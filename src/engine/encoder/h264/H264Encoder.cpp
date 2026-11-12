@@ -202,6 +202,9 @@ inline void raiseTo(std::atomic<int>& counter, int v)
     counter.notify_all();
 }
 
+// Phases of a wavefront row (FrameCoder::WaveState::rowPhase).
+enum : uint8_t { kRowNew = 0, kRowMbs = 1, kRowTail = 2, kRowPublish = 3, kRowDone = 4 };
+
 inline void spinWait()
 {
 #if defined(__SSE2__) || defined(_M_X64)
@@ -820,17 +823,21 @@ double Encoder::twoPassQp(double kI, double kP, double kB) const
 
 int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? 1 : 0); }
 
-// Workers of the frame threading: they take rows of the oldest picture first, then of the next
-// one (which waits for the reference rows it needs), so no worker ever waits on a row nobody has.
+// Workers of the frame threading. Rows are not waited in: a worker takes a row that can go on (of
+// the oldest picture first, from the top), runs it until it would have to wait (for the row above,
+// the entropy writer, the reference picture) and parks it there; whatever lets a parked row go on
+// wakes a sleeping worker (WaveSignal). So a worker only sleeps when no row of any picture in
+// flight can move.
 struct Encoder::Pool {
-    std::mutex m;
-    std::condition_variable cv;
+    WaveSignal sig; // its mutex also guards active and stop
     std::vector<std::thread> threads;
     FrameCoder* active[2] = {nullptr, nullptr}; // oldest first
     bool stop = false;
+    int spin = 128;
 
     explicit Pool(int count)
     {
+        spin = spinFor(count);
         try {
             for (int t = 0; t < count; ++t)
                 threads.emplace_back([this] { run(); });
@@ -843,53 +850,75 @@ struct Encoder::Pool {
     void shutdown()
     {
         {
-            std::lock_guard<std::mutex> l(m);
+            std::lock_guard<std::mutex> l(sig.m);
             stop = true;
         }
-        cv.notify_all();
+        sig.wake(true);
         for (auto& t : threads)
             t.join();
+        threads.clear();
     }
     void run()
     {
         for (;;) {
+            const uint32_t epoch = sig.epoch.load(std::memory_order_seq_cst);
             FrameCoder* c = nullptr;
             int r = -1;
             {
-                std::unique_lock<std::mutex> l(m);
-                for (;;) {
-                    if (stop)
-                        return;
-                    for (FrameCoder* a : active)
-                        if (a && a->rowsLeft() && (r = a->claimRow()) >= 0) {
-                            c = a;
-                            break;
-                        }
-                    if (c)
+                std::lock_guard<std::mutex> l(sig.m);
+                if (stop)
+                    return;
+                for (FrameCoder* a : active)
+                    if (a && (r = a->claimRunnableRow()) >= 0) {
+                        c = a;
                         break;
-                    cv.wait(l);
-                }
+                    }
             }
-            c->waveRow(r); // catches its own failures
+            if (c) {
+                c->waveRowRun(r); // catches its own failures
+                continue;
+            }
+            // Nothing can move: a short spin, then sleep until something changed (the timeout only
+            // bounds the damage of a wake-up that should ever be missed).
+            for (int i = 0; i < spin && sig.epoch.load(std::memory_order_relaxed) == epoch; ++i) {
+#if defined(__SSE2__) || defined(_M_X64)
+                _mm_pause();
+#endif
+            }
+            if (sig.epoch.load(std::memory_order_seq_cst) != epoch)
+                continue;
+            const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            {
+                std::unique_lock<std::mutex> l(sig.m);
+                sig.sleepers.fetch_add(1, std::memory_order_seq_cst);
+                if (!stop && sig.epoch.load(std::memory_order_seq_cst) == epoch)
+                    sig.cv.wait_for(l, std::chrono::milliseconds(2));
+                sig.sleepers.fetch_sub(1, std::memory_order_seq_cst);
+            }
+            if (gTiming)
+                idleUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                                 std::memory_order_relaxed);
         }
     }
+    std::atomic<long> idleUs{0}; // time the workers slept (H264_TIMING)
     void add(FrameCoder* c)
     {
         {
-            std::lock_guard<std::mutex> l(m);
+            std::lock_guard<std::mutex> l(sig.m);
             (active[0] ? active[1] : active[0]) = c;
         }
-        cv.notify_all();
+        sig.wake(true);
     }
     void remove(FrameCoder* c)
     {
-        std::lock_guard<std::mutex> l(m);
+        std::lock_guard<std::mutex> l(sig.m);
         if (active[0] == c) {
             active[0] = active[1];
             active[1] = nullptr;
         } else if (active[1] == c) {
             active[1] = nullptr;
         }
+        c->wave_.signal = nullptr;
     }
 };
 
@@ -1378,12 +1407,25 @@ void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
         w.progress.reset(new std::atomic<int>[size_t(rows)]);
         w.deblocked.reset(new std::atomic<int>[size_t(rows)]);
         w.rowPrevNz.reset(new bool[size_t(rows)]);
+        w.rowMb.reset(new std::atomic<int>[size_t(rows)]);
+        w.rowDb.reset(new std::atomic<int>[size_t(rows)]);
+        w.rowPhase.reset(new std::atomic<uint8_t>[size_t(rows)]);
+        w.rowBusy.reset(new std::atomic<uint8_t>[size_t(rows)]);
         w.allocated = rows;
     }
     for (int r = 0; r < rows; ++r) {
         w.progress[size_t(r)].store(0, std::memory_order_relaxed);
         w.deblocked[size_t(r)].store(0, std::memory_order_relaxed);
+        w.rowMb[size_t(r)].store(0, std::memory_order_relaxed);
+        w.rowDb[size_t(r)].store(0, std::memory_order_relaxed);
+        w.rowPhase[size_t(r)].store(kRowNew, std::memory_order_relaxed);
+        w.rowBusy[size_t(r)].store(0, std::memory_order_relaxed);
     }
+    w.firstOpen.store(0, std::memory_order_relaxed);
+    // A parked row goes on once it can do a batch (not one macroblock at a time behind the row
+    // above); small enough that every thread still finds a row across the picture's width.
+    static const int kBatchEnv = std::getenv("H264_BATCH") ? std::atoi(std::getenv("H264_BATCH")) : -1;
+    w.batch = kBatchEnv >= 0 ? kBatchEnv : std::clamp(mbW_ / (2 * std::max(1, threads)), 0, 8);
     w.written.store(0, std::memory_order_relaxed);
     w.rowsDone.store(0, std::memory_order_relaxed);
     waveErrors_.clear();
@@ -1424,6 +1466,8 @@ void FrameCoder::waveFail()
         raiseTo(w.deblocked[size_t(r)], mbW_);
     }
     raiseTo(w.written, w.rows);
+    if (w.signal)
+        w.signal->wake(true); // parked rows are given up by the workers
     // The reference rows are released once no row writes them any more (waveRow, waveEnd).
 }
 
@@ -1439,33 +1483,138 @@ void FrameCoder::waveWriteGuarded()
     }
 }
 
+// The failed picture's row: whoever waits for it is released, the row counts as done.
+void FrameCoder::abandonRow(int r)
+{
+    WaveState& w = wave_;
+    w.rowPhase[size_t(r)].store(kRowDone, std::memory_order_release);
+    raiseTo(w.progress[size_t(r)], mbW_);
+    if (r > 0)
+        raiseTo(w.deblocked[size_t(r - 1)], mbW_);
+    w.rowsDone.fetch_add(1, std::memory_order_acq_rel);
+}
+
 void FrameCoder::waveRow(int r)
 {
     bool done = false;
     try {
-        failurePoint(FailPoint::WaveRow);
-        done = !waveErrors_.failed() && waveRowBody(r);
+        done = !waveErrors_.failed() && waveRowBody(r, true) == 1;
     } catch (...) {
         waveFail();
     }
-    if (!done) {
-        // Abandoned (failure here or elsewhere): release whoever waits for this row.
-        raiseTo(wave_.progress[size_t(r)], mbW_);
-        if (r > 0)
-            raiseTo(wave_.deblocked[size_t(r - 1)], mbW_);
-        wave_.rowsDone.fetch_add(1, std::memory_order_acq_rel);
-    }
+    if (!done)
+        abandonRow(r); // failure here or elsewhere
     // The last row of a failed picture: nothing writes the reference picture any more, so the
     // next picture's rows (waiting for its rows) may go on.
     if (waveErrors_.failed() && wave_.rowsDone.load(std::memory_order_acquire) >= wave_.rows && wave_.out)
         raiseTo(wave_.out->rowsReady, mbH_);
 }
 
-// One row of the wavefront; false when it stopped early because the picture failed.
-bool FrameCoder::waveRowBody(int r)
+// Reference rows row r can reach: vectors up to 64 pixels (4 rows) plus the 6-tap filter.
+bool FrameCoder::refRowsReady(int r) const
+{
+    if (!pSlice_)
+        return true;
+    const int need = std::min(mbH_, r + 6);
+    for (const auto& ref : refs_)
+        if (ref->rowsReady.load(std::memory_order_acquire) < need)
+            return false;
+    if (bSlice_)
+        for (const auto& ref : refs1_)
+            if (ref->rowsReady.load(std::memory_order_acquire) < need)
+                return false;
+    return true;
+}
+
+// Whether a parked row can go on by a batch (or, after a failure, must be given up).
+bool FrameCoder::rowRunnable(int r) const
+{
+    const WaveState& w = wave_;
+    if (waveErrors_.failed())
+        return w.rowPhase[size_t(r)].load(std::memory_order_acquire) != kRowDone;
+    const int k = w.batch;
+    switch (w.rowPhase[size_t(r)].load(std::memory_order_acquire)) {
+    case kRowNew:
+        if (r > 0 && w.progress[size_t(r - 1)].load(std::memory_order_acquire) < std::min(2 + k, mbW_))
+            return false;
+        return refRowsReady(r);
+    case kRowMbs:
+        return r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >=
+                             std::min(w.rowMb[size_t(r)].load(std::memory_order_acquire) + 2 + k, mbW_);
+    case kRowTail: {
+        if (!w.inlineDeblock || r == 0)
+            return true;
+        const int db = w.rowDb[size_t(r)].load(std::memory_order_acquire);
+        if (db >= mbW_)
+            return true;
+        return w.written.load(std::memory_order_acquire) >= r &&
+               (r == 1 || w.deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(db + 2 + k, mbW_));
+    }
+    case kRowPublish:
+        return !(w.out && w.inlineDeblock && r >= 2) || w.out->rowsReady.load(std::memory_order_acquire) >= r - 2;
+    default:
+        return false;
+    }
+}
+
+// After a change that may let row r go on: wakes a sleeping worker if nobody is on that row.
+void FrameCoder::wakeRow(int r)
 {
     WaveState& w = wave_;
-    // Reference rows this row can reach: vectors up to 64 pixels (4 rows) plus the 6-tap filter.
+    if (w.signal && r < w.rows && !w.rowBusy[size_t(r)].load(std::memory_order_acquire) && rowRunnable(r))
+        w.signal->wake();
+}
+
+// Called with the pool's lock held: the first row (from the top) that can go on, marked busy.
+int FrameCoder::claimRunnableRow()
+{
+    WaveState& w = wave_;
+    int first = w.firstOpen.load(std::memory_order_relaxed);
+    for (int r = first; r < w.rows; ++r) {
+        const uint8_t phase = w.rowPhase[size_t(r)].load(std::memory_order_acquire);
+        if (phase == kRowDone) {
+            if (r == first)
+                w.firstOpen.store(++first, std::memory_order_relaxed);
+            continue;
+        }
+        if (!w.rowBusy[size_t(r)].load(std::memory_order_acquire) && rowRunnable(r)) {
+            w.rowBusy[size_t(r)].store(1, std::memory_order_release);
+            return r;
+        }
+        if (phase == kRowNew)
+            break; // the rows below it cannot start before it
+    }
+    return -1;
+}
+
+void FrameCoder::waveRowRun(int r)
+{
+    WaveState& w = wave_;
+    int res = -1;
+    try {
+        if (!waveErrors_.failed())
+            res = waveRowBody(r, false);
+    } catch (...) {
+        waveFail();
+    }
+    if (res < 0 && w.rowPhase[size_t(r)].load(std::memory_order_acquire) != kRowDone)
+        abandonRow(r);
+    w.rowBusy[size_t(r)].store(0, std::memory_order_release);
+    if (res == 0)
+        wakeRow(r); // what it waited for may have come between its last look and here
+    if (waveErrors_.failed() && w.rowsDone.load(std::memory_order_acquire) >= w.rows && w.out)
+        raiseTo(w.out->rowsReady, mbH_);
+    if (waveErrors_.failed() && w.signal)
+        w.signal->wake(true);
+}
+
+// One row of the wavefront, in phases: start (reference rows, the row above two macroblocks ahead),
+// the macroblocks, the rest of the deblocking of the row above, the band that became final. With
+// block it waits wherever it cannot go on (a thread per row); without, it returns 0 there and
+// goes on from the same place when called again (the pool parks the row). -1 when the picture failed.
+int FrameCoder::waveRowBody(int r, bool block)
+{
+    WaveState& w = wave_;
     auto waitRef = [&](const RefPic& ref) {
         const int need = std::min(mbH_, r + 6);
         if (ref.rowsReady.load(std::memory_order_acquire) >= need)
@@ -1475,15 +1624,9 @@ bool FrameCoder::waveRowBody(int r)
         w.refWaitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
                               std::memory_order_relaxed);
     };
-    if (pSlice_) {
-        for (const auto& ref : refs_)
-            waitRef(*ref);
-        if (bSlice_)
-            for (const auto& ref : refs1_)
-                waitRef(*ref);
-    }
+    auto aboveAt = [&](int need) { return r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need; };
     auto waitAbove = [&](int need) {
-        if (r == 0 || w.progress[size_t(r - 1)].load(std::memory_order_acquire) >= need)
+        if (aboveAt(need))
             return;
         const auto t0 = gTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         waitAtLeast(w.progress[size_t(r - 1)], need, w.spin);
@@ -1491,67 +1634,110 @@ bool FrameCoder::waveRowBody(int r)
             w.waitUs.fetch_add(long(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
                                std::memory_order_relaxed);
     };
-    int dbNext = 0; // next macroblock of row r - 1 to filter
+    int dbNext = w.rowDb[size_t(r)].load(std::memory_order_relaxed); // next macroblock of row r - 1 to filter
     auto deblockBehind = [&](int upTo, bool wait) {
         if (!w.inlineDeblock || r == 0)
             return;
+        const int before = dbNext;
         while (dbNext < upTo) {
             const bool ready = w.written.load(std::memory_order_acquire) >= r &&
                                (r == 1 || w.deblocked[size_t(r - 2)].load(std::memory_order_acquire) >= std::min(dbNext + 2, mbW_));
             if (!ready) {
                 if (!wait)
-                    return;
+                    break;
                 waitAtLeast(w.written, r, w.spin);
                 if (r > 1)
                     waitAtLeast(w.deblocked[size_t(r - 2)], std::min(dbNext + 2, mbW_), w.spin);
                 continue;
             }
             if (waveErrors_.failed()) // the counters may have been pushed to their end
-                return;
+                break;
             deblockMb(dbNext, r - 1);
             raiseTo(w.deblocked[size_t(r - 1)], ++dbNext);
         }
+        if (dbNext != before) {
+            w.rowDb[size_t(r)].store(dbNext, std::memory_order_release);
+            wakeRow(r + 1); // its own deblocking follows this one
+        }
     };
     CabacEncoder& eng = w.rowEngine[size_t(r)];
-    if (r == 0) {
-        eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
-        eng.startCounting();
-    } else {
-        waitAbove(std::min(2, mbW_));
-        if (waveErrors_.failed())
-            return false;
-        eng = w.rowSnap[size_t(r - 1)];
+    uint8_t phase = w.rowPhase[size_t(r)].load(std::memory_order_relaxed);
+    if (phase == kRowNew) {
+        failurePoint(FailPoint::WaveRow);
+        if (pSlice_ && !refRowsReady(r)) {
+            if (!block)
+                return 0;
+            for (const auto& ref : refs_)
+                waitRef(*ref);
+            if (bSlice_)
+                for (const auto& ref : refs1_)
+                    waitRef(*ref);
+        }
+        if (r == 0) {
+            eng.start(nullptr, cfg_.qp, pSlice_ ? 0 : -1);
+            eng.startCounting();
+        } else {
+            if (!aboveAt(std::min(2, mbW_))) {
+                if (!block)
+                    return 0;
+                waitAbove(std::min(2, mbW_));
+            }
+            if (waveErrors_.failed())
+                return -1;
+            eng = w.rowSnap[size_t(r - 1)];
+        }
+        qpPredByTop_[size_t(r)] = cfg_.qp;
+        w.rowPrevNz[size_t(r)] = false;
+        cabacByTop_[size_t(r)] = &eng;
+        prevQpNzByTop_[size_t(r)] = &w.rowPrevNz[size_t(r)];
+        w.rowPhase[size_t(r)].store(phase = kRowMbs, std::memory_order_release);
     }
-    qpPredByTop_[size_t(r)] = cfg_.qp;
-    w.rowPrevNz[size_t(r)] = false;
-    cabacByTop_[size_t(r)] = &eng;
-    prevQpNzByTop_[size_t(r)] = &w.rowPrevNz[size_t(r)];
-    for (int mbx = 0; mbx < mbW_; ++mbx) {
-        waitAbove(std::min(mbx + 2, mbW_));
-        if (waveErrors_.failed())
-            return false;
-        MbOut mb;
-        if (bSlice_)
-            encodeMbB(mb, mbx, r);
-        else if (pSlice_)
-            encodeMbP(mb, mbx, r);
-        else
-            commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
-        cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
-        mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
-        if (mbx == std::min(1, mbW_ - 1))
-            w.rowSnap[size_t(r)] = eng;
-        raiseTo(w.progress[size_t(r)], mbx + 1);
-        deblockBehind(mbx, false);
+    if (phase == kRowMbs) {
+        for (int mbx = w.rowMb[size_t(r)].load(std::memory_order_relaxed); mbx < mbW_; ++mbx) {
+            if (!aboveAt(std::min(mbx + 2, mbW_))) {
+                if (!block)
+                    return 0;
+                waitAbove(std::min(mbx + 2, mbW_));
+            }
+            if (waveErrors_.failed())
+                return -1;
+            MbOut mb;
+            if (bSlice_)
+                encodeMbB(mb, mbx, r);
+            else if (pSlice_)
+                encodeMbP(mb, mbx, r);
+            else
+                commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
+            cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
+            mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
+            if (mbx == std::min(1, mbW_ - 1))
+                w.rowSnap[size_t(r)] = eng;
+            w.rowMb[size_t(r)].store(mbx + 1, std::memory_order_release);
+            raiseTo(w.progress[size_t(r)], mbx + 1);
+            wakeRow(r + 1);
+            deblockBehind(mbx, false);
+        }
+        w.rowPhase[size_t(r)].store(phase = kRowTail, std::memory_order_release);
     }
-    deblockBehind(mbW_, true);
-    if (waveErrors_.failed())
-        return false;
+    if (phase == kRowTail) {
+        deblockBehind(mbW_, block);
+        if (waveErrors_.failed())
+            return -1;
+        if (w.inlineDeblock && r > 0 && dbNext < mbW_)
+            return 0; // only without block
+        w.rowPhase[size_t(r)].store(phase = kRowPublish, std::memory_order_release);
+    }
     // Row r - 1 is filtered now, so row r - 2 is final (filtering row r - 1 changed its last lines).
-    if (w.out && w.inlineDeblock && r >= 2)
+    if (w.out && w.inlineDeblock && r >= 2) {
+        if (!block && w.out->rowsReady.load(std::memory_order_acquire) < r - 2)
+            return 0;
         publishBand(r - 2);
+        if (waveErrors_.failed())
+            return -1;
+    }
+    w.rowPhase[size_t(r)].store(kRowDone, std::memory_order_release);
     w.rowsDone.fetch_add(1, std::memory_order_acq_rel);
-    return true;
+    return 1;
 }
 
 // Copies the final rows of band k (macroblock row) into the reference picture and builds its
@@ -1594,6 +1780,8 @@ void FrameCoder::publishBand(int k)
         std::memcpy(&R.ref[o], &refIdx_[o], n);
     }
     raiseTo(R.rowsReady, k + 1);
+    if (w.signal)
+        w.signal->wake(true); // rows of the next picture, and the row that publishes the next band
 }
 
 // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows the
@@ -1630,6 +1818,7 @@ void FrameCoder::waveWrite()
             eng.terminate(m + 1 == count); // end_of_slice_flag
         }
         raiseTo(w.written, r + 1);
+        wakeRow(r + 1); // it may filter row r now
     }
     bw.alignZero();
 }
@@ -2030,6 +2219,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             pool_ = std::make_unique<Pool>(cfg_.threads);
         fc.reset(idr, frameNum, idrCount_);
         fc.outPic_ = pic;
+        fc.wave_.signal = &pool_->sig;
         fc.waveBegin(cfg_.threads, pic.get(), true);
         pool_->add(&fc);
     } else {
@@ -2060,7 +2250,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (++gPhaseFrames % 20 == 0)
             std::fprintf(stderr, "timing ms/frame: load %.1f scenecut %.1f tree+rc %.1f aq %.1f encode %.1f (threads waited %.1f) deblock %.1f refplanes %.1f\n",
                          gPhaseMs[0] / gPhaseFrames, gPhaseMs[1] / gPhaseFrames, gPhaseMs[2] / gPhaseFrames, gPhaseMs[3] / gPhaseFrames,
-                         gPhaseMs[4] / gPhaseFrames, gWaitMs / gPhaseFrames, gPhaseMs[5] / gPhaseFrames, gPhaseMs[6] / gPhaseFrames);
+                         gPhaseMs[4] / gPhaseFrames, (gWaitMs + (pool_ ? pool_->idleUs.load() / 1000.0 : 0.0)) / gPhaseFrames, gPhaseMs[5] / gPhaseFrames, gPhaseMs[6] / gPhaseFrames);
     }
     return &fc;
 }

@@ -11,6 +11,8 @@
 #include <array>
 #include <atomic>
 #include <climits>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #include <memory>
 #include <vector>
@@ -63,6 +65,29 @@ inline BParts bPartsOf(int bType, const uint8_t* sub)
     return b;
 }
 
+// Wakes the worker pool of the frame threading: every change that may let a parked row go on bumps
+// the epoch; a worker that found nothing to do sleeps only while the epoch stays what it was
+// before it looked.
+struct WaveSignal {
+    std::atomic<uint32_t> epoch{0};
+    std::atomic<int> sleepers{0};
+    std::mutex m;
+    std::condition_variable cv;
+    void wake(bool all = false)
+    {
+        epoch.fetch_add(1, std::memory_order_seq_cst);
+        if (sleepers.load(std::memory_order_seq_cst) > 0) {
+            {
+                std::lock_guard<std::mutex> l(m); // the sleeper is past its check and waiting
+            }
+            if (all)
+                cv.notify_all();
+            else
+                cv.notify_one();
+        }
+    }
+};
+
 class FrameCoder {
 public:
     explicit FrameCoder(const EncoderConfig& config);
@@ -80,8 +105,12 @@ public:
         const int r = wave_.nextRow.fetch_add(1, std::memory_order_acq_rel);
         return r < wave_.rows ? r : -1;
     }
-    bool rowsLeft() const { return wave_.nextRow.load(std::memory_order_acquire) < wave_.rows; }
     void waveRow(int r); // never throws: a failure stops the picture (rethrowWaveError)
+    // The worker pool's way (frame threading): rows are not waited in but parked. claimRunnableRow
+    // hands out a row that can go on by a batch of macroblocks (-1 = none right now), waveRowRun
+    // takes it as far as it goes without waiting and gives it back.
+    int claimRunnableRow();
+    void waveRowRun(int r); // never throws
     void waveEnd();
     void rethrowWaveError(); // after waveEnd: the first exception of a row or the writer
     std::vector<uint8_t> assemble(PhaseClock& clock);
@@ -97,6 +126,12 @@ public:
         std::atomic<int> rowsDone{0};
         std::atomic<long> waitUs{0}, refWaitUs{0}; // waiting for the row above / the reference (H264_TIMING)
         std::thread writer;
+        // Where each row stands (a row is advanced by one thread at a time: rowBusy).
+        std::unique_ptr<std::atomic<int>[]> rowMb, rowDb; // next macroblock to decide / to filter in the row above
+        std::unique_ptr<std::atomic<uint8_t>[]> rowPhase, rowBusy;
+        std::atomic<int> firstOpen{0}; // no row above this one is unfinished
+        int batch = 0;                 // a parked row goes on once it can do this many macroblocks more than one
+        WaveSignal* signal = nullptr;  // the pool's, while the picture is in it
         RefPic* out = nullptr; // reference picture filled band by band, or nullptr
         int yCopied = 0, cCopied = 0, fBuilt = 0, hBuilt = 0;
     };
@@ -116,7 +151,11 @@ public:
     void encodeSlice(int s);
     void waveWrite();
     void waveWriteGuarded();
-    bool waveRowBody(int r);
+    int waveRowBody(int r, bool block); // 1 done, 0 parked (only without block), -1 the picture failed
+    bool rowRunnable(int r) const;
+    bool refRowsReady(int r) const;
+    void wakeRow(int r);
+    void abandonRow(int r);
     void waveFail();
     ThreadErrors waveErrors_;
     void publishBand(int k);
