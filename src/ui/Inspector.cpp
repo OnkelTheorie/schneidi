@@ -663,6 +663,20 @@ void Inspector::apply(TrackKind kind, const QString& key, const QString& text, c
 
 void Inspector::refresh()
 {
+    // The rows shown or hidden below change the width the panel needs, also on the pages not shown (the stack is as
+    // wide as its widest page). Rows hidden there, or while the content was hidden, tell nobody: the layouts kept the
+    // old minimum (the template placeholder rows of the first build, 325 px in Russian) and a splitter took it at
+    // some later layout - the right column grew a few pixels by itself (after a tour it came back wider). So the
+    // stack, the content and the panel say it themselves once the rows are set
+    struct Told {
+        Inspector* self;
+        ~Told()
+        {
+            self->m_pages->updateGeometry();
+            self->m_content->updateGeometry();
+            self->updateGeometry();
+        }
+    } told{this};
     m_tabs->button(kSubtitlePage)->setVisible(false);
     if (refreshTransition()) return;
     if (refreshSubtitle()) return;
