@@ -297,6 +297,23 @@ int main()
         if (std::abs(kbps2 - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
+        // The encoder takes the first pass's analysis instead of repeating it: the same stream with
+        // none of it kept and with only the first pictures kept (memory limit).
+        CHECK(c.firstPass->analysis.size() == 60);
+        const size_t perPicture = size_t((c.width + 15) / 16) * ((c.height + 15) / 16) * 12;
+        for (size_t keep : {size_t(0), 25 * perPicture}) {
+            FirstPass fpKeep(c.width, c.height, 1, false, keep);
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fpKeep.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            EncoderConfig k = c;
+            k.firstPass = fpKeep.stats();
+            CHECK(k.firstPass->analysis.size() == (keep ? 25u : 0u));
+            size_t bytesKeep = 0;
+            CHECK(roundTrip(k, 60, &bytesKeep));
+            CHECK(bytesKeep == bytes);
+        }
     }
     // B pictures (CABAC only): coding order, display order and timestamps, every picture bit-exact
     if (gCabac) {

@@ -32,6 +32,16 @@ struct FirstPassStats {
     std::vector<double> intraSum, interSum; // per picture, like LookaheadFrame
     std::vector<uint8_t> sceneChange, forceKeyframe;
     std::vector<double> bScore; // per picture (LookaheadFrame::bScore), only with FirstPass(.., forB = true)
+    // The lookahead analysis of the first pictures (per macroblock, as LookaheadFrame has it): the
+    // encoder takes it instead of analysing the same pictures again. Kept up to a memory limit
+    // (FirstPass), so it may cover fewer pictures than the rest, or none.
+    struct Analysis {
+        std::vector<int32_t> intraCost, interCost;
+        std::vector<int16_t> mvx, mvy;
+        double intraSum = 0, interSum = 0;
+        bool sceneChange = false;
+    };
+    std::vector<std::shared_ptr<const Analysis>> analysis;
     size_t size() const { return intraSum.size(); }
 };
 
@@ -118,7 +128,9 @@ class FirstPass {
 public:
     // threads > 1: pictures are analysed in batches side by side (same numbers).
     // forB: also what the adaptive B picture placement needs (one more search per picture).
-    FirstPass(int width, int height, int threads = 1, bool forB = false);
+    // keepAnalysisBytes: memory for FirstPassStats::analysis (about 12 bytes per macroblock and
+    // picture: 1080p ~100 KB); pictures beyond it are analysed again by the encoder.
+    FirstPass(int width, int height, int threads = 1, bool forB = false, size_t keepAnalysisBytes = size_t(1) << 30);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
     std::shared_ptr<const FirstPassStats> stats() const;
@@ -132,6 +144,8 @@ private:
     mutable LookaheadFrame prev_, prev2_;
     mutable bool havePrev_ = false, havePrev2_ = false;
     bool forB_ = false;
+    size_t keepBytes_ = 0;
+    mutable size_t keptBytes_ = 0;
     std::shared_ptr<FirstPassStats> stats_;
 };
 
@@ -232,6 +246,8 @@ private:
     std::exception_ptr pendingError_; // thrown on pendingThread_, rethrown by joinPending
     std::exception_ptr broken_;       // a failed encode()/flush(): every later call throws it again
     void joinPending();
+    // Lookahead analysis of f against prev, or the first pass's when it kept it.
+    void analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const;
     std::vector<uint8_t> encodeImpl(const Picture& picture, bool forceKeyframe);
     std::vector<uint8_t> flushImpl();
     // Rate control state.

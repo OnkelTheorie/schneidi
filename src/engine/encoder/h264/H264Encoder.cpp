@@ -606,11 +606,14 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
-FirstPass::FirstPass(int width, int height, int threads, bool forB)
+FirstPass::FirstPass(int width, int height, int threads, bool forB, size_t keepAnalysisBytes)
     : width_(width), height_(height), threads_(std::max(1, threads)),
       la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
-      stats_(std::make_shared<FirstPassStats>()), forB_(forB)
+      stats_(std::make_shared<FirstPassStats>()), forB_(forB), keepBytes_(keepAnalysisBytes)
 {
+    // H264_KEEPANALYSIS=0: the encoder analyses every picture again (for measurements).
+    if (const char* e = std::getenv("H264_KEEPANALYSIS"))
+        keepBytes_ = std::atoi(e) ? keepBytes_ : 0;
 }
 
 FirstPass::~FirstPass() = default;
@@ -650,6 +653,23 @@ void FirstPass::analyseBatch() const
     // The motion search starts from the predecessor's vectors: in order.
     for (int i = 0; i < n; ++i)
         la_->costs(batch_[size_t(i)], prevOf(i), threads_);
+    // Kept from the start without gaps (the encoder's analysis of a picture needs its predecessor's).
+    for (int i = 0; i < n; ++i) {
+        const LookaheadFrame& f = batch_[size_t(i)];
+        const size_t bytes = f.intraCost.size() * 12;
+        if (stats_->analysis.size() != stats_->intraSum.size() + size_t(i) || keptBytes_ + bytes > keepBytes_)
+            break;
+        auto a = std::make_shared<FirstPassStats::Analysis>();
+        a->intraCost = f.intraCost;
+        a->interCost = f.interCost;
+        a->mvx = f.mvx;
+        a->mvy = f.mvy;
+        a->intraSum = f.intraSum;
+        a->interSum = f.interSum;
+        a->sceneChange = f.sceneChange;
+        stats_->analysis.push_back(std::move(a));
+        keptBytes_ += bytes;
+    }
     if (forB_) {
         auto prev2Of = [&](int i) { return i > 1 ? &batch_[size_t(i) - 2] : i == 1 ? (havePrev_ ? &prev_ : nullptr) : havePrev2_ ? &prev2_ : nullptr; };
         parallel([&](int i) {
@@ -753,6 +773,10 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->forceKeyframe.push_back(st.forceKeyframe[i]);
             if (!st.bScore.empty())
                 part->bScore.push_back(st.bScore[i]);
+            // Only the first chunk analyses its pictures like the first pass did (the others
+            // start without a predecessor).
+            if (c == 0 && i < st.analysis.size())
+                part->analysis.push_back(st.analysis[i]);
         }
         total += need[c];
         plan.firstPass.push_back(std::move(part));
@@ -905,6 +929,27 @@ std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
     }
 }
 
+void Encoder::analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const
+{
+    const FirstPassStats* st = cfg_.firstPass.get();
+    if (!st || size_t(f.index) >= st->analysis.size() || !st->analysis[size_t(f.index)]) {
+        la_->analyse(f, prev);
+        return;
+    }
+    // The same picture with the same predecessor as in the first pass: same numbers. The half
+    // picture and thumbnail are still made (a later picture past the kept ones searches in them).
+    const FirstPassStats::Analysis& a = *st->analysis[size_t(f.index)];
+    la_->prepare(f);
+    f.intraCost = a.intraCost;
+    f.interCost = a.interCost;
+    f.mvx = a.mvx;
+    f.mvy = a.mvy;
+    f.propagate.assign(a.intraCost.size(), 0.0f);
+    f.intraSum = a.intraSum;
+    f.interSum = a.interSum;
+    f.sceneChange = a.sceneChange;
+}
+
 std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyframe)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
@@ -927,7 +972,7 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
             pendingThread_ = std::thread([this, prev, prev2] {
                 try {
                     failurePoint(FailPoint::LookaheadThread);
-                    la_->analyse(*pendingFrame_, prev);
+                    analyseFrame(*pendingFrame_, prev);
                     if (prev2)
                         pendingFrame_->bScore = la_->bScore(*pendingFrame_, *prev, *prev2);
                 } catch (...) {
@@ -935,12 +980,12 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
                 }
             });
         } else {
-            la_->analyse(*pendingFrame_, prev);
+            analyseFrame(*pendingFrame_, prev);
             if (prev2)
                 pendingFrame_->bScore = la_->bScore(*pendingFrame_, *prev, *prev2);
         }
     } else {
-        la_->analyse(f, queue_.empty() ? nullptr : &queue_.back());
+        analyseFrame(f, queue_.empty() ? nullptr : &queue_.back());
         if (scoreB && queue_.size() >= 2)
             f.bScore = la_->bScore(f, queue_.back(), queue_[queue_.size() - 2]);
         queue_.push_back(std::move(f));
