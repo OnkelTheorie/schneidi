@@ -24,6 +24,7 @@ extern "C" {
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cerrno>
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
@@ -141,6 +142,19 @@ QString errorText(int code)
     char buf[AV_ERROR_MAX_STRING_SIZE] = {};
     av_strerror(code, buf, sizeof buf);
     return QString::fromUtf8(buf);
+}
+
+// A read error that means the file is gone or its device is (a USB disk pulled, a network share dropped), not its end
+// or damaged data
+bool lostFile(int code)
+{
+    if (code == AVERROR(EIO) || code == AVERROR(ENOENT) || code == AVERROR(ENXIO) || code == AVERROR(ENODEV)
+        || code == AVERROR(EBADF))
+        return true;
+#ifdef ESTALE
+    if (code == AVERROR(ESTALE)) return true; // NFS
+#endif
+    return false;
 }
 
 // MLT's guess_frame_rate (producer_avformat.c); 0/1 = unknown (the producer then uses the profile's rate)
@@ -608,6 +622,7 @@ struct Reader::Impl {
     bool ended = false;                              // the decoder gave its last frame
     bool stop = false;
     bool lost = false; // the decoder could not be opened again: no more pictures (Reader::failed)
+    std::atomic<int> readError{0}; // the file could not be read any more (a disk or share gone): lost as well
     bool started = false;
     std::list<Request*> pending;
     int64_t high = -1;       // highest position asked for recently (read-ahead reference)
@@ -989,6 +1004,7 @@ struct Reader::Impl {
         if (!draining) {
             const int r = av_read_frame(fmt, pkt);
             if (r == AVERROR(EAGAIN)) return;
+            if (r < 0 && lostFile(r)) readError = r;
             if (r < 0) {
                 draining = true;
                 send = nullptr;
@@ -1159,6 +1175,10 @@ struct Reader::Impl {
         std::vector<Decoded> fresh;
         std::vector<std::shared_ptr<const Picture>> finished;
         while (!stop) {
+            if (const int r = readError.load()) { // not the end of the file: the file is gone (tried again by its user)
+                loseDecoder(QString("cannot read the file: %1").arg(errorText(r)));
+                continue;
+            }
             if (finishFailed || g_loseDecoder == 1) {
                 finishFailed = false;
                 int armed = 1;

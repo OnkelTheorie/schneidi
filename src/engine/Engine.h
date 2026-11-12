@@ -214,6 +214,9 @@ signals:
     void loopChanged(bool on); // setLoopRange switched loop playback on or off
     void modeChanged(Engine::Mode mode);
     void showsProxyChanged(bool on);
+    // A media file that played before cannot be read any more (its disk gone, moved away): the preview shows nothing
+    // for it and tries again on the next play or seek (Picture::Options::sourceLost; any thread, at most every 1.5 s)
+    void sourceLost(const QString& path);
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
     // the master measures true peak (dBTP, BS.1770 4x oversampled) like the delivery check
     void audioLevels(const QVector<float>& db);

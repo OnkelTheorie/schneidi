@@ -218,6 +218,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(Stabilizer::instance(), &Stabilizer::resultReady, this, &MainWindow::updateRenderCacheBar);
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
+    // A source lost while the project is open (disk or share gone, file moved): named, the preview tries it again
+    connect(m_engine, &Engine::sourceLost, this, [this](const QString& path) {
+        statusBar()->showMessage(T("Quelldatei nicht lesbar: %1 – neuer Versuch beim nächsten Abspielen oder Springen")
+                                     .arg(QFileInfo(path).fileName()),
+                                 8000);
+    });
 
     // Engine -> playhead (timeline and multicam grid; in source mode the playhead stays put)
     TimelineView* tv = m_timeline->view();

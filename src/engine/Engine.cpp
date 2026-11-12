@@ -538,6 +538,10 @@ Picture::Options Engine::previewOptions(const QSize& output) const
     o.renderCache = [resolved](const Clip& c) { return resolved->cached(c); };
     o.gradeBypass = m_gradeBypass;
     o.parallelFrames = m_pump ? m_pump->workers() : 1;
+    // From a rendering thread: the signal is queued to the receivers (the window names the file)
+    o.sourceLost = [self = QPointer<Engine>(const_cast<Engine*>(this))](const QString& path) {
+        if (self) emit self->sourceLost(path);
+    };
     return o;
 }
 
