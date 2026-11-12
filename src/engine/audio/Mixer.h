@@ -65,6 +65,18 @@ public:
     // silent or muted). Off by default.
     void setMetering(bool on);
     const std::vector<float>& trackPeaks() const;
+    // The same per stretch of `block` samples of the last render() (0 = off, the default): stretch b, track t,
+    // channel c at [(b * tracks + t) * 2 + c]; the last stretch may be shorter. Backwards playback shows the meters of
+    // a chunk block by block.
+    void setMeterBlock(int block);
+    const std::vector<float>& blockPeaks() const;
+
+    // Backwards preview: chunks mixed forward one before the other, each a jump. With warm >= 0 a jump keeps the
+    // track EQ, compressor and master limiter where they were (their level goes on from the neighbouring chunk
+    // instead of starting over every chunk: no flutter at the chunk rate) and keeps the noise reduction and voice
+    // cleaning of a voice, which then listen only `warm` samples before the new position instead of up to half a
+    // second (no seek, little decoding per chunk). -1 (the default): every jump starts over, like the export.
+    void setChunked(int warm);
 
     // Counters for tests and the log
     struct Stats {
@@ -72,6 +84,7 @@ public:
         int readersOpened = 0;
         int missing = 0;     // sources that could not be opened (silent)
         int restarts = 0;    // render() calls that did not continue the previous one
+        int64_t warmed = 0;  // samples run through noise reduction/voice cleaning ahead of a jump (warm-up)
     };
     const Stats& stats() const;
 

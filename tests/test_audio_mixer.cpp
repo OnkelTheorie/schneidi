@@ -3,6 +3,7 @@
 // Retimed clips against generated sources (always): bursts at known times land where the clip's RetimeMap puts
 // them (sample-exact without pitch correction, within a few ms with it), the pitch follows the speed (tape) or stays
 // (own stretcher, engine/audio/Stretch), level kept, reverse at 100 % = the samples backwards, block size does not matter.
+// Backwards preview in chunks (setChunked): compressor level steady across chunks, voice cleaning warms up cheaply.
 // Against the sound references of step 0 (test_audio_reference, private docs folder; skipped without it):
 // - difference to the reference (rendered through the old MLT path in 0.10) printed, checked against a bound per case
 //   (listed per case with the reason where the old path was wrong or works differently)
@@ -568,6 +569,118 @@ void checkJumps(const Synth& src)
     CHECK_EQ(jumping.stats().restarts, 2);
 }
 
+// Backwards preview (Mixer::setChunked): chunks mixed one before the other like the player does (8448 samples, 8192
+// apart). A steady tone through a track compressor keeps its level from chunk to chunk (starting over, every chunk
+// began uncompressed: a flutter at the chunk rate, ~6 Hz), and a clip with voice cleaning and noise reduction warms up
+// over the overlap only instead of up to half a second per chunk (with a seek and the decoding of an AAC file).
+// Meters per block of a render (Mixer::setMeterBlock).
+void checkBackwardChunks(const Synth& src, const QString& voice)
+{
+    constexpr int kChunk = 8192, kLen = kChunk + 256, kWarm = 256;
+    auto backwards = [&](Audio::Mixer& m, int warm, int64_t from, int64_t to, std::vector<std::vector<float>>* chunks) {
+        m.setChunked(warm);
+        std::vector<float> l(kLen), r(kLen);
+        float* buf[2] = {l.data(), r.data()};
+        for (int64_t next = from; next - kLen >= to; next -= kChunk) {
+            m.render(next - kLen, kLen, buf);
+            if (chunks) chunks->push_back(l);
+        }
+    };
+    auto peakDb = [](const float* x, int n) {
+        float p = 0;
+        for (int i = 0; i < n; ++i) p = std::max(p, std::abs(x[i]));
+        return 20 * std::log10(std::max(1e-9f, p));
+    };
+    Audio::Mixer::Options o;
+    o.fileLength = [](const QString&) { return int(kSynthSeconds * kFps); };
+
+    // 1. Track compressor
+    {
+        Timeline tl;
+        tl.audio.resize(1);
+        tl.audio[0].kind = TrackKind::Audio;
+        tl.audio[0].clips << synthClip(src.tone, 0, 250, 1.0, false, false);
+        tl.audio[0].dynamics.on = true;
+        tl.audio[0].dynamics.thresholdDb = -30;
+        tl.audio[0].dynamics.ratio = 8;
+        tl.audio[0].dynamics.attackMs = 20;
+        tl.audio[0].dynamics.releaseMs = 200;
+        Audio::Mixer forward(tl, FrameRate{kFps, 1}, o);
+        std::vector<float> l(size_t(3 * kRate)), r(l.size());
+        float* buf[2] = {l.data(), r.data()};
+        forward.render(0, 3 * kRate, buf);
+        const double steady = peakDb(l.data() + l.size() - 256, 256);
+        double worst[2] = {};
+        for (int mode = 0; mode < 2; ++mode) {
+            Audio::Mixer m(tl, FrameRate{kFps, 1}, o);
+            m.setMetering(true);
+            m.setMeterBlock(256);
+            std::vector<std::vector<float>> chunks;
+            backwards(m, mode ? kWarm : -1, 9 * kRate, kRate, &chunks);
+            for (size_t c = 1; c < chunks.size(); ++c) // the first one starts the compressor
+                for (int b = 1; b < kLen / 256; ++b) // beyond the overlap
+                    worst[mode] = std::max(worst[mode], std::abs(peakDb(chunks[c].data() + b * 256, 256) - steady));
+            if (mode == 1) {
+                // Block meters: 33 blocks of one track, each at the compressed level
+                const std::vector<float>& bp = m.blockPeaks();
+                if (CHECK_EQ(int(bp.size()), kLen / 256 * 2))
+                    CHECK(std::abs(20 * std::log10(std::max(1e-9f, bp[10 * 2])) - steady) < 0.5);
+            }
+        }
+        std::printf("  Rückwärts mit Kompressor: Pegel je Block bis %.2f dB neben dem Dauerpegel (%.1f dBFS), "
+                    "neu gestartet je Stück %.2f dB\n", worst[1], steady, worst[0]);
+        CHECK(worst[1] < 0.5);
+        CHECK(worst[0] > 2); // what it was: every chunk began uncompressed
+    }
+
+    // 2. Voice cleaning + noise reduction over an AAC file: cost per second played backwards
+    if (voice.isEmpty()) return;
+    Timeline tl;
+    tl.audio.resize(1);
+    tl.audio[0].kind = TrackKind::Audio;
+    Clip c = synthClip(voice, 0, 275, 1.0, false, false);
+    c.effects << EffectInstance{"denoise", {}, true} << EffectInstance{"voiceclean", {}, true};
+    tl.audio[0].clips << c;
+    Audio::Mixer::Options vo;
+    vo.fileLength = [](const QString&) { return 275; };
+    Audio::Mixer forward(tl, FrameRate{kFps, 1}, vo);
+    std::vector<float> fl(size_t(11 * kRate)), fr(fl.size());
+    float* fbuf[2] = {fl.data(), fr.data()};
+    forward.render(0, 11 * kRate, fbuf);
+    double ms[2] = {}, diffDb[2] = {};
+    int64_t warmed[2] = {};
+    for (int mode = 0; mode < 2; ++mode) {
+        Audio::Mixer m(tl, FrameRate{kFps, 1}, vo);
+        std::vector<std::vector<float>> chunks;
+        QElapsedTimer t;
+        t.start();
+        const int64_t from = 11 * kRate, to = kRate;
+        backwards(m, mode ? kWarm : -1, from, to, &chunks);
+        ms[mode] = double(t.nsecsElapsed()) / 1e6 / (double(from - to) / kRate); // per second of sound
+        warmed[mode] = m.stats().warmed;
+        // Against the forward mix, beyond the overlap (that one is faded into the next chunk)
+        double diff = 0, ref = 0;
+        int64_t next = from;
+        for (size_t k = 1; k < chunks.size(); ++k) {
+            next -= kChunk;
+            const int64_t start = next - kLen;
+            for (int i = 256; i < kLen; ++i) {
+                const double a = chunks[k][size_t(i)], b = fl[size_t(start + i)];
+                diff += (a - b) * (a - b);
+                ref += b * b;
+            }
+        }
+        diffDb[mode] = 10 * std::log10(std::max(1e-20, diff) / std::max(1e-20, ref));
+    }
+    std::printf("  Rückwärts mit Stimme säubern (AAC): %.1f ms je Sekunde, %.1f s vorgewärmt (neu gestartet je Stück: "
+                "%.1f ms, %.1f s); Abstand zum Vorwärts-Mix %.1f dB (neu gestartet %.1f dB)\n",
+                ms[1], double(warmed[1]) / kRate, ms[0], double(warmed[0]) / kRate, diffDb[1], diffDb[0]);
+    CHECK(warmed[1] * 5 < warmed[0]);
+    // The voice cleaning learns from the neighbouring chunk: nearer the forward mix than one starting every chunk anew
+    // (the gate and level of the cleaning differ from the run through from the clip's start either way)
+    CHECK(diffDb[1] < diffDb[0] && diffDb[1] < -12);
+}
+
 // Live values (preview, Mixer::updateMix): fader, pan and mute glide within 10 ms to what a mixer built with the new
 // values gives (then sample-exact), without a step; a track that was silent when planned or a changed clip needs a
 // new mixer. Level meters per track after fader/pan.
@@ -749,6 +862,13 @@ int main(int argc, char** argv)
             checkJumps(src);
             checkLive(src);
             checkRetimed(src);
+            // Speech-like sound (noise bursts and a tone) as AAC: decoding and seeking cost like a real clip
+            const QString voice = Check::makeMedia(tmp.filePath("voice.m4a"),
+                {"-f", "lavfi", "-i", "aevalsrc=(0.2*sin(2*PI*180*t)+0.1*sin(2*PI*900*t))*(0.6+0.4*sin(2*PI*3*t))"
+                 "+0.01*(random(0)-0.5)|(0.2*sin(2*PI*180*t)+0.1*sin(2*PI*900*t))*(0.6+0.4*sin(2*PI*3*t))"
+                 "+0.01*(random(1)-0.5):s=48000:d=12", "-c:a", "aac", "-b:a", "160k"});
+            CHECK(!voice.isEmpty());
+            checkBackwardChunks(src, voice);
         }
     }
     g_dir = Check::audioReference();
