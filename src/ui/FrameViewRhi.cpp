@@ -227,8 +227,19 @@ void FrameViewRhiSurface::warmUp(bool openGl)
     Q_UNUSED(openGl);
     return; // a D3D11/Metal device is cheap and has not delayed the start
 #else
-    if (g_probe || g_warmUp) return;
     const bool vk = vulkan();
+    // Once per API: after opt-in Vulkan failed in settleApi, OpenGL's check may still run
+    if (g_probe || (g_warmUp && g_warmUp->vulkan == vk)) return;
+    // At the quit a check still being made gets a moment to end (a driver call cut off at exit may crash)
+    static std::once_flag hooked;
+    std::call_once(hooked, [] {
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [] {
+            if (const std::shared_ptr<WarmUp> w = g_warmUp) {
+                std::unique_lock lock(w->m);
+                w->cv.wait_for(lock, std::chrono::milliseconds(500), [&w] { return w->done; });
+            }
+        });
+    });
     // OpenGL only when asked (not while the window is built: making a context there slowed its setup down ~70 ms,
     // the X server is busy with it), where a fallback surface may be made off the GUI thread (GLX pbuffers) and the
     // platform allows contexts on other threads
@@ -278,13 +289,15 @@ void FrameViewRhiSurface::settleApi(bool allowSoftware)
     if (g_apiSettled) return;
 #if defined(SCHNEIDI_VIEWER_VULKAN)
     if (vulkan()) {
-        warmUp(false); // (nothing when it ran)
+        warmUp(false); // (nothing when it ran, or when a view checked the GPU already: probe())
         QString why;
-        const std::optional<FrameView::Probe> p = warmUpResult(kCheckWaitMs);
+        // A view made without the stored check checked Vulkan itself (probe(), no start check): its answer
+        const bool ownCheck = !warmedUp() && g_probe;
+        const std::optional<FrameView::Probe> p = ownCheck ? g_probe : warmUpResult(kCheckWaitMs);
         if (!p) why = QStringLiteral("the Vulkan check did not finish in time");
         else if (!p->ok) why = QStringLiteral("no Vulkan device");
         else if (p->software && !allowSoftware) why = "software device " + p->device;
-        else {
+        else if (!ownCheck) {
             // Can the device show into this display's windows (a throwaway window of the Vulkan type, not shown)
             QWindow test;
             test.setSurfaceType(QSurface::VulkanSurface);
@@ -304,7 +317,9 @@ void FrameViewRhiSurface::settleApi(bool allowSoftware)
 bool FrameViewRhiSurface::startCheckPasses(bool allowSoftware, QString* why)
 {
     if (!warmedUp()) return true; // nothing checked: as before (the stored check)
-    const std::optional<FrameView::Probe> p = warmUpResult(kCheckWaitMs);
+    // No waiting here: the app attaches once the check is made or after FrameView::whenGpuChecked gave up (~3 s) -
+    // not made by then counts as failed
+    const std::optional<FrameView::Probe> p = warmUpResult(0);
     if (p && p->ok && (!p->software || allowSoftware)) return true;
     const QString reason = !p   ? QStringLiteral("the GPU check of the start did not finish in time")
                            : p->ok ? "software device " + p->device

@@ -125,6 +125,9 @@ void testDeferredAttach(const QString& api)
     CHECK(later->surfaceDeferred());
     CHECK(first->backend() == FrameView::Backend::Rhi);
     CHECK(!first->gpuSurfaceReady()); // the painter until the switch
+    bool checked = false; // as the app: the switch once the GPU check is made
+    FrameView::whenGpuChecked([&checked] { checked = true; });
+    CHECK(QTest::qWaitFor([&checked] { return checked; }, 5000));
     FrameView::attachDeferredSurfaces();
     for (FrameView* v : {first, later}) {
         CHECK(!v->surfaceDeferred());
@@ -138,11 +141,34 @@ void testDeferredAttach(const QString& api)
     FrameView::setUseCachedGpuCheck(false);
 }
 
+// Opt-in Vulkan with a view that checked the GPU itself (no stored check, no start check): settleApi takes that answer,
+// it neither waits for a check that never runs nor gives up the user's choice
+void testOwnCheckVulkan()
+{
+    QSettings().setValue("viewer/gpuApi", "vulkan");
+    QWidget window;
+    window.resize(320, 180);
+    auto* view = new FrameView(&window);
+    view->resize(320, 180);
+    const bool gpu = view->backend() == FrameView::Backend::Rhi; // its own check found a device
+    FrameView::prepareWindow(&window);
+    QElapsedTimer t;
+    t.start();
+    window.show();
+    CHECK(QTest::qWaitForWindowExposed(&window));
+    if (gpu) {
+        CHECK(FrameView::composesWithVulkan());
+        CHECK_EQ(QSettings().value("viewer/gpuApi").toString(), QString("vulkan"));
+    }
+    CHECK(t.elapsed() < 1500);
+    for (const char* key : {"viewer/gpuCheck", "viewer/gpuApi", "viewer/vulkanCheckRunning"}) QSettings().remove(key);
+}
+
 // Both APIs, each in a child process of this test (xcb only)
 void testDeferredAttachBothApis(const char* self)
 {
     if (QGuiApplication::platformName() != QLatin1String("xcb")) return;
-    for (const QString api : {QStringLiteral("opengl"), QStringLiteral("vulkan")}) {
+    for (const QString api : {QStringLiteral("opengl"), QStringLiteral("vulkan"), QStringLiteral("vulkan-own-check")}) {
         QProcess child;
         child.setProcessChannelMode(QProcess::MergedChannels);
         child.start(QString::fromLocal8Bit(self), {"--deferred-attach", api});
@@ -492,9 +518,14 @@ int main(int argc, char** argv)
     if (qEnvironmentVariableIsSet("FRAME_VIEW_PLATFORM")) qputenv("QT_QPA_PLATFORM", qgetenv("FRAME_VIEW_PLATFORM"));
     // The child of testDeferredAttachBothApis: the X11 start with one API (decided once per process)
     const bool attachChild = argc >= 3 && qstrcmp(argv[1], "--deferred-attach") == 0;
-    if (attachChild) qputenv("SCHNEIDI_VIEWER_API", argv[2]);
+    const bool ownCheck = attachChild && qstrcmp(argv[2], "vulkan-own-check") == 0;
+    if (attachChild && !ownCheck) qputenv("SCHNEIDI_VIEWER_API", argv[2]);
     QApplication app(argc, argv);
     Check::initApp("frame-view");
+    if (ownCheck) {
+        testOwnCheckVulkan();
+        return Check::result();
+    }
     if (attachChild) {
         testDeferredAttach(QString::fromLocal8Bit(argv[2]));
         return Check::result();

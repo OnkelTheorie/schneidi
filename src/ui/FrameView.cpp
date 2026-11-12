@@ -271,7 +271,7 @@ void FrameView::warmUpGpu(bool openGl)
 void FrameView::whenGpuChecked(std::function<void()> then, int waited)
 {
 #ifdef SCHNEIDI_HAVE_RHI
-    constexpr int kStepMs = 20, kMaxWaitMs = 3000; // the check gives up itself after 2 s (startCheckPasses)
+    constexpr int kStepMs = 20, kMaxWaitMs = 3000; // not made by then: startCheckPasses counts it as failed
     if (FrameViewRhiSurface::warmUpRunning() && waited < kMaxWaitMs) {
         QTimer::singleShot(kStepMs, qApp, [then = std::move(then), waited]() mutable {
             whenGpuChecked(std::move(then), waited + kStepMs);
