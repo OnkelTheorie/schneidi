@@ -489,6 +489,8 @@ schneidi_test(test_comp_follow) # tracker follow rule (0.19): followers relative
 schneidi_test(test_comp_timeline) # comp graphs through timeline edits: media offset and text from/until follow cuts and head trims, slip keeps them, undo
 schneidi_test(test_comp_cli) # compositing through the CLI (0.19 G): ops comp/comp_from/node/track_node, keyframes comp.n<id>.<key>, effects kind nodes, frames at a node, comp checks, undo
 target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_tracker_lost) # losing the tracked point (0.22): seen keys, lost modes bridge/hold/fade of masks and transforms, check tracker_lost/_ended, CLI
+target_link_libraries(test_comp_tracker_lost PRIVATE schneidi_cli_lib)
 # Compositing graphs on the graphics card (0.19 package F) vs CompEval: merge modes, masks, keys, blur, recipes;
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
