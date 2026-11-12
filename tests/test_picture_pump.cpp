@@ -557,6 +557,49 @@ void testForgetRecent()
     CHECK_EQ(old, 0);
 }
 
+// A frame larger than the whole budget for recently shown frames (a big still after small ones) is not kept: it
+// would push every other recent frame out and then itself, leaving nothing
+void testRecentTooBig()
+{
+    std::mutex m;
+    std::vector<int64_t> shown;
+    Picture::Pump pump([] { return NAN; }, [&](const QImage&, int64_t pos, double) {
+        std::lock_guard l(m);
+        shown.push_back(pos);
+    }, 2);
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->render = [](int64_t pos) {
+        const int side = pos == 50 ? 64 : 4; // 64x64 RGBA = 16 KB, 4x4 = 64 bytes
+        QImage i(side, side, QImage::Format_RGBA8888);
+        i.fill(Qt::red);
+        return i;
+    };
+    c->last = [] { return int64_t(1000); };
+    c->fps = 25;
+    const auto last = [&] {
+        std::lock_guard l(m);
+        return shown.empty() ? int64_t(-1) : shown.back();
+    };
+    pump.setRecentBudget(1000);
+    pump.setContent(c, 0, 0);
+    CHECK(waitFor([&] { return last() == 0; }, 2000));
+    for (int64_t p : {1, 2}) {
+        pump.seek(p);
+        CHECK(waitFor([&] { return last() == p; }, 2000));
+    }
+    CHECK(waitFor([&] { return pump.stats().recentBytes == 3 * 64; }, 1000));
+    pump.seek(50);
+    CHECK(waitFor([&] { return last() == 50; }, 2000));
+    std::this_thread::sleep_for(50ms);
+    if (!CHECK_EQ(pump.stats().recentBytes, int64_t(3 * 64)))
+        std::printf("       %lld bytes kept\n", static_cast<long long>(pump.stats().recentBytes));
+    // The small ones are still there: stepping back to 2 takes it from the recent frames
+    const int before = pump.stats().recent;
+    pump.seek(2);
+    CHECK(waitFor([&] { return last() == 2; }, 2000));
+    CHECK(pump.stats().recent > before);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -571,6 +614,8 @@ int main(int argc, char** argv)
     testSameContentAgain();
     std::printf("forget recent while playing\n");
     testForgetRecent();
+    std::printf("recent frame larger than the budget\n");
+    testRecentTooBig();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

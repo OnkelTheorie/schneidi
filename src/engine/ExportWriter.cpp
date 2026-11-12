@@ -38,6 +38,33 @@ extern "C" {
 
 namespace {
 
+// Does the highest H.264 level (6.2, Table A-1) take this configuration? levelIdcFor (engine/encoder/h264) falls back
+// to 6.2 when no level fits (above 8K, 8K over 120 fps), the stream would then claim a level it breaks: its limits
+// checked here the way levelIdcFor checks every level
+bool ownLevelFits(const schneidi::h264::EncoderConfig& c)
+{
+    constexpr int64_t kMaxMbps = 16711680, kMaxFs = 139264, kMaxDpbMbs = 696320, kMaxBr = 800000;
+    const int64_t mbW = (c.width + 15) / 16, mbH = (c.height + 15) / 16, fs = mbW * mbH;
+    const double fps = c.fps > 0 ? c.fps : 60.0;
+    const int64_t side = int64_t(std::sqrt(double(kMaxFs) * 8.0)); // A.3.1: width and height in macroblocks
+    if (double(fs) * fps > double(kMaxMbps) * 1.0001 || fs > kMaxFs || mbW > side || mbH > side) return false;
+    if (fs * std::max(1, c.refs) > kMaxDpbMbs) return false;
+    const bool high = c.cabac && c.transform8x8 && c.mode != schneidi::h264::IntraMode::Pcm;
+    return c.bitrateKbps <= 0 || c.bitrateKbps * 1.5 * 1000.0 <= double(kMaxBr) * (high ? 1250.0 : 1000.0);
+}
+
+QString ownLevelProblem(const schneidi::h264::EncoderConfig& c)
+{
+    if (ownLevelFits(c)) return {};
+    return QStringLiteral("the own H.264 encoder cannot write %1x%2 at %3 fps%4: above the highest H.264 level (6.2: "
+                          "up to 8K at 120 fps); use H.264 or H.265")
+        .arg(c.width)
+        .arg(c.height)
+        .arg(c.fps, 0, 'g', 4)
+        .arg(c.bitrateKbps > 0 ? QStringLiteral(" and %1 kbit/s").arg(c.bitrateKbps) : QString());
+}
+
+
 // Sample formats the writer delivers: interleaved, the encode thread splits planar formats
 bool soundFormat(AVSampleFormat f)
 {
@@ -654,7 +681,10 @@ struct ExportWriter::Impl {
         std::vector<int> probeAt;
         for (int a : {0, s.length / 3, 2 * s.length / 3})
             if (a + 1 < s.length && (probeAt.empty() || a > probeAt.back() + 1)) probeAt.push_back(a);
-        std::vector<std::pair<int, FramePtr>> kept;
+        // Each pair is coded as soon as its second picture is there: only the key picture waits (one clone), not up to
+        // six whole pictures for the whole first pass
+        std::vector<OwnProbe> probes;
+        FramePtr waiting;
         try {
             schneidi::h264::FirstPass pass(width, height, ownThreads()); // (batches side by side, same numbers)
             pump->run(0, s.length);
@@ -665,13 +695,19 @@ struct ExportWriter::Impl {
                     return false;
                 }
                 pass.add(ownPicture(f.get()), ownKeyAt(i));
-                for (int a : probeAt)
-                    if (i == a || i == a + 1) kept.emplace_back(i, FramePtr(av_frame_clone(f.get())));
+                for (int a : probeAt) {
+                    if (i == a) waiting.reset(av_frame_clone(f.get()));
+                    else if (i == a + 1 && waiting) {
+                        probes.push_back(probeOwnPair(a, waiting.get(), f.get()));
+                        waiting.reset();
+                    }
+                }
                 ++analysed;
             }
+            waiting.reset();
             if (stop) return false;
             ownStats = pass.stats();
-            const double bits = probeOwnBits(*ownStats, kept);
+            const double bits = probeOwnBits(*ownStats, probes);
             const double cap = ownBitrateK * 1000.0 * s.length / std::max(1.0, fps);
             // Margin for what the probe does not see (macroblock tree, the model's error): on 720p30 noise the
             // prediction was 21 % under the real size at that QP
@@ -686,18 +722,43 @@ struct ExportWriter::Impl {
         return !stop;
     }
     static constexpr double kOwnFixedShare = 0.7;
+    static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (startOwn, probeOwnBits)
 
-    // Bits of the whole clip at ownQp: per kept pair, a small fixed-QP encoder codes the key picture and the next as a
-    // P picture; bits per first-pass cost of each type times the clip's costs (key pictures placed as the encoder
-    // places them). 0 = no usable pair.
-    double probeOwnBits(const schneidi::h264::FirstPassStats& st, const std::vector<std::pair<int, FramePtr>>& kept) const
+    // A probe pair coded at ownQp: the key picture at `at` and the next one as a P picture
+    struct OwnProbe {
+        int at = 0;
+        double bitsI = 0, bitsP = 0;
+    };
+    OwnProbe probeOwnPair(int at, const AVFrame* key, const AVFrame* next) const
     {
-        constexpr int kGop = 250; // (startOwn)
+        schneidi::h264::EncoderConfig c;
+        c.width = width;
+        c.height = height;
+        c.qp = ownQp;
+        c.gop = kOwnGop;
+        c.threads = ownThreads();
+        c.fps = fps;
+        c.lookahead = 0; // (no macroblock tree either)
+        c.sceneCut = false;
+        c.frameThreads = false;
+        schneidi::h264::Encoder probe(c);
+        OwnProbe p;
+        p.at = at;
+        p.bitsI = double(probe.encode(ownPicture(key)).size()) * 8;
+        p.bitsP = double(probe.encode(ownPicture(next)).size()) * 8;
+        return p;
+    }
+
+    // Bits of the whole clip at ownQp: per probe pair (probeOwnPair) bits per first-pass cost of each type times the
+    // clip's costs (key pictures placed as the encoder places them; a pair whose second picture is a key picture there
+    // does not count). 0 = no usable pair.
+    double probeOwnBits(const schneidi::h264::FirstPassStats& st, const std::vector<OwnProbe>& probes) const
+    {
         std::vector<char> key(st.size(), 0);
         double costI = 0, costP = 0;
         int since = 0;
         for (size_t i = 0; i < st.size(); ++i, ++since) {
-            if (i == 0 || since >= kGop || st.forceKeyframe[i] || (st.sceneChange[i] && since >= 6)) {
+            if (i == 0 || since >= kOwnGop || st.forceKeyframe[i] || (st.sceneChange[i] && since >= 6)) {
                 key[i] = 1;
                 since = 0;
             }
@@ -705,24 +766,11 @@ struct ExportWriter::Impl {
         }
         double kI = 0, kP = 0;
         int pairs = 0;
-        for (size_t j = 0; j + 1 < kept.size(); j += 2) {
-            const int a = kept[j].first;
-            if (kept[j + 1].first != a + 1 || size_t(a + 1) >= st.size() || key[size_t(a + 1)]) continue;
-            schneidi::h264::EncoderConfig c;
-            c.width = width;
-            c.height = height;
-            c.qp = ownQp;
-            c.gop = kGop;
-            c.threads = ownThreads();
-            c.fps = fps;
-            c.lookahead = 0; // (no macroblock tree either)
-            c.sceneCut = false;
-            c.frameThreads = false;
-            schneidi::h264::Encoder probe(c);
-            const double bitsI = double(probe.encode(ownPicture(kept[j].second.get())).size()) * 8;
-            const double bitsP = double(probe.encode(ownPicture(kept[j + 1].second.get())).size()) * 8;
-            kI += bitsI / std::max(1.0, st.intraSum[size_t(a)]);
-            kP += bitsP / std::max(1.0, st.interSum[size_t(a + 1)]);
+        for (const OwnProbe& p : probes) {
+            const size_t a = size_t(p.at);
+            if (a + 1 >= st.size() || key[a + 1]) continue;
+            kI += p.bitsI / std::max(1.0, st.intraSum[a]);
+            kP += p.bitsP / std::max(1.0, st.interSum[a + 1]);
             ++pairs;
         }
         if (pairs == 0) return 0;
@@ -1084,6 +1132,13 @@ struct ExportWriter::Impl {
                 fail(QStringLiteral("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not %1").arg(s.pixFmt));
                 return false;
             }
+            // ... and not tiny pictures or ones above the highest level (before the first pass, not after it)
+            if (isOwnH264(s.videoCodec)) {
+                if (const QString problem = ownSizeProblem(QSize(width, height), fps); !problem.isEmpty()) {
+                    fail(problem);
+                    return false;
+                }
+            }
             if (pixFmt == AV_PIX_FMT_VAAPI && !openHardware()) return false;
             vst = avformat_new_stream(oc, nullptr);
             if (!vst) {
@@ -1136,7 +1191,7 @@ struct ExportWriter::Impl {
         c.height = height;
         c.qp = ownQp;
         // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
-        c.gop = 250;
+        c.gop = kOwnGop;
         c.threads = ownThreads();
         c.fps = fps;
         if (ownBitrateK > 0 && !ownFixedQp) {
@@ -1153,6 +1208,11 @@ struct ExportWriter::Impl {
         c.transferCharacteristics = int(trc);
         c.matrixCoefficients = int(matrix);
         c.fullRange = target.fullRange;
+        // The bit rate is known now (two passes): the level must take it too
+        if (const QString problem = ownLevelProblem(c); !problem.isEmpty()) {
+            fail(problem);
+            return false;
+        }
         std::vector<uint8_t> header;
         try {
             ownEnc = std::make_unique<schneidi::h264::Encoder>(c);
@@ -2002,6 +2062,20 @@ QString ExportWriter::error() const
 {
     std::lock_guard<std::mutex> lock(d->errorMutex);
     return d->error;
+}
+
+QString ExportWriter::ownSizeProblem(QSize size, double fps)
+{
+    if (size.width() < kOwnMinSide || size.height() < kOwnMinSide)
+        return QStringLiteral("the own H.264 encoder needs at least %1x%1 pixels, not %2x%3")
+            .arg(kOwnMinSide)
+            .arg(size.width())
+            .arg(size.height());
+    schneidi::h264::EncoderConfig c; // the export's defaults: no bit rate (that one is checked when it is known)
+    c.width = size.width();
+    c.height = size.height();
+    c.fps = fps;
+    return ownLevelProblem(c);
 }
 
 int ExportWriter::ownH264Qp(int crf)

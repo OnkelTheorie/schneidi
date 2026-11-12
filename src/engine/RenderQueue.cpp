@@ -3,6 +3,7 @@
 
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 
 #include <QDir>
@@ -87,12 +88,24 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
         s.from = std::max(0, job.from);
         s.to = job.to;
     }
-    if (job.review) { // small and fast: every frame is drawn on (nothing copied), the fastest encoder setting
-        s.smartRender = false;
-        s.preset = "ultrafast";
-        s.crf = std::max(s.crf, 28);
-    }
+    if (job.review) makeReview(s);
     return s;
+}
+
+void RenderQueue::makeReview(ExportSettings& s)
+{
+    // Small and fast: every frame is drawn on (nothing copied), the fastest encoder setting
+    s.smartRender = false;
+    s.preset = "ultrafast";
+    s.crf = std::max(s.crf, 28);
+    // The own H.264 encoder has no fast preset (it ignores "preset"; two passes with a cap): plain H.264 instead
+    if (ExportWriter::isOwnH264(s.videoCodec)) {
+        const HardwareEncoders::Choice c = HardwareEncoders::resolve(VideoEncoder::Software, QStringLiteral("h264"));
+        if (!c.codec.isEmpty()) {
+            s.videoCodec = c.codec;
+            s.softwareCodec = c.fallback;
+        }
+    }
 }
 
 ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& project)

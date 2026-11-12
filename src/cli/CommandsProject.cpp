@@ -1020,9 +1020,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (marks) {
         // The marks drawn onto every frame after compositing; the timeline itself stays as it is
         es.overlay = Picture::reviewOverlay(marks);
-        es.smartRender = false;
-        es.preset = "ultrafast";
-        es.crf = std::max(es.crf, 28);
+        RenderQueue::makeReview(es);
     }
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();

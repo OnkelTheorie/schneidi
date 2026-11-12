@@ -47,6 +47,9 @@ public:
     static ExportSettings exportSettings(const RenderJob& job, const ProjectFormat& format);
     // The same with the project's media lengths (ExportSettings::mediaLengths)
     static ExportSettings exportSettings(const RenderJob& job, const Project& project);
+    // A review render (marks drawn onto every frame): no smart render, the fastest encoder setting, lower quality; the
+    // own H.264 encoder (no fast setting) becomes plain H.264
+    static void makeReview(ExportSettings& s);
 
     // Review render (RenderJob::review): what is burned into its frames. Made by the app (cli/RenderReview: cuts,
     // beats of the music track, hits, sections …) from a copy of the project, in a worker thread while the job is

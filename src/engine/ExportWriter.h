@@ -75,6 +75,11 @@ public:
     static bool isOwnH264(const QString& codec) { return codec == QLatin1String(kOwnH264); }
     // The own encoder's fixed QP for an x264-like CRF (the export's quality levels)
     static int ownH264Qp(int crf);
+    // Why the own encoder cannot write pictures of this size at this frame rate (empty = it can): smaller than
+    // kOwnMinSide on a side, or above the highest H.264 level (6.2: more than 8K, 8K over 120 fps). The writer refuses
+    // those itself; a bit rate cap above 6.2's is refused once the first pass has decided on two passes.
+    static constexpr int kOwnMinSide = 32;
+    static QString ownSizeProblem(QSize size, double fps);
     // Picture engine and audio mixer
     struct Own {
         std::shared_ptr<Picture::Renderer> renderer; // nullptr = audio only
