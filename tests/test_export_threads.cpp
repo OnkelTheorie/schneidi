@@ -223,6 +223,18 @@ void testMemoryThreads()
     CHECK(SystemMemory::read().total > 0);
     CHECK(SystemMemory::read().available > 0);
 #endif
+    // A simulated machine simulated: SCHNEIDI_TOTAL_MB lowers the RAM, a cgroup limit above it and what is available
+    qputenv("SCHNEIDI_TOTAL_MB", "415");
+    const SystemMemory::Info simulated = SystemMemory::read();
+    CHECK_EQ(simulated.total, qint64(415) << 20);
+    CHECK(simulated.limit == 0 || simulated.limit <= (qint64(415) << 20));
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
+    CHECK(simulated.available > 0 && simulated.available <= (qint64(415) << 20));
+#endif
+    qputenv("SCHNEIDI_AVAILABLE_MB", "100"); // what is free on top
+    CHECK_EQ(SystemMemory::read().available, qint64(100) << 20);
+    qunsetenv("SCHNEIDI_AVAILABLE_MB");
+    qunsetenv("SCHNEIDI_TOTAL_MB");
 }
 
 // A memory cap of the process's control group (container, systemd scope) counts, not only the machine's free RAM:
@@ -276,10 +288,45 @@ void testCgroupRoom(const QString& dir)
     CHECK_EQ(Exporter::automaticThreads(10, QSize(1920, 1080), SystemMemory::cgroupRoom(self, root)).threads, 1);
     put(scope + "/memory.high", "max\n");
     stat(0, 200 * MB);
-    // cgroup v1 or garbage: unknown, never a path outside the mount
+    // cgroup v1 without its files, or garbage: unknown, never a path outside the mount
     CHECK_EQ(SystemMemory::cgroupRoom("12:memory:/user.slice\n", root), qint64(0));
+    CHECK_EQ(SystemMemory::cgroupRoom("12:memory:/../../etc\n", root), qint64(0));
     CHECK_EQ(SystemMemory::cgroupRoom("0::/../../etc\n", root), qint64(0));
     CHECK_EQ(SystemMemory::cgroupRoom("", root), qint64(0));
+    // cgroup v1 (older distributions, Docker on them): the memory controller's own tree at <root>/memory, its
+    // "unlimited" a huge number; usage and the total_* cache count the children too
+    {
+        const QString v1 = dir + "/cg1";
+        auto put1 = [&](const QString& rel, const QByteArray& text) {
+            QDir().mkpath(QFileInfo(v1 + "/memory" + rel).path());
+            QFile f(v1 + "/memory" + rel);
+            if (f.open(QIODevice::WriteOnly)) f.write(text);
+        };
+        const QByteArray self1 = "12:pids:/docker/abc\n7:cpu,memory:/docker/abc\n1:name=systemd:/docker/abc\n";
+        put1("/memory.limit_in_bytes", "9223372036854771712\n"); // the root: unlimited
+        put1("/docker/abc/memory.limit_in_bytes", "9223372036854771712\n");
+        CHECK_EQ(SystemMemory::cgroupRoom(self1, v1), qint64(0));
+        // 2 GB cap, 1.5 GB used of which 300+200 MB file cache (the hierarchical total_* lines, not the group's own)
+        put1("/docker/abc/memory.limit_in_bytes", QByteArray::number(2048 * MB) + "\n");
+        put1("/docker/abc/memory.usage_in_bytes", QByteArray::number(1536 * MB) + "\n");
+        put1("/docker/abc/memory.stat", "cache 1\nactive_file " + QByteArray::number(10 * MB) + "\ninactive_file "
+                                            + QByteArray::number(10 * MB) + "\ntotal_active_file "
+                                            + QByteArray::number(300 * MB) + "\ntotal_inactive_file "
+                                            + QByteArray::number(200 * MB) + "\n");
+        qint64 limit1 = -1;
+        CHECK_EQ(SystemMemory::cgroupRoom(self1, v1, &limit1), 1012 * MB);
+        CHECK_EQ(limit1, 2048 * MB);
+        // An older kernel without the total_* lines: the group's own
+        put1("/docker/abc/memory.stat", "active_file " + QByteArray::number(100 * MB) + "\n");
+        CHECK_EQ(SystemMemory::cgroupRoom(self1, v1), 612 * MB);
+        // Inside the container the mount's root is the container's group (its path from /proc/self/cgroup is not
+        // there): the walk up reaches the root's limit
+        put1("/memory.limit_in_bytes", QByteArray::number(1024 * MB) + "\n");
+        put1("/memory.usage_in_bytes", QByteArray::number(24 * MB) + "\n");
+        CHECK_EQ(SystemMemory::cgroupRoom("5:memory:/docker/other\n", v1), 1000 * MB);
+        // Hybrid: a v2 line (no memory files in that tree) next to the v1 memory controller
+        CHECK_EQ(SystemMemory::cgroupRoom("0::/user.slice\n5:memory:/docker/other\n", v1), 1000 * MB);
+    }
     // The 8K case of the 5 GB scope with 4.2 GB room: a handful of threads instead of all
     put("/user.slice/memory.high", "max\n");
     const Exporter::ThreadChoice uhd8k =

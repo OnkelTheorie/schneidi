@@ -50,6 +50,7 @@ struct Info {
     bool hasBFrames = false;
     int64_t duration = 0;         // container duration in AV_TIME_BASE units, < 0 if unknown
     QString codec;                // decoder name
+    int fieldOrder = 0;           // the stream's AVFieldOrder (0 unknown, 1 progressive, else interlaced)
 };
 
 struct Picture {
@@ -59,6 +60,16 @@ struct Picture {
     bool topFieldFirst = false;
     ~Picture();
 };
+
+// Is the top field shown first? As the decoder flags an interlaced picture `frame` (may be null), else as the stream's
+// AVFieldOrder `fieldOrder` states it; nullopt when neither says (progressive or unknown). The decoder's flag goes
+// first: H.264 in MP4/MOV/TS states the parser's guess (TT also for a bottom-first stream without timing SEI), while
+// the decoder knows the order from the fields' picture order counts. libavcodec/defs.h documents TB as "top coded
+// first, bottom displayed first", but FFmpeg itself treats TB as top field first and BT as bottom first: the ffmpeg
+// program writes TB/BT for top/bottom-first pictures (fftools/ffmpeg_enc.c; a bottom-first H.264 in MKV reads back as
+// BT), the rawvideo, v210 and FFV1 decoders flag TB pictures top-first, the yuv4mpeg, AVI and MXF muxers write TB as
+// top-first. Files carry that meaning, so it is followed here (TT/TB top first, BB/BT bottom first).
+std::optional<bool> topFieldShownFirst(const AVFrame* frame, int fieldOrder);
 
 // Degrees clockwise the stream's pictures are turned to show them upright (rotation tag or display matrix), in [0, 360)
 double streamRotation(const AVStream* stream);

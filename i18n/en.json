@@ -3002,5 +3002,10 @@
  "Taste, Tastenkombination oder Seitentaste der Maus drücken (auch Esc). Abbrechen: daneben klicken": "Press a key, key combination or side button of the mouse (Esc too). To cancel, click elsewhere",
  "Bild der Datei am Clipanfang: so viele Bilder der Datei werden übersprungen (negativ: die Datei beginnt so viele Bilder später)": "File frame shown at the clip's start: that many frames of the file are skipped (negative: the file starts that many frames later)",
  "Compositing-Graph: der Ausgabe-Knoten %1 (%2) gibt eine Maske aus, kein Bild - der Graph wirkt nicht. Ein Bild-Knoten als Ausgabe (Maske in den Masken-Eingang eines Merge)": "Comp graph: the output node %1 (%2) gives a mask, not a picture - the graph has no effect. Make a picture node the output (the mask into a merge's mask input)",
- "Der Clip liegt auf einer gesperrten Spur": "The clip lies on a locked track"
+ "Der Clip liegt auf einer gesperrten Spur": "The clip lies on a locked track",
+ "H.264 (eigener Encoder, experimentell)": "H.264 (own encoder, experimental)",
+ "Experimentell: nur 8 Bit 4:2:0, ohne B-Frames, langsamer als x264.": "Experimental: 8-bit 4:2:0 only, no B-frames, slower than x264.",
+ "Die XML-Datei ist zu tief verschachtelt (Zeile %1)": "The XML file is nested too deeply (line %1)",
+ "EDL kann höchstens %1 fps (zwei Stellen für Bilder im Timecode); diese Timeline hat %2 fps. FCP7-XML oder OTIO nehmen.": "EDL allows at most %1 fps (two frame digits in its timecodes); this timeline has %2 fps. Use FCP7 XML or OTIO.",
+ "EDL: Audiospur %1 - mehr als %2 Audiospuren werden nicht gelesen": "EDL: audio track %1 - more than %2 audio tracks are not read"
 }

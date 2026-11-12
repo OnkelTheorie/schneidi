@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the slim FFmpeg for the Windows package in MSYS2 UCRT64: the same build as for the AppImage
 # (packaging/linux/build-ffmpeg-lgpl.sh, components: packaging/ffmpeg-components.txt), with D3D11VA/DXVA2 instead of
-# VAAPI. build-windows.sh calls it when its FFMPEG_PREFIX has no ffmpeg.exe yet.
+# VAAPI. build-windows.sh calls it when its FFMPEG_PREFIX has no ffmpeg.exe yet or was built from another list.
 #   packaging/windows/build-ffmpeg-lgpl.sh [prefix]
 # GPL_ENCODERS=1 (default, the GitHub download since 0.21): with x264/x265 (GPL-2.0+), prefix build-ffmpeg/prefix.
 # GPL_ENCODERS=0: GPL-free (LGPL-2.1+), prefix build-ffmpeg-lgpl/prefix.

@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <memory>
 
 enum class TrackKind { Video, Audio };
@@ -629,6 +630,19 @@ struct TrackDynamics {
     bool operator==(const TrackDynamics&) const = default;
 };
 
+// Which track it is while the program runs: every new Track gets its own, copies keep it (undo snapshots, edits of the
+// timeline), so a window bound to a track can follow it when tracks are added, removed or reordered (also equal empty
+// ones). Not saved, and never part of ==: two tracks with the same content are equal.
+struct TrackUid {
+    quint64 value = next();
+    bool operator==(const TrackUid&) const { return true; }
+    static quint64 next()
+    {
+        static std::atomic<quint64> last{0};
+        return ++last;
+    }
+};
+
 struct Track {
     TrackKind kind = TrackKind::Video;
     QString name;  // assigned by the user (double-click in the track header); empty = default "Video 1"/"Audio 1"
@@ -644,6 +658,7 @@ struct Track {
     // Audio only: EQ -> compressor -> fader/pan
     TrackEq eq;
     TrackDynamics dynamics;
+    TrackUid uid; // (last: aggregate initialisation Track{kind} stays as it is)
     bool operator==(const Track&) const = default;
 };
 

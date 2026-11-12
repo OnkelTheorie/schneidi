@@ -26,6 +26,10 @@ const QVector<RenderFormatInfo>& renderFormats()
         // VP9 constant quality needs bit rate 0; "good" + cpu-used 4 + row-mt: reasonable speed
         {"vp9", "VP9 (WebM)", "webm", "libvpx-vp9", "libopus", "yuv420p", K::Video, {24, 31, 37}, false, false,
          "vb=0 deadline=good cpu-used=4 row-mt=1"},
+        // schneidi's own H.264 encoder, experimental (engine/encoder/h264): never a default, in no preset. Quality
+        // levels as x264's CRF (ExportWriter::ownH264Qp makes a QP of them), "web" = the cap as a bit rate target
+        {"h264_own", N_("H.264 (eigener Encoder, experimentell)"), "mp4", "h264_own", "aac", "yuv420p", K::Video,
+         {18, 22, 28}, true, false, ""},
         // Mastering / exchange with other editors: fixed (high) quality, uncompressed sound
         {"prores", "ProRes 422 HQ (MOV)", "mov", "prores_ks", "pcm_s24le", "yuv422p10le", K::Video, {}, false, false, "vprofile=3"},
         {"prores422", "ProRes 422 (MOV)", "mov", "prores_ks", "pcm_s24le", "yuv422p10le", K::Video, {}, false, false, "vprofile=2"},

@@ -1263,6 +1263,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                         t.color.clear();
                         t.locked = false;
                         t.clips.clear();
+                        t.uid = TrackUid{}; // a new track, not a second handle on `own`
                         *list << t;
                         made.insert(j, i);
                         if (audioMoves && list == &timeline.audio) *audioMoves << qMakePair(int(i), int(j));

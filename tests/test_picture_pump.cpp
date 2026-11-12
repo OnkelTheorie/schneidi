@@ -50,6 +50,15 @@ struct TestClock {
         std::lock_guard lock(m);
         running = false;
     }
+    // Stands still where it is now (a clock, not NaN: frames ahead stay due later and wait)
+    void freeze()
+    {
+        std::lock_guard lock(m);
+        if (!running) return;
+        start += speed * t.nsecsElapsed() / 1e9 * kFps;
+        speed = 0;
+        t.start();
+    }
     double now()
     {
         std::lock_guard lock(m);
@@ -483,6 +492,114 @@ void testSameContentAgain()
     CHECK(waitFor([&] { return renders.load() >= 1; }, 2000));
 }
 
+// The content's picture changed while playing without a new generation (Engine: a stabilization finished - a refresh
+// would drop the frames prepared ahead): forgetRecent. Stepping back after the stop rendered the frames of before
+// again from the recent ones - the clip unstabilized; also the frames already prepared ahead when it came
+void testForgetRecent()
+{
+    TestClock clock;
+    Seen seen;
+    std::atomic<int> cost{5}, color{10};
+    Picture::Pump pump([&] { return clock.now(); },
+                       [&](const QImage& img, int64_t pos, double) { seen.add(img, pos, clock.now()); }, 2);
+    pump.setContent(content(&cost, &color), 0, 0);
+    CHECK(waitFor([&] { return seen.count() == 1; }, 1000));
+    seen.take();
+    clock.play(0, 1);
+    pump.setSpeed(1, 0);
+    CHECK(waitFor([&] { return seen.count() >= 10; }, 3000));
+    // The clock stands: the frames rendered ahead (old picture) wait in the pump, not yet due
+    clock.freeze();
+    std::this_thread::sleep_for(60ms); // (the show thread shows what is due and waits; the workers fill ahead)
+    const auto played = seen.take();
+    if (!CHECK(!played.empty())) return;
+    const int64_t stop = played.back().position + 1; // rendered ahead with the old picture
+    color = 20;
+    pump.forgetRecent();
+    CHECK_EQ(pump.stats().recentBytes, int64_t(0));
+    // Paused right there: the still is the new picture, not the frame rendered ahead before the change
+    pump.setSpeed(0, stop);
+    clock.stop();
+    int pausedColor = -1;
+    CHECK(waitFor(
+        [&] {
+            for (const Seen::Entry& e : seen.take())
+                if (e.position == stop) pausedColor = e.color;
+            return pausedColor >= 0;
+        },
+        2000));
+    if (!CHECK_EQ(pausedColor, 20)) std::printf("       paused on a frame rendered before the change\n");
+    // Every frame played (before and after the change, the pause position too) shows the new picture when stepped
+    // onto again
+    int old = 0, steps = 0;
+    const int recentBefore = pump.stats().recent;
+    std::vector<int64_t> positions;
+    for (const Seen::Entry& e : played) positions.push_back(e.position);
+    positions.push_back(stop);
+    for (const int64_t at : positions) {
+        pump.seek(at);
+        int got = -1;
+        if (!CHECK(waitFor(
+                [&] {
+                    for (const Seen::Entry& e : seen.take())
+                        if (e.position == at) got = e.color;
+                    return got >= 0;
+                },
+                1000)))
+            break;
+        if (got != 20) ++old;
+        ++steps;
+    }
+    const int fromRecent = pump.stats().recent - recentBefore;
+    std::printf("       %d frames stepped onto again, %d with the old picture, %d from the recent ones\n", steps, old,
+                fromRecent);
+    CHECK(steps > 5);
+    CHECK_EQ(old, 0);
+}
+
+// A frame larger than the whole budget for recently shown frames (a big still after small ones) is not kept: it
+// would push every other recent frame out and then itself, leaving nothing
+void testRecentTooBig()
+{
+    std::mutex m;
+    std::vector<int64_t> shown;
+    Picture::Pump pump([] { return NAN; }, [&](const QImage&, int64_t pos, double) {
+        std::lock_guard l(m);
+        shown.push_back(pos);
+    }, 2);
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->render = [](int64_t pos) {
+        const int side = pos == 50 ? 64 : 4; // 64x64 RGBA = 16 KB, 4x4 = 64 bytes
+        QImage i(side, side, QImage::Format_RGBA8888);
+        i.fill(Qt::red);
+        return i;
+    };
+    c->last = [] { return int64_t(1000); };
+    c->fps = 25;
+    const auto last = [&] {
+        std::lock_guard l(m);
+        return shown.empty() ? int64_t(-1) : shown.back();
+    };
+    pump.setRecentBudget(1000);
+    pump.setContent(c, 0, 0);
+    CHECK(waitFor([&] { return last() == 0; }, 2000));
+    for (int64_t p : {1, 2}) {
+        pump.seek(p);
+        CHECK(waitFor([&] { return last() == p; }, 2000));
+    }
+    CHECK(waitFor([&] { return pump.stats().recentBytes == 3 * 64; }, 1000));
+    pump.seek(50);
+    CHECK(waitFor([&] { return last() == 50; }, 2000));
+    std::this_thread::sleep_for(50ms);
+    if (!CHECK_EQ(pump.stats().recentBytes, int64_t(3 * 64)))
+        std::printf("       %lld bytes kept\n", static_cast<long long>(pump.stats().recentBytes));
+    // The small ones are still there: stepping back to 2 takes it from the recent frames
+    const int before = pump.stats().recent;
+    pump.seek(2);
+    CHECK(waitFor([&] { return last() == 2; }, 2000));
+    CHECK(pump.stats().recent > before);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -495,6 +612,10 @@ int main(int argc, char** argv)
     testStillPastEnd();
     std::printf("same content again\n");
     testSameContentAgain();
+    std::printf("forget recent while playing\n");
+    testForgetRecent();
+    std::printf("recent frame larger than the budget\n");
+    testRecentTooBig();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

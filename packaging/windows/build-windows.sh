@@ -39,8 +39,11 @@ else
     SUFFIX="-lgpl"
     CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
 fi
-# (Built again also when the prefix lacks the licence texts or still has postproc: one of a build before 0.21)
+# Built again also when the prefix was built from another component list, FFmpeg version or variant (its stamp,
+# see build-ffmpeg-lgpl.sh: a prefix of an older list lacks what was added since, e.g. the subtitle encoders of 0.21),
+# lacks the licence texts or still has postproc (both: a build before 0.21)
 if [ ! -x "$FFMPEG_PREFIX/bin/ffmpeg.exe" ] || [ ! -f "$FFMPEG_PREFIX/share/licenses/ffmpeg/LICENSE.md" ] ||
+    [ "$(cat "$FFMPEG_PREFIX/share/schneidi/ffmpeg-build.txt" 2>/dev/null)" != "$("$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" --stamp)" ] ||
     find "$FFMPEG_PREFIX/bin" -iname 'postproc*.dll' 2>/dev/null | grep -q .; then
     "$ROOT/packaging/windows/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
 fi

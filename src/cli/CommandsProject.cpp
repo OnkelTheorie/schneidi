@@ -906,7 +906,8 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.size = QSize(w & ~1, h & ~1);
     }
     if (a.contains("fps")) {
-        const FrameRate r = nearestExportRate(a["fps"].toDouble());
+        // 48/100/120 from a 120 fps project too (nearestExportRate stopped at 60); anything else is refused
+        const FrameRate r = exportFrameRate(a["fps"].toDouble());
         job.settings.rateNum = r.num;
         job.settings.rateDen = r.den;
     }
@@ -1019,9 +1020,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (marks) {
         // The marks drawn onto every frame after compositing; the timeline itself stays as it is
         es.overlay = Picture::reviewOverlay(marks);
-        es.smartRender = false;
-        es.preset = "ultrafast";
-        es.crf = std::max(es.crf, 28);
+        RenderQueue::makeReview(es);
     }
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();

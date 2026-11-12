@@ -146,6 +146,12 @@ void testScanner(const QString& root)
     // Subfolders (not hidden ones), audio too
     w.subfolders = true;
     w.audio = true;
+    // seen for the first time: never taken on that look, even when long unchanged - a second look must find them
+    // the same (a recording still being written was taken cut short)
+    r = sc.scan({w}, none, t0.addSecs(70));
+    CHECK_EQ(names(r.ready), QStringList{"new.mp4"});
+    CHECK_EQ(names(r.pending), (QStringList{"deep.mp4", "song.mp3"}));
+    CHECK_EQ(r.unconfirmed, 2);
     r = sc.scan({w}, none, t0.addSecs(70));
     CHECK_EQ(names(r.ready), (QStringList{"deep.mp4", "new.mp4", "song.mp3"}));
     CHECK(r.folders.contains(dir + "/sub") && !r.folders.contains(dir + "/.cache"));
@@ -171,6 +177,8 @@ void testScanner(const QString& root)
 
     // Appeared while watching, with an old modification time (a copy that kept it): taken
     write(dir + "/copied.mp4", t0.addSecs(-7200));
+    r = sc.scan({w}, none, t0.addSecs(80));
+    CHECK(names(r.pending).contains("copied.mp4"));
     r = sc.scan({w}, none, t0.addSecs(80));
     CHECK(names(r.ready).contains("copied.mp4"));
     CHECK(!names(r.ready).contains("old.mp4"));
@@ -198,10 +206,19 @@ void testScanner(const QString& root)
     r = sc.scan({w}, none, t0.addSecs(94));
     CHECK(names(r.ready).contains("skew.mp4"));
 
-    // Without an earlier scan (`watch` from the command line) the modification time alone decides
+    // Without an earlier scan (`watch` from the command line): an old modification time is not enough, a second look
+    // must see the same size - a file that grew meanwhile (a recording whose time lags) waits
     Scanner once(3000);
     r = once.scan({w}, none, t0.addSecs(95));
+    CHECK(r.ready.isEmpty() && names(r.pending).contains("new.mp4") && r.unconfirmed > 0);
+    write(dir + "/new.mp4", t0.addSecs(65), 40); // grew, its time lags
+    r = once.scan({w}, none, t0.addSecs(96));
+    CHECK(!names(r.ready).contains("new.mp4") && names(r.pending).contains("new.mp4"));
+    r = once.scan({w}, none, t0.addSecs(96));
     CHECK(names(r.ready).contains("new.mp4") && !names(r.ready).contains("skew.mp4"));
+    // settle 0 (asked for: at once) takes a file on its first look
+    Scanner now(0);
+    CHECK(names(now.scan({w}, none, t0.addSecs(96)).ready).contains("new.mp4"));
     // A folder that is not there: nothing, no error
     WatchFolder gone;
     gone.path = root + "/not-there";
@@ -427,17 +444,26 @@ void testCommand(const QString& root, const QString& clip)
     r = run("watch", {{"project", project}});
     CHECK_EQ(r["pending"].toArray(), QJsonArray{dir + "/fresh.mp4"});
     CHECK(r["new"].toArray().isEmpty());
+    // Long unchanged by its time but never looked at before: a second look within the call (same size) takes it
+    QFile::remove(dir + "/fresh.mp4");
+    copyNow(clip, dir + "/aged.mp4");
+    {
+        QFile f(dir + "/aged.mp4");
+        CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(QDateTime::currentDateTime().addSecs(-60), QFileDevice::FileModificationTime));
+    }
+    r = run("watch", {{"project", project}});
+    if (CHECK_EQ(r["new"].toArray().size(), 1)) CHECK_EQ(item(r, "new", 0)["file"].toString(), dir + "/aged.mp4");
     // list: no import; `info` shows the revision
     r = run("watch", {{"project", project}, {"list", true}, {"settle_s", 0}});
     CHECK(!r.contains("new") && r["folders"].toArray().size() == 1);
     r = run("info", {{"project", project}, {"summary", true}});
-    CHECK_EQ(r["watch"].toObject()["revision"].toInt(), 1);
+    CHECK_EQ(r["watch"].toObject()["revision"].toInt(), 2);
     CHECK_EQ(r["watch"].toObject()["folders"].toInt(), 1);
     // Remove: the imported file stays
     r = run("watch", {{"project", project}, {"remove", dir}});
     CHECK(r["folders"].toArray().isEmpty());
     ProjectFile::load(project, &d, nullptr);
-    CHECK(d.watchFolders.isEmpty() && d.media.size() == 1);
+    CHECK(d.watchFolders.isEmpty() && d.media.size() == 2);
     r = run("watch", {{"project", project}});
     CHECK(r["notes"].toArray().size() == 1 && r["new"].toArray().isEmpty());
 }

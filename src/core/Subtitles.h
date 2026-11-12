@@ -13,7 +13,8 @@
 
 namespace Subtitles {
 
-// SRT file -> entries in timeline frames (fps = project frame rate, e.g. 29.97). ids stay 0.
+// SRT or WebVTT file -> entries in timeline frames (fps = project frame rate, e.g. 29.97). ids stay 0.
+// WebVTT: header/NOTE/STYLE/REGION blocks are left out, "MM:SS.mmm" times read, &amp; &lt; &gt; &nbsp; unescaped.
 // Encoding UTF-8 (with/without BOM), otherwise Windows-1252/Latin-1; formatting (<i>, {\an8}) is removed,
 // broken blocks skipped (skipped = count). Sorted, overlaps shortened at the end of the previous one.
 QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped = nullptr);

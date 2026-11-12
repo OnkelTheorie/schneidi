@@ -470,6 +470,11 @@ Sequence read(const QByteArray& data, Format f, FrameRate edlRate)
     return {};
 }
 
+void checkFrames(double frames)
+{
+    if (!(std::abs(frames) <= kMaxFrames)) throw Error{T("Zeitangabe außerhalb des möglichen Bereichs")};
+}
+
 QString pathFromUrl(const QString& url)
 {
     QString s = url.trimmed();

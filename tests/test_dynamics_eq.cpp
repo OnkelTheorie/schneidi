@@ -16,6 +16,7 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/ClipFormat.h"
@@ -29,6 +30,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLineEdit>
+#include <QPointer>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -755,6 +757,149 @@ void testDialogsCloseWithoutCommit()
     }
 }
 
+// An EQ/compressor window follows its track (Track::uid) when tracks are moved, added or removed (also by undo), never
+// editing the track that now has its old number; its track deleted = the window closes. Its own edits keep it on its
+// track even when the old state equals another track (two empty tracks).
+void testDialogsFollowTrack()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    while (p.timeline().audio.size() < 3) ed.addTrack(TrackKind::Audio, p.timeline().audio.size());
+    p.edit("names", [](Timeline& tl) {
+        tl.audio[0].name = "A";
+        tl.audio[1].name = "B";
+        tl.audio[2].name = "C";
+    });
+    const auto trackNamed = [&](const QString& name) -> const Track& {
+        for (const Track& t : p.timeline().audio)
+            if (t.name == name) return t;
+        return p.timeline().audio[0];
+    };
+    auto* eq = new EqDialog(&ed, 1); // B
+    auto* dyn = new DynamicsDialog(&ed, 1);
+    eq->setAttribute(Qt::WA_DeleteOnClose);
+    dyn->setAttribute(Qt::WA_DeleteOnClose);
+    QPointer<EqDialog> eqAlive(eq);
+    QPointer<DynamicsDialog> dynAlive(dyn);
+    eq->show();
+    dyn->show();
+    auto* eqOn = eq->findChild<QCheckBox*>("eqOn");
+    auto* dynOn = dyn->findChild<QCheckBox*>("dynamicsOn");
+    if (!CHECK(eqOn && dynOn)) return;
+    const auto toggle = [](QCheckBox* box) { box->setChecked(!box->isChecked()); };
+
+    ed.moveTrack(TrackKind::Audio, 1, 0); // B A C
+    toggle(eqOn);
+    toggle(dynOn);
+    CHECK(trackNamed("B").eq.on && trackNamed("B").dynamics.on);
+    CHECK(!trackNamed("A").eq.on && !trackNamed("A").dynamics.on);
+    CHECK(eq->windowTitle().contains("A1"));
+    p.undoStack()->undo(); // the compressor
+    p.undoStack()->undo(); // the EQ
+    p.undoStack()->undo(); // the move: A B C
+    toggle(eqOn);
+    CHECK(trackNamed("B").eq.on && !trackNamed("A").eq.on);
+    ed.addTrack(TrackKind::Audio, 0); // new A B C
+    toggle(eqOn);
+    CHECK(!trackNamed("B").eq.on && !p.timeline().audio[0].eq.on && !trackNamed("A").eq.on);
+    ed.removeTrack({TrackKind::Audio, 0}); // A B C
+    toggle(eqOn);
+    CHECK(trackNamed("B").eq.on);
+    // Its track deleted: both close
+    ed.removeTrack({TrackKind::Audio, 1});
+    QApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    CHECK(!eqAlive && !dynAlive);
+    delete eqAlive.data();
+    delete dynAlive.data();
+
+    // Two equal tracks: the window's own edit stays on its track
+    Project q;
+    Editor qe(&q, &sel);
+    while (q.timeline().audio.size() < 2) qe.addTrack(TrackKind::Audio, 0);
+    q.edit("same", [](Timeline& tl) { tl.audio[1] = tl.audio[0]; });
+    EqDialog same(&qe, 0);
+    auto* sameOn = same.findChild<QCheckBox*>("eqOn");
+    if (!CHECK(sameOn)) return;
+    sameOn->setChecked(true);
+    sameOn->setChecked(false);
+    sameOn->setChecked(true);
+    CHECK(q.timeline().audio[0].eq.on && !q.timeline().audio[1].eq.on);
+    CHECK(same.windowTitle().contains("A1"));
+
+    // A recording with two sound streams dropped onto A1: A1 gets a clip and its stream's name, A2 is made in the same
+    // step (Editor::insertMedia). The window on A1 stays there, also when the drop is undone
+    {
+        Project r;
+        Selection rs;
+        Editor re(&r, &rs);
+        while (r.timeline().audio.size() > 1) re.removeTrack({TrackKind::Audio, 1});
+        auto* w = new EqDialog(&re, 0);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        QPointer<EqDialog> alive(w);
+        w->show();
+        auto* on = w->findChild<QCheckBox*>("eqOn");
+        if (!CHECK(on)) return;
+        r.edit("drop", [](Timeline& tl) {
+            Clip c;
+            c.id = 900;
+            c.mediaPath = "/x/two-streams.mkv";
+            c.in = 0;
+            c.out = 49;
+            tl.audio[0].name = "Game";
+            tl.audio[0].clips << c;
+            TimelineOps::ensureTracks(tl, TrackKind::Audio, 2);
+            c.id = 901;
+            c.audioStream = 1;
+            tl.audio[1].name = "Mic";
+            tl.audio[1].clips << c;
+        });
+        QApplication::processEvents();
+        CHECK(alive);
+        if (!alive) return;
+        on->setChecked(true);
+        CHECK(r.timeline().audio[0].eq.on && !r.timeline().audio[1].eq.on);
+        r.undoStack()->undo(); // the EQ
+        r.undoStack()->undo(); // the drop: A1 alone and empty again
+        QApplication::processEvents();
+        CHECK(alive);
+        if (!alive) return;
+        on->setChecked(true);
+        CHECK(r.timeline().audio.size() == 1 && r.timeline().audio[0].eq.on);
+        r.undoStack()->redo(); // the drop again
+        r.undoStack()->redo(); // the EQ (on A1)
+        QApplication::processEvents();
+        CHECK(alive && r.timeline().audio[0].eq.on && w->windowTitle().contains("A1"));
+        delete alive.data();
+    }
+
+    // Equal (empty, default) tracks: a track inserted above the window's track moves the window along; its own track
+    // deleted next to an equal one closes the window (never jumps to the neighbour)
+    {
+        Project r;
+        Selection rs;
+        Editor re(&r, &rs);
+        while (r.timeline().audio.size() > 1) re.removeTrack({TrackKind::Audio, 1});
+        auto* w = new EqDialog(&re, 0);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        QPointer<EqDialog> alive(w);
+        w->show();
+        auto* on = w->findChild<QCheckBox*>("eqOn");
+        if (!CHECK(on)) return;
+        re.addTrack(TrackKind::Audio, 0); // a new, equal track above: the window's one is A2 now
+        CHECK(alive && w->windowTitle().contains("A2"));
+        on->setChecked(true);
+        CHECK(r.timeline().audio[1].eq.on && !r.timeline().audio[0].eq.on);
+        r.undoStack()->undo(); // the EQ: both equal again
+        re.removeTrack({TrackKind::Audio, 1}); // its own track goes, the equal one at A1 stays
+        QApplication::processEvents();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        CHECK(!alive);
+        delete alive.data();
+    }
+}
+
 // ---- CLI ----
 
 void testCliMixerEqCompressor(const QString& dir)
@@ -831,6 +976,7 @@ int main(int argc, char** argv)
     testDialogs();
     testMixerDialogWindows();
     testDialogsCloseWithoutCommit();
+    testDialogsFollowTrack();
     testCliMixerEqCompressor(dir.path());
 
     if (!Check::haveFfmpeg()) return Check::result();

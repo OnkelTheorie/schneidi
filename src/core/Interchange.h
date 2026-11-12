@@ -150,7 +150,7 @@ Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& l
 
 // ---- Files ----
 
-QByteArray write(Sequence& seq, Format f); // may add warnings (e.g. EDL: only one video track)
+QByteArray write(Sequence& seq, Format f); // may add warnings (e.g. EDL: only one video track); throws Error (EDL above 99 fps)
 // Throws Error if the file cannot be read. EDL has no frame rate of its own: `edlRate` is used.
 Sequence read(const QByteArray& data, Format f, FrameRate edlRate = {25, 1});
 
@@ -166,5 +166,14 @@ Sequence readOtio(const QByteArray& data);
 // local path (stays as given if it cannot be resolved)
 QString pathFromUrl(const QString& url);
 QString urlFromPath(const QString& path);
+
+// Readers: no timeline reaches 2^29 frames (6 days at 1000 fps): a time beyond is broken (files come from other
+// programs and `serve` uploads), and the sums of times stay inside int. checkFrames throws Error beyond it
+inline constexpr int kMaxFrames = 1 << 29;
+void checkFrames(double frames);
+// Audio tracks a reader creates at most (an EDL's "A99999999" made billions); more is refused with Error
+inline constexpr int kMaxReadTracks = 64;
+// EDL timecodes have two frame digits (CMX3600): writeEdl throws Error for a frame rate above this
+inline constexpr int kMaxEdlFps = 99;
 
 } // namespace Interchange

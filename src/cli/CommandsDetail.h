@@ -45,6 +45,13 @@ double seconds(int frames, const ProjectFormat& fmt);
 QJsonObject range(int from, int to, const ProjectFormat& fmt);
 // width/height/fps of `a` over `f` (the format of a new project's start template)
 ProjectFormat parseFormat(const QJsonObject& a, ProjectFormat f = {});
+// A project frame rate from `fps`: a standard rate (23.976 … 60) or 48/100/120; any other fails with the list
+// (`what` names the argument in that message)
+FrameRate projectFrameRate(double fps, const QString& what = "fps");
+// An output frame rate (`render --fps`): the project rates plus 10/12/15; any other fails with the list
+FrameRate exportFrameRate(double fps);
+// A content template's frame rate (from its file): an offered rate when it is one, else that rate itself (> 0)
+FrameRate templateFrameRate(double fps);
 QJsonObject formatJson(const ProjectFormat& f);
 // Own import presets for audio streams (`info`, `templates`): mute_mix, rules {title, action, volume_db, track}
 QJsonObject importPresetsJson(const StreamPresets& p);

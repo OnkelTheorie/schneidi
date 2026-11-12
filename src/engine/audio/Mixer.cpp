@@ -179,6 +179,9 @@ struct Mixer::Impl {
     double masterApplied = 1.0;
     bool metering = false;
     std::vector<float> peaks; // per track L, R of the last render (metering)
+    int meterBlock = 0;            // setMeterBlock
+    std::vector<float> blockPeaks; // peaks per stretch of meterBlock samples of the last render
+    int chunkWarm = -1;            // setChunked: >= 0 = a jump keeps filters and processors
     int64_t expected = INT64_MIN; // next render position
     int latency = 0;              // master (limiter), compensated
     std::vector<float> mix[kChannels], track[kChannels], voice[kChannels], scratch;
@@ -196,6 +199,7 @@ struct Mixer::Impl {
     void renderVoice(Voice& v, VoiceState& st, int64_t u, int count, float* const* out);
     bool readSource(Voice& v, VoiceState& st, int64_t u, int count, float* const* out);
     void restart();
+    void continueChunk();
     void render(int64_t pos, int count, float* const* out);
 };
 
@@ -431,6 +435,17 @@ void Mixer::Impl::restart()
     masterApplied = masterGain;
 }
 
+// Backwards (setChunked): the next chunk lies before the one mixed last. Every voice starts over at its new
+// position, but the track EQ and compressor, the limiter and the voices' noise reduction and voice cleaning go on with
+// what they have: the level of the neighbouring chunk instead of a reset every chunk.
+void Mixer::Impl::continueChunk()
+{
+    for (TrackState& ts : trackStates) {
+        for (VoiceState& v : ts.voices) v.nextU = INT64_MIN;
+        ts.firstVoice = 0; // earlier voices are ahead again
+    }
+}
+
 bool Mixer::Impl::readSource(Voice& v, VoiceState& st, int64_t u, int count, float* const* out)
 {
     if (!st.opened) {
@@ -456,6 +471,7 @@ bool Mixer::Impl::readSource(Voice& v, VoiceState& st, int64_t u, int count, flo
     }
     const int64_t pos = u + v.sourceOffset;
     if (st.sub) {
+        st.sub->chunkWarm = chunkWarm;
         st.sub->render(pos, count, out);
         return true;
     }
@@ -474,7 +490,10 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
     const bool fresh = u != st.nextU;
     st.nextU = u + count;
     if (v.denoise || v.clean) {
-        if (fresh || (v.denoise && st.denoisers.empty()) || (v.clean && !st.cleaner)) {
+        // Backwards in chunks (setChunked): the processors keep what they learnt from the neighbouring chunk
+        const bool have = (!v.denoise || !st.denoisers.empty()) && (!v.clean || st.cleaner);
+        const bool keep = fresh && have && chunkWarm >= 0;
+        if ((fresh && !keep) || !have) {
             st.denoisers.clear();
             st.cleaner.reset();
             for (int c = 0; v.denoise && c < kChannels; ++c) {
@@ -494,14 +513,19 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
         // clip, the voice cleaning first listens to up to half a second before u (its noise and voice level settle),
         // so playback from there sounds like the export that ran through from the clip's start.
         const int lead = (v.denoise ? st.denoisers[0]->latency() : 0) + (st.cleaner ? st.cleaner->latency() : 0);
+        // Kept processors only need their buffers filled anew with the sound before u (silence before the clip).
         if (fresh) {
-            const int64_t warm = v.clean ? std::clamp<int64_t>(u - v.uStart, 0, opt.rate / 2) : 0;
+            const int64_t warm = keep ? chunkWarm : v.clean ? std::clamp<int64_t>(u - v.uStart, 0, opt.rate / 2) : 0;
+            stats->warmed += warm + lead;
             for (int64_t p = u - warm, end = u + lead; p < end;) {
-                const int n = int(std::min<int64_t>(end - p, 4096));
+                const int n = int(std::min<int64_t>(end - p, p < v.uStart ? v.uStart - p : 4096));
                 scratch.resize(size_t(n) * kChannels);
                 float* pre[kChannels];
                 for (int c = 0; c < kChannels; ++c) pre[c] = scratch.data() + size_t(c) * n;
-                readSource(v, st, p, n, pre);
+                if (p < v.uStart)
+                    std::fill(scratch.begin(), scratch.begin() + ptrdiff_t(n) * kChannels, 0.f);
+                else
+                    readSource(v, st, p, n, pre);
                 process(pre, n);
                 p += n;
             }
@@ -552,6 +576,8 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
 void Mixer::Impl::renderMix(int64_t pos, int count)
 {
     for (auto& m : mix) std::fill(m.begin(), m.begin() + count, 0.f);
+    const size_t stride = tracks.size() * 2;
+    if (metering && meterBlock > 0) blockPeaks.assign(size_t((count + meterBlock - 1) / meterBlock) * stride, 0.f);
     const int64_t end = pos + count;
     for (size_t ti = 0; ti < tracks.size(); ++ti) {
         TrackPlan& tp = tracks[ti];
@@ -622,6 +648,13 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
                 mix[c][size_t(i)] += track[c][size_t(i)];
                 if (peak) peak[c] = std::max(peak[c], std::abs(track[c][size_t(i)]));
             }
+        if (peak && meterBlock > 0)
+            for (int b = 0, from = 0; from < count; ++b, from += meterBlock)
+                for (int c = 0; c < kChannels; ++c) {
+                    float& q = blockPeaks[size_t(b) * stride + 2 * ti + size_t(c)];
+                    for (int i = from, to = std::min(count, from + meterBlock); i < to; ++i)
+                        q = std::max(q, std::abs(track[c][size_t(i)]));
+                }
     }
     if (masterGain != masterApplied) {
         const int len = std::min(count, kGlide);
@@ -677,6 +710,12 @@ void Mixer::setMetering(bool on)
 
 const std::vector<float>& Mixer::trackPeaks() const { return d->peaks; }
 
+void Mixer::setMeterBlock(int block) { d->meterBlock = std::max(0, block); }
+
+const std::vector<float>& Mixer::blockPeaks() const { return d->blockPeaks; }
+
+void Mixer::setChunked(int warm) { d->chunkWarm = warm < 0 ? -1 : warm; }
+
 bool Mixer::updateMix(const Timeline& timeline)
 {
     Impl& m = *d;
@@ -703,7 +742,8 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
     const bool restarted = pos != m.expected;
     if (restarted) {
         if (m.expected != INT64_MIN) ++m.stats->restarts;
-        m.restart();
+        if (m.chunkWarm >= 0 && m.expected != INT64_MIN) m.continueChunk();
+        else m.restart();
     }
     m.expected = pos + count;
     const size_t need = size_t(std::max(count, m.latency));

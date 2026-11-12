@@ -30,6 +30,7 @@
 #include <QFontMetricsF>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -418,7 +419,7 @@ void testCliOp(const QString& dir)
                            QJsonObject{{"from", 30}, {"to", 40}, {"text", "drei."}}};
     QJsonObject o = run({QJsonObject{{"op", "captions"}, {"style", "karaoke"}, {"words", words},
                                      {"highlight", "#00ff00"}, {"size", 100}}});
-    CHECK(!o.contains("error"));
+    if (!CHECK(!o.contains("error"))) std::printf("       %s\n", qPrintable(o.value("error").toString()));
     ProjectData back;
     QFile in(path);
     CHECK(in.open(QIODevice::ReadOnly));
@@ -860,6 +861,38 @@ void testEmbedPlayers(const QString& dir)
     }
 }
 
+// The bundled FFmpeg (AppImage, Windows, Docker) is built from packaging/ffmpeg-components.txt: it must list an encoder
+// for each subtitle codec the export picks (MP4/MOV mov_text, MKV SubRip, WebM WebVTT), or every packaged export
+// leaves the subtitle streams out without a word (found on Windows, 0.21). The names come from the FFmpeg the test
+// links, by codec ID (configure names drop the underscore: mov_text is "movtext").
+void testBundledComponents()
+{
+    QFile f(Check::sourceDir() + "/packaging/ffmpeg-components.txt");
+    if (!CHECK(f.open(QIODevice::ReadOnly | QIODevice::Text))) return;
+    QSet<QString> encoders, decoders, filters;
+    for (const QString& line : QString::fromUtf8(f.readAll()).split('\n')) {
+        const QStringList w = line.simplified().split(' ');
+        if (w.size() < 2) continue;
+        if (w[0] == "encoder") encoders << QString(w[1]).remove('_');
+        if (w[0] == "decoder") decoders << QString(w[1]).remove('_');
+        if (w[0] == "filter") filters << w[1];
+    }
+    // Proxies of interlaced material are deinterlaced (engine/ProxyManager.cpp: bwdif, yadif as the fallback)
+    for (const char* filter : {"bwdif", "yadif"})
+        if (!CHECK(filters.contains(filter))) std::printf("       ffmpeg-components.txt lacks filter %s\n", filter);
+    for (const AVCodecID id : {AV_CODEC_ID_MOV_TEXT, AV_CODEC_ID_SUBRIP, AV_CODEC_ID_WEBVTT}) {
+        bool encoder = false, decoder = false;
+        void* it = nullptr;
+        while (const AVCodec* c = av_codec_iterate(&it)) {
+            if (c->id != id) continue;
+            const QString name = QString::fromLatin1(c->name).remove('_');
+            if (av_codec_is_encoder(c) && encoders.contains(name)) encoder = true;
+            if (av_codec_is_decoder(c) && decoders.contains(name)) decoder = true;
+        }
+        if (!CHECK(encoder && decoder)) std::printf("       ffmpeg-components.txt lacks %s\n", avcodec_get_name(id));
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -880,6 +913,7 @@ int main(int argc, char** argv)
     testWordScripts();
     testTimelineFormat();
     testResetTrackStyle();
+    testBundledComponents();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testCliOp(tmp.path());

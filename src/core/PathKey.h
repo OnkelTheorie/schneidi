@@ -30,6 +30,17 @@ inline Qt::CaseSensitivity sensitivity(bool foldCase = kFoldCase)
     return foldCase ? Qt::CaseInsensitive : Qt::CaseSensitive;
 }
 
+// Two spellings of one file as Project::mediaInfo matches them: the same text, or on Windows the same apart from case
+// and separators ("C:/Clips/A.mp4" is "c:\\clips\\a.mp4"). Cheap when equal (no file system access).
+inline bool same(const QString& a, const QString& b, bool foldCase = kFoldCase)
+{
+    if (a == b) return true;
+    if (!foldCase || a.isEmpty() || b.isEmpty()) return false;
+    // both separators: a Windows path also compares right where tests run it on Linux
+    const auto clean = [](QString p) { return QDir::cleanPath(p.replace(QLatin1Char('\\'), QLatin1Char('/'))); };
+    return clean(a).compare(clean(b), Qt::CaseInsensitive) == 0;
+}
+
 // `path` lies inside the folder `dir` (both cleaned; the folder itself is not inside it): "C:/Templates/x/a.png" is
 // in "c:/templates/x" on Windows, a template saved there keeps its files
 inline bool isInside(const QString& path, const QString& dir, bool foldCase = kFoldCase)

@@ -20,6 +20,7 @@
 #include "engine/video/Scan.h"
 
 extern "C" {
+#include <libavcodec/defs.h>
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
@@ -35,6 +36,7 @@ extern "C" {
 #include <cstring>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <thread>
 
@@ -410,6 +412,84 @@ void testInterlacedFields()
     }
 }
 
+// Which field is shown first, per file: the decoder's flag on interlaced pictures, else the stream's field order
+// (TT/TB top first, BB/BT bottom first). A bottom-first H.264 in MP4 states TT (the parser's guess without timing SEI)
+// while the decoded pictures say bottom first; the reader trusted the stream's TT and called it top first. Each
+// picture: the top field's lines dark, the bottom field's light - the decoded picture keeps them on their lines (and
+// the field-wise RGBA conversion too), whichever field is shown first. Progressive files stay progressive.
+void testFieldOrder(const QString& dir)
+{
+    const auto make = [&](const QString& name, const QString& field) {
+        QString chain = "color=c=gray:size=352x288:rate=25:duration=0.4,format=yuv420p,"
+                        "geq=lum='if(mod(Y\\,2)\\,235\\,16)':cb=128:cr=128";
+        QStringList flags;
+        if (!field.isEmpty()) {
+            chain += ",setfield=" + field;
+            flags << "-flags" << "+ilme+ildct";
+        }
+        return Check::makeMedia(dir + "/" + name, QStringList{"-f", "lavfi", "-i", chain} + flags
+                                                      + QStringList{"-c:v", "libx264", "-preset", "ultrafast", "-qp",
+                                                                    "10", "-pix_fmt", "yuv420p"});
+    };
+    struct Case {
+        const char* name;
+        const char* field; // "" progressive
+    };
+    for (const Case c : {Case{"fields-progressive.mp4", ""}, Case{"fields-tff.mp4", "tff"}, Case{"fields-tff.mkv", "tff"},
+                         Case{"fields-bff.mp4", "bff"}, Case{"fields-bff.mkv", "bff"}, Case{"fields-bff.mov", "bff"}}) {
+        const QString path = make(c.name, c.field);
+        if (!Check::report(!path.isEmpty(), c.name, __FILE__, __LINE__, "ffmpeg could not make the file")) continue;
+        const auto r = Video::Reader::open(path);
+        if (!CHECK(r)) continue;
+        const bool interlaced = *c.field != 0, top = QByteArray(c.field) == "tff";
+        const int order = r->info().fieldOrder;
+        int wrong = 0, darkTop = 0, pictures = 0;
+        for (int i = 0; i < 8; ++i) {
+            const auto p = r->picture(i);
+            if (!p || !p->frame) break;
+            ++pictures;
+            if (p->progressive == interlaced || (interlaced && p->topFieldFirst != top)) ++wrong;
+            // Rows 100..187: even (top field) rows dark, odd (bottom field) rows light
+            const AVFrame* f = p->frame;
+            double even = 0, odd = 0;
+            for (int y = 100; y < 188; ++y)
+                for (int x = 100; x < 252; ++x) (y % 2 ? odd : even) += f->data[0][size_t(y) * f->linesize[0] + x];
+            if (even < odd) ++darkTop;
+            if (i == 0 && interlaced) { // the field-wise conversion keeps the lines on their field
+                std::vector<uint8_t> rgba(size_t(f->width) * f->height * 4);
+                Video::Picture view;
+                view.frame = av_frame_clone(f);
+                view.progressive = p->progressive;
+                view.topFieldFirst = p->topFieldFirst;
+                if (CHECK(Video::toRgba(view, r->info(), rgba.data(), f->width, f->height, false))) {
+                    const auto at = [&](int y) { return rgba[(size_t(y) * f->width + 176) * 4]; };
+                    CHECK(at(144) < 60 && at(145) > 200);
+                }
+            }
+        }
+        std::printf("  %s: stream field order %d, %d pictures, %d with the wrong field order, %d with the top field "
+                    "dark\n", c.name, order, pictures, wrong, darkTop);
+        CHECK(pictures >= 8);
+        Check::report(wrong == 0, qPrintable(QString(c.name) + ": progressive/field shown first"), __FILE__, __LINE__);
+        CHECK_EQ(darkTop, pictures);
+        // The shared mapping: the stream's order alone (no picture) and an interlaced picture's flag
+        const std::optional<bool> stream = Video::topFieldShownFirst(nullptr, order);
+        if (QByteArray(c.name).endsWith(".mkv")) CHECK(stream && *stream == top);
+        if (!interlaced) CHECK(!stream || order == AV_FIELD_PROGRESSIVE);
+    }
+    AVFrame* f = av_frame_alloc();
+    f->flags = AV_FRAME_FLAG_INTERLACED;
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_TT) == std::optional<bool>(false)); // the picture's flag wins
+    f->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_BT) == std::optional<bool>(true));
+    f->flags = 0; // a progressive picture: the stream says
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_TB) == std::optional<bool>(true));
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_BB) == std::optional<bool>(false));
+    CHECK(!Video::topFieldShownFirst(f, AV_FIELD_PROGRESSIVE));
+    CHECK(!Video::topFieldShownFirst(f, AV_FIELD_UNKNOWN));
+    av_frame_free(&f);
+}
+
 void testRotation(const QString& plain, const QString& rotated, double degrees, const QString& name = {})
 {
     auto a = Video::Reader::open(plain), b = Video::Reader::open(rotated);
@@ -500,8 +580,10 @@ int main(int argc, char** argv)
                                                                  "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
                                                                  "-x265-params", "log-level=error",
                                                                  "-video_track_timescale", "600"}), 60);
-    // Interlaced (top field first)
-    add("interlaced", Check::makeMedia(file("interlaced.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libx264",
+    // Interlaced (top field first). The pictures must be marked top-first (setfield): from progressive pictures the
+    // libx264 wrapper codes bottom first despite tff=1, and only the muxer's -field_order says TT
+    add("interlaced", Check::makeMedia(file("interlaced.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-vf",
+                                                                "setfield=tff", "-c:v", "libx264",
                                                                 "-flags", "+ildct+ilme", "-x264opts", "tff=1",
                                                                 "-pix_fmt", "yuv420p", "-field_order", "tt"}), 50);
     // SD with BT.601 tag
@@ -567,6 +649,7 @@ int main(int argc, char** argv)
         CHECK(p && p->progressive);
     }
     testInterlacedFields();
+    testFieldOrder(dir.path());
     testRotation(file("h264.mp4"), file("rotated.mp4"), 90);
     // Formats a quarter turn cannot keep: 4:2:2 (camera files, iPhone ProRes 422 shot in portrait), palette, 1 bit
     struct Turn {

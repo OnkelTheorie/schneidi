@@ -15,6 +15,13 @@ public:
 
     // Where band `band` (0..5) is drawn (widget coordinates)
     QPointF pointFor(int band) const;
+    // The window's track moved (tracks added/removed/reordered): draw and edit that one
+    void setTrack(int track)
+    {
+        m_track = track;
+        m_drag = -1;
+        update();
+    }
     QSize sizeHint() const override { return {480, 220}; }
 
 protected:

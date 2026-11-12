@@ -30,6 +30,8 @@
 #include <QUndoStack>
 #include <QWindow>
 
+#include <stdexcept>
+
 namespace {
 
 class FakeApp : public LiveHost {
@@ -45,8 +47,17 @@ public:
     QVector<LiveActivity> activities;
     QStringList proxies;
 
+    mutable bool throwOnPath = false; // once: a command fails with something that is no Cli::Error
+
     Project* liveProject() override { return &project; }
-    QString liveProjectPath() const override { return path; }
+    QString liveProjectPath() const override
+    {
+        if (throwOnPath) {
+            throwOnPath = false;
+            throw std::runtime_error("test failure");
+        }
+        return path;
+    }
     Selection* liveSelection() override { return &selection; }
     int livePlayhead() const override { return playhead; }
     bool livePlaying() const override { return playing; }
@@ -789,6 +800,26 @@ int main(int argc, char* argv[])
         CHECK(!server.attached());
         server.setAllowed(true);
         first.disconnectFromServer();
+    }
+
+    // A command that fails with something other than Cli::Error (std::bad_alloc …): an error answer, its undo macro
+    // closed and taken back (it stayed open: every later change of the user went into it)
+    {
+        QUndoStack* undo = fake.project.undoStack();
+        const int index = undo->index();
+        const int clipsBefore = videoClips(fake.project);
+        const QJsonArray ops = QJsonDocument::fromJson(R"([{"op":"split","at":30}])").array();
+        fake.throwOnPath = true;
+        const QJsonObject r = server.runForChat("edit", {{"project", fake.path}, {"ops", ops}});
+        CHECK(!fake.throwOnPath); // reached inside the command
+        CHECK_EQ(r["error"].toObject()["code"].toString(), QString("INTERNAL"));
+        CHECK(r["error"].toObject()["message"].toString().contains("test failure"));
+        CHECK_EQ(undo->index(), index);
+        CHECK_EQ(videoClips(fake.project), clipsBefore);
+        // The next edit is a step of its own (no macro left open)
+        CHECK(server.runForChat("edit", {{"project", fake.path}, {"ops", ops}})["ok"].toBool());
+        CHECK_EQ(undo->index(), index + 1);
+        CHECK_EQ(videoClips(fake.project), clipsBefore + 1);
     }
 
     return Check::result();

@@ -1156,10 +1156,15 @@ struct Service::Impl {
             }
             if (quit) context.reset(); // on its own thread (GL context, textures)
             {
+                // Notified under the lock: a job lives on its waiter's stack, and a waiter woken early (spuriously, or
+                // by another job's notify) that sees done returns and ends the job - with its condition variable -
+                // before a notify after the unlock would reach it
                 std::lock_guard lock(mutex);
-                for (Job* job : jobs) job->done = true;
+                for (Job* job : jobs) {
+                    job->done = true;
+                    job->doneCv.notify_all();
+                }
             }
-            for (Job* job : jobs) job->doneCv.notify_all();
             if (quit) return;
         }
     }

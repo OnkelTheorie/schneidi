@@ -339,18 +339,9 @@ bool evalBlur(NodeCtx& ctx, Buf* out)
 constexpr const char* kWheels[] = {"lift", "gamma", "gain", "offset"};
 constexpr const char* kWheelParts[] = {"y", "r", "g", "b"};
 
-// Loaded LUTs by path (read-only once loaded; shared by every render like the Renderer's own LUT cache)
-std::shared_ptr<const ColorGrade::Lut> lutOf(const QString& path)
-{
-    static std::mutex mutex;
-    static std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
-    std::lock_guard lock(mutex);
-    if (auto it = luts.find(path); it != luts.end()) return it->second;
-    auto l = ColorGrade::loadLut(path);
-    if (luts.size() > 16) luts.clear();
-    luts.emplace(path, l);
-    return l;
-}
+// Loaded LUTs by path: loadLut keeps them and reads a file again once its time or size changed (an own cache by path
+// kept an overwritten LUT, or a missing one after its drive was mounted, for the program's life)
+std::shared_ptr<const ColorGrade::Lut> lutOf(const QString& path) { return ColorGrade::loadLut(path); }
 
 // Baked tables by values + LUT (baking costs more than applying at preview size; a static correction bakes once).
 // The entry holds its LUT, so a LUT's address cannot be reused by another while it is here
