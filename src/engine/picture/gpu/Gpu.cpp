@@ -1216,6 +1216,11 @@ void deferredPrepareJob()
         if (g_surface || g_surfaceTaken) return;
     }
     if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return;
+    // A platform that allows no OpenGL context off the GUI thread: the whole surface here, as before
+    if (!QOpenGLContext::supportsThreadedOpenGL()) {
+        Service::prepare(true);
+        return;
+    }
     QThreadPool::globalInstance()->start([] {
         QSurfaceFormat format = glFormat();
         {
@@ -1316,8 +1321,12 @@ Service* Service::instance()
         prepare();
         {
             std::unique_lock lock(g_surfaceMutex);
-            // A deferred prepare() is about to run on the GUI thread: wait for it a little
-            if (!gui && g_preparePosted) g_surfaceReady.wait_for(lock, std::chrono::seconds(2), [] { return g_surface != nullptr; });
+            // A deferred prepare() is to run on the GUI thread (the app: after the window's open animation, at the
+            // latest ~4 s after the start): wait for it - making the surface and context here instead would make an
+            // OpenGL context while the window may still animate (the NVIDIA driver stalls the X server meanwhile).
+            // Bounded: a GUI thread that never gets there must not leave the worker waiting for good.
+            if (!gui && g_preparePosted)
+                g_surfaceReady.wait_for(lock, std::chrono::seconds(10), [] { return g_surface != nullptr; });
             d->surface.reset(std::exchange(g_surface, nullptr));
             g_surfaceTaken = true;
         }

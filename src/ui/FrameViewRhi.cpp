@@ -8,6 +8,7 @@
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QSettings>
+#include <QThread>
 #include <QTimer>
 #include <QWindow>
 #include <rhi/qrhi.h>
@@ -227,9 +228,11 @@ void FrameViewRhiSurface::warmUp()
 #else
     if (g_probe || g_warmUp) return;
     const bool vk = vulkan();
-    // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers) and the platform allows
-    // contexts on other threads
-    if (!vk && (QGuiApplication::platformName() != QLatin1String("xcb") || !QOpenGLContext::supportsThreadedOpenGL()))
+    // OpenGL: only where a fallback surface may be made off the GUI thread (GLX pbuffers), the platform allows
+    // contexts on other threads, and there are cores to spare (a check only: on one or two cores it would slow the
+    // window's setup down; the stored check decides then, as before)
+    if (!vk && (QGuiApplication::platformName() != QLatin1String("xcb") || !QOpenGLContext::supportsThreadedOpenGL()
+                || QThread::idealThreadCount() < 4))
         return;
     if (vk) { // a driver that crashes or hangs here: OpenGL from the next start on (vulkan())
         QSettings settings;

@@ -130,10 +130,14 @@ public:
     // picture while the window is built (file, stream analysis, the graphics card's decoder: 100-300 ms). The next
     // open() of the same path with the same threads and hardware options and the same kind of user (autoBackward,
     // keepBytes zero or not: a preview's reader, not a thumbnail's) takes that reader with its own options (waiting
-    // for it if it is not open yet) instead of opening the file again; one not taken within kPreparedMs (or at the
-    // application's quit) is closed. Thread-safe.
+    // for it while it is being opened; one whose job has not started yet is cancelled and the file opened directly)
+    // instead of opening the file again. One not taken within kPreparedMs after it opened is closed (by the next
+    // prepare(), open() or dropPrepared(); at the application's quit). No thread waits for a taker. Thread-safe.
     static void prepare(const QString& path, const Options& options);
     static void prepare(const QString& path);
+    // Closes the prepared readers not taken yet (expired ones also close at the next prepare()/open()); a job still
+    // waiting for the pool is cancelled. Thread-safe.
+    static void dropPrepared();
     // Readers prepared and not taken yet (tests)
     static int preparedCount();
     static constexpr int kPreparedMs = 8000;

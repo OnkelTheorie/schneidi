@@ -25,6 +25,7 @@
 #include "engine/StorageThumbCache.h"
 #include "engine/FfmpegLog.h"
 #include "engine/picture/gpu/Gpu.h"
+#include "engine/ProxyManager.h"
 #include "engine/video/Reader.h"
 
 #include <QApplication>
@@ -338,8 +339,14 @@ void prepareFirstPictureNow(const QStringList& files)
     // The picture engine's preview readers keep a seek window (the size is the taker's)
     Video::Reader::Options preview;
     preview.keepBytes = 1;
-    for (const QString& v : videos)
-        if (QImageReader::imageFormat(v).isEmpty()) Video::Reader::prepare(v, preview); // stills are read another way
+    // The preview plays a file's proxy when there is one and proxies are on (ProxyManager::resolve): that one, never
+    // the original then
+    const bool proxies = QSettings().value("playback/useProxy", true).toBool();
+    for (const QString& v : videos) {
+        if (!QImageReader::imageFormat(v).isEmpty()) continue; // stills are read another way
+        const QString proxy = ProxyManager::proxyPath(v);
+        Video::Reader::prepare(proxies && QFileInfo::exists(proxy) ? proxy : v, preview);
+    }
 }
 
 void prepareFirstPicture(const QStringList& files)
@@ -512,7 +519,16 @@ int main(int argc, char* argv[])
     // window's setup; otherwise a while after the window settled (it costs video memory, wakes a laptop's card)
     if (const QStringList launchFiles = LaunchArgs::files(app.arguments().mid(1)); !launchFiles.isEmpty()) {
         MainWindow::warmUpVideoDecoding();
-        if (screenshot.isEmpty()) prepareFirstPicture(launchFiles);
+        // Only with cores to spare: on one or two the helpers only slow the window's own setup down (measured on
+        // one core: the window +320 ms, the first picture no sooner)
+        if (screenshot.isEmpty() && QThread::idealThreadCount() >= 4) {
+            prepareFirstPicture(launchFiles);
+            // What the first picture did not take (a playhead moved meanwhile, another timeline shown) is closed
+            afterOpenAnimation([] {
+                QTimer::singleShot(Video::Reader::kPreparedMs, qApp,
+                                   [] { QThreadPool::globalInstance()->start([] { Video::Reader::dropPrepared(); }); });
+            });
+        }
     } else afterOpenAnimation([] { QTimer::singleShot(1500, qApp, [] { MainWindow::warmUpVideoDecoding(); }); });
     MainWindow w(&engine);
     StartupTrace::mark("MainWindow constructed");

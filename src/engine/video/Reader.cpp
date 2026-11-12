@@ -1435,36 +1435,71 @@ Reader::~Reader() = default;
 
 namespace {
 
-// Reader::prepare: readers opened ahead, by path
+// Reader::prepare: readers opened ahead, by path. No thread waits for a taker: the open runs as one pool job, a reader
+// not taken in time is closed by the next prepare()/open()/dropPrepared() that finds it expired.
 struct Prepared {
+    enum class State { Queued, Opening, Done, Cancelled };
     Reader::Options options;
-    bool done = false;    // opened (or failed: reader null)
-    bool taken = false;   // open() took it, or it expired: the helper thread lets go
-    std::unique_ptr<Reader> reader;
+    State state = State::Queued;
+    std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    std::unique_ptr<Reader> reader; // Done: the reader (null: the file did not open)
 };
 std::mutex g_preparedMutex;
 std::condition_variable g_preparedCv;
 std::multimap<QString, std::shared_ptr<Prepared>> g_prepared; // guarded by g_preparedMutex
-thread_local bool t_preparing = false; // the helper thread of prepare(): its open() never takes a prepared reader
+thread_local bool t_preparing = false; // the job of prepare(): its open() never takes a prepared reader
+bool g_preparedQuit = false;           // the application quits: a job closes what it opened (guarded by the mutex)
+
+// Takes the expired ones (or all) out of g_prepared (lock held): their readers, to be closed outside the lock. A queued
+// one is cancelled (its job does nothing), one being opened is left to its job (expired once it is done)
+std::vector<std::unique_ptr<Reader>> takeExpired(bool all)
+{
+    std::vector<std::unique_ptr<Reader>> out;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = g_prepared.begin(); it != g_prepared.end();) {
+        Prepared& p = *it->second;
+        const bool expired = all || now - p.since > std::chrono::milliseconds(Reader::kPreparedMs);
+        if (expired && p.state != Prepared::State::Opening) {
+            if (p.state == Prepared::State::Queued) p.state = Prepared::State::Cancelled;
+            out.push_back(std::move(p.reader));
+            it = g_prepared.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return out;
+}
 
 std::unique_ptr<Reader> takePrepared(const QString& path, const Reader::Options& options)
 {
-    std::unique_lock lock(g_preparedMutex);
-    auto [from, to] = g_prepared.equal_range(path);
-    for (auto it = from; it != to; ++it) {
-        const std::shared_ptr<Prepared> p = it->second;
-        // The same decoder (threads, hardware) and the same kind of user: a preview's reader (seek window, steps
-        // back) is not given to a thumbnail's
-        if (p->options.threads != options.threads || p->options.hardware != options.hardware
-            || p->options.autoBackward != options.autoBackward || (p->options.keepBytes > 0) != (options.keepBytes > 0))
-            continue;
-        g_prepared.erase(it);
-        g_preparedCv.wait(lock, [&p] { return p->done; });
-        p->taken = true;
-        g_preparedCv.notify_all();
-        return std::move(p->reader);
+    std::vector<std::unique_ptr<Reader>> expired;
+    std::unique_ptr<Reader> taken;
+    {
+        std::unique_lock lock(g_preparedMutex);
+        if (g_prepared.empty()) return nullptr;
+        expired = takeExpired(false);
+        auto [from, to] = g_prepared.equal_range(path);
+        for (auto it = from; it != to; ++it) {
+            const std::shared_ptr<Prepared> p = it->second;
+            // The same decoder (threads, hardware) and the same kind of user: a preview's reader (seek window,
+            // steps back) is not given to a thumbnail's
+            if (p->options.threads != options.threads || p->options.hardware != options.hardware
+                || p->options.autoBackward != options.autoBackward
+                || (p->options.keepBytes > 0) != (options.keepBytes > 0))
+                continue;
+            g_prepared.erase(it);
+            // Its job has not started (few cores, a busy pool): cancelled, the caller opens the file itself now
+            if (p->state == Prepared::State::Queued) {
+                p->state = Prepared::State::Cancelled;
+                break;
+            }
+            // Being opened: that is sooner than opening it once more
+            g_preparedCv.wait(lock, [&p] { return p->state == Prepared::State::Done; });
+            taken = std::move(p->reader);
+            break;
+        }
     }
-    return nullptr;
+    return taken; // `expired` closes outside the lock
 }
 
 } // namespace
@@ -1473,41 +1508,57 @@ void Reader::prepare(const QString& path, const Options& options)
 {
     static std::once_flag hooked;
     std::call_once(hooked, [] {
-        // At the quit: nothing waits for its taker any more (the helper threads close their readers and end)
+        // At the quit: nothing is kept for a taker any more
         if (QCoreApplication* app = QCoreApplication::instance())
             QObject::connect(app, &QCoreApplication::aboutToQuit, app, [] {
-                std::lock_guard lock(g_preparedMutex);
-                for (auto& [path, p] : g_prepared) p->taken = true;
-                g_prepared.clear();
-                g_preparedCv.notify_all();
+                {
+                    std::lock_guard lock(g_preparedMutex);
+                    g_preparedQuit = true;
+                }
+                dropPrepared();
             });
     });
     auto p = std::make_shared<Prepared>();
     p->options = options;
+    std::vector<std::unique_ptr<Reader>> expired;
     {
         std::lock_guard lock(g_preparedMutex);
+        expired = takeExpired(false);
         g_prepared.emplace(path, p);
     }
-    // The global pool: waited for at exit, a driver call is never cut off halfway
+    // One pool job that only opens (waited for at exit: a driver call is never cut off halfway)
     QThreadPool::globalInstance()->start([path, options, p] {
+        {
+            std::lock_guard lock(g_preparedMutex);
+            if (p->state == Prepared::State::Cancelled) return;
+            p->state = Prepared::State::Opening;
+        }
         t_preparing = true;
         std::unique_ptr<Reader> reader = open(path, options);
         t_preparing = false;
-        std::unique_lock lock(g_preparedMutex);
-        p->reader = std::move(reader);
-        p->done = true;
-        g_preparedCv.notify_all();
-        // Not taken in time: closed here (a proxy was used instead, the playhead moved...)
-        if (!g_preparedCv.wait_for(lock, std::chrono::milliseconds(kPreparedMs), [&p] { return p->taken; })) {
-            for (auto it = g_prepared.begin(); it != g_prepared.end(); ++it)
-                if (it->second == p) {
-                    g_prepared.erase(it);
-                    break;
-                }
+        {
+            std::lock_guard lock(g_preparedMutex);
+            if (!g_preparedQuit) p->reader = std::move(reader); // else closed here, below
+            p->state = Prepared::State::Done;
+            p->since = std::chrono::steady_clock::now(); // kept kPreparedMs from now on
+            if (g_preparedQuit)
+                for (auto it = g_prepared.begin(); it != g_prepared.end(); ++it)
+                    if (it->second == p) {
+                        g_prepared.erase(it);
+                        break;
+                    }
         }
-        reader = std::move(p->reader); // closed outside the lock
-        lock.unlock();
+        g_preparedCv.notify_all();
     });
+}
+
+void Reader::dropPrepared()
+{
+    std::vector<std::unique_ptr<Reader>> readers;
+    {
+        std::lock_guard lock(g_preparedMutex);
+        readers = takeExpired(true);
+    }
 }
 
 int Reader::preparedCount()

@@ -5,7 +5,8 @@
 // - several threads asking one reader a little out of order (export workers, read-ahead)
 // - hardware decoding (if this machine has a device) = software decoding bit for bit (H.264, 10-bit HEVC)
 // - unused readers close their decoder after a pause and give the same pictures when asked again
-// - a reader opened ahead (Reader::prepare) is taken by the next open() of the file with the same decoder options
+// - a reader opened ahead (Reader::prepare) is taken by the next open() of the file with the same decoder options;
+//   one whose job has not started is cancelled and the file opened at once; dropPrepared closes the rest
 // - a decoder that cannot be opened again (after a hardware failure) answers nothing at once, for good
 // - a gap in the timestamps of a variable-rate file (a picture held for 2 s) shows the held picture, not the next one
 // plus the frame properties the file states (size, rotation, colour standard and range, interlacing, alpha).
@@ -30,6 +31,8 @@ extern "C" {
 #include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
+#include <QSemaphore>
 
 #include <atomic>
 #include <chrono>
@@ -173,6 +176,32 @@ void testPrepared(const Media& m, const QVector<QByteArray>& ref)
     CHECK_EQ(wrong, 0);
     auto again = Video::Reader::open(m.path, taker); // taken once only: this one opens the file
     CHECK(again && again->picture(1));
+
+    // Few cores, the pool busy: the prepare job has not started when the file is needed - cancelled, the file opens
+    // at once instead of waiting for the pool (and the job does nothing when it gets its turn)
+    QThreadPool* pool = QThreadPool::globalInstance();
+    const int threads = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore hold;
+    pool->start([&hold] { hold.acquire(); });
+    Video::Reader::prepare(m.path, o);
+    QElapsedTimer t;
+    t.start();
+    auto direct = Video::Reader::open(m.path, taker);
+    CHECK(direct && direct->picture(2));
+    CHECK(t.elapsed() < 5000);
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+    hold.release();
+    pool->waitForDone();
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+    pool->setMaxThreadCount(threads);
+
+    // dropPrepared closes what nobody took
+    Video::Reader::prepare(m.path, o);
+    pool->waitForDone();
+    CHECK_EQ(Video::Reader::preparedCount(), 1);
+    Video::Reader::dropPrepared();
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
 }
 
 // Hardware pictures = software pictures (H.264/HEVC decoding is bit exact)
