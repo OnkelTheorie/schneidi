@@ -371,7 +371,56 @@ void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<Grade
     });
 }
 
-bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points)
+namespace {
+
+// Seen keyframes of a tracker over the analyzed range (found frames and lost ones): step keys, one on each side of a
+// change, so every frame reads exactly 1 or 0. What lies before and after the range keeps its value; without lost
+// frames and without earlier seen keys nothing is written (an analysis that never lost the point)
+void writeSeen(Clip& c, int node, const QVector<Comp::TrackPoint>& points, const QVector<int>& lost)
+{
+    const AnimParam p = Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(node, Comp::kSeenKey));
+    const bool had = Keys::animated(c, p);
+    if (lost.isEmpty() && !had) return;
+    QSet<int> found;
+    int lo = INT_MAX, hi = INT_MIN;
+    for (const Comp::TrackPoint& q : points) {
+        found.insert(q.frame);
+        lo = std::min(lo, q.frame);
+        hi = std::max(hi, q.frame);
+    }
+    for (int f : lost) {
+        lo = std::min(lo, f);
+        hi = std::max(hi, f);
+    }
+    if (lo > hi) return;
+    // The old curve around the range (step keys: their values as they are)
+    bool keysBefore = false, keysAfter = false;
+    for (int t : Keys::keyTimes(c, {p})) {
+        keysBefore |= t < lo;
+        keysAfter |= t > hi;
+    }
+    const double before = had ? Keys::valueAt(c, p, lo - 1) : 1.0, after = had ? Keys::valueAt(c, p, hi + 1) : 1.0;
+    for (int t : Keys::keyTimes(c, {p}))
+        if (t >= lo - 1 && t <= hi + 1) Keys::removeKey(c, p, t);
+    const auto state = [&](int f) { return found.contains(f) ? 1.0 : 0.0; };
+    // Into the range: the old value up to lo - 1 (a key there keeps it a step), the new one from lo
+    if (keysBefore && before != state(lo)) Keys::setKey(c, p, lo - 1, before);
+    if (keysBefore || state(lo) == 0 || !keysAfter) Keys::setKey(c, p, lo, state(lo));
+    for (int f = lo + 1; f <= hi; ++f)
+        if (state(f) != state(f - 1)) {
+            Keys::setKey(c, p, f - 1, state(f - 1));
+            Keys::setKey(c, p, f, state(f));
+        }
+    // Out of it: the old value again from hi + 1
+    if (keysAfter) {
+        Keys::setKey(c, p, hi, state(hi));
+        if (after != state(hi)) Keys::setKey(c, p, hi + 1, after);
+    }
+}
+
+} // namespace
+
+bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points, const QVector<int>& lost)
 {
     const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);
     if (!found || points.isEmpty()) return false;
@@ -414,6 +463,7 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
             const double v[4] = {p.x, p.y, p.scale * scale0, p.angle + angle0};
             for (int i = 0; i < 4; ++i) Keys::setKey(c, params[i], p.frame, v[i]);
         }
+        writeSeen(c, node, points, lost);
     });
     return true;
 }

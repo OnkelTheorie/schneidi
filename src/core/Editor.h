@@ -455,8 +455,10 @@ public:
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
     // Tracking result of a tracker node of the clip's "comp" graph: keyframes of n<node>.x/.y/.scale/.angle on every
     // point (keyframes between the first and the last point are replaced, others stay). One undo step. false = no
-    // such clip, comp effect or tracker node, or no points
-    bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points);
+    // such clip, comp effect or tracker node, or no points. lost = the frames analyzed where it was not found (0.22):
+    // keyframes n<node>.seen (1 found, 0 lost; one key on each side of a change) over the analyzed range, the seen
+    // value before and after it stays
+    bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points, const QVector<int>& lost = {});
     // The cutout node `node` of the clip's graph uses analysis `cache` (its matte file, engine/picture/CompCutout):
     // sets the node's value "cache" as one undo step (core/EditorCutout.cpp). false + *err = no such clip or node, or
     // the node is no cutout
