@@ -107,6 +107,8 @@ void RenderCache::setMode(Mode mode)
     if (mode == m_mode) return;
     m_mode = mode;
     QSettings().setValue(kSettingKey, modeId(mode));
+    m_paused = false; // another mode: a change
+    m_pausedKeys.clear();
     if (mode == Mode::Off) {
         m_jobs.clear();
         cancelCurrent();
@@ -231,7 +233,7 @@ QVector<RenderCache::Span> RenderCache::spans(const Timeline& tl) const
             const QString k = key(c, m_format);
             double done = QFileInfo::exists(cacheDir() + "/" + k + ".mov") ? 1.0 : 0.0;
             if (done == 0.0 && k == m_currentKey) done = running;
-            out << Span{c.start, c.end(), done};
+            out << Span{c.start, c.end(), done, c.displayName()};
         }
     return out;
 }
@@ -239,6 +241,35 @@ QVector<RenderCache::Span> RenderCache::spans(const Timeline& tl) const
 int RenderCache::pendingCount() const
 {
     return m_jobs.size();
+}
+
+double RenderCache::currentProgress() const
+{
+    return m_progress ? m_progress->load() / 1000.0 : 0.0;
+}
+
+QStringList RenderCache::pendingNames() const
+{
+    QStringList names;
+    for (const Job& j : m_jobs) names << j.name;
+    return names;
+}
+
+void RenderCache::resume()
+{
+    m_paused = false;
+    m_pausedKeys.clear(); // the next sync() queues what is missing
+}
+
+void RenderCache::pauseUntilChange()
+{
+    if (m_paused && !m_thread && m_jobs.isEmpty()) return;
+    m_pausedKeys.clear();
+    for (const Job& j : std::as_const(m_jobs)) m_pausedKeys.insert(j.key);
+    if (!m_currentKey.isEmpty()) m_pausedKeys.insert(m_currentKey);
+    m_paused = true;
+    m_jobs.clear();
+    cancelCurrent(); // emits progressChanged: the job display goes
 }
 
 void RenderCache::sync(const Timeline& tl)
@@ -271,7 +302,23 @@ void RenderCache::sync(const Timeline& tl)
                 continue;
             }
             seen.insert(k);
-            jobs << Job{k, normalized(*c)};
+            jobs << Job{k, normalized(*c), c->displayName()};
+        }
+    }
+    // Paused by the user: stays so while only what was paused waits; a clip needing a new render resumes all
+    if (m_paused && jobs.isEmpty()) { // nothing waits any more (rendered or gone): no longer paused
+        m_paused = false;
+        m_pausedKeys.clear();
+    }
+    if (m_paused) {
+        const bool fresh = std::any_of(jobs.cbegin(), jobs.cend(), [this](const Job& j) { return !m_pausedKeys.contains(j.key); });
+        if (fresh) {
+            m_paused = false;
+            m_pausedKeys.clear();
+        } else {
+            m_pausedKeys = seen; // what was rendered meanwhile or left the timeline is no longer paused
+            jobs.clear();
+            seen.clear();
         }
     }
     m_inUse = inUse;
@@ -294,6 +341,8 @@ void RenderCache::clear()
 {
     cancelCurrent();
     m_failed.clear();
+    m_paused = false; // everything is to be rendered anew
+    m_pausedKeys.clear();
     const QDir dir(cacheDir());
     for (const QString& f : dir.entryList({"*.mov"}, QDir::Files)) QFile::remove(dir.filePath(f));
     emit cacheChanged(); // preview reads the originals again; the following sync() renders anew
@@ -356,6 +405,7 @@ void RenderCache::cancelCurrent()
     delete m_thread;
     m_thread = nullptr;
     m_currentKey.clear();
+    m_currentName.clear();
     m_progress.reset();
     m_poll.stop();
     emit progressChanged();
@@ -372,6 +422,7 @@ void RenderCache::startNext()
     }
     QDir().mkpath(cacheDir());
     m_currentKey = job.key;
+    m_currentName = job.name;
     m_cancel = std::make_shared<std::atomic<bool>>(false);
     m_progress = std::make_shared<std::atomic<int>>(0);
     m_lastProgress = -1;
@@ -402,6 +453,7 @@ void RenderCache::onFinished(bool ok, const QString& error)
     delete m_thread;
     m_thread = nullptr;
     m_currentKey.clear();
+    m_currentName.clear();
     m_progress.reset();
     m_poll.stop();
     if (!ok) {

@@ -218,6 +218,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(Stabilizer::instance(), &Stabilizer::resultReady, this, &MainWindow::updateRenderCacheBar);
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
+    // A source lost while the project is open (disk or share gone, file moved): named, the preview tries it again
+    connect(m_engine, &Engine::sourceLost, this, [this](const QString& path) {
+        statusBar()->showMessage(T("Quelldatei nicht lesbar: %1 – neuer Versuch beim nächsten Abspielen oder Springen")
+                                     .arg(QFileInfo(path).fileName()),
+                                 8000);
+    });
 
     // Engine -> playhead (timeline and multicam grid; in source mode the playhead stays put)
     TimelineView* tv = m_timeline->view();
@@ -826,10 +832,54 @@ void MainWindow::setProjectFormat(const ProjectFormat& format)
 
 void MainWindow::updateRenderCacheBar()
 {
+    RenderCache* cache = m_engine->renderCache();
     QVector<TimelineView::CacheSpan> spans;
-    for (const RenderCache::Span& s : m_engine->renderCache()->spans(m_project->timeline()))
-        spans << TimelineView::CacheSpan{s.start, s.end, s.done};
-    m_timeline->view()->setRenderCacheSpans(spans);
+    bool allDone = true;
+    for (const RenderCache::Span& s : cache->spans(m_project->timeline())) {
+        spans << TimelineView::CacheSpan{s.start, s.end, s.done, s.name};
+        allDone &= s.done >= 1.0;
+    }
+    m_timeline->view()->setRenderCacheSpans(spans, cache->isPaused());
+    updateRenderCacheJob(allDone);
+}
+
+void MainWindow::updateRenderCacheJob(bool allDone)
+{
+    // Rendering in the background shows as a job (bottom right) with a ✕ that pauses it: without it the user saw
+    // only the bar above the ruler and took it for a proxy he could not stop
+    if (!m_backgroundJobs) return;
+    RenderCache* cache = m_engine->renderCache();
+    const QString id = "render_cache";
+    if (cache->isRendering()) {
+        BackgroundJobs::Job job;
+        job.text = T("Render-Cache – %1 – %2 %").arg(cache->currentName()).arg(int(cache->currentProgress() * 100));
+        job.fraction = cache->currentProgress();
+        QStringList tip{T("Rendert Clips mit Effekten oder geänderter Geschwindigkeit vor, damit die Vorschau flüssig "
+                          "läuft (der Export rechnet immer aus den Originalen).")};
+        if (const QStringList waiting = cache->pendingNames(); !waiting.isEmpty())
+            tip << T("Danach: %1").arg(waiting.join(", "));
+        tip << T("✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus");
+        job.toolTip = tip.join("\n");
+        job.cancel = [cache] { cache->pauseUntilChange(); };
+        job.cancelToolTip = T("Render-Cache pausieren (bis zur nächsten Änderung)");
+        m_backgroundJobs->setJob(id, job);
+        m_renderCacheJob = true;
+        return;
+    }
+    if (!m_renderCacheJob) return;
+    if (cache->pendingCount() > 0) { // the next clip starts in a moment
+        BackgroundJobs::Job job;
+        job.text = T("Render-Cache – wartet (%1)").arg(cache->pendingNames().join(", "));
+        job.fraction = -1;
+        job.cancel = [cache] { cache->pauseUntilChange(); };
+        job.cancelToolTip = T("Render-Cache pausieren (bis zur nächsten Änderung)");
+        m_backgroundJobs->setJob(id, job);
+        return;
+    }
+    m_renderCacheJob = false;
+    if (cache->isPaused()) m_backgroundJobs->finishJob(id, T("Render-Cache pausiert bis zur nächsten Änderung"));
+    else if (allDone && cache->mode() != RenderCache::Mode::Off) m_backgroundJobs->finishJob(id, T("Render-Cache fertig"));
+    else m_backgroundJobs->removeJob(id);
 }
 
 void MainWindow::grabStill()

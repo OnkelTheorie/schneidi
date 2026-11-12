@@ -10,6 +10,7 @@
 #include "engine/ProxyManager.h"
 #include <QEventLoop>
 #include <QThread>
+#include <QThreadPool>
 
 #include <algorithm>
 #include <QElapsedTimer>
@@ -338,17 +339,23 @@ int main(int argc, char** argv)
                 if (last->icon().cacheKey() != before.last()) loop.quit();
             });
             poll.start(20);
-            QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+            QTimer::singleShot(60000, &loop, &QEventLoop::quit); // under load it takes long; quits as soon as it is there
             loop.exec();
             CHECK(last->icon().cacheKey() != before.last()); // the last one got its thumbnail
-            // Out of view at the top, still without one. The first ones may have been under way before the scroll:
-            // one per worker of the thumbnail pool (MediaStorage: a quarter of the cores, 1 to 3 - in a cgroup with
-            // all 12 cores 3, in Claude's slice with 10 cores 2)
-            const int workers = std::clamp(QThread::idealThreadCount() / 4, 1, 3);
-            int waiting = 0;
-            for (int i = workers; i < 10; ++i)
-                if (list->item(i)->icon().cacheKey() == before[i]) ++waiting;
-            CHECK_EQ(waiting, 10 - workers);
+            // Out of view at the top, still without one. Some may have been under way before the scroll: at most one
+            // per worker of the thumbnail pool (read from the pool itself, not worked out from the cores: the test ran
+            // in cgroups with other core counts than the formula assumed) - and they are the first ones (the view was
+            // at the top then). Every other one at the top waits.
+            const auto* pool = storage.findChild<QThreadPool*>();
+            const int workers = pool ? pool->maxThreadCount() : 1;
+            int loaded = 0, beyond = 0;
+            for (int i = 0; i < 10; ++i)
+                if (list->item(i)->icon().cacheKey() != before[i]) {
+                    ++loaded;
+                    if (i >= workers) ++beyond;
+                }
+            CHECK(loaded <= workers);
+            CHECK_EQ(beyond, 0);
         }
     }
 

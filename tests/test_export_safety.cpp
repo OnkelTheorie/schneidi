@@ -375,6 +375,8 @@ void testDecoderLost(const QString& root)
     CHECK(r.started);
     CHECK(!r.ok);
     if (!CHECK(!r.message.isEmpty())) std::printf("       no answer after %lld ms\n", took.elapsed());
+    // The message names the file (the user can bring it back: a disk plugged in again)
+    if (!CHECK(r.message.contains(QFileInfo(g_media).fileName()))) std::printf("       message: '%s'\n", qPrintable(r.message));
     CHECK_EQ(entries(dir), QStringList());
 }
 

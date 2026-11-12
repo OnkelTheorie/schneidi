@@ -1276,6 +1276,14 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             list << st;
         }
         o["proxies"] = list;
+    } else if (action == "render_cache") {
+        // The preview's render cache (Playback > Render Cache): mode and/or pause until the next change
+        const QString mode = a["mode"].toString().trimmed().toLower();
+        if (!mode.isEmpty() && mode != "off" && mode != "smart" && mode != "user")
+            fail("BAD_ARGUMENT", "render_cache: mode must be off, smart or user");
+        if (mode.isEmpty() && !a.contains("pause"))
+            fail("BAD_ARGUMENT", "render_cache needs 'mode' and/or 'pause' (true pauses, false resumes)");
+        h->liveRenderCacheControl(mode, a["pause"].toBool());
     } else if (action == "clean_proxies") {
         // Proxy files neither the app's project (unsaved changes included) nor a recent project needs
         // (engine/ProxyCleanup): listed, deleted only with delete:true
@@ -1328,8 +1336,8 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             o["media"] = list;
         }
     } else {
-        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, open, proxies or "
-                             "clean_proxies");
+        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, open, proxies, "
+                             "render_cache or clean_proxies");
     }
     o["app"] = Live::appState(h);
     return o;

@@ -127,6 +127,10 @@ struct Options {
     // review render (engine/picture/ReviewOverlay). Called from several threads at once. A frame with an overlay is
     // always an RGBA picture (never written straight into the encoder's planes).
     std::function<void(uint8_t* rgba, int width, int height, int64_t frame)> overlay;
+    // A media file that opened before could not be opened again (lost while the project is open: a disk or share
+    // gone, the file moved). Called from a rendering thread, at most once per attempt (a lost source is tried again
+    // after the next seek or play start: Renderer::retryLost).
+    std::function<void(const QString& path)> sourceLost;
 
     QSize outputSize() const { return output.isEmpty() ? format.size() : output; }
 };
@@ -187,6 +191,11 @@ public:
         int gradients = 0;         // gradients of luma transitions/wipes built (once per style and size)
     };
     Stats stats() const;
+    // Export: the media file whose loss stopped a frame (render() gave none), empty = none
+    QString lostSource() const;
+    // A seek or play start: sources lost while open (their file opened before) are tried again on their next request
+    // (at most every 1.5 s); never-opened files stay failed
+    void retryLost();
 
 private:
     Frame renderFrame(int64_t frame, const RenderHints& hints);

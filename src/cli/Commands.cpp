@@ -1004,7 +1004,11 @@ const QVector<Command>& commands()
                                 "{files} (show files in the app: a .schneidi project opens there - refused while the "
                                 "open one has unsaved changes -, media files come into its media pool and are "
                                 "selected; the window comes to the front), proxies "
-                                "{files?, generate?} (preview proxies; default all video files), clean_proxies "
+                                "{files?, generate?} (preview proxies; default all video files), render_cache "
+                                "{mode?, pause?} (the preview renders clips with effects or changed speed ahead in "
+                                "the background - `state` tells it as render_cache: mode, state rendering/waiting/"
+                                "paused/idle/off, clip, percent; mode off/smart/user, pause: true stops it until the "
+                                "next change, false resumes), clean_proxies "
                                 "{delete?} (proxy files neither this project nor a recently opened one needs, with the "
                                 "reason: missing/changed original, unused, other size, leftover; a dry run unless "
                                 "delete is true)", true, true},
@@ -1015,6 +1019,10 @@ const QVector<Command>& commands()
                               "and/or media files"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
+          {"mode", T::String, "render_cache: off, smart (clips with effects or changed speed) or user (only clips "
+                              "marked for it)"},
+          {"pause", T::Boolean, "render_cache: true stops rendering ahead until the next change of a cached clip, "
+                                "false resumes"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"},
           {"trust_custom_code", T::Boolean, "open: ask the user to run its custom code; only when the user said so"}},
          cmdApp},

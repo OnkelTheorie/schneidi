@@ -20,15 +20,18 @@
 #include "core/Project.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
+#include "engine/RenderCache.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/ElidedLabel.h"
 #include "ui/MediaPool.h"
 #include "ui/ProxyProgress.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QTimer>
 #include <QProgressBar>
@@ -335,6 +338,104 @@ void testFailures(MainWindow& w, Engine& engine, const QString& dir)
 
 } // namespace
 
+// Render cache (Playback > Render Cache: Smart renders clips with effects ahead): a job while it renders ("Render-Cache
+// – <clip> – 0 %", what it is and how to switch it off in the tooltip), the ruler bar names the clip and its state;
+// the ✕ pauses it until the next change of a cached clip; the app's live state tells an AI the same
+void testRenderCache(MainWindow& w, Engine& engine, const QString& dir)
+{
+    auto* jobs = w.findChild<BackgroundJobs*>();
+    auto* view = w.findChild<TimelineView*>();
+    if (!CHECK(jobs && view)) return;
+    jobs->setHoldMs(300);
+    QTest::qWait(450);
+    CHECK(jobs->isHidden());
+    const QStringList clips = makeClips(dir, "cache", 1);
+    if (!CHECK_EQ(clips.size(), 1)) return;
+    RenderCache* cache = engine.renderCache();
+    cache->clear();
+    cache->setPlaying(true); // holds the render at 0 % (it pauses while the preview plays)
+    w.importFiles(clips, true);
+    settle();
+    int id = 0;
+    for (const Track& t : w.liveProject()->timeline().video)
+        for (const Clip& c : t.clips)
+            if (c.mediaPath == clips[0]) id = c.id;
+    if (!CHECK(id > 0)) return;
+    w.editor()->addEffect({id}, "blur");
+    cache->setMode(RenderCache::Mode::Smart);
+    QElapsedTimer t;
+    t.start();
+    while (!cache->isRendering() && t.elapsed() < 10000) QTest::qWait(20);
+    settle();
+    if (!CHECK(cache->isRendering())) return;
+    CHECK_EQ(jobs->text(), T("Render-Cache – %1 – %2 %").arg("cache-1.mp4").arg(0));
+    CHECK(jobs->toolTip().contains(T("✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus")));
+    auto* cancel = jobs->findChild<QToolButton*>("background_jobs_cancel");
+    if (!CHECK(cancel && cancel->isVisible())) return;
+    CHECK_EQ(cancel->toolTip(), T("Render-Cache pausieren (bis zur nächsten Änderung)"));
+    QJsonObject live = w.liveRenderCache();
+    CHECK_EQ(live["mode"].toString(), QString("smart"));
+    CHECK_EQ(live["state"].toString(), QString("rendering"));
+    CHECK_EQ(live["clip"].toString(), QString("cache-1.mp4"));
+    // The bar at the top of the ruler: the clip and its state
+    auto rulerTip = [view] {
+        for (int x = 0; x < view->width(); x += 4)
+            if (const QString tip = view->renderCacheToolTip(QPoint(x, 1)); !tip.isEmpty()) return tip;
+        return QString();
+    };
+    CHECK(rulerTip().startsWith(T("Render-Cache: %1 – %2").arg("cache-1.mp4", T("noch nicht gerendert"))));
+    CHECK(view->renderCacheToolTip(QPoint(view->width() / 2, 20)).isEmpty()); // below the bar: not its tooltip
+    settle();
+    dump(w.findChild<QWidget*>("PageBar"), "statusbar-render-cache");
+
+    // ✕: paused until the next change
+    QTest::mouseClick(cancel, Qt::LeftButton);
+    settle();
+    CHECK(cache->isPaused());
+    CHECK(!cache->isRendering());
+    CHECK_EQ(jobs->text(), T("Render-Cache pausiert bis zur nächsten Änderung"));
+    CHECK(rulerTip().contains(T("pausiert")));
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("paused"));
+    cache->setPlaying(false);
+    QTest::qWait(2500); // longer than the rest before rendering
+    CHECK(cache->isPaused());
+    CHECK(!cache->isRendering());
+    CHECK(jobs->isHidden());
+
+    // A change of the clip resumes; at the end "done"
+    w.editor()->modifyClips({id}, "trim", [](Clip& c) { c.out -= 2; });
+    bool done = false;
+    t.restart();
+    while (!done && t.elapsed() < 60000) {
+        QTest::qWait(10);
+        done = jobs->text() == T("Render-Cache fertig");
+    }
+    CHECK(done);
+    CHECK(!cache->isPaused());
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("idle"));
+    CHECK_EQ(w.liveRenderCache()["cached"].toInt(), 1);
+    CHECK(rulerTip().contains(T("fertig")));
+    // An AI pauses it the same way and resumes it (pause:false)
+    w.editor()->modifyClips({id}, "trim", [](Clip& c) { c.out -= 2; });
+    t.restart();
+    while (!cache->isRendering() && t.elapsed() < 10000) QTest::qWait(10);
+    w.liveRenderCacheControl("", true);
+    CHECK(cache->isPaused());
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("paused"));
+    w.liveRenderCacheControl("", false);
+    CHECK(!cache->isPaused());
+    CHECK(cache->pendingCount() > 0 || cache->isRendering());
+    t.restart();
+    while (w.liveRenderCache()["state"].toString() != "idle" && t.elapsed() < 60000) QTest::qWait(20);
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("idle"));
+    // ... and switches it off
+    w.liveRenderCacheControl("off", false);
+    CHECK(cache->mode() == RenderCache::Mode::Off);
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("off"));
+    cache->setMode(RenderCache::Mode::User);
+    cache->clear();
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -363,5 +464,6 @@ int main(int argc, char** argv)
     CHECK(QTest::qWaitForWindowActive(&w));
     testApp(w, engine, dir.path());
     testFailures(w, engine, dir.path());
+    testRenderCache(w, engine, dir.path());
     return Check::result();
 }

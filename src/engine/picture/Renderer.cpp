@@ -295,6 +295,7 @@ struct VideoSource {
     int length = 0;     // frames in the project rate (as MLT's producer length)
     bool hasAlpha = false; // pixel format with alpha
     QString file;          // the file decoded (the proxy in a preview with proxies)
+    QString media;         // the media file of the project it stands for (named when it is lost)
     qint64 modified = 0;   // its time of change at opening (ms since the epoch): names its pictures with the path
 };
 
@@ -308,6 +309,9 @@ struct Source {
     std::shared_ptr<StillSource> still;
     bool failed = false;
     FileStamp::Stamp stamp; // of the media file when opened: another one = the file was overwritten, open it again
+    std::chrono::steady_clock::time_point opened; // when it was opened (or the open failed): a lost one is retried
+    bool lost = false;  // failed although the file opened before (Renderer::retryLost tries it again)
+    uint64_t retry = 0; // Impl::retryGen when it was opened
     std::chrono::steady_clock::time_point used;
     int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
 };
@@ -319,6 +323,12 @@ thread_local const RenderHints* t_hints = nullptr;
 thread_local bool t_exact = true;
 // A video's decoder was lost for good (Video::Reader::failed): an export renders no frame without it (render() null)
 thread_local bool t_sourceLost = false;
+thread_local QString t_lostFile; // its media file
+// A lost source (its file opened before, then could not be opened or read: a USB disk or share gone) is opened again
+// after the next seek or play start (Renderer::retryLost), and at most this often: a file back with the same content
+// (FileStamp sees no change) shows again, a file still gone costs one failed open per seek, never one per frame (each
+// open of a gone share may block). Files that never opened stay failed (offline media, unreadable imports).
+constexpr std::chrono::milliseconds kRetryBroken{1500};
 
 // GPU path (0.19): a clip whose compositing graph the card may evaluate. clipLayer() of that clip plans the graph
 // (gpu/CompGpu) instead of evaluating it, and hands back where the result goes instead of drawing it
@@ -434,6 +444,10 @@ struct Renderer::Impl {
 
     std::mutex sourceMutex;
     std::map<QString, Source> sources;
+    QSet<QString> opened; // media files opened once (sourceMutex): failing later = lost
+    std::atomic<uint64_t> retryGen{0}; // counts retryLost(): a lost source is tried again once per count
+    mutable std::mutex lostMutex;
+    QString lost; // media file of the last frame that went without a lost source (lostSource)
     std::mutex lengthMutex;
     std::map<QString, int> lengths; // file -> length in project frames (mediaLength)
 
@@ -492,12 +506,19 @@ struct Renderer::Impl {
         const QString key = lane + '|' + file;
         {
             std::vector<Source> stale; // closed outside the lock
+            Source retried;            // a broken one tried again (closed outside the lock too)
             std::lock_guard lock(sourceMutex);
             auto it = sources.find(key);
             if (it != sources.end() && it->second.stamp == stamp) {
-                it->second.used = std::chrono::steady_clock::now();
-                it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
-                return it->second;
+                const auto now = std::chrono::steady_clock::now();
+                const bool lost = it->second.lost || (it->second.video && it->second.video->reader->failed());
+                if (!lost || it->second.retry == retryGen.load() || now - it->second.opened < kRetryBroken) {
+                    it->second.used = now;
+                    it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
+                    return it->second;
+                }
+                retried = std::move(it->second); // lost, and a seek or play since: try the file again
+                sources.erase(it);
             }
             // Overwritten under the same name: everything kept of the old content goes - in every lane (mediaLength
             // reads any lane's source: one of the old content would bring the old length back)
@@ -520,6 +541,7 @@ struct Renderer::Impl {
         }
         Source s;
         s.stamp = stamp;
+        s.retry = retryGen.load();
         if (looksLikeStill(file)) {
             QImageReader reader(file);
             reader.setAutoTransform(true);
@@ -570,16 +592,31 @@ struct Renderer::Impl {
                     v->length = int(double(v->info.duration) / AV_TIME_BASE * options.format.rate.fps() + 0.5);
                 if (direction < 0) r->setBehind(std::max(4, backwardKeep(v->info.width, v->info.height)));
                 v->file = file;
+                v->media = path;
                 v->modified = QFileInfo(file).lastModified().toMSecsSinceEpoch();
                 v->reader = std::move(r);
                 s.video = std::move(v);
             }
         }
         s.failed = !s.video && !s.still;
-        s.used = std::chrono::steady_clock::now();
+        s.used = s.opened = std::chrono::steady_clock::now();
         s.usedFrame = t_frame;
-        std::lock_guard lock(sourceMutex);
-        return sources.emplace(key, s).first->second;
+        bool lost = false;
+        Source result;
+        {
+            std::lock_guard lock(sourceMutex);
+            if (!s.failed) opened.insert(path);
+            else lost = s.lost = opened.contains(path);
+            result = sources.emplace(key, s).first->second;
+        }
+        if (lost) {
+            // It opened before: lost while the project is open (a disk or share gone, the file moved). An export stops
+            // naming it; the preview tells (Options::sourceLost) and tries again on a later request (kRetryBroken)
+            t_sourceLost = true;
+            t_lostFile = path;
+            if (options.sourceLost) options.sourceLost(path);
+        }
+        return result;
     }
 
     // Pictures a decoder keeps behind the last request while playing backwards: a whole GOP if memory allows (each
@@ -1029,7 +1066,10 @@ struct Renderer::Impl {
         bool exact = true;
         auto pic = v.reader->picture(request, fetch, &exact);
         if (!exact) t_exact = false;
-        if (!pic && v.reader->failed()) t_sourceLost = true;
+        if (!pic && v.reader->failed()) {
+            t_sourceLost = true;
+            t_lostFile = v.media;
+        }
         if (!pic || !pic->frame) return {};
         return pic;
     }
@@ -2875,9 +2915,15 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
     t_sourceLost = false;
+    t_lostFile.clear();
     // Export: a frame without a video whose decoder was lost is no frame (the export fails, saying so, instead of
     // writing the clip black)
-    const auto lost = [&] { return t_sourceLost && d->options.mode == Mode::Export; };
+    const auto lost = [&] {
+        if (!t_sourceLost || d->options.mode != Mode::Export) return false;
+        std::lock_guard lock(d->lostMutex);
+        d->lost = t_lostFile;
+        return true;
+    };
 
     if (hints.yuv && d->passThrough(int(frame), ctx, *hints.yuv)) {
         t_hints = nullptr;
@@ -3112,6 +3158,17 @@ int64_t Renderer::length() const
 }
 
 const Options& Renderer::options() const { return d->options; }
+
+void Renderer::retryLost()
+{
+    ++d->retryGen;
+}
+
+QString Renderer::lostSource() const
+{
+    std::lock_guard lock(d->lostMutex);
+    return d->lost;
+}
 
 Renderer::Stats Renderer::stats() const
 {

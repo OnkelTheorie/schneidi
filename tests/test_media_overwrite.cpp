@@ -6,7 +6,8 @@
 // Covered: a renderer that keeps its source open (viewer, export, comp Media node: Renderer::source), MediaStills
 // (thumbnail/trim workers), StillFetcher, MediaCache thumbnails, Engine::checkFiles; stills (PNG) and video; the sound
 // mix (Audio::Player::reopenFiles: a new mix reads the new samples). A file that still grows is no change until it
-// has held still for the settle time (kSettleMs, shortened here); observers may add/remove observers from inside.
+// has held still for the settle time (kSettleMs, shortened here); observers may add/remove observers from inside. A
+// source lost and back as it was shows again on a later request (no change of its stamp).
 
 #include "render_check.h"
 
@@ -339,6 +340,55 @@ void testMissing(const QString& file)
     FileStamp::removeObserver(id);
 }
 
+// A source lost while the project is open (a USB disk pulled, a share gone, the file moved away) and back as it was:
+// FileStamp sees no change then, so the broken source used to stay - the preview black until the file changed. Now a
+// broken source is opened again on a later request (play, seek; at most every 1.5 s), and the preview is told the file.
+void testLostAndBack(const QString& file, const QString& red)
+{
+    std::printf("-- lost and back\n");
+    if (!CHECK(overwrite(red, file, 60))) return;
+    FileStamp::now(file);
+    ProjectFormat format;
+    format.width = 320;
+    format.height = 180;
+    Picture::Options o;
+    o.format = format;
+    o.mode = Picture::Mode::Preview;
+    QStringList lost; // Options::sourceLost (a rendering thread; here the calling one)
+    o.sourceLost = [&lost](const QString& path) { lost << path; };
+    Picture::Renderer renderer(Picture::mediaTimeline(file), o);
+    CHECK_COLOR(renderer.render(0).toImage(), Color::Red);
+    const QString away = file + ".away";
+    if (!CHECK(QFile::rename(file, away))) return;
+    // Its decoder closed meanwhile (here: the clip left the timeline a while, then came back by undo; a USB disk pulled
+    // while it is open fails its reads - Video::Reader::failed - and counts the same)
+    renderer.update(Timeline{});
+    renderer.trim(std::chrono::steady_clock::now() + std::chrono::minutes(5));
+    CHECK_EQ(renderer.stats().sourcesOpen, 0);
+    renderer.update(Picture::mediaTimeline(file));
+    CHECK(colorOf(renderer.render(0).toImage()) != Color::Red); // gone: nothing to show
+    CHECK_EQ(lost, QStringList{file});
+    CHECK(QFile::rename(away, file)); // back as it was: the same stamp
+    FileStamp::now(file);
+    CHECK(colorOf(renderer.render(0).toImage()) != Color::Red); // tried a moment ago: not again yet
+    CHECK_EQ(lost.size(), 1); // and not told again
+    QTest::qWait(1600);
+    CHECK(colorOf(renderer.render(0).toImage()) != Color::Red); // no seek or play since: not on every request
+    renderer.retryLost(); // a seek (Engine::seek) or play start
+    CHECK_COLOR(renderer.render(0).toImage(), Color::Red); // the next request opens it again
+    CHECK_EQ(lost.size(), 1);
+
+    // A file that never opened (offline media, an unreadable import) is no lost one: not told, not retried
+    Timeline offlineTl = Picture::mediaTimeline(file);
+    offlineTl.video[0].clips[0].mediaPath = file + ".never.mp4";
+    Picture::Renderer offline(offlineTl, o);
+    offline.render(0);
+    QTest::qWait(1600);
+    offline.retryLost();
+    offline.render(0);
+    CHECK_EQ(lost.size(), 1);
+}
+
 // Observers are called without a FileStamp lock held: one may add another and remove itself from inside
 void testObservers(const QString& file)
 {
@@ -453,6 +503,7 @@ int main(int argc, char** argv)
     }
     testFile(dir.filePath("clip.mp4"), mp4[0], mp4[1], mp4[2]);
     testCaches(dir.filePath("clip-cache.mp4"), mp4[0], mp4[1]);
+    testLostAndBack(dir.filePath("lost.mp4"), mp4[0]);
 
     QStringList wav;
     for (const char* amp : {"0.8", "0.15"}) {

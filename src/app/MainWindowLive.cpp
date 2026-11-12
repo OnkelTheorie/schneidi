@@ -11,6 +11,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
+#include "engine/RenderCache.h"
 #include "engine/RenderQueue.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
@@ -77,6 +78,47 @@ QJsonObject MainWindow::liveProxyState(const QString& file) const
 }
 
 QString MainWindow::liveProxyWriting() const { return m_engine->proxies()->writing(); }
+
+QJsonObject MainWindow::liveRenderCache() const
+{
+    const RenderCache* cache = m_engine->renderCache();
+    static const char* const kModes[] = {"off", "smart", "user"};
+    QJsonObject o{{"mode", kModes[int(cache->mode())]}};
+    int clips = 0, cached = 0;
+    for (const RenderCache::Span& s : cache->spans(m_project->timeline())) {
+        ++clips;
+        cached += s.done >= 1.0;
+    }
+    o["clips"] = clips;   // clips of the open timeline the mode caches
+    o["cached"] = cached; // of those: rendered
+    o["waiting"] = cache->pendingCount();
+    QString state = cache->mode() == RenderCache::Mode::Off ? "off"
+                    : cache->isRendering()                  ? "rendering"
+                    : cache->isPaused()                     ? "paused"
+                    : cache->pendingCount() > 0             ? "waiting"
+                                                            : "idle";
+    o["state"] = state;
+    if (cache->isRendering()) {
+        o["clip"] = cache->currentName();
+        o["percent"] = int(cache->currentProgress() * 100);
+    }
+    return o;
+}
+
+void MainWindow::liveRenderCacheControl(const QString& mode, bool pause)
+{
+    RenderCache* cache = m_engine->renderCache();
+    if (mode == "off") cache->setMode(RenderCache::Mode::Off);
+    else if (mode == "smart") cache->setMode(RenderCache::Mode::Smart);
+    else if (mode == "user") cache->setMode(RenderCache::Mode::User);
+    if (pause) {
+        cache->pauseUntilChange();
+    } else {
+        cache->resume(); // pause:false (or only a mode) ends a pause
+        m_engine->syncRenderCache();
+    }
+    updateRenderCacheBar();
+}
 
 bool MainWindow::liveOpen(const QStringList& files, bool byUser, QString* error)
 {

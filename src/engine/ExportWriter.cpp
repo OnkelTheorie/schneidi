@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ExportWriter.h"
+#include "core/I18n.h"
 
 #include "engine/ExternalEncoder.h"
 #include "engine/OpenMedia.h"
@@ -9,6 +10,7 @@
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
@@ -629,7 +631,7 @@ struct ExportWriter::Impl {
             if (pump) {
                 item.picture = pump->take(i);
                 if (!item.picture) {
-                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    if (!stop) fail(noFrame(i));
                     return false;
                 }
                 item.restart = restart && i == a;
@@ -638,6 +640,15 @@ struct ExportWriter::Impl {
             if (!push(std::move(item))) return false;
         }
         return !stop;
+    }
+
+    // Why output frame i has no picture: a source file lost while exporting is named (the user can bring it back)
+    QString noFrame(int i) const
+    {
+        const QString lost = o.renderer ? o.renderer->lostSource() : QString();
+        if (!lost.isEmpty())
+            return T("Quelldatei nicht mehr lesbar: %1 (Bild %2)").arg(QDir::toNativeSeparators(lost)).arg(i);
+        return QStringLiteral("no frame %1 from the timeline").arg(i);
     }
 
     void fail(const QString& message, bool encoderProblem = false)
@@ -691,7 +702,7 @@ struct ExportWriter::Impl {
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
                 if (!f) {
-                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    if (!stop) fail(noFrame(i));
                     return false;
                 }
                 pass.add(ownPicture(f.get()), ownKeyAt(i));
@@ -963,7 +974,7 @@ struct ExportWriter::Impl {
             Item item;
             item.picture = pump->take(i);
             if (!item.picture) {
-                if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                if (!stop) fail(noFrame(i));
                 return false;
             }
             item.restart = i == a;

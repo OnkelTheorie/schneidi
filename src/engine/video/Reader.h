@@ -178,11 +178,13 @@ public:
     // Long stream analyses run by this process (files the first analysis could not describe; once per file and session)
     static int longAnalyses();
     // The decoder is lost for good: it could not be opened again (software after a hardware failure, after
-    // hibernating). Every picture() answers nullptr from then on, at once.
+    // hibernating) or the file could not be read any more (its disk gone). Every picture() answers nullptr from then on.
     bool failed() const;
     // Tests only: the next decoder thread to look acts as if its hardware decoder failed, and from then on no software
     // decoder opens (false: back to normal)
     static void loseDecoderForTests(bool on);
+    // Tests only: the end of every file reads as EIO (as some demuxers say for data cut short)
+    static void eioAtEndForTests(bool on);
 
 private:
     Reader();

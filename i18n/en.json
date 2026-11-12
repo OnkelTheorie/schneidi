@@ -3022,5 +3022,19 @@
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "“Neutral” is a new project as always: nothing muted, nothing renamed, the format comes from the first clip. The chosen template also applies to the project schneidi starts with.",
  "… und %1 weitere": "… and %1 more",
  "◀ Verfolgen": "◀ Track",
- "♪ Audio": "♪ Audio"
+ "♪ Audio": "♪ Audio",
+ "%1 % gerendert": "%1 % rendered",
+ "Blau = fertig vorgerendert, Rot = fehlt noch. Ausschalten: Wiedergabe › Render-Cache › Aus": "Blue = rendered ahead, red = still to render. Switch off: Playback › Render Cache › None",
+ "Danach: %1": "Next: %1",
+ "Quelldatei nicht lesbar: %1 – neuer Versuch beim nächsten Abspielen oder Springen": "Source file not readable: %1 – trying again on the next play or seek",
+ "Quelldatei nicht mehr lesbar: %1 (Bild %2)": "Source file no longer readable: %1 (frame %2)",
+ "Render-Cache pausieren (bis zur nächsten Änderung)": "Pause the render cache (until the next change)",
+ "Render-Cache pausiert bis zur nächsten Änderung": "Render cache paused until the next change",
+ "Render-Cache – %1 – %2 %": "Render cache – %1 – %2 %",
+ "Render-Cache – wartet (%1)": "Render cache – waiting (%1)",
+ "Render-Cache: %1 – %2": "Render cache: %1 – %2",
+ "Rendert Clips mit Effekten oder geänderter Geschwindigkeit vor, damit die Vorschau flüssig läuft (der Export rechnet immer aus den Originalen).": "Renders clips with effects or changed speed ahead so the preview plays smoothly (the export always renders from the originals).",
+ "noch nicht gerendert": "not rendered yet",
+ "pausiert": "paused",
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
 }
