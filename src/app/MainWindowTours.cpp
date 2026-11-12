@@ -340,6 +340,10 @@ void MainWindow::setupTours(QMenu* help)
             QListWidget* list = m_effects->list();
             for (int i = 0; i < list->count(); ++i)
                 if (list->item(i)->data(Qt::UserRole).toString() == CompUi::kRecipePrefix + recipe && !list->item(i)->isHidden()) {
+                    // More recipes than the list shows (0.22: ten; longer names in Russian, a big font): scrolled into
+                    // view, so the step points at it instead of nowhere
+                    if (!list->viewport()->rect().contains(list->visualItemRect(list->item(i))))
+                        list->scrollToItem(list->item(i), QAbstractItemView::EnsureVisible);
                     const QRect r = list->visualItemRect(list->item(i)).intersected(list->viewport()->rect());
                     return {list->viewport(), r};
                 }
