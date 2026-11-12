@@ -32,8 +32,8 @@
 namespace schneidi::h264 {
 
 // H264Cabac.cpp
-void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                  int cbfInc, int* out);
+double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
+                    int cbfInc, int* out, double* energy = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
 static const bool gTiming = std::getenv("H264_TIMING") != nullptr;
@@ -61,6 +61,9 @@ double gStatT8Total = 0;
 double gStatSplitN[20] = {}, gStatSplitWin[20] = {}, gStatSplitLoss[20] = {}, gStatInterTotal = 0; // by whole.cost / sqrt(lambda)
 std::atomic<long> gStatT8Try[20] = {}, gStatT8Win[20] = {}; // by sa8d / satd of the chosen layout, 0.05 steps from 0.6
 std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of the intra estimate to the inter cost
+// Mode decision by estimate (see encodeMbP): per bucket of the estimates' distance the cases, wrong
+// picks and the RD cost lost by trusting the estimate.
+double gStatEstT8[8][3] = {}, gStatEstSplit[8][3] = {}, gStatEstTotal = 0;
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
@@ -1686,6 +1689,12 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
         std::fprintf(stderr, "\nstats: split by 2*log2(whole/sqrt(lambda)+1): n/wins/loss permille:");
         for (int i = 0; i < 20; ++i)
             std::fprintf(stderr, " [%d] %.0f/%.0f/%.2f", i, gStatSplitN[i], gStatSplitWin[i], 1000.0 * gStatSplitLoss[i] / std::max(1.0, gStatInterTotal));
+        std::fprintf(stderr, "\nstats: estimate, transform by |j4-j8|/lambda (<0.5 <1 <2 <4 <8 <16 <32 more) n/wrong/loss permille:");
+        for (int i = 0; i < 8; ++i)
+            std::fprintf(stderr, " %.0f/%.0f/%.3f", gStatEstT8[i][0], gStatEstT8[i][1], 1000.0 * gStatEstT8[i][2] / std::max(1.0, gStatEstTotal));
+        std::fprintf(stderr, "\nstats: estimate, split by jSplit/jWhole (<0.8 <0.9 <0.95 <1 <1.05 <1.1 <1.2 more) n/split wins/gain permille:");
+        for (int i = 0; i < 8; ++i)
+            std::fprintf(stderr, " %.0f/%.0f/%.3f", gStatEstSplit[i][0], gStatEstSplit[i][1], 1000.0 * gStatEstSplit[i][2] / std::max(1.0, gStatEstTotal));
         std::fprintf(stderr, "\nstats: t8 loss if only 4x4 / only 8x8 (permille of the inter cost):");
         for (int i = 0; i < 20; ++i)
             std::fprintf(stderr, " %.2f/%.2f", 1000.0 * gStatT8LossIf4[i] / std::max(1.0, gStatT8Total),
@@ -3115,6 +3124,11 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels, double
     forward8x8(residual, w64);
     const double step2 = double(1 << (qp / 6));
     const double* scale = kScale[size_t(qp % 6)].data();
+    if (!levels) { // the trellis takes the real-valued levels only
+        for (int k = 0; k < 64; ++k)
+            real[k] = 4.0 * double(w64[k]) / (scale[k] * step2);
+        return;
+    }
     for (int k = 0; k < 64; ++k) {
         const double x = 4.0 * double(w64[k]) / (scale[k] * step2);
         const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
@@ -3682,6 +3696,16 @@ double FrameCoder::refineQuarter(const RefPic& R, int mbx, int mby, int x4, int 
 void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
                                InterResidual& ir)
 {
+    planInterLuma(mbx, mby, lp, qp, lambda, t8, trellis, ir, nullptr);
+    reconInterLuma(mbx, mby, lp, qp, t8, io, ir);
+}
+
+// First half of coding an inter macroblock's luma residual: transform and quantisation (trellis,
+// decimation) into ir. With est (trellis path only, else left at -1): the trellis' own estimate of
+// squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
+void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
+                               InterResidual& ir, double* est)
+{
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int qpDiv = qp / 6, qpMod = qp % 6;
     const int qbits = 15 + qpDiv;
@@ -3689,18 +3713,22 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     int (*levels)[16] = ir.levels;
     int (*levels8)[64] = ir.levels8;
     int cbpLuma = 0; // levels8 is only read with t8, which writes all of it
+    const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+    if (est)
+        *est = -1;
     if (t8) {
         // No decimation here: measured, it costs more quality than it saves for 8x8 blocks.
+        double sum = 0;
         for (int b8 = 0; b8 < 4; ++b8) {
             const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
             int res[64];
             for (int y = 0; y < 8; ++y)
                 for (int x = 0; x < 8; ++x)
                     res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-            const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
             double real[64];
-            quantize8x8(res, qp, 1.0 / 6.0, levels8[b8], real);
-            if (live && cfg_.effort > 0 && trellis) {
+            const bool trellisPath = live && cfg_.effort > 0 && trellis;
+            quantize8x8(res, qp, 1.0 / 6.0, trellisPath ? nullptr : levels8[b8], real);
+            if (trellisPath) {
                 // Pixel error per level unit, by QP and scan position (computed once).
                 static const auto kScale8 = [] {
                     std::array<std::array<double, 64>, 52> t{};
@@ -3717,39 +3745,46 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 for (int s = 0; s < 64; ++s)
                     xs[s] = real[kZigzag8[s]];
                 int scanLv[64];
-                cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv);
-                for (int s = 0; s < 64; ++s)
+                double energy = 0;
+                const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv, est ? &energy : nullptr);
+                bool any = false;
+                for (int s = 0; s < 64; ++s) {
                     levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
+                    any |= scanLv[s] != 0;
+                }
+                sum += any ? j : energy;
+                if (any)
+                    cbpLuma |= 1 << b8;
+            } else {
+                for (int k = 0; k < 64; ++k)
+                    if (levels8[b8][k] != 0) {
+                        cbpLuma |= 1 << b8;
+                        break;
+                    }
             }
-        }
-        for (int b8 = 0; b8 < 4; ++b8) {
-            const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
-            int count = 0;
-            for (int k = 0; k < 64; ++k)
-                count += levels8[b8][k] != 0;
-            if (count)
-                cbpLuma |= 1 << b8;
-            int d[64], r[64];
-            dequant8x8(levels8[b8], qp, d);
-            inverse8x8(d, r);
-            for (int y = 0; y < 8; ++y)
-                for (int x = 0; x < 8; ++x)
-                    recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 8 + x]);
-            for (int k = 0; k < 64; ++k)
-                io.syn.luma8[b8][k] = levels8[b8][kZigzag8[k]];
         }
         for (int b = 0; b < 16; ++b)
             std::fill(levels[b], levels[b] + 16, 0);
+        if (est && live && cfg_.effort > 0 && trellis)
+            *est = sum;
+        ir.cbpLuma = cbpLuma;
+        return;
     }
-    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
+    double jBlk[16], eBlk[16];
+    bool zeroBlk[16] = {}; // known to be all zero (no score to compute)
+    const bool trellisPath = cfg_.effort > 0 && live && trellis;
+    for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
         int res[16], coef[16];
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-        forward4x4(res, coef);
-        const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
-        if (cfg_.effort > 0 && live && trellis) {
+        if (trellisPath) {
+            forward4x4Diff(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, lp + oy * 16 + ox, 16, coef);
+        } else {
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
+            forward4x4(res, coef);
+        }
+        if (trellisPath) {
             // Trellis with CABAC costs on real-valued levels.
             static const auto kScale4 = [] {
                 std::array<std::array<double, 16>, 52> t{};
@@ -3762,16 +3797,26 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                     }
                 return t;
             }();
+            static const auto kMfScan = [] { // the quantisation multiplier by QP % 6 and scan position
+                std::array<std::array<double, 16>, 6> t{};
+                for (int q = 0; q < 6; ++q)
+                    for (int s = 0; s < 16; ++s)
+                        t[size_t(q)][size_t(s)] = kQuantMf[q][posClass(kZigzag[s])];
+                return t;
+            }();
             double xs[16];
             const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
-            for (int s = 0; s < 16; ++s) {
-                const int r = kZigzag[s];
-                xs[s] = double(coef[r]) * kQuantMf[qpMod][posClass(r)] * invStep;
-            }
-            int scanLv[16];
-            cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv);
+            const double* mf = kMfScan[size_t(qpMod)].data();
             for (int s = 0; s < 16; ++s)
+                xs[s] = double(coef[kZigzag[s]]) * mf[s] * invStep;
+            int scanLv[16];
+            jBlk[blkIdx] = cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr);
+            int any = 0;
+            for (int s = 0; s < 16; ++s) {
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
+                any |= scanLv[s];
+            }
+            zeroBlk[blkIdx] = any == 0;
         } else if (cfg_.effort > 0 && !live) {
             // Round to nearest, then let the rate-distortion pass decide which levels to lower.
             for (int i = 0; i < 16; ++i)
@@ -3784,33 +3829,71 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     }
     // Decimation: a few lone +-1 levels cost more bits than they bring back.
     int scores[16], mbScore = 0;
-    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
-        scores[blkIdx] = decimateScore(levels[blkIdx]);
+    for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        scores[blkIdx] = zeroBlk[blkIdx] ? 0 : decimateScore(levels[blkIdx]);
         mbScore += scores[blkIdx];
     }
-    for (int b8 = 0; b8 < 4 && !t8; ++b8) {
+    double sum = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
         const int s = scores[b8 * 4] + scores[b8 * 4 + 1] + scores[b8 * 4 + 2] + scores[b8 * 4 + 3];
         if (s < 4 || mbScore < 6)
             for (int k = 0; k < 4; ++k)
                 std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
+        else
+            cbpLuma |= 1 << b8; // a kept group has a level (its score is not 0)
+        if (est && trellisPath)
+            for (int k = 0; k < 4; ++k)
+                sum += (cbpLuma >> b8) & 1 ? jBlk[b8 * 4 + k] : eBlk[b8 * 4 + k];
     }
-    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
-        const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
-        bool any = false;
-        int d[16];
-        for (int i = 0; i < 16; ++i) {
-            any |= levels[blkIdx][i] != 0;
-            d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
+    if (est && trellisPath)
+        *est = sum;
+    ir.cbpLuma = cbpLuma;
+}
+
+// Second half: reconstruction of the planned levels over the prediction lp (and the 8x8 levels
+// into the syntax).
+void FrameCoder::reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, bool t8, MbOut& io, const InterResidual& ir)
+{
+    const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    const int qpDiv = qp / 6, qpMod = qp % 6;
+    const int (*levels)[16] = ir.levels;
+    const int (*levels8)[64] = ir.levels8;
+    if (t8) {
+        for (int b8 = 0; b8 < 4; ++b8) {
+            const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
+            if (!((ir.cbpLuma >> b8) & 1)) {
+                for (int y = 0; y < 8; ++y)
+                    std::memcpy(&recY_[lumaOff + size_t(oy + y) * padW_ + ox], lp + (oy + y) * 16 + ox, 8);
+                std::memset(io.syn.luma8[b8], 0, sizeof(io.syn.luma8[b8]));
+                continue;
+            }
+            int d[64], r[64];
+            dequant8x8(levels8[b8], qp, d);
+            inverse8x8(d, r);
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 8; ++x)
+                    recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 8 + x]);
+            for (int k = 0; k < 64; ++k)
+                io.syn.luma8[b8][k] = levels8[b8][kZigzag8[k]];
         }
-        if (any)
-            cbpLuma |= 1 << (blkIdx >> 2);
+        return;
+    }
+    for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
+        if (!((ir.cbpLuma >> (blkIdx >> 2)) & 1)) {
+            for (int y = 0; y < 4; ++y)
+                std::memcpy(&recY_[lumaOff + size_t(oy + y) * padW_ + ox], lp + (oy + y) * 16 + ox, 4);
+            continue;
+        }
+        int d[16];
+        for (int i = 0; i < 16; ++i)
+            d[i] = (levels[blkIdx][i] * kDequantV[qpMod][posClass(i)]) << qpDiv;
         int r[16];
         inverse4x4(d, r);
         for (int y = 0; y < 4; ++y)
             for (int x = 0; x < 4; ++x)
                 recY_[lumaOff + size_t(oy + y) * padW_ + ox + x] = clip1(lp[(oy + y) * 16 + ox + x] + r[y * 4 + x]);
     }
-    ir.cbpLuma = cbpLuma;
 }
 
 // The part of an inter macroblock after its header: coded block pattern, mb_qp_delta and the
@@ -4096,49 +4179,54 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // Prediction and chroma coding of a layout do not depend on the transform size: kept for
     // the second coding of the same layout (8x8 transform).
     struct PredCache {
-        bool valid = false;
+        bool valid = false, chroma = false;
         uint8_t lp[256], cp[2][64], recU[64], recV[64];
         ChromaMb ch;
     };
     PredCache predCache[2]; // whole, split
     const int cw = padW_ / 2;
     const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
-    auto encodeInter = [&](const Choice& best, MbOut& io, bool t8) {
+    auto predictLayout = [&](const Choice& c) -> PredCache& {
+        PredCache& pc = predCache[c.layout == 0 ? 0 : 1];
+        if (!pc.valid) {
+            const Layout& layout = kLayouts[c.layout];
+            for (int p = 0; p < layout.count; ++p) {
+                const Part& P = layout.parts[p];
+                motionCompensate(*refs_[size_t(c.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, c.mv[p][0], c.mv[p][1], pc.lp, pc.cp);
+            }
+            pc.valid = true;
+        }
+        return pc;
+    };
+    // planned: the luma levels of this layout and transform from planInterLuma (else coded here).
+    auto encodeInter = [&](const Choice& best, MbOut& io, bool t8, const InterResidual* planned = nullptr) {
         BitWriter& interBits = io.bw;
         const Layout& layout = kLayouts[best.layout];
-        PredCache& pc = predCache[best.layout == 0 ? 0 : 1];
+        PredCache& pc = predictLayout(best);
         for (int p = 0; p < layout.count; ++p) {
             const Part& P = layout.parts[p];
-            if (!pc.valid)
-                motionCompensate(*refs_[size_t(best.ref[p])], mbx, mby, P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1],
-                                 lp, cp);
             setBlocks(P.x4, P.y4, P.w4, P.h4, best.mv[p][0], best.mv[p][1], best.ref[p]);
         }
-        if (pc.valid) {
-            std::memcpy(lp, pc.lp, sizeof(lp));
-            std::memcpy(cp, pc.cp, sizeof(cp));
-        } else {
-            std::memcpy(pc.lp, lp, sizeof(lp));
-            std::memcpy(pc.cp, cp, sizeof(cp));
-        }
-        InterResidual res;
-        codeInterLuma(mbx, mby, lp, qp, lambda, t8, trellisNow, io, res);
-        ChromaMb ch;
-        if (pc.valid) {
-            ch = pc.ch;
+        InterResidual own;
+        if (planned)
+            reconInterLuma(mbx, mby, pc.lp, qp, t8, io, *planned);
+        else
+            codeInterLuma(mbx, mby, pc.lp, qp, lambda, t8, trellisNow, io, own);
+        const InterResidual& res = planned ? *planned : own;
+        if (pc.chroma) {
             for (int y = 0; y < 8; ++y) {
                 std::memcpy(&recU_[chromaOff + size_t(y) * cw], pc.recU + y * 8, 8);
                 std::memcpy(&recV_[chromaOff + size_t(y) * cw], pc.recV + y * 8, 8);
             }
         } else {
-            analyseChroma(mbx, mby, ch, cp);
-            pc.ch = ch;
+            analyseChroma(mbx, mby, pc.ch, pc.cp);
             for (int y = 0; y < 8; ++y) {
                 std::memcpy(pc.recU + y * 8, &recU_[chromaOff + size_t(y) * cw], 8);
                 std::memcpy(pc.recV + y * 8, &recV_[chromaOff + size_t(y) * cw], 8);
             }
-            pc.valid = true;
+            pc.chroma = true;
         }
+        const ChromaMb& ch = pc.ch;
         clearNz();
 
         io.syn.kind = MbSyntax::Kind::Inter;
@@ -4201,17 +4289,111 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             return 2;
         return 0;
     };
-    MbOut interBits;
-    const int pickWhole = transformPick(whole);
-    double costInter = encodeInter(whole, interBits, pickWhole == 1);
-    int bestPick = pickWhole;
-    bool chosenInterDelta = interDelta;
-    MbState interState;
-    saveMb(mbx, mby, interState);
-    Choice best = whole;
     // Try the split for real when its estimate is close or better.
     // Measured: 1.0 is as fast as 1.1 and -0.04 % BD-rate (0.95: +0.44 %). H264_SPLITF overrides.
     static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.0;
+    MbOut interBits;
+    double costInter = 1e300;
+    bool chosenInterDelta = false;
+    MbState interState;
+    Choice best = whole;
+    // Mode decision by estimate (CABAC, High profile): each candidate (16x16 or the best split, 4x4 or
+    // 8x8 transform) is transformed and quantised with the trellis, whose own cost (squared error +
+    // lambda * coefficient bits) ranks them; only the best transform of a layout is reconstructed and
+    // counted for real, the other one only when the estimates are within kEstBoth * lambda, and the
+    // split only when its estimate is below kEstSplit times the 16x16 one. Measured (two-pass, AQ +
+    // tree, 600 pictures CS2, BD-rate PSNR-Y / SSIM-Y / instructions against coding every candidate):
+    // -0.40 / -0.33 % / -1.5 % (the split now competes with its best transform, not only with 4x4;
+    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit 1.0: -0.30 /
+    // -0.23 % / -2.0 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
+    static const int kRdEstEnv = std::getenv("H264_RDEST") ? std::atoi(std::getenv("H264_RDEST")) : -1;
+    const bool kRdEst = kRdEstEnv < 0 ? cfg_.modeEstimate : kRdEstEnv != 0;
+    static const double kEstBoth = std::getenv("H264_ESTBOTH") ? std::atof(std::getenv("H264_ESTBOTH")) : 0.0;
+    static const double kEstSplit = std::getenv("H264_ESTSPLIT") ? std::atof(std::getenv("H264_ESTSPLIT")) : 1e9;
+    const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+    const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
+    if (useEst) {
+        struct Plan {
+            InterResidual r4, r8;
+            double j4, j8;
+        };
+        auto plan = [&](const Choice& c, Plan& p) {
+            const PredCache& pc = predictLayout(c);
+            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4);
+            planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8);
+            p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
+            p.j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r8.cbpLuma, true);
+        };
+        auto consider = [&](const Choice& c, bool t8, const Plan& p) {
+            MbOut tmp;
+            const double cost = encodeInter(c, tmp, t8, t8 ? &p.r8 : &p.r4);
+            if (cost < costInter) {
+                costInter = cost;
+                chosenInterDelta = interDelta;
+                interBits = std::move(tmp);
+                saveMb(mbx, mby, interState);
+                best = c;
+            }
+            return cost;
+        };
+        auto codeLayout = [&](const Choice& c, const Plan& p) {
+            const bool t8 = p.j8 < p.j4;
+            const double dist = std::abs(p.j8 - p.j4) / lambda;
+            const double first = consider(c, t8, p);
+            double other = 1e300;
+            if (dist < kEstBoth || gStats)
+                other = consider(c, !t8, p);
+            if (gStats) {
+                const int bucket = dist < 0.5 ? 0 : dist < 1 ? 1 : dist < 2 ? 2 : dist < 4 ? 3 : dist < 8 ? 4 : dist < 16 ? 5 : dist < 32 ? 6 : 7;
+                std::lock_guard<std::mutex> l(gStatMutex);
+                gStatEstT8[bucket][0] += 1;
+                if (other < first) {
+                    gStatEstT8[bucket][1] += 1;
+                    gStatEstT8[bucket][2] += first - other;
+                }
+            }
+            return std::min(first, other);
+        };
+        Plan pw;
+        plan(whole, pw);
+        const double costWhole = codeLayout(whole, pw);
+        if (split.cost < whole.cost * kSplitTry) {
+            Plan ps;
+            plan(split, ps);
+            // Header bits of both layouts as the CAVLC count (type, references, vector differences).
+            auto headBits = [&](const Choice& c) {
+                const Layout& L = kLayouts[c.layout];
+                int bits = L.typeBits;
+                for (int p = 0; p < L.count; ++p)
+                    bits += refBits(c.ref[p]) + seBits(c.mv[p][0] - c.mvp[p][0]) + seBits(c.mv[p][1] - c.mvp[p][1]);
+                return bits;
+            };
+            const double jw = std::min(pw.j4, pw.j8) + lambda * headBits(whole);
+            const double js = std::min(ps.j4, ps.j8) + lambda * headBits(split);
+            if (js < jw * kEstSplit || gStats) {
+                const double costSplit = codeLayout(split, ps);
+                if (gStats) {
+                    const double r = js / std::max(1.0, jw);
+                    const int bucket = r < 0.8 ? 0 : r < 0.9 ? 1 : r < 0.95 ? 2 : r < 1 ? 3 : r < 1.05 ? 4 : r < 1.1 ? 5 : r < 1.2 ? 6 : 7;
+                    std::lock_guard<std::mutex> l(gStatMutex);
+                    gStatEstSplit[bucket][0] += 1;
+                    if (costSplit < costWhole) {
+                        gStatEstSplit[bucket][1] += 1;
+                        gStatEstSplit[bucket][2] += costWhole - costSplit;
+                    }
+                }
+            }
+        }
+        if (gStats) {
+            std::lock_guard<std::mutex> l(gStatMutex);
+            gStatEstTotal += costInter;
+        }
+    } else {
+    const int pickWhole = transformPick(whole);
+    costInter = encodeInter(whole, interBits, pickWhole == 1);
+    int bestPick = pickWhole;
+    chosenInterDelta = interDelta;
+    saveMb(mbx, mby, interState);
     const int splitBucket = std::clamp(int(2.0 * std::log2(whole.cost / lambdaSad + 1.0)), 0, 19);
     const double costWhole4 = costInter;
     if (split.cost < whole.cost * kSplitTry) {
@@ -4271,6 +4453,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         interBits = std::move(finalBits);
         saveMb(mbx, mby, interState);
     }
+    } // !useEst
 
     // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the motion search.
     MbOut intraBits;
@@ -5303,23 +5486,33 @@ bool FrameCoder::detectSceneCut(std::vector<uint8_t>& prevThumb_)
 // rounding), luma 4x4 blocks and chroma DC/AC alike.
 bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const
 {
-    const int qpDiv = qp / 6, qpMod = qp % 6;
-    const int qbits = 15 + qpDiv;
-    const int offset = (1 << qbits) / 6;
+    // A coefficient quantises to zero while |c| * mf + offset < 2^qbits: the largest such |c| per
+    // position class, laid out as the two row patterns of a 4x4 block (classes 0 2 0 2 / 2 1 2 1).
+    auto limits = [](int q, int* lim) {
+        const int qbits = 15 + q / 6, offset = (1 << qbits) / 6;
+        int byClass[3];
+        for (int c = 0; c < 3; ++c) {
+            const int mf = kQuantMf[q % 6][c];
+            byClass[c] = ((1 << qbits) - offset + mf - 1) / mf - 1;
+        }
+        static constexpr int kClass[8] = {0, 2, 0, 2, 2, 1, 2, 1};
+        for (int i = 0; i < 8; ++i)
+            lim[i] = byClass[kClass[i]];
+    };
+    int lim[8];
+    limits(qp, lim);
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     for (int b = 0; b < 16; ++b) {
         const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
-        int res[16], coef[16];
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-        forward4x4(res, coef);
-        for (int i = 0; i < 16; ++i)
-            if (quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, offset) != 0)
-                return false;
+        int coef[16];
+        forward4x4Diff(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, lp + oy * 16 + ox, 16, coef);
+        if (anyAbove4x4(coef, lim))
+            return false;
     }
     const int qpc = chromaQp(qp);
     const int cDiv = qpc / 6, cMod = qpc % 6, cqbits = 15 + cDiv, cOffset = (1 << cqbits) / 6;
+    int limC[8];
+    limits(qpc, limC);
     const int cw = padW_ / 2;
     const size_t co = size_t(mby * 8) * cw + mbx * 8;
     for (int c = 0; c < 2; ++c) {
@@ -5327,15 +5520,12 @@ bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const u
         int dc[4];
         for (int b = 0; b < 4; ++b) {
             const int ox = (b & 1) * 4, oy = (b >> 1) * 4;
-            int res[16], coef[16];
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x)
-                    res[y * 4 + x] = int(src[co + size_t(oy + y) * cw + ox + x]) - int(cp[c][(oy + y) * 8 + ox + x]);
-            forward4x4(res, coef);
+            int coef[16];
+            forward4x4Diff(&src[co + size_t(oy) * cw + ox], cw, cp[c] + oy * 8 + ox, 8, coef);
             dc[b] = coef[0];
-            for (int i = 1; i < 16; ++i)
-                if (quantize(coef[i], kQuantMf[cMod][posClass(i)], cqbits, cOffset) != 0)
-                    return false;
+            coef[0] = 0; // the DC goes through its own transform below
+            if (anyAbove4x4(coef, limC))
+                return false;
         }
         const int f[4] = {dc[0] + dc[1] + dc[2] + dc[3], dc[0] - dc[1] + dc[2] - dc[3], dc[0] + dc[1] - dc[2] - dc[3],
                           dc[0] - dc[1] - dc[2] + dc[3]};

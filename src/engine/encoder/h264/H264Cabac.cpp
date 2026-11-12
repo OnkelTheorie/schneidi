@@ -148,6 +148,33 @@ void FrameCoder::CabacState::resize(int mbW, int mbH)
     cbfChroma[1].assign(mbs * 4, 0);
 }
 
+double FrameCoder::cabacLumaSideBits(const CabacEncoder& ce, int mbx, int mby, int cbpLuma, bool t8) const
+{
+    const CabacState& st = cabWave_;
+    const size_t m = size_t(mby) * mbW_ + mbx;
+    const bool hasL = mbx > 0, hasT = topMbAvailable(mby);
+    const size_t mL = m - 1, mT = m - size_t(mbW_);
+    uint32_t cost = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
+        const int x8 = b8 & 1, y8 = b8 >> 1;
+        auto cond = [&](bool inside, int b8Inside, bool avail, size_t n, int b8N) {
+            if (inside)
+                return ((cbpLuma >> b8Inside) & 1) == 0 ? 1 : 0;
+            if (!avail)
+                return 0;
+            if (st.kind[n] == kKindSkip)
+                return 1;
+            return ((st.cbp[n] >> b8N) & 1) == 0 ? 1 : 0;
+        };
+        const int a = cond(x8 == 1, b8 - 1, hasL, mL, b8 + 1);
+        const int b = cond(y8 == 1, b8 - 2, hasT, mT, b8 + 2);
+        cost += ce.binCost(73 + a + 2 * b, (cbpLuma >> b8) & 1);
+    }
+    if (cbpLuma && useT8())
+        cost += ce.binCost(399 + (hasL && st.t8[mL]) + (hasT && st.t8[mT]), t8);
+    return cost / 256.0;
+}
+
 void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
 {
     using K = MbSyntax::Kind;
@@ -546,8 +573,11 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
 // -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
 static const bool gTrellisTwo = std::getenv("H264_TRELLIS3") == nullptr;
 
-void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                  int cbfInc, int* out)
+// With energy: returns the path's cost (squared pixel error of all coefficients + lambda * bits of
+// the block, coded_block_flag included for 4x4 blocks) and sets *energy to the squared error of the
+// all-zero block; the mode decision compares transforms and layouts with these (no reconstruction).
+double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
+                    int cbfInc, int* out, double* energy)
 {
     constexpr int kEmpty = 8;
     // Coefficients after the last one that reaches half a level can only become 0: they leave
@@ -556,9 +586,18 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
     while (end > 0 && std::abs(x[end - 1]) < 0.5)
         --end;
     std::fill(out + end, out + count, 0);
-    if (end == 0)
-        return;
     const bool cat5 = cat == 5;
+    const double l256 = lambda / 256.0;
+    double tail = 0; // squared error of the coefficients after `end` (always zero)
+    if (energy) {
+        for (int k = end; k < count; ++k) {
+            const double e = x[k] * scale[k];
+            tail += e * e;
+        }
+        *energy = tail;
+    }
+    if (end == 0)
+        return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
     auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
     auto lastCtx = [&](int k) { return cat5 ? 417 + kLast8[k] : 166 + kSigOffset[cat] + k; };
@@ -593,9 +632,39 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
     int16_t mags[64][9];
     std::fill(cost, cost + 9, 1e300);
     cost[kEmpty] = 0;
-    const double l256 = lambda / 256.0;
+    uint64_t pass = 0; // positions below half a level: every path keeps its node there (level 0)
+    // Level bits of the magnitudes 1 and 2 by node, computed on first use.
+    uint32_t lbCache[16];
+    uint32_t lbValid = 0;
+    auto levelBitsCached = [&](int state, int a) {
+        if (a >= 2)
+            return levelBits(state, a);
+        const int i = a * 8 + state;
+        if (!((lbValid >> i) & 1)) {
+            lbCache[i] = levelBits(state, a);
+            lbValid |= 1u << i;
+        }
+        return lbCache[i];
+    };
     for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
+        if (energy) {
+            const double e = ax * scale[k];
+            *energy += e * e;
+        }
+        if (ax < 0.5) {
+            // Only level 0: the same sums as the general case below, without the node bookkeeping.
+            const double err = ax * scale[k];
+            const double errSq0 = err * err;
+            const double sig = l256 * ce.binCost(sigCtx(k), 0);
+            for (int n = 0; n < 8; ++n)
+                if (cost[n] < 1e299)
+                    cost[n] = cost[n] + errSq0 + sig;
+            if (cost[kEmpty] < 1e299)
+                cost[kEmpty] += errSq0;
+            pass |= uint64_t(1) << k;
+            continue;
+        }
         int cand[3] = {0, 0, 0}, nc = 1;
         if (ax >= 0.5) {
             const int fl = int(ax);
@@ -630,7 +699,7 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
                         cst += l256 * sig0;
                     to = n;
                 } else {
-                    uint32_t bits = levelBits(empty ? 0 : n, mag - 1);
+                    uint32_t bits = levelBitsCached(empty ? 0 : n, mag - 1);
                     bits += sig1Last[empty ? 1 : 0];
                     cst += l256 * bits;
                     to = next(empty ? 0 : n, mag);
@@ -654,10 +723,15 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
         }
     }
     for (int k = 0, n = best; k < end; ++k) {
+        if ((pass >> k) & 1) {
+            out[k] = 0;
+            continue;
+        }
         const int mag = mags[k][n];
         out[k] = x[k] < 0 ? -mag : mag;
         n = from[k][n];
     }
+    return bestCost + tail;
 }
 
 } // namespace schneidi::h264

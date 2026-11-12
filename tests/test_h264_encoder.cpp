@@ -251,6 +251,20 @@ int main()
         c.transform8x8 = false;
         CHECK(roundTrip(c, 6));
     }
+    if (gCabac) { // every inter candidate coded in full instead of ranked by estimate; several QPs and references
+        for (int qp : {18, 26, 38}) {
+            EncoderConfig c = config(250, 142, IntraMode::Auto, 12, 3);
+            c.qp = qp;
+            c.refs = qp == 26 ? 2 : 1;
+            size_t bytesEst = 0, bytesFull = 0;
+            CHECK(roundTrip(c, 12, &bytesEst));
+            c.modeEstimate = false;
+            CHECK(roundTrip(c, 12, &bytesFull));
+            if (std::abs(double(bytesFull) - double(bytesEst)) >= 0.05 * double(bytesFull))
+                std::fprintf(stderr, "mode estimate at QP %d: %zu bytes, full %zu\n", qp, bytesEst, bytesFull);
+            CHECK(std::abs(double(bytesFull) - double(bytesEst)) < 0.05 * double(bytesFull));
+        }
+    }
     // A keyframe the caller asks for (a cut in the timeline) in the middle of a GOP
     CHECK(roundTrip(config(176, 144, IntraMode::Auto, 30), 10, nullptr, 4));
     {
@@ -451,6 +465,15 @@ int main()
             if (std::abs(kbps - 1000.0) >= 250.0)
                 std::fprintf(stderr, "first pass with B pictures: %.0f kbit/s instead of 1000\n", kbps);
             CHECK(std::abs(kbps - 1000.0) < 250.0);
+            // Mode decision by estimate (the default) and with every candidate coded in full: both
+            // bit-exact, about the same size (two-pass with B pictures).
+            {
+                EncoderConfig full = c;
+                full.modeEstimate = false;
+                size_t bytesFull = 0;
+                CHECK(roundTrip(full, 60, &bytesFull));
+                CHECK(std::abs(double(bytesFull) - double(bytes)) < 0.05 * double(bytes));
+            }
             c.firstPass.reset();
             const ChunkPlan rated = planChunks(*fp.stats(), c, 3, 10);
             bytes = 0;

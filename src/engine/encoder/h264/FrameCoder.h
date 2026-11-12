@@ -192,6 +192,9 @@ public:
     };
     void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
                        InterResidual& ir);
+    void planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, InterResidual& ir,
+                       double* est);
+    void reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, bool t8, MbOut& io, const InterResidual& ir);
     bool writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
     bool skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const;
@@ -223,6 +226,9 @@ public:
         std::vector<uint8_t> cbfChroma[2];                      // per 4x4 chroma block
         void resize(int mbW, int mbH);
     };
+    // Bits of an inter macroblock's luma coded_block_pattern bins and transform_size_8x8_flag in the
+    // contexts' current states (for estimates).
+    double cabacLumaSideBits(const CabacEncoder& ce, int mbx, int mby, int cbpLuma, bool t8) const;
     void cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
     bool useT8() const { return useCabac() && cfg_.transform8x8; }

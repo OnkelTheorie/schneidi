@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 
 #if defined(__SSE2__) || defined(_M_X64)
 #include <emmintrin.h>
@@ -176,6 +177,60 @@ inline void forward4x4(const int* in, int* out)
         out[8 + x] = s03 - s12;
         out[12 + x] = d03 - 2 * d12;
     }
+#endif
+}
+
+// forward4x4 of the difference a - b of two 4x4 blocks of 8-bit samples.
+inline void forward4x4Diff(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int* out)
+{
+#ifdef SCHNEIDI_H264_SSE2
+    using namespace transform_detail;
+    auto add = [](__m128i x, __m128i y) { return _mm_add_epi32(x, y); };
+    auto sub = [](__m128i x, __m128i y) { return _mm_sub_epi32(x, y); };
+    auto dbl = [](__m128i x) { return _mm_slli_epi32(x, 1); };
+    const __m128i zero = _mm_setzero_si128();
+    auto row = [&](int i) {
+        int32_t wa, wb;
+        std::memcpy(&wa, a + i * strideA, 4);
+        std::memcpy(&wb, b + i * strideB, 4);
+        const __m128i d = _mm_sub_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(wa), zero), _mm_unpacklo_epi8(_mm_cvtsi32_si128(wb), zero));
+        return _mm_srai_epi32(_mm_unpacklo_epi16(d, d), 16); // sign-extended to 32 bits
+    };
+    __m128i v[4];
+    fwd4(row(0), row(1), row(2), row(3), v, add, sub, dbl);
+    transpose4(v[0], v[1], v[2], v[3]);
+    __m128i w[4];
+    fwd4(v[0], v[1], v[2], v[3], w, add, sub, dbl);
+    transpose4(w[0], w[1], w[2], w[3]);
+    for (int i = 0; i < 4; ++i)
+        st(out + 4 * i, w[i]);
+#else
+    int res[16];
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+            res[y * 4 + x] = int(a[y * strideA + x]) - int(b[y * strideB + x]);
+    forward4x4(res, out);
+#endif
+}
+
+// True when any |coef[i]| (4x4, raster) exceeds limit[i & 7] (rows alternate between two patterns).
+inline bool anyAbove4x4(const int* coef, const int* limit)
+{
+#ifdef SCHNEIDI_H264_SSE2
+    using namespace transform_detail;
+    const __m128i l0 = ld(limit), l1 = ld(limit + 4);
+    auto over = [](__m128i x, __m128i l) {
+        const __m128i m = _mm_srai_epi32(x, 31);
+        return _mm_cmpgt_epi32(_mm_sub_epi32(_mm_xor_si128(x, m), m), l);
+    };
+    const __m128i any = _mm_or_si128(_mm_or_si128(over(ld(coef), l0), over(ld(coef + 4), l1)),
+                                     _mm_or_si128(over(ld(coef + 8), l0), over(ld(coef + 12), l1)));
+    return _mm_movemask_epi8(any) != 0;
+#else
+    for (int i = 0; i < 16; ++i)
+        if ((coef[i] < 0 ? -coef[i] : coef[i]) > limit[i & 7])
+            return true;
+    return false;
 #endif
 }
 

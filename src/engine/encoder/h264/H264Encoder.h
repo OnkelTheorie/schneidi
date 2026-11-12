@@ -91,6 +91,11 @@ struct EncoderConfig {
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
     // no gain (+0.7 % BD-rate), so off by default.
     bool weightedBipred = false;
+    // Mode decision of inter macroblocks in P pictures by estimate (CABAC with the 8x8 transform):
+    // the candidates (16x16 or the best split, 4x4 or 8x8 transform) are ranked by the trellis
+    // quantisation's own cost and only the best one per layout is reconstructed and counted in
+    // full. false = every candidate coded in full (slower; the stream differs).
+    bool modeEstimate = true;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
