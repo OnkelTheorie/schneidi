@@ -29,6 +29,7 @@
 #include "engine/video/Compose.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QComboBox>
 #include <QLabel>
 #include <QToolButton>
@@ -436,6 +437,28 @@ void testFastPaths()
         CHECK(avg < 0.5);
         CHECK(most <= (amount < 10 ? 0 : 12));
     }
+    // Perf guard: a strong blur over most of a 1080p frame was ~50 ms (full-size blur on one thread), now a few ms.
+    // Best of five against a bound that only the old way misses, even on a loaded machine
+    {
+        ShapeStyle s;
+        s.kind = ShapeKind::Ellipse;
+        s.fill = ShapeFill::Blur;
+        s.amount = 100;
+        Shapes::Place p;
+        p.center = QPointF(960, 540);
+        p.w = p.h = 1600;
+        const Shapes::Outline o = Shapes::placed(s, p);
+        std::vector<uint8_t> img = busyPicture(w, h);
+        double best = 1e9;
+        for (int i = 0; i < 5; ++i) {
+            QElapsedTimer t;
+            t.start();
+            Picture::ShapePaint::below(img.data(), w, h, o, s, 1.0, 1.0);
+            best = std::min(best, t.nsecsElapsed() / 1e6);
+        }
+        std::printf("       blur below a 1600 px circle at 1080p: %.1f ms\n", best);
+        CHECK(best < 25);
+    }
     // VideoEffects::gaussian in bands on several threads: the very values of one pass on one thread
     {
         std::vector<uint8_t> img = busyPicture(w, h);
@@ -481,6 +504,29 @@ void testFastPaths()
         Compose::draw(out.data(), 640, 360, shadow.data(), 640, 360, m, 1.0);
         Compose::over(out.data(), ref.data(), 640, 360, 1.0);
         CHECK(out == img);
+    }
+    // A painted shape is kept while nothing changes: a change of colour, shadow or place is drawn, never the old one
+    {
+        Clip c = shapeClip(2, ShapeKind::Ellipse, 80, 80);
+        c.title.look.shadowOn = true;
+        c.title.look.shadowOpacity = 1;
+        c.title.look.shadowSoft = 4;
+        c.title.look.shadowX = 20;
+        c.title.look.shadowY = 0;
+        c.title.look.shadowColor = QColor(0, 0, 255);
+        const auto pic = [&] { return render(timelineOf({media(1, g_gray)}, {c}), 0); };
+        const QImage a = pic();
+        CHECK(at(a, 160, 90, kRed));
+        CHECK(at(a, 215, 90, QColor(0, 0, 255), 20)); // the shadow beside it, to the right
+        CHECK(pic() == a);                            // the same again (from the kept painting)
+        c.title.look.shadowColor = QColor(0, 255, 0);
+        CHECK(at(pic(), 215, 90, QColor(0, 255, 0), 20));
+        c.title.color = kWhite;
+        CHECK(at(pic(), 160, 90, kWhite));
+        c.title.posX = -60; // moved left: its old place shows the picture below
+        const QImage moved = pic();
+        CHECK(at(moved, 100, 90, kWhite));
+        CHECK(at(moved, 175, 90, QColor(200, 200, 200), 3));
     }
 }
 
