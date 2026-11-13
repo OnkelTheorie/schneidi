@@ -97,6 +97,13 @@ struct EncoderConfig {
     // quantisation's own cost and only the best one per layout is reconstructed and counted in
     // full. false = every candidate coded in full (slower; the stream differs).
     bool modeEstimate = true;
+    // Psycho-visual rate-distortion: 0 = off (the stream is then the same as without this option).
+    // The mode decision (skip, inter, intra and their transform sizes) adds psyRd * sqrt(lambda) *
+    // the difference between the magnitudes of the source's and the reconstruction's AC Hadamard
+    // coefficients to a candidate's cost, so one that keeps the texture or grain of the source
+    // beats one that is closer in squared error but smoother; the winner is also tried with a
+    // quantisation that keeps more of the small coefficients. PSNR and SSIM drop by design.
+    double psyRd = 0.0;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame

@@ -426,4 +426,99 @@ inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB
 #endif
 }
 
+// Magnitudes of the Hadamard coefficients of an 8x8 block of samples at two scales, without the DC
+// ones (set to 0): m[0..63] the 4x4 transforms of its four quarters, m[64..127] its 8x8 transform
+// (a 2x2 Hadamard across the quarters' coefficients). What the psycho-visual mode decision compares
+// between source and reconstruction (hadamardMagsDistance): texture and grain have these
+// magnitudes, a smoothed block has lost them. m: 16-byte aligned. The order of the coefficients
+// differs between the SSE2 and the plain version; the distance does not depend on it.
+inline void hadamardMags8x8U8(const uint8_t* p, int stride, int16_t* m)
+{
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128i zero = _mm_setzero_si128();
+    auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
+    __m128i c[4][2]; // per quarter (left/right of the upper, then of the lower half) its 16 coefficients
+    for (int half = 0; half < 2; ++half) {
+        const uint8_t* q = p + half * 4 * stride;
+        auto row = [&](int i) { return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(q + i * stride)), zero); };
+        const __m128i r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+        const __m128i s01 = _mm_add_epi16(r0, r1), d01 = _mm_sub_epi16(r0, r1);
+        const __m128i s23 = _mm_add_epi16(r2, r3), d23 = _mm_sub_epi16(r2, r3);
+        const __m128i t0 = _mm_add_epi16(s01, s23), t1 = _mm_sub_epi16(s01, s23);
+        const __m128i t2 = _mm_sub_epi16(d01, d23), t3 = _mm_add_epi16(d01, d23);
+        for (int side = 0; side < 2; ++side) {
+            const __m128i u0 = side ? _mm_unpackhi_epi16(t0, t1) : _mm_unpacklo_epi16(t0, t1);
+            const __m128i u1 = side ? _mm_unpackhi_epi16(t2, t3) : _mm_unpacklo_epi16(t2, t3);
+            const __m128i v0 = _mm_unpacklo_epi32(u0, u1), v1 = _mm_unpackhi_epi32(u0, u1);
+            const __m128i c1 = _mm_unpackhi_epi64(v0, v0), c3 = _mm_unpackhi_epi64(v1, v1);
+            const __m128i ha = _mm_add_epi16(v0, c1), hb = _mm_sub_epi16(v0, c1);
+            const __m128i hc = _mm_add_epi16(v1, c3), hd = _mm_sub_epi16(v1, c3);
+            const int qi = half * 2 + side;
+            c[qi][0] = _mm_unpacklo_epi64(_mm_add_epi16(ha, hc), _mm_sub_epi16(ha, hc)); // lane 0: the sample sum
+            c[qi][1] = _mm_unpacklo_epi64(_mm_sub_epi16(hb, hd), _mm_add_epi16(hb, hd));
+            _mm_store_si128(reinterpret_cast<__m128i*>(m + qi * 16), absv(c[qi][0]));
+            _mm_store_si128(reinterpret_cast<__m128i*>(m + qi * 16 + 8), absv(c[qi][1]));
+            m[qi * 16] = 0;
+        }
+    }
+    // Each |coefficient| of the 8x8 transform is at most 64 * 255: fits 16 bits.
+    for (int k = 0; k < 2; ++k) {
+        const __m128i a = _mm_add_epi16(c[0][k], c[1][k]), b = _mm_sub_epi16(c[0][k], c[1][k]);
+        const __m128i d = _mm_add_epi16(c[2][k], c[3][k]), e = _mm_sub_epi16(c[2][k], c[3][k]);
+        int16_t* o = m + 64 + k * 32;
+        _mm_store_si128(reinterpret_cast<__m128i*>(o), absv(_mm_add_epi16(a, d)));
+        _mm_store_si128(reinterpret_cast<__m128i*>(o + 8), absv(_mm_sub_epi16(a, d)));
+        _mm_store_si128(reinterpret_cast<__m128i*>(o + 16), absv(_mm_add_epi16(b, e)));
+        _mm_store_si128(reinterpret_cast<__m128i*>(o + 24), absv(_mm_sub_epi16(b, e)));
+    }
+    m[64] = 0;
+#else
+    int c[4][16];
+    for (int q = 0; q < 4; ++q) {
+        int in[16];
+        for (int i = 0; i < 16; ++i)
+            in[i] = p[((q >> 1) * 4 + (i >> 2)) * stride + (q & 1) * 4 + (i & 3)];
+        hadamard4x4(in, c[q]);
+        for (int i = 0; i < 16; ++i)
+            m[q * 16 + i] = int16_t(i ? std::abs(c[q][i]) : 0);
+    }
+    for (int i = 0; i < 16; ++i) {
+        const int a = c[0][i] + c[1][i], b = c[0][i] - c[1][i], d = c[2][i] + c[3][i], e = c[2][i] - c[3][i];
+        m[64 + i * 4] = int16_t(i ? std::abs(a + d) : 0);
+        m[64 + i * 4 + 1] = int16_t(std::abs(a - d));
+        m[64 + i * 4 + 2] = int16_t(std::abs(b + e));
+        m[64 + i * 4 + 3] = int16_t(std::abs(b - e));
+    }
+#endif
+}
+
+// Distance of two blocks by their coefficient magnitudes (hadamardMags8x8U8), in SATD units: the
+// summed differences of the 4x4 magnitudes, (sum + 1) >> 1 like satd4x4, plus those of the 8x8
+// ones, (sum + 2) >> 2 like sa8dU8. Coefficient by coefficient, not the difference of the totals: a
+// block that makes up for lost fine detail with one strong pattern is no closer.
+inline int hadamardMagsDistance(const int16_t* a, const int16_t* b)
+{
+    int sum[2];
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128i zero = _mm_setzero_si128(), one = _mm_set1_epi16(1);
+    for (int part = 0; part < 2; ++part) {
+        __m128i acc = zero;
+        for (int i = 0; i < 64; i += 8) {
+            const __m128i d = _mm_sub_epi16(_mm_load_si128(reinterpret_cast<const __m128i*>(a + part * 64 + i)),
+                                            _mm_load_si128(reinterpret_cast<const __m128i*>(b + part * 64 + i)));
+            acc = _mm_add_epi32(acc, _mm_madd_epi16(_mm_max_epi16(d, _mm_sub_epi16(zero, d)), one));
+        }
+        acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
+        sum[part] = _mm_cvtsi128_si32(_mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1))));
+    }
+#else
+    for (int part = 0; part < 2; ++part) {
+        sum[part] = 0;
+        for (int i = 0; i < 64; ++i)
+            sum[part] += std::abs(a[part * 64 + i] - b[part * 64 + i]);
+    }
+#endif
+    return ((sum[0] + 1) >> 1) + ((sum[1] + 2) >> 2);
+}
+
 } // namespace schneidi::h264

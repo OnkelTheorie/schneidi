@@ -230,9 +230,9 @@ public:
         int cbpLuma;
     };
     void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
-                       InterResidual& ir);
+                       InterResidual& ir, double fineLambda = -1.0);
     void planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, InterResidual& ir,
-                       double* est);
+                       double* est, double fineLambda = -1.0);
     void reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, bool t8, MbOut& io, const InterResidual& ir);
     bool writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
@@ -248,6 +248,12 @@ public:
     void motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
                           uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
+    // Psycho-visual RD (cfg_.psyRd). psyBegin, before a macroblock is decided: the Hadamard
+    // coefficient magnitudes of its source luma, kept for the thread. psyCost: the weighted distance
+    // between those and the magnitudes of the luma reconstruction as it stands in recY_, to add to
+    // SSD + lambda * bits (0.0 when off).
+    void psyBegin(int mbx, int mby) const;
+    double psyCost(int mbx, int mby) const;
     void buildRefPlanes(RefPic& R);
     void refFullRows(RefPic& R, int y0, int y1) const;
     void refHalfRows(RefPic& R, int y0, int y1) const;
