@@ -11,6 +11,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/BarDetect.h"
+#include "engine/KillFeedLines.h"
 #include "engine/ReframeAnalysis.h"
 #include "ui/timeline/TimelinePanel.h"
 
@@ -57,19 +58,28 @@ QString overlayNote(int n)
 } // namespace
 
 bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat& format,
-                                QHash<int, QVector<Reframe::Key>>* paths, QHash<QString, QRectF>* contents)
+                                QHash<int, QVector<Reframe::Key>>* paths, QHash<QString, QRectF>* contents,
+                                QHash<int, Reframe::Feed>* feeds)
 {
     QHash<QString, int> lengths; // read here: the project is not touched from the thread
     for (const Clip& c : clips)
         if (const MediaInfo* m = m_project->mediaInfo(c.mediaPath)) lengths.insert(c.mediaPath, m->length);
+    const Reframe::KeepChoice choice = reframeKeepChoice();
+    const bool readFeeds = feeds && choice.kind != Reframe::KeepChoice::None;
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     auto progress = std::make_shared<std::atomic<int>>(0);
+    auto feedProgress = std::make_shared<std::atomic<int>>(0);
     auto result = std::make_shared<QHash<int, QVector<Reframe::Key>>>();
+    auto feedResult = std::make_shared<QHash<int, Reframe::Feed>>();
     auto errors = std::make_shared<QStringList>();
     auto bars = std::make_shared<QHash<QString, QRectF>>(); // black bars are never wanted in a reframed picture
     QThread* thread = QThread::create([=] {
-        *result = ReframeAnalysis::paths(clips, format, 0.5, [lengths](const QString& p) { return lengths.value(p); },
-                                         errors.get(), cancel.get(), progress.get(), bars.get());
+        const auto lengthOf = [lengths](const QString& p) { return lengths.value(p); };
+        *result = ReframeAnalysis::paths(clips, format, 0.5, lengthOf, errors.get(), cancel.get(), progress.get(), bars.get());
+        // The kill feed's lines, for a copy that shows only them (unreadable: the copy keeps the whole region)
+        if (readFeeds && !cancel->load())
+            *feedResult = KillFeedLines::feeds(clips, format, Reframe::Mode::Auto, *bars, choice, lengthOf, nullptr,
+                                               cancel.get(), [feedProgress](int p) { *feedProgress = p; });
     });
     QProgressDialog dialog(T("Auto-Reframe: Bild wird analysiert …"), T("Abbrechen"), 0, 1000, this);
     dialog.setWindowModality(Qt::WindowModal);
@@ -84,7 +94,10 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
     });
     QTimer poll;
     poll.setInterval(100);
-    connect(&poll, &QTimer::timeout, &dialog, [&] { dialog.setValue(std::min(999, progress->load())); });
+    connect(&poll, &QTimer::timeout, &dialog, [&] {
+        const int p = readFeeds ? (progress->load() * 4 + feedProgress->load()) / 5 : progress->load();
+        dialog.setValue(std::min(999, p));
+    });
     thread->start();
     poll.start();
     loop.exec();
@@ -101,6 +114,7 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
                              T("Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1").arg(errors->join('\n')));
     *paths = *result;
     if (contents) *contents = *bars;
+    if (feeds) *feeds = *feedResult;
     return true;
 }
 
@@ -118,15 +132,19 @@ void MainWindow::autoReframe()
     const int sequence = m_project->currentSequence();
     QHash<int, QVector<Reframe::Key>> paths;
     QHash<QString, QRectF> contents;
-    if (!measureReframe(clips, m_project->timelineFormat(), &paths, &contents)) return;
+    QHash<int, Reframe::Feed> feeds;
+    if (!measureReframe(clips, m_project->timelineFormat(), &paths, &contents, &feeds)) return;
     // Another timeline opened or the clips changed meanwhile
     if (m_project->currentSequence() != sequence || footageChanged(m_project->timeline(), clips)) {
         statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
         return;
     }
-    const auto keeps = m_editor->reframeKeeps(ids, Reframe::Mode::Auto, contents, reframeKeepChoice());
+    auto keeps = m_editor->reframeKeeps(ids, Reframe::Mode::Auto, contents, reframeKeepChoice());
+    KillFeedLines::attach(keeps, feeds);
     const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents, &keeps);
-    const bool kept = std::any_of(keeps.begin(), keeps.end(), [](const QVector<Reframe::Keep>& k) { return !k.isEmpty(); });
+    const bool kept = std::any_of(keeps.begin(), keeps.end(), [](const QVector<Reframe::Keep>& k) {
+        return std::any_of(k.begin(), k.end(), [](const Reframe::Keep& x) { return !Reframe::feedEmpty(x.feed); });
+    });
     QString text = kept ? T("Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
                         : T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n);
     if (!overlays.isEmpty()) text += " " + overlayNote(int(overlays.size()));
@@ -151,7 +169,8 @@ void MainWindow::reframedCopy(int sequenceId)
                 clips << c;
     QHash<int, QVector<Reframe::Key>> paths;
     QHash<QString, QRectF> contents;
-    if (!clips.isEmpty() && !measureReframe(clips, format, &paths, &contents)) return;
+    QHash<int, Reframe::Feed> feeds;
+    if (!clips.isEmpty() && !measureReframe(clips, format, &paths, &contents, &feeds)) return;
     q = m_project->sequence(sequenceId);
     if (!q || footageChanged(q->timeline, clips)) {
         statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
@@ -169,14 +188,18 @@ void MainWindow::reframedCopy(int sequenceId)
         m_timeline->openSequence(copy);
         // Old clip id -> new one: the copy keeps tracks and clip order
         QHash<int, QVector<Reframe::Key>> mapped;
+        QHash<int, Reframe::Feed> mappedFeeds;
         const Timeline& now = m_project->timeline();
         for (int t = 0; t < source.video.size() && t < now.video.size(); ++t)
-            for (int i = 0; i < source.video[t].clips.size() && i < now.video[t].clips.size(); ++i)
-                if (paths.contains(source.video[t].clips[i].id))
-                    mapped.insert(now.video[t].clips[i].id, paths.value(source.video[t].clips[i].id));
+            for (int i = 0; i < source.video[t].clips.size() && i < now.video[t].clips.size(); ++i) {
+                const int was = source.video[t].clips[i].id, is = now.video[t].clips[i].id;
+                if (paths.contains(was)) mapped.insert(is, paths.value(was));
+                if (feeds.contains(was)) mappedFeeds.insert(is, feeds.value(was));
+            }
         QVector<int> overlays;
         const QVector<int> targets = m_editor->reframeTargets({}, &overlays);
-        const auto keeps = m_editor->reframeKeeps(targets, Reframe::Mode::Auto, contents, reframeKeepChoice());
+        auto keeps = m_editor->reframeKeeps(targets, Reframe::Mode::Auto, contents, reframeKeepChoice());
+        KillFeedLines::attach(keeps, mappedFeeds);
         if (!targets.isEmpty()) m_editor->reframeClips(targets, Reframe::Mode::Auto, mapped, contents, &keeps);
         if (!overlays.isEmpty()) statusBar()->showMessage(overlayNote(int(overlays.size())), 8000);
     }

@@ -95,9 +95,42 @@ bool isOverlay(const Clip& c, int track, double mediaAspect, QSizeF frame);
 // A part of the picture kept readable above the reframed picture: the kill feed of a game, which a 9:16 crop of 16:9
 // footage cuts away. Shown by a second copy of the clip on a track above (picture in picture), cropped to the region
 // and placed near the top of the frame.
+// What a game's kill feed shows at one moment (measured by engine/KillFeedLines): how many lines, how far left the
+// widest one reaches and where the last one ends, fractions of the whole recording (as Keep::region)
+struct FeedSample {
+    double frame = 0; // clip frame (0 = the clip's first)
+    int lines = 0;
+    double left = 1, bottom = 0; // only with lines
+    bool operator==(const FeedSample&) const = default;
+};
+// The kill feed over a clip. Not measured = the copy shows the whole region all the time.
+struct Feed {
+    bool measured = false;
+    QVector<FeedSample> samples; // sorted by frame, a few per second
+    double fps = 25;             // the timeline's frame rate (fades and moves are times)
+    double lineHeight = 0;       // one line, part of the recording's height (0 = unknown: no limit on the text size)
+    bool operator==(const Feed&) const = default;
+};
+// A stretch of the clip in which the kept kill feed stays the same: hidden (no lines) or showing `lines` lines
+// from `left` to the region's right edge and from its top to `bottom` (fractions of the recording)
+struct FeedState {
+    int from = 0, to = 0; // clip frames [from, to)
+    int lines = 0;
+    double left = 1, bottom = 0;
+    bool operator==(const FeedState&) const = default;
+};
+// The stretches of a measured feed over a clip of `length` frames: a line missing for a moment (a flash, a sample
+// that missed it) does not count, nor one seen for a moment only; the widest line of a stretch sets its left edge.
+// Empty when the feed is not measured.
+QVector<FeedState> feedStates(const Feed& f, int length);
+// Does the measured feed show no line at all over the clip? (Then the copy is left out.)
+bool feedEmpty(const Feed& f);
+
 struct Keep {
     QString id;    // what it keeps: "killfeed" (a game's, core/GameHud.h) or "custom"
     QRectF region; // fractions of the whole picture
+    // The kill feed's lines over the clip (killfeed only): the copy shows only them, hidden while there are none
+    Feed feed;
     bool operator==(const Keep&) const = default;
 };
 // Which regions a reframe keeps: Auto = the kill feed of a known game (core/GameHud.h, from the file's folder or name,
@@ -109,11 +142,16 @@ struct KeepChoice {
 };
 // Where a kept region goes: centred, `top` of the frame height below its top edge (under the app buttons of the
 // platforms, ExportCheck safeTop), `width` of the frame width wide but at most `maxHeight` of the frame height tall
+// (`maxLine`: a measured kill feed's line at most this part of the frame height, so one short line is not blown up)
 struct KeepPlace {
     double top = 0.1, width = 0.84, maxHeight = 0.15;
+    double maxLine = 0.036;
 };
 // The copy of `base` that shows only `k.region`: the same file, time, speed and effects (a grade looks the same), no
 // sound link, no transform keyframes, cropped to the region and placed by `place`. Its id is left to the caller.
+// With a measured feed the copy follows its lines (keyframes): faded out while there are none, its crop's left and
+// bottom edge (and the zoom and place that keep it centred at the top) eased to the lines there are; the region's
+// top and right edge stay.
 Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place = {});
 // The same for a kept-region copy (its crop already in the new shape's pixels): placed anew for the new shape, unless
 // it was moved or zoomed by hand since. False = left as it is.
@@ -126,6 +164,11 @@ bool isKeepAlong(const Clip& c, const Clip& base);
 // `region` (fractions of a game's picture) in fractions of the whole recording, when the game fills only `content`
 // of it (black bars around a 4:3 game)
 QRectF inContent(const QRectF& region, const QRectF& content);
+// The regions a reframe in `mode` to `frame` keeps for clip `c` (Editor::reframeKeeps; also usable in a thread on a
+// copy of the clip): content = the file's part between black bars. A kill feed of a game not known goes to *noGame
+// when asked for explicitly (KeepChoice::KillFeed).
+QVector<Keep> keepsOf(const Clip& c, Mode mode, QSizeF frame, const QRectF& content, const KeepChoice& choice,
+                      bool* noGame = nullptr);
 // Does a reframe cut the sides of the picture away (a 9:16 crop of 16:9 footage)? Then a kill feed at the edge is gone.
 bool cropsSides(Mode mode, double mediaAspect, QSizeF frame, const QRectF& content = QRectF(0, 0, 1, 1));
 

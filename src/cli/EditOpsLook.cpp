@@ -14,6 +14,7 @@
 #include "core/TimelineOps.h"
 #include "engine/BarDetect.h"
 #include "engine/ColorGrade.h"
+#include "engine/KillFeedLines.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/TextRegions.h"
 #include "engine/Tracker.h"
@@ -878,18 +879,40 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
                                      "give game (%2) or a region \"x,y,w,h\"")
                                  .arg(clips.join(", "), games.join(", ")));
     }
-    s.editor.reframeClips(targets, mode, paths, contents, &keeps);
+    // The kill feed copies follow the feed's lines (hidden while there are none), when they can be read
+    QHash<int, QVector<Reframe::Keep>> fitted = keeps;
+    {
+        QStringList errors;
+        const auto feeds = KillFeedLines::feeds(clips, f, mode, contents, choice, [&s](const QString& path) {
+            const MediaInfo* m = s.project.mediaInfo(path);
+            return m ? m->length : 0;
+        }, &errors);
+        for (const QString& e : errors) s.notes << "kill feed lines not read, the whole region is kept: " + e;
+        KillFeedLines::attach(fitted, feeds);
+    }
+    s.editor.reframeClips(targets, mode, paths, contents, &fitted);
     if (!overlays.isEmpty())
         s.notes << QString("overlays not reframed, they keep their place and size in the frame: clips %1 (a smaller "
                            "picture on a track above V1, e.g. a webcam; name them in clips:[…] to reframe them anyway)")
                        .arg(overlayIds.join(", "));
-    QStringList kept;
+    QStringList kept, followed, noLines;
     for (int id : targets)
-        for (const Reframe::Keep& k : keeps.value(id))
+        for (const Reframe::Keep& k : fitted.value(id)) {
+            if (Reframe::feedEmpty(k.feed)) {
+                noLines << QString::number(id);
+                continue;
+            }
             kept << QString("%1: %2 (%3)").arg(id).arg(k.id, GameHud::regionText(k.region));
+            if (k.feed.measured) followed << QString::number(id);
+        }
     if (!kept.isEmpty())
         s.notes << "kept readable at the top of the frame (a cropped copy of the clip on a track above, info "
                    "keep_region): " + kept.join(", ");
+    if (!followed.isEmpty())
+        s.notes << "the kill feed copy follows its lines (clips " + followed.join(", ")
+                       + "): hidden while the feed is empty, as tall as its lines and as wide as the widest one";
+    if (!noLines.isEmpty())
+        s.notes << "no kill feed line in clips " + noLines.join(", ") + ": no kill feed copy for them";
     QStringList cropped;
     for (auto it = contents.cbegin(); it != contents.cend(); ++it)
         if (BarDetect::hasBars(*it)) cropped << QFileInfo(it.key()).fileName() + " (" + contentText(*it) + ")";
@@ -1060,6 +1083,9 @@ void addLookOps(QVector<OpDef>& ops)
                  "the kill feed of game footage when the reframe cuts the sides away (the game from game, or from the "
                  "folder or file name: cs2, valorant - as `highlights` knows them); 'killfeed' = that kill feed "
                  "always; a region \"x,y,w,h\" (fractions 0..1 of the whole picture) = that part; 'none' = nothing. "
+                 "A CS2 kill feed copy follows the feed's lines (read 10 times a second): hidden while there are none, "
+                 "as tall as the lines and as wide as the widest one (keyframes on opacity, crop and place); a clip "
+                 "without any line gets no copy. "
                  "The copy is linked to its clip (`info` link) and follows it: move, trim, split, delete, speed go "
                  "for both; place or crop the copy itself with 'transform' on its id. "
                  "Reframing a clip again replaces its earlier copies (none removes them); `info` shows them with "

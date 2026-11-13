@@ -50,7 +50,8 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
   - **The kill feed of game footage** (top right, cut away by a 9:16 crop): `reframe` keeps it by itself (`keep`
     `"auto"`, default) for a known game (`game` `cs2`/`valorant`, by default from the folder or file name) - a copy
     of the clip cropped to the kill feed on a free track above, centred near the top under the platforms' buttons
-    (`info`: `keep_region`). `keep` `"killfeed"` = always, `"none"` = no copy (removes earlier ones), a region
+    (`info`: `keep_region`). For CS2 the copy follows the feed's lines: hidden while the feed is empty, as tall
+    as its lines and as wide as the widest (a clip without any line gets no copy). `keep` `"killfeed"` = always, `"none"` = no copy (removes earlier ones), a region
     `"x,y,w,h"` (fractions of the whole picture) = any other part (a scoreboard, the minimap). Reframing a clip
     again replaces its copies.
   - **Fill and reframe by hand**: `transform` `zoom` ≈ 3.16 fills the height; `x` moves the visible window
