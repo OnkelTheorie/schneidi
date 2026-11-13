@@ -434,6 +434,22 @@ constexpr double kFeedBlip = 0.25;  // seconds: lines seen for a shorter moment 
 constexpr double kFeedPadX = 0.35;  // left of the widest line, part of a line's height
 constexpr double kFeedPadY = 0.3;   // below the last line, part of a line's height
 
+constexpr int kFeedSteady = 3;     // samples an edge is seen in (fewer samples: all of them)
+constexpr double kFeedSame = 0.004; // ... within this much (part of the picture)
+
+// The smallest value that `steady` of the values come close to (all of them when there are fewer)
+double steadyLeast(std::vector<double> v, int steady, double same)
+{
+    std::sort(v.begin(), v.end());
+    const size_t need = std::min(v.size(), size_t(std::max(1, steady)));
+    for (size_t i = 0; i < v.size(); ++i) {
+        size_t n = 0;
+        for (size_t k = i; k < v.size() && v[k] <= v[i] + same; ++k) ++n;
+        if (n >= need) return v[i];
+    }
+    return v.back();
+}
+
 // The region a state shows: from its widest line to the region's right edge, the region's top to below its last line
 QRectF stateRegion(const FeedState& s, const QRectF& region, double lineHeight, double mediaAspect)
 {
@@ -490,14 +506,19 @@ QVector<FeedState> feedStates(const Feed& f, int length)
         s.lines = count[size_t(i)];
         if (s.lines > 0) {
             // The widest line and the lowest bottom of the samples that saw this many lines (else of all that saw
-            // some: a stretch held over a moment without)
+            // some: a stretch held over a moment without), each seen in a few samples: one sample that took some
+            // game picture next to a line for its box does not widen the whole stretch
             for (int pickSame : {1, 0}) {
+                std::vector<double> lefts, bottoms;
                 for (int k = i; k <= j; ++k)
                     if (in[k].lines > 0 && (!pickSame || in[k].lines == s.lines)) {
-                        s.left = std::min(s.left, in[k].left);
-                        s.bottom = std::max(s.bottom, in[k].bottom);
+                        lefts.push_back(in[k].left);
+                        bottoms.push_back(-in[k].bottom);
                     }
-                if (s.bottom > 0) break;
+                if (lefts.empty()) continue;
+                s.left = steadyLeast(lefts, kFeedSteady, kFeedSame);
+                s.bottom = -steadyLeast(bottoms, kFeedSteady, kFeedSame);
+                break;
             }
             if (s.bottom <= 0) s.lines = 0; // nothing measured to show
         }
@@ -626,6 +647,9 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
             if (!track.isEmpty() && track.last().frame == c.in + key.frame) track.removeLast();
             track << Keyframe{c.in + key.frame, key.value, KeyEase::EaseInOut};
         }
+        // A key between two of the same value adds nothing
+        for (int i = int(track.size()) - 2; i >= 1; --i)
+            if (track[i].value == track[i - 1].value && track[i].value == track[i + 1].value) track.removeAt(i);
         const bool flat = std::all_of(track.begin(), track.end(), [&](const Keyframe& x) {
             return std::abs(x.value - track.first().value) < 1e-9;
         });

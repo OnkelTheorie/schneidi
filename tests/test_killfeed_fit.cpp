@@ -118,7 +118,7 @@ void testDetect()
 }
 
 // A line timeline (10 samples a second at 30 fps): none, one line (missing in one sample: a flash), three lines,
-// none with a single sample of a line (a sign in the picture)
+// none with a single sample of a line (a sign in the picture); one sample reads a line too wide
 Reframe::Feed timeline()
 {
     Reframe::Feed f;
@@ -130,6 +130,7 @@ Reframe::Feed timeline()
         s.frame = frame;
         if (frame >= 60 && frame < 120 && frame != 90) s.lines = 1, s.left = 1659 / 1920.0, s.bottom = 106 / 1080.0;
         if (frame >= 120 && frame < 240) s.lines = 3, s.left = 1529 / 1920.0, s.bottom = 173 / 1080.0;
+        if (frame == 180) s.left = 1400 / 1920.0; // one sample took game picture left of a line for its box
         if (frame == 270) s.lines = 1, s.left = 1500 / 1920.0, s.bottom = 106 / 1080.0;
         f.samples << s;
     }
@@ -149,6 +150,7 @@ void testStates()
         CHECK(near(st[2].from, 119, 2));
         CHECK_EQ(st[2].lines, 3);
         CHECK(near(st[2].bottom * 1080, 173, 1e-6));
+        CHECK(near(st[2].left * 1920, 1529, 1e-6)); // not the one wide sample
         CHECK_EQ(st[3].lines, 0); // the blip at 270 is no line
         CHECK_EQ(st[3].to, 300);
     }
