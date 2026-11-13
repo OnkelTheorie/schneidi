@@ -52,7 +52,8 @@ QString compactInstructions(const QString& instructions);
 // it fits an 8192-token local model with room for a short chat (test_ai_chat checks it). Measured with Ollama (0.22,
 // 28,762 characters incl. the chat template): Llama 3.2 6,909 tokens (4.16 characters per token), Qwen 2.5 7,060
 // (4.07) - the full budget leaves them ~600 tokens of 8192; Gemma 4 8,068 (3.56, its tool template is long) needs a
-// 16k context (what the tight-context notice recommends for 8192)
+// 16k context. The chat itself checks with 3.5 characters per token (AiChat::estimatedTokens: nothing goes out that
+// a server could cut), so it refuses 8192 and takes 12288 and up; several tool steps need kStepsContext
 constexpr qint64 kCompactBudget = 31000;
 extern const QStringList kRareTools;
 // The ops of `edit` in short, so that a new op costs at most about kOpChars characters (the short request no longer
@@ -94,8 +95,11 @@ qint64 contextOf(const QString& kind, const QJsonObject& answer, const QString& 
 qint64 contextFrom(const QHash<QString, qint64>& found);
 // Room the chat needs besides the instructions and tools: the user's words, tool results, the model's answers
 constexpr qint64 kChatRoom = 4096;
+// The context a chat of several tool steps needs: below it a few tool results (up to ~6,000 tokens each) fill the
+// context and the chat drops older ones (AiChat::fitHistory); twice as much is better
+constexpr qint64 kStepsContext = 32768;
 // The context to set on the server for a request whose fixed part (instructions, tools) has `fixed` tokens: the next
-// power of two with room for the chat
+// power of two with room for the chat, at least kStepsContext
 qint64 recommendedContext(qint64 fixed);
 
 } // namespace Ai

@@ -446,7 +446,7 @@ qint64 contextFrom(const QHash<QString, qint64>& found)
 
 qint64 recommendedContext(qint64 fixed)
 {
-    qint64 n = 8192;
+    qint64 n = kStepsContext;
     while (n < fixed + kChatRoom) n *= 2;
     return n;
 }

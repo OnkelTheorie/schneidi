@@ -403,10 +403,10 @@ void testBodiesAndErrors()
             400, R"({"error":{"code":400,"message":"request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it","type":"exceed_context_size_error"}})");
         CHECK(llama.kind == Ai::Failure::Kind::TooLarge && !llama.retry);
         CHECK(llama.message.contains("4096") && llama.message.contains("15768") && llama.message.contains("32768"));
-        // The short request: less is needed and said
+        // The short request: less is needed and said, but at least what several tool steps take (32768)
         const Ai::Failure small = Ai::httpFailure(
             400, R"x({"error":{"message":"request (6400 tokens) exceeds the available context size (4096 tokens)"}})x", {}, 6400);
-        CHECK(small.message.contains("16384") && small.message.contains("6400") && !small.message.contains("32768"));
+        CHECK(small.message.contains("32768") && small.message.contains("6400") && !small.message.contains("16384"));
         qint64 context = 0, request = 0;
         CHECK(Ai::contextOverflow("This model's maximum context length is 8192 tokens. However, your messages resulted in "
                                   "15768 tokens. Please reduce the length of the messages.",
@@ -420,7 +420,9 @@ void testBodiesAndErrors()
         // A large context that is full: a new chat helps, not the server's settings
         CHECK(Ai::contextAdvice(131072, 140000).contains(T("„Neuer Chat“ fängt frisch an.")));
         CHECK(!Ai::contextAdvice(131072, 140000).contains("32768"));
-        CHECK(Ai::contextAdvice(16384, 17000, false, 6000).contains(T("„Neuer Chat“ fängt frisch an.")));
+        CHECK(Ai::contextAdvice(32768, 33000, false, 6000).contains(T("„Neuer Chat“ fängt frisch an.")));
+        // Below what several tool steps take, a full chat says to raise the context
+        CHECK(Ai::contextAdvice(16384, 17000, false, 6000).contains("32768"));
         CHECK(Ai::httpFailure(400, R"({"error":{"message":"bad tool schema"}})").kind == Ai::Failure::Kind::Request);
     }
 
@@ -711,9 +713,11 @@ void testContext()
     CHECK(!Ai::useCompact(Ai::Compact::Auto, claude, 0));
     CHECK(!Ai::useCompact(Ai::Compact::Off, local, 4096));
     CHECK(Ai::useCompact(Ai::Compact::On, claude, 0));
-    CHECK_EQ(Ai::recommendedContext(6500), qint64(16384));
+    // Never below what several tool steps take
+    CHECK_EQ(Ai::recommendedContext(6500), Ai::kStepsContext);
     CHECK_EQ(Ai::recommendedContext(15000), qint64(32768));
-    CHECK_EQ(Ai::recommendedContext(100), qint64(8192));
+    CHECK_EQ(Ai::recommendedContext(100), qint64(32768));
+    CHECK_EQ(Ai::recommendedContext(30000), qint64(65536));
 
     // First sentences: "e.g." ends nothing, long ones end at a clause outside brackets
     CHECK_EQ(Ai::firstSentence("Find pauses in the audio. Ranges are frames."), QString("Find pauses in the audio."));

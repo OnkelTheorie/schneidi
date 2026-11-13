@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -89,7 +90,12 @@ AiChat::AiChat(QObject* parent) : QObject(parent), m_client(new AiClient(this)),
     });
     connect(m_client, &AiClient::contextProbed, this, [this](qint64 tokens) {
         // Not known (no server said it, a probe timed out while the model loaded): asked again with the next request
-        if (tokens > 0) m_contexts.insert(m_probeKey, tokens);
+        // (the last one named stays the fallback: Ollama names none for a model that is not loaded with
+        // OLLAMA_CONTEXT_LENGTH set, see context())
+        if (tokens > 0) {
+            m_contexts.insert(m_probeKey, tokens);
+            m_lastContexts.insert(m_probeKey, tokens);
+        }
         m_probing = false;
         prepare();
     });
@@ -226,6 +232,7 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, Mode mode)
     m_repeats = 0;
     m_guideAsked = false;
     m_opsAsked = false;
+    m_recalls = 0;
     m_request = text.trimmed();
     // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
     // providers take per request (count and size of pictures). It can look again with `frames`. Not once Claude's
@@ -253,6 +260,7 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, Mode mode)
         message = QString("[Note from the schneidi app: %1]\n\n").arg(modeNote(mode, true)) + message;
     m_mode = mode;
     appendUser(message);
+    m_turnStart = m_history.size() - 1; // (the user's words may have joined the results of a stopped turn)
     setBusy(true);
     // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0,
     // asked again next time)
@@ -354,6 +362,61 @@ QString AiChat::systemPrompt() const
     return parts.join("\n\n");
 }
 
+const QString AiChat::kRemovedResult =
+    "[older result removed to fit the model's context - call the tool again if needed]";
+
+qint64 AiChat::estimatedTokens(const QVector<Ai::Message>& history, qint64 fixedChars)
+{
+    qint64 chars = fixedChars, images = 0;
+    for (const Ai::Message& m : history) {
+        chars += m.text.size();
+        for (const Ai::ToolCall& c : m.calls)
+            chars += c.name.size() + c.id.size() + QJsonDocument(c.input).toJson(QJsonDocument::Compact).size();
+        for (const Ai::ToolResult& t : m.results) {
+            chars += t.text.size() + t.id.size();
+            images += t.images.size();
+        }
+    }
+    return qint64(std::ceil(double(chars) / kCharsPerToken)) + images * kImageTokens;
+}
+
+int AiChat::fitHistory(QVector<Ai::Message>& history, qint64 fixedChars, qint64 context, qsizetype turnStart)
+{
+    const qint64 budget = context - Ai::kChatRoom;
+    if (context <= 0 || estimatedTokens(history, fixedChars) <= budget) return 0;
+    // Down to kFitShare of the budget, not just under it: the history (the prefix a local server reuses from its
+    // cache) changes only every few rounds, not with every new result
+    const qint64 target = budget * kFitShare / 100;
+    const auto fits = [&] { return estimatedTokens(history, fixedChars) <= target; };
+    // The last message's results are the newest of a tool round of the running turn (after its start): the model is
+    // about to read them. At the start of a turn they are an earlier turn's (the user's words joined them)
+    const qsizetype last = history.size() - 1;
+    const qsizetype end = last > turnStart ? last : history.size();
+    int removed = 0;
+    // Earlier turns first (up to and with the turn's first message: its results came before the user's words), then
+    // the earlier rounds of the running turn; in each, pictures before texts, oldest first
+    const auto trim = [&](qsizetype from, qsizetype to) {
+        for (qsizetype i = from; i < to && !fits(); ++i)
+            for (Ai::ToolResult& t : history[i].results)
+                if (!t.images.isEmpty() && !fits()) {
+                    t.text += QString("\n[%1 picture(s) of this answer removed to fit the model's context]")
+                                  .arg(t.images.size());
+                    t.images.clear();
+                    ++removed;
+                }
+        for (qsizetype i = from; i < to && !fits(); ++i)
+            for (Ai::ToolResult& t : history[i].results)
+                if (t.text.size() > kRemovedResult.size() && !fits()) {
+                    t.text = kRemovedResult;
+                    ++removed;
+                }
+    };
+    const qsizetype split = std::clamp<qsizetype>(turnStart + 1, 0, end);
+    trim(0, split);
+    trim(split, end);
+    return removed;
+}
+
 void AiChat::requestModel()
 {
     if (++m_rounds > kMaxRounds) {
@@ -361,12 +424,36 @@ void AiChat::requestModel()
         finishTurn();
         return;
     }
-    const qint64 context = this->context(m_endpoint);
+    const qint64 context = this->context(m_endpoint); // (the last one named when a probe found none)
     if (m_system.isEmpty()) { // fixed for the chat: the full request or the short one
         m_compact = Ai::useCompact(m_compactMode, m_endpoint, context);
         m_system = systemPrompt();
         m_chatTools = m_compact ? Ai::compactTools(m_mcp->tools(), m_editOps) : m_mcp->tools();
         m_warned = false;
+        m_trimmed = false;
+    }
+    const qint64 fixedChars = m_system.size() + QJsonDocument(m_chatTools).toJson(QJsonDocument::Compact).size();
+    // A small context the server named: the oldest tool results give way before the request outgrows it (a local
+    // server cuts the start of a request silently: the instructions and tools). Not once Claude's thinking blocks are
+    // in the history (it must stay byte for byte; such servers name no context anyway)
+    const bool bound =
+        std::any_of(m_history.begin(), m_history.end(), [](const Ai::Message& m) { return !m.anthropic.isEmpty(); });
+    if (context > 0 && !bound && fitHistory(m_history, fixedChars, context, m_turnStart) > 0 && !m_trimmed) {
+        m_trimmed = true;
+        addNotice(T("Ältere Ergebnisse der Werkzeuge wurden aus dem Chat genommen, damit die Anfrage in den Kontext des "
+                    "Modells passt. Die KI kann sie bei Bedarf neu abfragen."));
+    }
+    // The calls whose answers gave way: the model may call them again, but not round after round (nextTool)
+    m_trimmedCalls.clear();
+    {
+        QSet<QString> ids;
+        for (const Ai::Message& m : m_history)
+            for (const Ai::ToolResult& t : m.results)
+                if (t.text == kRemovedResult) ids.insert(t.id);
+        if (!ids.isEmpty())
+            for (const Ai::Message& m : m_history)
+                for (const Ai::ToolCall& c : m.calls)
+                    if (ids.contains(c.id)) m_trimmedCalls.insert(callKey(c));
     }
     Ai::Request r;
     r.model = m_endpoint.model;
@@ -376,7 +463,7 @@ void AiChat::requestModel()
     r.messages = m_history;
     r.fallbacks = Ai::fallbacksFor(m_endpoint);
     // The text it has (pictures aside): a server that read much less cut the request (see onReply)
-    m_sentChars = m_system.size() + QJsonDocument(r.tools).toJson(QJsonDocument::Compact).size();
+    m_sentChars = fixedChars;
     r.fixedTokens = m_sentChars / 4;
     for (const Ai::Message& m : m_history) {
         m_sentChars += m.text.size();
@@ -385,17 +472,32 @@ void AiChat::requestModel()
             m_sentChars += c.name.size() + QJsonDocument(c.input).toJson(QJsonDocument::Compact).size();
         for (const Ai::ToolResult& t : m.results) m_sentChars += t.text.size();
     }
-    // A context the server named: a request larger than it is not sent (it would be cut or refused); a tight one is
-    // said once. Either is asked again next time (the user may change the server's setting meanwhile)
+    // A context the server named: a request larger than it is not sent (it would be cut or refused) - what is left
+    // after fitHistory, estimated as fitHistory does (a server cuts silently what we would take for fitting); a small
+    // or tight one is said once per chat. A refused or tight one is asked again next time (the user may change the
+    // server's setting meanwhile); a small one is kept (fitHistory works with it)
     if (context > 0) {
-        const qint64 tokens = m_sentChars / 4; // about (our requests have 3.6-4.2 characters per token)
+        const qint64 tokens = estimatedTokens(m_history, fixedChars);
+        const qint64 fixedTokens = qint64(std::ceil(double(fixedChars) / kCharsPerToken));
         if (tokens > context) {
             m_contexts.remove(contextKey(m_endpoint));
-            addError(Ai::contextAdvice(context, tokens, false, r.fixedTokens));
+            addError(Ai::contextAdvice(context, tokens, false, fixedTokens));
             finishTurn();
             return;
         }
-        if (tokens + Ai::kChatRoom > context && !m_warned) {
+        const qint64 needed = std::max(Ai::kStepsContext, Ai::recommendedContext(fixedTokens));
+        // Below kStepsContext a few tool results fill it: the chat works (older results give way), but forgets
+        if (context < Ai::kStepsContext && !m_warned) {
+            m_warned = true;
+            addNotice(T("Der Kontext des Modells ist knapp: es nimmt %1 Token, die Anfrage hat schon etwa %2. Für "
+                        "mehrere Schritte mit Werkzeugen in den Einstellungen des KI-Servers die Kontextlänge auf "
+                        "mindestens %3 Token stellen, besser %4 – bis dahin lässt schneidi ältere Ergebnisse der "
+                        "Werkzeuge weg.")
+                          .arg(context)
+                          .arg(tokens)
+                          .arg(needed)
+                          .arg(2 * needed));
+        } else if (tokens + Ai::kChatRoom > context && !m_warned) {
             m_warned = true;
             m_contexts.remove(contextKey(m_endpoint));
             addNotice(T("Der Kontext des Modells ist knapp: es nimmt %1 Token, die Anfrage hat schon etwa %2. Für "
@@ -403,7 +505,7 @@ void AiChat::requestModel()
                         "KI-Servers die Kontextlänge auf mindestens %3 Token stellen.")
                           .arg(context)
                           .arg(tokens)
-                          .arg(Ai::recommendedContext(r.fixedTokens)));
+                          .arg(needed));
         }
     }
     m_streaming = -1;
@@ -563,6 +665,23 @@ void AiChat::nextTool()
                  {}, true);
         return;
     }
+    // A call whose answer gave way to fit the context, made again and again (the model reads it, it gives way again …):
+    // the request ends after kMaxRecalls of them
+    if (m_trimmedCalls.contains(callKey(call)) && ++m_recalls >= kMaxRecalls) {
+        change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
+        for (int i = int(m_results.size()); i < m_calls.size(); ++i)
+            m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
+                                        "not run: the request was ended (the same call again: its answer does not fit "
+                                        "the model's context)",
+                                        {}, true};
+        appendUser({}, m_results);
+        addNotice(T("Die KI fragt immer wieder Ergebnisse ab, die nicht mehr in den Kontext des Modells passen – "
+                    "angehalten. Mehr Kontext in den Einstellungen des KI-Servers (mindestens %1 Token) oder ein "
+                    "„Neuer Chat“ hilft.")
+                      .arg(Ai::kStepsContext));
+        finishTurn();
+        return;
+    }
     if (!call.error.isEmpty()) { // never reached the tool; what to send instead (small models write "social")
         QStringList params;
         for (const QJsonValue& t : m_mcp->tools())
@@ -695,6 +814,7 @@ void AiChat::clear()
     m_system.clear();
     m_chatTools = {};
     m_compact = false;
+    m_contexts.clear(); // asked again: the user may have changed the server's setting for a new chat
     m_usage = {};
     m_request.clear();
     emit cleared();
