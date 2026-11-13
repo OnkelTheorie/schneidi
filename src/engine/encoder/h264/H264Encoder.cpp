@@ -4615,8 +4615,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // least kSplitQuad times its share of the threshold. Natural texture spreads the cost (the
     // dearest quarter ~0.25-0.35 of the sum). Without it the threshold cost +8.3 % BD-rate (PSNR-Y,
     // two-pass) on the animation test material for -3.4 % instructions there; SPLITSKIP was only
-    // measured on CS2. Measured (two-pass, 4 rates; instructions two-pass 8 Mbit/s 120 pictures
-    // CS2): see the commit message. H264_SPLITQ / H264_SPLITR override, H264_SPLITQ=0 = off.
+    // measured on CS2. With 0.5 / 0.4 (two-pass, 4 rates, BD-rate PSNR-Y / SSIM-Y against no
+    // exception; instructions two-pass 8 Mbit/s, 120 pictures, 8 threads): animation -5.1 / -3.9 %
+    // for +2.0 %, CS2 -0.2 / -0.2 % for +4.0 % (+0.6 % of it the four quarter SATDs), camera
+    // -0.1 / -0.1 % for +1.8 %, calm -0.1 / -0.2 % for +0.2 %. Concentration 0.45: animation
+    // fixed QP -3.6 instead of -4.3 %, CS2 +2.1 %; 0.35: CS2 +7.7 %. H264_SPLITQ / H264_SPLITR
+    // override, H264_SPLITQ=0 = off (the stream before).
     static const double kSplitQuad = std::getenv("H264_SPLITQ") ? std::atof(std::getenv("H264_SPLITQ")) : 0.5;
     static const double kSplitConc = std::getenv("H264_SPLITR") ? std::atof(std::getenv("H264_SPLITR")) : 0.4;
     bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
