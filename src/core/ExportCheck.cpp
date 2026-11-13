@@ -293,9 +293,11 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
                 if (!e || !Comp::graphOf(*e, &g) || !g.node(sh.followNode)
                     || g.node(sh.followNode)->type != QLatin1String(Comp::kTrackerType))
                     out << issue(Severity::Warning, "shape_follow_missing",
-                                 T("Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – sie "
-                                   "bleibt stehen")
-                                     .arg(c.title.firstLine())
+                                 (c.title.isDrawing()
+                                      ? T("Zeichnung folgt einem Tracker, den es nicht mehr gibt (Clip %1, Knoten %2) – "
+                                          "sie bleibt stehen")
+                                      : T("Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – "
+                                          "sie bleibt stehen").arg(c.title.firstLine()))
                                      .arg(sh.followClip)
                                      .arg(sh.followNode),
                                  std::max(from, c.start), std::min(to, c.end()), c.id);

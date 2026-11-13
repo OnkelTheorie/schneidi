@@ -609,6 +609,15 @@ void testCheck()
     for (const ExportCheck::Issue& is : ExportCheck::layout(tl, 0, 50, vertical))
         if (is.check == QLatin1String("safe_area")) found = true;
     CHECK(!found);
+    // Following a tracker that is gone: named as a drawing
+    tl.video[0].clips[0].title.shape.followClip = 77;
+    tl.video[0].clips[0].title.shape.followNode = 2;
+    found = false;
+    for (const ExportCheck::Issue& is : ExportCheck::timeline(tl, 0, 50, vertical))
+        if (is.check == QLatin1String("shape_follow_missing") && is.clip == 5)
+            found = is.message.contains(T("Zeichnung folgt einem Tracker, den es nicht mehr gibt (Clip %1, Knoten %2) – "
+                                          "sie bleibt stehen").arg(77).arg(2));
+    CHECK(found);
 }
 
 // ---- Inspector: the section "Zeichnung" for a drawing (its stroke count, Leeren), not for a text ----
