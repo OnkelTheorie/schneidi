@@ -2754,6 +2754,39 @@ const IntraDirTable<8>& intraDir8()
     return t;
 }
 
+#ifdef SCHNEIDI_H264_AVX2
+// The same for 8x8 blocks: g = IntraDirTable<8>::edges values with the DC value at 74, 80 bytes
+// readable; out = the nine 8x8 predictions, 64 bytes each (stride 8).
+struct Intra8Shuffles {
+    alignas(32) uint8_t s[9][2][5][32]; // [mode][rows 0-3 / 4-7][part of g]
+    Intra8Shuffles()
+    {
+        const IntraDirTable<8>& dir = intraDir8();
+        for (int mode = 0; mode < 9; ++mode)
+            for (int p = 0; p < 64; ++p) {
+                const int idx = mode == 2 ? 74 : dir.idx[mode][p];
+                for (int part = 0; part < 5; ++part)
+                    s[mode][p >> 5][part][p & 31] =
+                        idx >= part * 16 && idx < part * 16 + 16 ? uint8_t(idx - part * 16) : uint8_t(0x80);
+            }
+    }
+};
+__attribute__((target("avx2"))) void intra8PredictAll(const uint8_t* g, uint8_t (*out)[64])
+{
+    static const Intra8Shuffles t;
+    __m256i gp[5];
+    for (int part = 0; part < 5; ++part)
+        gp[part] = _mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(g + part * 16)));
+    for (int mode = 0; mode < 9; ++mode)
+        for (int h = 0; h < 2; ++h) {
+            __m256i v = _mm256_shuffle_epi8(gp[0], _mm256_load_si256(reinterpret_cast<const __m256i*>(t.s[mode][h][0])));
+            for (int part = 1; part < 5; ++part)
+                v = _mm256_or_si256(v, _mm256_shuffle_epi8(gp[part], _mm256_load_si256(reinterpret_cast<const __m256i*>(t.s[mode][h][part]))));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(out[mode] + h * 32), v);
+        }
+}
+#endif
+
 } // namespace
 
 struct FrameCoder::ChromaMb {
@@ -3541,7 +3574,8 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
 
         uint8_t pred[64], cand[64];
         const IntraDirTable<8>& dir = intraDir8();
-        uint8_t edge[IntraDirTable<8>::kG];
+        uint8_t edge[80] = {}; // IntraDirTable<8>::kG values, [74] = DC for the shuffle path
+        static_assert(IntraDirTable<8>::kG <= 74);
         if (dir.ok)
             IntraDirTable<8>::edges(T, L, edge);
         int bestMode = 2, bestCost = 1 << 30;
@@ -3563,7 +3597,29 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             }
             return cost;
         };
-        intraModeSearch(tryMode, predMode);
+#ifdef SCHNEIDI_H264_AVX2
+        if (!(gExp & 64) && dir.ok && corner && haveAvx2()) {
+            // All nine directions at once (same costs, same first-lowest pick as below).
+            int st = 0, sl = 0;
+            for (int i = 0; i < 8; ++i) {
+                st += T[1 + i];
+                sl += L[i];
+            }
+            edge[74] = uint8_t((st + sl + 8) >> 4);
+            alignas(32) uint8_t all[9][64];
+            intra8PredictAll(edge, all);
+            const uint8_t* src8 = &srcY_[size_t(py) * padW_ + px];
+            for (int mode = 0; mode < 9; ++mode) {
+                const int cost = lambda * (mode == predMode ? 1 : 4) + satd8x8U8Fast(src8, padW_, all[mode], 8);
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    bestMode = mode;
+                }
+            }
+            std::memcpy(pred, all[bestMode], 64);
+        } else
+#endif
+            intraModeSearch(tryMode, predMode);
         satdSum += bestCost;
         if (satdSum > bound)
             return false; // clearly worse than another intra type: the caller drops it
