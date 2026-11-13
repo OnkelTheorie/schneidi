@@ -123,7 +123,10 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         tabLay->addWidget(b);
     }
     tabLay->addStretch(1);
-    connect(m_tabs, &QButtonGroup::idClicked, m_pages, &QStackedWidget::setCurrentIndex);
+    connect(m_tabs, &QButtonGroup::idClicked, this, [this](int page) {
+        ensurePage(page);
+        m_pages->setCurrentIndex(page);
+    });
 
     // ---- Overall layout ----
     // Before the pages are built: they then grow inside the panel's own tree. Hung in after the last page, the whole
@@ -160,12 +163,10 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
     QVBoxLayout* videoLay = makePage();
     QVBoxLayout* audioLay = makePage();
-    buildTitlePage(makePage());
-    StartupTrace::mark("  Inspector title page");
-    buildTransitionPage(makePage());
-    buildSubtitlePage(makePage());
+    // Title, transition and subtitle pages: built when first needed (ensurePage), ~45 ms of the start otherwise. Their
+    // empty places in the stack take no width: the panel is as wide as the built pages need
+    for (int page : {kTitlePage, kTransitionPage, kSubtitlePage}) m_unbuilt.insert(page, makePage());
     QVBoxLayout* fxLay = makePage();
-    StartupTrace::mark("  Inspector transition+subtitle pages");
 
     const TrackKind V = TrackKind::Video;
 
@@ -568,30 +569,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     audioLay->addStretch(1);
 
     StartupTrace::mark("  Inspector video+audio pages");
-    // Choice boxes: as wide as their longest entry when there is room, in a narrow panel they give way (the entry
-    // ends in "…") instead of widening it
-    for (QComboBox* box : m_pages->findChildren<QComboBox*>())
-        box->setMinimumWidth(std::min(box->minimumSizeHint().width(), box->fontMetrics().averageCharWidth() * 8 + 24));
-    // Number fields made outside makeParam (subtitles, titles): may give a little in a narrow panel too
-    for (QLineEdit* edit : m_pages->findChildren<QLineEdit*>())
-        if (auto* field = dynamic_cast<ScrubField*>(edit)) field->setShrinkable(true);
-    // A check box alone in the value column may use the reset and keyframe columns too (long texts, a large font)
-    for (QGridLayout* grid : m_pages->findChildren<QGridLayout*>()) {
-        QVector<QLayoutItem*> alone;
-        for (int i = 0; i < grid->count(); ++i) {
-            int row, column, rows, columns;
-            grid->getItemPosition(i, &row, &column, &rows, &columns);
-            if (column == 1 && columns == 1 && qobject_cast<QCheckBox*>(grid->itemAt(i)->widget())
-                && !grid->itemAtPosition(row, 2) && !grid->itemAtPosition(row, 3))
-                alone << grid->itemAt(i);
-        }
-        for (QLayoutItem* item : alone) {
-            int row, column, rows, columns;
-            grid->getItemPosition(grid->indexOf(item), &row, &column, &rows, &columns);
-            grid->takeAt(grid->indexOf(item));
-            grid->addItem(item, row, 1, 1, std::max(1, grid->columnCount() - 1), item->alignment());
-        }
-    }
+    finishPage(m_pages);
     StartupTrace::mark("  Inspector box widths");
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
@@ -610,6 +588,53 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
     refresh();
+}
+
+void Inspector::finishPage(QWidget* root)
+{
+    // Choice boxes: as wide as their longest entry when there is room, in a narrow panel they give way (the entry
+    // ends in "…") instead of widening it
+    for (QComboBox* box : root->findChildren<QComboBox*>())
+        box->setMinimumWidth(std::min(box->minimumSizeHint().width(), box->fontMetrics().averageCharWidth() * 8 + 24));
+    // Number fields made outside makeParam (subtitles, titles): may give a little in a narrow panel too
+    for (QLineEdit* edit : root->findChildren<QLineEdit*>())
+        if (auto* field = dynamic_cast<ScrubField*>(edit)) field->setShrinkable(true);
+    // A check box alone in the value column may use the reset and keyframe columns too (long texts, a large font)
+    for (QGridLayout* grid : root->findChildren<QGridLayout*>()) {
+        QVector<QLayoutItem*> alone;
+        for (int i = 0; i < grid->count(); ++i) {
+            int row, column, rows, columns;
+            grid->getItemPosition(i, &row, &column, &rows, &columns);
+            if (column == 1 && columns == 1 && qobject_cast<QCheckBox*>(grid->itemAt(i)->widget())
+                && !grid->itemAtPosition(row, 2) && !grid->itemAtPosition(row, 3))
+                alone << grid->itemAt(i);
+        }
+        for (QLayoutItem* item : alone) {
+            int row, column, rows, columns;
+            grid->getItemPosition(grid->indexOf(item), &row, &column, &rows, &columns);
+            grid->takeAt(grid->indexOf(item));
+            grid->addItem(item, row, 1, 1, std::max(1, grid->columnCount() - 1), item->alignment());
+        }
+    }
+}
+
+void Inspector::ensurePage(int page)
+{
+    QVBoxLayout* lay = m_unbuilt.take(page);
+    if (!lay) return;
+    if (page == kTitlePage) buildTitlePage(lay);
+    else if (page == kTransitionPage) buildTransitionPage(lay);
+    else if (page == kSubtitlePage) buildSubtitlePage(lay);
+    finishPage(lay->parentWidget());
+    // The new rows count for the panel's width from now on (as when they were built with the others)
+    m_pages->updateGeometry();
+    m_content->updateGeometry();
+    updateGeometry();
+}
+
+void Inspector::ensureAllPages()
+{
+    for (int page : m_unbuilt.keys()) ensurePage(page);
 }
 
 Inspector::~Inspector()
@@ -739,6 +764,7 @@ void Inspector::refresh()
     const Clip* t = primary(TrackKind::Video, true);
     m_tabs->button(0)->setEnabled(v);
     m_tabs->button(1)->setEnabled(a);
+    if (t) ensurePage(kTitlePage); // its fields and m_params before the values are shown below
     m_tabs->button(kTitlePage)->setEnabled(t);
     m_tabs->button(kTitlePage)->setVisible(t);
     const int fx = v ? effectCount(*v) : 0;
