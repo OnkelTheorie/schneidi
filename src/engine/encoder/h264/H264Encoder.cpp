@@ -5235,6 +5235,72 @@ void FrameCoder::refFullRows(RefPic& R, int y0, int y1) const
 }
 
 // Half-pel planes B, V, J for the rows [y0, y1); needs the full-pel rows y0 - 2 .. y1 + 2.
+#ifdef SCHNEIDI_H264_AVX2
+// AVX2 parts of refHalfRows (the SSE2 steps 16 samples at a time; same numbers): the vertical
+// 6-tap (32-bit intermediate + rounded plane) and the horizontal 6-tap of one row, continuing at
+// x / hEnd; the centre 6-tap over the intermediate, continuing at jEnd.
+// (Helpers take and return __m256i: only ever inlined into AVX2 functions, so GCC's ABI note is moot.)
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpsabi"
+#endif
+#define S264_AVX2 __attribute__((target("avx2"))) static inline
+S264_AVX2 __m256i halfLd16(const uint8_t* p) { return _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p))); }
+S264_AVX2 __m256i halfTap16(__m256i a, __m256i b, __m256i c, __m256i d, __m256i e, __m256i f)
+{
+    const __m256i outer = _mm256_add_epi16(a, f), mid = _mm256_add_epi16(c, d), side = _mm256_add_epi16(b, e);
+    return _mm256_sub_epi16(_mm256_add_epi16(outer, _mm256_mullo_epi16(mid, _mm256_set1_epi16(20))),
+                            _mm256_mullo_epi16(side, _mm256_set1_epi16(5)));
+}
+S264_AVX2 void halfStore8(uint8_t* p, __m256i v16) // 16 x int16, (v + 16) >> 5 -> 16 x uint8 (saturated)
+{
+    const __m256i v = _mm256_srai_epi16(_mm256_add_epi16(v16, _mm256_set1_epi16(16)), 5);
+    const __m256i packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(v, v), 0xD8);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(p), _mm256_castsi256_si128(packed));
+}
+S264_AVX2 __m256i halfTap32(const int* v, int x)
+{
+#define S264_LD(i) _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + (i)))
+    const __m256i outer = _mm256_add_epi32(S264_LD(x - 2), S264_LD(x + 3));
+    const __m256i mid = _mm256_add_epi32(S264_LD(x), S264_LD(x + 1)), side = _mm256_add_epi32(S264_LD(x - 1), S264_LD(x + 2));
+#undef S264_LD
+    const __m256i mid20 = _mm256_add_epi32(_mm256_slli_epi32(mid, 4), _mm256_slli_epi32(mid, 2));
+    const __m256i side5 = _mm256_add_epi32(_mm256_slli_epi32(side, 2), side);
+    const __m256i jj = _mm256_sub_epi32(_mm256_add_epi32(outer, mid20), side5);
+    return _mm256_srai_epi32(_mm256_add_epi32(jj, _mm256_set1_epi32(512)), 10);
+}
+
+S264_AVX2 void halfPelRowAvx2(const uint8_t* const* r, int W, int* vi, uint8_t* vb, uint8_t* hb, int& x, int& hEnd)
+{
+    for (; x + 16 <= W; x += 16) {
+        const __m256i vv = halfTap16(halfLd16(r[0] + x), halfLd16(r[1] + x), halfLd16(r[2] + x), halfLd16(r[3] + x),
+                                     halfLd16(r[4] + x), halfLd16(r[5] + x));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(vi + x), _mm256_cvtepi16_epi32(_mm256_castsi256_si128(vv)));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(vi + x + 8), _mm256_cvtepi16_epi32(_mm256_extracti128_si256(vv, 1)));
+        halfStore8(vb + x, vv);
+    }
+    const uint8_t* row = r[2];
+    for (; hEnd + 19 <= W; hEnd += 16) {
+        const uint8_t* q = row + hEnd;
+        halfStore8(hb + hEnd, halfTap16(halfLd16(q - 2), halfLd16(q - 1), halfLd16(q), halfLd16(q + 1), halfLd16(q + 2),
+                                        halfLd16(q + 3)));
+    }
+}
+
+S264_AVX2 void halfPelCentreAvx2(const int* v, int W, uint8_t* j, int& jEnd)
+{
+    for (; jEnd + 19 <= W; jEnd += 16) {
+        const __m256i w = _mm256_permute4x64_epi64(_mm256_packs_epi32(halfTap32(v, jEnd), halfTap32(v, jEnd + 8)), 0xD8);
+        const __m256i b = _mm256_permute4x64_epi64(_mm256_packus_epi16(w, w), 0xD8);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(j + jEnd), _mm256_castsi256_si128(b));
+    }
+}
+#undef S264_AVX2
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+#endif
+
 void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
 {
     const int M = kMargin;
@@ -5252,6 +5318,10 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
         uint8_t* vb = &R.V[size_t(y) * W];
         uint8_t* hb = &R.B[size_t(y) * W];
         int x = 0, hEnd = 2;
+#ifdef SCHNEIDI_H264_AVX2
+        if (haveAvx2())
+            halfPelRowAvx2(r, W, vi, vb, hb, x, hEnd);
+#endif
 #if defined(__SSE2__) || defined(_M_X64)
         // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
         {
@@ -5302,6 +5372,10 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
         const int* v = vRow.data();
         uint8_t* j = &R.J[size_t(y) * W];
         int jEnd = 2;
+#ifdef SCHNEIDI_H264_AVX2
+        if (haveAvx2())
+            halfPelCentreAvx2(v, W, j, jEnd);
+#endif
 #if defined(__SSE2__) || defined(_M_X64)
         {
             auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
