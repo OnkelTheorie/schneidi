@@ -428,7 +428,14 @@ static int printInfo(int argc, char* argv[])
     const LaunchArgs::Info info = LaunchArgs::info(args);
     if (info == LaunchArgs::Info::None) return -1;
 #ifdef Q_OS_WIN
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    // `schneidi --version > file` (or `| more`): the shell hands the GUI program the file/pipe as its standard output
+    // and the C runtime has already bound stdout to it. Reopening stdout on the console (CONOUT$) would send the text
+    // past the redirection into the console window, so the console is only attached when stdout is not a file or
+    // pipe (no handle, or a console handle: FILE_TYPE_CHAR, where CONOUT$ is the same console anyway)
+    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    const DWORD outType = out && out != INVALID_HANDLE_VALUE ? GetFileType(out) : FILE_TYPE_UNKNOWN;
+    const bool redirected = outType == FILE_TYPE_DISK || outType == FILE_TYPE_PIPE;
+    if (!redirected && AttachConsole(ATTACH_PARENT_PROCESS)) {
         FILE* f = nullptr;
         freopen_s(&f, "CONOUT$", "w", stdout);
     }
