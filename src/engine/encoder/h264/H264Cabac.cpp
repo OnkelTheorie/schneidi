@@ -5,8 +5,13 @@
 #include "FrameCoder.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
+
+#if defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
 
 namespace schneidi::h264 {
 namespace {
@@ -573,6 +578,67 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
 // -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
 static const bool gTrellisTwo = std::getenv("H264_TRELLIS3") == nullptr;
 
+// Squared pixel errors of a block at level 0, in one pass from the end (count a multiple of 4):
+// end = one past the last coefficient of half a level or more, tail = sum of the squares from end
+// on, energy = tail + the sum of the squares before end. Each sum runs in four lanes (k mod 4, k
+// descending), combined as (l0 + l1) + (l2 + l3): SSE2 and plain C++ add in the same order.
+static void trellisScan(const double* x, const double* scale, int count, int& end, double& tail, double& energy)
+{
+    end = 0;
+    bool found = false;
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128d half = _mm_set1_pd(0.5);
+    const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
+    __m128d tl[2] = {_mm_setzero_pd(), _mm_setzero_pd()}, hd[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
+    for (int g = count - 4; g >= 0; g -= 4) {
+        for (int h = 1; h >= 0; --h) {
+            const int k = g + 2 * h;
+            const __m128d v = _mm_loadu_pd(x + k);
+            const __m128d e = _mm_mul_pd(v, _mm_loadu_pd(scale + k));
+            const __m128d sq = _mm_mul_pd(e, e);
+            if (found) {
+                hd[h] = _mm_add_pd(hd[h], sq);
+                continue;
+            }
+            const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(v, absMask), half));
+            if (!m) {
+                tl[h] = _mm_add_pd(tl[h], sq);
+                continue;
+            }
+            found = true;
+            end = k + ((m & 2) ? 2 : 1);
+            // Lane k + 1 is at or after end; lane k only when k + 1 is the last one.
+            const __m128d before = (m & 2) ? _mm_castsi128_pd(_mm_set1_epi64x(-1))
+                                           : _mm_castsi128_pd(_mm_set_epi64x(0, -1)); // lanes < end
+            hd[h] = _mm_add_pd(hd[h], _mm_and_pd(before, sq));
+            tl[h] = _mm_add_pd(tl[h], _mm_andnot_pd(before, sq));
+        }
+    }
+    auto lanes = [](const __m128d* v) {
+        alignas(16) double l[4];
+        _mm_store_pd(l, v[0]);
+        _mm_store_pd(l + 2, v[1]);
+        return (l[0] + l[1]) + (l[2] + l[3]);
+    };
+    tail = lanes(tl);
+    energy = tail + lanes(hd);
+#else
+    double tl[4] = {0, 0, 0, 0}, hd[4] = {0, 0, 0, 0};
+    for (int k = count - 1; k >= 0; --k) {
+        const double e = x[k] * scale[k];
+        const double sq = e * e;
+        if (!found && std::abs(x[k]) >= 0.5) {
+            found = true;
+            end = k + 1;
+        }
+        // Lanes adding +0.0 in the SIMD version change nothing, so skipping them is the same.
+        (found ? hd : tl)[k & 3] += sq;
+    }
+    tail = (tl[0] + tl[1]) + (tl[2] + tl[3]);
+    energy = tail + ((hd[0] + hd[1]) + (hd[2] + hd[3]));
+#endif
+}
+
 // With energy: returns the path's cost (squared pixel error of all coefficients + lambda * bits of
 // the block, coded_block_flag included for 4x4 blocks) and sets *energy to the squared error of the
 // all-zero block; the mode decision compares transforms and layouts with these (no reconstruction).
@@ -583,19 +649,28 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     // Coefficients after the last one that reaches half a level can only become 0: they leave
     // every path in the "nothing coded yet" node at no cost, so the search starts at that one.
     int end = count;
-    while (end > 0 && std::abs(x[end - 1]) < 0.5)
-        --end;
-    std::fill(out + end, out + count, 0);
-    const bool cat5 = cat == 5;
-    const double l256 = lambda / 256.0;
     double tail = 0; // squared error of the coefficients after `end` (always zero)
     if (energy) {
-        for (int k = end; k < count; ++k) {
-            const double e = x[k] * scale[k];
-            tail += e * e;
+        trellisScan(x, scale, count, end, tail, *energy);
+    } else {
+#if defined(__SSE2__) || defined(_M_X64)
+        const __m128d half = _mm_set1_pd(0.5);
+        const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
+        while (end >= 2) {
+            const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(_mm_loadu_pd(x + end - 2), absMask), half));
+            if (m) {
+                end -= (m & 2) ? 0 : 1;
+                break;
+            }
+            end -= 2;
         }
-        *energy = tail;
+#endif
+        while (end > 0 && std::abs(x[end - 1]) < 0.5)
+            --end;
     }
+    std::fill(out, out + count, 0);
+    const bool cat5 = cat == 5;
+    const double l256 = lambda / 256.0;
     if (end == 0)
         return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
@@ -633,6 +708,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     std::fill(cost, cost + 9, 1e300);
     cost[kEmpty] = 0;
     uint64_t pass = 0; // positions below half a level: every path keeps its node there (level 0)
+    unsigned live = 1u << kEmpty; // nodes some path has reached (the others stay at 1e300)
     // Level bits of the magnitudes 1 and 2 by node, computed on first use.
     uint32_t lbCache[16];
     uint32_t lbValid = 0;
@@ -648,19 +724,18 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     };
     for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
-        if (energy) {
-            const double e = ax * scale[k];
-            *energy += e * e;
-        }
         if (ax < 0.5) {
             // Only level 0: the same sums as the general case below, without the node bookkeeping.
             const double err = ax * scale[k];
             const double errSq0 = err * err;
-            const double sig = l256 * ce.binCost(sigCtx(k), 0);
-            for (int n = 0; n < 8; ++n)
-                if (cost[n] < 1e299)
+            if (live & 0xFF) {
+                const double sig = l256 * ce.binCost(sigCtx(k), 0);
+                for (unsigned m = live & 0xFF; m; m &= m - 1) {
+                    const int n = std::countr_zero(m);
                     cost[n] = cost[n] + errSq0 + sig;
-            if (cost[kEmpty] < 1e299)
+                }
+            }
+            if (live & (1u << kEmpty))
                 cost[kEmpty] += errSq0;
             pass |= uint64_t(1) << k;
             continue;
@@ -686,9 +761,9 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             const double err = (ax - cand[ci]) * scale[k];
             errSq[ci] = err * err;
         }
-        for (int n = 0; n < 9; ++n) {
-            if (cost[n] >= 1e299)
-                continue;
+        unsigned reached = 0;
+        for (unsigned m = live; m; m &= m - 1) {
+            const int n = std::countr_zero(m); // ascending, as before: ties keep the first node
             const bool empty = n == kEmpty;
             for (int ci = 0; ci < nc; ++ci) {
                 const int mag = cand[ci];
@@ -708,10 +783,12 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
                     fresh[to] = cst;
                     from[k][to] = uint8_t(n);
                     mags[k][to] = int16_t(mag);
+                    reached |= 1u << to;
                 }
             }
         }
         std::copy(fresh, fresh + 9, cost);
+        live = reached;
     }
     int best = kEmpty;
     double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
@@ -722,11 +799,10 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             best = n;
         }
     }
-    for (int k = 0, n = best; k < end; ++k) {
-        if ((pass >> k) & 1) {
-            out[k] = 0;
-            continue;
-        }
+    // Positions below half a level stay 0 (out is cleared above) and keep the node.
+    uint64_t coded = ~pass & (end >= 64 ? ~uint64_t(0) : (uint64_t(1) << end) - 1);
+    for (int n = best; coded; coded &= coded - 1) {
+        const int k = std::countr_zero(coded);
         const int mag = mags[k][n];
         out[k] = x[k] < 0 ? -mag : mag;
         n = from[k][n];
