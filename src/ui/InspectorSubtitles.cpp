@@ -422,6 +422,7 @@ bool Inspector::refreshSubtitle()
     int track = -1;
     const SubtitleCue* c = selectedCue(&track);
     if (!c) return false;
+    ensurePage(kSubtitlePage);
     for (int id : {0, 1, kTitlePage, kTransitionPage, kEffectsPage}) m_tabs->button(id)->setVisible(false);
     m_tabs->button(kSubtitlePage)->setVisible(true);
     m_tabs->button(kSubtitlePage)->setEnabled(true);

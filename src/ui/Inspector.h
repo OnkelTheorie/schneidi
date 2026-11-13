@@ -4,6 +4,7 @@
 #include "core/TimelineOps.h"
 #include "core/Types.h"
 
+#include <QHash>
 #include <QSize>
 #include <QWidget>
 #include <functional>
@@ -34,6 +35,8 @@ public:
     explicit Inspector(Editor* editor, QWidget* parent = nullptr);
     ~Inspector() override;
     void setFrameSize(const QSize& size);
+    // Builds the pages still waiting for their first use (title, transition, subtitles; see ensurePage)
+    void ensureAllPages();
 
 public slots:
     // Playhead (timeline frame): values show the interpolated value there, keyframes are set there
@@ -168,6 +171,11 @@ private:
     // Sort effect sections into the render order of the shown clip: fixed stages first, then the clip's order
     void arrangeEffectSections();
     void refresh();
+    // Title, transition and subtitle pages are built on first use (the start does not need them): every path that shows
+    // or fills one calls this first. finishPage: the size rules for boxes, number fields and check boxes of a new page
+    void ensurePage(int page);
+    void finishPage(QWidget* root);
+    QHash<int, QVBoxLayout*> m_unbuilt; // page index -> its still empty layout
 
     Editor* m_editor;
     // What the selection was when it last changed (Selection::changed also comes for keyframe diamonds only)
