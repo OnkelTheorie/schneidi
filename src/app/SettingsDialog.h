@@ -33,6 +33,7 @@ public:
 
     AiSettings aiSettings() const;
     QString language() const; // code, as I18n::language()
+    double uiScale() const;   // interface size (UiScale::saved: 0 = the system's)
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
@@ -73,6 +74,7 @@ private:
     AiSettingsPage* m_aiPage = nullptr;
     StartTemplatesPage* m_templatesPage = nullptr;
     QComboBox* m_language = nullptr;
+    QComboBox* m_uiScale = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;
     QCheckBox* m_autoLink = nullptr;

@@ -107,6 +107,9 @@ public:
     // In-app tours (MainWindowTours.cpp, app/TourManager.h): Help › Tours; offerTours = the one question at the end of
     // the start (main.cpp, never in test runs); pageName = a page's name in the tour files ("media", "edit", ...)
     void offerTours();
+    // A larger interface for a screen with many pixels at 100 % (app/UiScale.h): a bar under the top bar, "Larger
+    // (factor)" / "Leave it"; either answer is kept, a yes takes effect after a restart (main.cpp, never in test runs)
+    void offerUiScale(double factor);
     class TourManager* tours() const { return m_tours; }
     // A tour asks or runs, or an AI drives the app: no unasked questions (the Claude offer) now
     bool busyForQuestions() const;
@@ -601,7 +604,7 @@ private:
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)
     QMenu* m_recentMenu = nullptr;
     QMenu* m_templateMenu = nullptr;
-    class QLabel* m_titleLabel = nullptr;
+    class ElidedLabel* m_titleLabel = nullptr; // project name in the top bar
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;
     int m_autosaveSlot = 0; // 0 = none assigned yet
@@ -616,6 +619,7 @@ private:
     QWidget* buildUpdateBar();
     class UpdateCheck* m_updates = nullptr;
     QWidget* m_updateBar = nullptr;
+    QWidget* m_scaleBar = nullptr; // offerUiScale
     class QLabel* m_updateText = nullptr;
     QUrl m_updatePage;
     static QString liveOffReason(); // for the AI: connections are off in the settings

@@ -16,6 +16,7 @@
 #include "ui/FrameView.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
+#include "app/UiScale.h"
 #include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
@@ -482,10 +483,13 @@ int main(int argc, char* argv[])
     // Names before the application object: I18n::prepareEnvironment reads the language setting
     AppPaths::setProgramNames();
     I18n::prepareEnvironment(langOverride);
+    // The interface size of Settings › General (QT_SCALE_FACTOR, read by the QApplication); screenshots keep 100 %
+    if (screenshot.isEmpty()) UiScale::applyBeforeApp();
 #if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
     skipKdeQuickOpenGlCheck(argc, argv); // (--screenshot set the offscreen platform above)
 #endif
     QApplication app(argc, argv);
+    UiScale::takeBackEnvironment(); // read: a restart or a started program must not take it for the user's own
     StartupTrace::mark("QApplication");
     QApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString())); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     // Already running: hand the files over to that app (a double-click in the file manager, a recorder passing its
@@ -692,6 +696,9 @@ int main(int argc, char* argv[])
     if (!testRun) QThreadPool::globalInstance()->start([] { StorageThumbCache::prune(); });
     // The first start's tour question, once, after the window settled (the overlay does not block an AI or the app)
     if (!testRun) QTimer::singleShot(1200, &w, [&w] { w.offerTours(); });
+    // A 4K screen at 100 %: everything tiny - a larger interface offered once, in a bar (nothing changes without a yes)
+    if (!testRun && QGuiApplication::platformName() != QLatin1String("offscreen") && UiScale::offerDue())
+        if (const double factor = UiScale::suggestion(w.screen()); factor > 0) w.offerUiScale(factor);
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;

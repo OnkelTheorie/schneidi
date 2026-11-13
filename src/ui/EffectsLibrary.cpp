@@ -13,6 +13,8 @@
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
 #include "engine/VideoEffects.h"
+#include "ui/CompactButton.h"
+#include "ui/ElidedLabel.h"
 #include "ui/MediaPool.h"
 #include "ui/comp/CompShared.h"
 
@@ -496,15 +498,18 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
 {
     setObjectName("Panel");
 
-    auto* title = new QLabel(T("Effekte"));
+    // A narrow column: the title ends in "…", the import button shows "+" (its tooltip says what it does)
+    auto* title = new ElidedLabel;
+    title->setFullText(T("Effekte"));
     title->setObjectName("PanelTitle");
     m_search = new QLineEdit;
     m_search->setPlaceholderText(T("Suchen"));
     m_search->setClearButtonEnabled(true);
     m_search->setMaximumWidth(180);
     // Import effects: opens the effects folder (like "Show in file manager"), files there appear on their own
-    auto* import = new QToolButton;
+    auto* import = new CompactButton;
     import->setText(T("Effekte importieren…"));
+    import->setCompactText("+");
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
                          "Übergänge (Graustufenbilder) in den Ordner „Transitions“ legen, Unterordner werden zu "
                          "Kategorien. Presets aus Kdenlive/Shotcut in den Ordner „Presets“.\n%1")

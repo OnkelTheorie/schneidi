@@ -21,6 +21,7 @@
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
 #include "ui/ProxyProgress.h"
+#include "ui/CompactButton.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "ui/TimelineFormatDialog.h"
@@ -322,10 +323,13 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_sortKey = sort == "date" ? SortKey::Date : sort == "duration" ? SortKey::Duration : SortKey::Name;
     m_sortAscending = settings.value("mediaPool/sortAscending", true).toBool();
 
-    auto* title = new QLabel(T("Medienpool"));
+    // A narrow pool (1024 px wide window, a long language): the title ends in "…", the import button shows "+"
+    auto* title = new ElidedLabel;
+    title->setFullText(T("Medienpool"));
     title->setObjectName("PanelTitle");
-    auto* importBtn = new QToolButton;
+    auto* importBtn = new CompactButton;
     importBtn->setText(T("Importieren…"));
+    importBtn->setCompactText("+");
     connect(importBtn, &QToolButton::clicked, this, &MediaPool::importDialog);
 
     // View like DaVinci at the top right of the Media Pool: icon/list view, sorting
@@ -397,8 +401,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setObjectName("pool_search");
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
-    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
+    // The field takes the room of the title it replaces and needs no more (the title elides down to nothing): opening
+    // the search never widens the pool, the Viewer beside stays put; with room the field stretches (stretch 1)
+    m_search->setSizePolicy(QSizePolicy::Ignored, m_search->sizePolicy().verticalPolicy());
     connect(m_search, &QLineEdit::textChanged, this, [this] {
         rebuildClips();
         m_indexTimer->start(); // the material search after a short pause in typing
@@ -431,6 +436,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     header->addWidget(m_listView);
     header->addWidget(m_sortBtn);
     header->addWidget(importBtn);
+    // The symbol buttons with narrow padding and the sort menu without its arrow (the symbol says it): the header
+    // decides the pool's minimum width, which counts for a 1024 px wide window with a long language or a big font
+    for (QToolButton* b : {m_searchBtn, m_thumbView, m_listView, m_sortBtn})
+        b->setStyleSheet("QToolButton { padding: 3px 3px; } QToolButton::menu-indicator { image: none; }");
 
     // Bin list on the left (Master on top, sub-bins indented)
     auto* bins = new BinTree;

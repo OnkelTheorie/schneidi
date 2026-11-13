@@ -41,6 +41,7 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/ShapeOverlay.h"
 #include "ui/DrawOverlay.h"
+#include "ui/CompactButton.h"
 #include "ui/ElidedLabel.h"
 #include "ui/SplitterMemory.h"
 #include "ui/MediaStorage.h"
@@ -225,11 +226,13 @@ void MainWindow::buildLayout()
 QWidget* MainWindow::buildTopBar()
 {
     // Top bar like in DaVinci: show/hide panels left/right, project name in the middle
-    // Visibility is saved (panels/<key>); test runs do not change the setting
-    auto makeToggle = [this](const QString& text, const QString& key, bool def, QWidget* panel) {
-        auto* b = new QToolButton;
+    // Visibility is saved (panels/<key>); test runs do not change the setting. A narrow window (1024 px, a long
+    // language, a big font) shows only the symbols, the name is in the tooltip
+    auto makeToggle = [this](const char* symbol, const QString& name, const QString& key, bool def, QWidget* panel) {
+        auto* b = new CompactButton;
         b->setObjectName("panelToggle_" + key);
-        b->setText(text);
+        b->setText(QString::fromUtf8(symbol) + " " + name);
+        b->setCompactText(QString::fromUtf8(symbol));
         b->setCheckable(true);
         b->setChecked(QSettings().value("panels/" + key, def).toBool());
         // Only hide panels not yet inserted (show() without a parent opened its own window)
@@ -245,19 +248,19 @@ QWidget* MainWindow::buildTopBar()
         });
         return b;
     };
-    m_poolToggle = makeToggle("▦ " + T("Medienpool"), "mediaPool", true, m_mediaPool);
-    m_effectsToggle = makeToggle("✦ " + T("Effekte"), "effects", false, m_effects);
-    m_storageToggle = makeToggle("▤ " + T("Dateibrowser"), "mediaStorage", false, m_storage);
+    m_poolToggle = makeToggle("▦", T("Medienpool"), "mediaPool", true, m_mediaPool);
+    m_effectsToggle = makeToggle("✦", T("Effekte"), "effects", false, m_effects);
+    m_storageToggle = makeToggle("▤", T("Dateibrowser"), "mediaStorage", false, m_storage);
     m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Medienpool/Timeline ziehen"));
-    m_inspectorToggle = makeToggle("☰ " + T("Inspektor"), "inspector", true, m_inspector);
-    m_mixerToggle = makeToggle("▥ " + T("Mischpult"), "mixer", false, m_mixer);
-    m_transcriptToggle = makeToggle("¶ " + T("Transkript"), "transcript", false, m_transcript);
+    m_inspectorToggle = makeToggle("☰", T("Inspektor"), "inspector", true, m_inspector);
+    m_mixerToggle = makeToggle("▥", T("Mischpult"), "mixer", false, m_mixer);
+    m_transcriptToggle = makeToggle("¶", T("Transkript"), "transcript", false, m_transcript);
     m_transcriptToggle->setToolTip(T("Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline"));
-    m_chatToggle = makeToggle("✧ " + T("KI"), "aiChat", false, m_chatPanel);
+    m_chatToggle = makeToggle("✧", T("KI"), "aiChat", false, m_chatPanel);
     m_chatToggle->setObjectName("ai_chat_toggle");
     m_chatToggle->setToolTip(T("KI-Chat: sag einer KI, was sie im offenen Projekt tun soll"));
 
-    auto* title = m_titleLabel = new QLabel;
+    auto* title = m_titleLabel = new ElidedLabel; // a long project name ends in "…" instead of widening the window
     title->setStyleSheet("font-weight: 600;");
     title->setAlignment(Qt::AlignCenter);
 

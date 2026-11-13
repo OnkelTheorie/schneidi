@@ -16,6 +16,7 @@
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/MediaPool.h"
+#include "ui/ElidedLabel.h"
 #include "ui/TrustDialog.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
