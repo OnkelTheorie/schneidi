@@ -19,6 +19,7 @@
 #include <QImage>
 #include <QLockFile>
 #include <QMainWindow>
+#include <QMargins>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -141,6 +142,14 @@ public:
     // of the project left is removed (false = not readable, message shown)
     bool openBackup(const QString& path);
     void disableAutosave();      // test runs: do not write/delete a backup
+    // The window's normal geometry on its screen before the first show (main.cpp, then maximized): most of the available
+    // area (90 %, centred), so it never starts larger than the screen (1024x768, a scale factor) and is not small on a
+    // big one. fitToScreen: a wanted geometry (a size given for a test run) shrunk/moved so that it and its frame
+    // (`frame`: title bar and borders the window system adds, estimated) lie inside `available`; invalid, larger than
+    // the screen or off it = 90 % of the room, centred
+    void placeOnScreen(const QRect& wanted = {});
+    static QRect fitToScreen(const QRect& wanted, const QRect& available, const QMargins& frame = kFrameEstimate);
+    static constexpr QMargins kFrameEstimate{4, 32, 4, 4};
     // Set project settings (one undo step); test helper --format
     void setProjectFormat(const ProjectFormat& format);
     // Restart (design/language): main() restarts schneidi with these arguments after quitting
@@ -527,6 +536,8 @@ private:
     } m_large;
     QAction* m_largeAction = nullptr;
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
+    class QShortcut* m_drawEscape = nullptr;  // Esc ends painting (only enabled while it is on)
+    void updateEscapeKeys(); // which Esc shortcut is on: recording, then painting, then the large viewer
     QAction* m_fullScreenAction = nullptr;
     QAction* m_appFullScreenAction = nullptr;
     bool m_maximizedBeforeFullScreen = true; // the window state setAppFullScreen(false) brings back

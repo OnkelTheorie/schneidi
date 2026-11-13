@@ -18,6 +18,10 @@
 #include "ui/ScrubField.h"
 #include <QMimeData>
 #include <QTreeWidget>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPushButton>
+#include <QSet>
 #include <QDropEvent>
 
 #include <QApplication>
@@ -131,6 +135,42 @@ int main(int argc, char** argv)
     lib.show();
     app.processEvents();
     CHECK(!lib.grab().isNull());
+    // Searching finds "Clip in Form" by its words (Form, Kreis, shape, circle), also from the Toolbox, with a picture
+    {
+        tree->setCurrentItem(tree->topLevelItem(0));
+        auto* search = lib.findChild<QLineEdit*>();
+        auto* list = lib.findChild<QListWidget*>();
+        if (CHECK(search && list)) {
+            for (const char* word : {"Form", "kreis", "shape", "Circle"}) {
+                search->setText(QString::fromLatin1(word));
+                app.processEvents();
+                QListWidgetItem* hit = nullptr;
+                for (int i = 0; i < list->count(); ++i)
+                    if (list->item(i)->data(Qt::UserRole).toString() == "fx:clip_shape") hit = list->item(i);
+                Check::report(hit != nullptr, "search finds Clip in Form", __FILE__, __LINE__, word);
+                if (hit) {
+                    // Not the blank grey tile: a picture with colours in it
+                    const QImage icon = hit->icon().pixmap(32, 32).toImage();
+                    QSet<QRgb> colours;
+                    for (int y = 0; y < icon.height(); y += 2)
+                        for (int x = 0; x < icon.width(); x += 2) colours.insert(icon.pixel(x, y));
+                    CHECK(colours.size() > 8);
+                }
+            }
+            search->clear();
+        }
+    }
+    // The Inspector's Video tab adds it ("Form…" under Beschneiden)
+    {
+        auto* button = insp.findChild<QPushButton*>("ClipShapeButton");
+        if (CHECK(button)) {
+            button->click();
+            app.processEvents();
+            const Clip* c = TimelineOps::findClip(project.timeline(), vid);
+            CHECK(c && EffectRegistry::has(*c, "clip_shape"));
+            editor.removeEffect({vid}, "clip_shape");
+        }
+    }
 
     // Drag filter onto the timeline: audio track accepts nothing, video clip gets the effect (one undo step)
     editor.removeEffect({vid}, "blur");

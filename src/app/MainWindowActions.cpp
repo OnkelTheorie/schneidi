@@ -277,6 +277,8 @@ void MainWindow::buildActions()
         setDrawTool(m_drawAction->isChecked());
     });
     m_drawAction->setCheckable(true);
+    m_drawEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { setDrawTool(false); });
+    m_drawEscape->setEnabled(false); // only while painting (updateEscapeKeys)
     makeAction(toolsMenu, "snapping", T("Einrasten an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);

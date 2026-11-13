@@ -26,6 +26,8 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <algorithm>
+#include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -34,10 +36,24 @@
 
 namespace {
 
+// Scrolls only downwards: the dialog is at least as wide as the page's narrowest layout (long labels already put
+// their fields below them, hints wrap), so nothing is cut off at the right in a long language with a large font
+class PageArea : public QScrollArea {
+public:
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget())
+            s.setWidth(std::max(s.width(), widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width()
+                                               + 2 * frameWidth()));
+        return s;
+    }
+};
+
 // Pages scroll when they get longer than the dialog (the AI page grows with the chat settings)
 QScrollArea* scrolling(QWidget* page)
 {
-    auto* area = new QScrollArea;
+    auto* area = new PageArea;
     area->setWidget(page);
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);

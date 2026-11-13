@@ -9,6 +9,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -332,6 +333,31 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         }
         shapeBox->setCurrentIndex(i);
         shapeBox->setEnabled(c->kind == ClipKind::Media);
+    };
+    // Cut the picture to a circle, star … (effect "clip_shape", its values then in the Effects tab): found here, where
+    // one looks for the picture's outline, not only in the Effects Library
+    auto* shapeCut = new QPushButton(T("Form…"));
+    shapeCut->setObjectName("ClipShapeButton");
+    shapeCut->setFocusPolicy(Qt::NoFocus);
+    shapeCut->setToolTip(T("Schneidet das Bild als Kreis, Rechteck, Stern … aus (Effekt „Clip in Form“, z. B. Facecam "
+                           "als Kreis); die Werte stehen dann unter Effekte"));
+    connect(shapeCut, &QPushButton::clicked, this, [this] {
+        const QString id = QString::fromLatin1(Shapes::kClipShapeEffect);
+        if (const Clip* c = primary(TrackKind::Video); c && EffectRegistry::has(*c, id)) {
+            m_tabs->button(kEffectsPage)->click(); // already cut: show its values
+            return;
+        }
+        m_editor->addEffect(selectedIds(TrackKind::Video), id);
+    });
+    crop.grid->addWidget(rowLabel(T("Form")), crop.rows, 0);
+    crop.grid->addWidget(shapeCut, crop.rows, 1, Qt::AlignLeft);
+    ++crop.rows;
+    m_refreshers << [this, shapeCut] {
+        const Clip* c = primary(TrackKind::Video);
+        if (!c) return;
+        const bool has = EffectRegistry::has(*c, QString::fromLatin1(Shapes::kClipShapeEffect));
+        const QString text = has ? T("Form bearbeiten…") : T("Form…");
+        if (shapeCut->text() != text) shapeCut->setText(text);
     };
 
     // ---- Composite ----

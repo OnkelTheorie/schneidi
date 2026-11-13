@@ -11,7 +11,9 @@
 #include "core/TimelineOps.h"
 
 #include <QColorDialog>
+#include <QEvent>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -46,7 +48,9 @@ DrawBrush::DrawBrush()
     const QSettings s;
     const QColor c(s.value("draw/color").toString());
     if (c.isValid()) m_color = c;
-    m_width = std::clamp(s.value("draw/width", m_width).toDouble(), 0.0005, 0.2);
+    if (s.contains("draw/widthPx")) m_widthPx = s.value("draw/widthPx").toDouble();
+    else if (s.contains("draw/width")) m_widthPx = s.value("draw/width").toDouble() * 1080; // 0.22 betas: of the frame height
+    m_widthPx = std::clamp(m_widthPx, kMinPx, kMaxPx);
     m_opacity = std::clamp(s.value("draw/opacity", m_opacity).toDouble(), 0.05, 1.0);
 }
 
@@ -54,7 +58,7 @@ void DrawBrush::save() const
 {
     QSettings s;
     s.setValue("draw/color", m_color.name());
-    s.setValue("draw/width", m_width);
+    s.setValue("draw/widthPx", m_widthPx);
     s.setValue("draw/opacity", m_opacity);
 }
 
@@ -66,11 +70,16 @@ void DrawBrush::setColor(const QColor& c)
     emit changed();
 }
 
-void DrawBrush::setWidth(double w)
+double DrawBrush::width(int frameHeight) const
 {
-    w = std::clamp(w, 0.0005, 0.2);
-    if (w == m_width) return;
-    m_width = w;
+    return std::min(0.2, m_widthPx / std::max(1, frameHeight));
+}
+
+void DrawBrush::setWidthPx(double px)
+{
+    px = std::clamp(px, kMinPx, kMaxPx);
+    if (px == m_widthPx) return;
+    m_widthPx = px;
     save();
     emit changed();
 }
@@ -241,7 +250,7 @@ void DrawOverlay::paint(QPainter& p, const QRectF& frame)
     const double scale = frame.height() / std::max(1, fmt.height);
     if (m_painting && !m_stroke.isEmpty()) { // the stroke being painted, as it will look
         QColor col = brush.color();
-        const double width = std::max(1.0, brush.width() * fmt.height * scale);
+        const double width = std::max(1.0, brush.width(fmt.height) * fmt.height * scale);
         p.setOpacity(brush.opacity());
         if (m_stroke.size() == 1) {
             p.setPen(Qt::NoPen);
@@ -257,7 +266,7 @@ void DrawOverlay::paint(QPainter& p, const QRectF& frame)
         p.setOpacity(1);
     }
     if (m_hovering || m_erasing) { // where the brush or eraser touches
-        const double r = std::max(brush.eraser() ? kEraser : 1.0, brush.width() * fmt.height * scale / 2);
+        const double r = std::max(brush.eraser() ? kEraser : 1.0, brush.width(fmt.height) * fmt.height * scale / 2);
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(QColor(0, 0, 0, 150), 2.5));
         p.drawEllipse(m_hover, r, r);
@@ -447,7 +456,7 @@ void DrawOverlay::commitStroke(const QRectF& frame)
     DrawStroke s;
     s.color = brush.color();
     s.opacity = brush.opacity();
-    s.width = brush.width();
+    s.width = brush.width(fmt.height);
     if (c && Keys::hasTransform(*c)) { // as wide on the screen as the brush, whatever the drawing's zoom
         const int t = localFrame(*c);
         const double z = std::sqrt(std::abs(Keys::valueAt(*c, AnimParam::ZoomX, t) * Keys::valueAt(*c, AnimParam::ZoomY, t)));
@@ -491,7 +500,7 @@ void DrawOverlay::erase(const QRectF& frame)
         const int t = localFrame(*c);
         zoom = std::sqrt(std::abs(Keys::valueAt(*c, AnimParam::ZoomX, t) * Keys::valueAt(*c, AnimParam::ZoomY, t)));
     }
-    const double radius = std::max(DrawBrush::instance().width() * fmt.height / 2 / std::max(1e-3, zoom), kEraser / perPixel);
+    const double radius = std::max(DrawBrush::instance().width(fmt.height) * fmt.height / 2 / std::max(1e-3, zoom), kEraser / perPixel);
     QVector<int> gone = Drawing::hits(c->title.drawing, path, radius, fmt.width, fmt.height);
     if (gone.isEmpty()) return;
     m_editor->modifyClips({id}, T("Radieren"), [&](Clip& clip) {
@@ -539,9 +548,16 @@ DrawBar::DrawBar(std::function<int()> frameHeight, QWidget* parent) : QWidget(pa
     QPalette pal = palette();
     pal.setColor(QPalette::Window, Theme::panelHeader);
     setPalette(pal);
-    auto* row = new QHBoxLayout(this);
-    row->setContentsMargins(6, 3, 6, 3);
-    row->setSpacing(4);
+    auto* rows = new QVBoxLayout(this);
+    rows->setContentsMargins(6, 3, 6, 3);
+    rows->setSpacing(2);
+    m_row1 = new QHBoxLayout;
+    m_row2 = new QHBoxLayout;
+    for (QHBoxLayout* r : {m_row1, m_row2}) {
+        r->setContentsMargins(0, 0, 0, 0);
+        r->setSpacing(4);
+        rows->addLayout(r);
+    }
     const auto tool = [this](const QString& text, const QString& tip) {
         auto* b = new QToolButton(this);
         b->setText(text);
@@ -560,24 +576,28 @@ DrawBar::DrawBar(std::function<int()> frameHeight, QWidget* parent) : QWidget(pa
     m_width = new QSpinBox(this);
     m_width->setRange(1, 216);
     m_width->setSuffix(" px");
-    m_width->setToolTip(T("Breite neuer Striche (Pixel der Timeline)"));
+    m_width->setToolTip(T("Breite neuer Striche in Pixeln des Timeline-Bilds"));
     m_width->setFocusPolicy(Qt::ClickFocus);
     m_opacity = new QSpinBox(this);
     m_opacity->setRange(5, 100);
     m_opacity->setSuffix(" %");
     m_opacity->setToolTip(T("Deckkraft neuer Striche"));
     m_opacity->setFocusPolicy(Qt::ClickFocus);
-    auto* done = new QToolButton(this);
+    auto* done = m_done = new QToolButton(this);
     done->setText(T("Fertig"));
     done->setToolTip(T("Malen beenden (P)"));
     done->setAutoRaise(true);
     done->setFocusPolicy(Qt::NoFocus);
-    row->addWidget(m_brush);
-    row->addWidget(m_eraser);
-    row->addWidget(m_color);
-    row->addWidget(m_width);
-    row->addWidget(m_opacity);
-    row->addWidget(done);
+    m_row1->addWidget(m_brush);
+    m_row1->addWidget(m_eraser);
+    m_row1->addWidget(m_color);
+    m_row1->addWidget(m_width);
+    m_row1->addWidget(m_opacity);
+    m_row1->addWidget(done);
+    m_row1->addStretch(1);
+    m_row2->addStretch(1);
+    // Over the viewer's picture without a layout: follows its width (a narrow window), never makes it wider
+    if (parent) parent->installEventFilter(this);
     DrawBrush& b = DrawBrush::instance();
     connect(m_brush, &QToolButton::clicked, this, [] { DrawBrush::instance().setEraser(false); });
     connect(m_eraser, &QToolButton::clicked, this, [] { DrawBrush::instance().setEraser(true); });
@@ -585,13 +605,43 @@ DrawBar::DrawBar(std::function<int()> frameHeight, QWidget* parent) : QWidget(pa
         const QColor c = QColorDialog::getColor(DrawBrush::instance().color(), this, T("Farbe neuer Striche"));
         if (c.isValid()) DrawBrush::instance().setColor(c);
     });
-    connect(m_width, &QSpinBox::valueChanged, this, [this](int px) {
-        DrawBrush::instance().setWidth(double(px) / std::max(1, m_frameHeight ? m_frameHeight() : 1080));
-    });
+    connect(m_width, &QSpinBox::valueChanged, this, [](int px) { DrawBrush::instance().setWidthPx(px); });
     connect(m_opacity, &QSpinBox::valueChanged, this, [](int pct) { DrawBrush::instance().setOpacity(pct / 100.0); });
     connect(done, &QToolButton::clicked, this, &DrawBar::closeWanted);
     connect(&b, &DrawBrush::changed, this, &DrawBar::sync);
     sync();
+}
+
+bool DrawBar::eventFilter(QObject* watched, QEvent* e)
+{
+    if (watched == parentWidget() && e->type() == QEvent::Resize && isVisible()) place();
+    return QWidget::eventFilter(watched, e);
+}
+
+void DrawBar::place()
+{
+    const int room = parentWidget() ? std::max(1, parentWidget()->width() - 2 * kMargin) : QWIDGETSIZE_MAX;
+    // One row when it fits, else the opacity and "Done" in a second row
+    const auto rowWidth = [this] {
+        int w = 12 + 4 * 5; // margins and spacing
+        for (QWidget* x : {static_cast<QWidget*>(m_brush), static_cast<QWidget*>(m_eraser), static_cast<QWidget*>(m_color),
+                           static_cast<QWidget*>(m_width), static_cast<QWidget*>(m_opacity), static_cast<QWidget*>(m_done)})
+            w += x->sizeHint().width();
+        return w;
+    };
+    const bool two = rowWidth() > room;
+    if (two != (m_row2->indexOf(m_done) >= 0)) {
+        for (QWidget* x : {static_cast<QWidget*>(m_opacity), static_cast<QWidget*>(m_done)}) {
+            (two ? m_row1 : m_row2)->removeWidget(x);
+            QHBoxLayout* to = two ? m_row2 : m_row1;
+            to->insertWidget(to->count() - 1, x); // before the stretch
+        }
+    }
+    layout()->activate();
+    const QSize hint = sizeHint();
+    resize(std::min(hint.width(), room), hint.height());
+    move(kMargin, kMargin);
+    raise();
 }
 
 void DrawBar::sync()
@@ -604,7 +654,8 @@ void DrawBar::sync()
     m_color->setIcon(QIcon(px));
     const QSignalBlocker b1(m_width), b2(m_opacity);
     const int h = std::max(1, m_frameHeight ? m_frameHeight() : 1080);
-    m_width->setMaximum(std::max(1, int(std::lround(0.2 * h)))); // DrawBrush's largest width
-    m_width->setValue(std::max(1, int(std::lround(b.width() * h))));
+    // Pixels of the timeline frame; at most a fifth of its height (DrawBrush::width)
+    m_width->setMaximum(std::clamp(int(std::lround(0.2 * h)), 1, int(DrawBrush::kMaxPx)));
+    m_width->setValue(std::max(1, int(std::lround(std::min(b.widthPx(), 0.2 * h)))));
     m_opacity->setValue(int(std::lround(b.opacity() * 100)));
 }

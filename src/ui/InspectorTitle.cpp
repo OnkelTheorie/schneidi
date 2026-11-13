@@ -14,6 +14,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -73,6 +74,19 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 {
     const TrackKind V = TrackKind::Video;
     auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
+    auto showFor = [this, current](const Section& s, std::function<bool(const TitleStyle&)> when) {
+        m_refreshers << [s, current, when] {
+            if (const Clip* c = current()) {
+                const bool on = when(c->title);
+                s.header->setVisible(on);
+                if (!on) s.body->setVisible(false);
+                else if (s.toggle) s.body->setVisible(s.toggle->isChecked());
+            }
+        };
+    };
+    // A shape's and a drawing's own section first (with their colour and position): they have no text section
+    buildShapeSection(page, showFor);
+    buildDrawingSection(page, showFor);
 
     // ---- Text (like DaVinci "Text": text field, font, size, color, style, alignment, position) ----
     Section txt = addSection(page, V, T("Text"), [](Clip& c) {
@@ -191,7 +205,6 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     txt.grid->addWidget(rowLabel(T("Stil")), txt.rows, 0);
     txt.grid->addLayout(styleBox, txt.rows++, 1, 1, 3); // no reset or keyframes: the whole row
 
-    const int posRow = txt.rows;
     addXY(txt, "titlePos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
           [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
     // A progress bar has no font, size, style or position (its place is the edge): only its colour stays here
@@ -235,20 +248,12 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
                      [](Clip& c) -> double& { return c.title.boxPad; }),
            "titleBoxPad", T("Hintergrund"), boxOn);
     const QVector<QWidget*> textOnly = textRows + rowWidgets(box.grid, padRow, box.rows);
-    // A shape has no letters (font, size, style; its size is in the section "Form") and no box, but a position
-    const QVector<QWidget*> letters = rowWidgets(txt.grid, fontRow, colorRow) + rowWidgets(txt.grid, styleRow, posRow)
-                                      + rowWidgets(box.grid, padRow, box.rows);
-    // A drawing's strokes have their own colours: no text colour either
-    const QVector<QWidget*> textColor = rowWidgets(txt.grid, colorRow, styleRow);
-    m_refreshers << [textOnly, letters, textColor, current] {
-        if (const Clip* c = current()) {
+    m_refreshers << [textOnly, current] {
+        if (const Clip* c = current())
             for (QWidget* w : textOnly) w->setVisible(!c->title.isProgress());
-            if (c->title.isShape() || c->title.isDrawing())
-                for (QWidget* w : letters) w->hide();
-            if (c->title.isDrawing())
-                for (QWidget* w : textColor) w->hide();
-        }
     };
+    // A shape and a drawing have no letters: no text section (their colour and position are in "Form"/"Zeichnung")
+    showFor(txt, [](const TitleStyle& t) { return !t.isShape() && !t.isDrawing(); });
     m_refreshers << [box, current] { // the box section does nothing for a shape
         if (const Clip* c = current()) {
             const bool on = !c->title.isShape() && !c->title.isDrawing();
@@ -692,8 +697,6 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
         }
     };
     showFor(bar, [](const TitleStyle& t) { return t.isProgress(); });
-    buildShapeSection(page, showFor);
-    buildDrawingSection(page, showFor);
     showFor(outline, [](const TitleStyle& t) { return !t.isProgress() && !t.isDrawing(); });
 }
 
@@ -805,9 +808,9 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
     return button;
 }
 
-// Shape title (0.22, TitleKind::Shape): its kind, size, turn, fill (colour, none, blur, pixelate), soft edge, spotlight,
-// how much of the stroke is drawn and the tracker it follows. The fill colour is the "Text" section's colour, the
-// stroke its outline, the shadow the look's shadow
+// Shape title (0.22, TitleKind::Shape): its kind, size, turn, position, fill (colour, none, blur, pixelate), soft edge,
+// spotlight, how much of the stroke is drawn and the tracker it follows. The fill colour is the title colour, the
+// stroke its outline, the shadow the look's shadow. Shown first; a shape has no "Text" section
 void Inspector::buildShapeSection(QVBoxLayout* page,
                                   const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor)
 {
@@ -836,13 +839,18 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
     for (const auto& k : kShapeKinds) kind->addItem(T(k.name), int(k.kind));
     connect(kind, &QComboBox::activated, this, [this, V, kind] {
         const auto k = ShapeKind(kind->currentData().toInt());
-        // A line's height is its thickness: a box height would make it a bar (as the CLI: 8 px at 1080)
-        const double thick = std::max(2.0, std::round(m_editor->project()->timelineFormat().height / 135.0));
-        apply(V, {}, T("Form"), [k, thick](Clip& c) {
-            if (k == ShapeKind::Line && c.title.shape.kind != ShapeKind::Line) {
-                c.title.shape.height = thick;
-                Keys::clear(c, AnimParam::ShapeHeight);
-            }
+        // A line's height is its thickness (a box height would make it a bar); leaving it brings the height back
+        const double thick = Shapes::lineThickness(m_editor->project()->timelineFormat().height);
+        if (const Clip* c = primary(V, true); c && c->title.isShape() && k == ShapeKind::Line
+                                              && c->title.shape.kind != ShapeKind::Line)
+            m_heightBeforeLine.insert(c->id, c->title.shape.height);
+        const QHash<int, double> remembered = m_heightBeforeLine;
+        apply(V, {}, T("Form"), [k, thick, remembered](Clip& c) {
+            const ShapeStyle& s = c.title.shape;
+            const QSizeF size = Shapes::sizeForKind(s, k, thick, remembered.value(c.id));
+            if (size.height() != s.height) Keys::clear(c, AnimParam::ShapeHeight);
+            c.title.shape.width = size.width();
+            c.title.shape.height = size.height();
             c.title.shape.kind = k;
         }, true);
     });
@@ -854,6 +862,8 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
               [](Clip& c) -> double& { return c.title.shape.height; }, AnimParam::ShapeHeight);
     addSlider(sh, "shapeRotation", T("Drehung"), -360, 360, 0, 0.5, 1,
               [](Clip& c) -> double& { return c.title.shape.rotation; }, AnimParam::ShapeRotation);
+    addXY(sh, "shapePos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
+          [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
     const int cornerRow = sh.rows;
     addSlider(sh, "shapeCorner", T("Eckenradius"), 0, 1000, 0, 0.5, 0, [](Clip& c) -> double& { return c.title.shape.corner; });
     const int pointsRow = sh.rows;
@@ -878,6 +888,9 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
     });
     sh.grid->addWidget(rowLabel(T("Füllung")), sh.rows, 0);
     sh.grid->addWidget(fill, sh.rows++, 1);
+    const int colorRow = sh.rows;
+    addColor(sh, T("Farbe"), T("Füllfarbe"), [](Clip& c) -> QColor& { return c.title.color; }, true, {},
+             AnimParam::TitleColor, [](Clip& c) -> int& { return c.title.colorRef; });
     const int amountRow = sh.rows;
     addSlider(sh, "shapeAmount", T("Stärke"), 0, 100, ShapeStyle().amount, 0.2, 0,
               [](Clip& c) -> double& { return c.title.shape.amount; });
@@ -890,9 +903,17 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
               [](Clip& c) -> double& { return c.title.shape.reveal; }, AnimParam::ShapeReveal);
     addFollowRow(sh, [](const TitleStyle& t) { return t.isShape(); },
                  T("Die Form bewegt sich mit einem Tracker eines Clips (Seite Compositing)"));
+    // No fill and no stroke: nothing to see (a spotlight still darkens around it)
+    auto* invisible = new QLabel(T("Die Form ist unsichtbar: keine Füllung und kein Rand. Wähle eine Füllung oder "
+                                   "schalte die Umrandung ein."));
+    invisible->setObjectName("shapeInvisibleHint");
+    invisible->setWordWrap(true);
+    invisible->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
+    sh.grid->addWidget(invisible, sh.rows++, 0, 1, 3);
     const QVector<QWidget*> corner = rowWidgets(sh.grid, cornerRow, pointsRow), pointRow = rowWidgets(sh.grid, pointsRow, innerRow),
-                            inner = rowWidgets(sh.grid, innerRow, fillRow), amount = rowWidgets(sh.grid, amountRow, afterAmount);
-    m_refreshers << [current, kind, points, fill, corner, pointRow, inner, amount] {
+                            inner = rowWidgets(sh.grid, innerRow, fillRow), amount = rowWidgets(sh.grid, amountRow, afterAmount),
+                            color = rowWidgets(sh.grid, colorRow, amountRow);
+    m_refreshers << [current, kind, points, fill, corner, pointRow, inner, amount, color, invisible] {
         const Clip* c = current();
         if (!c || !c->title.isShape()) return;
         const ShapeStyle& s = c->title.shape;
@@ -904,6 +925,10 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
         for (QWidget* w : pointRow) w->setVisible(s.kind == ShapeKind::Star || s.kind == ShapeKind::Polygon);
         for (QWidget* w : inner) w->setVisible(s.kind == ShapeKind::Star);
         for (QWidget* w : amount) w->setVisible(s.fill == ShapeFill::Blur || s.fill == ShapeFill::Pixelate);
+        // A line is drawn in the fill colour
+        for (QWidget* w : color) w->setVisible(s.fill == ShapeFill::Color || s.kind == ShapeKind::Line);
+        invisible->setVisible(s.fill == ShapeFill::None && !c->title.outlineOn && s.kind != ShapeKind::Line
+                              && s.spotlight <= 0);
     };
     showFor(sh, [](const TitleStyle& t) { return t.isShape(); });
 }
@@ -980,18 +1005,23 @@ void Inspector::buildDrawingSection(QVBoxLayout* page,
     paint->setToolTip(T("Im Viewer malen (P): Striche kommen in diese Zeichnung"));
     paint->setFocusPolicy(Qt::NoFocus);
     connect(paint, &QPushButton::clicked, this, &Inspector::drawToolRequested);
+    // The count in its row, the buttons below it: side by side the row made the Inspector (and the main window with
+    // it) ~70 px wider than any other page
     auto* line = new QHBoxLayout;
     line->setContentsMargins(0, 0, 0, 0);
     line->setSpacing(4);
-    line->addWidget(count, 1);
     line->addWidget(paint);
     line->addWidget(clear);
+    line->addStretch(1);
     sec.grid->addWidget(rowLabel(T("Striche")), sec.rows, 0);
-    sec.grid->addLayout(line, sec.rows++, 1);
+    sec.grid->addWidget(count, sec.rows++, 1);
+    sec.grid->addLayout(line, sec.rows++, 1, 1, 3); // over the reset/keyframe columns too
     Param* reveal = addSlider(sec, "drawingReveal", T("Aufmalen"), 0, 30, 0, 0.05, 1,
                               [](Clip& c) -> double& { return c.title.drawing.reveal; });
     reveal->slider->setToolTip(T("Sekunden, in denen sich die Striche ab dem Clip-Anfang nacheinander aufmalen "
                                  "(0 = alle sofort)"));
+    addXY(sec, "drawingPos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
+          [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
     // The brush of new strokes: the paint tool's (the same in every drawing)
     auto* color = new QToolButton;
     color->setToolTip(T("Farbe neuer Striche"));
@@ -1003,11 +1033,9 @@ void Inspector::buildDrawingSection(QVBoxLayout* page,
     auto* width = new QSpinBox;
     width->setRange(1, 216);
     width->setSuffix(" px");
-    width->setToolTip(T("Breite neuer Striche (Pixel der Timeline)"));
+    width->setToolTip(T("Breite neuer Striche in Pixeln des Timeline-Bilds"));
     width->setFocusPolicy(Qt::ClickFocus);
-    connect(width, &QSpinBox::valueChanged, this, [this](int px) {
-        DrawBrush::instance().setWidth(double(px) / std::max(1, m_editor->project()->timelineFormat().height));
-    });
+    connect(width, &QSpinBox::valueChanged, this, [](int px) { DrawBrush::instance().setWidthPx(px); });
     auto* brushLine = new QHBoxLayout;
     brushLine->setContentsMargins(0, 0, 0, 0);
     brushLine->setSpacing(4);
@@ -1022,8 +1050,8 @@ void Inspector::buildDrawingSection(QVBoxLayout* page,
         color->setIcon(QIcon(px));
         const QSignalBlocker bw(width);
         const int h = std::max(1, m_editor->project()->timelineFormat().height);
-        width->setMaximum(std::max(1, int(std::lround(0.2 * h)))); // DrawBrush's largest width
-        width->setValue(std::max(1, int(std::lround(b.width() * h))));
+        width->setMaximum(std::clamp(int(std::lround(0.2 * h)), 1, int(DrawBrush::kMaxPx))); // DrawBrush::width's largest
+        width->setValue(std::max(1, int(std::lround(std::min(b.widthPx(), 0.2 * h)))));
     };
     connect(&DrawBrush::instance(), &DrawBrush::changed, this, syncBrush);
     addFollowRow(sec, [](const TitleStyle& t) { return t.isDrawing(); },

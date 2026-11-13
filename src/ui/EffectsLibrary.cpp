@@ -8,6 +8,7 @@
 #include "core/I18n.h"
 #include "core/Presets.h"
 #include "core/SfxSynth.h"
+#include "core/Shapes.h"
 #include "engine/Extensions.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
@@ -310,6 +311,23 @@ QPixmap ownLookIcon(const QString& id)
 QPixmap effectIcon(const QString& id)
 {
     if (VideoEffects::isOwn(id) && id != "chromakey") return ownLookIcon(id);
+    if (id == QLatin1String(Shapes::kClipShapeEffect)) { // the colourful picture cut to a circle with a white rim
+        QPixmap pm(kIcon);
+        pm.fill(QColor(0x2a, 0x2a, 0x30));
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        const double d = pm.height() * 0.8;
+        const QRectF circle(pm.width() / 2.0 - d / 2, pm.height() / 2.0 - d / 2, d, d);
+        QPainterPath clip;
+        clip.addEllipse(circle);
+        p.setClipPath(clip);
+        p.drawPixmap(pm.rect(), ownLookIcon(QString()));
+        p.setClipping(false);
+        p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(circle);
+        return pm;
+    }
     QPixmap pm(kIcon);
     pm.fill(QColor(0x2a, 0x2a, 0x30));
     QPainter p(&pm);
@@ -783,7 +801,7 @@ void EffectsLibrary::rebuild()
     const QString group = cur ? cur->data(0, kGroupRole).toString() : QString();
     const QString filter = m_search->text().trimmed();
 
-    struct Entry { QString name; QString data; QPixmap icon; QString tip; bool ok = true; };
+    struct Entry { QString name; QString data; QPixmap icon; QString tip; bool ok = true; QStringList keywords; };
     struct Group { QString header; QVector<Entry> entries; };
     QVector<Group> groups;
 
@@ -820,7 +838,7 @@ void EffectsLibrary::rebuild()
         for (const auto& e : EffectRegistry::all())
             // The custom effects (filter chain, shader) come with their code through `edit`: empty they do nothing
             if (e.library && e.video == video && e.id != QLatin1String("ffmpeg_filter") && e.id != QLatin1String("shader"))
-                out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
+                out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description, true, e.keywords};
         return out;
     };
     auto builtinPresets = [&] {
@@ -900,6 +918,8 @@ void EffectsLibrary::rebuild()
     case All: // Toolbox: all groups with header like in DaVinci
         groups = {{T("Videoübergänge"), videoTransitions()}, {T("Audioübergänge"), audioTransitions()},
                   {T("Titel-Vorlagen"), titles}};
+        // A search in the Toolbox also finds the filters (searching "Form" finds "Clip in Form" too)
+        if (!filter.isEmpty()) groups += {{T("Videoeffekte"), filters(true)}, {T("Audioeffekte"), filters(false)}};
         break;
     case VideoTransitions: groups = {{{}, videoTransitions()}}; break;
     case AudioTransitions: groups = {{{}, audioTransitions()}}; break;
@@ -953,7 +973,10 @@ void EffectsLibrary::rebuild()
     for (const Group& g : groups) {
         QVector<const Entry*> hits;
         for (const Entry& e : g.entries)
-            if (filter.isEmpty() || e.name.contains(filter, Qt::CaseInsensitive)) hits << &e;
+            if (filter.isEmpty() || e.name.contains(filter, Qt::CaseInsensitive)
+                || std::any_of(e.keywords.begin(), e.keywords.end(),
+                               [&](const QString& k) { return k.contains(filter, Qt::CaseInsensitive); }))
+                hits << &e;
         if (hits.isEmpty()) continue;
         if (!g.header.isEmpty()) {
             auto* h = new QListWidgetItem(g.header);

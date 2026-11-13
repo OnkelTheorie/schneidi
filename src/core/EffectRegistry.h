@@ -62,6 +62,7 @@ struct EffectDescriptor {
     // then the Color page grade, then the Green Screen key; noise reduction per audio clip). It cannot be moved; all
     // other effects render after the fixed stages in the clip's order (Editor::moveEffect)
     bool fixed = false;
+    QStringList keywords; // further words the Effects Library's search finds it by (both UI languages)
 };
 
 namespace EffectRegistry {

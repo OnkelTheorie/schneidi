@@ -172,6 +172,7 @@ private:
     Editor* m_editor;
     // What the selection was when it last changed (Selection::changed also comes for keyframe diamonds only)
     QSet<int> m_shownIds;
+    QHash<int, double> m_heightBeforeLine; // shape clip id -> its height before it became a line (back to it after)
     TransitionKey m_shownTransition;
     EditPoint m_shownEditPoint;
     QSize m_frameSize{1920, 1080};

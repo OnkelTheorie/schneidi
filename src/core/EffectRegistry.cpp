@@ -118,6 +118,7 @@ EffectDescriptor clipShapeEffect()
                 {"shadow", T("Schatten"), "shadow", EffectParam::Bool, false, 0, 0},
                 number("shadow_soft", T("Schatten weich"), 12, 0, 200, 0.1, 1),
                 number("shadow_opacity", T("Schatten Deckkraft"), 0.6, 0, 1, 0.002, 2)};
+    d.keywords = {"Form", "Kreis", "Maske", "Ausschneiden", "Facecam", "shape", "circle", "mask", "cut out", "crop"};
     d.library = true;
     d.fixed = true;
     return d;

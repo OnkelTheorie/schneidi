@@ -1206,7 +1206,7 @@ void InputBindings::holdWindowKey(const QString& owner, const QString& key, bool
 
 QStringList InputBindings::windowInternalKeys()
 {
-    return {"Esc"}; // MainWindow: m_largeEscape, m_voiceoverEscape
+    return {"Esc"}; // MainWindow: m_largeEscape, m_voiceoverEscape, m_drawEscape
 }
 
 bool InputBindings::matches(const QAction* action, const QKeyEvent* e)

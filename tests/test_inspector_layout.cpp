@@ -89,6 +89,17 @@ void checkPages(const QString& font, const QString& lang, int maxWidth)
     title.start = 200;
     title.out = 99;
     tl.video[0].clips << title;
+    // A shape and a drawing (0.22): their own sections first, no text section
+    Clip shape = title;
+    shape.id = project.newClipId();
+    shape.start = 400;
+    shape.title.kind = TitleKind::Shape;
+    tl.video[0].clips << shape;
+    Clip drawing = title;
+    drawing.id = project.newClipId();
+    drawing.start = 600;
+    drawing.title.kind = TitleKind::Drawing;
+    tl.video[0].clips << drawing;
     project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, title.id, 0});
 
     Inspector insp(&editor);
@@ -103,7 +114,8 @@ void checkPages(const QString& font, const QString& lang, int maxWidth)
 
     auto* group = insp.findChild<QStackedWidget*>();
     if (!CHECK(group)) return;
-    for (const QSet<int>& selected : {QSet<int>{v.id, a.id}, QSet<int>{title.id}, QSet<int>{cue}, QSet<int>{}}) {
+    for (const QSet<int>& selected : {QSet<int>{v.id, a.id}, QSet<int>{title.id}, QSet<int>{shape.id}, QSet<int>{drawing.id},
+                                       QSet<int>{cue}, QSet<int>{}}) {
         if (selected.isEmpty()) sel.setTransition({0, v.id});
         else sel.set(selected);
         settle();

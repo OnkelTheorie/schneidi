@@ -34,6 +34,8 @@
 #include <QPointingDevice>
 #include <QTabletEvent>
 #include <QPushButton>
+#include <QSpinBox>
+#include <QToolButton>
 #include <QTemporaryDir>
 #include <QUndoStack>
 
@@ -308,7 +310,7 @@ void testPaint()
     std::printf("paint\n");
     DrawBrush::instance().setEraser(false);
     DrawBrush::instance().setColor(QColor(0, 255, 0));
-    DrawBrush::instance().setWidth(10 / 180.0);
+    DrawBrush::instance().setWidthPx(10);
     DrawBrush::instance().setOpacity(1);
     Painter t;
     t.p.edit("setup", [&](Timeline& tl) { tl.video[0].clips << media(t.p.newClipId(), g_blue, 200); });
@@ -427,7 +429,7 @@ void testOffFrame(const QString& dir)
 {
     std::printf("off frame\n");
     DrawBrush::instance().setEraser(false);
-    DrawBrush::instance().setWidth(6 / 180.0);
+    DrawBrush::instance().setWidthPx(6);
     Painter t;
     t.ov.setActive(true);
     CHECK(t.drag(t.line({-80, 90}, {100, 90}, 18))); // starts 80 px left of the picture
@@ -532,7 +534,7 @@ void testTablet()
 {
     std::printf("tablet\n");
     DrawBrush::instance().setEraser(false);
-    DrawBrush::instance().setWidth(10 / 180.0);
+    DrawBrush::instance().setWidthPx(10);
     Painter t;
     t.ov.setActive(true);
     const QPointingDevice pen("test pen", 4711, QInputDevice::DeviceType::Stylus, QPointingDevice::PointerType::Pen,
@@ -559,7 +561,7 @@ void testLockedAndZoomedEraser()
 {
     std::printf("locked, zoomed eraser\n");
     DrawBrush::instance().setEraser(false);
-    DrawBrush::instance().setWidth(10 / 180.0);
+    DrawBrush::instance().setWidthPx(10);
     Painter t;
     t.ov.setActive(true);
     CHECK(t.drag(t.line({80, 60}, {240, 60})));
@@ -589,7 +591,7 @@ void testLockedAndZoomedEraser()
         c.transform.zoomX = c.transform.zoomY = 3;
     });
     z.ov.setActive(true);
-    DrawBrush::instance().setWidth(30 / 180.0);
+    DrawBrush::instance().setWidthPx(30);
     CHECK(z.drag(z.line({140, 120}, {180, 120}, 4)));
     CHECK(z.drawing()->title.drawing.strokes.size() == 1);
     CHECK(z.drag(z.line({140, 92}, {180, 92}, 4)));
@@ -844,11 +846,45 @@ void testInspector()
     clear->click();
     const Clip* c = TimelineOps::findClip(p.timeline(), id);
     CHECK(c && c->title.drawing.strokes.isEmpty());
+    // No "Text" section for a drawing (its position is in the drawing's section)
+    for (QToolButton* b : insp.findChildren<QToolButton*>())
+        if (b->text() == T("Text")) CHECK(!b->isVisibleTo(&insp));
     // A text title: no drawing section
     sel.clear();
     e.addTitle(100, -1, 50, TitleKind::Text);
     QCoreApplication::processEvents();
     CHECK(!clear->isVisibleTo(&insp));
+}
+
+// The brush width is pixels of the timeline frame: 25 px is 25 px in a 1080x1920 timeline as in a 1920x1080 one
+// (the bar shows what is drawn); the bar never reaches past a narrow viewer
+void testBrushPixels()
+{
+    std::printf("brush pixels\n");
+    DrawBrush& b = DrawBrush::instance();
+    b.setWidthPx(25);
+    CHECK(std::abs(b.width(1920) * 1920 - 25) < 1e-9 && std::abs(b.width(1080) * 1080 - 25) < 1e-9);
+    CHECK(b.width(50) <= 0.2 + 1e-12); // at most a fifth of the frame
+    QWidget viewer;
+    viewer.resize(300, 200);
+    int frameHeight = 1920;
+    DrawBar bar([&] { return frameHeight; }, &viewer);
+    viewer.show();
+    bar.show();
+    bar.sync();
+    bar.place();
+    QSpinBox* width = nullptr;
+    for (QSpinBox* s : bar.findChildren<QSpinBox*>())
+        if (s->suffix() == " px") width = s;
+    if (CHECK(width)) CHECK_EQ(width->value(), 25);
+    frameHeight = 1080;
+    bar.sync();
+    if (width) CHECK_EQ(width->value(), 25);
+    CHECK(bar.geometry().right() < viewer.width() && viewer.width() == 300);
+    viewer.resize(900, 200); // room: back to one row
+    QCoreApplication::processEvents();
+    CHECK(bar.geometry().right() < viewer.width() && bar.height() < 60);
+    b.setWidthPx(10);
 }
 
 } // namespace
@@ -879,5 +915,6 @@ int main(int argc, char** argv)
     testCli(tmp.path());
     testCheck();
     testInspector();
+    testBrushPixels();
     return Check::result();
 }

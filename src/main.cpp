@@ -51,6 +51,10 @@
 #include <QTimer>
 #include <QWindow>
 #include <clocale>
+#include <cstdio>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
 #include <dlfcn.h>
 #endif
@@ -413,8 +417,33 @@ void offerClaude(MainWindow* window, const std::function<QJsonObject(bool)>& set
 
 } // namespace
 
+// --help/--version: printed before anything else (no window, no display, no settings touched). A Windows GUI program
+// has no console of its own: it writes into the one it was started from, if any
+static int printInfo(int argc, char* argv[])
+{
+    QStringList args;
+    for (int i = 1; i < argc; ++i) args << QString::fromLocal8Bit(argv[i]);
+    const LaunchArgs::Info info = LaunchArgs::info(args);
+    if (info == LaunchArgs::Info::None) return -1;
+#ifdef Q_OS_WIN
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        FILE* f = nullptr;
+        freopen_s(&f, "CONOUT$", "w", stdout);
+    }
+#endif
+    QString version = QString::fromUtf8(SCHNEIDI_VERSION_LABEL);
+    if (*SCHNEIDI_BUILD) version += QString(" (%1)").arg(SCHNEIDI_BUILD);
+    const QString program = argc > 0 ? QFileInfo(QString::fromLocal8Bit(argv[0])).fileName() : QString("schneidi");
+    const QString text = info == LaunchArgs::Info::Version ? QString("schneidi %1\n").arg(version)
+                                                           : LaunchArgs::helpText(program, version);
+    std::fputs(text.toLocal8Bit().constData(), stdout);
+    std::fflush(stdout);
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
+    if (const int done = printInfo(argc, argv); done >= 0) return done;
     StartupTrace::start();
     QElapsedTimer startTimer;
     startTimer.start();
@@ -545,9 +574,14 @@ int main(int argc, char* argv[])
     // picture); the window is made as a GPU (Vulkan/OpenGL) window right away so that it can take the surface in place
     FrameView::prepareWindow(&w);
     attachViewerSurface();
-    // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
+    // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow. The normal
+    // geometry fits the screen first: without a window manager (Xvfb) or when un-maximized the window never reaches
+    // past the screen (a 1024x768 screen, a scale factor) and is not small on a big one
     if (app.arguments().contains("--screenshot")) w.show();
-    else w.showMaximized();
+    else {
+        w.placeOnScreen();
+        w.showMaximized();
+    }
     StartupTrace::mark("window show() returned");
     // The real GPU check once the window is on screen and idle (a stored one decided the viewer's start), at the
     // latest after the first interactions have had their turn

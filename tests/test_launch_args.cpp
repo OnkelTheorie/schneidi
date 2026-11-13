@@ -36,5 +36,15 @@ int main(int argc, char** argv)
     CHECK_EQ(files(LaunchArgs::restart("/p/x.schneidi")), QStringList{"/p/x.schneidi"});
     CHECK(!handsOver(LaunchArgs::restart("/p/x.schneidi")));
     CHECK(files(LaunchArgs::restart({})).isEmpty());
+    // --help and --version print and quit (main.cpp, before any window); not after "--" (a file of that name)
+    using LaunchArgs::Info;
+    CHECK(LaunchArgs::info({"--help"}) == Info::Help);
+    CHECK(LaunchArgs::info({"/v/a.mkv", "-h"}) == Info::Help);
+    CHECK(LaunchArgs::info({"--version"}) == Info::Version);
+    CHECK(LaunchArgs::info({"-v"}) == Info::Version);
+    CHECK(LaunchArgs::info({"--verbose", "/v/a.mkv"}) == Info::None);
+    CHECK(LaunchArgs::info({"--", "--help"}) == Info::None);
+    const QString help = LaunchArgs::helpText("schneidi", "1.2.3");
+    CHECK(help.contains("1.2.3") && help.contains("--version") && help.contains("--new-instance"));
     return Check::result();
 }
