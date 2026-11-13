@@ -875,6 +875,9 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
               [](Clip& c) -> double& { return c.title.shape.reveal; }, AnimParam::ShapeReveal);
     // The tracker it follows: tracker nodes of the timeline's clips
     auto* follow = combo();
+    // Clip names can be long: the column keeps its width (the list shows them whole)
+    follow->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    follow->setMinimumContentsLength(8);
     follow->setToolTip(T("Die Form bewegt sich mit einem Tracker eines Clips (Seite Compositing)"));
     connect(follow, &QComboBox::activated, this, [this, V, follow] {
         const QPoint v = follow->currentData().toPoint();
