@@ -2688,6 +2688,13 @@ struct IntraDirTable {
         for (int p = 0; p < N * N; ++p)
             pred[p] = g[t[p]];
     }
+    void predict(int mode, const uint8_t* g, uint8_t* pred, int stride) const
+    {
+        const uint8_t* t = idx[mode];
+        for (int y = 0; y < N; ++y)
+            for (int x = 0; x < N; ++x)
+                pred[y * stride + x] = g[t[y * N + x]];
+    }
 };
 
 const IntraDirTable<4>& intraDir4()
@@ -2995,7 +3002,52 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             }
             return cost;
         };
-        intraModeSearch(tryMode, predMode);
+        if (gExp & 64) {
+            intraModeSearch(tryMode, predMode);
+        } else {
+            // All nine directions: predictions four side by side, one SATD call per four (same
+            // costs and the same first-lowest pick as trying them one by one).
+            alignas(16) uint8_t group[3][64];
+            int modeOf[9], n = 0;
+            for (int mode = 0; mode < 9; ++mode) {
+                const bool needsTop = mode == 0 || mode == 3 || mode == 7;
+                const bool needsLeft = mode == 1 || mode == 8;
+                const bool needsBoth = mode >= 4 && mode <= 6;
+                if ((needsTop && !top) || (needsLeft && !left) || (needsBoth && !(top && left)))
+                    continue;
+                uint8_t* g = group[n >> 2] + (n & 3) * 4;
+                if (mode != 2 && dir.ok) {
+                    dir.predict(mode, edge, g, 16);
+                } else {
+                    predict4x4(mode, T, L, left, top, cand);
+                    for (int y = 0; y < 4; ++y)
+                        std::memcpy(g + y * 16, cand + y * 4, 4);
+                }
+                modeOf[n++] = mode;
+            }
+            int satd[12];
+            const uint8_t* srcBlk = &srcY_[size_t(py) * padW_ + px];
+            int k = 0;
+            for (; k + 4 <= n || (n - k >= 2 && k < n); k += 4) {
+                for (int j = n - k; j < 4; ++j) // unused slots of the last group
+                    for (int y = 0; y < 4; ++y)
+                        std::memset(group[k >> 2] + y * 16 + j * 4, 0, 4);
+                satd4x4x4U8(srcBlk, padW_, group[k >> 2], satd + k);
+            }
+            for (; k < n; ++k)
+                satd[k] = satdU8(srcBlk, padW_, group[k >> 2] + (k & 3) * 4, 16);
+            int bestI = 0;
+            for (int i = 0; i < n; ++i) {
+                const int cost = satd[i] + lambda * (modeOf[i] == predMode ? 1 : 4);
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    bestMode = modeOf[i];
+                    bestI = i;
+                }
+            }
+            for (int y = 0; y < 4; ++y)
+                std::memcpy(pred + y * 4, group[bestI >> 2] + y * 16 + (bestI & 3) * 4, 4);
+        }
         satdSum += bestCost;
         if (satdSum > bound) {
             if (satdOut)

@@ -180,6 +180,38 @@ __attribute__((target("avx2"))) inline int satd8x8U8Avx2(const uint8_t* a, int s
     return satdLanesAvx2(r);
 }
 
+// One 4x4 source block against four predictions side by side (pred: 16 x 4, stride 16):
+// out[i] = satdU8(src, stride, pred + 4 * i, 16).
+__attribute__((target("avx2"))) inline void satd4x4x4U8Avx2(const uint8_t* src, int stride, const uint8_t* pred, int* out)
+{
+    __m256i r[4];
+    for (int i = 0; i < 4; ++i) {
+        int32_t w;
+        std::memcpy(&w, src + i * stride, 4);
+        r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(_mm_set1_epi32(w)),
+                                _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(pred + i * 16))));
+    }
+    const __m256i s01 = _mm256_add_epi16(r[0], r[1]), d01 = _mm256_sub_epi16(r[0], r[1]);
+    const __m256i s23 = _mm256_add_epi16(r[2], r[3]), d23 = _mm256_sub_epi16(r[2], r[3]);
+    const __m256i t0 = _mm256_add_epi16(s01, s23), t1 = _mm256_sub_epi16(s01, s23);
+    const __m256i t2 = _mm256_sub_epi16(d01, d23), t3 = _mm256_add_epi16(d01, d23);
+    const __m256i u[2][2] = {{_mm256_unpacklo_epi16(t0, t1), _mm256_unpacklo_epi16(t2, t3)},
+                             {_mm256_unpackhi_epi16(t0, t1), _mm256_unpackhi_epi16(t2, t3)}};
+    for (int k = 0; k < 2; ++k) { // k = 0: blocks 0 (lane 0) and 2 (lane 1); k = 1: blocks 1 and 3
+        const __m256i v0 = _mm256_unpacklo_epi32(u[k][0], u[k][1]), v1 = _mm256_unpackhi_epi32(u[k][0], u[k][1]);
+        const __m256i c1 = _mm256_unpackhi_epi64(v0, v0), c3 = _mm256_unpackhi_epi64(v1, v1);
+        const __m256i ha = _mm256_add_epi16(v0, c1), hb = _mm256_sub_epi16(v0, c1);
+        const __m256i hc = _mm256_add_epi16(v1, c3), hd = _mm256_sub_epi16(v1, c3);
+        const __m256i o01 = _mm256_unpacklo_epi64(_mm256_add_epi16(ha, hc), _mm256_sub_epi16(ha, hc));
+        const __m256i o23 = _mm256_unpacklo_epi64(_mm256_sub_epi16(hb, hd), _mm256_add_epi16(hb, hd));
+        const __m256i sum = _mm256_madd_epi16(_mm256_add_epi16(_mm256_abs_epi16(o01), _mm256_abs_epi16(o23)), _mm256_set1_epi16(1));
+        const __m256i s2 = _mm256_add_epi32(sum, _mm256_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
+        const __m256i s1 = _mm256_add_epi32(s2, _mm256_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1)));
+        out[k] = (_mm256_cvtsi256_si32(s1) + 1) >> 1;
+        out[2 + k] = (_mm_cvtsi128_si32(_mm256_extracti128_si256(s1, 1)) + 1) >> 1;
+    }
+}
+
 inline bool haveAvx2()
 {
     static const bool yes = __builtin_cpu_supports("avx2");
@@ -195,6 +227,20 @@ inline int satd16x4U8(const uint8_t* a, int strideA, const uint8_t* b, int strid
         return satd16x4U8Avx2(a, strideA, b, strideB);
 #endif
     return satd8x4U8(a, strideA, b, strideB) + satd8x4U8(a + 8, strideA, b + 8, strideB);
+}
+
+// One 4x4 source block against four predictions side by side (pred: 16 x 4, stride 16):
+// out[i] = satdU8(src, stride, pred + 4 * i, 16). Used to compare intra directions in one go.
+inline void satd4x4x4U8(const uint8_t* src, int stride, const uint8_t* pred, int* out)
+{
+#ifdef SCHNEIDI_H264_AVX2
+    if (haveAvx2()) {
+        satd4x4x4U8Avx2(src, stride, pred, out);
+        return;
+    }
+#endif
+    for (int i = 0; i < 4; ++i)
+        out[i] = satdU8(src, stride, pred + 4 * i, 16);
 }
 
 // 8x8 Hadamard SATD of the difference of two 8x8 blocks, scaled like satd4x4 (sum / 4 instead of
