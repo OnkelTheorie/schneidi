@@ -3,7 +3,7 @@
 // pictures the encoder reconstructed (CAVLC and CABAC; I and P frames, all intra/inter modes, slices, adaptive QP,
 // rate control, odd sizes). With B pictures the access units come in coding order: the decoder must hand the
 // pictures out in display order with the right timestamps. The psycho-visual mode decision (psyRd): off = the same
-// stream as without the option, on = decodable, the same with any thread count, and closer to the source's AC energy.
+// stream as without the option, on = decodable, the same with any thread count, and closer to the source's texture.
 
 #include "check.h"
 
@@ -72,9 +72,9 @@ struct StreamInfo {
     std::vector<int> order; // display index of each access unit, in coding order
     double minPsnrY = 99;   // lowest luma PSNR of a reconstruction against its source picture
     uint64_t hash = 1469598103934665603ull; // FNV-1a of the whole stream
-    // AC energy (acEnergy8x8U8, both scales) over the whole 8x8 luma blocks of all pictures: the source's, and the
-    // summed difference between each block's and its reconstruction's
-    double energySource = 0, energyGap = 0;
+    // Psy distance (hadamardMagsDistance) between the source's and the reconstruction's whole 8x8 luma blocks,
+    // summed over all pictures, and the same against flat blocks (all of the source's texture lost)
+    double psyDistance = 0, psyFlat = 0;
 };
 
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
@@ -154,11 +154,12 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
             info->minPsnrY = std::min(info->minPsnrY, sse > 0 ? 10.0 * std::log10(255.0 * 255.0 * double(src.y.size()) / sse) : 99.0);
             for (int y = 0; y + 8 <= r.h; y += 8)
                 for (int x = 0; x + 8 <= r.w; x += 8) {
-                    int s4, s8, r4, r8;
-                    acEnergy8x8U8(&src.y[size_t(y) * r.w + x], r.w, s4, s8);
-                    acEnergy8x8U8(&r.y[size_t(y) * r.w + x], r.w, r4, r8);
-                    info->energySource += s4 + s8;
-                    info->energyGap += std::abs(s4 - r4) + std::abs(s8 - r8);
+                    alignas(16) int16_t ms[128], mr[128];
+                    alignas(16) static const int16_t kFlat[128] = {};
+                    hadamardMags8x8U8(&src.y[size_t(y) * r.w + x], r.w, ms);
+                    hadamardMags8x8U8(&r.y[size_t(y) * r.w + x], r.w, mr);
+                    info->psyDistance += hadamardMagsDistance(ms, mr);
+                    info->psyFlat += hadamardMagsDistance(ms, kFlat);
                 }
         }
         recon[display] = std::move(r);
@@ -289,39 +290,41 @@ bool kernelsMatchReference()
         if (a != ra || c != rc)
             return false;
         if (it % 8 == 0) {
-            // AC energy of an 8x8 block against plain Hadamard sums without their DC coefficients
-            int e4, e8, ref4 = 0, ref8;
-            acEnergy8x8U8(a.data(), S, e4, e8);
-            int h8[64], sum = 0;
-            for (int y = 0; y < 8; ++y)
-                for (int x = 0; x < 8; ++x)
-                    sum += h8[y * 8 + x] = a[size_t(y) * S + x];
+            // Psy distance of two 8x8 blocks against plain Hadamard transforms: the coefficients' magnitudes
+            // compared one by one, without the DC ones
+            alignas(16) int16_t ma[128], mc[128];
+            hadamardMags8x8U8(a.data(), S, ma);
+            hadamardMags8x8U8(c.data(), S, mc);
+            int h[2][64], d4 = 0, d8 = 0;
+            for (int w = 0; w < 2; ++w)
+                for (int y = 0; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        h[w][y * 8 + x] = (w ? c : a)[size_t(y) * S + x];
             for (int q = 0; q < 4; ++q) {
-                int in[16], out[16], abs4 = 0;
-                for (int i = 0; i < 16; ++i)
-                    in[i] = h8[((q >> 1) * 4 + (i >> 2)) * 8 + (q & 1) * 4 + (i & 3)];
-                hadamard4x4(in, out);
-                for (int v : out)
-                    abs4 += std::abs(v);
-                ref4 += (abs4 + 1) >> 1;
+                int in[2][16], out[2][16];
+                for (int w = 0; w < 2; ++w) {
+                    for (int i = 0; i < 16; ++i)
+                        in[w][i] = h[w][((q >> 1) * 4 + (i >> 2)) * 8 + (q & 1) * 4 + (i & 3)];
+                    hadamard4x4(in[w], out[w]);
+                }
+                for (int i = 1; i < 16; ++i)
+                    d4 += std::abs(std::abs(out[0][i]) - std::abs(out[1][i]));
             }
-            ref4 -= sum >> 1;
-            for (int pass = 0; pass < 2; ++pass)
-                for (int line = 0; line < 8; ++line)
-                    for (int step = 1; step < 8; step <<= 1)
-                        for (int i = 0; i < 8; i += 2 * step)
-                            for (int j = i; j < i + step; ++j) {
-                                int& u = pass ? h8[j * 8 + line] : h8[line * 8 + j];
-                                int& v = pass ? h8[(j + step) * 8 + line] : h8[line * 8 + j + step];
-                                const int p = u, m = v;
-                                u = p + m;
-                                v = p - m;
-                            }
-            int abs8 = 0;
-            for (int v : h8)
-                abs8 += std::abs(v);
-            ref8 = ((abs8 + 2) >> 2) - (sum >> 2);
-            if (e4 != ref4 || e8 != ref8 || e4 < 0 || e8 < 0)
+            for (int w = 0; w < 2; ++w)
+                for (int pass = 0; pass < 2; ++pass)
+                    for (int line = 0; line < 8; ++line)
+                        for (int step = 1; step < 8; step <<= 1)
+                            for (int i = 0; i < 8; i += 2 * step)
+                                for (int j = i; j < i + step; ++j) {
+                                    int& u = pass ? h[w][j * 8 + line] : h[w][line * 8 + j];
+                                    int& v = pass ? h[w][(j + step) * 8 + line] : h[w][line * 8 + j + step];
+                                    const int p = u, m = v;
+                                    u = p + m;
+                                    v = p - m;
+                                }
+            for (int i = 1; i < 64; ++i)
+                d8 += std::abs(std::abs(h[0][i]) - std::abs(h[1][i]));
+            if (hadamardMagsDistance(ma, mc) != ((d4 + 1) >> 1) + ((d8 + 2) >> 2) || hadamardMagsDistance(ma, ma) != 0)
                 return false;
             int four[4];
             const uint8_t* pred = c.data(); // 16 x 4 at stride 16
@@ -631,8 +634,8 @@ int main()
     // Psycho-visual mode decision (psyRd)
     {
         // Off (0, the default) is the stream without the option; on, every picture still decodes bit-exact, with
-        // one thread or several the same stream, and the reconstruction is closer to the source's AC energy.
-        for (int qp : {24, 34}) {
+        // one thread or several the same stream, and the reconstruction is closer to the source by the psy distance.
+        for (int qp : {22, 28}) { // where the source's noise is not below the quantiser altogether
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 1);
             c.qp = qp;
             StreamInfo plain, zero, on, onThreads, strong;
@@ -654,11 +657,11 @@ int main()
             CHECK(onRows.hash == onThreads.hash);
             c.psyRd = 3.0;
             CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &strong));
-            if (!(on.energyGap < plain.energyGap && strong.energyGap < on.energyGap))
-                std::fprintf(stderr, "psy at QP %d: energy gap %.0f, with 1.0 %.0f, with 3.0 %.0f of %.0f; %zu -> %zu bytes\n", qp,
-                             plain.energyGap, on.energyGap, strong.energyGap, plain.energySource, bytesPlain, bytesOn);
-            CHECK(on.energyGap < plain.energyGap);
-            CHECK(strong.energyGap < on.energyGap);
+            if (!(on.psyDistance < plain.psyDistance && strong.psyDistance < on.psyDistance) || std::getenv("H264_TEST_PSY"))
+                std::fprintf(stderr, "psy at QP %d: distance %.0f, with 1.0 %.0f, with 3.0 %.0f of %.0f; %zu -> %zu bytes\n", qp,
+                             plain.psyDistance, on.psyDistance, strong.psyDistance, plain.psyFlat, bytesPlain, bytesOn);
+            CHECK(on.psyDistance < plain.psyDistance);
+            CHECK(strong.psyDistance < on.psyDistance);
         }
         // With the other tools: intra only, without the 8x8 transform (CABAC), every candidate coded in full,
         // several references, adaptive QP extremes, QP extremes, odd size with slices or the wavefront

@@ -649,8 +649,10 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 // With energy: returns the path's cost (squared pixel error of all coefficients + lambda * bits of
 // the block, coded_block_flag included for 4x4 blocks) and sets *energy to the squared error of the
 // all-zero block; the mode decision compares transforms and layouts with these (no reconstruction).
+// lambdaHigh >= 0: the bits of the coefficients from scan position highFrom on weigh lambdaHigh
+// instead of lambda (the psy mode decision's finer quantisation of the texture frequencies).
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                    int cbfInc, int* out, double* energy, uint64_t* nonZero)
+                    int cbfInc, int* out, double* energy, uint64_t* nonZero, double lambdaHigh, int highFrom)
 {
     if (nonZero)
         *nonZero = 0;
@@ -680,6 +682,9 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     std::fill(out, out + count, 0);
     const bool cat5 = cat == 5;
     const double l256 = lambda / 256.0;
+    const double h256 = lambdaHigh >= 0 ? lambdaHigh / 256.0 : l256;
+    if (lambdaHigh < 0)
+        highFrom = count; // no position weighs differently
     if (end == 0)
         return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
@@ -733,12 +738,13 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     };
     for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
+        const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
         if (ax < 0.5) {
             // Only level 0: the same sums as the general case below, without the node bookkeeping.
             const double err = ax * scale[k];
             const double errSq0 = err * err;
             if (live & 0xFF) {
-                const double sig = l256 * ce.binCost(sigCtx(k), 0);
+                const double sig = lk * ce.binCost(sigCtx(k), 0);
                 for (unsigned m = live & 0xFF; m; m &= m - 1) {
                     const int n = std::countr_zero(m);
                     cost[n] = cost[n] + errSq0 + sig;
@@ -780,12 +786,12 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
                 int to;
                 if (mag == 0) {
                     if (!empty)
-                        cst += l256 * sig0;
+                        cst += lk * sig0;
                     to = n;
                 } else {
                     uint32_t bits = levelBitsCached(empty ? 0 : n, mag - 1);
                     bits += sig1Last[empty ? 1 : 0];
-                    cst += l256 * bits;
+                    cst += lk * bits;
                     to = next(empty ? 0 : n, mag);
                 }
                 if (cst < fresh[to]) {

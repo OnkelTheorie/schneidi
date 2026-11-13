@@ -36,7 +36,8 @@ namespace schneidi::h264 {
 // H264Cabac.cpp
 // nonZero (optional): bit k set where out[k] != 0.
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                    int cbfInc, int* out, double* energy = nullptr, uint64_t* nonZero = nullptr);
+                    int cbfInc, int* out, double* energy = nullptr, uint64_t* nonZero = nullptr, double lambdaHigh = -1.0,
+                    int highFrom = 0);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
 static const bool gTiming = std::getenv("H264_TIMING") != nullptr;
@@ -94,12 +95,12 @@ const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
 const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.2;
 // B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
 const bool gBParts = !std::getenv("H264_BPARTS") || std::atoi(std::getenv("H264_BPARTS")) != 0;
-// Psycho-visual RD of the macroblock a thread is deciding (FrameCoder::psyBegin): the weight of an
-// energy difference in its cost (0 = off) and the AC energy of the source's four 8x8 luma blocks at
-// both scales (acEnergy8x8U8).
+// Psycho-visual RD of the macroblock a thread is deciding (FrameCoder::psyBegin): the weight of a
+// unit of distance in its cost (0 = off) and the Hadamard coefficient magnitudes of the source's
+// four 8x8 luma blocks (hadamardMags8x8U8).
 struct PsyMb {
     double weight = 0;
-    int e4[4] = {}, e8[4] = {};
+    alignas(16) int16_t src[4][128];
 };
 thread_local PsyMb tPsy;
 // With psy, the inter candidate that won is coded once more with its trellis quantisation at
@@ -112,6 +113,11 @@ thread_local PsyMb tPsy;
 // exceeds a few bits changes nothing (it nearly always does); coding both transform sizes for real
 // instead of by estimate brings nothing on top. H264_PSYQ overrides (0 = no such candidate).
 const double gPsyFine = std::getenv("H264_PSYQ") ? std::atof(std::getenv("H264_PSYQ")) : 0.25;
+// The finer quantisation leaves the lowest frequencies as they are (scan positions below these, 4x4
+// and 8x8 transform): a DC or first AC level more in one block and not in its neighbour is a
+// visible step at high QP, not texture. H264_PSYQ4 / H264_PSYQ8 override.
+const int gPsyFineFrom4 = std::getenv("H264_PSYQ4") ? std::atoi(std::getenv("H264_PSYQ4")) : 3;
+const int gPsyFineFrom8 = std::getenv("H264_PSYQ8") ? std::atoi(std::getenv("H264_PSYQ8")) : 6;
 // The same for intra macroblocks, whose quantisation rounds down below 2/3 of a step: the chosen
 // type once more rounding to nearest (tIntraFine: offset gPsyIntraRound instead of 1/3), and the
 // psy cost decides. Measured as above with psyRd 1.0: intra pictures only +4.8..5.5 points of AC
@@ -3903,8 +3909,11 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
 #endif
 }
 
-// Psycho-visual RD. The energy difference is the mean of the two scales, summed over the four 8x8
-// blocks, and weighs psyRd * sqrt(lambda) per unit: like a SATD against the mode decision's SSD.
+// Psycho-visual RD. The distance (hadamardMagsDistance) is the mean of the two scales, summed over
+// the four 8x8 blocks, and weighs psyRd * sqrt(lambda) per unit: like a SATD against the mode
+// decision's SSD. Comparing the totals of the magnitudes instead (the blocks' AC energy) keeps
+// more energy for the same strength, but at high QP it is met by any pattern: one strong
+// coefficient per block in place of fine grain shows as a regular mesh on dark, flat areas.
 void FrameCoder::psyBegin(int mbx, int mby) const
 {
     if (!(cfg_.psyRd > 0)) {
@@ -3920,7 +3929,7 @@ void FrameCoder::psyBegin(int mbx, int mby) const
     tPsy.weight = cfg_.psyRd * 0.5 * kSqrtLambda[size_t(mbQp_[size_t(mby) * mbW_ + mbx])];
     const uint8_t* src = &srcY_[size_t(mby * 16) * padW_ + mbx * 16];
     for (int b = 0; b < 4; ++b)
-        acEnergy8x8U8(src + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, tPsy.e4[b], tPsy.e8[b]);
+        hadamardMags8x8U8(src + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, tPsy.src[b]);
 }
 
 double FrameCoder::psyCost(int mbx, int mby) const
@@ -3928,13 +3937,13 @@ double FrameCoder::psyCost(int mbx, int mby) const
     if (!(tPsy.weight > 0))
         return 0.0;
     const uint8_t* rec = &recY_[size_t(mby * 16) * padW_ + mbx * 16];
-    int diff = 0;
+    int distance = 0;
     for (int b = 0; b < 4; ++b) {
-        int e4, e8;
-        acEnergy8x8U8(rec + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, e4, e8);
-        diff += std::abs(e4 - tPsy.e4[b]) + std::abs(e8 - tPsy.e8[b]);
+        alignas(16) int16_t mags[128];
+        hadamardMags8x8U8(rec + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, mags);
+        distance += hadamardMagsDistance(tPsy.src[b], mags);
     }
-    return tPsy.weight * diff;
+    return tPsy.weight * distance;
 }
 
 // Neighbouring 4x4 block (x4, y4 relative to the macroblock, may be -1 or 4) for motion
@@ -4244,17 +4253,19 @@ double FrameCoder::refineQuarter(const RefPic& R, int mbx, int mby, int x4, int 
 // Luma residual of an inter macroblock against the prediction lp: transform, quantisation
 // (trellis), decimation and reconstruction.
 void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
-                               InterResidual& ir)
+                               InterResidual& ir, double fineLambda)
 {
-    planInterLuma(mbx, mby, lp, qp, lambda, t8, trellis, ir, nullptr);
+    planInterLuma(mbx, mby, lp, qp, lambda, t8, trellis, ir, nullptr, fineLambda);
     reconInterLuma(mbx, mby, lp, qp, t8, io, ir);
 }
 
 // First half of coding an inter macroblock's luma residual: transform and quantisation (trellis,
 // decimation) into ir. With est (trellis path only, else left at -1): the trellis' own estimate of
 // squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
+// fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
+// above the lowest frequencies are decided with fineLambda instead of lambda.
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
-                               InterResidual& ir, double* est)
+                               InterResidual& ir, double* est, double fineLambda)
 {
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int qpDiv = qp / 6, qpMod = qp % 6;
@@ -4313,8 +4324,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 int scanLv[64];
                 double energy = 0;
                 uint64_t nz = 0;
-                const double j =
-                    cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv, est ? &energy : nullptr, &nz);
+                const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
+                                              est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
                 const bool any = nz != 0;
                 std::fill(levels8[b8], levels8[b8] + 64, 0);
                 for (uint64_t m = nz; m; m &= m - 1) {
@@ -4380,8 +4391,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 xs[s] = double(coef[kZigzag[s]]) * mf[s] * invStep;
             int scanLv[16];
             uint64_t nz = 0;
-            jBlk[blkIdx] =
-                cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr, &nz);
+            jBlk[blkIdx] = cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv,
+                                        est ? &eBlk[blkIdx] : nullptr, &nz, fineLambda, gPsyFineFrom4);
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             for (uint64_t m = nz; m; m &= m - 1) {
                 const int s = std::countr_zero(m);
@@ -5042,9 +5053,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     } // !useEst
     // Psy: the winner once more with the finer quantisation (see gPsyFine).
-    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0) {
+    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe) {
         InterResidual fine;
-        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda * gPsyFine, bestT8, true, fine, nullptr);
+        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
         if (fine.cbpLuma || interBits.syn.cbpLuma) { // else the same macroblock again
             MbOut fineBits;
             const double costFine = encodeInter(best, fineBits, bestT8, &fine);
@@ -5414,7 +5425,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     ChromaCache chromaCache[3];
     bool sentDelta = false;
     double lastPsy = 0; // psy cost of the coding encodeB did last
-    auto encodeB = [&](int which, MbOut& io, bool t8, double quantLambda) {
+    auto encodeB = [&](int which, MbOut& io, bool t8, double fineLambda) {
         const Cand& best = cands[which ? which - 1 : 0];
         const uint8_t* lp = which ? clp[which - 1] : dlp;
         const uint8_t (*cp)[64] = which ? ccp[which - 1] : dcp;
@@ -5427,7 +5438,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             setDirect();
         }
         InterResidual res;
-        codeInterLuma(mbx, mby, lp, qp, quantLambda, t8, true, io, res);
+        codeInterLuma(mbx, mby, lp, qp, lambda, t8, true, io, res, fineLambda);
         ChromaCache& cc = chromaCache[which];
         ChromaMb ch;
         if (cc.valid) {
@@ -5461,14 +5472,14 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     MbOut interBits;
     int bestWhich = 0;
     bool bestT8 = false;
-    double costInter = encodeB(0, interBits, false, lambda);
+    double costInter = encodeB(0, interBits, false, -1.0);
     double bestPsy = lastPsy;
     bool chosenDelta = sentDelta;
     MbState interState;
     saveMb(mbx, mby, interState);
     for (int which = 1; which <= candCount; ++which) {
         MbOut candBits;
-        const double costCand = encodeB(which, candBits, false, lambda);
+        const double costCand = encodeB(which, candBits, false, -1.0);
         if (costCand < costInter) {
             costInter = costCand;
             bestPsy = lastPsy;
@@ -5481,7 +5492,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     // 8x8 transform for the best of them (High profile).
     if (useT8() && cfg_.effort > 0) {
         MbOut t8Bits;
-        const double costT8 = encodeB(bestWhich, t8Bits, true, lambda);
+        const double costT8 = encodeB(bestWhich, t8Bits, true, -1.0);
         if (costT8 < costInter) {
             costInter = costT8;
             bestPsy = lastPsy;
