@@ -77,8 +77,10 @@ check() {
     -DSCHNEIDI_SHARED_LIBS=ON \
     -DSCHNEIDI_TESTS=ON
   cmake --build build-tests
-  QT_QPA_PLATFORM=offscreen ctest --test-dir build-tests --output-on-failure -LE timing -E '^(test_smart_render|test_inspector_layout)$' \
-    --repeat until-pass:2 -j"$(nproc)"
+  QT_QPA_PLATFORM=offscreen ctest --test-dir build-tests --output-on-failure -LE timing \
+    -E '^(test_smart_render|test_inspector_layout|test_tours)$' --repeat until-pass:2 -j"$(nproc)"
+  # The guided tours click through the whole program (2-5 minutes): alone, so a busy machine does not time it out
+  QT_QPA_PLATFORM=offscreen ctest --test-dir build-tests --output-on-failure -R '^test_tours$' --repeat until-pass:2
 }
 
 package() {

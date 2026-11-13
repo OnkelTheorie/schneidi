@@ -36,7 +36,7 @@ The test suite (`check()`, about 240 test programs) builds schneidi a second tim
 test program does not carry a full copy of it: it roughly doubles the build time. `makepkg -si --nocheck` skips it
 (the AUR helpers have the same switch, e.g. `yay -S --mflags --nocheck schneidi`). Tests that measure real time
 (label `timing`) are left out because they fail on a busy machine, and a failing test is retried once.
-Two more are left out for now: `test_smart_render` (its H.265 case fails with FFmpeg 9) and `test_inspector_layout`
+Two more are left out for now, and `test_tours` (several minutes of clicking through the program) runs alone afterwards: `test_smart_render` (its H.265 case fails with FFmpeg 9) and `test_inspector_layout`
 (pixel limits calibrated on another version of the Noto fonts). Without a font installed, the text and layout tests
 fail: `noto-fonts` is a check dependency for that reason.
 
