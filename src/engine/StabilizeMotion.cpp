@@ -141,8 +141,10 @@ struct Estimator::Impl {
                 double s = 0;
                 for (int y = r; y < a.h - r; ++y) {
                     const float* pa = &a.px[size_t(y) * a.w];
-                    const float* pb = &b.px[size_t(y + dy) * b.w + dx];
-                    for (int x = r; x < a.w - r; ++x) s += std::abs(pa[x] - pb[x]);
+                    // Row start, then x + dx: with dx < 0 on the first row, &px[row + dx] would index before the
+                    // vector (an out-of-range operator[], caught by _GLIBCXX_ASSERTIONS in distribution builds)
+                    const float* pb = b.px.data() + size_t(y + dy) * b.w;
+                    for (int x = r; x < a.w - r; ++x) s += std::abs(pa[x] - pb[x + dx]);
                 }
                 s += 1e-3 * (dx * dx + dy * dy); // ties (flat picture): the smaller shift
                 if (s < best) {
