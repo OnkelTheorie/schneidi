@@ -91,7 +91,7 @@ protected:
         QStringList paths;
         for (QListWidgetItem* it : items) {
             const QString path = it->data(Qt::UserRole).toString();
-            if (path != MediaPool::TitleItem) paths << path; // sequences too: can be moved into bins
+            if (!MediaPool::isTitleItem(path)) paths << path; // sequences too: can be moved into bins
         }
         if (!paths.isEmpty()) data->setData(MediaPool::ListMimeType, paths.join('\n').toUtf8());
         return data;
@@ -517,7 +517,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
         if (const int seq = sequenceOfItem(path)) emit sequenceOpenRequested(seq);
-        else if (path != TitleItem) emit sourceRequested(path);
+        else if (!isTitleItem(path)) emit sourceRequested(path);
     });
 
     auto* clipArea = new QWidget;
@@ -1116,6 +1116,25 @@ void MediaPool::rebuildClips()
         titleItem->setData(Qt::UserRole, QString(TitleItem));
         titleItem->setToolTip(T("Titel – in die Timeline ziehen"));
         m_list->addItem(titleItem);
+        // Shape (0.22): circle, rectangle, arrow … as a clip of its own
+        QPixmap shapeThumb(kThumb);
+        shapeThumb.fill(Theme::titleClip.darker(135));
+        {
+            QPainter p(&shapeThumb);
+            p.setRenderHint(QPainter::Antialiasing);
+            const double side = std::min(shapeThumb.width(), shapeThumb.height()) * 0.42;
+            const QPointF c(shapeThumb.width() / 2.0, shapeThumb.height() / 2.0);
+            p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 3));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(c + QPointF(-side * 0.35, 0), side / 2, side / 2);
+            p.setBrush(QColor(255, 214, 0));
+            p.setPen(Qt::NoPen);
+            p.drawRect(QRectF(c.x() + side * 0.05, c.y() - side * 0.4, side * 0.8, side * 0.8));
+        }
+        auto* shapeItem = new QListWidgetItem(QIcon(shapeThumb), T("Form\nKreis, Pfeil …"));
+        shapeItem->setData(Qt::UserRole, QString(ShapeItem));
+        shapeItem->setToolTip(T("Form (Kreis, Rechteck, Pfeil, Stern …) – in die Timeline ziehen"));
+        m_list->addItem(shapeItem);
     }
 
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
@@ -1353,7 +1372,7 @@ QStringList MediaPool::selectedMedia() const
     QStringList paths;
     for (QListWidgetItem* it : m_list->selectedItems()) {
         const QString path = it->data(Qt::UserRole).toString();
-        if (path != TitleItem && !sequenceOfItem(path)) paths << path;
+        if (!isTitleItem(path) && !sequenceOfItem(path)) paths << path;
     }
     return paths;
 }

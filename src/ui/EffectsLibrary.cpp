@@ -72,6 +72,7 @@ QString collapseKey(const QTreeWidgetItem* it)
 constexpr const char* kTitleData = "title";
 constexpr const char* kCounterData = "title:counter";
 constexpr const char* kProgressData = "title:progress";
+constexpr const char* kShapeData = "title:shape";
 constexpr const char* kEffectPrefix = "fx:"; // List entry of a filter: "fx:<effect ID>"
 constexpr const char* kSoundPrefix = "sound:"; // List entry of an effect sound: "sound:<op fields as JSON>"
 
@@ -127,6 +128,7 @@ protected:
         if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // like "Text" in the pool
         else if (d == kCounterData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::CounterItem));
         else if (d == kProgressData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ProgressItem));
+        else if (d == kShapeData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ShapeItem));
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
         else if (d.startsWith(kSoundPrefix)) data->setData(EffectsLibrary::SoundMimeType, d.mid(6).toUtf8());
         else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d))
@@ -240,6 +242,13 @@ QPixmap titleIcon(TitleKind kind = TitleKind::Text)
     QPixmap pm(kIcon);
     pm.fill(Theme::titleClip.darker(135));
     QPainter p(&pm);
+    if (kind == TitleKind::Shape) {
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 2));
+        p.setBrush(QColor(255, 214, 0));
+        p.drawEllipse(QRectF(pm.width() * 0.2, pm.height() * 0.2, pm.width() * 0.6, pm.height() * 0.6));
+        return pm;
+    }
     if (kind == TitleKind::Progress) {
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
@@ -544,9 +553,11 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString d = it->data(Qt::UserRole).toString();
         if (d.isEmpty()) return;
-        if (d == kTitleData || d == kCounterData || d == kProgressData) {
-            emit titleRequested(int(d == kCounterData ? TitleKind::Counter
-                                    : d == kProgressData ? TitleKind::Progress : TitleKind::Text));
+        if (d == kTitleData || d == kCounterData || d == kProgressData || d == kShapeData) {
+            emit titleRequested(int(d == kCounterData    ? TitleKind::Counter
+                                    : d == kProgressData ? TitleKind::Progress
+                                    : d == kShapeData    ? TitleKind::Shape
+                                                         : TitleKind::Text));
             return;
         }
         if (d.startsWith(kEffectPrefix)) {
@@ -880,7 +891,10 @@ void EffectsLibrary::rebuild()
                                       T("Zahl, die über die Länge des Clips hochzählt (z. B. 0 → 1000 Kills)")},
                                 Entry{T("Fortschrittsbalken"), kProgressData, titleIcon(TitleKind::Progress),
                                       T("Balken am Bildrand, der zeigt, wie viel vom Video noch kommt (über die "
-                                        "ganze Timeline)")}};
+                                        "ganze Timeline)")},
+                                Entry{T("Form"), kShapeData, titleIcon(TitleKind::Shape),
+                                      T("Kreis, Rechteck, Pfeil, Stern … mit Füllung, Rand und Schatten; auch als "
+                                        "Unschärfe oder Spotlight")}};
 
     switch (shown) {
     case All: // Toolbox: all groups with header like in DaVinci

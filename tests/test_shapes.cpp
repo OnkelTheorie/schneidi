@@ -10,6 +10,9 @@
 #include "cli/CommandsDetail.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
+#include "core/Editor.h"
+#include "core/Selection.h"
+#include "ui/Inspector.h"
 #include "core/ExportCheck.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -21,6 +24,8 @@
 #include "core/TimelineOps.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QPlainTextEdit>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPainter>
@@ -554,6 +559,41 @@ void testCheck()
     CHECK(!found);
 }
 
+// ---- Inspector: the section "Form" for a shape (its kind combo changes the clip), the text field hidden ----
+void testInspector()
+{
+    std::printf("inspector\n");
+    Project p;
+    ProjectData d;
+    d.timeline = timelineOf({});
+    d.format = kFormat;
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Inspector insp(&e);
+    e.addTitle(0, -1, 50, TitleKind::Shape);
+    const int id = *sel.ids().begin();
+    insp.resize(380, 1600);
+    insp.show();
+    QCoreApplication::processEvents();
+    const Clip* c = TimelineOps::findClip(p.timeline(), id);
+    CHECK(c && c->title.isShape() && c->title.text.isEmpty() && c->title.shape.width > 0);
+    QComboBox* kinds = nullptr;
+    for (QComboBox* b : insp.findChildren<QComboBox*>())
+        if (b->count() == int(std::size(kShapeKinds)) && b->itemData(0).toInt() == int(ShapeKind::Ellipse)) kinds = b;
+    if (!CHECK(kinds && kinds->isVisibleTo(&insp))) return;
+    for (QPlainTextEdit* t : insp.findChildren<QPlainTextEdit*>()) CHECK(!t->isVisibleTo(&insp));
+    kinds->setCurrentIndex(kinds->findData(int(ShapeKind::Star)));
+    emit kinds->activated(kinds->currentIndex());
+    c = TimelineOps::findClip(p.timeline(), id);
+    CHECK(c && c->title.shape.kind == ShapeKind::Star);
+    // A text title: no shape section
+    sel.clear();
+    e.addTitle(100, -1, 50, TitleKind::Text);
+    QCoreApplication::processEvents();
+    CHECK(!kinds->isVisibleTo(&insp));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -582,5 +622,6 @@ int main(int argc, char** argv)
     testFollow();
     testCli(tmp.path());
     testCheck();
+    testInspector();
     return Check::result();
 }
