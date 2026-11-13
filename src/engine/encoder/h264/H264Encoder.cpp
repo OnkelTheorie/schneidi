@@ -103,15 +103,16 @@ struct PsyMb {
     alignas(16) int16_t src[4][128];
 };
 thread_local PsyMb tPsy;
-// With psy, the inter candidate that won is coded once more with its trellis quantisation at
-// kPsyFine * lambda: fewer small coefficients dropped, so more of the source's energy at more bits,
-// and the psy cost decides between the two. Measured at fixed QP 30-38, 60 pictures each of CS2, a
-// slow zoom with grain and camera footage, at equal bitrate against psy off (AC energy kept /
-// high-frequency energy kept / PSNR-Y): psyRd 1.0 without this candidate +1.5..1.8 / +0.8..2.2
-// points / -0.05..-0.18 dB, with it at 0.5: +2.5..3.3 / +3.6..4.9 / +0.01..-0.24, at 0.25:
-// +2.9..3.8 / +4.4..6.0 / 0.00..-0.38, at 0.1 no more. Trying it only where the winner's psy cost
-// exceeds a few bits changes nothing (it nearly always does); coding both transform sizes for real
-// instead of by estimate brings nothing on top. H264_PSYQ overrides (0 = no such candidate).
+// With psy, the inter candidate that won is coded once more with a finer trellis quantisation
+// (lambda times gPsyFine for its coefficient bits): fewer small coefficients dropped, so more of
+// the source's detail at more bits, and the psy cost decides between the two. The mode decision
+// alone has little to choose from: its candidates are all quantised for squared error.
+// Measured at fixed QP 30-38, 60 pictures each of CS2, a slow zoom with grain and camera footage,
+// at equal bitrate against psy off (block AC energy kept / high-frequency energy kept / PSNR-Y),
+// psyRd 1.0: mode decision alone -0.2..+0.2 points / -0.5..-0.1 / -0.04..-0.18 dB; with this
+// candidate +0.2..0.9 / +2.5..3.2 / -0.08..-0.14; with the intra one below as well +0.5..1.1 /
+// +2.9..4.0 / -0.08..-0.11; psyRd 2.0 +1.2..1.8 / +5.7..7.2 / -0.20..-0.41. H264_PSYQ overrides
+// (0 = no such candidate).
 const double gPsyFine = std::getenv("H264_PSYQ") ? std::atof(std::getenv("H264_PSYQ")) : 0.25;
 // The finer quantisation leaves the lowest frequencies as they are (scan positions below these, 4x4
 // and 8x8 transform): a DC or first AC level more in one block and not in its neighbour is a
@@ -120,10 +121,7 @@ const int gPsyFineFrom4 = std::getenv("H264_PSYQ4") ? std::atoi(std::getenv("H26
 const int gPsyFineFrom8 = std::getenv("H264_PSYQ8") ? std::atoi(std::getenv("H264_PSYQ8")) : 6;
 // The same for intra macroblocks, whose quantisation rounds down below 2/3 of a step: the chosen
 // type once more rounding to nearest (tIntraFine: offset gPsyIntraRound instead of 1/3), and the
-// psy cost decides. Measured as above with psyRd 1.0: intra pictures only +4.8..5.5 points of AC
-// energy / +12..13 of high-frequency energy / -0.15..-0.19 dB on top of the mode decision (offset
-// 0.42: +2.7..2.9 / +6.5..7.0 / +0.04..+0.06); a GOP of 60 pictures +0.4..0.9 / +0.5..1.9 / 0.00.
-// H264_PSYIQ overrides (0 = no such candidate).
+// psy cost decides. H264_PSYIQ overrides (0 = no such candidate).
 const double gPsyIntraRound = std::getenv("H264_PSYIQ") ? std::atof(std::getenv("H264_PSYIQ")) : 0.5;
 thread_local bool tIntraFine = false;
 double gPhaseMs[8] = {};
@@ -3409,10 +3407,16 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
         Snapshot keep;
         save(keep);
         MbOut fine;
-        tIntraFine = true;
-        const bool fineDelta = picked == 0 ? encodeLuma16(fine, mbx, mby, ch) : picked == 1 ? encodeLuma4(fine, mbx, mby, ch)
-                                                                                           : encodeLuma8(fine, mbx, mby, ch);
-        tIntraFine = false;
+        struct FineScope { // not left set for the thread's next macroblock if the coding throws
+            FineScope() { tIntraFine = true; }
+            ~FineScope() { tIntraFine = false; }
+        };
+        bool fineDelta;
+        {
+            const FineScope scope;
+            fineDelta = picked == 0 ? encodeLuma16(fine, mbx, mby, ch) : picked == 1 ? encodeLuma4(fine, mbx, mby, ch)
+                                                                                  : encodeLuma8(fine, mbx, mby, ch);
+        }
         const double costFine = ssd() + lambda * mbBits(fine, mbx, mby, picked == 2 ? 0.0 : double(fine.bw.bitCount()));
         if (costFine < pickedCost) {
             out = std::move(fine);
