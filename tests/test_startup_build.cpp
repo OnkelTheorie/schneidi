@@ -3,8 +3,8 @@
 // window, never a finished panel moved into another parent at the start. Every move of a built widget tree re-applies
 // the app style sheet to all of its widgets (scroll areas lay their content out again): the Inspector moved into the
 // mixer column at the start cost ~60 ms, the whole tree hung into the window at the end ~20 ms more (MainWindow::
-// buildLayout). Checked with the mixer column on and off: no ParentChange for the big panels after their construction,
-// and each of the Inspector's scroll areas sees the style change of its own insertion only.
+// buildLayout). Checked with the mixer column on and off: no ParentChange for the big panels after their construction
+// (the mixer moves once, cheaply, into its column before that hangs in), none for a splitter holding the Inspector.
 
 #include "check.h"
 
@@ -21,40 +21,31 @@
 
 #include <QApplication>
 #include <QHash>
-#include <QScrollArea>
+#include <QStackedWidget>
 #include <QSettings>
 #include <QSplitter>
 #include <QTest>
-#include <algorithm>
 #include <clocale>
 #include <memory>
 
 namespace {
 
-bool inside(const QObject* o, const char* cls)
-{
-    for (const QObject* p = o; p; p = p->parent())
-        if (p->inherits(cls)) return true;
-    return false;
-}
-
 // Counts, application wide, ParentChange of the panels (seen only once their own constructor runs: during the base
-// class constructor the object is not one yet) and StyleChange of the scroll areas inside the Inspector
+// class constructor the object is not one yet) and of the containers (splitters, the page stack) the Inspector is in
 class Counter : public QObject
 {
 public:
     QHash<QString, int> parentChanges;
-    QHash<const QObject*, int> styleChanges;
+    int inspectorMoves = 0;
 
     bool eventFilter(QObject* o, QEvent* e) override
     {
-        if (e->type() == QEvent::ParentChange) {
-            for (const char* cls : {"Inspector", "MediaPool", "MediaStorage", "Viewer", "TimelinePanel", "EffectsLibrary",
-                                    "Mixer", "TranscriptPanel"})
-                if (o->metaObject()->className() == QByteArray(cls)) ++parentChanges[cls];
-        } else if (e->type() == QEvent::StyleChange && qobject_cast<QScrollArea*>(o) && inside(o, "Inspector")) {
-            ++styleChanges[o];
-        }
+        if (e->type() != QEvent::ParentChange) return false;
+        for (const char* cls : {"Inspector", "MediaPool", "MediaStorage", "Viewer", "TimelinePanel", "EffectsLibrary",
+                                "TranscriptPanel"})
+            if (o->metaObject()->className() == QByteArray(cls)) ++parentChanges[cls];
+        if ((qobject_cast<QSplitter*>(o) || qobject_cast<QStackedWidget*>(o)) && o->findChild<Inspector*>())
+            ++inspectorMoves;
         return false;
     }
 };
@@ -105,13 +96,8 @@ void startWith(Engine& engine, bool mixer)
     for (auto it = counter.parentChanges.cbegin(); it != counter.parentChanges.cend(); ++it)
         Check::report(it.value() == 0, "panel built in place, not moved at the start", __FILE__, __LINE__,
                       QString("%1: %2 moves (%3)").arg(it.key()).arg(it.value()).arg(where));
-    int most = 0;
-    for (int n : counter.styleChanges) most = std::max(most, n);
-    Check::report(!counter.styleChanges.isEmpty() && most <= 1, "Inspector's tree styled once", __FILE__, __LINE__,
-                  QString("%1 scroll areas, up to %2 style changes each (%3)")
-                      .arg(counter.styleChanges.size())
-                      .arg(most)
-                      .arg(where));
+    Check::report(counter.inspectorMoves == 0, "Inspector's containers not moved after it was built", __FILE__, __LINE__,
+                  QString("%1 moves (%2)").arg(counter.inspectorMoves).arg(where));
 }
 
 } // namespace
