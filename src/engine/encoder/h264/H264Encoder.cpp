@@ -641,18 +641,20 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
-bool BProbe::collects(int index, bool sceneChange) const
+// A new measurement every kInterval pictures and from each scene change or keyframe the caller asks
+// for on (also one inside the pictures being collected: they start again there).
+bool BProbe::startsAt(const LookaheadFrame& f, int index) const
 {
-    return kBProbe && (start_ >= 0 || lastStart_ < 0 || index - lastStart_ >= kInterval || (sceneChange && index > lastStart_));
+    return lastStart_ < 0 || index - lastStart_ >= kInterval || ((f.sceneChange || f.forceKeyframe) && index > lastStart_);
 }
+
+bool BProbe::collects(const LookaheadFrame& f, int index) const { return kBProbe && (start_ >= 0 || startsAt(f, index)); }
 
 bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads)
 {
     if (!kBProbe || bframes <= 0)
         return false;
-    // A new measurement every kInterval pictures and from each scene change on (also one inside
-    // the pictures being collected: they start again there).
-    if (lastStart_ < 0 || index - lastStart_ >= kInterval || (f.sceneChange && index > lastStart_)) {
+    if (startsAt(f, index)) {
         pics_.clear();
         start_ = lastStart_ = index;
     }
@@ -736,11 +738,10 @@ double BProbe::gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
     if (trace)
         std::fprintf(stderr, "bprobe: P %.0f bits ssd %.0f | P+%d %.0f bits ssd %.0f | B %.0f bits ssd %.0f\n", r0, d0, kQpStep, r1, d1, rb, db);
-    // Next to nothing is coded (a still picture): B pictures cost nothing either, the lookahead
-    // costs may place them. No slope from the two P runs: no measurement, no B pictures.
-    if (r0 < (0.002 * w * h + 256.0) * (count - 1)) // the slice headers alone are some 100 bits
-        return -1.0;
-    if (r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0 || db <= 0)
+    // Next to nothing is coded (a still picture, a desktop: the slice headers alone are some 100
+    // bits) or the two P runs give no slope: no measurement, no B pictures. On such material they
+    // gain or lose a few percent (measured -4 .. +7 % on screen recordings).
+    if (r0 < (0.002 * w * h + 256.0) * (count - 1) || r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0 || db <= 0)
         return 0;
     const double slope = std::log(r1 / r0) / std::log(d1 / d0); // < 0
     const double pBits = r0 * std::exp(slope * std::log(db / d0)); // the P runs' bits at the B run's error
@@ -821,7 +822,7 @@ void FirstPass::analyseBatch() const
         if (kBProbe) {
             for (int i = 0; i < n; ++i) {
                 const LookaheadFrame& f = batch_[size_t(i)];
-                want[size_t(i)] = probe_.collects(base + i, f.sceneChange);
+                want[size_t(i)] = probe_.collects(f, base + i);
                 stats_->bGate.push_back(probe_.allowed());
                 if (probe_.add(*la_, f, base + i, bframes_, threads_))
                     std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
@@ -1159,7 +1160,7 @@ bool Encoder::wantBSearch(const LookaheadFrame& f) const
     const std::vector<uint8_t>* stats = cfg_.firstPass ? &cfg_.firstPass->bGate : nullptr;
     if (stats && stats->empty())
         return true;
-    if (!stats && probe_.collects(f.index, f.sceneChange))
+    if (!stats && probe_.collects(f, f.index))
         return true;
     for (int i = std::max(0, f.index - cfg_.bframes); i <= f.index; ++i)
         if (stats ? size_t(i) >= stats->size() || (*stats)[size_t(i)] : gateAt(i))
@@ -1267,63 +1268,9 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
     return out;
 }
 
-// Types of the queued pictures that are not decided yet, in display order: keyframes as the
-// schedule, the caller and the scene changes ask for them, then runs of up to `bframes` B pictures
-// each followed by a P picture. The picture before a keyframe and the last one are P pictures (a
-// B picture needs a later reference of its own GOP). Adaptive: the run lengths come from planRuns
-// over the queue's lookahead costs, or from the first pass's plan of the whole clip.
-
-// Weight of a B picture's lookahead cost against a P picture's in the placement (H264_BW).
-static const double kBWeight = std::getenv("H264_BW") ? std::atof(std::getenv("H264_BW")) : 1.0;
-
-// Cheapest split of the pictures 1..n that follow reference picture 0 into runs of up to maxB B
-// pictures, each ended by a P picture (picture n is one): a Viterbi search over the lookahead
-// costs. pCost(t, d): picture t as a P picture d after its reference; bCost(t, a, c): picture t as a
-// B picture a after its reference before and c before the one after (< 0: unknown). Writes
-// types[1..n] (1 P, 2 B).
-template <class PCost, class BCost>
-static void planRuns(int n, int maxB, PCost&& pCost, BCost&& bCost, std::vector<uint8_t>& types)
-{
-    constexpr double kNone = 1e300;
-    std::vector<double> best(size_t(n) + 1, kNone);
-    std::vector<int> run(size_t(n) + 1, 0);
-    best[0] = 0;
-    for (int t = 1; t <= n; ++t) {
-        for (int r = 0; r <= std::min(maxB, t - 1); ++r) {
-            const int s = t - r - 1;
-            if (best[size_t(s)] >= kNone)
-                continue;
-            const double pc = pCost(t, r + 1);
-            if (pc < 0)
-                continue;
-            double sum = best[size_t(s)] + pc;
-            bool ok = true;
-            for (int k = 1; k <= r && ok; ++k) {
-                const double bc = bCost(s + k, k, r + 1 - k);
-                ok = bc >= 0;
-                sum += kBWeight * bc;
-            }
-            if (ok && sum < best[size_t(t)]) {
-                best[size_t(t)] = sum;
-                run[size_t(t)] = r;
-            }
-        }
-        if (best[size_t(t)] >= kNone) { // nothing known: a P picture
-            best[size_t(t)] = best[size_t(t) - 1];
-            run[size_t(t)] = 0;
-        }
-    }
-    types.assign(size_t(n) + 1, 1);
-    for (int t = n; t > 0;) {
-        const int r = run[size_t(t)];
-        for (int k = 1; k <= r; ++k)
-            types[size_t(t - k)] = 2;
-        t -= r + 1;
-    }
-}
-
 // Picture types of the whole clip from the first pass: keyframes as the encoder places them,
-// between them planRuns over the first pass's costs; and each picture's cost as planned.
+// between them runs of B pictures where the first pass's probe found them worth it; and each
+// picture's lookahead cost as planned.
 void Encoder::planFromStats()
 {
     const FirstPassStats& st = *cfg_.firstPass;
@@ -1344,25 +1291,17 @@ void Encoder::planFromStats()
         while (e < n && !key[e])
             ++e;
         const int len = int(e - i);
-        std::vector<uint8_t> types;
-        if (adapt) {
-            const size_t base = i - 1; // the reference picture before (a keyframe or a P picture)
-            auto gate = [&](size_t i) { return !kBProbe || i >= st.bGate.size() || st.bGate[i]; };
-            planRuns(len, cfg_.bframes, [&](int t, int d) { return double(plan(base + size_t(t), d)); },
-                     [&](int t, int a, int c) {
-                         return gate(base + size_t(t)) ? double(plan(base + size_t(t + c), bPlanIndex(a, c, st.bMax))) : -1.0;
-                     },
-                     types);
-        } else {
-            types.assign(size_t(len) + 1, 1);
-            for (int t = 1, run = 0; t < len; ++t) // fixed runs; the last picture before a keyframe is P
-                if (run < cfg_.bframes) {
-                    types[size_t(t)] = 2;
-                    ++run;
-                } else {
-                    run = 0;
-                }
-        }
+        // Runs of B pictures, each ended by a P picture; the last picture before a keyframe is P.
+        // Adaptive: only where the probe found them worth it.
+        auto gate = [&](size_t k) { return !adapt || !kBProbe || k >= st.bGate.size() || st.bGate[k]; };
+        std::vector<uint8_t> types(size_t(len) + 1, 1);
+        for (int t = 1, run = 0; t < len; ++t)
+            if (run < cfg_.bframes && gate(i + size_t(t) - 1)) {
+                types[size_t(t)] = 2;
+                ++run;
+            } else {
+                run = 0;
+            }
         for (int t = 1; t <= len; ++t)
             statType_[i + size_t(t) - 1] = types[size_t(t)];
         i = e;
@@ -1407,6 +1346,11 @@ double Encoder::queueCost(size_t j) const
     return g.interSum;
 }
 
+// Types of the queued pictures that are not decided yet, in display order: keyframes as the
+// schedule, the caller and the scene changes ask for them, then runs of up to `bframes` B pictures
+// each followed by a P picture. The picture before a keyframe and the last one are P pictures (a
+// B picture needs a later reference of its own GOP). Adaptive: B pictures only where the probe
+// found them worth it (the queue's own, or the first pass's plan of the whole clip).
 void Encoder::planQueue()
 {
     size_t u = 0;
@@ -1436,7 +1380,7 @@ void Encoder::planQueue()
             if (adapt && cfg_.firstPass)
                 b = size_t(f.index) < statType_.size() && statType_[size_t(f.index)] == 2;
             else
-                b = run < cfg_.bframes; // fixed runs (adaptive: replaced below)
+                b = !adapt || gateAt(f.index); // adaptive: only where the probe found B pictures worth it
             if (b && canB && run < cfg_.bframes) {
                 f.type = 2;
                 ++run;
@@ -1446,31 +1390,6 @@ void Encoder::planQueue()
             }
         }
         f.gopPos = pos++;
-    }
-    if (adapt && !cfg_.firstPass) {
-        // Between keyframes (and from the last decided reference picture on) the cheapest runs.
-        for (size_t i = u; i < queue_.size();) {
-            if (queue_[i].type == 0) {
-                ++i;
-                continue;
-            }
-            size_t e = i;
-            while (e < queue_.size() && queue_[e].type != 0)
-                ++e;
-            const size_t base = i - 1; // may be before the queue (u = 0): the costs live in the later pictures
-            auto at = [&](int t) -> const LookaheadFrame& { return queue_[base + size_t(t)]; };
-            std::vector<uint8_t> types;
-            planRuns(int(e - i), cfg_.bframes,
-                     [&](int t, int d) { return at(t).bPlan.empty() ? (d == 1 ? at(t).interSum : -1.0) : double(at(t).bPlan[size_t(d)]); },
-                     [&](int t, int a, int c) {
-                         return at(t + c).bPlan.empty() || !gateAt(at(t).index) ? -1.0
-                                                                                 : double(at(t + c).bPlan[size_t(bPlanIndex(a, c, cfg_.bframes))]);
-                     },
-                     types);
-            for (size_t j = i; j < e; ++j)
-                queue_[j].type = types[j - base];
-            i = e;
-        }
     }
     // Distances to the reference pictures (pictures whose reference left the queue keep theirs).
     int lastRef = -1;

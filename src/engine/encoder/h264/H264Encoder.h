@@ -91,9 +91,9 @@ struct EncoderConfig {
     // option). Access units come out in coding order: lastDisplayIndex() says which picture one is.
     int bframes = 0;
     int bQpOffset = 2;     // QP of a B picture above the P QP
-    // Places B pictures where they pay: per run the cheapest of "n B pictures + P" for n = 0..bframes
-    // by the lookahead costs (a Viterbi search over the queue; with a first pass over the whole clip,
-    // which must then have been made with at least this many bframes).
+    // Places B pictures only where they pay (BProbe: a few pictures coded with and without them;
+    // with a first pass over the whole clip, which must then have been made with at least this
+    // many bframes). false = runs of bframes B pictures everywhere.
     bool bAdaptive = true;
     // Predictions from both lists weighted by the distance to the two reference pictures
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
@@ -127,12 +127,13 @@ struct ChunkPlan {
 // clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 
-// Where B pictures pay, measured instead of estimated: every kInterval pictures and after each scene
-// change the next few half-size pictures (the lookahead's) are coded for real, once with B pictures
-// between the first and the last and twice without (two QPs, for the slope of bits over distortion).
-// B pictures are placed from there on only if they need clearly fewer bits at equal distortion. The
-// lookahead costs cannot tell this: a slow zoom (B pictures at a third of the bits) and noise that
-// changes with every picture (B pictures a loss) look alike to them.
+// Where B pictures pay, measured instead of estimated: every kInterval pictures and after each
+// scene change or keyframe the caller asks for, the next few half-size pictures (the lookahead's)
+// are coded for real - once with B pictures between the first and the last, twice without (two
+// QPs, for the slope of bits over distortion). From there on runs of B pictures are placed only if
+// they needed clearly fewer bits at equal distortion. The lookahead costs cannot tell this: a slow
+// zoom (B pictures at a third of the bits) and noise that changes with every picture (B pictures a
+// loss) look alike to them, and they see a zoom's distant P pictures as far too expensive.
 class BProbe {
 public:
     static constexpr int kInterval = 120;
@@ -140,7 +141,7 @@ public:
     // finished with it: allowed() then holds from picture resultStart() on.
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
     // Whether add() will keep this picture for a measurement (one being collected or starting with it).
-    bool collects(int index, bool sceneChange) const;
+    bool collects(const LookaheadFrame& f, int index) const;
     bool allowed() const { return allowed_; }
     int resultStart() const { return resultStart_; }
     double lastGain() const { return gain_; }
@@ -149,6 +150,7 @@ public:
     static double gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads);
 
 private:
+    bool startsAt(const LookaheadFrame& f, int index) const;
     std::vector<std::vector<uint8_t>> pics_;
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
     bool allowed_ = false;

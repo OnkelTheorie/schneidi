@@ -35,13 +35,32 @@ struct Yuv {
     std::vector<uint8_t> y, u, v;
 };
 
-// Picture kind of synthFrame: 0 = the moving pictures below, 1 = still (only the noise changes).
+// Picture kind of synthFrame: 0 = the moving pictures below, 1 = still (only the noise changes), 2 = a slow zoom.
 int gSynthKind = 0;
 
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
+// A texture under a slow zoom with a little noise (gSynthKind 2): the material B pictures pay on.
+int zoomSample(int x, int y, int w, int h, int t)
+{
+    auto lattice = [](int ix, int iy) {
+        uint32_t s = uint32_t(ix) * 73856093u ^ uint32_t(iy) * 19349663u;
+        s = (s ^ (s >> 13)) * 1274126177u;
+        return int((s >> 16) & 255);
+    };
+    // Positions in 1/256 pixel: the picture's centre stays, the scale grows by 0.15 % per picture. Lattice cells
+    // of 6 pixels, bilinear between their corners.
+    const int scale = 65536 + t * 100;
+    const int64_t u = (int64_t(x * 2 - w) * 128 * 65536 / scale + int64_t(w) * 128) / 6;
+    const int64_t v = (int64_t(y * 2 - h) * 128 * 65536 / scale + int64_t(h) * 128) / 6;
+    const int ix = int(u >> 8), iy = int(v >> 8), fx = int(u & 255), fy = int(v & 255);
+    const int top = lattice(ix, iy) * (256 - fx) + lattice(ix + 1, iy) * fx;
+    const int bottom = lattice(ix, iy + 1) * (256 - fx) + lattice(ix + 1, iy + 1) * fx;
+    return (top * (256 - fy) + bottom * fy) >> 16;
+}
+
 Yuv synthFrame(int w, int h, int t)
 {
-    const int tm = gSynthKind == 1 ? 0 : t;
+    const int tm = gSynthKind != 0 ? 0 : t;
     Yuv f;
     f.w = w;
     f.h = h;
@@ -54,7 +73,9 @@ Yuv synthFrame(int w, int h, int t)
             seed = seed * 1664525u + 1013904223u;
             int v = (x * 255) / w / 2 + (y * 255) / h / 3 + int(seed >> 29);
             const int sx = (tm * 3) % w, sy = (tm * 2) % h;
-            if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
+            if (gSynthKind == 2)
+                v = 16 + zoomSample(x, y, w, h, t) * 7 / 8 + int(seed >> 30);
+            else if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
                 v = ((x / 4 + y / 4) & 1) ? 220 : 40;
             f.y[size_t(y) * w + x] = uint8_t(std::clamp(v, 0, 255));
         }
@@ -527,17 +548,30 @@ int main()
             }
         }
         {
-            // Cost-based placement: a still picture gets full runs of B pictures (one pass and from a first pass
-            // with the same plan), the moving material at this size at least some P pictures between the B runs
-            gSynthKind = 1;
+            // Placement: a slow zoom gets runs of B pictures (the probe finds them worth it, the lookahead costs
+            // pick the runs; one pass and from a first pass with the same plan) and is smaller with them at the
+            // same QP. A still picture gets none: nothing is coded there with or without them.
+            gSynthKind = 2;
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            size_t plain = 0, withB = 0;
+            CHECK(roundTrip(c, 24, &plain));
             c.bframes = 3;
             StreamInfo info;
-            CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info));
+            CHECK(roundTrip(c, 24, &withB, -1, nullptr, &info));
             const auto bCount = std::count(info.types.begin(), info.types.end(), 'B');
-            if (bCount < 15)
-                std::fprintf(stderr, "still picture: types %s\n", info.types.c_str());
-            CHECK(bCount >= 15);
+            if (bCount < 12 || withB >= plain)
+                std::fprintf(stderr, "slow zoom: types %s, %zu bytes, without B %zu\n", info.types.c_str(), withB, plain);
+            CHECK(bCount >= 12);
+            CHECK(withB < plain);
+            {
+                gSynthKind = 1;
+                StreamInfo still;
+                CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &still));
+                if (still.types.find('B') != std::string::npos)
+                    std::fprintf(stderr, "still picture: types %s\n", still.types.c_str());
+                CHECK(still.types.find('B') == std::string::npos);
+                gSynthKind = 2;
+            }
             FirstPass fp(c.width, c.height, 2, c.bframes);
             for (int t = 0; t < 24; ++t) {
                 const Yuv src = synthFrame(c.width, c.height, t);
@@ -549,7 +583,7 @@ int main()
             StreamInfo info2;
             CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info2));
             if (info2.types != info.types)
-                std::fprintf(stderr, "still picture, first pass: types %s instead of %s\n", info2.types.c_str(), info.types.c_str());
+                std::fprintf(stderr, "slow zoom, first pass: types %s instead of %s\n", info2.types.c_str(), info.types.c_str());
             CHECK(info2.types == info.types);
             gSynthKind = 0;
         }
