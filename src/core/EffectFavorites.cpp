@@ -4,6 +4,7 @@
 #include "core/EffectFolders.h"
 #include "core/Presets.h"
 
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
@@ -16,11 +17,18 @@ constexpr const char* kFavorites = "effects/favorites";
 constexpr const char* kRecent = "effects/recent";
 constexpr const char* kInFolder = "@/"; // a path relative to the effects folder
 
-// A path inside the effects folder relative to it, others unchanged
-QString stablePath(const QString& path)
+// A path inside the effects folder relative to it, others unchanged; '/' always (a path given with '\\' on Windows
+// gives the same key), the folder compared without case where file names have none
+QString stablePath(const QString& given)
 {
-    const QString root = EffectFolders::root();
-    if (!root.isEmpty() && path.startsWith(root + '/')) return kInFolder + path.mid(root.size() + 1);
+    const QString path = QDir::fromNativeSeparators(given);
+    const QString root = QDir::fromNativeSeparators(EffectFolders::root());
+#ifdef Q_OS_WIN
+    constexpr Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    if (!root.isEmpty() && path.startsWith(root + '/', cs)) return kInFolder + path.mid(root.size() + 1);
     return path;
 }
 
