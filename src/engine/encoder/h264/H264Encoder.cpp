@@ -2836,6 +2836,7 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
     const int cqbits = 15 + qpcDiv;
     const int cOffset = (1 << cqbits) / (interPred ? 6 : 3);
     bool anyDc = false, anyAc = false;
+    bool acNz[2][4];
     for (int c = 0; c < 2; ++c) {
         int ccoef[4][16];
         for (int b = 0; b < 4; ++b) {
@@ -2850,7 +2851,8 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
         }
         for (int blk = 0; blk < 4; ++blk) {
             ccoef[blk][0] = 0; // the DC went its own way above
-            anyAc |= quant4x4(ccoef[blk], kRows.mf[qpcMod], cqbits, cOffset, kMaxLevel, ch.ac[c][blk]);
+            acNz[c][blk] = quant4x4(ccoef[blk], kRows.mf[qpcMod], cqbits, cOffset, kMaxLevel, ch.ac[c][blk]);
+            anyAc |= acNz[c][blk];
         }
     }
     ch.cbp = anyAc ? 2 : anyDc ? 1 : 0;
@@ -2861,11 +2863,16 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
                           l[0] - l[1] - l[2] + l[3]};
         uint8_t* r0 = &(*crec[c])[chromaOff];
         for (int blk = 0; blk < 4; ++blk) {
+            const int ox = (blk & 1) * 4, oy = (blk >> 1) * 4;
+            if (!acNz[c][blk] && f[blk] == 0) { // no residual: the prediction is the reconstruction
+                for (int y = 0; y < 4; ++y)
+                    std::memcpy(r0 + size_t(oy + y) * cw + ox, cpred[c] + (oy + y) * 8 + ox, 4);
+                continue;
+            }
             int d[16], r[16];
             dequant4x4(ch.ac[c][blk], kRows.v[qpcMod], qpcDiv, d); // ac[0] is 0
             d[0] = ((f[blk] * 16 * kDequantV[qpcMod][0]) << qpcDiv) >> 5;
             inverse4x4(d, r);
-            const int ox = (blk & 1) * 4, oy = (blk >> 1) * 4;
             addClip4x4(cpred[c] + oy * 8 + ox, 8, r, r0 + size_t(oy) * cw + ox, cw);
         }
     }
