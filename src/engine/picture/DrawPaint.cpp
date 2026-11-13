@@ -54,9 +54,20 @@ QPainterPath varyingStroke(const Drawing::Placed& s)
 {
     QPainterPath path;
     path.setFillRule(Qt::WindingFill);
+    double drawnR = -1; // the last disc's radius
     for (int i = 0; i < s.points.size(); ++i) {
         const double r = std::max(0.0, s.widths.value(i)) / 2;
-        if (r > 0.05) addPiece(path, circle(s.points[i], r));
+        // A disc where the width changed, the line turns, and at both ends; the bands cover the rest
+        bool disc = i == 0 || i + 1 == s.points.size() || std::abs(r - drawnR) > 0.05 * std::max(r, 0.5);
+        if (!disc) {
+            const QPointF u = s.points[i] - s.points[i - 1], v = s.points[i + 1] - s.points[i];
+            const double lu = std::hypot(u.x(), u.y()), lv = std::hypot(v.x(), v.y());
+            disc = lu < 1e-9 || lv < 1e-9 || (u.x() * v.x() + u.y() * v.y()) / (lu * lv) < 0.996; // > ~5 degrees
+        }
+        if (disc && r > 0.05) {
+            addPiece(path, circle(s.points[i], r));
+            drawnR = r;
+        }
         if (i == 0) continue;
         const QPointF a = s.points[i - 1], b = s.points[i], d = b - a;
         const double len = std::hypot(d.x(), d.y());
@@ -77,11 +88,12 @@ bool uniform(const Drawing::Placed& s)
 
 } // namespace
 
-void paint(uint8_t* rgba, int w, int h, QPoint origin, const QVector<Drawing::Placed>& strokes, double opacity)
+Painted render(const QVector<Drawing::Placed>& strokes, const QRect& reach)
 {
-    if (strokes.isEmpty() || opacity <= 0 || w <= 0 || h <= 0) return;
-    const QRect box = Drawing::bounds(strokes).adjusted(-2, -2, 2, 2).intersected(QRectF(origin, QSizeF(w, h))).toAlignedRect();
-    if (box.isEmpty() || box.width() > 16384 || box.height() > 16384) return;
+    Painted out;
+    if (strokes.isEmpty()) return out;
+    const QRect box = Drawing::bounds(strokes).adjusted(-2, -2, 2, 2).intersected(QRectF(reach)).toAlignedRect();
+    if (box.isEmpty() || box.width() > 16384 || box.height() > 16384) return out;
     QImage img(box.width(), box.height(), QImage::Format_RGBA8888_Premultiplied);
     img.fill(Qt::transparent);
     {
@@ -112,11 +124,25 @@ void paint(uint8_t* rgba, int w, int h, QPoint origin, const QVector<Drawing::Pl
         }
     }
     QImage straight = img.convertToFormat(QImage::Format_RGBA8888);
-    if (straight.bytesPerLine() != box.width() * 4) return;
+    if (straight.bytesPerLine() != box.width() * 4) return out;
+    out.straight = straight;
+    out.box = box;
+    return out;
+}
+
+void put(uint8_t* rgba, int w, int h, QPoint origin, const Painted& painted, double opacity)
+{
+    if (painted.straight.isNull() || opacity <= 0 || w <= 0 || h <= 0) return;
     Compose::Affine m;
-    m.c = box.x() - origin.x();
-    m.f = box.y() - origin.y();
-    Compose::draw(rgba, w, h, straight.constBits(), box.width(), box.height(), m, opacity);
+    m.c = painted.box.x() - origin.x();
+    m.f = painted.box.y() - origin.y();
+    Compose::draw(rgba, w, h, painted.straight.constBits(), painted.box.width(), painted.box.height(), m, opacity);
+}
+
+void paint(uint8_t* rgba, int w, int h, QPoint origin, const QVector<Drawing::Placed>& strokes, double opacity)
+{
+    if (strokes.isEmpty() || opacity <= 0 || w <= 0 || h <= 0) return;
+    put(rgba, w, h, origin, render(strokes, QRect(origin, QSize(w, h))), opacity);
 }
 
 } // namespace Picture::DrawPaint

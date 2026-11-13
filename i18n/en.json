@@ -3152,5 +3152,7 @@
  "Zeichnen": "Draw",
  "Zeichnung": "Drawing",
  "Zeichnung leeren": "Clear drawing",
- "Zeichnung folgt einem Tracker, den es nicht mehr gibt (Clip %1, Knoten %2) – sie bleibt stehen": "Drawing follows a tracker that is gone (clip %1, node %2) – it stays where it is"
+ "Zeichnung folgt einem Tracker, den es nicht mehr gibt (Clip %1, Knoten %2) – sie bleibt stehen": "Drawing follows a tracker that is gone (clip %1, node %2) – it stays where it is",
+ "Zeichnung malt sich %1 s lang auf, der Clip zeigt davon nur %2 s – sie endet halb gezeichnet": "Drawing draws itself over %1 s, the clip shows only %2 s of it – it ends half drawn",
+ "Die Spur der Zeichnung ist gesperrt": "The drawing's track is locked"
 }

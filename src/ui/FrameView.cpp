@@ -5,6 +5,8 @@
 #include "core/StartupTrace.h"
 #include "engine/CpuPath.h"
 #include "ui/ViewerOverlay.h"
+
+#include <QTabletEvent>
 #ifdef SCHNEIDI_HAVE_RHI
 #include "ui/FrameViewRhi.h"
 #endif
@@ -583,6 +585,17 @@ void FrameView::resizeEvent(QResizeEvent* e)
     m_pan = clampedPan(m_pan);
     if (m_surface) m_surface->setGeometry(rect());
     if (m_overlayLayer) m_overlayLayer->setGeometry(rect());
+}
+
+// A pen: the overlay may take it with its pressure (painting); otherwise Qt makes mouse events of it
+void FrameView::tabletEvent(QTabletEvent* e)
+{
+    const QRectF r = frameRect();
+    if (m_overlay && !r.isEmpty() && m_overlay->tablet(e, r)) {
+        e->accept();
+        return;
+    }
+    e->ignore();
 }
 
 void FrameView::mousePressEvent(QMouseEvent* e)

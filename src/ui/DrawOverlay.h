@@ -69,6 +69,7 @@ public:
     Qt::CursorShape cursorAt(const QPointF& pos, const QRectF& frame) const override;
     void hover(const QPointF& pos, const QRectF& frame) override;
     void leave() override;
+    bool tablet(QTabletEvent* e, const QRectF& frame) override;
 
     // The drawing clip the next stroke goes into (0 = a new one is made)
     int target() const;
@@ -77,11 +78,13 @@ public:
 
 signals:
     void activeChanged(bool on);
+    void notice(const QString& text); // a short note over the picture (an eraser on a locked track)
 
 private:
     enum Part { None = -1, Inside = 100 };
     const Clip* drawingAt() const; // the selected drawing under the playhead (following a tracker included)
     int localFrame(const Clip& c) const;
+    bool locked(const Clip& c) const; // on a locked track
     // Project pixels -> widget through the clip's transform (no clip: the plain view)
     QTransform toWidget(const Clip* c, const QRectF& frame) const;
     // A widget point -> 0..1 of the frame in the drawing's own space (its title position and transform taken off)
@@ -89,6 +92,7 @@ private:
     QRectF localBox(const Clip& c) const; // the strokes' bounds in project pixels (title position included)
     int partAt(const QPointF& pos, const QRectF& frame) const;
     void commitStroke(const QRectF& frame);
+    void extendStroke(const QPointF& pos, float pressure);
     void erase(const QRectF& frame);
 
     Editor* m_editor;
@@ -100,9 +104,11 @@ private:
     bool m_belowDrag = false;
     // painting: the stroke so far in widget coordinates and its pressure
     bool m_painting = false, m_erasing = false;
+    bool m_tablet = false; // the stroke comes from a pen's tablet events
     QVector<QPointF> m_stroke;
     QVector<float> m_pressure;
     int m_eraseSerial = 0;
+    bool m_lockedSaid = false; // this eraser drag said its track is locked
     QPointF m_hover;
     bool m_hovering = false;
     // the box: what is dragged and the values at the press

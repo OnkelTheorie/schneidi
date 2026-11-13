@@ -1001,7 +1001,7 @@ void Inspector::buildDrawingSection(QVBoxLayout* page,
         if (c.isValid()) DrawBrush::instance().setColor(c);
     });
     auto* width = new QSpinBox;
-    width->setRange(1, 400);
+    width->setRange(1, 216);
     width->setSuffix(" px");
     width->setToolTip(T("Breite neuer Striche (Pixel der Timeline)"));
     width->setFocusPolicy(Qt::ClickFocus);
@@ -1021,19 +1021,21 @@ void Inspector::buildDrawingSection(QVBoxLayout* page,
         px.fill(b.color());
         color->setIcon(QIcon(px));
         const QSignalBlocker bw(width);
-        width->setValue(std::max(1, int(std::lround(b.width() * m_editor->project()->timelineFormat().height))));
+        const int h = std::max(1, m_editor->project()->timelineFormat().height);
+        width->setMaximum(std::max(1, int(std::lround(0.2 * h)))); // DrawBrush's largest width
+        width->setValue(std::max(1, int(std::lround(b.width() * h))));
     };
     connect(&DrawBrush::instance(), &DrawBrush::changed, this, syncBrush);
     addFollowRow(sec, [](const TitleStyle& t) { return t.isDrawing(); },
                  T("Die Zeichnung bewegt sich mit einem Tracker eines Clips (Seite Compositing)"));
-    m_refreshers << [current, count, clear, syncBrush] {
+    m_refreshers << [this, current, count, clear, syncBrush] {
         const Clip* c = current();
         if (!c || !c->title.isDrawing()) return;
         const int n = int(c->title.drawing.strokes.size());
         const QString text = n == 1 ? T("1 Strich") : T("%1 Striche").arg(n);
         if (count->text() != text) count->setText(text);
         clear->setEnabled(n > 0);
-        syncBrush();
+        if (!m_valuesOnly) syncBrush(); // a selection or timeline change (its height); not every frame of playback
     };
     showFor(sec, [](const TitleStyle& t) { return t.isDrawing(); });
 }

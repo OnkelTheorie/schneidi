@@ -80,20 +80,21 @@ bool strokeFromJson(const QJsonObject& o, DrawStroke* out, QString* error)
 {
     DrawStroke s;
     const QJsonArray pts = o.value("points").toArray();
+    const QJsonArray pr = o.value("pressure").toArray();
+    const bool pressure = pr.size() * 2 == pts.size();
     for (int i = 0; i + 1 < pts.size(); i += 2) {
         const QJsonValue x = pts[i], y = pts[i + 1];
-        if (!x.isDouble() || !y.isDouble()) continue;
+        if (!x.isDouble() || !y.isDouble()) continue; // a broken point goes with its pressure
         const double px = x.toDouble(), py = y.toDouble();
-        if (!std::isfinite(px) || !std::isfinite(py) || px < -1 || px > 2 || py < -1 || py > 2) continue;
-        s.points << QPointF(px, py);
+        if (!std::isfinite(px) || !std::isfinite(py)) continue;
+        // Off the picture is kept (a stroke over its edge, a format change moved it), only kept within reason
+        s.points << QPointF(std::clamp(px, -kFar, kFar), std::clamp(py, -kFar, kFar));
+        if (pressure) s.pressure << float(std::clamp(pr[i / 2].toDouble(1), 0.0, 1.0));
     }
     if (s.points.isEmpty()) {
         if (error) *error = "a stroke needs points [x0, y0, x1, y1, …] (0..1 of the frame)";
         return false;
     }
-    const QJsonArray pr = o.value("pressure").toArray();
-    if (pr.size() == s.points.size())
-        for (const QJsonValue& v : pr) s.pressure << float(std::clamp(v.toDouble(1), 0.0, 1.0));
     const QColor c(o.value("color").toString());
     if (c.isValid()) s.color = c;
     s.width = std::clamp(o.value("width").toDouble(s.width), 0.0, 1.0);

@@ -14,11 +14,19 @@
 #include <QRectF>
 #include <QVector>
 
+#include <algorithm>
+
 namespace Drawing {
+
+// Points may lie off the picture (a stroke painted over its edge): painting and op draw keep them within
+// kMin..kMax of the frame; a file keeps any finite value (a format change may have moved them further) within +-kFar
+inline constexpr double kMin = -1, kMax = 2, kFar = 100;
+// p kept within kMin..kMax (painting, op draw)
+inline QPointF within(QPointF p) { return QPointF(std::clamp(p.x(), kMin, kMax), std::clamp(p.y(), kMin, kMax)); }
 
 // ---- file / CLI form: {strokes:[{points:[x0,y0,x1,y1,…], pressure?:[…], color, width, opacity?}], reveal?} ----
 // points rounded to 1/100000 of the frame, pressure to 1/1000 (left out when all 1), width in fractions of the frame
-// height. Unknown keys are ignored when read (a newer version's); points outside -1..2 or not numbers are dropped
+// height. Unknown keys are ignored when read (a newer version's); points that are not numbers are dropped
 QJsonObject toJson(const DrawingStyle& d);
 DrawingStyle fromJson(const QJsonObject& o);
 QJsonObject strokeJson(const DrawStroke& s);
@@ -38,7 +46,8 @@ QVector<Placed> place(const Clip& c, double t, double PW, double PH, const Masks
 // One stroke placed without a title position (points of 0..1 times the frame)
 Placed placeStroke(const DrawStroke& s, double PW, double PH);
 
-// How much of a self-drawing drawing is drawn at clip frame t (0..1): 1 when it does not reveal
+// How much of a self-drawing drawing is drawn at frame t of its content (clip frame + in: a split or trimmed
+// clip goes on where its part begins), 0..1: 1 when it does not reveal
 double revealFraction(const DrawingStyle& d, double t, double fps);
 // The strokes up to `fraction` of their summed length, drawn in order (the last one partly, its widths interpolated);
 // a dot counts as long as it is wide

@@ -1432,25 +1432,64 @@ struct Renderer::Impl {
     void drawDrawing(Image& layer, const Clip& c, double t, const Ctx& ctx, QPoint shift, QRect* bounds,
                      const Generators::TitleMotion& m)
     {
+        // The clip is a window onto the drawing: after a split or a trimmed start the reveal goes on from there
+        const double fraction = Drawing::revealFraction(c.title.drawing, std::max(0.0, t + c.in), ctx.fps);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        // In output pixels
+        const auto placed = [&](const Masks::Follow* f) {
+            QVector<Drawing::Placed> strokes = Drawing::place(c, t, ctx.PW, ctx.PH, f);
+            if (m.scale != 1 || m.rise != 0) {
+                const QRectF all = Drawing::bounds(strokes);
+                const QPointF mid = all.center();
+                const QPointF rise(0, -m.rise * std::max(all.height(), 1.0));
+                for (Drawing::Placed& s : strokes) {
+                    for (QPointF& q : s.points) q = mid + (q - mid) * m.scale + rise;
+                    for (double& w : s.widths) w *= m.scale;
+                }
+            }
+            strokes = Drawing::revealed(strokes, fraction);
+            for (Drawing::Placed& s : strokes) {
+                for (QPointF& q : s.points) q = QPointF(q.x() * sx, q.y() * sy);
+                for (double& w : s.widths) w *= sy;
+            }
+            return strokes;
+        };
+        // Nothing changing over time (all drawn, no tracker, no title motion, no moving keys): the painted picture
+        // is kept per clip and size; a change of the strokes is new data (they are compared as shared data)
+        const bool still = fraction >= 1 && m.scale == 1 && m.rise == 0 && c.title.shape.followClip <= 0
+                           && !Keys::animated(c, AnimParam::TitlePosX) && !Keys::animated(c, AnimParam::TitlePosY);
+        if (still) {
+            struct Cached {
+                QVector<DrawStroke> strokes; // held: the data cannot be freed and reused while it is the key
+                double x = 0, y = 0, PW = 0, PH = 0;
+                int W = 0, H = 0;
+                QRect bounds;
+                DrawPaint::Painted painted;
+            };
+            thread_local Cached cache[2];
+            thread_local int next = 0;
+            const QVector<DrawStroke>& key = c.title.drawing.strokes;
+            Cached* hit = nullptr;
+            for (Cached& k : cache)
+                if (k.W > 0 && k.strokes.constData() == key.constData() && k.strokes.size() == key.size() && k.x == c.title.posX
+                    && k.y == c.title.posY && k.PW == ctx.PW && k.PH == ctx.PH && k.W == ctx.W && k.H == ctx.H)
+                    hit = &k;
+            if (!hit) {
+                hit = &cache[next];
+                next = (next + 1) % 2;
+                const QVector<Drawing::Placed> strokes = placed(nullptr);
+                *hit = Cached{key, c.title.posX, c.title.posY, ctx.PW, ctx.PH, ctx.W, ctx.H,
+                              Drawing::bounds(strokes).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H),
+                              DrawPaint::render(strokes, QRect(0, 0, ctx.W, ctx.H))};
+            }
+            if (bounds) *bounds = hit->bounds;
+            else DrawPaint::put(layer.data(), layer.w, layer.h, shift, hit->painted);
+            return;
+        }
         Masks::Follow f;
         double seen = 1;
         const bool follows = shapeFollow(c, t, ctx, &f, &seen);
-        QVector<Drawing::Placed> strokes = Drawing::place(c, t, ctx.PW, ctx.PH, follows ? &f : nullptr);
-        if (m.scale != 1 || m.rise != 0) {
-            const QRectF all = Drawing::bounds(strokes);
-            const QPointF mid = all.center();
-            const QPointF rise(0, -m.rise * std::max(all.height(), 1.0));
-            for (Drawing::Placed& s : strokes) {
-                for (QPointF& q : s.points) q = mid + (q - mid) * m.scale + rise;
-                for (double& w : s.widths) w *= m.scale;
-            }
-        }
-        strokes = Drawing::revealed(strokes, Drawing::revealFraction(c.title.drawing, t, ctx.fps));
-        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
-        for (Drawing::Placed& s : strokes) {
-            for (QPointF& q : s.points) q = QPointF(q.x() * sx, q.y() * sy);
-            for (double& w : s.widths) w *= sy;
-        }
+        const QVector<Drawing::Placed> strokes = placed(follows ? &f : nullptr);
         if (bounds) {
             *bounds = Drawing::bounds(strokes).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
             return;

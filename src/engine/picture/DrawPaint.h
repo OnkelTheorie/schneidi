@@ -6,11 +6,22 @@
 
 #include "core/Drawing.h"
 
+#include <QImage>
 #include <QPoint>
+#include <QRect>
 
 #include <cstdint>
 
 namespace Picture::DrawPaint {
+
+// The strokes (output pixels) painted within `reach`: straight RGBA, `box` = where it lies in output pixels (empty
+// image = nothing). put() lays it onto rgba (w x h, its pixel (0, 0) at output pixel `origin`)
+struct Painted {
+    QImage straight;
+    QRect box;
+};
+Painted render(const QVector<Drawing::Placed>& strokes, const QRect& reach);
+void put(uint8_t* rgba, int w, int h, QPoint origin, const Painted& painted, double opacity = 1);
 
 // Paints `strokes` (output pixels) onto rgba (w x h), whose pixel (0, 0) is output pixel `origin`, with opacity 0..1
 void paint(uint8_t* rgba, int w, int h, QPoint origin, const QVector<Drawing::Placed>& strokes, double opacity = 1);

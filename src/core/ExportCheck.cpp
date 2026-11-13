@@ -285,6 +285,14 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
         if (t.hidden) continue;
         for (const Clip& c : t.clips) {
             if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
+            // A drawing that draws itself longer than its clip shows it: it ends half drawn
+            if (const DrawingStyle& dr = c.title.drawing; c.title.isDrawing() && dr.reveal > 0 && !dr.strokes.isEmpty()
+                && dr.reveal * fps > c.in + c.length() + 0.5)
+                out << issue(Severity::Warning, "drawing_reveal_long",
+                             T("Zeichnung malt sich %1 s lang auf, der Clip zeigt davon nur %2 s – sie endet halb gezeichnet")
+                                 .arg(QString::number(dr.reveal, 'g', 3).replace('.', I18n::decimalPoint()))
+                                 .arg(QString::number((c.in + c.length()) / fps, 'g', 3).replace('.', I18n::decimalPoint())),
+                             std::max(from, c.start), std::min(to, c.end()), c.id);
             if (const ShapeStyle& sh = c.title.shape;
                 (c.title.isShape() || c.title.isDrawing()) && sh.followClip > 0 && sh.followNode > 0) {
                 const Clip* tracked = TimelineOps::findClip(tl, sh.followClip);

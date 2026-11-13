@@ -32,8 +32,9 @@ DrawStroke strokeOf(const QJsonValue& v, int index, bool pixels, const ProjectFo
         if (!x.isDouble() || !y.isDouble()) fail("BAD_ARGUMENT", where + ".points must be numbers");
         QPointF p(x.toDouble(), y.toDouble());
         if (pixels) p = QPointF(p.x() / f.width, p.y() / f.height);
-        if (!std::isfinite(p.x()) || !std::isfinite(p.y()) || p.x() < -0.5 || p.x() > 1.5 || p.y() < -0.5 || p.y() > 1.5)
-            fail("BAD_ARGUMENT", where + QString(".points: (%1, %2) lies far outside the picture (%3)")
+        if (!std::isfinite(p.x()) || !std::isfinite(p.y()) || p.x() < Drawing::kMin || p.x() > Drawing::kMax || p.y() < Drawing::kMin
+            || p.y() > Drawing::kMax)
+            fail("BAD_ARGUMENT", where + QString(".points: (%1, %2) lies far outside the picture (%3; -1..2 of it)")
                                      .arg(x.toDouble()).arg(y.toDouble())
                                      .arg(pixels ? QString("pixels %1 x %2").arg(f.width).arg(f.height) : QString("0..1 of the frame")));
         pts << p;
@@ -190,14 +191,14 @@ void addDrawOps(QVector<OpDef>& ops)
                  "above) or with clip: add strokes to one, remove strokes, make it draw itself",
                  "strokes: a list of {points, color?, width?, opacity?, pressure?} (or just the points). points: "
                  "[[x, y], …] or [x0, y0, x1, y1, …]; units 'frame' (default: 0..1 of the picture, (0, 0) top left, "
-                 "y down) or 'pixels' (of the timeline format, from the top left). One point = a dot. width in pixels "
+                 "y down; -1..2 reach past its edges) or 'pixels' (of the timeline format, from the top left). One point = a dot. width in pixels "
                  "of the timeline format (default 8 at 1080 high), color \"#rrggbb\"/\"#aarrggbb\" (default yellow), "
                  "opacity 0..100, pressure: one value 0..1 per point (the width there; a pen). color/width/opacity on "
                  "the op = for its strokes without their own. Strokes are drawn with round ends in the given order; "
                  "the app smooths painted strokes, given points are kept as they are. With clip: strokes are added "
                  "after the drawing's own; clear:true removes all strokes first; remove: a stroke index or a list "
                  "(counted from 0 as `info` lists them; the app's eraser does the same). reveal: a time (\"2s\") = the "
-                 "strokes draw themselves one after another from the clip's start over that time (each takes the share "
+                 "strokes draw themselves one after another from the drawing's start over that time (a split or trimmed clip goes on where its part begins) (each takes the share "
                  "its length has); reveal:false = all at once. x/y = moves the whole drawing (pixels, y up, like a "
                  "title). clip_opacity 0..100. Scale or turn it with op 'transform' like any title. follow: {clip, "
                  "node} = a tracker node of that clip's comp graph (op 'node' type tracker + 'track_node'), or just the "

@@ -19,6 +19,7 @@
 #include <QPointingDevice>
 #include <QSettings>
 #include <QSpinBox>
+#include <QTabletEvent>
 #include <QToolButton>
 
 #include <algorithm>
@@ -106,7 +107,7 @@ void DrawOverlay::setActive(bool on)
 {
     if (on == m_active) return;
     m_active = on;
-    m_painting = m_erasing = false;
+    m_painting = m_erasing = m_tablet = false;
     m_stroke.clear();
     m_pressure.clear();
     emit activeChanged(on);
@@ -123,10 +124,17 @@ const Clip* DrawOverlay::drawingAt() const
     return f >= c->start && f < c->end() ? c : nullptr;
 }
 
+bool DrawOverlay::locked(const Clip& c) const
+{
+    TrackRef ref;
+    return TimelineOps::findClip(m_editor->project()->timeline(), c.id, &ref) && m_editor->isTrackLocked(ref);
+}
+
 int DrawOverlay::target() const
 {
     const Clip* c = drawingAt();
-    return c && c->title.shape.followClip <= 0 ? c->id : 0;
+    // following a tracker or on a locked track: the stroke goes into a new drawing on a free track
+    return c && c->title.shape.followClip <= 0 && !locked(*c) ? c->id : 0;
 }
 
 int DrawOverlay::localFrame(const Clip& c) const
@@ -289,6 +297,7 @@ bool DrawOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
     m_hover = e->position();
     if (DrawBrush::instance().eraser()) {
         m_erasing = true;
+        m_lockedSaid = false;
         ++m_eraseSerial;
         m_stroke = {e->position()};
         erase(frame);
@@ -351,14 +360,51 @@ bool DrawOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         return true;
     }
     if (!m_painting) return false;
-    const QPointF& last = m_stroke.last();
-    if (std::hypot(e->position().x() - last.x(), e->position().y() - last.y()) < 0.75) return true;
-    m_stroke << e->position();
     const QPointingDevice* dev = e->pointingDevice();
     const bool pen = dev && dev->type() == QInputDevice::DeviceType::Stylus;
-    m_pressure << (pen ? float(std::clamp(e->points().value(0).pressure(), 0.0, 1.0)) : 1.0f);
-    emit changed();
+    extendStroke(e->position(), pen ? float(std::clamp(e->points().value(0).pressure(), 0.0, 1.0)) : 1.0f);
     return true;
+}
+
+void DrawOverlay::extendStroke(const QPointF& pos, float pressure)
+{
+    const QPointF& last = m_stroke.last();
+    if (std::hypot(pos.x() - last.x(), pos.y() - last.y()) < 0.75) return;
+    m_stroke << pos;
+    m_pressure << pressure;
+    emit changed();
+}
+
+bool DrawOverlay::tablet(QTabletEvent* e, const QRectF& frame)
+{
+    // The pen's own events carry its pressure (the mouse events Qt makes of them do not); the eraser and the box
+    // take those mouse events
+    if (!m_active || DrawBrush::instance().eraser() || (m_timelineShown && !m_timelineShown())) return false;
+    const float pressure = float(std::clamp(e->pressure(), 0.0, 1.0));
+    switch (e->type()) {
+    case QEvent::TabletPress:
+        if (e->button() != Qt::LeftButton || m_painting) return false;
+        m_painting = m_tablet = true;
+        m_hover = e->position();
+        m_stroke = {e->position()};
+        m_pressure = {pressure};
+        emit changed();
+        return true;
+    case QEvent::TabletMove:
+        if (!m_painting || !m_tablet) return false; // hovering: the mouse event shows where it is
+        m_hover = e->position();
+        extendStroke(e->position(), pressure);
+        return true;
+    case QEvent::TabletRelease:
+        if (!m_painting || !m_tablet) return false;
+        m_painting = m_tablet = false;
+        commitStroke(frame);
+        m_stroke.clear();
+        m_pressure.clear();
+        emit changed();
+        return true;
+    default: return false;
+    }
 }
 
 bool DrawOverlay::mouseRelease(QMouseEvent* e, const QRectF& frame)
@@ -407,7 +453,7 @@ void DrawOverlay::commitStroke(const QRectF& frame)
         const double z = std::sqrt(std::abs(Keys::valueAt(*c, AnimParam::ZoomX, t) * Keys::valueAt(*c, AnimParam::ZoomY, t)));
         if (z > 1e-3) s.width /= z;
     }
-    for (const QPointF& w : m_stroke) s.points << toDrawing(c, w, frame);
+    for (const QPointF& w : m_stroke) s.points << Drawing::within(toDrawing(c, w, frame)); // far off: at -1..2
     if (std::any_of(m_pressure.begin(), m_pressure.end(), [](float v) { return v < 0.999f; })) s.pressure = m_pressure;
     Drawing::smooth(s, fmt.width, fmt.height);
     if (c) {
@@ -422,9 +468,14 @@ void DrawOverlay::commitStroke(const QRectF& frame)
 
 void DrawOverlay::erase(const QRectF& frame)
 {
-    const int id = target();
-    const Clip* c = id ? TimelineOps::findClip(m_editor->project()->timeline(), id) : nullptr;
-    if (!c || m_stroke.isEmpty() || c->title.drawing.strokes.isEmpty()) return;
+    const Clip* c = drawingAt();
+    if (!c || c->title.shape.followClip > 0 || m_stroke.isEmpty() || c->title.drawing.strokes.isEmpty()) return;
+    if (locked(*c)) {
+        if (!m_lockedSaid) emit notice(T("Die Spur der Zeichnung ist gesperrt"));
+        m_lockedSaid = true;
+        return;
+    }
+    const int id = c->id;
     const ProjectFormat fmt = m_editor->project()->timelineFormat();
     QVector<QPointF> path;
     for (const QPointF& w : m_stroke) {
@@ -434,7 +485,13 @@ void DrawOverlay::erase(const QRectF& frame)
     // radius in the drawing's pixels: the brush's half width, at least a few screen pixels
     const QTransform tw = toWidget(c, frame);
     const double perPixel = std::max(1e-6, std::sqrt(std::abs(tw.determinant()))); // widget pixels per drawing pixel
-    const double radius = std::max(DrawBrush::instance().width() * fmt.height / 2, kEraser / perPixel);
+    // the brush is as wide on the screen whatever the drawing's zoom (as a new stroke): its pixels divided by the zoom
+    double zoom = 1;
+    if (Keys::hasTransform(*c)) {
+        const int t = localFrame(*c);
+        zoom = std::sqrt(std::abs(Keys::valueAt(*c, AnimParam::ZoomX, t) * Keys::valueAt(*c, AnimParam::ZoomY, t)));
+    }
+    const double radius = std::max(DrawBrush::instance().width() * fmt.height / 2 / std::max(1e-3, zoom), kEraser / perPixel);
     QVector<int> gone = Drawing::hits(c->title.drawing, path, radius, fmt.width, fmt.height);
     if (gone.isEmpty()) return;
     m_editor->modifyClips({id}, T("Radieren"), [&](Clip& clip) {
@@ -501,7 +558,7 @@ DrawBar::DrawBar(std::function<int()> frameHeight, QWidget* parent) : QWidget(pa
     m_color->setAutoRaise(true);
     m_color->setFocusPolicy(Qt::NoFocus);
     m_width = new QSpinBox(this);
-    m_width->setRange(1, 400);
+    m_width->setRange(1, 216);
     m_width->setSuffix(" px");
     m_width->setToolTip(T("Breite neuer Striche (Pixel der Timeline)"));
     m_width->setFocusPolicy(Qt::ClickFocus);
@@ -547,6 +604,7 @@ void DrawBar::sync()
     m_color->setIcon(QIcon(px));
     const QSignalBlocker b1(m_width), b2(m_opacity);
     const int h = std::max(1, m_frameHeight ? m_frameHeight() : 1080);
+    m_width->setMaximum(std::max(1, int(std::lround(0.2 * h)))); // DrawBrush's largest width
     m_width->setValue(std::max(1, int(std::lround(b.width() * h))));
     m_opacity->setValue(int(std::lround(b.opacity() * 100)));
 }

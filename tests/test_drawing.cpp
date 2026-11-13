@@ -31,6 +31,8 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPointingDevice>
+#include <QTabletEvent>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -419,6 +421,182 @@ void testBox()
     CHECK(!t.drag({mid, mid + QPointF(5, 5)}));
 }
 
+// ---- off the picture: painted over its edge (kept within -1..2), into a zoomed drawing, a file round trip; the
+// reader keeps any finite point (and so the pressure) ----
+void testOffFrame(const QString& dir)
+{
+    std::printf("off frame\n");
+    DrawBrush::instance().setEraser(false);
+    DrawBrush::instance().setWidth(6 / 180.0);
+    Painter t;
+    t.ov.setActive(true);
+    CHECK(t.drag(t.line({-80, 90}, {100, 90}, 18))); // starts 80 px left of the picture
+    CHECK(t.drag(t.line({-2000, 20}, {40, 20}, 10))); // far off: kept at -1 of the frame
+    const Clip* d = t.drawing();
+    if (!CHECK(d && d->title.drawing.strokes.size() == 2)) return;
+    CHECK(std::abs(d->title.drawing.strokes[0].points.first().x() + 0.25) < 1e-6);
+    CHECK(std::abs(d->title.drawing.strokes[1].points.first().x() + 1) < 1e-6);
+    // Zoomed 3x around the middle, painted at the picture's edge: far outside the frame in the drawing's own space
+    const int id = d->id;
+    t.e.modifyClips({id}, "zoom", [](Clip& c) {
+        c.transform.zoomX = c.transform.zoomY = 0.25;
+    });
+    CHECK(t.drag(t.line({0, 170}, {319, 170}, 30)));
+    d = t.drawing();
+    CHECK(d && d->title.drawing.strokes.size() == 3 && d->title.drawing.strokes[2].points.first().x() < -1 + 1e-9);
+    // Pressure on a stroke reaching off the picture survives the file
+    t.e.modifyClips({id}, "pressure", [](Clip& c) {
+        DrawStroke s = stroke({{-0.6, 0.5}, {0.5, 0.5}, {1.8, 0.5}}, 6);
+        s.pressure = {1.0f, 0.5f, 0.25f};
+        c.title.drawing.strokes << s;
+    });
+    const QString path = dir + "/offframe.schneidi";
+    QString error;
+    CHECK(ProjectFile::save(t.p.data(), path, &error));
+    ProjectData back;
+    CHECK(ProjectFile::load(path, &back, &error));
+    const Clip* b = TimelineOps::findClip(back.timeline, id);
+    // the same strokes (painted points are rounded to 1/100000 of the frame in the file)
+    const DrawingStyle& was = TimelineOps::findClip(t.p.timeline(), id)->title.drawing;
+    bool same = b && b->title.drawing.strokes.size() == was.strokes.size();
+    for (int i = 0; same && i < was.strokes.size(); ++i) {
+        const DrawStroke &x = was.strokes[i], &y = b->title.drawing.strokes[i];
+        same = x.points.size() == y.points.size() && x.pressure == y.pressure && std::abs(x.width - y.width) < 1e-6;
+        for (int k = 0; same && k < x.points.size(); ++k)
+            same = std::abs(x.points[k].x() - y.points[k].x()) <= 5e-6 && std::abs(x.points[k].y() - y.points[k].y()) <= 5e-6;
+    }
+    CHECK(same);
+    CHECK(b && b->title.drawing.strokes[2].points.first().x() < -1 + 1e-9);
+    // A format change may move points past -1..2: a file still keeps them
+    const DrawingStyle far = Drawing::fromJson(QJsonDocument::fromJson(
+        R"({"strokes":[{"points":[-3.5,0.5,0.5,0.5,4.25,0.5],"pressure":[1,0.5,0.25]}]})").object());
+    CHECK(far.strokes.size() == 1 && far.strokes[0].points.size() == 3 && far.strokes[0].pressure.size() == 3
+          && far.strokes[0].points[2].x() == 4.25);
+}
+
+// ---- reveal through a split and a trimmed start: the clip is a window onto the drawing ----
+void testRevealSplit()
+{
+    std::printf("reveal split\n");
+    Project p;
+    ProjectData pd;
+    pd.timeline = timelineOf({});
+    pd.format = kFormat;
+    p.load(pd);
+    Selection sel;
+    Editor e(&p, &sel);
+    e.addTitle(0, 0, 100, TitleKind::Drawing, [](Clip& c) {
+        c.title.drawing.strokes << stroke({{0.3, 0.3}, {0.7, 0.3}}, 8) << stroke({{0.3, 0.7}, {0.7, 0.7}}, 8);
+        c.title.drawing.reveal = 2; // first stroke by frame 25, second by 50
+    });
+    const int id = *sel.ids().begin();
+    const QImage whole = render(p.timeline(), 38);
+    e.bladeAt(id, 30);
+    int parts = 0;
+    for (const Clip& c : p.timeline().video[0].clips) parts += c.isTitle() ? 1 : 0;
+    CHECK(parts == 2);
+    const QImage split = render(p.timeline(), 38); // in the second part: half of the second stroke, as before
+    CHECK(at(split, 110, 126, kRed) && at(split, 210, 126, kBlack));
+    CHECK(split == whole);
+    // A left trim: clip starting at 25 showing the drawing from its frame 25 on
+    Clip trimmed = drawingClip(1, {stroke({{0.3, 0.3}, {0.7, 0.3}}, 8), stroke({{0.3, 0.7}, {0.7, 0.7}}, 8)});
+    trimmed.title.drawing.reveal = 2;
+    trimmed.in = 25;
+    trimmed.out = 99;
+    trimmed.start = 25;
+    const QImage tr = render(timelineOf({trimmed}), 25); // its first frame: the first stroke whole
+    CHECK(at(tr, 220, 54, kRed) && at(tr, 110, 126, kBlack));
+}
+
+// ---- a dissolve between the two halves of a split drawing: it stays (dissolving into itself) ----
+void testTransition()
+{
+    std::printf("transition\n");
+    Clip a = drawingClip(1, {stroke({{0.25, 0.5}, {0.75, 0.5}}, 12)}, 30);
+    Clip b = drawingClip(2, {stroke({{0.25, 0.5}, {0.75, 0.5}}, 12)}, 30);
+    b.start = 30;
+    b.in = 30;
+    b.out = 59;
+    a.transOut = b.transIn = 10;
+    const Timeline tl = timelineOf({a, b});
+    for (int f : {26, 30, 33}) CHECK(at(render(tl, f), 160, 90, kRed, 30));
+    // The painted picture is kept while nothing changes: a changed stroke shows at once
+    Timeline changed = tl;
+    changed.video[0].clips[0].title.drawing.strokes[0].color = kBlue;
+    CHECK(at(render(changed, 10), 160, 90, kBlue));
+    CHECK(at(render(tl, 10), 160, 90, kRed));
+}
+
+// ---- a pen: tablet events carry the pressure into the stroke ----
+void testTablet()
+{
+    std::printf("tablet\n");
+    DrawBrush::instance().setEraser(false);
+    DrawBrush::instance().setWidth(10 / 180.0);
+    Painter t;
+    t.ov.setActive(true);
+    const QPointingDevice pen("test pen", 4711, QInputDevice::DeviceType::Stylus, QPointingDevice::PointerType::Pen,
+                              QInputDevice::Capability::Position | QInputDevice::Capability::Pressure, 1, 1);
+    const auto ev = [&](QEvent::Type type, QPointF at, double pressure, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QTabletEvent e(type, &pen, at, at, pressure, 0, 0, 0, 0, 0, Qt::NoModifier, button, buttons);
+        return t.ov.tablet(&e, t.frame);
+    };
+    CHECK(ev(QEvent::TabletPress, {80, 90}, 1.0, Qt::LeftButton, Qt::LeftButton));
+    for (int i = 1; i <= 20; ++i)
+        CHECK(ev(QEvent::TabletMove, {80 + i * 8.0, 90}, 1.0 - i * 0.04, Qt::NoButton, Qt::LeftButton));
+    CHECK(ev(QEvent::TabletRelease, {240, 90}, 0.2, Qt::LeftButton, Qt::NoButton));
+    const Clip* d = t.drawing();
+    if (!CHECK(d && d->title.drawing.strokes.size() == 1)) return;
+    const DrawStroke& s = d->title.drawing.strokes[0];
+    CHECK(s.pressure.size() == s.points.size() && s.pressure.first() > 0.95f && s.pressure.last() < 0.3f);
+    // Hovering (no press) is left to the mouse events
+    CHECK(!ev(QEvent::TabletMove, {100, 100}, 0, Qt::NoButton, Qt::NoButton));
+}
+
+// ---- locked track: a stroke goes into a new drawing, the eraser says so and changes nothing; the eraser is as wide
+// on the screen in a zoomed drawing as the brush ----
+void testLockedAndZoomedEraser()
+{
+    std::printf("locked, zoomed eraser\n");
+    DrawBrush::instance().setEraser(false);
+    DrawBrush::instance().setWidth(10 / 180.0);
+    Painter t;
+    t.ov.setActive(true);
+    CHECK(t.drag(t.line({80, 60}, {240, 60})));
+    const int id = t.drawing()->id;
+    TrackRef ref;
+    TimelineOps::findClip(t.p.timeline(), id, &ref);
+    t.e.toggleTrackLock(ref);
+    t.sel.set({id});
+    CHECK(t.ov.target() == 0);
+    CHECK(t.drag(t.line({80, 120}, {240, 120})));
+    int drawings = 0;
+    for (const Track& tr : t.p.timeline().video)
+        for (const Clip& c : tr.clips) drawings += c.isTitle() ? 1 : 0;
+    CHECK(drawings == 2 && TimelineOps::findClip(t.p.timeline(), id)->title.drawing.strokes.size() == 1);
+    QString said;
+    QObject::connect(&t.ov, &DrawOverlay::notice, [&](const QString& s) { said = s; });
+    t.sel.set({id});
+    DrawBrush::instance().setEraser(true);
+    CHECK(t.drag(t.line({150, 50}, {170, 70}, 5)));
+    CHECK(!said.isEmpty() && TimelineOps::findClip(t.p.timeline(), id)->title.drawing.strokes.size() == 1);
+    t.e.toggleTrackLock(ref);
+    // Zoom 3 around the middle: a line at the drawing's y 90; the eraser 30 px wide on the screen (= 5 px of the
+    // drawing) passing 10 drawing pixels (30 screen pixels) below it misses, right over it hits
+    Painter z;
+    z.e.addTitle(0, -1, 50, TitleKind::Drawing, [](Clip& c) {
+        c.title.drawing.strokes << stroke({{0.4, 0.5}, {0.6, 0.5}}, 2);
+        c.transform.zoomX = c.transform.zoomY = 3;
+    });
+    z.ov.setActive(true);
+    DrawBrush::instance().setWidth(30 / 180.0);
+    CHECK(z.drag(z.line({140, 120}, {180, 120}, 4)));
+    CHECK(z.drawing()->title.drawing.strokes.size() == 1);
+    CHECK(z.drag(z.line({140, 92}, {180, 92}, 4)));
+    CHECK(z.drawing()->title.drawing.strokes.isEmpty());
+    DrawBrush::instance().setEraser(false);
+}
+
 // ---- following a tracker of the clip below: moved with the tracked point (0.5 -> 0.75 of 320 = +80 px) ----
 Clip trackedClip()
 {
@@ -589,6 +767,17 @@ void testCli(const QString& dir)
     CHECK(errorOf(QString(R"([{"op":"draw","clip":%1,"remove":7}])").arg(id)).contains("does not exist"));
     CHECK(errorOf(QString(R"([{"op":"draw","clip":%1,"strokes":[]}])").arg(tracked)).contains("not a drawing"));
     CHECK(errorOf(R"([{"op":"draw","strokes":[[[0.1,0.1]]],"brush":3}])").startsWith("BAD_ARGUMENT")); // unknown key
+    CHECK(errorOf(R"([{"op":"draw","strokes":[[[2.5,0.1]]]}])").contains("outside"));              // past -1..2
+    CHECK(errorOf(R"([{"op":"draw","strokes":[[[-0.9,0.1],[1.9,0.9]]]}])") == "none");            // within -1..2
+    // op title does not make empty shapes or drawings
+    CHECK(errorOf(R"([{"op":"title","kind":"drawing"}])").contains("op: draw"));
+    CHECK(errorOf(R"([{"op":"title","kind":"shape"}])").contains("op: shape"));
+    // check: a reveal longer than the clip
+    edit(QString(R"([{"op":"draw","clip":%1,"reveal":"4s"}])").arg(id));
+    bool longReveal = false;
+    for (const QJsonValue& v : run("check", {{"project", g_path}}).value("issues").toArray())
+        if (v.toObject().value("check").toString() == "drawing_reveal_long") longReveal = true;
+    CHECK(longReveal);
     // help
     const QJsonObject help = run("help", {{"command", "edit"}, {"op", "draw"}});
     CHECK(QJsonDocument(help).toJson().contains("reveal"));
@@ -681,6 +870,11 @@ int main(int argc, char** argv)
     testSmooth();
     testPaint();
     testBox();
+    testOffFrame(tmp.path());
+    testRevealSplit();
+    testTransition();
+    testTablet();
+    testLockedAndZoomedEraser();
     testFollow();
     testCli(tmp.path());
     testCheck();

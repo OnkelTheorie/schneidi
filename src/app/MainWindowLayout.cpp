@@ -518,6 +518,7 @@ void MainWindow::showPage(Page page)
             m_drawOverlay = new DrawOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
                                             [this] { return !m_viewer->showsSource(); }, m_shapeOverlay);
             connect(m_drawOverlay, &DrawOverlay::activeChanged, this, &MainWindow::drawToolChanged);
+            connect(m_drawOverlay, &DrawOverlay::notice, this, [this](const QString& t) { m_viewer->showNotice(t, 3000); });
         }
         m_viewer->setOverlay(m_drawOverlay);
     } else if (before == Page::Edit && page != Page::Comp) {
