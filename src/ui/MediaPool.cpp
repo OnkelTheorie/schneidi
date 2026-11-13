@@ -1362,6 +1362,8 @@ QRect MediaPool::itemArea(const QString& path) const
 {
     QListWidgetItem* it = m_items.value(path);
     if (!it || it->isHidden() || !m_list->isVisible()) return {};
+    // A tour points at this item: bring it into view first (the Text/Form entries can push it below the fold)
+    m_list->scrollToItem(it, QAbstractItemView::EnsureVisible);
     const QRect r = m_list->visualItemRect(it).intersected(m_list->viewport()->rect());
     if (r.isEmpty()) return {};
     return QRect(m_list->viewport()->mapTo(this, r.topLeft()), r.size());
