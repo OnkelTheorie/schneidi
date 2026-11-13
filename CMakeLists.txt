@@ -482,7 +482,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
 # is a known multiple of the vector width). OutputColor: 3.5 -> 1.6 ms per 1080p frame.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp src/engine/BlurFill.cpp
-                                src/engine/video/Compose.cpp
+                                src/engine/video/Compose.cpp src/engine/picture/ShapePaint.cpp
                                 src/engine/VideoEffects.cpp src/engine/ColorGrade.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 

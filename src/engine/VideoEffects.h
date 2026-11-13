@@ -80,6 +80,8 @@ struct Params {
 bool apply(const QString& effectId, uint8_t* rgba, int width, int height, const Params& params, int64_t frameNo);
 // Gaussian blur (three box blurs) of an RGBA picture with straight alpha, sigma in pixels
 void gaussian(uint8_t* rgba, int width, int height, double sigma);
+// The same blur on one 16-bit plane (e.g. a premultiplied alpha 0..65535: gaussian's values for that channel)
+void gaussianPlane(uint16_t* plane, int width, int height, double sigma);
 
 // Is the effect one of these (by effect id, e.g. "chromakey", "frei0r.glow")?
 bool isOwn(const QString& effectId);

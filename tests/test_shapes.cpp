@@ -24,6 +24,9 @@
 #include "core/EffectRegistry.h"
 #include "core/Shapes.h"
 #include "core/TimelineOps.h"
+#include "engine/VideoEffects.h"
+#include "engine/picture/ShapePaint.h"
+#include "engine/video/Compose.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -37,6 +40,7 @@
 
 #include <clocale>
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -357,6 +361,127 @@ void testBelow()
     spot.transform.opacity = 50;
     const QImage half = render(timelineOf({media(1, g_gray)}, {spot}), 0);
     CHECK(at(half, 20, 20, QColor(150, 150, 150), 3));
+}
+
+// ---- what the faster paths draw: as the full-size blur did (within a level or two), the shadow's alpha exactly ----
+// A 1080p picture with hard edges, gradients and noise
+std::vector<uint8_t> busyPicture(int w, int h)
+{
+    std::vector<uint8_t> px(size_t(w) * h * 4);
+    uint32_t seed = 7;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            uint8_t* p = px.data() + (size_t(y) * w + x) * 4;
+            seed = seed * 1664525u + 1013904223u;
+            const bool check = ((x / 64) + (y / 64)) % 2;
+            p[0] = uint8_t(check ? 230 : 20);
+            p[1] = uint8_t((x * 255) / w);
+            p[2] = uint8_t(((x / 9) % 2 ? 200 : 40) + (seed >> 28));
+            p[3] = 255;
+        }
+    return px;
+}
+
+// The blur fill as it was drawn before 0.22.1: the region blurred at full size, mixed in by the coverage
+void blurBelowReference(uint8_t* rgba, int w, int h, const Shapes::Outline& o, const ShapeStyle& s)
+{
+    std::vector<uint8_t> plane(size_t(w) * h, 0);
+    const QRect area = Picture::ShapePaint::coverage(o.points, 0, w, h, plane.data());
+    const double sigma = s.amount * h / 2000.0;
+    const int R = int(std::ceil(3 * sigma)) + 1;
+    const QRect reg = area.adjusted(-R, -R, R, R).intersected(QRect(0, 0, w, h));
+    std::vector<uint8_t> blurred(size_t(reg.width()) * reg.height() * 4);
+    for (int y = 0; y < reg.height(); ++y)
+        std::memcpy(blurred.data() + size_t(y) * reg.width() * 4, rgba + (size_t(reg.top() + y) * w + reg.left()) * 4,
+                    size_t(reg.width()) * 4);
+    VideoEffects::gaussian(blurred.data(), reg.width(), reg.height(), sigma);
+    for (int y = area.top(); y <= area.bottom(); ++y)
+        for (int x = area.left(); x <= area.right(); ++x) {
+            const int m = plane[size_t(y) * w + x];
+            uint8_t* d = rgba + (size_t(y) * w + x) * 4;
+            const uint8_t* src = blurred.data() + (size_t(y - reg.top()) * reg.width() + (x - reg.left())) * 4;
+            for (int c = 0; c < 4; ++c) {
+                const int v = (int(src[c]) - int(d[c])) * m;
+                d[c] = uint8_t(d[c] + (v >= 0 ? (v + 127) / 255 : -((127 - v) / 255)));
+            }
+        }
+}
+
+void testFastPaths()
+{
+    std::printf("fast paths\n");
+    const int w = 1920, h = 1080;
+    // The blur fill of a big circle, strong (worked out at a fraction of the size) and light (full size)
+    for (const double amount : {50.0, 100.0, 8.0}) {
+        ShapeStyle s;
+        s.kind = ShapeKind::Ellipse;
+        s.fill = ShapeFill::Blur;
+        s.amount = amount;
+        Shapes::Place p;
+        p.center = QPointF(900, 520);
+        p.w = p.h = 1000;
+        const Shapes::Outline o = Shapes::placed(s, p);
+        std::vector<uint8_t> fast = busyPicture(w, h), ref = fast;
+        Picture::ShapePaint::below(fast.data(), w, h, o, s, 1.0, 1.0);
+        blurBelowReference(ref.data(), w, h, o, s);
+        int most = 0;
+        double sum = 0;
+        for (size_t i = 0; i < fast.size(); ++i) {
+            const int d = std::abs(int(fast[i]) - int(ref[i]));
+            most = std::max(most, d);
+            sum += d;
+        }
+        const double avg = sum / double(fast.size());
+        std::printf("       blur %.0f: largest difference %d, mean %.3f\n", amount, most, avg);
+        CHECK(avg < 0.5);
+        CHECK(most <= (amount < 10 ? 0 : 12));
+    }
+    // VideoEffects::gaussian in bands on several threads: the very values of one pass on one thread
+    {
+        std::vector<uint8_t> img = busyPicture(w, h);
+        std::vector<uint8_t> plane(size_t(w) * h), tmp(plane.size());
+        for (size_t i = 0; i < plane.size(); ++i) plane[i] = img[i * 4];
+        VideoEffects::gaussian(img.data(), w, h, 9.0);
+        int radii[3];
+        CHECK(VideoEffects::matteBlurRadii(9.0, radii));
+        for (const int r : radii) {
+            VideoEffects::matteBoxRows(plane.data(), tmp.data(), w, h, r);
+            VideoEffects::matteBoxCols(tmp.data(), plane.data(), w, h, 0, w, r);
+        }
+        bool same = true;
+        for (size_t i = 0; i < plane.size() && same; ++i) same = plane[i] == img[i * 4];
+        CHECK(same);
+    }
+    // The drop shadow (clip in a shape: shadow behind the cut picture) blurs only its alpha: the same alpha as the
+    // four channels blurred, the colour black
+    {
+        Shapes::ClipShape cs;
+        cs.shadow = true;
+        cs.shadowSoft = 30;
+        cs.shadowOpacity = 0.8;
+        std::vector<uint8_t> img = busyPicture(640, 360);
+        std::vector<uint8_t> ref = img;
+        Picture::ShapePaint::clipShape(img.data(), 640, 360, cs, 1.0);
+        // As drawn before: the cut picture, its shadow (rgb black, alpha times opacity, all four channels blurred)
+        const Shapes::Outline o = Shapes::clipShapeOutline(cs, 640, 360);
+        std::vector<uint8_t> plane(size_t(640) * 360, 0);
+        Picture::ShapePaint::coverage(o.points, 0, 640, 360, plane.data());
+        for (size_t i = 0; i < plane.size(); ++i) ref[i * 4 + 3] = uint8_t((ref[i * 4 + 3] * plane[i] + 127) / 255);
+        std::vector<uint8_t> shadow = ref;
+        for (size_t i = 0; i < plane.size(); ++i) {
+            shadow[i * 4] = shadow[i * 4 + 1] = shadow[i * 4 + 2] = 0;
+            shadow[i * 4 + 3] = uint8_t(std::lround(shadow[i * 4 + 3] * 0.8));
+        }
+        VideoEffects::gaussian(shadow.data(), 640, 360, 15);
+        std::vector<uint8_t> out(ref.size(), 0);
+        const double off = 10;
+        Compose::Affine m;
+        m.c = off;
+        m.f = off;
+        Compose::draw(out.data(), 640, 360, shadow.data(), 640, 360, m, 1.0);
+        Compose::over(out.data(), ref.data(), 640, 360, 1.0);
+        CHECK(out == img);
+    }
 }
 
 // ---- clip in a shape ----
@@ -913,6 +1038,7 @@ int main(int argc, char** argv)
     testKeyframes();
     testProjectFile(tmp.path());
     testBelow();
+    testFastPaths();
     testClipShape();
     testFollow();
     testCli(tmp.path());
