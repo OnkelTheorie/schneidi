@@ -388,7 +388,7 @@ void AiChat::requestModel()
     // A context the server named: a request larger than it is not sent (it would be cut or refused); a tight one is
     // said once. Either is asked again next time (the user may change the server's setting meanwhile)
     if (context > 0) {
-        const qint64 tokens = m_sentChars / 4; // about (our requests have 3.6-4 characters per token)
+        const qint64 tokens = m_sentChars / 4; // about (our requests have 3.6-4.2 characters per token)
         if (tokens > context) {
             m_contexts.remove(contextKey(m_endpoint));
             addError(Ai::contextAdvice(context, tokens, false, r.fixedTokens));
@@ -433,7 +433,7 @@ void AiChat::onReply(const Ai::Reply& reply)
     // A local server that cut the request to the model's context (Ollama does so silently, 4096 tokens unless set
     // otherwise): the model read only its end - without the tools and the guide, maybe without the request. Its
     // answer is neither run nor kept nor shown (what the user writes next joins their message); the user learns why.
-    // Our requests have 3.6-4 characters per token (Qwen, Gemma): far more than 4.5 per token read = cut.
+    // Our requests have 3.6-4.2 characters per token (Gemma, Qwen, Llama): far more than 4.5 per token read = cut.
     if (m_endpoint.protocol == Ai::Protocol::OpenAi && Ai::isLocal(m_endpoint.address) && reply.usage.input > 0
         && m_sentChars > 9 * reply.usage.input / 2 + 2000) {
         if (m_streaming >= 0)

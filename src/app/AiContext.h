@@ -49,7 +49,10 @@ qsizetype paramTextFor(const QString& tool);
 // and without how the app's project works live (the app chat's own part says it)
 QString compactInstructions(const QString& instructions);
 // What the short request (system prompt and tools, no chat) may take at most, in characters: about 7,500 tokens, so
-// it fits an 8192-token local model with room for a short chat (test_ai_chat checks it)
+// it fits an 8192-token local model with room for a short chat (test_ai_chat checks it). Measured with Ollama (0.22,
+// 28,762 characters incl. the chat template): Llama 3.2 6,909 tokens (4.16 characters per token), Qwen 2.5 7,060
+// (4.07) - the full budget leaves them ~600 tokens of 8192; Gemma 4 8,068 (3.56, its tool template is long) needs a
+// 16k context (what the tight-context notice recommends for 8192)
 constexpr qint64 kCompactBudget = 31000;
 extern const QStringList kRareTools;
 // The ops of `edit` in short, so that a new op costs at most about kOpChars characters (the short request no longer
