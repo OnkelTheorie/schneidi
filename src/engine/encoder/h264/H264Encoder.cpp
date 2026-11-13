@@ -1507,18 +1507,12 @@ void Encoder::markKeyframes()
 
 // Lookahead cost of a picture for the bit model, with the macroblock tree's QP offsets folded in
 // (a block at offset -6 costs about twice the bits).
-// Experiment knobs: H264_BTS = tree strength next to B pictures, H264_BTMODE=0 = that strength for
-// every picture once B pictures are on.
-static const double kBTreeStrengthEnv = std::getenv("H264_BTS") ? std::atof(std::getenv("H264_BTS")) : -1.0;
-static const int kBTreeMode = std::getenv("H264_BTMODE") ? std::atoi(std::getenv("H264_BTMODE")) : 1;
-
-// Strength of the macroblock tree for a picture: with B pictures around it a reference picture
-// collects the costs of the whole run, and the full strength then takes too much from the B pictures.
+// Strength of the macroblock tree for a picture. A reference picture with B pictures before or
+// after it collects the costs of the whole run; the full strength then gives it more bits than the
+// B pictures get back (measured on a slow zoom: strength 1 -50.5 %, 1.5 -49.5 %, 2 -47.2 %).
 double Encoder::treeStrength(const LookaheadFrame& f) const
 {
-    if (!useB() || (kBTreeMode == 1 && !f.nearB))
-        return cfg_.mbtreeStrength;
-    return kBTreeStrengthEnv >= 0 ? kBTreeStrengthEnv : cfg_.mbtreeStrengthB;
+    return useB() && f.nearB ? cfg_.mbtreeStrengthB : cfg_.mbtreeStrength;
 }
 
 double Encoder::frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter) const
@@ -2267,7 +2261,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (type == 2) {
             fc.treeOffset_.clear(); // nothing references a B picture
         } else if (cfg_.mbtree) {
-            if (bMode && !std::getenv("H264_B_OLDTREE"))
+            if (bMode)
                 la_->propagateB(queue_, cfg_.bframes, cfg_.weightedBipred);
             else
                 la_->propagate(queue_);

@@ -617,10 +617,8 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
         }
     };
     const int count = int(frames.size());
-    // Experiment knob H264_BTREE: share of a B picture's cost that is passed on (default 1).
-    static const float kBShare = std::getenv("H264_BTREE") ? float(std::atof(std::getenv("H264_BTREE"))) : 1.0f;
     // B pictures first: nothing references them, they only pass on their own cost.
-    for (int j = 0; j < count && kBShare > 0; ++j) {
+    for (int j = 0; j < count; ++j) {
         LookaheadFrame& f = frames[size_t(j)];
         if (f.type != 2 || f.intraCost.size() != n)
             continue;
@@ -648,7 +646,7 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
                 const int best = std::min({c0, c1, cb});
                 if (intra <= 0 || best >= intra)
                     continue;
-                const float amount = kBShare * (float(intra) + f.propagate[m]) * float(intra - best) / float(intra);
+                const float amount = (float(intra) + f.propagate[m]) * float(intra - best) / float(intra);
                 if (best == cb) {
                     if (r >= 0)
                         add(frames[size_t(r)], bx, by, (*mx0)[m], (*my0)[m], amount * w0);

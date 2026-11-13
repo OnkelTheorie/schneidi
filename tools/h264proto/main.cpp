@@ -2,7 +2,7 @@
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
-//                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
+//                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--mbtree-strength-b S] [--2pass] [--recon out.yuv]
 //                     [--bframes N (0)] [--b-qp offset (2)] [--no-b-adapt] [--weightb]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
 // PSNR and --recon go by display order.
