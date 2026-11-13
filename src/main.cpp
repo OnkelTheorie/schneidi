@@ -47,6 +47,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QThread>
+#include <QTextLayout>
 #include <QThreadPool>
 #include <QTimer>
 #include <QWindow>
@@ -503,6 +504,17 @@ int main(int argc, char* argv[])
 
     Theme::load(designArg);
     Theme::apply(app);
+    // The UI font's fallbacks (the symbols of buttons and tabs are in other fonts): fontconfig looks them up once (~10 ms
+    // on the main thread while the window was built). A helper thread does it meanwhile; the font database keeps the
+    // lists for all threads
+    QThreadPool::globalInstance()->start([font = QApplication::font()] {
+        QTextLayout layout(QString::fromUtf8("…−∞↺→⇅▣▤▥▦▶◀◆◇●☰♪♫⚠✂✓✕✦✧⧓🔍"), font);
+        layout.beginLayout();
+        layout.createLine();
+        layout.endLayout();
+        // The image format plugins (the menu bar's first icon loaded them, ~6 ms): loaded once for all threads
+        QImageReader::supportedImageFormats();
+    });
     InputBindings::instance().load();
     StartupTrace::mark("log, i18n, theme, bindings");
 

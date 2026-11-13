@@ -5,6 +5,7 @@
 // mixer column at the start cost ~60 ms, the whole tree hung into the window at the end ~20 ms more (MainWindow::
 // buildLayout). Checked with the mixer column on and off: no ParentChange for the big panels after their construction
 // (the mixer moves once, cheaply, into its column before that hangs in), none for a splitter holding the Inspector.
+// The Media Storage lists its start folder after the window is up (or when it shows), not while it is built.
 
 #include "check.h"
 
@@ -20,10 +21,13 @@
 #include "ui/timeline/TimelinePanel.h"
 
 #include <QApplication>
+#include <QFile>
+#include <QListWidget>
 #include <QHash>
 #include <QStackedWidget>
 #include <QSettings>
 #include <QSplitter>
+#include <QTemporaryDir>
 #include <QTest>
 #include <clocale>
 #include <memory>
@@ -100,6 +104,33 @@ void startWith(Engine& engine, bool mixer)
                   QString("%1 moves (%2)").arg(counter.inspectorMoves).arg(where));
 }
 
+// The Media Storage panel off: its start folder is listed after the window is up, not while it is built; on, it is
+// listed when it shows (before the first paint)
+void storageListing(Engine& engine)
+{
+    QTemporaryDir dir;
+    QFile(dir.filePath("clip.mp4")).open(QIODevice::WriteOnly);
+    for (const bool on : {false, true}) {
+        const QString where = on ? "panel on" : "panel off";
+        QSettings s;
+        s.remove("layout");
+        s.remove("panels");
+        s.setValue("panels/mediaStorage", on);
+        s.setValue("mediaStorage/folder", dir.path());
+        auto w = std::make_unique<MainWindow>(&engine);
+        auto* list = w->findChild<MediaStorage*>() ? w->findChild<MediaStorage*>()->findChild<QListWidget*>() : nullptr;
+        if (!CHECK(list)) return;
+        Check::report(list->count() == 0, "not listed while the window is built", __FILE__, __LINE__, where);
+        w->resize(1600, 900);
+        w->show();
+        if (on) Check::report(list->count() == 1, "listed when it shows", __FILE__, __LINE__, where);
+        QTest::qWait(1300);
+        Check::report(list->count() == 1, "listed after the start", __FILE__, __LINE__,
+                      QString("%1: %2 entries").arg(where).arg(list->count()));
+    }
+    QSettings().remove("mediaStorage");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -114,5 +145,6 @@ int main(int argc, char** argv)
     if (!CHECK(engine.init(&err))) return Check::result();
     startWith(engine, true);
     startWith(engine, false);
+    storageListing(engine);
     return Check::result();
 }

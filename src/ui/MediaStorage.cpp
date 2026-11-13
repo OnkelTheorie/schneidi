@@ -31,6 +31,7 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QThreadPool>
+#include <QShowEvent>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -48,6 +49,7 @@ constexpr QSize kListIcon{48, 27};
 constexpr int kPathRole = Qt::UserRole;
 constexpr int kDirRole = Qt::UserRole + 1;
 constexpr int kLoadedRole = Qt::UserRole + 2;
+constexpr int kDeferredListMs = 1000; // the start folder of a panel not shown, listed after the window is up
 
 const QStringList& videoExt()
 {
@@ -301,7 +303,20 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     QString last = s.value("mediaStorage/folder").toString();
     if (last.isEmpty() || !QFileInfo(last).isDir()) last = m_locations.value(0);
     m_savedFolder = QDir::cleanPath(last);
+    m_deferFiles = true;
     setFolder(last);
+    m_deferFiles = false;
+}
+
+void MediaStorage::showEvent(QShowEvent* event)
+{
+    listPendingFiles();
+    QWidget::showEvent(event);
+}
+
+void MediaStorage::listPendingFiles()
+{
+    if (m_filesPending) rebuildFiles();
 }
 
 MediaStorage::~MediaStorage()
@@ -455,6 +470,12 @@ void MediaStorage::setFolder(const QString& dir)
         QSettings().setValue("mediaStorage/folder", clean);
     }
     m_list->scrollToTop();
+    if (m_deferFiles && !isVisible()) {
+        // Not shown yet: listed when it shows, else shortly after the start (the thumbnails load in the background)
+        m_filesPending = true;
+        QTimer::singleShot(kDeferredListMs, this, &MediaStorage::listPendingFiles);
+        return;
+    }
     rebuildFiles();
 }
 
@@ -470,6 +491,7 @@ QStringList MediaStorage::mediaIn(const QString& dir) const
 
 void MediaStorage::rebuildFiles()
 {
+    m_filesPending = false;
     QStringList selected = selectedFiles();
     m_scrub->forget();
     m_hoverPath.clear();

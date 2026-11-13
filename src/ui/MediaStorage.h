@@ -39,6 +39,7 @@ public:
     HoverScrub* hoverScrub() const { return m_scrub; }
 
 protected:
+    void showEvent(QShowEvent* event) override; // the start's folder listing, if it still waits (see the constructor)
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 signals:
@@ -75,6 +76,11 @@ private:
     QString m_folder;
     QString m_savedFolder;
     bool m_persistent = true;
+    // The start's folder listing waits until the panel shows or the window is up (the constructor's setFolder; ~15 ms
+    // for a folder of 200 clips, most users have the panel off)
+    bool m_deferFiles = false;
+    bool m_filesPending = false;
+    void listPendingFiles();
     QTreeWidget* m_tree;
     QListWidget* m_list;
     QLabel* m_pathLabel;
