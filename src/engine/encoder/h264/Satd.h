@@ -133,7 +133,9 @@ inline int satd8x8U8(const uint8_t* a, int strideA, const uint8_t* b, int stride
 // Four 4x4 blocks side by side (16 x 4): the 8x4 kernel's steps on both 128-bit lanes at once
 // (lane 0 = columns 0-7, lane 1 = columns 8-15); same result as four satdU8 calls.
 // Core: four rows of differences, each lane holding two 4x4 blocks side by side.
-__attribute__((target("avx2"))) inline int satdLanesAvx2(const __m256i* r)
+// Per-block sums stay in vector lanes: each 4x4 block's |coefficient| sum is rounded ((s + 1) >> 1)
+// in its lane and accumulated; one horizontal sum at the end.
+__attribute__((target("avx2"))) inline void satdLanesAccAvx2(const __m256i* r, __m256i& acc)
 {
     const __m256i s01 = _mm256_add_epi16(r[0], r[1]), d01 = _mm256_sub_epi16(r[0], r[1]);
     const __m256i s23 = _mm256_add_epi16(r[2], r[3]), d23 = _mm256_sub_epi16(r[2], r[3]);
@@ -141,20 +143,27 @@ __attribute__((target("avx2"))) inline int satdLanesAvx2(const __m256i* r)
     const __m256i t2 = _mm256_sub_epi16(d01, d23), t3 = _mm256_add_epi16(d01, d23);
     const __m256i u[2][2] = {{_mm256_unpacklo_epi16(t0, t1), _mm256_unpacklo_epi16(t2, t3)},
                              {_mm256_unpackhi_epi16(t0, t1), _mm256_unpackhi_epi16(t2, t3)}};
-    int total = 0;
-    for (int k = 0; k < 2; ++k) { // horizontal stage, one block per lane, rounded per block
+    __m256i sums[2];
+    for (int k = 0; k < 2; ++k) {
         const __m256i v0 = _mm256_unpacklo_epi32(u[k][0], u[k][1]), v1 = _mm256_unpackhi_epi32(u[k][0], u[k][1]);
         const __m256i c1 = _mm256_unpackhi_epi64(v0, v0), c3 = _mm256_unpackhi_epi64(v1, v1);
         const __m256i ha = _mm256_add_epi16(v0, c1), hb = _mm256_sub_epi16(v0, c1);
         const __m256i hc = _mm256_add_epi16(v1, c3), hd = _mm256_sub_epi16(v1, c3);
         const __m256i o01 = _mm256_unpacklo_epi64(_mm256_add_epi16(ha, hc), _mm256_sub_epi16(ha, hc));
         const __m256i o23 = _mm256_unpacklo_epi64(_mm256_sub_epi16(hb, hd), _mm256_add_epi16(hb, hd));
-        const __m256i sum = _mm256_madd_epi16(_mm256_add_epi16(_mm256_abs_epi16(o01), _mm256_abs_epi16(o23)), _mm256_set1_epi16(1));
-        const __m256i s2 = _mm256_add_epi32(sum, _mm256_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
-        const __m256i s1 = _mm256_add_epi32(s2, _mm256_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1)));
-        total += ((_mm256_cvtsi256_si32(s1) + 1) >> 1) + ((_mm_cvtsi128_si32(_mm256_extracti128_si256(s1, 1)) + 1) >> 1);
+        sums[k] = _mm256_madd_epi16(_mm256_add_epi16(_mm256_abs_epi16(o01), _mm256_abs_epi16(o23)), _mm256_set1_epi16(1));
     }
-    return total;
+    const __m256i h1 = _mm256_hadd_epi32(sums[0], sums[1]); // per lane: k0 halves, k1 halves
+    const __m256i blk = _mm256_hadd_epi32(h1, h1);          // per lane: block k0, block k1 (twice)
+    acc = _mm256_add_epi32(acc, _mm256_srli_epi32(_mm256_add_epi32(blk, _mm256_set1_epi32(1)), 1));
+}
+
+__attribute__((target("avx2"))) inline int satdLanesAvx2(const __m256i* r)
+{
+    __m256i acc = _mm256_setzero_si256();
+    satdLanesAccAvx2(r, acc);
+    const __m128i lanes = _mm_add_epi32(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1));
+    return _mm_cvtsi128_si32(lanes) + _mm_cvtsi128_si32(_mm_srli_si128(lanes, 4));
 }
 
 __attribute__((target("avx2"))) inline int satd16x4U8Avx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
@@ -216,15 +225,33 @@ __attribute__((target("avx2"))) inline void satd4x4x4U8Avx2(const uint8_t* src, 
 // the same sum as the strip-wise calls of sadPart.
 __attribute__((target("avx2"))) inline int satdBlockAvx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
 {
-    int s = 0;
+    __m256i acc = _mm256_setzero_si256();
+    __m256i r[4];
     if (w == 16) {
-        for (int y = 0; y < h; y += 4)
-            s += satd16x4U8Avx2(a + y * strideA, strideA, b + y * strideB, strideB);
+        for (int y = 0; y < h; y += 4) {
+            for (int i = 0; i < 4; ++i)
+                r[i] = _mm256_sub_epi16(
+                    _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a + (y + i) * strideA))),
+                    _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(b + (y + i) * strideB))));
+            satdLanesAccAvx2(r, acc);
+        }
     } else {
-        for (int y = 0; y < h; y += 8)
-            s += satd8x8U8Avx2(a + y * strideA, strideA, b + y * strideB, strideB);
+        for (int y = 0; y < h; y += 8) {
+            for (int i = 0; i < 4; ++i) {
+                const uint8_t* pa = a + (y + i) * strideA;
+                const uint8_t* pb = b + (y + i) * strideB;
+                const __m128i ra = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pa)),
+                                                      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(pa + 4 * strideA)));
+                const __m128i rb = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pb)),
+                                                      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(pb + 4 * strideB)));
+                r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(ra), _mm256_cvtepu8_epi16(rb));
+            }
+            satdLanesAccAvx2(r, acc);
+        }
     }
-    return s;
+    // Elements 0 and 1 of each 128-bit lane hold the sums (2 and 3 repeat them).
+    const __m128i lanes = _mm_add_epi32(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1));
+    return _mm_cvtsi128_si32(lanes) + _mm_cvtsi128_si32(_mm_srli_si128(lanes, 4));
 }
 
 inline bool haveAvx2()
