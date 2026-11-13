@@ -426,4 +426,16 @@ inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB
 #endif
 }
 
+// AC energy of an 8x8 block of samples at two scales, in SATD units: e4 = the 4x4 Hadamard sums of
+// its four quarters, e8 = its 8x8 Hadamard sum, each without the DC coefficients (which are the
+// plain sample sums). What the psycho-visual mode decision compares between source and
+// reconstruction: texture and grain have it, a smoothed block has lost it.
+inline void acEnergy8x8U8(const uint8_t* p, int stride, int& e4, int& e8)
+{
+    static constexpr uint8_t kZero[64] = {};
+    const int sum = sadBlock(p, stride, kZero, 8, 8, 8);
+    e4 = satd8x8U8Fast(p, stride, kZero, 8) - (sum >> 1);
+    e8 = sa8dU8(p, stride, kZero, 8) - (sum >> 2);
+}
+
 } // namespace schneidi::h264

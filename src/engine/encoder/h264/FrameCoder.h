@@ -248,6 +248,12 @@ public:
     void motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
                           uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
+    // Psycho-visual RD (cfg_.psyRd). psyBegin, before a macroblock is decided: the AC energy of
+    // its source luma, kept for the thread. psyCost: the weighted difference between that and the
+    // energy of the luma reconstruction as it stands in recY_, to add to SSD + lambda * bits (0.0
+    // when off).
+    void psyBegin(int mbx, int mby) const;
+    double psyCost(int mbx, int mby) const;
     void buildRefPlanes(RefPic& R);
     void refFullRows(RefPic& R, int y0, int y1) const;
     void refHalfRows(RefPic& R, int y0, int y1) const;

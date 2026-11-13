@@ -94,6 +94,14 @@ const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
 const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.2;
 // B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
 const bool gBParts = !std::getenv("H264_BPARTS") || std::atoi(std::getenv("H264_BPARTS")) != 0;
+// Psycho-visual RD of the macroblock a thread is deciding (FrameCoder::psyBegin): the weight of an
+// energy difference in its cost (0 = off) and the AC energy of the source's four 8x8 luma blocks at
+// both scales (acEnergy8x8U8).
+struct PsyMb {
+    double weight = 0;
+    int e4[4] = {}, e8[4] = {};
+};
+thread_local PsyMb tPsy;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -1395,6 +1403,7 @@ void FrameCoder::encodeSlice(int s)
             }
             MbOut mb;
             bool coded = true;
+            psyBegin(mbx, mby);
             if (pSlice_)
                 coded = encodeMbP(mb, mbx, mby);
             else
@@ -1731,6 +1740,7 @@ int FrameCoder::waveRowBody(int r, bool block)
             if (waveErrors_.failed())
                 return -1;
             MbOut mb;
+            psyBegin(mbx, r);
             if (bSlice_)
                 encodeMbB(mb, mbx, r);
             else if (pSlice_)
@@ -3227,7 +3237,7 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
                 const int d = int(srcY_[o]) - int(recY_[o]);
                 s += d * d;
             }
-        return s;
+        return double(s) + psyCost(mbx, mby);
     };
     struct Snapshot {
         uint8_t rec[256];
@@ -3287,17 +3297,17 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
         double costA = 1e300, costB = 1e300, costC = 1e300;
         if (satd8 >= 0 && satd8 <= lim) {
             restore(snapC);
-            costC = double(ssd()) + lambda * mbBits(c, mbx, mby, 0.0);
+            costC = ssd() + lambda * mbBits(c, mbx, mby, 0.0);
         }
         if (satd4 >= 0 && satd4 <= lim) {
             restore(snapB);
-            costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
+            costB = ssd() + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
         }
         MbOut a;
         bool deltaA = false;
         if (est16 != INT_MAX && est16 <= lim) {
             deltaA = encodeLuma16(a, mbx, mby, ch);
-            costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
+            costA = ssd() + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
         }
         if (costA >= 1e300 && costB >= 1e300 && costC >= 1e300) {
             tIntraNone = true; // all given up: the macroblock state is left half written
@@ -3322,18 +3332,18 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     double costA = 1e300;
     if (!tIntraSkip16) {
         deltaA = encodeLuma16(a, mbx, mby, ch);
-        costA = double(ssd()) + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
+        costA = ssd() + lambda * mbBits(a, mbx, mby, double(a.bw.bitCount()));
     }
     Snapshot snapA;
     save(snapA);
     const bool deltaB = encodeLuma4(b, mbx, mby, ch);
-    const double costB = double(ssd()) + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
+    const double costB = ssd() + lambda * mbBits(b, mbx, mby, double(b.bw.bitCount()));
     if (useT8() && !tIntraSkip8) {
         Snapshot snapB;
         save(snapB);
         MbOut c;
         const bool deltaC = encodeLuma8(c, mbx, mby, ch);
-        const double costC = double(ssd()) + lambda * mbBits(c, mbx, mby, 0.0);
+        const double costC = ssd() + lambda * mbBits(c, mbx, mby, 0.0);
         if (costC < costA && costC < costB) {
             out = std::move(c);
             return deltaC;
@@ -3836,6 +3846,40 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
         }
     return s;
 #endif
+}
+
+// Psycho-visual RD. The energy difference is the mean of the two scales, summed over the four 8x8
+// blocks, and weighs psyRd * sqrt(lambda) per unit: like a SATD against the mode decision's SSD.
+void FrameCoder::psyBegin(int mbx, int mby) const
+{
+    if (!(cfg_.psyRd > 0)) {
+        tPsy.weight = 0;
+        return;
+    }
+    static const auto kSqrtLambda = [] {
+        std::array<double, 52> t{};
+        for (int q = 0; q < 52; ++q)
+            t[size_t(q)] = std::sqrt(0.85 * std::pow(2.0, (q - 12) / 3.0));
+        return t;
+    }();
+    tPsy.weight = cfg_.psyRd * 0.5 * kSqrtLambda[size_t(mbQp_[size_t(mby) * mbW_ + mbx])];
+    const uint8_t* src = &srcY_[size_t(mby * 16) * padW_ + mbx * 16];
+    for (int b = 0; b < 4; ++b)
+        acEnergy8x8U8(src + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, tPsy.e4[b], tPsy.e8[b]);
+}
+
+double FrameCoder::psyCost(int mbx, int mby) const
+{
+    if (!(tPsy.weight > 0))
+        return 0.0;
+    const uint8_t* rec = &recY_[size_t(mby * 16) * padW_ + mbx * 16];
+    int diff = 0;
+    for (int b = 0; b < 4; ++b) {
+        int e4, e8;
+        acEnergy8x8U8(rec + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, e4, e8);
+        diff += std::abs(e4 - tPsy.e4[b]) + std::abs(e8 - tPsy.e8[b]);
+    }
+    return tPsy.weight * diff;
 }
 
 // Neighbouring 4x4 block (x4, y4 relative to the macroblock, may be -1 or 4) for motion
@@ -4465,7 +4509,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
-    const double costSkip = double(mbSsd(mbx, mby)) + lambda * skipBits(mbx, mby);
+    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
     MbState skipState;
     saveMb(mbx, mby, skipState);
 
@@ -4732,7 +4776,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         interDelta = writeInterResidual(mbx, mby, qp, t8, res, ch, io);
         // A skip_run ends here: count its codeword to be fair against skip.
-        return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
+        return double(mbSsd(mbx, mby)) + psyCost(mbx, mby) +
+               lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
     };
     // Transform size by SATD (experiment H264_EXP & 512): the 8x8 Hadamard of the residual against
     // four 4x4 ones; clearly one way -> only that transform is coded, else both (as without).
@@ -4954,7 +4999,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             tIntraEst16 = -1;
             setBlocks(0, 0, 4, 4, 0, 0, -1);
             if (!tIntraNone)
-                costIntra = double(mbSsd(mbx, mby)) +
+                costIntra = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) +
                             lambda * mbBits(intraBits, mbx, mby, double(intraBits.bw.bitCount() + seBits(0)));
             if (gStats) {
                 const int bucket = std::min(3, int(2.0 * intraEstimate / std::max(1.0, best.cost)));
@@ -5152,7 +5197,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setDirect();
-    const double costSkip = double(mbSsd(mbx, mby)) + lambda * skipBits(mbx, mby);
+    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
     MbState skipState;
     saveMb(mbx, mby, skipState);
     if (skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
@@ -5329,7 +5374,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                     io.syn.mvd1[p][c] = best.mv[p][1][c] - best.mvp[p][1][c];
                 }
         sentDelta = writeInterResidual(mbx, mby, qp, t8, res, ch, io);
-        return double(mbSsd(mbx, mby)) + lambda * mbBits(io, mbx, mby, 0.0);
+        return double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * mbBits(io, mbx, mby, 0.0);
     };
     MbOut interBits;
     int bestWhich = 0;
@@ -5388,7 +5433,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             const int zero[2] = {0, 0};
             setBlocks(0, 0, 4, 4, 0, zero, zero);
             if (!tIntraNone)
-                costIntra = double(mbSsd(mbx, mby)) + lambda * mbBits(intraBits, mbx, mby, 0.0);
+                costIntra = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * mbBits(intraBits, mbx, mby, 0.0);
         }
     }
 
