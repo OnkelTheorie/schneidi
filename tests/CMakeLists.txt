@@ -568,5 +568,6 @@ endforeach()
 
 schneidi_test(test_shapes) # shapes (0.22): shape titles per kind, stroke reveal, keyframes, file, blur/pixelate/spotlight below, clip_shape, tracker follow, CLI ops, check
 target_link_libraries(test_shapes PRIVATE schneidi_cli_lib)
+schneidi_test(test_idle_render) # the app at rest renders nothing: a blur shape selected in the Inspector, after an edit no repaint loop (frames, CPU)
 schneidi_test(test_drawing) # drawings (0.22): strokes at known pixels, reveal timing, file, smoothing, painting (undo per stroke, eraser, box), tracker follow, CLI op draw, check, Inspector
 target_link_libraries(test_drawing PRIVATE schneidi_cli_lib)
