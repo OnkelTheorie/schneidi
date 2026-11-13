@@ -829,7 +829,15 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
     for (const auto& k : kShapeKinds) kind->addItem(T(k.name), int(k.kind));
     connect(kind, &QComboBox::activated, this, [this, V, kind] {
         const auto k = ShapeKind(kind->currentData().toInt());
-        apply(V, {}, T("Form"), [k](Clip& c) { c.title.shape.kind = k; }, true);
+        // A line's height is its thickness: a box height would make it a bar (as the CLI: 8 px at 1080)
+        const double thick = std::max(2.0, std::round(m_editor->project()->timelineFormat().height / 135.0));
+        apply(V, {}, T("Form"), [k, thick](Clip& c) {
+            if (k == ShapeKind::Line && c.title.shape.kind != ShapeKind::Line) {
+                c.title.shape.height = thick;
+                Keys::clear(c, AnimParam::ShapeHeight);
+            }
+            c.title.shape.kind = k;
+        }, true);
     });
     sh.grid->addWidget(rowLabel(T("Form")), sh.rows, 0);
     sh.grid->addWidget(kind, sh.rows++, 1);
@@ -902,6 +910,12 @@ void Inspector::buildShapeSection(QVBoxLayout* page,
         for (QWidget* w : pointRow) w->setVisible(s.kind == ShapeKind::Star || s.kind == ShapeKind::Polygon);
         for (QWidget* w : inner) w->setVisible(s.kind == ShapeKind::Star);
         for (QWidget* w : amount) w->setVisible(s.fill == ShapeFill::Blur || s.fill == ShapeFill::Pixelate);
+        // The trackers list only when the timeline or selection changed, not every frame of playback (an open
+        // list would close)
+        if (m_valuesOnly && follow->findData(QPoint(s.followClip, s.followNode)) >= 0) {
+            follow->setCurrentIndex(follow->findData(QPoint(s.followClip, s.followNode)));
+            return;
+        }
         follow->clear();
         follow->addItem(T("Keinem"), QPoint());
         const Project* p = m_editor->project();

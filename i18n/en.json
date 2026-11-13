@@ -3128,5 +3128,6 @@
  "Unschärfe und Verpixeln verdecken, was unter der Form liegt (Gesicht, Kennzeichen, Name)": "Blur and pixelate hide what lies below the shape (a face, a number plate, a name)",
  "Versatz in % der Bildbreite": "Offset in % of the picture width",
  "Versatz in % der Bildhöhe (nach oben)": "Offset in % of the picture height (up)",
- "Vieleck": "Polygon"
+ "Vieleck": "Polygon",
+ "Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – sie bleibt stehen": "Shape \"%1\" follows a tracker that is gone (clip %2, node %3) – it stays where it is"
 }

@@ -267,6 +267,7 @@ void testProjectFile(const QString& dir)
     EffectRegistry::add(m, Shapes::kClipShapeEffect);
     EffectRegistry::instance(m, Shapes::kClipShapeEffect)->params["shape"] = "star";
     EffectRegistry::instance(m, Shapes::kClipShapeEffect)->params["size"] = 70.0;
+    EffectRegistry::instance(m, Shapes::kClipShapeEffect)->params["stroke_width"] = 6.0;
     p.edit("setup", [&](Timeline& tl) {
         tl.video[0].clips << m;
         tl.video[1].clips << c;
@@ -287,6 +288,11 @@ void testProjectFile(const QString& dir)
     scaleTimeline(twice, QSize(320, 180), QSize(640, 360));
     const Clip* big = TimelineOps::findClip(twice, c.id);
     CHECK(big && std::abs(big->title.shape.width - 240) < 1e-9 && std::abs(big->title.shape.height - 160) < 1e-9);
+    // clip_shape's pixel values with it (stroke, shadow softness; percent values stay)
+    const Clip* bm = TimelineOps::findClip(twice, m.id);
+    CHECK(bm && std::abs(EffectRegistry::value(*bm, Shapes::kClipShapeEffect, "stroke_width").toDouble() - 12) < 1e-9);
+    CHECK(bm && std::abs(EffectRegistry::value(*bm, Shapes::kClipShapeEffect, "shadow_soft").toDouble() - 24) < 1e-9);
+    CHECK(bm && std::abs(EffectRegistry::value(*bm, Shapes::kClipShapeEffect, "size").toDouble() - 70) < 1e-9);
 }
 
 // Mean of one channel over a rectangle
@@ -517,7 +523,17 @@ void testCli(const QString& dir)
     CHECK(blur && std::abs(blur->title.posX) < 1e-6 && std::abs(blur->title.posY) < 1e-6); // the tracker's start point
     // keyframe op with the new names
     edit(QString(R"([{"op":"keyframe","clips":[%1],"param":"shape_width","keys":[{"at":0,"value":20},{"at":5,"value":60}]}])").arg(starId));
-    CHECK(saved().timeline.video[1].clips.isEmpty() || TimelineOps::findClip(saved().timeline, starId)->keys.value(AnimParam::ShapeWidth).size() == 2);
+    {
+        const ProjectData k = saved();
+        const Clip* keyed = TimelineOps::findClip(k.timeline, starId);
+        CHECK(keyed && keyed->keys.value(AnimParam::ShapeWidth).size() == 2);
+    }
+    // info's stroke object goes back into the op (round trip)
+    edit(QString(R"([{"op":"shape","clip":%1,"stroke":{"color":"#ff00ff","width":7}}])").arg(starId));
+    {
+        const Clip* st = TimelineOps::findClip(saved().timeline, starId);
+        CHECK(st && st->title.outlineOn && st->title.outlineWidth == 7 && st->title.outlineColor == QColor(255, 0, 255));
+    }
     // Bad values are errors
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","kind":"hexagon"}])"}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","fill":"glitter"}])"}}), QString("BAD_ARGUMENT"));
@@ -635,9 +651,148 @@ void testOverlay()
     CHECK(drag(knob, centre + QPointF(100, 0))); // to the right of the centre: a quarter turn clockwise
     s = TimelineOps::findClip(p.timeline(), id);
     CHECK(s && std::abs(s->title.shape.rotation - 90) < 0.5);
+    // A Media Pool source in the viewer: the box is not the timeline's
+    bool timeline = false;
+    ShapeOverlay source(&e, &sel, [&] { return playhead; }, nullptr, [&] { return timeline; });
+    {
+        const QPointF at = ov.centerPos(frame);
+        QMouseEvent press(QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        CHECK(!source.mousePress(&press, frame));
+        CHECK(source.centerPos(frame).isNull());
+        timeline = true;
+        CHECK(source.mousePress(&press, frame));
+        QMouseEvent release(QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        source.mouseRelease(&release, frame);
+    }
     // Outside the clip's time: nothing to grab
     playhead = 200;
     CHECK(!drag(c, c + QPointF(5, 5)));
+}
+
+// ---- a blur shape keeps hiding through its transitions: fading in, and dissolving into its other half ----
+void testBelowTransitions()
+{
+    std::printf("below in transitions\n");
+    Clip blur = shapeClip(2, ShapeKind::Rect, 100, 100, 25);
+    blur.title.shape.fill = ShapeFill::Blur;
+    blur.title.shape.amount = 60;
+    blur.transIn = 10;
+    const QImage in = render(timelineOf({media(1, g_stripes, 50)}, {blur}), 3);
+    CHECK(contrast(in, QRect(140, 70, 40, 40)) < 30);
+    // Split in two at 25 with a dissolve over the cut
+    Clip a = shapeClip(2, ShapeKind::Rect, 100, 100, 25);
+    a.title.shape.fill = ShapeFill::Blur;
+    a.title.shape.amount = 60;
+    Clip b = a;
+    b.id = 3;
+    b.start = 25;
+    b.in = 25;
+    b.out = 49;
+    a.transOut = 10;
+    b.transIn = 10;
+    const Timeline tl = timelineOf({media(1, g_stripes, 50)}, {a, b});
+    CHECK(!TimelineOps::transitions(tl.video[1], [](const Clip&) { return 0; }).isEmpty());
+    for (int f : {21, 25, 29}) {
+        const QImage img = render(tl, f);
+        CHECK(contrast(img, QRect(140, 70, 40, 40)) < 30);
+        CHECK(contrast(img, QRect(10, 10, 40, 40)) > 200); // outside stays sharp
+    }
+}
+
+// ---- the tracked clip split: the shape follows the part after the cut (it has a new id) ----
+void testFollowSplit()
+{
+    std::printf("follow split\n");
+    Clip left = trackedClip();
+    left.out = 4;
+    Clip right = trackedClip();
+    right.id = 3;
+    right.start = 5;
+    right.in = 5;
+    right.out = 24;
+    Clip shape = shapeClip(2, ShapeKind::Ellipse, 40, 40);
+    shape.title.shape.followClip = 1;
+    shape.title.shape.followNode = 2;
+    const QImage img = render(timelineOf({left, right}, {shape}), 10);
+    CHECK(at(img, 240, 90, kRed));
+    CHECK(at(img, 160, 90, QColor(0, 0, 255)));
+}
+
+// ---- a stroked line drawn through the bounds path (clip transform) as far as straight onto the frame ----
+void testLineBounds()
+{
+    std::printf("line bounds\n");
+    Clip direct = shapeClip(1, ShapeKind::Line, 200, 10);
+    direct.title.outlineOn = true;
+    direct.title.outlineColor = kWhite;
+    direct.title.outlineWidth = 6;
+    direct.title.posX = 4;
+    Clip placed = direct;
+    placed.title.posX = 0;
+    placed.transform.posX = 4; // the same place through the clip's transform: drawn only as large as its bounds
+    const QImage a = render(timelineOf({direct}), 0), b = render(timelineOf({placed}), 0);
+    CHECK(at(a, 164 + 100 + 8, 90, kWhite)); // the outline's round cap past the line's end
+    CHECK(at(b, 164 + 100 + 8, 90, kWhite));
+    CHECK(at(b, 164, 90 + 9, kWhite));
+}
+
+// ---- paste: a shape copied with the clip it follows follows the copy ----
+void testPasteFollow()
+{
+    std::printf("paste follow\n");
+    Project p;
+    ProjectData d;
+    d.timeline = timelineOf({});
+    d.format = kFormat;
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Clip m = trackedClip();
+    m.id = p.newClipId();
+    Clip shape = shapeClip(p.newClipId(), ShapeKind::Ellipse, 40, 40);
+    shape.title.shape.followClip = m.id;
+    shape.title.shape.followNode = 2;
+    p.edit("setup", [&](Timeline& tl) {
+        tl.video[0].clips << m;
+        tl.video[1].clips << shape;
+    });
+    sel.set({m.id, shape.id});
+    e.copySelection();
+    e.paste(100);
+    int newTracked = 0, followed = -1;
+    for (const Track& t : p.timeline().video)
+        for (const Clip& c : t.clips) {
+            if (c.start < 100) continue;
+            if (c.isTitle()) followed = c.title.shape.followClip;
+            else newTracked = c.id;
+        }
+    CHECK(newTracked > 0 && followed == newTracked);
+    // The shape alone: it keeps following the original
+    sel.set({shape.id});
+    e.copySelection();
+    e.paste(200);
+    for (const Track& t : p.timeline().video)
+        for (const Clip& c : t.clips)
+            if (c.start >= 200 && c.isTitle()) CHECK_EQ(c.title.shape.followClip, m.id);
+}
+
+// ---- check: a shape following a tracker that is gone ----
+void testFollowCheck()
+{
+    std::printf("follow check\n");
+    Clip shape = shapeClip(2, ShapeKind::Ellipse, 40, 40);
+    shape.title.shape.followClip = 1;
+    shape.title.shape.followNode = 2;
+    const auto missing = [](const Timeline& tl) {
+        for (const ExportCheck::Issue& is : ExportCheck::timeline(tl, 0, 25, kFormat))
+            if (is.check == QLatin1String("shape_follow_missing") && is.clip == 2) return true;
+        return false;
+    };
+    CHECK(!missing(timelineOf({trackedClip()}, {shape})));
+    CHECK(missing(timelineOf({media(1, g_blue)}, {shape})));       // no graph
+    CHECK(missing(timelineOf({}, {shape})));                       // no clip
+    shape.title.shape.followNode = 7;
+    CHECK(missing(timelineOf({trackedClip()}, {shape})));          // no such node
 }
 
 } // namespace
@@ -670,5 +825,10 @@ int main(int argc, char** argv)
     testCheck();
     testInspector();
     testOverlay();
+    testBelowTransitions();
+    testFollowSplit();
+    testLineBounds();
+    testPasteFollow();
+    testFollowCheck();
     return Check::result();
 }
