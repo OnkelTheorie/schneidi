@@ -58,6 +58,23 @@ bool kindFromId(const QString& id, ShapeKind* k)
     return false;
 }
 
+double lineThickness(int frameHeight)
+{
+    return std::max(2.0, std::round(frameHeight / 135.0));
+}
+
+QSizeF sizeForKind(const ShapeStyle& s, ShapeKind to, double lineThickness, double remembered)
+{
+    const bool wasLine = s.kind == ShapeKind::Line, isLine = to == ShapeKind::Line;
+    if (isLine && !wasLine) return {s.width, lineThickness};
+    if (wasLine && !isLine) {
+        const double w = s.width > 1 ? s.width : ShapeStyle().width;
+        const double h = remembered > s.height ? remembered : to == ShapeKind::Arrow ? std::round(w / 2) : w;
+        return {w, h};
+    }
+    return {s.width, s.height};
+}
+
 const char* fillId(ShapeFill f)
 {
     for (const auto& i : kShapeFills)

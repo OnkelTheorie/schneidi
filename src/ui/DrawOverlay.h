@@ -25,18 +25,22 @@ class QToolButton;
 class Selection;
 struct Clip;
 
-// The brush of the paint tool, for the whole app (kept in the settings): colour, width as a fraction of the frame
-// height (sharp in any resolution), opacity 0..1, eraser on
+// The brush of the paint tool, for the whole app (kept in the settings): colour, width in pixels of the timeline frame
+// (what the paint bar and the Inspector show: "25 px" draws 25 px wide strokes in a 1080x1920 timeline as in a
+// 1920x1080 one; a stroke stores it as a fraction of its frame height, core/Types.h DrawStroke), opacity 0..1, eraser on
 class DrawBrush : public QObject {
     Q_OBJECT
 public:
     static DrawBrush& instance();
+    static constexpr double kMinPx = 1, kMaxPx = 400;
     QColor color() const { return m_color; }
-    double width() const { return m_width; }
+    double widthPx() const { return m_widthPx; }
+    // The width as a fraction of a frame `frameHeight` high (a stroke's DrawStroke::width), at most a fifth of it
+    double width(int frameHeight) const;
     double opacity() const { return m_opacity; }
     bool eraser() const { return m_eraser; }
     void setColor(const QColor& c);
-    void setWidth(double w);
+    void setWidthPx(double px);
     void setOpacity(double o);
     void setEraser(bool on);
 
@@ -47,7 +51,7 @@ private:
     DrawBrush();
     void save() const;
     QColor m_color{255, 214, 0};
-    double m_width = 0.008, m_opacity = 1;
+    double m_widthPx = 9, m_opacity = 1;
     bool m_eraser = false;
 };
 
@@ -118,19 +122,27 @@ private:
     double m_startX = 0, m_startY = 0, m_startZoomX = 1, m_startZoomY = 1, m_startPosX = 0, m_startPosY = 0;
 };
 
-// The paint tool's bar over the viewer: brush / eraser, colour, width (pixels of the timeline format), opacity and
-// a button that ends painting. frameHeight: the timeline's height in pixels
+// The paint tool's bar over the viewer: brush / eraser, colour, width (pixels of the timeline frame, DrawBrush),
+// opacity and a button that ends painting. frameHeight: the timeline's height in pixels
 class DrawBar : public QWidget {
     Q_OBJECT
 public:
     explicit DrawBar(std::function<int()> frameHeight, QWidget* parent = nullptr);
     void sync(); // the brush's values into the controls
+    // Size and place at the parent's top left: at most as wide as the parent (two rows when one does not fit), so a
+    // narrow window keeps its size. Also on every resize of the parent
+    void place();
+    static constexpr int kMargin = 8;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* e) override;
 
 signals:
     void closeWanted();
 
 private:
     std::function<int()> m_frameHeight;
-    QToolButton *m_brush, *m_eraser, *m_color;
+    QToolButton *m_brush, *m_eraser, *m_color, *m_done;
     QSpinBox *m_width, *m_opacity;
+    class QHBoxLayout *m_row1, *m_row2;
 };

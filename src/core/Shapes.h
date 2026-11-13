@@ -11,6 +11,7 @@
 #include <QHash>
 #include <QPointF>
 #include <QRectF>
+#include <QSizeF>
 #include <QVector>
 
 namespace Shapes {
@@ -29,6 +30,13 @@ struct Outline {
     bool closed = true;
 };
 Outline outline(const ShapeStyle& s, double w, double h, double tolerance = 0.25);
+
+// The kind changes from `from` to `to`: the box size that fits. A line's height is its thickness (`lineThickness`
+// pixels: a box height would make it a bar); leaving a line restores `remembered` (the height before it became a line,
+// 0 = unknown: as wide as the box, an arrow half of it), so a star is not a flat sliver. Other changes keep the size
+QSizeF sizeForKind(const ShapeStyle& s, ShapeKind to, double lineThickness, double remembered = 0);
+// The thickness of a new line in a format `frameHeight` high (8 px at 1080)
+double lineThickness(int frameHeight);
 
 // Where a shape title is at clip frame t (keyframes included): centre in project pixels of a PW x PH frame (y down),
 // size and rotation (clockwise degrees), how much of the stroke is drawn (0..1)

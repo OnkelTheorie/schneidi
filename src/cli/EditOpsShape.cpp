@@ -151,8 +151,16 @@ void opShape(Session& s, const QJsonObject& op)
     if (!clip) fail("FAILED", "the shape went missing");
     TitleStyle t = clip->title;
     ShapeStyle& sh = t.shape;
-    if (op.contains("kind") && !Shapes::kindFromId(op.value("kind").toString(), &sh.kind))
+    ShapeKind newKind = sh.kind;
+    if (op.contains("kind") && !Shapes::kindFromId(op.value("kind").toString(), &newKind))
         fail("BAD_ARGUMENT", QString("kind must be one of %1").arg(kindList()));
+    if (newKind != sh.kind && !created) {
+        // A line's height is its thickness; leaving a line gets a box again (not a flat sliver of a star)
+        const QSizeF size = Shapes::sizeForKind(sh, newKind, Shapes::lineThickness(s.project.timelineFormat().height));
+        sh.width = size.width();
+        sh.height = size.height();
+    }
+    sh.kind = newKind;
     if (op.contains("size")) sh.width = sh.height = numberOf(op, "size", 0, 100000);
     if (op.contains("width")) sh.width = numberOf(op, "width", 0, 100000);
     if (op.contains("height")) sh.height = numberOf(op, "height", 0, 100000);
@@ -200,7 +208,7 @@ void opShape(Session& s, const QJsonObject& op)
     }
     if (op.contains("follow")) applyFollow(s, t, op, *clip, ref.index, !op.contains("x") && !op.contains("y"));
     if (sh.kind == ShapeKind::Line && op.contains("kind") && !op.contains("height") && !op.contains("size"))
-        sh.height = std::max(2.0, std::round(s.project.timelineFormat().height / 135.0)); // a line: 8 px at 1080
+        sh.height = Shapes::lineThickness(s.project.timelineFormat().height); // a line: 8 px at 1080
     if (sh.fill == ShapeFill::None && !t.outlineOn && sh.kind != ShapeKind::Line && sh.spotlight <= 0)
         s.notes << "fill none without a stroke draws nothing: give stroke:true (stroke_color, stroke_width) or spotlight";
     const bool opacity = op.contains("opacity");

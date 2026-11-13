@@ -545,6 +545,15 @@ void MainWindow::showPage(Page page)
 
 void MainWindow::setDrawTool(bool on)
 {
+    // Painting goes into the timeline: with a Media Pool clip in the viewer there is nothing to paint on
+    if (on && m_page == Page::Edit && m_viewer->showsSource()) {
+        m_viewer->showNotice(T("Malen geht nur auf der Timeline"), 3000);
+        if (m_drawAction) {
+            const QSignalBlocker b(m_drawAction);
+            m_drawAction->setChecked(m_drawOverlay && m_drawOverlay->active());
+        }
+        return;
+    }
     if (on && m_page != Page::Edit) showPage(Page::Edit);
     if (m_drawOverlay) m_drawOverlay->setActive(on);
     else if (m_drawAction) m_drawAction->setChecked(false);
@@ -564,11 +573,24 @@ void MainWindow::drawToolChanged(bool on)
         m_drawBar->setVisible(on);
         if (on) {
             m_drawBar->sync();
-            m_drawBar->adjustSize();
-            m_drawBar->move(8, 8);
-            m_drawBar->raise();
+            m_drawBar->place(); // never wider than the viewer (it follows its width)
         }
     }
+    updateEscapeKeys();
+}
+
+// Esc ends what is on, one at a time (two enabled Esc shortcuts are ambiguous and neither fires): a recording first,
+// then painting, then the large viewer. Window actions bound to Esc give it up meanwhile (InputBindings::holdWindowKey)
+void MainWindow::updateEscapeKeys()
+{
+    const bool recording = m_voiceover && m_voiceover->recording();
+    const bool drawing = m_drawOverlay && m_drawOverlay->active();
+    if (m_voiceoverEscape) m_voiceoverEscape->setEnabled(recording);
+    if (m_drawEscape) m_drawEscape->setEnabled(drawing && !recording);
+    if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !recording && !drawing);
+    InputBindings::instance().holdWindowKey("voiceover", "Esc", recording);
+    InputBindings::instance().holdWindowKey("draw_tool", "Esc", drawing && !recording);
+    if (m_largeEscape) InputBindings::instance().holdWindowKey("large_viewer", "Esc", m_largeEscape->isEnabled());
 }
 
 void MainWindow::ensureColorPage()
@@ -865,11 +887,7 @@ void MainWindow::setViewerLarge(bool on)
     }
     if (m_largeAction) m_largeAction->setChecked(m_large.active);
     // Two enabled Esc shortcuts are ambiguous and neither fires: while recording, Esc ends the take first
-    if (m_largeEscape) {
-        m_largeEscape->setEnabled(m_large.active && !(m_voiceover && m_voiceover->recording()));
-        // A window action bound to Esc gives it up meanwhile (InputBindings::holdWindowKey)
-        InputBindings::instance().holdWindowKey("large_viewer", "Esc", m_largeEscape->isEnabled());
-    }
+    updateEscapeKeys();
 }
 
 namespace {

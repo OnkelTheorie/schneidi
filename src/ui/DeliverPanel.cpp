@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/DeliverPanel.h"
+#include "ui/WheelGuard.h"
 
 #include "app/Theme.h"
 #include "core/I18n.h"
@@ -38,6 +39,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QScrollBar>
+#include <QScrollArea>
 #include <algorithm>
 
 namespace {
@@ -275,8 +278,21 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->setContentsMargins(0, 0, 0, 12);
     lay->setSpacing(6);
     lay->addWidget(title);
-    lay->addLayout(form);
-    lay->addStretch(1);
+    // The settings scroll when the window is low (a 1024x768 screen): the window's minimum height was this form's
+    auto* formPage = new QWidget;
+    auto* formLay = new QVBoxLayout(formPage);
+    formLay->setContentsMargins(0, 0, 0, 0);
+    formLay->addLayout(form);
+    formLay->addStretch(1);
+    auto* formScroll = new QScrollArea;
+    formScroll->setWidget(formPage);
+    formScroll->setWidgetResizable(true);
+    formScroll->setFrameShape(QFrame::NoFrame);
+    formScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // As wide as the form (the panel never cuts it off at the right)
+    formScroll->setMinimumWidth(formPage->minimumSizeHint().width() + formScroll->verticalScrollBar()->sizeHint().width());
+    lay->addWidget(formScroll, 1);
+    WheelGuard::install(formPage); // scrolling over a choice box scrolls the page, does not change the box
     auto* bottom = new QVBoxLayout;
     bottom->setContentsMargins(12, 0, 12, 0);
     bottom->addWidget(m_checkList);

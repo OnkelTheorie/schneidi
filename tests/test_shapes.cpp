@@ -27,6 +27,8 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QLabel>
+#include <QToolButton>
 #include <QPlainTextEdit>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -534,6 +536,14 @@ void testCli(const QString& dir)
         const Clip* st = TimelineOps::findClip(saved().timeline, starId);
         CHECK(st && st->title.outlineOn && st->title.outlineWidth == 7 && st->title.outlineColor == QColor(255, 0, 255));
     }
+    // A line and back: the next kind is a box again, not a sliver of the line's thickness
+    edit(QString(R"([{"op":"shape","clip":%1,"kind":"line"}])").arg(starId));
+    edit(QString(R"([{"op":"shape","clip":%1,"kind":"polygon"}])").arg(starId));
+    {
+        const Clip* poly = TimelineOps::findClip(saved().timeline, starId);
+        CHECK(poly && poly->title.shape.kind == ShapeKind::Polygon && poly->title.shape.height > 20
+              && poly->title.shape.height == poly->title.shape.width);
+    }
     // Bad values are errors
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","kind":"hexagon"}])"}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","fill":"glitter"}])"}}), QString("BAD_ARGUMENT"));
@@ -598,13 +608,54 @@ void testInspector()
     CHECK(c && c->title.isShape() && c->title.text.isEmpty() && c->title.shape.width > 0);
     QComboBox* kinds = nullptr;
     for (QComboBox* b : insp.findChildren<QComboBox*>())
-        if (b->count() == int(std::size(kShapeKinds)) && b->itemData(0).toInt() == int(ShapeKind::Ellipse)) kinds = b;
+        if (b->count() == int(std::size(kShapeKinds)) && b->itemData(0).toInt() == int(ShapeKind::Ellipse)
+            && b->itemText(0) == T(kShapeKinds[0].name) && b->itemText(1) == T(kShapeKinds[1].name))
+            kinds = b;
     if (!CHECK(kinds && kinds->isVisibleTo(&insp))) return;
     for (QPlainTextEdit* t : insp.findChildren<QPlainTextEdit*>()) CHECK(!t->isVisibleTo(&insp));
-    kinds->setCurrentIndex(kinds->findData(int(ShapeKind::Star)));
-    emit kinds->activated(kinds->currentIndex());
-    c = TimelineOps::findClip(p.timeline(), id);
+    // No "Text" section for a shape: its colour and position are in "Form", which comes first
+    for (QToolButton* b : insp.findChildren<QToolButton*>())
+        if (b->text() == T("Text")) CHECK(!b->isVisibleTo(&insp));
+    auto choose = [&](ShapeKind k) {
+        kinds->setCurrentIndex(kinds->findData(int(k)));
+        emit kinds->activated(kinds->currentIndex());
+        QCoreApplication::processEvents();
+        return TimelineOps::findClip(p.timeline(), id);
+    };
+    const double h0 = c->title.shape.height;
+    c = choose(ShapeKind::Star);
     CHECK(c && c->title.shape.kind == ShapeKind::Star);
+    // A line is thin; the next kind gets its height back (before: a flat star/polygon sliver of 8 px)
+    c = choose(ShapeKind::Line);
+    CHECK(c && c->title.shape.height == Shapes::lineThickness(kFormat.height));
+    c = choose(ShapeKind::Star);
+    CHECK(c && c->title.shape.height == h0);
+    // Without a remembered height (a line from the start): as high as wide, an arrow half of it
+    ShapeStyle line;
+    line.kind = ShapeKind::Line;
+    line.width = 200;
+    line.height = 4;
+    CHECK(Shapes::sizeForKind(line, ShapeKind::Polygon, 4) == QSizeF(200, 200));
+    CHECK(Shapes::sizeForKind(line, ShapeKind::Arrow, 4) == QSizeF(200, 100));
+    CHECK(Shapes::sizeForKind(line, ShapeKind::Line, 4) == QSizeF(200, 4));
+    // Fill none and no stroke: a hint that it is invisible
+    auto* invisible = insp.findChild<QLabel*>("shapeInvisibleHint");
+    if (CHECK(invisible)) {
+        CHECK(!invisible->isVisibleTo(&insp));
+        e.modifyClips({id}, "fill", [](Clip& x) {
+            x.title.shape.fill = ShapeFill::None;
+            x.title.outlineOn = false;
+        });
+        QCoreApplication::processEvents();
+        CHECK(invisible->isVisibleTo(&insp));
+    }
+    // Keyframes of the shape's values: at their times (the timeline's key lane and markers)
+    e.modifyClips({id}, "keys", [](Clip& x) {
+        Keys::setKey(x, AnimParam::ShapeReveal, 3, 0);
+        Keys::setKey(x, AnimParam::ShapeWidth, 12, 80);
+    });
+    c = TimelineOps::findClip(p.timeline(), id);
+    CHECK(c && Keys::keyTimes(*c) == (QVector<int>{3, 12}));
     // A text title: no shape section
     sel.clear();
     e.addTitle(100, -1, 50, TitleKind::Text);

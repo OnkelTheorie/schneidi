@@ -70,6 +70,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QScreen>
 #include <QActionGroup>
 #include <QApplication>
 #include <QMouseEvent>
@@ -109,6 +110,42 @@
 QString MainWindow::appName()
 {
     return "schneidi " + QCoreApplication::applicationVersion().section(" (", 0, 0);
+}
+
+QRect MainWindow::fitToScreen(const QRect& wanted, const QRect& available, const QMargins& frame)
+{
+    const QRect room = available.marginsRemoved(frame);
+    if (room.width() < 100 || room.height() < 100) return room; // a tiny screen: all of it
+    const bool fits = wanted.isValid() && wanted.width() <= room.width() && wanted.height() <= room.height();
+    if (fits && wanted.intersects(available)) { // on this screen: pushed fully inside
+        QRect r = wanted;
+        r.moveLeft(std::clamp(r.left(), room.left(), room.right() - r.width() + 1));
+        r.moveTop(std::clamp(r.top(), room.top(), room.bottom() - r.height() + 1));
+        return r;
+    }
+    QRect r(0, 0, room.width() * 9 / 10, room.height() * 9 / 10);
+    if (fits) r.setSize(wanted.size()); // from another (disconnected) screen: its size, centred here
+    r.moveCenter(room.center());
+    return r;
+}
+
+void MainWindow::placeOnScreen(const QRect& wanted)
+{
+    const QScreen* s = screen() ? screen() : QGuiApplication::primaryScreen();
+    if (!s) return;
+    if (layout()) layout()->activate(); // the minimum of the pages as they are now
+    const QRect available = s->availableGeometry();
+    QRect r = fitToScreen(wanted, available);
+    // Never below the window's own minimum (the Edit page's panels): grown, then moved inside again; a screen smaller
+    // than it gets the window at its top left
+    const QSize least = minimumSizeHint().expandedTo(minimumSize());
+    if (r.width() < least.width() || r.height() < least.height()) {
+        r.setSize(r.size().expandedTo(least));
+        r = fitToScreen(r, available);
+        if (r.width() < least.width() || r.height() < least.height())
+            r = QRect(available.marginsRemoved(kFrameEstimate).topLeft(), r.size().expandedTo(least));
+    }
+    setGeometry(r);
 }
 
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
