@@ -285,7 +285,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_timecode = new QLabel;
     // Timecode in the recessed field (design language of the mixer)
     m_timecode->setStyleSheet(QString("color: %1; background: %2; border: 1px solid %3; border-radius: 2px;"
-                                      " font-family: monospace; font-size: 13px; padding: 1px 8px;")
+                                      " font-family: monospace; font-size: 13px; padding: 1px 6px;")
                                   .arg(Theme::text.name(), Theme::well.name(), Theme::border.name()));
 
     auto makeBtn = [](const QString& text, const QString& tip) {
@@ -425,6 +425,7 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
     b->setObjectName(icon == ViewIcon::Large ? "viewer_large" : "viewer_full_screen");
     b->setIcon(viewIcon(icon));
     b->setIconSize(QSize(18, 18));
+    b->setStyleSheet("QToolButton { padding: 3px 3px; }"); // narrow: the bar decides the viewer's minimum width
     b->setCheckable(true);
     b->setChecked(action->isChecked());
     b->setAutoRaise(true);
@@ -477,8 +478,13 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
     const auto label = [](double z) {
         return z == FrameView::kFit ? T("Einpassen") : QString("%1 %").arg(QString::number(z * 100, 'g', 4).replace('.', I18n::decimalPoint()));
     };
-    b->setText(label(zoom()));
-    connect(this, &Viewer::zoomChanged, b, [b, label](double z) { b->setText(label(z)); });
+    // Narrow: "Fit" becomes a symbol, a percentage stays whole (it is short)
+    const auto show = [b, label](double z) {
+        b->setText(label(z));
+        b->setCompactText(z == FrameView::kFit ? QStringLiteral("⤢") : label(z));
+    };
+    show(zoom());
+    connect(this, &Viewer::zoomChanged, b, show);
     m_barRight->insertWidget(0, b);
     m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
                              QSizePolicy::Fixed, QSizePolicy::Minimum);

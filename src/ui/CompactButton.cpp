@@ -41,8 +41,10 @@ QString CompactButton::shownText() const
 {
     const int missing = sizeHint().width() - width();
     if (missing <= 0 || !showsText()) return text();
-    if (!m_compact.isEmpty()) return m_compact;
-    return fontMetrics().elidedText(text(), Qt::ElideRight, std::max(0, textWidth(text()) - missing));
+    // Elided while that keeps a few letters more than the short form ("▦ Media…"), else the short form ("▦")
+    const QString elided = fontMetrics().elidedText(text(), Qt::ElideRight, std::max(0, textWidth(text()) - missing));
+    if (m_compact.isEmpty() || elided.size() >= m_compact.size() + 4) return elided;
+    return m_compact;
 }
 
 void CompactButton::paintEvent(QPaintEvent*)

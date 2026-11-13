@@ -3,12 +3,15 @@
 // starts larger than the screen's available area - a 1024x768 screen, a 1280x1024 one at QT_SCALE_FACTOR=1.25 had the
 // Inspector and the right of the viewer off-screen (without a window manager, maximizing does nothing) - and is not a
 // small window on a big screen. The rule itself with made-up screens; the real window on the screen it runs on (run it
-// under Xvfb with several -screen sizes: the frame stays inside availableGeometry).
+// under Xvfb with several -screen sizes: the frame stays inside availableGeometry). The Edit page with a clip selected
+// fits a 1024 px wide screen (de, en; Russian with a big font at least 1280 px): tool buttons shorten their text
+// (CompactButton), panel titles elide, the viewer's minimum is smaller.
 
 #include "check.h"
 
 #include "app/MainWindow.h"
 #include "core/Editor.h"
+#include "core/EffectRegistry.h"
 #include "core/Project.h"
 #include "engine/Engine.h"
 #include "ui/DrawOverlay.h"
@@ -159,7 +162,7 @@ void testPaintBar(Engine& engine)
     CHECK(!bar->isVisible() && !paint->isChecked());
 }
 
-// WINDOW_FIT_DUMP=<px>: the visible widgets whose minimum width is at least that, as a tree (what holds the window wide)
+// WINDOW_FIT_SHOT=<folder>: a picture of the window per case. WINDOW_FIT_DUMP=<px>: the visible widgets whose minimum width is at least that, as a tree (what holds the window wide)
 void dumpMinimums(QWidget* w, int depth = 0)
 {
     if (!w->isVisible()) return;
@@ -183,13 +186,15 @@ void settle()
 }
 
 // The Edit page with a clip selected fits a 1024x768 screen (it needed >= 1085 px): a video clip, each kind of title
-// (text, counter, progress bar, shape, drawing) and an audio clip, with the default panels and with the left column
-// (Effects Library) and the mixer column on. The window's minimum width is what decides.
-void testVgaEditPage(Engine& engine, const QString& media, const char* label)
+// (text, counter, progress bar, shape, drawing) and an audio clip, with the default panels (Media Pool, Viewer and
+// Inspector side by side) and with a user's layout (Effects Library instead of the pool, the mixer column on). The
+// window's minimum width is what decides.
+void testVgaEditPage(Engine& engine, const QString& media, const char* label, int screenWidth = 1024)
 {
     const QMargins f = MainWindow::kFrameEstimate;
-    const int room = 1024 - f.left() - f.right();
+    const int room = screenWidth - f.left() - f.right();
     for (const bool columns : {false, true}) {
+        QSettings().setValue("panels/mediaPool", !columns);
         QSettings().setValue("panels/effects", columns);
         QSettings().setValue("panels/mixer", columns);
         MainWindow w(&engine);
@@ -211,10 +216,19 @@ void testVgaEditPage(Engine& engine, const QString& media, const char* label)
                 if (!t.clips.isEmpty()) return t.clips.first().id;
             return -1;
         };
+        // The Inspector's longest pages: every effect on the clip (each one a section of its own)
+        auto everyEffect = [&](const QVector<Track>& tracks, bool video) {
+            const int id = first(tracks);
+            for (const EffectDescriptor& d : EffectRegistry::all())
+                if (d.video == video && d.library) ed->addEffect({id}, d.id);
+            ed->selection()->set(QSet<int>{id});
+        };
         QVector<Case> cases;
         if (!media.isEmpty()) {
             cases << Case{"video clip", [&] { ed->selection()->set(QSet<int>{first(ed->project()->timeline().video)}); }};
             cases << Case{"audio clip", [&] { ed->selection()->set(QSet<int>{first(ed->project()->timeline().audio)}); }};
+            cases << Case{"video clip with every effect", [&] { everyEffect(ed->project()->timeline().video, true); }};
+            cases << Case{"audio clip with every effect", [&] { everyEffect(ed->project()->timeline().audio, false); }};
         }
         for (const auto& k : kTitleKinds)
             cases << Case{k.id, [&, kind = k.kind] { ed->addTitle(400, -1, 50, kind); }};
@@ -225,10 +239,13 @@ void testVgaEditPage(Engine& engine, const QString& media, const char* label)
             const int min = w.minimumSizeHint().width();
             widest = qMax(widest, min);
             std::printf("%s, %s: %s selected -> window minimum %d (room %d)\n", label,
-                        columns ? "effects+mixer" : "default panels", qPrintable(c.name), min, room);
+                        columns ? "effects+mixer, no pool" : "default panels", qPrintable(c.name), min, room);
             if (qEnvironmentVariableIsSet("WINDOW_FIT_DUMP")) dumpMinimums(&w);
-            Check::report(min <= room, "the Edit page fits a 1024 px wide screen", __FILE__, __LINE__,
-                          QString("%1 (%2): minimum %3 > %4").arg(c.name, label).arg(min).arg(room));
+            if (const QString dir = qEnvironmentVariable("WINDOW_FIT_SHOT"); !dir.isEmpty())
+                w.grab().save(QString("%1/%2-%3-%4.png").arg(dir, label, columns ? "columns" : "default", c.name));
+            Check::report(min <= room && w.width() <= room, "the Edit page fits the screen's width", __FILE__,
+                          __LINE__, QString("%1 (%2, %3 px screen): minimum %4, window %5 > %6").arg(c.name, label)
+                                        .arg(screenWidth).arg(min).arg(w.width()).arg(room));
         }
     }
     QSettings().remove("panels");
@@ -247,7 +264,9 @@ int main(int argc, char** argv)
     if (!CHECK(engine.init(&err))) return Check::result();
     testWindow(engine);
     testPaintBar(engine);
-    // WINDOW_FIT_LANG / WINDOW_FIT_PT: one language/font only (measuring); else de and en at the default font
+    // WINDOW_FIT_LANG / WINDOW_FIT_PT: one language/font only (measuring, 1024 px); else de and en at the default font
+    // on 1024 px, and Russian with a big font (15 pt, the user's real settings) on 1280 px - with the fonts here it
+    // fits 1024 px too (999 px under Xvfb, 1012 offscreen), other fonts (CI) may be wider
     QTemporaryDir dir;
     QString media;
     if (Check::haveFfmpeg())
@@ -267,6 +286,12 @@ int main(int argc, char** argv)
         testVgaEditPage(engine, media, "de");
         I18n::install("en");
         testVgaEditPage(engine, media, "en");
+        I18n::install("ru");
+        QFont big = font;
+        big.setPointSizeF(15);
+        QApplication::setFont(big);
+        testVgaEditPage(engine, media, "ru 15 pt", 1280);
+        QApplication::setFont(font);
     }
     return Check::result();
 }

@@ -435,6 +435,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     header->addWidget(m_listView);
     header->addWidget(m_sortBtn);
     header->addWidget(importBtn);
+    // The symbol buttons with narrow padding and the sort menu without its arrow (the symbol says it): the header
+    // decides the pool's minimum width, which counts for a 1024 px wide window with a long language or a big font
+    for (QToolButton* b : {m_searchBtn, m_thumbView, m_listView, m_sortBtn})
+        b->setStyleSheet("QToolButton { padding: 3px 3px; } QToolButton::menu-indicator { image: none; }");
 
     // Bin list on the left (Master on top, sub-bins indented)
     auto* bins = new BinTree;

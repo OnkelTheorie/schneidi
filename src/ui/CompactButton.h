@@ -2,8 +2,9 @@
 #pragma once
 #include <QToolButton>
 
-// A tool button with text that never holds its panel wide: given less room than its text needs, it shows a short form
-// (setCompactText, e.g. only the symbol of "▦ Media Pool" or "+" for "Import…"), without one the text ends in "…".
+// A tool button with text that never holds its panel wide: given less room than its text needs, the text ends in "…";
+// with a short form (setCompactText, e.g. only the symbol of "▦ Media Pool" or "+" for "Import…") that one is shown
+// once the elided text would keep only a few letters.
 // Its minimum width is that of the short form, its size hint that of the full text; the tooltip holds the full text
 // when the button has none of its own. For text-only and text-beside-icon buttons (the usual tool buttons).
 class CompactButton : public QToolButton {
