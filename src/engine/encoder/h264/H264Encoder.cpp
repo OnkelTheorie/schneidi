@@ -74,6 +74,9 @@ const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 
 // measurements only: H264_DBA / H264_DBB.
 const int gDeblockA = std::clamp(std::getenv("H264_DBA") ? std::atoi(std::getenv("H264_DBA")) : 0, -6, 6);
 const int gDeblockB = std::clamp(std::getenv("H264_DBB") ? std::atoi(std::getenv("H264_DBB")) : 0, -6, 6);
+// AQ texture measure (experiment, H264_AQEDGE): 0 = variance of the macroblock, 1 = mean of its
+// 8x8 quadrants' variances, 2 = mean of the two flattest quadrants.
+const int gAqEdge = std::getenv("H264_AQEDGE") ? std::atoi(std::getenv("H264_AQEDGE")) : 0;
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
@@ -6230,7 +6233,25 @@ void FrameCoder::planMacroblockQp()
                 }
             }
 #endif
-            const double variance = double(sq - sum * sum / 256);
+            double variance = double(sq - sum * sum / 256);
+            if (gAqEdge) {
+                // Experiment: texture measured inside the four 8x8 quadrants, so a step between two
+                // flat areas (a bright edge against dark water) does not count as busy texture.
+                double v[4];
+                for (int q = 0; q < 4; ++q) {
+                    int64_t qs = 0, qq = 0;
+                    for (int y = 0; y < 8; ++y) {
+                        const uint8_t* row = &srcY_[size_t(mby * 16 + (q >> 1) * 8 + y) * padW_ + mbx * 16 + (q & 1) * 8];
+                        for (int x = 0; x < 8; ++x) {
+                            qs += row[x];
+                            qq += row[x] * row[x];
+                        }
+                    }
+                    v[q] = 4.0 * double(qq - qs * qs / 64); // on the 256-pixel scale
+                }
+                std::sort(v, v + 4);
+                variance = gAqEdge == 1 ? (v[0] + v[1] + v[2] + v[3]) / 4 : (v[0] + v[1]) / 2;
+            }
             const double e = std::log2(variance + 1.0);
             mbEnergy_[size_t(mby) * mbW_ + mbx] = float(e);
             mean += e;
