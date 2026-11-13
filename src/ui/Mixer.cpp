@@ -11,6 +11,7 @@
 #include "core/Selection.h"
 #include "core/Loudness.h"
 #include "engine/Engine.h"
+#include "ui/CompactButton.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -774,7 +775,9 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_inputMeter = new InputMeter;
     m_inputMeter->hide();
     titleLay->addWidget(m_inputMeter);
-    m_record = new QToolButton;
+    auto* record = new CompactButton;
+    record->setCompactText("●"); // a narrow mixer: only the dot
+    m_record = record;
     m_record->setObjectName("voiceover_record");
     m_record->setText("● " + T("Voiceover"));
     m_record->setCheckable(true);
@@ -787,7 +790,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
                                      Theme::readableOn(Theme::recording).name()));
     m_record->setEnabled(false); // until a recorder is set
     // Voice cleaning for the whole voice track in one click: the armed track, else the target audio track
-    m_cleanVoice = new QToolButton;
+    m_cleanVoice = new CompactButton; // a narrow mixer: the text ends in "…"
     m_cleanVoice->setObjectName("clean_voice");
     m_cleanVoice->setText(T("Stimme säubern"));
     m_cleanVoice->setFocusPolicy(Qt::NoFocus);

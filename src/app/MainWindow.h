@@ -601,7 +601,7 @@ private:
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)
     QMenu* m_recentMenu = nullptr;
     QMenu* m_templateMenu = nullptr;
-    class QLabel* m_titleLabel = nullptr;
+    class ElidedLabel* m_titleLabel = nullptr; // project name in the top bar
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;
     int m_autosaveSlot = 0; // 0 = none assigned yet

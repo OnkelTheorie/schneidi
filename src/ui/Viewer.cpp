@@ -8,6 +8,7 @@
 #include "engine/PreviewResolution.h"
 #include "engine/ProxyManager.h"
 #include "engine/StillFetcher.h"
+#include "ui/CompactButton.h"
 #include "ui/TrimView.h"
 #include "ui/MediaPool.h"
 #include "ui/FrameView.h"
@@ -202,7 +203,8 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
 
     m_screen = new FrameView;
     m_screen->setObjectName("viewer_screen");
-    m_screen->setMinimumSize(320, 180);
+    // Small enough for the Edit page in a 1024 px wide window (with the Inspector and a left column beside it)
+    m_screen->setMinimumSize(240, 135);
     m_screen->installEventFilter(this); // resized / other screen: the automatic preview size follows
     m_edgeTimer = new QTimer(this);
     m_edgeTimer->setSingleShot(true);
@@ -241,13 +243,14 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         text->setWordWrap(true);
         text->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
         awayLay->addWidget(text);
-        auto* back = new QToolButton;
+        // Both buttons shorten ("…") rather than holding the viewer wide
+        auto* back = new CompactButton;
         back->setObjectName("viewer_program_back");
         back->setText(T("Vorschau zurückholen"));
         back->setFocusPolicy(Qt::NoFocus);
         connect(back, &QToolButton::clicked, this, &Viewer::programBackWanted);
         // Or give the area to the panels beside/below (Settings › General, the Workspace menu: the same choice)
-        auto* hideArea = new QToolButton;
+        auto* hideArea = new CompactButton;
         hideArea->setObjectName("viewer_program_hide_area");
         hideArea->setText(T("Fläche ausblenden"));
         hideArea->setToolTip(T("Die Vorschau-Fläche im Hauptfenster schließen, solange die Vorschau auf dem zweiten "
@@ -459,8 +462,8 @@ double Viewer::zoom() const
 
 void Viewer::addZoomActions(const QList<QAction*>& actions)
 {
-    // Menu button left of Before/After: shows the zoom, the menu holds the steps
-    auto* b = new QToolButton;
+    // Menu button left of Before/After: shows the zoom, the menu holds the steps; a narrow viewer shortens "Fit" with "…"
+    auto* b = new CompactButton;
     b->setObjectName("viewer_zoom");
     b->setPopupMode(QToolButton::InstantPopup);
     b->setAutoRaise(true);

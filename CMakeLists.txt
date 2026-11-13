@@ -417,6 +417,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
     src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
     src/ui/WheelGuard.h           src/ui/WheelGuard.cpp
+    src/ui/CompactButton.h        src/ui/CompactButton.cpp
     src/ui/ElidedLabel.h
     src/ui/SplitterMemory.h
     src/ui/FileManager.h          src/ui/FileManager.cpp

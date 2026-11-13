@@ -21,6 +21,7 @@
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
 #include "ui/ProxyProgress.h"
+#include "ui/CompactButton.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "ui/TimelineFormatDialog.h"
@@ -322,10 +323,13 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_sortKey = sort == "date" ? SortKey::Date : sort == "duration" ? SortKey::Duration : SortKey::Name;
     m_sortAscending = settings.value("mediaPool/sortAscending", true).toBool();
 
-    auto* title = new QLabel(T("Medienpool"));
+    // A narrow pool (1024 px wide window, a long language): the title ends in "…", the import button shows "+"
+    auto* title = new ElidedLabel;
+    title->setFullText(T("Medienpool"));
     title->setObjectName("PanelTitle");
-    auto* importBtn = new QToolButton;
+    auto* importBtn = new CompactButton;
     importBtn->setText(T("Importieren…"));
+    importBtn->setCompactText("+");
     connect(importBtn, &QToolButton::clicked, this, &MediaPool::importDialog);
 
     // View like DaVinci at the top right of the Media Pool: icon/list view, sorting

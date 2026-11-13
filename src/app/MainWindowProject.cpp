@@ -36,6 +36,7 @@
 #include "engine/RenderCache.h"
 #include "ui/TrustDialog.h"
 #include "ui/DeliverPanel.h"
+#include "ui/ElidedLabel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
@@ -144,7 +145,7 @@ void MainWindow::updateTitle()
     const QString name = m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName();
     const QString shown = name + (m_project->isModified() ? " *" : "");
     setWindowTitle(shown + " – " + appName());
-    if (m_titleLabel) m_titleLabel->setText(shown);
+    if (m_titleLabel) m_titleLabel->setFullText(shown);
 }
 
 void MainWindow::setProjectPath(const QString& path)
