@@ -325,6 +325,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/RegionPick.h       src/engine/RegionPick.cpp
     src/engine/TextRegions.h      src/engine/TextRegions.cpp
     src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
+    src/engine/KillFeedLines.h    src/engine/KillFeedLines.cpp
     src/engine/BarDetect.h        src/engine/BarDetect.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp

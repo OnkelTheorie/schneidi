@@ -441,9 +441,10 @@ private:
     void reframedCopy(int sequenceId);
     // What a reframe from the app keeps above the picture (menu switch "reframe/keepKillFeed", default on)
     Reframe::KeepChoice reframeKeepChoice() const;
-    // Measures the clips with a progress dialog (window modal); false = cancelled
+    // Measures the clips with a progress dialog (window modal); false = cancelled. feeds: the kill feed lines of the
+    // clips a reframe keeps a kill feed of (engine/KillFeedLines)
     bool measureReframe(const QVector<Clip>& clips, const ProjectFormat& format, QHash<int, QVector<Reframe::Key>>* paths,
-                        QHash<QString, QRectF>* contents = nullptr);
+                        QHash<QString, QRectF>* contents = nullptr, QHash<int, Reframe::Feed>* feeds = nullptr);
     // Clip menu: crop the black bars baked into the selected clips (engine/BarDetect), show them as stretched 4:3
     void cropBlackBars();
     void setStretched43(bool on);

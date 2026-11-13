@@ -29,6 +29,13 @@ struct Game {
     // How far left a framed line can reach (long names, an assist: "A + B  weapon  C"), part of the width: the names'
     // team colours are read up to there (a teamkill: the victim in the player's own team colour)
     double frameLeft = 0;
+    // Every line of the feed (the player's and everyone else's): a box of `lineHeight` (part of the picture height)
+    // whose right edge is at `frameRight`, the first one's top between `firstLineMin` and `firstLineMax` (HUD layouts
+    // differ), the next ones `linePitch` below each other. 0 = not known: the kept kill feed stays a fixed region.
+    // Read by engine/KillFeedLines, so the kept copy in a short shows only the lines that are there.
+    double lineHeight = 0;
+    double linePitch = 0;
+    double firstLineMin = 0, firstLineMax = 0;
 };
 
 const QVector<Game>& games();

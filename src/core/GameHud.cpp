@@ -18,10 +18,12 @@ const QVector<Game>& games()
     // its bottom; red signs and the hit tint behind do not count there). Shown in a short: x from 0.78 (long names
     // reach 0.81), five lines (the fifth ends at y 241 = 0.223; the text is a little smaller than with four).
     // A line with an assist and two long names starts at about x 0.8 (1585); read from 0.55 for longer names.
+    // Every line (not only the player's) is a dark, semi-transparent box (red for the player's own death) 31 px
+    // tall, its right edge at 1909, lines 33-34 px apart; over a black picture (the death screen) only the text shows.
     // Valorant: the player's lines carry a yellow mark at their left.
     static const QVector<Game> list{
         {"cs2", "Counter-Strike 2", QRectF(0.88, 0.06, 0.115, 0.19), "#d8444a", 40, QRectF(0.78, 0.06, 0.22, 0.172),
-         QRectF(0.88, 0.06, 0.115, 0.34), 30.0 / 1080, 1908.5 / 1920, 0.55},
+         QRectF(0.88, 0.06, 0.115, 0.34), 30.0 / 1080, 1908.5 / 1920, 0.55, 31.0 / 1080, 33.5 / 1080, 0.06, 0.095},
         {"valorant", "Valorant", QRectF(0.70, 0.04, 0.22, 0.23), "#e7e371", 0, QRectF(0.70, 0.04, 0.295, 0.24)},
     };
     return list;
