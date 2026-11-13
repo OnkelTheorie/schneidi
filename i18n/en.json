@@ -3133,7 +3133,6 @@
  "%1 Striche": "%1 strokes",
  "1 Strich": "1 stroke",
  "Aufmalen": "Draw on",
- "Breite neuer Striche (Pixel der Timeline)": "Width of new strokes (timeline pixels)",
  "Deckkraft neuer Striche": "Opacity of new strokes",
  "Die Zeichnung bewegt sich mit einem Tracker eines Clips (Seite Compositing)": "The drawing moves with a clip's tracker (Compositing page)",
  "Entfernt alle Striche der Zeichnung": "Removes all strokes of the drawing",
@@ -3157,5 +3156,12 @@
  "Die Spur der Zeichnung ist gesperrt": "The drawing's track is locked",
  "Der Kontext des Modells ist knapp: es nimmt %1 Token, die Anfrage hat schon etwa %2. Für mehrere Schritte mit Werkzeugen in den Einstellungen des KI-Servers die Kontextlänge auf mindestens %3 Token stellen, besser %4 – bis dahin lässt schneidi ältere Ergebnisse der Werkzeuge weg.": "The model's context is tight: it takes %1 tokens, the request already has about %2. For several steps with tools, set the context length to at least %3 tokens in the AI server's settings, better %4 – until then schneidi leaves out older tool results.",
  "Ältere Ergebnisse der Werkzeuge wurden aus dem Chat genommen, damit die Anfrage in den Kontext des Modells passt. Die KI kann sie bei Bedarf neu abfragen.": "Older tool results were taken out of the chat so the request fits the model's context. The AI can ask for them again if needed.",
- "Die KI fragt immer wieder Ergebnisse ab, die nicht mehr in den Kontext des Modells passen – angehalten. Mehr Kontext in den Einstellungen des KI-Servers (mindestens %1 Token) oder ein „Neuer Chat“ hilft.": "The AI keeps asking for results that no longer fit the model's context – stopped. More context in the AI server's settings (at least %1 tokens) or a “New Chat” helps."
+ "Die KI fragt immer wieder Ergebnisse ab, die nicht mehr in den Kontext des Modells passen – angehalten. Mehr Kontext in den Einstellungen des KI-Servers (mindestens %1 Token) oder ein „Neuer Chat“ hilft.": "The AI keeps asking for results that no longer fit the model's context – stopped. More context in the AI server's settings (at least %1 tokens) or a “New Chat” helps.",
+ "Breite neuer Striche in Pixeln des Timeline-Bilds": "Width of new strokes in pixels of the timeline frame",
+ "Die Form ist unsichtbar: keine Füllung und kein Rand. Wähle eine Füllung oder schalte die Umrandung ein.": "The shape is invisible: no fill and no stroke. Choose a fill or turn on the outline.",
+ "Form bearbeiten…": "Edit shape…",
+ "Form…": "Shape…",
+ "Füllfarbe": "Fill color",
+ "Malen geht nur auf der Timeline": "Painting only works on the timeline",
+ "Schneidet das Bild als Kreis, Rechteck, Stern … aus (Effekt „Clip in Form“, z. B. Facecam als Kreis); die Werte stehen dann unter Effekte": "Cuts the picture out as a circle, rectangle, star … (effect “Clip in Shape”, e.g. a face cam as a circle); its values are then under Effects"
 }
