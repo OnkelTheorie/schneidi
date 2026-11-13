@@ -298,6 +298,7 @@ struct ExportWriter::Impl {
 
     // Smart render
     bool smart = false;
+    bool sampleEntries = false; // smart render: each piece's parameter sets as a sample entry (newSampleEntry)
     int soundNext = 0; // fetch thread: output frame whose sound comes next
     AVCodecID codecId = AV_CODEC_ID_NONE;
     std::atomic<int> copied{0};
@@ -1552,9 +1553,13 @@ struct ExportWriter::Impl {
         if (std::strcmp(oc->oformat->name, "mp4") == 0)
             av_dict_set(&options, "movflags", "+negative_cts_offsets", AV_DICT_APPEND);
         // HEVC in MP4/MOV as 'hvc1' instead of FFmpeg's default 'hev1': Apple players (QuickTime, Safari, iPhone) play
-        // no 'hev1'. Smart render's in-band parameter sets per piece then work as they do in H.264's 'avc1'.
+        // no 'hev1'. Smart render: in-band parameter sets per piece (FFmpeg 7 keeps them) and a sample entry per
+        // distinct set (FFmpeg 8+ drops them from 'hvc1' samples, newSampleEntry).
         const bool mov = std::strcmp(oc->oformat->name, "mp4") == 0 || std::strcmp(oc->oformat->name, "mov") == 0;
-        if (mov && vst && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+        if (mov && vst && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) {
+            vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+            sampleEntries = smart;
+        }
         r = avformat_write_header(oc, &options);
         av_dict_free(&options);
         if (r < 0) {
@@ -1671,6 +1676,7 @@ struct ExportWriter::Impl {
             }
             std::memmove(p->data + extra, p->data, size_t(size));
             std::memcpy(p->data, pieceHeader.data(), size_t(extra));
+            if (!newSampleEntry(p, pieceHeader.data(), extra)) return false;
         }
         p->dts = videoPackets - kDelay;
         if (p->pts == AV_NOPTS_VALUE || p->dts > p->pts) {
@@ -1688,6 +1694,25 @@ struct ExportWriter::Impl {
             smartBroke = true;
             return false;
         }
+        return true;
+    }
+
+    // Smart render, HEVC in MP4/MOV ('hvc1'): the parameter sets of the piece that starts with packet p as a sample
+    // entry of its own. FFmpeg 8+ keeps 'hvc1' to the spec there and drops parameter sets from the samples, the
+    // decoder then took every piece with the stream's first ones: copied GOPs came out in decode order (the encoded
+    // piece's sps_max_num_reorder_pics 0) and with wrong pictures. The muxer starts a new sample description for each
+    // distinct set (an equal one is reused), the demuxer hands it to the decoder on the switch. FFmpeg 7 ignores the
+    // side data and keeps the in-band parameter sets (as before).
+    bool newSampleEntry(AVPacket* p, const uint8_t* params, int size)
+    {
+        if (!sampleEntries || size <= 0) return true;
+        uint8_t* side = av_packet_new_side_data(p, AV_PKT_DATA_NEW_EXTRADATA, size_t(size));
+        if (!side) {
+            fail(QStringLiteral("out of memory"));
+            smartBroke = true;
+            return false;
+        }
+        std::memcpy(side, params, size_t(size));
         return true;
     }
 
@@ -1845,6 +1870,8 @@ struct ExportWriter::Impl {
             if (!item.packets.empty()) { // copied GOP
                 pieceFed = false;
                 bool ok = finishPiece();
+                if (ok && item.params)
+                    ok = newSampleEntry(item.packets.front(), item.params->extradata, item.params->extradata_size);
                 for (AVPacket* q : item.packets)
                     if (ok) ok = writeVideo(q, false);
                 freeItem(item);
