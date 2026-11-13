@@ -102,66 +102,91 @@
 
 void MainWindow::buildLayout()
 {
-    m_mediaPool = new MediaPool(m_project, m_engine);
-    m_mediaPool->setProbeCache(&m_probeCache); // a dropped file: the drop preview's probe, not a second one
-    connect(m_mediaPool, &MediaPool::probingChanged, this, &MainWindow::updateLiveWaiting);
-    StartupTrace::mark("ctor MediaPool");
-    m_effects = new EffectsLibrary;
-    StartupTrace::mark("ctor EffectsLibrary");
-    m_storage = new MediaStorage;
-    StartupTrace::mark("ctor MediaStorage");
-    m_viewer = new Viewer(m_engine);
-    StartupTrace::mark("ctor Viewer");
-    m_multicam = new MulticamView(m_project, m_selection, m_editor);
-    StartupTrace::mark("ctor MulticamView");
-    m_viewer->setMulticamView(m_multicam);
-    m_inspector = new Inspector(m_editor);
-    StartupTrace::mark("ctor Inspector");
-    m_inspector->setFrameSize(m_project->timelineFormat().size());
-    m_timeline = new TimelinePanel(m_editor);
-    StartupTrace::mark("ctor TimelinePanel");
-    m_deliver = new DeliverPanel(m_project);
-    StartupTrace::mark("ctor DeliverPanel");
-    m_mixer = new Mixer(m_project, m_engine);
-    StartupTrace::mark("ctor Mixer");
-    m_mixer->setEditor(m_editor);
-    m_mixer->hide();
-    m_transcript = new TranscriptPanel(m_project, m_editor);
-    StartupTrace::mark("ctor TranscriptPanel");
-
-    StartupTrace::mark("layout panels done");
+    // The skeleton first, already in the window: root, the chat splitter, the pages and their splitters. The panels are
+    // then built straight into the place they take on the Edit page (the usual start page; showPage only orders them
+    // there). Every move of a built widget tree into another parent re-applies the app style sheet to all of its
+    // widgets (scroll areas lay their content out again): built bottom-up and hung in at the end, the whole tree did
+    // that several times (the Inspector alone ~60 ms at the start). The empty splitters are still made as top-level
+    // widgets and hung in (cheap): their first geometry (640x480) is what the first sizes are computed in before the
+    // window shows (updateRightColumn takes editMain's) - children of the window started at 100x30 and split otherwise
+    auto* root = new QWidget;
+    root->setObjectName("Root");
+    auto* lay = new QVBoxLayout(root);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
+    setCentralWidget(root);
+    m_chatSplit = new QSplitter(Qt::Horizontal, root);
+    m_chatSplit->setObjectName("aiChatSplit");
+    lay->addWidget(m_chatSplit, 1);
+    m_pages = new QStackedWidget(m_chatSplit);
+    m_chatSplit->addWidget(m_pages);
     // Pages; the shared panels (pool, viewer, timeline) move along when switching
+    // Media page like DaVinci: Media Storage | Viewer on top, the Media Pool below
+    m_mediaPage = new QSplitter(Qt::Vertical);
+    m_pages->addWidget(m_mediaPage);
+    m_mediaTop = new QSplitter(Qt::Horizontal);
+    m_mediaPage->addWidget(m_mediaTop);
     m_editTop = new QSplitter(Qt::Horizontal);
-    m_editLeft = new QSplitter(Qt::Vertical);
+    m_editLeft = new QSplitter(Qt::Vertical, m_editTop);
     m_editLeft->setObjectName("editLeft");
-    m_editLeft->addWidget(m_effects);
+    m_editTop->addWidget(m_editLeft);
     m_editMain = new QSplitter(Qt::Vertical);
     m_editMain->addWidget(m_editTop);
     // The mixer on the right below the Inspector, in a column of its own: the handle above the timeline moves only the
     // timeline, the mixer keeps its height (and the Inspector comes down to it)
     m_editRight = new QSplitter(Qt::Vertical);
-    m_editRight->addWidget(m_mixer);
     m_editRight->hide();
     m_editRow = new QSplitter(Qt::Horizontal);
     m_editRow->addWidget(m_editMain);
     m_editRow->addWidget(m_editRight);
     m_editRow->setStretchFactor(0, 1);
+    m_pages->addWidget(m_editRow);
+    m_deliverPage = new QSplitter(Qt::Horizontal);
+    m_pages->addWidget(m_deliverPage);
+    StartupTrace::mark("  skeleton");
+
+    m_mediaPool = new MediaPool(m_project, m_engine, m_editLeft);
+    m_mediaPool->setProbeCache(&m_probeCache); // a dropped file: the drop preview's probe, not a second one
+    connect(m_mediaPool, &MediaPool::probingChanged, this, &MainWindow::updateLiveWaiting);
+    StartupTrace::mark("ctor MediaPool");
+    m_effects = new EffectsLibrary(m_editLeft); // below Media Storage / Media Pool: showPage puts those first
+    StartupTrace::mark("ctor EffectsLibrary");
+    m_storage = new MediaStorage(m_editLeft);
+    StartupTrace::mark("ctor MediaStorage");
+    m_viewer = new Viewer(m_engine, m_editTop);
+    StartupTrace::mark("ctor Viewer");
+    m_multicam = new MulticamView(m_project, m_selection, m_editor);
+    StartupTrace::mark("ctor MulticamView");
+    m_viewer->setMulticamView(m_multicam);
+    // The Inspector right in its place: the mixer column (saved setting, as the toggle reads it), else the top row. Moved
+    // there later it took ~60 ms (updateRightColumn sizes the column as before: the slot keeps the row's sizes)
+    QSplitter* const inspectorAt = QSettings().value("panels/mixer", false).toBool() ? m_editRight : m_editTop;
+    m_inspector = new Inspector(m_editor, inspectorAt);
+    inspectorAt->addWidget(m_inspector);
+    StartupTrace::mark("ctor Inspector");
+    m_inspector->setFrameSize(m_project->timelineFormat().size());
+    m_timeline = new TimelinePanel(m_editor, m_editMain);
+    m_editMain->addWidget(m_timeline);
+    StartupTrace::mark("ctor TimelinePanel");
+    m_deliver = new DeliverPanel(m_project, m_deliverPage);
+    StartupTrace::mark("ctor DeliverPanel");
+    // The mixer without a parent, hung in once (cheap): built in the column, its size hints at the column's first
+    // sizing (updateRightColumn) were others and the column split differently (Inspector 10 px lower)
+    m_mixer = new Mixer(m_project, m_engine);
+    m_mixer->hide();
+    m_editRight->addWidget(m_mixer); // below the Inspector
+    StartupTrace::mark("ctor Mixer");
+    m_mixer->setEditor(m_editor);
+    m_transcript = new TranscriptPanel(m_project, m_editor, m_editTop);
+    StartupTrace::mark("ctor TranscriptPanel");
+
+    StartupTrace::mark("layout panels done");
     m_inspectorSlot = new QWidget(this); // not in any layout while unused
     m_inspectorSlot->hide();
-    // Media page like DaVinci: Media Storage | Viewer on top, the Media Pool below
-    m_mediaPage = new QSplitter(Qt::Vertical);
-    m_mediaTop = new QSplitter(Qt::Horizontal);
-    m_mediaPage->addWidget(m_mediaTop);
-    m_deliverPage = new QSplitter(Qt::Horizontal);
     m_deliverRight = new QSplitter(Qt::Vertical);
     m_deliverPage->addWidget(m_deliver);
     m_deliverPage->addWidget(m_deliverRight);
     m_deliverPage->addWidget(m_deliver->queuePanel()); // Render queue on the right like in DaVinci
-
-    m_pages = new QStackedWidget;
-    m_pages->addWidget(m_mediaPage);
-    m_pages->addWidget(m_editRow);
-    m_pages->addWidget(m_deliverPage);
     const QPair<QSplitter*, const char*> splitters[] = {
         {m_editTop, "editTop"},         {m_editMain, "editMain"},     {m_editLeft, "editLeft"},
         {m_editRow, "editRow"},         {m_editRight, "editRight"},   {m_mediaPage, "mediaPage"},   {m_mediaTop, "mediaTop"},
@@ -174,18 +199,11 @@ void MainWindow::buildLayout()
     buildChat();
     StartupTrace::mark("  buildChat");
 
-    auto* root = new QWidget;
-    root->setObjectName("Root");
-    auto* lay = new QVBoxLayout(root);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(0);
-    lay->addWidget(buildTopBar());
+    lay->insertWidget(0, buildTopBar());
     StartupTrace::mark("  topbar");
-    lay->addWidget(buildUpdateBar());
-    lay->addWidget(m_chatSplit, 1);
+    lay->insertWidget(1, buildUpdateBar());
     lay->addWidget(buildPageBar());
     StartupTrace::mark("  pagebar");
-    setCentralWidget(root);
     // The status bar's messages show in the page bar (one compact row at the bottom, the room goes to the pages):
     // the QStatusBar itself stays hidden, every statusBar()->showMessage() lands there through messageChanged
     statusBar()->hide();
@@ -452,8 +470,8 @@ void MainWindow::showPage(Page page)
         m_editTop->insertWidget(2, m_transcript);
         if (m_editTop->indexOf(m_inspector) < 0 && m_editTop->indexOf(m_inspectorSlot) < 0) {
             // First placement (else it is there, or its slot: updateRightColumn). With the mixer column the slot
-            // goes here and the Inspector straight into the column: every move of the Inspector re-applies the
-            // style sheet to its whole widget tree (~150 ms at the start)
+            // goes here and the Inspector stays in the column it was built in (buildLayout): every move of the
+            // Inspector re-applies the style sheet to its whole widget tree (~60-150 ms at the start)
             if (m_mixerToggle && m_mixerToggle->isChecked()) {
                 m_inspectorSlot->setVisible(true); // takes the Inspector's size below, hidden again in the column swap
                 m_editTop->insertWidget(3, m_inspectorSlot);
@@ -753,7 +771,9 @@ void MainWindow::updateRightColumn()
 {
     // The Inspector's place in the top row stays (its slot), so the row keeps its saved sizes either way
     const bool column = m_mixerToggle && m_mixerToggle->isChecked();
-    if (column == (m_inspector->parentWidget() == m_editRight)) {
+    // In place: in the column (built there at the start: the slot holds its first place in the row, the column still
+    // gets its sizes below) or in the row
+    if (column == (m_inspector->parentWidget() == m_editRight) && m_inspectorSlot->isHidden()) {
         m_editRight->setVisible(column);
         return;
     }
