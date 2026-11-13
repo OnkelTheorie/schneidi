@@ -426,6 +426,8 @@ add_executable(bench_multicam bench_multicam.cpp)
 target_link_libraries(bench_multicam PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_probe bench_probe.cpp)
 target_link_libraries(bench_probe PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_shape bench_shape.cpp)
+target_link_libraries(bench_shape PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_compose bench_compose.cpp)
 target_link_libraries(bench_compose PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_export bench_export.cpp)
@@ -566,5 +568,6 @@ endforeach()
 
 schneidi_test(test_shapes) # shapes (0.22): shape titles per kind, stroke reveal, keyframes, file, blur/pixelate/spotlight below, clip_shape, tracker follow, CLI ops, check
 target_link_libraries(test_shapes PRIVATE schneidi_cli_lib)
+schneidi_test(test_idle_render) # the app at rest renders nothing: a blur shape selected in the Inspector, after an edit no repaint loop (frames, CPU)
 schneidi_test(test_drawing) # drawings (0.22): strokes at known pixels, reveal timing, file, smoothing, painting (undo per stroke, eraser, box), tracker follow, CLI op draw, check, Inspector
 target_link_libraries(test_drawing PRIVATE schneidi_cli_lib)
