@@ -112,6 +112,14 @@ thread_local PsyMb tPsy;
 // exceeds a few bits changes nothing (it nearly always does); coding both transform sizes for real
 // instead of by estimate brings nothing on top. H264_PSYQ overrides (0 = no such candidate).
 const double gPsyFine = std::getenv("H264_PSYQ") ? std::atof(std::getenv("H264_PSYQ")) : 0.25;
+// The same for intra macroblocks, whose quantisation rounds down below 2/3 of a step: the chosen
+// type once more rounding to nearest (tIntraFine: offset gPsyIntraRound instead of 1/3), and the
+// psy cost decides. Measured as above with psyRd 1.0: intra pictures only +4.8..5.5 points of AC
+// energy / +12..13 of high-frequency energy / -0.15..-0.19 dB on top of the mode decision (offset
+// 0.42: +2.7..2.9 / +6.5..7.0 / +0.04..+0.06); a GOP of 60 pictures +0.4..0.9 / +0.5..1.9 / 0.00.
+// H264_PSYIQ overrides (0 = no such candidate).
+const double gPsyIntraRound = std::getenv("H264_PSYIQ") ? std::atof(std::getenv("H264_PSYIQ")) : 0.5;
+thread_local bool tIntraFine = false;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -2960,7 +2968,7 @@ bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     }
 
     const int qbits = 15 + qpDiv;
-    const int intraOffset = (1 << qbits) / 3;
+    const int intraOffset = tIntraFine ? int((1 << qbits) * gPsyIntraRound) : (1 << qbits) / 3;
     int dcIn[16], dcT[16], dcLevel[16];
     for (int b = 0; b < 16; ++b)
         dcIn[b] = coef[b][0];
@@ -3037,7 +3045,7 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
     const int qp = mbQp_[size_t(mby) * mbW_ + mbx];
     const int qpDiv = qp / 6, qpMod = qp % 6;
     const int qbits = 15 + qpDiv;
-    const int intraOffset = (1 << qbits) / 3;
+    const int intraOffset = tIntraFine ? int((1 << qbits) * gPsyIntraRound) : (1 << qbits) / 3;
     const int lw = mbW_ * 4;
     // SATD-domain lambda for the mode decision.
     const int lambda = std::max(1, int(0.9 * std::pow(2.0, (qp - 12) / 6.0) + 0.5));
@@ -3276,6 +3284,9 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
     };
 
     const double lambda = 0.85 * std::pow(2.0, (mbQp_[size_t(mby) * mbW_ + mbx] - 12) / 3.0);
+    int picked = -1; // 0 Intra 16x16, 1 Intra 4x4, 2 Intra 8x8
+    double pickedCost = 0;
+    const auto pick = [&]() -> bool {
     if (tIntraEst16 >= 0 && gIntraSel > 0) {
         // SATD pre-selection: Intra 4x4 and 8x8 are analysed block by block (and given up once
         // clearly worse than the best so far or than inter); full RD (and the Intra 16x16 coding)
@@ -3327,14 +3338,20 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
         if (costC < costA && costC < costB) {
             restore(snapC);
             out = std::move(c);
+            picked = 2;
+            pickedCost = costC;
             return deltaC;
         }
         if (costB <= costA) {
             restore(snapB);
             out = std::move(b);
+            picked = 1;
+            pickedCost = costB;
             return deltaB;
         }
         out = std::move(a); // state is the Intra 16x16 one (coded last)
+        picked = 0;
+        pickedCost = costA;
         return deltaA;
     }
     MbOut a, b;
@@ -3356,21 +3373,49 @@ bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
         const double costC = ssd() + lambda * mbBits(c, mbx, mby, 0.0);
         if (costC < costA && costC < costB) {
             out = std::move(c);
+            picked = 2;
+            pickedCost = costC;
             return deltaC;
         }
         if (costB <= costA) {
             restore(snapB);
             out = std::move(b);
+            picked = 1;
+            pickedCost = costB;
             return deltaB;
         }
     }
     if (costA <= costB) {
         restore(snapA);
         out = std::move(a);
+        picked = 0;
+        pickedCost = costA;
         return deltaA;
     }
     out = std::move(b);
+    picked = 1;
+    pickedCost = costB;
     return deltaB;
+    };
+    bool delta = pick();
+    // Psy: the chosen type once more with the quantisation rounding to nearest (see gPsyIntraRound).
+    if (tPsy.weight > 0 && gPsyIntraRound > 0 && picked >= 0) {
+        Snapshot keep;
+        save(keep);
+        MbOut fine;
+        tIntraFine = true;
+        const bool fineDelta = picked == 0 ? encodeLuma16(fine, mbx, mby, ch) : picked == 1 ? encodeLuma4(fine, mbx, mby, ch)
+                                                                                           : encodeLuma8(fine, mbx, mby, ch);
+        tIntraFine = false;
+        const double costFine = ssd() + lambda * mbBits(fine, mbx, mby, picked == 2 ? 0.0 : double(fine.bw.bitCount()));
+        if (costFine < pickedCost) {
+            out = std::move(fine);
+            delta = fineDelta;
+        } else {
+            restore(keep);
+        }
+    }
+    return delta;
 }
 
 
@@ -3702,7 +3747,7 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
         for (int y = 0; y < 8; ++y)
             for (int x = 0; x < 8; ++x)
                 res[y * 8 + x] = int(srcY_[size_t(py + y) * padW_ + px + x]) - int(pred[y * 8 + x]);
-        quantize8x8(res, qp, 1.0 / 3.0, levels);
+        quantize8x8(res, qp, tIntraFine ? gPsyIntraRound : 1.0 / 3.0, levels);
         int count = 0;
         for (int k = 0; k < 64; ++k) {
             count += levels[k] != 0;
