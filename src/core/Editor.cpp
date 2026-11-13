@@ -11,6 +11,7 @@
 #include "core/Retime.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
@@ -225,6 +226,13 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         c.title.outlineOn = true;
         c.title.outlineWidth = std::round(c.title.size / 20);
         c.title.numbers = Generators::numberStyleOfLanguage(); // stored: renders the same on every machine
+    } else if (kind == TitleKind::Shape) {
+        // A circle a quarter of the picture high in the middle, white without a stroke; no text (an older version
+        // reads it as an empty text title: it draws nothing)
+        c.title.text.clear();
+        c.title.shape.width = c.title.shape.height = std::round(std::min(fmt.width, fmt.height) / 4.0);
+        c.title.outlineWidth = std::max(2.0, std::round(std::min(fmt.width, fmt.height) / 180.0));
+        c.title.outlineColor = QColor(255, 214, 0);
     } else if (kind == TitleKind::Progress) {
         // Along the whole timeline unless placed with a length; top edge: the apps cover the bottom of a vertical video
         c.title.text.clear();
@@ -1016,9 +1024,11 @@ void Editor::paste(int frame)
     QSet<int> pasted;
     p->edit(T("Einfügen"), [&](Timeline& tl) {
         QHash<int, int> linkMap; // copy gets its own link
+        QHash<int, int> idMap;   // old -> new (a shape following a clip pasted with it follows the copy)
         for (const auto& it : items) {
             Clip c = it.clip;
             c.id = p->newClipId();
+            idMap.insert(it.clip.id, c.id);
             c.start += frame;
             if (c.linkId) {
                 if (!linkMap.contains(c.linkId)) linkMap[c.linkId] = p->newLinkId();
@@ -1028,6 +1038,7 @@ void Editor::paste(int frame)
             TimelineOps::placeClip(tl.track(it.ref), c, [p] { return p->newClipId(); }, tl.frameRate);
             pasted.insert(c.id);
         }
+        Shapes::remapFollow(tl, idMap);
     });
     m_selection->set(pasted);
 }

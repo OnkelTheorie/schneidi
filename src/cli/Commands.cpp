@@ -517,7 +517,10 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     const ProjectFormat& f = p.format();
     QJsonObject o{{"id", c.id}, {"track", trackName(ref)}, {"name", p.clipName(c)},
                   {"start", c.start}, {"end", c.end()}, {"start_tc", tc(c.start, f)}, {"end_tc", tc(c.end(), f)}};
-    if (c.isTitle()) {
+    if (c.isTitle() && c.title.isShape()) {
+        o["kind"] = "shape"; // op 'shape' takes these fields
+        o["shape"] = shapeJson(c.title);
+    } else if (c.isTitle()) {
         o["kind"] = "title";
         o["text"] = c.title.text;
         o["style"] = titleStyleJson(c.title, TitleStyle{});

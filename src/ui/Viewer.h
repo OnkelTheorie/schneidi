@@ -59,6 +59,7 @@ public:
 
     // On-screen controls over the picture (Color page windows); nullptr = none
     void setOverlay(class ViewerOverlay* overlay);
+    bool showsSource() const { return !m_sourcePath.isEmpty(); } // a Media Pool clip, not the timeline
     ViewerOverlay* overlay() const;
 
     // Hint bar above the picture (playback too slow: offer proxy media) with an optional button and a close button;

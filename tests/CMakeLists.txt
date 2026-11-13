@@ -568,3 +568,5 @@ endforeach()
 # (Debian 13 desktop, Noto). Another font set (the CI container) is a pixel or two wider without a bug, so CI skips them
 # (ctest -LE font_calibrated); the full local suite runs them.
 set_tests_properties(test_inspector_layout test_window_space PROPERTIES LABELS font_calibrated)
+schneidi_test(test_shapes) # shapes (0.22): shape titles per kind, stroke reveal, keyframes, file, blur/pixelate/spotlight below, clip_shape, tracker follow, CLI ops, check
+target_link_libraries(test_shapes PRIVATE schneidi_cli_lib)

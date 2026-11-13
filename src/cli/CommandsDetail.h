@@ -176,6 +176,13 @@ void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
 void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
 // Compositing graph (0.19, EditOpsComp.cpp): ops comp, comp_from, node, track_node
 void addCompOps(QVector<OpDef>& ops);
+// Shapes (0.22, EditOpsShape.cpp): ops shape, clip_shape; a shape title as `info` shows it
+void addShapeOps(QVector<OpDef>& ops);
+// A title or shape placed on a track (EditOpsEdit.cpp): the clips [from, to) of video track `track` overlapped before,
+// and the notes saying what happened to them
+QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to);
+void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before);
+QJsonObject shapeJson(const TitleStyle& t);
 // AI cutout (0.19, EditOpsCutout.cpp): op cutout_node
 void addCutoutOps(QVector<OpDef>& ops);
 // `effects kind:'nodes'`: every node kind with inputs, output and parameters (key, type, default, range, choices)

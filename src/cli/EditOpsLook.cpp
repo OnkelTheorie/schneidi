@@ -48,6 +48,8 @@ constexpr NamedParam kNamed[] = {
     {"title_size", AnimParam::TitleSize},   {"title_x", AnimParam::TitlePosX},
     {"title_y", AnimParam::TitlePosY},      {"title_color", AnimParam::TitleColor},
     {"volume", AnimParam::Volume},          {"pan", AnimParam::Pan},
+    {"shape_width", AnimParam::ShapeWidth}, {"shape_height", AnimParam::ShapeHeight},
+    {"shape_rotation", AnimParam::ShapeRotation}, {"shape_reveal", AnimParam::ShapeReveal},
 };
 
 constexpr const char* kEaseNames[] = {"linear", "ease_in", "ease_out", "ease_in_out", "bezier"};
@@ -1087,7 +1089,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "animate a value",
                  "param: zoom (zoom_x and zoom_y together; `info` shows them as zoom while they match), zoom_x, "
                  "zoom_y, x, y, rotation, tilt_x, tilt_y, fov, crop_left, crop_right, crop_top, crop_bottom, opacity, "
-                 "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
+                 "title_size, title_x, title_y, title_color (\"#rrggbb\"; a shape: its fill), shape_width, shape_height, "
+                 "shape_rotation, shape_reveal (0..100, the stroke drawing itself), volume (dB, audio clips), pan (-100..100, "
                  "audio clips) or an effect parameter \"<effect>.<key>\" (keys: `effects <id>`; grade values: "
                  "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip (its end counts as "
                  "its last frame; outside is an error - with several clips, ones no time falls in are left alone), or "

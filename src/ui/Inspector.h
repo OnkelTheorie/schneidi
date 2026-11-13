@@ -144,6 +144,9 @@ private:
     // Section "Placeholder" of a template clip of `kind` (InspectorSlot.cpp): only shown for a placeholder
     void buildSlotSection(QVBoxLayout* page, TrackKind kind);
     void buildGeneratorSections(QVBoxLayout* page, const Section& outline);
+    // Shape title (0.22): kind, size, fill, spotlight, stroke reveal, tracker; showFor = shown for shapes only
+    void buildShapeSection(QVBoxLayout* page,
+                           const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor);
     // Fill, 2.5D edge, shadow, glow of a text/counter title (TitleLook, 0.19)
     void buildLookSections(QVBoxLayout* page);
     void buildTransitionPage(QVBoxLayout* page);

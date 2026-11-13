@@ -5,6 +5,8 @@
 
 #include "app/Theme.h"
 #include "core/BrandKit.h"
+#include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
@@ -187,6 +189,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     txt.grid->addWidget(rowLabel(T("Stil")), txt.rows, 0);
     txt.grid->addLayout(styleBox, txt.rows++, 1, 1, 3); // no reset or keyframes: the whole row
 
+    const int posRow = txt.rows;
     addXY(txt, "titlePos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
           [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
     // A progress bar has no font, size, style or position (its place is the edge): only its colour stays here
@@ -230,9 +233,23 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
                      [](Clip& c) -> double& { return c.title.boxPad; }),
            "titleBoxPad", T("Hintergrund"), boxOn);
     const QVector<QWidget*> textOnly = textRows + rowWidgets(box.grid, padRow, box.rows);
-    m_refreshers << [textOnly, current] {
-        if (const Clip* c = current())
+    // A shape has no letters (font, size, style; its size is in the section "Form") and no box, but a position
+    const QVector<QWidget*> letters = rowWidgets(txt.grid, fontRow, colorRow) + rowWidgets(txt.grid, styleRow, posRow)
+                                      + rowWidgets(box.grid, padRow, box.rows);
+    m_refreshers << [textOnly, letters, current] {
+        if (const Clip* c = current()) {
             for (QWidget* w : textOnly) w->setVisible(!c->title.isProgress());
+            if (c->title.isShape())
+                for (QWidget* w : letters) w->hide();
+        }
+    };
+    m_refreshers << [box, current] { // the box section does nothing for a shape
+        if (const Clip* c = current()) {
+            const bool on = !c->title.isShape();
+            box.header->setVisible(on);
+            if (!on) box.body->setVisible(false);
+            else if (box.toggle) box.body->setVisible(box.toggle->isChecked());
+        }
     };
 
     buildLookSections(page);
@@ -344,7 +361,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
             picture->addItem(QFileInfo(l.texture).fileName(), l.texture);
         picture->setCurrentIndex(std::max(0, picture->findData(l.texture)));
     };
-    shown.append({fill, [](const TitleStyle& t) { return !t.isProgress(); }});
+    shown.append({fill, [](const TitleStyle& t) { return !t.isProgress() && !t.isShape(); }});
 
     // ---- Edge: 2.5D extrusion ----
     const Flag edgeOn = [](Clip& c) -> bool& { return c.title.look.edgeOn; };
@@ -378,7 +395,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
             light->setChecked(c->title.look.edgeLight);
         }
     };
-    shown.append({edge, [](const TitleStyle& t) { return !t.isProgress(); }});
+    shown.append({edge, [](const TitleStyle& t) { return !t.isProgress() && !t.isShape(); }});
 
     // ---- Shadow ----
     const Flag shadowOn = [](Clip& c) -> bool& { return c.title.look.shadowOn; };
@@ -425,7 +442,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
            "titleGlowStrength", T("Glühen"), glowSwitch);
     addColor(glow, T("Farbe"), T("Glühfarbe"), [](Clip& c) -> QColor& { return c.title.look.glowColor; }, false,
              glowSwitch);
-    shown.append({glow, [](const TitleStyle& t) { return !t.isProgress(); }});
+    shown.append({glow, [](const TitleStyle& t) { return !t.isProgress() && !t.isShape(); }});
 
     // ---- 3D: real 3D letters (engine/text3d; the values of op title text3d) ----
     const Flag solidOn = [](Clip& c) -> bool& { return c.title.look.solidOn; };
@@ -468,7 +485,7 @@ void Inspector::buildLookSections(QVBoxLayout* page)
              solidSwitch);
     solidSlider("titleSolidShine", T("Glanz"), 0, 1, d3.solidShine, 0.01, 2, &TitleLook::solidShine);
     solidSlider("titleSolidMetal", T("Metall"), 0, 1, d3.solidMetal, 0.01, 2, &TitleLook::solidMetal);
-    shown.append({solid, [](const TitleStyle& t) { return !t.isProgress(); }});
+    shown.append({solid, [](const TitleStyle& t) { return !t.isProgress() && !t.isShape(); }});
 
     // ---- Animation: how the title comes in and goes out (seconds at its start / end) ----
     Section anim = addSection(page, V, T("Animation"), [](Clip& c) {
@@ -669,6 +686,7 @@ void Inspector::buildGeneratorSections(QVBoxLayout* page, const Section& outline
         }
     };
     showFor(bar, [](const TitleStyle& t) { return t.isProgress(); });
+    buildShapeSection(page, showFor);
     showFor(outline, [](const TitleStyle& t) { return !t.isProgress(); });
 }
 
@@ -778,4 +796,142 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
         }
     };
     return button;
+}
+
+// Shape title (0.22, TitleKind::Shape): its kind, size, turn, fill (colour, none, blur, pixelate), soft edge, spotlight,
+// how much of the stroke is drawn and the tracker it follows. The fill colour is the "Text" section's colour, the
+// stroke its outline, the shadow the look's shadow
+void Inspector::buildShapeSection(QVBoxLayout* page,
+                                  const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor)
+{
+    const TrackKind V = TrackKind::Video;
+    auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
+    auto combo = [] {
+        auto* c = new QComboBox;
+        c->setFocusPolicy(Qt::ClickFocus);
+        return c;
+    };
+    Section sh = addSection(page, V, T("Form"), [](Clip& c) {
+        const ShapeStyle d;
+        ShapeStyle& s = c.title.shape;
+        const ShapeKind kind = s.kind;
+        const double w = s.width, h = s.height;
+        const int followClip = s.followClip, followNode = s.followNode;
+        s = d;
+        s.kind = kind; // the reset keeps what it is, its size and the tracker
+        s.width = w;
+        s.height = h;
+        s.followClip = followClip;
+        s.followNode = followNode;
+        for (AnimParam p : {AnimParam::ShapeRotation, AnimParam::ShapeReveal}) Keys::clear(c, p);
+    }, {}, true);
+    auto* kind = combo();
+    for (const auto& k : kShapeKinds) kind->addItem(T(k.name), int(k.kind));
+    connect(kind, &QComboBox::activated, this, [this, V, kind] {
+        const auto k = ShapeKind(kind->currentData().toInt());
+        // A line's height is its thickness: a box height would make it a bar (as the CLI: 8 px at 1080)
+        const double thick = std::max(2.0, std::round(m_editor->project()->timelineFormat().height / 135.0));
+        apply(V, {}, T("Form"), [k, thick](Clip& c) {
+            if (k == ShapeKind::Line && c.title.shape.kind != ShapeKind::Line) {
+                c.title.shape.height = thick;
+                Keys::clear(c, AnimParam::ShapeHeight);
+            }
+            c.title.shape.kind = k;
+        }, true);
+    });
+    sh.grid->addWidget(rowLabel(T("Form")), sh.rows, 0);
+    sh.grid->addWidget(kind, sh.rows++, 1);
+    addSlider(sh, "shapeWidth", T("Breite"), 0, 4000, ShapeStyle().width, 1, 0,
+              [](Clip& c) -> double& { return c.title.shape.width; }, AnimParam::ShapeWidth);
+    addSlider(sh, "shapeHeight", T("Höhe"), 0, 4000, ShapeStyle().height, 1, 0,
+              [](Clip& c) -> double& { return c.title.shape.height; }, AnimParam::ShapeHeight);
+    addSlider(sh, "shapeRotation", T("Drehung"), -360, 360, 0, 0.5, 1,
+              [](Clip& c) -> double& { return c.title.shape.rotation; }, AnimParam::ShapeRotation);
+    const int cornerRow = sh.rows;
+    addSlider(sh, "shapeCorner", T("Eckenradius"), 0, 1000, 0, 0.5, 0, [](Clip& c) -> double& { return c.title.shape.corner; });
+    const int pointsRow = sh.rows;
+    auto* points = combo();
+    for (int i = 3; i <= 32; ++i) points->addItem(QString::number(i), i);
+    connect(points, &QComboBox::activated, this, [this, V, points] {
+        const int n = points->currentData().toInt();
+        apply(V, {}, T("Ecken"), [n](Clip& c) { c.title.shape.points = n; }, true);
+    });
+    sh.grid->addWidget(rowLabel(T("Ecken")), sh.rows, 0);
+    sh.grid->addWidget(points, sh.rows++, 1);
+    const int innerRow = sh.rows;
+    addSlider(sh, "shapeInner", T("Innenradius"), 0.05, 1, ShapeStyle().inner, 0.002, 2,
+              [](Clip& c) -> double& { return c.title.shape.inner; });
+    const int fillRow = sh.rows;
+    auto* fill = combo();
+    for (const auto& f : kShapeFills) fill->addItem(T(f.name), int(f.fill));
+    fill->setToolTip(T("Unschärfe und Verpixeln verdecken, was unter der Form liegt (Gesicht, Kennzeichen, Name)"));
+    connect(fill, &QComboBox::activated, this, [this, V, fill] {
+        const auto f = ShapeFill(fill->currentData().toInt());
+        apply(V, {}, T("Füllung"), [f](Clip& c) { c.title.shape.fill = f; }, true);
+    });
+    sh.grid->addWidget(rowLabel(T("Füllung")), sh.rows, 0);
+    sh.grid->addWidget(fill, sh.rows++, 1);
+    const int amountRow = sh.rows;
+    addSlider(sh, "shapeAmount", T("Stärke"), 0, 100, ShapeStyle().amount, 0.2, 0,
+              [](Clip& c) -> double& { return c.title.shape.amount; });
+    const int afterAmount = sh.rows;
+    addSlider(sh, "shapeFeather", T("Weiche Kante"), 0, 500, 0, 0.2, 1, [](Clip& c) -> double& { return c.title.shape.feather; });
+    Param* spot = addSlider(sh, "shapeSpotlight", T("Spotlight"), 0, 100, 0, 0.2, 0,
+                            [](Clip& c) -> double& { return c.title.shape.spotlight; });
+    spot->slider->setToolTip(T("Dunkelt das Bild außerhalb der Form ab („schau hier“)"));
+    addSlider(sh, "shapeReveal", T("Rand gezeichnet"), 0, 100, 100, 0.2, 0,
+              [](Clip& c) -> double& { return c.title.shape.reveal; }, AnimParam::ShapeReveal);
+    // The tracker it follows: tracker nodes of the timeline's clips
+    auto* follow = combo();
+    // Clip names can be long: the column keeps its width (the list shows them whole)
+    follow->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    follow->setMinimumContentsLength(8);
+    follow->setToolTip(T("Die Form bewegt sich mit einem Tracker eines Clips (Seite Compositing)"));
+    connect(follow, &QComboBox::activated, this, [this, V, follow] {
+        const QPoint v = follow->currentData().toPoint();
+        apply(V, {}, T("Folgt Tracker"), [v](Clip& c) {
+            c.title.shape.followClip = v.x();
+            c.title.shape.followNode = v.y();
+        }, true);
+    });
+    sh.grid->addWidget(rowLabel(T("Folgt Tracker")), sh.rows, 0);
+    sh.grid->addWidget(follow, sh.rows++, 1);
+    const QVector<QWidget*> corner = rowWidgets(sh.grid, cornerRow, pointsRow), pointRow = rowWidgets(sh.grid, pointsRow, innerRow),
+                            inner = rowWidgets(sh.grid, innerRow, fillRow), amount = rowWidgets(sh.grid, amountRow, afterAmount);
+    m_refreshers << [this, current, kind, points, fill, follow, corner, pointRow, inner, amount] {
+        const Clip* c = current();
+        if (!c || !c->title.isShape()) return;
+        const ShapeStyle& s = c->title.shape;
+        const QSignalBlocker b1(kind), b2(points), b3(fill), b4(follow);
+        kind->setCurrentIndex(kind->findData(int(s.kind)));
+        points->setCurrentIndex(points->findData(std::clamp(s.points, 3, 32)));
+        fill->setCurrentIndex(fill->findData(int(s.fill)));
+        for (QWidget* w : corner) w->setVisible(s.kind == ShapeKind::Rect);
+        for (QWidget* w : pointRow) w->setVisible(s.kind == ShapeKind::Star || s.kind == ShapeKind::Polygon);
+        for (QWidget* w : inner) w->setVisible(s.kind == ShapeKind::Star);
+        for (QWidget* w : amount) w->setVisible(s.fill == ShapeFill::Blur || s.fill == ShapeFill::Pixelate);
+        // The trackers list only when the timeline or selection changed, not every frame of playback (an open
+        // list would close)
+        if (m_valuesOnly && follow->findData(QPoint(s.followClip, s.followNode)) >= 0) {
+            follow->setCurrentIndex(follow->findData(QPoint(s.followClip, s.followNode)));
+            return;
+        }
+        follow->clear();
+        follow->addItem(T("Keinem"), QPoint());
+        const Project* p = m_editor->project();
+        for (const Track& t : p->timeline().video)
+            for (const Clip& x : t.clips) {
+                const EffectInstance* e = EffectRegistry::instance(x, ::Comp::kEffectId);
+                CompGraph g;
+                if (!e || !::Comp::graphOf(*e, &g)) continue;
+                for (const CompNode& n : g.nodes)
+                    if (n.type == QLatin1String(::Comp::kTrackerType))
+                        follow->addItem(T("%1 – Tracker %2").arg(p->clipName(x)).arg(n.id), QPoint(x.id, n.id));
+            }
+        const int at = follow->findData(QPoint(s.followClip, s.followNode));
+        if (at < 0 && s.followClip > 0) follow->addItem(T("Clip %1 – Tracker %2 (fehlt)").arg(s.followClip).arg(s.followNode),
+                                                        QPoint(s.followClip, s.followNode));
+        follow->setCurrentIndex(std::max(0, follow->findData(QPoint(s.followClip, s.followNode))));
+    };
+    showFor(sh, [](const TitleStyle& t) { return t.isShape(); });
 }

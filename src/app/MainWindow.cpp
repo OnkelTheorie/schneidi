@@ -612,6 +612,7 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlacePar
         m_editor->addTitle(frame, track, 0,
                            p == MediaPool::CounterItem    ? TitleKind::Counter
                            : p == MediaPool::ProgressItem ? TitleKind::Progress
+                           : p == MediaPool::ShapeItem    ? TitleKind::Shape
                                                           : TitleKind::Text);
         return;
     }

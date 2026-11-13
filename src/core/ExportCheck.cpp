@@ -2,12 +2,16 @@
 #include "core/ExportCheck.h"
 
 #include "core/Captions.h"
+#include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/Retime.h"
+#include "core/Shapes.h"
+#include "core/TimelineOps.h"
 
 #include <QFileInfo>
 #include <QFont>
@@ -57,6 +61,8 @@ QRectF titleBlock(const Clip& c, double t, double W, double H)
     QRectF r;
     if (s.isProgress()) { // the whole bar (it fills up to there)
         r = Generators::progressTrack(s, W, H);
+    } else if (s.isShape()) { // the outline with stroke and shadow, where it was placed (a tracker left out)
+        r = Shapes::bounds(s, Shapes::placed(s.shape, Shapes::placeAt(c, t, W, H), nullptr, 1.0));
     } else {
         const QFontMetricsF fm = metrics(s, std::max(1.0, Keys::valueAt(c, AnimParam::TitleSize, t)));
         const QStringList lines = (s.isCounter() ? Generators::counterWidest(s, fm) : s.text).split('\n');
@@ -271,6 +277,27 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
     const double fps = f.rate.fps();
 
     out += length(from, to, f, o);
+    // A shape following a tracker that is gone (clip deleted, node removed): it stays where it was drawn
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
+            if (const ShapeStyle& sh = c.title.shape; c.title.isShape() && sh.followClip > 0 && sh.followNode > 0) {
+                const Clip* tracked = TimelineOps::findClip(tl, sh.followClip);
+                const EffectInstance* e = tracked ? EffectRegistry::instance(*tracked, Comp::kEffectId) : nullptr;
+                CompGraph g;
+                if (!e || !Comp::graphOf(*e, &g) || !g.node(sh.followNode)
+                    || g.node(sh.followNode)->type != QLatin1String(Comp::kTrackerType))
+                    out << issue(Severity::Warning, "shape_follow_missing",
+                                 T("Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – sie "
+                                   "bleibt stehen")
+                                     .arg(c.title.firstLine())
+                                     .arg(sh.followClip)
+                                     .arg(sh.followNode),
+                                 std::max(from, c.start), std::min(to, c.end()), c.id);
+            }
+        }
+    }
 
     // Media that are not where the project says (moved, deleted, other computer): renders as a placeholder
     QSet<QString> seen;
@@ -469,6 +496,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         Zone zone;
         int from, to, clip;
         QString text;
+        bool shape = false; // a shape title (0.22): named as one
     };
     QVector<Found> found;
     for (int ti = 0; ti < tl.video.size(); ++ti) {
@@ -477,6 +505,10 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         for (const Clip& c : t.clips) {
             if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
             if (c.title.kind == TitleKind::Text && c.title.text.trimmed().isEmpty()) continue;
+            // A shape that shows nothing of its own (blur, pixelate or no fill, no stroke) covers nothing to read
+            if (c.title.isShape() && c.title.shape.kind != ShapeKind::Line && c.title.shape.fill != ShapeFill::Color
+                && !c.title.outlineOn)
+                continue;
             if (Keys::hasOpacity(c) && !Keys::animated(c, AnimParam::Opacity) && c.transform.opacity <= 0) continue;
             if (c.title.isProgress()) {
                 // A thin bar along the top edge is the usual place (the apps' top row is text over the picture);
@@ -507,7 +539,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             if (first < 0 || bad < std::min(b - a, int(std::lround(0.5 * f.rate.fps())))) continue;
             const Zone zone = Zone(std::max_element(zones.begin(), zones.end()) - zones.begin());
             const QString name = c.title.kind == TitleKind::Text ? c.title.text.simplified() : c.title.firstLine();
-            found.append({ti, zone, first, std::min(b, last + step), c.id, name});
+            found.append({ti, zone, first, std::min(b, last + step), c.id, name, c.title.isShape()});
         }
     }
     for (int i = 0; i < found.size(); ++i) {
@@ -521,7 +553,8 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             }
         std::sort(group.begin(), group.end(), [](const Found& a, const Found& b) { return a.from < b.from; });
         if (group.size() == 1) {
-            out << issue(Severity::Warning, "safe_area", zoneMessage(f0.zone, T("Titel „%1“").arg(f0.text)), f0.from,
+            out << issue(Severity::Warning, "safe_area",
+                         zoneMessage(f0.zone, (f0.shape ? T("Form „%1“") : T("Titel „%1“")).arg(f0.text)), f0.from,
                          f0.to, f0.clip);
             continue;
         }

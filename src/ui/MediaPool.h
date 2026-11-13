@@ -52,7 +52,12 @@ public:
     // Counter and progress bar titles (Effects Library, Titles), likewise
     static constexpr const char* CounterItem = "schneidi:title:counter";
     static constexpr const char* ProgressItem = "schneidi:title:progress";
-    static bool isTitleItem(const QString& item) { return item == TitleItem || item == CounterItem || item == ProgressItem; }
+    // Shape title (0.22): "Form" next to "Text" in the Master
+    static constexpr const char* ShapeItem = "schneidi:title:shape";
+    static bool isTitleItem(const QString& item)
+    {
+        return item == TitleItem || item == CounterItem || item == ProgressItem || item == ShapeItem;
+    }
     // Timeline/compound clip (sequence) as an entry: "schneidi:seq:<id>" instead of a path
     static QString sequenceItem(int id);
     static int sequenceOfItem(const QString& item); // 0 = not a sequence entry

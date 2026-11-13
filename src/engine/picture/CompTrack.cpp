@@ -428,6 +428,42 @@ double trackerValue(const QVariantMap& values, const QString& key)
     return ft;
 }
 
+bool followAt(const Clip& c, int node, double t, double fps, FollowAt* out)
+{
+    const EffectInstance* e = EffectRegistry::instance(c, ::Comp::kEffectId);
+    const NodeType* k = find(::Comp::kTrackerType);
+    CompGraph g;
+    if (!e || !k || !::Comp::graphOf(*e, &g) || !g.node(node) || g.node(node)->type != QLatin1String(::Comp::kTrackerType))
+        return false;
+    QVariantMap values;
+    for (auto it = e->params.begin(); it != e->params.end(); ++it) {
+        int id = 0;
+        QString key;
+        if (CompGraph::splitParamKey(it.key(), &id, &key) && id == node) values.insert(key, it.value());
+    }
+    const auto param = [node](const QString& key) { return Keys::effectParam(::Comp::kEffectId, CompGraph::paramKey(node, key)); };
+    const QString mode = textValue(*k, values, QStringLiteral("mode"));
+    const ::Comp::FollowTime ft = followTime(&c, node, values, t, fps);
+    const auto value = [&](const char* key) {
+        return ::Comp::followValue(
+            QString::fromLatin1(key), mode,
+            [&](const QString& q) { return values.contains(q) || Keys::animated(c, param(q)); },
+            [&](const QString& q) { return Keys::animated(c, param(q)) ? Keys::valueAt(c, param(q), t) : numValue(*k, values, q); },
+            &ft);
+    };
+    FollowAt f;
+    f.from = QPointF(value("rx"), value("ry"));
+    f.to = QPointF(value("x"), value("y"));
+    const double s = value("scale"), a = value("angle"), seen = value(::Comp::kSeenKey);
+    f.scale = s > 0 && std::isfinite(s) ? s : 1.0;
+    f.angle = std::isfinite(a) ? a : 0.0;
+    f.seen = std::isfinite(seen) ? std::clamp(seen, 0.0, 1.0) : 1.0;
+    if (!std::isfinite(f.from.x()) || !std::isfinite(f.from.y()) || !std::isfinite(f.to.x()) || !std::isfinite(f.to.y()))
+        return false;
+    *out = f;
+    return true;
+}
+
 TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int from, int to,
                    const std::function<void(int, int)>& progress, const std::atomic<bool>* cancel,
                    const FaceFinder& faces)
