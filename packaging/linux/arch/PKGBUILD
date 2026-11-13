@@ -21,14 +21,17 @@ depends=(
   'libstdc++'
   'glibc'
 )
-makedepends=('cmake' 'ninja' 'pkgconf' 'miniaudio')
+makedepends=('cmake' 'ninja' 'miniaudio')
+# The tests need nothing beyond the run time dependencies (Qt Test is part of qt6-base, Arch's FFmpeg has libx264
+# and the ffmpeg/ffprobe programs) plus the two validators
+checkdepends=('desktop-file-utils' 'appstream')
 optdepends=(
   'libpulse: sound output through PulseAudio/PipeWire-Pulse'
   'qt6-shadertools: own GLSL shader effects (the qsb shader compiler)'
   'libva-mesa-driver: hardware video decoding on AMD (VA-API)'
   'intel-media-driver: hardware video decoding on Intel (VA-API)'
 )
-# No schneidi-debug package (~270 MB) for a local build; Arch's build flags (LTO, _GLIBCXX_ASSERTIONS) stay on
+# No schneidi-debug package (~270 MB); drop this line to get one. Arch's build flags (LTO, _GLIBCXX_ASSERTIONS) stay on
 options=('!debug')
 _rnnoise_model=0b50c45
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
@@ -38,22 +41,40 @@ noextract=("rnnoise_data-$_rnnoise_model.tar.gz")
 sha256sums=('d62c17c7717716e2a6bf38895a29a8e972c893ad59c9b0f6432403fb4d541e0e'
             '4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43')
 
+_cmake_common=(
+  -G Ninja
+  -DCMAKE_BUILD_TYPE=Release            # the configuration upstream tests and ships (NDEBUG)
+  -DCMAKE_INSTALL_PREFIX=/usr
+  -DSCHNEIDI_SYSTEM_MINIAUDIO=ON        # the system miniaudio.h (makedepends) instead of the bundled copy
+  -DQT_NO_PRIVATE_MODULE_WARNING=ON
+)
+
 build() {
-  # Release build from a tarball (no .git folder): schneidi's own code is linked statically into both programs
-  # (SCHNEIDI_SHARED_LIBS off), no tests. The system miniaudio.h is used (makedepends).
-  cmake -S "$pkgname-$pkgver" -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=/usr \
-    -DSCHNEIDI_SHARED_LIBS=OFF \
-    -DSCHNEIDI_TESTS=OFF \
-    -DSCHNEIDI_SYSTEM_MINIAUDIO=ON \
+  # The package: schneidi's own code linked statically into both programs, no tests
+  cmake -S "$pkgname-$pkgver" -B build "${_cmake_common[@]}" \
     -DSCHNEIDI_RNNOISE_MODEL="$srcdir/rnnoise_data-$_rnnoise_model.tar.gz" \
-    -DQT_NO_PRIVATE_MODULE_WARNING=ON
+    -DSCHNEIDI_SHARED_LIBS=OFF \
+    -DSCHNEIDI_TESTS=OFF
   cmake --build build
 }
 
 check() {
+  # The packaged programs start; desktop entry and AppStream data are valid
   QT_QPA_PLATFORM=offscreen build/schneidi-cli --version
+  desktop-file-validate "$pkgname-$pkgver/packaging/linux/schneidi.desktop"
+  appstreamcli validate --no-net "$pkgname-$pkgver/packaging/linux/io.github.OnkelTheorie.schneidi.metainfo.xml"
+
+  # The test suite (~240 programs) in a build folder of its own with schneidi's code as shared libraries: linked
+  # statically, every test program would be a full copy of schneidi. Costs about as much as build() again;
+  # `makepkg --nocheck` skips it. Offscreen, without sound devices or a GPU. Tests labelled "timing" measure real time
+  # and fail on a busy build machine, not because of the code: left out. A failure is retried once (flaky under load).
+  cmake -S "$pkgname-$pkgver" -B build-tests "${_cmake_common[@]}" \
+    -DSCHNEIDI_RNNOISE_MODEL="$srcdir/rnnoise_data-$_rnnoise_model.tar.gz" \
+    -DSCHNEIDI_SHARED_LIBS=ON \
+    -DSCHNEIDI_TESTS=ON
+  cmake --build build-tests
+  QT_QPA_PLATFORM=offscreen ctest --test-dir build-tests --output-on-failure -LE timing \
+    --repeat until-pass:2 -j"$(nproc)"
 }
 
 package() {
@@ -64,5 +85,6 @@ package() {
   install -Dm644 LICENSE THIRD_PARTY.md -t "$pkgdir/usr/share/licenses/$pkgname/"
   install -Dm644 third_party/rnnoise/COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING.rnnoise"
   install -Dm644 third_party/earshot/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.earshot"
+  install -Dm644 third_party/miniaudio/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.miniaudio"
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
 }
