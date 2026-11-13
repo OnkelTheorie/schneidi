@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Test effects: editor (add/remove/undo/split), project file, Inspector, Effects Library,
+// Test effects: editor (add/remove/undo/split), project file, Inspector, Effects Library (categories by purpose,
+// search across groups, favourites, recently used, shapes & drawing, saved collapsed state; EFFECTS_SHOT=<folder>
+// saves pictures of it, EFFECTS_PT=<points> a larger font),
 // dragging filters onto the timeline (offscreen)
 #include "check.h"
 
+#include "core/EffectFavorites.h"
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -15,7 +19,15 @@
 #include "ui/Inspector.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/MediaPool.h"
 #include "ui/ScrubField.h"
+#include <QCollator>
+#include <QDir>
+#include <QSettings>
+#include <QSignalSpy>
+#include <QTest>
+#include <QTreeWidgetItemIterator>
+#include <memory>
 #include <QMimeData>
 #include <QTreeWidget>
 #include <QLineEdit>
@@ -27,6 +39,10 @@
 #include <QApplication>
 #include <QTemporaryDir>
 #include <QUndoStack>
+
+namespace {
+constexpr QSize kIconTest{48, 27};
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -127,46 +143,260 @@ int main(int argc, char** argv)
     editor.modifyClips({vid}, "t", [](Clip& x) { std::swap(x.effects[0], x.effects[1]); });
     app.processEvents();
     CHECK(!insp.grab().isNull());
-    // Effects Library: Videoeffekte -> Filter
+    // Every effect has exactly one category, every category has effects, ids round-trip
+    {
+        QSet<EffectCategory> used;
+        for (const EffectDescriptor& d : EffectRegistry::all()) {
+            Check::report(d.category != EffectCategory::None, "effect has a category", __FILE__, __LINE__, d.id);
+            used.insert(d.category);
+        }
+        for (const EffectCategoryInfo& c : kEffectCategories) {
+            Check::report(used.contains(c.category), "category has effects", __FILE__, __LINE__, c.id);
+            EffectCategory back = EffectCategory::None;
+            CHECK(EffectRegistry::categoryFromId(QString::fromLatin1(c.id), &back) && back == c.category);
+            CHECK(!EffectRegistry::categoryName(c.category).isEmpty());
+        }
+        EffectCategory none;
+        CHECK(!EffectRegistry::categoryFromId("nope", &none));
+    }
+
+    // Effects Library: fresh favourites, recently used and collapsed state
+    for (const char* k : {"effects/favorites", "effects/recent", "effects/collapsed", "effects/expanded"}) QSettings().remove(k);
+    if (const QString pt = qEnvironmentVariable("EFFECTS_PT"); !pt.isEmpty()) { // EFFECTS_PT=15: a large font
+        QFont f = QApplication::font();
+        f.setPointSizeF(pt.toDouble());
+        QApplication::setFont(f);
+    }
     EffectsLibrary lib;
-    lib.resize(420, 260);
+    lib.resize(460, 420);
     auto* tree = lib.findChild<QTreeWidget*>();
-    tree->setCurrentItem(tree->topLevelItem(1)->child(0));
+    auto* search = lib.findChild<QLineEdit*>();
+    auto* list = lib.list();
     lib.show();
     app.processEvents();
     CHECK(!lib.grab().isNull());
-    // Searching finds "Clip in Form" by its words (Form, Kreis, shape, circle), also from the Toolbox, with a picture
+    auto category = [&](const QString& text, QTreeWidgetItem* in = nullptr) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+            if ((*it)->text(0) == text && (!in || (*it)->parent() == in)) return *it;
+        return nullptr;
+    };
+    auto rowOf = [&](const QString& data) {
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole).toString() == data) return i;
+        return -1;
+    };
+    auto isHeader = [&](int row) { return list->item(row)->flags() == Qt::NoItemFlags; };
+    auto headerAbove = [&](int row) {
+        for (int i = row; i >= 0; --i)
+            if (isHeader(i)) return list->item(i)->text();
+        return QString();
+    };
+    // Order of the top level
     {
-        tree->setCurrentItem(tree->topLevelItem(0));
-        auto* search = lib.findChild<QLineEdit*>();
-        auto* list = lib.findChild<QListWidget*>();
-        if (CHECK(search && list)) {
-            for (const char* word : {"Form", "kreis", "shape", "Circle"}) {
-                search->setText(QString::fromLatin1(word));
-                app.processEvents();
-                QListWidgetItem* hit = nullptr;
-                for (int i = 0; i < list->count(); ++i)
-                    if (list->item(i)->data(Qt::UserRole).toString() == "fx:clip_shape") hit = list->item(i);
-                Check::report(hit != nullptr, "search finds Clip in Form", __FILE__, __LINE__, word);
-                if (hit) {
-                    // Not the blank grey tile: a picture with colours in it
-                    const QImage icon = hit->icon().pixmap(32, 32).toImage();
-                    QSet<QRgb> colours;
-                    for (int y = 0; y < icon.height(); y += 2)
-                        for (int x = 0; x < icon.width(); x += 2) colours.insert(icon.pixel(x, y));
-                    CHECK(colours.size() > 8);
+        QStringList tops;
+        for (int i = 0; i < tree->topLevelItemCount(); ++i) tops << tree->topLevelItem(i)->text(0);
+        CHECK_EQ(tops, QStringList({T("Favoriten"), T("Zuletzt benutzt"), T("Übergänge"), T("Titel"), T("Formen & Zeichnen"),
+                                    T("Videoeffekte"), T("Audioeffekte"), "LUTs", T("Klänge"), T("Compositing-Rezepte"),
+                                    "Presets"}));
+        CHECK(category(T("Verlaufsblenden"), category(T("Übergänge"))));
+    }
+    // Videoeffekte: a header per category (in the registry's order), A-Z inside, every library video effect once
+    QTreeWidgetItem* videoFx = category(T("Videoeffekte"));
+    if (CHECK(videoFx)) {
+        tree->setCurrentItem(videoFx);
+        QStringList headers, expected;
+        for (const EffectCategoryInfo& c : kEffectCategories)
+            for (const EffectDescriptor& d : EffectRegistry::all())
+                if (d.library && d.video && d.category == c.category && c.category != EffectCategory::Custom) {
+                    expected << T(c.name);
+                    break;
                 }
+        int entries = 0;
+        QCollator collator(QLocale{});
+        collator.setNumericMode(true);
+        collator.setCaseSensitivity(Qt::CaseInsensitive);
+        for (int i = 0; i < list->count(); ++i) {
+            if (isHeader(i)) {
+                headers << list->item(i)->text();
+                continue;
             }
-            // Every key rebuilds the list, the icons are made once: more typing adds no new ones
-            const qsizetype icons = lib.cachedIconCount();
-            CHECK(icons > 0);
-            for (const char* word : {"F", "Fo", "For", "Form", "", "Bl", "Blur"}) {
-                search->setText(QString::fromLatin1(word));
-                app.processEvents();
-            }
-            CHECK(lib.cachedIconCount() == icons);
-            search->clear();
+            ++entries;
+            if (i > 0 && !isHeader(i - 1))
+                Check::report(collator.compare(list->item(i - 1)->text(), list->item(i)->text()) <= 0, "A-Z inside a group",
+                              __FILE__, __LINE__, list->item(i)->text());
         }
+        CHECK_EQ(headers, expected);
+        int videoEffects = 0;
+        for (const EffectDescriptor& d : EffectRegistry::all())
+            videoEffects += d.library && d.video && d.category != EffectCategory::Custom;
+        CHECK_EQ(entries, videoEffects);
+        CHECK_EQ(videoFx->childCount(), int(expected.size()));
+        CHECK_EQ(headerAbove(rowOf("fx:blur")), T("Unschärfe"));
+        if (const auto dir = qEnvironmentVariable("EFFECTS_SHOT"); !dir.isEmpty())
+            lib.grab().save(QDir(dir).filePath(QString("effects-%1-video.png").arg(lang)));
+        // A category alone: no header, only its effects
+        if (QTreeWidgetItem* stylize = category(T("Stilisieren"), videoFx); CHECK(stylize)) {
+            tree->setCurrentItem(stylize);
+            CHECK(list->count() == 4 && !isHeader(0) && rowOf("frei0r.scanline0r") < 0 && rowOf("fx:frei0r.scanline0r") >= 0);
+        }
+    }
+    // Audioeffekte by purpose as well
+    if (QTreeWidgetItem* audioFx = category(T("Audioeffekte")); CHECK(audioFx)) {
+        tree->setCurrentItem(audioFx);
+        CHECK(rowOf("fx:denoise") > 0 && headerAbove(rowOf("fx:denoise")) == T("Reparieren"));
+        CHECK(rowOf("fx:voiceclean") > 0 && headerAbove(rowOf("fx:voiceclean")) == T("Stimme"));
+        CHECK(rowOf("fx:blur") < 0);
+    }
+    // Searching looks through everything (whatever is selected) and names the group of each hit: "Clip in Form" by its
+    // words (Form, Kreis, shape, circle), with a picture
+    {
+        tree->setCurrentItem(category(T("Titel")));
+        for (const char* word : {"Form", "kreis", "shape", "Circle"}) {
+            search->setText(QString::fromLatin1(word));
+            app.processEvents();
+            const int row = rowOf("fx:clip_shape");
+            Check::report(row > 0, "search finds Clip in Form", __FILE__, __LINE__, word);
+            if (row > 0) {
+                CHECK_EQ(headerAbove(row), T("Videoeffekte › %1").arg(T("Keying & Masken")));
+                // Not the blank grey tile: a picture with colours in it
+                const QImage icon = list->item(row)->icon().pixmap(32, 32).toImage();
+                QSet<QRgb> colours;
+                for (int y = 0; y < icon.height(); y += 2)
+                    for (int x = 0; x < icon.width(); x += 2) colours.insert(icon.pixel(x, y));
+                CHECK(colours.size() > 8);
+            }
+        }
+        search->setText("Form");
+        app.processEvents();
+        CHECK(rowOf("shape:arrow") > 0 && headerAbove(rowOf("shape:arrow")) == T("Formen & Zeichnen"));
+        if (const auto dir = qEnvironmentVariable("EFFECTS_SHOT"); !dir.isEmpty())
+            lib.grab().save(QDir(dir).filePath(QString("effects-%1-search.png").arg(lang)));
+        search->setText(T("Rauschunterdrückung"));
+        app.processEvents();
+        CHECK(rowOf("fx:denoise") > 0 && headerAbove(rowOf("fx:denoise")) == T("Audioeffekte › %1").arg(T("Reparieren")));
+        search->setText(T("Überblendung"));
+        app.processEvents();
+        CHECK(rowOf("video:cross_dissolve") > 0);
+        // Every key rebuilds the list, the icons are made once: more typing adds no new ones
+        search->setText("Form");
+        app.processEvents();
+        const qsizetype icons = lib.cachedIconCount();
+        CHECK(icons > 0);
+        for (const char* word : {"F", "Fo", "For", "Form", "", "Bl", "Blur"}) {
+            search->setText(QString::fromLatin1(word));
+            app.processEvents();
+        }
+        CHECK(lib.cachedIconCount() == icons);
+        search->clear();
+    }
+    // Shapes & drawing: the paint tool (double-click only) and every shape kind, dragged as a shape of that kind
+    if (QTreeWidgetItem* shapes = category(T("Formen & Zeichnen")); CHECK(shapes)) {
+        tree->setCurrentItem(shapes);
+        CHECK_EQ(list->count(), 1 + int(std::size(kShapeKinds)));
+        lib.setDrawShortcut(QKeySequence("P"));
+        CHECK(list->item(0)->data(Qt::UserRole).toString() == "draw" && list->item(0)->text().contains("(P)")
+              && !(list->item(0)->flags() & Qt::ItemIsDragEnabled));
+        QSignalSpy draw(&lib, &EffectsLibrary::drawRequested), shape(&lib, &EffectsLibrary::shapeRequested);
+        emit list->itemDoubleClicked(list->item(0));
+        CHECK_EQ(draw.size(), 1);
+        if (const int row = rowOf("shape:arrow"); CHECK(row > 0)) {
+            emit list->itemDoubleClicked(list->item(row));
+            CHECK(shape.size() == 1 && shape.first().first().toString() == "arrow");
+            std::unique_ptr<QMimeData> mime(list->model()->mimeData({list->model()->index(row, 0)}));
+            CHECK(mime && QString::fromUtf8(mime->data(MediaPool::MimeType)) == MediaPool::shapeItem("arrow"));
+            CHECK(MediaPool::isTitleItem(MediaPool::shapeItem("arrow")) && MediaPool::shapeKindOf(MediaPool::shapeItem("arrow")) == "arrow");
+        }
+        if (const auto dir = qEnvironmentVariable("EFFECTS_SHOT"); !dir.isEmpty())
+            lib.grab().save(QDir(dir).filePath(QString("effects-%1-shapes.png").arg(lang)));
+        // Used: the shape is the most recent entry (the paint tool is not an entry that gets applied)
+        CHECK(!EffectFavorites::recent().isEmpty() && EffectFavorites::recent().first() == "shape:arrow");
+    }
+    // Favourites: empty = a hint; context menu/F toggle, the star, kept for the next start, missing items left out
+    {
+        QTreeWidgetItem* favorites = category(T("Favoriten"));
+        tree->setCurrentItem(favorites);
+        CHECK(list->count() == 1 && isHeader(0) && list->item(0)->text().contains("F"));
+        tree->setCurrentItem(videoFx);
+        const QImage plain = list->item(rowOf("fx:blur"))->icon().pixmap(kIconTest).toImage();
+        lib.toggleFavorite("fx:blur");
+        CHECK(EffectFavorites::isFavorite("fx:blur"));
+        CHECK(list->item(rowOf("fx:blur"))->icon().pixmap(kIconTest).toImage() != plain); // the star
+        CHECK(list->item(rowOf("fx:blur"))->toolTip().startsWith(T("Favorit")));
+        // Key F on the selected entry
+        list->setCurrentRow(rowOf("fx:frei0r.glow"));
+        QTest::keyClick(list, Qt::Key_F);
+        CHECK(EffectFavorites::isFavorite("fx:frei0r.glow"));
+        QTest::keyClick(list, Qt::Key_F);
+        CHECK(!EffectFavorites::isFavorite("fx:frei0r.glow"));
+        // A LUT inside the effects folder is kept relative to it; gone items are just not listed
+        CHECK_EQ(EffectFavorites::key(QString("lut:") + EffectFolders::lutDir() + "/Film/x.cube"), QString("lut:@/LUTs/Film/x.cube"));
+        CHECK_EQ(EffectFavorites::filePath("lut:@/LUTs/Film/x.cube"), EffectFolders::lutDir() + "/Film/x.cube");
+        EffectFavorites::setFavorite("fx:gone", true);
+        EffectFavorites::setFavorite("lut:@/LUTs/gone.cube", true);
+        EffectFavorites::setFavorite("video:cross_dissolve", true);
+        tree->setCurrentItem(favorites);
+        CHECK(rowOf("fx:blur") > 0 && rowOf("video:cross_dissolve") > 0);
+        CHECK_EQ(headerAbove(rowOf("fx:blur")), T("Videoeffekte › %1").arg(T("Unschärfe")));
+        int real = 0;
+        for (int i = 0; i < list->count(); ++i) real += !isHeader(i);
+        CHECK_EQ(real, 2);
+        if (const auto dir = qEnvironmentVariable("EFFECTS_SHOT"); !dir.isEmpty())
+            lib.grab().save(QDir(dir).filePath(QString("effects-%1-favorites.png").arg(lang)));
+        EffectsLibrary again; // persisted
+        auto* t2 = again.findChild<QTreeWidget*>();
+        t2->setCurrentItem(t2->topLevelItem(0));
+        bool found = false;
+        for (int i = 0; i < again.list()->count(); ++i) found |= again.list()->item(i)->data(Qt::UserRole).toString() == "fx:blur";
+        CHECK(found);
+        // Off again from the Favourites themselves
+        lib.toggleFavorite("fx:blur");
+        CHECK(rowOf("fx:blur") < 0);
+    }
+    // Recently used: newest first, no duplicates, at most 10; double-click counts, gone items left out
+    {
+        QSettings().remove("effects/recent");
+        for (int i = 0; i < 12; ++i) EffectFavorites::noteUsed(QString("fx:x%1").arg(i));
+        EffectFavorites::noteUsed("fx:x5");
+        const QStringList r = EffectFavorites::recent();
+        CHECK(r.size() == EffectFavorites::kRecentMax && r.first() == "fx:x5" && r.count("fx:x5") == 1 && r[1] == "fx:x11"
+              && !r.contains("fx:x1"));
+        tree->setCurrentItem(category(T("Übergänge")));
+        emit list->itemDoubleClicked(list->item(rowOf("video:cross_dissolve")));
+        tree->setCurrentItem(videoFx);
+        emit list->itemDoubleClicked(list->item(rowOf("fx:blur")));
+        tree->setCurrentItem(category(T("Zuletzt benutzt")));
+        CHECK(list->count() == 2 && list->item(0)->data(Qt::UserRole).toString() == "fx:blur"
+              && list->item(1)->data(Qt::UserRole).toString() == "video:cross_dissolve");
+        CHECK(list->item(0)->toolTip().contains(T("Unschärfe")));
+    }
+    // Collapsed state: saved by category number; a category closed by default (LUTs) opened stays open; the older
+    // saved form (only the collapsed ones) still works
+    {
+        QTreeWidgetItem* luts = category("LUTs");
+        CHECK(luts && !luts->isExpanded() && category(T("Übergänge"))->isExpanded());
+        luts->setExpanded(true);
+        videoFx->setExpanded(false);
+        {
+            EffectsLibrary again;
+            auto* t2 = again.findChild<QTreeWidget*>();
+            for (int i = 0; i < t2->topLevelItemCount(); ++i) {
+                const QString text = t2->topLevelItem(i)->text(0);
+                if (text == "LUTs") CHECK(t2->topLevelItem(i)->isExpanded());
+                if (text == T("Videoeffekte")) CHECK(!t2->topLevelItem(i)->isExpanded());
+            }
+        }
+        QSettings().remove("effects/expanded");
+        QSettings().setValue("effects/collapsed", QStringList{"0:", "16:"}); // old Toolbox, Audioeffekte
+        {
+            EffectsLibrary again;
+            auto* t2 = again.findChild<QTreeWidget*>();
+            for (int i = 0; i < t2->topLevelItemCount(); ++i) {
+                const QString text = t2->topLevelItem(i)->text(0);
+                if (text == T("Audioeffekte")) CHECK(!t2->topLevelItem(i)->isExpanded());
+                if (text == T("Videoeffekte") || text == T("Übergänge")) CHECK(t2->topLevelItem(i)->isExpanded());
+            }
+        }
+        for (const char* k : {"effects/favorites", "effects/recent", "effects/collapsed", "effects/expanded"}) QSettings().remove(k);
     }
     // The Inspector's Video tab adds it ("Form…" under Beschneiden)
     {

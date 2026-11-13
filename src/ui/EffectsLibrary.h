@@ -5,6 +5,7 @@
 #include "core/EffectFolders.h"
 
 #include <QHash>
+#include <QKeySequence>
 #include <QPixmap>
 #include <QWidget>
 #include <functional>
@@ -15,10 +16,13 @@ class QTimer;
 class QListWidget;
 class QTreeWidget;
 
-// Effects Library (Edit page like DaVinci): on the left categories (Toolbox → Video Transitions, Audio Transitions,
-// Titles; Open FX → Filters; Presets (Shotcut/Kdenlive); LUTs and gradient wipes → each Bundled/Custom, Custom = effects folder,
-// its subfolders as subcategories), on the right the entries with preview icon. Categories can be collapsed
-// (saved). "Import effects…" opens the effects folder, new files appear on their own. Dragging onto a cut/clip edge creates
+// Effects Library (Edit page): on the left categories (Favourites, Recently used; Transitions → Video, Audio, gradient
+// wipes; Titles; Shapes & drawing; Video effects and Audio effects → their purpose (EffectCategory, the registry's);
+// LUTs; Sounds; Compositing recipes; Presets (Shotcut/Kdenlive); bundled/custom below those with files, custom = effects
+// folder, its subfolders as subcategories), on the right the entries with preview icon, under small group headers
+// where a category shows several groups. The search looks through everything and names each hit's group. Categories
+// can be collapsed (saved). Favourites: context menu or key F on an entry (a star on its icon), recently used = the
+// last entries applied (double-click or a drop that was taken; core/EffectFavorites). "Import effects…" opens the effects folder, new files appear on their own. Dragging onto a cut/clip edge creates
 // the transition, "Text" ends up as a title on the video track, a filter on a video clip attaches the effect;
 // double-click applies the entry at the playhead/to the selection. "Klänge" (effect sounds of op 'sfx': built-in
 // recordings and computed ones, installed sound packs, the user's own folder): double-click = listen, dragging into
@@ -48,6 +52,10 @@ public:
     void showRecipes();
     bool exportRecipe(const QString& id, const QString& zipPath, QString* err = nullptr);
     QString importRecipe(const QString& zipPath, QString* err = nullptr);
+    // The paint tool's key, shown in the "Malen" entry ("Malen (P)"); empty = none
+    void setDrawShortcut(const QKeySequence& key);
+    // Favourite of the list entry with this data (tests; the user: context menu, key F)
+    void toggleFavorite(const QString& data);
     QListWidget* list() const { return m_list; } // tests
     qsizetype cachedIconCount() const { return m_icons.size(); } // tests
 
@@ -56,6 +64,11 @@ signals:
     void titleRequested(int kind); // TitleKind
     void effectRequested(const QString& effectId);
     void soundPreviewRequested(const QString& file); // double-click on a sound: hear it (nothing is placed)
+    void shapeRequested(const QString& kindId);       // a shape title of this kind ("arrow") at the playhead
+    void drawRequested();                             // "Malen": the paint tool on
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void rebuild();
@@ -66,6 +79,8 @@ private:
     // rebuilds the list on every key, the icons are reused (the filter icons render a picture each)
     const QPixmap& cachedIcon(const QString& key, const std::function<QPixmap()>& make);
     void saveCollapsed();
+    void noteUsed(const QString& data); // recently used (and the list anew when it is shown)
+    void rebuildKeepingPlace();         // rebuild with the same entry selected and the same scroll position
     struct PresetEntry {
         qint64 stamp = 0;
         QString name, tip;
@@ -92,4 +107,5 @@ private:
     QHash<QString, IconEntry> m_lutIcons;
     QHash<QString, PresetEntry> m_presets;
     QHash<QString, QPixmap> m_icons; // cachedIcon
+    QString m_drawKey;
 };

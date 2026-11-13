@@ -303,6 +303,7 @@ private:
     // Panel set of the Edit page (Workspace → Panels): which toggles are on
     void applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector);
     void onDrop(const QStringList& paths, int frame, int track, PlaceParts parts = PlaceParts::Both);
+    void addShape(int frame, int track, const QString& kindId);
     // Subtitles (SRT): every file becomes a new subtitle track; export of the visible track
     void importSubtitleFiles(const QStringList& paths);
     void importSubtitlesDialog();
