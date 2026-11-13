@@ -21,8 +21,8 @@ jobs:
             libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev \
             libavfilter-dev qt6-shader-baker \
             ffmpeg xvfb xauth locales ccache fonts-noto-core
-          # fonts-noto-core: the layout tests' widths are measured with Noto Sans (the desktop default of the main
-          # development machine); without it the container's fallback font is a few pixels wider
+          # fonts-noto-core: the desktop default of the main development machine (the layout tests' limits follow the
+          # font, they pass with the container's fallback DejaVu Sans too)
           # Locale-aware sorting and German number format are tested; default "C" locale breaks them
           sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/' /etc/locale.gen
           locale-gen
@@ -47,7 +47,7 @@ jobs:
         # Widget tests and fonts need an X server (-j4 was no faster: the heavy tests encode with several threads themselves)
         env:
           LANG: de_DE.UTF-8
-        run: xvfb-run -a ctest --test-dir build --output-on-failure -j2 -LE font_calibrated # see tests/CMakeLists.txt
+        run: xvfb-run -a ctest --test-dir build --output-on-failure -j2
 
   # Without Qt RHI (no qt6-base-private-dev: some distributions, Windows without the private headers) the GPU parts
   # compile to stubs; nothing else builds them, so a stub that drifts from its header went unnoticed (b8a99b2)
