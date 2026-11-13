@@ -35,9 +35,13 @@ struct Yuv {
     std::vector<uint8_t> y, u, v;
 };
 
+// Picture kind of synthFrame: 0 = the moving pictures below, 1 = still (only the noise changes).
+int gSynthKind = 0;
+
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
 Yuv synthFrame(int w, int h, int t)
 {
+    const int tm = gSynthKind == 1 ? 0 : t;
     Yuv f;
     f.w = w;
     f.h = h;
@@ -49,14 +53,14 @@ Yuv synthFrame(int w, int h, int t)
         for (int x = 0; x < w; ++x) {
             seed = seed * 1664525u + 1013904223u;
             int v = (x * 255) / w / 2 + (y * 255) / h / 3 + int(seed >> 29);
-            const int sx = (t * 3) % w, sy = (t * 2) % h;
+            const int sx = (tm * 3) % w, sy = (tm * 2) % h;
             if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
                 v = ((x / 4 + y / 4) & 1) ? 220 : 40;
             f.y[size_t(y) * w + x] = uint8_t(std::clamp(v, 0, 255));
         }
     for (int y = 0; y < h / 2; ++y)
         for (int x = 0; x < w / 2; ++x) {
-            f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + t);
+            f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + tm);
             f.v[size_t(y) * (w / 2) + x] = uint8_t(128 + (y - h / 4) / 2);
         }
     return f;
@@ -389,7 +393,7 @@ int main()
         CHECK(c.firstPass->analysis.size() == 60);
         const size_t perPicture = size_t((c.width + 15) / 16) * ((c.height + 15) / 16) * 12;
         for (size_t keep : {size_t(0), 25 * perPicture}) {
-            FirstPass fpKeep(c.width, c.height, 1, false, keep);
+            FirstPass fpKeep(c.width, c.height, 1, 0, keep);
             for (int t = 0; t < 60; ++t) {
                 const Yuv src = synthFrame(c.width, c.height, t);
                 fpKeep.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
@@ -514,6 +518,33 @@ int main()
             }
         }
         {
+            // Cost-based placement: a still picture gets full runs of B pictures (one pass and from a first pass
+            // with the same plan), the moving material at this size at least some P pictures between the B runs
+            gSynthKind = 1;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bframes = 3;
+            StreamInfo info;
+            CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info));
+            const auto bCount = std::count(info.types.begin(), info.types.end(), 'B');
+            if (bCount < 15)
+                std::fprintf(stderr, "still picture: types %s\n", info.types.c_str());
+            CHECK(bCount >= 15);
+            FirstPass fp(c.width, c.height, 2, c.bframes);
+            for (int t = 0; t < 24; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            c.bitrateKbps = 300;
+            c.fps = 30;
+            StreamInfo info2;
+            CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info2));
+            if (info2.types != info.types)
+                std::fprintf(stderr, "still picture, first pass: types %s instead of %s\n", info2.types.c_str(), info.types.c_str());
+            CHECK(info2.types == info.types);
+            gSynthKind = 0;
+        }
+        {
             // Rate control with B pictures: one pass, with a first pass, and in chunks
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
             c.bframes = 2;
@@ -525,13 +556,13 @@ int main()
             if (std::abs(kbps - 1000.0) >= 250.0)
                 std::fprintf(stderr, "rate control with B pictures: %.0f kbit/s instead of 1000\n", kbps);
             CHECK(std::abs(kbps - 1000.0) < 250.0);
-            FirstPass fp(c.width, c.height, 2, true); // with the scores of the adaptive placement
+            FirstPass fp(c.width, c.height, 2, c.bframes); // with the costs of the adaptive placement
             for (int t = 0; t < 60; ++t) {
                 const Yuv src = synthFrame(c.width, c.height, t);
                 fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
             }
             c.firstPass = fp.stats();
-            CHECK(c.firstPass->bScore.size() == 60);
+            CHECK(c.firstPass->bMax == 2 && c.firstPass->bPlan.size() == 60 * size_t(bPlanStride(2)));
             bytes = 0;
             CHECK(roundTrip(c, 60, &bytes));
             kbps = bytes * 8.0 / 2.0 / 1000.0;

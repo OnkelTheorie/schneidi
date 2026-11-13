@@ -67,6 +67,8 @@ std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of t
 // Mode decision by estimate (see encodeMbP): per bucket of the estimates' distance the cases, wrong
 // picks and the RD cost lost by trusting the estimate.
 double gStatEstT8[8][3] = {}, gStatEstSplit[8][3] = {}, gStatEstTotal = 0;
+// B macroblocks: skip, direct, 16x16 L0 / L1 / Bi, 16x8 or 8x16, 8x8, intra, and of the coded inter ones the 8x8 transform.
+std::atomic<long> gStatB[9] = {};
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
@@ -94,6 +96,8 @@ const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
 const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.2;
 // B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
 const bool gBParts = !std::getenv("H264_BPARTS") || std::atoi(std::getenv("H264_BPARTS")) != 0;
+// B pictures: B_8x8 with direct 8x8 blocks (H264_B8X8=0 turns it off, for measurements).
+const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8")) != 0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -422,9 +426,9 @@ Encoder::Encoder(const EncoderConfig& config)
         cfg_.deblock = false;
     // B pictures need CABAC and P pictures; their run and its reference picture must fit the queue.
     cfg_.bframes = useB() ? std::min(cfg_.bframes, 8) : 0;
-    // (the newest picture is analysed against the two before it while older ones leave the queue)
+    // (the newest picture is analysed against up to bframes + 1 before it while older ones leave the queue)
     if (useB())
-        cfg_.lookahead = std::max(cfg_.lookahead, cfg_.bframes + 4);
+        cfg_.lookahead = std::max(cfg_.lookahead, 2 * cfg_.bframes + 4);
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
     idrCount_ = cfg_.idrPicIdBase;
@@ -631,11 +635,12 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
-FirstPass::FirstPass(int width, int height, int threads, bool forB, size_t keepAnalysisBytes)
+FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)
     : width_(width), height_(height), threads_(std::max(1, threads)),
       la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
-      stats_(std::make_shared<FirstPassStats>()), forB_(forB), keepBytes_(keepAnalysisBytes)
+      bframes_(std::clamp(bframes, 0, 8)), keepBytes_(keepAnalysisBytes), stats_(std::make_shared<FirstPassStats>())
 {
+    stats_->bMax = bframes_;
     // H264_KEEPANALYSIS=0: the encoder analyses every picture again (for measurements).
     if (const char* e = std::getenv("H264_KEEPANALYSIS"))
         keepBytes_ = std::atoi(e) ? keepBytes_ : 0;
@@ -695,22 +700,40 @@ void FirstPass::analyseBatch() const
         stats_->analysis.push_back(std::move(a));
         keptBytes_ += bytes;
     }
-    if (forB_) {
-        auto prev2Of = [&](int i) { return i > 1 ? &batch_[size_t(i) - 2] : i == 1 ? (havePrev_ ? &prev_ : nullptr) : havePrev2_ ? &prev2_ : nullptr; };
+    if (bframes_ > 0) {
+        // The pictures up to bframes + 1 before picture i of the batch (the batch, then the history).
+        auto before = [&](int i) {
+            std::vector<const LookaheadFrame*> b;
+            for (int k = 1; k <= bframes_ + 1; ++k) {
+                const int j = i - k;
+                if (j >= 0)
+                    b.push_back(&batch_[size_t(j)]);
+                else if (size_t(-j) <= history_.size())
+                    b.push_back(&history_[history_.size() - size_t(-j)]);
+                else
+                    break;
+            }
+            return b;
+        };
+        // All searches first (they read only the one-step results), then the bi-predicted costs
+        // (they read the searches of the pictures before).
         parallel([&](int i) {
-            if (prev2Of(i))
-                batch_[size_t(i)].bScore = la_->bScore(batch_[size_t(i)], *prevOf(i), *prev2Of(i));
+            const auto b = before(i);
+            la_->searchB(batch_[size_t(i)], b.data(), int(b.size()), bframes_);
         });
-        for (const LookaheadFrame& f : batch_)
-            stats_->bScore.push_back(f.bScore);
-        if (n >= 2) {
-            prev2_ = std::move(batch_[size_t(n) - 2]);
-            havePrev2_ = true;
-        } else {
-            prev2_ = std::move(prev_);
-            havePrev2_ = havePrev_;
+        parallel([&](int i) {
+            const auto b = before(i);
+            la_->biB(batch_[size_t(i)], b.data(), int(b.size()), bframes_, false);
+        });
+        for (LookaheadFrame& f : batch_) {
+            stats_->bPlan.insert(stats_->bPlan.end(), f.bPlan.begin(), f.bPlan.end());
+            f.y = {};
+            f.bi.clear();
+            f.back.clear();
+            history_.push_back(f);
         }
-        prev2_.y = {};
+        while (history_.size() > size_t(bframes_) + 1)
+            history_.pop_front();
     }
     for (LookaheadFrame& f : batch_) {
         stats_->intraSum.push_back(f.intraSum);
@@ -796,8 +819,11 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->interSum.push_back(st.interSum[i]);
             part->sceneChange.push_back(st.sceneChange[i]);
             part->forceKeyframe.push_back(st.forceKeyframe[i]);
-            if (!st.bScore.empty())
-                part->bScore.push_back(st.bScore[i]);
+            part->bMax = st.bMax;
+            if (!st.bPlan.empty()) {
+                const size_t stride = size_t(bPlanStride(st.bMax));
+                part->bPlan.insert(part->bPlan.end(), st.bPlan.begin() + ptrdiff_t(i * stride), st.bPlan.begin() + ptrdiff_t((i + 1) * stride));
+            }
             // Only the first chunk analyses its pictures like the first pass did (the others
             // start without a predecessor).
             if (c == 0 && i < st.analysis.size())
@@ -1017,34 +1043,40 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
         la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
     joinPending();
     const bool full = int(queue_.size()) + 1 >= cfg_.lookahead;
-    const bool scoreB = bAdapt() && !cfg_.firstPass; // the adaptive B placement measures here
     // Once the queue is full the newest picture joins it only at the next call (analysed in the
     // background with several threads), so the encoded picture sees the same queue with any
     // thread count. Its predecessor stays in the queue while a picture is popped.
+    // B pictures: the searches of the macroblock tree and the placement against the pictures before.
+    std::vector<const LookaheadFrame*> before;
+    if (bSearch())
+        for (size_t k = 1; k <= size_t(cfg_.bframes) + 1 && k <= queue_.size(); ++k)
+            before.push_back(&queue_[queue_.size() - k]);
+    auto analyseB = [this](LookaheadFrame& g, const std::vector<const LookaheadFrame*>& b) {
+        if (!bSearch())
+            return;
+        la_->searchB(g, b.data(), int(b.size()), cfg_.bframes);
+        la_->biB(g, b.data(), int(b.size()), cfg_.bframes, cfg_.weightedBipred);
+    };
     if (full && queue_.size() >= 2) {
         pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
         const LookaheadFrame* prev = &queue_.back();
-        const LookaheadFrame* prev2 = scoreB ? &queue_[queue_.size() - 2] : nullptr;
         if (cfg_.threads > 1) {
-            pendingThread_ = std::thread([this, prev, prev2] {
+            pendingThread_ = std::thread([this, prev, before, analyseB] {
                 try {
                     failurePoint(FailPoint::LookaheadThread);
                     analyseFrame(*pendingFrame_, prev);
-                    if (prev2)
-                        pendingFrame_->bScore = la_->bScore(*pendingFrame_, *prev, *prev2);
+                    analyseB(*pendingFrame_, before);
                 } catch (...) {
                     pendingError_ = std::current_exception();
                 }
             });
         } else {
             analyseFrame(*pendingFrame_, prev);
-            if (prev2)
-                pendingFrame_->bScore = la_->bScore(*pendingFrame_, *prev, *prev2);
+            analyseB(*pendingFrame_, before);
         }
     } else {
         analyseFrame(f, queue_.empty() ? nullptr : &queue_.back());
-        if (scoreB && queue_.size() >= 2)
-            f.bScore = la_->bScore(f, queue_.back(), queue_[queue_.size() - 2]);
+        analyseB(f, before);
         queue_.push_back(std::move(f));
     }
     if (!full)
@@ -1059,41 +1091,137 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
 // Types of the queued pictures that are not decided yet, in display order: keyframes as the
 // schedule, the caller and the scene changes ask for them, then runs of up to `bframes` B pictures
 // each followed by a P picture. The picture before a keyframe and the last one are P pictures (a
-// B picture needs a later reference of its own GOP). With `decide` the first run and its
-// reference picture become final.
-// Threshold of the adaptive B placement: a run of n B pictures needs every picture after its
-// first one, up to the reference picture that ends it, to score below kBScoreMax[n]. Measured
-// (fixed QP, BD-rate PSNR-Y against no B pictures; slow zoom with grain / fast game): 0.55 -46 % /
-// 0 %, 0.57 -50 % / +2 %, 0.59 -52 % / +7 %, always three -53 % / +18 %. H264_BT1..3 override.
-static const double kBScoreMax[4] = {
-    0,
-    std::getenv("H264_BT1") ? std::atof(std::getenv("H264_BT1")) : 0.57,
-    std::getenv("H264_BT2") ? std::atof(std::getenv("H264_BT2")) : 0.57,
-    std::getenv("H264_BT3") ? std::atof(std::getenv("H264_BT3")) : 0.57,
-};
-// Longest run of B pictures (up to maxB) that may start at a picture; score(k) is the bScore of
-// the k-th picture after it (negative: unknown, the run ends before it).
-template <class Score>
-static int bRunLimit(int maxB, Score&& score)
+// B picture needs a later reference of its own GOP). Adaptive: the run lengths come from planRuns
+// over the queue's lookahead costs, or from the first pass's plan of the whole clip.
+
+// Weight of a B picture's lookahead cost against a P picture's in the placement (H264_BW).
+static const double kBWeight = std::getenv("H264_BW") ? std::atof(std::getenv("H264_BW")) : 1.0;
+
+// Cheapest split of the pictures 1..n that follow reference picture 0 into runs of up to maxB B
+// pictures, each ended by a P picture (picture n is one): a Viterbi search over the lookahead
+// costs. pCost(t, d): picture t as a P picture d after its reference; bCost(t, a, c): picture t as a
+// B picture a after its reference before and c before the one after (< 0: unknown). Writes
+// types[1..n] (1 P, 2 B).
+template <class PCost, class BCost>
+static void planRuns(int n, int maxB, PCost&& pCost, BCost&& bCost, std::vector<uint8_t>& types)
 {
-    int limit = 0;
-    double worst = 0;
-    for (int k = 1; k <= maxB; ++k) {
-        const double s = score(k);
-        if (s < 0)
-            break;
-        worst = std::max(worst, s);
-        if (worst < kBScoreMax[std::min(k, 3)])
-            limit = k;
+    constexpr double kNone = 1e300;
+    std::vector<double> best(size_t(n) + 1, kNone);
+    std::vector<int> run(size_t(n) + 1, 0);
+    best[0] = 0;
+    for (int t = 1; t <= n; ++t) {
+        for (int r = 0; r <= std::min(maxB, t - 1); ++r) {
+            const int s = t - r - 1;
+            if (best[size_t(s)] >= kNone)
+                continue;
+            const double pc = pCost(t, r + 1);
+            if (pc < 0)
+                continue;
+            double sum = best[size_t(s)] + pc;
+            bool ok = true;
+            for (int k = 1; k <= r && ok; ++k) {
+                const double bc = bCost(s + k, k, r + 1 - k);
+                ok = bc >= 0;
+                sum += kBWeight * bc;
+            }
+            if (ok && sum < best[size_t(t)]) {
+                best[size_t(t)] = sum;
+                run[size_t(t)] = r;
+            }
+        }
+        if (best[size_t(t)] >= kNone) { // nothing known: a P picture
+            best[size_t(t)] = best[size_t(t) - 1];
+            run[size_t(t)] = 0;
+        }
     }
-    return limit;
+    types.assign(size_t(n) + 1, 1);
+    for (int t = n; t > 0;) {
+        const int r = run[size_t(t)];
+        for (int k = 1; k <= r; ++k)
+            types[size_t(t - k)] = 2;
+        t -= r + 1;
+    }
 }
 
-double Encoder::bScoreOf(const LookaheadFrame& f) const
+// Picture types of the whole clip from the first pass: keyframes as the encoder places them,
+// between them planRuns over the first pass's costs; and each picture's cost as planned.
+void Encoder::planFromStats()
 {
-    if (cfg_.firstPass)
-        return size_t(f.index) < cfg_.firstPass->bScore.size() ? cfg_.firstPass->bScore[size_t(f.index)] : -1.0;
-    return f.bScore;
+    const FirstPassStats& st = *cfg_.firstPass;
+    const size_t n = st.size();
+    const std::vector<uint8_t> key = keyPlan(st, cfg_, 0, n);
+    statType_.assign(n, 1);
+    statCost_.assign(n, 0);
+    const bool adapt = bAdapt() && st.bMax >= cfg_.bframes && st.bPlan.size() >= n * size_t(bPlanStride(st.bMax));
+    const size_t stride = size_t(bPlanStride(std::max(1, st.bMax)));
+    auto plan = [&](size_t i, int k) { return st.bPlan[i * stride + size_t(k)]; };
+    for (size_t i = 0; i < n;) {
+        if (key[i]) {
+            statType_[i] = 0;
+            ++i;
+            continue;
+        }
+        size_t e = i;
+        while (e < n && !key[e])
+            ++e;
+        const int len = int(e - i);
+        std::vector<uint8_t> types;
+        if (adapt) {
+            const size_t base = i - 1; // the reference picture before (a keyframe or a P picture)
+            planRuns(len, cfg_.bframes, [&](int t, int d) { return double(plan(base + size_t(t), d)); },
+                     [&](int t, int a, int c) { return double(plan(base + size_t(t + c), bPlanIndex(a, c, st.bMax))); }, types);
+        } else {
+            types.assign(size_t(len) + 1, 1);
+            for (int t = 1, run = 0; t < len; ++t) // fixed runs; the last picture before a keyframe is P
+                if (run < cfg_.bframes) {
+                    types[size_t(t)] = 2;
+                    ++run;
+                } else {
+                    run = 0;
+                }
+        }
+        for (int t = 1; t <= len; ++t)
+            statType_[i + size_t(t) - 1] = types[size_t(t)];
+        i = e;
+    }
+    // Costs as planned (P from its reference, B between its two), for the rate control.
+    for (size_t i = 0, lastRef = 0; i < n; ++i) {
+        if (statType_[i] == 0) {
+            statCost_[i] = st.intraSum[i];
+            lastRef = i;
+        } else if (statType_[i] == 1) {
+            const size_t d = i - lastRef;
+            statCost_[i] = adapt && d >= 1 && d <= size_t(st.bMax) + 1 && plan(i, int(d)) >= 0 ? plan(i, int(d)) : st.interSum[i];
+            lastRef = i;
+        } else {
+            size_t s = i + 1;
+            while (s < n && statType_[s] == 2)
+                ++s;
+            const int a = int(i - lastRef), c = int(s - i);
+            const double v = adapt && s < n && a + c <= st.bMax + 1 ? plan(s, bPlanIndex(a, c, st.bMax)) : -1.0;
+            statCost_[i] = v >= 0 ? v : st.interSum[i];
+        }
+    }
+}
+
+// Lookahead cost of queued picture j as planned: P from the reference before, B between its two.
+double Encoder::queueCost(size_t j) const
+{
+    const LookaheadFrame& g = queue_[j];
+    if (g.keyframe)
+        return g.intraSum;
+    if (g.type == 2) {
+        const size_t s = j + size_t(g.nextDist);
+        if (s < queue_.size() && !queue_[s].bPlan.empty() && g.refDist + g.nextDist <= cfg_.bframes + 1) {
+            const float v = queue_[s].bPlan[size_t(bPlanIndex(g.refDist, g.nextDist, cfg_.bframes))];
+            if (v >= 0)
+                return v;
+        }
+        return g.interSum;
+    }
+    if (g.refDist > 1 && size_t(g.refDist) < g.bPlan.size() && g.bPlan[size_t(g.refDist)] >= 0)
+        return g.bPlan[size_t(g.refDist)];
+    return g.interSum;
 }
 
 void Encoder::planQueue()
@@ -1106,7 +1234,9 @@ void Encoder::planQueue()
         return f.index == 0 || pos >= cfg_.gop || f.forceKeyframe || (cfg_.sceneCut && f.sceneChange && pos >= 6);
     };
     const bool adapt = bAdapt();
-    int pos = gopPos_, run = 0, runLimit = cfg_.bframes;
+    if (adapt && cfg_.firstPass && statType_.empty())
+        planFromStats();
+    int pos = gopPos_, run = 0;
     for (size_t j = u; j < queue_.size(); ++j) {
         LookaheadFrame& f = queue_[j];
         const bool key = keyAt(j, pos);
@@ -1118,9 +1248,13 @@ void Encoder::planQueue()
             run = 0;
         } else {
             const bool last = j + 1 == queue_.size();
-            if (run == 0 && adapt)
-                runLimit = bRunLimit(cfg_.bframes, [&](int k) { return j + size_t(k) < queue_.size() ? bScoreOf(queue_[j + size_t(k)]) : -1.0; });
-            if (run < runLimit && !last && !keyAt(j + 1, pos + 1)) {
+            const bool canB = !last && !keyAt(j + 1, pos + 1);
+            bool b;
+            if (adapt && cfg_.firstPass)
+                b = size_t(f.index) < statType_.size() && statType_[size_t(f.index)] == 2;
+            else
+                b = run < cfg_.bframes; // fixed runs (adaptive: replaced below)
+            if (b && canB && run < cfg_.bframes) {
                 f.type = 2;
                 ++run;
             } else {
@@ -1129,6 +1263,52 @@ void Encoder::planQueue()
             }
         }
         f.gopPos = pos++;
+    }
+    if (adapt && !cfg_.firstPass) {
+        // Between keyframes (and from the last decided reference picture on) the cheapest runs.
+        for (size_t i = u; i < queue_.size();) {
+            if (queue_[i].type == 0) {
+                ++i;
+                continue;
+            }
+            size_t e = i;
+            while (e < queue_.size() && queue_[e].type != 0)
+                ++e;
+            const size_t base = i - 1; // may be before the queue (u = 0): the costs live in the later pictures
+            auto at = [&](int t) -> const LookaheadFrame& { return queue_[base + size_t(t)]; };
+            std::vector<uint8_t> types;
+            planRuns(int(e - i), cfg_.bframes,
+                     [&](int t, int d) { return at(t).bPlan.empty() ? (d == 1 ? at(t).interSum : -1.0) : double(at(t).bPlan[size_t(d)]); },
+                     [&](int t, int a, int c) { return at(t + c).bPlan.empty() ? -1.0 : double(at(t + c).bPlan[size_t(bPlanIndex(a, c, cfg_.bframes))]); },
+                     types);
+            for (size_t j = i; j < e; ++j)
+                queue_[j].type = types[j - base];
+            i = e;
+        }
+    }
+    // Distances to the reference pictures (pictures whose reference left the queue keep theirs).
+    int lastRef = -1;
+    for (size_t j = 0; j < queue_.size(); ++j) {
+        LookaheadFrame& f = queue_[j];
+        if (f.type == 2) {
+            if (lastRef >= 0)
+                f.refDist = int(j) - lastRef;
+            size_t s = j + 1;
+            while (s < queue_.size() && queue_[s].type == 2)
+                ++s;
+            f.nextDist = int(s - j);
+        } else {
+            if (lastRef >= 0)
+                f.refDist = int(j) - lastRef;
+            lastRef = int(j);
+        }
+    }
+    // Reference pictures with B pictures before or after them (treeStrength). A picture coded
+    // ahead of its B pictures keeps what it was coded with.
+    for (size_t j = 0; j < queue_.size(); ++j) {
+        LookaheadFrame& f = queue_[j];
+        if (f.type != 2 && !f.coded)
+            f.nearB = f.refDist > 1 || (j + 1 < queue_.size() && queue_[j + 1].type == 2);
     }
 }
 
@@ -1141,10 +1321,12 @@ LookaheadFrame* Encoder::pickNext()
     if (!queue_.front().decided) {
         planQueue();
         static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
-        for (LookaheadFrame& f : queue_) {
+        for (size_t j = 0; j < queue_.size(); ++j) {
+            LookaheadFrame& f = queue_[j];
             f.decided = true;
             if (trace)
-                std::fprintf(stderr, "btype: picture %d %c score %.3f\n", f.index, "IPB"[f.type], bScoreOf(f));
+                std::fprintf(stderr, "btype: picture %d %c %d %d cost %.0f intra %.0f p1 %.0f\n", f.index, "IPB"[f.type], f.refDist,
+                             f.type == 2 ? f.nextDist : 0, queueCost(j), f.intraSum, f.interSum);
             if (f.type != 2) {
                 gopPos_ = f.gopPos + 1;
                 break;
@@ -1288,16 +1470,32 @@ void Encoder::markKeyframes()
 
 // Lookahead cost of a picture for the bit model, with the macroblock tree's QP offsets folded in
 // (a block at offset -6 costs about twice the bits).
-double Encoder::frameCost(const LookaheadFrame& f, bool intra) const
+// Experiment knobs: H264_BTS = tree strength next to B pictures, H264_BTMODE=0 = that strength for
+// every picture once B pictures are on.
+static const double kBTreeStrengthEnv = std::getenv("H264_BTS") ? std::atof(std::getenv("H264_BTS")) : -1.0;
+static const int kBTreeMode = std::getenv("H264_BTMODE") ? std::atoi(std::getenv("H264_BTMODE")) : 1;
+
+// Strength of the macroblock tree for a picture: with B pictures around it a reference picture
+// collects the costs of the whole run, and the full strength then takes too much from the B pictures.
+double Encoder::treeStrength(const LookaheadFrame& f) const
 {
+    if (!useB() || (kBTreeMode == 1 && !f.nearB))
+        return cfg_.mbtreeStrength;
+    return kBTreeStrengthEnv >= 0 ? kBTreeStrengthEnv : cfg_.mbtreeStrengthB;
+}
+
+double Encoder::frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter) const
+{
+    if (!inter)
+        inter = &f.interCost;
     const size_t n = size_t(mbW_) * mbH_;
     if (f.intraCost.size() != n)
         return 0;
     double sum = 0;
     for (size_t m = 0; m < n; ++m) {
-        const double c = intra ? f.intraCost[m] : std::min(f.intraCost[m], f.interCost[m]);
+        const double c = intra ? f.intraCost[m] : std::min(f.intraCost[m], (*inter)[m]);
         if (cfg_.mbtree) {
-            const float off = std::max(-8.0f, Lookahead::qpOffset(f, int(m), cfg_.mbtreeStrength));
+            const float off = std::max(-8.0f, Lookahead::qpOffset(f, int(m), treeStrength(f)));
             sum += c * std::exp2(-off / 6.0);
         } else {
             sum += c;
@@ -1891,6 +2089,10 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
         else
             appendNal(out, refPic_ ? 2 : 0, 1, bw.bytes());
     }
+    if (gStats && bSlice_)
+        std::fprintf(stderr, "statsB: skip %ld direct %ld L0 %ld L1 %ld Bi %ld split %ld 8x8 %ld intra %ld t8 %ld\n", gStatB[0].load(),
+                     gStatB[1].load(), gStatB[2].load(), gStatB[3].load(), gStatB[4].load(), gStatB[5].load(), gStatB[6].load(),
+                     gStatB[7].load(), gStatB[8].load());
     if (gStats && pSlice_ && !bSlice_) {
         std::fprintf(stderr, "stats: inter %ld with luma %ld 8x8 %ld (%.1f %% of coded, %.1f %% of inter)\n", long(gStatInter.load()),
                      long(gStatInterCbp.load()), long(gStatT8.load()), 100.0 * gStatT8.load() / std::max<long>(1, gStatInterCbp.load()),
@@ -2027,10 +2229,13 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (type == 2) {
             fc.treeOffset_.clear(); // nothing references a B picture
         } else if (cfg_.mbtree) {
-            la_->propagate(queue_);
+            if (bMode && !std::getenv("H264_B_OLDTREE"))
+                la_->propagateB(queue_, cfg_.bframes, cfg_.weightedBipred);
+            else
+                la_->propagate(queue_);
             fc.treeOffset_.resize(size_t(mbW_) * mbH_);
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
-                fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength));
+                fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
         }
     } else {
         fc.treeOffset_.clear();
@@ -2055,11 +2260,17 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         auto windowNeed = [&](int& count) {
             double need = 0;
             count = 0;
-            for (const LookaheadFrame& g : queue_) {
+            for (size_t j = 0; j < queue_.size(); ++j) {
+                const LookaheadFrame& g = queue_[j];
                 if (g.coded && &g != &frame)
                     continue; // a reference picture coded ahead of its turn
                 const int t = g.keyframe ? 0 : bMode && g.type == 2 ? 2 : 1;
-                const double c = t == 2 ? g.interSum : frameCost(g, g.keyframe);
+                // With B pictures: a B picture between its references, a P picture from its reference.
+                const std::vector<int32_t>* inter = bMode && t == 1 && g.refDist > 1 && size_t(g.refDist) < g.fwd.size() &&
+                                                            g.fwd[size_t(g.refDist)].valid()
+                                                        ? &g.fwd[size_t(g.refDist)].cost
+                                                        : nullptr;
+                const double c = t == 2 ? queueCost(j) : frameCost(g, g.keyframe, inter);
                 if (&g == &frame)
                     costUsed = c;
                 need += kType(t) * c * typeScale(t);
@@ -2071,42 +2282,19 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // First pass: the whole clip's costs are known, one QP for all of it.
         const bool twoPass = cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size();
         if (twoPass && frameIndex_ == 0) {
-            // Keyframes as the encoder will place them (schedule, caller, scene cuts).
-            const FirstPassStats& st = *cfg_.firstPass;
-            tpKey_.assign(st.size(), 0);
-            tpType_.assign(st.size(), 1);
+            // Keyframes and picture types as the encoder will place them, with their costs.
+            if (statType_.empty())
+                planFromStats();
             tpRemI_ = tpRemP_ = tpRemB_ = 0;
-            int since = 0;
-            for (size_t i = 0; i < st.size(); ++i) {
-                const bool key = i == 0 || since >= cfg_.gop || st.forceKeyframe[i] || (cfg_.sceneCut && st.sceneChange[i] && since >= 6);
-                if (key)
-                    since = 0;
-                ++since;
-                tpKey_[i] = key;
-            }
-            // Picture types as planQueue will place them.
-            const bool adapt = bAdapt();
-            int run = 0, runLimit = cfg_.bframes;
-            for (size_t i = 0; i < st.size(); ++i) {
-                if (run == 0 && adapt && !tpKey_[i])
-                    runLimit = bRunLimit(cfg_.bframes, [&](int k) { return i + size_t(k) < st.bScore.size() ? st.bScore[i + size_t(k)] : -1.0; });
-                if (tpKey_[i]) {
-                    tpType_[i] = 0;
-                    run = 0;
-                } else if (bMode && run < runLimit && i + 1 < st.size() && !tpKey_[i + 1]) {
-                    tpType_[i] = 2;
-                    ++run;
-                } else {
-                    run = 0;
-                }
-                (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) += tpKey_[i] ? st.intraSum[i] : st.interSum[i];
-            }
+            for (size_t i = 0; i < statType_.size(); ++i)
+                (statType_[i] == 0 ? tpRemI_ : statType_[i] == 2 ? tpRemB_ : tpRemP_) += statCost_[i];
         }
         auto steadyQp = [&] {
             if (twoPass) {
                 for (const LookaheadFrame& g : queue_)
                     if (&g == &frame)
-                        costUsed = g.keyframe ? g.intraSum : g.interSum;
+                        costUsed = bMode && size_t(g.index) < statCost_.size() ? statCost_[size_t(g.index)]
+                                                                               : g.keyframe ? g.intraSum : g.interSum;
                 return twoPassQp(kOf(true), kOf(false), kB());
             }
             int count;
@@ -2170,7 +2358,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
             const FirstPassStats& st = *cfg_.firstPass;
             const size_t i = std::min(size_t(frame.index), st.size() - 1);
-            (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) -= tpKey_[i] ? st.intraSum[i] : st.interSum[i];
+            (statType_[i] == 0 ? tpRemI_ : statType_[i] == 2 ? tpRemB_ : tpRemP_) -= statCost_[i];
             if (std::getenv("H264_RC_TRACE"))
                 std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
         } else if (rcQp_ > 0) {
@@ -5116,6 +5304,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     if (skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+        if (gStats)
+            ++gStatB[0];
         return false;
     }
     const double estDirect = double(satd16(dlp)) + lambdaSad;
@@ -5125,17 +5315,18 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     struct Part {
         int x4, y4, w4, h4, shape;
     };
-    static constexpr Part kPart[3][2] = {
-        {{0, 0, 4, 4, 0}, {0, 0, 4, 4, 0}},
-        {{0, 0, 4, 2, 1}, {0, 2, 4, 2, 2}}, // 16x8
-        {{0, 0, 2, 4, 3}, {2, 0, 2, 4, 4}}, // 8x16
+    static constexpr Part kPart[4][4] = {
+        {{0, 0, 4, 4, 0}},
+        {{0, 0, 4, 2, 1}, {0, 2, 4, 2, 2}},                                 // 16x8
+        {{0, 0, 2, 4, 3}, {2, 0, 2, 4, 4}},                                 // 8x16
+        {{0, 0, 2, 2, 0}, {2, 0, 2, 2, 0}, {0, 2, 2, 2, 0}, {2, 2, 2, 2, 0}}, // 8x8 (B_8x8)
     };
     struct Cand {
         double cost = 1e300;
         int bType = 0, shape = 0, count = 0;
-        int use[2] = {};
-        int mv[2][2][2] = {};  // [partition][list][x, y]
-        int mvp[2][2][2] = {}; // the predictors the vector differences are coded against
+        int use[4] = {};       // per partition: 1 list 0, 2 list 1, 3 both; 0 = direct (B_8x8 only)
+        int mv[4][2][2] = {};  // [partition][list][x, y]
+        int mvp[4][2][2] = {}; // the predictors the vector differences are coded against
     };
     const bool none[16] = {};
     std::pair<int, int> starts[2][8];
@@ -5216,6 +5407,59 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         c.cost = total + lambdaSad * typeBits(c.bType);
         return c;
     };
+    // B_8x8: per 8x8 block the direct prediction (sub_mb_type B_Direct_8x8, no vector coded) or
+    // its own search in list 0, list 1 or both.
+    auto tryB8x8 = [&](const Cand& whole) {
+        Cand c;
+        c.shape = 3;
+        c.count = 4;
+        c.bType = 22;
+        double total = lambdaSad * 7;
+        bool decoded[16] = {};
+        for (int p = 0; p < 4; ++p) {
+            const Part& P = kPart[3][p];
+            const size_t so = lumaOff + size_t(P.y4 * 4) * padW_ + P.x4 * 4;
+            const int satdDirect = satd8x8U8(&srcY_[so], padW_, dlp + P.y4 * 64 + P.x4 * 4, 16);
+            double cost[2];
+            for (int list = 0; list < 2; ++list) {
+                int pX, pY;
+                predictMvPart(mbx, mby, P.x4, P.y4, P.w4, 0, 0, decoded, pX, pY, list);
+                c.mvp[p][list][0] = pX;
+                c.mvp[p][list][1] = pY;
+                std::pair<int, int> st[10];
+                int n = 0;
+                for (int i = 0; i < startCount[list] && n < 8; ++i)
+                    st[n++] = starts[list][i];
+                st[n++] = {whole.mv[0][list][0], whole.mv[0][list][1]};
+                st[n++] = {pX, pY};
+                cost[list] = motionSearch(list ? *refs1_[0] : *refs_[0], mbx, mby, P.x4, P.y4, P.w4, P.h4, pX, pY, lambdaSad, st, n,
+                                          true, c.mv[p][list][0], c.mv[p][list][1]);
+            }
+            uint8_t a[256], b[256];
+            const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4;
+            mcLuma(*refs_[0], px + (c.mv[p][0][0] >> 2), py + (c.mv[p][0][1] >> 2), c.mv[p][0][0] & 3, c.mv[p][0][1] & 3, 8, 8, a);
+            mcLuma(*refs1_[0], px + (c.mv[p][1][0] >> 2), py + (c.mv[p][1][1] >> 2), c.mv[p][1][0] & 3, c.mv[p][1][1] & 3, 8, 8, b);
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 8; ++x)
+                    a[y * 16 + x] = clip1((a[y * 16 + x] * biW0_ + b[y * 16 + x] * biW1_ + 32) >> 6);
+            const double costBi = satd8x8U8(&srcY_[so], padW_, a, 16) + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1) + 5);
+            const double costDirect = satdDirect + lambdaSad;
+            cost[0] += lambdaSad * 3;
+            cost[1] += lambdaSad * 3;
+            const double best = std::min({costDirect, costBi, cost[0], cost[1]});
+            c.use[p] = best == costDirect ? 0 : best == cost[0] ? 1 : best == cost[1] ? 2 : 3;
+            total += best;
+            if (c.use[p] == 0)
+                setBlocks(P.x4, P.y4, 2, 2, dUse, d.mv[0][p], d.mv[1][p]);
+            else
+                setBlocks(P.x4, P.y4, 2, 2, c.use[p], c.mv[p][0], c.mv[p][1]);
+            for (int y = P.y4; y < P.y4 + 2; ++y)
+                for (int x = P.x4; x < P.x4 + 2; ++x)
+                    decoded[y * 4 + x] = true;
+        }
+        c.cost = total;
+        return c;
+    };
     // The 16x16 candidate and, where its estimate is better, the best split one (both are coded for real).
     Cand cands[2];
     cands[0] = tryShape(0);
@@ -5223,6 +5467,11 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     if (cfg_.effort > 0 && gBParts) {
         for (int shape : {1, 2}) {
             const Cand c = tryShape(shape);
+            if (c.cost < cands[1].cost)
+                cands[1] = c;
+        }
+        if (gB8x8) {
+            const Cand c = tryB8x8(cands[0]);
             if (c.cost < cands[1].cost)
                 cands[1] = c;
         }
@@ -5237,6 +5486,14 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     for (int k = 0; k < candCount; ++k)
         for (int p = 0; p < cands[k].count; ++p) {
             const Part& P = kPart[cands[k].shape][p];
+            if (cands[k].use[p] == 0) { // a direct 8x8 block: the direct prediction's quarter
+                for (int y = 0; y < 8; ++y)
+                    std::memcpy(clp[k] + (P.y4 * 4 + y) * 16 + P.x4 * 4, dlp + (P.y4 * 4 + y) * 16 + P.x4 * 4, 8);
+                for (int c = 0; c < 2; ++c)
+                    for (int y = 0; y < 4; ++y)
+                        std::memcpy(ccp[k][c] + (P.y4 * 2 + y) * 8 + P.x4 * 2, dcp[c] + (P.y4 * 2 + y) * 8 + P.x4 * 2, 4);
+                continue;
+            }
             predictBi(mbx, mby, P.x4, P.y4, P.w4, P.h4, cands[k].use[p], cands[k].mv[p][0], cands[k].mv[p][1], clp[k], ccp[k]);
         }
     struct ChromaCache {
@@ -5253,7 +5510,10 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         if (which) {
             for (int p = 0; p < best.count; ++p) {
                 const Part& P = kPart[best.shape][p];
-                setBlocks(P.x4, P.y4, P.w4, P.h4, best.use[p], best.mv[p][0], best.mv[p][1]);
+                if (best.use[p] == 0)
+                    setBlocks(P.x4, P.y4, P.w4, P.h4, dUse, d.mv[0][p], d.mv[1][p]);
+                else
+                    setBlocks(P.x4, P.y4, P.w4, P.h4, best.use[p], best.mv[p][0], best.mv[p][1]);
             }
         } else {
             setDirect();
@@ -5280,6 +5540,9 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         clearNz();
         io.syn.kind = MbSyntax::Kind::Inter;
         io.syn.bType = uint8_t(which ? best.bType : 0);
+        if (which && best.shape == 3)
+            for (int p = 0; p < 4; ++p)
+                io.syn.bSub[p] = uint8_t(best.use[p]);
         if (which)
             for (int p = 0; p < best.count; ++p)
                 for (int c = 0; c < 2; ++c) {
@@ -5354,6 +5617,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         restoreMb(mbx, mby, skipState);
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+        if (gStats)
+            ++gStatB[0];
         return false;
     }
     bool coded;
@@ -5361,7 +5626,15 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         restoreMb(mbx, mby, interState);
         result = std::move(interBits);
         coded = chosenDelta;
+        if (gStats) {
+            const int t = result.syn.bType;
+            ++gStatB[t == 0 ? 1 : t <= 3 ? 1 + t : t < 22 ? 5 : 6];
+            if (result.syn.t8)
+                ++gStatB[8];
+        }
     } else {
+        if (gStats)
+            ++gStatB[7];
         result = std::move(intraBits); // state is already the intra one
         coded = intraDelta;
     }

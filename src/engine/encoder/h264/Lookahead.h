@@ -9,6 +9,22 @@
 
 namespace schneidi::h264 {
 
+// One motion search of a picture against another picture at the lookahead's resolution.
+struct LookaheadSearch {
+    std::vector<int32_t> cost;     // per macroblock: SATD + vector bits of the best motion prediction
+    std::vector<int16_t> mvx, mvy; // half-pel units of the half picture
+    double sum = 0;                // sum over the macroblocks of min(intra, cost)
+    bool valid() const { return !cost.empty(); }
+};
+
+// B pictures with up to maxB in a row: the costs of a picture as a P picture d = 1..maxB+1 pictures
+// after its reference and as a B picture a before / c after its references (a + c <= maxB + 1),
+// in one array per picture: [d] P costs ([0] unused), then the B combinations (bPlanIndex).
+// The B cost of picture b with (a, c) is stored at picture b + c (it is known once that one is).
+inline int bPlanStride(int maxB) { return maxB + 2 + maxB * (maxB + 1) / 2; }
+inline int bComboIndex(int a, int c, int maxB) { return (c - 1) * (maxB + 1) - (c - 1) * c / 2 + (a - 1); }
+inline int bPlanIndex(int a, int c, int maxB) { return maxB + 2 + bComboIndex(a, c, maxB); }
+
 struct LookaheadFrame {
     std::vector<uint8_t> y, u, v; // source copy, strides width / width/2
     bool forceKeyframe = false;
@@ -37,10 +53,14 @@ struct LookaheadFrame {
     bool decided = false; // the type is final
     bool coded = false;   // a reference picture coded ahead of the B pictures before it
     bool cutKey = false;  // keyframe because of a detected scene change
-    // How badly the picture is predicted when the picture before it is left out: its cost against
-    // the picture two back over the summed costs of both single steps (0.5 = steady motion, towards
-    // 1 and above = motion that changes from picture to picture). -1 = not measured.
-    double bScore = -1;
+    // B pictures (Lookahead::searchB / biB), all kept in the newest picture of each search:
+    std::vector<LookaheadSearch> fwd;          // [d], d >= 2: this picture predicted from the one d before ([1] = interCost)
+    std::vector<LookaheadSearch> back;         // [c], c >= 1: the picture c before predicted from this one
+    std::vector<std::vector<int32_t>> bi;      // [bComboIndex(a, c)]: the picture c before, from the average of the
+                                               // predictions out of the picture a before it and this one
+    std::vector<float> bPlan;                  // bPlanStride(maxB) costs, see bPlanStride; < 0 = unknown
+    bool nearB = false;                        // a reference picture with B pictures before or after it
+    int refDist = 1, nextDist = 1;             // planned distance to the reference before (P, B) / after (B)
 };
 
 class Lookahead {
@@ -57,15 +77,24 @@ public:
     // pictures go one after another).
     void sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const;
     // seed: another start point of the search, that picture's vector times seedScale.
+    // src: the picture whose half picture is searched (default f itself).
     void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1, const LookaheadFrame* seed = nullptr,
-               int seedScale = 1) const;
-    // bScore of f (analysed against prev) from a second search against prev2, the picture before prev.
-    double bScore(const LookaheadFrame& f, const LookaheadFrame& prev, const LookaheadFrame& prev2) const;
+               int seedScale = 1, const LookaheadFrame* src = nullptr) const;
+    // B pictures, f being the newest picture and before[k - 1] the picture k before it (k = 1..count,
+    // all analysed; nullptr = missing). searchB: f from the pictures 2..maxB+1 before it (fwd) and the
+    // pictures 1..maxB before it from f (back); biB (after searchB of f and of the pictures before
+    // it): the bi-predicted costs (bi) and f.bPlan.
+    void searchB(LookaheadFrame& f, const LookaheadFrame* const* before, int count, int maxB, int threads = 1) const;
+    void biB(LookaheadFrame& f, const LookaheadFrame* const* before, int count, int maxB, bool weighted) const;
 
     // Macroblock tree over the queue: propagates the cost of every block back through the
     // motion vectors to the blocks it was predicted from, last picture first. Keyframes do not
     // propagate into their predecessor.
     void propagate(std::deque<LookaheadFrame>& frames) const;
+    // The same along the real references of planned B pictures (LookaheadFrame::type, refDist,
+    // nextDist): non-reference B pictures pass their cost to both references (half each where the
+    // average of both predicts best), P pictures to the reference picture before them.
+    void propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool weighted) const;
 
     // QP offset of a macroblock from its propagated cost (strength 2 at x264's default qcomp).
     static float qpOffset(const LookaheadFrame& f, int mb, double strength);
@@ -74,6 +103,8 @@ public:
     int halfH() const { return halfH_; }
 
 private:
+    void searchInto(const LookaheadFrame& cur, const LookaheadFrame& ref, LookaheadSearch& out, const LookaheadFrame* seed,
+                    int seedScale, int threads) const;
     int width_, height_, mbW_, mbH_, halfW_, halfH_;
 };
 
