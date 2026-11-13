@@ -66,12 +66,14 @@ QVector<EffectDescriptor> customEffects()
     filter.description = T("Eine FFmpeg-Filterkette auf dem Bild des Clips (z. B. hue=s=0,edgedetect)");
     filter.params = {{"chain", T("Filterkette"), "chain", EffectParam::Text, QString(), 0, 0}};
     filter.library = true;
+    filter.category = EffectCategory::Custom;
     EffectDescriptor shader;
     shader.id = QStringLiteral("shader");
     shader.name = T("Shader");
     shader.description = T("Ein eigener GLSL-Shader auf dem Bild des Clips (läuft auf der Grafikkarte)");
     shader.params = {{"code", T("Shader-Code"), "code", EffectParam::Text, QString(), 0, 0}};
     shader.library = true;
+    shader.category = EffectCategory::Custom;
     for (int i = 1; i <= 8; ++i) {
         const QString key = QStringLiteral("p%1").arg(i);
         shader.params << EffectParam{key, T("Wert %1").arg(i), key, EffectParam::Double, 0.0, -100.0, 100.0,
@@ -121,6 +123,7 @@ EffectDescriptor clipShapeEffect()
     d.keywords = {"Form", "Kreis", "Maske", "Ausschneiden", "Facecam", "shape", "circle", "mask", "cut out", "crop"};
     d.library = true;
     d.fixed = true;
+    d.category = EffectCategory::Keying;
     return d;
 }
 
@@ -130,8 +133,10 @@ EffectDescriptor clipShapeEffect()
 QVector<EffectDescriptor> ownLooks()
 {
     QVector<EffectDescriptor> out;
-    auto add = [&](const char* id, const QString& name, const QString& description, QVector<EffectParam> params) {
+    auto add = [&](const char* id, EffectCategory category, const QString& name, const QString& description,
+                   QVector<EffectParam> params) {
         EffectDescriptor d;
+        d.category = category;
         d.id = QString::fromLatin1(id);
         d.name = name;
         d.mltService = d.id;
@@ -140,7 +145,7 @@ QVector<EffectDescriptor> ownLooks()
         d.description = description;
         out << d;
     };
-    add("frei0r.glow", T("Glühen"), T("Weicher, heller Schein um helle Stellen"),
+    add("frei0r.glow", EffectCategory::Color, T("Glühen"), T("Weicher, heller Schein um helle Stellen"),
         {f0rNumber("frei0r.glow", "0", T("Unschärfe"), "Blur", 0.0),
          // schneidi's own (the plugin has neither, MLT ignores them); the defaults give the plugin's glow, as before
          {"strength", T("Stärke"), "strength", EffectParam::Double, 1.0, 0.0, 1.0,
@@ -149,15 +154,15 @@ QVector<EffectDescriptor> ownLooks()
          {"threshold", T("Threshold"), "threshold", EffectParam::Double, 0.0, 0.0, 1.0,
           Keys::effectParam("frei0r.glow", "threshold"), 0.002, 3, {},
           T("Nur was heller ist, leuchtet (0 = das ganze Bild; höher = kein Schleier über dunklen Stellen)")}});
-    add("frei0r.colorhalftone", T("Rasterdruck"), T("Farbige Rasterpunkte wie im Zeitungsdruck"),
+    add("frei0r.colorhalftone", EffectCategory::Stylize, T("Rasterdruck"), T("Farbige Rasterpunkte wie im Zeitungsdruck"),
         {f0rNumber("frei0r.colorhalftone", "0", T("Punktgröße"), "dot radius", 0.4),
          f0rNumber("frei0r.colorhalftone", "1", T("Winkel Cyan"), "cyan angle", 0.3),
          f0rNumber("frei0r.colorhalftone", "2", T("Winkel Magenta"), "magenta angle", 0.45),
          f0rNumber("frei0r.colorhalftone", "3", T("Winkel Gelb"), "yellow angle", 0.25)});
-    add("frei0r.rgbnoise", T("Bildrauschen"), T("Farbiges Rauschen, in jedem Bild anders"),
+    add("frei0r.rgbnoise", EffectCategory::Stylize, T("Bildrauschen"), T("Farbiges Rauschen, in jedem Bild anders"),
         {f0rNumber("frei0r.rgbnoise", "0", T("Stärke"), "noise", 0.2, {}, "amount")});
-    add("frei0r.scanline0r", T("Fernsehzeilen"), T("Jede zweite Zeile dunkler, wie ein altes Fernsehbild"), {});
-    add("frei0r.nosync0r", T("Gestörter Bildlauf"), T("Bild rollt nach oben weg wie bei einem Fernseher ohne Bildfang"),
+    add("frei0r.scanline0r", EffectCategory::Stylize, T("Fernsehzeilen"), T("Jede zweite Zeile dunkler, wie ein altes Fernsehbild"), {});
+    add("frei0r.nosync0r", EffectCategory::Stylize, T("Gestörter Bildlauf"), T("Bild rollt nach oben weg wie bei einem Fernseher ohne Bildfang"),
         {f0rNumber("frei0r.nosync0r", "0", T("Versatz"), "HSync", 0.0, {}, "offset")});
     {
         EffectParam shape = f0rOther(EffectParam::Choice, "0", T("Form"), "pattern", QString("gradient_linear"), "shape");
@@ -173,7 +178,7 @@ QVector<EffectDescriptor> ownLooks()
                               T("Differenz"),     T("Ausschluss"),      T("Farbton"),       T("Sättigung"),
                               T("Farbe"),         T("Luminanz")};
         const char* g = "frei0r.cairogradient";
-        add(g, T("Verlauf"), T("Farbverlauf über dem Bild (linear oder rund), mit Deckkraft und Mischmodus"),
+        add(g, EffectCategory::Color, T("Verlauf"), T("Farbverlauf über dem Bild (linear oder rund), mit Deckkraft und Mischmodus"),
             {shape, f0rOther(EffectParam::Color, "1", T("Startfarbe"), "start color", QColor(0, 0, 0)),
              f0rNumber(g, "2", T("Deckkraft Start"), "start opacity", 0.5),
              f0rOther(EffectParam::Color, "3", T("Endfarbe"), "end color", QColor(255, 255, 255)),
@@ -184,7 +189,7 @@ QVector<EffectDescriptor> ownLooks()
     }
     {
         const char* a = "frei0r.alpha0ps_alpha0ps";
-        add(a, T("Alphakanal"), T("Kante der Transparenz verkleinern, vergrößern, weich machen oder anzeigen"),
+        add(a, EffectCategory::Keying, T("Alphakanal"), T("Kante der Transparenz verkleinern, vergrößern, weich machen oder anzeigen"),
             {f0rNumber(a, "0", T("Anzeige"), "Display", 0.0,
                        T("0 Bild, 0,21 Alpha als Grau, 0,36 Grau + Rot, 0,5/0,64/0,79/1 Auswahl auf Schwarz/Grau/Weiß/Karos")),
              f0rOther(EffectParam::Bool, "1", T("Eingangs-Alpha zeigen"), "Display input alpha", false),
@@ -214,7 +219,7 @@ QVector<EffectDescriptor>& registry()
              {"spill", T("Farbsaum entfernen"), "spill", EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3,
               {}, T("Nimmt den Schimmer der Key-Farbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
          },
-         false, {}, true},
+         false, {}, true, EffectCategory::Keying},
         // Simple color correction (all values -100..+100, 0 = unchanged). Engine: avfilter.colorchannelmixer
         // (temperature/tint as white balance, saturation) + avfilter.colorlevels (brightness, contrast)
         {"color", T("Farbkorrektur"), {}, true,
@@ -225,13 +230,13 @@ QVector<EffectDescriptor>& registry()
              {"temperature", T("Temperatur"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::FxTemp, 0.5, 2},
              {"tint", T("Tönung"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::FxTint, 0.5, 2},
          },
-         true},
+         true, {}, false, EffectCategory::Color},
         // Strength relative to the picture height -> looks the same in every preview/export size. Engine: avfilter.gblur
         {"blur", T("Gaußsche Unschärfe"), {}, true,
          {
              {"strength", T("Stärke"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::FxBlur, 0.25, 2},
          },
-         true},
+         true, {}, false, EffectCategory::Blur},
         // Stabilization. Engine: own analysis and warp (engine/Stabilizer, engine/StabilizeMotion) – needs an analysis
         // pass that runs in the background; until it is done the clip plays unstabilized. Smoothing, zoom and border
         // apply live, shakiness/accuracy start a new analysis.
@@ -251,7 +256,7 @@ QVector<EffectDescriptor>& registry()
               T("Genauigkeit der Bewegungserkennung (höher = langsamere Analyse). Neue Analyse"), {}, {}, true},
          },
          true, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspektor)"),
-         true},
+         true, EffectCategory::Repair},
         // Noise reduction for voice recordings (DaVinci: Fairlight FX → Noise Reduction). Engine: own spectral noise
         // suppression (engine/Denoise, real time); defaults work for typical hiss/hum under speech.
         {"denoise", T("Rauschunterdrückung"), {}, false,
@@ -263,7 +268,8 @@ QVector<EffectDescriptor>& registry()
              {"track", T("Rauschen verfolgen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
               T("Misst das Rauschen laufend in der Aufnahme (in Sprechpausen) statt den festen Rauschpegel zu nehmen")},
          },
-         true, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true},
+         true, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true,
+         EffectCategory::Repair},
         // Voice cleaning in one click (engine/VoiceClean, ported from the mici microphone filter): RNNoise noise
         // suppression, voice gate, bump/click dampers, shaping with mici's recommended values. ~57 ms latency, compensated.
         {"voiceclean", T("Stimme säubern"), {}, false,
@@ -281,7 +287,7 @@ QVector<EffectDescriptor>& registry()
                 "immer mindestens 12 dB leiser als im Original")},
          },
          true, T("Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme"),
-         true},
+         true, EffectCategory::Voice},
         // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
         // Engine: engine/ColorGrade, applied before all other effects.
@@ -311,13 +317,13 @@ QVector<EffectDescriptor>& registry()
              {"exposure", T("Belichtung"), {}, EffectParam::Double, 0.0, -4, 4, AnimParam::GradeExposure, 0.01, 2},
              {"lut", T("LUT"), {}, EffectParam::Path, QString(), 0, 0},
          },
-         false, {}, true},
+         false, {}, true, EffectCategory::Color},
         // Compositing graph (0.19, core/CompGraph.h): nodes, links and node values in params ("graph", "n<id>.<key>").
         // Fixed stage after every other effect, before crop/transform: its input "clip" is the clip's picture with all
         // its effects; the Inspector's transform/opacity work on the result. The parameters depend on the graph, so
         // the descriptor has none (the node kinds have them, engine/picture/CompNodes.h)
         {"comp", T("Compositing"), {}, true, {}, false,
-         T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Compositing)"), true},
+         T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Compositing)"), true, EffectCategory::Keying},
     }) + ownLooks() // after the built-in ones: the Effects Library lists them behind blur and color correction
                    + customEffects() + QVector<EffectDescriptor>{clipShapeEffect()};
     return effects;
@@ -326,6 +332,30 @@ QVector<EffectDescriptor>& registry()
 } // namespace
 
 const QVector<EffectDescriptor>& all() { return registry(); }
+
+QString categoryId(EffectCategory c)
+{
+    for (const EffectCategoryInfo& i : kEffectCategories)
+        if (i.category == c) return QString::fromLatin1(i.id);
+    return {};
+}
+
+QString categoryName(EffectCategory c)
+{
+    for (const EffectCategoryInfo& i : kEffectCategories)
+        if (i.category == c) return T(i.name);
+    return {};
+}
+
+bool categoryFromId(const QString& id, EffectCategory* c)
+{
+    for (const EffectCategoryInfo& i : kEffectCategories)
+        if (id == QLatin1String(i.id)) {
+            *c = i.category;
+            return true;
+        }
+    return false;
+}
 
 const EffectDescriptor* find(const QString& id)
 {

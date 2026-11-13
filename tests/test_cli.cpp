@@ -7,6 +7,7 @@
 #include "cli/Mcp.h"
 #include "core/Project.h"
 #include "core/EffectRegistry.h"
+#include <QSettings>
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
@@ -1233,6 +1234,44 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         };
         CHECK_EQ(kindOf("denoise"), QString("audio"));
         CHECK_EQ(kindOf("stabilize"), QString("video"));
+        // Every effect names its category (what it is for); `category` lists only those, an unknown one is refused
+        for (const QJsonValue& e : fx)
+            Check::report(!e["category"].toString().isEmpty(), "effect has a category", __FILE__, __LINE__, e["effect"].toString());
+        const QJsonObject colorOnly = run("effects", {{"category", "color"}});
+        QStringList colorIds;
+        for (const QJsonValue& e : colorOnly["effects"].toArray()) {
+            CHECK_EQ(e["category"].toString(), QString("color"));
+            colorIds << e["effect"].toString();
+        }
+        CHECK(colorIds.contains("color") && colorIds.contains("grade") && !colorIds.contains("blur"));
+        CHECK(!colorOnly.contains("luts"));
+        CHECK_EQ(run("effects", {{"category", "voice"}})["effects"][0]["effect"].toString(), QString("voiceclean"));
+        CHECK_EQ(errorOf("effects", {{"category", "loud"}}), QString("BAD_ARGUMENT"));
+        // Favourites of the app's Effects Library: marked in the full list, `favorites` lists them (and recently used)
+        // as the ops take them, entries that are gone are left out
+        QSettings().setValue("effects/favorites", QStringList{"fx:blur", "video:cross_dissolve", "shape:arrow", "fx:gone",
+                                                               "lut:@/LUTs/gone.cube", "recipe:pip_frame"});
+        QSettings().setValue("effects/recent", QStringList{"title:counter", "fx:denoise"});
+        bool blurFavorite = false, colorFavorite = true;
+        for (const QJsonValue& e : run("effects", {})["effects"].toArray()) {
+            if (e["effect"].toString() == "blur") blurFavorite = e["favorite"].toBool();
+            if (e["effect"].toString() == "color") colorFavorite = e["favorite"].toBool();
+        }
+        CHECK(blurFavorite && !colorFavorite);
+        const QJsonObject favs = run("effects", {{"favorites", true}});
+        const QJsonArray fl = favs["favorites"].toArray();
+        CHECK_EQ(fl.size(), 4);
+        if (fl.size() == 4) {
+            CHECK(fl[0]["type"].toString() == "video_effect" && fl[0]["effect"].toString() == "blur"
+                  && fl[0]["category"].toString() == "blur");
+            CHECK(fl[1]["type"].toString() == "transition" && fl[1]["transition"].toString() == "cross_dissolve");
+            CHECK(fl[2]["type"].toString() == "shape" && fl[2]["shape"].toString() == "arrow");
+            CHECK(fl[3]["type"].toString() == "recipe" && fl[3]["recipe"].toString() == "pip_frame");
+        }
+        const QJsonArray rl = favs["recent"].toArray();
+        CHECK(rl.size() == 2 && rl[0]["title"].toString() == "counter" && rl[1]["effect"].toString() == "denoise");
+        QSettings().remove("effects/favorites");
+        QSettings().remove("effects/recent");
         const QJsonArray params = run("effects", {{"effect", "stabilize"}})["effects"][0]["params"].toArray();
         bool analysis = false;
         for (const QJsonValue& p : params)

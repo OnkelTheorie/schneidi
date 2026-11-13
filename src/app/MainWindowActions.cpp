@@ -282,6 +282,10 @@ void MainWindow::buildActions()
         setDrawTool(m_drawAction->isChecked());
     });
     m_drawAction->setCheckable(true);
+    // The Effects Library's "Malen" entry names the key (it follows a changed key binding)
+    const auto drawKey = [this] { m_effects->setDrawShortcut(m_drawAction->shortcut()); };
+    drawKey();
+    connect(m_drawAction, &QAction::changed, this, drawKey);
     // Esc while typing in a field (the Inspector's numbers, a title's text) is the field's: it cancels/leaves the edit
     // and painting goes on; only Esc elsewhere ends painting. The window shortcut takes the key before the field sees it
     m_drawEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] {

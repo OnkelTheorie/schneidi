@@ -4,6 +4,7 @@
 
 #include "app/Theme.h"
 #include "core/CompRecipes.h"
+#include "core/EffectFavorites.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Presets.h"
@@ -18,7 +19,11 @@
 #include "ui/MediaPool.h"
 #include "ui/comp/CompShared.h"
 
+#include <QCollator>
 #include <QDateTime>
+#include <QDrag>
+#include <QKeyEvent>
+#include <QScrollBar>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QMenu>
@@ -43,6 +48,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
+#include <QUndoStack>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -61,9 +67,16 @@ enum Category {
     AudioFx,                                                      // audio effects (DaVinci: Audio FX → Fairlight FX)
     SoundsAll, BuiltinSounds, PackSounds, Sounds, SoundGroup,     // effect sounds: built-in, packs, own folder
     RecipesCat,                                                   // compositing recipes (0.19, op `comp recipe`)
+    TransitionsAll,                                               // 0.22: video + audio transitions + gradient wipes
+    VideoFxGroup, AudioFxGroup,                                   // an EffectCategory (kGroupRole = its id)
+    Favorites, Recent,                                            // the user's favourites, recently used
+    ShapesCat,                                                    // shape titles by kind + the paint tool
     // Luts/Transitions = own effects folder, …Group = its subfolder
-    // (numbers are saved with the collapsed state: append new categories at the end)
+    // (numbers are saved with the collapsed state: append new categories at the end; All (the old Toolbox) and Filters
+    // are no longer shown, their saved state is just ignored)
 };
+// Shown collapsed until the user opens them (the long file lists)
+bool collapsedByDefault(int cat) { return cat == LumasAll || cat == LutsAll || cat == SoundsAll || cat == PresetsAll; }
 constexpr int kGroupRole = Qt::UserRole + 1; // …Group: subfolder relative to the folder
 constexpr const char* kLumaPrefix = "luma:"; // List entry of a gradient wipe: "luma:<image>"
 
@@ -75,7 +88,8 @@ QString collapseKey(const QTreeWidgetItem* it)
 constexpr const char* kTitleData = "title";
 constexpr const char* kCounterData = "title:counter";
 constexpr const char* kProgressData = "title:progress";
-constexpr const char* kShapeData = "title:shape";
+constexpr const char* kShapePrefix = "shape:"; // List entry of a shape kind: "shape:<kind id>"
+constexpr const char* kDrawData = "draw";       // the paint tool
 constexpr const char* kEffectPrefix = "fx:"; // List entry of a filter: "fx:<effect ID>"
 constexpr const char* kSoundPrefix = "sound:"; // List entry of an effect sound: "sound:<op fields as JSON>"
 
@@ -121,6 +135,7 @@ QPixmap soundIcon(bool own)
 class EffectList : public QListWidget {
 public:
     using QListWidget::QListWidget;
+    std::function<void(const QString&)> dropped; // a drag of this entry data was taken by the target
 
 protected:
     QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override
@@ -131,7 +146,8 @@ protected:
         if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // like "Text" in the pool
         else if (d == kCounterData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::CounterItem));
         else if (d == kProgressData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ProgressItem));
-        else if (d == kShapeData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ShapeItem));
+        else if (d.startsWith(kShapePrefix))
+            data->setData(MediaPool::MimeType, MediaPool::shapeItem(d.mid(int(qstrlen(kShapePrefix)))).toUtf8());
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
         else if (d.startsWith(kSoundPrefix)) data->setData(EffectsLibrary::SoundMimeType, d.mid(6).toUtf8());
         else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d))
@@ -142,6 +158,17 @@ protected:
     QStringList mimeTypes() const override
     {
         return {EffectsLibrary::MimeType, EffectsLibrary::EffectMimeType, EffectsLibrary::SoundMimeType, MediaPool::MimeType};
+    }
+    // Own drag (instead of QAbstractItemView's) to learn whether the drop was taken: that counts as used
+    void startDrag(Qt::DropActions supported) override
+    {
+        QListWidgetItem* it = currentItem();
+        if (!it || !(it->flags() & Qt::ItemIsDragEnabled)) return;
+        const QString d = it->data(Qt::UserRole).toString();
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mimeData({it}));
+        drag->setPixmap(it->icon().pixmap(iconSize()));
+        if (drag->exec(supported, Qt::CopyAction) != Qt::IgnoreAction && dropped) dropped(d);
     }
 };
 
@@ -240,34 +267,120 @@ QPixmap audioIcon()
     return pm;
 }
 
-QPixmap titleIcon(TitleKind kind = TitleKind::Text)
+// Titles, shapes and the paint tool share one look: the title clip's tile (the timeline's title colour, darker) with
+// a calm near-white glyph (85 % opacity, a 1 px slightly darker rim on filled shapes), centred with even padding and
+// the thin dark frame of the other thumbnails
+const QColor kGlyph(0xf4, 0xf4, 0xf6, 217);
+const QColor kGlyphRim(0xc4, 0xc4, 0xcc);
+
+QPixmap titleTile()
 {
     QPixmap pm(kIcon);
     pm.fill(Theme::titleClip.darker(135));
+    return pm;
+}
+
+void frameTile(QPainter& p, const QPixmap& pm)
+{
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(QColor(0, 0, 0, 120));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(QRect(QPoint(0, 0), pm.size() / pm.devicePixelRatio()).adjusted(0, 0, -1, -1));
+}
+
+QPixmap titleIcon(TitleKind kind = TitleKind::Text)
+{
+    QPixmap pm = titleTile();
     QPainter p(&pm);
-    if (kind == TitleKind::Shape) {
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 2));
-        p.setBrush(QColor(255, 214, 0));
-        p.drawEllipse(QRectF(pm.width() * 0.2, pm.height() * 0.2, pm.width() * 0.6, pm.height() * 0.6));
-        return pm;
-    }
+    p.setRenderHint(QPainter::Antialiasing);
     if (kind == TitleKind::Progress) {
-        p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
-        const QRectF bar(4, 5, pm.width() - 8, 5);
-        p.setBrush(QColor(0, 0, 0, 110));
+        const QRectF bar(6, pm.height() / 2.0 - 2.5, pm.width() - 12, 5);
+        p.setBrush(QColor(0, 0, 0, 90));
         p.drawRoundedRect(bar, 2.5, 2.5);
-        p.setBrush(QColor(255, 214, 0));
+        p.setBrush(kGlyph);
         p.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * 0.6, bar.height()), 2.5, 2.5);
-        return pm;
+    } else {
+        QFont f = p.font();
+        f.setPixelSize(kind == TitleKind::Counter ? 13 : 17);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(kGlyph);
+        p.drawText(pm.rect(), Qt::AlignCenter, kind == TitleKind::Counter ? "123" : "T");
     }
-    QFont f = p.font();
-    f.setPixelSize(kind == TitleKind::Counter ? 13 : 17);
-    f.setBold(true);
-    p.setFont(f);
-    p.setPen(QColor(0xf0, 0xf0, 0xf0));
-    p.drawText(pm.rect(), Qt::AlignCenter, kind == TitleKind::Counter ? "123" : "T");
+    frameTile(p, pm);
+    return pm;
+}
+
+// A shape kind: its outline (core/Shapes) scaled into the tile with even padding, filled near-white with a slightly
+// darker 1 px rim; a line (open outline) as a near-white stroke
+QPixmap shapeIcon(ShapeKind kind)
+{
+    QPixmap pm = titleTile();
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    ShapeStyle s;
+    s.kind = kind;
+    // The kind's natural proportions; scaled to fit below
+    const double w = kind == ShapeKind::Rect ? 1.5 : kind == ShapeKind::Arrow ? 2.4 : kind == ShapeKind::Line ? 3.0 : 1.0;
+    const double h = kind == ShapeKind::Line ? 0.0 : 1.0;
+    const Shapes::Outline o = Shapes::outline(s, w * 100, std::max(h * 100, 1.0));
+    QPolygonF poly(o.points);
+    const QRectF bounds = poly.boundingRect();
+    constexpr double pad = 5.0;
+    const QRectF box = QRectF(QPointF(0, 0), QSizeF(kIcon)).adjusted(pad, pad, -pad, -pad);
+    const double scale = std::min(box.width() / std::max(bounds.width(), 1e-6),
+                                  kind == ShapeKind::Line ? 1e9 : box.height() / std::max(bounds.height(), 1e-6));
+    QTransform t;
+    t.translate(box.center().x(), box.center().y());
+    t.scale(scale, kind == ShapeKind::Line ? 0.0 : scale);
+    t.translate(-bounds.center().x(), -bounds.center().y());
+    poly = t.map(poly);
+    if (o.closed && kind != ShapeKind::Line) {
+        p.setPen(QPen(kGlyphRim, 1.0));
+        p.setBrush(kGlyph);
+        p.drawPolygon(poly);
+    } else {
+        p.setPen(QPen(kGlyph, 2.5, Qt::SolidLine, Qt::RoundCap));
+        p.drawPolyline(poly);
+    }
+    frameTile(p, pm);
+    return pm;
+}
+
+// The paint tool: a free brush stroke in the same near-white, inside the same padding
+QPixmap drawIcon()
+{
+    QPixmap pm = titleTile();
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const double l = 8, r = kIcon.width() - 8.0, top = 7, bottom = kIcon.height() - 7.0, mid = (top + bottom) / 2;
+    QPainterPath stroke(QPointF(l, bottom - 2));
+    stroke.cubicTo(l + 8, top - 3, l + 14, bottom + 3, (l + r) / 2 + 2, mid);
+    stroke.cubicTo((l + r) / 2 + 8, top - 1, r - 6, top + 2, r, top + 1);
+    p.setPen(QPen(kGlyph, 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(stroke);
+    frameTile(p, pm);
+    return pm;
+}
+
+// A favourite: the icon with a small star in its top right corner
+QPixmap starred(const QPixmap& icon)
+{
+    QPixmap pm = icon.isNull() ? QPixmap(kIcon) : icon.copy();
+    if (icon.isNull()) pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const double r = 5.5, cx = pm.width() / pm.devicePixelRatio() - r - 1, cy = r + 1;
+    QPolygonF star;
+    for (int i = 0; i < 10; ++i) {
+        const double a = -std::numbers::pi / 2 + i * std::numbers::pi / 5, rr = i % 2 ? r * 0.45 : r;
+        star << QPointF(cx + rr * std::cos(a), cy + rr * std::sin(a));
+    }
+    p.setPen(QPen(QColor(0, 0, 0, 170), 1));
+    p.setBrush(QColor(255, 200, 40));
+    p.drawPolygon(star);
     return pm;
 }
 
@@ -524,48 +637,65 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     header->addWidget(import);
     header->addWidget(m_search);
 
-    // Categories like in DaVinci: Toolbox with sub-items; everything collapsible
+    // Categories by what they are for: favourites and recently used on top, then transitions, titles, shapes, the
+    // effects by purpose, LUTs, sounds, recipes, presets; everything collapsible
     m_categories = new QTreeWidget;
     m_categories->setHeaderHidden(true);
     m_categories->setIndentation(12);
-    auto add = [](auto* parent, const QString& text, int cat) {
+    auto add = [](auto* parent, const QString& text, int cat, const QString& group = {}) {
         auto* it = new QTreeWidgetItem(parent, {text});
         it->setData(0, Qt::UserRole, cat);
+        if (!group.isEmpty()) it->setData(0, kGroupRole, group);
         return it;
     };
-    auto* toolbox = add(m_categories, T("Toolbox"), All);
-    add(toolbox, T("Videoübergänge"), VideoTransitions);
-    add(toolbox, T("Audioübergänge"), AudioTransitions);
-    add(toolbox, T("Titel-Vorlagen"), Titles);
-    // Open FX → Filters (like DaVinci: the ResolveFX filters live there)
-    auto* openFx = add(m_categories, T("Videoeffekte"), OpenFx);
-    add(openFx, T("Filter"), Filters); // "Filter" is German too
-    add(m_categories, T("Audioeffekte"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
+    add(m_categories, T("Favoriten"), Favorites)
+        ->setToolTip(0, T("Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)"));
+    add(m_categories, T("Zuletzt benutzt"), Recent)->setToolTip(0, T("Die zuletzt angewendeten Einträge, der neueste oben"));
+    auto* transitions = add(m_categories, T("Übergänge"), TransitionsAll);
+    add(transitions, T("Video"), VideoTransitions);
+    add(transitions, T("Audio"), AudioTransitions);
+    // Gradient wipes: bundled and the effects folder's (subfolders = subcategories)
+    auto* lumas = add(transitions, T("Verlaufsblenden"), LumasAll);
+    add(lumas, T("Mitgeliefert"), BuiltinTransitions);
+    m_transRoot = add(lumas, T("Eigene"), Transitions);
+    m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
+    add(m_categories, T("Titel"), Titles);
+    add(m_categories, T("Formen & Zeichnen"), ShapesCat)
+        ->setToolTip(0, T("Kreis, Pfeil, Stern … als eigener Clip über dem Bild, und Malen direkt im Bild"));
+    // Effects by purpose (EffectCategory, defined next to each effect in the registry)
+    for (const bool video : {true, false}) {
+        auto* root = video ? add(m_categories, T("Videoeffekte"), OpenFx) : add(m_categories, T("Audioeffekte"), AudioFx);
+        if (!video) root->setToolTip(0, T("Effekte für Audioclips"));
+        for (const EffectCategoryInfo& c : kEffectCategories)
+            if (std::any_of(EffectRegistry::all().begin(), EffectRegistry::all().end(), [&](const EffectDescriptor& d) {
+                    return d.library && d.video == video && d.category == c.category && d.category != EffectCategory::Custom;
+                }))
+                add(root, T(c.name), video ? VideoFxGroup : AudioFxGroup, QString::fromLatin1(c.id));
+    }
+    auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
+    luts->setToolTip(0, T("Farb-Looks als LUT-Datei (.cube …)"));
+    add(luts, T("Mitgeliefert"), BuiltinLuts);
+    m_lutRoot = add(luts, T("Eigene"), Luts);
+    m_lutRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::lutDir()));
     auto* sounds = add(m_categories, T("Klänge"), SoundsAll);
     sounds->setToolTip(0, T("Effekt-Klänge: Doppelklick = anhören, in die Timeline ziehen = an dieser Stelle einfügen"));
     add(sounds, T("Mitgeliefert"), BuiltinSounds);
     add(sounds, T("Pakete"), PackSounds);
     m_soundRoot = add(sounds, T("Eigene"), Sounds);
     m_soundRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::soundDir()));
-    // Sorted by kind, below that bundled and custom effects folder each (subfolder = subcategories)
-    auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
-    add(luts, T("Mitgeliefert"), BuiltinLuts);
-    m_lutRoot = add(luts, T("Eigene"), Luts);
-    m_lutRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::lutDir()));
-    auto* lumas = add(m_categories, T("Verlaufsblenden"), LumasAll);
-    add(lumas, T("Mitgeliefert"), BuiltinTransitions);
-    m_transRoot = add(lumas, T("Eigene"), Transitions);
-    m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
     add(m_categories, T("Compositing-Rezepte"), RecipesCat)
         ->setToolTip(0, T("Fertige Compositings (Greenscreen, Text hinter Person …) für einen Clip"));
     m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
     m_presetRoot->setToolTip(0, T("Mitgelieferte Looks und Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
-    for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
-    m_categories->setCurrentItem(toolbox);
+    for (QTreeWidgetItemIterator it(m_categories); *it; ++it)
+        (*it)->setExpanded(!collapsedByDefault((*it)->data(0, Qt::UserRole).toInt()));
+    m_categories->setCurrentItem(transitions);
     connect(m_categories, &QTreeWidget::itemExpanded, this, &EffectsLibrary::saveCollapsed);
     connect(m_categories, &QTreeWidget::itemCollapsed, this, &EffectsLibrary::saveCollapsed);
 
-    m_list = new EffectList;
+    auto* list = new EffectList;
+    list->dropped = [this](const QString& d) { noteUsed(d); };
+    m_list = list;
     m_list->setViewMode(QListView::ListMode);
     m_list->setIconSize(kIcon);
     m_list->setSpacing(1);
@@ -576,42 +706,38 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString d = it->data(Qt::UserRole).toString();
         if (d.isEmpty()) return;
-        if (d == kTitleData || d == kCounterData || d == kProgressData || d == kShapeData) {
-            emit titleRequested(int(d == kCounterData    ? TitleKind::Counter
-                                    : d == kProgressData ? TitleKind::Progress
-                                    : d == kShapeData    ? TitleKind::Shape
-                                                         : TitleKind::Text));
+        if (d == kDrawData) {
+            emit drawRequested();
             return;
         }
-        if (d.startsWith(kEffectPrefix)) {
-            emit effectRequested(d.mid(3));
-            return;
-        }
-        if (d.startsWith(kSoundPrefix)) { // listen only: placing is dragging it into the timeline
-            if (const QString file = soundFile(d.mid(6).toUtf8()); !file.isEmpty()) emit soundPreviewRequested(file);
-            return;
-        }
-        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d)) {
-            // LUT/preset/recipe -> like a filter
-            emit effectRequested(d);
-            return;
-        }
-        TrackKind kind;
-        TransitionStyle style;
-        if (parseTransition(d.toUtf8(), &kind, &style)) emit transitionRequested(kind, style);
+        // Recently used: only what changed the project (an effect without a clip to take it, a transition without a
+        // cut at the playhead is not used); a sound is only heard here. Without a history (tests) every one counts
+        QUndoStack* history = m_history ? m_history() : nullptr;
+        bool changed = false;
+        QMetaObject::Connection watch;
+        if (history) watch = connect(history, &QUndoStack::indexChanged, this, [&changed] { changed = true; });
+        applyEntry(d);
+        if (watch) disconnect(watch);
+        if (!d.startsWith(kSoundPrefix) && (changed || !history)) noteUsed(d);
     });
 
-    // Recipes: share as ZIP, take one in, remove an own one
+    // Context menu: favourite on/off for every entry with a stable key; recipes: share as ZIP, take one in, remove an
+    // own one
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         const QTreeWidgetItem* cur = m_categories->currentItem();
-        if (!cur || cur->data(0, Qt::UserRole).toInt() != RecipesCat) return;
+        const bool recipes = cur && cur->data(0, Qt::UserRole).toInt() == RecipesCat;
         const QListWidgetItem* it = m_list->itemAt(pos);
         const QString d = it ? it->data(Qt::UserRole).toString() : QString();
         const QString id = CompUi::isRecipe(d) ? d.mid(int(qstrlen(CompUi::kRecipePrefix))) : QString();
         const std::optional<CompRecipe> r = id.isEmpty() ? std::nullopt : CompRecipes::find(id);
         QMenu menu(this);
+        if (const QString key = EffectFavorites::key(d); !key.isEmpty()) {
+            menu.addAction(EffectFavorites::isFavorite(key) ? T("Aus Favoriten entfernen") : T("Zu Favoriten hinzufügen"),
+                           this, [this, d] { toggleFavorite(d); });
+        }
         if (r) {
+            if (!menu.isEmpty()) menu.addSeparator();
             menu.addAction(T("Als ZIP exportieren…"), this, [this, r] {
                 const QString file = QFileDialog::getSaveFileName(this, T("Rezept exportieren"), r->id + ".zip",
                                                                   T("ZIP-Archiv (*.zip)"));
@@ -620,12 +746,15 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
                 if (!exportRecipe(r->id, file, &err)) QMessageBox::warning(this, T("Rezept exportieren"), err);
             });
         }
-        menu.addAction(T("Rezept importieren (ZIP)…"), this, [this] {
-            const QString file = QFileDialog::getOpenFileName(this, T("Rezept importieren"), {}, T("ZIP-Archiv (*.zip)"));
-            if (file.isEmpty()) return;
-            QString err;
-            if (importRecipe(file, &err).isEmpty()) QMessageBox::warning(this, T("Rezept importieren"), err);
-        });
+        if (recipes) {
+            if (!menu.isEmpty() && !r) menu.addSeparator();
+            menu.addAction(T("Rezept importieren (ZIP)…"), this, [this] {
+                const QString file = QFileDialog::getOpenFileName(this, T("Rezept importieren"), {}, T("ZIP-Archiv (*.zip)"));
+                if (file.isEmpty()) return;
+                QString err;
+                if (importRecipe(file, &err).isEmpty()) QMessageBox::warning(this, T("Rezept importieren"), err);
+            });
+        }
         if (r && !r->builtIn) {
             menu.addSeparator();
             menu.addAction(T("Rezept löschen…"), this, [this, r] {
@@ -639,14 +768,26 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
                 rebuild();
             });
         }
-        menu.exec(m_list->viewport()->mapToGlobal(pos));
+        if (!menu.isEmpty()) menu.exec(m_list->viewport()->mapToGlobal(pos));
     });
+    // Key F on an entry: favourite on/off (the list takes the key before a window shortcut would)
+    m_list->installEventFilter(this);
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(m_categories);
     split->addWidget(m_list);
     split->setStretchFactor(1, 1);
-    SplitterMemory::remember(split, "effectsCategories", {130, 230}); // the user's drag comes back on the next start
+    // The category column fits the longest fixed name in the font used ("Formen & Zeichnen", "Compositing-Rezepte" in
+    // German, a large font), without the user's subfolders; the user's drag comes back on the next start
+    int categoryWidth = 0;
+    for (QTreeWidgetItemIterator it(m_categories); *it; ++it) {
+        int depth = 1; // the branch arrow's column
+        for (const QTreeWidgetItem* p = (*it)->parent(); p; p = p->parent()) ++depth;
+        categoryWidth = std::max(categoryWidth, depth * m_categories->indentation()
+                                                    + m_categories->fontMetrics().horizontalAdvance((*it)->text(0)));
+    }
+    categoryWidth += 2 * m_categories->frameWidth() + 10; // the item's text margins
+    SplitterMemory::remember(split, "effectsCategories", {std::clamp(categoryWidth, 130, 220), 230});
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -701,12 +842,100 @@ QString EffectsLibrary::importRecipe(const QString& zipPath, QString* err)
     return r->id;
 }
 
+// Collapsed and expanded categories by number + subfolder (collapseKey). Older versions saved only the collapsed
+// ones (everything else was open): a category missing from both lists takes its default
 void EffectsLibrary::saveCollapsed()
 {
-    QStringList collapsed;
+    QStringList collapsed, expanded;
     for (QTreeWidgetItemIterator it(m_categories); *it; ++it)
-        if ((*it)->childCount() && !(*it)->isExpanded()) collapsed << collapseKey(*it);
-    QSettings().setValue("effects/collapsed", collapsed);
+        if ((*it)->childCount()) ((*it)->isExpanded() ? expanded : collapsed) << collapseKey(*it);
+    QSettings settings;
+    settings.setValue("effects/collapsed", collapsed);
+    settings.setValue("effects/expanded", expanded);
+}
+
+void EffectsLibrary::setHistory(std::function<QUndoStack*()> history) { m_history = std::move(history); }
+
+// What a double-click on an entry does (the paint tool is handled before)
+void EffectsLibrary::applyEntry(const QString& d)
+{
+    if (d == kTitleData || d == kCounterData || d == kProgressData) {
+        emit titleRequested(int(d == kCounterData    ? TitleKind::Counter
+                                : d == kProgressData ? TitleKind::Progress
+                                                     : TitleKind::Text));
+        return;
+    }
+    if (d.startsWith(kShapePrefix)) {
+        emit shapeRequested(d.mid(int(qstrlen(kShapePrefix))));
+        return;
+    }
+    if (d.startsWith(kEffectPrefix)) {
+        emit effectRequested(d.mid(3));
+        return;
+    }
+    if (d.startsWith(kSoundPrefix)) { // listen only: placing is dragging it into the timeline
+        if (const QString file = soundFile(d.mid(6).toUtf8()); !file.isEmpty()) emit soundPreviewRequested(file);
+        return;
+    }
+    if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d)) {
+        // LUT/preset/recipe -> like a filter
+        emit effectRequested(d);
+        return;
+    }
+    TrackKind kind;
+    TransitionStyle style;
+    if (parseTransition(d.toUtf8(), &kind, &style)) emit transitionRequested(kind, style);
+}
+
+void EffectsLibrary::setDrawShortcut(const QKeySequence& key)
+{
+    const QString text = key.toString(QKeySequence::NativeText);
+    if (text == m_drawKey) return; // QAction::changed also comes for checking/unchecking the tool
+    m_drawKey = text;
+    const QTreeWidgetItem* cur = m_categories->currentItem();
+    if (cur && cur->data(0, Qt::UserRole).toInt() == ShapesCat) rebuildKeepingPlace();
+}
+
+void EffectsLibrary::toggleFavorite(const QString& data)
+{
+    const QString key = EffectFavorites::key(data);
+    if (key.isEmpty()) return;
+    EffectFavorites::toggleFavorite(key);
+    rebuildKeepingPlace(); // the star, and the Favourites category itself
+}
+
+void EffectsLibrary::noteUsed(const QString& data)
+{
+    EffectFavorites::noteUsed(EffectFavorites::key(data));
+    const QTreeWidgetItem* cur = m_categories->currentItem();
+    if (cur && cur->data(0, Qt::UserRole).toInt() == Recent) rebuildKeepingPlace();
+}
+
+void EffectsLibrary::rebuildKeepingPlace()
+{
+    const QString current = m_list->currentItem() ? m_list->currentItem()->data(Qt::UserRole).toString() : QString();
+    const int scroll = m_list->verticalScrollBar()->value();
+    rebuild();
+    for (int i = 0; !current.isEmpty() && i < m_list->count(); ++i)
+        if (m_list->item(i)->data(Qt::UserRole).toString() == current) {
+            m_list->setCurrentRow(i);
+            break;
+        }
+    m_list->verticalScrollBar()->setValue(scroll);
+}
+
+bool EffectsLibrary::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_list && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_F && !(key->modifiers() & ~Qt::KeypadModifier) && m_list->currentItem()
+            && !EffectFavorites::key(m_list->currentItem()->data(Qt::UserRole).toString()).isEmpty()) {
+            event->accept();
+            if (event->type() == QEvent::KeyPress && !key->isAutoRepeat()) toggleFavorite(m_list->currentItem()->data(Qt::UserRole).toString());
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void EffectsLibrary::fillGroups(QTreeWidgetItem* root, int groupCategory, const QVector<EffectFolders::LutEntry>& entries)
@@ -736,6 +965,7 @@ void EffectsLibrary::rescanFolders()
     m_userTransitions = EffectFolders::userTransitions();
     m_userPresets = EffectFolders::userPresets();
     m_userSounds = EffectFolders::userSounds();
+    m_packSoundsStamp = -1; // the packs too
 
     // Subcategories = subfolders (nested like in the folder); selection stays if it still exists
     const QSignalBlocker block(m_categories);
@@ -751,10 +981,17 @@ void EffectsLibrary::rescanFolders()
         fillGroups(root, group, *entries);
         if (wasInside) m_categories->setCurrentItem(root); // more precisely below, if the folder still exists
     }
-    // Restore collapsed state (default: everything open)
-    const QStringList collapsed = QSettings().value("effects/collapsed").toStringList();
+    // Restore collapsed state (default: open, the long file lists closed)
+    const QSettings settings;
+    const QStringList collapsed = settings.value("effects/collapsed").toStringList();
+    const QStringList expanded = settings.value("effects/expanded").toStringList();
     for (QTreeWidgetItemIterator it(m_categories); *it; ++it) {
-        if ((*it)->childCount()) (*it)->setExpanded(!collapsed.contains(collapseKey(*it)));
+        if ((*it)->childCount()) {
+            const QString key = collapseKey(*it);
+            (*it)->setExpanded(collapsed.contains(key)  ? false
+                               : expanded.contains(key) ? true
+                                                        : !collapsedByDefault((*it)->data(0, Qt::UserRole).toInt()));
+        }
         if (!curKey.isEmpty() && collapseKey(*it) == curKey) m_categories->setCurrentItem(*it);
     }
     rebuild();
@@ -809,26 +1046,41 @@ void EffectsLibrary::rebuild()
 {
     m_list->clear();
     const QTreeWidgetItem* cur = m_categories->currentItem();
-    const int shown = cur ? cur->data(0, Qt::UserRole).toInt() : int(All);
+    const int shown = cur ? cur->data(0, Qt::UserRole).toInt() : int(TransitionsAll);
     const QString group = cur ? cur->data(0, kGroupRole).toString() : QString();
     const QString filter = m_search->text().trimmed();
 
-    struct Entry { QString name; QString data; QPixmap icon; QString tip; bool ok = true; QStringList keywords; };
+    // load: what costs reading a file (a LUT's picture, whether it can be read) runs only for the entries shown
+    struct Entry {
+        QString name;
+        QString data;
+        QPixmap icon;
+        QString tip;
+        bool ok = true;
+        QStringList keywords;
+        std::function<void(Entry&)> load = {};
+        bool drag = true; // false: double-click only (the paint tool)
+    };
     struct Group { QString header; QVector<Entry> entries; };
     QVector<Group> groups;
 
-    // Files from the effects folder resp. bundled (icons cost reading -> only for the selected category)
-    auto files = [&](const QVector<EffectFolders::LutEntry>& list, bool lut, bool builtin) {
+    // Files from the effects folder resp. bundled; inFolder: only the selected subfolder (and its subfolders)
+    auto files = [&](const QVector<EffectFolders::LutEntry>& list, bool lut, bool builtin, bool inFolder) {
         QVector<Entry> out;
         for (const auto& l : list) {
-            // Top-level category shows everything, a subcategory its folder including subfolders
-            if (!builtin && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
-            QString error;
-            const QPixmap icon = fileIcon(l.path, lut, &error);
-            QString tip = builtin ? (lut ? T("LUT (mitgeliefert)") : T("Übergang (mitgeliefert)"))
-                                  : QDir::toNativeSeparators(l.path);
-            if (!error.isEmpty()) tip += "\n" + T("Lässt sich nicht lesen: %1").arg(error);
-            out << Entry{l.name, (lut ? EffectFolders::LutPrefix : kLumaPrefix) + l.path, icon, tip, error.isEmpty()};
+            if (inFolder && !builtin && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
+            const QString tip = builtin ? (lut ? T("LUT (mitgeliefert)") : T("Übergang (mitgeliefert)"))
+                                        : QDir::toNativeSeparators(l.path);
+            const QString path = l.path;
+            out << Entry{l.name, (lut ? EffectFolders::LutPrefix : kLumaPrefix) + l.path, {}, tip, true, {},
+                         [this, path, lut](Entry& e) {
+                             QString error;
+                             e.icon = fileIcon(path, lut, &error);
+                             if (!error.isEmpty()) {
+                                 e.tip += "\n" + T("Lässt sich nicht lesen: %1").arg(error);
+                                 e.ok = false;
+                             }
+                         }};
         }
         return out;
     };
@@ -837,7 +1089,7 @@ void EffectsLibrary::rebuild()
         for (const auto& i : kTransitionTypes)
             if (i.type != TransitionType::Luma) // Gradient wipes come individually (per image)
                 out << Entry{T(i.name), QString("video:%1").arg(i.id), cachedIcon(QString("video:%1").arg(i.id), [&] { return transitionIcon(i.type); })};
-        return out + files(EffectFolders::builtinTransitions(), false, true);
+        return out;
     };
     auto audioTransitions = [&] {
         QVector<Entry> out;
@@ -845,13 +1097,23 @@ void EffectsLibrary::rebuild()
             out << Entry{T(i.name), QString("audio:%1").arg(i.id), cachedIcon("audio", [] { return audioIcon(); })};
         return out;
     };
-    auto filters = [&](bool video) {
-        QVector<Entry> out;
-        for (const auto& e : EffectRegistry::all())
-            // The custom effects (filter chain, shader) come with their code through `edit`: empty they do nothing
-            if (e.library && e.video == video && e.id != QLatin1String("ffmpeg_filter") && e.id != QLatin1String("shader"))
-                out << Entry{e.name, kEffectPrefix + e.id, cachedIcon(kEffectPrefix + e.id, [&] { return effectIcon(e.id); }),
-                              e.description, true, e.keywords};
+    // Video or audio effects by purpose (one group per category, `only` = just that one), A–Z in the language shown
+    QCollator collator(QLocale{});
+    collator.setNumericMode(true);
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    auto effects = [&](bool video, const QString& only = {}) {
+        QVector<Group> out;
+        for (const EffectCategoryInfo& c : kEffectCategories) {
+            if (!only.isEmpty() && only != QLatin1String(c.id)) continue;
+            QVector<Entry> list;
+            for (const auto& e : EffectRegistry::all())
+                // The custom effects (filter chain, shader) come with their code through `edit`: empty they do nothing
+                if (e.library && e.video == video && e.category == c.category && e.category != EffectCategory::Custom)
+                    list << Entry{e.name, kEffectPrefix + e.id, cachedIcon(kEffectPrefix + e.id, [&] { return effectIcon(e.id); }),
+                                  e.description, true, e.keywords};
+            std::sort(list.begin(), list.end(), [&](const Entry& a, const Entry& b) { return collator.compare(a.name, b.name) < 0; });
+            if (!list.isEmpty()) out << Group{T(c.name), list};
+        }
         return out;
     };
     auto builtinPresets = [&] {
@@ -862,10 +1124,10 @@ void EffectsLibrary::rebuild()
         }
         return out;
     };
-    auto presets = [&] {
+    auto presets = [&](bool inFolder) {
         QVector<Entry> out;
         for (const auto& l : m_userPresets) {
-            if (!group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
+            if (inFolder && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
             const PresetEntry& p = presetEntry(l.path);
             out << Entry{p.name, Presets::Prefix + l.path, p.icon, p.tip, p.ok};
         }
@@ -892,100 +1154,172 @@ void EffectsLibrary::rebuild()
         }
         return out;
     };
-    auto soundFiles = [&](const QVector<EffectFolders::LutEntry>& list, bool own) {
+    auto soundFiles = [&](const QVector<EffectFolders::LutEntry>& list, bool own, bool inFolder) {
         QVector<Entry> out;
         for (const auto& l : list) {
-            if (own && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
+            if (inFolder && own && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
             out << Entry{l.name, soundData({{"kind", l.path}}), cachedIcon(own ? "sound:own" : "sound", [own] { return soundIcon(own); }), QDir::toNativeSeparators(l.path)};
         }
         return out;
     };
     auto packSounds = [&] {
-        QVector<EffectFolders::LutEntry> list;
-        for (const QString& pack : Extensions::installedSoundPacks()) {
-            QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
-            QStringList found;
-            while (it.hasNext())
-                if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
-            found.sort();
-            for (const QString& f : found) {
-                EffectFolders::LutEntry e;
-                e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
-                e.path = f;
-                list << e;
+        // Installing/removing a pack renames folders in the packs folder (its time changes); a rescan of the effects
+        // folder reads them anew too
+        const QFileInfo packsDir(Extensions::soundPacksDir());
+        const qint64 stamp = packsDir.exists() ? packsDir.lastModified().toMSecsSinceEpoch() : 0;
+        if (stamp != m_packSoundsStamp) {
+            m_packSoundsStamp = stamp;
+            m_packSounds.clear();
+            for (const QString& pack : Extensions::installedSoundPacks()) {
+                QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
+                QStringList found;
+                while (it.hasNext())
+                    if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
+                found.sort();
+                for (const QString& f : found) {
+                    EffectFolders::LutEntry e;
+                    e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
+                    e.path = f;
+                    m_packSounds << e;
+                }
             }
         }
-        return soundFiles(list, false);
+        return soundFiles(m_packSounds, false, false);
+    };
+    auto recipes = [&](bool builtIn) {
+        // Built-in and own recipes (CompRecipes::all); dragged onto a clip / double-clicked = applied (one undo step)
+        QVector<Entry> out;
+        for (const CompRecipe& r : CompRecipes::all()) {
+            if (r.builtIn != builtIn) continue;
+            QStringList tip{CompRecipes::shownDescription(r)};
+            QStringList slotIds;
+            for (const CompRecipeSlot& slot : r.slotList) slotIds << slot.id;
+            if (!slotIds.isEmpty()) tip << T("Einstellbar: %1").arg(slotIds.join(", "));
+            if (!r.builtIn) tip << QDir::toNativeSeparators(r.dir);
+            out << Entry{CompRecipes::shownName(r), CompUi::kRecipePrefix + r.id,
+                         cachedIcon(r.builtIn ? "recipe" : "recipe:own", [&] { return recipeIcon(!r.builtIn); }), tip.join('\n')};
+        }
+        return out;
     };
     const QVector<Entry> titles{Entry{T("Text"), kTitleData, cachedIcon("title:text", [] { return titleIcon(); })},
                                 Entry{T("Zähler"), kCounterData, cachedIcon("title:counter", [] { return titleIcon(TitleKind::Counter); }),
                                       T("Zahl, die über die Länge des Clips hochzählt (z. B. 0 → 1000 Kills)")},
                                 Entry{T("Fortschrittsbalken"), kProgressData, cachedIcon("title:progress", [] { return titleIcon(TitleKind::Progress); }),
                                       T("Balken am Bildrand, der zeigt, wie viel vom Video noch kommt (über die "
-                                        "ganze Timeline)")},
-                                Entry{T("Form"), kShapeData, cachedIcon("title:shape", [] { return titleIcon(TitleKind::Shape); }),
-                                      T("Kreis, Rechteck, Pfeil, Stern … mit Füllung, Rand und Schatten; auch als "
-                                        "Unschärfe oder Spotlight")}};
+                                        "ganze Timeline)")}};
+    // Shapes & drawing: the paint tool first, then every shape kind (dropped = a shape title of that kind)
+    auto shapes = [&] {
+        QVector<Entry> out;
+        out << Entry{m_drawKey.isEmpty() ? T("Malen") : T("Malen (%1)").arg(m_drawKey), kDrawData,
+                     cachedIcon("draw", [] { return drawIcon(); }),
+                     T("Doppelklick: mit Maus oder Stift direkt ins Bild malen, die Striche werden ein Clip über dem Bild "
+                       "(wie Timeline › Werkzeuge › Malen)"),
+                     true, {"zeichnen", "draw", "paint", "pen", "Stift"}, {}, false};
+        for (const auto& k : kShapeKinds)
+            out << Entry{T(k.name), kShapePrefix + QString::fromLatin1(k.id),
+                         cachedIcon(QString("shape:%1").arg(k.id), [&] { return shapeIcon(k.kind); }),
+                         T("In die Timeline ziehen oder Doppelklick (am Abspielkopf): eine Form als eigener Clip über dem "
+                           "Bild, mit Füllung, Rand und Schatten; auch als Unschärfe oder Spotlight"),
+                         true, {"Form", "shape"}};
+        return out;
+    };
+    // Everything, each group under its full name: the search, the favourites and recently used look through it
+    auto everything = [&] {
+        QVector<Group> all{{T("Übergänge › Video"), videoTransitions()},
+                           {T("Übergänge › Audio"), audioTransitions()},
+                           {T("Übergänge › Verlaufsblenden"), files(EffectFolders::builtinTransitions(), false, true, false)
+                                                                  + files(m_userTransitions, false, false, false)},
+                           {T("Titel"), titles},
+                           {T("Formen & Zeichnen"), shapes()}};
+        for (Group& g : effects(true)) all << Group{T("Videoeffekte › %1").arg(g.header), g.entries};
+        for (Group& g : effects(false)) all << Group{T("Audioeffekte › %1").arg(g.header), g.entries};
+        all << Group{QStringLiteral("LUTs"), files(EffectFolders::builtinLuts(), true, true, false) + files(m_userLuts, true, false, false)}
+            << Group{T("Klänge"), builtinSounds() + packSounds() + soundFiles(m_userSounds, true, false)}
+            << Group{T("Compositing-Rezepte"), recipes(true) + recipes(false)}
+            << Group{QStringLiteral("Presets"), builtinPresets() + presets(false)};
+        return all;
+    };
 
-    switch (shown) {
-    case All: // Toolbox: all groups with header like in DaVinci
-        groups = {{T("Videoübergänge"), videoTransitions()}, {T("Audioübergänge"), audioTransitions()},
-                  {T("Titel-Vorlagen"), titles}};
-        // A search in the Toolbox also finds the filters (searching "Form" finds "Clip in Form" too)
-        if (!filter.isEmpty()) groups += {{T("Videoeffekte"), filters(true)}, {T("Audioeffekte"), filters(false)}};
-        break;
-    case VideoTransitions: groups = {{{}, videoTransitions()}}; break;
-    case AudioTransitions: groups = {{{}, audioTransitions()}}; break;
-    case Titles: groups = {{{}, titles}}; break;
-    case OpenFx: groups = {{T("Filter"), filters(true)}}; break;
-    case Filters: groups = {{{}, filters(true)}}; break;
-    case AudioFx: groups = {{{}, filters(false)}}; break;
-    case LutsAll:
-        groups = {{T("Mitgeliefert"), files(EffectFolders::builtinLuts(), true, true)},
-                  {T("Eigene"), files(m_userLuts, true, false)}};
-        break;
-    case LumasAll:
-        groups = {{T("Mitgeliefert"), files(EffectFolders::builtinTransitions(), false, true)},
-                  {T("Eigene"), files(m_userTransitions, false, false)}};
-        break;
-    case BuiltinLuts: groups = {{{}, files(EffectFolders::builtinLuts(), true, true)}}; break;
-    case BuiltinTransitions: groups = {{{}, files(EffectFolders::builtinTransitions(), false, true)}}; break;
-    case Luts:
-    case LutGroup: groups = {{{}, files(m_userLuts, true, false)}}; break;
-    case Transitions:
-    case TransitionGroup: groups = {{{}, files(m_userTransitions, false, false)}}; break;
-    case PresetsAll:
-        groups = {{T("Mitgeliefert"), builtinPresets()}, {T("Eigene"), presets()}};
-        break;
-    case PresetGroup: groups = {{{}, presets()}}; break;
-    case SoundsAll:
-        groups = {{T("Mitgeliefert"), builtinSounds()}, {T("Pakete"), packSounds()},
-                  {T("Eigene"), soundFiles(m_userSounds, true)}};
-        break;
-    case BuiltinSounds: groups = {{{}, builtinSounds()}}; break;
-    case PackSounds: groups = {{{}, packSounds()}}; break;
-    case Sounds:
-    case SoundGroup: groups = {{{}, soundFiles(m_userSounds, true)}}; break;
-    case RecipesCat: {
-        // Built-in and own recipes (CompRecipes::all); dragged onto a clip / double-clicked = applied (one undo step)
-        QVector<Entry> builtIn, own;
-        for (const CompRecipe& r : CompRecipes::all()) {
-            QStringList tip{CompRecipes::shownDescription(r)};
-            QStringList slotIds;
-            for (const CompRecipeSlot& slot : r.slotList) slotIds << slot.id;
-            if (!slotIds.isEmpty()) tip << T("Einstellbar: %1").arg(slotIds.join(", "));
-            if (!r.builtIn) tip << QDir::toNativeSeparators(r.dir);
-            (r.builtIn ? builtIn : own) << Entry{CompRecipes::shownName(r), CompUi::kRecipePrefix + r.id,
-                                                 cachedIcon(r.builtIn ? "recipe" : "recipe:own", [&] { return recipeIcon(!r.builtIn); }), tip.join('\n')};
+    const QStringList favorites = EffectFavorites::favorites();
+    bool listed = false; // Favourites/Recently used: entries whose key matched (no header for "nothing found")
+    if (!filter.isEmpty()) {
+        groups = everything(); // the search looks through everything, whatever category is selected
+    } else {
+        switch (shown) {
+        case Favorites:
+            for (Group& g : everything()) {
+                QVector<Entry> hits;
+                for (const Entry& e : g.entries)
+                    if (favorites.contains(EffectFavorites::key(e.data))) hits << e;
+                if (!hits.isEmpty()) groups << Group{g.header, hits};
+            }
+            listed = !groups.isEmpty();
+            break;
+        case Recent: {
+            // Most recent first: one group without header (an item that no longer exists is left out)
+            QHash<QString, Entry> byKey;
+            for (const Group& g : everything())
+                for (const Entry& e : g.entries) {
+                    Entry withGroup = e;
+                    withGroup.tip = e.tip.isEmpty() ? g.header : g.header + "\n" + e.tip;
+                    byKey.insert(EffectFavorites::key(e.data), withGroup);
+                }
+            QVector<Entry> hits;
+            for (const QString& key : EffectFavorites::recent())
+                if (auto it = byKey.constFind(key); it != byKey.cend()) hits << *it;
+            groups = {{{}, hits}};
+            listed = !hits.isEmpty();
+            break;
         }
-        groups = {{T("Mitgeliefert"), builtIn}, {T("Eigene"), own}};
-        break;
-    }
+        case All: // the old Toolbox (not shown any more)
+        case TransitionsAll:
+            groups = {{T("Video"), videoTransitions()}, {T("Audio"), audioTransitions()},
+                      {T("Verlaufsblenden"), files(EffectFolders::builtinTransitions(), false, true, true)
+                                                 + files(m_userTransitions, false, false, true)}};
+            break;
+        case VideoTransitions: groups = {{{}, videoTransitions()}}; break;
+        case AudioTransitions: groups = {{{}, audioTransitions()}}; break;
+        case Titles: groups = {{{}, titles}}; break;
+        case ShapesCat: groups = {{{}, shapes()}}; break;
+        case OpenFx:
+        case Filters: groups = effects(true); break;
+        case AudioFx: groups = effects(false); break;
+        case VideoFxGroup:
+        case AudioFxGroup:
+            groups = effects(shown == VideoFxGroup, group);
+            if (!groups.isEmpty()) groups.first().header.clear(); // the category itself: no header
+            break;
+        case LutsAll:
+            groups = {{T("Mitgeliefert"), files(EffectFolders::builtinLuts(), true, true, true)},
+                      {T("Eigene"), files(m_userLuts, true, false, true)}};
+            break;
+        case LumasAll:
+            groups = {{T("Mitgeliefert"), files(EffectFolders::builtinTransitions(), false, true, true)},
+                      {T("Eigene"), files(m_userTransitions, false, false, true)}};
+            break;
+        case BuiltinLuts: groups = {{{}, files(EffectFolders::builtinLuts(), true, true, true)}}; break;
+        case BuiltinTransitions: groups = {{{}, files(EffectFolders::builtinTransitions(), false, true, true)}}; break;
+        case Luts:
+        case LutGroup: groups = {{{}, files(m_userLuts, true, false, true)}}; break;
+        case Transitions:
+        case TransitionGroup: groups = {{{}, files(m_userTransitions, false, false, true)}}; break;
+        case PresetsAll: groups = {{T("Mitgeliefert"), builtinPresets()}, {T("Eigene"), presets(true)}}; break;
+        case PresetGroup: groups = {{{}, presets(true)}}; break;
+        case SoundsAll:
+            groups = {{T("Mitgeliefert"), builtinSounds()}, {T("Pakete"), packSounds()},
+                      {T("Eigene"), soundFiles(m_userSounds, true, true)}};
+            break;
+        case BuiltinSounds: groups = {{{}, builtinSounds()}}; break;
+        case PackSounds: groups = {{{}, packSounds()}}; break;
+        case Sounds:
+        case SoundGroup: groups = {{{}, soundFiles(m_userSounds, true, true)}}; break;
+        case RecipesCat: groups = {{T("Mitgeliefert"), recipes(true)}, {T("Eigene"), recipes(false)}}; break;
+        }
     }
 
-    for (const Group& g : groups) {
-        QVector<const Entry*> hits;
-        for (const Entry& e : g.entries)
+    for (Group& g : groups) {
+        QVector<Entry*> hits;
+        for (Entry& e : g.entries)
             if (filter.isEmpty() || e.name.contains(filter, Qt::CaseInsensitive)
                 || std::any_of(e.keywords.begin(), e.keywords.end(),
                                [&](const QString& k) { return k.contains(filter, Qt::CaseInsensitive); }))
@@ -1000,17 +1334,27 @@ void EffectsLibrary::rebuild()
             h->setFont(f);
             m_list->addItem(h);
         }
-        for (const Entry* e : hits) {
-            auto* it = new QListWidgetItem(QIcon(e->icon), e->name);
+        for (Entry* e : hits) {
+            if (e->load) e->load(*e);
+            const QString key = EffectFavorites::key(e->data);
+            const bool favorite = !key.isEmpty() && favorites.contains(key);
+            auto* it = new QListWidgetItem(QIcon(favorite ? starred(e->icon) : e->icon), e->name);
             it->setData(Qt::UserRole, e->ok ? e->data : QString()); // broken file: visible, but not applicable
-            it->setFlags(e->ok ? Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled : Qt::ItemIsEnabled);
+            it->setFlags(!e->ok   ? Qt::ItemIsEnabled
+                         : e->drag ? Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled
+                                   : Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             if (!e->ok) it->setForeground(Theme::warning);
-            if (!e->tip.isEmpty()) it->setToolTip(e->tip);
+            QString tip = e->tip;
+            if (favorite) tip = tip.isEmpty() ? T("Favorit") : T("Favorit") + "\n" + tip;
+            if (!tip.isEmpty()) it->setToolTip(tip);
             m_list->addItem(it);
         }
     }
     if (m_list->count() == 0 && filter.isEmpty()) {
         QString hint;
+        if (shown == Favorites && !listed)
+            hint = T("Noch keine Favoriten – Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)");
+        if (shown == Recent && !listed) hint = T("Noch nichts benutzt – was du anwendest, steht hier, das Neueste oben");
         if (shown == Luts || shown == LutGroup) hint = T("Noch keine LUTs – „Effekte importieren…“ öffnet den Ordner");
         if (shown == Transitions || shown == TransitionGroup)
             hint = T("Noch keine Verlaufsblenden – „Effekte importieren…“ öffnet den Ordner");
@@ -1024,6 +1368,7 @@ void EffectsLibrary::rebuild()
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);
             h->setForeground(Theme::textDim);
+            h->setData(Qt::ToolTipRole, hint);
             m_list->addItem(h);
         }
     }

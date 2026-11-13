@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
 #include "app/OpenTrace.h"
+#include "core/Shapes.h"
 #include "core/StartupTrace.h"
 #include "app/TourManager.h"
 #include "ui/TourOverlay.h"
@@ -564,6 +565,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_effects, &EffectsLibrary::titleRequested, this,
             [this, tv](int kind) { m_editor->addTitle(tv->playhead(), -1, 0, TitleKind(kind)); });
+    connect(m_effects, &EffectsLibrary::shapeRequested, this, [this, tv](const QString& kind) { addShape(tv->playhead(), -1, kind); });
+    connect(m_effects, &EffectsLibrary::drawRequested, this, [this] { setDrawTool(true); });
+    m_effects->setHistory([this] { return m_project->undoStack(); }); // recently used = what changed the project
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
         const QVector<int> targets = m_editor->effectTargets(tv->playhead(), Editor::effectKind(id));
@@ -653,10 +657,32 @@ MediaInfo MainWindow::probeCached(const QString& path)
     return quick.info;
 }
 
+// A shape title of one kind ("arrow"; unknown = the default circle), its box made for the kind like the Inspector's
+// kind switch does (a line gets a line's thickness)
+void MainWindow::addShape(int frame, int track, const QString& kindId)
+{
+    ShapeKind kind = ShapeKind::Ellipse;
+    if (!Shapes::kindFromId(kindId, &kind) || kind == ShapeKind::Ellipse) {
+        m_editor->addTitle(frame, track, 0, TitleKind::Shape);
+        return;
+    }
+    const int height = m_project->timelineFormat().height;
+    m_editor->addTitle(frame, track, 0, TitleKind::Shape, [kind, height](Clip& c) {
+        const QSizeF size = Shapes::sizeForKind(c.title.shape, kind, Shapes::lineThickness(height));
+        c.title.shape.width = size.width();
+        c.title.shape.height = size.height();
+        c.title.shape.kind = kind;
+    });
+}
+
 void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlaceParts parts)
 {
     if (paths.size() == 1 && MediaPool::isTitleItem(paths.first())) {
         const QString& p = paths.first();
+        if (const QString kind = MediaPool::shapeKindOf(p); !kind.isEmpty()) { // a shape of one kind (Effects Library)
+            addShape(frame, track, kind);
+            return;
+        }
         m_editor->addTitle(frame, track, 0,
                            p == MediaPool::CounterItem    ? TitleKind::Counter
                            : p == MediaPool::ProgressItem ? TitleKind::Progress

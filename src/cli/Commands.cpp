@@ -1487,11 +1487,19 @@ const QVector<Command>& commands()
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},
-        {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind and parameter "
-                    "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
+        {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind, category (what "
+                    "it is for) and parameter names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
                     "luma images (op 'transition'), effect presets (op 'effect' preset), accent presets (op "
                     "'accent': zoom punch, flash, shake on kills, beats, drops) and effect sounds (op 'sfx').",
          {{"effect", T::String, "only this effect, with parameter details", false, true},
+          {"category", T::String, "only the effects of this category (what they are for): " + [] {
+               QStringList ids;
+               for (const EffectCategoryInfo& c : kEffectCategories) ids << QString::fromLatin1(c.id);
+               return ids.join(", ");
+           }()},
+          {"favorites", T::Boolean, "only the user's favourites and recently used entries of the app's Effects Library "
+                                    "(effects, transitions, titles, shapes, LUTs, sounds, recipes, presets) as the ops "
+                                    "take them; entries the user marked carry favorite:true in the full list too"},
           {"kind", T::String, "'sfx': only the effect sounds; 'nodes': the node kinds of the compositing graph (edit "
                               "ops 'comp', 'node') with inputs and parameters; 'recipes': ready compositing graphs "
                               "(edit op comp recipe) with their slots", false, true},

@@ -54,9 +54,18 @@ public:
     static constexpr const char* ProgressItem = "schneidi:title:progress";
     // Shape title (0.22): "Form" next to "Text" in the Master
     static constexpr const char* ShapeItem = "schneidi:title:shape";
+    // A shape of one kind (Effects Library, Shapes & drawing): "schneidi:title:shape:<kind id>" ("arrow")
+    static QString shapeItem(const QString& kindId) { return QString::fromLatin1(ShapeItem) + ':' + kindId; }
+    // The kind id of a shape item ("" = the plain one, the default circle)
+    static QString shapeKindOf(const QString& item)
+    {
+        const QString prefix = QString::fromLatin1(ShapeItem) + ':';
+        return item.startsWith(prefix) ? item.mid(prefix.size()) : QString();
+    }
     static bool isTitleItem(const QString& item)
     {
-        return item == TitleItem || item == CounterItem || item == ProgressItem || item == ShapeItem;
+        return item == TitleItem || item == CounterItem || item == ProgressItem || item == ShapeItem
+               || item.startsWith(QString::fromLatin1(ShapeItem) + ':');
     }
     // Timeline/compound clip (sequence) as an entry: "schneidi:seq:<id>" instead of a path
     static QString sequenceItem(int id);

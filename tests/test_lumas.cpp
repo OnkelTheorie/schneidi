@@ -251,8 +251,12 @@ void testWidget()
             if (list->item(i)->flags() & Qt::ItemIsDragEnabled) ++n;
         return n;
     };
-    QTreeWidgetItem* lumas = top("Verlaufsblenden");
-    if (!CHECK(lumas && lumas->childCount() == 2 && !top("schneidi") && !top("Übergänge"))) return;
+    // Gradient wipes sit with the other transitions
+    QTreeWidgetItem* transitions = top("Übergänge");
+    QTreeWidgetItem* lumas = nullptr;
+    for (int i = 0; transitions && i < transitions->childCount(); ++i)
+        if (transitions->child(i)->text(0) == "Verlaufsblenden") lumas = transitions->child(i);
+    if (!CHECK(lumas && lumas->childCount() == 2 && !top("schneidi") && !top("Verlaufsblenden"))) return;
     QTreeWidgetItem* builtinItem = lumas->child(0);
     QTreeWidgetItem* trans = lumas->child(1); // Own
 
@@ -273,9 +277,12 @@ void testWidget()
         tree->setCurrentItem(luts->child(0));
         CHECK_EQ(realItems(), int(EffectFolders::builtinLuts().size()));
     }
-    // Toolbox -> Video Transitions contains the bundled gradients, not the empty style "Gradient wipe"
-    tree->setCurrentItem(top("Toolbox")->child(0));
-    CHECK_EQ(realItems(), int(std::size(kTransitionTypes)) - 1 + builtin);
+    // Transitions › Video: the kinds without the empty style "Gradient wipe" (the gradients are their own group);
+    // Transitions itself: video, audio and the gradients (bundled + own) under headers
+    tree->setCurrentItem(transitions->child(0));
+    CHECK_EQ(realItems(), int(std::size(kTransitionTypes)) - 1);
+    tree->setCurrentItem(transitions);
+    CHECK_EQ(realItems(), int(std::size(kTransitionTypes)) - 1 + int(std::size(kAudioCurves)) + builtin + 2);
 
     // Own transitions including subfolders
     tree->setCurrentItem(trans);
@@ -286,20 +293,20 @@ void testWidget()
     }
 
     // Collapse: arrows visible, state is saved and restored next time
-    CHECK(tree->rootIsDecorated() && top("Toolbox")->isExpanded());
-    top("Toolbox")->setExpanded(false);
+    CHECK(tree->rootIsDecorated() && top("Übergänge")->isExpanded());
+    top("Übergänge")->setExpanded(false);
     {
         EffectsLibrary again;
         auto* t2 = again.findChild<QTreeWidget*>();
         bool found = false;
         for (int i = 0; t2 && i < t2->topLevelItemCount(); ++i)
-            if (t2->topLevelItem(i)->text(0) == "Toolbox") {
+            if (t2->topLevelItem(i)->text(0) == "Übergänge") {
                 found = true;
                 CHECK(!t2->topLevelItem(i)->isExpanded());
             }
         CHECK(found);
     }
-    top("Toolbox")->setExpanded(true);
+    top("Übergänge")->setExpanded(true);
     CHECK(!lib.grab().isNull());
 }
 

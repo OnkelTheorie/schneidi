@@ -10,6 +10,7 @@
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/CompRecipes.h"
+#include "core/EffectFavorites.h"
 #include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
@@ -753,6 +754,7 @@ QJsonArray recipesJson()
         if (!r.description.isEmpty()) o["description"] = r.description;
         if (!r.note.isEmpty()) o["note"] = r.note;
         if (!r.dir.isEmpty()) o["folder"] = QDir::toNativeSeparators(r.dir);
+        if (EffectFavorites::isFavorite("recipe:" + r.id)) o["favorite"] = true; // marked in the Effects Library
         list << o;
     }
     return list;
