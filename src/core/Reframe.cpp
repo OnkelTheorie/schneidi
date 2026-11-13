@@ -589,10 +589,11 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
         frame = std::clamp(frame, 0, last);
         for (AnimParam p : shapeParams) keys[p] << Key{frame, valueOf(x, p)};
     };
-    // Opacity: the base's (with its own keys) times shown (1) or hidden (0)
+    // Opacity: the base's (with its own keys; 100 with compositing off) times shown (1) or hidden (0)
     const auto opacityKey = [&](int frame, double shown) {
         frame = std::clamp(frame, 0, last);
-        keys[AnimParam::Opacity] << Key{frame, Keys::valueAt(base, AnimParam::Opacity, frame) * shown};
+        const double opacity = base.transform.compositeOn ? Keys::valueAt(base, AnimParam::Opacity, frame) : 100.0;
+        keys[AnimParam::Opacity] << Key{frame, opacity * shown};
     };
     // The first shape shown is the static one too (a copy without keys looks like that)
     const FeedState* firstShown = nullptr;
@@ -658,6 +659,7 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
             continue;
         }
         c.keys[it.key()] = track;
+        if (it.key() == AnimParam::Opacity) c.transform.compositeOn = true; // else the opacity does not apply
     }
     return c;
 }
