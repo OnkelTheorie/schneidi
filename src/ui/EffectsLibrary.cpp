@@ -266,77 +266,101 @@ QPixmap audioIcon()
     return pm;
 }
 
-QPixmap titleIcon(TitleKind kind = TitleKind::Text)
+// Titles, shapes and the paint tool share one look: the title clip's tile (the timeline's title colour, darker) with
+// a calm near-white glyph (85 % opacity, a 1 px slightly darker rim on filled shapes), centred with even padding and
+// the thin dark frame of the other thumbnails
+const QColor kGlyph(0xf4, 0xf4, 0xf6, 217);
+const QColor kGlyphRim(0xc4, 0xc4, 0xcc);
+
+QPixmap titleTile()
 {
     QPixmap pm(kIcon);
     pm.fill(Theme::titleClip.darker(135));
-    QPainter p(&pm);
-    if (kind == TitleKind::Shape) {
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 2));
-        p.setBrush(QColor(255, 214, 0));
-        p.drawEllipse(QRectF(pm.width() * 0.2, pm.height() * 0.2, pm.width() * 0.6, pm.height() * 0.6));
-        return pm;
-    }
-    if (kind == TitleKind::Progress) {
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        const QRectF bar(4, 5, pm.width() - 8, 5);
-        p.setBrush(QColor(0, 0, 0, 110));
-        p.drawRoundedRect(bar, 2.5, 2.5);
-        p.setBrush(QColor(255, 214, 0));
-        p.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * 0.6, bar.height()), 2.5, 2.5);
-        return pm;
-    }
-    QFont f = p.font();
-    f.setPixelSize(kind == TitleKind::Counter ? 13 : 17);
-    f.setBold(true);
-    p.setFont(f);
-    p.setPen(QColor(0xf0, 0xf0, 0xf0));
-    p.drawText(pm.rect(), Qt::AlignCenter, kind == TitleKind::Counter ? "123" : "T");
     return pm;
 }
 
-// A shape kind: its outline (core/Shapes) filled yellow with a light stroke, a line as a yellow stroke
+void frameTile(QPainter& p, const QPixmap& pm)
+{
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(QColor(0, 0, 0, 120));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(QRect(QPoint(0, 0), pm.size() / pm.devicePixelRatio()).adjusted(0, 0, -1, -1));
+}
+
+QPixmap titleIcon(TitleKind kind = TitleKind::Text)
+{
+    QPixmap pm = titleTile();
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (kind == TitleKind::Progress) {
+        p.setPen(Qt::NoPen);
+        const QRectF bar(6, pm.height() / 2.0 - 2.5, pm.width() - 12, 5);
+        p.setBrush(QColor(0, 0, 0, 90));
+        p.drawRoundedRect(bar, 2.5, 2.5);
+        p.setBrush(kGlyph);
+        p.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * 0.6, bar.height()), 2.5, 2.5);
+    } else {
+        QFont f = p.font();
+        f.setPixelSize(kind == TitleKind::Counter ? 13 : 17);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(kGlyph);
+        p.drawText(pm.rect(), Qt::AlignCenter, kind == TitleKind::Counter ? "123" : "T");
+    }
+    frameTile(p, pm);
+    return pm;
+}
+
+// A shape kind: its outline (core/Shapes) scaled into the tile with even padding, filled near-white with a slightly
+// darker 1 px rim; a line (open outline) as a near-white stroke
 QPixmap shapeIcon(ShapeKind kind)
 {
-    QPixmap pm(kIcon);
-    pm.fill(Theme::titleClip.darker(135));
+    QPixmap pm = titleTile();
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     ShapeStyle s;
     s.kind = kind;
-    const double h = pm.height() - 8.0;
-    double w = h;
-    if (kind == ShapeKind::Rect) w = h * 1.5;
-    if (kind == ShapeKind::Arrow || kind == ShapeKind::Line) w = pm.width() - 12.0;
-    const Shapes::Outline o = Shapes::outline(s, w, kind == ShapeKind::Line ? 1.0 : (kind == ShapeKind::Arrow ? h * 0.7 : h));
+    // The kind's natural proportions; scaled to fit below
+    const double w = kind == ShapeKind::Rect ? 1.5 : kind == ShapeKind::Arrow ? 2.4 : kind == ShapeKind::Line ? 3.0 : 1.0;
+    const double h = kind == ShapeKind::Line ? 0.0 : 1.0;
+    const Shapes::Outline o = Shapes::outline(s, w * 100, std::max(h * 100, 1.0));
     QPolygonF poly(o.points);
-    poly.translate(pm.width() / 2.0, pm.height() / 2.0);
-    const QColor yellow(255, 214, 0);
+    const QRectF bounds = poly.boundingRect();
+    constexpr double pad = 5.0;
+    const QRectF box = QRectF(QPointF(0, 0), QSizeF(kIcon)).adjusted(pad, pad, -pad, -pad);
+    const double scale = std::min(box.width() / std::max(bounds.width(), 1e-6),
+                                  kind == ShapeKind::Line ? 1e9 : box.height() / std::max(bounds.height(), 1e-6));
+    QTransform t;
+    t.translate(box.center().x(), box.center().y());
+    t.scale(scale, kind == ShapeKind::Line ? 0.0 : scale);
+    t.translate(-bounds.center().x(), -bounds.center().y());
+    poly = t.map(poly);
     if (o.closed && kind != ShapeKind::Line) {
-        p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 1.2));
-        p.setBrush(yellow);
+        p.setPen(QPen(kGlyphRim, 1.0));
+        p.setBrush(kGlyph);
         p.drawPolygon(poly);
     } else {
-        p.setPen(QPen(yellow, 2.5, Qt::SolidLine, Qt::RoundCap));
+        p.setPen(QPen(kGlyph, 2.5, Qt::SolidLine, Qt::RoundCap));
         p.drawPolyline(poly);
     }
+    frameTile(p, pm);
     return pm;
 }
 
-// The paint tool: a free brush stroke
+// The paint tool: a free brush stroke in the same near-white, inside the same padding
 QPixmap drawIcon()
 {
-    QPixmap pm(kIcon);
-    pm.fill(Theme::titleClip.darker(135));
+    QPixmap pm = titleTile();
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    QPainterPath stroke(QPointF(6, pm.height() - 7));
-    stroke.cubicTo(14, 2, 22, pm.height() - 2, 30, 10);
-    stroke.cubicTo(34, 4, 40, 8, pm.width() - 5, 6);
-    p.setPen(QPen(QColor(255, 214, 0), 2.5, Qt::SolidLine, Qt::RoundCap));
+    const double l = 8, r = kIcon.width() - 8.0, top = 7, bottom = kIcon.height() - 7.0, mid = (top + bottom) / 2;
+    QPainterPath stroke(QPointF(l, bottom - 2));
+    stroke.cubicTo(l + 8, top - 3, l + 14, bottom + 3, (l + r) / 2 + 2, mid);
+    stroke.cubicTo((l + r) / 2 + 8, top - 1, r - 6, top + 2, r, top + 1);
+    p.setPen(QPen(kGlyph, 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
     p.drawPath(stroke);
+    frameTile(p, pm);
     return pm;
 }
 

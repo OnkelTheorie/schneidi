@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test effects: editor (add/remove/undo/split), project file, Inspector, Effects Library (categories by purpose,
 // search across groups, favourites, recently used, shapes & drawing, saved collapsed state; EFFECTS_SHOT=<folder>
-// saves pictures of it, EFFECTS_PT=<points> a larger font),
+// saves pictures of it, EFFECTS_PT=<points> a larger font, EFFECTS_THEME=<design> another design),
 // dragging filters onto the timeline (offscreen)
 #include "check.h"
 
@@ -51,6 +51,8 @@ int main(int argc, char** argv)
     Check::initApp("effects");
     const QString lang = argc > 1 ? argv[1] : "de";
     I18n::install(lang);
+    // EFFECTS_THEME=hell: the pictures (EFFECTS_SHOT) in another design
+    if (const QString design = qEnvironmentVariable("EFFECTS_THEME"); !design.isEmpty()) Theme::activate(Theme::defaults(design));
     Theme::apply(app);
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
