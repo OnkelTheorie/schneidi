@@ -102,6 +102,16 @@ struct PsyMb {
     int e4[4] = {}, e8[4] = {};
 };
 thread_local PsyMb tPsy;
+// With psy, the inter candidate that won is coded once more with its trellis quantisation at
+// kPsyFine * lambda: fewer small coefficients dropped, so more of the source's energy at more bits,
+// and the psy cost decides between the two. Measured at fixed QP 30-38, 60 pictures each of CS2, a
+// slow zoom with grain and camera footage, at equal bitrate against psy off (AC energy kept /
+// high-frequency energy kept / PSNR-Y): psyRd 1.0 without this candidate +1.5..1.8 / +0.8..2.2
+// points / -0.05..-0.18 dB, with it at 0.5: +2.5..3.3 / +3.6..4.9 / +0.01..-0.24, at 0.25:
+// +2.9..3.8 / +4.4..6.0 / 0.00..-0.38, at 0.1 no more. Trying it only where the winner's psy cost
+// exceeds a few bits changes nothing (it nearly always does); coding both transform sizes for real
+// instead of by estimate brings nothing on top. H264_PSYQ overrides (0 = no such candidate).
+const double gPsyFine = std::getenv("H264_PSYQ") ? std::atof(std::getenv("H264_PSYQ")) : 0.25;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -4695,8 +4705,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
     }
 
-    // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits.
+    // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits
+    // (+ the psy cost, also left in interPsy).
     bool interDelta = false;
+    double interPsy = 0;
     const bool trellisLast = gExp & 32; // experiment: candidates with plain quantisation, the winner again with the trellis
     bool trellisNow = !trellisLast;
     // Prediction and chroma coding of a layout do not depend on the transform size: kept for
@@ -4776,8 +4788,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         interDelta = writeInterResidual(mbx, mby, qp, t8, res, ch, io);
         // A skip_run ends here: count its codeword to be fair against skip.
-        return double(mbSsd(mbx, mby)) + psyCost(mbx, mby) +
-               lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
+        interPsy = psyCost(mbx, mby);
+        return double(mbSsd(mbx, mby)) + interPsy + lambda * mbBits(io, mbx, mby, double(interBits.bitCount() + seBits(0)));
     };
     // Transform size by SATD (experiment H264_EXP & 512): the 8x8 Hadamard of the residual against
     // four 4x4 ones; clearly one way -> only that transform is coded, else both (as without).
@@ -4821,6 +4833,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     bool chosenInterDelta = false;
     MbState interState;
     Choice best = whole;
+    bool bestT8 = false;   // transform of the chosen inter coding
+    double bestPsy = 0;    // and its psy cost
     // Mode decision by estimate (CABAC, High profile): each candidate (16x16 or the best split, 4x4 or
     // 8x8 transform) is transformed and quantised with the trellis, whose own cost (squared error +
     // lambda * coefficient bits) ranks them; only the best transform of a layout is reconstructed and
@@ -4855,6 +4869,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 interBits = std::move(tmp);
                 saveMb(mbx, mby, interState);
                 best = c;
+                bestT8 = t8;
+                bestPsy = interPsy;
             }
             return cost;
         };
@@ -4913,6 +4929,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     } else {
     const int pickWhole = transformPick(whole);
     costInter = encodeInter(whole, interBits, pickWhole == 1);
+    bestPsy = interPsy;
     int bestPick = pickWhole;
     chosenInterDelta = interDelta;
     saveMb(mbx, mby, interState);
@@ -4929,6 +4946,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         if (costSplit < costInter) {
             costInter = costSplit;
+            bestPsy = interPsy;
             chosenInterDelta = interDelta;
             interBits = std::move(splitBits);
             saveMb(mbx, mby, interState);
@@ -4938,7 +4956,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     // 8x8 transform for the chosen layout (High profile). Experiment (H264_EXP & 128): not when
     // the 4x4 transform left no luma coefficients.
-    bool bestT8 = bestPick == 1;
+    bestT8 = bestPick == 1;
     if (useT8() && cfg_.effort > 0 && bestPick == 0 && !((gExp & 128) && interBits.syn.cbpLuma == 0)) {
         MbOut t8Bits;
         const double costT8 = encodeInter(best, t8Bits, true);
@@ -4956,6 +4974,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         if (costT8 < costInter) {
             costInter = costT8;
+            bestPsy = interPsy;
             chosenInterDelta = interDelta;
             interBits = std::move(t8Bits);
             saveMb(mbx, mby, interState);
@@ -4971,11 +4990,27 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         trellisNow = true;
         MbOut finalBits;
         costInter = encodeInter(best, finalBits, bestT8);
+        bestPsy = interPsy;
         chosenInterDelta = interDelta;
         interBits = std::move(finalBits);
         saveMb(mbx, mby, interState);
     }
     } // !useEst
+    // Psy: the winner once more with the finer quantisation (see gPsyFine).
+    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0) {
+        InterResidual fine;
+        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda * gPsyFine, bestT8, true, fine, nullptr);
+        if (fine.cbpLuma || interBits.syn.cbpLuma) { // else the same macroblock again
+            MbOut fineBits;
+            const double costFine = encodeInter(best, fineBits, bestT8, &fine);
+            if (costFine < costInter) {
+                costInter = costFine;
+                chosenInterDelta = interDelta;
+                interBits = std::move(fineBits);
+                saveMb(mbx, mby, interState);
+            }
+        }
+    }
 
     // ---- Candidate 3: intra, only when a cheap Intra 16x16 SATD estimate beats the motion search.
     MbOut intraBits;
@@ -5333,7 +5368,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     };
     ChromaCache chromaCache[3];
     bool sentDelta = false;
-    auto encodeB = [&](int which, MbOut& io, bool t8) {
+    double lastPsy = 0; // psy cost of the coding encodeB did last
+    auto encodeB = [&](int which, MbOut& io, bool t8, double quantLambda) {
         const Cand& best = cands[which ? which - 1 : 0];
         const uint8_t* lp = which ? clp[which - 1] : dlp;
         const uint8_t (*cp)[64] = which ? ccp[which - 1] : dcp;
@@ -5346,7 +5382,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             setDirect();
         }
         InterResidual res;
-        codeInterLuma(mbx, mby, lp, qp, lambda, t8, true, io, res);
+        codeInterLuma(mbx, mby, lp, qp, quantLambda, t8, true, io, res);
         ChromaCache& cc = chromaCache[which];
         ChromaMb ch;
         if (cc.valid) {
@@ -5374,19 +5410,23 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                     io.syn.mvd1[p][c] = best.mv[p][1][c] - best.mvp[p][1][c];
                 }
         sentDelta = writeInterResidual(mbx, mby, qp, t8, res, ch, io);
-        return double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * mbBits(io, mbx, mby, 0.0);
+        lastPsy = psyCost(mbx, mby);
+        return double(mbSsd(mbx, mby)) + lastPsy + lambda * mbBits(io, mbx, mby, 0.0);
     };
     MbOut interBits;
     int bestWhich = 0;
-    double costInter = encodeB(0, interBits, false);
+    bool bestT8 = false;
+    double costInter = encodeB(0, interBits, false, lambda);
+    double bestPsy = lastPsy;
     bool chosenDelta = sentDelta;
     MbState interState;
     saveMb(mbx, mby, interState);
     for (int which = 1; which <= candCount; ++which) {
         MbOut candBits;
-        const double costCand = encodeB(which, candBits, false);
+        const double costCand = encodeB(which, candBits, false, lambda);
         if (costCand < costInter) {
             costInter = costCand;
+            bestPsy = lastPsy;
             chosenDelta = sentDelta;
             interBits = std::move(candBits);
             saveMb(mbx, mby, interState);
@@ -5396,11 +5436,24 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     // 8x8 transform for the best of them (High profile).
     if (useT8() && cfg_.effort > 0) {
         MbOut t8Bits;
-        const double costT8 = encodeB(bestWhich, t8Bits, true);
+        const double costT8 = encodeB(bestWhich, t8Bits, true, lambda);
         if (costT8 < costInter) {
             costInter = costT8;
+            bestPsy = lastPsy;
             chosenDelta = sentDelta;
             interBits = std::move(t8Bits);
+            saveMb(mbx, mby, interState);
+            bestT8 = true;
+        }
+    }
+    // Psy: the winner once more with the finer quantisation (see gPsyFine).
+    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0) {
+        MbOut fineBits;
+        const double costFine = encodeB(bestWhich, fineBits, bestT8, lambda * gPsyFine);
+        if (costFine < costInter) {
+            costInter = costFine;
+            chosenDelta = sentDelta;
+            interBits = std::move(fineBits);
             saveMb(mbx, mby, interState);
         }
     }

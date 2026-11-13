@@ -101,7 +101,8 @@ struct EncoderConfig {
     // The mode decision (skip, inter, intra and their transform sizes) adds
     // psyRd * sqrt(lambda) * |AC energy of the source - AC energy of the reconstruction| to a
     // candidate's cost, so one that keeps the texture or grain of the source beats one that is
-    // closer in squared error but smoother. PSNR and SSIM drop by design; 1.0 is a usual strength.
+    // closer in squared error but smoother; inter macroblocks also get a candidate quantised to
+    // keep more of the small coefficients. PSNR and SSIM drop by design; 1.0 is a usual strength.
     double psyRd = 0.0;
 };
 
