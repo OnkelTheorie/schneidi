@@ -24,12 +24,6 @@ QString stablePath(const QString& path)
     return path;
 }
 
-QString absolutePath(const QString& stored)
-{
-    if (stored.startsWith(QLatin1String(kInFolder))) return EffectFolders::root() + '/' + stored.mid(2);
-    return stored;
-}
-
 const QStringList kFilePrefixes{QString::fromLatin1(EffectFolders::LutPrefix), QStringLiteral("luma:"),
                                 QString::fromLatin1(Presets::Prefix)};
 
@@ -47,6 +41,12 @@ QString key(const QString& data)
         return "sound:" + QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
     }
     return data;
+}
+
+QString absolutePath(const QString& stored)
+{
+    if (stored.startsWith(QLatin1String(kInFolder))) return EffectFolders::root() + '/' + stored.mid(2);
+    return stored;
 }
 
 QString filePath(const QString& key)

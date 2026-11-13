@@ -18,6 +18,8 @@ inline constexpr int kRecentMax = 10;
 QString key(const QString& data);
 // The file a key of a file entry names (absolute, or ":/…" for a bundled one); empty = not a file key
 QString filePath(const QString& key);
+// A stored path ("@/Sounds/x.wav" = inside the effects folder) as an absolute one; others unchanged
+QString absolutePath(const QString& stored);
 
 QStringList favorites();
 bool isFavorite(const QString& key);
