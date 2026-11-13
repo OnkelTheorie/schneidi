@@ -641,6 +641,11 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
+bool BProbe::collects(int index, bool sceneChange) const
+{
+    return kBProbe && (start_ >= 0 || lastStart_ < 0 || index - lastStart_ >= kInterval || (sceneChange && index > lastStart_));
+}
+
 bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads)
 {
     if (!kBProbe || bframes <= 0)
@@ -808,6 +813,23 @@ void FirstPass::analyseBatch() const
         keptBytes_ += bytes;
     }
     if (bframes_ > 0) {
+        // The probe first (it needs the half pictures and scene changes only): the searches below
+        // are made only for pictures that may become part of a run of B pictures - those the probe
+        // is still collecting, and those up to bframes after a picture where B pictures pay.
+        const int base = int(stats_->intraSum.size());
+        std::vector<uint8_t> want(size_t(n), 1);
+        if (kBProbe) {
+            for (int i = 0; i < n; ++i) {
+                const LookaheadFrame& f = batch_[size_t(i)];
+                want[size_t(i)] = probe_.collects(base + i, f.sceneChange);
+                stats_->bGate.push_back(probe_.allowed());
+                if (probe_.add(*la_, f, base + i, bframes_, threads_))
+                    std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
+            }
+            for (int i = 0; i < n; ++i)
+                for (int j = std::max(0, base + i - bframes_); j <= base + i && !want[size_t(i)]; ++j)
+                    want[size_t(i)] = stats_->bGate[size_t(j)];
+        }
         // The pictures up to bframes + 1 before picture i of the batch (the batch, then the history).
         auto before = [&](int i) {
             std::vector<const LookaheadFrame*> b;
@@ -825,12 +847,20 @@ void FirstPass::analyseBatch() const
         // All searches first (they read only the one-step results), then the bi-predicted costs
         // (they read the searches of the pictures before).
         parallel([&](int i) {
+            if (!want[size_t(i)])
+                return;
             const auto b = before(i);
             la_->searchB(batch_[size_t(i)], b.data(), int(b.size()), bframes_);
         });
         parallel([&](int i) {
+            LookaheadFrame& f = batch_[size_t(i)];
+            if (!want[size_t(i)]) { // a P picture after its predecessor is all that is known
+                f.bPlan.assign(size_t(bPlanStride(bframes_)), -1.0f);
+                f.bPlan[1] = float(f.interSum);
+                return;
+            }
             const auto b = before(i);
-            la_->biB(batch_[size_t(i)], b.data(), int(b.size()), bframes_, false);
+            la_->biB(f, b.data(), int(b.size()), bframes_, false);
         });
         for (LookaheadFrame& f : batch_) {
             stats_->bPlan.insert(stats_->bPlan.end(), f.bPlan.begin(), f.bPlan.end());
@@ -843,12 +873,6 @@ void FirstPass::analyseBatch() const
             history_.pop_front();
     }
     for (LookaheadFrame& f : batch_) {
-        if (bframes_ > 0) {
-            const int index = int(stats_->intraSum.size());
-            stats_->bGate.push_back(probe_.allowed());
-            if (probe_.add(*la_, f, index, bframes_, threads_))
-                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
-        }
         stats_->intraSum.push_back(f.intraSum);
         stats_->interSum.push_back(f.interSum);
         stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
@@ -1123,6 +1147,26 @@ void Encoder::noteGate(const LookaheadFrame& f)
         gate_.emplace_back(probe_.resultStart(), probe_.allowed());
 }
 
+// The lookahead's searches for B pictures are made only for pictures that may become part of a run
+// of them: those the probe is still collecting and those up to bframes after a picture where B
+// pictures pay (a P picture ends its run that far behind the last B picture's place).
+bool Encoder::wantBSearch(const LookaheadFrame& f) const
+{
+    if (!bSearch())
+        return false;
+    if (!bAdapt() || !kBProbe)
+        return true;
+    const std::vector<uint8_t>* stats = cfg_.firstPass ? &cfg_.firstPass->bGate : nullptr;
+    if (stats && stats->empty())
+        return true;
+    if (!stats && probe_.collects(f.index, f.sceneChange))
+        return true;
+    for (int i = std::max(0, f.index - cfg_.bframes); i <= f.index; ++i)
+        if (stats ? size_t(i) >= stats->size() || (*stats)[size_t(i)] : gateAt(i))
+            return true;
+    return false;
+}
+
 bool Encoder::gateAt(int index) const
 {
     if (!kBProbe)
@@ -1186,7 +1230,7 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
         for (size_t k = 1; k <= size_t(cfg_.bframes) + 1 && k <= queue_.size(); ++k)
             before.push_back(&queue_[queue_.size() - k]);
     auto analyseB = [this](LookaheadFrame& g, const std::vector<const LookaheadFrame*>& b) {
-        if (!bSearch())
+        if (!wantBSearch(g))
             return;
         la_->searchB(g, b.data(), int(b.size()), cfg_.bframes);
         la_->biB(g, b.data(), int(b.size()), cfg_.bframes, cfg_.weightedBipred);

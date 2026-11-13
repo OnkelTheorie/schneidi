@@ -139,6 +139,8 @@ public:
     // The next picture in display order (prepared by the lookahead). True when a measurement was
     // finished with it: allowed() then holds from picture resultStart() on.
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
+    // Whether add() will keep this picture for a measurement (one being collected or starting with it).
+    bool collects(int index, bool sceneChange) const;
     bool allowed() const { return allowed_; }
     int resultStart() const { return resultStart_; }
     double lastGain() const { return gain_; }
@@ -273,6 +275,7 @@ private:
     BProbe probe_;
     std::vector<std::pair<int, bool>> gate_; // (first picture, B pictures allowed), in order
     void noteGate(const LookaheadFrame& f);
+    bool wantBSearch(const LookaheadFrame& f) const;
     bool gateAt(int index) const;
     std::vector<uint8_t> statType_;
     std::vector<double> statCost_;
