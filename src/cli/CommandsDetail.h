@@ -183,6 +183,12 @@ void addShapeOps(QVector<OpDef>& ops);
 QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to);
 void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before);
 QJsonObject shapeJson(const TitleStyle& t);
+// op shape/draw `follow` (EditOpsShape.cpp): {clip, node}, a node id or false into t.shape.followClip/followNode;
+// placeAtRef = put the title onto the tracked point (a shape not placed by hand)
+void applyFollow(Session& s, TitleStyle& t, const QJsonObject& op, const Clip& title, int titleTrack, bool placeAtRef);
+// Drawings (0.22, EditOpsDraw.cpp): op draw; a drawing title as `info` shows it
+void addDrawOps(QVector<OpDef>& ops);
+QJsonObject drawingJson(const TitleStyle& t, const ProjectFormat& f);
 // AI cutout (0.19, EditOpsCutout.cpp): op cutout_node
 void addCutoutOps(QVector<OpDef>& ops);
 // `effects kind:'nodes'`: every node kind with inputs, output and parameters (key, type, default, range, choices)

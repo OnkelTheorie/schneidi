@@ -11,6 +11,7 @@
 #include "core/Loudness.h"
 #include "core/Retime.h"
 #include "core/Shapes.h"
+#include "core/Drawing.h"
 #include "core/TimelineOps.h"
 
 #include <QFileInfo>
@@ -61,6 +62,8 @@ QRectF titleBlock(const Clip& c, double t, double W, double H)
     QRectF r;
     if (s.isProgress()) { // the whole bar (it fills up to there)
         r = Generators::progressTrack(s, W, H);
+    } else if (s.isDrawing()) { // the strokes with their width, where they were drawn (a tracker left out)
+        r = Drawing::bounds(Drawing::place(c, t, W, H));
     } else if (s.isShape()) { // the outline with stroke and shadow, where it was placed (a tracker left out)
         r = Shapes::bounds(s, Shapes::placed(s.shape, Shapes::placeAt(c, t, W, H), nullptr, 1.0));
     } else {
@@ -282,16 +285,27 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
         if (t.hidden) continue;
         for (const Clip& c : t.clips) {
             if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
-            if (const ShapeStyle& sh = c.title.shape; c.title.isShape() && sh.followClip > 0 && sh.followNode > 0) {
+            // A drawing that draws itself longer than its clip shows it: it ends half drawn
+            if (const DrawingStyle& dr = c.title.drawing; c.title.isDrawing() && dr.reveal > 0 && !dr.strokes.isEmpty()
+                && dr.reveal * fps > c.in + c.length() + 0.5)
+                out << issue(Severity::Warning, "drawing_reveal_long",
+                             T("Zeichnung malt sich %1 s lang auf, der Clip zeigt davon nur %2 s – sie endet halb gezeichnet")
+                                 .arg(QString::number(dr.reveal, 'g', 3).replace('.', I18n::decimalPoint()))
+                                 .arg(QString::number((c.in + c.length()) / fps, 'g', 3).replace('.', I18n::decimalPoint())),
+                             std::max(from, c.start), std::min(to, c.end()), c.id);
+            if (const ShapeStyle& sh = c.title.shape;
+                (c.title.isShape() || c.title.isDrawing()) && sh.followClip > 0 && sh.followNode > 0) {
                 const Clip* tracked = TimelineOps::findClip(tl, sh.followClip);
                 const EffectInstance* e = tracked ? EffectRegistry::instance(*tracked, Comp::kEffectId) : nullptr;
                 CompGraph g;
                 if (!e || !Comp::graphOf(*e, &g) || !g.node(sh.followNode)
                     || g.node(sh.followNode)->type != QLatin1String(Comp::kTrackerType))
                     out << issue(Severity::Warning, "shape_follow_missing",
-                                 T("Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – sie "
-                                   "bleibt stehen")
-                                     .arg(c.title.firstLine())
+                                 (c.title.isDrawing()
+                                      ? T("Zeichnung folgt einem Tracker, den es nicht mehr gibt (Clip %1, Knoten %2) – "
+                                          "sie bleibt stehen")
+                                      : T("Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – "
+                                          "sie bleibt stehen").arg(c.title.firstLine()))
                                      .arg(sh.followClip)
                                      .arg(sh.followNode),
                                  std::max(from, c.start), std::min(to, c.end()), c.id);
@@ -505,6 +519,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         for (const Clip& c : t.clips) {
             if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
             if (c.title.kind == TitleKind::Text && c.title.text.trimmed().isEmpty()) continue;
+            if (c.title.isDrawing() && c.title.drawing.strokes.isEmpty()) continue;
             // A shape that shows nothing of its own (blur, pixelate or no fill, no stroke) covers nothing to read
             if (c.title.isShape() && c.title.shape.kind != ShapeKind::Line && c.title.shape.fill != ShapeFill::Color
                 && !c.title.outlineOn)

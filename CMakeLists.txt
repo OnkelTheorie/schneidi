@@ -214,6 +214,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Voiceover.h          src/core/Voiceover.cpp
     src/core/Generators.h         src/core/Generators.cpp
     src/core/Shapes.h             src/core/Shapes.cpp
+    src/core/Drawing.h            src/core/Drawing.cpp
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Beats.h              src/core/Beats.cpp
@@ -301,6 +302,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompCamera.h src/engine/picture/CompCamera.cpp
     src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
     src/engine/picture/ShapePaint.h src/engine/picture/ShapePaint.cpp
+    src/engine/picture/DrawPaint.h src/engine/picture/DrawPaint.cpp
     src/engine/picture/CustomEffects.h src/engine/picture/FilterEffect.cpp src/engine/picture/ShaderEffect.cpp
     src/engine/picture/CustomEffectsClip.cpp
     src/core/Masks.h              src/core/Masks.cpp
@@ -427,6 +429,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/ShapeOverlay.h         src/ui/ShapeOverlay.cpp
+    src/ui/DrawOverlay.h          src/ui/DrawOverlay.cpp
     src/ui/TourOverlay.h          src/ui/TourOverlay.cpp
     src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp
     src/ui/comp/CompCanvas.h      src/ui/comp/CompCanvas.cpp
@@ -606,7 +609,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
-    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp src/cli/EditOpsShape.cpp
+    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp src/cli/EditOpsShape.cpp src/cli/EditOpsDraw.cpp
     src/cli/EditOpsCutout.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisKillFeed.cpp

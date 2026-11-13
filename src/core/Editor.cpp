@@ -210,7 +210,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
     });
 }
 
-void Editor::addTitle(int frame, int track, int length, TitleKind kind)
+void Editor::addTitle(int frame, int track, int length, TitleKind kind, const std::function<void(Clip&)>& setup)
 {
     Project* p = m_project;
     const Timeline& cur = p->timeline();
@@ -233,6 +233,10 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         c.title.shape.width = c.title.shape.height = std::round(std::min(fmt.width, fmt.height) / 4.0);
         c.title.outlineWidth = std::max(2.0, std::round(std::min(fmt.width, fmt.height) / 180.0));
         c.title.outlineColor = QColor(255, 214, 0);
+    } else if (kind == TitleKind::Drawing) {
+        // Strokes only (painted in the viewer or given to op 'draw'); no text (an older version reads it as an empty
+        // text title: it draws nothing)
+        c.title.text.clear();
     } else if (kind == TitleKind::Progress) {
         // Along the whole timeline unless placed with a length; top edge: the apps cover the bottom of a vertical video
         c.title.text.clear();
@@ -251,6 +255,7 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
                     if (x.start < length && x.end() > 0) track = -1;
         }
     }
+    if (setup) setup(c);
     c.start = std::max(0, frame);
     c.in = 0;
     // Placed with its final length: placing 5 s first and shortening afterwards overwrote what followed on the track
@@ -265,7 +270,7 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         return;
     }
     c.id = p->newClipId();
-    p->edit(T("Titel einfügen"), [&](Timeline& tl) {
+    p->edit(kind == TitleKind::Drawing ? T("Zeichnen") : T("Titel einfügen"), [&](Timeline& tl) {
         TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
         TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); }, tl.frameRate);
     });

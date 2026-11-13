@@ -40,6 +40,7 @@
 #include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/ShapeOverlay.h"
+#include "ui/DrawOverlay.h"
 #include "ui/ElidedLabel.h"
 #include "ui/SplitterMemory.h"
 #include "ui/MediaStorage.h"
@@ -52,6 +53,7 @@
 #include "ui/MulticamView.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/SecondScreen.h"
+#include "ui/FrameView.h"
 #include "ui/Viewer.h"
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
@@ -509,13 +511,20 @@ void MainWindow::showPage(Page page)
     }
     // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
     if (page == Page::Edit) {
-        if (!m_shapeOverlay)
+        if (!m_shapeOverlay) {
             m_shapeOverlay = new ShapeOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
                                               [this] { return !m_viewer->showsSource(); });
-        m_viewer->setOverlay(m_shapeOverlay);
+            // Painting (0.22) over it: what the paint tool and the drawing box do not take goes to the shape box
+            m_drawOverlay = new DrawOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
+                                            [this] { return !m_viewer->showsSource(); }, m_shapeOverlay);
+            connect(m_drawOverlay, &DrawOverlay::activeChanged, this, &MainWindow::drawToolChanged);
+            connect(m_drawOverlay, &DrawOverlay::notice, this, [this](const QString& t) { m_viewer->showNotice(t, 3000); });
+        }
+        m_viewer->setOverlay(m_drawOverlay);
     } else if (before == Page::Edit && page != Page::Comp) {
         m_viewer->setOverlay(m_colorPanel ? m_colorPanel->overlay() : nullptr);
     }
+    if (page != Page::Edit && m_drawOverlay) m_drawOverlay->setActive(false); // painting is the Edit page's
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
     updatePageButtons();
     // The armed track's level meter listens only where the timeline (its mic) is shown
@@ -529,6 +538,34 @@ void MainWindow::showPage(Page page)
     m_transcriptToggle->setEnabled(edit);
     updateViewerArea();
     if (m_tours) QMetaObject::invokeMethod(m_tours, &TourManager::poke, Qt::QueuedConnection); // a step may wait for it
+}
+
+void MainWindow::setDrawTool(bool on)
+{
+    if (on && m_page != Page::Edit) showPage(Page::Edit);
+    if (m_drawOverlay) m_drawOverlay->setActive(on);
+    else if (m_drawAction) m_drawAction->setChecked(false);
+}
+
+void MainWindow::drawToolChanged(bool on)
+{
+    if (m_drawAction && m_drawAction->isChecked() != on) {
+        const QSignalBlocker b(m_drawAction);
+        m_drawAction->setChecked(on);
+    }
+    if (on && !m_drawBar) {
+        m_drawBar = new DrawBar([this] { return m_project->timelineFormat().height; }, m_viewer->screen());
+        connect(m_drawBar, &DrawBar::closeWanted, this, [this] { setDrawTool(false); });
+    }
+    if (m_drawBar) {
+        m_drawBar->setVisible(on);
+        if (on) {
+            m_drawBar->sync();
+            m_drawBar->adjustSize();
+            m_drawBar->move(8, 8);
+            m_drawBar->raise();
+        }
+    }
 }
 
 void MainWindow::ensureColorPage()

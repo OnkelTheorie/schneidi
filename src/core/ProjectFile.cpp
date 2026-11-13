@@ -14,6 +14,7 @@
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/Shapes.h"
+#include "core/Drawing.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
 #include "core/SfxSynth.h"
@@ -368,6 +369,14 @@ void generatorToJson(QJsonObject& o, const TitleStyle& t)
             so["followNode"] = sh.followNode;
         }
         o["shape"] = so;
+    } else if (t.isDrawing()) {
+        // Drawing (0.22): its strokes; an older version reads the title as an empty text (it draws nothing)
+        QJsonObject dj = Drawing::toJson(t.drawing);
+        if (t.shape.followClip > 0 && t.shape.followNode > 0) {
+            dj["followClip"] = t.shape.followClip;
+            dj["followNode"] = t.shape.followNode;
+        }
+        o["drawing"] = dj;
     } else {
         o["span"] = t.span == ProgressSpan::Clip ? "clip" : "timeline";
         o["barTop"] = t.barTop;
@@ -467,6 +476,11 @@ TitleStyle titleFromJson(const QJsonObject& o)
         sh.reveal = std::clamp(so.value("reveal").toDouble(sh.reveal), 0.0, 100.0);
         sh.followClip = std::max(0, so.value("followClip").toInt());
         sh.followNode = std::max(0, so.value("followNode").toInt());
+    }
+    if (const QJsonObject dj = o.value("drawing").toObject(); t.isDrawing() && !dj.isEmpty()) {
+        t.drawing = Drawing::fromJson(dj);
+        t.shape.followClip = std::max(0, dj.value("followClip").toInt());
+        t.shape.followNode = std::max(0, dj.value("followNode").toInt());
     }
     t.colorRef = std::clamp(o.value("colorRef").toInt(), 0, BrandKit::kMaxColors);
     t.outlineRef = std::clamp(o.value("outlineRef").toInt(), 0, BrandKit::kMaxColors);
