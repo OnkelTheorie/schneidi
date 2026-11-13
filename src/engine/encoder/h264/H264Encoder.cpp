@@ -4608,7 +4608,25 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     static const int kRdEstEnv = std::getenv("H264_RDEST") ? std::atoi(std::getenv("H264_RDEST")) : -1;
     const bool kRdEst = (kRdEstEnv < 0 ? cfg_.modeEstimate : kRdEstEnv != 0) && useCabac() && useT8() && cfg_.effort > 0;
     const double kSplitSkip = kSplitSkipEnv >= 0 ? kSplitSkipEnv : kRdEst ? 200.0 : 160.0;
-    if (cfg_.effort > 0 && !(whole.cost < kSplitSkip * lambdaSad)) {
+    static const double kSplitQuad = std::getenv("H264_SPLITQ") ? std::atof(std::getenv("H264_SPLITQ")) : 0.0;
+    static const double kSplitConc = std::getenv("H264_SPLITR") ? std::atof(std::getenv("H264_SPLITR")) : 0.0;
+    bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
+    if (skipSplits && kSplitQuad > 0) {
+        // The 16x16 cost may be low overall but sit in one corner (an object edge moving over a
+        // still background): search the splits when the dearest 8x8 quarter of the 16x16 prediction
+        // costs more than kSplitQuad times its share of the threshold and holds at least kSplitConc
+        // of the four quarters' sum.
+        const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
+        const RefPic& R = *refs_[size_t(whole.ref[0])];
+        int qMax = 0, qSum = 0;
+        for (int q = 0; q < 4; ++q) {
+            const int s = sadPart(R, mbx, mby, (q & 1) * 2, (q >> 1) * 2, 2, 2, whole.mv[0][0], whole.mv[0][1], true);
+            qMax = std::max(qMax, s);
+            qSum += s;
+        }
+        skipSplits = !(qMax >= quadLim && qMax >= kSplitConc * qSum);
+    }
+    if (cfg_.effort > 0 && !skipSplits) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
         // The split layouts compare at half-pel; the best one gets the quarter-pel step only when its
