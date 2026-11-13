@@ -4608,14 +4608,19 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     static const int kRdEstEnv = std::getenv("H264_RDEST") ? std::atoi(std::getenv("H264_RDEST")) : -1;
     const bool kRdEst = (kRdEstEnv < 0 ? cfg_.modeEstimate : kRdEstEnv != 0) && useCabac() && useT8() && cfg_.effort > 0;
     const double kSplitSkip = kSplitSkipEnv >= 0 ? kSplitSkipEnv : kRdEst ? 200.0 : 160.0;
-    static const double kSplitQuad = std::getenv("H264_SPLITQ") ? std::atof(std::getenv("H264_SPLITQ")) : 0.0;
-    static const double kSplitConc = std::getenv("H264_SPLITR") ? std::atof(std::getenv("H264_SPLITR")) : 0.0;
+    // Exception (13.11.): the 16x16 cost may be low overall but sit in one part of the macroblock
+    // (a thin line, a dot or an object edge moving over a still background - drawn/synthetic
+    // material, screen recordings). The splits are still searched when the dearest 8x8 quarter of
+    // the 16x16 prediction (SATD) holds at least kSplitConc of the four quarters' sum and costs at
+    // least kSplitQuad times its share of the threshold. Natural texture spreads the cost (the
+    // dearest quarter ~0.25-0.35 of the sum). Without it the threshold cost +8.3 % BD-rate (PSNR-Y,
+    // two-pass) on the animation test material for -3.4 % instructions there; SPLITSKIP was only
+    // measured on CS2. Measured (two-pass, 4 rates; instructions two-pass 8 Mbit/s 120 pictures
+    // CS2): see the commit message. H264_SPLITQ / H264_SPLITR override, H264_SPLITQ=0 = off.
+    static const double kSplitQuad = std::getenv("H264_SPLITQ") ? std::atof(std::getenv("H264_SPLITQ")) : 0.5;
+    static const double kSplitConc = std::getenv("H264_SPLITR") ? std::atof(std::getenv("H264_SPLITR")) : 0.4;
     bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
-    if (skipSplits && kSplitQuad > 0) {
-        // The 16x16 cost may be low overall but sit in one corner (an object edge moving over a
-        // still background): search the splits when the dearest 8x8 quarter of the 16x16 prediction
-        // costs more than kSplitQuad times its share of the threshold and holds at least kSplitConc
-        // of the four quarters' sum.
+    if (skipSplits && kSplitQuad > 0 && cfg_.effort > 0) {
         const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
         const RefPic& R = *refs_[size_t(whole.ref[0])];
         int qMax = 0, qSum = 0;
