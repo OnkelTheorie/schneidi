@@ -25,7 +25,8 @@ constexpr int kSigOffset[5] = {0, 15, 29, 44, 47};
 constexpr int kAbsOffset[5] = {0, 10, 20, 30, 39};
 
 // k-th order Exp-Golomb suffix in bypass bins (9.3.2.3).
-void expGolombBypass(CabacEncoder& ce, unsigned v, int k)
+template <class E>
+void expGolombBypass(E& ce, unsigned v, int k)
 {
     for (;;) {
         if (v >= (1u << k)) {
@@ -42,7 +43,8 @@ void expGolombBypass(CabacEncoder& ce, unsigned v, int k)
 }
 
 // residual_block_cabac (7.3.5.3.3) for one coefficient list; returns coded_block_flag.
-int residualBlock(CabacEncoder& ce, int cat, const int* list, int count, int cbfInc)
+template <class E>
+int residualBlock(E& ce, int cat, const int* list, int count, int cbfInc)
 {
     int last = -1;
     for (int i = 0; i < count; ++i)
@@ -97,7 +99,8 @@ constexpr uint8_t kLast8[63] = {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
                                 6, 6, 7, 7, 7, 7, 8, 8, 8};
 
 // residual_block_cabac for an 8x8 block (ctxBlockCat 5): no coded_block_flag (inferred 1).
-void residualBlock8x8(CabacEncoder& ce, const int* list)
+template <class E>
+void residualBlock8x8(E& ce, const int* list)
 {
     int last = -1;
     for (int i = 0; i < 64; ++i)
@@ -180,7 +183,8 @@ double FrameCoder::cabacLumaSideBits(const CabacEncoder& ce, int mbx, int mby, i
     return cost / 256.0;
 }
 
-void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
+template <class E>
+void FrameCoder::cabacWriteMb(E& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
 {
     using K = MbSyntax::Kind;
     const size_t m = size_t(mby) * mbW_ + mbx;
@@ -567,6 +571,9 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
     }
 }
 
+
+template void FrameCoder::cabacWriteMb<CabacEncoder>(CabacEncoder&, FrameCoder::CabacState&, int, int, const FrameCoder::MbSyntax&, bool&);
+template void FrameCoder::cabacWriteMb<CabacCounter>(CabacCounter&, FrameCoder::CabacState&, int, int, const FrameCoder::MbSyntax&, bool&);
 
 // Trellis quantisation with CABAC costs (in the spirit of x264's trellis): dynamic programming
 // over the coefficients in reverse scan order. Nodes are the 8 states of the coeff_abs_level

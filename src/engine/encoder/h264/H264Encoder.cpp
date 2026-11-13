@@ -6057,8 +6057,7 @@ double FrameCoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
     const CabacEncoder* live = cabacByTop_[top];
     if (!live)
         return cavlcBits;
-    CabacEncoder probe = *live;
-    probe.startCounting();
+    CabacCounter probe(*live);
     bool prev = *prevQpNzByTop_[top];
     cabacWriteMb(probe, cabWave_, mbx, mby, o.syn, prev);
     return probe.countedBits();
@@ -6070,8 +6069,7 @@ double FrameCoder::skipBits(int mbx, int mby)
     const CabacEncoder* live = cabacByTop_[top];
     if (!live)
         return 1.0;
-    CabacEncoder probe = *live;
-    probe.startCounting();
+    CabacCounter probe(*live);
     MbSyntax skip;
     bool prev = false;
     cabacWriteMb(probe, cabWave_, mbx, mby, skip, prev);

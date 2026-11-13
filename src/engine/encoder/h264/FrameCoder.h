@@ -268,7 +268,9 @@ public:
     // Bits of an inter macroblock's luma coded_block_pattern bins and transform_size_8x8_flag in the
     // contexts' current states (for estimates).
     double cabacLumaSideBits(const CabacEncoder& ce, int mbx, int mby, int cbpLuma, bool t8) const;
-    void cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
+    // E = CabacEncoder (writing, or its counting mode) or CabacCounter (bit estimate).
+    template <class E>
+    void cabacWriteMb(E& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
     bool useT8() const { return useCabac() && cfg_.transform8x8; }
     int residual(BitWriter& bw, const int* coeffs, int count, int nC) const;
