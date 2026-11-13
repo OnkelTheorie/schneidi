@@ -3924,6 +3924,32 @@ void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int
                 const uint8_t* r0 = p + size_t(by0 + y) * cw + bx0;
                 const uint8_t* r1 = r0 + cw;
                 uint8_t* o = chroma[c] + (y4 * 2 + y) * 8 + x4 * 2;
+#if defined(__SSE2__) || defined(_M_X64)
+                // Same sums in 16-bit lanes (at most 64 * 255 + 32); r0[bw] is inside the plane.
+                if (bw == 8 || bw == 4) {
+                    const __m128i zero = _mm_setzero_si128();
+                    auto ld = [&](const uint8_t* q) {
+                        if (bw == 8)
+                            return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(q)), zero);
+                        int32_t v;
+                        std::memcpy(&v, q, 4);
+                        return _mm_unpacklo_epi8(_mm_cvtsi32_si128(v), zero);
+                    };
+                    const __m128i sum = _mm_add_epi16(
+                        _mm_add_epi16(_mm_mullo_epi16(ld(r0), _mm_set1_epi16(int16_t(wA))),
+                                      _mm_mullo_epi16(ld(r0 + 1), _mm_set1_epi16(int16_t(wB)))),
+                        _mm_add_epi16(_mm_mullo_epi16(ld(r1), _mm_set1_epi16(int16_t(wC))),
+                                      _mm_add_epi16(_mm_mullo_epi16(ld(r1 + 1), _mm_set1_epi16(int16_t(wD))), _mm_set1_epi16(32))));
+                    const __m128i px = _mm_packus_epi16(_mm_srli_epi16(sum, 6), zero);
+                    if (bw == 8) {
+                        _mm_storel_epi64(reinterpret_cast<__m128i*>(o), px);
+                    } else {
+                        const int32_t v = _mm_cvtsi128_si32(px);
+                        std::memcpy(o, &v, 4);
+                    }
+                    continue;
+                }
+#endif
                 for (int x = 0; x < bw; ++x)
                     o[x] = uint8_t((wA * r0[x] + wB * r0[x + 1] + wC * r1[x] + wD * r1[x + 1] + 32) >> 6);
             }
