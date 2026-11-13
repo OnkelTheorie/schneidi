@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaCache.h"
+#include "core/AppPaths.h"
 #include "engine/picture/MediaStills.h"
 
 #include "engine/ClipFormat.h"
@@ -61,7 +62,7 @@ QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
                            .arg(QString("%1/%2").arg(rate.num).arg(rate.den))
                            .arg(Waveform::kBucketsPerFrame);
     const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks";
+    const QString dir = AppPaths::writable(QStandardPaths::CacheLocation) + "/peaks";
     QDir().mkpath(dir);
     return dir + "/" + hash + ".peaks";
 }

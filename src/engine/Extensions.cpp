@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Extensions.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "engine/Bundle.h"
 
@@ -352,7 +353,7 @@ const Item* find(const QString& id)
 
 QString rootDir()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("extensions");
+    return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("extensions");
 }
 
 QVector<const Item*> parseList(const QString& list, QString* unknown)

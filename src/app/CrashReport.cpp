@@ -2,6 +2,7 @@
 #include "app/CrashReport.h"
 
 #include "app/Log.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "ui/FileManager.h"
 
@@ -280,7 +281,7 @@ void removeOld()
 
 QString directory()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("crashes");
+    return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("crashes");
 }
 
 void install()

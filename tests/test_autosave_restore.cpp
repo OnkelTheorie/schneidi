@@ -7,6 +7,7 @@
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -62,7 +63,7 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     MainWindow w(&engine);
 
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString dir = AppPaths::writable(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
     const QString backup = dir + "/autosave." + ProjectFile::Extension; // the first slot
     const auto broken = [&] {

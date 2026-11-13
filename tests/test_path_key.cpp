@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Path keys (core/PathKey): one key per file for caches, notes, plan/backup folders and locks - absolute and clean,
 // lower case on Windows (both ways tested on every platform through the parameter); the keys that use it.
+#include "core/AppPaths.h"
 #include "core/PathKey.h"
 #include "core/ProjectFile.h"
 #include "engine/MediaIndex.h"
@@ -16,7 +17,7 @@ int main(int argc, char** argv)
 {
     Check::initEnv();
     QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
 

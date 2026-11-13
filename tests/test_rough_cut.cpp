@@ -152,17 +152,18 @@ MediaTranscript transcriptOf(const QVector<Word>& words)
 void testOps(const QString& dir)
 {
     g_path = dir + "/talk.schneidi";
+    // Made-up media (nothing on disk), absolute as the ops make their paths (Windows: with the drive)
     {
         Project p;
-        MediaInfo a{"/x/a.mp4", "a.mp4", 25 * 60, true, true, false};
+        MediaInfo a{Check::absPath("/x/a.mp4"), "a.mp4", 25 * 60, true, true, false};
         a.transcripts << transcriptOf(say("Heute zeige ich euch das neue Handy. Heute zeige ich euch das alte äh neue "
                                           "Handy. Heute zeige ich euch das neue Handy.", 0));
-        MediaInfo b{"/x/b.mp4", "b.mp4", 25 * 60, true, true, false};
+        MediaInfo b{Check::absPath("/x/b.mp4"), "b.mp4", 25 * 60, true, true, false};
         b.transcripts << transcriptOf(say("Es hat drei Kameras. Das war es.", 10));
         // Two takes, the later one with a stall of 1.5 s in it: the earlier, fluent one is the last good one
-        MediaInfo c{"/x/c.mp4", "c.mp4", 25 * 60, true, true, false};
+        MediaInfo c{Check::absPath("/x/c.mp4"), "c.mp4", 25 * 60, true, true, false};
         c.transcripts << transcriptOf(say("Wir fahren heute ans Meer. Wir fahren heute | ans Meer.", 0));
-        MediaInfo q{"/x/quiet.mp4", "quiet.mp4", 25 * 60, true, true, false}; // no transcript
+        MediaInfo q{Check::absPath("/x/quiet.mp4"), "quiet.mp4", 25 * 60, true, true, false}; // no transcript
         p.addMedia(a);
         p.addMedia(b);
         p.addMedia(c);
@@ -191,9 +192,9 @@ void testOps(const QString& dir)
             const QVector<Clip>& v = p->timeline().video[0].clips;
             if (CHECK_EQ(v.size(), 2)) {
                 // b.mp4 first (script order), from just before 10.0 s; then the third take of a.mp4 (word 16, 6.4 s)
-                CHECK_EQ(v[0].mediaPath, QString("/x/b.mp4"));
+                CHECK_EQ(v[0].mediaPath, Check::absPath("/x/b.mp4"));
                 CHECK(std::abs(v[0].in - 248) <= 1); // 9.92 s
-                CHECK_EQ(v[1].mediaPath, QString("/x/a.mp4"));
+                CHECK_EQ(v[1].mediaPath, Check::absPath("/x/a.mp4"));
                 CHECK(std::abs(v[1].in - 160) <= 1); // 6.4 s: the word before ends right there
                 CHECK(v[1].start == v[0].end());
                 // ends after the last word's spoken end (8.8 + 0.25 + 0.07 * 6 + 0.12 s), before the file's next word
@@ -203,7 +204,7 @@ void testOps(const QString& dir)
     }
     {
         const QJsonObject sea = run("edit", {{"project", g_path}, {"ops", QJsonArray{QJsonObject{
-                                                  {"op", "rough_cut"}, {"media", QJsonArray{"/x/c.mp4"}},
+                                                  {"op", "rough_cut"}, {"media", QJsonArray{Check::absPath("/x/c.mp4")}},
                                                   {"script", "Wir fahren heute ans Meer."}, {"name", "Meer"}}}}});
         const QString t = QString::fromUtf8(QJsonDocument(sea).toJson(QJsonDocument::Compact));
         if (!CHECK(t.contains("take 1 of 2: the last complete one"))) std::printf("       %s\n", qPrintable(t.left(600)));
@@ -224,9 +225,9 @@ void testOps(const QString& dir)
     // best_takes never cuts into a clip without words between two takes (it cut up to the next word anywhere)
     run("edit", {{"project", g_path},
                  {"ops", QJsonArray{QJsonObject{{"op", "new_timeline"}, {"name", "Zwischen"}},
-                                    QJsonObject{{"op", "keep"}, {"media", "/x/a.mp4"}, {"ranges", QJsonArray{QJsonArray{"0s", "2.8s"}}}},
-                                    QJsonObject{{"op", "keep"}, {"media", "/x/quiet.mp4"}, {"ranges", QJsonArray{QJsonArray{"0s", "2s"}}}},
-                                    QJsonObject{{"op", "keep"}, {"media", "/x/a.mp4"}, {"ranges", QJsonArray{QJsonArray{"6.4s", "9.2s"}}}}}}});
+                                    QJsonObject{{"op", "keep"}, {"media", Check::absPath("/x/a.mp4")}, {"ranges", QJsonArray{QJsonArray{"0s", "2.8s"}}}},
+                                    QJsonObject{{"op", "keep"}, {"media", Check::absPath("/x/quiet.mp4")}, {"ranges", QJsonArray{QJsonArray{"0s", "2s"}}}},
+                                    QJsonObject{{"op", "keep"}, {"media", Check::absPath("/x/a.mp4")}, {"ranges", QJsonArray{QJsonArray{"6.4s", "9.2s"}}}}}}});
     run("edit", {{"project", g_path}, {"timeline", "Zwischen"}, {"ops", QJsonArray{QJsonObject{{"op", "best_takes"}}}}});
     {
         const auto p = loaded();
@@ -234,14 +235,14 @@ void testOps(const QString& dir)
             if (p->sequenceName(q.id) == "Zwischen") p->setCurrentSequence(q.id);
         int quiet = 0;
         for (const Clip& c : p->timeline().video[0].clips)
-            if (c.mediaPath == "/x/quiet.mp4") quiet += c.length();
+            if (c.mediaPath == Check::absPath("/x/quiet.mp4")) quiet += c.length();
         CHECK_EQ(quiet, 50); // all of it
     }
 
     // best_takes on a timeline of all of a.mp4: the first two takes go, the last one stays
     run("edit", {{"project", g_path},
                  {"ops", QJsonArray{QJsonObject{{"op", "new_timeline"}, {"name", "Alles"}},
-                                    QJsonObject{{"op", "keep"}, {"media", "/x/a.mp4"}, {"ranges", QJsonArray{QJsonArray{"0s", "10s"}}}}}}});
+                                    QJsonObject{{"op", "keep"}, {"media", Check::absPath("/x/a.mp4")}, {"ranges", QJsonArray{QJsonArray{"0s", "10s"}}}}}}});
     const QJsonObject b = run("edit", {{"project", g_path}, {"timeline", "Alles"},
                                        {"ops", QJsonArray{QJsonObject{{"op", "best_takes"}}}}});
     const QString bt = QString::fromUtf8(QJsonDocument(b).toJson(QJsonDocument::Compact));

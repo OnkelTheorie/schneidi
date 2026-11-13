@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ProxyManager.h"
+#include "core/AppPaths.h"
 #include "engine/Bundle.h"
 
 #include "core/I18n.h"
@@ -314,7 +315,7 @@ ProxyManager::~ProxyManager()
 
 QString ProxyManager::cacheDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/proxies";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/proxies";
 }
 
 QString ProxyManager::decodeSource(const QString& original)

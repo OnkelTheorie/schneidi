@@ -3,6 +3,7 @@
 #include "cli/Live.h"
 
 #include "cli/CommandsDetail.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/CodeTrust.h"
 #include "core/LiveHost.h"
@@ -208,7 +209,7 @@ bool isAppProject(const QString& project) { return project.trimmed() == AppProje
 
 QString registryDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/live";
+    return AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/live";
 }
 
 LiveHost* host() { return g_host; }

@@ -101,6 +101,11 @@ inline QString audioReference()
     return qEnvironmentVariable("AUDIO_REFERENCE_DIR", buildPath("SCHNEIDI_AUDIO_REFERENCE"));
 }
 
+// A made-up absolute path ("/x/a.mp4", nothing on disk) the way the program stores it: unchanged on Linux/macOS; on
+// Windows a path without a drive gets the current one ("C:/x/a.mp4"), as QFileInfo::absoluteFilePath does in the
+// program (media pool, ops, interchange)
+inline QString absPath(const QString& path) { return QFileInfo(path).absoluteFilePath(); }
+
 inline bool haveFfmpeg() { return !QStandardPaths::findExecutable("ffmpeg").isEmpty(); }
 
 // Create a test medium with ffmpeg (args = inputs/filters/codecs without output file); empty = failed

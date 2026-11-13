@@ -8,6 +8,7 @@
 #include "check.h"
 
 #include "cli/Commands.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "core/TemplateLibrary.h"
@@ -259,13 +260,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_CONFIG_HOME", (tmp.path() + "/config").toUtf8());
     Check::initEnv();
     QApplication app(argc, argv);
-    QApplication::setApplicationName("schneidi");
-#ifdef Q_OS_WIN
-    QStandardPaths::setTestModeEnabled(true); // XDG does not apply there: never the user's templates/backups
-    // The test folders stay between runs there: start empty like a new XDG folder
-    for (const auto where : {QStandardPaths::AppDataLocation, QStandardPaths::CacheLocation})
-        if (const QString d = QStandardPaths::writableLocation(where); d.contains("qttest")) QDir(d).removeRecursively();
-#endif
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
     Check::initEngine();
     I18n::install("en");
     testSize();

@@ -6,6 +6,7 @@
 // (added/changed/removed clips with the place of the removed ones, the step, failures) and, while an AI session is
 // connected, its work outside the app (analyses: start, progress, end with a short result).
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/EffectRegistry.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -155,7 +156,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // own registry of running apps (and backups)
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8()); // own proxy folder (clean_proxies deletes there)
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     FakeApp fake;
     setup(fake.project);
@@ -348,7 +349,7 @@ int main(int argc, char* argv[])
     CHECK_EQ(fake.proxies, QStringList({"/x/a.mp4"}));
     CHECK_EQ(r["proxies"].toArray().size(), 1);
     if (!ProxyManager::cacheDir().startsWith(tmp.path())) {
-        // Windows ignores XDG_CACHE_HOME: never clean up the real proxy folder of whoever runs the tests
+        // Never clean up a proxy folder outside the test folder (the real one of whoever runs the tests)
         std::printf("       clean_proxies skipped: the proxy folder is not in the test folder (%s)\n",
                     qPrintable(ProxyManager::cacheDir()));
     } else {
@@ -667,7 +668,9 @@ int main(int argc, char* argv[])
         QFile f(Cli::Live::registryDir() + QString("/%1.json").arg(QCoreApplication::applicationPid()));
         CHECK(f.open(QIODevice::ReadOnly));
         const QJsonObject entry = QJsonDocument::fromJson(f.readAll()).object();
+#ifndef Q_OS_WIN // no other bits there: Qt reports them from the read-only flag alone (the profile's ACL protects AppData)
         CHECK(!f.permissions().testFlag(QFile::ReadOther));
+#endif
         QLocalSocket s;
         s.connectToServer(entry["server"].toString());
         CHECK(s.waitForConnected(1000));
@@ -723,11 +726,14 @@ int main(int argc, char* argv[])
                              + server.chatEnvironment().value(Cli::Live::ChatSecretEnv).toUtf8() + "\"}\n"
                              + R"({"type":"attach","client":"chat"})" "\n", 2).contains("\"ok\":true"));
         fake.activities.clear();
-        talk(outside, job, 0);
+        // The chat's job first, on its own: which socket the app reads first is up to the system (Windows: often the
+        // other order)
         talk(chat, job, 0);
-        for (int i = 0; i < 20; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        for (int i = 0; i < 50 && fake.activities.isEmpty(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        const int chatJob = fake.activities.value(0).id;
+        talk(outside, job, 0);
+        for (int i = 0; i < 50 && fake.activities.size() < 2; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (CHECK_EQ(fake.activities.size(), qsizetype(2))) CHECK(fake.activities[0].id != fake.activities[1].id);
-        const int chatJob = fake.activities.value(1).id;
         chat.disconnectFromServer();
         for (int i = 0; i < 50 && fake.activities.size() < 3; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (CHECK_EQ(fake.activities.size(), qsizetype(3))) {

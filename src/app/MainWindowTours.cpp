@@ -4,6 +4,7 @@
 
 #include "app/TourManager.h"
 #include "app/VoiceoverRecorder.h"
+#include "core/AppPaths.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
 #include "core/I18n.h"
@@ -488,7 +489,7 @@ QStringList MainWindow::tourSampleFiles()
 {
     // Built in, nothing is downloaded: the short game clips of the built-in highlight template, copied to the app's data
     // folder (the engine reads files, not resources)
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
+    const QString dir = AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
     QDir().mkpath(dir);
     QStringList files;
     for (const QString& name : {QStringLiteral("clip1.mp4"), QStringLiteral("clip2.mp4"), QStringLiteral("clip3.mp4")}) {

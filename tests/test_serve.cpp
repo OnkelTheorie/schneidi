@@ -681,7 +681,7 @@ int main(int argc, char* argv[])
         QDirIterator it(data, {"serve-token"}, QDir::Files, QDirIterator::Subdirectories);
         if (it.hasNext()) tokenPath = it.next();
         if (CHECK(!tokenPath.isEmpty())) {
-            const auto others = QFile::ReadGroup | QFile::WriteGroup | QFile::ReadOther | QFile::WriteOther;
+            [[maybe_unused]] const auto others = QFile::ReadGroup | QFile::WriteGroup | QFile::ReadOther | QFile::WriteOther;
             CHECK(QFile::resize(tokenPath, 0)); // empty: a new token is made
             CHECK(QFile::setPermissions(tokenPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther));
 #ifndef Q_OS_WIN // Windows cannot replace a file another program has open
@@ -695,7 +695,9 @@ int main(int argc, char* argv[])
 #endif
             QFile now(tokenPath);
             CHECK(now.open(QIODevice::ReadOnly) && now.readLine().trimmed().size() >= 16);
+#ifndef Q_OS_WIN // no group/other bits there: Qt reports them from the read-only flag alone (the profile's ACL protects AppData)
             CHECK(!(QFileInfo(tokenPath).permissions() & others));
+#endif
         }
     }
     // ... and its clients are elsewhere although it listens on 127.0.0.1: `upload` must not fetch from this computer

@@ -31,7 +31,9 @@ Clip mk(int id, const QString& path, int start, int len, int in, int link = 0)
     return c;
 }
 
-const QString kA = "/media/a.mp4", kB = "/media/b.mp4", kC = "/media/c c.mp4", kM = "/media/music.wav";
+// Absolute on every platform (Windows: with the drive), as an import stores them
+const QString kA = Check::absPath("/media/a.mp4"), kB = Check::absPath("/media/b.mp4"),
+              kC = Check::absPath("/media/c c.mp4"), kM = Check::absPath("/media/music.wav");
 
 // V1: fade in on a, dissolve a|b (20, centered), c at 50 % with opacity keys; A1: sound of a and b (linked, a with
 // volume keys), A2: music from stream 2 with a fade out; markers
@@ -202,7 +204,7 @@ int main(int argc, char** argv)
             if (file.open(QIODevice::WriteOnly)) file.write(data);
         }
         CHECK(data.contains("FCM: NON-DROP FRAME"));
-        CHECK(data.contains("* SOURCE FILE: /media/c c.mp4"));
+        CHECK(data.contains("* SOURCE FILE: " + kC.toUtf8()));
         CHECK(data.contains("M2   AX       012.5")); // 50 % at 25 fps
         CHECK(out.warnings.contains(T("EDL: Lautstärke und Deckkraft nicht geschrieben")));
         const Seq in = read(data, Format::Edl, FrameRate{25, 1});
@@ -546,7 +548,7 @@ int main(int argc, char** argv)
     CHECK_EQ(pathFromUrl("file://localhost/C%3a/Users/x/a%20b.mp4"), QString("C:/Users/x/a b.mp4"));
     CHECK_EQ(pathFromUrl("file:///home/x/a%20b.mp4"), QString("/home/x/a b.mp4"));
     CHECK_EQ(pathFromUrl("C:\\Users\\x\\a.mp4"), QString("C:/Users/x/a.mp4"));
-    CHECK_EQ(pathFromUrl(urlFromPath("/tmp/ä ö.mp4")), QString("/tmp/ä ö.mp4"));
+    CHECK_EQ(pathFromUrl(urlFromPath(Check::absPath("/tmp/ä ö.mp4"))), Check::absPath("/tmp/ä ö.mp4"));
     CHECK(formatOf("x.EDL") == Format::Edl && formatOf("x.xml") == Format::Fcp7 && formatOf("x.otio") == Format::Otio);
     CHECK(!formatOf("x.mp4"));
 

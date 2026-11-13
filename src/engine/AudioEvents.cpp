@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/AudioEvents.h"
 
+#include "core/AppPaths.h"
 #include "core/Fft.h"
 #include "core/PathKey.h"
 #include "engine/Extensions.h"
@@ -948,7 +949,7 @@ QHash<QString, Result>& memory()
 
 QString cacheFile(const QString& key)
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/audio-events/" + key + ".json";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events/" + key + ".json";
 }
 
 std::optional<Result> loadDisk(const QString& key)

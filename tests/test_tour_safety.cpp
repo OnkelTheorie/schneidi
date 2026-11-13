@@ -13,6 +13,7 @@
 #include "app/MainWindow.h"
 #include "app/Theme.h"
 #include "app/TourManager.h"
+#include "core/AppPaths.h"
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -95,7 +96,7 @@ std::unique_ptr<MainWindow> window(Engine& engine)
 
 QString sampleClip()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample/clip1.mp4";
+    return AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample/clip1.mp4";
 }
 
 // The user's render runs: no tour (a status message says why); a practice render ends with the tour and never marks

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/CompRecipes.h"
 
+#include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
@@ -137,7 +138,7 @@ const CompRecipeSlot* CompRecipe::slot(const QString& id) const
 
 namespace CompRecipes {
 
-QString dir() { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("comp"); }
+QString dir() { return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("comp"); }
 
 QString builtInRoot() { return builtInOverride().isEmpty() ? QStringLiteral(":/comp") : builtInOverride(); }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/BrandKit.h"
 
+#include "core/AppPaths.h"
 #include "core/Keyframes.h"
 #include "core/ProjectFile.h"
 #include "core/Types.h"
@@ -114,7 +115,7 @@ BrandKit fromJson(const QJsonObject& o, const QDir* base)
 
 QString globalPath()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("brand-kit.json");
+    return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("brand-kit.json");
 }
 
 BrandKit global()

@@ -4,6 +4,7 @@
 // render, snap to beat, sound effects and the material index read the same cache)
 #include "cli/AnalysisDetail.h"
 
+#include "core/AppPaths.h"
 #include "core/GameHud.h"
 #include "engine/FrameGaps.h"
 
@@ -301,7 +302,7 @@ constexpr int kCacheVersion = 8; // 4, 5: CS2 kill feed lines by their frame (2 
 
 QString cacheFile(const QString& key)
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/highlights/" + key + ".json";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/highlights/" + key + ".json";
 }
 
 } // namespace

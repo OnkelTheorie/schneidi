@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ReframeAnalysis.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
@@ -197,7 +198,7 @@ Sample locate(const Cells& c, const std::vector<float>& still, int cw, int ch)
 
 } // namespace
 
-QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/reframe"; }
+QString cacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/reframe"; }
 
 std::optional<Need> need(const Clip& c, FrameRate rate, int fileLength)
 {

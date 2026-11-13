@@ -16,6 +16,7 @@
 #include "ui/FrameView.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
+#include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/SettingsIsolation.h"
@@ -441,12 +442,7 @@ int main(int argc, char* argv[])
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
     // Names before the application object: I18n::prepareEnvironment reads the language setting
-    QApplication::setApplicationName("schneidi");
-#ifdef Q_OS_WIN
-    // Without an organization name QSettings cannot write to the registry on Windows (on Linux
-    // "Unknown Organization" serves as a substitute - it stays that way there, otherwise existing settings would be gone)
-    QApplication::setOrganizationName("schneidi");
-#endif
+    AppPaths::setProgramNames();
     I18n::prepareEnvironment(langOverride);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && !defined(Q_OS_ANDROID)
     skipKdeQuickOpenGlCheck(argc, argv); // (--screenshot set the offscreen platform above)

@@ -13,6 +13,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 #include "cli/Setup.h"
+#include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/SettingsIsolation.h"
@@ -136,10 +137,7 @@ int main(int argc, char* argv[])
     // No window, no sound: titles still need Qt's painting (fonts), hence a GUI application on the offscreen platform
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi"); // same backups, effects and settings as the app
-#ifdef Q_OS_WIN
-    QGuiApplication::setOrganizationName("schneidi");
-#endif
+    AppPaths::setProgramNames(); // same backups, effects and settings as the app
     QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));
     I18n::install("en");
     std::setlocale(LC_NUMERIC, "C"); // C libraries (FFmpeg option parsing) read numbers with a dot

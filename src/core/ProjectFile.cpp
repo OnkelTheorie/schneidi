@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
+#include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/TitleLookJson.h"
 #include "core/PathKey.h"
@@ -1469,7 +1470,7 @@ bool save(const ProjectData& data, const QString& path, QString* error)
 
 QString backupDir(const QString& projectPath)
 {
-    const QString root = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("backups");
+    const QString root = QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("backups");
     if (projectPath.isEmpty()) return root;
     // Name + short hash of the path: projects of the same name in different folders do not get mixed up. The path
     // as a key (core/PathKey: one folder for "c:/x" and "C:/X" on Windows)
@@ -1542,7 +1543,7 @@ std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs)
     // In the user's cache folder, not the temp folder: TMPDIR differs between programs of the same user (an AI
     // agent's sandbox, a shell in a container setup, the app started from the desktop) and two lock folders mean
     // no lock. (A lock beside the project would also hold across users and computers, see docs.)
-    const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)).filePath("schneidi/locks"));
+    const QDir dir(QDir(AppPaths::writable(QStandardPaths::GenericCacheLocation)).filePath("schneidi/locks"));
     dir.mkpath(".");
     // One lock per FILE, not per spelling of its path: through a symlinked folder (~/Videos -> another disk) the
     // same project must get the same lock, or two writers each take their own and one's changes are lost. A file
