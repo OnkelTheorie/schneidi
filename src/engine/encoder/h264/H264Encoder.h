@@ -41,11 +41,10 @@ struct FirstPassStats {
         bool sceneChange = false;
     };
     std::vector<std::shared_ptr<const Analysis>> analysis;
-    // B picture placement (FirstPass with bframes > 0): per picture bPlanStride(bMax) costs
-    // (LookaheadFrame::bPlan), so the whole clip's picture types can be planned before encoding.
+    // B picture placement (FirstPass with bframes > 0 = bMax): per picture whether B pictures pay
+    // there (BProbe), so the whole clip's picture types can be planned before encoding. Empty = not
+    // measured, B pictures everywhere.
     int bMax = 0;
-    std::vector<float> bPlan;
-    // Per picture: B pictures pay here (BProbe); empty = not measured, B pictures allowed everywhere.
     std::vector<uint8_t> bGate;
     size_t size() const { return intraSum.size(); }
 };
@@ -171,7 +170,7 @@ class FirstPass {
 public:
     // threads > 1: pictures are analysed in batches side by side (same numbers).
     // bframes > 0: also what the adaptive B picture placement needs for runs of up to that many
-    // (2 * bframes more searches per picture).
+    // (the probe: about 3 pictures' worth of encoding at half size every 120 pictures).
     // keepAnalysisBytes: memory for FirstPassStats::analysis (about 12 bytes per macroblock and
     // picture: 1080p ~100 KB); pictures beyond it are analysed again by the encoder.
     FirstPass(int width, int height, int threads = 1, int bframes = 0, size_t keepAnalysisBytes = size_t(1) << 30);
@@ -187,7 +186,6 @@ private:
     mutable std::vector<LookaheadFrame> batch_;
     mutable LookaheadFrame prev_;
     mutable bool havePrev_ = false;
-    mutable std::deque<LookaheadFrame> history_; // B placement: the last bframes + 1 analysed pictures, newest last
     mutable BProbe probe_;
     int bframes_ = 0;
     size_t keepBytes_ = 0;
@@ -267,8 +265,6 @@ private:
     bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
     // Adaptive placement: from the first pass when there is one (so its plan holds), else from the queue.
     bool bAdapt() const { return useB() && cfg_.bAdaptive && (!cfg_.firstPass || cfg_.firstPass->bMax >= cfg_.bframes); }
-    // The lookahead searches B pictures need (macroblock tree along the real references, placement).
-    bool bSearch() const { return useB() && (cfg_.mbtree || (bAdapt() && !cfg_.firstPass)); }
     // Picture types of the whole clip from the first pass (bAdapt with a first pass), and the
     // lookahead cost of each picture as planned.
     void planFromStats();
@@ -277,7 +273,8 @@ private:
     BProbe probe_;
     std::vector<std::pair<int, bool>> gate_; // (first picture, B pictures allowed), in order
     void noteGate(const LookaheadFrame& f);
-    bool wantBSearch(const LookaheadFrame& f) const;
+    void ensureBSearches();
+    bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
     bool gateAt(int index) const;
     std::vector<uint8_t> statType_;
     std::vector<double> statCost_;

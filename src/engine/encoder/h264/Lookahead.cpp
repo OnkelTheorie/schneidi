@@ -260,19 +260,25 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
             const size_t m = size_t(by) * mbW_ + bx;
             const uint8_t* cur = at(src->half, bx * 8, by * 8);
 
-            // Intra: DC, vertical and horizontal prediction from the source neighbours.
-            uint8_t pred[64];
-            int dc = 0;
-            for (int i = 0; i < 8; ++i)
-                dc += cur[-stride + i] + cur[i * stride - 1];
-            std::fill(pred, pred + 64, uint8_t((dc + 8) >> 4));
-            int intra = satd8x8U8Fast(cur, stride, pred, 8);
-            for (int y = 0; y < 8; ++y)
-                std::copy_n(cur - stride, 8, pred + y * 8);
-            intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8));
-            for (int y = 0; y < 8; ++y)
-                std::fill(pred + y * 8, pred + y * 8 + 8, cur[y * stride - 1]);
-            intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8)) + kIntraPenalty;
+            // Intra: DC, vertical and horizontal prediction from the source neighbours (known
+            // already when another picture's half picture is searched).
+            int intra;
+            if (src != &f && src->intraCost.size() == n) {
+                intra = src->intraCost[m];
+            } else {
+                uint8_t pred[64];
+                int dc = 0;
+                for (int i = 0; i < 8; ++i)
+                    dc += cur[-stride + i] + cur[i * stride - 1];
+                std::fill(pred, pred + 64, uint8_t((dc + 8) >> 4));
+                intra = satd8x8U8Fast(cur, stride, pred, 8);
+                for (int y = 0; y < 8; ++y)
+                    std::copy_n(cur - stride, 8, pred + y * 8);
+                intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8));
+                for (int y = 0; y < 8; ++y)
+                    std::fill(pred + y * 8, pred + y * 8 + 8, cur[y * stride - 1]);
+                intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8)) + kIntraPenalty;
+            }
             f.intraCost[m] = intra;
             intraSum += intra;
             if (!prev) {
@@ -516,38 +522,21 @@ void Lookahead::searchInto(const LookaheadFrame& cur, const LookaheadFrame& ref,
     out.sum = t.interSum;
 }
 
-void Lookahead::searchB(LookaheadFrame& f, const LookaheadFrame* const* before, int count, int maxB, int threads) const
+void Lookahead::searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads) const
 {
-    f.fwd.assign(size_t(maxB) + 2, LookaheadSearch{});
-    f.back.assign(size_t(maxB) + 1, LookaheadSearch{});
-    // Independent searches: f from the pictures 2..maxB+1 before it (start: its own one-step
-    // vector times the distance), the pictures 1..maxB before it from f (start: the one-step
-    // vector of the picture after them, reversed and times the distance).
-    struct Job {
-        const LookaheadFrame* cur;
-        const LookaheadFrame* ref;
-        LookaheadSearch* out;
-        const LookaheadFrame* seed;
-        int scale;
-    };
-    std::vector<Job> jobs;
-    for (int d = 2; d <= maxB + 1 && d <= count; ++d)
-        if (before[d - 1])
-            jobs.push_back({&f, before[d - 1], &f.fwd[size_t(d)], &f, d});
-    for (int c = 1; c <= maxB && c <= count; ++c) {
-        const LookaheadFrame* seed = c == 1 ? &f : before[c - 2];
-        if (before[c - 1] && seed)
-            jobs.push_back({before[c - 1], &f, &f.back[size_t(c)], seed, -c});
-    }
-    if (jobs.empty())
-        return;
-    std::atomic<int> next{0};
-    runOnThreads(std::clamp(threads, 1, int(jobs.size())), [&] {
-        for (int i; (i = next.fetch_add(1)) < int(jobs.size());) {
-            const Job& j = jobs[size_t(i)];
-            searchInto(*j.cur, *j.ref, *j.out, j.seed, j.scale, 1);
-        }
-    });
+    if (f.fwd.size() != size_t(maxB) + 2)
+        f.fwd.assign(size_t(maxB) + 2, LookaheadSearch{});
+    // Start: the picture's own one-step vector times the distance.
+    searchInto(f, ref, f.fwd[size_t(d)], &f, d, threads);
+}
+
+void Lookahead::searchBack(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& after, int c, int maxB,
+                           int threads) const
+{
+    if (next.back.size() != size_t(maxB) + 1)
+        next.back.assign(size_t(maxB) + 1, LookaheadSearch{});
+    // Start: the one-step vector of the picture after b, reversed and times the distance.
+    searchInto(b, next, next.back[size_t(c)], &after, -c, threads);
 }
 
 namespace {
@@ -566,61 +555,44 @@ void predHalf(const uint8_t* ref, int stride, int hx, int hy, uint8_t* out)
 
 } // namespace
 
-void Lookahead::biB(LookaheadFrame& f, const LookaheadFrame* const* before, int count, int maxB, bool weighted) const
+void Lookahead::biCost(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& r0, int a, int c, int maxB,
+                       bool weighted) const
 {
     const int stride = halfW_ + 2 * kMargin;
     const size_t n = size_t(mbW_) * mbH_;
-    f.bi.assign(size_t(maxB) * (maxB + 1) / 2, {});
-    f.bPlan.assign(size_t(bPlanStride(maxB)), -1.0f);
-    f.bPlan[1] = float(f.interSum);
-    for (int d = 2; d <= maxB + 1; ++d)
-        if (size_t(d) < f.fwd.size() && f.fwd[size_t(d)].valid())
-            f.bPlan[size_t(d)] = float(f.fwd[size_t(d)].sum);
-    for (int c = 1; c <= maxB && c <= count; ++c) {
-        const LookaheadFrame* b = before[c - 1];
-        if (!b || size_t(c) >= f.back.size() || !f.back[size_t(c)].valid() || b->intraCost.size() != n)
-            continue;
-        const LookaheadSearch& l1 = f.back[size_t(c)];
-        for (int a = 1; a <= maxB + 1 - c && c + a <= count; ++a) {
-            const LookaheadFrame* r0 = before[c + a - 1];
-            if (!r0)
-                continue;
-            const std::vector<int32_t>* c0v;
-            const std::vector<int16_t>*mx0, *my0;
-            if (a == 1) {
-                c0v = &b->interCost;
-                mx0 = &b->mvx;
-                my0 = &b->mvy;
-            } else if (size_t(a) < b->fwd.size() && b->fwd[size_t(a)].valid()) {
-                c0v = &b->fwd[size_t(a)].cost;
-                mx0 = &b->fwd[size_t(a)].mvx;
-                my0 = &b->fwd[size_t(a)].mvy;
-            } else {
-                continue;
-            }
-            const int w1 = weighted ? 64 * a / (a + c) : 32;
-            std::vector<int32_t>& out = f.bi[size_t(bComboIndex(a, c, maxB))];
-            out.assign(n, 0);
-            double sum = 0;
-            for (int by = 0; by < mbH_; ++by)
-                for (int bx = 0; bx < mbW_; ++bx) {
-                    const size_t m = size_t(by) * mbW_ + bx;
-                    const size_t off = size_t(by * 8 + kMargin) * stride + size_t(bx * 8 + kMargin);
-                    const uint8_t* cur = b->half.data() + off;
-                    uint8_t p0[64], p1[64], avg[64];
-                    predHalf(r0->half.data() + off, stride, (*mx0)[m], (*my0)[m], p0);
-                    predHalf(f.half.data() + off, stride, l1.mvx[m], l1.mvy[m], p1);
-                    for (int i = 0; i < 64; ++i)
-                        avg[i] = uint8_t(w1 == 32 ? (p0[i] + p1[i] + 1) >> 1 : (p0[i] * (64 - w1) + p1[i] * w1 + 32) >> 6);
-                    const int c0 = (*c0v)[m], c1 = l1.cost[m];
-                    const int s0 = satd8x8U8Fast(cur, stride, p0, 8), s1 = satd8x8U8Fast(cur, stride, p1, 8);
-                    const int cb = satd8x8U8Fast(cur, stride, avg, 8) + std::max(0, c0 - s0) + std::max(0, c1 - s1);
-                    out[m] = cb;
-                    sum += std::min({b->intraCost[m], c0, c1, cb});
-                }
-            f.bPlan[size_t(bPlanIndex(a, c, maxB))] = float(sum);
-        }
+    if (next.bi.size() != size_t(bComboCount(maxB))) {
+        next.bi.assign(size_t(bComboCount(maxB)), {});
+        next.biSum.assign(size_t(bComboCount(maxB)), -1.0);
     }
+    const bool haveL0 = a == 1 || (size_t(a) < b.fwd.size() && b.fwd[size_t(a)].valid());
+    if (!haveL0 || size_t(c) >= next.back.size() || !next.back[size_t(c)].valid() || b.intraCost.size() != n)
+        return;
+    const LookaheadSearch& l1 = next.back[size_t(c)];
+    const std::vector<int32_t>& c0v = a == 1 ? b.interCost : b.fwd[size_t(a)].cost;
+    const std::vector<int16_t>& mx0 = a == 1 ? b.mvx : b.fwd[size_t(a)].mvx;
+    const std::vector<int16_t>& my0 = a == 1 ? b.mvy : b.fwd[size_t(a)].mvy;
+    const int w1 = weighted ? 64 * a / (a + c) : 32;
+    std::vector<int32_t>& out = next.bi[size_t(bComboIndex(a, c, maxB))];
+    out.assign(n, 0);
+    double sum = 0;
+    for (int by = 0; by < mbH_; ++by)
+        for (int bx = 0; bx < mbW_; ++bx) {
+            const size_t m = size_t(by) * mbW_ + bx;
+            const size_t off = size_t(by * 8 + kMargin) * stride + size_t(bx * 8 + kMargin);
+            const uint8_t* cur = b.half.data() + off;
+            uint8_t p0[64], p1[64], avg[64];
+            predHalf(r0.half.data() + off, stride, mx0[m], my0[m], p0);
+            predHalf(next.half.data() + off, stride, l1.mvx[m], l1.mvy[m], p1);
+            for (int i = 0; i < 64; ++i)
+                avg[i] = uint8_t(w1 == 32 ? (p0[i] + p1[i] + 1) >> 1 : (p0[i] * (64 - w1) + p1[i] * w1 + 32) >> 6);
+            // The average's SATD plus what the two searches paid for their vectors.
+            const int c0 = c0v[m], c1 = l1.cost[m];
+            const int s0 = satd8x8U8Fast(cur, stride, p0, 8), s1 = satd8x8U8Fast(cur, stride, p1, 8);
+            const int cb = satd8x8U8Fast(cur, stride, avg, 8) + std::max(0, c0 - s0) + std::max(0, c1 - s1);
+            out[m] = cb;
+            sum += std::min({b.intraCost[m], c0, c1, cb});
+        }
+    next.biSum[size_t(bComboIndex(a, c, maxB))] = sum;
 }
 
 void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool weighted) const
@@ -659,7 +631,9 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
         if (size_t(c) >= l1f.back.size() || !l1f.back[size_t(c)].valid())
             continue;
         const LookaheadSearch& l1 = l1f.back[size_t(c)];
-        const std::vector<int32_t>& bi = l1f.bi[size_t(bComboIndex(a, c, maxB))];
+        static const std::vector<int32_t> kNoBi;
+        const size_t combo = size_t(bComboIndex(a, c, maxB));
+        const std::vector<int32_t>& bi = combo < l1f.bi.size() ? l1f.bi[combo] : kNoBi;
         const bool haveL0 = a == 1 || (size_t(a) < f.fwd.size() && f.fwd[size_t(a)].valid());
         const std::vector<int32_t>* c0v = !haveL0 ? nullptr : a == 1 ? &f.interCost : &f.fwd[size_t(a)].cost;
         const std::vector<int16_t>* mx0 = !haveL0 ? nullptr : a == 1 ? &f.mvx : &f.fwd[size_t(a)].mvx;

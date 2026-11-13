@@ -17,13 +17,10 @@ struct LookaheadSearch {
     bool valid() const { return !cost.empty(); }
 };
 
-// B pictures with up to maxB in a row: the costs of a picture as a P picture d = 1..maxB+1 pictures
-// after its reference and as a B picture a before / c after its references (a + c <= maxB + 1),
-// in one array per picture: [d] P costs ([0] unused), then the B combinations (bPlanIndex).
-// The B cost of picture b with (a, c) is stored at picture b + c (it is known once that one is).
-inline int bPlanStride(int maxB) { return maxB + 2 + maxB * (maxB + 1) / 2; }
+// B pictures with up to maxB in a row: index of the combination "a pictures after the reference
+// before, c before the one after" (a, c >= 1, a + c <= maxB + 1).
+inline int bComboCount(int maxB) { return maxB * (maxB + 1) / 2; }
 inline int bComboIndex(int a, int c, int maxB) { return (c - 1) * (maxB + 1) - (c - 1) * c / 2 + (a - 1); }
-inline int bPlanIndex(int a, int c, int maxB) { return maxB + 2 + bComboIndex(a, c, maxB); }
 
 struct LookaheadFrame {
     std::vector<uint8_t> y, u, v; // source copy, strides width / width/2
@@ -53,12 +50,13 @@ struct LookaheadFrame {
     bool decided = false; // the type is final
     bool coded = false;   // a reference picture coded ahead of the B pictures before it
     bool cutKey = false;  // keyframe because of a detected scene change
-    // B pictures (Lookahead::searchB / biB), all kept in the newest picture of each search:
+    // B pictures (Lookahead::searchFwd / searchBack / biCost), each kept in the later picture of the two:
     std::vector<LookaheadSearch> fwd;          // [d], d >= 2: this picture predicted from the one d before ([1] = interCost)
     std::vector<LookaheadSearch> back;         // [c], c >= 1: the picture c before predicted from this one
     std::vector<std::vector<int32_t>> bi;      // [bComboIndex(a, c)]: the picture c before, from the average of the
                                                // predictions out of the picture a before it and this one
-    std::vector<float> bPlan;                  // bPlanStride(maxB) costs, see bPlanStride; < 0 = unknown
+    std::vector<double> biSum;                 // [bComboIndex(a, c)]: that picture's total as a B picture (min of intra,
+                                               // both lists and the average per macroblock)
     bool nearB = false;                        // a reference picture with B pictures before or after it
     int refDist = 1, nextDist = 1;             // planned distance to the reference before (P, B) / after (B)
 };
@@ -80,12 +78,14 @@ public:
     // src: the picture whose half picture is searched (default f itself).
     void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1, const LookaheadFrame* seed = nullptr,
                int seedScale = 1, const LookaheadFrame* src = nullptr) const;
-    // B pictures, f being the newest picture and before[k - 1] the picture k before it (k = 1..count,
-    // all analysed; nullptr = missing). searchB: f from the pictures 2..maxB+1 before it (fwd) and the
-    // pictures 1..maxB before it from f (back); biB (after searchB of f and of the pictures before
-    // it): the bi-predicted costs (bi) and f.bPlan.
-    void searchB(LookaheadFrame& f, const LookaheadFrame* const* before, int count, int maxB, int threads = 1) const;
-    void biB(LookaheadFrame& f, const LookaheadFrame* const* before, int count, int maxB, bool weighted) const;
+    // B pictures: the searches the macroblock tree and the rate control need along the planned
+    // references (maxB = longest run). searchFwd: f from ref, the picture d >= 2 before it (f.fwd[d]).
+    // searchBack: b, the picture c before next, from next (next.back[c]); after = the picture right
+    // after b (next itself for c = 1), whose vectors start the search. biCost: b between r0 (a
+    // before it) and next (c after it), after both of its searches (next.bi, next.biSum).
+    void searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads = 1) const;
+    void searchBack(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& after, int c, int maxB, int threads = 1) const;
+    void biCost(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& r0, int a, int c, int maxB, bool weighted) const;
 
     // Macroblock tree over the queue: propagates the cost of every block back through the
     // motion vectors to the blocks it was predicted from, last picture first. Keyframes do not

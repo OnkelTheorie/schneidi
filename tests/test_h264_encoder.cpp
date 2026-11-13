@@ -605,7 +605,7 @@ int main()
                 fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
             }
             c.firstPass = fp.stats();
-            CHECK(c.firstPass->bMax == 2 && c.firstPass->bPlan.size() == 60 * size_t(bPlanStride(2)));
+            CHECK(c.firstPass->bMax == 2 && c.firstPass->bGate.size() == 60);
             bytes = 0;
             CHECK(roundTrip(c, 60, &bytes));
             kbps = bytes * 8.0 / 2.0 / 1000.0;

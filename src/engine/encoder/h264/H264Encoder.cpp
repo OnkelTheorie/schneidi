@@ -813,65 +813,14 @@ void FirstPass::analyseBatch() const
         stats_->analysis.push_back(std::move(a));
         keptBytes_ += bytes;
     }
-    if (bframes_ > 0) {
-        // The probe first (it needs the half pictures and scene changes only): the searches below
-        // are made only for pictures that may become part of a run of B pictures - those the probe
-        // is still collecting, and those up to bframes after a picture where B pictures pay.
+    // B pictures: where they pay (the probe needs the half pictures and the scene changes).
+    if (bframes_ > 0 && kBProbe) {
         const int base = int(stats_->intraSum.size());
-        std::vector<uint8_t> want(size_t(n), 1);
-        if (kBProbe) {
-            for (int i = 0; i < n; ++i) {
-                const LookaheadFrame& f = batch_[size_t(i)];
-                want[size_t(i)] = probe_.collects(f, base + i);
-                stats_->bGate.push_back(probe_.allowed());
-                if (probe_.add(*la_, f, base + i, bframes_, threads_))
-                    std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
-            }
-            for (int i = 0; i < n; ++i)
-                for (int j = std::max(0, base + i - bframes_); j <= base + i && !want[size_t(i)]; ++j)
-                    want[size_t(i)] = stats_->bGate[size_t(j)];
+        for (int i = 0; i < n; ++i) {
+            stats_->bGate.push_back(probe_.allowed());
+            if (probe_.add(*la_, batch_[size_t(i)], base + i, bframes_, threads_))
+                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
         }
-        // The pictures up to bframes + 1 before picture i of the batch (the batch, then the history).
-        auto before = [&](int i) {
-            std::vector<const LookaheadFrame*> b;
-            for (int k = 1; k <= bframes_ + 1; ++k) {
-                const int j = i - k;
-                if (j >= 0)
-                    b.push_back(&batch_[size_t(j)]);
-                else if (size_t(-j) <= history_.size())
-                    b.push_back(&history_[history_.size() - size_t(-j)]);
-                else
-                    break;
-            }
-            return b;
-        };
-        // All searches first (they read only the one-step results), then the bi-predicted costs
-        // (they read the searches of the pictures before).
-        parallel([&](int i) {
-            if (!want[size_t(i)])
-                return;
-            const auto b = before(i);
-            la_->searchB(batch_[size_t(i)], b.data(), int(b.size()), bframes_);
-        });
-        parallel([&](int i) {
-            LookaheadFrame& f = batch_[size_t(i)];
-            if (!want[size_t(i)]) { // a P picture after its predecessor is all that is known
-                f.bPlan.assign(size_t(bPlanStride(bframes_)), -1.0f);
-                f.bPlan[1] = float(f.interSum);
-                return;
-            }
-            const auto b = before(i);
-            la_->biB(f, b.data(), int(b.size()), bframes_, false);
-        });
-        for (LookaheadFrame& f : batch_) {
-            stats_->bPlan.insert(stats_->bPlan.end(), f.bPlan.begin(), f.bPlan.end());
-            f.y = {};
-            f.bi.clear();
-            f.back.clear();
-            history_.push_back(f);
-        }
-        while (history_.size() > size_t(bframes_) + 1)
-            history_.pop_front();
     }
     for (LookaheadFrame& f : batch_) {
         stats_->intraSum.push_back(f.intraSum);
@@ -960,10 +909,6 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->bMax = st.bMax;
             if (!st.bGate.empty())
                 part->bGate.push_back(st.bGate[i]);
-            if (!st.bPlan.empty()) {
-                const size_t stride = size_t(bPlanStride(st.bMax));
-                part->bPlan.insert(part->bPlan.end(), st.bPlan.begin() + ptrdiff_t(i * stride), st.bPlan.begin() + ptrdiff_t((i + 1) * stride));
-            }
             // Only the first chunk analyses its pictures like the first pass did (the others
             // start without a predecessor).
             if (c == 0 && i < st.analysis.size())
@@ -1148,24 +1093,40 @@ void Encoder::noteGate(const LookaheadFrame& f)
         gate_.emplace_back(probe_.resultStart(), probe_.allowed());
 }
 
-// The lookahead's searches for B pictures are made only for pictures that may become part of a run
-// of them: those the probe is still collecting and those up to bframes after a picture where B
-// pictures pay (a P picture ends its run that far behind the last B picture's place).
-bool Encoder::wantBSearch(const LookaheadFrame& f) const
+// The lookahead's searches along the planned references of B pictures (macroblock tree, rate
+// control): made once per picture, when its run is settled - the last pictures of the queue may
+// still change their type with the next one that joins (a keyframe, the probe's answer), unless
+// nothing more comes in.
+void Encoder::ensureBSearches()
 {
-    if (!bSearch())
-        return false;
-    if (!bAdapt() || !kBProbe)
-        return true;
-    const std::vector<uint8_t>* stats = cfg_.firstPass ? &cfg_.firstPass->bGate : nullptr;
-    if (stats && stats->empty())
-        return true;
-    if (!stats && probe_.collects(f, f.index))
-        return true;
-    for (int i = std::max(0, f.index - cfg_.bframes); i <= f.index; ++i)
-        if (stats ? size_t(i) >= stats->size() || (*stats)[size_t(i)] : gateAt(i))
-            return true;
-    return false;
+    if (!useB() || (!cfg_.mbtree && cfg_.bitrateKbps <= 0))
+        return;
+    const int maxB = cfg_.bframes;
+    const size_t count = queue_.size();
+    const size_t settled = flushing_ ? count : count - std::min(count, size_t(maxB) + 4);
+    for (size_t j = 0; j < count; ++j) {
+        LookaheadFrame& f = queue_[j];
+        if ((j >= settled && !f.decided) || f.keyframe || f.type == 0)
+            continue;
+        const int a = f.refDist;
+        if (a < 1 || a > maxB + 1 || size_t(a) > j)
+            continue; // its reference has left the queue: searched while it was there
+        const bool haveFwd = a == 1 || (size_t(a) < f.fwd.size() && f.fwd[size_t(a)].valid());
+        if (!haveFwd)
+            la_->searchFwd(f, queue_[j - size_t(a)], a, maxB, cfg_.threads);
+        if (f.type != 2)
+            continue;
+        const int c = f.nextDist;
+        const size_t s = j + size_t(c);
+        if (c < 1 || a + c > maxB + 1 || s >= count)
+            continue;
+        LookaheadFrame& next = queue_[s];
+        if (size_t(c) >= next.back.size() || !next.back[size_t(c)].valid())
+            la_->searchBack(next, f, queue_[j + 1], c, maxB, cfg_.threads);
+        const size_t combo = size_t(bComboIndex(a, c, maxB));
+        if (combo >= next.biSum.size() || next.biSum[combo] < 0)
+            la_->biCost(next, f, queue_[j - size_t(a)], a, c, maxB, cfg_.weightedBipred);
+    }
 }
 
 bool Encoder::gateAt(int index) const
@@ -1225,37 +1186,23 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
     // Once the queue is full the newest picture joins it only at the next call (analysed in the
     // background with several threads), so the encoded picture sees the same queue with any
     // thread count. Its predecessor stays in the queue while a picture is popped.
-    // B pictures: the searches of the macroblock tree and the placement against the pictures before.
-    std::vector<const LookaheadFrame*> before;
-    if (bSearch())
-        for (size_t k = 1; k <= size_t(cfg_.bframes) + 1 && k <= queue_.size(); ++k)
-            before.push_back(&queue_[queue_.size() - k]);
-    auto analyseB = [this](LookaheadFrame& g, const std::vector<const LookaheadFrame*>& b) {
-        if (!wantBSearch(g))
-            return;
-        la_->searchB(g, b.data(), int(b.size()), cfg_.bframes);
-        la_->biB(g, b.data(), int(b.size()), cfg_.bframes, cfg_.weightedBipred);
-    };
     if (full && queue_.size() >= 2) {
         pendingFrame_ = std::make_unique<LookaheadFrame>(std::move(f));
         const LookaheadFrame* prev = &queue_.back();
         if (cfg_.threads > 1) {
-            pendingThread_ = std::thread([this, prev, before, analyseB] {
+            pendingThread_ = std::thread([this, prev] {
                 try {
                     failurePoint(FailPoint::LookaheadThread);
                     analyseFrame(*pendingFrame_, prev);
-                    analyseB(*pendingFrame_, before);
                 } catch (...) {
                     pendingError_ = std::current_exception();
                 }
             });
         } else {
             analyseFrame(*pendingFrame_, prev);
-            analyseB(*pendingFrame_, before);
         }
     } else {
         analyseFrame(f, queue_.empty() ? nullptr : &queue_.back());
-        analyseB(f, before);
         queue_.push_back(std::move(f));
         noteGate(queue_.back());
     }
@@ -1278,9 +1225,7 @@ void Encoder::planFromStats()
     const std::vector<uint8_t> key = keyPlan(st, cfg_, 0, n);
     statType_.assign(n, 1);
     statCost_.assign(n, 0);
-    const bool adapt = bAdapt() && st.bMax >= cfg_.bframes && st.bPlan.size() >= n * size_t(bPlanStride(st.bMax));
-    const size_t stride = size_t(bPlanStride(std::max(1, st.bMax)));
-    auto plan = [&](size_t i, int k) { return st.bPlan[i * stride + size_t(k)]; };
+    const bool adapt = bAdapt();
     for (size_t i = 0; i < n;) {
         if (key[i]) {
             statType_[i] = 0;
@@ -1306,24 +1251,10 @@ void Encoder::planFromStats()
             statType_[i + size_t(t) - 1] = types[size_t(t)];
         i = e;
     }
-    // Costs as planned (P from its reference, B between its two), for the rate control.
-    for (size_t i = 0, lastRef = 0; i < n; ++i) {
-        if (statType_[i] == 0) {
-            statCost_[i] = st.intraSum[i];
-            lastRef = i;
-        } else if (statType_[i] == 1) {
-            const size_t d = i - lastRef;
-            statCost_[i] = adapt && d >= 1 && d <= size_t(st.bMax) + 1 && plan(i, int(d)) >= 0 ? plan(i, int(d)) : st.interSum[i];
-            lastRef = i;
-        } else {
-            size_t s = i + 1;
-            while (s < n && statType_[s] == 2)
-                ++s;
-            const int a = int(i - lastRef), c = int(s - i);
-            const double v = adapt && s < n && a + c <= st.bMax + 1 ? plan(s, bPlanIndex(a, c, st.bMax)) : -1.0;
-            statCost_[i] = v >= 0 ? v : st.interSum[i];
-        }
-    }
+    // The rate control's costs: the first pass knows each picture against the one before only; the
+    // B and the distant P pictures have their own bits per cost there.
+    for (size_t i = 0; i < n; ++i)
+        statCost_[i] = statType_[i] == 0 ? st.intraSum[i] : st.interSum[i];
 }
 
 // Lookahead cost of queued picture j as planned: P from the reference before, B between its two.
@@ -1334,15 +1265,15 @@ double Encoder::queueCost(size_t j) const
         return g.intraSum;
     if (g.type == 2) {
         const size_t s = j + size_t(g.nextDist);
-        if (s < queue_.size() && !queue_[s].bPlan.empty() && g.refDist + g.nextDist <= cfg_.bframes + 1) {
-            const float v = queue_[s].bPlan[size_t(bPlanIndex(g.refDist, g.nextDist, cfg_.bframes))];
-            if (v >= 0)
-                return v;
+        if (s < queue_.size() && g.refDist + g.nextDist <= cfg_.bframes + 1) {
+            const size_t combo = size_t(bComboIndex(g.refDist, g.nextDist, cfg_.bframes));
+            if (combo < queue_[s].biSum.size() && queue_[s].biSum[combo] >= 0)
+                return queue_[s].biSum[combo];
         }
         return g.interSum;
     }
-    if (g.refDist > 1 && size_t(g.refDist) < g.bPlan.size() && g.bPlan[size_t(g.refDist)] >= 0)
-        return g.bPlan[size_t(g.refDist)];
+    if (g.refDist > 1 && size_t(g.refDist) < g.fwd.size() && g.fwd[size_t(g.refDist)].valid())
+        return g.fwd[size_t(g.refDist)].sum;
     return g.interSum;
 }
 
@@ -1474,6 +1405,7 @@ std::vector<uint8_t> Encoder::flush()
 std::vector<uint8_t> Encoder::flushImpl()
 {
     joinPending();
+    flushing_ = true;
     while (!queue_.empty()) {
         std::vector<uint8_t> out;
         if (useB()) {
@@ -2326,9 +2258,10 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
-        if (bMode)
+        if (bMode) {
             planQueue(); // also the pictures that joined since the decision
-        else
+            ensureBSearches();
+        } else
             markKeyframes();
         frame.keyframe = idr;
         if (type == 2) {
