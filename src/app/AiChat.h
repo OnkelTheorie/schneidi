@@ -6,7 +6,8 @@
 // Edits reach the app through the live connection (cli/Live.h), one undo step each, like those of any AI.
 // The history lives only in memory (never in the project, never on disk) and is only ever appended to (providers
 // tie their thinking blocks to it) - except for a model with a small context its server named (a local one): there
-// the oldest tool results give way to a placeholder when the next request would not fit (fitHistory).
+// the oldest tool results give way to a placeholder when the next request would not fit (fitHistory, in steps so
+// that a server's cached prefix stays valid for a few rounds).
 
 #include "app/AiContext.h"
 #include "app/AiProvider.h"
@@ -16,6 +17,7 @@
 #include <QImage>
 #include <QJsonObject>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QVector>
 
@@ -57,7 +59,13 @@ public:
     void setCompact(Ai::Compact mode) { m_compactMode = mode; }
     bool compact() const { return m_compact; } // the running chat has the short request
     // The context of the endpoint's model as its server said it (asked once per chat, address and model; 0 = not known)
-    qint64 context(const Ai::Endpoint& e) const { return m_contexts.value(contextKey(e), 0); }
+    // When the last probe found none, the last one named for it (Ollama names none for a model not loaded with
+    // OLLAMA_CONTEXT_LENGTH set; it did not change for that)
+    qint64 context(const Ai::Endpoint& e) const
+    {
+        const qint64 n = m_contexts.value(contextKey(e), 0);
+        return n > 0 ? n : m_lastContexts.value(contextKey(e), 0);
+    }
     // Test runs (--screenshot, --demo, --actions, offscreen): nothing is ever sent
     void setOffline(bool on) { m_offline = on; }
     bool offline() const { return m_offline; }
@@ -106,15 +114,20 @@ public:
 
     // Fits the history into a context of `context` tokens (one the server named) with room for the chat's next steps
     // (Ai::kChatRoom), estimated with kCharsPerToken (conservative: Gemma 4 has 3.56 in our requests) and kImageTokens
-    // per picture; fixedChars = the system prompt and the tools. What gives way, oldest first: the pictures of tool
-    // results, then their text (kRemovedResult instead). Never the user's words, the model's calls, nor the results
-    // in the last message (the newest of the running turn): every tool call keeps its answer of the same id, so the
-    // history stays valid in both protocols. Returns how many results or pictures were removed.
-    static int fitHistory(QVector<Ai::Message>& history, qint64 fixedChars, qint64 context);
+    // per picture; fixedChars = the system prompt and the tools. Once over, down to kFitShare % of that (the history
+    // changes only every few rounds: a local server re-reads its cached prefix from the first change on). What gives
+    // way, oldest first: the results of earlier turns (messages up to turnStart, the running turn's first one), then
+    // those of the running turn's earlier rounds; pictures before texts (kRemovedResult instead). Never the user's
+    // words, the model's calls, nor the results in the last message while it is a round of the running turn (after
+    // turnStart): every tool call keeps its answer of the same id, so the history stays valid in both protocols.
+    // Returns how many results or pictures were removed.
+    static int fitHistory(QVector<Ai::Message>& history, qint64 fixedChars, qint64 context, qsizetype turnStart);
     // The tokens of a request with this history, as fitHistory estimates them
     static qint64 estimatedTokens(const QVector<Ai::Message>& history, qint64 fixedChars);
     static constexpr double kCharsPerToken = 3.5;
     static constexpr qint64 kImageTokens = 1000;
+    static constexpr qint64 kFitShare = 75;
+    static constexpr int kMaxRecalls = 3; // calls of a removed result again per request, then it ends
     static const QString kRemovedResult;
 
 signals:
@@ -172,8 +185,10 @@ private:
     QString m_probeKey;
     bool m_warned = false;     // a tight context was said in this chat
     bool m_trimmed = false;    // tool results were removed to fit the context (said once per chat)
-    qint64 m_turnContext = 0;  // the context named for this turn (the cache is cleared after a notice: asked again
-                               // with the next request of the user, but the turn's further rounds still fit into it)
+    QHash<QString, qint64> m_lastContexts; // contextKey -> the last context named (kept across chats)
+    qsizetype m_turnStart = 0; // the running turn's first message in m_history (the user's words)
+    QSet<QString> m_trimmedCalls; // calls whose answers gave way to fit the context (callKey)
+    int m_recalls = 0;            // of them, made again in this request
     Ai::Usage m_usage;
     int m_rounds = 0;
     bool m_nudged = false; // an empty answer was answered with "go on" in this request

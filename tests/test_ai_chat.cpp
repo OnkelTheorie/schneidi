@@ -312,39 +312,42 @@ bool appendOnly(const QJsonObject& before, const QJsonObject& after)
     return true;
 }
 
-// The history fitted into a small context (AiChat::fitHistory): pictures first, then the oldest tool results give
-// way; the user's words, the calls and the last message's results stay; every call keeps its answer
+// The history fitted into a small context (AiChat::fitHistory): earlier turns before the running one's earlier rounds,
+// pictures before texts, oldest first, down to kFitShare of the budget; the user's words, the calls and the newest
+// results of a tool round stay; every call keeps its answer
 void testFitHistory()
 {
     const auto big = [](int n) { return QString(AiChat::kMaxToolText, QChar('a' + n)); };
-    QVector<Ai::Message> h;
-    Ai::Message user;
-    user.text = "Look at everything";
-    h << user;
-    for (int n = 0; n < 5; ++n) {
+    const auto call = [](QVector<Ai::Message>& h, int n, const QString& text) {
         Ai::Message a;
         a.role = Ai::Message::Role::Assistant;
         a.calls = {{QString("call_%1").arg(n), "help", QJsonObject{{"command", "edit"}}, {}}};
         h << a;
         Ai::Message r;
-        r.results = {{QString("call_%1").arg(n), "help", big(n), {}, false}};
-        if (n == 0) r.results[0].images = {Ai::Image{}};
+        r.results = {{QString("call_%1").arg(n), "help", text, {}, false}};
         h << r;
-    }
+    };
+    QVector<Ai::Message> h;
+    Ai::Message user;
+    user.text = "Look at everything";
+    h << user;
+    for (int n = 0; n < 5; ++n) call(h, n, big(n));
+    h[2].results[0].images = {Ai::Image{}};
     const qint64 fixed = 29000, context = 32768; // the newest result alone takes a third of 16384
+    const qint64 budget = context - Ai::kChatRoom;
     const QVector<Ai::Message> before = h;
-    CHECK(AiChat::estimatedTokens(h, fixed) + Ai::kChatRoom > context);
+    CHECK(AiChat::estimatedTokens(h, fixed) > budget);
     // An unknown context (Claude, a cloud provider): nothing changes
-    CHECK_EQ(AiChat::fitHistory(h, fixed, 0), 0);
-    CHECK_EQ(h.size(), before.size());
+    CHECK_EQ(AiChat::fitHistory(h, fixed, 0, 0), 0);
     CHECK_EQ(h[2].results[0].text, before[2].results[0].text);
-    const int removed = AiChat::fitHistory(h, fixed, context);
+    const int removed = AiChat::fitHistory(h, fixed, context, 0);
     CHECK(removed > 0);
-    CHECK(AiChat::estimatedTokens(h, fixed) + Ai::kChatRoom <= context);
+    // Down to 75 % of the budget, not just under it (the history changes only every few rounds)
+    CHECK(AiChat::estimatedTokens(h, fixed) <= budget * AiChat::kFitShare / 100);
     CHECK_EQ(h.size(), before.size());
     CHECK(h[2].results[0].images.isEmpty()); // the picture went first
     CHECK_EQ(h[2].results[0].text, AiChat::kRemovedResult);
-    CHECK_EQ(h.last().results[0].text, big(4)); // the newest result stays whole
+    CHECK_EQ(h.last().results[0].text, big(4)); // the newest result of the tool round stays whole
     CHECK_EQ(h[0].text, before[0].text);
     for (int i = 0; i < h.size(); ++i) {
         CHECK_EQ(h[i].calls.size(), before[i].calls.size());
@@ -358,16 +361,45 @@ void testFitHistory()
             if (t.text != AiChat::kRemovedResult) whole = true;
             else CHECK(!whole);
         }
-    // Fitting again changes nothing (stable: the prefix a local server caches stays)
+    // Fitting again changes nothing (under the budget: the prefix a local server caches stays)
     const QVector<Ai::Message> fitted = h;
-    CHECK_EQ(AiChat::fitHistory(h, fixed, context), 0);
+    CHECK_EQ(AiChat::fitHistory(h, fixed, context, 0), 0);
     for (int i = 0; i < h.size(); ++i)
         for (int k = 0; k < h[i].results.size(); ++k) CHECK_EQ(h[i].results[k].text, fitted[i].results[k].text);
-    // Nothing more to remove: what is left does not fit, the caller refuses the request
+
+    // Too small for the newest result of a tool round: everything else goes (the picture and four texts), the newest
+    // stays and the request is refused (estimate over the context)
     QVector<Ai::Message> tiny = before;
-    AiChat::fitHistory(tiny, fixed, 8192);
-    CHECK(AiChat::estimatedTokens(tiny, fixed) + Ai::kChatRoom > 8192);
+    CHECK_EQ(AiChat::fitHistory(tiny, fixed, 16384, 0), 5);
+    for (int i = 1; i < tiny.size() - 1; ++i)
+        for (const Ai::ToolResult& t : tiny[i].results) CHECK_EQ(t.text, AiChat::kRemovedResult);
     CHECK_EQ(tiny.last().results[0].text, big(4));
+    CHECK(AiChat::estimatedTokens(tiny, fixed) > 16384 - Ai::kChatRoom);
+    // The user writes on: the turn starts at that message (their words joined the results), the results are an
+    // earlier turn's now and give way too - the chat goes on
+    tiny.last().text = "Go on";
+    CHECK_EQ(AiChat::fitHistory(tiny, fixed, 16384, tiny.size() - 1), 1);
+    CHECK_EQ(tiny.last().results[0].text, AiChat::kRemovedResult);
+    CHECK_EQ(tiny.last().results[0].id, QString("call_4"));
+    CHECK_EQ(tiny.last().text, QString("Go on"));
+    CHECK(AiChat::estimatedTokens(tiny, fixed) <= (16384 - Ai::kChatRoom) * AiChat::kFitShare / 100);
+
+    // Earlier turns before the running one: turn 1 (one result), turn 2 (the user's words joined its results, then
+    // two rounds); one result has to go: turn 1's, not turn 2's first round
+    QVector<Ai::Message> turns;
+    turns << user;
+    call(turns, 0, big(0));
+    turns.last().text = "And now?";
+    const qsizetype start = turns.size() - 1;
+    call(turns, 1, big(1));
+    call(turns, 2, big(2));
+    const qint64 small = 23000; // over its budget with three results, under 75 % of it with two
+    CHECK(AiChat::estimatedTokens(turns, 0) > small - Ai::kChatRoom);
+    CHECK_EQ(AiChat::fitHistory(turns, 0, small, start), 1);
+    CHECK_EQ(turns[2].results[0].text, AiChat::kRemovedResult);
+    CHECK_EQ(turns[2].text, QString("And now?"));
+    CHECK_EQ(turns[4].results[0].text, big(1));
+    CHECK_EQ(turns[6].results[0].text, big(2));
 }
 
 // The network side alone: a redirect to another address gets neither the key nor the conversation
@@ -1154,17 +1186,18 @@ void test(const QString& dir)
         CHECK_EQ(int(fake.requests.size()), sent); // never sent
         if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
             CHECK(e->text.contains("4096") && e->text.contains("32768"));
-        // Asked again (the user may have changed the server): now 8192 = it fits, but tight
+        // Asked again (the user may have changed the server): now 12288 = it fits, but tight (8192 no longer: the short
+        // request alone is ~8,200 tokens at the 3.5 characters per token checked; Llama 3.2 and Qwen 2.5 have more)
         fake.gets.remove("/props");
-        fake.gets["/api/show"] = R"({"parameters":"num_ctx                        8192","model_info":{}})";
+        fake.gets["/api/show"] = R"({"parameters":"num_ctx                        12288","model_info":{}})";
         fake.script = {openAiText("Hallo!")};
         panel->sendText("Hallo?");
         CHECK(waitFor([&] { return !chat->busy(); }));
         CHECK_EQ(int(fake.requests.size()), sent + 1);
         const Ai::Endpoint tiny{Ai::Protocol::OpenAi, fake.address() + "/v1", {}, "tiny-model", "custom"};
-        CHECK_EQ(chat->context(tiny), qint64(0)); // not kept: asked again next time
+        CHECK_EQ(chat->context(tiny), qint64(12288)); // kept: below 32k is said once, older results give way
         bool tight = false;
-        for (const AiChat::Entry& e : chat->entries()) tight |= e.kind == AiChat::Entry::Kind::Notice && e.text.contains("knapp") && e.text.contains("8192");
+        for (const AiChat::Entry& e : chat->entries()) tight |= e.kind == AiChat::Entry::Kind::Notice && e.text.contains("knapp") && e.text.contains("12288");
         CHECK(tight);
         // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
         // system prompt and tools of a fresh chat, the one word above aside. New ops and parameters no longer make it
@@ -1293,6 +1326,50 @@ void test(const QString& dir)
         for (const AiChat::Entry& e : chat->entries()) advice += e.kind == AiChat::Entry::Kind::Notice && e.text.contains("65536");
         CHECK_EQ(advice, 1);
         CHECK(QJsonDocument(fake.last().body).toJson(QJsonDocument::Compact).size() / 3.5 < 16384);
+        // The newest result alone too big (12288): refused in its tool round; what the user writes next starts a turn,
+        // the result is an earlier turn's then and gives way - the chat goes on
+        chat->clear();
+        fake.gets["/api/show"] = R"({"parameters":"num_ctx                        12288","model_info":{}})";
+        fake.script = {openAiTool("call_r1", "help", help), openAiText("Weiter geht's.", 9000)};
+        int sent2 = int(fake.requests.size());
+        panel->sendText("Lies die Hilfe zu edit");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent2 + 1); // the request with the result is not sent
+        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e)) CHECK(e->text.contains("12288"));
+        panel->sendText("Mach weiter");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent2 + 2)) {
+            const QJsonArray m = fake.last().body["messages"].toArray();
+            bool placeholder = false;
+            for (const QJsonValue& v : m)
+                if (v["role"].toString() == "tool") {
+                    CHECK_EQ(v["tool_call_id"].toString(), QString("call_r1"));
+                    placeholder |= v["content"].toString() == AiChat::kRemovedResult;
+                }
+            CHECK(placeholder);
+            CHECK(m.last()["content"].toString().contains("Mach weiter"));
+            CHECK(QJsonDocument(fake.last().body).toJson(QJsonDocument::Compact).size() / 3.5 < 12288);
+        }
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
+            CHECK_EQ(a->text, QString("Weiter geht's."));
+        // The same call again and again (its answer gives way each time): the third time ends the request, every
+        // call keeps its answer
+        chat->clear();
+        fake.gets["/api/show"] = R"({"parameters":"num_ctx                        16384","model_info":{}})";
+        fake.script.clear();
+        for (int i = 1; i <= 5; ++i) fake.script << openAiTool(QString("call_l%1").arg(i), "help", help);
+        fake.script << openAiText("Nie erreicht.", 9000);
+        sent2 = int(fake.requests.size());
+        panel->sendText("Lies die Hilfe immer wieder");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent2 + 5);
+        CHECK_EQ(fake.script.size(), 1);
+        int loop = 0;
+        for (const AiChat::Entry& e : chat->entries()) loop += e.kind == AiChat::Entry::Kind::Notice && e.text.contains("immer wieder");
+        CHECK_EQ(loop, 1);
+        CHECK_EQ(chat->history().last().results.size(), 1);
+        CHECK_EQ(chat->history().last().results[0].id, QString("call_l5"));
+        fake.script.clear();
         // 32k: enough for several steps, no notice
         chat->clear();
         fake.gets["/api/show"] = R"({"parameters":"num_ctx                        32768","model_info":{}})";
