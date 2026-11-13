@@ -8,6 +8,7 @@
 #include "core/Masks.h"
 #include "core/Types.h"
 
+#include <QHash>
 #include <QPointF>
 #include <QRectF>
 #include <QVector>
@@ -52,6 +53,10 @@ QRectF bounds(const TitleStyle& t, const Outline& o);
 // The outline as a mask polygon for MaskRaster (pixels of the picture it is rasterized into): soft = the feather
 // (at least one pixel, an anti-aliased edge)
 Masks::Geometry geometry(const QVector<QPointF>& points, double soft);
+
+// Copies of clips got new ids (old -> new, paste, decompose): a copied shape following a clip copied with it follows
+// the copy. Only the clips with a new id are looked at
+void remapFollow(Timeline& tl, const QHash<int, int>& ids);
 
 // ---- Clip in a shape (effect "clip_shape"): the clip's own picture cut to a shape, with stroke and shadow ----
 inline constexpr const char* kClipShapeEffect = "clip_shape";

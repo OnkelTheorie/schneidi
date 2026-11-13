@@ -5,6 +5,7 @@
 #include "core/Keyframes.h"
 
 #include <QColor>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
@@ -198,7 +199,9 @@ QRectF bounds(const TitleStyle& t, const Outline& o)
     QRectF r(QPointF(x0, y0), QPointF(x1, y1));
     double grow = std::max(1.0, t.shape.feather);
     if (t.outlineOn) grow = std::max(grow, t.outlineWidth / 2 + 1);
-    if (t.shape.kind == ShapeKind::Line) grow = std::max(grow, t.shape.height / 2 + 1);
+    // a line's pen: its thickness plus the outline on both sides (ShapePaint: lineWidth + 2 * outline)
+    if (t.shape.kind == ShapeKind::Line)
+        grow = std::max(grow, std::max(0.0, t.shape.height) / 2 + (t.outlineOn ? std::max(0.0, t.outlineWidth) : 0.0) + 1);
     r.adjust(-grow, -grow, grow, grow);
     if (t.look.shadowOn) {
         const double soft = 3 * std::max(0.0, t.look.shadowSoft);
@@ -215,6 +218,17 @@ Masks::Geometry geometry(const QVector<QPointF>& points, double soft)
     g.soft = std::max(1.0, soft);
     g.empty = points.size() < 3;
     return g;
+}
+
+void remapFollow(Timeline& tl, const QHash<int, int>& ids)
+{
+    if (ids.isEmpty()) return;
+    QSet<int> copies;
+    for (const int id : ids) copies.insert(id);
+    for (Track& t : tl.video)
+        for (Clip& c : t.clips)
+            if (copies.contains(c.id) && c.isTitle() && c.title.isShape() && ids.contains(c.title.shape.followClip))
+                c.title.shape.followClip = ids.value(c.title.shape.followClip);
 }
 
 bool clipShapeAt(const Clip& c, double t, ClipShape* out)

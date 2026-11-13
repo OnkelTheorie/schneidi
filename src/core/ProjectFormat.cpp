@@ -2,10 +2,12 @@
 #include "core/ProjectFormat.h"
 
 #include "core/CompGraph.h"
+#include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
+#include "core/Shapes.h"
 #include "core/TimelineStory.h"
 #include "core/Types.h"
 
@@ -116,6 +118,16 @@ double titleFit(const Clip& c, double s, double fromW, double toW)
 // Node values of compositing graphs in project pixels (Comp::pixelKeys: a text node's size, a blur radius, a shadow
 // offset ...) times k, static values and keyframes; positions as 0..1 of the picture stay. A value never set keeps
 // its node default (the engine's, unknown here) - like a fresh node in the new resolution.
+// Clip in a shape (0.22): its pixel values (stroke, soft edge, shadow softness), static and keyframed; size and place
+// are percent of the picture and stay
+void scaleClipShape(Clip& c, double k)
+{
+    const QString id = QString::fromLatin1(Shapes::kClipShapeEffect);
+    if (!EffectRegistry::has(c, id)) return;
+    for (const char* key : {"stroke_width", "feather", "shadow_soft"}) // static value (into the effect) and keyframes
+        Keys::convert(c, Keys::effectParam(id, QString::fromLatin1(key)), [k](double v) { return v * k; }, k);
+}
+
 void scaleCompPixels(Clip& c, double k)
 {
     QVector<AnimParam> scaled; // keyframes belong to the effect id: two comp instances share them
@@ -220,6 +232,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
                 if (tracks == &tl.video) scaleCompPixels(c, s);
+                if (tracks == &tl.video) scaleClipShape(c, s);
                 // Convert keyframe values in pixels likewise
                 for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
                     double f = 1;

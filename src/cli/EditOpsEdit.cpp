@@ -263,6 +263,8 @@ bool applyCaptions(CaptionStyle& c, const QJsonObject& op, const char* modeKey)
     return any;
 }
 
+} // namespace
+
 // Clips of the video track `track` that [from, to) overlaps, by id (before a title is placed or lengthened there)
 QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
 {
@@ -274,7 +276,11 @@ QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
     return out;
 }
 
-QString clipWord(const Clip& c) { return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip"); }
+static QString clipWord(const Clip& c)
+{
+    if (c.isTitle() && c.title.isShape()) return QString("shape \"%1\"").arg(c.title.firstLine());
+    return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip");
+}
 
 // Placing on a track overwrites what is there (like `place`); say what happened to each clip that was in the range,
 // so that a second title over the first one does not silently replace it
@@ -304,6 +310,8 @@ void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before)
         s.notes << "a track holds one clip at a time: to show two titles at once, leave out `track` (the new title "
                    "goes on a free track above) or give each its own track";
 }
+
+namespace {
 
 void opTitle(Session& s, const QJsonObject& op)
 {

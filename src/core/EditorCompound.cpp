@@ -10,6 +10,7 @@
 #include "core/Multicam.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
 
 #include <QSet>
 #include <algorithm>
@@ -284,6 +285,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                 const TrackKind other = part.second.kind == TrackKind::Video ? TrackKind::Audio : TrackKind::Video;
                 if (!haveKind[other == TrackKind::Video ? 0 : 1]) kinds << other;
                 const int offset = cc.start - cc.in;
+                QHash<int, int> idMap; // inner id -> new id (a shape following a clip of the content follows it here)
                 for (TrackKind kind : kinds) {
                     const QVector<Track>& src = inner->tracks(kind);
                     const int base = kind == part.second.kind ? part.second.index : 0;
@@ -330,6 +332,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                                                         tl.frameRate);
                             x.start += offset;
                             x.id = newId();
+                            idMap.insert(n.id, x.id);
                             if (x.linkId) {
                                 const QPair<int, int> key{group.first(), n.linkId};
                                 if (!links.contains(key)) links.insert(key, p->newLinkId());
@@ -342,6 +345,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                         }
                     }
                 }
+                Shapes::remapFollow(tl, idMap);
             }
         }
     });

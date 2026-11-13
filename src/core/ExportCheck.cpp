@@ -2,13 +2,16 @@
 #include "core/ExportCheck.h"
 
 #include "core/Captions.h"
+#include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
-#include "core/Shapes.h"
 #include "core/Loudness.h"
 #include "core/Retime.h"
+#include "core/Shapes.h"
+#include "core/TimelineOps.h"
 
 #include <QFileInfo>
 #include <QFont>
@@ -274,6 +277,27 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
     const double fps = f.rate.fps();
 
     out += length(from, to, f, o);
+    // A shape following a tracker that is gone (clip deleted, node removed): it stays where it was drawn
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
+            if (const ShapeStyle& sh = c.title.shape; c.title.isShape() && sh.followClip > 0 && sh.followNode > 0) {
+                const Clip* tracked = TimelineOps::findClip(tl, sh.followClip);
+                const EffectInstance* e = tracked ? EffectRegistry::instance(*tracked, Comp::kEffectId) : nullptr;
+                CompGraph g;
+                if (!e || !Comp::graphOf(*e, &g) || !g.node(sh.followNode)
+                    || g.node(sh.followNode)->type != QLatin1String(Comp::kTrackerType))
+                    out << issue(Severity::Warning, "shape_follow_missing",
+                                 T("Form „%1“ folgt einem Tracker, den es nicht mehr gibt (Clip %2, Knoten %3) – sie "
+                                   "bleibt stehen")
+                                     .arg(c.title.firstLine())
+                                     .arg(sh.followClip)
+                                     .arg(sh.followNode),
+                                 std::max(from, c.start), std::min(to, c.end()), c.id);
+            }
+        }
+    }
 
     // Media that are not where the project says (moved, deleted, other computer): renders as a placeholder
     QSet<QString> seen;
@@ -481,6 +505,10 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         for (const Clip& c : t.clips) {
             if (!c.isTitle() || !c.enabled || c.end() <= from || c.start >= to) continue;
             if (c.title.kind == TitleKind::Text && c.title.text.trimmed().isEmpty()) continue;
+            // A shape that shows nothing of its own (blur, pixelate or no fill, no stroke) covers nothing to read
+            if (c.title.isShape() && c.title.shape.kind != ShapeKind::Line && c.title.shape.fill != ShapeFill::Color
+                && !c.title.outlineOn)
+                continue;
             if (Keys::hasOpacity(c) && !Keys::animated(c, AnimParam::Opacity) && c.transform.opacity <= 0) continue;
             if (c.title.isProgress()) {
                 // A thin bar along the top edge is the usual place (the apps' top row is text over the picture);

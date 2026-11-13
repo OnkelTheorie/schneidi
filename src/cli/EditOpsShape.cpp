@@ -5,6 +5,7 @@
 // shape is shapeJson.
 #include "cli/CommandsDetail.h"
 
+#include "core/BrandKit.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
@@ -127,10 +128,13 @@ void opShape(Session& s, const QJsonObject& op)
     int id = 0;
     if (created) {
         const int track = op.contains("track") ? parseTrack(op.value("track")) : -1;
+        const QHash<int, Clip> before =
+            clipsIn(s, track, std::max(0, at), std::max(0, at) + (length > 0 ? length : 5 * s.project.fps()));
         s.selection.clear();
         s.editor.addTitle(std::max(0, at), track, length, TitleKind::Shape);
         if (s.selection.ids().isEmpty()) fail("FAILED", "could not place the shape (locked track?)");
         id = *s.selection.ids().begin();
+        noteOverwritten(s, id, before);
     } else {
         const Clip& c = clipOf(s, op);
         if (!c.isTitle() || !c.title.isShape()) fail("BAD_ARGUMENT", QString("clip %1 is not a shape").arg(c.id));
@@ -161,6 +165,7 @@ void opShape(Session& s, const QJsonObject& op)
             if (f.isString() && f.toString().startsWith('#')) {
                 sh.fill = ShapeFill::Color;
                 t.color = colorOf(f, "fill");
+                t.colorRef = 0; // a fixed colour: no brand colour any more
             } else {
                 fail("BAD_ARGUMENT", "fill must be color, none, blur, pixelate or a colour \"#rrggbb\"");
             }
@@ -176,7 +181,12 @@ void opShape(Session& s, const QJsonObject& op)
         if (v.isBool()) t.outlineOn = v.toBool();
         else if (v.isString()) t.outlineOn = true, t.outlineColor = colorOf(v, "stroke"), t.outlineRef = 0;
         else if (v.isDouble()) t.outlineOn = v.toDouble() > 0, t.outlineWidth = numberOf(op, "stroke", 0, 2000);
-        else fail("BAD_ARGUMENT", "stroke is true/false, a colour or a width");
+        else if (v.isObject()) { // as `info` shows it: {color, width}
+            const QJsonObject o = v.toObject();
+            t.outlineOn = true;
+            if (o.contains("color")) t.outlineColor = colorOf(o.value("color"), "stroke.color"), t.outlineRef = 0;
+            if (o.contains("width")) t.outlineWidth = numberOf(o, "width", 0, 2000), t.outlineOn = t.outlineWidth > 0;
+        } else fail("BAD_ARGUMENT", "stroke is true/false, a colour, a width or {color, width}");
     }
     if (op.contains("stroke_color")) t.outlineOn = true, t.outlineColor = colorOf(op.value("stroke_color"), "stroke_color"), t.outlineRef = 0;
     if (op.contains("stroke_width")) t.outlineWidth = numberOf(op, "stroke_width", 0, 2000), t.outlineOn = t.outlineWidth > 0;
@@ -197,6 +207,7 @@ void opShape(Session& s, const QJsonObject& op)
     if (drawOn > 0 && !t.outlineOn && sh.kind != ShapeKind::Line) t.outlineOn = true;
     s.editor.modifyClips({id}, "Shape", [&](Clip& c) {
         c.title = t;
+        Brand::resolve(c, s.project.effectiveBrand()); // a brand colour reference fills in its colour
         if (opacity) {
             c.transform.opacity = opacityValue;
             c.transform.compositeOn = true;

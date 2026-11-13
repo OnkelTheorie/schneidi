@@ -11,6 +11,7 @@
 #include "core/Retime.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
@@ -1023,9 +1024,11 @@ void Editor::paste(int frame)
     QSet<int> pasted;
     p->edit(T("Einfügen"), [&](Timeline& tl) {
         QHash<int, int> linkMap; // copy gets its own link
+        QHash<int, int> idMap;   // old -> new (a shape following a clip pasted with it follows the copy)
         for (const auto& it : items) {
             Clip c = it.clip;
             c.id = p->newClipId();
+            idMap.insert(it.clip.id, c.id);
             c.start += frame;
             if (c.linkId) {
                 if (!linkMap.contains(c.linkId)) linkMap[c.linkId] = p->newLinkId();
@@ -1035,6 +1038,7 @@ void Editor::paste(int frame)
             TimelineOps::placeClip(tl.track(it.ref), c, [p] { return p->newClipId(); }, tl.frameRate);
             pasted.insert(c.id);
         }
+        Shapes::remapFollow(tl, idMap);
     });
     m_selection->set(pasted);
 }
