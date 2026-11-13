@@ -605,7 +605,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
-    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp
+    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp src/cli/EditOpsShape.cpp
     src/cli/EditOpsCutout.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisKillFeed.cpp

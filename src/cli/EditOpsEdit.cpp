@@ -199,7 +199,7 @@ TitleKind titleKindOf(const QJsonObject& op)
     const QString id = op.value("kind").toString();
     for (const auto& k : kTitleKinds)
         if (id == QLatin1String(k.id)) return k.kind;
-    fail("BAD_ARGUMENT", "kind must be text, counter or progress");
+    fail("BAD_ARGUMENT", "kind must be text, counter, progress or shape (shapes have their own op: shape)");
 }
 
 void applyGenerator(TitleStyle& t, const QJsonObject& op)

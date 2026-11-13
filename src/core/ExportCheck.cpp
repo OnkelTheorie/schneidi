@@ -6,6 +6,7 @@
 #include "core/Generators.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
+#include "core/Shapes.h"
 #include "core/Loudness.h"
 #include "core/Retime.h"
 
@@ -57,6 +58,8 @@ QRectF titleBlock(const Clip& c, double t, double W, double H)
     QRectF r;
     if (s.isProgress()) { // the whole bar (it fills up to there)
         r = Generators::progressTrack(s, W, H);
+    } else if (s.isShape()) { // the outline with stroke and shadow, where it was placed (a tracker left out)
+        r = Shapes::bounds(s, Shapes::placed(s.shape, Shapes::placeAt(c, t, W, H), nullptr, 1.0));
     } else {
         const QFontMetricsF fm = metrics(s, std::max(1.0, Keys::valueAt(c, AnimParam::TitleSize, t)));
         const QStringList lines = (s.isCounter() ? Generators::counterWidest(s, fm) : s.text).split('\n');
@@ -469,6 +472,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         Zone zone;
         int from, to, clip;
         QString text;
+        bool shape = false; // a shape title (0.22): named as one
     };
     QVector<Found> found;
     for (int ti = 0; ti < tl.video.size(); ++ti) {
@@ -507,7 +511,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             if (first < 0 || bad < std::min(b - a, int(std::lround(0.5 * f.rate.fps())))) continue;
             const Zone zone = Zone(std::max_element(zones.begin(), zones.end()) - zones.begin());
             const QString name = c.title.kind == TitleKind::Text ? c.title.text.simplified() : c.title.firstLine();
-            found.append({ti, zone, first, std::min(b, last + step), c.id, name});
+            found.append({ti, zone, first, std::min(b, last + step), c.id, name, c.title.isShape()});
         }
     }
     for (int i = 0; i < found.size(); ++i) {
@@ -521,7 +525,8 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             }
         std::sort(group.begin(), group.end(), [](const Found& a, const Found& b) { return a.from < b.from; });
         if (group.size() == 1) {
-            out << issue(Severity::Warning, "safe_area", zoneMessage(f0.zone, T("Titel „%1“").arg(f0.text)), f0.from,
+            out << issue(Severity::Warning, "safe_area",
+                         zoneMessage(f0.zone, (f0.shape ? T("Form „%1“") : T("Titel „%1“")).arg(f0.text)), f0.from,
                          f0.to, f0.clip);
             continue;
         }

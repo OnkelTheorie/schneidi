@@ -72,7 +72,10 @@ void shadowOf(uint8_t* rgba, int w, int h, const QColor& color, double opacity, 
 // dst = dst + (src - dst) * weight / 255 (all four channels), weight = mask times k
 inline void lerp(uint8_t* dst, const uint8_t* src, int weight)
 {
-    for (int c = 0; c < 4; ++c) dst[c] = uint8_t(dst[c] + ((int(src[c]) - int(dst[c])) * weight + 127) / 255);
+    for (int c = 0; c < 4; ++c) {
+        const int d = (int(src[c]) - int(dst[c])) * weight; // rounded to the nearest on both sides of zero
+        dst[c] = uint8_t(dst[c] + (d >= 0 ? (d + 127) / 255 : -((127 - d) / 255)));
+    }
 }
 
 } // namespace
