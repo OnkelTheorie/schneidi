@@ -7,6 +7,8 @@
 #include "check.h"
 
 #include "engine/encoder/h264/Cavlc.h"
+#include "engine/encoder/h264/Deblock.h"
+#include "engine/encoder/h264/Satd.h"
 #include "engine/encoder/h264/H264Encoder.h"
 #include "engine/encoder/h264/ThreadErrors.h"
 
@@ -15,6 +17,7 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -212,12 +215,82 @@ EncoderConfig config(int w, int h, IntraMode mode, int gop, int threads = 1)
     return c;
 }
 
+// The edge kernels (SIMD where available) against the per-line reference filter, and the
+// four-predictions SATD against single calls, on random edges and samples.
+bool kernelsMatchReference()
+{
+    using namespace deblock_detail;
+    uint32_t seed = 12345;
+    auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    constexpr int S = 40;
+    for (int it = 0; it < 20000; ++it) {
+        std::vector<uint8_t> a(S * S), c(S * S);
+        const int base = int(rnd() % 256), amp = 1 + int(rnd() % (it % 3 == 0 ? 255 : 20));
+        for (auto* v : {&a, &c})
+            for (auto& x : *v)
+                x = uint8_t(std::clamp(base + int(rnd() % unsigned(2 * amp + 1)) - amp, 0, 255));
+        DeblockEdge e;
+        e.alpha = int(rnd() % (it % 4 == 0 ? 40 : 256));
+        e.beta = int(rnd() % 19);
+        e.bs4 = rnd() % 3 == 0;
+        for (auto& t : e.tc0)
+            t = e.bs4 ? int8_t(0) : rnd() % 4 == 0 ? int8_t(-1) : int8_t(rnd() % 26);
+        std::vector<uint8_t> ra = a, rc = c;
+        uint8_t *q = &a[10 * S + 12], *qv = &c[10 * S + 12], *r = &ra[10 * S + 12], *rv = &rc[10 * S + 12];
+        switch (it % 4) {
+        case 0:
+            deblockLumaEdgeV(q, S, e);
+            for (int i = 0; i < 16; ++i)
+                if (e.bs4 || e.tc0[i >> 2] >= 0)
+                    lumaLine(r + i * S, 1, e.alpha, e.beta, e.tc0[i >> 2], e.bs4);
+            break;
+        case 1:
+            deblockLumaEdgeH(q, S, e);
+            for (int i = 0; i < 16; ++i)
+                if (e.bs4 || e.tc0[i >> 2] >= 0)
+                    lumaLine(r + i, S, e.alpha, e.beta, e.tc0[i >> 2], e.bs4);
+            break;
+        case 2:
+            deblockChromaEdgeV(q, qv, S, e);
+            for (int i = 0; i < 8; ++i)
+                if (e.bs4 || e.tc0[i >> 1] >= 0) {
+                    chromaLine(r + i * S, 1, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                    chromaLine(rv + i * S, 1, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                }
+            break;
+        default:
+            deblockChromaEdgeH(q, qv, S, e);
+            for (int i = 0; i < 8; ++i)
+                if (e.bs4 || e.tc0[i >> 1] >= 0) {
+                    chromaLine(r + i, S, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                    chromaLine(rv + i, S, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                }
+            break;
+        }
+        if (a != ra || c != rc)
+            return false;
+        if (it % 8 == 0) {
+            int four[4];
+            const uint8_t* pred = c.data(); // 16 x 4 at stride 16
+            satd4x4x4U8(a.data(), S, pred, four);
+            for (int i = 0; i < 4; ++i)
+                if (four[i] != satdU8(a.data(), S, pred + 4 * i, 16))
+                    return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main()
 {
     Check::initEnv();
     CHECK(selfTestTables());
+    CHECK(kernelsMatchReference());
     for (const bool cabac : {false, true}) {
     gCabac = cabac;
 
