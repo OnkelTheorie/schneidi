@@ -136,6 +136,13 @@ void MainWindow::buildLayout()
     // timeline, the mixer keeps its height (and the Inspector comes down to it)
     m_editRight = new QSplitter(Qt::Vertical);
     m_editRight->hide();
+    // The mixer hung into the column before that hangs in the window (one cheap move of the mixer's tree, as before): built
+    // in the column, its size hints at the column's first sizing (updateRightColumn) were others and the column split
+    // differently (Inspector 10 px lower)
+    m_mixer = new Mixer(m_project, m_engine);
+    m_mixer->hide();
+    m_editRight->addWidget(m_mixer);
+    StartupTrace::mark("ctor Mixer");
     m_editRow = new QSplitter(Qt::Horizontal);
     m_editRow->addWidget(m_editMain);
     m_editRow->addWidget(m_editRight);
@@ -160,9 +167,10 @@ void MainWindow::buildLayout()
     m_viewer->setMulticamView(m_multicam);
     // The Inspector right in its place: the mixer column (saved setting, as the toggle reads it), else the top row. Moved
     // there later it took ~60 ms (updateRightColumn sizes the column as before: the slot keeps the row's sizes)
-    QSplitter* const inspectorAt = QSettings().value("panels/mixer", false).toBool() ? m_editRight : m_editTop;
-    m_inspector = new Inspector(m_editor, inspectorAt);
-    inspectorAt->addWidget(m_inspector);
+    const bool column = QSettings().value("panels/mixer", false).toBool();
+    m_inspector = new Inspector(m_editor, column ? m_editRight : m_editTop);
+    if (column) m_editRight->insertWidget(0, m_inspector); // over the mixer
+    else m_editTop->addWidget(m_inspector);
     StartupTrace::mark("ctor Inspector");
     m_inspector->setFrameSize(m_project->timelineFormat().size());
     m_timeline = new TimelinePanel(m_editor, m_editMain);
@@ -170,12 +178,6 @@ void MainWindow::buildLayout()
     StartupTrace::mark("ctor TimelinePanel");
     m_deliver = new DeliverPanel(m_project, m_deliverPage);
     StartupTrace::mark("ctor DeliverPanel");
-    // The mixer without a parent, hung in once (cheap): built in the column, its size hints at the column's first
-    // sizing (updateRightColumn) were others and the column split differently (Inspector 10 px lower)
-    m_mixer = new Mixer(m_project, m_engine);
-    m_mixer->hide();
-    m_editRight->addWidget(m_mixer); // below the Inspector
-    StartupTrace::mark("ctor Mixer");
     m_mixer->setEditor(m_editor);
     m_transcript = new TranscriptPanel(m_project, m_editor, m_editTop);
     StartupTrace::mark("ctor TranscriptPanel");

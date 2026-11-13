@@ -599,7 +599,14 @@ void MediaStorage::queueThumb(const QString& path)
 int MediaStorage::nextInView(bool onDiskOnly) const
 {
     // What is shown first, then what is nearest to it: scrolled down, the clips coming into view load next and not
-    // the ones above that nobody looks at
+    // the ones above that nobody looks at. A list not shown (the panel off, the window not up yet: a new folder starts at
+    // the top) simply in its order: asking a hidden list for item places lays out every item, once per thumbnail (a
+    // folder of ~150 clips kept the start ~120 ms busy right after the first paint, the panel was not even on)
+    if (!m_list->isVisible()) {
+        for (int i = 0; i < m_thumbQueue.size(); ++i)
+            if (!onDiskOnly || m_thumbOnDisk.contains(m_thumbQueue[i])) return i;
+        return -1;
+    }
     const QRect view = m_list->viewport()->rect();
     int best = -1;
     int bestDistance = std::numeric_limits<int>::max();
