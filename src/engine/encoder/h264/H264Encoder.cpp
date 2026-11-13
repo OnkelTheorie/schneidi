@@ -2703,6 +2703,51 @@ const IntraDirTable<4>& intraDir4()
     static const IntraDirTable<4> t;
     return t;
 }
+#ifdef SCHNEIDI_H264_AVX2
+// All nine 4x4 intra predictions at once when top and left are available: g = the candidate edge
+// values (IntraDirTable<4>::edges) with the DC value at 38, 48 bytes readable. Output: three
+// 16 x 4 groups side by side (modes 0-3, 4-7, 8; the rest of the last group repeats mode 8), each
+// row of a group gathered by byte shuffles from the three 16-byte parts of g.
+struct Intra4Shuffles {
+    alignas(32) uint8_t s[3][2][3][32]; // [group][row pair][part of g] -> two rows
+    Intra4Shuffles()
+    {
+        const IntraDirTable<4>& dir = intraDir4();
+        for (int k = 0; k < 3; ++k)
+            for (int y = 0; y < 4; ++y)
+                for (int j = 0; j < 4; ++j) {
+                    const int mode = std::min(4 * k + j, 8);
+                    for (int x = 0; x < 4; ++x) {
+                        const int idx = mode == 2 ? 38 : dir.idx[mode][y * 4 + x];
+                        for (int part = 0; part < 3; ++part)
+                            s[k][y >> 1][part][(y & 1) * 16 + j * 4 + x] =
+                                idx >= part * 16 && idx < part * 16 + 16 ? uint8_t(idx - part * 16) : uint8_t(0x80);
+                    }
+                }
+    }
+};
+const Intra4Shuffles& intra4Shuffles()
+{
+    static const Intra4Shuffles t;
+    return t;
+}
+__attribute__((target("avx2"))) void intra4PredictAll(const uint8_t* g, uint8_t (*group)[64])
+{
+    const Intra4Shuffles& t = intra4Shuffles();
+    const __m256i g0 = _mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(g)));
+    const __m256i g1 = _mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(g + 16)));
+    const __m256i g2 = _mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(g + 32)));
+    for (int k = 0; k < 3; ++k)
+        for (int r = 0; r < 2; ++r) {
+            const uint8_t(*sh)[32] = t.s[k][r];
+            const __m256i v = _mm256_or_si256(
+                _mm256_or_si256(_mm256_shuffle_epi8(g0, _mm256_load_si256(reinterpret_cast<const __m256i*>(sh[0]))),
+                                _mm256_shuffle_epi8(g1, _mm256_load_si256(reinterpret_cast<const __m256i*>(sh[1])))),
+                _mm256_shuffle_epi8(g2, _mm256_load_si256(reinterpret_cast<const __m256i*>(sh[2]))));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(group[k] + r * 32), v);
+        }
+}
+#endif
 const IntraDirTable<8>& intraDir8()
 {
     static const IntraDirTable<8> t;
@@ -2981,7 +3026,8 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
 
         uint8_t pred[16], cand[16];
         const IntraDirTable<4>& dir = intraDir4();
-        uint8_t edge[IntraDirTable<4>::kG];
+        uint8_t edge[48] = {}; // IntraDirTable<4>::kG values, [38] = DC for the shuffle path
+        static_assert(IntraDirTable<4>::kG <= 38);
         if (dir.ok)
             IntraDirTable<4>::edges(T, L, edge);
         int bestMode = 2, bestCost = 1 << 30;
@@ -3010,7 +3056,15 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             // costs and the same first-lowest pick as trying them one by one).
             alignas(16) uint8_t group[3][64];
             int modeOf[9], n = 0;
-            for (int mode = 0; mode < 9; ++mode) {
+#ifdef SCHNEIDI_H264_AVX2
+            if (dir.ok && top && left && haveAvx2()) {
+                edge[38] = uint8_t((T[1] + T[2] + T[3] + T[4] + L[0] + L[1] + L[2] + L[3] + 4) >> 3);
+                intra4PredictAll(edge, group);
+                for (; n < 9; ++n)
+                    modeOf[n] = n;
+            }
+#endif
+            for (int mode = n ? 9 : 0; mode < 9; ++mode) {
                 const bool needsTop = mode == 0 || mode == 3 || mode == 7;
                 const bool needsLeft = mode == 1 || mode == 8;
                 const bool needsBoth = mode >= 4 && mode <= 6;
