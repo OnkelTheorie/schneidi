@@ -278,11 +278,11 @@ inline int quantize(int coef, int mf, int qbits, int offset)
     return coef < 0 ? -level : level;
 }
 
-// Residual group thresholds of inter luma (4x4 transform), in bits at the macroblock's lambda: an
-// 8x8 group must gain more than kGroupBits, the whole luma residual more than kMbBits (see
-// planInterLuma). H264_DECG / H264_DECM override them for measurements.
+// Residual group threshold of inter luma (4x4 transform), in bits at the macroblock's lambda: an
+// 8x8 group of four blocks is coded only when they together gain more than kGroupBits (see
+// planInterLuma). Fitted by fixed-QP BD-rate on our test material (1, 3, 6, 10, 15 bits tried; a
+// further macroblock-level threshold over all kept groups gained nothing). H264_DECG overrides it.
 const double kGroupBits = std::getenv("H264_DECG") ? std::atof(std::getenv("H264_DECG")) : 3.0;
-const double kMbBits = std::getenv("H264_DECM") ? std::atof(std::getenv("H264_DECM")) : 0.0;
 // Bit model of a sparse 4x4 block (every coefficient below 1.5 levels) for the paths without the
 // CABAC trellis: block overhead + bits per non-zero level, fitted by least squares to the trellis'
 // own bit counts on our test material (H264_DECLOG=1 prints the fit).
@@ -4491,23 +4491,12 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         gain[blkIdx] = sparseLevelGain(levels[blkIdx], xs, scale4, lambda);
     }
     // Residual groups that do not pay for themselves: an 8x8 group is coded only when its blocks
-    // together gain more than its own signalling (coded_block_pattern bit and the extra context
-    // cost of a non-empty group, kGroupBits); the whole luma residual only when everything kept
-    // gains more than the macroblock-level cost of having luma at all (kMbBits: cbp, transform
-    // size flag, a skip or a cheaper macroblock type it may prevent). Both bit counts are fitted by
-    // rate-distortion measurement on our test material, not derived from the syntax alone.
-    double groupGain[4], kept = 0;
-    for (int b8 = 0; b8 < 4; ++b8) {
-        groupGain[b8] = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
-        if (groupGain[b8] > lambda * kGroupBits)
-            kept += groupGain[b8];
-        else
-            groupGain[b8] = 0;
-    }
-    const bool lumaPays = kept > lambda * kMbBits;
+    // together gain more than its own signalling and the context cost of a non-empty group
+    // (kGroupBits, fitted by measurement: the coded_block_pattern bit alone would be about one).
     double sum = 0;
     for (int b8 = 0; b8 < 4; ++b8) {
-        if (lumaPays && groupGain[b8] > 0)
+        const double groupGain = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
+        if (groupGain > lambda * kGroupBits)
             cbpLuma |= 1 << b8; // a group with a positive gain has a level
         else
             for (int k = 0; k < 4; ++k)
