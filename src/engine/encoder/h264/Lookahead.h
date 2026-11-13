@@ -67,7 +67,8 @@ public:
     // propagate into their predecessor.
     void propagate(std::deque<LookaheadFrame>& frames) const;
 
-    // QP offset of a macroblock from its propagated cost (strength 2 at x264's default qcomp).
+    // QP offset of a macroblock from its propagated cost (strength 2 = 5 * (1 - 0.6), i.e. a
+    // quantiser-curve compression of 0.6).
     static float qpOffset(const LookaheadFrame& f, int mb, double strength);
 
     int halfW() const { return halfW_; }

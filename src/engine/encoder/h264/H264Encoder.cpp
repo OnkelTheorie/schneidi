@@ -37,7 +37,7 @@ namespace schneidi::h264 {
 // nonZero (optional): bit k set where out[k] != 0.
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                     int cbfInc, int* out, double* energy = nullptr, uint64_t* nonZero = nullptr, double lambdaHigh = -1.0,
-                    int highFrom = 0);
+                    int highFrom = 0, double* zeroCost = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
 static const bool gTiming = std::getenv("H264_TIMING") != nullptr;
@@ -272,6 +272,92 @@ inline int quantize(int coef, int mf, int qbits, int offset)
     const int mag = int((int64_t(std::abs(coef)) * mf + offset) >> qbits);
     const int level = std::min(mag, kMaxLevel);
     return coef < 0 ? -level : level;
+}
+
+// Residual group thresholds of inter luma (4x4 transform), in bits at the macroblock's lambda: an
+// 8x8 group must gain more than kGroupBits, the whole luma residual more than kMbBits (see
+// planInterLuma). H264_DECG / H264_DECM override them for measurements.
+const double kGroupBits = std::getenv("H264_DECG") ? std::atof(std::getenv("H264_DECG")) : 6.0;
+const double kMbBits = std::getenv("H264_DECM") ? std::atof(std::getenv("H264_DECM")) : 10.0;
+// Bit model of a sparse 4x4 block (every coefficient below 1.5 levels) for the paths without the
+// CABAC trellis: block overhead + bits per non-zero level, fitted by least squares to the trellis'
+// own bit counts on our test material (H264_DECLOG=1 prints the fit).
+const double kBlkBits = std::getenv("H264_DECA") ? std::atof(std::getenv("H264_DECA")) : 0.0;
+const double kNzBits = std::getenv("H264_DECB") ? std::atof(std::getenv("H264_DECB")) : 3.7;
+
+// Fit data of the bit model (H264_DECLOG=1): normal equations of bits ~ 1 + nonzero.
+const bool gDecLog = std::getenv("H264_DECLOG") != nullptr;
+std::mutex gDecLogMutex;
+struct DecFit {
+    double m[2][2] = {}, v[2] = {}, sq = 0;
+    long n = 0;
+    ~DecFit()
+    {
+        if (!gDecLog || n == 0)
+            return;
+        const double d = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+        const double a = (v[0] * m[1][1] - m[0][1] * v[1]) / d, b = (m[0][0] * v[1] - m[1][0] * v[0]) / d;
+        const double mean = v[0] / double(n);
+        std::fprintf(stderr, "declog blocks=%ld bits = %.3f + %.3f*nz (mean %.2f, rms %.2f)\n", n, a, b, mean,
+                     std::sqrt(std::max(0.0, sq / double(n) - mean * mean)));
+    }
+} gDecFit;
+
+// Squared pixel error the levels of a 4x4 block remove (transform domain; x = real-valued levels
+// in scan order, scale = pixel error per level unit). Sets sparse when every coefficient is below
+// 1.5 levels (only then can the block drop to zero without a large error) and nz to the count of
+// non-zero levels.
+double levelGain(const int* raster, const double* x, const double* scale, bool& sparse, int& nz)
+{
+    double dd = 0;
+    nz = 0;
+    sparse = true;
+    for (int s = 0; s < 16; ++s) {
+        if (std::abs(x[s]) >= 1.5)
+            sparse = false;
+        const int l = raster[kZigzag[s]];
+        if (l == 0)
+            continue;
+        const double e0 = x[s] * scale[s], e1 = (x[s] - l) * scale[s];
+        dd += e0 * e0 - e1 * e1;
+        ++nz;
+    }
+    return dd;
+}
+
+// What coding a 4x4 block's levels gains over dropping them (squared error + lambda * bits), for
+// the paths without the trellis: the bits come from the fitted model; a block that is not sparse
+// is always worth coding (a huge gain, like the trellis, which never drops such a block).
+double sparseLevelGain(const int* raster, const double* x, const double* scale, double lambda)
+{
+    bool sparse;
+    int nz;
+    const double dd = levelGain(raster, x, scale, sparse, nz);
+    if (nz == 0)
+        return 0.0;
+    if (!sparse)
+        return 1e300;
+    return dd - lambda * (kBlkBits + kNzBits * nz);
+}
+
+// Records one trellis-coded sparse block for the bit-model fit (H264_DECLOG=1).
+void decLogSample(const int* raster, const double* x, const double* scale, double lambda, double gainJ)
+{
+    bool sparse;
+    int nz;
+    const double dd = levelGain(raster, x, scale, sparse, nz);
+    if (!sparse || nz == 0 || lambda <= 0)
+        return;
+    const double measured = (dd - gainJ) / lambda; // bits of the levels over the empty block
+    std::lock_guard<std::mutex> lk(gDecLogMutex);
+    gDecFit.m[0][0] += 1;
+    gDecFit.m[0][1] += nz;
+    gDecFit.m[1][0] += nz;
+    gDecFit.m[1][1] += double(nz) * nz;
+    gDecFit.v[0] += measured;
+    gDecFit.v[1] += nz * measured;
+    gDecFit.sq += measured * measured;
+    ++gDecFit.n;
 }
 
 int sad(const uint8_t* a, const uint8_t* b, int n)
@@ -2040,7 +2126,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.prev_ = bMode ? nullptr : lastStarted_;
     lastStarted_ = &fc;
 
-    // Frame-level rate control (in the spirit of x264's one-pass ABR, aiming at a steady QP, which
+    // Frame-level rate control (one-pass average-bitrate control aiming at a steady QP, which
     // is what PSNR likes best): a P picture gets the QP at which the average complexity of all P
     // pictures so far (bits * 2^(qp/6); bits roughly halve per +6 QP) meets the per-frame budget,
     // scaled by the bits over or under the target (overflow against a buffer of 5 s of bits) and at
@@ -3630,30 +3716,6 @@ void dequant8x8(const int* levels, int qp, int* d)
     }
 }
 
-// x264-style decimation score of a 4x4 block (raster levels, scanned in zig-zag order).
-int decimateScore(const int* levels)
-{
-    static constexpr int kTable[16] = {3, 2, 2, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    int scan[16];
-    for (int k = 0; k < 16; ++k)
-        scan[k] = levels[kZigzag[k]];
-    int last = 15;
-    while (last >= 0 && scan[last] == 0)
-        --last;
-    int score = 0;
-    while (last >= 0) {
-        if (std::abs(scan[last--]) > 1)
-            return 9;
-        int run = 0;
-        while (last >= 0 && scan[last] == 0) {
-            --last;
-            ++run;
-        }
-        score += kTable[run];
-    }
-    return score;
-}
-
 int median3(int a, int b, int c) { return std::max(std::min(a, b), std::min(std::max(a, b), c)); }
 
 } // namespace
@@ -4354,8 +4416,32 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         ir.cbpLuma = cbpLuma;
         return;
     }
+    // Pixel error per level unit of a 4x4 coefficient, by QP and scan position.
+    static const auto kScale4 = [] {
+        std::array<std::array<double, 16>, 52> t{};
+        static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
+        for (int q = 0; q < 52; ++q)
+            for (int s = 0; s < 16; ++s) {
+                const int r = kZigzag[s];
+                t[size_t(q)][size_t(s)] = kDequantV[q % 6][posClass(r)] * double(1 << (q / 6)) *
+                                          std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
+            }
+        return t;
+    }();
+    static const auto kMfScan = [] { // the quantisation multiplier by QP % 6 and scan position
+        std::array<std::array<double, 16>, 6> t{};
+        for (int q = 0; q < 6; ++q)
+            for (int s = 0; s < 16; ++s)
+                t[size_t(q)][size_t(s)] = kQuantMf[q][posClass(kZigzag[s])];
+        return t;
+    }();
+    const double* scale4 = kScale4[size_t(qp)].data();
+    const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
+    const double* mf = kMfScan[size_t(qpMod)].data();
     double jBlk[16], eBlk[16];
-    bool zeroBlk[16] = {}; // known to be all zero (no score to compute)
+    // What coding each block's levels gains over dropping them: squared error + lambda * bits of
+    // the empty block minus the same for the chosen levels (0 for an empty block).
+    double gain[16];
     const bool trellisPath = cfg_.effort > 0 && live && trellis;
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
@@ -4368,42 +4454,27 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                     res[y * 4 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
             forward4x4(res, coef);
         }
+        double xs[16];
+        for (int s = 0; s < 16; ++s)
+            xs[s] = double(coef[kZigzag[s]]) * mf[s] * invStep;
         if (trellisPath) {
             // Trellis with CABAC costs on real-valued levels.
-            static const auto kScale4 = [] {
-                std::array<std::array<double, 16>, 52> t{};
-                static constexpr double kNorm4[4] = {4.0, 2.5, 4.0, 2.5};
-                for (int q = 0; q < 52; ++q)
-                    for (int s = 0; s < 16; ++s) {
-                        const int r = kZigzag[s];
-                        t[size_t(q)][size_t(s)] = kDequantV[q % 6][posClass(r)] * double(1 << (q / 6)) *
-                                                  std::sqrt(kNorm4[r >> 2] * kNorm4[r & 3]) / 64.0;
-                    }
-                return t;
-            }();
-            static const auto kMfScan = [] { // the quantisation multiplier by QP % 6 and scan position
-                std::array<std::array<double, 16>, 6> t{};
-                for (int q = 0; q < 6; ++q)
-                    for (int s = 0; s < 16; ++s)
-                        t[size_t(q)][size_t(s)] = kQuantMf[q][posClass(kZigzag[s])];
-                return t;
-            }();
-            double xs[16];
-            const double invStep = 1.0 / double(1 << qbits); // a power of two: same as dividing
-            const double* mf = kMfScan[size_t(qpMod)].data();
-            for (int s = 0; s < 16; ++s)
-                xs[s] = double(coef[kZigzag[s]]) * mf[s] * invStep;
             int scanLv[16];
             uint64_t nz = 0;
-            jBlk[blkIdx] = cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv,
-                                        est ? &eBlk[blkIdx] : nullptr, &nz, fineLambda, gPsyFineFrom4);
+            double zeroJ = 0;
+            jBlk[blkIdx] = cabacTrellis(*live, 2, xs, scale4, 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr, &nz,
+                                        fineLambda, gPsyFineFrom4, &zeroJ);
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             for (uint64_t m = nz; m; m &= m - 1) {
                 const int s = std::countr_zero(m);
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
             }
-            zeroBlk[blkIdx] = nz == 0;
-        } else if (cfg_.effort > 0 && !live) {
+            gain[blkIdx] = nz ? zeroJ - jBlk[blkIdx] : 0.0;
+            if (gDecLog && nz && fineLambda < 0)
+                decLogSample(levels[blkIdx], xs, scale4, lambda, gain[blkIdx]);
+            continue;
+        }
+        if (cfg_.effort > 0 && !live) {
             // Round to nearest, then let the rate-distortion pass decide which levels to lower.
             for (int i = 0; i < 16; ++i)
                 levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, (1 << qbits) / 2);
@@ -4412,21 +4483,30 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             for (int i = 0; i < 16; ++i)
                 levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
         }
+        gain[blkIdx] = sparseLevelGain(levels[blkIdx], xs, scale4, lambda);
     }
-    // Decimation: a few lone +-1 levels cost more bits than they bring back.
-    int scores[16], mbScore = 0;
-    for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
-        scores[blkIdx] = zeroBlk[blkIdx] ? 0 : decimateScore(levels[blkIdx]);
-        mbScore += scores[blkIdx];
+    // Residual groups that do not pay for themselves: an 8x8 group is coded only when its blocks
+    // together gain more than its own signalling (coded_block_pattern bit and the extra context
+    // cost of a non-empty group, kGroupBits); the whole luma residual only when everything kept
+    // gains more than the macroblock-level cost of having luma at all (kMbBits: cbp, transform
+    // size flag, a skip or a cheaper macroblock type it may prevent). Both bit counts are fitted by
+    // rate-distortion measurement on our test material, not derived from the syntax alone.
+    double groupGain[4], kept = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
+        groupGain[b8] = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
+        if (groupGain[b8] > lambda * kGroupBits)
+            kept += groupGain[b8];
+        else
+            groupGain[b8] = 0;
     }
+    const bool lumaPays = kept > lambda * kMbBits;
     double sum = 0;
     for (int b8 = 0; b8 < 4; ++b8) {
-        const int s = scores[b8 * 4] + scores[b8 * 4 + 1] + scores[b8 * 4 + 2] + scores[b8 * 4 + 3];
-        if (s < 4 || mbScore < 6)
+        if (lumaPays && groupGain[b8] > 0)
+            cbpLuma |= 1 << b8; // a group with a positive gain has a level
+        else
             for (int k = 0; k < 4; ++k)
                 std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
-        else
-            cbpLuma |= 1 << b8; // a kept group has a level (its score is not 0)
         if (est && trellisPath)
             for (int k = 0; k < 4; ++k)
                 sum += (cbpLuma >> b8) & 1 ? jBlk[b8 * 4 + k] : eBlk[b8 * 4 + k];

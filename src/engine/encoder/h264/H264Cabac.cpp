@@ -575,7 +575,7 @@ void FrameCoder::cabacWriteMb(E& ce, CabacState& st, int mbx, int mby, const MbS
 template void FrameCoder::cabacWriteMb<CabacEncoder>(CabacEncoder&, FrameCoder::CabacState&, int, int, const FrameCoder::MbSyntax&, bool&);
 template void FrameCoder::cabacWriteMb<CabacCounter>(CabacCounter&, FrameCoder::CabacState&, int, int, const FrameCoder::MbSyntax&, bool&);
 
-// Trellis quantisation with CABAC costs (in the spirit of x264's trellis): dynamic programming
+// Trellis quantisation with CABAC costs (rate-distortion optimised quantisation): dynamic programming
 // over the coefficients in reverse scan order. Nodes are the 8 states of the coeff_abs_level
 // contexts (4 for "no level > 1 yet" by count of ones, 4 by count of levels > 1) plus "nothing
 // coded yet"; each coefficient may become 0, floor(|x|) or floor(|x|) + 1. Distortion is the
@@ -651,8 +651,13 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 // all-zero block; the mode decision compares transforms and layouts with these (no reconstruction).
 // lambdaHigh >= 0: the bits of the coefficients from scan position highFrom on weigh lambdaHigh
 // instead of lambda (the psy mode decision's finer quantisation of the texture frequencies).
+// zeroCost (optional): the cost of the all-zero block on the same scale as the return value
+// (squared error of every coefficient + lambda * the bits of coding nothing), so zeroCost minus
+// the return value is what coding the chosen levels gains over dropping them (the trellis itself
+// never drops a level of 1 or more, the caller may still drop the whole block).
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                    int cbfInc, int* out, double* energy, uint64_t* nonZero, double lambdaHigh, int highFrom)
+                    int cbfInc, int* out, double* energy, uint64_t* nonZero, double lambdaHigh, int highFrom,
+                    double* zeroCost)
 {
     if (nonZero)
         *nonZero = 0;
@@ -685,8 +690,21 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     const double h256 = lambdaHigh >= 0 ? lambdaHigh / 256.0 : l256;
     if (lambdaHigh < 0)
         highFrom = count; // no position weighs differently
-    if (end == 0)
+    auto emptyCost = [&] {
+        double e = 0;
+        if (energy) {
+            e = *energy;
+        } else {
+            for (int k = 0; k < count; ++k)
+                e += (x[k] * scale[k]) * (x[k] * scale[k]);
+        }
+        return e + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
+    };
+    if (end == 0) {
+        if (zeroCost)
+            *zeroCost = emptyCost();
         return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
+    }
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
     auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
     auto lastCtx = [&](int k) { return cat5 ? 417 + kLast8[k] : 166 + kSigOffset[cat] + k; };
@@ -807,6 +825,8 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     }
     int best = kEmpty;
     double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
+    if (zeroCost)
+        *zeroCost = emptyCost();
     for (int n = 0; n < 8; ++n) {
         const double c = cost[n] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 1));
         if (c < bestCost) {
