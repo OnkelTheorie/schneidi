@@ -540,6 +540,8 @@ private:
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
     class QShortcut* m_drawEscape = nullptr;  // Esc ends painting (only enabled while it is on)
     void updateEscapeKeys(); // which Esc shortcut is on: recording, then painting, then the large viewer
+    // Esc with the focus in a text/number field: handed to the field and the focus taken out of it (true); false = not in one
+    bool escapeToFocusedField();
     QAction* m_fullScreenAction = nullptr;
     QAction* m_appFullScreenAction = nullptr;
     bool m_maximizedBeforeFullScreen = true; // the window state setAppFullScreen(false) brings back

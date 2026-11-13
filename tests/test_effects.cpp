@@ -157,6 +157,14 @@ int main(int argc, char** argv)
                     CHECK(colours.size() > 8);
                 }
             }
+            // Every key rebuilds the list, the icons are made once: more typing adds no new ones
+            const qsizetype icons = lib.cachedIconCount();
+            CHECK(icons > 0);
+            for (const char* word : {"F", "Fo", "For", "Form", "", "Bl", "Blur"}) {
+                search->setText(QString::fromLatin1(word));
+                app.processEvents();
+            }
+            CHECK(lib.cachedIconCount() == icons);
             search->clear();
         }
     }

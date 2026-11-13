@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QPixmap>
 #include <QWidget>
+#include <functional>
 
 class QFileSystemWatcher;
 class QLineEdit;
@@ -48,6 +49,7 @@ public:
     bool exportRecipe(const QString& id, const QString& zipPath, QString* err = nullptr);
     QString importRecipe(const QString& zipPath, QString* err = nullptr);
     QListWidget* list() const { return m_list; } // tests
+    qsizetype cachedIconCount() const { return m_icons.size(); } // tests
 
 signals:
     void transitionRequested(TrackKind kind, const TransitionStyle& style);
@@ -60,6 +62,9 @@ private:
     void rescanFolders(); // re-read custom LUTs/transitions (folder changed), subcategories anew
     void fillGroups(class QTreeWidgetItem* root, int groupCategory, const QVector<EffectFolders::LutEntry>& entries);
     QPixmap fileIcon(const QString& path, bool lut, QString* error); // LUT: sample image, transition: A -> B
+    // Drawn icons (transitions, filters, titles, sounds, recipes) per entry key, made once: typing in the search
+    // rebuilds the list on every key, the icons are reused (the filter icons render a picture each)
+    const QPixmap& cachedIcon(const QString& key, const std::function<QPixmap()>& make);
     void saveCollapsed();
     struct PresetEntry {
         qint64 stamp = 0;
@@ -86,4 +91,5 @@ private:
     };
     QHash<QString, IconEntry> m_lutIcons;
     QHash<QString, PresetEntry> m_presets;
+    QHash<QString, QPixmap> m_icons; // cachedIcon
 };

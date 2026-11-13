@@ -587,6 +587,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         refresh();
     });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
+    // Another project (new/opened): its clip ids are not the old one's, a remembered shape height would go to a
+    // stranger
+    connect(editor->project(), &Project::loaded, this, [this] { m_heightBeforeLine.clear(); });
     refresh();
 }
 

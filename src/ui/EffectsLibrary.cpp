@@ -793,6 +793,13 @@ QPixmap EffectsLibrary::fileIcon(const QString& path, bool lut, QString* error)
     return it->icon;
 }
 
+const QPixmap& EffectsLibrary::cachedIcon(const QString& key, const std::function<QPixmap()>& make)
+{
+    auto it = m_icons.find(key);
+    if (it == m_icons.end()) it = m_icons.insert(key, make());
+    return *it;
+}
+
 void EffectsLibrary::rebuild()
 {
     m_list->clear();
@@ -824,13 +831,13 @@ void EffectsLibrary::rebuild()
         QVector<Entry> out;
         for (const auto& i : kTransitionTypes)
             if (i.type != TransitionType::Luma) // Gradient wipes come individually (per image)
-                out << Entry{T(i.name), QString("video:%1").arg(i.id), transitionIcon(i.type)};
+                out << Entry{T(i.name), QString("video:%1").arg(i.id), cachedIcon(QString("video:%1").arg(i.id), [&] { return transitionIcon(i.type); })};
         return out + files(EffectFolders::builtinTransitions(), false, true);
     };
     auto audioTransitions = [&] {
         QVector<Entry> out;
         for (const auto& i : kAudioCurves)
-            out << Entry{T(i.name), QString("audio:%1").arg(i.id), audioIcon()};
+            out << Entry{T(i.name), QString("audio:%1").arg(i.id), cachedIcon("audio", [] { return audioIcon(); })};
         return out;
     };
     auto filters = [&](bool video) {
@@ -838,7 +845,8 @@ void EffectsLibrary::rebuild()
         for (const auto& e : EffectRegistry::all())
             // The custom effects (filter chain, shader) come with their code through `edit`: empty they do nothing
             if (e.library && e.video == video && e.id != QLatin1String("ffmpeg_filter") && e.id != QLatin1String("shader"))
-                out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description, true, e.keywords};
+                out << Entry{e.name, kEffectPrefix + e.id, cachedIcon(kEffectPrefix + e.id, [&] { return effectIcon(e.id); }),
+                              e.description, true, e.keywords};
         return out;
     };
     auto builtinPresets = [&] {
@@ -866,7 +874,7 @@ void EffectsLibrary::rebuild()
             for (qsizetype i = 0; i < rec.size(); ++i) {
                 const SfxSynth::Recorded& r = rec[i];
                 out << Entry{T("%1 %2 (Aufnahme)").arg(soundKindName(k)).arg(i + 1),
-                             soundData({{"kind", SfxSynth::kindName(k)}, {"seed", int(i + 1)}}), soundIcon(false),
+                             soundData({{"kind", SfxSynth::kindName(k)}, {"seed", int(i + 1)}}), cachedIcon("sound", [] { return soundIcon(false); }),
                              T("Aufnahme von %1 (%2), %3").arg(r.author, r.licence, secondsText(r.length))};
             }
             // The computed ones (a length = computed, also where recordings are the default)
@@ -875,7 +883,7 @@ void EffectsLibrary::rebuild()
                 out << Entry{T("%1 %2 (berechnet)").arg(soundKindName(k)).arg(seed),
                              soundData({{"kind", SfxSynth::kindName(k)}, {"seed", seed},
                                         {"length", QString::number(length, 'f', 3) + "s"}}),
-                             soundIcon(false), T("Berechnet (eigener Klang, keine Aufnahme), %1").arg(secondsText(length))};
+                             cachedIcon("sound", [] { return soundIcon(false); }), T("Berechnet (eigener Klang, keine Aufnahme), %1").arg(secondsText(length))};
         }
         return out;
     };
@@ -883,7 +891,7 @@ void EffectsLibrary::rebuild()
         QVector<Entry> out;
         for (const auto& l : list) {
             if (own && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
-            out << Entry{l.name, soundData({{"kind", l.path}}), soundIcon(own), QDir::toNativeSeparators(l.path)};
+            out << Entry{l.name, soundData({{"kind", l.path}}), cachedIcon(own ? "sound:own" : "sound", [own] { return soundIcon(own); }), QDir::toNativeSeparators(l.path)};
         }
         return out;
     };
@@ -904,13 +912,13 @@ void EffectsLibrary::rebuild()
         }
         return soundFiles(list, false);
     };
-    const QVector<Entry> titles{Entry{T("Text"), kTitleData, titleIcon()},
-                                Entry{T("Zähler"), kCounterData, titleIcon(TitleKind::Counter),
+    const QVector<Entry> titles{Entry{T("Text"), kTitleData, cachedIcon("title:text", [] { return titleIcon(); })},
+                                Entry{T("Zähler"), kCounterData, cachedIcon("title:counter", [] { return titleIcon(TitleKind::Counter); }),
                                       T("Zahl, die über die Länge des Clips hochzählt (z. B. 0 → 1000 Kills)")},
-                                Entry{T("Fortschrittsbalken"), kProgressData, titleIcon(TitleKind::Progress),
+                                Entry{T("Fortschrittsbalken"), kProgressData, cachedIcon("title:progress", [] { return titleIcon(TitleKind::Progress); }),
                                       T("Balken am Bildrand, der zeigt, wie viel vom Video noch kommt (über die "
                                         "ganze Timeline)")},
-                                Entry{T("Form"), kShapeData, titleIcon(TitleKind::Shape),
+                                Entry{T("Form"), kShapeData, cachedIcon("title:shape", [] { return titleIcon(TitleKind::Shape); }),
                                       T("Kreis, Rechteck, Pfeil, Stern … mit Füllung, Rand und Schatten; auch als "
                                         "Unschärfe oder Spotlight")}};
 
@@ -963,7 +971,7 @@ void EffectsLibrary::rebuild()
             if (!slotIds.isEmpty()) tip << T("Einstellbar: %1").arg(slotIds.join(", "));
             if (!r.builtIn) tip << QDir::toNativeSeparators(r.dir);
             (r.builtIn ? builtIn : own) << Entry{CompRecipes::shownName(r), CompUi::kRecipePrefix + r.id,
-                                                 recipeIcon(!r.builtIn), tip.join('\n')};
+                                                 cachedIcon(r.builtIn ? "recipe" : "recipe:own", [&] { return recipeIcon(!r.builtIn); }), tip.join('\n')};
         }
         groups = {{T("Mitgeliefert"), builtIn}, {T("Eigene"), own}};
         break;

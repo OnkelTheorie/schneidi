@@ -587,6 +587,49 @@ void testCheck()
     CHECK(!found);
 }
 
+// ---- Inspector: a height remembered for a line (to give back when it becomes another kind) belongs to its project:
+// another project's clip with the same id that is a line from the start gets the default height, not that one ----
+void testInspectorProjectChange()
+{
+    std::printf("inspector project change\n");
+    Project p;
+    ProjectData d;
+    d.timeline = timelineOf({shapeClip(1, ShapeKind::Rect, 200, 150)});
+    d.format = kFormat;
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Inspector insp(&e);
+    insp.resize(380, 1600);
+    insp.show();
+    sel.set({1});
+    QCoreApplication::processEvents();
+    QComboBox* kinds = nullptr;
+    for (QComboBox* b : insp.findChildren<QComboBox*>())
+        if (b->count() == int(std::size(kShapeKinds)) && b->itemData(0).toInt() == int(ShapeKind::Ellipse)
+            && b->itemText(0) == T(kShapeKinds[0].name) && b->itemText(1) == T(kShapeKinds[1].name))
+            kinds = b;
+    if (!CHECK(kinds && kinds->isVisibleTo(&insp))) return;
+    auto choose = [&](ShapeKind k) {
+        kinds->setCurrentIndex(kinds->findData(int(k)));
+        emit kinds->activated(kinds->currentIndex());
+        QCoreApplication::processEvents();
+        return TimelineOps::findClip(p.timeline(), 1);
+    };
+    const Clip* c = choose(ShapeKind::Line); // remembers 150 for clip 1
+    CHECK(c && c->title.shape.kind == ShapeKind::Line);
+    // Another project: clip 1 is a line 200 wide from the start
+    ProjectData other;
+    other.timeline = timelineOf({shapeClip(1, ShapeKind::Line, 200, 4)});
+    other.format = kFormat;
+    p.load(other);
+    sel.set({1});
+    QCoreApplication::processEvents();
+    c = choose(ShapeKind::Polygon);
+    CHECK(c && c->title.shape.kind == ShapeKind::Polygon);
+    if (c) CHECK_EQ(c->title.shape.height, 200.0); // as high as wide (stale: 150)
+}
+
 // ---- Inspector: the section "Form" for a shape (its kind combo changes the clip), the text field hidden ----
 void testInspector()
 {
@@ -875,6 +918,7 @@ int main(int argc, char** argv)
     testCli(tmp.path());
     testCheck();
     testInspector();
+    testInspectorProjectChange();
     testOverlay();
     testBelowTransitions();
     testFollowSplit();
