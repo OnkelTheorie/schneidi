@@ -15,6 +15,7 @@ class QLineEdit;
 class QTimer;
 class QListWidget;
 class QTreeWidget;
+class QUndoStack;
 
 // Effects Library (Edit page): on the left categories (Favourites, Recently used; Transitions → Video, Audio, gradient
 // wipes; Titles; Shapes & drawing; Video effects and Audio effects → their purpose (EffectCategory, the registry's);
@@ -56,6 +57,9 @@ public:
     void setDrawShortcut(const QKeySequence& key);
     // Favourite of the list entry with this data (tests; the user: context menu, key F)
     void toggleFavorite(const QString& data);
+    // The history a double-click's change lands in (MainWindow: the project's undo stack): an entry counts as
+    // recently used only when applying it pushed a step. Not set (tests): every double-click counts
+    void setHistory(std::function<QUndoStack*()> history);
     QListWidget* list() const { return m_list; } // tests
     qsizetype cachedIconCount() const { return m_icons.size(); } // tests
 
@@ -79,6 +83,7 @@ private:
     // rebuilds the list on every key, the icons are reused (the filter icons render a picture each)
     const QPixmap& cachedIcon(const QString& key, const std::function<QPixmap()>& make);
     void saveCollapsed();
+    void applyEntry(const QString& data); // what a double-click does (signals)
     void noteUsed(const QString& data); // recently used (and the list anew when it is shown)
     void rebuildKeepingPlace();         // rebuild with the same entry selected and the same scroll position
     struct PresetEntry {
@@ -108,4 +113,8 @@ private:
     QHash<QString, PresetEntry> m_presets;
     QHash<QString, QPixmap> m_icons; // cachedIcon
     QString m_drawKey;
+    std::function<QUndoStack*()> m_history;
+    // Files of the installed sound packs (read once per change of the packs folder, not on every search key)
+    QVector<EffectFolders::LutEntry> m_packSounds;
+    qint64 m_packSoundsStamp = -1;
 };

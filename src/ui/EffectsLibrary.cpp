@@ -48,6 +48,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
+#include <QUndoStack>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -709,33 +710,15 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
             emit drawRequested();
             return;
         }
-        if (!d.startsWith(kSoundPrefix)) noteUsed(d); // a sound is only heard here
-        if (d == kTitleData || d == kCounterData || d == kProgressData) {
-            emit titleRequested(int(d == kCounterData    ? TitleKind::Counter
-                                    : d == kProgressData ? TitleKind::Progress
-                                                         : TitleKind::Text));
-            return;
-        }
-        if (d.startsWith(kShapePrefix)) {
-            emit shapeRequested(d.mid(int(qstrlen(kShapePrefix))));
-            return;
-        }
-        if (d.startsWith(kEffectPrefix)) {
-            emit effectRequested(d.mid(3));
-            return;
-        }
-        if (d.startsWith(kSoundPrefix)) { // listen only: placing is dragging it into the timeline
-            if (const QString file = soundFile(d.mid(6).toUtf8()); !file.isEmpty()) emit soundPreviewRequested(file);
-            return;
-        }
-        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d)) {
-            // LUT/preset/recipe -> like a filter
-            emit effectRequested(d);
-            return;
-        }
-        TrackKind kind;
-        TransitionStyle style;
-        if (parseTransition(d.toUtf8(), &kind, &style)) emit transitionRequested(kind, style);
+        // Recently used: only what changed the project (an effect without a clip to take it, a transition without a
+        // cut at the playhead is not used); a sound is only heard here. Without a history (tests) every one counts
+        QUndoStack* history = m_history ? m_history() : nullptr;
+        bool changed = false;
+        QMetaObject::Connection watch;
+        if (history) watch = connect(history, &QUndoStack::indexChanged, this, [&changed] { changed = true; });
+        applyEntry(d);
+        if (watch) disconnect(watch);
+        if (!d.startsWith(kSoundPrefix) && (changed || !history)) noteUsed(d);
     });
 
     // Context menu: favourite on/off for every entry with a stable key; recipes: share as ZIP, take one in, remove an
@@ -794,7 +777,17 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     split->addWidget(m_categories);
     split->addWidget(m_list);
     split->setStretchFactor(1, 1);
-    SplitterMemory::remember(split, "effectsCategories", {130, 230}); // the user's drag comes back on the next start
+    // The category column fits the longest fixed name in the font used ("Formen & Zeichnen", "Compositing-Rezepte" in
+    // German, a large font), without the user's subfolders; the user's drag comes back on the next start
+    int categoryWidth = 0;
+    for (QTreeWidgetItemIterator it(m_categories); *it; ++it) {
+        int depth = 1; // the branch arrow's column
+        for (const QTreeWidgetItem* p = (*it)->parent(); p; p = p->parent()) ++depth;
+        categoryWidth = std::max(categoryWidth, depth * m_categories->indentation()
+                                                    + m_categories->fontMetrics().horizontalAdvance((*it)->text(0)));
+    }
+    categoryWidth += 2 * m_categories->frameWidth() + 10; // the item's text margins
+    SplitterMemory::remember(split, "effectsCategories", {std::clamp(categoryWidth, 130, 220), 230});
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -861,9 +854,44 @@ void EffectsLibrary::saveCollapsed()
     settings.setValue("effects/expanded", expanded);
 }
 
+void EffectsLibrary::setHistory(std::function<QUndoStack*()> history) { m_history = std::move(history); }
+
+// What a double-click on an entry does (the paint tool is handled before)
+void EffectsLibrary::applyEntry(const QString& d)
+{
+    if (d == kTitleData || d == kCounterData || d == kProgressData) {
+        emit titleRequested(int(d == kCounterData    ? TitleKind::Counter
+                                : d == kProgressData ? TitleKind::Progress
+                                                     : TitleKind::Text));
+        return;
+    }
+    if (d.startsWith(kShapePrefix)) {
+        emit shapeRequested(d.mid(int(qstrlen(kShapePrefix))));
+        return;
+    }
+    if (d.startsWith(kEffectPrefix)) {
+        emit effectRequested(d.mid(3));
+        return;
+    }
+    if (d.startsWith(kSoundPrefix)) { // listen only: placing is dragging it into the timeline
+        if (const QString file = soundFile(d.mid(6).toUtf8()); !file.isEmpty()) emit soundPreviewRequested(file);
+        return;
+    }
+    if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix) || CompUi::isRecipe(d)) {
+        // LUT/preset/recipe -> like a filter
+        emit effectRequested(d);
+        return;
+    }
+    TrackKind kind;
+    TransitionStyle style;
+    if (parseTransition(d.toUtf8(), &kind, &style)) emit transitionRequested(kind, style);
+}
+
 void EffectsLibrary::setDrawShortcut(const QKeySequence& key)
 {
-    m_drawKey = key.toString(QKeySequence::NativeText);
+    const QString text = key.toString(QKeySequence::NativeText);
+    if (text == m_drawKey) return; // QAction::changed also comes for checking/unchecking the tool
+    m_drawKey = text;
     const QTreeWidgetItem* cur = m_categories->currentItem();
     if (cur && cur->data(0, Qt::UserRole).toInt() == ShapesCat) rebuildKeepingPlace();
 }
@@ -903,7 +931,7 @@ bool EffectsLibrary::eventFilter(QObject* watched, QEvent* event)
         if (key->key() == Qt::Key_F && !(key->modifiers() & ~Qt::KeypadModifier) && m_list->currentItem()
             && !EffectFavorites::key(m_list->currentItem()->data(Qt::UserRole).toString()).isEmpty()) {
             event->accept();
-            if (event->type() == QEvent::KeyPress) toggleFavorite(m_list->currentItem()->data(Qt::UserRole).toString());
+            if (event->type() == QEvent::KeyPress && !key->isAutoRepeat()) toggleFavorite(m_list->currentItem()->data(Qt::UserRole).toString());
             return true;
         }
     }
@@ -937,6 +965,7 @@ void EffectsLibrary::rescanFolders()
     m_userTransitions = EffectFolders::userTransitions();
     m_userPresets = EffectFolders::userPresets();
     m_userSounds = EffectFolders::userSounds();
+    m_packSoundsStamp = -1; // the packs too
 
     // Subcategories = subfolders (nested like in the folder); selection stays if it still exists
     const QSignalBlocker block(m_categories);
@@ -1134,21 +1163,28 @@ void EffectsLibrary::rebuild()
         return out;
     };
     auto packSounds = [&] {
-        QVector<EffectFolders::LutEntry> list;
-        for (const QString& pack : Extensions::installedSoundPacks()) {
-            QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
-            QStringList found;
-            while (it.hasNext())
-                if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
-            found.sort();
-            for (const QString& f : found) {
-                EffectFolders::LutEntry e;
-                e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
-                e.path = f;
-                list << e;
+        // Installing/removing a pack renames folders in the packs folder (its time changes); a rescan of the effects
+        // folder reads them anew too
+        const QFileInfo packsDir(Extensions::soundPacksDir());
+        const qint64 stamp = packsDir.exists() ? packsDir.lastModified().toMSecsSinceEpoch() : 0;
+        if (stamp != m_packSoundsStamp) {
+            m_packSoundsStamp = stamp;
+            m_packSounds.clear();
+            for (const QString& pack : Extensions::installedSoundPacks()) {
+                QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
+                QStringList found;
+                while (it.hasNext())
+                    if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
+                found.sort();
+                for (const QString& f : found) {
+                    EffectFolders::LutEntry e;
+                    e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
+                    e.path = f;
+                    m_packSounds << e;
+                }
             }
         }
-        return soundFiles(list, false, false);
+        return soundFiles(m_packSounds, false, false);
     };
     auto recipes = [&](bool builtIn) {
         // Built-in and own recipes (CompRecipes::all); dragged onto a clip / double-clicked = applied (one undo step)

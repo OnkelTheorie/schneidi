@@ -567,6 +567,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             [this, tv](int kind) { m_editor->addTitle(tv->playhead(), -1, 0, TitleKind(kind)); });
     connect(m_effects, &EffectsLibrary::shapeRequested, this, [this, tv](const QString& kind) { addShape(tv->playhead(), -1, kind); });
     connect(m_effects, &EffectsLibrary::drawRequested, this, [this] { setDrawTool(true); });
+    m_effects->setHistory([this] { return m_project->undoStack(); }); // recently used = what changed the project
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
         const QVector<int> targets = m_editor->effectTargets(tv->playhead(), Editor::effectKind(id));
