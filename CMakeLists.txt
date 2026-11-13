@@ -196,6 +196,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/GameHud.h            src/core/GameHud.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
+    src/core/EffectFavorites.h    src/core/EffectFavorites.cpp
     src/core/Presets.h            src/core/Presets.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
     src/core/TruePeak.h           src/core/TruePeak.cpp

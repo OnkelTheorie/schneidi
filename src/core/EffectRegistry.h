@@ -48,6 +48,25 @@ struct EffectParam {
     }
 };
 
+// What an effect is for (Effects Library subcategory, `effects` category): video and audio effects each list the
+// categories that have effects of their kind, in this order. Ids are stable (CLI/MCP filter); new ones go anywhere in
+// the list (the order is the shown one, nothing is saved by number)
+enum class EffectCategory { None, Color, Blur, Stylize, Keying, Repair, Voice, Custom };
+struct EffectCategoryInfo {
+    EffectCategory category;
+    const char* id;   // "color", "blur", … (CLI/MCP)
+    const char* name; // N_(): shown through T()
+};
+inline constexpr EffectCategoryInfo kEffectCategories[] = {
+    {EffectCategory::Color, "color", N_("Farbe & Licht")},
+    {EffectCategory::Blur, "blur", N_("Unschärfe")},
+    {EffectCategory::Stylize, "stylize", N_("Stilisieren")},
+    {EffectCategory::Keying, "keying", N_("Keying & Masken")},
+    {EffectCategory::Repair, "repair", N_("Reparieren")},
+    {EffectCategory::Voice, "voice", N_("Stimme")},
+    {EffectCategory::Custom, "custom", N_("Eigener Code")},
+};
+
 struct EffectDescriptor {
     QString id;
     QString name;
@@ -62,11 +81,16 @@ struct EffectDescriptor {
     // then the Color page grade, then the Green Screen key; noise reduction per audio clip). It cannot be moved; all
     // other effects render after the fixed stages in the clip's order (Editor::moveEffect)
     bool fixed = false;
+    EffectCategory category = EffectCategory::None; // what it is for (every effect has one; test_effects checks)
     QStringList keywords; // further words the Effects Library's search finds it by (both UI languages)
 };
 
 namespace EffectRegistry {
 const QVector<EffectDescriptor>& all();
+// Category id ("color") and shown name (translated) of a category; categoryFromId: false = unknown id
+QString categoryId(EffectCategory c);
+QString categoryName(EffectCategory c);
+bool categoryFromId(const QString& id, EffectCategory* c);
 const EffectDescriptor* find(const QString& id);
 // Parameter of d by its stored key or its readable alias (EffectParam::alias); nullptr = none
 const EffectParam* findParam(const EffectDescriptor& d, const QString& keyOrAlias);
