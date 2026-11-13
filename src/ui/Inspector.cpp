@@ -10,6 +10,7 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Shapes.h"
+#include "core/StartupTrace.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -160,9 +161,11 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     QVBoxLayout* videoLay = makePage();
     QVBoxLayout* audioLay = makePage();
     buildTitlePage(makePage());
+    StartupTrace::mark("  Inspector title page");
     buildTransitionPage(makePage());
     buildSubtitlePage(makePage());
     QVBoxLayout* fxLay = makePage();
+    StartupTrace::mark("  Inspector transition+subtitle pages");
 
     const TrackKind V = TrackKind::Video;
 
@@ -564,6 +567,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);
 
+    StartupTrace::mark("  Inspector video+audio pages");
     // Choice boxes: as wide as their longest entry when there is room, in a narrow panel they give way (the entry
     // ends in "…") instead of widening it
     for (QComboBox* box : m_pages->findChildren<QComboBox*>())
@@ -588,6 +592,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
             grid->addItem(item, row, 1, 1, std::max(1, grid->columnCount() - 1), item->alignment());
         }
     }
+    StartupTrace::mark("  Inspector box widths");
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
     connect(editor->selection(), &Selection::changed, this, [this] {
