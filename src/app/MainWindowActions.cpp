@@ -1056,9 +1056,13 @@ bool MainWindow::escapeToFocusedField()
     const bool field = qobject_cast<QLineEdit*>(f) || qobject_cast<QAbstractSpinBox*>(f) || qobject_cast<QTextEdit*>(f)
                        || qobject_cast<QPlainTextEdit*>(f) || (combo && combo->isEditable());
     if (!field) return false;
-    // The field's own Esc first (ScrubField: back to the value before typing), then the focus leaves it
+    // The field's own Esc first (ScrubField: back to the value before typing), then the focus leaves it. Sending a
+    // key press runs the shortcut map again: the painting Esc is off meanwhile, or it would come back here
+    const bool drawEscape = m_drawEscape && m_drawEscape->isEnabled();
+    if (drawEscape) m_drawEscape->setEnabled(false);
     QKeyEvent press(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QCoreApplication::sendEvent(f, &press);
+    if (drawEscape) m_drawEscape->setEnabled(true);
     if (f->hasFocus()) f->clearFocus();
     return true;
 }
