@@ -13,6 +13,7 @@
 #include "core/Equalizer.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
+#include "core/Shapes.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
 #include "core/SfxSynth.h"
@@ -348,6 +349,25 @@ void generatorToJson(QJsonObject& o, const TitleStyle& t)
         if (t.grouping != d.grouping) o["grouping"] = t.grouping;
         o["numbers"] = numberStyleInfo(t.numbers).id;
         if (t.countEase != d.countEase) o["countEase"] = motionEaseInfo(t.countEase).id;
+    } else if (t.isShape()) {
+        // Shape (0.22): its own group; an older version reads the title as an empty text (it draws nothing)
+        const ShapeStyle& sh = t.shape;
+        const ShapeStyle sd;
+        QJsonObject so{{"kind", Shapes::kindId(sh.kind)}, {"width", sh.width}, {"height", sh.height}};
+        if (sh.rotation != sd.rotation) so["rotation"] = sh.rotation;
+        if (sh.corner != sd.corner) so["corner"] = sh.corner;
+        if (sh.points != sd.points) so["points"] = sh.points;
+        if (sh.inner != sd.inner) so["inner"] = sh.inner;
+        if (sh.fill != sd.fill) so["fill"] = Shapes::fillId(sh.fill);
+        if (sh.amount != sd.amount) so["amount"] = sh.amount;
+        if (sh.feather != sd.feather) so["feather"] = sh.feather;
+        if (sh.spotlight != sd.spotlight) so["spotlight"] = sh.spotlight;
+        if (sh.reveal != sd.reveal) so["reveal"] = sh.reveal;
+        if (sh.followClip > 0 && sh.followNode > 0) {
+            so["followClip"] = sh.followClip;
+            so["followNode"] = sh.followNode;
+        }
+        o["shape"] = so;
     } else {
         o["span"] = t.span == ProgressSpan::Clip ? "clip" : "timeline";
         o["barTop"] = t.barTop;
@@ -431,6 +451,23 @@ TitleStyle titleFromJson(const QJsonObject& o)
     t.barThickness = std::clamp(o.value("barThickness").toDouble(t.barThickness), 1.0, 10000.0);
     t.barMargin = std::clamp(o.value("barMargin").toDouble(t.barMargin), 0.0, 10000.0);
     t.barRound = o.value("barRound").toBool(t.barRound);
+    if (const QJsonObject so = o.value("shape").toObject(); !so.isEmpty()) {
+        ShapeStyle& sh = t.shape;
+        Shapes::kindFromId(so.value("kind").toString(), &sh.kind); // unknown (newer) kind: ellipse
+        sh.width = std::clamp(so.value("width").toDouble(sh.width), 0.0, 1e6);
+        sh.height = std::clamp(so.value("height").toDouble(sh.height), 0.0, 1e6);
+        sh.rotation = so.value("rotation").toDouble(sh.rotation);
+        sh.corner = std::clamp(so.value("corner").toDouble(sh.corner), 0.0, 1e6);
+        sh.points = std::clamp(so.value("points").toInt(sh.points), 3, 32);
+        sh.inner = std::clamp(so.value("inner").toDouble(sh.inner), 0.05, 1.0);
+        Shapes::fillFromId(so.value("fill").toString(), &sh.fill); // unknown (newer) fill: colour
+        sh.amount = std::clamp(so.value("amount").toDouble(sh.amount), 0.0, 100.0);
+        sh.feather = std::clamp(so.value("feather").toDouble(sh.feather), 0.0, 1e4);
+        sh.spotlight = std::clamp(so.value("spotlight").toDouble(sh.spotlight), 0.0, 100.0);
+        sh.reveal = std::clamp(so.value("reveal").toDouble(sh.reveal), 0.0, 100.0);
+        sh.followClip = std::max(0, so.value("followClip").toInt());
+        sh.followNode = std::max(0, so.value("followNode").toInt());
+    }
     t.colorRef = std::clamp(o.value("colorRef").toInt(), 0, BrandKit::kMaxColors);
     t.outlineRef = std::clamp(o.value("outlineRef").toInt(), 0, BrandKit::kMaxColors);
     t.boxRef = std::clamp(o.value("boxRef").toInt(), 0, BrandKit::kMaxColors);

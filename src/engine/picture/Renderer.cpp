@@ -24,6 +24,9 @@
 #include "engine/picture/CustomEffects.h"
 #include "engine/picture/Effects.h"
 #include "engine/picture/Interpolate.h"
+#include "engine/picture/CompTrack.h"
+#include "engine/picture/ShapePaint.h"
+#include "core/Shapes.h"
 #include "engine/picture/TitleLook.h"
 #include "engine/picture/gpu/CompGpu.h"
 #include "engine/picture/gpu/Gpu.h"
@@ -774,6 +777,9 @@ struct Renderer::Impl {
         const EffectInstance* comp = EffectRegistry::instance(c, ::Comp::kEffectId);
         const bool composed = comp && comp->enabled && applyComp(img, c, *comp, t, ctx, frameHeight / ctx.PH, lane, nested);
         if (!composed && nested && nested->deferred) renderNested(img, *nested);
+        // Clip in a shape (0.22) last: the cut edge, stroke and shadow stay as set whatever the effects did
+        if (Shapes::ClipShape cs; !img.empty() && Shapes::clipShapeAt(c, t, &cs))
+            ShapePaint::clipShape(img.data(), img.w, img.h, cs, frameHeight / std::max(1.0, ctx.PH));
     }
 
     // The clip's only picture effect is an enabled compositing graph (no grade, stabilization, other effects)
@@ -1119,7 +1125,12 @@ struct Renderer::Impl {
     void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0, QPoint shift = {},
                    QRect* bounds = nullptr)
     {
-        const Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        if (c.title.isShape()) { // a shape following a tracker fades with it when the point is lost
+            Masks::Follow f;
+            double seen = 1;
+            if (shapeFollow(c, t, ctx, &f, &seen)) m.opacity *= seen;
+        }
         if (m.opacity <= 0) {
             if (bounds) *bounds = QRect();
             return;
@@ -1147,6 +1158,10 @@ struct Renderer::Impl {
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
         if (st.isProgress()) {
             drawProgress(layer, c, t, ctx, shift, bounds);
+            return;
+        }
+        if (st.isShape()) {
+            drawShape(layer, c, t, ctx, shift, bounds, m);
             return;
         }
         double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
@@ -1270,6 +1285,121 @@ struct Renderer::Impl {
         v.shine = l.solidShine;
         v.metal = l.solidMetal;
         Text3d::render(mesh, v, layer.data(), layer.w, layer.h);
+    }
+
+    // Where a shape title following a tracker (ShapeStyle::followClip/followNode) is carried at its clip frame t:
+    // the tracked clip's tracker values (0..1 of its picture) placed where that picture lies in the frame at zoom and
+    // position (its rotation and crop are left out), in project pixels. seen = the tracker's visibility. false = none
+    bool shapeFollow(const Clip& c, double t, const Ctx& ctx, Masks::Follow* f, double* seen)
+    {
+        const ShapeStyle& s = c.title.shape;
+        if (s.followClip <= 0 || s.followNode <= 0 || !ctx.root) return false;
+        const Clip* tracked = TimelineOps::findClip(*ctx.root, s.followClip);
+        if (!tracked) return false;
+        const double tt = c.start + t - tracked->start;
+        Picture::Comp::FollowAt at;
+        if (!Picture::Comp::followAt(*tracked, s.followNode, tt, ctx.fps, &at)) return false;
+        double aspect = tracked->isTitle() || tracked->isNested() ? 0.0 : MediaAspect::ofClip(*tracked);
+        if (aspect <= 0 && !tracked->isTitle() && !tracked->isNested()) aspect = nativeAspect(*tracked, QStringLiteral("follow"));
+        const QSizeF fit = MediaAspect::fit(aspect, QSizeF(ctx.PW, ctx.PH));
+        const bool transform = Keys::hasTransform(*tracked);
+        const int tf = int(std::lround(std::clamp(tt, 0.0, double(std::max(0, tracked->length() - 1)))));
+        const double zx = transform ? Keys::valueAt(*tracked, AnimParam::ZoomX, tf) : 1.0;
+        const double zy = transform ? Keys::valueAt(*tracked, AnimParam::ZoomY, tf) : 1.0;
+        const double px = transform ? Keys::valueAt(*tracked, AnimParam::PosX, tf) : 0.0;
+        const double py = transform ? Keys::valueAt(*tracked, AnimParam::PosY, tf) : 0.0;
+        const double fw = fit.width() * zx, fh = fit.height() * zy;
+        const QPointF centre(ctx.PW / 2 + px, ctx.PH / 2 - py);
+        auto place = [&](QPointF q) { return centre + QPointF((q.x() - 0.5) * fw, (q.y() - 0.5) * fh); };
+        f->from = place(at.from);
+        f->to = place(at.to);
+        f->scale = at.scale;
+        f->angle = at.angle;
+        *seen = at.seen;
+        return true;
+    }
+
+    // A shape title's outline at clip frame t in project pixels (keyframes, title motion, tracker); placed = also
+    // through the clip's own transform (zoom, position, rotation: for the shapes drawn straight onto the frame)
+    Shapes::Outline shapeOutline(const Clip& c, double t, const Ctx& ctx, const Generators::TitleMotion& m,
+                                 bool placed, double* reveal)
+    {
+        Shapes::Place p = Shapes::placeAt(c, t, ctx.PW, ctx.PH);
+        if (m.scale != 1) {
+            p.w *= m.scale;
+            p.h *= m.scale;
+        }
+        p.center.ry() -= m.rise * std::max(p.h, 1.0);
+        *reveal = p.reveal;
+        Masks::Follow f;
+        double seen = 1;
+        const bool follows = shapeFollow(c, t, ctx, &f, &seen);
+        const double tolerance = 0.25 * ctx.PH / std::max(1, ctx.H);
+        Shapes::Outline o = Shapes::placed(c.title.shape, p, follows ? &f : nullptr, tolerance);
+        if (placed && Keys::hasTransform(c)) {
+            const double zx = Keys::valueAt(c, AnimParam::ZoomX, t), zy = Keys::valueAt(c, AnimParam::ZoomY, t);
+            const QPointF to(ctx.PW / 2 + Keys::valueAt(c, AnimParam::PosX, t), ctx.PH / 2 - Keys::valueAt(c, AnimParam::PosY, t));
+            const double a = Keys::valueAt(c, AnimParam::Rotation, t) * std::numbers::pi / 180; // counterclockwise
+            const double cs = std::cos(a), sn = std::sin(a);
+            for (QPointF& q : o.points) {
+                const QPointF d((q.x() - ctx.PW / 2) * zx, (q.y() - ctx.PH / 2) * zy);
+                q = to + QPointF(d.x() * cs + d.y() * sn, -d.x() * sn + d.y() * cs);
+            }
+        }
+        return o;
+    }
+
+    QColor shapeFill(const Clip& c, double t) const
+    {
+        if (c.title.shape.fill != ShapeFill::Color && c.title.shape.kind != ShapeKind::Line) return Qt::transparent;
+        return Keys::animated(c, AnimParam::TitleColor) ? Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, t))
+                                                        : c.title.color;
+    }
+
+    // Shape title (core/Shapes.h, 0.22): fill, stroke and shadow; the picture below (blur, pixelate, spotlight) is
+    // shapeBelow's. Same arguments as drawTitle
+    void drawShape(Image& layer, const Clip& c, double t, const Ctx& ctx, QPoint shift, QRect* bounds,
+                   const Generators::TitleMotion& m)
+    {
+        double reveal = 1;
+        Shapes::Outline o = shapeOutline(c, t, ctx, m, false, &reveal);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        if (bounds) {
+            const QRectF r = Shapes::bounds(c.title, o);
+            *bounds = QRectF(r.x() * sx, r.y() * sy, r.width() * sx, r.height() * sy).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
+            return;
+        }
+        for (QPointF& q : o.points) q = QPointF(q.x() * sx, q.y() * sy);
+        ShapePaint::paint(layer.data(), layer.w, layer.h, shift, o, c.title, reveal, sy, 1.0, shapeFill(c, t));
+    }
+
+    // A shape that changes the picture below it (blur or pixelate fill, spotlight) at clip frame t, straight onto the
+    // frame so far with its opacity times k; then its stroke, shadow and colour fill over it
+    void shapeBelow(Image& canvas, const Clip& c, int t, const Ctx& ctx, double k)
+    {
+        Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        Masks::Follow f;
+        double seen = 1;
+        if (shapeFollow(c, t, ctx, &f, &seen)) k *= seen;
+        k *= m.opacity;
+        if (k <= 0) return;
+        double reveal = 1;
+        Shapes::Outline o = shapeOutline(c, t, ctx, m, true, &reveal);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        for (QPointF& q : o.points) q = QPointF(q.x() * sx, q.y() * sy);
+        ShapePaint::below(canvas.data(), canvas.w, canvas.h, o, c.title.shape, sy, k);
+        ShapePaint::paint(canvas.data(), canvas.w, canvas.h, {}, o, c.title, reveal, sy, k, shapeFill(c, t));
+    }
+
+    // A shape at frame f that reads the picture below it: the card does not make that (the frame goes the CPU way)
+    static bool shapeReadsBelow(const Timeline& tl, int f)
+    {
+        for (const Track& track : tl.video) {
+            if (track.hidden) continue;
+            const Clip* c = clipAt(track, f);
+            if (c && c->enabled && c->isTitle() && c->title.isShape() && c->title.shape.readsBelow()) return true;
+        }
+        return false;
     }
 
     // Progress bar title (core/Generators.h): the track (box colour, when on) along the edge and its filled part in the
@@ -1793,6 +1923,11 @@ struct Renderer::Impl {
         const QString lane = trackClipLane(tl, trackIndex, *c, prefix);
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
+        if (c->isTitle() && c->title.isShape() && c->title.shape.readsBelow()) { // works on the frame below it
+            const double opacity = Keys::hasOpacity(*c) ? std::clamp(Keys::valueAt(*c, AnimParam::Opacity, t) / 100.0, 0.0, 1.0) : 1.0;
+            shapeBelow(canvas, *c, t, ctx, opacity * fade);
+            return;
+        }
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
         // original with its effects; not while Before/After shows a graded clip without its grade
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
@@ -2445,7 +2580,7 @@ struct Renderer::Impl {
         Gpu::Service* gpu = this->gpu.load(std::memory_order_relaxed);
         // (a tilted clip: the graph's result is placed through a homography, which only the CPU path draws)
         if (comp && comp->enabled && gpu && gpu->info().comp && !c.transform.hasBlurFill() && c.keepRegion.isEmpty()
-            && !c.isTitle() && !tiltedEver(c)) {
+            && !c.isTitle() && !tiltedEver(c) && !EffectRegistry::has(c, Shapes::kClipShapeEffect)) {
             cap.clip = &c;
             t_compCapture = &cap;
         }
@@ -2782,6 +2917,7 @@ struct Renderer::Impl {
     // The frame on the GPU path into f (buffer or hints.yuv); false = the card could not do it (CPU path then)
     bool renderGpu(Gpu::Service& gpu, Frame& f, int64_t frame, const Ctx& ctx, const RenderHints& hints)
     {
+        if (shapeReadsBelow(*ctx.root, int(frame))) return false; // blur/pixelate/spotlight shapes: CPU
         std::vector<GpuOp> ops;
         gpuTimeline(ops, *ctx.root, int(frame), ctx, options.subtitles);
         if (hints.cancel && hints.cancel->load()) return true; // caller sees the cancel

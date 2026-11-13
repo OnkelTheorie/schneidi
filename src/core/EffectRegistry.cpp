@@ -4,6 +4,7 @@
 #include "core/GradeWindows.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
+#include "core/Shapes.h"
 
 #include <QColor>
 
@@ -79,6 +80,47 @@ QVector<EffectDescriptor> customEffects()
     shader.params << EffectParam{"color1", T("Farbe 1"), "color1", EffectParam::Color, QColor(255, 255, 255), 0, 0}
                   << EffectParam{"color2", T("Farbe 2"), "color2", EffectParam::Color, QColor(0, 0, 0), 0, 0};
     return {filter, shader};
+}
+
+// Clip in a shape (0.22, core/Shapes.h): the clip's picture cut to a circle, rounded rectangle, star … with a stroke
+// and a shadow (a face cam as a circle), without a node. A fixed stage after the compositing graph, so the cut edge
+// stays sharp whatever the other effects do; the clip's transform places the result
+EffectDescriptor clipShapeEffect()
+{
+    const QString id = QString::fromLatin1(Shapes::kClipShapeEffect);
+    auto number = [&](const char* key, const QString& label, double def, double lo, double hi, double step, int decimals,
+                      const QString& description = {}) {
+        EffectParam p{key, label, key, EffectParam::Double, def, lo, hi, Keys::effectParam(id, key), step, decimals};
+        p.description = description;
+        return p;
+    };
+    EffectDescriptor d;
+    d.id = id;
+    d.name = T("Clip in Form");
+    d.description = T("Schneidet das Bild des Clips als Kreis, Rechteck, Stern … aus, mit Rand und Schatten (z. B. "
+                      "Facecam als Kreis)");
+    EffectParam shape{"shape", T("Form"), "shape", EffectParam::Choice, QString("ellipse"), 0, 0};
+    for (const auto& k : kShapeKinds) {
+        if (k.kind == ShapeKind::Line) continue; // cuts nothing out
+        shape.choices << QString::fromLatin1(k.id);
+        shape.choiceLabels << T(k.name);
+    }
+    d.params = {shape,
+                number("size", T("Größe"), 90, 0, 400, 0.5, 1, T("Höhe der Form in % der kürzeren Bildseite")),
+                number("aspect", T("Seitenverhältnis"), 1, 0.05, 20, 0.01, 2, T("Breite durch Höhe (1 = Kreis bzw. Quadrat)")),
+                number("x", T("Position X"), 0, -100, 100, 0.1, 1, T("Versatz in % der Bildbreite")),
+                number("y", T("Position Y"), 0, -100, 100, 0.1, 1, T("Versatz in % der Bildhöhe (nach oben)")),
+                number("corner", T("Eckenradius"), 20, 0, 50, 0.1, 1, T("Rechteck: Rundung der Ecken in %")),
+                number("points", T("Ecken"), 5, 3, 32, 0.05, 0, T("Stern: Zacken, Vieleck: Ecken")),
+                number("feather", T("Weiche Kante"), 0, 0, 500, 0.1, 1),
+                number("stroke_width", T("Randbreite"), 0, 0, 500, 0.1, 1),
+                {"stroke_color", T("Randfarbe"), "stroke_color", EffectParam::Color, QColor(255, 255, 255), 0, 0},
+                {"shadow", T("Schatten"), "shadow", EffectParam::Bool, false, 0, 0},
+                number("shadow_soft", T("Schatten weich"), 12, 0, 200, 0.1, 1),
+                number("shadow_opacity", T("Schatten Deckkraft"), 0.6, 0, 1, 0.002, 2)};
+    d.library = true;
+    d.fixed = true;
+    return d;
 }
 
 // Own picture effects in place of the frei0r plugins schneidi offered (engine/VideoEffects). Same ids, parameter keys
@@ -276,7 +318,7 @@ QVector<EffectDescriptor>& registry()
         {"comp", T("Compositing"), {}, true, {}, false,
          T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Compositing)"), true},
     }) + ownLooks() // after the built-in ones: the Effects Library lists them behind blur and color correction
-                   + customEffects();
+                   + customEffects() + QVector<EffectDescriptor>{clipShapeEffect()};
     return effects;
 }
 
@@ -398,6 +440,7 @@ QVector<const EffectInstance*> renderOrder(const Clip& c)
     static const QStringList stages{"stabilize", "grade", "chromakey"};
     auto rank = [](const EffectInstance& e) {
         if (e.effectId == QLatin1String("comp")) return int(stages.size()) + 2; // after the movable effects
+        if (e.effectId == QLatin1String(Shapes::kClipShapeEffect)) return int(stages.size()) + 3; // after the graph
         if (movable(e.effectId)) return int(stages.size()) + 1;
         const int i = int(stages.indexOf(e.effectId));
         return i >= 0 ? i : int(stages.size());

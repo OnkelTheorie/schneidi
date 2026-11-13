@@ -225,6 +225,13 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         c.title.outlineOn = true;
         c.title.outlineWidth = std::round(c.title.size / 20);
         c.title.numbers = Generators::numberStyleOfLanguage(); // stored: renders the same on every machine
+    } else if (kind == TitleKind::Shape) {
+        // A circle a quarter of the picture high in the middle, white without a stroke; no text (an older version
+        // reads it as an empty text title: it draws nothing)
+        c.title.text.clear();
+        c.title.shape.width = c.title.shape.height = std::round(std::min(fmt.width, fmt.height) / 4.0);
+        c.title.outlineWidth = std::max(2.0, std::round(std::min(fmt.width, fmt.height) / 180.0));
+        c.title.outlineColor = QColor(255, 214, 0);
     } else if (kind == TitleKind::Progress) {
         // Along the whole timeline unless placed with a length; top edge: the apps cover the bottom of a vertical video
         c.title.text.clear();

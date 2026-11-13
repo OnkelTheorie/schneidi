@@ -76,6 +76,16 @@ double trackerValue(const QVariantMap& values, const QString& key);
 // (keyframes of the clip, else `values`)
 ::Comp::FollowTime followTime(const Clip* clip, int node, const QVariantMap& values, double t, double fps);
 
+// Where followers of tracker `node` of clip c (its "comp" graph) are carried at clip frame t, by the follow rule of
+// core/CompTrack.h: from the reference point (rx, ry) to (x, y), scaled and turned (clockwise degrees) around it;
+// points 0..1 of the clip's picture. seen = the follower's visibility (lost mode). For followers outside the graph
+// (a shape title on a track above, 0.22). false = the clip has no such tracker
+struct FollowAt {
+    QPointF from, to;
+    double scale = 1, angle = 0, seen = 1;
+};
+bool followAt(const Clip& c, int node, double t, double fps, FollowAt* out);
+
 // Tracker node `node` of clip c's "comp" graph over clip frames from..to; the node's start values at `from`
 // (keyframes resolved). Pictures: the clip alone without its effects, its own picture without the bars of another
 // aspect ratio (Tracker::clipPictures), so positions are 0..1 of the picture the graph works on

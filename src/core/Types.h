@@ -117,13 +117,58 @@ inline const MotionEaseInfo& motionEaseInfo(MotionEase e)
 }
 
 // What a title clip draws: its text, a number counting from one value to another over the clip (animated counter,
-// "0 -> 1000 kills") or a progress bar along an edge of the picture (how much of the video is left, typical for shorts)
-enum class TitleKind { Text, Counter, Progress };
+// "0 -> 1000 kills"), a progress bar along an edge of the picture (how much of the video is left, typical for shorts)
+// or a shape (0.22: circle, rectangle, arrow, star … with fill, stroke and shadow; core/Shapes.h)
+enum class TitleKind { Text, Counter, Progress, Shape };
 struct TitleKindInfo { TitleKind kind; const char* id; const char* name; };
 inline constexpr TitleKindInfo kTitleKinds[] = {
     {TitleKind::Text, "text", N_("Text")},
     {TitleKind::Counter, "counter", N_("Zähler")},
     {TitleKind::Progress, "progress", N_("Fortschrittsbalken")},
+    {TitleKind::Shape, "shape", N_("Form")},
+};
+// The outline a shape title draws (core/Shapes.h makes the points): ellipse in its box (a circle when square),
+// rectangle with rounded corners, triangle pointing up, arrow pointing right (shaft and head), line (stroked only),
+// star with `points` tips, regular polygon with `points` corners
+enum class ShapeKind { Ellipse, Rect, Triangle, Arrow, Line, Star, Polygon };
+struct ShapeKindInfo { ShapeKind kind; const char* id; const char* name; };
+inline constexpr ShapeKindInfo kShapeKinds[] = {
+    {ShapeKind::Ellipse, "ellipse", N_("Ellipse")},   {ShapeKind::Rect, "rect", N_("Rechteck")},
+    {ShapeKind::Triangle, "triangle", N_("Dreieck")}, {ShapeKind::Arrow, "arrow", N_("Pfeil")},
+    {ShapeKind::Line, "line", N_("Linie")},           {ShapeKind::Star, "star", N_("Stern")},
+    {ShapeKind::Polygon, "polygon", N_("Vieleck")},
+};
+// What fills a shape: its colour, nothing (stroke only), or the picture below it blurred / as a mosaic (it hides a
+// face, a number plate, a name - like an adjustment clip limited to the shape)
+enum class ShapeFill { Color, None, Blur, Pixelate };
+struct ShapeFillInfo { ShapeFill fill; const char* id; const char* name; };
+inline constexpr ShapeFillInfo kShapeFills[] = {
+    {ShapeFill::Color, "color", N_("Farbe")},
+    {ShapeFill::None, "none", N_("Keine")},
+    {ShapeFill::Blur, "blur", N_("Unschärfe")},
+    {ShapeFill::Pixelate, "pixelate", N_("Verpixeln")},
+};
+// A shape title's own values (TitleStyle::kind == Shape). The rest comes from the title: fill colour = `color`, stroke
+// = outline (on, colour, width; drawn on the outline, half inside), shadow = look.shadow*, centre = posX/posY, opacity =
+// the clip's. Lengths in pixels of the project format. Keyframes: AnimParam::ShapeWidth/Height/Rotation/Reveal.
+struct ShapeStyle {
+    ShapeKind kind = ShapeKind::Ellipse;
+    double width = 300, height = 300; // the box; a line: length x thickness; an arrow: length x head width
+    double rotation = 0;   // degrees clockwise
+    double corner = 0;     // rectangle: corner radius (pixels)
+    int points = 5;        // star tips / polygon corners (3..32)
+    double inner = 0.45;   // star: inner radius / outer radius
+    ShapeFill fill = ShapeFill::Color;
+    double amount = 50;    // blur: strength 0..100 like the blur effect (100 = 1/20 of the frame height);
+                           // pixelate: block size 0..100 (100 = 1/10 of the frame height)
+    double feather = 0;    // soft edge of the fill (pixels)
+    double spotlight = 0;  // 0..100: the picture outside the shape is darkened by so much percent
+    double reveal = 100;   // stroke drawn from its start up to this percent of its length (the stroke draws itself)
+    // Follows a tracker node of another clip's compositing graph (core/CompTrack.h follow rule; 0 = none): the shape
+    // moves with it from where it was drawn at the analysis' start
+    int followClip = 0, followNode = 0;
+    bool readsBelow() const { return fill == ShapeFill::Blur || fill == ShapeFill::Pixelate || spotlight > 0; }
+    bool operator==(const ShapeStyle&) const = default;
 };
 // How a counter writes its number: thousands separator and decimal point. Stored with the title (default: the UI
 // language's way when it is made), so a project renders the same on every machine whatever its language.
@@ -259,10 +304,12 @@ struct TitleStyle {
     TitleLook look; // fill, edge, shadow, glow (0.19; text and counter titles)
     TitleAnim enter = TitleAnim::None, exit = TitleAnim::None; // entry / exit animation (seconds below)
     double enterLen = 0.2, exitLen = 0.2;
+    ShapeStyle shape; // kind Shape only (0.22)
     bool hasBrandRef() const { return colorRef || outlineRef || boxRef || fontRef; }
 
     bool isCounter() const { return kind == TitleKind::Counter; }
     bool isProgress() const { return kind == TitleKind::Progress; }
+    bool isShape() const { return kind == TitleKind::Shape; }
     bool operator==(const TitleStyle&) const = default;
 
     // Font for drawing: "Sans" (default, also stored that way in projects) does not exist on Windows
@@ -277,6 +324,9 @@ struct TitleStyle {
     QString firstLine() const
     {
         if (isProgress()) return T("Fortschrittsbalken");
+        if (isShape())
+            for (const auto& k : kShapeKinds)
+                if (k.kind == shape.kind) return T(k.name);
         if (isCounter()) {
             const auto num = [](double v) { return QString::number(v, 'g', 12).replace('.', I18n::decimalPoint()); };
             return QString("%1%2 → %3%4").arg(prefix, num(countFrom), num(countTo), suffix).trimmed();
@@ -389,6 +439,7 @@ enum class AnimParam {
     GradeGainY, GradeGainR, GradeGainG, GradeGainB,
     GradeOffsetY, GradeOffsetR, GradeOffsetG, GradeOffsetB,
     GradeContrast, GradePivot, GradeSaturation, GradeTemp, GradeTint, GradeExposure,
+    ShapeWidth, ShapeHeight, ShapeRotation, ShapeReveal, // shape title (0.22, TitleStyle::shape)
     Count
 };
 // Interpolation at a keyframe (right-click on the diamond as in DaVinci):

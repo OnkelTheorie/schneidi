@@ -213,6 +213,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Story.h              src/core/Story.cpp
     src/core/Voiceover.h          src/core/Voiceover.cpp
     src/core/Generators.h         src/core/Generators.cpp
+    src/core/Shapes.h             src/core/Shapes.cpp
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Beats.h              src/core/Beats.cpp
@@ -299,6 +300,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompNodesText3d.cpp src/engine/text3d/Text3d.h src/engine/text3d/Text3d.cpp
     src/engine/picture/CompCamera.h src/engine/picture/CompCamera.cpp
     src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
+    src/engine/picture/ShapePaint.h src/engine/picture/ShapePaint.cpp
     src/engine/picture/CustomEffects.h src/engine/picture/FilterEffect.cpp src/engine/picture/ShaderEffect.cpp
     src/engine/picture/CustomEffectsClip.cpp
     src/core/Masks.h              src/core/Masks.cpp

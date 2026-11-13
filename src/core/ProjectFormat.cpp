@@ -216,6 +216,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     *v *= ts;
                 ti.barThickness *= sy;
                 ti.barMargin *= sy;
+                for (double* v : {&ti.shape.width, &ti.shape.height, &ti.shape.corner, &ti.shape.feather}) *v *= s;
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
                 if (tracks == &tl.video) scaleCompPixels(c, s);
@@ -226,6 +227,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     case AnimParam::PosX: case AnimParam::TitlePosX: f = sx; break;
                     case AnimParam::PosY: case AnimParam::TitlePosY: f = sy; break;
                     case AnimParam::TitleSize: f = ts; break;
+                    case AnimParam::ShapeWidth: case AnimParam::ShapeHeight: f = s; break;
                     default: continue;
                     }
                     for (Keyframe& k : it.value()) {
