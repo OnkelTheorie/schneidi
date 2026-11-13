@@ -41,9 +41,9 @@ struct FirstPassStats {
         bool sceneChange = false;
     };
     std::vector<std::shared_ptr<const Analysis>> analysis;
-    // B picture placement (FirstPass with bframes > 0 = bMax): per picture whether B pictures pay
-    // there (BProbe), so the whole clip's picture types can be planned before encoding. Empty = not
-    // measured, B pictures everywhere.
+    // B picture placement (FirstPass with bframes > 0 = bMax): per picture the longest run of B
+    // pictures that pays there (BProbe, 0 = none), so the whole clip's picture types can be planned
+    // before encoding. Empty = not measured, B pictures everywhere.
     int bMax = 0;
     std::vector<uint8_t> bGate;
     size_t size() const { return intraSum.size(); }
@@ -128,30 +128,32 @@ ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int 
 
 // Where B pictures pay, measured instead of estimated: every kInterval pictures and after each
 // scene change or keyframe the caller asks for, the next few half-size pictures (the lookahead's)
-// are coded for real - once with B pictures between the first and the last, twice without (two
-// QPs, for the slope of bits over distortion). From there on runs of B pictures are placed only if
-// they needed clearly fewer bits at equal distortion. The lookahead costs cannot tell this: a slow
-// zoom (B pictures at a third of the bits) and noise that changes with every picture (B pictures a
-// loss) look alike to them, and they see a zoom's distant P pictures as far too expensive.
+// are coded for real - with runs of two B pictures and twice without (two QPs, for the slope of
+// bits over distortion). From there on B pictures are placed only if they needed clearly fewer
+// bits at equal distortion; where they did and longer runs are allowed, the long run is measured
+// against the short one the same way. The lookahead costs cannot tell any of this: a slow zoom (B
+// pictures at a third of the bits) and noise that changes with every picture (B pictures a loss)
+// look alike to them, and they see a zoom's distant P pictures as far too expensive.
 class BProbe {
 public:
     static constexpr int kInterval = 120;
-    // The next picture in display order (prepared by the lookahead). True when a measurement was
-    // finished with it: allowed() then holds from picture resultStart() on.
+    // The next picture in display order (prepared by the lookahead). True when an answer came
+    // with it: run() then holds from picture resultStart() on (the second answer for the same
+    // pictures replaces the first).
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
-    bool allowed() const { return allowed_; }
+    int run() const { return run_; } // longest run of B pictures that pays, 0 = none
     int resultStart() const { return resultStart_; }
-    double lastGain() const { return gain_; }
-    // Bits of "I B.. P" against "I P.. P" at equal distortion, counted over the pictures after the
-    // first (-0.5 = half the bits with B pictures). pics: w x h luma each, in display order.
-    static double gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads);
+    // Bits of "I B.. P .." with runs of runs[k] B pictures against "I P.. P" at equal distortion,
+    // counted over the pictures after the first (gains[k] = -0.5: half the bits; 0 = no
+    // measurement). pics: w x h luma each, in display order.
+    static void measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
+                        double* gains);
 
 private:
     bool startsAt(const LookaheadFrame& f, int index) const;
     std::vector<std::vector<uint8_t>> pics_;
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
-    bool allowed_ = false;
-    double gain_ = 0;
+    int run_ = 0;
 };
 
 struct Picture {
@@ -269,11 +271,11 @@ private:
     // Without a first pass: the probe sees every picture as it joins the queue; from each
     // measurement's first picture on its result holds.
     BProbe probe_;
-    std::vector<std::pair<int, bool>> gate_; // (first picture, B pictures allowed), in order
+    std::vector<std::pair<int, int>> gate_; // (first picture, longest run of B pictures that pays), in order
     void noteGate(const LookaheadFrame& f);
     void ensureBSearches();
     bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
-    bool gateAt(int index) const;
+    int gateAt(int index) const;
     std::vector<uint8_t> statType_;
     std::vector<double> statCost_;
     double queueCost(size_t j) const; // lookahead cost of queued picture j as planned (no tree)

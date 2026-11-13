@@ -604,8 +604,8 @@ void FrameCoder::loadSource(const Picture& pic)
     copyPlane(pic.v, pic.strideC, cfg_.width / 2, cfg_.height / 2, srcV_, padW_ / 2, padH_ / 2);
 }
 
-// B probe (see BProbe): B pictures are placed where they need at least this much fewer bits
-// (H264_BPROBE_GAIN; measured: slow zoom -0.4 .. -0.7, game, camera and noise +0.02 .. +0.4).
+// B probe (see BProbe): B pictures are placed where runs of two need at least this much fewer bits
+// (H264_BPROBE_GAIN; measured: slow zoom -0.3 .. -0.5, game, camera and noise -0.05 .. +0.6).
 // H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
 static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
 static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
@@ -659,27 +659,49 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     if (start_ < 0)
         return false;
     pics_.push_back(la.halfPicture(f));
-    if (int(pics_.size()) < std::min(bframes, 2) + 2)
+    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    const int shortRun = std::min(bframes, 2);
+    const int count = int(pics_.size());
+    if (count == shortRun + 2) {
+        // First answer, from four pictures: do runs of two B pictures pay at all?
+        double gain = 0;
+        measure(pics_, la.halfW(), la.halfH(), threads, &shortRun, 1, &gain);
+        run_ = gain < kBProbeGain ? shortRun : 0;
+        resultStart_ = start_;
+        if (trace)
+            std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
+        if (run_ == 0 || bframes <= shortRun) {
+            start_ = -1;
+            pics_.clear();
+        }
+        return true;
+    }
+    if (count < bframes + 2)
         return false;
-    gain_ = gain(pics_, la.halfW(), la.halfH(), threads);
-    allowed_ = gain_ < kBProbeGain;
-    resultStart_ = start_;
+    // Second answer, where they do and longer runs are allowed: the long run against the short
+    // one over the pictures of one long run.
+    const int runs[2] = {shortRun, bframes};
+    double gains[2] = {};
+    measure(pics_, la.halfW(), la.halfH(), threads, runs, 2, gains);
+    run_ = gains[1] < gains[0] ? bframes : shortRun;
+    if (trace)
+        std::fprintf(stderr, "bprobe: picture %d gain %+.3f with %d, %+.3f with %d: run %d\n", resultStart_, gains[0], shortRun, gains[1],
+                     bframes, run_);
     start_ = -1;
     pics_.clear();
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
-    if (trace)
-        std::fprintf(stderr, "bprobe: picture %d gain %+.3f %s\n", resultStart_, gain_, allowed_ ? "B" : "-");
     return true;
 }
 
-double BProbe::gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads)
+void BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
+                     double* gains)
 {
+    std::fill(gains, gains + runCount, 0.0);
     const int count = int(pics.size());
     if (count < 3 || w < 16 || h < 16)
-        return 0;
+        return;
     const std::vector<uint8_t> grey(size_t(w / 2) * (h / 2), 128);
     // Bits and luma error of the pictures after the first one.
-    auto run = [&](int qp, int bframes, double& bits, double& ssd) {
+    auto code = [&](int qp, int bframes, double& bits, double& ssd) {
         EncoderConfig c;
         c.width = w;
         c.height = h;
@@ -729,21 +751,21 @@ double BProbe::gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         }
     };
     constexpr int kQp = 28, kQpStep = 3;
-    double r0, d0, r1, d1, rb, db;
-    run(kQp, 0, r0, d0);
-    run(kQp + kQpStep, 0, r1, d1);
-    run(kQp, count - 2, rb, db);
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
-    if (trace)
-        std::fprintf(stderr, "bprobe: P %.0f bits ssd %.0f | P+%d %.0f bits ssd %.0f | B %.0f bits ssd %.0f\n", r0, d0, kQpStep, r1, d1, rb, db);
+    double r0, d0, r1, d1;
+    code(kQp, 0, r0, d0);
+    code(kQp + kQpStep, 0, r1, d1);
     // Next to nothing is coded (a still picture, a desktop: the slice headers alone are some 100
     // bits) or the two P runs give no slope: no measurement, no B pictures. On such material they
     // gain or lose a few percent (measured -4 .. +7 % on screen recordings).
-    if (r0 < (0.002 * w * h + 256.0) * (count - 1) || r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0 || db <= 0)
-        return 0;
+    if (r0 < (0.002 * w * h + 256.0) * (count - 1) || r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0)
+        return;
     const double slope = std::log(r1 / r0) / std::log(d1 / d0); // < 0
-    const double pBits = r0 * std::exp(slope * std::log(db / d0)); // the P runs' bits at the B run's error
-    return rb / pBits - 1.0;
+    for (int k = 0; k < runCount; ++k) {
+        double rb, db;
+        code(kQp, runs[k], rb, db);
+        if (db > 0)
+            gains[k] = rb / (r0 * std::exp(slope * std::log(db / d0))) - 1.0; // against the P runs' bits at this error
+    }
 }
 
 FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)
@@ -815,9 +837,9 @@ void FirstPass::analyseBatch() const
     if (bframes_ > 0 && kBProbe) {
         const int base = int(stats_->intraSum.size());
         for (int i = 0; i < n; ++i) {
-            stats_->bGate.push_back(probe_.allowed());
+            stats_->bGate.push_back(uint8_t(probe_.run()));
             if (probe_.add(*la_, batch_[size_t(i)], base + i, bframes_, threads_))
-                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
+                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.run()));
         }
     }
     for (LookaheadFrame& f : batch_) {
@@ -1087,8 +1109,12 @@ void Encoder::noteGate(const LookaheadFrame& f)
 {
     if (!bAdapt() || cfg_.firstPass || !kBProbe)
         return;
-    if (probe_.add(*la_, f, f.index, cfg_.bframes, cfg_.threads))
-        gate_.emplace_back(probe_.resultStart(), probe_.allowed());
+    if (!probe_.add(*la_, f, f.index, cfg_.bframes, cfg_.threads))
+        return;
+    if (!gate_.empty() && gate_.back().first == probe_.resultStart())
+        gate_.back().second = probe_.run(); // the second answer for the same pictures
+    else
+        gate_.emplace_back(probe_.resultStart(), probe_.run());
 }
 
 // The lookahead's searches along the planned references of B pictures (macroblock tree, rate
@@ -1127,14 +1153,15 @@ void Encoder::ensureBSearches()
     }
 }
 
-bool Encoder::gateAt(int index) const
+// Longest run of B pictures a picture may be part of, by the probe.
+int Encoder::gateAt(int index) const
 {
     if (!kBProbe)
-        return true;
+        return cfg_.bframes;
     for (size_t i = gate_.size(); i-- > 0;)
         if (gate_[i].first <= index)
             return gate_[i].second;
-    return false;
+    return 0;
 }
 
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
@@ -1236,10 +1263,10 @@ void Encoder::planFromStats()
         const int len = int(e - i);
         // Runs of B pictures, each ended by a P picture; the last picture before a keyframe is P.
         // Adaptive: only where the probe found them worth it.
-        auto gate = [&](size_t k) { return !adapt || !kBProbe || k >= st.bGate.size() || st.bGate[k]; };
+        auto gate = [&](size_t k) { return !adapt || !kBProbe || k >= st.bGate.size() ? cfg_.bframes : std::min<int>(cfg_.bframes, st.bGate[k]); };
         std::vector<uint8_t> types(size_t(len) + 1, 1);
         for (int t = 1, run = 0; t < len; ++t)
-            if (run < cfg_.bframes && gate(i + size_t(t) - 1)) {
+            if (run < gate(i + size_t(t) - 1)) {
                 types[size_t(t)] = 2;
                 ++run;
             } else {
@@ -1309,7 +1336,7 @@ void Encoder::planQueue()
             if (adapt && cfg_.firstPass)
                 b = size_t(f.index) < statType_.size() && statType_[size_t(f.index)] == 2;
             else
-                b = !adapt || gateAt(f.index); // adaptive: only where the probe found B pictures worth it
+                b = !adapt || run < gateAt(f.index); // adaptive: runs as long as the probe found worth it
             if (b && canB && run < cfg_.bframes) {
                 f.type = 2;
                 ++run;
