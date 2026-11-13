@@ -148,6 +148,8 @@ public:
     // (`frame`: title bar and borders the window system adds, estimated) lie inside `available`; invalid, larger than
     // the screen or off it = 90 % of the room, centred
     void placeOnScreen(const QRect& wanted = {});
+    // The screen a new window starts on: the one under the mouse cursor, else the primary screen (null = none)
+    static class QScreen* startScreen();
     static QRect fitToScreen(const QRect& wanted, const QRect& available, const QMargins& frame = kFrameEstimate);
     static constexpr QMargins kFrameEstimate{4, 32, 4, 4};
     // Set project settings (one undo step); test helper --format

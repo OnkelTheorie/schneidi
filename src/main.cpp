@@ -158,7 +158,8 @@ public:
     {
         setAttribute(Qt::WA_OpaquePaintEvent);
         setFixedSize(pixmap.deviceIndependentSize().toSize());
-        if (const QScreen* screen = QGuiApplication::primaryScreen())
+        // On the screen the main window will start on (MainWindow::startScreen: under the mouse cursor)
+        if (const QScreen* screen = MainWindow::startScreen())
             move(screen->availableGeometry().center() - rect().center());
     }
     void showNow(const QString& message)
