@@ -16,6 +16,16 @@ struct LookaheadFrame {
     std::vector<int32_t> intraCost, interCost; // per macroblock: SATD of the best intra / motion prediction
     std::vector<int16_t> mvx, mvy;             // per macroblock, half-pel units of the half picture, into the previous frame
     std::vector<float> propagate;              // macroblock tree: cost that later pictures inherit from this block
+    // The macroblock tree's links of this picture into its predecessor, made from the costs and vectors
+    // above on first use (Lookahead::propagate) and dropped whenever they change.
+    struct TreeLinks {
+        std::vector<int32_t> mb;          // source block (blocks that propagate something, raster order)
+        std::vector<float> intra, diff;   // float(intra), float(intra - inter)
+        std::vector<uint8_t> count;       // targets of each source block (1..4)
+        std::vector<int32_t> target;      // blocks in the predecessor, all sources one after another
+        std::vector<float> weight;        // overlap of each target in 1/256 of a block
+        bool ready = false;
+    } treeLinks;
     double intraSum = 0, interSum = 0;         // picture totals: all intra / min(intra, inter)
     bool keyframe = false;                     // the schedule or the caller makes this an IDR picture
     std::vector<uint8_t> thumb;                // quarter-size luma for the scene change detection

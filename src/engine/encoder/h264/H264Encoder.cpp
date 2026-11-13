@@ -999,6 +999,7 @@ void Encoder::analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const
     f.mvx = a.mvx;
     f.mvy = a.mvy;
     f.propagate.assign(a.intraCost.size(), 0.0f);
+    f.treeLinks.ready = false;
     f.intraSum = a.intraSum;
     f.interSum = a.interSum;
     f.sceneChange = a.sceneChange;
@@ -5634,6 +5635,23 @@ void FrameCoder::planMacroblockQp()
     for (int mby = 0; mby < mbH_; ++mby)
         for (int mbx = 0; mbx < mbW_; ++mbx) {
             int64_t sum = 0, sq = 0;
+#if defined(__SSE2__) || defined(_M_X64)
+            {
+                const __m128i zero = _mm_setzero_si128();
+                __m128i s = zero, q = zero; // 64-bit sums / 32-bit sums of squares (at most 256 * 255^2)
+                for (int y = 0; y < 16; ++y) {
+                    const __m128i v =
+                        _mm_loadu_si128(reinterpret_cast<const __m128i*>(&srcY_[size_t(mby * 16 + y) * padW_ + mbx * 16]));
+                    s = _mm_add_epi64(s, _mm_sad_epu8(v, zero));
+                    const __m128i lo = _mm_unpacklo_epi8(v, zero), hi = _mm_unpackhi_epi8(v, zero);
+                    q = _mm_add_epi32(q, _mm_add_epi32(_mm_madd_epi16(lo, lo), _mm_madd_epi16(hi, hi)));
+                }
+                q = _mm_add_epi32(q, _mm_shuffle_epi32(q, _MM_SHUFFLE(1, 0, 3, 2)));
+                q = _mm_add_epi32(q, _mm_shuffle_epi32(q, _MM_SHUFFLE(2, 3, 0, 1)));
+                sum = _mm_cvtsi128_si32(s) + _mm_cvtsi128_si32(_mm_unpackhi_epi64(s, s));
+                sq = _mm_cvtsi128_si32(q);
+            }
+#else
             for (int y = 0; y < 16; ++y) {
                 const uint8_t* row = &srcY_[size_t(mby * 16 + y) * padW_ + mbx * 16];
                 for (int x = 0; x < 16; ++x) {
@@ -5641,6 +5659,7 @@ void FrameCoder::planMacroblockQp()
                     sq += row[x] * row[x];
                 }
             }
+#endif
             const double variance = double(sq - sum * sum / 256);
             const double e = std::log2(variance + 1.0);
             mbEnergy_[size_t(mby) * mbW_ + mbx] = float(e);

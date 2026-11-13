@@ -214,6 +214,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
     f.mvx.assign(n, 0);
     f.mvy.assign(n, 0);
     f.propagate.assign(n, 0.0f);
+    f.treeLinks.ready = false;
     f.intraSum = f.interSum = 0;
 
     auto at = [&](const std::vector<uint8_t>& plane, int x, int y) -> const uint8_t* {
@@ -415,32 +416,60 @@ void Lookahead::propagate(std::deque<LookaheadFrame>& frames) const
         std::fill(f.propagate.begin(), f.propagate.end(), 0.0f);
     const size_t n = size_t(mbW_) * mbH_;
     for (size_t j = frames.size(); j-- > 1;) {
-        const LookaheadFrame& f = frames[j];
+        LookaheadFrame& f = frames[j];
         if (f.keyframe || f.intraCost.size() != n)
             continue;
-        LookaheadFrame& ref = frames[j - 1];
-        for (int by = 0; by < mbH_; ++by)
-            for (int bx = 0; bx < mbW_; ++bx) {
-                const size_t m = size_t(by) * mbW_ + bx;
-                const int intra = f.intraCost[m], inter = f.interCost[m];
-                if (intra <= 0 || inter >= intra)
-                    continue;
-                // The share of this block's information that came from the reference.
-                const float amount = (float(intra) + f.propagate[m]) * float(intra - inter) / float(intra);
-                // Position in the reference in half-pel units; a block covers 16.
-                const int px = bx * 16 + f.mvx[m], py = by * 16 + f.mvy[m];
-                const int ix = px >> 4, iy = py >> 4; // floor
-                const int fx = px - ix * 16, fy = py - iy * 16;
-                const int w[4] = {(16 - fx) * (16 - fy), fx * (16 - fy), (16 - fx) * fy, fx * fy};
-                for (int k = 0; k < 4; ++k) {
-                    if (!w[k])
+        LookaheadFrame::TreeLinks& L = f.treeLinks;
+        if (!L.ready) {
+            // The parts of the propagation that do not depend on the propagated costs, once per
+            // picture instead of once per coded picture it stays in the queue for.
+            L.mb.clear();
+            L.intra.clear();
+            L.diff.clear();
+            L.count.clear();
+            L.target.clear();
+            L.weight.clear();
+            for (int by = 0; by < mbH_; ++by)
+                for (int bx = 0; bx < mbW_; ++bx) {
+                    const size_t m = size_t(by) * mbW_ + bx;
+                    const int intra = f.intraCost[m], inter = f.interCost[m];
+                    if (intra <= 0 || inter >= intra)
                         continue;
-                    const int x = ix + (k & 1), y = iy + (k >> 1);
-                    if (x < 0 || y < 0 || x >= mbW_ || y >= mbH_)
+                    // Position in the reference in half-pel units; a block covers 16.
+                    const int px = bx * 16 + f.mvx[m], py = by * 16 + f.mvy[m];
+                    const int ix = px >> 4, iy = py >> 4; // floor
+                    const int fx = px - ix * 16, fy = py - iy * 16;
+                    const int w[4] = {(16 - fx) * (16 - fy), fx * (16 - fy), (16 - fx) * fy, fx * fy};
+                    uint8_t count = 0;
+                    for (int k = 0; k < 4; ++k) {
+                        if (!w[k])
+                            continue;
+                        const int x = ix + (k & 1), y = iy + (k >> 1);
+                        if (x < 0 || y < 0 || x >= mbW_ || y >= mbH_)
+                            continue;
+                        L.target.push_back(int32_t(size_t(y) * mbW_ + x));
+                        L.weight.push_back(float(w[k]));
+                        ++count;
+                    }
+                    if (!count)
                         continue;
-                    ref.propagate[size_t(y) * mbW_ + x] += amount * float(w[k]) / 256.0f;
+                    L.mb.push_back(int32_t(m));
+                    L.intra.push_back(float(intra));
+                    L.diff.push_back(float(intra - inter));
+                    L.count.push_back(count);
                 }
-            }
+            L.ready = true;
+        }
+        // The share of each block's information that came from the reference, spread over the
+        // blocks it was predicted from (the same float operations in the same order as before).
+        float* refProp = frames[j - 1].propagate.data();
+        const float* prop = f.propagate.data();
+        const size_t links = L.mb.size();
+        for (size_t i = 0, t = 0; i < links; ++i) {
+            const float amount = (L.intra[i] + prop[L.mb[i]]) * L.diff[i] / L.intra[i];
+            for (const size_t e = t + L.count[i]; t < e; ++t)
+                refProp[L.target[t]] += amount * L.weight[t] / 256.0f;
+        }
     }
 }
 
