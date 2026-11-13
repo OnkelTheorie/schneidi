@@ -7,6 +7,7 @@
 #include "ThreadErrors.h"
 
 #include <algorithm>
+#include <bit>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -177,14 +178,41 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                             intra += std::abs(thumb[size_t(by + y) * tw + bx + x] - mean);
                     // The same place first: usually close to the best, so the bound below bites early.
                     int best = sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb[size_t(by) * tw + bx], tw, 8, 8);
-                    for (int my = -kRange; my <= kRange && best > 0; ++my)
-                        for (int mx = -kRange; mx <= kRange; ++mx) {
-                            if (by + my < 0 || bx + mx < 0 || by + my + 8 > th || bx + mx + 8 > tw)
-                                continue;
+                    const uint8_t* cur = &thumb[size_t(by) * tw + bx];
+                    const int mx0 = std::max(-kRange, -bx), mx1 = std::min(kRange, tw - 8 - bx); // inclusive
+                    for (int my = -kRange; my <= kRange && best > 0; ++my) {
+                        if (by + my < 0 || by + my + 8 > th)
+                            continue;
+                        const uint8_t* ref = &prevThumb[size_t(by + my) * tw + bx];
+                        int mx = mx0;
+#if defined(__SSE2__) || defined(_M_X64)
+                        // The sum bound four positions at a time (with the best SAD at the start of
+                        // the four: maybe a SAD more than one by one, the same minimum).
+                        {
+                            const uint32_t* top = &integral[size_t(by + my) * iw + bx];
+                            const uint32_t* bottom = &integral[size_t(by + my + 8) * iw + bx];
+                            const __m128i vsum = _mm_set1_epi32(sum);
+                            auto ld = [](const uint32_t* p) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(p)); };
+                            for (; mx + 3 <= mx1; mx += 4) {
+                                const __m128i ps = _mm_add_epi32(_mm_sub_epi32(ld(bottom + mx + 8), ld(top + mx + 8)),
+                                                                 _mm_sub_epi32(ld(top + mx), ld(bottom + mx)));
+                                const __m128i d = _mm_sub_epi32(vsum, ps);
+                                const __m128i sign = _mm_srai_epi32(d, 31);
+                                const __m128i ad = _mm_sub_epi32(_mm_xor_si128(d, sign), sign);
+                                int m = _mm_movemask_ps(_mm_castsi128_ps(_mm_cmplt_epi32(ad, _mm_set1_epi32(best))));
+                                for (; m; m &= m - 1) {
+                                    const int k = mx + std::countr_zero(unsigned(m));
+                                    best = std::min(best, sadBlock(cur, tw, ref + k, tw, 8, 8));
+                                }
+                            }
+                        }
+#endif
+                        for (; mx <= mx1; ++mx) {
                             if (std::abs(sum - prevSum(bx + mx, by + my)) >= best)
                                 continue;
-                            best = std::min(best, sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb[size_t(by + my) * tw + bx + mx], tw, 8, 8));
+                            best = std::min(best, sadBlock(cur, tw, ref + mx, tw, 8, 8));
                         }
+                    }
                     interCost += std::min(best, intra);
                     intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
                 }
