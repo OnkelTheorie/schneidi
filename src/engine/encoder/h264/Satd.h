@@ -212,6 +212,21 @@ __attribute__((target("avx2"))) inline void satd4x4x4U8Avx2(const uint8_t* src, 
     }
 }
 
+// SATD of a w x h block (w = 8 or 16, h a multiple of 8 for w = 8, of 4 for w = 16) in one call:
+// the same sum as the strip-wise calls of sadPart.
+__attribute__((target("avx2"))) inline int satdBlockAvx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
+{
+    int s = 0;
+    if (w == 16) {
+        for (int y = 0; y < h; y += 4)
+            s += satd16x4U8Avx2(a + y * strideA, strideA, b + y * strideB, strideB);
+    } else {
+        for (int y = 0; y < h; y += 8)
+            s += satd8x8U8Avx2(a + y * strideA, strideA, b + y * strideB, strideB);
+    }
+    return s;
+}
+
 inline bool haveAvx2()
 {
     static const bool yes = __builtin_cpu_supports("avx2");

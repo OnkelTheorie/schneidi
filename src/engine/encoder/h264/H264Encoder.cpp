@@ -3366,7 +3366,7 @@ int interCbpCode(int cbp)
 }
 
 // Bits of se(v): 2 * floor(log2(codeNum + 1)) + 1.
-inline int seBits(int v)
+inline int seBitsCalc(int v)
 {
     const uint32_t k = v > 0 ? uint32_t(2 * v - 1) : uint32_t(-2 * v);
 #if defined(__GNUC__) || defined(__clang__)
@@ -3377,6 +3377,21 @@ inline int seBits(int v)
         ++len;
     return 2 * len + 1;
 #endif
+}
+
+// The same from a table for the vector differences the searches see (|v| < 1024).
+struct SeBitsTable {
+    uint8_t bits[2048];
+    SeBitsTable()
+    {
+        for (int v = -1024; v < 1024; ++v)
+            bits[v + 1024] = uint8_t(seBitsCalc(v));
+    }
+};
+const SeBitsTable kSeBits;
+inline int seBits(int v)
+{
+    return unsigned(v + 1024) < 2048u ? kSeBits.bits[v + 1024] : seBitsCalc(v);
 }
 
 // ---- 8x8 transform (High profile), 8.5.11.
@@ -3974,9 +3989,17 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
 {
     const int range = 64 * 4;
     bool useSatd = false;
+    // Full-pel positions (all of the first stage) read the plane in place: the SAD of sadPart
+    // without its per-call set-up.
+    const int px0 = mbx * 16 + x4 * 4, py0 = mby * 16 + y4 * 4;
+    const uint8_t* const srcBlk = &srcY_[size_t(py0) * padW_ + px0];
+    const uint8_t* const refBase = &R.F[size_t(py0 + kMargin) * extW_ + size_t(px0 + kMargin)];
+    const int bw = w4 * 4, bh = h4 * 4;
     auto cost = [&](int vx, int vy) {
-        return double(sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd)) +
-               lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
+        const int sad = !useSatd && !(vx & 3) && !(vy & 3)
+                            ? sadBlock(srcBlk, padW_, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh)
+                            : sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd);
+        return double(sad) + lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
     };
     // Start points measured so far (duplicates are common: the skip vector, the neighbours, the prediction).
     int seenX[16], seenY[16], seenCount = 0;
@@ -5660,6 +5683,10 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
         mcLuma(R, px + (mvx >> 2), py + (mvy >> 2), fx, fy, w, h, buf);
     }
     if (satd) {
+#ifdef SCHNEIDI_H264_AVX2
+        if ((w4 == 4 || !(h4 & 1)) && haveAvx2())
+            return satdBlockAvx2(&srcY_[lo], padW_, pred, ps, w, h);
+#endif
         for (int by = 0; by < h4; ++by) {
             if (w4 == 4) {
                 s += satd16x4U8(&srcY_[lo + size_t(by * 4) * padW_], padW_, pred + by * 4 * ps, ps);
