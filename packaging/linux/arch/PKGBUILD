@@ -22,9 +22,10 @@ depends=(
   'glibc'
 )
 makedepends=('cmake' 'ninja' 'miniaudio')
-# The tests need nothing beyond the run time dependencies (Qt Test is part of qt6-base, Arch's FFmpeg has libx264
-# and the ffmpeg/ffprobe programs) plus the two validators
-checkdepends=('desktop-file-utils' 'appstream')
+# The tests need little beyond the run time dependencies (Qt Test is part of qt6-base, Arch's FFmpeg has libx264
+# and the ffmpeg/ffprobe programs): the two validators and a font - a clean chroot has none, and text titles,
+# captions and the layout tests measure real text (Noto: the font upstream's CI and development machines use)
+checkdepends=('desktop-file-utils' 'appstream' 'noto-fonts')
 optdepends=(
   'libpulse: sound output through PulseAudio/PipeWire-Pulse'
   'qt6-shadertools: own GLSL shader effects (the qsb shader compiler)'

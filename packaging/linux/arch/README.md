@@ -27,9 +27,15 @@ cd schneidi/packaging/linux/arch
 makepkg -si
 ```
 
-`makepkg` installs the build dependencies (`cmake`, `ninja`, `pkgconf`, `miniaudio`), downloads the release tarball
-and the RNNoise model (22 MB, for the voice cleaning effect), builds (about 10 minutes on 8 cores) and `-i` installs
-the package with `pacman`. Then start schneidi from the application menu, or run `schneidi` / `schneidi-cli help`.
+`makepkg` installs the build dependencies (`cmake`, `ninja`, `miniaudio`; for the tests `desktop-file-utils`,
+`appstream` and `noto-fonts`), downloads the release tarball and the RNNoise model (22 MB, for the voice cleaning effect), builds,
+runs the test suite and `-i` installs the package with `pacman`. Then start schneidi from the application menu, or
+run `schneidi` / `schneidi-cli help`.
+
+The test suite (`check()`, about 240 test programs) builds schneidi a second time, as shared libraries, so that every
+test program does not carry a full copy of it: it roughly doubles the build time. `makepkg -si --nocheck` skips it
+(the AUR helpers have the same switch, e.g. `yay -S --mflags --nocheck schneidi`). Tests that measure real time
+(label `timing`) are left out because they fail on a busy machine, and a failing test is retried once.
 
 Uninstall: `sudo pacman -R schneidi`.
 
