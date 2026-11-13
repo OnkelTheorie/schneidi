@@ -349,6 +349,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindow.h          src/app/MainWindow.cpp
     src/app/LaunchArgs.h          src/app/LaunchArgs.cpp
     src/app/PageVisibility.h      src/app/PageVisibility.cpp
+    src/app/UiScale.h             src/app/UiScale.cpp
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
     src/app/MainWindowComp.cpp

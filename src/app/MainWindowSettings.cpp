@@ -13,6 +13,7 @@
 #include "ui/comp/CompShared.h"
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
+#include "app/UiScale.h"
 #include "app/UpdateCheck.h"
 #include "engine/Engine.h"
 #include "core/I18n.h"
@@ -29,6 +30,8 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
+#include <QVBoxLayout>
+#include <algorithm>
 
 void MainWindow::settingsDialog(int tab)
 {
@@ -72,12 +75,21 @@ void MainWindow::settingsDialog(int tab)
     if (!m_autosaveDisabled && dlg.audioOutput() != Engine::audioOutput()) m_engine->setAudioOutput(dlg.audioOutput());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
+    // Interface size: after a restart (asked below, with the language's question when that changed too)
+    const bool scaleChanged = dlg.uiScale() != UiScale::saved() && !m_autosaveDisabled;
+    if (scaleChanged) {
+        UiScale::setSaved(dlg.uiScale());
+        UiScale::setAsked(); // chosen by hand: the 4K offer never comes
+    }
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {
         I18n::setLanguage(lang);
         offerRestart(I18n::translate(lang, N_("Die Sprache ändert sich nach dem Neustart von schneidi.")),
                      I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
+    } else if (scaleChanged) {
+        offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                     T("Später"));
     }
 }
 
@@ -179,6 +191,55 @@ QWidget* MainWindow::buildUpdateBar()
         m_updateBar->show();
     });
     return m_updateBar;
+}
+
+void MainWindow::offerUiScale(double factor)
+{
+    // Like the update hint: a thin bar, nothing modal; nothing changes unless "Larger" is clicked. Asked once: either
+    // answer is kept (a bar left open asks again at the next start)
+    if (m_scaleBar || factor <= 0) return;
+    m_scaleBar = new QWidget;
+    m_scaleBar->setObjectName("ui_scale_bar");
+    m_scaleBar->setAttribute(Qt::WA_StyledBackground);
+    m_scaleBar->setStyleSheet(QString("#ui_scale_bar { background: %1; border-bottom: 1px solid %2; }")
+                                  .arg(Theme::mix(Theme::panel, Theme::primary, 0.18).name(), Theme::border.name()));
+    auto* lay = new QHBoxLayout(m_scaleBar);
+    lay->setContentsMargins(10, 2, 6, 2);
+    lay->setSpacing(6);
+    const QString percent = QString::number(qRound(factor * 100)) + " %";
+    auto* text = new QLabel(T("Dieser Bildschirm hat sehr viele Pixel, schneidi wirkt darauf winzig. Oberfläche auf %1 "
+                              "vergrößern?").arg(percent));
+    text->setWordWrap(true);
+    text->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
+    lay->addWidget(text, 1);
+    auto* larger = new QToolButton;
+    larger->setObjectName("ui_scale_larger");
+    larger->setText(T("Vergrößern (%1)").arg(percent));
+    larger->setToolTip(T("Wirkt nach dem Neustart von schneidi. Ändern: Einstellungen › Allgemein › Größe"));
+    larger->setFocusPolicy(Qt::NoFocus);
+    auto* keep = new QToolButton;
+    keep->setObjectName("ui_scale_keep");
+    keep->setText(T("So lassen"));
+    keep->setToolTip(T("Nicht mehr fragen. Ändern: Einstellungen › Allgemein › Größe"));
+    keep->setFocusPolicy(Qt::NoFocus);
+    lay->addWidget(larger);
+    lay->addWidget(keep);
+    connect(larger, &QToolButton::clicked, this, [this, factor] {
+        UiScale::setSaved(factor);
+        UiScale::setAsked();
+        m_scaleBar->hide();
+        offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                     T("Später"));
+    });
+    connect(keep, &QToolButton::clicked, this, [this] {
+        UiScale::setAsked();
+        m_scaleBar->hide();
+        statusBar()->showMessage(T("Größe bleibt. Ändern: Einstellungen › Allgemein › Größe."), 8000);
+    });
+    // Under the top bar and the update hint
+    if (auto* root = qobject_cast<QVBoxLayout*>(centralWidget()->layout()))
+        root->insertWidget(std::min(2, root->count()), m_scaleBar);
+    m_scaleBar->show();
 }
 
 void MainWindow::startUpdateCheck()
