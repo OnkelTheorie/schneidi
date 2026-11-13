@@ -547,7 +547,7 @@ void testCheck()
     bool found = false;
     for (const ExportCheck::Issue& is : ExportCheck::layout(tl, 0, 50, vertical))
         if (is.check == QLatin1String("safe_area") && is.clip == 5) {
-            found = is.message.contains("Rectangle");
+            found = is.message.contains(T("Form „%1“").arg(T("Rechteck"))); // named as a shape
             if (!found) std::printf("       %s\n", qPrintable(is.message));
         }
     CHECK(found);
