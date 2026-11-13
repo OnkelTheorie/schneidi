@@ -13,6 +13,8 @@
 #include "core/Editor.h"
 #include "core/Selection.h"
 #include "ui/Inspector.h"
+#include "ui/ShapeOverlay.h"
+#include <QMouseEvent>
 #include "core/ExportCheck.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -594,6 +596,50 @@ void testInspector()
     CHECK(!kinds->isVisibleTo(&insp));
 }
 
+// ---- the box over the viewer: drag inside moves, a side handle sizes around the centre, the knob turns ----
+void testOverlay()
+{
+    std::printf("overlay\n");
+    Project p;
+    ProjectData d;
+    d.timeline = timelineOf({});
+    d.format = kFormat;
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    e.addTitle(0, -1, 50, TitleKind::Shape);
+    const int id = *sel.ids().begin();
+    int playhead = 10;
+    ShapeOverlay ov(&e, &sel, [&] { return playhead; });
+    const QRectF frame(0, 0, 320, 180); // one widget pixel = one project pixel
+    const QPointF c = ov.centerPos(frame);
+    CHECK(std::abs(c.x() - 160) < 0.01 && std::abs(c.y() - 90) < 0.01);
+    auto drag = [&](QPointF from, QPointF to) {
+        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        const bool took = ov.mousePress(&press, frame);
+        ov.mouseMove(&move, frame);
+        ov.mouseRelease(&release, frame);
+        return took;
+    };
+    CHECK(drag(c, c + QPointF(20, -10)));
+    const Clip* s = TimelineOps::findClip(p.timeline(), id);
+    CHECK(s && s->title.posX == 20 && s->title.posY == 10);
+    const double w = s->title.shape.width;
+    const QPointF right = ov.handlePos(3, frame);
+    CHECK(drag(right, right + QPointF(15, 0)));
+    s = TimelineOps::findClip(p.timeline(), id);
+    CHECK(s && std::abs(s->title.shape.width - (w + 30)) < 1.01);
+    const QPointF knob = ov.handlePos(8, frame), centre = ov.centerPos(frame);
+    CHECK(drag(knob, centre + QPointF(100, 0))); // to the right of the centre: a quarter turn clockwise
+    s = TimelineOps::findClip(p.timeline(), id);
+    CHECK(s && std::abs(s->title.shape.rotation - 90) < 0.5);
+    // Outside the clip's time: nothing to grab
+    playhead = 200;
+    CHECK(!drag(c, c + QPointF(5, 5)));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -623,5 +669,6 @@ int main(int argc, char** argv)
     testCli(tmp.path());
     testCheck();
     testInspector();
+    testOverlay();
     return Check::result();
 }

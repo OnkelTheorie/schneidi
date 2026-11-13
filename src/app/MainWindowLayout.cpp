@@ -39,6 +39,7 @@
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/ShapeOverlay.h"
 #include "ui/ElidedLabel.h"
 #include "ui/SplitterMemory.h"
 #include "ui/MediaStorage.h"
@@ -506,6 +507,14 @@ void MainWindow::showPage(Page page)
         if (m_compPage->viewNode() || m_compPage->matte()) updatePreview();
         break;
     }
+    // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
+    if (page == Page::Edit) {
+        if (!m_shapeOverlay)
+            m_shapeOverlay = new ShapeOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this);
+        m_viewer->setOverlay(m_shapeOverlay);
+    } else if (before == Page::Edit && page != Page::Comp) {
+        m_viewer->setOverlay(m_colorPanel ? m_colorPanel->overlay() : nullptr);
+    }
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
     updatePageButtons();
     // The armed track's level meter listens only where the timeline (its mic) is shown
@@ -545,7 +554,7 @@ void MainWindow::ensureColorPage()
     watchSizes(m_colorBottom, "colorBottom");
     applySizes(m_colorBottom, {1100, 420});
     // The window outline over the viewer (only while the Color page shows); the Comp page keeps its own meanwhile
-    if (m_page != Page::Comp) m_viewer->setOverlay(m_colorPanel->overlay());
+    if (m_page != Page::Comp && m_page != Page::Edit) m_viewer->setOverlay(m_colorPanel->overlay()); // Edit: the shapes
     connectColorPage();
 }
 

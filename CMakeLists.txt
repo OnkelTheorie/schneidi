@@ -426,6 +426,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
+    src/ui/ShapeOverlay.h         src/ui/ShapeOverlay.cpp
     src/ui/TourOverlay.h          src/ui/TourOverlay.cpp
     src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp
     src/ui/comp/CompCanvas.h      src/ui/comp/CompCanvas.cpp

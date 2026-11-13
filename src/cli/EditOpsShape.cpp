@@ -203,8 +203,8 @@ void opShape(Session& s, const QJsonObject& op)
         }
         if (drawOn > 0) {
             Keys::clear(c, AnimParam::ShapeReveal);
-            Keys::setKey(c, AnimParam::ShapeReveal, c.in, 0);
-            Keys::setKey(c, AnimParam::ShapeReveal, c.in + std::min(drawOn, c.length() - 1), 100);
+            Keys::setKey(c, AnimParam::ShapeReveal, 0, 0); // clip frames
+            Keys::setKey(c, AnimParam::ShapeReveal, std::min(drawOn, c.length() - 1), 100);
         }
     });
     if (created) s.notes << QJsonObject{{"shape", id}};
