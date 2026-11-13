@@ -115,9 +115,15 @@ QWidget* SettingsDialog::buildGeneral()
     // The whole interface larger (fonts, panels, icons): for a 4K screen at 100 % (app/UiScale.h)
     m_uiScale = new QComboBox;
     m_uiScale->addItem(T("Wie das System"), 0.0);
-    for (double f : UiScale::steps()) m_uiScale->addItem(QString::number(qRound(f * 100)) + " %", f);
+    const auto percent = [](double f) { return QString::number(qRound(f * 100)) + " %"; };
+    for (double f : UiScale::steps()) m_uiScale->addItem(percent(f), f);
+    // A saved size the list lacks (set by hand in the settings file): shown as it is, OK keeps it
+    if (const double saved = UiScale::saved(); saved > 0 && m_uiScale->findData(saved) < 0)
+        m_uiScale->addItem(percent(saved), saved);
     m_uiScale->setCurrentIndex(std::max(0, m_uiScale->findData(UiScale::saved())));
     form->addRow(T("Größe"), m_uiScale);
+    if (const QString own = UiScale::userFactor(); !own.isEmpty())
+        form->addRow(hint(T("Wird von QT_SCALE_FACTOR=%1 überschrieben (beim Start gesetzt).").arg(own)));
     auto* buttons = new QHBoxLayout;
     auto* design = new QPushButton(T("Design…"));
     connect(design, &QPushButton::clicked, this, &SettingsDialog::designRequested);

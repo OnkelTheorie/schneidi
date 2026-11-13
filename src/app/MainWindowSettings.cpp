@@ -80,6 +80,7 @@ void MainWindow::settingsDialog(int tab)
     if (scaleChanged) {
         UiScale::setSaved(dlg.uiScale());
         UiScale::setAsked(); // chosen by hand: the 4K offer never comes
+        if (m_scaleBar) m_scaleBar->hide(); // nor stays open to overwrite the choice
     }
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
@@ -87,7 +88,7 @@ void MainWindow::settingsDialog(int tab)
         I18n::setLanguage(lang);
         offerRestart(I18n::translate(lang, N_("Die Sprache ändert sich nach dem Neustart von schneidi.")),
                      I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
-    } else if (scaleChanged) {
+    } else if (scaleChanged && UiScale::userFactor().isEmpty()) { // the user's QT_SCALE_FACTOR wins: no restart helps
         offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
     }

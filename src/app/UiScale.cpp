@@ -49,6 +49,11 @@ void takeBackEnvironment()
     g_setByUs = false;
 }
 
+QString userFactor()
+{
+    return g_setByUs ? QString() : qEnvironmentVariable(kEnv);
+}
+
 double suggestion(int logicalWidth, double devicePixelRatio, double physicalDpi)
 {
     if (logicalWidth < 3200 || devicePixelRatio > 1.05 || !std::isfinite(physicalDpi) || physicalDpi < 120) return 0;

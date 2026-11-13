@@ -2,12 +2,14 @@
 // Interface size (app/UiScale.h): the factor offered for a screen (4K at 100 % yes; scaled, ordinary or far away TV
 // screens no), the saved factor as QT_SCALE_FACTOR (never over the user's own, taken back after the QApplication), the
 // offer only once (either answer kept, a factor chosen in the settings counts as an answer), and the bar in the window:
-// "Leave it" changes nothing, "Larger" saves the factor (the restart question answered "Later").
+// "Leave it" changes nothing, "Larger" saves the factor (the restart question answered "Later"); a saved size the
+// settings' list lacks stays chosen there; the user's own QT_SCALE_FACTOR is known as such.
 // UI_SCALE_DUMP=<file.png>: a picture of the window with the bar.
 
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "app/SettingsDialog.h"
 #include "app/UiScale.h"
 #include "engine/Engine.h"
 
@@ -56,12 +58,14 @@ void testSettingAndEnvironment()
     UiScale::setSaved(1.5);
     CHECK(UiScale::applyBeforeApp());
     CHECK_EQ(qEnvironmentVariable("QT_SCALE_FACTOR"), QString("1.5"));
+    CHECK(UiScale::userFactor().isEmpty()); // ours, not the user's
     UiScale::takeBackEnvironment(); // a restart must not take it for the user's
     CHECK(qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR"));
     qputenv("QT_SCALE_FACTOR", "2"); // the user's own wins
     CHECK(!UiScale::applyBeforeApp());
     UiScale::takeBackEnvironment();
     CHECK_EQ(qEnvironmentVariable("QT_SCALE_FACTOR"), QString("2"));
+    CHECK_EQ(UiScale::userFactor(), QString("2")); // Settings says the size is overridden
     UiScale::setSaved(0);
     CHECK(!UiScale::offerDue()); // the user scales by hand
     qunsetenv("QT_SCALE_FACTOR");
@@ -75,6 +79,23 @@ QToolButton* button(MainWindow& w, const char* name)
 {
     auto* b = w.findChild<QToolButton*>(name);
     return b && b->isVisible() ? b : nullptr;
+}
+
+// A saved size the list lacks (250 %) stays chosen in the settings: OK does not reset it
+void testSettingsList()
+{
+    QSettings().remove("ui");
+    UiScale::setSaved(2.5);
+    {
+        SettingsDialog dlg{AiSettings{}};
+        CHECK_EQ(dlg.uiScale(), 2.5);
+    }
+    UiScale::setSaved(1.25);
+    {
+        SettingsDialog dlg{AiSettings{}};
+        CHECK_EQ(dlg.uiScale(), 1.25);
+    }
+    QSettings().remove("ui");
 }
 
 void testBar(Engine& engine)
@@ -138,6 +159,7 @@ int main(int argc, char** argv)
     Check::initApp("ui-scale");
     testSuggestion();
     testSettingAndEnvironment();
+    testSettingsList();
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();

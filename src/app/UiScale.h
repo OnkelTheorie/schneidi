@@ -9,6 +9,7 @@
 // The answer is kept (kAskedKey), nothing changes without a yes.
 
 #include <QList>
+#include <QString>
 
 class QScreen;
 
@@ -29,6 +30,8 @@ void setSaved(double factor);
 // program schneidi starts must not inherit it as if the user had set it)
 bool applyBeforeApp();
 void takeBackEnvironment();
+// The user's own QT_SCALE_FACTOR (started with it), empty = none: it wins over the saved size (Settings says so)
+QString userFactor();
 
 // The factor to offer for a screen: logical width >= 3200 px at a device pixel ratio of 1 (no scaling) and a physical
 // density of a high-resolution monitor (>= 120 dpi; a 4K TV far away has less). The density over 96 dpi in 25 % steps,

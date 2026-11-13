@@ -2789,6 +2789,7 @@
  "Wird eine Datei nur im Compositing oder als Titel-Textur benutzt, bleibt der Clip; nur dieser Verweis wird geleert.": "If a file is only used in a comp or as a title texture, the clip stays; only that reference is cleared.",
  "Wird gerade benutzt: Bitte laufende Exporte, Sprachausgabe und Transkription beenden und es dann noch einmal versuchen.": "In use: please stop running exports, speech and transcriptions first, then try again.",
  "Wird noch als Clip in einer Timeline benutzt": "Still used as a clip in a timeline",
+ "Wird von QT_SCALE_FACTOR=%1 überschrieben (beim Start gesetzt).": "Overridden by QT_SCALE_FACTOR=%1 (set at the start).",
  "Wird vorbereitet …": "Preparing …",
  "Wirkt ab": "Works from",
  "Wirkt außerhalb des Fensters statt innen": "Acts outside the window instead of inside",
