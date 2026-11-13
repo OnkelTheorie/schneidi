@@ -401,8 +401,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setObjectName("pool_search");
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
-    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
+    // The field takes the room of the title it replaces and needs no more (the title elides down to nothing): opening
+    // the search never widens the pool, the Viewer beside stays put; with room the field stretches (stretch 1)
+    m_search->setSizePolicy(QSizePolicy::Ignored, m_search->sizePolicy().verticalPolicy());
     connect(m_search, &QLineEdit::textChanged, this, [this] {
         rebuildClips();
         m_indexTimer->start(); // the material search after a short pause in typing

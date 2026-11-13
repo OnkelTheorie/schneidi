@@ -4,9 +4,9 @@
 
 // A tool button with text that never holds its panel wide: given less room than its text needs, the text ends in "…";
 // with a short form (setCompactText, e.g. only the symbol of "▦ Media Pool" or "+" for "Import…") that one is shown
-// once the elided text would keep only a few letters.
-// Its minimum width is that of the short form, its size hint that of the full text; the tooltip holds the full text
-// when the button has none of its own. For text-only and text-beside-icon buttons (the usual tool buttons).
+// once the elided text would keep only a few letters. Its minimum width is that of the short form, its size hint
+// that of the full text; shortened, the tooltip starts with the full text (then the button's own tooltip). For
+// text-only and text-beside-icon buttons (the usual tool buttons).
 class CompactButton : public QToolButton {
 public:
     // Horizontally it may shrink below its hint (a tool button is Fixed), never grow beyond it

@@ -59,10 +59,11 @@ void CompactButton::paintEvent(QPaintEvent*)
 
 bool CompactButton::event(QEvent* e)
 {
-    // Shortened and without a tooltip of its own: the full text as the tooltip
-    if (e->type() == QEvent::ToolTip && toolTip().isEmpty() && shownText() != text()) {
+    // Shortened: the full text as the tooltip, before the button's own tooltip (which may not name it)
+    if (e->type() == QEvent::ToolTip && shownText() != text()) {
         QString full = text();
         full.remove(QLatin1Char('&'));
+        if (!toolTip().isEmpty()) full += "\n" + toolTip();
         QToolTip::showText(static_cast<QHelpEvent*>(e)->globalPos(), full, this);
         return true;
     }

@@ -3197,5 +3197,6 @@
  "Form…": "Shape…",
  "Füllfarbe": "Fill color",
  "Malen geht nur auf der Timeline": "Painting only works on the timeline",
- "Schneidet das Bild als Kreis, Rechteck, Stern … aus (Effekt „Clip in Form“, z. B. Facecam als Kreis); die Werte stehen dann unter Effekte": "Cuts the picture out as a circle, rectangle, star … (effect “Clip in Shape”, e.g. a face cam as a circle); its values are then under Effects"
+ "Schneidet das Bild als Kreis, Rechteck, Stern … aus (Effekt „Clip in Form“, z. B. Facecam als Kreis); die Werte stehen dann unter Effekte": "Cuts the picture out as a circle, rectangle, star … (effect “Clip in Shape”, e.g. a face cam as a circle); its values are then under Effects",
+ "Wird von QT_SCALE_FACTOR=%1 überschrieben (beim Start gesetzt).": "Overridden by QT_SCALE_FACTOR=%1 (set at the start)."
 }
