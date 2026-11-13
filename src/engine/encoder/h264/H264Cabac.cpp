@@ -643,8 +643,10 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 // the block, coded_block_flag included for 4x4 blocks) and sets *energy to the squared error of the
 // all-zero block; the mode decision compares transforms and layouts with these (no reconstruction).
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                    int cbfInc, int* out, double* energy)
+                    int cbfInc, int* out, double* energy, uint64_t* nonZero)
 {
+    if (nonZero)
+        *nonZero = 0;
     constexpr int kEmpty = 8;
     // Coefficients after the last one that reaches half a level can only become 0: they leave
     // every path in the "nothing coded yet" node at no cost, so the search starts at that one.
@@ -801,12 +803,16 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     }
     // Positions below half a level stay 0 (out is cleared above) and keep the node.
     uint64_t coded = ~pass & (end >= 64 ? ~uint64_t(0) : (uint64_t(1) << end) - 1);
+    uint64_t nz = 0;
     for (int n = best; coded; coded &= coded - 1) {
         const int k = std::countr_zero(coded);
         const int mag = mags[k][n];
         out[k] = x[k] < 0 ? -mag : mag;
+        nz |= uint64_t(mag != 0) << k;
         n = from[k][n];
     }
+    if (nonZero)
+        *nonZero = nz;
     return bestCost + tail;
 }
 

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -33,8 +34,9 @@
 namespace schneidi::h264 {
 
 // H264Cabac.cpp
+// nonZero (optional): bit k set where out[k] != 0.
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                    int cbfInc, int* out, double* energy = nullptr);
+                    int cbfInc, int* out, double* energy = nullptr, uint64_t* nonZero = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
 static const bool gTiming = std::getenv("H264_TIMING") != nullptr;
@@ -3480,6 +3482,36 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels, double
     }
 }
 
+// The real-valued levels of quantize8x8 (trellis path) straight in zigzag scan order: the same
+// doubles (same operations per coefficient), without the copy into scan order afterwards.
+void quantize8x8Scan(const int* residual, int qp, double* xs)
+{
+    static const auto kScaleScan = [] { // n_i n_j v8 by QP % 6 and scan position
+        std::array<std::array<double, 64>, 6> t{};
+        const Basis8& B = basis8();
+        for (int q = 0; q < 6; ++q)
+            for (int s = 0; s < 64; ++s) {
+                const int k = kZigzag8[s];
+                t[size_t(q)][size_t(s)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
+            }
+        return t;
+    }();
+    int w64[64];
+    forward8x8(residual, w64);
+    const double step2 = double(1 << (qp / 6));
+    const double* scale = kScaleScan[size_t(qp % 6)].data();
+    int s = 0;
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128d four = _mm_set1_pd(4.0), st = _mm_set1_pd(step2);
+    for (; s < 64; s += 2) {
+        const __m128d w = _mm_cvtepi32_pd(_mm_setr_epi32(w64[kZigzag8[s]], w64[kZigzag8[s + 1]], 0, 0));
+        _mm_storeu_pd(xs + s, _mm_div_pd(_mm_mul_pd(four, w), _mm_mul_pd(_mm_loadu_pd(scale + s), st)));
+    }
+#endif
+    for (; s < 64; ++s)
+        xs[s] = 4.0 * double(w64[kZigzag8[s]]) / (scale[s] * step2);
+}
+
 void dequant8x8(const int* levels, int qp, int* d)
 {
     static const auto kLs = [] { // 16 * normAdjust8x8 by QP % 6 and position
@@ -4085,12 +4117,31 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         for (int b8 = 0; b8 < 4; ++b8) {
             const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
             int res[64];
-            for (int y = 0; y < 8; ++y)
-                for (int x = 0; x < 8; ++x)
-                    res[y * 8 + x] = int(srcY_[lumaOff + size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]);
-            double real[64];
+            {
+                const uint8_t* sp = &srcY_[lumaOff + size_t(oy) * padW_ + ox];
+                const uint8_t* pp = lp + oy * 16 + ox;
+                int y = 0;
+#if defined(__SSE2__) || defined(_M_X64)
+                const __m128i zero = _mm_setzero_si128();
+                for (; y < 8; ++y) {
+                    const __m128i d = _mm_sub_epi16(
+                        _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(sp + size_t(y) * padW_)), zero),
+                        _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pp + y * 16)), zero));
+                    const __m128i sign = _mm_srai_epi16(d, 15);
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(res + y * 8), _mm_unpacklo_epi16(d, sign));
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(res + y * 8 + 4), _mm_unpackhi_epi16(d, sign));
+                }
+#endif
+                for (; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        res[y * 8 + x] = int(sp[size_t(y) * padW_ + x]) - int(pp[y * 16 + x]);
+            }
             const bool trellisPath = live && cfg_.effort > 0 && trellis;
-            quantize8x8(res, qp, 1.0 / 6.0, trellisPath ? nullptr : levels8[b8], real);
+            double xs[64];
+            if (!trellisPath)
+                quantize8x8(res, qp, 1.0 / 6.0, levels8[b8]);
+            else
+                quantize8x8Scan(res, qp, xs);
             if (trellisPath) {
                 // Pixel error per level unit, by QP and scan position (computed once).
                 static const auto kScale8 = [] {
@@ -4104,16 +4155,16 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                         }
                     return t;
                 }();
-                double xs[64];
-                for (int s = 0; s < 64; ++s)
-                    xs[s] = real[kZigzag8[s]];
                 int scanLv[64];
                 double energy = 0;
-                const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv, est ? &energy : nullptr);
-                bool any = false;
-                for (int s = 0; s < 64; ++s) {
+                uint64_t nz = 0;
+                const double j =
+                    cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv, est ? &energy : nullptr, &nz);
+                const bool any = nz != 0;
+                std::fill(levels8[b8], levels8[b8] + 64, 0);
+                for (uint64_t m = nz; m; m &= m - 1) {
+                    const int s = std::countr_zero(m);
                     levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
-                    any |= scanLv[s] != 0;
                 }
                 sum += any ? j : energy;
                 if (any)
@@ -4173,13 +4224,15 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             for (int s = 0; s < 16; ++s)
                 xs[s] = double(coef[kZigzag[s]]) * mf[s] * invStep;
             int scanLv[16];
-            jBlk[blkIdx] = cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr);
-            int any = 0;
-            for (int s = 0; s < 16; ++s) {
+            uint64_t nz = 0;
+            jBlk[blkIdx] =
+                cabacTrellis(*live, 2, xs, kScale4[size_t(qp)].data(), 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr, &nz);
+            std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
+            for (uint64_t m = nz; m; m &= m - 1) {
+                const int s = std::countr_zero(m);
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
-                any |= scanLv[s];
             }
-            zeroBlk[blkIdx] = any == 0;
+            zeroBlk[blkIdx] = nz == 0;
         } else if (cfg_.effort > 0 && !live) {
             // Round to nearest, then let the rate-distortion pass decide which levels to lower.
             for (int i = 0; i < 16; ++i)
