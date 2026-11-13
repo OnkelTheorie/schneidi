@@ -13,7 +13,8 @@ namespace Drawing {
 
 namespace {
 
-double rounded(double v, double step) { return std::round(v / step) * step; }
+// v to `per` steps of 1 (a power of ten): divided by an exact number, 0.125 stays 0.125
+double rounded(double v, double per) { return std::round(v * per) / per; }
 
 QString colorName(const QColor& c) { return c.alpha() == 255 ? c.name() : c.name(QColor::HexArgb); }
 
@@ -64,14 +65,14 @@ double segDist(QPointF p, QPointF a, QPointF b)
 QJsonObject strokeJson(const DrawStroke& s)
 {
     QJsonArray pts;
-    for (const QPointF& p : s.points) pts << rounded(p.x(), 1e-5) << rounded(p.y(), 1e-5);
-    QJsonObject o{{"points", pts}, {"color", colorName(s.color)}, {"width", rounded(s.width, 1e-6)}};
+    for (const QPointF& p : s.points) pts << rounded(p.x(), 1e5) << rounded(p.y(), 1e5);
+    QJsonObject o{{"points", pts}, {"color", colorName(s.color)}, {"width", rounded(s.width, 1e6)}};
     if (std::any_of(s.pressure.begin(), s.pressure.end(), [](float v) { return std::abs(v - 1.0f) > 5e-4f; })) {
         QJsonArray pr;
-        for (const float v : s.pressure) pr << rounded(v, 1e-3);
+        for (const float v : s.pressure) pr << rounded(v, 1e3);
         o["pressure"] = pr;
     }
-    if (s.opacity < 1) o["opacity"] = rounded(s.opacity, 1e-3);
+    if (s.opacity < 1) o["opacity"] = rounded(s.opacity, 1e3);
     return o;
 }
 
