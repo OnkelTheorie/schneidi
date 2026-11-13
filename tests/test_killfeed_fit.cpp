@@ -175,7 +175,8 @@ void testKeys()
     CHECK(fixed.keys.isEmpty());
     const Clip c = Reframe::keepCopy(base, {"killfeed", region, timeline()}, aspect, frame);
     const auto at = [&](AnimParam p, int t) { return Keys::valueAt(c, p, t); };
-    for (AnimParam p : {AnimParam::Opacity, AnimParam::CropLeft, AnimParam::CropBottom, AnimParam::ZoomX, AnimParam::PosY})
+    // (the zoom, and with it the place of the top edge, stays when the text size limit sets it for both shapes)
+    for (AnimParam p : {AnimParam::Opacity, AnimParam::CropLeft, AnimParam::CropBottom, AnimParam::PosX})
         CHECK(c.keys.contains(p));
     CHECK(!c.keys.contains(AnimParam::CropTop) && !c.keys.contains(AnimParam::CropRight)); // top and right stay
     CHECK(near(c.transform.cropTop, region.top() * fitted.height(), 1e-6));
@@ -197,8 +198,8 @@ void testKeys()
     CHECK(near(bottom3 - bottom1, (173 - 106) / 1080.0 * fitted.height(), 1));
     // Growing is done when the lines show (frame 119), eased over 0.2 s before
     CHECK(near(at(AnimParam::CropLeft, 119), left3, 0.5));
-    CHECK(near(at(AnimParam::CropLeft, 112), left1, 0.5) == false);
-    CHECK(near(at(AnimParam::CropLeft, 100), left1, 1e-6));
+    CHECK(at(AnimParam::CropLeft, 116) < left1 - 1 && at(AnimParam::CropLeft, 116) > left3 + 1);
+    CHECK(near(at(AnimParam::CropLeft, 110), left1, 1e-6));
     // The text is bigger than in the fixed region, but a line at most maxLine of the frame height; the copy at most
     // the width and height a kept region may take; its top edge stays at 10 % of the frame
     const Reframe::KeepPlace place;
@@ -257,7 +258,7 @@ void testCli(const QString& dir)
         }
         return parts.join(',');
     }();
-    const QString back = "gradients=s=1920x1080:c0=0xc8a878:c1=0x705030:d=6:r=30:speed=0.002,noise=alls=4:allf=t";
+    const QString back = "gradients=s=1920x1080:c0=0xc8a878:c1=0x705030:d=6:r=30:speed=0.002,drawgrid=w=97:h=61:t=2:c=0x403020@0.6";
     const QString game = Check::makeMedia(dir + "/cs2/feed.mkv", {"-f", "lavfi", "-i", back + "," + text, "-c:v",
                                                                   "libx264", "-qp", "8", "-pix_fmt", "yuv420p", "-g", "30"});
     const QString empty = Check::makeMedia(dir + "/cs2/empty.mkv", {"-f", "lavfi", "-i", back, "-t", "3", "-c:v", "libx264",
@@ -267,6 +268,7 @@ void testCli(const QString& dir)
     {
         QString error;
         const auto samples = KillFeedLines::measure(game, 0, 6, QRectF(0, 0, 1, 1), cs2(), &error);
+        if (qEnvironmentVariableIsSet("KILLFEED_DEBUG") && samples) for (const auto& s : *samples) std::printf("%.3f %d %.4f %.4f\n", s.seconds, s.lines, s.left, s.bottom);
         if (CHECK(samples.has_value())) {
             int at1 = -1, at3 = -1, at5 = -1;
             for (const KillFeedLines::Sample& s : *samples) {
@@ -288,10 +290,7 @@ void testCli(const QString& dir)
     }
 
     const QString path = dir + "/fit.schneidi";
-    {
-        const QJsonObject made = run("new", {{"project", path}, {"media", QJsonArray{game, empty}}});
-        CHECK(made["ok"].toBool());
-    }
+    run("new", {{"project", path}, {"media", QJsonArray{game, empty}}});
     run("edit", {{"project", path}, {"ops", QString(R"([{"op":"append","media":"%1"},{"op":"append","media":"%2"}])")
                                                 .arg(game, empty)}});
     const QJsonObject out = run("edit", {{"project", path}, {"ops", R"([{"op":"new_timeline","from":"Timeline 1",

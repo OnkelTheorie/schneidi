@@ -356,7 +356,7 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
     const double srcFps = info.frameRate.num > 0 && info.frameRate.den > 0 ? av_q2d(info.frameRate) : 25.0;
     const int64_t first = int64_t(std::floor(from * srcFps));
     const int64_t last = std::max(first, int64_t(std::ceil(to * srcFps)));
-    const int step = std::max(1, int(std::lround(srcFps / kSamplesPerSecond)));
+    const double step = std::max(1.0, srcFps / kSamplesPerSecond); // in positions (a 25 fps file: every 2.5th)
     const int64_t endFrame = info.duration > 0 ? int64_t(std::ceil(double(info.duration) / AV_TIME_BASE * srcFps)) : 0;
 
     SwsContext* sws = nullptr;
@@ -365,7 +365,11 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
     Geometry g;
     QRect area;
     int pw = 0, ph = kScale;
-    for (int64_t pos = first; pos <= last; pos += step) {
+    int64_t done = first - 1; // the last position read
+    for (int k = 0;; ++k) {
+        const int64_t pos = first + int64_t(std::llround(k * step));
+        if (pos > last) break;
+        if (pos <= done) continue; // the file skipped there
         if (cancel && cancel->load()) break;
         const auto pic = reader->picture(pos);
         if (!pic || !pic->frame) break;
@@ -398,13 +402,15 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
         sws = sws_getCachedContext(sws, cropped->width, cropped->height, AVPixelFormat(cropped->format), aw, ah,
                                    AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws) break;
-        rgb.resize(size_t(aw) * size_t(ah) * 3);
+        // Rows aligned and room after the last: swscale writes whole SIMD blocks
+        const int stride = (aw * 3 + 63) & ~63;
+        rgb.resize(size_t(stride) * size_t(ah + 1) + 64);
         uint8_t* planes[4] = {rgb.data(), nullptr, nullptr, nullptr};
-        int strides[4] = {aw * 3, 0, 0, 0};
+        int strides[4] = {stride, 0, 0, 0};
         sws_scale(sws, cropped->data, cropped->linesize, 0, cropped->height, planes, strides);
         View v;
         v.bits = rgb.data();
-        v.stride = aw * 3;
+        v.stride = stride;
         v.ox = area.x();
         v.oy = area.y();
         v.w = aw;
@@ -414,8 +420,8 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
         Sample s = detectView(v, g);
         s.seconds = double(pic->position) / srcFps;
         if (out.isEmpty() || s.seconds > out.last().seconds + 1e-6) out << s;
-        if (pic->position > pos) pos = pic->position; // positions the file skips
-        if (progress) progress(int(std::min<int64_t>(999, (pos - first + 1) * 1000 / (last - first + 1))));
+        done = std::max(pos, int64_t(pic->position)); // positions the file skips
+        if (progress) progress(int(std::min<int64_t>(999, (done - first + 1) * 1000 / (last - first + 1))));
     }
     sws_freeContext(sws);
     reader.reset();
