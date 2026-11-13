@@ -25,8 +25,10 @@ constexpr int kRotate = 8;
 
 } // namespace
 
-ShapeOverlay::ShapeOverlay(Editor* editor, Selection* selection, std::function<int()> playhead, QObject* parent)
-    : ViewerOverlay(parent), m_editor(editor), m_selection(selection), m_playhead(std::move(playhead))
+ShapeOverlay::ShapeOverlay(Editor* editor, Selection* selection, std::function<int()> playhead, QObject* parent,
+                           std::function<bool()> timelineShown)
+    : ViewerOverlay(parent), m_editor(editor), m_selection(selection), m_playhead(std::move(playhead)),
+      m_timelineShown(std::move(timelineShown))
 {
     connect(selection, &Selection::changed, this, &ViewerOverlay::changed);
 }
@@ -34,6 +36,7 @@ ShapeOverlay::ShapeOverlay(Editor* editor, Selection* selection, std::function<i
 const Clip* ShapeOverlay::clip() const
 {
     if (!m_selection || m_selection->ids().size() != 1) return nullptr;
+    if (m_timelineShown && !m_timelineShown()) return nullptr; // a source clip in the viewer: not the timeline's shape
     const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), *m_selection->ids().begin());
     if (!c || !c->isTitle() || !c->title.isShape() || c->title.shape.followClip > 0) return nullptr;
     const int f = m_playhead ? m_playhead() : c->start;
@@ -194,8 +197,10 @@ bool ShapeOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         const QPointF v = pos - l.map(QPointF(0, 0));
         double angle = std::atan2(v.y(), v.x()) * 180 / M_PI + 90; // clockwise, 0 = the knob straight up
         if (e->modifiers() & Qt::ShiftModifier) angle = std::round(angle / 15) * 15;
-        while (angle > 180) angle -= 360;
-        while (angle < -180) angle += 360;
+        // Continuous from the value before: no jump at +-180 (a turn past it keeps counting, keyframes stay smooth)
+        const Clip* c = clip();
+        const double now = c ? Keys::valueAt(*c, AnimParam::ShapeRotation, localFrame(*c)) : 0.0;
+        angle += std::round((now - angle) / 360) * 360;
         set({{int(AnimParam::ShapeRotation), angle}});
     } else {
         const QPointF q = l.inverted().map(pos); // around the centre

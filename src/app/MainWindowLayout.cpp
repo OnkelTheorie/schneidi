@@ -510,7 +510,8 @@ void MainWindow::showPage(Page page)
     // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
     if (page == Page::Edit) {
         if (!m_shapeOverlay)
-            m_shapeOverlay = new ShapeOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this);
+            m_shapeOverlay = new ShapeOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
+                                              [this] { return !m_viewer->showsSource(); });
         m_viewer->setOverlay(m_shapeOverlay);
     } else if (before == Page::Edit && page != Page::Comp) {
         m_viewer->setOverlay(m_colorPanel ? m_colorPanel->overlay() : nullptr);

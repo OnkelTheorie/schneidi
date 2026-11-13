@@ -343,6 +343,15 @@ struct CompCapture {
     double opacity = 1;
 };
 thread_local CompCapture* t_compCapture = nullptr;
+// The timeline being drawn on this thread (the root, or the content of a compound clip): what a shape following a
+// tracker looks its tracked clip up in. And a number per rendered frame, so per-frame caches never outlive it
+thread_local const Timeline* t_timeline = nullptr;
+thread_local uint64_t t_renderSeq = 0;
+struct TimelineScope {
+    const Timeline* outer;
+    explicit TimelineScope(const Timeline& tl) : outer(t_timeline) { t_timeline = &tl; }
+    ~TimelineScope() { t_timeline = outer; }
+};
 
 // Preview: what a decoder keeps of the pictures decoded on the way to a jump's target (steps back after a jump)
 constexpr int64_t kSeekWindowBytes = 96ll * 1024 * 1024;
@@ -1293,11 +1302,46 @@ struct Renderer::Impl {
     bool shapeFollow(const Clip& c, double t, const Ctx& ctx, Masks::Follow* f, double* seen)
     {
         const ShapeStyle& s = c.title.shape;
-        if (s.followClip <= 0 || s.followNode <= 0 || !ctx.root) return false;
-        const Clip* tracked = TimelineOps::findClip(*ctx.root, s.followClip);
+        const Timeline* tl = t_timeline ? t_timeline : ctx.root.get();
+        if (s.followClip <= 0 || s.followNode <= 0 || !tl) return false;
+        // Asked several times per frame (visibility, bounds, drawing): the graph is read once
+        struct Cached {
+            uint64_t seq = 0;
+            const Timeline* tl = nullptr;
+            const Clip* clip = nullptr;
+            double t = 0;
+            bool ok = false;
+            Masks::Follow f;
+            double seen = 1;
+        };
+        thread_local Cached cache[4];
+        thread_local int next = 0;
+        for (const Cached& k : cache)
+            if (k.seq == t_renderSeq && k.tl == tl && k.clip == &c && k.t == t) {
+                if (k.ok) {
+                    *f = k.f;
+                    *seen = k.seen;
+                }
+                return k.ok;
+            }
+        Cached& slot = cache[next];
+        next = (next + 1) % 4;
+        slot = Cached{t_renderSeq, tl, &c, t};
+        TrackRef ref;
+        const Clip* tracked = TimelineOps::findClip(*tl, s.followClip, &ref);
         if (!tracked) return false;
-        const double tt = c.start + t - tracked->start;
+        // The tracked clip was split (the part after the cut has a new id): the clip on its track at this frame
+        // with the same tracker
+        const int at0 = c.start + int(std::floor(t));
         Picture::Comp::FollowAt at;
+        if ((at0 < tracked->start || at0 >= tracked->end()) && ref.kind == TrackKind::Video && ref.index < tl->video.size())
+            for (const Clip& o : tl->video[ref.index].clips)
+                if (at0 >= o.start && at0 < o.end() && o.mediaPath == tracked->mediaPath
+                    && Picture::Comp::followAt(o, s.followNode, at0 - o.start, ctx.fps, &at)) {
+                    tracked = &o;
+                    break;
+                }
+        const double tt = c.start + t - tracked->start;
         if (!Picture::Comp::followAt(*tracked, s.followNode, tt, ctx.fps, &at)) return false;
         double aspect = tracked->isTitle() || tracked->isNested() ? 0.0 : MediaAspect::ofClip(*tracked);
         if (aspect <= 0 && !tracked->isTitle() && !tracked->isNested()) aspect = nativeAspect(*tracked, QStringLiteral("follow"));
@@ -1316,6 +1360,9 @@ struct Renderer::Impl {
         f->scale = at.scale;
         f->angle = at.angle;
         *seen = at.seen;
+        slot.ok = true;
+        slot.f = *f;
+        slot.seen = *seen;
         return true;
     }
 
@@ -1375,7 +1422,7 @@ struct Renderer::Impl {
 
     // A shape that changes the picture below it (blur or pixelate fill, spotlight) at clip frame t, straight onto the
     // frame so far with its opacity times k; then its stroke, shadow and colour fill over it
-    void shapeBelow(Image& canvas, const Clip& c, int t, const Ctx& ctx, double k)
+    void shapeBelow(Image& canvas, const Clip& c, int t, const Ctx& ctx, double k, bool paint = true)
     {
         Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
         Masks::Follow f;
@@ -1388,16 +1435,22 @@ struct Renderer::Impl {
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
         for (QPointF& q : o.points) q = QPointF(q.x() * sx, q.y() * sy);
         ShapePaint::below(canvas.data(), canvas.w, canvas.h, o, c.title.shape, sy, k);
-        ShapePaint::paint(canvas.data(), canvas.w, canvas.h, {}, o, c.title, reveal, sy, k, shapeFill(c, t));
+        if (paint) ShapePaint::paint(canvas.data(), canvas.w, canvas.h, {}, o, c.title, reveal, sy, k, shapeFill(c, t));
     }
 
     // A shape at frame f that reads the picture below it: the card does not make that (the frame goes the CPU way)
-    static bool shapeReadsBelow(const Timeline& tl, int f)
+    bool shapeReadsBelow(const Timeline& tl, int f)
     {
+        const auto reads = [](const Clip* c) {
+            return c && c->enabled && c->isTitle() && c->title.isShape() && c->title.shape.readsBelow();
+        };
         for (const Track& track : tl.video) {
             if (track.hidden) continue;
-            const Clip* c = clipAt(track, f);
-            if (c && c->enabled && c->isTitle() && c->title.isShape() && c->title.shape.readsBelow()) return true;
+            if (reads(clipAt(track, f))) return true;
+            for (const auto& s : spansAt(track, f, tl)) // a side of a transition reaching past its clip
+                if (f >= s.start && f < s.end)
+                    for (const Clip& c : track.clips)
+                        if ((c.id == s.leftId || c.id == s.rightId) && reads(&c)) return true;
         }
         return false;
     }
@@ -1914,6 +1967,16 @@ struct Renderer::Impl {
         if (track.hidden) return;
         for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) {
+                // A shape that hides what lies below (blur, pixelate, spotlight) does so at full strength through
+                // its transitions: a face must never show sharp while the blur fades in or dissolves into its other
+                // half. Only its stroke, shadow and colour take part in the transition (trackLayer)
+                for (const int id : {s.leftId, s.rightId})
+                    for (const Clip& sc : track.clips)
+                        if (id && sc.id == id && sc.enabled && sc.isTitle() && sc.title.isShape() && sc.title.shape.readsBelow()) {
+                            const int st = f - sc.start;
+                            const double op = Keys::hasOpacity(sc) ? std::clamp(Keys::valueAt(sc, AnimParam::Opacity, st) / 100.0, 0.0, 1.0) : 1.0;
+                            shapeBelow(canvas, sc, st, ctx, op, false);
+                        }
                 Image layer = trackLayer(track, trackIndex, f, ctx, tl, prefix, depth);
                 if (!layer.empty()) Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
                 return;
@@ -2580,7 +2643,11 @@ struct Renderer::Impl {
         Gpu::Service* gpu = this->gpu.load(std::memory_order_relaxed);
         // (a tilted clip: the graph's result is placed through a homography, which only the CPU path draws)
         if (comp && comp->enabled && gpu && gpu->info().comp && !c.transform.hasBlurFill() && c.keepRegion.isEmpty()
-            && !c.isTitle() && !tiltedEver(c) && !EffectRegistry::has(c, Shapes::kClipShapeEffect)) {
+            && !c.isTitle() && !tiltedEver(c)
+            && [&] {
+                   const EffectInstance* cs = EffectRegistry::instance(c, Shapes::kClipShapeEffect);
+                   return !cs || !cs->enabled; // a cut to a shape is made on the CPU after the graph
+               }()) {
             cap.clip = &c;
             t_compCapture = &cap;
         }
@@ -2752,6 +2819,7 @@ struct Renderer::Impl {
     // The draws of a timeline's picture at frame f (as renderTimeline)
     void gpuTimeline(std::vector<GpuOp>& ops, const Timeline& tl, int f, const Ctx& ctx, bool subtitles)
     {
+        const TimelineScope scope(tl);
         int lowest = 0;
         for (int i = tl.video.size() - 1; i >= 0; --i)
             if (covers(tl.video[i], i, f, ctx, tl, QString())) {
@@ -2966,6 +3034,7 @@ struct Renderer::Impl {
     void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool subtitles,
                         int depth)
     {
+        const TimelineScope scope(tl);
         // Top down to the first track that surely covers the frame: what lies below is never decoded
         // (tests/test_occlusion), then bottom up onto the canvas
         int lowest = 0;
@@ -3051,6 +3120,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     if (d->options.mode == Mode::Export && frame % 16 == 0)
         d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
     t_frame = frame;
+    ++t_renderSeq;
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
     t_sourceLost = false;

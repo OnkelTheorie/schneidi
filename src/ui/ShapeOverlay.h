@@ -18,7 +18,9 @@ struct Clip;
 class ShapeOverlay : public ViewerOverlay {
     Q_OBJECT
 public:
-    ShapeOverlay(Editor* editor, Selection* selection, std::function<int()> playhead, QObject* parent = nullptr);
+    // timelineShown: the viewer shows the timeline (not a Media Pool source); missing = always
+    ShapeOverlay(Editor* editor, Selection* selection, std::function<int()> playhead, QObject* parent = nullptr,
+                 std::function<bool()> timelineShown = {});
 
     void paint(QPainter& p, const QRectF& frame) override;
     bool mousePress(QMouseEvent* e, const QRectF& frame) override;
@@ -42,6 +44,7 @@ private:
     Editor* m_editor;
     Selection* m_selection;
     std::function<int()> m_playhead;
+    std::function<bool()> m_timelineShown;
     int m_part = None;
     int m_clipId = 0;
     QPointF m_press; // project pixels
