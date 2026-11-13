@@ -277,8 +277,8 @@ inline int quantize(int coef, int mf, int qbits, int offset)
 // Residual group thresholds of inter luma (4x4 transform), in bits at the macroblock's lambda: an
 // 8x8 group must gain more than kGroupBits, the whole luma residual more than kMbBits (see
 // planInterLuma). H264_DECG / H264_DECM override them for measurements.
-const double kGroupBits = std::getenv("H264_DECG") ? std::atof(std::getenv("H264_DECG")) : 6.0;
-const double kMbBits = std::getenv("H264_DECM") ? std::atof(std::getenv("H264_DECM")) : 10.0;
+const double kGroupBits = std::getenv("H264_DECG") ? std::atof(std::getenv("H264_DECG")) : 3.0;
+const double kMbBits = std::getenv("H264_DECM") ? std::atof(std::getenv("H264_DECM")) : 0.0;
 // Bit model of a sparse 4x4 block (every coefficient below 1.5 levels) for the paths without the
 // CABAC trellis: block overhead + bits per non-zero level, fitted by least squares to the trellis'
 // own bit counts on our test material (H264_DECLOG=1 prints the fit).
@@ -4344,7 +4344,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     if (est)
         *est = -1;
     if (t8) {
-        // No decimation here: measured, it costs more quality than it saves for 8x8 blocks.
+        // No residual-group test here: measured with the same rule (RD gain against the block's
+        // coded_block_pattern bit), it gains nothing for 8x8 blocks.
         double sum = 0;
         for (int b8 = 0; b8 < 4; ++b8) {
             const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
