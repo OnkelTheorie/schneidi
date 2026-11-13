@@ -283,7 +283,7 @@ inline int quantize(int coef, int mf, int qbits, int offset)
 
 // Residual group threshold of inter luma (4x4 transform), in bits at the macroblock's lambda: an
 // 8x8 group of four blocks is coded only when they together gain more than kGroupBits (see
-// planInterLuma). Fitted by fixed-QP BD-rate on our test material (1, 3, 6, 10, 15 bits tried; a
+// planInterLuma). Fitted by fixed-QP BD-rate on our test material (0, 3, 6, 10, 15 bits tried; a
 // further macroblock-level threshold over all kept groups gained nothing). H264_DECG overrides it.
 const double kGroupBits = std::getenv("H264_DECG") ? std::atof(std::getenv("H264_DECG")) : 3.0;
 // Bit model of a sparse 4x4 block (every coefficient below 1.5 levels) for the paths without the
