@@ -4353,20 +4353,29 @@ bool FrameCoder::writeInterResidual(int mbx, int mby, int qp, bool t8, const Int
     io.syn.qpDelta = qp - qpPredOf(mby);
     if (cbp)
         interBits.se(qp - qpPredOf(mby)); // mb_qp_delta
-    for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+    if (t8) {
+        // 8x8 transform (CABAC only): the four 4x4 blocks carry the 8x8 block's count (bS, nC). The
+        // 4x4 syntax levels are not read with the 8x8 transform, so they are not copied.
+        for (int b8 = 0; b8 < 4; ++b8) {
+            int total = 0;
+            for (int k = 0; k < 64; ++k)
+                total += levels8[b8][k] != 0;
+            for (int i = 0; i < 4; ++i) {
+                const int blkIdx = b8 * 4 + i;
+                const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
+                nzLuma_[size_t(by) * lw + bx] = uint8_t(std::min(total, 255));
+            }
+        }
+    }
+    for (int blkIdx = 0; blkIdx < 16 && !t8; ++blkIdx) {
         const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
         int total = 0;
         int scan[16];
         for (int k = 0; k < 16; ++k)
             scan[k] = levels[blkIdx][kZigzag[k]];
         std::memcpy(io.syn.luma[blkIdx], scan, sizeof(scan));
-        if (t8) {
-            // 8x8 transform (CABAC only): the four 4x4 blocks carry the 8x8 block's count (bS, nC).
-            for (int k = 0; k < 64; ++k)
-                total += levels8[blkIdx >> 2][k] != 0;
-        } else if (cbpLuma & (1 << (blkIdx >> 2))) {
+        if (cbpLuma & (1 << (blkIdx >> 2)))
             total = residual(interBits, scan, 16, lumaNc(bx, by));
-        }
         nzLuma_[size_t(by) * lw + bx] = uint8_t(std::min(total, 255));
     }
     writeChroma(io, mbx, mby, ch);
