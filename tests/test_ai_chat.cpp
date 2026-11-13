@@ -1070,7 +1070,7 @@ void test(const QString& dir)
         panel->sendText("Setz viele Keyframes");
         CHECK(waitFor([&] { return !chat->busy(); }));
         // The next request is about as long as this one: the server says it read a token per 4 characters of it
-        // (the whole JSON body; our requests have 3.6-4 characters per token of their text)
+        // (the whole JSON body; our requests have 3.6-4.2 characters per token of their text)
         const qint64 body = QJsonDocument(fake.last().body).toJson(QJsonDocument::Compact).size();
         CHECK(chat->requestTokens() * 4 <= body); // the estimate holds no more than was sent
         const int errors = count(chat, AiChat::Entry::Kind::Error);
@@ -1108,7 +1108,8 @@ void test(const QString& dir)
         CHECK(tight);
         // The short request stays within its budget (it grew past an 8192-token model with the 0.17 tools once):
         // system prompt and tools of a fresh chat, the one word above aside. New ops and parameters no longer make it
-        // grow by their whole text (Ai::compactOps, kParamText): 28,656 characters at 0.21 (30,952 before) = 7.6 % room
+        // grow by their whole text (Ai::compactOps, kParamText): 28,656 characters at 0.21 (30,952 before) = 7.6 %
+        // room, 28,756 with shape and clip_shape (0.22)
         const qint64 used = chat->requestTokens() * 4;
         std::printf("       short request: %lld characters, budget %lld (%lld %% room)\n", used, Ai::kCompactBudget,
                     (Ai::kCompactBudget - used) * 100 / Ai::kCompactBudget);
