@@ -8,6 +8,7 @@
 #include "Cavlc.h"
 #include "Satd.h"
 #include "Transform.h"
+#include "Deblock.h"
 #include "ThreadErrors.h"
 
 #include <algorithm>
@@ -5405,56 +5406,6 @@ constexpr uint8_t kTc0[52][3] = {
     {6, 8, 13}, {7, 10, 14}, {8, 11, 16}, {9, 12, 18}, {10, 13, 20}, {11, 15, 23}, {13, 17, 25},
 };
 
-// Filters one line across an edge. q points at q0, step is the distance between samples across the edge.
-inline void filterLine(uint8_t* q, int step, int bS, int alpha, int beta, int indexA, bool chroma)
-{
-    const int p0 = q[-step], p1 = q[-2 * step], q0 = q[0], q1 = q[step];
-    if (!(std::abs(p0 - q0) < alpha && std::abs(p1 - p0) < beta && std::abs(q1 - q0) < beta))
-        return;
-    if (chroma) {
-        if (bS < 4) {
-            const int tc = kTc0[indexA][bS - 1] + 1;
-            const int delta = std::clamp((((q0 - p0) << 2) + (p1 - q1) + 4) >> 3, -tc, tc);
-            q[-step] = clip1(p0 + delta);
-            q[0] = clip1(q0 - delta);
-        } else {
-            q[-step] = uint8_t((2 * p1 + p0 + q1 + 2) >> 2);
-            q[0] = uint8_t((2 * q1 + q0 + p1 + 2) >> 2);
-        }
-        return;
-    }
-    const int p2 = q[-3 * step], q2 = q[2 * step];
-    const int ap = std::abs(p2 - p0), aq = std::abs(q2 - q0);
-    if (bS < 4) {
-        const int tc0 = kTc0[indexA][bS - 1];
-        const int tc = tc0 + (ap < beta) + (aq < beta);
-        const int delta = std::clamp((((q0 - p0) << 2) + (p1 - q1) + 4) >> 3, -tc, tc);
-        q[-step] = clip1(p0 + delta);
-        q[0] = clip1(q0 - delta);
-        if (ap < beta)
-            q[-2 * step] = uint8_t(p1 + std::clamp((p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1, -tc0, tc0));
-        if (aq < beta)
-            q[step] = uint8_t(q1 + std::clamp((q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1, -tc0, tc0));
-    } else {
-        const int p3 = q[-4 * step], q3 = q[3 * step];
-        const bool strong = std::abs(p0 - q0) < ((alpha >> 2) + 2);
-        if (ap < beta && strong) {
-            q[-step] = uint8_t((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3);
-            q[-2 * step] = uint8_t((p2 + p1 + p0 + q0 + 2) >> 2);
-            q[-3 * step] = uint8_t((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3);
-        } else {
-            q[-step] = uint8_t((2 * p1 + p0 + q1 + 2) >> 2);
-        }
-        if (aq < beta && strong) {
-            q[0] = uint8_t((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3);
-            q[step] = uint8_t((p0 + q0 + q1 + q2 + 2) >> 2);
-            q[2 * step] = uint8_t((2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3);
-        } else {
-            q[0] = uint8_t((2 * q1 + q0 + p1 + 2) >> 2);
-        }
-    }
-}
-
 } // namespace
 
 // Boundary strength between two 4x4 luma blocks (8.7.2.1), positions in 4x4 units.
@@ -5563,46 +5514,49 @@ void FrameCoder::deblockMb(int mbx, int mby)
                     bsH[e][s] = hy == 0 ? 0 : boundaryStrength(hx, hy - 1, hx, hy, e == 0);
                 }
             // Luma: vertical edges left to right, then horizontal edges top to bottom
-            // (with the 8x8 transform only edges 0 and 2).
+            // (with the 8x8 transform only edges 0 and 2). Every line of an edge is independent of the
+            // others, so a kernel filters a whole edge at once; the edges keep their order.
             const bool t8 = cabWave_.t8[size_t(mby) * mbW_ + mbx] != 0;
-            for (int e = 0; e < 4; ++e)
-                for (int s = 0; s < 4; ++s) {
-                    if (!bsV[e][s] || (t8 && (e & 1)))
-                        continue;
-                    for (int k = 0; k < 4; ++k) {
-                        uint8_t* q = &recY_[size_t(mby * 16 + s * 4 + k) * padW_ + mbx * 16 + e * 4];
-                        const EdgeQp& eq = e == 0 ? leftEdge : inner;
-                        filterLine(q, 1, bsV[e][s], eq.alphaY, eq.betaY, eq.indexY, false);
-                    }
-                }
-            for (int e = 0; e < 4; ++e)
-                for (int s = 0; s < 4; ++s) {
-                    if (!bsH[e][s] || (t8 && (e & 1)))
-                        continue;
-                    for (int k = 0; k < 4; ++k) {
-                        uint8_t* q = &recY_[size_t(mby * 16 + e * 4) * padW_ + mbx * 16 + s * 4 + k];
-                        const EdgeQp& eq = e == 0 ? topEdge : inner;
-                        filterLine(q, padW_, bsH[e][s], eq.alphaY, eq.betaY, eq.indexY, false);
-                    }
-                }
-            // Chroma: edges 0 and 4 use the strength of luma edges 0 and 2.
-            for (std::vector<uint8_t>* plane : {&recU_, &recV_}) {
-                for (int ce = 0; ce < 2; ++ce)
-                    for (int k = 0; k < 8; ++k) {
-                        const int bS = bsV[ce * 2][k >> 1];
-                        const EdgeQp& eq = ce == 0 ? leftEdge : inner;
-                        if (bS)
-                            filterLine(&(*plane)[size_t(mby * 8 + k) * cw + mbx * 8 + ce * 4], 1, bS, eq.alphaC, eq.betaC,
-                                       eq.indexC, true);
-                    }
-                for (int ce = 0; ce < 2; ++ce)
-                    for (int k = 0; k < 8; ++k) {
-                        const int bS = bsH[ce * 2][k >> 1];
-                        const EdgeQp& eq = ce == 0 ? topEdge : inner;
-                        if (bS)
-                            filterLine(&(*plane)[size_t(mby * 8 + ce * 4) * cw + mbx * 8 + k], cw, bS, eq.alphaC, eq.betaC,
-                                       eq.indexC, true);
-                    }
+            // bS per segment -> kernel edge; false = nothing to filter. An intra side on a macroblock
+            // edge gives bS 4 to every segment (macroblocks are intra or inter as a whole).
+            auto makeEdge = [](const int* bs, int index, int alpha, int beta, DeblockEdge& out) {
+                if (!(bs[0] | bs[1] | bs[2] | bs[3]) || alpha == 0 || beta == 0)
+                    return false;
+                out.alpha = alpha;
+                out.beta = beta;
+                out.bs4 = bs[0] == 4;
+                for (int s = 0; s < 4; ++s)
+                    out.tc0[s] = bs[s] == 0 ? int8_t(-1) : bs[s] == 4 ? int8_t(0) : int8_t(kTc0[index][bs[s] - 1]);
+                return true;
+            };
+            DeblockEdge ed;
+            uint8_t* const y0 = &recY_[size_t(mby * 16) * padW_ + mbx * 16];
+            for (int e = 0; e < 4; ++e) {
+                if (t8 && (e & 1))
+                    continue;
+                const EdgeQp& eq = e == 0 ? leftEdge : inner;
+                if (makeEdge(bsV[e], eq.indexY, eq.alphaY, eq.betaY, ed))
+                    deblockLumaEdgeV(y0 + e * 4, padW_, ed);
+            }
+            for (int e = 0; e < 4; ++e) {
+                if (t8 && (e & 1))
+                    continue;
+                const EdgeQp& eq = e == 0 ? topEdge : inner;
+                if (makeEdge(bsH[e], eq.indexY, eq.alphaY, eq.betaY, ed))
+                    deblockLumaEdgeH(y0 + size_t(e * 4) * padW_, padW_, ed);
+            }
+            // Chroma: edges 0 and 4 use the strength of luma edges 0 and 2; Cb and Cr share the QP.
+            uint8_t* const u0 = &recU_[size_t(mby * 8) * cw + mbx * 8];
+            uint8_t* const v0 = &recV_[size_t(mby * 8) * cw + mbx * 8];
+            for (int ce = 0; ce < 2; ++ce) {
+                const EdgeQp& eq = ce == 0 ? leftEdge : inner;
+                if (makeEdge(bsV[ce * 2], eq.indexC, eq.alphaC, eq.betaC, ed))
+                    deblockChromaEdgeV(u0 + ce * 4, v0 + ce * 4, cw, ed);
+            }
+            for (int ce = 0; ce < 2; ++ce) {
+                const EdgeQp& eq = ce == 0 ? topEdge : inner;
+                if (makeEdge(bsH[ce * 2], eq.indexC, eq.alphaC, eq.betaC, ed))
+                    deblockChromaEdgeH(u0 + size_t(ce * 4) * cw, v0 + size_t(ce * 4) * cw, cw, ed);
             }
         }
     }
