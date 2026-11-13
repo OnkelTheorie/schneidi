@@ -11,9 +11,13 @@
 #include "core/Editor.h"
 #include "engine/Engine.h"
 #include "ui/DrawOverlay.h"
+#include "ui/Inspector.h"
 
+#include <QAbstractSpinBox>
 #include <QAction>
 #include <QApplication>
+#include <QLineEdit>
+#include <QCursor>
 #include <QScreen>
 #include <QSettings>
 #include <QTest>
@@ -43,6 +47,11 @@ void testRule()
 
 void testWindow(Engine& engine)
 {
+    // The start screen is the one under the mouse cursor (else the primary one): never none while there is a screen
+    QScreen* start = MainWindow::startScreen();
+    CHECK(start);
+    if (start && QGuiApplication::screenAt(QCursor::pos())) CHECK(start == QGuiApplication::screenAt(QCursor::pos()));
+
     MainWindow w(&engine);
     w.disableAutosave();
     w.placeOnScreen();
@@ -121,6 +130,25 @@ void testPaintBar(Engine& engine)
         std::printf("window not active: Esc not checked\n");
         return;
     }
+    // In a text/number field (the Inspector's) Esc is the field's: the edit is left, painting goes on
+    QLineEdit* field = nullptr;
+    auto* inspector = w.findChild<Inspector*>();
+    if (inspector)
+        for (QLineEdit* e : inspector->findChildren<QLineEdit*>())
+            if (e->isVisible() && e->isEnabled() && e->focusPolicy() != Qt::NoFocus) field = e;
+    if (CHECK(field)) {
+        field->setFocus();
+        QApplication::processEvents();
+        if (field->hasFocus()) {
+            QTest::keyClick(field, Qt::Key_Escape);
+            QApplication::processEvents();
+            CHECK(!field->hasFocus());
+            CHECK(bar->isVisible() && paint->isChecked());
+        } else std::printf("field did not take the focus: Esc in a field not checked\n");
+    }
+    // Elsewhere Esc ends painting
+    if (QWidget* f = QApplication::focusWidget(); f && (qobject_cast<QLineEdit*>(f) || qobject_cast<QAbstractSpinBox*>(f)))
+        f->clearFocus();
     QTest::keyClick(QApplication::focusWidget() ? QApplication::focusWidget() : static_cast<QWidget*>(&w), Qt::Key_Escape);
     QApplication::processEvents();
     CHECK(!bar->isVisible() && !paint->isChecked());

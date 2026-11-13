@@ -70,6 +70,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QCursor>
 #include <QScreen>
 #include <QActionGroup>
 #include <QApplication>
@@ -129,10 +130,19 @@ QRect MainWindow::fitToScreen(const QRect& wanted, const QRect& available, const
     return r;
 }
 
+QScreen* MainWindow::startScreen()
+{
+    if (QScreen* s = QGuiApplication::screenAt(QCursor::pos())) return s;
+    return QGuiApplication::primaryScreen();
+}
+
 void MainWindow::placeOnScreen(const QRect& wanted)
 {
-    const QScreen* s = screen() ? screen() : QGuiApplication::primaryScreen();
+    // Before the first show the window has no screen of its own yet (Qt gives it the primary one): it starts where
+    // the user is looking, the screen under the mouse cursor (two monitors: not always on the primary one)
+    QScreen* s = isVisible() && screen() ? screen() : startScreen();
     if (!s) return;
+    if (!isVisible() && screen() != s) setScreen(s);
     if (layout()) layout()->activate(); // the minimum of the pages as they are now
     const QRect available = s->availableGeometry();
     QRect r = fitToScreen(wanted, available);

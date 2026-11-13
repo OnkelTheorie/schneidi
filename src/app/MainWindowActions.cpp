@@ -60,7 +60,12 @@
 #include <QActionGroup>
 #include <climits>
 #include <tuple>
+#include <QAbstractSpinBox>
 #include <QApplication>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QMouseEvent>
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -277,7 +282,12 @@ void MainWindow::buildActions()
         setDrawTool(m_drawAction->isChecked());
     });
     m_drawAction->setCheckable(true);
-    m_drawEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { setDrawTool(false); });
+    // Esc while typing in a field (the Inspector's numbers, a title's text) is the field's: it cancels/leaves the edit
+    // and painting goes on; only Esc elsewhere ends painting. The window shortcut takes the key before the field sees it
+    m_drawEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] {
+        if (escapeToFocusedField()) return;
+        setDrawTool(false);
+    });
     m_drawEscape->setEnabled(false); // only while painting (updateEscapeKeys)
     makeAction(toolsMenu, "snapping", T("Einrasten an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
@@ -1036,4 +1046,23 @@ void MainWindow::editBrandKit()
     // The project's own kit (changed: set + applied as one step) or the global one applied
     if (dlg.project() != m_project->brand()) m_editor->setProjectBrand(dlg.project());
     else m_editor->applyBrand();
+}
+
+bool MainWindow::escapeToFocusedField()
+{
+    QWidget* f = QApplication::focusWidget();
+    if (!f || f->window() != this) return false;
+    auto* combo = qobject_cast<QComboBox*>(f);
+    const bool field = qobject_cast<QLineEdit*>(f) || qobject_cast<QAbstractSpinBox*>(f) || qobject_cast<QTextEdit*>(f)
+                       || qobject_cast<QPlainTextEdit*>(f) || (combo && combo->isEditable());
+    if (!field) return false;
+    // The field's own Esc first (ScrubField: back to the value before typing), then the focus leaves it. Sending a
+    // key press runs the shortcut map again: the painting Esc is off meanwhile, or it would come back here
+    const bool drawEscape = m_drawEscape && m_drawEscape->isEnabled();
+    if (drawEscape) m_drawEscape->setEnabled(false);
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(f, &press);
+    if (drawEscape) m_drawEscape->setEnabled(true);
+    if (f->hasFocus()) f->clearFocus();
+    return true;
 }

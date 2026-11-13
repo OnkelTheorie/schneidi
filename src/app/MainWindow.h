@@ -148,6 +148,8 @@ public:
     // (`frame`: title bar and borders the window system adds, estimated) lie inside `available`; invalid, larger than
     // the screen or off it = 90 % of the room, centred
     void placeOnScreen(const QRect& wanted = {});
+    // The screen a new window starts on: the one under the mouse cursor, else the primary screen (null = none)
+    static class QScreen* startScreen();
     static QRect fitToScreen(const QRect& wanted, const QRect& available, const QMargins& frame = kFrameEstimate);
     static constexpr QMargins kFrameEstimate{4, 32, 4, 4};
     // Set project settings (one undo step); test helper --format
@@ -538,6 +540,8 @@ private:
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
     class QShortcut* m_drawEscape = nullptr;  // Esc ends painting (only enabled while it is on)
     void updateEscapeKeys(); // which Esc shortcut is on: recording, then painting, then the large viewer
+    // Esc with the focus in a text/number field: handed to the field and the focus taken out of it (true); false = not in one
+    bool escapeToFocusedField();
     QAction* m_fullScreenAction = nullptr;
     QAction* m_appFullScreenAction = nullptr;
     bool m_maximizedBeforeFullScreen = true; // the window state setAppFullScreen(false) brings back
