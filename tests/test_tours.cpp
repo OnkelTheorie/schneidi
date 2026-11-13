@@ -24,6 +24,7 @@
 #include "cli/Live.h"
 #include "app/Theme.h"
 #include "app/TourManager.h"
+#include "core/AppPaths.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -501,7 +502,7 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     if (!CHECK(r->running())) return;
     DialogWatch dialogs;
     // The practice project: the sample clips, never the user's own
-    const QString sample = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
+    const QString sample = AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
     CHECK_EQ(w.liveProject()->media().size(), qsizetype(3));
     for (const MediaInfo& m : w.liveProject()->media()) CHECK(m.path.startsWith(sample));
     CHECK_EQ(clipCount(w.liveProject()) == 0, t.practice == "pool");
@@ -1240,7 +1241,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     CHECK_EQ(clipCount(w.liveProject()), 1);
     if (!user) {
         // The empty graph's button starts the Compositing tour (in the user's project: a video clip without a graph)
-        w.importFiles({QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample/clip1.mp4"}, true, true);
+        w.importFiles({AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample/clip1.mp4"}, true, true);
         int video = 0;
         for (const Track& tr : w.liveProject()->timeline().video)
             for (const Clip& c : tr.clips)

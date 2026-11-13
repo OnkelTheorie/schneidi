@@ -2,6 +2,8 @@
 #include "cli/Setup.h"
 
 #include "cli/Guide.h"
+#include "core/AppPaths.h"
+#include "core/SettingsIsolation.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -35,11 +37,14 @@ QString claudeCodeDir()
 QString claudeDesktopDir()
 {
 #if defined(Q_OS_WIN)
+    // A test run never looks at (or changes) the real Claude Desktop: its config folder, like on Linux
+    if (!qEnvironmentVariableIsEmpty(SettingsIsolation::kVariable))
+        return QDir(AppPaths::writable(QStandardPaths::GenericConfigLocation)).filePath("Claude");
     return QDir(qEnvironmentVariable("APPDATA")).filePath("Claude");
 #elif defined(Q_OS_MACOS)
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("Claude");
+    return QDir(AppPaths::writable(QStandardPaths::GenericDataLocation)).filePath("Claude");
 #else
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)).filePath("Claude");
+    return QDir(AppPaths::writable(QStandardPaths::GenericConfigLocation)).filePath("Claude");
 #endif
 }
 

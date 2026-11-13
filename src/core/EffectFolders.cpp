@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/EffectFolders.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 
 #include <QDir>
@@ -114,7 +115,7 @@ QString findIn(const QString& dir, const QString& fileName)
 
 } // namespace
 
-QString root() { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("effects"); }
+QString root() { return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("effects"); }
 
 QString lutDir() { return QDir(root()).filePath("LUTs"); }
 

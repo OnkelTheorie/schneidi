@@ -2,6 +2,7 @@
 // The 0.17 talk ops (jl_cut, room_tone) and story ops (section, sections, note, hook_variants) live in the app: each `edit` call is one undo step, undo gives back exactly the
 // project before, redo the change, and the result matches the same ops run on the project file.
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -179,7 +180,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8());
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     const QString take = tmp.path() + "/take.wav";
     if (!CHECK(writeTake(take))) return Check::result();

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RenderCache.h"
+#include "core/AppPaths.h"
 #include "engine/picture/Renderer.h"
 
 #include "core/CodeTrust.h"
@@ -99,7 +100,7 @@ RenderCache::~RenderCache()
 
 QString RenderCache::cacheDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/rendercache";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/rendercache";
 }
 
 void RenderCache::setMode(Mode mode)

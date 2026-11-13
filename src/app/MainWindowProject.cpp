@@ -13,6 +13,7 @@
 #include "app/NormalizeDialog.h"
 #include "app/OpenTrace.h"
 #include "app/PasteAttributesDialog.h"
+#include "core/AppPaths.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "app/StartTemplatesPage.h"
@@ -90,7 +91,7 @@ namespace {
 // A function, not a global: a global would be built before the dictionary is loaded (always German)
 QString fileFilter() { return T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension); }
 
-QDir autosaveDir() { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)); }
+QDir autosaveDir() { return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)); }
 QString autosaveLockPath(int slot) { return autosaveDir().filePath(QString("autosave-%1.lock").arg(slot)); }
 QString autosaveFile(int slot)
 {

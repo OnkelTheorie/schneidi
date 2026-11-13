@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TemplateLibrary.h"
 
+#include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/PathKey.h"
@@ -39,7 +40,7 @@ QString& builtInOverride()
 // Built-in templates are copied here before use (the engine cannot read media out of the resources)
 QString builtInCache()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("templates-builtin");
+    return QDir(AppPaths::writable(QStandardPaths::CacheLocation)).filePath("templates-builtin");
 }
 
 // Whether the copy `dst` still is `src`: same size and the modification time of `src` it was stamped with on copying

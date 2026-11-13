@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/InputBindings.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 
 #include <QAction>
@@ -385,7 +386,7 @@ InputBindings::InputBindings()
 
 QString InputBindings::filePath() const
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    const QString dir = AppPaths::writable(QStandardPaths::AppConfigLocation);
     return QDir(dir).filePath("keybindings.json");
 }
 
@@ -699,7 +700,7 @@ bool InputBindings::importSet(const QString& path, QString* error)
 
 QString InputBindings::customPresetDir()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("keypresets");
+    return QDir(AppPaths::writable(QStandardPaths::AppConfigLocation)).filePath("keypresets");
 }
 
 QStringList InputBindings::presetIds()

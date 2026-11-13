@@ -5,6 +5,7 @@
 // analyses before it sends the edit to the app (prepareMusic), so the app does not decode.
 #include "cli/CommandsDetail.h"
 
+#include "core/AppPaths.h"
 #include "core/Beats.h"
 #include "core/I18n.h"
 #include "core/MusicFit.h"
@@ -98,7 +99,7 @@ namespace {
 
 QString cacheFile(const QString& key)
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/beats/" + key + ".json";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/beats/" + key + ".json";
 }
 
 } // namespace

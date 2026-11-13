@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/RenderJob.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/ProjectFormat.h"
 
@@ -386,7 +387,7 @@ QVector<RenderPreset> builtins()
 
 QString userFile()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("render-presets.json");
+    return QDir(AppPaths::writable(QStandardPaths::AppConfigLocation)).filePath("render-presets.json");
 }
 
 QVector<RenderPreset> loadUser()

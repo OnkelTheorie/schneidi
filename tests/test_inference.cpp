@@ -7,6 +7,7 @@
 //   applause where the noise is, at YAMNet's 0.48 s grid; nothing else
 // - analyzeFile with SCHNEIDI_YAMNET pointing at the stand-in: by "yamnet", silence and the shot's exact time from
 //   the heuristics, the cache keyed by the model; Engine::Heuristic ignores the model
+#include "core/AppPaths.h"
 #include "engine/AudioEvents.h"
 #include "engine/Inference.h"
 
@@ -227,7 +228,7 @@ int main(int argc, char** argv)
     CHECK(Inference::probe(Inference::libraryPath(), &error, &version));
     CHECK(!version.isEmpty());
     std::printf("ONNX Runtime %s (%s)\n", qPrintable(Inference::version()), qPrintable(Inference::libraryPath()));
-    QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/audio-events").removeRecursively();
+    QDir(AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events").removeRecursively();
     QTemporaryDir tmp;
     testSession();
     testYamnetStandIn(QDir(tmp.path()));

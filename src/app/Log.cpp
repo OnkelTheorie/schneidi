@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/Log.h"
+#include "core/AppPaths.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -87,7 +88,7 @@ void writeEnd()
 
 QString directory()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("logs");
+    return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("logs");
 }
 
 void install()

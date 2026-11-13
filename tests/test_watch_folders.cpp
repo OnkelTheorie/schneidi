@@ -10,6 +10,7 @@
 #include "app/WatchFoldersDialog.h"
 #include "cli/Commands.h"
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -797,7 +798,7 @@ int main(int argc, char** argv)
     qputenv("XDG_CONFIG_HOME", (tmp.path() + "/config").toUtf8());
     Check::initEnv();
     QApplication app(argc, argv);
-    QApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
     Check::initEngine();
     const QString root = QDir(tmp.path()).filePath("w");
     QDir().mkpath(root);

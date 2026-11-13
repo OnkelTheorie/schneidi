@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/StartTemplates.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/RenderJob.h"
@@ -121,7 +122,7 @@ QVector<StartTemplate> builtIn()
     return list;
 }
 
-QString dir() { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("templates"); }
+QString dir() { return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("templates"); }
 
 QVector<StartTemplate> own()
 {

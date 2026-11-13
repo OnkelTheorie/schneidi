@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompCutout.h"
 
+#include "core/AppPaths.h"
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -287,7 +288,7 @@ void refineMatte(const uint8_t* low, int lw, int lh, const uint8_t* rgba, int w,
 
 // ---------- Cache file ----------
 
-QString cutoutCacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/cutout"; }
+QString cutoutCacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/cutout"; }
 
 QString cutoutCachePath(const QString& id) { return QDir(cutoutCacheDir()).filePath(id + ".matte"); }
 

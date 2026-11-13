@@ -65,11 +65,20 @@ void settle(const QString& file)
     FileStamp::now(file);
 }
 
-// Copies `from` over `to` and sets `to`'s modification time `step` seconds after a fixed point (always another one)
+// Copies `from` over `to` and sets `to`'s modification time `step` seconds after a fixed point (always another one).
+// A new file where the system allows it; Windows refuses to delete a file a reader has open (FFmpeg opens without
+// FILE_SHARE_DELETE), so there it is written over in place, as a program rendering to the same name does
 bool overwrite(const QString& from, const QString& to, int step)
 {
-    QFile::remove(to);
-    if (!QFile::copy(from, to)) return false;
+    if (!QFile::remove(to) && QFileInfo::exists(to)) {
+        QFile source(from), target(to);
+        if (!source.open(QIODevice::ReadOnly) || !target.open(QIODevice::ReadWrite | QIODevice::Truncate)) return false;
+        const QByteArray bytes = source.readAll();
+        if (target.write(bytes) != bytes.size()) return false;
+        target.close();
+    } else if (!QFile::copy(from, to)) {
+        return false;
+    }
     QFile f(to);
     if (!f.open(QIODevice::ReadWrite)) return false;
     return f.setFileTime(QDateTime::fromSecsSinceEpoch(1700000000 + step * 100), QFileDevice::FileModificationTime);
@@ -358,13 +367,14 @@ void testLostAndBack(const QString& file, const QString& red)
     o.sourceLost = [&lost](const QString& path) { lost << path; };
     Picture::Renderer renderer(Picture::mediaTimeline(file), o);
     CHECK_COLOR(renderer.render(0).toImage(), Color::Red);
-    const QString away = file + ".away";
-    if (!CHECK(QFile::rename(file, away))) return;
-    // Its decoder closed meanwhile (here: the clip left the timeline a while, then came back by undo; a USB disk pulled
-    // while it is open fails its reads - Video::Reader::failed - and counts the same)
+    // Its decoder closed (here: the clip left the timeline a while, then came back by undo; a USB disk pulled while it
+    // is open fails its reads - Video::Reader::failed - and counts the same), and the file gone meanwhile (moved
+    // after the close: Windows cannot rename a file a reader has open)
     renderer.update(Timeline{});
     renderer.trim(std::chrono::steady_clock::now() + std::chrono::minutes(5));
     CHECK_EQ(renderer.stats().sourcesOpen, 0);
+    const QString away = file + ".away";
+    if (!CHECK(QFile::rename(file, away))) return;
     renderer.update(Picture::mediaTimeline(file));
     CHECK(colorOf(renderer.render(0).toImage()) != Color::Red); // gone: nothing to show
     CHECK_EQ(lost, QStringList{file});

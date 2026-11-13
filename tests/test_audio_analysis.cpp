@@ -13,6 +13,7 @@
 
 #include "check.h"
 
+#include "core/AppPaths.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
@@ -303,7 +304,7 @@ void checkSync(const QString& noise, const QString& noiseLate, const QString& pa
 // Waveform of a file from a fresh cache (the disk cache of the test paths is cleared first)
 std::shared_ptr<const Waveform> waveform(const QString& path, qint64* ms)
 {
-    QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks").removeRecursively();
+    QDir(AppPaths::writable(QStandardPaths::CacheLocation) + "/peaks").removeRecursively();
     MediaCache cache;
     cache.setFormat(kFmt);
     QElapsedTimer t;

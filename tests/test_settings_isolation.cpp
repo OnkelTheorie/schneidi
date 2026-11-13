@@ -6,11 +6,13 @@
 
 #include "check.h"
 
+#include "core/AppPaths.h"
 #include "core/SettingsIsolation.h"
 #include "core/StartTemplates.h"
 #include "core/StreamPresets.h"
 
 #include <QDateTime>
+#include <QDirIterator>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -54,22 +56,22 @@ int main(int argc, char* argv[])
     Check::initEnv();
     QGuiApplication app(argc, argv);
     // The real program's names: without the isolation this would be the user's own settings
-    QGuiApplication::setApplicationName("schneidi");
-#ifdef Q_OS_WIN
-    QGuiApplication::setOrganizationName("schneidi");
-#endif
+    AppPaths::setProgramNames();
     if (Check::cliPath().isEmpty()) return Check::skip("schneidi-cli unknown");
 
     const QString own = qEnvironmentVariable(SettingsIsolation::kVariable);
     if (!CHECK(!own.isEmpty())) return Check::result();
     CHECK_EQ(QSettings().format(), QSettings::IniFormat);
     CHECK_EQ(inside(QSettings().fileName(), own), QString("yes"));
-#if !defined(Q_OS_WIN) && !defined(Q_OS_DARWIN)
-    CHECK_EQ(inside(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), own), QString("yes"));
-    CHECK_EQ(inside(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation), own), QString("yes"));
-    CHECK_EQ(inside(QStandardPaths::writableLocation(QStandardPaths::CacheLocation), own), QString("yes"));
-#else
-    CHECK(QStandardPaths::isTestModeEnabled()); // XDG does nothing there: Qt's test folders, never the real AppData
+    // Data, config, cache in the own folder on every platform (core/AppPaths.h: on Windows/macOS through the XDG
+    // variables as well)
+    for (auto type : {QStandardPaths::AppDataLocation, QStandardPaths::AppLocalDataLocation,
+                      QStandardPaths::AppConfigLocation, QStandardPaths::CacheLocation,
+                      QStandardPaths::GenericDataLocation, QStandardPaths::GenericConfigLocation,
+                      QStandardPaths::GenericCacheLocation})
+        CHECK_EQ(inside(AppPaths::writable(type), own), QString("yes"));
+#if defined(Q_OS_WIN) || defined(Q_OS_DARWIN)
+    CHECK(QStandardPaths::isTestModeEnabled()); // what still asks Qt directly: Qt's test folders, never the real AppData
 #endif
 #ifdef Q_OS_LINUX
     // The user's real settings file (src/main.cpp: no organization on Linux): only its metadata, never its content
@@ -106,6 +108,29 @@ int main(int argc, char* argv[])
         const QJsonObject info = newProject(tmp.filePath("fresh.schneidi"), fresh);
         CHECK(!info.isEmpty());
         CHECK(!info.contains("import_presets"));
+    }
+    // The data a spawned schneidi-cli writes (backups of an edit) lands in the folder the test gives it, on every
+    // platform: through the XDG variable (a test pointing a child elsewhere) or else below SCHNEIDI_TEST_SETTINGS
+    {
+        auto backupsBelow = [](const QString& folder) {
+            QDirIterator it(folder, {"backups"}, QDir::Dirs, QDirIterator::Subdirectories);
+            return it.hasNext();
+        };
+        auto editIn = [&](const QProcessEnvironment& e, const QString& name) {
+            const QString project = tmp.filePath(name);
+            cli({"new", project}, e);
+            return cli({"edit", project, "--ops", R"([{"op":"add_track","kind":"audio"}])"}, e);
+        };
+        QProcessEnvironment child = env;
+        child.insert(SettingsIsolation::kVariable, QDir::toNativeSeparators(tmp.filePath("child")));
+        child.remove("XDG_DATA_HOME");
+        child.remove("XDG_CONFIG_HOME");
+        child.remove("XDG_CACHE_HOME");
+        CHECK(editIn(child, "child.schneidi")["ok"].toBool());
+        CHECK(backupsBelow(tmp.filePath("child/data")));
+        child.insert("XDG_DATA_HOME", QDir::toNativeSeparators(tmp.filePath("elsewhere")));
+        CHECK(editIn(child, "elsewhere.schneidi")["ok"].toBool());
+        CHECK(backupsBelow(tmp.filePath("elsewhere")));
     }
 
 #ifdef Q_OS_LINUX

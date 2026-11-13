@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/TextRegions.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/MediaAspect.h"
 #include "engine/BarDetect.h"
@@ -256,7 +257,7 @@ int sampleStep(const FrameRate& rate)
     return std::max(1, int(std::lround(fps / kSamplesPerSecond)));
 }
 
-QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/textregions"; }
+QString cacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/textregions"; }
 
 Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<bool>* cancel, std::atomic<int>* progress)
 {
