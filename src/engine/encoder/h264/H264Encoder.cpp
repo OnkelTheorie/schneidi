@@ -426,7 +426,7 @@ Encoder::Encoder(const EncoderConfig& config)
         cfg_.deblock = false;
     // B pictures need CABAC and P pictures; their run and its reference picture must fit the queue.
     cfg_.bframes = useB() ? std::min(cfg_.bframes, 8) : 0;
-    // (the newest picture is analysed against up to bframes + 1 before it while older ones leave the queue)
+    // (and the pictures of the run coded now be settled: the probe's answer, a keyframe behind them)
     if (useB())
         cfg_.lookahead = std::max(cfg_.lookahead, 2 * cfg_.bframes + 4);
     for (auto& c : coders_)
@@ -606,7 +606,7 @@ void FrameCoder::loadSource(const Picture& pic)
 
 // B probe (see BProbe): B pictures are placed where they need at least this much fewer bits
 // (H264_BPROBE_GAIN; measured: slow zoom -0.4 .. -0.7, game, camera and noise +0.02 .. +0.4).
-// H264_BPROBE=0: no probe, the lookahead costs alone decide (for measurements).
+// H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
 static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
 static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
 
@@ -647,8 +647,6 @@ bool BProbe::startsAt(const LookaheadFrame& f, int index) const
 {
     return lastStart_ < 0 || index - lastStart_ >= kInterval || ((f.sceneChange || f.forceKeyframe) && index > lastStart_);
 }
-
-bool BProbe::collects(const LookaheadFrame& f, int index) const { return kBProbe && (start_ >= 0 || startsAt(f, index)); }
 
 bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads)
 {

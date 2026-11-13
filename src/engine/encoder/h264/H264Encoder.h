@@ -139,8 +139,6 @@ public:
     // The next picture in display order (prepared by the lookahead). True when a measurement was
     // finished with it: allowed() then holds from picture resultStart() on.
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
-    // Whether add() will keep this picture for a measurement (one being collected or starting with it).
-    bool collects(const LookaheadFrame& f, int index) const;
     bool allowed() const { return allowed_; }
     int resultStart() const { return resultStart_; }
     double lastGain() const { return gain_; }
