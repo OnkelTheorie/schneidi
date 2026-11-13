@@ -427,15 +427,81 @@ inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB
 }
 
 // AC energy of an 8x8 block of samples at two scales, in SATD units: e4 = the 4x4 Hadamard sums of
-// its four quarters, e8 = its 8x8 Hadamard sum, each without the DC coefficients (which are the
-// plain sample sums). What the psycho-visual mode decision compares between source and
-// reconstruction: texture and grain have it, a smoothed block has lost it.
+// its four quarters (each (sum + 1) >> 1, like satd4x4), e8 = its 8x8 Hadamard sum ((sum + 2) >> 2,
+// like sa8dU8), each without the DC coefficients (which are the plain sample sums). What the
+// psycho-visual mode decision compares between source and reconstruction: texture and grain have
+// it, a smoothed block has lost it. One pass: the 8x8 transform is a 2x2 Hadamard across the four
+// quarters' 4x4 coefficients.
 inline void acEnergy8x8U8(const uint8_t* p, int stride, int& e4, int& e8)
 {
-    static constexpr uint8_t kZero[64] = {};
-    const int sum = sadBlock(p, stride, kZero, 8, 8, 8);
-    e4 = satd8x8U8Fast(p, stride, kZero, 8) - (sum >> 1);
-    e8 = sa8dU8(p, stride, kZero, 8) - (sum >> 2);
+#if defined(__SSE2__) || defined(_M_X64)
+    const __m128i zero = _mm_setzero_si128();
+    auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
+    auto hsum = [](__m128i v16) { // 8 x int16 (non-negative) -> their sum
+        const __m128i s = _mm_madd_epi16(v16, _mm_set1_epi16(1));
+        const __m128i s2 = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+        return _mm_cvtsi128_si32(_mm_add_epi32(s2, _mm_shuffle_epi32(s2, _MM_SHUFFLE(2, 3, 0, 1))));
+    };
+    __m128i c[4][2]; // per quarter (left/right of the upper, then of the lower half) its 16 coefficients
+    int sum4 = 0, dc = 0;
+    for (int half = 0; half < 2; ++half) {
+        const uint8_t* q = p + half * 4 * stride;
+        auto row = [&](int i) { return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(q + i * stride)), zero); };
+        const __m128i r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+        const __m128i s01 = _mm_add_epi16(r0, r1), d01 = _mm_sub_epi16(r0, r1);
+        const __m128i s23 = _mm_add_epi16(r2, r3), d23 = _mm_sub_epi16(r2, r3);
+        const __m128i t0 = _mm_add_epi16(s01, s23), t1 = _mm_sub_epi16(s01, s23);
+        const __m128i t2 = _mm_sub_epi16(d01, d23), t3 = _mm_add_epi16(d01, d23);
+        for (int side = 0; side < 2; ++side) {
+            const __m128i u0 = side ? _mm_unpackhi_epi16(t0, t1) : _mm_unpacklo_epi16(t0, t1);
+            const __m128i u1 = side ? _mm_unpackhi_epi16(t2, t3) : _mm_unpacklo_epi16(t2, t3);
+            const __m128i v0 = _mm_unpacklo_epi32(u0, u1), v1 = _mm_unpackhi_epi32(u0, u1);
+            const __m128i c1 = _mm_unpackhi_epi64(v0, v0), c3 = _mm_unpackhi_epi64(v1, v1);
+            const __m128i ha = _mm_add_epi16(v0, c1), hb = _mm_sub_epi16(v0, c1);
+            const __m128i hc = _mm_add_epi16(v1, c3), hd = _mm_sub_epi16(v1, c3);
+            const __m128i o01 = _mm_unpacklo_epi64(_mm_add_epi16(ha, hc), _mm_sub_epi16(ha, hc));
+            const __m128i o23 = _mm_unpacklo_epi64(_mm_sub_epi16(hb, hd), _mm_add_epi16(hb, hd));
+            c[half * 2 + side][0] = o01;
+            c[half * 2 + side][1] = o23;
+            sum4 += (hsum(_mm_add_epi16(absv(o01), absv(o23))) + 1) >> 1;
+            dc += _mm_cvtsi128_si32(o01) & 0xFFFF; // lane 0: the quarter's sample sum (at most 16 * 255)
+        }
+    }
+    int sum8 = 0;
+    for (int k = 0; k < 2; ++k) {
+        const __m128i a = _mm_add_epi16(c[0][k], c[1][k]), b = _mm_sub_epi16(c[0][k], c[1][k]);
+        const __m128i d = _mm_add_epi16(c[2][k], c[3][k]), e = _mm_sub_epi16(c[2][k], c[3][k]);
+        // Each |coefficient| is at most 64 * 255, a pair of them fits the 32-bit lanes of the sum.
+        const __m128i one = _mm_set1_epi16(1);
+        __m128i acc = _mm_madd_epi16(absv(_mm_add_epi16(a, d)), one);
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(absv(_mm_sub_epi16(a, d)), one));
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(absv(_mm_add_epi16(b, e)), one));
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(absv(_mm_sub_epi16(b, e)), one));
+        acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
+        sum8 += _mm_cvtsi128_si32(_mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1))));
+    }
+#else
+    int c[4][16];
+    int sum4 = 0, dc = 0;
+    for (int q = 0; q < 4; ++q) {
+        int in[16];
+        for (int i = 0; i < 16; ++i)
+            in[i] = p[((q >> 1) * 4 + (i >> 2)) * stride + (q & 1) * 4 + (i & 3)];
+        hadamard4x4(in, c[q]);
+        int s = 0;
+        for (int v : c[q])
+            s += std::abs(v);
+        sum4 += (s + 1) >> 1;
+        dc += c[q][0];
+    }
+    int sum8 = 0;
+    for (int i = 0; i < 16; ++i) {
+        const int a = c[0][i] + c[1][i], b = c[0][i] - c[1][i], d = c[2][i] + c[3][i], e = c[2][i] - c[3][i];
+        sum8 += std::abs(a + d) + std::abs(a - d) + std::abs(b + e) + std::abs(b - e);
+    }
+#endif
+    e4 = sum4 - (dc >> 1);
+    e8 = ((sum8 + 2) >> 2) - (dc >> 2);
 }
 
 } // namespace schneidi::h264
