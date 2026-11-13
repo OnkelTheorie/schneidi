@@ -70,6 +70,10 @@ std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of t
 double gStatEstT8[8][3] = {}, gStatEstSplit[8][3] = {}, gStatEstTotal = 0;
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
+// Deblocking filter offsets (slice_alpha_c0_offset_div2 / slice_beta_offset_div2, -6..6), for
+// measurements only: H264_DBA / H264_DBB.
+const int gDeblockA = std::clamp(std::getenv("H264_DBA") ? std::atoi(std::getenv("H264_DBA")) : 0, -6, 6);
+const int gDeblockB = std::clamp(std::getenv("H264_DBB") ? std::atoi(std::getenv("H264_DBB")) : 0, -6, 6);
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
@@ -1488,8 +1492,8 @@ void FrameCoder::sliceHeader(BitWriter& bw, int s) const
     bw.se(cfg_.qp - 26);         // slice_qp_delta
     bw.ue(cfg_.deblock ? 0 : 1); // disable_deblocking_filter_idc (0 filters across slice edges too)
     if (cfg_.deblock) {
-        bw.se(0); // slice_alpha_c0_offset_div2
-        bw.se(0); // slice_beta_offset_div2
+        bw.se(gDeblockA); // slice_alpha_c0_offset_div2
+        bw.se(gDeblockB); // slice_beta_offset_div2
     }
 }
 
@@ -6106,7 +6110,12 @@ void FrameCoder::deblockMb(int mbx, int mby)
             };
             auto edgeQp = [&](int qpP) {
                 const int y = (qpP + qpQ + 1) >> 1, ch = (chromaQp(qpP) + chromaQp(qpQ) + 1) >> 1;
-                return EdgeQp{y, kAlpha[y], kBeta[y], ch, kAlpha[ch], kBeta[ch]};
+                if (gDeblockA == 0 && gDeblockB == 0)
+                    return EdgeQp{y, kAlpha[y], kBeta[y], ch, kAlpha[ch], kBeta[ch]};
+                // Slice offsets (8.7.2.2): indexA (alpha, tC0) and indexB (beta) move separately.
+                const int ya = std::clamp(y + 2 * gDeblockA, 0, 51), yb = std::clamp(y + 2 * gDeblockB, 0, 51);
+                const int ca = std::clamp(ch + 2 * gDeblockA, 0, 51), cb = std::clamp(ch + 2 * gDeblockB, 0, 51);
+                return EdgeQp{ya, kAlpha[ya], kBeta[yb], ca, kAlpha[ca], kBeta[cb]};
             };
             const EdgeQp inner = edgeQp(qpQ), leftEdge = edgeQp(qpLeft), topEdge = edgeQp(qpTop);
             int bsV[4][4], bsH[4][4]; // [edge][segment]
