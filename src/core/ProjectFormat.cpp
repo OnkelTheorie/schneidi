@@ -5,6 +5,7 @@
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/GradeWindows.h"
+#include "core/Drawing.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Shapes.h"
@@ -229,6 +230,8 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 ti.barThickness *= sy;
                 ti.barMargin *= sy;
                 for (double* v : {&ti.shape.width, &ti.shape.height, &ti.shape.corner, &ti.shape.feather}) *v *= s;
+                if (ti.isDrawing()) // strokes in 0..1 of the frame: only a frame of another shape moves them
+                    Drawing::scaleFormat(ti.drawing, from.width(), from.height(), to.width(), to.height(), s);
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
                 if (tracks == &tl.video) scaleCompPixels(c, s);

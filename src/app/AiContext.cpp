@@ -239,7 +239,7 @@ const QStringList kCoreOps{"append", "place",    "keep",       "insert", "split"
 // Ops an editing chat seldom needs (timeline and media pool housekeeping, multicam repairs, templates, node details):
 // by name only
 const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_node", "pick_region", "track_window", "multicam_nudge",
-                           "shape", "clip_shape",
+                           "shape", "clip_shape", "draw",
                            "add_angle", "angle_name", "source_marker", "bin", "remove_media", "compound", "decompose",
                            "place_timeline", "rename_timeline", "remove_timeline", "duplicate_timeline",
                            "add_subtitle_track", "copy_attributes", "flatten", "marks", "link"};

@@ -199,7 +199,7 @@ TitleKind titleKindOf(const QJsonObject& op)
     const QString id = op.value("kind").toString();
     for (const auto& k : kTitleKinds)
         if (id == QLatin1String(k.id)) return k.kind;
-    fail("BAD_ARGUMENT", "kind must be text, counter, progress or shape (shapes have their own op: shape)");
+    fail("BAD_ARGUMENT", "kind must be text, counter, progress or shape (shapes have their own op: shape, drawings op draw)");
 }
 
 void applyGenerator(TitleStyle& t, const QJsonObject& op)
@@ -279,6 +279,7 @@ QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
 static QString clipWord(const Clip& c)
 {
     if (c.isTitle() && c.title.isShape()) return QString("shape \"%1\"").arg(c.title.firstLine());
+    if (c.isTitle() && c.title.isDrawing()) return QString("drawing (%1 strokes)").arg(c.title.drawing.strokes.size());
     return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip");
 }
 

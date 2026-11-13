@@ -520,6 +520,9 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.isTitle() && c.title.isShape()) {
         o["kind"] = "shape"; // op 'shape' takes these fields
         o["shape"] = shapeJson(c.title);
+    } else if (c.isTitle() && c.title.isDrawing()) {
+        o["kind"] = "drawing"; // op 'draw' takes these fields
+        o["drawing"] = drawingJson(c.title, p.timelineFormat());
     } else if (c.isTitle()) {
         o["kind"] = "title";
         o["text"] = c.title.text;

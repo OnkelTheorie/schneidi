@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QFileInfo>
 #include <QMap>
+#include <QPointF>
 #include <QSize>
 #include <QString>
 #include <QStringList>
@@ -118,14 +119,16 @@ inline const MotionEaseInfo& motionEaseInfo(MotionEase e)
 
 // What a title clip draws: its text, a number counting from one value to another over the clip (animated counter,
 // "0 -> 1000 kills"), a progress bar along an edge of the picture (how much of the video is left, typical for shorts)
-// or a shape (0.22: circle, rectangle, arrow, star … with fill, stroke and shadow; core/Shapes.h)
-enum class TitleKind { Text, Counter, Progress, Shape };
+// a shape (0.22: circle, rectangle, arrow, star … with fill, stroke and shadow; core/Shapes.h) or a drawing (0.22:
+// strokes painted in the viewer; core/Drawing.h)
+enum class TitleKind { Text, Counter, Progress, Shape, Drawing };
 struct TitleKindInfo { TitleKind kind; const char* id; const char* name; };
 inline constexpr TitleKindInfo kTitleKinds[] = {
     {TitleKind::Text, "text", N_("Text")},
     {TitleKind::Counter, "counter", N_("Zähler")},
     {TitleKind::Progress, "progress", N_("Fortschrittsbalken")},
     {TitleKind::Shape, "shape", N_("Form")},
+    {TitleKind::Drawing, "drawing", N_("Zeichnung")},
 };
 // The outline a shape title draws (core/Shapes.h makes the points): ellipse in its box (a circle when square),
 // rectangle with rounded corners, triangle pointing up, arrow pointing right (shaft and head), line (stroked only),
@@ -169,6 +172,27 @@ struct ShapeStyle {
     int followClip = 0, followNode = 0;
     bool readsBelow() const { return fill == ShapeFill::Blur || fill == ShapeFill::Pixelate || spotlight > 0; }
     bool operator==(const ShapeStyle&) const = default;
+};
+// One stroke of a drawing title (0.22, TitleKind::Drawing; core/Drawing.h): a polyline in 0..1 of the project frame
+// (x of its width, y of its height, y down: sharp in any resolution, small in the file), drawn with round ends.
+// pressure: per point 0..1 (a pen; empty = all 1), the width there is width * pressure. width: fraction of the frame
+// height (0.01 = 10.8 px at 1080). A single point is a dot.
+struct DrawStroke {
+    QVector<QPointF> points;
+    QVector<float> pressure;
+    QColor color = Qt::white;
+    double width = 0.008;
+    double opacity = 1; // 0..1
+    bool operator==(const DrawStroke&) const = default;
+};
+// A drawing title's own values (TitleStyle::kind == Drawing): its strokes in drawing order. Moved by the title position
+// (posX/posY, pixels, y up like a title), scaled/turned by the clip's transform like any title; follows a tracker with
+// the shape's follow fields (shape.followClip/followNode). reveal > 0: the strokes draw themselves one after another
+// from the clip's start over that many seconds (each takes the share of the time its length has).
+struct DrawingStyle {
+    QVector<DrawStroke> strokes;
+    double reveal = 0; // seconds; 0 = all drawn at once
+    bool operator==(const DrawingStyle&) const = default;
 };
 // How a counter writes its number: thousands separator and decimal point. Stored with the title (default: the UI
 // language's way when it is made), so a project renders the same on every machine whatever its language.
@@ -304,12 +328,14 @@ struct TitleStyle {
     TitleLook look; // fill, edge, shadow, glow (0.19; text and counter titles)
     TitleAnim enter = TitleAnim::None, exit = TitleAnim::None; // entry / exit animation (seconds below)
     double enterLen = 0.2, exitLen = 0.2;
-    ShapeStyle shape; // kind Shape only (0.22)
+    ShapeStyle shape; // kind Shape only (0.22); a drawing uses its followClip/followNode
+    DrawingStyle drawing; // kind Drawing only (0.22)
     bool hasBrandRef() const { return colorRef || outlineRef || boxRef || fontRef; }
 
     bool isCounter() const { return kind == TitleKind::Counter; }
     bool isProgress() const { return kind == TitleKind::Progress; }
     bool isShape() const { return kind == TitleKind::Shape; }
+    bool isDrawing() const { return kind == TitleKind::Drawing; }
     bool operator==(const TitleStyle&) const = default;
 
     // Font for drawing: "Sans" (default, also stored that way in projects) does not exist on Windows
@@ -324,6 +350,7 @@ struct TitleStyle {
     QString firstLine() const
     {
         if (isProgress()) return T("Fortschrittsbalken");
+        if (isDrawing()) return T("Zeichnung");
         if (isShape())
             for (const auto& k : kShapeKinds)
                 if (k.kind == shape.kind) return T(k.name);

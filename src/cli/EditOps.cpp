@@ -1029,6 +1029,7 @@ QVector<OpDef> makeOps()
     addCompOps(ops);
     addCutoutOps(ops);
     addShapeOps(ops);
+    addDrawOps(ops);
     addTemplateOps(ops);
     return ops;
 }

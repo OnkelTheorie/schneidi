@@ -59,6 +59,8 @@ signals:
     void keyPickCancelled();
     // "Comp: N Knoten – Öffnen" of a clip with a compositing graph: show it on the Comp page
     void compOpenRequested(int clipId);
+    // "Malen" of a drawing title: the paint tool in the viewer on (MainWindow)
+    void drawToolRequested();
 
 private:
     using Field = std::function<double&(Clip&)>;
@@ -147,6 +149,11 @@ private:
     // Shape title (0.22): kind, size, fill, spotlight, stroke reveal, tracker; showFor = shown for shapes only
     void buildShapeSection(QVBoxLayout* page,
                            const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor);
+    // Drawing title (0.22): strokes (count, clear, paint), reveal time, brush of new strokes, tracker
+    void buildDrawingSection(QVBoxLayout* page,
+                             const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor);
+    // Row "Folgt Tracker" of a shape or drawing (is: which titles it is for)
+    void addFollowRow(Section& sec, const std::function<bool(const TitleStyle&)>& is, const QString& tip);
     // Fill, 2.5D edge, shadow, glow of a text/counter title (TitleLook, 0.19)
     void buildLookSections(QVBoxLayout* page);
     void buildTransitionPage(QVBoxLayout* page);

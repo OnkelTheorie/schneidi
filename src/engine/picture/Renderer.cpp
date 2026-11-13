@@ -26,6 +26,8 @@
 #include "engine/picture/Interpolate.h"
 #include "engine/picture/CompTrack.h"
 #include "engine/picture/ShapePaint.h"
+#include "engine/picture/DrawPaint.h"
+#include "core/Drawing.h"
 #include "core/Shapes.h"
 #include "engine/picture/TitleLook.h"
 #include "engine/picture/gpu/CompGpu.h"
@@ -1135,7 +1137,7 @@ struct Renderer::Impl {
                    QRect* bounds = nullptr)
     {
         Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
-        if (c.title.isShape()) { // a shape following a tracker fades with it when the point is lost
+        if (c.title.isShape() || c.title.isDrawing()) { // following a tracker: fades with it when the point is lost
             Masks::Follow f;
             double seen = 1;
             if (shapeFollow(c, t, ctx, &f, &seen)) m.opacity *= seen;
@@ -1171,6 +1173,10 @@ struct Renderer::Impl {
         }
         if (st.isShape()) {
             drawShape(layer, c, t, ctx, shift, bounds, m);
+            return;
+        }
+        if (st.isDrawing()) {
+            drawDrawing(layer, c, t, ctx, shift, bounds, m);
             return;
         }
         double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
@@ -1418,6 +1424,38 @@ struct Renderer::Impl {
         }
         for (QPointF& q : o.points) q = QPointF(q.x() * sx, q.y() * sy);
         ShapePaint::paint(layer.data(), layer.w, layer.h, shift, o, c.title, reveal, sy, 1.0, shapeFill(c, t));
+    }
+
+    // Drawing title (core/Drawing.h, 0.22): its strokes at clip frame t (title position, tracker, the part drawn so far
+    // when it draws itself), the title motion's scale and rise around the whole drawing's middle. Same arguments as
+    // drawTitle
+    void drawDrawing(Image& layer, const Clip& c, double t, const Ctx& ctx, QPoint shift, QRect* bounds,
+                     const Generators::TitleMotion& m)
+    {
+        Masks::Follow f;
+        double seen = 1;
+        const bool follows = shapeFollow(c, t, ctx, &f, &seen);
+        QVector<Drawing::Placed> strokes = Drawing::place(c, t, ctx.PW, ctx.PH, follows ? &f : nullptr);
+        if (m.scale != 1 || m.rise != 0) {
+            const QRectF all = Drawing::bounds(strokes);
+            const QPointF mid = all.center();
+            const QPointF rise(0, -m.rise * std::max(all.height(), 1.0));
+            for (Drawing::Placed& s : strokes) {
+                for (QPointF& q : s.points) q = mid + (q - mid) * m.scale + rise;
+                for (double& w : s.widths) w *= m.scale;
+            }
+        }
+        strokes = Drawing::revealed(strokes, Drawing::revealFraction(c.title.drawing, t, ctx.fps));
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        for (Drawing::Placed& s : strokes) {
+            for (QPointF& q : s.points) q = QPointF(q.x() * sx, q.y() * sy);
+            for (double& w : s.widths) w *= sy;
+        }
+        if (bounds) {
+            *bounds = Drawing::bounds(strokes).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
+            return;
+        }
+        DrawPaint::paint(layer.data(), layer.w, layer.h, shift, strokes);
     }
 
     // A shape that changes the picture below it (blur or pixelate fill, spotlight) at clip frame t, straight onto the

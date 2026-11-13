@@ -55,6 +55,8 @@ const Clip* trackerClip(const Timeline& tl, int node, int from, int to, int belo
     return best;
 }
 
+} // namespace
+
 // follow: {clip, node} or a node id (the clip: one under the shape with that tracker), false/0 = none
 void applyFollow(Session& s, TitleStyle& t, const QJsonObject& op, const Clip& shape, int shapeTrack, bool placeAtRef)
 {
@@ -111,6 +113,8 @@ void applyFollow(Session& s, TitleStyle& t, const QJsonObject& op, const Clip& s
     t.posX = px + (at.from.x() - 0.5) * fit.width() * zx;
     t.posY = py - (at.from.y() - 0.5) * fit.height() * zy;
 }
+
+namespace {
 
 void opShape(Session& s, const QJsonObject& op)
 {

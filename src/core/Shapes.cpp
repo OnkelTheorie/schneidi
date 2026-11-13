@@ -227,7 +227,7 @@ void remapFollow(Timeline& tl, const QHash<int, int>& ids)
     for (const int id : ids) copies.insert(id);
     for (Track& t : tl.video)
         for (Clip& c : t.clips)
-            if (copies.contains(c.id) && c.isTitle() && c.title.isShape() && ids.contains(c.title.shape.followClip))
+            if (copies.contains(c.id) && c.isTitle() && (c.title.isShape() || c.title.isDrawing()) && ids.contains(c.title.shape.followClip))
                 c.title.shape.followClip = ids.value(c.title.shape.followClip);
 }
 

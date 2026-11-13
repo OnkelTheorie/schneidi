@@ -475,6 +475,13 @@ private:
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     ShapeOverlay* m_shapeOverlay = nullptr; // the selected shape's box over the viewer (Edit page, 0.22)
+    // Painting in the viewer (tool "Malen", key P, 0.22): the Edit page's overlay (the shape box below it) and the
+    // brush bar over the viewer while the tool is on
+    class DrawOverlay* m_drawOverlay = nullptr;
+    class DrawBar* m_drawBar = nullptr;
+    QAction* m_drawAction = nullptr;
+    void setDrawTool(bool on);
+    void drawToolChanged(bool on);
     QPointer<class KeyTrainer> m_keyTrainer;     // Help › Practice keys, while open
     QPointer<class KeyColorPicker> m_keyPicker; // while the pipette is on
     QPointer<class KeyPickWindow> m_keyPickWindow; // its large picture, while the pipette is on

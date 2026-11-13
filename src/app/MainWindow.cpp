@@ -243,6 +243,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::keyPickRequested, this, &MainWindow::startKeyPick);
     connect(m_inspector, &Inspector::keyPickCancelled, this, &MainWindow::stopKeyPick);
     connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
+    connect(m_inspector, &Inspector::drawToolRequested, this, [this] { setDrawTool(true); });
     connect(m_selection, &Selection::changed, this, [this] {
         if (m_keyPicker) stopKeyPick();
         if (m_page == Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded

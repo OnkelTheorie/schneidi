@@ -272,6 +272,11 @@ void MainWindow::buildActions()
     makeAction(toolsMenu, "tool_slip", T("Inhalt-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
     makeAction(toolsMenu, "tool_slide", T("Gleiten-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slide); });
     makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
+    // Paint in the viewer (0.22): strokes become a drawing clip on a track above the picture
+    m_drawAction = makeAction(toolsMenu, "tool_draw", T("Malen"), QKeySequence("P"), [this] {
+        setDrawTool(m_drawAction->isChecked());
+    });
+    m_drawAction->setCheckable(true);
     makeAction(toolsMenu, "snapping", T("Einrasten an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
