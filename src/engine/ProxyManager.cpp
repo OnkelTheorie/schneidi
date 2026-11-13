@@ -165,10 +165,11 @@ QStringList listFilters(const QString& program)
     QStringList list;
     if (p.waitForStarted(10000) && p.waitForFinished(20000) && p.exitStatus() == QProcess::NormalExit
         && p.exitCode() == 0) {
-        // " TSC bwdif             V->V       Deinterlace the input image."
+        // " TSC bwdif             V->V       Deinterlace the input image." (FFmpeg <= 8: three flag columns),
+        // " TS bwdif              V->V       ..." (FFmpeg 9: two). Recognised by the "in->out" column, not the flags.
         for (const QByteArray& line : p.readAllStandardOutput().split('\n')) {
             const QList<QByteArray> words = line.simplified().split(' ');
-            if (words.size() >= 3 && words[0].size() == 3) list << QString::fromUtf8(words[1]);
+            if (words.size() >= 3 && words[2].contains("->")) list << QString::fromUtf8(words[1]);
         }
     } else {
         if (p.state() != QProcess::NotRunning) {
