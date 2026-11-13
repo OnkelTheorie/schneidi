@@ -447,15 +447,24 @@ int main()
             }
         }
         {
-            // Smaller than without B pictures at the same QP on this (easy) material
+            // Smaller than without B pictures at the same QP on this (easy) material: with fixed runs. Placed
+            // adaptively (the default) the probe finds too little gain here for B pictures (about 9 % at equal
+            // distortion; they are placed from 15 % on), and the stream is the one without them plus a few
+            // bytes of picture order counts.
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
-            size_t plain = 0, withB = 0;
+            size_t plain = 0, withB = 0, adaptive = 0;
             CHECK(roundTrip(c, 31, &plain));
             c.bframes = 2;
+            c.bAdaptive = false;
             CHECK(roundTrip(c, 31, &withB));
             if (withB >= plain)
                 std::fprintf(stderr, "B pictures: %zu bytes, without %zu\n", withB, plain);
             CHECK(withB < plain);
+            c.bAdaptive = true;
+            CHECK(roundTrip(c, 31, &adaptive));
+            if (adaptive >= plain + plain / 100)
+                std::fprintf(stderr, "adaptive B pictures: %zu bytes, without %zu\n", adaptive, plain);
+            CHECK(adaptive < plain + plain / 100);
         }
         {
             // A keyframe the caller asks for and the GOP end: the picture before a keyframe is a P picture

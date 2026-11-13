@@ -101,6 +101,8 @@ public:
 
     int halfW() const { return halfW_; }
     int halfH() const { return halfH_; }
+    // The half picture of a prepared frame without its border: halfW() x halfH(), rows one after another.
+    std::vector<uint8_t> halfPicture(const LookaheadFrame& f) const;
 
 private:
     void searchInto(const LookaheadFrame& cur, const LookaheadFrame& ref, LookaheadSearch& out, const LookaheadFrame* seed,

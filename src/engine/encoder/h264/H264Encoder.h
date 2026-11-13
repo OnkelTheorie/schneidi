@@ -45,6 +45,8 @@ struct FirstPassStats {
     // (LookaheadFrame::bPlan), so the whole clip's picture types can be planned before encoding.
     int bMax = 0;
     std::vector<float> bPlan;
+    // Per picture: B pictures pay here (BProbe); empty = not measured, B pictures allowed everywhere.
+    std::vector<uint8_t> bGate;
     size_t size() const { return intraSum.size(); }
 };
 
@@ -125,6 +127,32 @@ struct ChunkPlan {
 // clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 
+// Where B pictures pay, measured instead of estimated: every kInterval pictures and after each scene
+// change the next few half-size pictures (the lookahead's) are coded for real, once with B pictures
+// between the first and the last and twice without (two QPs, for the slope of bits over distortion).
+// B pictures are placed from there on only if they need clearly fewer bits at equal distortion. The
+// lookahead costs cannot tell this: a slow zoom (B pictures at a third of the bits) and noise that
+// changes with every picture (B pictures a loss) look alike to them.
+class BProbe {
+public:
+    static constexpr int kInterval = 120;
+    // The next picture in display order (prepared by the lookahead). True when a measurement was
+    // finished with it: allowed() then holds from picture resultStart() on.
+    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
+    bool allowed() const { return allowed_; }
+    int resultStart() const { return resultStart_; }
+    double lastGain() const { return gain_; }
+    // Bits of "I B.. P" against "I P.. P" at equal distortion, counted over the pictures after the
+    // first (-0.5 = half the bits with B pictures). pics: w x h luma each, in display order.
+    static double gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads);
+
+private:
+    std::vector<std::vector<uint8_t>> pics_;
+    int start_ = -1, lastStart_ = -1, resultStart_ = 0;
+    bool allowed_ = false;
+    double gain_ = 0;
+};
+
 struct Picture {
     const uint8_t* y = nullptr;
     const uint8_t* u = nullptr;
@@ -156,6 +184,7 @@ private:
     mutable LookaheadFrame prev_;
     mutable bool havePrev_ = false;
     mutable std::deque<LookaheadFrame> history_; // B placement: the last bframes + 1 analysed pictures, newest last
+    mutable BProbe probe_;
     int bframes_ = 0;
     size_t keepBytes_ = 0;
     mutable size_t keptBytes_ = 0;
@@ -239,6 +268,12 @@ private:
     // Picture types of the whole clip from the first pass (bAdapt with a first pass), and the
     // lookahead cost of each picture as planned.
     void planFromStats();
+    // Without a first pass: the probe sees every picture as it joins the queue; from each
+    // measurement's first picture on its result holds.
+    BProbe probe_;
+    std::vector<std::pair<int, bool>> gate_; // (first picture, B pictures allowed), in order
+    void noteGate(const LookaheadFrame& f);
+    bool gateAt(int index) const;
     std::vector<uint8_t> statType_;
     std::vector<double> statCost_;
     double queueCost(size_t j) const; // lookahead cost of queued picture j as planned (no tree)

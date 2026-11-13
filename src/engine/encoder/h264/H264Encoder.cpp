@@ -604,6 +604,12 @@ void FrameCoder::loadSource(const Picture& pic)
     copyPlane(pic.v, pic.strideC, cfg_.width / 2, cfg_.height / 2, srcV_, padW_ / 2, padH_ / 2);
 }
 
+// B probe (see BProbe): B pictures are placed where they need at least this much fewer bits
+// (H264_BPROBE_GAIN; measured: slow zoom -0.4 .. -0.7, game, camera and noise +0.02 .. +0.4).
+// H264_BPROBE=0: no probe, the lookahead costs alone decide (for measurements).
+static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
+static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
+
 namespace {
 
 LookaheadFrame copyPicture(const Picture& pic, int w, int h, bool forceKeyframe)
@@ -634,6 +640,107 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 }
 
 } // namespace
+
+bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads)
+{
+    if (!kBProbe || bframes <= 0)
+        return false;
+    // A new measurement every kInterval pictures and from each scene change on (also one inside
+    // the pictures being collected: they start again there).
+    if (lastStart_ < 0 || index - lastStart_ >= kInterval || (f.sceneChange && index > lastStart_)) {
+        pics_.clear();
+        start_ = lastStart_ = index;
+    }
+    if (start_ < 0)
+        return false;
+    pics_.push_back(la.halfPicture(f));
+    if (int(pics_.size()) < std::min(bframes, 2) + 2)
+        return false;
+    gain_ = gain(pics_, la.halfW(), la.halfH(), threads);
+    allowed_ = gain_ < kBProbeGain;
+    resultStart_ = start_;
+    start_ = -1;
+    pics_.clear();
+    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    if (trace)
+        std::fprintf(stderr, "bprobe: picture %d gain %+.3f %s\n", resultStart_, gain_, allowed_ ? "B" : "-");
+    return true;
+}
+
+double BProbe::gain(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads)
+{
+    const int count = int(pics.size());
+    if (count < 3 || w < 16 || h < 16)
+        return 0;
+    const std::vector<uint8_t> grey(size_t(w / 2) * (h / 2), 128);
+    // Bits and luma error of the pictures after the first one.
+    auto run = [&](int qp, int bframes, double& bits, double& ssd) {
+        EncoderConfig c;
+        c.width = w;
+        c.height = h;
+        c.qp = qp;
+        c.gop = 1 << 20;
+        c.sceneCut = false;
+        c.lookahead = 0;
+        c.mbtree = false;
+        c.threads = threads;
+        c.bframes = bframes;
+        c.bAdaptive = false;
+        Encoder e(c);
+        bits = ssd = 0;
+        auto take = [&](const std::vector<uint8_t>& au) {
+            const int i = e.lastDisplayIndex();
+            if (au.empty() || i <= 0 || i >= count)
+                return;
+            bits += double(au.size()) * 8.0;
+            const uint8_t* rec = e.reconY().data();
+            const int stride = e.paddedWidth();
+            uint64_t sum = 0;
+            for (int y = 0; y < h; ++y) {
+                const uint8_t* a = pics[size_t(i)].data() + size_t(y) * w;
+                const uint8_t* b = rec + size_t(y) * stride;
+                uint32_t row = 0;
+                for (int x = 0; x < w; ++x) {
+                    const int d = int(a[x]) - int(b[x]);
+                    row += uint32_t(d * d);
+                }
+                sum += row;
+            }
+            ssd += double(sum);
+        };
+        for (const std::vector<uint8_t>& p : pics) {
+            Picture pic;
+            pic.y = p.data();
+            pic.u = pic.v = grey.data();
+            pic.strideY = w;
+            pic.strideC = w / 2;
+            take(e.encode(pic));
+        }
+        for (;;) {
+            const std::vector<uint8_t> au = e.flush();
+            if (au.empty())
+                break;
+            take(au);
+        }
+    };
+    constexpr int kQp = 28, kQpStep = 3;
+    double r0, d0, r1, d1, rb, db;
+    run(kQp, 0, r0, d0);
+    run(kQp + kQpStep, 0, r1, d1);
+    run(kQp, count - 2, rb, db);
+    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    if (trace)
+        std::fprintf(stderr, "bprobe: P %.0f bits ssd %.0f | P+%d %.0f bits ssd %.0f | B %.0f bits ssd %.0f\n", r0, d0, kQpStep, r1, d1, rb, db);
+    // Next to nothing is coded (a still picture): B pictures cost nothing either, the lookahead
+    // costs may place them. No slope from the two P runs: no measurement, no B pictures.
+    if (r0 < (0.002 * w * h + 256.0) * (count - 1)) // the slice headers alone are some 100 bits
+        return -1.0;
+    if (r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0 || db <= 0)
+        return 0;
+    const double slope = std::log(r1 / r0) / std::log(d1 / d0); // < 0
+    const double pBits = r0 * std::exp(slope * std::log(db / d0)); // the P runs' bits at the B run's error
+    return rb / pBits - 1.0;
+}
 
 FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)
     : width_(width), height_(height), threads_(std::max(1, threads)),
@@ -736,6 +843,12 @@ void FirstPass::analyseBatch() const
             history_.pop_front();
     }
     for (LookaheadFrame& f : batch_) {
+        if (bframes_ > 0) {
+            const int index = int(stats_->intraSum.size());
+            stats_->bGate.push_back(probe_.allowed());
+            if (probe_.add(*la_, f, index, bframes_, threads_))
+                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.allowed()));
+        }
         stats_->intraSum.push_back(f.intraSum);
         stats_->interSum.push_back(f.interSum);
         stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
@@ -820,6 +933,8 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->sceneChange.push_back(st.sceneChange[i]);
             part->forceKeyframe.push_back(st.forceKeyframe[i]);
             part->bMax = st.bMax;
+            if (!st.bGate.empty())
+                part->bGate.push_back(st.bGate[i]);
             if (!st.bPlan.empty()) {
                 const size_t stride = size_t(bPlanStride(st.bMax));
                 part->bPlan.insert(part->bPlan.end(), st.bPlan.begin() + ptrdiff_t(i * stride), st.bPlan.begin() + ptrdiff_t((i + 1) * stride));
@@ -996,7 +1111,26 @@ void Encoder::joinPending()
     if (pendingFrame_) {
         queue_.push_back(std::move(*pendingFrame_));
         pendingFrame_.reset();
+        noteGate(queue_.back());
     }
+}
+
+void Encoder::noteGate(const LookaheadFrame& f)
+{
+    if (!bAdapt() || cfg_.firstPass || !kBProbe)
+        return;
+    if (probe_.add(*la_, f, f.index, cfg_.bframes, cfg_.threads))
+        gate_.emplace_back(probe_.resultStart(), probe_.allowed());
+}
+
+bool Encoder::gateAt(int index) const
+{
+    if (!kBProbe)
+        return true;
+    for (size_t i = gate_.size(); i-- > 0;)
+        if (gate_[i].first <= index)
+            return gate_[i].second;
+    return false;
 }
 
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
@@ -1078,6 +1212,7 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
         analyseFrame(f, queue_.empty() ? nullptr : &queue_.back());
         analyseB(f, before);
         queue_.push_back(std::move(f));
+        noteGate(queue_.back());
     }
     if (!full)
         return {};
@@ -1168,8 +1303,12 @@ void Encoder::planFromStats()
         std::vector<uint8_t> types;
         if (adapt) {
             const size_t base = i - 1; // the reference picture before (a keyframe or a P picture)
+            auto gate = [&](size_t i) { return !kBProbe || i >= st.bGate.size() || st.bGate[i]; };
             planRuns(len, cfg_.bframes, [&](int t, int d) { return double(plan(base + size_t(t), d)); },
-                     [&](int t, int a, int c) { return double(plan(base + size_t(t + c), bPlanIndex(a, c, st.bMax))); }, types);
+                     [&](int t, int a, int c) {
+                         return gate(base + size_t(t)) ? double(plan(base + size_t(t + c), bPlanIndex(a, c, st.bMax))) : -1.0;
+                     },
+                     types);
         } else {
             types.assign(size_t(len) + 1, 1);
             for (int t = 1, run = 0; t < len; ++t) // fixed runs; the last picture before a keyframe is P
@@ -1279,7 +1418,10 @@ void Encoder::planQueue()
             std::vector<uint8_t> types;
             planRuns(int(e - i), cfg_.bframes,
                      [&](int t, int d) { return at(t).bPlan.empty() ? (d == 1 ? at(t).interSum : -1.0) : double(at(t).bPlan[size_t(d)]); },
-                     [&](int t, int a, int c) { return at(t + c).bPlan.empty() ? -1.0 : double(at(t + c).bPlan[size_t(bPlanIndex(a, c, cfg_.bframes))]); },
+                     [&](int t, int a, int c) {
+                         return at(t + c).bPlan.empty() || !gateAt(at(t).index) ? -1.0
+                                                                                 : double(at(t + c).bPlan[size_t(bPlanIndex(a, c, cfg_.bframes))]);
+                     },
                      types);
             for (size_t j = i; j < e; ++j)
                 queue_[j].type = types[j - base];

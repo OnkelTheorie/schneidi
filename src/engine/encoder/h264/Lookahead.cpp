@@ -225,6 +225,15 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
 
 }
 
+std::vector<uint8_t> Lookahead::halfPicture(const LookaheadFrame& f) const
+{
+    const int stride = halfW_ + 2 * kMargin;
+    std::vector<uint8_t> out(size_t(halfW_) * halfH_);
+    for (int y = 0; y < halfH_; ++y)
+        std::memcpy(out.data() + size_t(y) * halfW_, f.half.data() + size_t(y + kMargin) * stride + kMargin, size_t(halfW_));
+    return out;
+}
+
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
                       int seedScale, const LookaheadFrame* src) const
 {
