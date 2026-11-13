@@ -5,7 +5,8 @@
 // user is one turn: the model answers, calls tools, gets their results … until it answers without a tool call.
 // Edits reach the app through the live connection (cli/Live.h), one undo step each, like those of any AI.
 // The history lives only in memory (never in the project, never on disk) and is only ever appended to (providers
-// tie their thinking blocks to it).
+// tie their thinking blocks to it) - except for a model with a small context its server named (a local one): there
+// the oldest tool results give way to a placeholder when the next request would not fit (fitHistory).
 
 #include "app/AiContext.h"
 #include "app/AiProvider.h"
@@ -55,7 +56,7 @@ public:
     // The short request for small or local models (app/AiContext.h); chosen at the first request of a chat
     void setCompact(Ai::Compact mode) { m_compactMode = mode; }
     bool compact() const { return m_compact; } // the running chat has the short request
-    // The context of the endpoint's model as its server said it (asked once per address and model; 0 = not known)
+    // The context of the endpoint's model as its server said it (asked once per chat, address and model; 0 = not known)
     qint64 context(const Ai::Endpoint& e) const { return m_contexts.value(contextKey(e), 0); }
     // Test runs (--screenshot, --demo, --actions, offscreen): nothing is ever sent
     void setOffline(bool on) { m_offline = on; }
@@ -102,6 +103,19 @@ public:
     static constexpr int kMaxImageEdge = 2000; // pixels, longer edges are scaled down
     static constexpr int kMaxRounds = 40; // tool rounds per request
     static constexpr int kMaxRepeats = 2; // a failed call sent again this often ends the request (OpenAI protocol)
+
+    // Fits the history into a context of `context` tokens (one the server named) with room for the chat's next steps
+    // (Ai::kChatRoom), estimated with kCharsPerToken (conservative: Gemma 4 has 3.56 in our requests) and kImageTokens
+    // per picture; fixedChars = the system prompt and the tools. What gives way, oldest first: the pictures of tool
+    // results, then their text (kRemovedResult instead). Never the user's words, the model's calls, nor the results
+    // in the last message (the newest of the running turn): every tool call keeps its answer of the same id, so the
+    // history stays valid in both protocols. Returns how many results or pictures were removed.
+    static int fitHistory(QVector<Ai::Message>& history, qint64 fixedChars, qint64 context);
+    // The tokens of a request with this history, as fitHistory estimates them
+    static qint64 estimatedTokens(const QVector<Ai::Message>& history, qint64 fixedChars);
+    static constexpr double kCharsPerToken = 3.5;
+    static constexpr qint64 kImageTokens = 1000;
+    static const QString kRemovedResult;
 
 signals:
     void entryAdded(int index);
@@ -157,6 +171,9 @@ private:
     bool m_probing = false;    // the context is being asked
     QString m_probeKey;
     bool m_warned = false;     // a tight context was said in this chat
+    bool m_trimmed = false;    // tool results were removed to fit the context (said once per chat)
+    qint64 m_turnContext = 0;  // the context named for this turn (the cache is cleared after a notice: asked again
+                               // with the next request of the user, but the turn's further rounds still fit into it)
     Ai::Usage m_usage;
     int m_rounds = 0;
     bool m_nudged = false; // an empty answer was answered with "go on" in this request

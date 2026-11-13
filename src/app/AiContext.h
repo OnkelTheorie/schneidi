@@ -94,8 +94,11 @@ qint64 contextOf(const QString& kind, const QJsonObject& answer, const QString& 
 qint64 contextFrom(const QHash<QString, qint64>& found);
 // Room the chat needs besides the instructions and tools: the user's words, tool results, the model's answers
 constexpr qint64 kChatRoom = 4096;
+// The context a chat of several tool steps needs: below it a few tool results (up to ~6,000 tokens each) fill the
+// context and the chat drops older ones (AiChat::fitHistory); twice as much is better
+constexpr qint64 kStepsContext = 32768;
 // The context to set on the server for a request whose fixed part (instructions, tools) has `fixed` tokens: the next
-// power of two with room for the chat
+// power of two with room for the chat, at least kStepsContext
 qint64 recommendedContext(qint64 fixed);
 
 } // namespace Ai
