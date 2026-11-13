@@ -322,6 +322,9 @@ QWidget* MainWindow::buildPageBar()
         auto* b = new QToolButton;
         b->setText(QString("%1  %2").arg(pg.icon, T(pg.name)));
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        // As tall as the bar (its line at the bottom of the bar): a symbol drawn by a taller fallback font makes one
+        // button and so the bar taller, the others stretch along instead of keeping their own height
+        b->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
         b->setCheckable(true);
         b->setChecked(pg.page == m_page);
         const Page page = pg.page;

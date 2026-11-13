@@ -1153,6 +1153,18 @@ void ownProject(MainWindow& w)
     if (CHECK(!tl.video.isEmpty() && !tl.video[0].clips.isEmpty())) w.liveSelection()->set({tl.video[0].clips[0].id});
     CHECK(w.liveProject()->isModified());
     CHECK(w.liveProject()->media().isEmpty());
+    // As the user sees it before starting a tour: the Inspector filled with the clip and the splitters laid out again.
+    // Taken right after the selection, a column narrower than the Inspector's new minimum (a wider font than Noto: 308 of
+    // 316 px) was still pending; the tour's setSizes applied it, so the column looked widened by the tour. The layout
+    // requests go up one widget per round (Inspector, column, row): all of them, not only what a short wait under load
+    // gets to
+    for (int i = 0; i < 10; ++i) QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    QTest::qWait(30);
+    // The column never narrower than its Inspector (nothing cut off on the right), whatever the font
+    if (auto* row = w.findChild<QSplitter*>("editRow"); row && row->widget(1) && row->widget(1)->isVisible())
+        Check::report(row->sizes().value(1) >= row->widget(1)->minimumSizeHint().width(), "right column fits the Inspector",
+                      __FILE__, __LINE__, QString("%1 of %2 px").arg(row->sizes().value(1))
+                                              .arg(row->widget(1)->minimumSizeHint().width()));
 }
 
 void runWindow(Engine& engine, const QString& run, const QString& settingsFile, const QString& lang, const QSize& size,

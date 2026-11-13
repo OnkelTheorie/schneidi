@@ -3,8 +3,9 @@
 // the panel's width, also with a large UI font (QT_FONT_DPI=144 or a large system font) and in a long language
 // (Russian, Hindi at a large font), also when the
 // panel is made narrow - it then stays as wide as its widest row (nothing cut off), and that width stays moderate:
-// within a real user's 308 px column at the normal font. Before, the rows needed ~350 px (a long clip name, long
-// labels, choice boxes, fixed number fields) and the pages scrolled sideways, at a large font up to 576 px.
+// within a real user's 308 px column at the normal font (Noto Sans; with another font the limit moves with the width
+// of a reference text, see forFont). Before, the rows needed ~350 px (a long clip name, long labels, choice boxes,
+// fixed number fields) and the pages scrolled sideways, at a large font up to 576 px.
 // INSPECTOR_LAYOUT_DUMP=<folder>: a picture per failing case (INSPECTOR_LAYOUT_ALL=1: of every case).
 
 #include "check.h"
@@ -20,10 +21,13 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QFontInfo>
+#include <QFontMetricsF>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QTest>
+
+#include <cmath>
 
 namespace {
 
@@ -39,6 +43,24 @@ void dump(QWidget* w, const QString& name)
 {
     const QString dir = qEnvironmentVariable("INSPECTOR_LAYOUT_DUMP");
     if (!dir.isEmpty()) w->grab().save(dir + "/" + name + ".png");
+}
+
+// A width limit measured with Noto Sans (the main development machine's font) at `notoPt`, for the font set now: scaled
+// by the width of a reference text in the language's script (its letters), so a wider font (DejaVu Sans, the fallback
+// of a bare Debian) or another Noto version moves the limit with it. +2 px: rounding and hinting.
+int forFont(int notoPx, double notoPt, const QString& lang)
+{
+    // The reference texts and their widths in Noto Sans (Devanagari) 9 pt (QFontMetricsF, offscreen)
+    struct Ref {
+        const char* text;
+        double noto;
+    };
+    const Ref latin{"abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ", 366.1};
+    const Ref cyrillic{"абвгдежзийклмнопрстуфхцчшщъыьэюя АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ", 515.4};
+    const Ref devanagari{"कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह कि की कु कू के कै को कौ", 358.7};
+    const Ref& ref = lang == "ru" ? cyrillic : lang == "hi" ? devanagari : latin;
+    const double now = QFontMetricsF(QApplication::font()).horizontalAdvance(QString::fromUtf8(ref.text));
+    return int(std::ceil(notoPx * now / (ref.noto * notoPt / 9.0))) + 2;
 }
 
 void checkPages(const QString& font, const QString& lang, int maxWidth)
@@ -85,8 +107,8 @@ void checkPages(const QString& font, const QString& lang, int maxWidth)
         if (selected.isEmpty()) sel.setTransition({0, v.id});
         else sel.set(selected);
         settle();
-        std::printf("%s font, %s, page %d: the Inspector needs %d px\n", qPrintable(font), qPrintable(lang),
-                    group->currentIndex(), insp.minimumSizeHint().width());
+        std::printf("%s font, %s, page %d: the Inspector needs %d px (limit %d)\n", qPrintable(font), qPrintable(lang),
+                    group->currentIndex(), insp.minimumSizeHint().width(), maxWidth);
         for (QAbstractButton* tab : insp.findChildren<QAbstractButton*>()) {
             if (!tab->isCheckable() || !tab->group() || !tab->isVisible() || !tab->isEnabled()) continue;
             if (tab->group()->id(tab) < 0) continue;
@@ -128,17 +150,18 @@ int main(int argc, char** argv)
     Check::initApp("inspector-layout");
     Theme::apply(app);
     const QFont normal = QApplication::font();
-    // The width limits below are measured with Noto Sans (CI installs it); a wider font fails them without a bug
-    std::printf("font: %s %.1f pt\n", qPrintable(QFontInfo(normal).family()), normal.pointSizeF());
+    QFont latin = normal; // the UI font itself (the families after it only fill in other scripts)
+    latin.setFamilies({normal.family()});
+    std::printf("font: %s %.1f pt\n", qPrintable(QFontInfo(latin).family()), normal.pointSizeF());
     QFont big = normal;
     big.setPointSizeF(normal.pointSizeF() * 1.5); // like QT_FONT_DPI=144 or a large system font
     for (const char* lang : {"de", "ru", "hi"}) {
         I18n::install(lang);
         QApplication::setFont(normal);
-        // A real user's Inspector column is 308 px wide (tests/data/tours/user-settings.conf, test_tours)
-        if (QString(lang) != "hi") checkPages("normal", lang, 308);
+        // A real user's Inspector column: 308 px with Noto Sans (tests/data/tours/user-settings.conf, test_tours)
+        if (QString(lang) != "hi") checkPages("normal", lang, forFont(308, 9.0, lang));
         QApplication::setFont(big);
-        checkPages("large", lang, 460);
+        checkPages("large", lang, forFont(460, 13.5, lang));
     }
     QApplication::setFont(normal);
     return Check::result();
