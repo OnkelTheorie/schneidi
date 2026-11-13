@@ -2,7 +2,8 @@
 // schneidi's own H.264 encoder (prototype): every stream must decode with FFmpeg's decoder to exactly the
 // pictures the encoder reconstructed (CAVLC and CABAC; I and P frames, all intra/inter modes, slices, adaptive QP,
 // rate control, odd sizes). With B pictures the access units come in coding order: the decoder must hand the
-// pictures out in display order with the right timestamps.
+// pictures out in display order with the right timestamps. The psycho-visual mode decision (psyRd): off = the same
+// stream as without the option, on = decodable, the same with any thread count, and closer to the source's AC energy.
 
 #include "check.h"
 
@@ -70,6 +71,10 @@ struct StreamInfo {
     std::string types;      // picture types in coding order
     std::vector<int> order; // display index of each access unit, in coding order
     double minPsnrY = 99;   // lowest luma PSNR of a reconstruction against its source picture
+    uint64_t hash = 1469598103934665603ull; // FNV-1a of the whole stream
+    // AC energy (acEnergy8x8U8, both scales) over the whole 8x8 luma blocks of all pictures: the source's, and the
+    // summed difference between each block's and its reconstruction's
+    double energySource = 0, energyGap = 0;
 };
 
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
@@ -121,6 +126,9 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         if (au.empty())
             return;
         bytes += au.size();
+        if (info)
+            for (const uint8_t b : au)
+                info->hash = (info->hash ^ b) * 1099511628211ull;
         Yuv r;
         r.w = cfg.width;
         r.h = cfg.height;
@@ -144,6 +152,14 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
             for (size_t i = 0; i < src.y.size(); ++i)
                 sse += double(int(src.y[i]) - int(r.y[i])) * double(int(src.y[i]) - int(r.y[i]));
             info->minPsnrY = std::min(info->minPsnrY, sse > 0 ? 10.0 * std::log10(255.0 * 255.0 * double(src.y.size()) / sse) : 99.0);
+            for (int y = 0; y + 8 <= r.h; y += 8)
+                for (int x = 0; x + 8 <= r.w; x += 8) {
+                    int s4, s8, r4, r8;
+                    acEnergy8x8U8(&src.y[size_t(y) * r.w + x], r.w, s4, s8);
+                    acEnergy8x8U8(&r.y[size_t(y) * r.w + x], r.w, r4, r8);
+                    info->energySource += s4 + s8;
+                    info->energyGap += std::abs(s4 - r4) + std::abs(s8 - r8);
+                }
         }
         recon[display] = std::move(r);
 
@@ -273,6 +289,40 @@ bool kernelsMatchReference()
         if (a != ra || c != rc)
             return false;
         if (it % 8 == 0) {
+            // AC energy of an 8x8 block against plain Hadamard sums without their DC coefficients
+            int e4, e8, ref4 = 0, ref8;
+            acEnergy8x8U8(a.data(), S, e4, e8);
+            int h8[64], sum = 0;
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 8; ++x)
+                    sum += h8[y * 8 + x] = a[size_t(y) * S + x];
+            for (int q = 0; q < 4; ++q) {
+                int in[16], out[16], abs4 = 0;
+                for (int i = 0; i < 16; ++i)
+                    in[i] = h8[((q >> 1) * 4 + (i >> 2)) * 8 + (q & 1) * 4 + (i & 3)];
+                hadamard4x4(in, out);
+                for (int v : out)
+                    abs4 += std::abs(v);
+                ref4 += (abs4 + 1) >> 1;
+            }
+            ref4 -= sum >> 1;
+            for (int pass = 0; pass < 2; ++pass)
+                for (int line = 0; line < 8; ++line)
+                    for (int step = 1; step < 8; step <<= 1)
+                        for (int i = 0; i < 8; i += 2 * step)
+                            for (int j = i; j < i + step; ++j) {
+                                int& u = pass ? h8[j * 8 + line] : h8[line * 8 + j];
+                                int& v = pass ? h8[(j + step) * 8 + line] : h8[line * 8 + j + step];
+                                const int p = u, m = v;
+                                u = p + m;
+                                v = p - m;
+                            }
+            int abs8 = 0;
+            for (int v : h8)
+                abs8 += std::abs(v);
+            ref8 = ((abs8 + 2) >> 2) - (sum >> 2);
+            if (e4 != ref4 || e8 != ref8 || e4 < 0 || e8 < 0)
+                return false;
             int four[4];
             const uint8_t* pred = c.data(); // 16 x 4 at stride 16
             satd4x4x4U8(a.data(), S, pred, four);
@@ -576,6 +626,108 @@ int main()
             const ChunkPlan rated = planChunks(*fp.stats(), c, 3, 10);
             bytes = 0;
             CHECK(roundTrip(c, 60, &bytes, -1, &rated));
+        }
+    }
+    // Psycho-visual mode decision (psyRd)
+    {
+        // Off (0, the default) is the stream without the option; on, every picture still decodes bit-exact, with
+        // one thread or several the same stream, and the reconstruction is closer to the source's AC energy.
+        for (int qp : {24, 34}) {
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 1);
+            c.qp = qp;
+            StreamInfo plain, zero, on, onThreads, strong;
+            size_t bytesPlain = 0, bytesOn = 0;
+            CHECK(roundTrip(c, 16, &bytesPlain, -1, nullptr, &plain));
+            c.psyRd = 0.0;
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &zero));
+            CHECK(zero.hash == plain.hash);
+            c.psyRd = 1.0;
+            CHECK(roundTrip(c, 16, &bytesOn, -1, nullptr, &on));
+            CHECK(on.hash != plain.hash);
+            CHECK(on.minPsnrY >= plain.minPsnrY - 1.5);
+            c.threads = 3; // CAVLC: a slice per thread, another stream
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &onThreads));
+            CHECK(onThreads.hash == on.hash || !gCabac);
+            c.frameThreads = false;
+            StreamInfo onRows;
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &onRows));
+            CHECK(onRows.hash == onThreads.hash);
+            c.psyRd = 3.0;
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &strong));
+            if (!(on.energyGap < plain.energyGap && strong.energyGap < on.energyGap))
+                std::fprintf(stderr, "psy at QP %d: energy gap %.0f, with 1.0 %.0f, with 3.0 %.0f of %.0f; %zu -> %zu bytes\n", qp,
+                             plain.energyGap, on.energyGap, strong.energyGap, plain.energySource, bytesPlain, bytesOn);
+            CHECK(on.energyGap < plain.energyGap);
+            CHECK(strong.energyGap < on.energyGap);
+        }
+        // With the other tools: intra only, without the 8x8 transform (CABAC), every candidate coded in full,
+        // several references, adaptive QP extremes, QP extremes, odd size with slices or the wavefront
+        {
+            EncoderConfig c = config(176, 144, IntraMode::Auto, 1);
+            c.psyRd = 1.0;
+            CHECK(roundTrip(c, 3));
+            c = config(250, 142, IntraMode::Auto, 12, 3);
+            c.psyRd = 2.0;
+            CHECK(roundTrip(c, 12));
+            c.transform8x8 = false;
+            CHECK(roundTrip(c, 12));
+            c.transform8x8 = true;
+            c.modeEstimate = false;
+            c.refs = 2;
+            CHECK(roundTrip(c, 12));
+            c.modeEstimate = true;
+            c.aqStrength = 3;
+            CHECK(roundTrip(c, 12));
+            c.aqStrength = 0;
+            c.effort = 0;
+            CHECK(roundTrip(c, 12));
+            for (int qp : {12, 44, 51}) {
+                EncoderConfig q = config(176, 144, IntraMode::Auto, 10, 2);
+                q.psyRd = 1.0;
+                q.qp = qp;
+                CHECK(roundTrip(q, 6));
+            }
+        }
+        if (gCabac) { // B pictures: fixed runs and the adaptive placement, one thread and several the same
+            for (const bool adaptive : {false, true}) {
+                uint64_t hashOne = 0;
+                for (int threads : {1, 4}) {
+                    EncoderConfig c = config(320, 192, IntraMode::Auto, 30, threads);
+                    c.bframes = 2;
+                    c.bAdaptive = adaptive;
+                    c.psyRd = 1.0;
+                    StreamInfo info;
+                    CHECK(roundTrip(c, 20, nullptr, -1, nullptr, &info));
+                    CHECK(info.minPsnrY >= 30.0);
+                    if (threads == 1)
+                        hashOne = info.hash;
+                    CHECK(info.hash == hashOne);
+                }
+            }
+        }
+        { // Rate control (one pass and with a first pass) still lands near its target
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bitrateKbps = 1000;
+            c.fps = 30;
+            c.psyRd = 1.0;
+            size_t bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            double kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "rate control with psy: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+            FirstPass fp(c.width, c.height);
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "first pass with psy: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
         }
     }
     // level_idc (Table A-1) in the SPS: 720p30 3.1, 1080p60 4.2, 4K30 5.1; VUI colours decode
