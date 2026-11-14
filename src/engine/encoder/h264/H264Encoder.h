@@ -289,7 +289,21 @@ private:
     // First-pass rate control: predicted keyframes and the costs of the pictures not coded yet.
     std::vector<uint8_t> tpKey_, tpType_;
     double tpRemI_ = 0, tpRemP_ = 0, tpRemB_ = 0;
+    // P pictures by cost per macroblock (half octaves): bits per cost are far from constant (a calm
+    // picture's residual mostly quantises to nothing, a busy one's does not), so k is learned per
+    // class and the not yet coded pictures of each class are predicted with their own k.
+    static constexpr int kRcBins = 28;
+    double rcKBin_[kRcBins] = {}, rcCostBin_[kRcBins] = {};
+    double tpRemPBin_[kRcBins] = {}, tpAllPBin_[kRcBins] = {};
+    double tpAllI_ = 0, tpAllB_ = 0;
+    // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass
+    // complexity compression) and the cost weight 2^(-offset/6) the bit model applies with it.
+    std::vector<float> tpOff_;
+    double tpCost(size_t i) const;
+    int rcBin(double cost) const;
+    double kPOfBin(int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB) const;
+    double twoPassPlanQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra) const;
 
 };
