@@ -1360,6 +1360,12 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             ids.insert(id);
         }
         h->liveSelection()->set(ids);
+    } else if (action == "page") {
+        // The app's page (the bar at the bottom): a hidden page shows while it is the current one
+        const QString page = a["page"].toString().trimmed().toLower();
+        if (page.isEmpty()) fail("BAD_ARGUMENT", "page needs 'page': media, edit, comp, color, studio or deliver");
+        if (!h->liveShowPage(page))
+            fail("BAD_ARGUMENT", "page: one of media, edit, comp, color, studio, deliver (not '" + page + "')");
     } else if (action == "undo" || action == "redo") {
         QUndoStack* u = p->undoStack();
         const bool undo = action == "undo";
@@ -1455,7 +1461,7 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             o["media"] = list;
         }
     } else {
-        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, open, proxies, "
+        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, page, undo, redo, save, open, proxies, "
                              "render_cache or clean_proxies");
     }
     o["app"] = Live::appState(h);

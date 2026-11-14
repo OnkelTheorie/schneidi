@@ -229,6 +229,7 @@ QJsonObject appState(LiveHost* h)
                   {"playhead", playhead},
                   {"playhead_tc", detail::tc(playhead, fmt)},
                   {"playing", h->livePlaying()},
+                  {"page", h->livePage()},
                   {"selection", selected}};
     if (p->undoStack()->canUndo()) o["undo"] = p->undoStack()->undoText(); // what `app` undo would take back
     const Timeline& tl = p->timeline();

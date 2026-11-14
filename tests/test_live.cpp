@@ -64,6 +64,14 @@ public:
     bool livePlaying() const override { return playing; }
     void liveSeek(int frame) override { playhead = frame; }
     void livePlay(bool play) override { playing = play; }
+    QString page = "edit";
+    QString livePage() const override { return page; }
+    bool liveShowPage(const QString& id) override
+    {
+        if (!QStringList{"media", "edit", "comp", "color", "studio", "deliver"}.contains(id)) return false;
+        page = id;
+        return true;
+    }
     bool liveSave(const QString& to, QString* error) override
     {
         if (!to.isEmpty()) path = to;
@@ -338,6 +346,14 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(r), QString("ok"));
     CHECK(fake.selection.contains(first));
     CHECK_EQ(code(cli({"app", "select", "--clips", "999"})), QString("NOT_FOUND"));
+    // page: the app shows a page by its id (Studio 0.23), `state` tells it
+    r = cli({"app", "page", "--page", "studio"});
+    CHECK_EQ(code(r), QString("ok"));
+    CHECK_EQ(fake.page, QString("studio"));
+    CHECK_EQ(r["app"].toObject()["page"].toString(), QString("studio"));
+    CHECK_EQ(code(cli({"app", "page", "--page", "fairlight"})), QString("BAD_ARGUMENT"));
+    CHECK_EQ(code(cli({"app", "page"})), QString("BAD_ARGUMENT"));
+    CHECK_EQ(fake.page, QString("studio"));
     cli({"app", "play"});
     CHECK(fake.playing);
     cli({"app", "stop"});

@@ -43,6 +43,18 @@ void MainWindow::liveSeek(int frame)
     else jumpToFrame(frame);
 }
 
+QString MainWindow::livePage() const { return pageId(m_page); }
+
+bool MainWindow::liveShowPage(const QString& page)
+{
+    for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Studio, Page::Deliver})
+        if (pageId(p) == page) {
+            showPage(p); // a hidden page shows while it is the current one (updatePageButtons)
+            return true;
+        }
+    return false;
+}
+
 void MainWindow::livePlay(bool play)
 {
     if (!play) {

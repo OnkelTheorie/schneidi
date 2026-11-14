@@ -117,6 +117,7 @@ void testWindow(Engine& engine)
         w.setPageHidden(Page::Media, true);
         w.setPageHidden(Page::Color, true);
         w.setPageHidden(Page::Comp, true);
+        w.setPageHidden(Page::Studio, true);
         CHECK(w.currentPage() == Page::Color || w.currentPage() == Page::Deliver);
         w.setPageHidden(Page::Color, true);
         CHECK(w.currentPage() == Page::Deliver);
@@ -180,7 +181,7 @@ void testWindow(Engine& engine)
         CHECK(w.currentPage() == Page::Media);
         CHECK(!button(w, "edit")->isVisible());
         w.showAllPages();
-        for (const char* id : {"media", "edit", "comp", "color", "deliver"}) CHECK(button(w, id)->isVisible());
+        for (const char* id : {"media", "edit", "comp", "color", "studio", "deliver"}) CHECK(button(w, id)->isVisible());
         CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList().size() == 3); // a test run: unchanged
         QSettings().remove(PageVisibility::kSettingsKey);
     }

@@ -78,7 +78,7 @@ public:
     int generateProxies(int scope);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
-    enum class Page { Media, Edit, Deliver, Color, Comp };
+    enum class Page { Media, Edit, Deliver, Color, Comp, Studio };
     void showPage(Page page);
     // A voice-over take a crash left unfinished: into the Media Pool? (once, not modal; also at the start)
     void offerCrashedTake();
@@ -104,6 +104,9 @@ public:
     void openCompForSelection();
     void compFromSelection();
     class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown
+    // Studio page (0.23, MainWindowStudio.cpp): sound - tracks with waveforms and the volume pen, the big mixer; built
+    // on its first showing
+    class StudioPage* studioPage() const { return m_studioPage; } // nullptr until the page was shown
     // In-app tours (MainWindowTours.cpp, app/TourManager.h): Help › Tours; offerTours = the one question at the end of
     // the start (main.cpp, never in test runs); pageName = a page's name in the tour files ("media", "edit", ...)
     void offerTours();
@@ -170,6 +173,8 @@ public:
     int livePlayhead() const override;
     bool livePlaying() const override;
     void liveSeek(int frame) override;
+    QString livePage() const override;
+    bool liveShowPage(const QString& page) override;
     void livePlay(bool play) override;
     bool liveSave(const QString& path, QString* error) override;
     void liveGenerateProxies(const QStringList& files) override;
@@ -397,6 +402,7 @@ private:
     void createCompoundClip(); // ask for the name like DaVinci
     // Comp page (MainWindowComp.cpp)
     void ensureCompPage();
+    void ensureStudioPage();
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -507,6 +513,7 @@ private:
     TimelinePanel* m_timeline = nullptr;
     DeliverPanel* m_deliver = nullptr;
     class CompPage* m_compPage = nullptr; // built on the first showing (startup stays fast)
+    class StudioPage* m_studioPage = nullptr; // built on the first showing (startup stays fast)
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
@@ -527,7 +534,7 @@ private:
     QButtonGroup* m_pageButtons = nullptr;
     class ElidedLabel* m_statusText = nullptr; // left in the page bar: status messages (the status bar is hidden)
     class QHBoxLayout* m_pageBarRight = nullptr; // right in the page bar: background work
-    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "deliver"}}; // bar order
+    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "studio", "deliver"}}; // bar order
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
     QToolButton* m_storageToggle = nullptr;

@@ -58,6 +58,7 @@
 #include "ui/Viewer.h"
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
+#include "ui/studio/StudioPage.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -216,7 +217,7 @@ void MainWindow::buildLayout()
     // The Edit page, or the nearest shown one when Edit is hidden
     const QString start = m_pageVisibility.nearestVisible(pageId(Page::Edit));
     Page first = Page::Edit;
-    for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Deliver})
+    for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Studio, Page::Deliver})
         if (pageId(p) == start) first = p;
     StartupTrace::mark("pages assembled");
     showPage(first);
@@ -339,6 +340,7 @@ QWidget* MainWindow::buildPageBar()
         {"✂", N_("Schneiden"), Page::Edit},
         {"◇", N_("Compositing"), Page::Comp},
         {"◐", N_("Farbe"), Page::Color},
+        {"♪", N_("Studio"), Page::Studio},
         {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
@@ -386,6 +388,7 @@ QString MainWindow::pageId(Page page)
     case Page::Edit: return "edit";
     case Page::Comp: return "comp";
     case Page::Color: return "color";
+    case Page::Studio: return "studio";
     case Page::Deliver: return "deliver";
     }
     return {};
@@ -399,7 +402,7 @@ void MainWindow::setPageHidden(Page page, bool hidden)
     if (!m_autosaveDisabled && !m_tourSaved.active) m_pageVisibility.save(); // test runs and tours: not the user's
     if (hidden && page == m_page) { // away from the page that just went
         const QString next = m_pageVisibility.nearestVisible(pageId(page));
-        for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Deliver})
+        for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Studio, Page::Deliver})
             if (pageId(p) == next) showPage(p);
     }
     updatePageButtons();
@@ -417,7 +420,7 @@ void MainWindow::fillPagesMenu(QMenu* menu)
     menu->clear();
     const struct { const char* name; Page page; } pages[] = {
         {N_("Medien"), Page::Media},     {N_("Schneiden"), Page::Edit}, {N_("Compositing"), Page::Comp},
-        {N_("Farbe"), Page::Color},      {N_("Export"), Page::Deliver},
+        {N_("Farbe"), Page::Color},      {N_("Studio"), Page::Studio},  {N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
         const Page page = pg.page;
@@ -533,6 +536,15 @@ void MainWindow::showPage(Page page)
         m_compPage->overlay()->setVisible(true);
         m_pages->setCurrentWidget(m_compPage);
         if (m_compPage->viewNode() || m_compPage->matte()) updatePreview();
+        break;
+    case Page::Studio:
+        // Built on the first showing: the viewer small at the top left, the tracks beside it, the mixer below
+        ensureStudioPage();
+        m_studioPage->top()->insertWidget(0, m_viewer);
+        m_studioPage->top()->setStretchFactor(1, 1);
+        applySizes(m_studioPage->top(), {420, 1180});
+        applySizes(m_studioPage->root(), {380, 560});
+        m_pages->setCurrentWidget(m_studioPage);
         break;
     }
     // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
