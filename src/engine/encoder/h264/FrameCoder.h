@@ -133,6 +133,10 @@ public:
         std::atomic<int> firstOpen{0}; // no row above this one is unfinished
         int batch = 0;                 // a parked row goes on once it can do this many macroblocks more than one
         WaveSignal* signal = nullptr;  // the pool's, while the picture is in it
+        // Pool workers inside waveRowRun of this picture (claimed under the pool's lock). The pool
+        // lets go of a picture only once this is zero: a worker past its row's last macroblock
+        // still reads this state (rowBusy, wakeRow, signal).
+        std::atomic<int> running{0};
         RefPic* out = nullptr; // reference picture filled band by band, or nullptr
         int yCopied = 0, cCopied = 0, fBuilt = 0, hBuilt = 0;
     };

@@ -1090,11 +1090,13 @@ struct Encoder::Pool {
                 for (FrameCoder* a : active)
                     if ((r = a->claimRunnableRow()) >= 0) {
                         c = a;
+                        c->wave_.running.fetch_add(1, std::memory_order_acq_rel);
                         break;
                     }
             }
             if (c) {
                 c->waveRowRun(r); // catches its own failures
+                c->wave_.running.fetch_sub(1, std::memory_order_acq_rel);
                 continue;
             }
             // Nothing can move: a short spin, then sleep until something changed (the timeout only
@@ -1130,8 +1132,15 @@ struct Encoder::Pool {
     }
     void remove(FrameCoder* c)
     {
-        std::lock_guard<std::mutex> l(sig.m);
-        active.erase(std::remove(active.begin(), active.end(), c), active.end());
+        {
+            std::lock_guard<std::mutex> l(sig.m);
+            active.erase(std::remove(active.begin(), active.end(), c), active.end());
+        }
+        // No worker can claim a row of c any more; the ones still in waveRowRun (their rows are
+        // done, they are on their way out) must be gone before the picture's state is reused:
+        // one of them read wave_.signal while it was cleared here (a crash seen once in ~300 runs).
+        while (c->wave_.running.load(std::memory_order_acquire) > 0)
+            std::this_thread::yield();
         c->wave_.signal = nullptr;
     }
 };
@@ -5076,6 +5085,16 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                         ch.ref[p] = cand[c][2];
                     }
                 }
+                if (kRectFast == 3) { // one half-pel step around the chosen vector
+                    const RefPic& R = *refs_[size_t(ch.ref[p])];
+                    const int pX = ch.mvp[p][0], pY = ch.mvp[p][1];
+                    const double rb = lambdaSad * refBits(ch.ref[p]);
+                    auto cost = [&](int vx, int vy) {
+                        return double(sadPart(R, mbx, mby, P.x4, P.y4, P.w4, P.h4, vx, vy, true)) +
+                               lambdaSad * (seBits(vx - pX) + seBits(vy - pY)) + rb;
+                    };
+                    subpelStep(cost, ch.mv[p][0], ch.mv[p][1], 2, 64 * 4, bestPart, ch.mv[p][0], ch.mv[p][1]);
+                }
                 ch.cost += bestPart;
                 setBlocks(P.x4, P.y4, P.w4, P.h4, ch.mv[p][0], ch.mv[p][1], ch.ref[p]);
                 for (int y = P.y4; y < P.y4 + P.h4; ++y)
@@ -5090,7 +5109,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 auto agree = [&](int a, int b) {
                     return quads.mv[a][0] == quads.mv[b][0] && quads.mv[a][1] == quads.mv[b][1] && quads.ref[a] == quads.ref[b];
                 };
-                const bool fast = kRectFast == 1 || (kRectFast == 2 && (li == 1 ? agree(0, 1) && agree(2, 3) : agree(0, 2) && agree(1, 3)));
+                const bool fast = kRectFast == 1 || kRectFast == 3 || (kRectFast == 2 && (li == 1 ? agree(0, 1) && agree(2, 3) : agree(0, 2) && agree(1, 3)));
                 const Choice c = fast ? tryRect(li) : tryLayout(li);
                 if (c.cost < split.cost)
                     split = c;
