@@ -4811,8 +4811,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
-    const double ssdSkip = double(mbSsd(mbx, mby));
-    const double costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
     MbState skipState;
     saveMb(mbx, mby, skipState);
 
@@ -4986,13 +4985,6 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     double lateJ8 = 0;
     bool lateValid = false, wholeZero = false;
     const bool atSkip = whole.ref[0] == 0 && whole.mv[0][0] == skipX && whole.mv[0][1] == skipY;
-    static const double kSkipAt = std::getenv("H264_SKIPAT") ? std::atof(std::getenv("H264_SKIPAT")) : 0.0;
-    if (kSkipAt > 0 && atSkip && kRdEst && !bSlice_ && tPsy.weight <= 0 && ssdSkip <= lambda * kSkipAt) {
-        restoreMb(mbx, mby, skipState);
-        result.syn.kind = MbSyntax::Kind::Skip;
-        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-        return false;
-    }
     if (((kLateSkip && atSkip) || kZeroNoSplit) && kRdEst && !bSlice_ && tPsy.weight <= 0 &&
         cabacByTop_[size_t(rowKey_[size_t(mby)])]) {
         uint8_t lpWhole[256];
@@ -5616,8 +5608,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setDirect();
-    const double ssdSkip = double(mbSsd(mbx, mby));
-    const double costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
     MbState skipState;
     saveMb(mbx, mby, skipState);
     if (skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {

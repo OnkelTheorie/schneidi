@@ -437,6 +437,31 @@ int main()
         if (std::abs(kbps2 - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
+        // With threads the first pass analyses its batches on a thread of its own, the pictures of
+        // a batch side by side: the same numbers as one picture after the other (also with the
+        // scores of the B placement, and with a scene change in the clip).
+        for (bool forB : {false, true}) {
+            auto statsOf = [&](int threads) {
+                FirstPass f(c.width, c.height, threads, forB);
+                for (int t = 0; t < 45; ++t) {
+                    const Yuv src = synthFrame(c.width, c.height, t < 30 ? t : 500 + 7 * t);
+                    f.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+                }
+                return f.stats();
+            };
+            const auto one = statsOf(1);
+            for (int threads : {2, 3, 8}) {
+                const auto many = statsOf(threads);
+                bool same = many->size() == one->size() && many->intraSum == one->intraSum && many->interSum == one->interSum &&
+                            many->sceneChange == one->sceneChange && many->bScore == one->bScore &&
+                            many->analysis.size() == one->analysis.size();
+                for (size_t i = 0; same && i < one->analysis.size(); ++i)
+                    same = many->analysis[i]->interCost == one->analysis[i]->interCost &&
+                           many->analysis[i]->intraCost == one->analysis[i]->intraCost &&
+                           many->analysis[i]->mvx == one->analysis[i]->mvx && many->analysis[i]->mvy == one->analysis[i]->mvy;
+                CHECK(same);
+            }
+        }
         // The encoder takes the first pass's analysis instead of repeating it: the same stream with
         // none of it kept and with only the first pictures kept (memory limit).
         CHECK(c.firstPass->analysis.size() == 60);
