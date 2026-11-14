@@ -17,6 +17,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+#include <QVector>
 
 #include <functional>
 #include <memory>
@@ -64,6 +65,13 @@ public:
     // Tests: how long an input may take to open (5 s)
     void setOpenTimeout(int ms);
     void inputChanged(); // the input setting changed: the armed track's meter listens to the new one
+    // The input devices to choose from (the Sound menu's "Eingabegerät (Voiceover)", the Studio page's recording
+    // card): the system default (id ""), every connected input, the chosen one when it is not connected
+    struct InputChoice {
+        QString id, name;
+    };
+    static QVector<InputChoice> inputChoices();
+    static void setInput(const QString& id); // saved in Voiceover::Settings (then inputChanged() on the recorder)
     // The armed track's meter may listen (the timeline is shown). It never does while the app is in the background:
     // an open input keeps a Bluetooth headset in its call profile (poor sound for everything else)
     void setMeterShown(bool shown);

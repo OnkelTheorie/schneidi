@@ -824,8 +824,7 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     m_timer = new QTimer(this);
     m_timer->setInterval(30);
     connect(m_timer, &QTimer::timeout, this, &StudioMixer::tick);
-    m_timer->start();
-    m_clock.start();
+    m_clock.start(); // the timer runs while the mixer shows (showEvent)
     sync();
     m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
 }
@@ -866,8 +865,16 @@ int StudioMixer::meterChannels(int track) const
 void StudioMixer::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
-    sync();
+    if (m_syncPending) sync();
     fitHeight();
+    m_clock.restart(); // the meters fall from now, not by the time it was hidden
+    m_timer->start();
+}
+
+void StudioMixer::hideEvent(QHideEvent* e)
+{
+    QWidget::hideEvent(e);
+    m_timer->stop(); // another page: no meters to move
 }
 
 void StudioMixer::resizeEvent(QResizeEvent* e)
@@ -968,6 +975,12 @@ void StudioMixer::openEditor(int track, bool eq)
 
 void StudioMixer::sync()
 {
+    // Every change of the timeline lands here: on another page only remembered (the strips follow when it shows)
+    if (!isVisible()) {
+        m_syncPending = true;
+        return;
+    }
+    m_syncPending = false;
     const Timeline& tl = m_project->timeline();
     if (m_strips.size() != tl.audio.size()) rebuild(int(tl.audio.size()));
     const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
@@ -980,8 +993,10 @@ void StudioMixer::sync()
         s->name->setText(name == trackShortName(ref) ? name : QString("%1  %2").arg(trackShortName(ref), name));
         s->name->setToolTip(name);
         const bool silenced = anySolo && !t.solo && !t.muted;
-        s->name->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
-                                   .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name()));
+        // A style sheet costs (Qt polishes the label again): set only when it changes
+        const QString style = QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
+                                  .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name());
+        if (s->name->styleSheet() != style) s->name->setStyleSheet(style);
         s->setVolume(t.volumeDb);
         s->setPan(t.pan);
         s->surround->setVisible(surround);
@@ -1002,6 +1017,7 @@ void StudioMixer::sync()
 
 void StudioMixer::onLevels(const QVector<float>& db)
 {
+    if (!isVisible()) return; // nothing shows them (the levels come again when it plays on this page)
     const int groups = int(m_strips.size()) + 1;
     if (db.isEmpty() || db.size() % groups != 0) return; // the track count is changing right now
     const int ch = int(db.size()) / groups;

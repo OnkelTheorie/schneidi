@@ -251,6 +251,31 @@ void testCliDuckMatchesEditor(const QString& dir)
     CHECK(ProjectFile::load(path, &off, &err));
     const Clip* offClip = TimelineOps::findClip(off.timeline, musicId);
     CHECK(offClip && keys(*offClip).isEmpty() && offClip->volumeDb == cli->volumeDb);
+    // by: a list (["A1"]) like 'under'; without it the other audible tracks (here A1) duck it - the same curve
+    for (const char* ops : {R"([{"op":"duck","track":"A2","by":["A1"]}])", R"([{"op":"duck","track":"A2"}])"}) {
+        try {
+            const QJsonObject r = cmd->run(Cli::normalize(*cmd, {{"project", path}, {"ops", ops}}), ctx);
+            CHECK(r["notes"].toArray().at(0).toString().contains("of A1"));
+        } catch (const Cli::Error& e) {
+            CHECK(false);
+            qWarning().noquote() << ops << e.code << e.message;
+        }
+        ProjectData by;
+        CHECK(ProjectFile::load(path, &by, &err));
+        const Clip* byClip = TimelineOps::findClip(by.timeline, musicId);
+        CHECK(byClip && keys(*byClip) == keys(*app));
+    }
+    // 'by' and 'under' together, a track that is not there: refused
+    for (const char* ops : {R"([{"op":"duck","track":"A2","by":["A1"],"under":"A1"}])",
+                            R"([{"op":"duck","track":"A2","by":["A7"]}])"}) {
+        bool refused = false;
+        try {
+            cmd->run(Cli::normalize(*cmd, {{"project", path}, {"ops", ops}}), ctx);
+        } catch (const Cli::Error& e) {
+            refused = e.code == "BAD_ARGUMENT";
+        }
+        CHECK(refused);
+    }
 }
 
 // Music ducked under speech from start to end (a podcast without pauses) has no key at its own level: a new volume

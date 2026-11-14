@@ -428,7 +428,8 @@ int Editor::unduck(const QVector<int>& ids)
 bool Editor::drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
 {
     const Timeline& cur = m_project->timeline();
-    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || stroke.isEmpty()) return false;
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || !VolumeDraw::spansEnough(stroke))
+        return false;
     bool changed = false;
     m_project->edit(T("Lautstärke zeichnen"), [&](Timeline& tl) {
         for (Clip& c : tl.audio[track].clips)

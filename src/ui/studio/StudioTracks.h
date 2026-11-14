@@ -15,6 +15,7 @@
 #include "ui/timeline/ViewState.h"
 
 #include <QPointer>
+#include <QRegion>
 #include <QVector>
 #include <QWidget>
 
@@ -24,6 +25,7 @@ class Editor;
 class MediaCache;
 class QScrollBar;
 struct Clip;
+struct Keyframe;
 namespace Voiceover { class LiveTake; }
 
 class StudioTracks : public QWidget {
@@ -54,8 +56,13 @@ public:
     int laneHeight() const { return m_laneH; }
     // Where volume keyframe `index` of clip `clipId` is drawn (tests); null = not drawn (off view, curve too dense)
     QPointF keyPoint(int clipId, int index) const;
-    // The take being recorded and the track it lands on (nullptr = none)
+    // The take being recorded and the track it lands on (nullptr = none); a track past the last one (a new track)
+    // gets a temporary lane below the others while it records
     void setLiveTake(const Voiceover::LiveTake* take, int track);
+    int laneCount() const; // the audio tracks and that temporary lane
+    // Tests: paint events so far and the part the last one drew
+    int paintCount() const { return m_paints; }
+    QRegion lastPaintRegion() const { return m_painted; }
 
     static constexpr int kHeaderW = 132;
     static constexpr int kRulerH = 24;
@@ -90,11 +97,16 @@ private:
     const Clip* clipAt(int track, double frame) const;
     double dbAtY(int track, int y) const;
     void addPenPoint(const QPoint& pos);
+    void paintPart(class QPainter& p); // what lies in m_dirty
     void drawRuler(class QPainter& p);
     void drawLane(class QPainter& p, int track);
     void drawWaveform(class QPainter& p, const QRect& body, const Clip& c, const QColor& color);
     void drawVolumeLine(class QPainter& p, const QRect& body, const Clip& c);
-    bool keysShown(const Clip& c) const; // the dots are drawn (room enough between them)
+    bool keysShown(const Clip& c) const; // the dots are drawn (room enough between the keys inside the clip)
+    static bool keyInside(const Clip& c, const Keyframe& k); // at a frame of the clip (0 <= t < length)
+    QRect playheadRect(int frame) const;  // what the playhead at `frame` covers (line, triangle)
+    bool takeOnNewTrack() const;
+    void drawNewTrackLane(class QPainter& p, int track);
     struct KeyHit {
         int clipId = -1, index = -1;
     };
@@ -123,4 +135,7 @@ private:
     int m_penTrack = -1;
     QVector<VolumeDraw::Point> m_stroke;
     QPoint m_hover{-1, -1};
+    QRect m_dirty;    // the part being drawn
+    QRegion m_painted; // what the last paint event drew (tests)
+    int m_paints = 0; // paint events (tests)
 };

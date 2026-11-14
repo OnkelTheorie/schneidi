@@ -19,6 +19,7 @@
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <cmath>
+#include <random>
 
 namespace {
 
@@ -32,6 +33,65 @@ Clip clip(int length)
     c.in = 0;
     c.out = length - 1;
     return c;
+}
+
+// Keys::valueAt finds the segment by binary search (0.23): identical to the old linear search from the front. A segment's
+// value depends only on its two keys, so a clip with just the keys the linear search would pick (and the next one) must
+// give the very same number (exact compare) - for random tracks with every ease, Bezier handles, on and between keys,
+// outside.
+void testValueAtSearch()
+{
+    std::mt19937 rng(23);
+    std::uniform_int_distribution<int> gap(1, 40), ease(0, 4), count(1, 40);
+    std::uniform_real_distribution<double> val(-60, 12), handle(-8, 8);
+    int checked = 0;
+    for (int round = 0; round < 300; ++round) {
+        Clip c = clip(2000);
+        c.in = round % 3 == 0 ? 37 : 0; // keys at source frames
+        KeyTrack k;
+        int f = c.in + gap(rng) - 10;
+        const int n = count(rng);
+        for (int i = 0; i < n; ++i) {
+            Keyframe key;
+            key.frame = f;
+            key.value = val(rng);
+            key.ease = KeyEase(ease(rng));
+            key.inDt = -std::abs(handle(rng));
+            key.inDv = handle(rng);
+            key.outDt = std::abs(handle(rng));
+            key.outDv = handle(rng);
+            k << key;
+            f += gap(rng);
+        }
+        for (AnimParam p : {AnimParam::Volume, AnimParam::Opacity, AnimParam::TitleColor}) {
+            Clip a = c;
+            a.keys[p] = k;
+            const double from = k.first().frame - c.in - 5, to = k.last().frame - c.in + 5;
+            for (double t = from; t <= to; t += 0.25) {
+                const double s = c.in + t;
+                double expect;
+                if (s <= k.first().frame) expect = Keys::valueAt([&] { Clip x = c; x.keys[p] = {k.first()}; return x; }(), p, t);
+                else if (s >= k.last().frame) expect = Keys::valueAt([&] { Clip x = c; x.keys[p] = {k.last()}; return x; }(), p, t);
+                else {
+                    int i = 1;
+                    while (s > k[i].frame) ++i; // the old linear search
+                    // Its two keys, and the next one: on a key's own frame the section ending there counts (not
+                    // the key's value as the last key would give)
+                    Clip few = c;
+                    few.keys[p] = {k[i - 1], k[i]};
+                    if (i + 1 < k.size()) few.keys[p] << k[i + 1];
+                    expect = Keys::valueAt(few, p, t);
+                }
+                const double got = Keys::valueAt(a, p, t);
+                if (got != expect) {
+                    CHECK_EQ(got, expect);
+                    return;
+                }
+                ++checked;
+            }
+        }
+    }
+    CHECK(checked > 100000);
 }
 
 void testValues()
@@ -391,6 +451,7 @@ int main(int argc, char** argv)
     Theme::apply(app);
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
+    testValueAtSearch();
     testValues();
     testAutoHandles();
     testSplit();

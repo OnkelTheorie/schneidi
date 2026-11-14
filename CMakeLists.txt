@@ -171,6 +171,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h
+    src/core/TaskProgress.h
     src/core/PathKey.h
     src/core/Selection.h
     src/core/PlaybackMeter.h
