@@ -6580,7 +6580,8 @@ void FrameCoder::planMacroblockQp()
             mean += e;
         }
     mean /= n;
-    if (std::getenv("H264_AQ_TRACE")) {
+    static const bool aqTrace = std::getenv("H264_AQ_TRACE") != nullptr;
+    if (aqTrace) {
         double tm = 0;
         if (treeOffset_.size() == size_t(n))
             for (int m = 0; m < n; ++m)
