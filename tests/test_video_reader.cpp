@@ -676,13 +676,16 @@ int main(int argc, char** argv)
                 const auto again = r->picture(10); // a seek back after the end still answers
                 CHECK(again && again->position == 10);
             }
-            // The same read error with the file gone: lost (a disk pulled)
+            // The same read error with the file gone: lost (a disk pulled). Windows does not rename a file another
+            // handle has open (the reader's), so there it cannot go away this way
+#ifndef Q_OS_WIN
             auto gone = Video::Reader::open(file("cut.mkv"), o);
             if (CHECK(gone) && CHECK(gone->picture(0))) {
                 CHECK(QFile::rename(file("cut.mkv"), file("cut-away.mkv")));
                 for (int i = 1; i < 100 && !gone->failed(); ++i) gone->picture(i);
                 CHECK(gone->failed());
             }
+#endif
             Video::Reader::eioAtEndForTests(false);
         }
     }
