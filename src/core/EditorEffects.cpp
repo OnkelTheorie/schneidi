@@ -7,6 +7,7 @@
 #include "core/Accents.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Equalizer.h"
 #include "core/GradeWindows.h"
 #include "core/Presets.h"
 #include "core/I18n.h"
@@ -52,22 +53,33 @@ void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
     modifyClips(targets, T("%1 hinzufügen").arg(d->name), [&](Clip& c) { EffectRegistry::add(c, effectId); });
 }
 
-QVector<int> Editor::cleanVoice(const QVector<int>& ids, const QVariantMap& values)
+QVector<int> Editor::cleanVoice(const QVector<int>& ids, const QVariantMap& values, bool voiceEq)
 {
     const QString id = QStringLiteral("voiceclean");
     const EffectDescriptor* d = EffectRegistry::find(id);
     const Timeline& tl = m_project->timeline();
     QVector<int> targets;
+    QVector<int> tracks; // audio tracks of the targets (voice EQ)
     for (int x : editable(ids))
-        if (TrackRef ref; TimelineOps::findClip(tl, x, &ref) && ref.kind == TrackKind::Audio && !targets.contains(x))
+        if (TrackRef ref; TimelineOps::findClip(tl, x, &ref) && ref.kind == TrackKind::Audio && !targets.contains(x)) {
             targets << x;
+            if (!tracks.contains(ref.index)) tracks << ref.index;
+        }
     if (!d || targets.isEmpty()) return {};
-    modifyClips(targets, d->name, [&](Clip& c) {
-        if (!EffectRegistry::has(c, id)) EffectRegistry::add(c, id);
-        EffectInstance* e = EffectRegistry::instance(c, id);
-        if (!e) return;
-        for (auto it = values.begin(); it != values.end(); ++it) e->params[it.key()] = it.value();
-        e->enabled = true;
+    const TrackEq eq = Equalizer::voicePreset();
+    m_project->edit(d->name, [&](Timeline& t) {
+        for (int x : targets) {
+            Clip* c = TimelineOps::findClip(t, x);
+            if (!c) continue;
+            if (!EffectRegistry::has(*c, id)) EffectRegistry::add(*c, id);
+            EffectInstance* e = EffectRegistry::instance(*c, id);
+            if (!e) continue;
+            for (auto it = values.begin(); it != values.end(); ++it) e->params[it.key()] = it.value();
+            e->enabled = true;
+        }
+        if (voiceEq)
+            for (int track : tracks)
+                if (track < t.audio.size()) t.audio[track].eq = eq;
     });
     return targets;
 }

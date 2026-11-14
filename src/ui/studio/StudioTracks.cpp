@@ -11,8 +11,13 @@
 #include "core/Selection.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "core/Voiceover.h"
 #include "engine/MediaCache.h"
+#include "ui/EffectsLibrary.h"
 
+#include <QContextMenuEvent>
+#include <QDragEnterEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -41,6 +46,7 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
     setProperty("tourTarget", "studio_tracks");
     setMouseTracking(true);
     setFocusPolicy(Qt::ClickFocus);
+    setAcceptDrops(true); // effect sounds
     setMinimumSize(320, kRulerH + kMinLaneH + 16);
     m_hbar = new QScrollBar(Qt::Horizontal, this);
     m_vbar = new QScrollBar(Qt::Vertical, this);
@@ -209,6 +215,28 @@ void StudioTracks::paintEvent(QPaintEvent*)
     p.save();
     p.setClipRect(QRect(0, area.top(), width(), area.height()));
     for (int i = 0; i < tl.audio.size(); ++i) drawLane(p, i);
+    // The take being recorded grows on its lane (red, its peaks), like in the timeline
+    if (m_take && m_takeTrack >= 0 && m_takeTrack < tl.audio.size() && m_take->lengthFrames() > 0) {
+        const QRect body = laneRect(m_takeTrack).adjusted(0, 4, 0, -4);
+        const double x0 = std::max<double>(kHeaderW, xOf(m_take->start())), x1 = std::min<double>(area.right(), xOf(m_take->end()));
+        if (x1 > x0) {
+            const QRect r(int(x0), body.top(), std::max(1, int(x1 - x0)), body.height());
+            p.fillRect(r, Theme::alpha(Theme::recording, 90));
+            p.setPen(Theme::alpha(Theme::recording.lighter(150), 230));
+            const int mid = body.center().y();
+            const double half = body.height() / 2.0 - 2;
+            for (int x = r.left(); x <= r.right(); ++x) {
+                const float pk = m_take->peak(frameAt(x), frameAt(x + 1));
+                if (pk <= 0) continue;
+                const double v = std::max(0.0, 1.0 + 20.0 * std::log10(pk) / 48.0);
+                const int h = std::max(1, int(v * half));
+                p.drawLine(x, mid - h, x, mid + h);
+            }
+            p.setPen(QPen(Theme::recording, 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(r.adjusted(0, 0, -1, -1));
+        }
+    }
     p.restore();
     if (tl.audio.isEmpty()) {
         p.setPen(Theme::textDim);
@@ -435,7 +463,7 @@ void StudioTracks::drawVolumeLine(QPainter& p, const QRect& body, const Clip& c)
     p.drawPath(path);
     // Keyframes as small dots (dense curves of the pen: only where there is room)
     const auto it = c.keys.constFind(AnimParam::Volume);
-    if (it != c.keys.constEnd() && m_view.pxPerFrame * c.length() / std::max<qsizetype>(1, it->size()) >= 6) {
+    if (keysShown(c)) {
         p.setBrush(Theme::primary);
         p.setPen(QPen(Theme::border, 1));
         for (const Keyframe& k : *it) {
@@ -445,6 +473,111 @@ void StudioTracks::drawVolumeLine(QPainter& p, const QRect& body, const Clip& c)
         }
     }
     p.setRenderHint(QPainter::Antialiasing, false);
+}
+
+bool StudioTracks::keysShown(const Clip& c) const
+{
+    const auto it = c.keys.constFind(AnimParam::Volume);
+    return it != c.keys.constEnd() && !it->isEmpty() && m_view.pxPerFrame * c.length() / it->size() >= 6;
+}
+
+QPointF StudioTracks::keyPoint(int clipId, int index) const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    TrackRef ref;
+    const Clip* c = TimelineOps::findClip(tl, clipId, &ref);
+    if (!c || ref.kind != TrackKind::Audio || !keysShown(*c)) return {};
+    const KeyTrack& k = c->keys.value(AnimParam::Volume);
+    if (index < 0 || index >= k.size()) return {};
+    const QRect body = laneRect(ref.index).adjusted(0, 4, 0, -4);
+    const double x = xOf(c->start + (k[index].frame - c->in));
+    if (x < kHeaderW - 3 || x > width() + 3) return {};
+    return {x, body.bottom() - VolumeDraw::posOf(k[index].value) * (body.height() - 1)};
+}
+
+StudioTracks::KeyHit StudioTracks::keyAt(const QPoint& pos) const
+{
+    const int track = trackAt(pos.y());
+    if (track < 0 || pos.x() < kHeaderW) return {};
+    const Timeline& tl = m_editor->project()->timeline();
+    KeyHit best;
+    double bestD = 6.0; // px
+    for (const Clip& c : tl.audio[track].clips) {
+        if (c.isTitle() || !keysShown(c)) continue;
+        const KeyTrack& k = c.keys.value(AnimParam::Volume);
+        for (int i = 0; i < k.size(); ++i) {
+            const QPointF pt = keyPoint(c.id, i);
+            const double d = std::hypot(pt.x() - pos.x(), pt.y() - pos.y());
+            if (!pt.isNull() && d < bestD) {
+                bestD = d;
+                best = {c.id, i};
+            }
+        }
+    }
+    return best;
+}
+
+void StudioTracks::dragKey(const QPoint& pos)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    TrackRef ref;
+    const Clip* c = TimelineOps::findClip(tl, m_key.clipId, &ref);
+    if (!c || ref.kind != TrackKind::Audio) return;
+    const KeyTrack& k = c->keys.value(AnimParam::Volume);
+    if (m_key.index >= k.size()) return;
+    // Between its neighbours (the order stays), inside the clip
+    const int lo = m_key.index > 0 ? k[m_key.index - 1].frame - c->in + 1 : 0;
+    const int hi = m_key.index + 1 < k.size() ? k[m_key.index + 1].frame - c->in - 1 : c->length() - 1;
+    if (hi < lo) return;
+    const int t = std::clamp(int(std::lround(frameAt(pos.x()))) - c->start, lo, hi);
+    const QRect area = clipArea();
+    const double db = std::clamp(dbAtY(ref.index, std::clamp(pos.y(), area.top(), area.bottom())), kMinVolumeDb, kMaxVolumeDb);
+    const int index = m_key.index;
+    m_editor->modifyClips({m_key.clipId}, T("Keyframe verschieben"), [&](Clip& clip) {
+        auto it = clip.keys.find(AnimParam::Volume);
+        if (it == clip.keys.end() || index >= it->size()) return;
+        (*it)[index].frame = clip.in + t;
+        (*it)[index].value = db;
+    }, m_keyMerge);
+    setToolTip(formatVolumeDb(db));
+}
+
+void StudioTracks::setLiveTake(const Voiceover::LiveTake* take, int track)
+{
+    m_take = take;
+    m_takeTrack = take ? track : -1;
+    update();
+}
+
+void StudioTracks::contextMenuEvent(QContextMenuEvent* e)
+{
+    // Right click on a keyframe dot: it goes (one undo step)
+    const KeyHit hit = keyAt(e->pos());
+    if (hit.clipId < 0) return QWidget::contextMenuEvent(e);
+    const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), hit.clipId);
+    if (!c) return;
+    const int t = c->keys.value(AnimParam::Volume).value(hit.index).frame - c->in;
+    m_editor->modifyClips({hit.clipId}, T("Keyframe löschen"), [t](Clip& clip) { Keys::removeKey(clip, AnimParam::Volume, t); });
+    e->accept();
+}
+
+void StudioTracks::dragEnterEvent(QDragEnterEvent* e)
+{
+    if (e->mimeData()->hasFormat(EffectsLibrary::SoundMimeType)) e->acceptProposedAction();
+}
+
+void StudioTracks::dragMoveEvent(QDragMoveEvent* e)
+{
+    if (e->mimeData()->hasFormat(EffectsLibrary::SoundMimeType) && e->position().x() >= kHeaderW) e->acceptProposedAction();
+    else e->ignore();
+}
+
+void StudioTracks::dropEvent(QDropEvent* e)
+{
+    if (!e->mimeData()->hasFormat(EffectsLibrary::SoundMimeType)) return;
+    const int frame = std::max(0, int(std::lround(frameAt(std::max<double>(kHeaderW, e->position().x())))));
+    e->acceptProposedAction();
+    emit soundDropRequested(e->mimeData()->data(EffectsLibrary::SoundMimeType), frame);
 }
 
 // ---------- Input ----------
@@ -484,6 +617,14 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
         addPenPoint(pos);
         return;
     }
+    // Select on a keyframe dot: drag it (time and level, one undo step)
+    if (const KeyHit hit = keyAt(pos); hit.clipId >= 0 && !tl.audio[track].locked) {
+        m_drag = Drag::Key;
+        m_key = hit;
+        m_keyMerge = QString("studio-key-%1").arg(++m_keyDrags);
+        m_editor->project()->closeMerge();
+        return;
+    }
     // Select: the playhead there, the clip under it selected (with its linked partner, like a click in the timeline)
     const double frame = frameAt(pos.x());
     if (const Clip* c = clipAt(track, frame)) {
@@ -505,13 +646,20 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
         emit seekRequested(std::max(0, int(std::lround(frameAt(std::max(kHeaderW, pos.x()))))));
     } else if (m_drag == Drag::Pen) {
         addPenPoint(pos);
+    } else if (m_drag == Drag::Key) {
+        dragKey(pos);
     } else {
         const int track = trackAt(pos.y());
         const bool overButton = track >= 0 && (muteRect(track).contains(pos) || soloRect(track).contains(pos));
-        setCursor(overButton ? Qt::PointingHandCursor : m_tool == Tool::Pen && pos.x() >= kHeaderW ? Qt::CrossCursor
-                                                                                                    : Qt::ArrowCursor);
+        const bool overKey = m_tool == Tool::Select && !overButton && keyAt(pos).clipId >= 0;
+        setCursor(overButton                                      ? Qt::PointingHandCursor
+                  : overKey                                       ? Qt::SizeAllCursor
+                  : m_tool == Tool::Pen && pos.x() >= kHeaderW ? Qt::CrossCursor
+                                                                  : Qt::ArrowCursor);
         if (m_tool == Tool::Pen && track >= 0 && pos.x() >= kHeaderW)
             setToolTip(formatVolumeDb(dbAtY(track, pos.y())));
+        else if (overKey)
+            setToolTip(T("Keyframe: ziehen = verschieben, Rechtsklick = löschen"));
         else
             setToolTip({});
     }
@@ -527,6 +675,10 @@ void StudioTracks::mouseReleaseEvent(QMouseEvent* e)
         m_editor->drawVolume(m_penTrack, stroke, m_smoothing); // one undo step per stroke
         update();
         return;
+    }
+    if (m_drag == Drag::Key) {
+        m_editor->project()->closeMerge();
+        m_key = {};
     }
     m_drag = Drag::None;
 }

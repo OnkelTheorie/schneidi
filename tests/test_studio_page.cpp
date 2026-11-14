@@ -8,7 +8,14 @@
 // - the pen: a drag over a clip's lane makes volume keyframes at the drawn level, one undo step per stroke;
 // - the meters take the channel count from the levels (6 channels = 5.1 bars; back to 2), never a fixed stereo pair;
 // - layout: at 1024 px wide, in German and Russian, normal and large font, nothing of the page is cut off (every label,
-//   button, box at least its minimum width and inside its parent) and the window does not grow.
+//   button, box at least its minimum width and inside its parent) and the window does not grow; the tools column is
+//   there; at 1920 px with two tracks it fills the room between the strips and the master (no gap), cards side by side.
+// - tools (Block 2), each one undo step with the right effect on the project: "Stimme säubern" (voiceclean on the
+//   target clips + EQ preset on the track), ducking (keys down while the voice sounds; again with another amount;
+//   off), "Lautheit auf Ziel" (op mixer target_lufs through the user runner, limiter on, before -> after shown), the
+//   target follows the selection, recording from the page (synthetic input) onto the chosen track, effect sounds
+//   (search, preview in the player, place at the playhead, drop onto a lane); a volume keyframe dragged and deleted
+//   on the lane; the keys A / P pick Auswahl / Stift on the page.
 // STUDIO_PAGE_DUMP=<folder>: a picture of the window per layout case.
 
 #include "check.h"
@@ -16,6 +23,11 @@
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
 #include "app/Theme.h"
+#include "app/VoiceoverRecorder.h"
+#include "cli/Live.h"
+#include "core/EffectRegistry.h"
+#include "core/Equalizer.h"
+#include "core/Selection.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
@@ -23,7 +35,9 @@
 #include "engine/Engine.h"
 #include "ui/Viewer.h"
 #include "ui/studio/StudioMixer.h"
+#include "ui/EffectsLibrary.h"
 #include "ui/studio/StudioPage.h"
+#include "ui/studio/StudioTools.h"
 #include "ui/studio/StudioTracks.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -31,6 +45,12 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
+#include <QContextMenuEvent>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMimeData>
+#include <QScrollArea>
+#include <QSlider>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QSettings>
@@ -212,6 +232,280 @@ void testWindow(Engine& engine, const QString& audioFile)
     CHECK(studio->isVisible());
 }
 
+
+void mouseButton(QWidget* w, QEvent::Type type, const QPoint& pos, Qt::MouseButton button, Qt::MouseButtons buttons)
+{
+    QMouseEvent e(type, QPointF(pos), w->mapToGlobal(QPointF(pos)), button, buttons, Qt::NoModifier);
+    QApplication::sendEvent(w, &e);
+}
+
+bool waitFor(const std::function<bool()>& ok, int ms = 8000)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!ok() && t.elapsed() < ms) QTest::qWait(20);
+    return ok();
+}
+
+// The tools column, one by one on a two-track project: A1 the voice (frames 50-150), A2 the music (0-200)
+void testTools(Engine& engine, const QString& voiceFile, const QString& musicFile)
+{
+    QSettings().remove("layout");
+    QSettings().remove("studio/duckAmount");
+    QSettings().setValue("audio/loudnessTarget", -14.0);
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
+        return Cli::Live::runForUser(&w, command, args, undoText);
+    });
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    {
+        ProjectData d;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 2);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = voiceFile;
+        v.start = 50;
+        v.in = 0;
+        v.out = 99;
+        d.timeline.audio[0].clips << v;
+        Clip m;
+        m.id = 2;
+        m.mediaPath = musicFile;
+        m.in = 0;
+        m.out = 199;
+        d.timeline.audio[1].clips << m;
+        d.lastClipId = 2;
+        p->load(d);
+        p->addMedia(Engine::probe(p->format(), voiceFile));
+        p->addMedia(Engine::probe(p->format(), musicFile));
+    }
+    w.showPage(Page::Studio);
+    settle(5);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    StudioTools* tools = page->tools();
+    StudioTracks* tracks = page->tracks();
+    if (!CHECK(tools && tools->isVisible())) return;
+    QUndoStack* undo = p->undoStack();
+    const auto clip = [p](int id) { return TimelineOps::findClip(p->timeline(), id); };
+    const auto click = [&](const char* name) {
+        auto* b = tools->findChild<QToolButton*>(name);
+        if (!CHECK(b)) return;
+        b->click();
+        settle();
+    };
+
+    // The target follows the selection
+    p->closeMerge();
+    tools->setTargetTrack(0);
+    tracks->fit();
+    settle();
+    mouse(tracks, QEvent::MouseButtonPress, QPoint(int(tracks->xOf(20)), tracks->laneRect(1).center().y()), Qt::LeftButton);
+    mouse(tracks, QEvent::MouseButtonRelease, QPoint(int(tracks->xOf(20)), tracks->laneRect(1).center().y()), Qt::NoButton);
+    settle();
+    CHECK_EQ(tools->targetTrack(), 1);
+    CHECK_EQ(tools->targetClips(), QVector<int>{2});
+    auto* targetBox = tools->findChild<QComboBox*>("studio_target");
+    if (CHECK(targetBox)) CHECK_EQ(targetBox->currentData().toInt(), 1);
+
+    // Stimme säubern: voiceclean on the voice clip and the EQ preset on A1, one step; undo takes both back
+    tools->setTargetTrack(0);
+    CHECK_EQ(tools->targetClips(), QVector<int>{1});
+    int at = undo->index();
+    click("studio_clean_voice");
+    CHECK_EQ(undo->index(), at + 1);
+    CHECK(clip(1) && EffectRegistry::has(*clip(1), "voiceclean"));
+    CHECK(clip(2) && !EffectRegistry::has(*clip(2), "voiceclean"));
+    CHECK(p->timeline().audio[0].eq == Equalizer::voicePreset());
+    CHECK(p->timeline().audio[1].eq == TrackEq{});
+    undo->undo();
+    CHECK(clip(1) && !EffectRegistry::has(*clip(1), "voiceclean"));
+    CHECK(p->timeline().audio[0].eq == TrackEq{});
+
+    // Ducking: the music down while the voice sounds (frame 100 is in it, frame 10 not), one step
+    tools->setTargetTrack(1);
+    auto* amount = tools->findChild<QSlider*>("studio_duck_amount");
+    if (!CHECK(amount)) return;
+    CHECK_EQ(amount->value(), -12);
+    at = undo->index();
+    click("studio_duck");
+    CHECK_EQ(undo->index(), at + 1);
+    if (CHECK(clip(2) && Keys::animated(*clip(2), AnimParam::Volume))) {
+        const double inVoice = Keys::valueAt(*clip(2), AnimParam::Volume, 100), before = Keys::valueAt(*clip(2), AnimParam::Volume, 10);
+        Check::report(std::abs(inVoice - (clip(2)->volumeDb - 12)) < 0.1 && std::abs(before - clip(2)->volumeDb) < 0.1,
+                      "ducked under the voice", __FILE__, __LINE__, QString("%1 / %2 dB").arg(inVoice).arg(before));
+    }
+    CHECK(clip(1) && !Keys::animated(*clip(1), AnimParam::Volume)); // the voice stays
+    // Again with another amount: replaces the curve (one more step), the amount is remembered
+    amount->setValue(-20);
+    at = undo->index();
+    click("studio_duck");
+    CHECK_EQ(undo->index(), at + 1);
+    if (clip(2)) CHECK(std::abs(Keys::valueAt(*clip(2), AnimParam::Volume, 100) - (clip(2)->volumeDb - 20)) < 0.1);
+    CHECK_EQ(QSettings().value("studio/duckAmount").toInt(), -20);
+    // Off: the keys go, one step
+    auto* unduck = tools->findChild<QToolButton*>("studio_unduck");
+    CHECK(unduck && unduck->isEnabled());
+    at = undo->index();
+    click("studio_unduck");
+    CHECK_EQ(undo->index(), at + 1);
+    CHECK(clip(2) && !Keys::animated(*clip(2), AnimParam::Volume));
+    CHECK(unduck && !unduck->isEnabled());
+
+    // Lautheit auf Ziel: Podcast -16, the master limiter on, one step, before -> after shown
+    auto* preset = tools->findChild<QComboBox*>("studio_loudness_preset");
+    if (!CHECK(preset && preset->count() == 3)) return;
+    CHECK_EQ(preset->currentData().toDouble(), -14.0); // the meter's target
+    preset->setCurrentIndex(1);
+    CHECK_EQ(tools->loudnessPreset(), -16.0);
+    const double masterBefore = p->timeline().masterVolumeDb;
+    const bool limiterBefore = p->timeline().masterLimiter;
+    at = undo->index();
+    click("studio_loudness_apply");
+    CHECK_EQ(undo->index(), at + 1);
+    CHECK(p->timeline().masterLimiter);
+    CHECK(std::abs(p->timeline().masterVolumeDb - masterBefore) > 0.05);
+    auto* loudLine = tools->findChild<QLabel*>("studio_loudness_result");
+    if (CHECK(loudLine)) {
+        Check::report(loudLine->isVisible() && loudLine->text().contains(QChar(0x2192)), "before -> after", __FILE__,
+                      __LINE__, loudLine->text());
+        CHECK(loudLine->text().contains(QString("16").replace('.', I18n::decimalPoint())));
+    }
+    CHECK_EQ(QSettings().value("audio/loudnessTarget").toDouble(), -16.0);
+    undo->undo();
+    CHECK_EQ(p->timeline().masterVolumeDb, masterBefore);
+    CHECK_EQ(p->timeline().masterLimiter, limiterBefore);
+
+    // Effect sounds: listed, the search narrows, Anhören plays it in the player, Einfügen puts it at the playhead
+    auto* sounds = tools->findChild<QListWidget*>("studio_sounds");
+    auto* search = tools->findChild<QLineEdit*>("studio_sound_search");
+    if (!CHECK(sounds && search && sounds->count() > 6)) return;
+    search->setText("Whoosh");
+    int shown = 0;
+    for (int i = 0; i < sounds->count(); ++i) shown += sounds->item(i)->isHidden() ? 0 : 1;
+    CHECK(shown > 0 && shown < sounds->count());
+    CHECK(sounds->currentItem() && !sounds->currentItem()->isHidden() && sounds->currentItem()->text().contains("Whoosh"));
+    click("studio_sound_play");
+    CHECK(waitFor([&] { return engine.mode() == Engine::Mode::Source; }, 3000));
+    engine.pause();
+    TimelineView* tv = w.findChild<TimelineView*>();
+    tv->seekRequested(75);
+    settle(5);
+    const int clipsBefore = [&] {
+        int n = 0;
+        for (const Track& t : p->timeline().audio) n += int(t.clips.size());
+        return n;
+    }();
+    at = undo->index();
+    click("studio_sound_place");
+    CHECK_EQ(undo->index(), at + 1);
+    int clipsAfter = 0;
+    for (const Track& t : p->timeline().audio) clipsAfter += int(t.clips.size());
+    CHECK_EQ(clipsAfter, clipsBefore + 1);
+    undo->undo();
+    // A drop onto a lane: there (op 'sfx' anchors the sound's moment at the drop frame)
+    {
+        const QByteArray data = sounds->currentItem()->data(Qt::UserRole).toByteArray();
+        auto* mime = new QMimeData;
+        mime->setData(EffectsLibrary::SoundMimeType, data);
+        const QPoint pos(int(tracks->xOf(120)), tracks->laneRect(0).center().y());
+        QDragEnterEvent enter(pos, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tracks, &enter);
+        CHECK(enter.isAccepted());
+        QDropEvent drop(QPointF(pos), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+        at = undo->index();
+        QApplication::sendEvent(tracks, &drop);
+        CHECK(waitFor([&] { return undo->index() == at + 1; }, 3000));
+        delete mime;
+        undo->undo();
+    }
+    search->clear();
+
+    // A volume keyframe on the lane: dragged (one step, later and lower), deleted with a right click (one step)
+    p->edit("keys", [](Timeline& tl) {
+        Clip& c = tl.audio[0].clips[0];
+        Keys::setKey(c, AnimParam::Volume, 10, 0);
+        Keys::setKey(c, AnimParam::Volume, 50, 0);
+        Keys::setKey(c, AnimParam::Volume, 90, 0);
+    });
+    p->closeMerge();
+    tracks->fit();
+    settle();
+    const QPointF key = tracks->keyPoint(1, 1);
+    if (CHECK(!key.isNull())) {
+        at = undo->index();
+        const QPoint from = key.toPoint(), to(int(tracks->xOf(50 + 60 + 10)), from.y() + tracks->laneHeight() / 4);
+        mouse(tracks, QEvent::MouseButtonPress, from, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseMove, (from + to) / 2, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseMove, to, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, to, Qt::NoButton);
+        settle();
+        CHECK_EQ(undo->index(), at + 1);
+        if (const Clip* c = clip(1); CHECK(c)) {
+            const KeyTrack k = c->keys.value(AnimParam::Volume);
+            if (CHECK_EQ(k.size(), 3)) {
+                Check::report(k[1].frame - c->in == 70, "key moved in time", __FILE__, __LINE__, QString::number(k[1].frame));
+                Check::report(k[1].value < -1, "key moved down", __FILE__, __LINE__, QString::number(k[1].value));
+            }
+        }
+        const QPoint now = tracks->keyPoint(1, 1).toPoint();
+        at = undo->index();
+        QContextMenuEvent menu(QContextMenuEvent::Mouse, now, tracks->mapToGlobal(now));
+        QApplication::sendEvent(tracks, &menu);
+        CHECK_EQ(undo->index(), at + 1);
+        if (const Clip* c = clip(1); CHECK(c)) CHECK_EQ(c->keys.value(AnimParam::Volume).size(), 2);
+    }
+
+    // The keys: P = Stift, A = Auswahl on this page; painting stays off
+    QAction* draw = InputBindings::instance().action("tool_draw");
+    QAction* select = InputBindings::instance().action("tool_select");
+    if (CHECK(draw && select)) {
+        draw->trigger();
+        CHECK(tracks->tool() == StudioTracks::Tool::Pen);
+        CHECK(!draw->isChecked());
+        select->trigger();
+        CHECK(tracks->tool() == StudioTracks::Tool::Select);
+    }
+
+    // Recording from the page: onto the chosen track (A2, armed), stopped from the page, one step
+    auto* recorder = w.findChild<VoiceoverRecorder*>();
+    auto* record = tools->findChild<QToolButton*>("studio_record");
+    auto* recordTrack = tools->findChild<QComboBox*>("studio_record_track");
+    if (CHECK(recorder && record && recordTrack) && CHECK(record->isEnabled())) {
+        CHECK_EQ(recordTrack->currentData().toInt(), -1); // Automatisch
+        const int a2 = recordTrack->findData(1);
+        recordTrack->setCurrentIndex(a2);
+        emit recordTrack->activated(a2);
+        CHECK_EQ(recorder->armedTrack(), 1);
+        engine.seek(0);
+        settle();
+        const int clipsOnA2 = int(p->timeline().audio[1].clips.size());
+        at = undo->index();
+        record->click();
+        CHECK(recorder->recording());
+        if (CHECK(waitFor([&] { return recorder->live(); }))) {
+            CHECK(record->isChecked());
+            QTest::qWait(1200);
+            record->click(); // stop
+            CHECK(waitFor([&] { return !recorder->recording(); }));
+            settle(5);
+            CHECK_EQ(recorder->placedTrack(), 1);
+            CHECK_EQ(undo->index(), at + 1);
+            CHECK(!record->isChecked());
+            Check::report(p->timeline().audio[1].clips.size() >= clipsOnA2, "take on A2", __FILE__, __LINE__,
+                          QString::number(p->timeline().audio[1].clips.size()));
+        }
+        recorder->setArmedTrack(-1);
+        CHECK_EQ(recordTrack->currentData().toInt(), -1);
+    }
+}
+
 // Nothing of the page cut off: every label, button and box at least its minimum width, inside its parent
 QString cutOff(QWidget* root)
 {
@@ -277,6 +571,10 @@ void testLayout(Engine& engine, const QString& audioFile)
                         if (c->minimumSizeHint().width() > 100 || c->minimumWidth() > 100)
                             std::printf("%s %s min %d hint %d minW %d\n", c->metaObject()->className(), qPrintable(c->objectName()),
                                         c->minimumSizeHint().width(), c->sizeHint().width(), c->minimumWidth());
+                // The tools column is there, at least one card wide
+                StudioTools* tools = page->tools();
+                Check::report(tools && tools->isVisible() && tools->width() >= 160, "tools column",
+                              __FILE__, __LINE__, QString("%1: %2 px").arg(where).arg(tools ? tools->width() : 0));
                 const QString cut = cutOff(page);
                 Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, where + ": " + cut);
                 // The lanes and the faders keep a usable size
@@ -295,6 +593,38 @@ void testLayout(Engine& engine, const QString& audioFile)
         }
     I18n::install("de");
     QApplication::setFont(normal);
+
+    // 1920 px, two tracks: the tools fill the room between the strips and the master (the gap before 0.23 Block 2)
+    QSettings().remove("layout");
+    {
+        MainWindow w(&engine);
+        w.disableAutosave();
+        w.resize(1920, 1080);
+        w.show();
+        if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+        w.importFiles({audioFile}, true);
+        settle();
+        w.showPage(Page::Studio);
+        settle(5);
+        StudioPage* page = w.studioPage();
+        if (!CHECK(page)) return;
+        StudioTools* tools = page->tools();
+        auto* strips = page->mixer()->findChild<QScrollArea*>();
+        QWidget* master = page->findChild<QWidget*>("studio_fader_master");
+        if (CHECK(tools && strips && master)) {
+            const int stripsRight = strips->mapTo(page->mixer(), QPoint(strips->width(), 0)).x();
+            const int toolsLeft = tools->mapTo(page->mixer(), QPoint(0, 0)).x();
+            const int toolsRight = tools->mapTo(page->mixer(), QPoint(tools->width(), 0)).x();
+            const int masterLeft = master->parentWidget()->mapTo(page->mixer(), QPoint(0, 0)).x();
+            Check::report(std::abs(toolsLeft - stripsRight) <= 2 && std::abs(masterLeft - toolsRight) <= 2, "no gap",
+                          __FILE__, __LINE__, QString("strips end %1, tools %2-%3, master %4").arg(stripsRight)
+                                                  .arg(toolsLeft).arg(toolsRight).arg(masterLeft));
+            Check::report(tools->columns() >= 2, "cards side by side", __FILE__, __LINE__, QString::number(tools->columns()));
+            const QString cut = cutOff(page);
+            Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, "1920: " + cut);
+        }
+        if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-1920.png").arg(dumpDir));
+    }
 }
 
 } // namespace
@@ -302,6 +632,7 @@ void testLayout(Engine& engine, const QString& audioFile)
 int main(int argc, char** argv)
 {
     Check::initEnv();
+    qputenv("SCHNEIDI_AUDIO_INPUT", "sine:440"); // the take of the recording tool: a synthetic input
     QApplication app(argc, argv);
     Check::initApp("studio-page");
     Theme::apply(app);
@@ -314,7 +645,11 @@ int main(int argc, char** argv)
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
+    const QString music = Check::makeMedia(dir.path() + "/music.wav",
+                                           {"-f", "lavfi", "-i", "sine=frequency=440:duration=8", "-ac", "2"});
+    if (!CHECK(!music.isEmpty())) return Check::result();
     testWindow(engine, audio);
+    testTools(engine, audio, music);
     testLayout(engine, audio);
     return Check::result();
 }

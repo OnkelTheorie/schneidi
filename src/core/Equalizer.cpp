@@ -63,6 +63,19 @@ double Equalizer::responseDb(const TrackEq& eq, double hz, int rate)
     return db;
 }
 
+TrackEq Equalizer::voicePreset()
+{
+    TrackEq eq;
+    eq.on = true;
+    eq.bands[0] = {EqBand::Kind::HighPass, true, 80, 0, 0.707};
+    eq.bands[1] = {EqBand::Kind::LowShelf, false, 100, 0, 0.707};
+    eq.bands[2] = {EqBand::Kind::Bell, true, 300, -2.5, 1.2};
+    eq.bands[3] = {EqBand::Kind::Bell, true, 3500, 1.5, 0.9};
+    eq.bands[4] = {EqBand::Kind::HighShelf, true, 10000, 1.5, 0.707};
+    eq.bands[5] = {EqBand::Kind::LowPass, false, 18000, 0, 0.707};
+    return eq;
+}
+
 TrackEq Equalizer::clamped(TrackEq eq)
 {
     const TrackEq def;

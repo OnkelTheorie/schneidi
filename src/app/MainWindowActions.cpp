@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
+
+#include "ui/studio/StudioPage.h"
+#include "ui/studio/StudioTracks.h"
 #include "app/AiChatPanel.h"
 #include "app/ExtensionsDialog.h"
 
@@ -271,7 +274,11 @@ void MainWindow::buildActions()
     });
     timeline->addSeparator();
     QMenu* toolsMenu = timeline->addMenu(T("Werkzeuge"));
-    makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
+    // On the Studio page A and P pick its tools (Auswahl / Stift) - the same actions, so a changed key binding follows
+    makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [this, tv] {
+        if (m_page == Page::Studio && m_studioPage) m_studioPage->tracks()->setTool(StudioTracks::Tool::Select);
+        else tv->setTool(TimelineView::Tool::Select);
+    });
     makeAction(toolsMenu, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
     // No default keys: Y and U (Premiere's) select from the playhead and switch the edit point side here
     makeAction(toolsMenu, "tool_slip", T("Inhalt-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
@@ -279,6 +286,14 @@ void MainWindow::buildActions()
     makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
     // Paint in the viewer (0.22): strokes become a drawing clip on a track above the picture
     m_drawAction = makeAction(toolsMenu, "tool_draw", T("Malen"), QKeySequence("P"), [this] {
+        if (m_page == Page::Studio && m_studioPage) {
+            // The Studio page has no picture to paint on: its pen (volume) instead; painting stays as it was (the
+            // trigger flipped the check)
+            const QSignalBlocker b(m_drawAction);
+            m_drawAction->setChecked(!m_drawAction->isChecked());
+            m_studioPage->tracks()->setTool(StudioTracks::Tool::Pen);
+            return;
+        }
         setDrawTool(m_drawAction->isChecked());
     });
     m_drawAction->setCheckable(true);

@@ -307,6 +307,8 @@ void mixToLoudness(Session& s, int track, double target)
         if (want >= kMaxVolumeDb - 0.05 && reached < target - kTolerance)
             note += QString(" - not reached: the fader is at its +12 dB end, %1 LU short").arg(target - reached, 0, 'f', 1);
         s.notes << note;
+        s.notes << QJsonObject{{"loudness", QJsonObject{{"of", what}, {"target_lufs", target}, {"before_lufs", l.integrated},
+                                                        {"after_lufs", reached}, {"true_peak_db", peak}, {"limiter", false}}}};
         return;
     }
     // Steps on what `probe` measures toward `goal`; false = at an end or the limiter takes (almost) everything
@@ -363,6 +365,10 @@ void mixToLoudness(Session& s, int track, double target)
         note += QString(" - %1 LU over the target").arg(l.integrated - target, 0, 'f', 1);
     }
     s.notes << note;
+    // The same in numbers (the Studio page shows before -> after)
+    s.notes << QJsonObject{{"loudness", QJsonObject{{"of", what}, {"target_lufs", target}, {"before_lufs", before},
+                                                    {"after_lufs", l.integrated}, {"true_peak_db", l.truePeakDb},
+                                                    {"limiter", true}}}};
 }
 
 // compressor:{on?, threshold_db?, ratio?, attack_ms?, release_ms?, knee_db?, makeup_db?} onto d; giving values
@@ -396,7 +402,11 @@ TrackDynamics compressorFrom(const QJsonValue& v, TrackDynamics d)
 // the EQ on (like dragging a point in the app)
 TrackEq eqFrom(const QJsonValue& v, TrackEq eq)
 {
-    if (!v.isObject()) fail("BAD_ARGUMENT", "'eq' must be an object like {on:true, bands:[{band:3, freq:2500, gain_db:3}]}");
+    if (v.isString()) { // a preset by name (the Studio page's "Stimme")
+        if (v.toString().trimmed().toLower() == "voice") return Equalizer::voicePreset();
+        fail("BAD_ARGUMENT", "unknown eq preset '" + v.toString() + "' (there is 'voice')");
+    }
+    if (!v.isObject()) fail("BAD_ARGUMENT", "'eq' must be an object like {on:true, bands:[{band:3, freq:2500, gain_db:3}]} or 'voice'");
     const QJsonObject o = v.toObject();
     bool changed = false;
     for (const QJsonValue& bv : o.value("bands").toArray()) {
@@ -821,6 +831,11 @@ void opDuck(Session& s, const QJsonObject& op)
     } else {
         ids = clipsOn(s, op, TrackKind::Audio, "ducking");
     }
+    if (op.value("remove").toBool()) { // ducking off: the volume keyframes go, the clip volume stays
+        const int n = s.editor.unduck(ids);
+        s.notes << QString("removed the volume keyframes (ducking) of %1 of %2 clip(s)").arg(n).arg(ids.size());
+        return;
+    }
     if (!op.contains("under")) fail("BAD_ARGUMENT", "missing 'under' (the tracks whose sound lowers the music, e.g. \"A1\")");
     const Timeline tl = s.project.renderTimeline();
     const QVector<int> voice = audioTracksOf(s.project, tl, op.value("under"));
@@ -896,11 +911,14 @@ void opCleanVoice(Session& s, const QJsonObject& op)
             if (!op.value(key).isBool()) fail("BAD_ARGUMENT", QString("'%1' must be true or false").arg(key));
             values[key] = op.value(key).toBool();
         }
-    const QVector<int> done = s.editor.cleanVoice(ids, values);
+    if (op.contains("eq") && !op.value("eq").isBool()) fail("BAD_ARGUMENT", "'eq' must be true or false");
+    const bool voiceEq = op.value("eq").toBool();
+    const QVector<int> done = s.editor.cleanVoice(ids, values, voiceEq);
     s.notes << QString("voice cleaning on %1 audio clip(s); the sound is %2 ms late inside the effect, compensated "
                        "(stays in sync)")
                    .arg(done.size())
                    .arg(std::lround(VoiceClean::latencyFor(48000) * 1000.0 / 48000));
+    if (voiceEq && !done.isEmpty()) s.notes << QString("EQ preset 'voice' on the clips' audio track(s)");
 }
 
 // ---------- speak ----------
@@ -1077,11 +1095,13 @@ void addAudioOps(QVector<OpDef>& ops)
                  "(default 10), release_ms? (default 150), knee_db? (default 6), makeup_db? (default 0)} - tames peaks "
                  "(game sound, shouting); stereo-linked. eq:{on?, bands?:[{band, on?, freq?, gain_db?, q?}]} - 6 bands "
                  "like Fairlight: 1 high pass (off by default), 2 low shelf, 3 and 4 bell, 5 high shelf, 6 low pass "
-                 "(off by default); freq 20..20000 Hz, gain_db -24..24 (not for 1 and 6), q 0.1..10. Giving values "
+                 "(off by default); freq 20..20000 Hz, gain_db -24..24 (not for 1 and 6), q 0.1..10; eq:'voice' = the preset "
+                 "for speech (as the Studio page's \"Stimme säubern\"). Giving values "
                  "switches the compressor / the band and the EQ on unless 'on' is given. `info` shows both on the track. "
                  "target_lufs with the limiter on: measured after the limiter and stepped until within 0.2 LU; the "
                  "master beyond its +12 dB raises the audible tracks' faders by the same amount (the limiter holds "
-                 "the peaks); the notes say what was reached and, when it is not reachable, how far it got. "
+                 "the peaks); the notes say what was reached and, when it is not reachable, how far it got (and in numbers: "
+                 "{loudness:{of, target_lufs, before_lufs, after_lufs, true_peak_db, limiter}}). "
                  "Surround panner (project in 5.1/7.1, {op:'format', channels}): pan = left/right, depth 0..100 = "
                  "front to surround (7.1: 50 = side, 100 = back), center 0..100 = share of the front pair in the "
                  "centre speaker, lfe_db = send to the LFE (-60 = off, low-passed at 120 Hz). A 5.1/7.1 file's centre, "
@@ -1101,15 +1121,16 @@ void addAudioOps(QVector<OpDef>& ops)
                  "limiter; relative: all together) and corrected toward the target (never the master); the notes "
                  "say what was reached and why when not. Measures the files (takes a while).",
                  opNormalize, kClipKeys}
-        << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?}",
+        << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?, remove?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
                  "clips or track = the music; under = the tracks that duck it (\"A1\", \"A1,A3\" or stream/track "
                  "names like \"Mikrofon\"). amount_db: how far down (default -12), threshold_db: what counts as "
                  "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
                  "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
-                 "keyframes; run it again after editing.",
+                 "keyframes; run it again after editing. remove:true takes the ducking off again (the clips' volume "
+                 "keyframes go, their volume stays; no 'under' needed).",
                  opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes
-        << OpDef{"clean_voice", "{op:'clean_voice', clips|track, amount?, gate?, clicks?, shape?, room?, remove?}",
+        << OpDef{"clean_voice", "{op:'clean_voice', clips|track, amount?, gate?, clicks?, shape?, room?, eq?, remove?}",
                  "\"Stimme säubern\": clean speech in one call (voice-overs, TTS, voice chat in game clips) - noise "
                  "and background sounds out (a soft room sound stays), pauses lowered, voice evened out",
                  "Adds the audio effect voiceclean to the clips (a video clip stands for its linked audio) or to every "
@@ -1121,7 +1142,9 @@ void addAudioOps(QVector<OpDef>& ops)
                  "the voice gets more even (quiet words up, loud ones down; not louder overall); room -80..-40 (default "
                  "-60) = dBFS of the room sound kept under the voice and in the pauses (the original's noise lowered "
                  "to this, but always by at least 12 dB), so pauses do not go dead silent. For speech only: "
-                 "ambience, nature sound or music without a voice is removed as noise. remove:true takes it off. "
+                 "ambience, nature sound or music without a voice is removed as noise. eq:true also puts the EQ preset 'voice' (high "
+                 "pass 80 Hz, -2.5 dB at 300 Hz, +1.5 dB presence and air) on the clips' audio tracks, in the same step "
+                 "(the Studio page's \"Stimme säubern\"). remove:true takes it off. "
                  "Works at any sample rate, "
                  "offline and the same in preview and export; the effect's ~57 ms delay is compensated (lips stay in "
                  "sync). The same effect is in `effects` (id voiceclean) for the generic effect op.",
