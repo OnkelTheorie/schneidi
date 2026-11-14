@@ -554,7 +554,9 @@ void StudioTracks::wheelEvent(QWheelEvent* e)
         break;
     }
     case WheelAction::ScrollHorizontal: m_view.scrollFrames(-steps / 120.0 * clipArea().width() / 8 / m_view.pxPerFrame); break;
-    case WheelAction::ScrollVertical: m_scrollY = std::clamp(m_scrollY - steps / 120 * (m_laneH / 3), 0, m_vbar->maximum()); break;
+    case WheelAction::ScrollVertical:
+        m_scrollY = std::clamp(m_scrollY - int(std::lround(steps / 120.0 * m_laneH / 3)), 0, m_vbar->maximum());
+        break;
     default: return;
     }
     syncScrollBars();

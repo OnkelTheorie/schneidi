@@ -1266,6 +1266,7 @@
  "Globales Branding verwenden": "Use global brand kit",
  "Glocke": "Bell",
  "Glätten": "Smoothing",
+ "Glätten bestimmt, wie ruhig ein gezeichneter Strich wird. Bei „Aus“ bleibt er genau so, wie du ihn gezogen hast.": "Smoothing sets how calm a drawn stroke becomes. With “None” it stays exactly as you drew it.",
  "Glättung": "Smoothing",
  "Glühen": "Glow",
  "Glühfarbe": "Glow color",

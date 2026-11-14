@@ -18,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -35,6 +36,7 @@ constexpr float kSilent = -200.f;
 constexpr double kFloor = -60.0; // lowest value of the meters (dBFS)
 constexpr double kFall = 24.0;   // meter decay dB/s
 constexpr double kHold = 1.0;    // peak hold, s
+constexpr int kCurveH = 56;      // EQ and compressor curves in a strip
 
 double meterPos(double db) { return std::clamp((db - kFloor) / -kFloor, 0.0, 1.0); }
 
@@ -56,8 +58,8 @@ QToolButton* smallButton(const QString& text, const QColor& on, const QString& t
     b->setCheckable(true);
     b->setFocusPolicy(Qt::NoFocus);
     b->setToolTip(tip);
-    b->setMinimumSize(24, 20);
-    b->setStyleSheet(QString("QToolButton { background: %1; color: %2; font-weight: 600; padding: 0 4px; border: none; }"
+    b->setMinimumHeight(20); // the width from its text (an explicit minimum width would let the layout cut it)
+    b->setStyleSheet(QString("QToolButton { background: %1; color: %2; font-weight: 600; padding: 0 3px; border: none; }"
                              "QToolButton:checked { background: %3; color: %4; }")
                          .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()));
     return b;
@@ -71,7 +73,7 @@ class StudioFader : public QWidget {
 public:
     StudioFader()
     {
-        setMinimumSize(60, 110);
+        setMinimumSize(60, 90);
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         setCursor(Qt::SizeVerCursor);
     }
@@ -170,13 +172,17 @@ protected:
         QFont f = font();
         f.setPointSizeF(7);
         p.setFont(f);
+        // Labels only where they do not run into the one above (a low fader skips -30/-40)
+        int lastLabel = -1000;
+        const int lineH = QFontMetrics(f).height();
         for (double db : {12.0, 6.0, 0.0, -6.0, -12.0, -20.0, -30.0, -40.0, -60.0}) {
             const int y = b - int(std::lround(VolumeDraw::posOf(db) * h));
             p.setPen(db == 0 ? Theme::text : Theme::textFaint);
             p.drawLine(slotX - 6, y, slotX - 3, y);
-            if (fw > 40)
-                p.drawText(QRect(fx, y - 6, slotX - fx - 8, 12), Qt::AlignRight | Qt::AlignVCenter,
-                           db <= kMinVolumeDb ? QStringLiteral("∞") : QString::number(int(db)));
+            if (fw <= 40 || y - lastLabel < lineH) continue;
+            p.drawText(QRect(fx, y - lineH / 2, slotX - fx - 8, lineH), Qt::AlignRight | Qt::AlignVCenter,
+                       db <= kMinVolumeDb ? QStringLiteral("∞") : QString::number(int(db)));
+            lastLabel = y;
         }
         const int y = b - int(std::lround(VolumeDraw::posOf(m_db) * h));
         const QRect handle(slotX - 11, y - 6, 22, 12);
@@ -249,7 +255,7 @@ public:
     {
         setMinimumSize(80, 40);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setFixedHeight(56);
+        setFixedHeight(kCurveH);
         setMouseTracking(true);
         setToolTip(T("Kompressor: Punkt seitlich = Schwelle, Ende hoch/runter = Verhältnis\nDoppelklick = alle Werte"));
         connect(editor->project(), &Project::timelineChanged, this, qOverload<>(&QWidget::update));
@@ -443,59 +449,58 @@ public:
         lay->addWidget(name);
         const QString tag = master ? QStringLiteral("master") : trackShortName({TrackKind::Audio, track});
         if (!master) {
-            // EQ: its switch and the curve (bands draggable); the window for all values beside it
-            auto* eqRow = new QHBoxLayout;
-            eqRow->setSpacing(3);
+            // EQ and compressor: their switches and windows ("…") in one row, below them their curves (draggable)
+            auto* fxRow = new QHBoxLayout;
+            fxRow->setSpacing(3);
             eq = smallButton(QStringLiteral("EQ"), Theme::primary, T("EQ der Spur an/aus"));
             eq->setObjectName("studio_eq_" + tag);
-            eqRow->addWidget(eq);
-            eqRow->addStretch(1);
             eqOpen = smallButton(QStringLiteral("…"), Theme::primary, T("EQ-Fenster öffnen"));
             eqOpen->setCheckable(false);
-            eqRow->addWidget(eqOpen);
-            lay->addLayout(eqRow);
+            dyn = smallButton(QStringLiteral("DYN"), Theme::primary, T("Kompressor der Spur an/aus"));
+            dyn->setObjectName("studio_dyn_" + tag);
+            dynOpen = smallButton(QStringLiteral("…"), Theme::primary, T("Kompressor-Fenster öffnen"));
+            dynOpen->setCheckable(false);
+            fxRow->addWidget(eq);
+            fxRow->addWidget(eqOpen);
+            fxRow->addStretch(1);
+            fxRow->addWidget(dyn);
+            fxRow->addWidget(dynOpen);
+            lay->addLayout(fxRow);
             eqCurve = new EqCurve(editor, track);
             eqCurve->setCompact(true);
             eqCurve->setObjectName("studio_eqcurve_" + tag);
-            eqCurve->setFixedHeight(56);
+            eqCurve->setFixedHeight(kCurveH);
             eqCurve->setToolTip(T("EQ: Punkte ziehen = Frequenz und Verstärkung, Doppelklick = 0 dB"));
             lay->addWidget(eqCurve);
-            auto* dynRow = new QHBoxLayout;
-            dynRow->setSpacing(3);
-            dyn = smallButton(QStringLiteral("DYN"), Theme::primary, T("Kompressor der Spur an/aus"));
-            dyn->setObjectName("studio_dyn_" + tag);
-            dynRow->addWidget(dyn);
-            dynRow->addStretch(1);
-            dynOpen = smallButton(QStringLiteral("…"), Theme::primary, T("Kompressor-Fenster öffnen"));
-            dynOpen->setCheckable(false);
-            dynRow->addWidget(dynOpen);
-            lay->addLayout(dynRow);
             dynCurve = new DynCurve(editor, track);
             dynCurve->setObjectName("studio_dyncurve_" + tag);
             lay->addWidget(dynCurve);
             pan = new PanBar;
             pan->setObjectName("studio_pan_" + tag);
             lay->addWidget(pan);
+            // Mute, solo, pan value and the peak in one row (room for the fader)
             auto* ms = new QHBoxLayout;
             ms->setSpacing(3);
             mute = smallButton(QStringLiteral("M"), Theme::warning, T("Stumm"));
             solo = smallButton(QStringLiteral("S"), Theme::meterMid, T("Solo: nur Spuren mit „S“ sind zu hören"));
-            ms->addWidget(mute, 1);
-            ms->addWidget(solo, 1);
+            ms->addWidget(mute);
+            ms->addWidget(solo);
             panLabel = new QLabel(QStringLiteral("C"));
             panLabel->setAlignment(Qt::AlignCenter);
             ms->addWidget(panLabel, 1);
+            peak = new QLabel;
+            ms->addWidget(peak, 1);
             lay->addLayout(ms);
         } else {
             limiter = smallButton(T("Limiter"), Theme::primary, {});
             limiter->setObjectName("studio_limiter");
             lay->addWidget(limiter);
+            peak = new QLabel;
+            lay->addWidget(peak);
         }
-        peak = new QLabel;
         peak->setAlignment(Qt::AlignCenter);
         peak->setToolTip(master ? T("True Peak (dBTP) seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück")
                                 : T("Spitzenpegel (dBFS) seit dem Zurücksetzen"));
-        lay->addWidget(peak);
         fader = new StudioFader;
         fader->setObjectName("studio_fader_" + tag);
         lay->addWidget(fader, 1);
@@ -505,6 +510,18 @@ public:
         lay->addWidget(value);
         setVolume(0);
         updatePeak();
+        m_master = master;
+        fitWidth();
+    }
+
+    // As wide as its widest row needs (a large font, a long language), never narrower than the usual strip; again
+    // once polished (the style sheet's fonts and paddings count)
+    void fitWidth()
+    {
+        ensurePolished();
+        for (QWidget* c : findChildren<QWidget*>()) c->ensurePolished();
+        layout()->invalidate();
+        setFixedWidth(std::max(StudioMixer::kStripW + (m_master ? 10 : 0), layout()->minimumSize().width()));
     }
 
     void setVolume(double db)
@@ -519,6 +536,21 @@ public:
         const int i = int(std::lround(v));
         panLabel->setText(i == 0 ? QStringLiteral("C") : QString("%1%2").arg(i < 0 ? QStringLiteral("L") : QStringLiteral("R")).arg(std::abs(i)));
     }
+    // The curves need room: a low mixer hides them (their switches stay), the fader keeps its height
+    bool curvesShown() const { return eqCurve && !eqCurve->isHidden(); }
+    void setCurvesShown(bool on)
+    {
+        if (!eqCurve || curvesShown() == on) return;
+        eqCurve->setVisible(on);
+        dynCurve->setVisible(on);
+    }
+    // Height the strip needs with its curves shown
+    int heightWithCurves() const
+    {
+        const int h = layout()->minimumSize().height();
+        return eqCurve && !curvesShown() ? h + 2 * (kCurveH + layout()->spacing()) : h;
+    }
+
     void updatePeak()
     {
         const QString text = signedDb(fader->maxPeak());
@@ -549,6 +581,7 @@ public:
 
 private:
     bool m_clip = false;
+    bool m_master = false;
 };
 
 // Loudness at the master, live (ITU-R BS.1770): momentary, short-term, integrated, range, true peak. Integrated green
@@ -706,6 +739,23 @@ void StudioMixer::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
     sync();
+    fitHeight();
+}
+
+void StudioMixer::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    fitHeight();
+}
+
+void StudioMixer::fitHeight()
+{
+    const int room = m_scroll->viewport()->height();
+    for (StudioStrip* s : m_strips) {
+        s->fitWidth();
+        s->setCurvesShown(room >= s->heightWithCurves());
+    }
+    m_master->fitWidth();
 }
 
 void StudioMixer::rebuild(int count)
@@ -753,6 +803,7 @@ void StudioMixer::rebuild(int count)
         m_stripLayout->insertWidget(i, s);
         m_strips << s;
     }
+    fitHeight();
 }
 
 void StudioMixer::openEditor(int track, bool eq)

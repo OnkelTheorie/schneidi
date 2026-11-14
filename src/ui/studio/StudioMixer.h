@@ -38,12 +38,14 @@ public:
 
 protected:
     void showEvent(QShowEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
 
 private:
     void sync(); // model -> strips (rebuilt when the track count changed)
     void rebuild(int count);
     void tick(); // meters fall, peak hold, loudness reading
     void openEditor(int track, bool eq);
+    void fitHeight(); // curves only where there is room for them
 
     Editor* m_editor;
     Project* m_project;

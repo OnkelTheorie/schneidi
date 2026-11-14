@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "ui/ElidedLabel.h"
 #include "ui/studio/StudioMixer.h"
 #include "ui/studio/StudioTracks.h"
 
@@ -47,9 +48,11 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     auto* barLay = new QHBoxLayout(bar);
     barLay->setContentsMargins(6, 2, 6, 2);
     barLay->setSpacing(4);
-    auto* title = new QLabel(T("Tonspuren"));
+    // The title gives way first in a narrow row (a long language, a large font): the tools stay whole
+    auto* title = new ElidedLabel;
+    title->setFullText(T("Tonspuren"));
     title->setObjectName("PanelTitle");
-    barLay->addWidget(title);
+    barLay->addWidget(title, 1);
     barLay->addSpacing(8);
     auto tool = [&](const QString& text, const QString& name, const QString& tip) {
         auto* b = new QToolButton;
@@ -81,7 +84,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_smoothing->setToolTip(T("Wie stark ein gezeichneter Strich geglättet wird"));
     for (const Smoothing& s : kSmoothing) m_smoothing->addItem(T(s.name), s.frames);
     barLay->addWidget(m_smoothing);
-    barLay->addStretch(1);
+    barLay->addSpacing(8);
     auto* fit = new QToolButton;
     fit->setObjectName("studio_fit");
     fit->setText(T("Einpassen"));

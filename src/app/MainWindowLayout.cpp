@@ -543,7 +543,7 @@ void MainWindow::showPage(Page page)
         m_studioPage->top()->insertWidget(0, m_viewer);
         m_studioPage->top()->setStretchFactor(1, 1);
         applySizes(m_studioPage->top(), {420, 1180});
-        applySizes(m_studioPage->root(), {400, 500});
+        applySizes(m_studioPage->root(), {380, 560});
         m_pages->setCurrentWidget(m_studioPage);
         break;
     }

@@ -26,10 +26,10 @@ public:
     void setCompact(bool on)
     {
         m_compact = on;
+        setMinimumSize(on ? QSize(80, 40) : QSize(320, 160)); // the full size is the constructor's
         update();
     }
     QSize sizeHint() const override { return m_compact ? QSize(140, 56) : QSize(480, 220); }
-    QSize minimumSizeHint() const override { return m_compact ? QSize(80, 40) : QWidget::minimumSizeHint(); }
 
 protected:
     void paintEvent(QPaintEvent*) override;

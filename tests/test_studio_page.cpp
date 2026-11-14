@@ -189,6 +189,9 @@ QString cutOff(QWidget* root)
     QStringList bad;
     for (QWidget* c : root->findChildren<QWidget*>()) {
         if (!c->isVisible()) continue;
+        bool inViewer = false;
+        for (QWidget* p = c->parentWidget(); p && p != root; p = p->parentWidget()) inViewer |= qobject_cast<Viewer*>(p) != nullptr;
+        if (inViewer) continue; // the viewer's own (moved here; its layout is tested with it)
         if (!qobject_cast<QLabel*>(c) && !qobject_cast<QAbstractButton*>(c) && !qobject_cast<QComboBox*>(c)) continue;
         if (c->objectName() == "qt_scrollarea_hcontainer" || c->objectName() == "qt_scrollarea_vcontainer") continue;
         const QString name = QString("%1 %2 '%3'")
@@ -235,14 +238,24 @@ void testLayout(Engine& engine, const QString& audioFile)
                 Check::report(w.width() == 1024, "window not wider", __FILE__, __LINE__,
                               QString("%1: %2 px").arg(where).arg(w.width()));
                 Check::report(page->width() <= 1024, "page fits", __FILE__, __LINE__, QString("%1: %2 px").arg(where).arg(page->width()));
+                if (qEnvironmentVariableIsSet("STUDIO_DEBUG"))
+                    for (QWidget* c : page->mixer()->findChildren<QWidget*>())
+                        if (c->minimumSizeHint().width() > 100 || c->minimumWidth() > 100)
+                            std::printf("%s %s min %d hint %d minW %d\n", c->metaObject()->className(), qPrintable(c->objectName()),
+                                        c->minimumSizeHint().width(), c->sizeHint().width(), c->minimumWidth());
                 const QString cut = cutOff(page);
                 Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, where + ": " + cut);
                 // The lanes and the faders keep a usable size
                 Check::report(page->tracks()->laneHeight() >= StudioTracks::kMinLaneH, "lanes tall enough", __FILE__,
                               __LINE__, QString("%1: %2 px").arg(where).arg(page->tracks()->laneHeight()));
-                if (auto* fader = page->findChild<QWidget*>("studio_fader_master"))
-                    Check::report(fader->height() >= 80, "fader tall enough", __FILE__, __LINE__,
-                                  QString("%1: %2 px").arg(where).arg(fader->height()));
+                for (const char* name : {"studio_fader_master", "studio_fader_A1", "studio_fader_A3"})
+                    if (auto* fader = page->findChild<QWidget*>(name); CHECK(fader)) {
+                        // Whole and tall enough: inside the mixer's view, not cut off at its bottom
+                        const QRect r(fader->mapTo(page->mixer(), QPoint(0, 0)), fader->size());
+                        Check::report(fader->height() >= 80 && page->mixer()->rect().contains(r), "fader whole", __FILE__,
+                                      __LINE__, QString("%1 %2: %3 px, bottom %4 of %5").arg(where, name).arg(fader->height())
+                                                    .arg(r.bottom()).arg(page->mixer()->height()));
+                    }
                 if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-%2-%3.png").arg(dumpDir, lang, large ? "large" : "normal"));
             }
         }
