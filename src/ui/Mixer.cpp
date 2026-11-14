@@ -5,6 +5,7 @@
 #include "app/EqDialog.h"
 #include "app/Theme.h"
 #include "app/VoiceoverRecorder.h"
+#include "core/Automation.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -112,6 +113,7 @@ public:
         m_overMark = mark;
         update();
     }
+    bool dragging() const { return m_dragging; }
     void setValue(double db)
     {
         if (db == m_db) return;
@@ -564,9 +566,23 @@ public:
 
     void setVolume(double db)
     {
+        shown = db;
         fader->setValue(db);
-        value->setText(formatVolumeDb(db));
+        const QString text = formatVolumeDb(db);
+        if (value->text() != text) value->setText(text);
     }
+    // Track automation: the fader shows the level at the playhead (fader + curve), moving it trims the whole curve
+    void setAutomated(bool on)
+    {
+        if (on == automated) return;
+        automated = on;
+        value->setStyleSheet(QString("color: %1; font-size: 8pt;").arg((on ? Theme::secondary : Theme::text).name()));
+        const QString tip = on ? T("Automation: zeigt den Pegel am Abspielkopf; der Fader verschiebt die ganze Kurve") : QString();
+        value->setToolTip(tip);
+        fader->setToolTip(tip);
+    }
+    double shown = 0;
+    bool automated = false;
     void setPan(double v)
     {
         pan->setValue(v);
@@ -972,8 +988,11 @@ void Mixer::rebuildStrips(int count)
     for (int i = 0; i < count; ++i) {
         auto* s = new ChannelStrip(false);
         s->fader->onChange = [this, i, s](double db) {
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With automation the fader shows the level at the playhead: a move trims the whole curve by as much
+            const double fader = t && !t->volumeAuto.isEmpty() ? t->volumeDb + (db - s->shown) : db;
             s->setVolume(db);
-            m_editor->setTrackVolume(i, db, "mixer-vol-" + QString::number(i));
+            m_editor->setTrackVolume(i, fader, "mixer-vol-" + QString::number(i));
         };
         s->pan->onChange = [this, i, s](double v) {
             s->setPan(v);
@@ -1132,7 +1151,8 @@ void Mixer::sync()
         ChannelStrip* s = m_strips[i];
         s->name->setText(trackShortName({TrackKind::Audio, i})); // like DaVinci "A1", name as tooltip
         s->name->setToolTip(trackDisplayName(t, {TrackKind::Audio, i}));
-        s->setVolume(t.volumeDb);
+        s->setAutomated(!t.volumeAuto.isEmpty());
+        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
         s->setPan(t.pan);
         s->mute->setChecked(t.muted); // setChecked does not trigger clicked
         s->solo->setChecked(t.solo);
@@ -1169,6 +1189,11 @@ void Mixer::tick()
         if (silent) s->fader->setLevel(kSilent, kSilent);
         s->fader->tick(dt);
     };
+    // Read mode: automated faders follow their curve at the playhead
+    const Timeline& tl = m_project->timeline();
+    for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
+        if (ChannelStrip* s = m_strips[i]; s->automated && !s->fader->dragging())
+            s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
     for (ChannelStrip* s : m_strips) step(s);
     step(m_master);
     for (ChannelStrip* s : m_strips) s->updatePeak();

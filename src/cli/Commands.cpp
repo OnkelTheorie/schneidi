@@ -683,6 +683,11 @@ QJsonObject timelineJson(const Project& p)
                 if (t.panDepth != 0) o["depth"] = t.panDepth; // surround panner (5.1/7.1 mix)
                 if (t.panCenter != 0) o["center"] = t.panCenter;
                 if (t.lfeDb > kMinVolumeDb) o["lfe_db"] = t.lfeDb;
+                if (!t.volumeAuto.isEmpty()) { // track automation: dB on top of the fader at timeline frames
+                    QJsonArray pts;
+                    for (const AutoPoint& a : t.volumeAuto) pts << QJsonObject{{"at", a.frame}, {"db", std::round(a.db * 100) / 100}};
+                    o["volume_automation"] = pts;
+                }
                 if (t.solo) o["solo"] = true;
                 if (t.dynamics != TrackDynamics{}) {
                     const TrackDynamics& d = t.dynamics;

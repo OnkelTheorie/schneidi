@@ -5,6 +5,7 @@
 #include "app/DynamicsDialog.h"
 #include "app/EqDialog.h"
 #include "app/Theme.h"
+#include "core/Automation.h"
 #include "core/ChannelLayout.h"
 #include "core/Dynamics.h"
 #include "core/Editor.h"
@@ -95,6 +96,7 @@ public:
         update();
     }
     int channels() const { return int(m_target.size()); }
+    bool dragging() const { return m_dragging; }
     void setOver(double db) { m_over = db; }
     void setValue(double db)
     {
@@ -619,9 +621,23 @@ public:
 
     void setVolume(double db)
     {
+        shown = db;
         fader->setValue(db);
-        value->setText(formatVolumeDb(db));
+        const QString text = formatVolumeDb(db);
+        if (value->text() != text) value->setText(text);
     }
+    // Track automation: the fader shows the level at the playhead (fader + curve) and moving it trims the whole curve
+    void setAutomated(bool on)
+    {
+        if (on == automated) return;
+        automated = on;
+        value->setStyleSheet(QString("color: %1;").arg((on ? Theme::secondary : Theme::text).name()));
+        const QString tip = on ? T("Automation: zeigt den Pegel am Abspielkopf; der Fader verschiebt die ganze Kurve") : QString();
+        value->setToolTip(tip);
+        fader->setToolTip(tip);
+    }
+    double shown = 0;       // what the fader shows (with automation: the level at the playhead)
+    bool automated = false;
     void setPan(double v)
     {
         if (!pan) return;
@@ -907,8 +923,11 @@ void StudioMixer::rebuild(int count)
         auto* s = new StudioStrip(m_editor, i);
         s->fader->setChannels(m_channels);
         s->fader->onChange = [this, i, s](double db) {
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With automation the fader shows the level at the playhead: a move trims the whole curve by as much
+            const double fader = t && !t->volumeAuto.isEmpty() ? t->volumeDb + (db - s->shown) : db;
             s->setVolume(db);
-            m_editor->setTrackVolume(i, db, QString("studio-vol-%1").arg(i));
+            m_editor->setTrackVolume(i, fader, QString("studio-vol-%1").arg(i));
         };
         s->pan->onChange = [this, i, s](double v) {
             s->setPan(v);
@@ -997,7 +1016,8 @@ void StudioMixer::sync()
         const QString style = QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
                                   .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name());
         if (s->name->styleSheet() != style) s->name->setStyleSheet(style);
-        s->setVolume(t.volumeDb);
+        s->setAutomated(!t.volumeAuto.isEmpty());
+        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
         s->setPan(t.pan);
         s->surround->setVisible(surround);
         s->depth->setValue(t.panDepth);
@@ -1036,6 +1056,11 @@ void StudioMixer::tick()
     const double dt = m_clock.restart() / 1000.0;
     if (!isVisible()) return;
     const bool silent = !m_lastLevels.isValid() || m_lastLevels.elapsed() > 150;
+    // Read mode: automated faders follow their curve at the playhead (playing or not)
+    const Timeline& tl = m_project->timeline();
+    for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
+        if (StudioStrip* s = m_strips[i]; s->automated && !s->fader->dragging())
+            s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
     for (StudioStrip* s : m_strips) {
         if (silent) s->fader->silence();
         s->fader->tick(dt);

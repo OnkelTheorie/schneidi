@@ -220,6 +220,13 @@ public:
     // clips under it (smoothed by `smoothing` frames, thinned). Locked tracks and clips stay. One undo step; false =
     // nothing changed (no clip under the stroke)
     bool drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
+    // Pen in track mode (VolumeDraw::applyTrack): the stroke becomes the volume automation of audio track `track`
+    // where it was drawn. Locked tracks stay. One undo step per stroke; false = nothing changed.
+    bool drawTrackVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
+    // The volume automation of audio track `track` replaced (CLI op track_volume; empty = off, the fader alone).
+    // Normalized (Automation::normalized). Locked tracks stay. One undo step (same mergeKey: one step, dragging a
+    // point on the Studio page); false = nothing changed.
+    bool setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText = {}, const QString& mergeKey = {});
     // Audio clips for normalizing: selection (with linked partners), audio only, not locked
     QVector<int> selectedAudioClips() const;
     // Change any clip property (Inspector). Same mergeKey = one undo step.

@@ -72,7 +72,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     };
     m_select = tool(T("Auswahl"), "studio_tool_select", T("Klick setzt den Abspielkopf und wählt den Clip"));
     m_pen = tool(T("Stift"), "studio_tool_pen",
-                 T("Lautstärke zeichnen: über die Clips ziehen – oben lauter, unten leiser (ein Strich = ein Schritt "
+                 T("Lautstärke zeichnen: über die Spur ziehen – oben lauter, unten leiser (ein Strich = ein Schritt "
                    "zum Rückgängigmachen)"));
     m_pen->setProperty("tourTarget", "studio_pen");
     // The keys (the window's tool actions pick these tools on this page; a changed binding shows here)
@@ -83,6 +83,17 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     group->addButton(m_select);
     group->addButton(m_pen);
     m_select->setChecked(true);
+    // What the pen writes: the track's automation (a curve over the timeline's time, also between clips; it stays
+    // when clips move) or the volume keyframes of the clips under the stroke (they move with their clip)
+    barLay->addSpacing(4);
+    auto* penClip = tool(T("Clip"), "studio_pen_clip",
+                         T("Der Stift zeichnet Lautstärke-Keyframes der Clips unter dem Strich (sie wandern mit dem Clip)"));
+    auto* penTrack = tool(T("Spur"), "studio_pen_track",
+                          T("Der Stift zeichnet die Automation der Spur: eine Kurve über die Zeit der Timeline, auch "
+                            "zwischen den Clips (der Fader verschiebt die ganze Kurve)"));
+    auto* targetGroup = new QButtonGroup(this);
+    targetGroup->addButton(penClip);
+    targetGroup->addButton(penTrack);
     barLay->addSpacing(8);
     auto* smoothLabel = new QLabel(T("Glätten"));
     barLay->addWidget(smoothLabel);
@@ -110,6 +121,20 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     });
     connect(m_tracks, &StudioTracks::toolChanged, this, [this](StudioTracks::Tool t) {
         (t == StudioTracks::Tool::Pen ? m_pen : m_select)->setChecked(true);
+    });
+    // The pen's target is the user's choice too (default: the track)
+    const bool clipTarget = QSettings().value("studio/penTarget").toString() == QLatin1String("clip");
+    (clipTarget ? penClip : penTrack)->setChecked(true);
+    m_tracks->setPenTarget(clipTarget ? StudioTracks::PenTarget::Clip : StudioTracks::PenTarget::Track);
+    connect(penClip, &QToolButton::toggled, this, [this](bool on) {
+        if (!on) return;
+        m_tracks->setPenTarget(StudioTracks::PenTarget::Clip);
+        QSettings().setValue("studio/penTarget", "clip");
+    });
+    connect(penTrack, &QToolButton::toggled, this, [this](bool on) {
+        if (!on) return;
+        m_tracks->setPenTarget(StudioTracks::PenTarget::Track);
+        QSettings().setValue("studio/penTarget", "track");
     });
     // The smoothing is the user's choice, kept between sessions
     const int saved = QSettings().value("studio/smoothing", kDefaultSmoothing).toInt();

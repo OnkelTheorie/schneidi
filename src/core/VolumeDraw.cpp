@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/VolumeDraw.h"
 
+#include "core/Automation.h"
 #include "core/Keyframes.h"
 
 #include <algorithm>
@@ -146,6 +147,24 @@ bool apply(Clip& c, const QVector<Point>& stroke, int smoothing)
     if (before) Keys::setKey(c, AnimParam::Volume, t0 - 1, oldBefore);
     if (after) Keys::setKey(c, AnimParam::Volume, t1 + 1, oldAfter);
     for (int i : thin(part)) Keys::setKey(c, AnimParam::Volume, t0 + i, std::round(part[i] * 100) / 100);
+    return true;
+}
+
+bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing)
+{
+    if (!spansEnough(stroke)) return false;
+    int first = 0;
+    const QVector<double> raw = resample(stroke, &first);
+    if (raw.isEmpty()) return false;
+    const QVector<double> all = smooth(raw, smoothing);
+    // Frames before 0 (a stroke started left of the timeline's start) are left out
+    const int skip = std::max(0, -first);
+    if (skip >= all.size()) return false;
+    const QVector<double> part = all.mid(skip);
+    const int from = first + skip;
+    AutoCurve inside;
+    for (int i : thin(part)) inside << AutoPoint{from + i, std::round(part[i] * 100) / 100 - t.volumeDb};
+    Automation::replaceRange(t.volumeAuto, from, from + int(part.size()) - 1, inside);
     return true;
 }
 
