@@ -6,6 +6,8 @@
 #include "Satd.h"
 #include "ThreadErrors.h"
 
+#include <climits>
+#include <cstdlib>
 #include <algorithm>
 #include <bit>
 #include <atomic>
@@ -254,6 +256,9 @@ double Lookahead::bScore(const LookaheadFrame& f, const LookaheadFrame& prev, co
     return steps > 0 ? far.interSum / steps : 0.5;
 }
 
+// H264_LASUBPEL=0: the lookahead's half-pel step measures all eight neighbours.
+static const bool gLaSubpel = !std::getenv("H264_LASUBPEL") || std::atoi(std::getenv("H264_LASUBPEL")) != 0;
+
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
                       int seedScale, const std::atomic<int>* prevRows, std::atomic<int>* ownRows) const
 {
@@ -405,6 +410,35 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
             clampMv(hx, hy);
             int bestSatd = satdHalf(hx, hy);
             const int cx = hx, cy = hy;
+            if (gLaSubpel) {
+                // The four direct neighbours, then the two diagonals beside the best of them (as the
+                // encoder's sub-pel step): 6 instead of 8 SATDs.
+                int c4[4];
+                static constexpr int kD[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+                for (int i = 0; i < 4; ++i) {
+                    const int vx = cx + kD[i][0], vy = cy + kD[i][1];
+                    c4[i] = std::abs(vx) > limit || std::abs(vy) > limit ? INT_MAX : satdHalf(vx, vy);
+                    if (c4[i] < bestSatd) {
+                        bestSatd = c4[i];
+                        hx = vx;
+                        hy = vy;
+                    }
+                }
+                const int h = c4[1] < c4[0] ? 1 : -1, v = c4[3] < c4[2] ? 1 : -1;
+                const bool horizontal = std::min(c4[0], c4[1]) < std::min(c4[2], c4[3]);
+                const int diag[2][2] = {{h, v}, {horizontal ? h : -h, horizontal ? -v : v}};
+                for (const auto& d : diag) {
+                    const int vx = cx + d[0], vy = cy + d[1];
+                    if (std::abs(vx) > limit || std::abs(vy) > limit)
+                        continue;
+                    const int c = satdHalf(vx, vy);
+                    if (c < bestSatd) {
+                        bestSatd = c;
+                        hx = vx;
+                        hy = vy;
+                    }
+                }
+            } else
             for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx) {
                     if (!dx && !dy)

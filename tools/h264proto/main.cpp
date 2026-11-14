@@ -303,6 +303,7 @@ int main(int argc, char** argv)
     double psnrY = 0, psnrU = 0, psnrV = 0, seconds = 0;
     // The encoder may hold pictures back (lookahead): PSNR against the source picture that came out.
     std::map<int, std::vector<uint8_t>> pending; // by display index: B pictures come out of order
+    std::vector<std::vector<uint8_t>> spare;
     double typePsnr[3] = {}, typeBytes[3] = {};
     int typeCount[3] = {};
     auto took = [&](const std::vector<uint8_t>& au) {
@@ -335,6 +336,7 @@ int main(int argc, char** argv)
                 for (int y = 0; y < ch; ++y)
                     std::fwrite(p->data() + size_t(y) * (pw / 2), 1, size_t(cw), recon);
         }
+        spare.push_back(std::move(pending.at(enc.lastDisplayIndex()))); // read buffers go round
         pending.erase(enc.lastDisplayIndex());
         ++frames;
     };
@@ -345,11 +347,17 @@ int main(int argc, char** argv)
         pic.v = pic.u + size_t(cw) * ch;
         pic.strideY = w;
         pic.strideC = cw;
-        pending[fed] = frame;
-        ++fed;
         const auto t0 = std::chrono::steady_clock::now();
-        const auto au = enc.encode(pic);
+        const auto au = enc.encode(pic); // copies the picture
         seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        pending[fed] = std::move(frame);
+        ++fed;
+        if (spare.empty()) {
+            frame = std::vector<uint8_t>(pending.begin()->second.size());
+        } else {
+            frame = std::move(spare.back());
+            spare.pop_back();
+        }
         took(au);
     }
     for (;;) {
