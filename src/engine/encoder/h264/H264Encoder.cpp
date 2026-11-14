@@ -6287,10 +6287,10 @@ void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, 
         return;
     }
 #elif defined(SCHNEIDI_H264_NEON)
-    if (b && (w == 16 || w == 8)) {
+    if (w == 16 || w == 8) { // averages, or plain copies without a library call per row
         for (int y = 0; y < h; ++y) {
             const uint8_t* ra = a + size_t(y) * W;
-            const uint8_t* rb = b + size_t(y) * W;
+            const uint8_t* rb = b ? b + size_t(y) * W : ra;
             if (w == 16)
                 vst1q_u8(out + y * 16, vrhaddq_u8(vld1q_u8(ra), vld1q_u8(rb)));
             else
