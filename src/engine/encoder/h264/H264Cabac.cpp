@@ -1,6 +1,7 @@
 // schneidi's own H.264 encoder: CABAC macroblock layer (ITU-T H.264 clauses 9.3.2 and 9.3.3.1).
 // Serialises the syntax elements the macroblock coders chose; context selection follows the
 // neighbour rules of 9.3.3.1.1 (availability stops at slice edges like everywhere else).
+#include "Simd.h" // first: no floating-point contraction (see there)
 #include "Cabac.h"
 #include "FrameCoder.h"
 
@@ -9,9 +10,6 @@
 #include <cmath>
 #include <cstdlib>
 
-#if defined(__SSE2__) || defined(_M_X64)
-#include <emmintrin.h>
-#endif
 
 namespace schneidi::h264 {
 namespace {
@@ -593,7 +591,7 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 {
     end = 0;
     bool found = false;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128d half = _mm_set1_pd(0.5);
     const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
     __m128d tl[2] = {_mm_setzero_pd(), _mm_setzero_pd()}, hd[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
@@ -669,7 +667,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     if (energy) {
         trellisScan(x, scale, count, end, tail, *energy);
     } else {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
         const __m128d half = _mm_set1_pd(0.5);
         const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
         while (end >= 2) {

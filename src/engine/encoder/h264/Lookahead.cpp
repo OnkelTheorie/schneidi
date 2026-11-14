@@ -1,6 +1,7 @@
 // Lookahead analysis at half resolution: per macroblock the SATD of the best of three intra
 // predictions and of a small motion search (full-pel diamond on SAD, half-pel on SATD) against
 // the previous picture, plus the macroblock tree that propagates these costs backwards.
+#include "Simd.h" // first: no floating-point contraction (see there)
 #include "Lookahead.h"
 
 #include "Satd.h"
@@ -59,7 +60,7 @@ void Lookahead::prepare(LookaheadFrame& f) const
         uint8_t* out = f.half.data() + size_t(y + kMargin) * stride + kMargin;
         const int inside = std::min(halfW_, width_ / 2); // both source columns inside the picture
         int x = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
         // Eight averages per step: even and odd samples of both rows as 16-bit sums (same numbers).
         const __m128i lowByte = _mm_set1_epi16(0x00ff), two = _mm_set1_epi16(2);
         for (; x + 8 <= inside; x += 8) {
@@ -101,7 +102,7 @@ void Lookahead::prepare(LookaheadFrame& f) const
             for (int dy = 0; dy < 4; ++dy)
                 rows[dy] = f.y.data() + size_t(std::min(y * 4 + dy, height_ - 1)) * width_;
             int x = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
             // Four thumbnail samples per step: 16-bit sums of the four rows, then of four neighbours.
             const __m128i lowByte = _mm_set1_epi16(0x00ff), ones = _mm_set1_epi16(1), eight = _mm_set1_epi32(8);
             for (; x + 4 <= inside; x += 4) {
@@ -205,7 +206,7 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                             continue;
                         const uint8_t* ref = &prevThumb[size_t(by + my) * tw + bx];
                         int mx = mx0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
                         // The sum bound four positions at a time (with the best SAD at the start of
                         // the four: maybe a SAD more than one by one, the same minimum).
                         {
@@ -387,7 +388,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                     return satd8x8U8Fast(cur, stride, ref, stride) + mvCost(hx, hy);
                 uint8_t p[64];
                 const int ox = hx & 1, oy = hy & 1;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
                 const __m128i zero = _mm_setzero_si128(), two = _mm_set1_epi16(2);
                 auto load = [&](const uint8_t* q) { return _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(q)), zero); };
                 for (int y = 0; y < 8; ++y) {

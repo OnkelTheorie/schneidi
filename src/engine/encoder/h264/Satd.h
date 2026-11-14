@@ -7,14 +7,7 @@
 #include <cstring>
 #include <initializer_list>
 
-#if defined(__SSE2__) || defined(_M_X64)
-#include <emmintrin.h>
-#endif
-// AVX2 kernels are compiled for that target only and picked at run time (GCC/Clang on x86).
-#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
-#define SCHNEIDI_H264_AVX2 1
-#include <immintrin.h>
-#endif
+#include "Simd.h"
 
 namespace schneidi::h264 {
 
@@ -51,7 +44,7 @@ inline int satd4x4(const int* diff)
 // SATD of a 4x4 block between two 8-bit images; same result as satd4x4 on their difference.
 inline int satdU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128i zero = _mm_setzero_si128();
     auto row = [&](int i) {
         int32_t wa, wb;
@@ -92,7 +85,7 @@ inline int satdU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 // the vertical transform across eight lanes.
 inline int satd8x4U8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128i zero = _mm_setzero_si128();
     auto row = [&](int i) {
         return _mm_sub_epi16(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + i * strideA)), zero),
@@ -290,7 +283,7 @@ inline void satd4x4x4U8(const uint8_t* src, int stride, const uint8_t* pred, int
 // satd8x8U8 it tells whether the 8x8 transform suits a residual better than four 4x4 ones.
 inline int sa8dU8(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     // Rows as 8 x int16: 8-point butterflies across the rows, transpose, again in 32 bit.
     const __m128i zero = _mm_setzero_si128();
     __m128i r[8];
@@ -376,7 +369,7 @@ inline int satd8x8U8Fast(const uint8_t* a, int strideA, const uint8_t* b, int st
 // SAD of one row of 8 or 16 samples (SSE2 where available, plain C elsewhere).
 inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
 {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     if (w == 16) {
         const __m128i s = _mm_sad_epu8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a)),
                                        _mm_loadu_si128(reinterpret_cast<const __m128i*>(b)));
@@ -397,7 +390,7 @@ inline int sadRow(const uint8_t* a, const uint8_t* b, int w)
 // SAD of a w x h block (w = 8 or 16, h even): same as summing sadRow, one horizontal sum at the end.
 inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
 {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     __m128i acc = _mm_setzero_si128();
     if (w == 16) {
         for (int y = 0; y < h; ++y)
@@ -434,7 +427,7 @@ inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB
 // differs between the SSE2 and the plain version; the distance does not depend on it.
 inline void hadamardMags8x8U8(const uint8_t* p, int stride, int16_t* m)
 {
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128i zero = _mm_setzero_si128();
     auto absv = [&](__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(zero, x)); };
     __m128i c[4][2]; // per quarter (left/right of the upper, then of the lower half) its 16 coefficients
@@ -499,7 +492,7 @@ inline void hadamardMags8x8U8(const uint8_t* p, int stride, int16_t* m)
 inline int hadamardMagsDistance(const int16_t* a, const int16_t* b)
 {
     int sum[2];
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128i zero = _mm_setzero_si128(), one = _mm_set1_epi16(1);
     for (int part = 0; part < 2; ++part) {
         __m128i acc = zero;

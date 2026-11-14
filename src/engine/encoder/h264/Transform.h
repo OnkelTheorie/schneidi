@@ -5,10 +5,7 @@
 #include <cstdint>
 #include <cstring>
 
-#if defined(__SSE2__) || defined(_M_X64)
-#include <emmintrin.h>
-#define SCHNEIDI_H264_SSE2 1
-#endif
+#include "Simd.h"
 
 namespace schneidi::h264 {
 

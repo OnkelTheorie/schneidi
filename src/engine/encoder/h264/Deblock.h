@@ -10,8 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 
-#if defined(__SSE2__) || defined(_M_X64)
-#include <emmintrin.h>
+#include "Simd.h"
+#ifdef SCHNEIDI_H264_SSE2
 #define SCHNEIDI_H264_DEBLOCK_SSE2 1
 #endif
 

@@ -695,6 +695,13 @@ add_executable(h264-proto EXCLUDE_FROM_ALL
 target_include_directories(h264-proto PRIVATE ${CMAKE_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
 target_link_libraries(h264-proto PRIVATE Threads::Threads)
+# The encoder's floating-point cost decisions must not be contracted into fused multiply-adds (AArch64, x86 with
+# -march=haswell or later): the stream would differ between platforms. Simd.h says so by pragma too.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_property(SOURCE src/engine/encoder/h264/H264Encoder.cpp src/engine/encoder/h264/Lookahead.cpp
+                        src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Cavlc.cpp
+                 APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 if(MINGW)
     # The encoder's AVX2 kernels keep __m256i on the stack; MinGW GCC does not align the stack to 32 bytes (GCC PR
     # 54412), so aligned spills could crash: the assembler turns aligned vector moves into unaligned ones. Applies to

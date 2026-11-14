@@ -1,6 +1,7 @@
 // schneidi's own H.264 encoder (prototype).
 // Clause numbers refer to ITU-T H.264. The encoder mirrors the decoder's
 // reconstruction exactly (8.3, 8.5), so later P frames can reference it.
+#include "Simd.h" // first: no floating-point contraction (see there)
 #include "H264Encoder.h"
 #include "FrameCoder.h"
 
@@ -27,9 +28,6 @@
 #include <condition_variable>
 #include <mutex>
 
-#if defined(__SSE2__) || defined(_M_X64)
-#include <emmintrin.h>
-#endif
 
 namespace schneidi::h264 {
 
@@ -243,9 +241,7 @@ inline void waitAtLeast(const std::atomic<int>& counter, int need, int spin = 12
     for (int i = 0; i < spin; ++i) {
         if (counter.load(std::memory_order_acquire) >= need)
             return;
-#if defined(__SSE2__) || defined(_M_X64)
-        _mm_pause();
-#endif
+        cpuRelax();
     }
     for (int v = counter.load(std::memory_order_acquire); v < need; v = counter.load(std::memory_order_acquire))
         counter.wait(v, std::memory_order_acquire);
@@ -266,9 +262,7 @@ enum : uint8_t { kRowNew = 0, kRowMbs = 1, kRowTail = 2, kRowPublish = 3, kRowDo
 
 inline void spinWait()
 {
-#if defined(__SSE2__) || defined(_M_X64)
-    _mm_pause();
-#endif
+    cpuRelax();
     std::this_thread::yield();
 }
 
@@ -1105,9 +1099,7 @@ struct Encoder::Pool {
             // Nothing can move: a short spin, then sleep until something changed (the timeout only
             // bounds the damage of a wake-up that should ever be missed).
             for (int i = 0; i < spin && sig.epoch.load(std::memory_order_relaxed) == epoch; ++i) {
-#if defined(__SSE2__) || defined(_M_X64)
-                _mm_pause();
-#endif
+                cpuRelax();
             }
             if (sig.epoch.load(std::memory_order_seq_cst) != epoch)
                 continue;
@@ -3780,7 +3772,7 @@ void quantize8x8Scan(const int* residual, int qp, double* xs)
     const double step2 = double(1 << (qp / 6));
     const double* scale = kScaleScan[size_t(qp % 6)].data();
     int s = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128d four = _mm_set1_pd(4.0), st = _mm_set1_pd(step2);
     for (; s < 64; s += 2) {
         const __m128d w = _mm_cvtepi32_pd(_mm_setr_epi32(w64[kZigzag8[s]], w64[kZigzag8[s + 1]], 0, 0));
@@ -4027,7 +4019,7 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
     const int cw = padW_ / 2;
     const size_t co = size_t(mby * 8) * cw + mbx * 8;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     // At most 256 * 255^2 + 128 * 255^2: fits 32 bits.
     const __m128i zero = _mm_setzero_si128();
     __m128i acc = zero;
@@ -4194,7 +4186,7 @@ void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int
                 const uint8_t* r0 = p + size_t(by0 + y) * cw + bx0;
                 const uint8_t* r1 = r0 + cw;
                 uint8_t* o = chroma[c] + (y4 * 2 + y) * 8 + x4 * 2;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
                 // Same sums in 16-bit lanes (at most 64 * 255 + 32); r0[bw] is inside the plane.
                 if (bw == 8 || bw == 4) {
                     const __m128i zero = _mm_setzero_si128();
@@ -4507,7 +4499,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 const uint8_t* sp = &srcY_[lumaOff + size_t(oy) * padW_ + ox];
                 const uint8_t* pp = lp + oy * 16 + ox;
                 int y = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
                 const __m128i zero = _mm_setzero_si128();
                 for (; y < 8; ++y) {
                     const __m128i d = _mm_sub_epi16(
@@ -6024,7 +6016,7 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
         if (haveAvx2())
             halfPelRowAvx2(r, W, vi, vb, hb, x, hEnd);
 #endif
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
         // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
         {
             const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
@@ -6078,7 +6070,7 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
         if (haveAvx2())
             halfPelCentreAvx2(v, W, j, jEnd);
 #endif
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
         {
             auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
             auto tap = [&](int x) { // 32-bit lanes: up to about 450000
@@ -6144,7 +6136,7 @@ void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, 
     case 14: a = J; b = B + W; break;
     default: a = V + 1; b = B + W; break;
     }
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     if (b && (w == 16 || w == 8)) {
         for (int y = 0; y < h; ++y) {
             const uint8_t* ra = a + size_t(y) * W;
@@ -6420,7 +6412,7 @@ void FrameCoder::planMacroblockQp()
     for (int mby = 0; mby < mbH_; ++mby)
         for (int mbx = 0; mbx < mbW_; ++mbx) {
             int64_t sum = 0, sq = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
             {
                 const __m128i zero = _mm_setzero_si128();
                 __m128i s = zero, q = zero; // 64-bit sums / 32-bit sums of squares (at most 256 * 255^2)
