@@ -34,6 +34,17 @@ struct RefPic {
     std::vector<int16_t> mvx, mvy;
     std::vector<int8_t> ref;
     int gopPos = 0; // display distance from the IDR picture
+    // Means of the source picture's 16x16 luma blocks and 8x8 chroma blocks (weighted prediction:
+    // a later picture compares its own with them to find a fade).
+    std::vector<float> dcY, dcU, dcV;
+};
+
+// Explicit weighted prediction of a P picture against one reference picture (pred_weight_table):
+// sample = clip(((sample * weight + round) >> log2 denominator) + offset).
+struct WeightParams {
+    bool luma = false, chroma = false;
+    int lumaWeight = 0, lumaOffset = 0;
+    int chromaWeight[2] = {0, 0}, chromaOffset[2] = {0, 0};
 };
 
 // Partitions of an inter macroblock in a B slice by its mb_type (table 7-14; 0 = B_Direct_16x16
@@ -332,6 +343,22 @@ public:
     CabacState cabWave_, cabWrite_;
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
+    void mcLumaPlain(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
+    void motionCompensatePlain(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
+                               uint8_t* luma, uint8_t (*chroma)[64]) const;
+    // Weighted prediction: the block means of the loaded source; the weights of this P picture
+    // against its references (after refs_ is set); the weights that apply to predictions from R.
+    void computeBlockMeans();
+    void planWeights();
+    const WeightParams* weightsOf(const RefPic& R) const
+    {
+        if (!wpAny_)
+            return nullptr;
+        for (size_t i = 0; i < refs_.size(); ++i)
+            if (refs_[i].get() == &R)
+                return &wp_[i];
+        return nullptr;
+    }
     int sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;
     struct MbState;
     void saveMb(int mbx, int mby, MbState& s) const;
@@ -366,6 +393,12 @@ public:
     bool refPic_ = true;   // the picture is a reference (nal_ref_idc)
     bool pocLsb_ = false;  // pic_order_cnt_type 0: the slice header carries pic_order_cnt_lsb
     int gopPos_ = 0;       // display distance from the IDR picture
+    // P picture with explicit weighted prediction: per reference of refs_ (wpAny_ = at least one
+    // reference is weighted; such a picture uses the second picture parameter set).
+    bool wpAny_ = false;
+    int wpLumaLog_ = 0, wpChromaLog_ = 0;
+    std::vector<WeightParams> wp_;
+    std::vector<float> dcY_, dcU_, dcV_; // this picture's block means (see RefPic)
     int biW0_ = 32, biW1_ = 32; // B picture: weights of the list 0 / list 1 prediction when both are used (of 64)
     void setBiWeights();
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row

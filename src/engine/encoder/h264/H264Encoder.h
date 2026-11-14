@@ -109,6 +109,13 @@ struct EncoderConfig {
     // calm, flat or dark stretches (a fade, a death screen) get a finer QP than busy ones. 0 = one
     // QP for the whole clip (the stream before 14.11.).
     double qcomp = 0.3;
+    // Explicit weighted prediction for P pictures (8.4.2.3; Main/High only, so not without CABAC):
+    // when the brightness of a picture differs from a reference picture's as a whole (a fade, a
+    // flash), the slice carries a weight and an offset per reference and the prediction is scaled
+    // by them. Decided per picture from 16x16 block means of the two source pictures; pictures
+    // without such a change are coded exactly as without the option (the stream then only has a
+    // second picture parameter set in its headers).
+    bool weightedPred = true;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -194,6 +201,8 @@ public:
     // The access unit that came out last: its position in input (display) order, counted from 0,
     // and its type ('I', 'P', 'B'). Without B pictures the display index simply counts up.
     int lastDisplayIndex() const { return lastDisplayIndex_; }
+    // P pictures coded with explicit weighted prediction so far (fades, flashes).
+    int weightedPictures() const { return weightedPictures_; }
     char lastType() const { return lastType_; }
     // Pictures an access unit may come out ahead of its display turn (the dts shift a muxer needs).
     int reorderDelay() const { return useB() ? 1 : 0; }
@@ -243,6 +252,8 @@ private:
     // ones their type, pickNext the next one in coding order (the reference picture after a run
     // of B pictures goes first and stays queued until they are coded).
     bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
+    // Explicit weighted prediction is not part of the Baseline profile (no CABAC = Baseline here).
+    bool useWeightedPred() const { return cfg_.weightedPred && useCabac() && cfg_.gop > 1; }
     // Adaptive placement: from the first pass when there is one (so its plan holds), else from the queue.
     bool bAdapt() const { return useB() && cfg_.bAdaptive && (!cfg_.firstPass || !cfg_.firstPass->bScore.empty()); }
     double bScoreOf(const LookaheadFrame& f) const;
@@ -266,6 +277,7 @@ private:
     int framesSinceIdr_ = 0;
     bool lastWasSceneCut_ = false;
     int lastDisplayIndex_ = -1;
+    int weightedPictures_ = 0;
     char lastType_ = 'I';
     int inCount_ = 0;      // pictures taken in (display index of the next one)
     int gopPos_ = 0;       // B mode: display distance from the last IDR picture of the first undecided picture

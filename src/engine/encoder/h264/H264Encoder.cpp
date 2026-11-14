@@ -701,6 +701,33 @@ std::vector<uint8_t> Encoder::headers() const
         bw.rbspTrailing();
         appendNal(out, 3, 8, bw.bytes());
     }
+    if (useWeightedPred()) {
+        // A second picture parameter set, the same but with weighted_pred_flag: P pictures across
+        // a fade refer to it and carry a pred_weight_table; all others stay as they were.
+        BitWriter bw;
+        bw.ue(1);       // pic_parameter_set_id
+        bw.ue(0);       // seq_parameter_set_id
+        bw.flag(useCabac()); // entropy_coding_mode_flag
+        bw.flag(false); // bottom_field_pic_order_in_frame_present_flag
+        bw.ue(0);       // num_slice_groups_minus1
+        bw.ue(0);       // num_ref_idx_l0_default_active_minus1
+        bw.ue(0);       // num_ref_idx_l1_default_active_minus1
+        bw.flag(true);  // weighted_pred_flag
+        bw.u(useB() && cfg_.weightedBipred ? 2 : 0, 2); // weighted_bipred_idc
+        bw.se(0);       // pic_init_qp_minus26
+        bw.se(0);       // pic_init_qs_minus26
+        bw.se(0);       // chroma_qp_index_offset
+        bw.flag(true);  // deblocking_filter_control_present_flag
+        bw.flag(false); // constrained_intra_pred_flag
+        bw.flag(false); // redundant_pic_cnt_present_flag
+        if (useT8()) {
+            bw.flag(true);  // transform_8x8_mode_flag
+            bw.flag(false); // pic_scaling_matrix_present_flag
+            bw.se(0);       // second_chroma_qp_index_offset
+        }
+        bw.rbspTrailing();
+        appendNal(out, 3, 8, bw.bytes());
+    }
     return out;
 }
 
@@ -1624,7 +1651,7 @@ void FrameCoder::sliceHeader(BitWriter& bw, int s) const
 {
     bw.ue(uint32_t(sliceTop_[size_t(s)] * mbW_)); // first_mb_in_slice
     bw.ue(idr_ ? 7 : bSlice_ ? 6 : 5);             // slice_type: I, B or P (all slices)
-    bw.ue(0);                                      // pic_parameter_set_id
+    bw.ue(wpAny_ ? 1 : 0);                         // pic_parameter_set_id (1: with weighted prediction)
     bw.u(uint32_t(framesSinceIdr_ & 15), 4);       // frame_num (0 for IDR)
     if (idr_)
         bw.ue(uint32_t(idrCount_ & 0xFFFF)); // idr_pic_id (differs between neighbours)
@@ -1640,6 +1667,25 @@ void FrameCoder::sliceHeader(BitWriter& bw, int s) const
         bw.flag(false); // ref_pic_list_modification_flag_l0
         if (bSlice_)
             bw.flag(false); // ref_pic_list_modification_flag_l1
+    }
+    if (wpAny_) {
+        // pred_weight_table (7.3.3.2)
+        bw.ue(uint32_t(wpLumaLog_));   // luma_log2_weight_denom
+        bw.ue(uint32_t(wpChromaLog_)); // chroma_log2_weight_denom
+        for (int i = 0; i < activeRefs_; ++i) {
+            const WeightParams& w = wp_[size_t(i)];
+            bw.flag(w.luma); // luma_weight_l0_flag
+            if (w.luma) {
+                bw.se(w.lumaWeight);
+                bw.se(w.lumaOffset);
+            }
+            bw.flag(w.chroma); // chroma_weight_l0_flag
+            if (w.chroma)
+                for (int c = 0; c < 2; ++c) {
+                    bw.se(w.chromaWeight[c]);
+                    bw.se(w.chromaOffset[c]);
+                }
+        }
     }
     if (idr_) {
         bw.flag(false); // no_output_of_prior_pics_flag
@@ -2285,6 +2331,14 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         fc.refs_.assign(refList_.begin(), refList_.begin() + std::min<ptrdiff_t>(ptrdiff_t(refList_.size()), std::max(1, cfg_.refs)));
         fc.refs1_.clear();
     }
+    fc.wpAny_ = false;
+    if (useWeightedPred() && type != 2) {
+        fc.computeBlockMeans();
+        if (type == 1)
+            fc.planWeights();
+        if (fc.wpAny_)
+            ++weightedPictures_;
+    }
     fc.activeRefs_ = int(fc.refs_.size());
     // With B pictures the picture coded before may still be in flight and is no reference: the
     // start points come from the reference picture's motion instead.
@@ -2431,6 +2485,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 pc.bitrateKbps = 0;
                 pc.lookahead = 0;
                 pc.bframes = 0;
+                pc.weightedPred = false;
                 pc.mbtree = false;
                 pc.aqStrength = 0;
                 pc.qp = probeQp;
@@ -2502,6 +2557,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             pc.bitrateKbps = 0;
             pc.lookahead = 0;
             pc.bframes = 0;
+            pc.weightedPred = false;
             pc.mbtree = false;
             pc.gop = std::max(2, cfg_.gop);
             pc.frameThreads = false;
@@ -2563,6 +2619,11 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (!pic)
             pic = std::make_shared<RefPic>();
         pic->gopPos = frame.gopPos;
+        if (useWeightedPred()) {
+            pic->dcY = fc.dcY_;
+            pic->dcU = fc.dcU_;
+            pic->dcV = fc.dcV_;
+        }
         refList_.push_front(pic);
     }
     // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
@@ -4346,7 +4407,25 @@ void FrameCoder::predictMvPart(int mbx, int mby, int x4, int y4, int w4, int sha
 
 // Motion compensation of one partition into macroblock-sized prediction buffers.
 void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
-                               uint8_t* luma, uint8_t (*chroma)[64]) const
+                                  uint8_t* luma, uint8_t (*chroma)[64]) const
+{
+    motionCompensatePlain(R, mbx, mby, x4, y4, w4, h4, mvx, mvy, luma, chroma); // luma: weighted by mcLuma
+    const WeightParams* wp = weightsOf(R);
+    if (!wp || !wp->chroma)
+        return;
+    const int round = wpChromaLog_ >= 1 ? 1 << (wpChromaLog_ - 1) : 0;
+    for (int c = 0; c < 2; ++c) {
+        const int w = wp->chromaWeight[c], o = wp->chromaOffset[c];
+        for (int y = y4 * 2; y < (y4 + h4) * 2; ++y) {
+            uint8_t* row = chroma[c] + y * 8;
+            for (int x = x4 * 2; x < (x4 + w4) * 2; ++x)
+                row[x] = uint8_t(std::clamp(((row[x] * w + round) >> wpChromaLog_) + o, 0, 255));
+        }
+    }
+}
+
+void FrameCoder::motionCompensatePlain(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
+                                       uint8_t* luma, uint8_t (*chroma)[64]) const
 {
     mcLuma(R, mbx * 16 + x4 * 4 + (mvx >> 2), mby * 16 + y4 * 4 + (mvy >> 2), mvx & 3, mvy & 3, w4 * 4, h4 * 4,
            luma + y4 * 4 * 16 + x4 * 4);
@@ -4527,8 +4606,10 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     const uint8_t* const srcBlk = &srcY_[size_t(py0) * padW_ + px0];
     const uint8_t* const refBase = &R.F[size_t(py0 + kMargin) * extW_ + size_t(px0 + kMargin)];
     const int bw = w4 * 4, bh = h4 * 4;
+    const WeightParams* const wpR = weightsOf(R);
+    const bool weighted = wpR && wpR->luma;
     auto cost = [&](int vx, int vy) {
-        const int sad = !useSatd && !(vx & 3) && !(vy & 3)
+        const int sad = !useSatd && !(vx & 3) && !(vy & 3) && !weighted
                             ? sadBlock(srcBlk, padW_, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh)
                             : sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd);
         return double(sad) + lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
@@ -6347,7 +6428,193 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
 
 // Luma prediction of a w x h block at integer position (x0, y0) plus quarter offset (fx, fy),
 // table 8-12. Output stride is 16.
+// Weighted prediction, deciding (experiment knobs): the weighted block means must leave at most
+// H264_WPTHR of the unweighted difference to the reference and gain at least H264_WPMIN grey levels
+// per block on average.
+static const double gWpThr = std::getenv("H264_WPTHR") ? std::atof(std::getenv("H264_WPTHR")) : 0.8;
+static const double gWpMin = std::getenv("H264_WPMIN") ? std::atof(std::getenv("H264_WPMIN")) : 0.25;
+static const bool gWpTrace = std::getenv("H264_WP_TRACE") != nullptr;
+
+void FrameCoder::computeBlockMeans()
+{
+    const int cw = padW_ / 2;
+    dcY_.resize(size_t(mbW_) * mbH_);
+    dcU_.resize(dcY_.size());
+    dcV_.resize(dcY_.size());
+    for (int mby = 0; mby < mbH_; ++mby)
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            int sum = 0;
+            for (int y = 0; y < 16; ++y) {
+                const uint8_t* row = &srcY_[size_t(mby * 16 + y) * padW_ + mbx * 16];
+                int rs = 0;
+                for (int x = 0; x < 16; ++x)
+                    rs += row[x];
+                sum += rs;
+            }
+            int su = 0, sv = 0;
+            for (int y = 0; y < 8; ++y) {
+                const uint8_t* ru = &srcU_[size_t(mby * 8 + y) * cw + mbx * 8];
+                const uint8_t* rv = &srcV_[size_t(mby * 8 + y) * cw + mbx * 8];
+                for (int x = 0; x < 8; ++x) {
+                    su += ru[x];
+                    sv += rv[x];
+                }
+            }
+            const size_t m = size_t(mby) * mbW_ + mbx;
+            dcY_[m] = float(sum) / 256.0f;
+            dcU_[m] = float(su) / 64.0f;
+            dcV_[m] = float(sv) / 64.0f;
+        }
+}
+
+namespace {
+
+// Mean and mean absolute deviation of block means.
+void meanAndSpread(const std::vector<float>& v, double& mean, double& spread)
+{
+    double s = 0;
+    for (float x : v)
+        s += x;
+    mean = s / double(std::max<size_t>(1, v.size()));
+    double d = 0;
+    for (float x : v)
+        d += std::abs(x - mean);
+    spread = d / double(std::max<size_t>(1, v.size()));
+}
+
+// Sum of |cur - clip(ref * w + o)| over the block means.
+double weightedDiff(const std::vector<float>& cur, const std::vector<float>& ref, double w, double o)
+{
+    double s = 0;
+    for (size_t i = 0; i < cur.size(); ++i)
+        s += std::abs(double(cur[i]) - std::clamp(double(ref[i]) * w + o, 0.0, 255.0));
+    return s;
+}
+
+struct WeightFit {
+    bool use = false;
+    double w = 1.0, o = 0.0; // as fitted, before the denominator is known
+    double mc = 0, mr = 0;
+};
+
+// Gain and offset that map the reference's block means on this picture's: gain from the spreads,
+// offset from the means; or an offset alone. The better one, if it explains the difference.
+WeightFit fitWeights(const std::vector<float>& cur, const std::vector<float>& ref, double thr, double minGain)
+{
+    WeightFit f;
+    if (cur.empty() || cur.size() != ref.size())
+        return f;
+    double sc, sr;
+    meanAndSpread(cur, f.mc, sc);
+    meanAndSpread(ref, f.mr, sr);
+    const double plain = weightedDiff(cur, ref, 1.0, 0.0);
+    double best = plain;
+    if (sr > 0.25 && sc > 0.25) {
+        const double w = std::clamp(sc / sr, 1.0 / 16.0, 16.0);
+        const double d = weightedDiff(cur, ref, w, f.mc - w * f.mr);
+        if (d < best) {
+            best = d;
+            f.w = w;
+            f.o = f.mc - w * f.mr;
+        }
+    }
+    const double d1 = weightedDiff(cur, ref, 1.0, f.mc - f.mr);
+    if (d1 < best * 0.98) { // an offset alone, when it does about as well: no rounding of the gain
+        best = d1;
+        f.w = 1.0;
+        f.o = f.mc - f.mr;
+    }
+    f.use = best <= thr * plain && plain - best >= minGain * double(cur.size());
+    return f;
+}
+
+} // namespace
+
+// Explicit weighted prediction for this P picture: per reference a gain and an offset for luma
+// and for the two chroma planes, where the block means of the two source pictures differ by such a
+// law (a fade, a flash) rather than by motion. One denominator per picture for luma, one for
+// chroma: the finest that still holds the largest gain (weights are 8 bit signed).
+void FrameCoder::planWeights()
+{
+    const size_t n = refs_.size();
+    wp_.assign(n, WeightParams());
+    wpAny_ = false;
+    std::vector<WeightFit> fy(n), fu(n), fv(n);
+    double maxLuma = 0, maxChroma = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const RefPic& R = *refs_[i];
+        fy[i] = fitWeights(dcY_, R.dcY, gWpThr, gWpMin);
+        if (fy[i].use)
+            maxLuma = std::max(maxLuma, fy[i].w);
+        // Chroma only together with luma (a fade moves all three), both planes with their own fit.
+        if (!fy[i].use)
+            continue;
+        fu[i] = fitWeights(dcU_, R.dcU, 1.0, 0.0);
+        fv[i] = fitWeights(dcV_, R.dcV, 1.0, 0.0);
+        const double plain = weightedDiff(dcU_, R.dcU, 1.0, 0.0) + weightedDiff(dcV_, R.dcV, 1.0, 0.0);
+        const double fitted = weightedDiff(dcU_, R.dcU, fu[i].w, fu[i].o) + weightedDiff(dcV_, R.dcV, fv[i].w, fv[i].o);
+        fu[i].use = fv[i].use = fitted <= gWpThr * plain && plain - fitted >= 0.5 * gWpMin * double(dcU_.size());
+        if (fu[i].use)
+            maxChroma = std::max({maxChroma, fu[i].w, fv[i].w});
+    }
+    if (maxLuma <= 0)
+        return;
+    auto denomFor = [](double maxW) {
+        int d = 7;
+        while (d > 0 && std::lround(maxW * double(1 << d)) > 127)
+            --d;
+        return d;
+    };
+    wpLumaLog_ = denomFor(maxLuma);
+    wpChromaLog_ = maxChroma > 0 ? denomFor(maxChroma) : 0;
+    auto quantise = [](const WeightFit& f, int log, int& weight, int& offset) {
+        weight = int(std::clamp<long>(std::lround(f.w * double(1 << log)), -128, 127));
+        offset = int(std::clamp<long>(std::lround(f.mc - f.mr * double(weight) / double(1 << log)), -128, 127));
+    };
+    for (size_t i = 0; i < n; ++i) {
+        const RefPic& R = *refs_[i];
+        WeightParams& w = wp_[i];
+        if (!fy[i].use)
+            continue;
+        quantise(fy[i], wpLumaLog_, w.lumaWeight, w.lumaOffset);
+        // The rounded numbers must still pass (a large offset is cut at 8 bits).
+        const double plain = weightedDiff(dcY_, R.dcY, 1.0, 0.0);
+        const double got = weightedDiff(dcY_, R.dcY, double(w.lumaWeight) / double(1 << wpLumaLog_), w.lumaOffset);
+        w.luma = got <= gWpThr * plain && plain - got >= gWpMin * double(dcY_.size()) &&
+                 (w.lumaWeight != (1 << wpLumaLog_) || w.lumaOffset != 0);
+        if (!w.luma)
+            continue;
+        wpAny_ = true;
+        if (fu[i].use) {
+            quantise(fu[i], wpChromaLog_, w.chromaWeight[0], w.chromaOffset[0]);
+            quantise(fv[i], wpChromaLog_, w.chromaWeight[1], w.chromaOffset[1]);
+            w.chroma = true;
+        }
+        if (gWpTrace)
+            std::fprintf(stderr, "wp: frame %d ref %zu luma %d/%d %+d (means %.1f <- %.1f, diff %.2f -> %.2f)%s\n", displayIndex_, i,
+                         w.lumaWeight, 1 << wpLumaLog_, w.lumaOffset, fy[i].mc, fy[i].mr, plain / double(dcY_.size()),
+                         got / double(dcY_.size()), w.chroma ? " +chroma" : "");
+    }
+}
+
+// Luma prediction of a block (rows 16 apart in out), with the picture's weight for this reference
+// applied when it has one (8.4.2.3: after the interpolation).
 void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const
+{
+    mcLumaPlain(R, x0, y0, fx, fy, w, h, out);
+    const WeightParams* wp = weightsOf(R);
+    if (!wp || !wp->luma)
+        return;
+    const int round = wpLumaLog_ >= 1 ? 1 << (wpLumaLog_ - 1) : 0;
+    const int lw = wp->lumaWeight, lo = wp->lumaOffset, sh = wpLumaLog_;
+    for (int y = 0; y < h; ++y) {
+        uint8_t* row = out + y * 16;
+        for (int x = 0; x < w; ++x)
+            row[x] = uint8_t(std::clamp(((row[x] * lw + round) >> sh) + lo, 0, 255));
+    }
+}
+
+void FrameCoder::mcLumaPlain(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const
 {
     const int M = kMargin;
     const int W = extW_;
@@ -6427,7 +6694,9 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
     const int w = w4 * 4, h = h4 * 4;
     const size_t lo = size_t(py) * padW_ + px;
     int s = 0;
-    if (!satd && !(mvx & 3) && !(mvy & 3)) {
+    const WeightParams* wp = weightsOf(R);
+    const bool weighted = wp && wp->luma; // then every position goes through the weighted block
+    if (!satd && !(mvx & 3) && !(mvy & 3) && !weighted) {
         const uint8_t* ref = &R.F[size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin)];
         return sadBlock(&srcY_[lo], padW_, ref, extW_, w, h);
     }
@@ -6436,7 +6705,7 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
     int ps = 16;
     // Full and half positions are one plane: read it in place instead of copying the block.
     const int fx = mvx & 3, fy = mvy & 3;
-    if (!(fx & 1) && !(fy & 1)) {
+    if (!(fx & 1) && !(fy & 1) && !weighted) {
         const RefPic& P = R;
         const std::vector<uint8_t>& plane = fy ? (fx ? P.J : P.V) : (fx ? P.B : P.F);
         pred = plane.data() + size_t(py + (mvy >> 2) + kMargin) * extW_ + size_t(px + (mvx >> 2) + kMargin);
