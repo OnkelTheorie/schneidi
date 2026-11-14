@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Inspector never shows a horizontal scrollbar: every page (Video, Audio, Title, Effects, Subtitle, Transition) fits
 // the panel's width, also with a large UI font (QT_FONT_DPI=144 or a large system font) and in a long language
-// (Russian, Hindi at a large font), also when the
+// (Russian, Ukrainian, Hindi at a large font), also when the
 // panel is made narrow - it then stays as wide as its widest row (nothing cut off), and that width stays moderate:
 // within a real user's 308 px column at the normal font (Noto Sans; with another font the limit moves with the width
 // of a reference text, see forFont). Before, the rows needed ~350 px (a long clip name, long labels, choice boxes,
@@ -47,7 +47,10 @@ void dump(QWidget* w, const QString& name)
 
 // A width limit measured with Noto Sans (the main development machine's font) at `notoPt`, for the font set now: scaled
 // by the width of a reference text in the language's script (its letters), so a wider font (DejaVu Sans, the fallback
-// of a bare Debian) or another Noto version moves the limit with it. +2 px: rounding and hinting.
+// of a bare Debian) or another Noto version moves the limit with it. +2 px: rounding and hinting. The scaling is only
+// approximate (digits and fixed pixels do not grow with the letters; Noto 2026.11 has narrower Cyrillic letters, yet
+// the Inspector got wider by its fallback reset arrow, now drawn), so the Inspector keeps room below the limit (ru 294,
+// uk 302 of 308 px with Noto 2020 and 2026.11) instead of ending right at it.
 int forFont(int notoPx, double notoPt, const QString& lang)
 {
     // The reference texts and their widths in Noto Sans (Devanagari) 9 pt (QFontMetricsF, offscreen)
@@ -58,7 +61,7 @@ int forFont(int notoPx, double notoPt, const QString& lang)
     const Ref latin{"abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ", 366.1};
     const Ref cyrillic{"абвгдежзийклмнопрстуфхцчшщъыьэюя АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ", 515.4};
     const Ref devanagari{"कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह कि की कु कू के कै को कौ", 358.7};
-    const Ref& ref = lang == "ru" ? cyrillic : lang == "hi" ? devanagari : latin;
+    const Ref& ref = lang == "ru" || lang == "uk" ? cyrillic : lang == "hi" ? devanagari : latin;
     const double now = QFontMetricsF(QApplication::font()).horizontalAdvance(QString::fromUtf8(ref.text));
     return int(std::ceil(notoPx * now / (ref.noto * notoPt / 9.0))) + 2;
 }
@@ -167,7 +170,7 @@ int main(int argc, char** argv)
     std::printf("font: %s %.1f pt\n", qPrintable(QFontInfo(latin).family()), normal.pointSizeF());
     QFont big = normal;
     big.setPointSizeF(normal.pointSizeF() * 1.5); // like QT_FONT_DPI=144 or a large system font
-    for (const char* lang : {"de", "ru", "hi"}) {
+    for (const char* lang : {"de", "ru", "uk", "hi"}) {
         I18n::install(lang);
         QApplication::setFont(normal);
         // A real user's Inspector column: 308 px with Noto Sans (tests/data/tours/user-settings.conf, test_tours)
