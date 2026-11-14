@@ -238,6 +238,9 @@ struct Mixer::Impl {
     std::vector<float> converted; // Mixer::render with outputChannels != channels: the mix before the conversion
     int meterBlock = 0;            // setMeterBlock
     std::vector<float> blockPeaks; // peaks per stretch of meterBlock samples of the last render
+    std::vector<float> chPeaks;      // per track and channel, then the master's channels (Mixer::channelPeaks)
+    std::vector<float> chBlockPeaks; // the same per stretch of meterBlock samples (Mixer::blockChannelPeaks)
+    void meterMaster(const std::vector<std::vector<float>>& master, int count);
     int chunkWarm = -1;            // setChunked: >= 0 = a jump keeps filters and processors
     int64_t expected = INT64_MIN; // next render position
     int latency = 0;              // master (limiter), compensated
@@ -756,7 +759,12 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
 {
     for (int c = 0; c < nch; ++c) std::fill(mix[size_t(c)].begin(), mix[size_t(c)].begin() + count, 0.f);
     const size_t stride = tracks.size() * 2;
-    if (metering && meterBlock > 0) blockPeaks.assign(size_t((count + meterBlock - 1) / meterBlock) * stride, 0.f);
+    const size_t chStride = (tracks.size() + 1) * size_t(nch);
+    if (metering && meterBlock > 0) {
+        const size_t blocks = size_t((count + meterBlock - 1) / meterBlock);
+        blockPeaks.assign(blocks * stride, 0.f);
+        chBlockPeaks.assign(blocks * chStride, 0.f);
+    }
     const int64_t end = pos + count;
     // Meters: the left speakers to L, the right ones to R, centre and LFE to both
     const auto meterSide = [this](int c) { return nch == 2 ? c : c == ChannelLayout::FC || c == ChannelLayout::LFE ? -1 : c % 2; };
@@ -769,7 +777,11 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
         ts.levelSet = true;
         const bool glide = target != ts.applied;
         float* peak = metering ? peaks.data() + 2 * ti : nullptr;
-        if (peak) peak[0] = peak[1] = 0.f;
+        float* chPeak = metering ? chPeaks.data() + size_t(nch) * ti : nullptr;
+        if (peak) {
+            peak[0] = peak[1] = 0.f;
+            std::fill(chPeak, chPeak + nch, 0.f);
+        }
         if (!tp.audible && !glide) continue;
         for (int c = 0; c < nch; ++c) std::fill(track[size_t(c)].begin(), track[size_t(c)].begin() + count, 0.f);
         while (ts.firstVoice < tp.voices.size() && tp.voices[ts.firstVoice].tEnd <= pos) {
@@ -867,19 +879,21 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
                     const float x = std::abs(track[size_t(c)][size_t(i)]);
                     if (side != 1) peak[0] = std::max(peak[0], x);
                     if (side != 0) peak[1] = std::max(peak[1], x);
+                    chPeak[c] = std::max(chPeak[c], x);
                 }
             }
         }
         if (peak && meterBlock > 0)
             for (int b = 0, from = 0; from < count; ++b, from += meterBlock)
                 for (int c = 0; c < nch; ++c) {
+                    float q = 0.f;
+                    for (int i = from, to = std::min(count, from + meterBlock); i < to; ++i)
+                        q = std::max(q, std::abs(track[size_t(c)][size_t(i)]));
                     const int side = meterSide(c);
-                    for (int sideIndex = 0; sideIndex < 2; ++sideIndex) {
-                        if (side == 1 - sideIndex) continue;
-                        float& q = blockPeaks[size_t(b) * stride + 2 * ti + size_t(sideIndex)];
-                        for (int i = from, to = std::min(count, from + meterBlock); i < to; ++i)
-                            q = std::max(q, std::abs(track[size_t(c)][size_t(i)]));
-                    }
+                    float* bp = blockPeaks.data() + size_t(b) * stride + 2 * ti;
+                    if (side != 1) bp[0] = std::max(bp[0], q);
+                    if (side != 0) bp[1] = std::max(bp[1], q);
+                    chBlockPeaks[size_t(b) * chStride + size_t(nch) * ti + size_t(c)] = q;
                 }
     }
     if (masterGain != masterApplied) {
@@ -980,7 +994,34 @@ void Mixer::setMetering(bool on)
 {
     d->metering = on;
     d->peaks.assign(on ? d->tracks.size() * 2 : 0, 0.f);
+    d->chPeaks.assign(on ? (d->tracks.size() + 1) * size_t(d->nch) : 0, 0.f);
+    if (!on) d->chBlockPeaks.clear();
 }
+
+// The master's channels of the last render() into the channel meters (after renderMix filled the tracks' part)
+void Mixer::Impl::meterMaster(const std::vector<std::vector<float>>& master, int count)
+{
+    const size_t at = tracks.size() * size_t(nch), chStride = at + size_t(nch);
+    if (chPeaks.size() != chStride) return;
+    for (int c = 0; c < nch; ++c) {
+        const float* x = master[size_t(c)].data();
+        float q = 0.f;
+        for (int i = 0; i < count; ++i) q = std::max(q, std::abs(x[i]));
+        chPeaks[at + size_t(c)] = q;
+    }
+    if (meterBlock <= 0) return;
+    for (int b = 0, from = 0; from < count && (size_t(b) + 1) * chStride <= chBlockPeaks.size(); ++b, from += meterBlock)
+        for (int c = 0; c < nch; ++c) {
+            const float* x = master[size_t(c)].data();
+            float q = 0.f;
+            for (int i = from, to = std::min(count, from + meterBlock); i < to; ++i) q = std::max(q, std::abs(x[i]));
+            chBlockPeaks[size_t(b) * chStride + at + size_t(c)] = q;
+        }
+}
+
+const std::vector<float>& Mixer::channelPeaks() const { return d->chPeaks; }
+
+const std::vector<float>& Mixer::blockChannelPeaks() const { return d->chBlockPeaks; }
 
 const std::vector<float>& Mixer::trackPeaks() const { return d->peaks; }
 
@@ -1064,6 +1105,7 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
     }
     m.renderMix(pos + m.latency, count);
     limit(count);
+    if (m.metering) m.meterMaster(lch == nch ? limited : m.mix, count); // a downmix limited inside: the mix before it
     for (int c = 0; c < lch; ++c) std::copy(limited[size_t(c)].begin(), limited[size_t(c)].begin() + count, out[c]);
 }
 

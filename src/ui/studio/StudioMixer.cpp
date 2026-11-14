@@ -97,6 +97,18 @@ public:
     }
     int channels() const { return int(m_target.size()); }
     bool dragging() const { return m_dragging; }
+    // A name under every bar (the master in 5.1/7.1: L R C LFE Ls Rs …); the bars get as wide as the longest name.
+    // Empty = none (narrow bars, as in stereo).
+    void setLabels(const QStringList& labels)
+    {
+        if (labels == m_labels) return;
+        m_labels = labels;
+        m_barW = 0;
+        for (const QString& l : labels) m_barW = std::max(m_barW, QFontMetrics(labelFont()).horizontalAdvance(l) + 2);
+        setMinimumWidth(m_labels.isEmpty() ? 60 : meterWidth() + 6 + 50);
+        update();
+    }
+    const QStringList& labels() const { return m_labels; }
     void setOver(double db) { m_over = db; }
     void setValue(double db)
     {
@@ -144,8 +156,20 @@ public:
 
 protected:
     int top() const { return 10; }
-    int bottom() const { return height() - 6; }
-    int meterWidth() const { return std::min(width() / 2, channels() * 6 + 2); }
+    bool labelled() const { return !m_labels.isEmpty(); }
+    int labelH() const { return QFontMetrics(labelFont()).height(); }
+    int bottom() const { return height() - 6 - (labelled() ? labelH() + 2 : 0); }
+    int meterWidth() const
+    {
+        if (labelled()) return channels() * (m_barW + 1) - 1;
+        return std::min(width() / 2, channels() * 6 + 2);
+    }
+    QFont labelFont() const
+    {
+        QFont f = font();
+        f.setPointSizeF(7);
+        return f;
+    }
 
     void paintEvent(QPaintEvent*) override
     {
@@ -168,6 +192,12 @@ protected:
             zone(yOf(-12), yOf(-3), Theme::meterMid);
             zone(yOf(-3), t, Theme::meterHigh);
             if (m_hold[size_t(c)] > kFloor) p.fillRect(QRectF(bar.x(), yOf(m_hold[size_t(c)]), bw, 2), Theme::text);
+        }
+        if (labelled()) {
+            p.setFont(labelFont());
+            p.setPen(Theme::textDim);
+            for (int c = 0; c < n && c < m_labels.size(); ++c)
+                p.drawText(QRectF(c * (bw + 1) - 2, b + 3, bw + 4, labelH()), Qt::AlignHCenter | Qt::AlignTop, m_labels[c]);
         }
         // Fader: scale and handle right of the meters
         const int fx = mw + 6, fw = width() - fx;
@@ -243,6 +273,8 @@ private:
     std::vector<float> m_target, m_disp, m_hold;
     std::vector<double> m_age;
     std::vector<bool> m_clip;
+    QStringList m_labels;
+    int m_barW = 0; // with labels: width of a bar
     float m_max = kSilent;
     double m_over = -0.001;
     double m_db = 0;
@@ -836,7 +868,7 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
         sync();
         fitHeight(); // the surround sends take room
     });
-    connect(m_engine, &Engine::audioLevels, this, &StudioMixer::onLevels);
+    connect(m_engine, &Engine::audioSpeakerLevels, this, &StudioMixer::onLevels);
     m_timer = new QTimer(this);
     m_timer->setInterval(30);
     connect(m_timer, &QTimer::timeout, this, &StudioMixer::tick);
@@ -870,6 +902,12 @@ void StudioMixer::fitStripsWidth()
     const int toolsMin = std::clamp(room - stripsWant, std::min(160, card), card);
     m_tools->setMinimumWidth(toolsMin);
     m_scroll->setMinimumWidth(std::clamp(room - toolsMin, 0, stripsWant));
+}
+
+QStringList StudioMixer::meterLabels(int track) const
+{
+    if (track < 0) return m_master->fader->labels();
+    return track < m_strips.size() ? m_strips[track]->fader->labels() : QStringList{};
 }
 
 int StudioMixer::meterChannels(int track) const
@@ -1045,6 +1083,16 @@ void StudioMixer::onLevels(const QVector<float>& db)
         m_channels = ch;
         for (StudioStrip* s : m_strips) s->fader->setChannels(ch);
         m_master->fader->setChannels(ch);
+        // 5.1/7.1: the master names its speakers (sample peaks of the mix); stereo: L, R as true peak as before
+        QStringList labels;
+        if (ch > 2)
+            for (int c = 0; c < ch; ++c) labels << ChannelLayout::label(ch, c);
+        m_master->fader->setLabels(labels);
+        m_master->peak->setToolTip(
+            ch > 2 ? T("Spitzenpegel (dBFS) des lautesten Lautsprechers seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück")
+                   : T("True Peak (dBTP) seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück"));
+        m_master->fitWidth();
+        fitStripsWidth();
     }
     for (int i = 0; i < m_strips.size(); ++i) m_strips[i]->fader->setLevels(db.constData() + i * ch, ch);
     m_master->fader->setLevels(db.constData() + (groups - 1) * ch, ch);

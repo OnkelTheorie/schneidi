@@ -50,10 +50,13 @@ struct Block {
 };
 
 // Peaks of a stretch of sound and where it ends (clock position)
+// peaks: the stereo levels ([track L, R ..., master L, R]), then from `split` on the per-speaker ones of a 5.1/7.1
+// mix ([track ch1..chN ..., master ch1..chN]; none in stereo)
 struct LevelEntry {
     uint32_t gen = 0;
     double end = 0;
     std::vector<float> peaks;
+    size_t split = 0;
 };
 
 } // namespace
@@ -162,6 +165,8 @@ struct Player::Impl {
         // Backwards: track peaks per block of the chunk mixed last (Mixer::blockPeaks) and of its first block (the
         // overlap the next chunk fades in from)
         std::vector<float> chunkPeaks, tailPeaks;
+        // 5.1/7.1: per speaker, tracks then master (Mixer::channelPeaks); the same per block backwards
+        std::vector<float> chPeaks, chunkChPeaks, tailChPeaks;
     };
 
     explicit Impl(const Options& o) : opt(o) {}
@@ -183,6 +188,7 @@ struct Player::Impl {
     void mixForward(Feed& f, int n, float* const* out);
     void mixBackward(Feed& f, int n, float* const* out);
     void notePeaks(Feed& f, const float* p, size_t n);
+    void noteChannelPeaks(Feed& f, const float* p, size_t n);
     // Ahead of the device: at least 50 ms and the asked buffer, and the device's real buffer + 20 ms – a device may
     // take its whole buffer at once (miniaudio's DirectSound: gaps up to 100 ms, then 2 periods of 1440 at once,
     // more than the 2048 asked; measured, docs/dev/ton.md)
@@ -480,12 +486,20 @@ void Player::Impl::notePeaks(Feed& f, const float* p, size_t n)
     for (size_t i = 0; i < n; ++i) f.peaks[i] = std::max(f.peaks[i], p[i]);
 }
 
+// Per-speaker peaks of a 5.1/7.1 mix (tracks, then master) into the block being made
+void Player::Impl::noteChannelPeaks(Feed& f, const float* p, size_t n)
+{
+    if (f.chPeaks.size() != n) f.chPeaks.assign(n, 0.f);
+    for (size_t i = 0; i < n; ++i) f.chPeaks[i] = std::max(f.chPeaks[i], p[i]);
+}
+
 void Player::Impl::mixForward(Feed& f, int n, float* const* out)
 {
     f.mixer->setChunked(-1);
     f.mixer->setMeterBlock(0);
     f.mixer->render(f.next, n, out);
     notePeaks(f, f.mixer->trackPeaks().data(), f.mixer->trackPeaks().size());
+    if (f.mixer->channels() > kChannels) noteChannelPeaks(f, f.mixer->channelPeaks().data(), f.mixer->channelPeaks().size());
     if (f.old) {
         float* o[kChannels];
         for (int c = 0; c < kChannels; ++c) o[c] = f.other[c].data();
@@ -512,6 +526,7 @@ void Player::Impl::mixBackward(Feed& f, int n, float* const* out)
     f.old.reset(); // a new mix takes over at the next chunk
     f.mixer->setMeterBlock(kBlock);
     const size_t stride = f.mixer->trackPeaks().size();
+    const size_t chStride = f.mixer->channels() > kChannels ? f.mixer->channelPeaks().size() : 0;
     for (int done = 0; done < n;) {
         if (f.revPos == f.revLen) {
             float* buf[kChannels];
@@ -520,11 +535,16 @@ void Player::Impl::mixBackward(Feed& f, int n, float* const* out)
                 f.tailPeaks.assign(f.chunkPeaks.begin(), f.chunkPeaks.begin() + ptrdiff_t(stride));
             else
                 f.tailPeaks.clear();
+            if (f.haveTail && chStride > 0 && f.chunkChPeaks.size() >= chStride)
+                f.tailChPeaks.assign(f.chunkChPeaks.begin(), f.chunkChPeaks.begin() + ptrdiff_t(chStride));
+            else
+                f.tailChPeaks.clear();
             // only a chunk right after the one before carries the filter state on; the first chunk after a seek or
             // a change of direction starts over like the export (no gain reduction or noise estimate from elsewhere)
             f.mixer->setChunked(f.haveTail ? kOverlap : -1);
             f.mixer->render(f.next - len, len, buf);
             f.chunkPeaks = f.mixer->blockPeaks();
+            if (chStride > 0) f.chunkChPeaks = f.mixer->blockChannelPeaks();
             for (int c = 0; c < kChannels; ++c) {
                 float* rev = f.rev[c].data();
                 for (int i = 0; i < len; ++i) rev[i] = buf[c][len - 1 - i];
@@ -548,6 +568,11 @@ void Player::Impl::mixBackward(Feed& f, int n, float* const* out)
             for (int b = (len - f.revPos - k) / kBlock, last = (len - f.revPos - 1) / kBlock; b <= last; ++b)
                 notePeaks(f, f.chunkPeaks.data() + size_t(b) * stride, stride);
             if (f.revPos < kOverlap && f.tailPeaks.size() == stride) notePeaks(f, f.tailPeaks.data(), stride);
+        }
+        if (chStride > 0 && f.chunkChPeaks.size() >= chStride * (len / kBlock)) {
+            for (int b = (len - f.revPos - k) / kBlock, last = (len - f.revPos - 1) / kBlock; b <= last; ++b)
+                noteChannelPeaks(f, f.chunkChPeaks.data() + size_t(b) * chStride, chStride);
+            if (f.revPos < kOverlap && f.tailChPeaks.size() == chStride) noteChannelPeaks(f, f.tailChPeaks.data(), chStride);
         }
         f.revPos += k;
         done += k;
@@ -595,12 +620,19 @@ void Player::Impl::produce(Feed& f, float* const* out, int n)
     f.peaks[f.peaks.size() - 2] = std::max(f.peaks[f.peaks.size() - 2], float(f.master.peak(0)));
     f.peaks[f.peaks.size() - 1] = std::max(f.peaks[f.peaks.size() - 1], float(f.master.peak(1)));
     f.produced += n;
+    if (!f.mixer || f.mixer->channels() <= kChannels) f.chPeaks.clear(); // stereo: the speakers are L, R
     {
+        // one vector as before (no extra allocation per block): stereo levels, then the speakers
+        std::vector<float> all;
+        all.reserve(f.peaks.size() + f.chPeaks.size());
+        all.insert(all.end(), f.peaks.begin(), f.peaks.end());
+        all.insert(all.end(), f.chPeaks.begin(), f.chPeaks.end());
         std::lock_guard<std::mutex> g(levelMutex);
-        levels.push_back({f.gen, f.start + double(f.produced) * f.speed, f.peaks});
+        levels.push_back({f.gen, f.start + double(f.produced) * f.speed, std::move(all), f.peaks.size()});
         while (levels.size() > 400) levels.pop_front(); // nobody asks
     }
     std::fill(f.peaks.begin(), f.peaks.end(), 0.f);
+    std::fill(f.chPeaks.begin(), f.chPeaks.end(), 0.f);
 }
 
 // ---- Control ----
@@ -849,8 +881,9 @@ double Player::position() const
     return d->positionLocked();
 }
 
-std::vector<float> Player::takeLevels()
+std::vector<float> Player::takeLevels(std::vector<float>* speakers)
 {
+    if (speakers) speakers->clear();
     double pos, speed;
     uint32_t gen;
     {
@@ -866,8 +899,13 @@ std::vector<float> Player::takeLevels()
         const LevelEntry& e = d->levels.front();
         if (e.gen == gen) {
             if (speed > 0 ? e.end > pos : e.end < pos) break; // not heard yet
-            if (out.size() != e.peaks.size()) out.assign(e.peaks.size(), 0.f);
+            if (out.size() != e.split) out.assign(e.split, 0.f);
             for (size_t i = 0; i < out.size(); ++i) out[i] = std::max(out[i], e.peaks[i]);
+            if (speakers) {
+                const size_t n = e.peaks.size() - e.split;
+                if (speakers->size() != n) speakers->assign(n, 0.f);
+                for (size_t i = 0; i < n; ++i) (*speakers)[i] = std::max((*speakers)[i], e.peaks[e.split + i]);
+            }
         }
         d->levels.pop_front();
     }

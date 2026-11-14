@@ -225,6 +225,8 @@ encoder libmp3lame
 encoder libopus
 encoder flac
 encoder alac
+# 5.1 for TVs/AV receivers (RenderSettings::audioFormat "ac3", 0.23): LGPL like the rest, its patents ran out (2017)
+encoder ac3
 encoder pcm_s16le
 encoder pcm_s24le
 encoder pcm_s32le

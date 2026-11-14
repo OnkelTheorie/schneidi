@@ -3318,5 +3318,7 @@
  "… und %1 weitere": "… and %1 more",
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
- "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
+ "%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.": "%1 cannot write %2, the sound is downmixed to 5.1.",
+ "Spitzenpegel (dBFS) des lautesten Lautsprechers seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück": "Peak level (dBFS) of the loudest speaker since the reset – a click on the red marks resets it"
 }

@@ -984,7 +984,9 @@ void StudioTracks::wheelEvent(QWheelEvent* e)
     const int steps = delta.y() != 0 ? delta.y() : delta.x();
     if (steps == 0) return;
     WheelAction action = InputBindings::instance().wheelAction(e->modifiers());
-    if (delta.y() == 0 && delta.x() != 0) action = WheelAction::ScrollHorizontal; // a sideways wheel / touchpad
+    // A sideways wheel / touchpad scrolls in time - but Qt swaps the axes while Alt is held (Alt+wheel is a zoom or scroll
+    // binding like on the timeline), so only without Alt
+    if (delta.y() == 0 && delta.x() != 0 && !(e->modifiers() & Qt::AltModifier)) action = WheelAction::ScrollHorizontal;
     if (action == WheelAction::ScrollVertical && !m_vbar->isVisible()) action = WheelAction::ScrollHorizontal;
     switch (action) {
     case WheelAction::Zoom: {
