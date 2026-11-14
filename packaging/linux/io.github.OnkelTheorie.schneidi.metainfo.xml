@@ -109,6 +109,14 @@
   </requires>
 
   <releases>
+    <release version="0.22.0" date="2026-11-14">
+      <description>
+        <p>Tracking Update: trackers notice a lost point, a node's time range on the timeline, text behind an object,
+        four-corner tracking with a corner pin, a shared camera with parallax, shapes and simple drawing on the video,
+        effects sorted by purpose with favourites, an export quality "Like source" and an interface size setting.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.22.0</url>
+    </release>
     <release version="0.21.0" date="2026-11-12">
       <description>
         <p>Languages Update: ten more UI languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified),

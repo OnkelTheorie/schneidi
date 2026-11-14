@@ -2,7 +2,7 @@
 
 **A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has five pages – Media, Edit, Comp, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
+schneidi has five pages – Media, Edit, Compositing, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
@@ -288,11 +288,13 @@ Guided tours on a built-in practice project (first steps, editing, color, compos
 ### 0.21 – Languages Update (released)
 Ten more languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplified), Italian, Hindi, Dutch, Turkish, Korean, Indonesian), x264/x265 in the downloads, a selectable proxy size, placing only picture or only sound, drop-frame timecode, a smoother and faster start, and a big round of fixes.
 
-### Next: 0.22 – Tracking Update
-Better tracking: fade out when the point is lost, a node's time range on the timeline, text behind a wall, four-corner tracking, a shared camera for 2.5D.
+### 0.22 – Tracking Update (released)
+Trackers notice a lost point (fade out or hold), a node's time range right on the timeline, text behind a wall or pillar, four-corner tracking with a corner pin, a shared camera with parallax, shapes and simple drawing on the video (blur a face or number plate, arrows, circles), effects sorted by purpose with favourites, a kill feed that follows its lines in 9:16 shorts, an export quality "Like source", and an interface size setting.
+
+### Next: 0.23 – Studio
+A page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording.
 
 ### Later
-- **0.23 – Studio:** a page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording
 - **0.24 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
