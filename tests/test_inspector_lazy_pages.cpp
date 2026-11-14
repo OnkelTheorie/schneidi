@@ -2,6 +2,7 @@
 // The Inspector builds its title, transition and subtitle pages on first use (~45 ms of the start). Nobody may see that:
 // - the panel's width does not depend on them: its minimum and preferred width are the same before and after they are
 //   built (de, ru, hi; normal and large font) - the pages built at the start (Video, Audio) are the widest;
+// - the title page's tab is named after the selected clip: title, shape or drawing;
 // - selecting a title clip, a transition or a subtitle builds its page and shows the values (the title's text, the
 //   transition's length, the subtitle's text), and a page is built once.
 
@@ -19,6 +20,7 @@
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTest>
+#include <QToolButton>
 
 namespace {
 
@@ -62,7 +64,17 @@ void check(const QString& where)
     title.start = 200;
     title.out = 99;
     tl.video[0].clips << title;
-    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, title.id, 0});
+    Clip shape = title; // a shape and a drawing use the same page, named after them
+    shape.id = project.newClipId();
+    shape.title.kind = TitleKind::Shape;
+    shape.start = 400;
+    tl.video[0].clips << shape;
+    Clip drawing = title;
+    drawing.id = project.newClipId();
+    drawing.title.kind = TitleKind::Drawing;
+    drawing.start = 600;
+    tl.video[0].clips << drawing;
+    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, drawing.id, 0});
 
     // The size hints of a fresh panel (nothing selected, as at the start) ...
     Inspector lazy(&editor);
@@ -102,6 +114,23 @@ void check(const QString& where)
     sel.set({title.id});
     settle();
     CHECK_EQ(widgetsOn(pages, kTitlePage), built); // built once
+
+    // The tab of that page says what is selected: title, shape or drawing
+    const auto tabText = [&insp] {
+        for (QToolButton* b : insp.findChild<QWidget*>("InspectorTabs")->findChildren<QToolButton*>())
+            if (b->isVisible() && b->text().startsWith("T\n")) return b->text().mid(2);
+        return QString();
+    };
+    CHECK_EQ(tabText(), T("Titel"));
+    sel.set({shape.id});
+    settle();
+    CHECK_EQ(tabText(), T("Form"));
+    sel.set({drawing.id});
+    settle();
+    CHECK_EQ(tabText(), T("Zeichnung"));
+    sel.set({title.id});
+    settle();
+    CHECK_EQ(tabText(), T("Titel"));
 
     CHECK(editor.addTransitionAt(0, v.id, TransitionStyle{}));
     sel.setTransition({0, v.id});

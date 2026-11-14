@@ -551,6 +551,7 @@
  "Clip-Geschwindigkeit ändern…": "Modifier la vitesse du clip…",
  "Clip: %1, %2 fps\nProjekt: %3, %4 fps\n\nNeu: %5, %6 fps": "Clip : %1, %2 i/s\nProjet : %3, %4 i/s\n\nNouveau : %5, %6 i/s",
  "Clipdauer anzeigen": "Afficher la durée des clips",
+ "Clipende": "Fin du clip",
  "Clipfarbe": "Couleur du clip",
  "Clipfarbe (%1)": "Couleur du clip (%1)",
  "Clipfarbe entfernen": "Supprimer la couleur du clip",

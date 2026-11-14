@@ -551,6 +551,7 @@
  "Clip-Geschwindigkeit ändern…": "更改片段速度…",
  "Clip: %1, %2 fps\nProjekt: %3, %4 fps\n\nNeu: %5, %6 fps": "片段:%1,%2 fps\n项目:%3,%4 fps\n\n新建:%5,%6 fps",
  "Clipdauer anzeigen": "显示片段时长",
+ "Clipende": "片段结尾",
  "Clipfarbe": "片段颜色",
  "Clipfarbe (%1)": "片段颜色(%1)",
  "Clipfarbe entfernen": "清除片段颜色",
