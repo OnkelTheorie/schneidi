@@ -104,6 +104,11 @@ struct EncoderConfig {
     // beats one that is closer in squared error but smoother; the winner is also tried with a
     // quantisation that keeps more of the small coefficients. PSNR and SSIM drop by design.
     double psyRd = 0.0;
+    // Two-pass complexity compression: a picture's QP follows its complexity (first-pass cost,
+    // averaged over +-1.5 s) by qcomp * 6 * log2(complexity / the clip's mean), at most +-4, so
+    // calm, flat or dark stretches (a fade, a death screen) get a finer QP than busy ones. 0 = one
+    // QP for the whole clip (the stream before 14.11.).
+    double qcomp = 0.3;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame

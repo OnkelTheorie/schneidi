@@ -3,11 +3,12 @@
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--2pass] [--recon out.yuv]
-//                     [--bframes N (0)] [--b-qp offset (2)] [--no-b-adapt] [--weightb] [--psy-rd S (0)]
+//                     [--bframes N (0)] [--b-qp offset (2)] [--no-b-adapt] [--weightb] [--psy-rd S (0)] [--qcomp S (0.3)]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
 // PSNR and --recon go by display order.
 // --psy-rd S: psycho-visual mode decision (keeps texture and grain at the cost of PSNR), 0 = off.
-// --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip.
+// --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip,
+// moved per picture by --qcomp S times its complexity against the clip's (0 = one QP throughout).
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
 // between them; implies the first pass. Input must be a file. --chunk-min F: shortest chunk in
 // pictures (default 15 s).
@@ -211,6 +212,8 @@ int main(int argc, char** argv)
             cfg.weightedBipred = true;
         else if (a == "--psy-rd" && i + 1 < argc)
             cfg.psyRd = std::atof(argv[++i]);
+        else if (a == "--qcomp" && i + 1 < argc)
+            cfg.qcomp = std::atof(argv[++i]);
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
     }

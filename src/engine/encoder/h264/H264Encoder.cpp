@@ -1036,12 +1036,9 @@ static const bool gTpBin = !std::getenv("H264_TPBIN") || std::atoi(std::getenv("
 // its last seconds (H264_TPDEV, <= 0 = no limit).
 static const double gTpDev = std::getenv("H264_TPDEV") ? std::atof(std::getenv("H264_TPDEV")) : 2.0;
 
-// Two-pass complexity compression: a picture's QP moves by gQcomp * 6 * log2 of its complexity
-// (first-pass inter cost, averaged in the log domain over +-gQcBlur seconds) against the clip's
-// mean, so calm, flat or dark stretches get a finer QP than busy ones (their errors show more and
-// cost few bits), within +-gQcMax (H264_QCOMP 0 = one QP for the whole clip, the old way).
-static const double gQcomp = std::getenv("H264_QCOMP") ? std::atof(std::getenv("H264_QCOMP")) : 0.0;
-static const double gQcBlur = std::getenv("H264_QCBLUR") ? std::atof(std::getenv("H264_QCBLUR")) : 0.5;
+// Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
+// largest QP offset (H264_QCBLUR, H264_QCMAX: experiment knobs).
+static const double gQcBlur = std::getenv("H264_QCBLUR") ? std::atof(std::getenv("H264_QCBLUR")) : 1.5;
 static const double gQcMax = std::getenv("H264_QCMAX") ? std::atof(std::getenv("H264_QCMAX")) : 4.0;
 
 // First-pass cost of picture i as the bit model counts it (its type, its QP offset).
@@ -2395,7 +2392,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 }
             }
             tpOff_.clear();
-            if (gQcomp > 0 && st.size() > 0) {
+            if (cfg_.qcomp > 0 && st.size() > 0) {
                 const size_t n = st.size();
                 const double mbs = double(mbW_) * mbH_;
                 std::vector<double> lg(n + 1, 0.0); // prefix sums of log2(cost per macroblock + 1)
@@ -2407,7 +2404,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 for (size_t i = 0; i < n; ++i) {
                     const size_t a = i > w ? i - w : 0, b = std::min(n, i + w + 1);
                     const double local = (lg[b] - lg[a]) / double(b - a);
-                    tpOff_[i] = float(std::clamp(gQcomp * 6.0 * (local - mean), -gQcMax, gQcMax));
+                    tpOff_[i] = float(std::clamp(cfg_.qcomp * 6.0 * (local - mean), -gQcMax, gQcMax));
                 }
             }
             for (size_t i = 0; i < st.size(); ++i) {
