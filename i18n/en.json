@@ -104,6 +104,7 @@
  "%1 s ohne Schnitt, Zoom oder Text": "%1 s without a cut, zoom or text",
  "%1 s ohne Schnitt, Zoom oder Text – in kurzen Hochkant-Videos wischen Zuschauer hier weiter; einen Schnitt, Zoom oder Text einbauen": "%1 s without a cut, zoom or text – in short vertical videos viewers swipe away here; add a cut, a zoom or a text",
  "%1 s schwarzes Bild": "%1 s of black picture",
+ "%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.": "%1 cannot write %2, the sound is downmixed to 5.1.",
  "%1 schreibt kein %2, der Ton ist auf Stereo heruntergemischt.": "%1 cannot write %2, the sound is downmixed to stereo.",
  "%1 verschieben": "Move %1",
  "%1 von %2 Mediendateien wurden nicht gefunden:\n%3\n\nOrdner auswählen, in dem sie liegen?": "%1 of %2 media files were not found:\n%3\n\nChoose the folder they are in?",
@@ -192,6 +193,8 @@
  "5 Frames nach links schieben": "Nudge 5 Frames Left",
  "5 Frames nach rechts schieben": "Nudge 5 Frames Right",
  "50 %": "50%",
+ "AC-3 (Dolby Digital)": "AC-3 (Dolby Digital)",
+ "AC-3 spielt 5.1 auf Fernsehern, AV-Receivern und in Blu-ray-/DVD-Programmen (640 kbit/s, 7.1 wird zu 5.1). AAC: kleiner, für Upload-Seiten und Handys.": "AC-3 plays 5.1 on TVs, AV receivers and in Blu-ray/DVD software (640 kbit/s, 7.1 becomes 5.1). AAC: smaller, for upload sites and phones.",
  "AV1 (sehr kleine Datei)": "AV1 (very small file)",
  "Ab %1 nicht mehr gefunden – Fenster dort neu setzen und weiter verfolgen": "Lost from %1 on – place the window there again and keep tracking",
  "Ab 4K, H.265, AV1 oder 10 Bit": "From 4K, H.265, AV1 or 10-bit",
@@ -339,6 +342,7 @@
  "Audio-Ausgabe": "Audio Output",
  "Audio-Bitrate": "Audio Bit Rate",
  "Audio-Bittiefe": "Audio Bit Depth",
+ "Audio-Codec": "Audio codec",
  "Audio-Encoder %1 nicht verfügbar.": "Audio encoder %1 is not available.",
  "Audio-Zielspur A%1": "Audio Destination A%1",
  "Audioclips": "Audio clips",
@@ -2485,6 +2489,7 @@
  "Spielaufnahme": "Game recording",
  "Spirale": "Spiral",
  "Spitzenpegel (Sample Peak Program)": "Sample Peak Program",
+ "Spitzenpegel (dBFS) des lautesten Lautsprechers seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück": "Peak level (dBFS) of the loudest speaker since the reset – a click on the red marks resets it",
  "Spitzenpegel (dBFS) seit dem Zurücksetzen": "Peak level (dBFS) since the reset",
  "Spitzenpegel (dBFS) – Klick setzt zurück": "Peak level (dBFS) – click to reset",
  "Spotlight": "Spotlight",
@@ -3318,7 +3323,5 @@
  "… und %1 weitere": "… and %1 more",
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
- "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
- "%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.": "%1 cannot write %2, the sound is downmixed to 5.1.",
- "Spitzenpegel (dBFS) des lautesten Lautsprechers seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück": "Peak level (dBFS) of the loudest speaker since the reset – a click on the red marks resets it"
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
 }
