@@ -446,6 +446,17 @@ void testOffFrame(const QString& dir)
     CHECK(t.drag(t.line({0, 170}, {319, 170}, 30)));
     d = t.drawing();
     CHECK(d && d->title.drawing.strokes.size() == 3 && d->title.drawing.strokes[2].points.first().x() < -1 + 1e-9);
+    // Strongly scaled down: the stroke wider than the frame in the drawing's own space (36 px brush at zoom 0.1 = 2
+    // frame heights), at zoom 0.005 capped at kMaxWidth; the file keeps both as painted
+    DrawBrush::instance().setWidthPx(36);
+    t.e.modifyClips({id}, "zoom", [](Clip& c) { c.transform.zoomX = c.transform.zoomY = 0.1; });
+    CHECK(t.drag(t.line({150, 90}, {170, 90}, 5)));
+    t.e.modifyClips({id}, "zoom", [](Clip& c) { c.transform.zoomX = c.transform.zoomY = 0.005; });
+    CHECK(t.drag(t.line({150, 100}, {170, 100}, 5)));
+    DrawBrush::instance().setWidthPx(6);
+    d = t.drawing();
+    CHECK(d && d->title.drawing.strokes.size() == 5 && std::abs(d->title.drawing.strokes[3].width - 2) < 1e-6
+          && std::abs(d->title.drawing.strokes[4].width - Drawing::kMaxWidth) < 1e-9);
     // Pressure on a stroke reaching off the picture survives the file
     t.e.modifyClips({id}, "pressure", [](Clip& c) {
         DrawStroke s = stroke({{-0.6, 0.5}, {0.5, 0.5}, {1.8, 0.5}}, 6);

@@ -21,6 +21,10 @@ namespace Drawing {
 // Points may lie off the picture (a stroke painted over its edge): painting and op draw keep them within
 // kMin..kMax of the frame; a file keeps any finite value (a format change may have moved them further) within +-kFar
 inline constexpr double kMin = -1, kMax = 2, kFar = 100;
+// Widest stroke (fractions of the frame height): painting into a scaled-down drawing makes the stroke wider in the
+// drawing's own space (as wide on the screen as the brush), a format change may too; painting, the file and a format
+// change all keep it within 0..kMaxWidth, so a saved drawing loads as it was painted
+inline constexpr double kMaxWidth = 4;
 // p kept within kMin..kMax (painting, op draw)
 inline QPointF within(QPointF p) { return QPointF(std::clamp(p.x(), kMin, kMax), std::clamp(p.y(), kMin, kMax)); }
 
