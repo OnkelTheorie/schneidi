@@ -9,6 +9,8 @@
 // --psy-rd S: psycho-visual mode decision (keeps texture and grain at the cost of PSNR), 0 = off.
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip,
 // moved per picture by --qcomp S times its complexity against the clip's (0 = one QP throughout).
+// --order file: one line per access unit, "display index, bytes", in coding order (a muxer needs it for
+// the timestamps of streams with B pictures; not with --chunks).
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
 // between them; implies the first pass. Input must be a file. --chunk-min F: shortest chunk in
 // pictures (default 15 s).
@@ -149,6 +151,7 @@ int main(int argc, char** argv)
     const char* outPath = argv[5];
     int maxFrames = 1 << 30;
     const char* reconPath = nullptr;
+    const char* orderPath = nullptr; // --order file: per access unit "display index, bytes" (for a muxer: pts with B pictures)
     bool twoPass = false;
     int chunks = 1, chunkMin = 0;
     for (int i = 6; i < argc; ++i) {
@@ -212,6 +215,8 @@ int main(int argc, char** argv)
             cfg.bAdaptive = false;
         else if (a == "--chroma-qp" && i + 1 < argc)
             cfg.chromaQpOffset = std::atoi(argv[++i]);
+        else if (a == "--chroma-rd" && i + 1 < argc)
+            cfg.chromaRdWeight = std::atoi(argv[++i]);
         else if (a == "--no-weightp")
             cfg.weightedPred = false;
         else if (a == "--weightb")
@@ -225,6 +230,8 @@ int main(int argc, char** argv)
             cfg.qcomp = std::atof(argv[++i]);
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
+        else if (a == "--order" && i + 1 < argc)
+            orderPath = argv[++i];
     }
 
     FILE* in = std::strcmp(inPath, "-") == 0 ? stdin : std::fopen(inPath, "rb"); // "-" = stdin
@@ -318,10 +325,13 @@ int main(int argc, char** argv)
     std::vector<std::vector<uint8_t>> spare;
     double typePsnr[3] = {}, typeBytes[3] = {};
     int typeCount[3] = {};
+    FILE* order = orderPath ? std::fopen(orderPath, "w") : nullptr;
     auto took = [&](const std::vector<uint8_t>& au) {
         if (au.empty())
             return;
         std::fwrite(au.data(), 1, au.size(), out);
+        if (order)
+            std::fprintf(order, "%d %zu\n", enc.lastDisplayIndex(), au.size());
         totalBytes += au.size();
         const std::vector<uint8_t>& src = pending.at(enc.lastDisplayIndex());
         const uint8_t* sy = src.data();
@@ -382,6 +392,8 @@ int main(int argc, char** argv)
     }
     std::fclose(in);
     std::fclose(out);
+    if (order)
+        std::fclose(order);
     if (recon)
         std::fclose(recon);
     if (!frames) {

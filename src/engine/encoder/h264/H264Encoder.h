@@ -88,7 +88,11 @@ struct EncoderConfig {
     // B pictures (CABAC only, Main/High): up to this many in a row between two reference pictures,
     // not used as references themselves. 0 = none (the stream is then the same as without this
     // option). Access units come out in coding order: lastDisplayIndex() says which picture one is.
-    int bframes = 0;
+    // Default 8 since 14.11.2026 (0 before): with the probe, B pictures appear only on material
+    // where they save 15 % or more (calm camera footage), there in runs of 2 or 8. A CALLER THAT
+    // MUXES MUST TAKE pts FROM lastDisplayIndex() AND dts FROM THE CODING ORDER (reorderDelay()),
+    // or set bframes = 0.
+    int bframes = 8;
     int bQpOffset = 2;     // QP of a B picture above the P QP
     // Places B pictures only where they pay (BProbe: a few pictures coded with and without them;
     // with a first pass over the whole clip, which must then have been made with at least this
@@ -128,6 +132,11 @@ struct EncoderConfig {
     // chroma_qp_index_offset (-12..12): the chroma planes' QP against luma's. Negative = finer
     // chroma: fewer coloured blotches on smooth, coloured areas (smoke, sky) for a few bits.
     int chromaQpOffset = 0;
+    // Weight of the chroma planes' squared error in the macroblock decisions (skip, inter, intra)
+    // against luma's (1 = sample for sample). A chroma sample covers four pixels, and a small
+    // coloured error (the ghost of a HUD element dragged along by a skip, a tint on smoke) is
+    // cheap in squared error but plain to see: with more weight such macroblocks get their residual.
+    int chromaRdWeight = 1;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame

@@ -497,6 +497,7 @@ void predictChroma8(int mode, const uint8_t* rec, int stride, bool left, bool to
 FrameCoder::FrameCoder(const EncoderConfig& config)
     : cfg_(config)
 {
+    cfg_.chromaRdWeight = std::clamp(cfg_.chromaRdWeight, 1, 16);
     cfg_.chromaQpOffset = std::clamp(cfg_.chromaQpOffset, -12, 12);
     mbW_ = (cfg_.width + 15) / 16;
     mbH_ = (cfg_.height + 15) / 16;
@@ -867,6 +868,8 @@ void BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h
         c.bframes = bframes;
         c.bAdaptive = false;
         c.weightedPred = false;
+        c.aqStrength = 1.0; // the probe's threshold was measured with these
+        c.psyRd = 0.0;
         Encoder e(c);
         bits = ssd = 0;
         auto take = [&](const std::vector<uint8_t>& au) {
@@ -4526,6 +4529,8 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
         add8(_mm_unpacklo_epi8(a, zero), _mm_unpacklo_epi8(b, zero));
         add8(_mm_unpackhi_epi8(a, zero), _mm_unpackhi_epi8(b, zero));
     }
+    const __m128i lumaAcc = acc;
+    acc = zero;
     for (int y = 0; y < 8; ++y) {
         const size_t o = co + size_t(y) * cw;
         add8(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&srcU_[o])), zero),
@@ -4533,9 +4538,12 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
         add8(_mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&srcV_[o])), zero),
              _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(&recV_[o])), zero));
     }
-    acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
-    acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1)));
-    return int64_t(uint32_t(_mm_cvtsi128_si32(acc)));
+    auto total = [](__m128i v) {
+        v = _mm_add_epi32(v, _mm_shuffle_epi32(v, _MM_SHUFFLE(1, 0, 3, 2)));
+        v = _mm_add_epi32(v, _mm_shuffle_epi32(v, _MM_SHUFFLE(2, 3, 0, 1)));
+        return int64_t(uint32_t(_mm_cvtsi128_si32(v)));
+    };
+    return total(lumaAcc) + int64_t(cfg_.chromaRdWeight) * total(acc);
 #elif defined(SCHNEIDI_H264_NEON)
     uint32x4_t acc = vdupq_n_u32(0);
     auto add8 = [&](uint8x8_t a, uint8x8_t b) {
@@ -4548,12 +4556,14 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
         add8(vget_low_u8(a), vget_low_u8(b));
         add8(vget_high_u8(a), vget_high_u8(b));
     }
+    const int64_t lumaSum = int64_t(vaddvq_u32(acc));
+    acc = vdupq_n_u32(0);
     for (int y = 0; y < 8; ++y) {
         const size_t o = co + size_t(y) * cw;
         add8(vld1_u8(&srcU_[o]), vld1_u8(&recU_[o]));
         add8(vld1_u8(&srcV_[o]), vld1_u8(&recV_[o]));
     }
-    return int64_t(vaddvq_u32(acc));
+    return lumaSum + int64_t(cfg_.chromaRdWeight) * int64_t(vaddvq_u32(acc));
 #else
     int64_t s = 0;
     for (int y = 0; y < 16; ++y)
@@ -4567,7 +4577,7 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
             const size_t o = co + size_t(y) * cw + x;
             const int du = int(srcU_[o]) - int(recU_[o]);
             const int dv = int(srcV_[o]) - int(recV_[o]);
-            s += du * du + dv * dv;
+            s += int64_t(cfg_.chromaRdWeight) * (du * du + dv * dv);
         }
     return s;
 #endif

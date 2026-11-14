@@ -266,6 +266,11 @@ EncoderConfig config(int w, int h, IntraMode mode, int gop, int threads = 1)
     c.gop = gop;
     c.threads = threads;
     c.qp = 28;
+    // The cases set what they test: no B pictures, the plain AQ strength and no psy unless asked for (the
+    // defaults since 14.11.2026 are 8 B pictures with the probe, AQ 1.5, psy 1.0 by QP; a case below runs them).
+    c.bframes = 0;
+    c.aqStrength = 1.0;
+    c.psyRd = 0.0;
     return c;
 }
 
@@ -820,6 +825,24 @@ int main()
                 q.weightedBipred = true;
                 CHECK(roundTrip(q, 12));
             }
+        }
+        {
+            // The defaults as they are (B pictures by the probe, AQ, psy by QP, weighted prediction): bit-exact,
+            // the same with any thread count, also with rate control and a first pass.
+            StreamInfo one, four;
+            EncoderConfig d;
+            d.width = 320;
+            d.height = 192;
+            d.gop = 30;
+            d.qp = 30;
+            d.threads = 1;
+            CHECK(roundTrip(d, 40, nullptr, -1, nullptr, &one));
+            d.threads = 4;
+            CHECK(roundTrip(d, 40, nullptr, -1, nullptr, &four));
+            CHECK(one.hash == four.hash);
+            d.bitrateKbps = 800;
+            d.fps = 30;
+            CHECK(roundTrip(d, 40));
         }
         {
             // Explicit weighted prediction: a fade in from black decodes bit-exactly (one and several references,
