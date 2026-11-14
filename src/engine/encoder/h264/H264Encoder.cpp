@@ -179,11 +179,12 @@ constexpr int posClass(int raster)
     return 2;
 }
 
-// Chroma QP from table 8-15 (chroma_qp_index_offset = 0).
+// Chroma QP from table 8-15; qp = the luma QP plus chroma_qp_index_offset.
 int chromaQp(int qp)
 {
     static const int kTable[22] = {29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36,
                                    36, 37, 37, 37, 38, 38, 38, 39, 39, 39, 39};
+    qp = std::clamp(qp, 0, 51);
     return qp < 30 ? qp : kTable[qp - 30];
 }
 
@@ -496,6 +497,7 @@ void predictChroma8(int mode, const uint8_t* rec, int stride, bool left, bool to
 FrameCoder::FrameCoder(const EncoderConfig& config)
     : cfg_(config)
 {
+    cfg_.chromaQpOffset = std::clamp(cfg_.chromaQpOffset, -12, 12);
     mbW_ = (cfg_.width + 15) / 16;
     mbH_ = (cfg_.height + 15) / 16;
     padW_ = mbW_ * 16;
@@ -538,6 +540,7 @@ FrameCoder::FrameCoder(const EncoderConfig& config)
 Encoder::Encoder(const EncoderConfig& config)
     : cfg_(config)
 {
+    cfg_.chromaQpOffset = std::clamp(cfg_.chromaQpOffset, -12, 12);
     mbW_ = (cfg_.width + 15) / 16;
     mbH_ = (cfg_.height + 15) / 16;
     padW_ = mbW_ * 16;
@@ -693,14 +696,14 @@ std::vector<uint8_t> Encoder::headers() const
         bw.u(useB() && cfg_.weightedBipred ? 2 : 0, 2); // weighted_bipred_idc: implicit (by picture distance) or none
         bw.se(0);       // pic_init_qp_minus26
         bw.se(0);       // pic_init_qs_minus26
-        bw.se(0);       // chroma_qp_index_offset
+        bw.se(chromaOffset()); // chroma_qp_index_offset
         bw.flag(true);  // deblocking_filter_control_present_flag
         bw.flag(false); // constrained_intra_pred_flag
         bw.flag(false); // redundant_pic_cnt_present_flag
         if (useT8()) {
             bw.flag(true);  // transform_8x8_mode_flag
             bw.flag(false); // pic_scaling_matrix_present_flag
-            bw.se(0);       // second_chroma_qp_index_offset
+            bw.se(chromaOffset()); // second_chroma_qp_index_offset
         }
         bw.rbspTrailing();
         appendNal(out, 3, 8, bw.bytes());
@@ -720,14 +723,14 @@ std::vector<uint8_t> Encoder::headers() const
         bw.u(useB() && cfg_.weightedBipred ? 2 : 0, 2); // weighted_bipred_idc
         bw.se(0);       // pic_init_qp_minus26
         bw.se(0);       // pic_init_qs_minus26
-        bw.se(0);       // chroma_qp_index_offset
+        bw.se(chromaOffset()); // chroma_qp_index_offset
         bw.flag(true);  // deblocking_filter_control_present_flag
         bw.flag(false); // constrained_intra_pred_flag
         bw.flag(false); // redundant_pic_cnt_present_flag
         if (useT8()) {
             bw.flag(true);  // transform_8x8_mode_flag
             bw.flag(false); // pic_scaling_matrix_present_flag
-            bw.se(0);       // second_chroma_qp_index_offset
+            bw.se(chromaOffset()); // second_chroma_qp_index_offset
         }
         bw.rbspTrailing();
         appendNal(out, 3, 8, bw.bytes());
@@ -3519,7 +3522,7 @@ void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*i
         }
     }
 
-    const int qpc = chromaQp(mbQp_[size_t(mby) * mbW_ + mbx]);
+    const int qpc = chromaQp(mbQp_[size_t(mby) * mbW_ + mbx] + cfg_.chromaQpOffset);
     const int qpcDiv = qpc / 6, qpcMod = qpc % 6;
     const int cqbits = 15 + qpcDiv;
     const int cOffset = (1 << cqbits) / (interPred ? 6 : 3);
@@ -7184,7 +7187,7 @@ void FrameCoder::deblockMb(int mbx, int mby)
                 int indexY, alphaY, betaY, indexC, alphaC, betaC;
             };
             auto edgeQp = [&](int qpP) {
-                const int y = (qpP + qpQ + 1) >> 1, ch = (chromaQp(qpP) + chromaQp(qpQ) + 1) >> 1;
+                const int y = (qpP + qpQ + 1) >> 1, ch = (chromaQp(qpP + cfg_.chromaQpOffset) + chromaQp(qpQ + cfg_.chromaQpOffset) + 1) >> 1;
                 if (gDeblockA == 0 && gDeblockB == 0)
                     return EdgeQp{y, kAlpha[y], kBeta[y], ch, kAlpha[ch], kBeta[ch]};
                 // Slice offsets (8.7.2.2): indexA (alpha, tC0) and indexB (beta) move separately.
@@ -7432,7 +7435,7 @@ bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const u
         if (anyAbove4x4(coef, lim))
             return false;
     }
-    const int qpc = chromaQp(qp);
+    const int qpc = chromaQp(qp + cfg_.chromaQpOffset);
     const int cDiv = qpc / 6, cMod = qpc % 6, cqbits = 15 + cDiv, cOffset = (1 << cqbits) / 6;
     int limC[8];
     limits(qpc, limC);

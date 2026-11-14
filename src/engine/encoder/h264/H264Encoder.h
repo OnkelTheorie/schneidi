@@ -125,6 +125,9 @@ struct EncoderConfig {
     // without such a change are coded exactly as without the option (the stream then only has a
     // second picture parameter set in its headers).
     bool weightedPred = true;
+    // chroma_qp_index_offset (-12..12): the chroma planes' QP against luma's. Negative = finer
+    // chroma: fewer coloured blotches on smooth, coloured areas (smoke, sky) for a few bits.
+    int chromaQpOffset = 0;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -294,6 +297,7 @@ private:
     // of B pictures goes first and stays queued until they are coded).
     bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
     // Explicit weighted prediction is not part of the Baseline profile (no CABAC = Baseline here).
+    int chromaOffset() const { return cfg_.chromaQpOffset; } // clamped by the constructor
     bool useWeightedPred() const { return cfg_.weightedPred && useCabac() && cfg_.gop > 1; }
     // Adaptive placement: from the first pass when there is one (so its plan holds), else from the queue.
     bool bAdapt() const { return useB() && cfg_.bAdaptive && (!cfg_.firstPass || cfg_.firstPass->bMax >= cfg_.bframes); }

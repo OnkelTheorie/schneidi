@@ -210,6 +210,8 @@ int main(int argc, char** argv)
             cfg.bQpOffset = std::atoi(argv[++i]);
         else if (a == "--no-b-adapt")
             cfg.bAdaptive = false;
+        else if (a == "--chroma-qp" && i + 1 < argc)
+            cfg.chromaQpOffset = std::atoi(argv[++i]);
         else if (a == "--no-weightp")
             cfg.weightedPred = false;
         else if (a == "--weightb")
