@@ -271,9 +271,22 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     if (noGame) copy["keep"] = "none";
     const QJsonObject made = run("edit", {{"project", project}, {"ops", QJsonArray{copy}}}, step(0.32, 0.4));
     const QJsonArray madeNotes = made["notes"].toArray();
-    const bool keptFeed = std::any_of(madeNotes.begin(), madeNotes.end(),
-                                      [](const QJsonValue& n) { return n.toString().startsWith("kept readable"); });
-    done << QString("timeline '%1' %2, reframe %3%4").arg(shortTimeline, aspect, reframe, keptFeed ? ", kill feed kept at the top" : "");
+    // What the reframe did with the kill feed, from its notes: copies made (following their lines or the whole
+    // region), or none (no line in the clips)
+    const auto noted = [&madeNotes](const QString& start, const QString& with = {}) {
+        return std::any_of(madeNotes.begin(), madeNotes.end(), [&](const QJsonValue& n) {
+            return n.toString().startsWith(start) && n.toString().contains(with);
+        });
+    };
+    QString feedText;
+    if (noted("kept readable", ": killfeed (")) {
+        feedText = noted("the kill feed copy follows its lines") ? ", kill feed kept at the top (shown with its lines)"
+                                                                 : ", kill feed kept at the top";
+        if (noted("no kill feed line found in clips")) feedText += " (whole region where no line was recognized)";
+    } else if (noted("no kill feed line in clips")) {
+        feedText = ", no kill feed line in the clips: no kill feed copy";
+    }
+    done << QString("timeline '%1' %2, reframe %3%4").arg(shortTimeline, aspect, reframe, feedText);
 
     // 6. Word captions from the speech, when whisper is there (never installed from here)
     bool burn = false;
