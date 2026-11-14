@@ -8,6 +8,7 @@
 #include "H264Encoder.h"
 #include "ThreadErrors.h"
 
+#include <cstring>
 #include <array>
 #include <atomic>
 #include <climits>
@@ -180,6 +181,44 @@ public:
         int luma8[4][64] = {};       // per 8x8 block, scan order
         int chromaDc[2][4] = {};
         int chromaAc[2][4][15] = {};
+
+        // Copies what the entropy coder reads of s: the header fields and only the level arrays
+        // its type and coded_block_pattern select (the others keep whatever they held).
+        void assignUsed(const MbSyntax& s)
+        {
+            kind = s.kind;
+            if (kind == Kind::Skip)
+                return; // a skipped macroblock is its kind alone
+            i16Mode = s.i16Mode;
+            chromaMode = s.chromaMode;
+            std::memcpy(i4Mode, s.i4Mode, sizeof i4Mode);
+            std::memcpy(i4Pred, s.i4Pred, sizeof i4Pred);
+            interType = s.interType;
+            std::memcpy(ref, s.ref, sizeof ref);
+            std::memcpy(mvd, s.mvd, sizeof mvd);
+            bType = s.bType;
+            std::memcpy(bSub, s.bSub, sizeof bSub);
+            std::memcpy(mvd1, s.mvd1, sizeof mvd1);
+            cbpLuma = s.cbpLuma;
+            cbpChroma = s.cbpChroma;
+            hasQpDelta = s.hasQpDelta;
+            qpDelta = s.qpDelta;
+            t8 = s.t8;
+            if (kind == Kind::I16)
+                std::memcpy(lumaDc, s.lumaDc, sizeof lumaDc);
+            for (int b8 = 0; b8 < 4; ++b8) {
+                if (!((cbpLuma >> b8) & 1))
+                    continue;
+                if (t8)
+                    std::memcpy(luma8[b8], s.luma8[b8], sizeof luma8[b8]);
+                else
+                    std::memcpy(luma[b8 * 4], s.luma[b8 * 4], 4 * sizeof luma[0]);
+            }
+            if (cbpChroma)
+                std::memcpy(chromaDc, s.chromaDc, sizeof chromaDc);
+            if (cbpChroma == 2)
+                std::memcpy(chromaAc, s.chromaAc, sizeof chromaAc);
+        }
     };
     struct MbOut {
         BitWriter bw; // CAVLC (also the bit estimate for decisions)
@@ -228,11 +267,13 @@ public:
         int levels[16][16];
         int levels8[4][64];
         int cbpLuma;
+        double energy8[4]; // 8x8 plan with estimate: squared error of each quadrant left empty
     };
     void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
                        InterResidual& ir, double fineLambda = -1.0);
+    // emptyOf8 (4x4 plan): the 8x8 plan of the same prediction; its empty quadrants stay empty.
     void planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, InterResidual& ir,
-                       double* est, double fineLambda = -1.0);
+                       double* est, double fineLambda = -1.0, const InterResidual* emptyOf8 = nullptr);
     void reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, bool t8, MbOut& io, const InterResidual& ir);
     bool writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;

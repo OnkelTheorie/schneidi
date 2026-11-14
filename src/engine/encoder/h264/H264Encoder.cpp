@@ -1863,7 +1863,7 @@ int FrameCoder::waveRowBody(int r, bool block)
             else
                 commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
             cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
-            mbSyn_[size_t(r) * mbW_ + mbx] = mb.syn;
+            mbSyn_[size_t(r) * mbW_ + mbx].assignUsed(mb.syn);
             if (mbx == std::min(1, mbW_ - 1))
                 w.rowSnap[size_t(r)] = eng;
             w.rowMb[size_t(r)].store(mbx + 1, std::memory_order_release);
@@ -4197,6 +4197,50 @@ void FrameCoder::rdoQuantize(int* levels, const int* residual, int qp, double la
 // again: their cost never beats the best, so the result is the same with fewer SADs. predCost >= 0: the full-pel cost the neighbours ended with; a start
 // point at least that good skips the coarse steps (32, 16). subpel: 0 full-pel only, 1 up to
 // half-pel, 2 up to quarter-pel. fullPelCost (optional) gets the full-pel cost of the result.
+// One sub-pel step around (cx0, cy0) without measuring all eight neighbours: the four direct ones
+// first, then of the diagonals only those next to them that can still win. Pattern 1: the one
+// diagonal between the better horizontal and the better vertical neighbour; pattern 2: both
+// diagonals beside the best direct neighbour. H264_SUBPEL = 0 measures all eight.
+static const int gSubpelBoth = std::getenv("H264_SUBPEL") ? std::atoi(std::getenv("H264_SUBPEL")) : 11;
+static const int gSubpelHalf = gSubpelBoth / 10, gSubpelQuarter = gSubpelBoth % 10;
+
+template <typename Cost>
+static inline void subpelStep(Cost&& cost, int cx0, int cy0, int step, int range, double& best, int& bx, int& by)
+{
+    const int gSubpelPattern = step == 2 ? gSubpelHalf : gSubpelQuarter;
+    double c[4]; // left, right, up, down
+    static constexpr int kD[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+    for (int i = 0; i < 4; ++i) {
+        const int cx = cx0 + kD[i][0] * step, cy = cy0 + kD[i][1] * step;
+        c[i] = std::abs(cx) > range || std::abs(cy) > range ? 1e300 : cost(cx, cy);
+        if (c[i] < best) {
+            best = c[i];
+            bx = cx;
+            by = cy;
+        }
+    }
+    const int h = c[1] < c[0] ? 1 : -1, v = c[3] < c[2] ? 1 : -1;
+    auto diag = [&](int dx, int dy) {
+        const int cx = cx0 + dx * step, cy = cy0 + dy * step;
+        if (std::abs(cx) > range || std::abs(cy) > range)
+            return;
+        const double d = cost(cx, cy);
+        if (d < best) {
+            best = d;
+            bx = cx;
+            by = cy;
+        }
+    };
+    diag(h, v);
+    if (gSubpelPattern == 2) {
+        // The second diagonal beside the better of the two chosen direct neighbours.
+        if (std::min(c[0], c[1]) < std::min(c[2], c[3]))
+            diag(h, -v);
+        else
+            diag(-h, v);
+    }
+}
+
 double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY,
                                 double lambdaSad, const std::pair<int, int>* starts, int startCount, int subpel, int& outX,
                                 int& outY, double predCost, double* fullPelCost) const
@@ -4277,6 +4321,10 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
         if (subpel < (step == 2 ? 1 : 2))
             break;
         const int cx0 = bx, cy0 = by;
+        if ((step == 2 ? gSubpelHalf : gSubpelQuarter) > 0) {
+            subpelStep(cost, cx0, cy0, step, range, best, bx, by);
+            continue;
+        }
         for (int dy = -1; dy <= 1; ++dy)
             for (int dx = -1; dx <= 1; ++dx) {
                 if ((!dx && !dy) || (diamond && dx && dy))
@@ -4308,6 +4356,10 @@ double FrameCoder::refineQuarter(const RefPic& R, int mbx, int mby, int x4, int 
     };
     double best = cost(vx, vy);
     const int cx0 = vx, cy0 = vy;
+    if (gSubpelQuarter > 0) {
+        subpelStep(cost, cx0, cy0, 1, range, best, vx, vy);
+        return best;
+    }
     for (int dy = -1; dy <= 1; ++dy)
         for (int dx = -1; dx <= 1; ++dx) {
             const int cx = cx0 + dx, cy = cy0 + dy;
@@ -4338,7 +4390,7 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
 // fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
 // above the lowest frequencies are decided with fineLambda instead of lambda.
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
-                               InterResidual& ir, double* est, double fineLambda)
+                               InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8)
 {
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int qpDiv = qp / 6, qpMod = qp % 6;
@@ -4407,6 +4459,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                     levels8[b8][kZigzag8[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
                 }
                 sum += any ? j : energy;
+                ir.energy8[b8] = energy;
                 if (any)
                     cbpLuma |= 1 << b8;
             } else {
@@ -4452,6 +4505,14 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     double gain[16];
     const bool trellisPath = cfg_.effort > 0 && live && trellis;
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        if (emptyOf8 && est && trellisPath && !((emptyOf8->cbpLuma >> (blkIdx >> 2)) & 1)) {
+            // The 8x8 plan left this quadrant without a level: taken as empty here too, at the
+            // same squared error (the quadrant's, in equal shares).
+            std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
+            gain[blkIdx] = 0.0;
+            jBlk[blkIdx] = eBlk[blkIdx] = 0.25 * emptyOf8->energy8[blkIdx >> 2];
+            continue;
+        }
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
         int res[16], coef[16];
         if (trellisPath) {
@@ -4721,12 +4782,18 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             predFull = kCoarse * m;
     }
     double wholeFull = -1;
+    // The parts of a split layout start from the 16x16 vector (among the others) and leave out the
+    // coarse steps: the 16x16 search has been over the area. H264_SPLITFINE=0: the search before.
+    static const int kSplitFine = std::getenv("H264_SPLITFINE") ? std::atoi(std::getenv("H264_SPLITFINE")) : 1;
+    bool splitFine = false;
+    double splitPred = 1e300;
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
         starts.push_back({pX, pY});
         const double area = double(w4 * h4) / 16.0;
         const bool whole16 = w4 == 4 && h4 == 4 && ref == 0;
         const double best = motionSearch(*refs_[size_t(ref)], mbx, mby, x4, y4, w4, h4, pX, pY, lambdaSad, starts.data(),
-                                         int(starts.size()), subpelNow, outX, outY, predFull >= 0 ? predFull * area : -1.0,
+                                         int(starts.size()), subpelNow, outX, outY,
+                                         splitFine ? splitPred * area : predFull >= 0 ? predFull * area : -1.0,
                                          whole16 ? &wholeFull : nullptr);
         starts.pop_back();
         return best;
@@ -4789,6 +4856,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     };
     const Choice whole = tryLayout(0);
     fullPelCost_[mbIndex] = float(wholeFull);
+    if (kSplitFine && cfg_.effort > 0) {
+        splitFine = kSplitFine == 1 || kSplitFine == 3;
+        static const double kSplitShare = std::getenv("H264_SPLITSHARE") ? std::atof(std::getenv("H264_SPLITSHARE")) : 1.0;
+        splitPred = kSplitFine == 1 ? 1e300 : kSplitShare * wholeFull;
+        starts.push_back({whole.mv[0][0], whole.mv[0][1]});
+    }
     Choice split;
     // No split layouts when the 16x16 cost is below c * sqrt(lambda): a well-predicted macroblock
     // rarely gains from splitting. Measured (two-pass, AQ + tree, 600 pictures CS2, BD-rate PSNR-Y /
@@ -4814,6 +4887,36 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // override, H264_SPLITQ=0 = off (the stream before).
     static const double kSplitQuad = std::getenv("H264_SPLITQ") ? std::atof(std::getenv("H264_SPLITQ")) : 0.5;
     static const double kSplitConc = std::getenv("H264_SPLITR") ? std::atof(std::getenv("H264_SPLITR")) : 0.4;
+    // Late skip: the 16x16 search ended on the skip vector and the trellis leaves no luma level of
+    // its residual (nor does chroma) -> that candidate is the skip macroblock with more bits. Skip
+    // is taken there without the split search and the intra try. H264_LATESKIP=0: off.
+    static const bool kLateSkip = !std::getenv("H264_LATESKIP") || std::atoi(std::getenv("H264_LATESKIP")) != 0;
+    InterResidual lateR8;
+    double lateJ8 = 0;
+    bool lateValid = false;
+    static const int kZeroNoSplit = std::getenv("H264_ZERONOSPLIT") ? std::atoi(std::getenv("H264_ZERONOSPLIT")) : 0;
+    bool wholeZero = false;
+    if (kLateSkip && kRdEst && !bSlice_ && tPsy.weight <= 0 && cabacByTop_[size_t(rowKey_[size_t(mby)])] &&
+        (kZeroNoSplit || (whole.ref[0] == 0 && whole.mv[0][0] == skipX && whole.mv[0][1] == skipY))) {
+        const bool atSkip = whole.ref[0] == 0 && whole.mv[0][0] == skipX && whole.mv[0][1] == skipY;
+        uint8_t lpWhole[256];
+        if (!atSkip)
+            mcLuma(*refs_[size_t(whole.ref[0])], mbx * 16 + (whole.mv[0][0] >> 2), mby * 16 + (whole.mv[0][1] >> 2),
+                   whole.mv[0][0] & 3, whole.mv[0][1] & 3, 16, 16, lpWhole);
+        planInterLuma(mbx, mby, atSkip ? lp : lpWhole, qp, lambda, true, true, lateR8, &lateJ8);
+        lateValid = true;
+        wholeZero = lateR8.cbpLuma == 0;
+        if (atSkip && lateR8.cbpLuma == 0) {
+            ChromaMb chLate;
+            analyseChroma(mbx, mby, chLate, cp);
+            if (chLate.cbp == 0) {
+                restoreMb(mbx, mby, skipState);
+                result.syn.kind = MbSyntax::Kind::Skip;
+                mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+                return false;
+            }
+        }
+    }
     bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
     if (skipSplits && kSplitQuad > 0 && cfg_.effort > 0) {
         const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
@@ -4826,6 +4929,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         skipSplits = !(qMax >= quadLim && qMax >= kSplitConc * qSum);
     }
+    if (wholeZero && kZeroNoSplit)
+        skipSplits = true;
     if (cfg_.effort > 0 && !skipSplits) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
@@ -4837,9 +4942,55 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         const bool lateSubpel = gExp & 256;
         subpelNow = lateSubpel ? 0 : kQpelSplit > 0 ? 1 : 2;
         split = tryLayout(3);
+        // 16x8 / 8x16 without a search of their own: each half takes the better of the vectors the
+        // two 8x8 parts it covers ended on, or the 16x16 one (SATD + vector bits, like the search).
+        // H264_RECTFAST=0: both layouts searched like the others.
+        static const bool kRectFast = !std::getenv("H264_RECTFAST") || std::atoi(std::getenv("H264_RECTFAST")) != 0;
+        const Choice quads = split;
+        auto tryRect = [&](int li) {
+            const Layout& L = kLayouts[li];
+            Choice ch;
+            ch.layout = li;
+            ch.cost = lambdaSad * L.typeBits;
+            bool decoded[16] = {};
+            for (int p = 0; p < L.count; ++p) {
+                const Part& P = L.parts[p];
+                const int q0 = li == 1 ? 2 * p : p, q1 = li == 1 ? 2 * p + 1 : p + 2;
+                const int cand[3][3] = {{quads.mv[q0][0], quads.mv[q0][1], quads.ref[q0]},
+                                        {quads.mv[q1][0], quads.mv[q1][1], quads.ref[q1]},
+                                        {whole.mv[0][0], whole.mv[0][1], whole.ref[0]}};
+                double bestPart = 1e300;
+                for (int c = 0; c < 3; ++c) {
+                    bool dup = false;
+                    for (int d = 0; d < c && !dup; ++d)
+                        dup = cand[d][0] == cand[c][0] && cand[d][1] == cand[c][1] && cand[d][2] == cand[c][2];
+                    if (dup)
+                        continue;
+                    int pX, pY;
+                    predictMvPart(mbx, mby, P.x4, P.y4, P.w4, P.shape, cand[c][2], decoded, pX, pY);
+                    const double cost = double(sadPart(*refs_[size_t(cand[c][2])], mbx, mby, P.x4, P.y4, P.w4, P.h4, cand[c][0],
+                                                       cand[c][1], true)) +
+                                        lambdaSad * (seBits(cand[c][0] - pX) + seBits(cand[c][1] - pY) + refBits(cand[c][2]));
+                    if (cost < bestPart) {
+                        bestPart = cost;
+                        ch.mv[p][0] = cand[c][0];
+                        ch.mv[p][1] = cand[c][1];
+                        ch.mvp[p][0] = pX;
+                        ch.mvp[p][1] = pY;
+                        ch.ref[p] = cand[c][2];
+                    }
+                }
+                ch.cost += bestPart;
+                setBlocks(P.x4, P.y4, P.w4, P.h4, ch.mv[p][0], ch.mv[p][1], ch.ref[p]);
+                for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                    for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                        decoded[y * 4 + x] = true;
+            }
+            return ch;
+        };
         if (split.cost < whole.cost * 1.1) { // 16x8 / 8x16 only where splitting looks worth it
             for (int li : {1, 2}) {
-                const Choice c = tryLayout(li);
+                const Choice c = kRectFast ? tryRect(li) : tryLayout(li);
                 if (c.cost < split.cost)
                     split = c;
             }
@@ -5012,6 +5163,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     static const double kEstSplit = std::getenv("H264_ESTSPLIT") ? std::atof(std::getenv("H264_ESTSPLIT")) : 1e9;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
+    // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
+    // (without levels both transforms are the same macroblock). H264_ZERO8=0: plan both.
+    static const bool kZeroQuad = !std::getenv("H264_ZEROQ") || std::atoi(std::getenv("H264_ZEROQ")) != 0;
+    static const bool kZero8 = !std::getenv("H264_ZERO8") || std::atoi(std::getenv("H264_ZERO8")) != 0;
     if (useEst) {
         struct Plan {
             InterResidual r4, r8;
@@ -5019,10 +5174,19 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         };
         auto plan = [&](const Choice& c, Plan& p) {
             const PredCache& pc = predictLayout(c);
-            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4);
-            planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8);
-            p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
+            if (lateValid && c.layout == 0) {
+                p.r8 = lateR8;
+                p.j8 = lateJ8;
+            } else {
+                planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8);
+            }
             p.j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r8.cbpLuma, true);
+            if (kZero8 && p.r8.cbpLuma == 0) {
+                p.j4 = 1e300;
+                return;
+            }
+            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, kZeroQuad ? &p.r8 : nullptr);
+            p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
         };
         auto consider = [&](const Choice& c, bool t8, const Plan& p) {
             MbOut tmp;
@@ -5043,7 +5207,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             const double dist = std::abs(p.j8 - p.j4) / lambda;
             const double first = consider(c, t8, p);
             double other = 1e300;
-            if (dist < kEstBoth || gStats)
+            if ((dist < kEstBoth || gStats) && std::max(p.j4, p.j8) < 1e299)
                 other = consider(c, !t8, p);
             if (gStats) {
                 const int bucket = dist < 0.5 ? 0 : dist < 1 ? 1 : dist < 2 ? 2 : dist < 4 ? 3 : dist < 8 ? 4 : dist < 16 ? 5 : dist < 32 ? 6 : 7;
