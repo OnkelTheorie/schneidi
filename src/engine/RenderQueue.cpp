@@ -103,6 +103,7 @@ void RenderQueue::makeReview(ExportSettings& s)
     s.smartRender = false;
     s.preset = "ultrafast";
     s.crf = std::max(s.crf, 28);
+    s.sourceQuality = false; // quality "Like source" would aim at the recordings' full bit rate: a constant quality
     // The own H.264 encoder has no fast preset (it ignores "preset"; two passes with a cap): plain H.264 instead
     if (ExportWriter::isOwnH264(s.videoCodec)) {
         const HardwareEncoders::Choice c = HardwareEncoders::resolve(VideoEncoder::Software, QStringLiteral("h264"));
