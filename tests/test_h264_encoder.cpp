@@ -39,10 +39,32 @@ struct Yuv {
 
 // > 0: the synthetic clip fades in from black over this many pictures (weighted prediction).
 int gFadeFrames = 0;
+// Picture kind of synthFrame: 0 = the moving pictures below, 1 = still (only the noise changes), 2 = a slow zoom.
+int gSynthKind = 0;
 
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
+// A texture under a slow zoom with a little noise (gSynthKind 2): the material B pictures pay on.
+int zoomSample(int x, int y, int w, int h, int t)
+{
+    auto lattice = [](int ix, int iy) {
+        uint32_t s = uint32_t(ix) * 73856093u ^ uint32_t(iy) * 19349663u;
+        s = (s ^ (s >> 13)) * 1274126177u;
+        return int((s >> 16) & 255);
+    };
+    // Positions in 1/256 pixel: the picture's centre stays, the scale grows by 0.15 % per picture. Lattice cells
+    // of 6 pixels, bilinear between their corners.
+    const int scale = 65536 + t * 100;
+    const int64_t u = (int64_t(x * 2 - w) * 128 * 65536 / scale + int64_t(w) * 128) / 6;
+    const int64_t v = (int64_t(y * 2 - h) * 128 * 65536 / scale + int64_t(h) * 128) / 6;
+    const int ix = int(u >> 8), iy = int(v >> 8), fx = int(u & 255), fy = int(v & 255);
+    const int top = lattice(ix, iy) * (256 - fx) + lattice(ix + 1, iy) * fx;
+    const int bottom = lattice(ix, iy + 1) * (256 - fx) + lattice(ix + 1, iy + 1) * fx;
+    return (top * (256 - fy) + bottom * fy) >> 16;
+}
+
 Yuv synthFrame(int w, int h, int t)
 {
+    const int tm = gSynthKind != 0 ? 0 : t;
     Yuv f;
     f.w = w;
     f.h = h;
@@ -54,14 +76,16 @@ Yuv synthFrame(int w, int h, int t)
         for (int x = 0; x < w; ++x) {
             seed = seed * 1664525u + 1013904223u;
             int v = (x * 255) / w / 2 + (y * 255) / h / 3 + int(seed >> 29);
-            const int sx = (t * 3) % w, sy = (t * 2) % h;
-            if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
+            const int sx = (tm * 3) % w, sy = (tm * 2) % h;
+            if (gSynthKind == 2)
+                v = 16 + zoomSample(x, y, w, h, t) * 7 / 8 + int(seed >> 30);
+            else if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
                 v = ((x / 4 + y / 4) & 1) ? 220 : 40;
             f.y[size_t(y) * w + x] = uint8_t(std::clamp(v, 0, 255));
         }
     for (int y = 0; y < h / 2; ++y)
         for (int x = 0; x < w / 2; ++x) {
-            f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + t);
+            f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + tm);
             f.v[size_t(y) * (w / 2) + x] = uint8_t(128 + (y - h / 4) / 2);
         }
     if (gFadeFrames > 0 && t < gFadeFrames) {
@@ -651,10 +675,10 @@ int main()
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
         // With threads the first pass analyses its batches on a thread of its own, the pictures of
         // a batch side by side: the same numbers as one picture after the other (also with the
-        // scores of the B placement, and with a scene change in the clip).
+        // B probe, and with a scene change in the clip).
         for (bool forB : {false, true}) {
             auto statsOf = [&](int threads) {
-                FirstPass f(c.width, c.height, threads, forB);
+                FirstPass f(c.width, c.height, threads, forB ? 3 : 0);
                 for (int t = 0; t < 45; ++t) {
                     const Yuv src = synthFrame(c.width, c.height, t < 30 ? t : 500 + 7 * t);
                     f.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
@@ -665,7 +689,7 @@ int main()
             for (int threads : {2, 3, 8}) {
                 const auto many = statsOf(threads);
                 bool same = many->size() == one->size() && many->intraSum == one->intraSum && many->interSum == one->interSum &&
-                            many->sceneChange == one->sceneChange && many->bScore == one->bScore &&
+                            many->sceneChange == one->sceneChange && many->bGate == one->bGate &&
                             many->analysis.size() == one->analysis.size();
                 for (size_t i = 0; same && i < one->analysis.size(); ++i)
                     same = many->analysis[i]->interCost == one->analysis[i]->interCost &&
@@ -679,7 +703,7 @@ int main()
         CHECK(c.firstPass->analysis.size() == 60);
         const size_t perPicture = size_t((c.width + 15) / 16) * ((c.height + 15) / 16) * 12;
         for (size_t keep : {size_t(0), 25 * perPicture}) {
-            FirstPass fpKeep(c.width, c.height, 1, false, keep);
+            FirstPass fpKeep(c.width, c.height, 1, 0, keep);
             for (int t = 0; t < 60; ++t) {
                 const Yuv src = synthFrame(c.width, c.height, t);
                 fpKeep.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
@@ -733,15 +757,24 @@ int main()
             }
         }
         {
-            // Smaller than without B pictures at the same QP on this (easy) material
+            // Smaller than without B pictures at the same QP on this (easy) material: with fixed runs. Placed
+            // adaptively (the default) the probe finds too little gain here for B pictures (about 9 % at equal
+            // distortion; they are placed from 15 % on), and the stream is the one without them plus a few
+            // bytes of picture order counts.
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
-            size_t plain = 0, withB = 0;
+            size_t plain = 0, withB = 0, adaptive = 0;
             CHECK(roundTrip(c, 31, &plain));
             c.bframes = 2;
+            c.bAdaptive = false;
             CHECK(roundTrip(c, 31, &withB));
             if (withB >= plain)
                 std::fprintf(stderr, "B pictures: %zu bytes, without %zu\n", withB, plain);
             CHECK(withB < plain);
+            c.bAdaptive = true;
+            CHECK(roundTrip(c, 31, &adaptive));
+            if (adaptive >= plain + plain / 100)
+                std::fprintf(stderr, "adaptive B pictures: %zu bytes, without %zu\n", adaptive, plain);
+            CHECK(adaptive < plain + plain / 100);
         }
         {
             // A keyframe the caller asks for and the GOP end: the picture before a keyframe is a P picture
@@ -842,6 +875,46 @@ int main()
             }
         }
         {
+            // Placement: a slow zoom gets runs of B pictures (the probe finds them worth it, the lookahead costs
+            // pick the runs; one pass and from a first pass with the same plan) and is smaller with them at the
+            // same QP. A still picture gets none: nothing is coded there with or without them.
+            gSynthKind = 2;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            size_t plain = 0, withB = 0;
+            CHECK(roundTrip(c, 24, &plain));
+            c.bframes = 3;
+            StreamInfo info;
+            CHECK(roundTrip(c, 24, &withB, -1, nullptr, &info));
+            const auto bCount = std::count(info.types.begin(), info.types.end(), 'B');
+            if (bCount < 12 || withB >= plain)
+                std::fprintf(stderr, "slow zoom: types %s, %zu bytes, without B %zu\n", info.types.c_str(), withB, plain);
+            CHECK(bCount >= 12);
+            CHECK(withB < plain);
+            {
+                gSynthKind = 1;
+                StreamInfo still;
+                CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &still));
+                if (still.types.find('B') != std::string::npos)
+                    std::fprintf(stderr, "still picture: types %s\n", still.types.c_str());
+                CHECK(still.types.find('B') == std::string::npos);
+                gSynthKind = 2;
+            }
+            FirstPass fp(c.width, c.height, 2, c.bframes);
+            for (int t = 0; t < 24; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            c.bitrateKbps = 300;
+            c.fps = 30;
+            StreamInfo info2;
+            CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info2));
+            if (info2.types != info.types)
+                std::fprintf(stderr, "slow zoom, first pass: types %s instead of %s\n", info2.types.c_str(), info.types.c_str());
+            CHECK(info2.types == info.types);
+            gSynthKind = 0;
+        }
+        {
             // Rate control with B pictures: one pass, with a first pass, and in chunks
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
             c.bframes = 2;
@@ -853,13 +926,13 @@ int main()
             if (std::abs(kbps - 1000.0) >= 250.0)
                 std::fprintf(stderr, "rate control with B pictures: %.0f kbit/s instead of 1000\n", kbps);
             CHECK(std::abs(kbps - 1000.0) < 250.0);
-            FirstPass fp(c.width, c.height, 2, true); // with the scores of the adaptive placement
+            FirstPass fp(c.width, c.height, 2, c.bframes); // with the costs of the adaptive placement
             for (int t = 0; t < 60; ++t) {
                 const Yuv src = synthFrame(c.width, c.height, t);
                 fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
             }
             c.firstPass = fp.stats();
-            CHECK(c.firstPass->bScore.size() == 60);
+            CHECK(c.firstPass->bMax == 2 && c.firstPass->bGate.size() == 60);
             bytes = 0;
             CHECK(roundTrip(c, 60, &bytes));
             kbps = bytes * 8.0 / 2.0 / 1000.0;

@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <bit>
 #include <atomic>
+#include <climits>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -278,21 +280,23 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
 
 }
 
-double Lookahead::bScore(const LookaheadFrame& f, const LookaheadFrame& prev, const LookaheadFrame& prev2) const
+std::vector<uint8_t> Lookahead::halfPicture(const LookaheadFrame& f) const
 {
-    LookaheadFrame far;
-    far.half = f.half;
-    costs(far, &prev2, 1, &f, 2); // about twice the vector of one step
-    const double steps = f.interSum + prev.interSum;
-    return steps > 0 ? far.interSum / steps : 0.5;
+    const int stride = halfW_ + 2 * kMargin;
+    std::vector<uint8_t> out(size_t(halfW_) * halfH_);
+    for (int y = 0; y < halfH_; ++y)
+        std::memcpy(out.data() + size_t(y) * halfW_, f.half.data() + size_t(y + kMargin) * stride + kMargin, size_t(halfW_));
+    return out;
 }
 
 // H264_LASUBPEL=0: the lookahead's half-pel step measures all eight neighbours.
 static const bool gLaSubpel = !std::getenv("H264_LASUBPEL") || std::atoi(std::getenv("H264_LASUBPEL")) != 0;
 
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
-                      int seedScale, const std::atomic<int>* prevRows, std::atomic<int>* ownRows) const
+                      int seedScale, const LookaheadFrame* src, const std::atomic<int>* prevRows, std::atomic<int>* ownRows) const
 {
+    if (!src)
+        src = &f;
     const int stride = halfW_ + 2 * kMargin;
     const size_t n = size_t(mbW_) * mbH_;
     f.intraCost.assign(n, 0);
@@ -312,21 +316,27 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
     auto doMb = [&](int bx, int by, double& intraSum, double& interSum) {
         {
             const size_t m = size_t(by) * mbW_ + bx;
-            const uint8_t* cur = at(f.half, bx * 8, by * 8);
+            const uint8_t* cur = at(src->half, bx * 8, by * 8);
 
-            // Intra: DC, vertical and horizontal prediction from the source neighbours.
-            uint8_t pred[64];
-            int dc = 0;
-            for (int i = 0; i < 8; ++i)
-                dc += cur[-stride + i] + cur[i * stride - 1];
-            std::fill(pred, pred + 64, uint8_t((dc + 8) >> 4));
-            int intra = satd8x8U8Fast(cur, stride, pred, 8);
-            for (int y = 0; y < 8; ++y)
-                std::copy_n(cur - stride, 8, pred + y * 8);
-            intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8));
-            for (int y = 0; y < 8; ++y)
-                std::fill(pred + y * 8, pred + y * 8 + 8, cur[y * stride - 1]);
-            intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8)) + kIntraPenalty;
+            // Intra: DC, vertical and horizontal prediction from the source neighbours (known
+            // already when another picture's half picture is searched).
+            int intra;
+            if (src != &f && src->intraCost.size() == n) {
+                intra = src->intraCost[m];
+            } else {
+                uint8_t pred[64];
+                int dc = 0;
+                for (int i = 0; i < 8; ++i)
+                    dc += cur[-stride + i] + cur[i * stride - 1];
+                std::fill(pred, pred + 64, uint8_t((dc + 8) >> 4));
+                intra = satd8x8U8Fast(cur, stride, pred, 8);
+                for (int y = 0; y < 8; ++y)
+                    std::copy_n(cur - stride, 8, pred + y * 8);
+                intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8));
+                for (int y = 0; y < 8; ++y)
+                    std::fill(pred + y * 8, pred + y * 8 + 8, cur[y * stride - 1]);
+                intra = std::min(intra, satd8x8U8Fast(cur, stride, pred, 8)) + kIntraPenalty;
+            }
             f.intraCost[m] = intra;
             intraSum += intra;
             if (!prev) {
@@ -604,6 +614,180 @@ void Lookahead::propagate(std::deque<LookaheadFrame>& frames) const
             for (const size_t e = t + L.count[i]; t < e; ++t)
                 refProp[L.target[t]] += amount * L.weight[t] / 256.0f;
         }
+    }
+}
+
+void Lookahead::searchInto(const LookaheadFrame& cur, const LookaheadFrame& ref, LookaheadSearch& out,
+                           const LookaheadFrame* seed, int seedScale, int threads) const
+{
+    LookaheadFrame t;
+    costs(t, &ref, threads, seed, seedScale, &cur);
+    out.cost = std::move(t.interCost);
+    out.mvx = std::move(t.mvx);
+    out.mvy = std::move(t.mvy);
+    out.sum = t.interSum;
+}
+
+void Lookahead::searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads) const
+{
+    if (f.fwd.size() != size_t(maxB) + 2)
+        f.fwd.assign(size_t(maxB) + 2, LookaheadSearch{});
+    // Start: the picture's own one-step vector times the distance.
+    searchInto(f, ref, f.fwd[size_t(d)], &f, d, threads);
+}
+
+void Lookahead::searchBack(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& after, int c, int maxB,
+                           int threads) const
+{
+    if (next.back.size() != size_t(maxB) + 1)
+        next.back.assign(size_t(maxB) + 1, LookaheadSearch{});
+    // Start: the one-step vector of the picture after b, reversed and times the distance.
+    searchInto(b, next, next.back[size_t(c)], &after, -c, threads);
+}
+
+namespace {
+
+// 8x8 prediction at a half-pel vector (bilinear, as the lookahead's search).
+void predHalf(const uint8_t* ref, int stride, int hx, int hy, uint8_t* out)
+{
+    const uint8_t* q0 = ref + (hy >> 1) * stride + (hx >> 1);
+    const int ox = hx & 1, oy = hy & 1;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            const uint8_t* q = q0 + y * stride + x;
+            out[y * 8 + x] = uint8_t((q[0] + q[ox] + q[oy * stride] + q[oy * stride + ox] + 2) >> 2);
+        }
+}
+
+} // namespace
+
+void Lookahead::biCost(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& r0, int a, int c, int maxB,
+                       bool weighted) const
+{
+    const int stride = halfW_ + 2 * kMargin;
+    const size_t n = size_t(mbW_) * mbH_;
+    if (next.bi.size() != size_t(bComboCount(maxB))) {
+        next.bi.assign(size_t(bComboCount(maxB)), {});
+        next.biSum.assign(size_t(bComboCount(maxB)), -1.0);
+    }
+    const bool haveL0 = a == 1 || (size_t(a) < b.fwd.size() && b.fwd[size_t(a)].valid());
+    if (!haveL0 || size_t(c) >= next.back.size() || !next.back[size_t(c)].valid() || b.intraCost.size() != n)
+        return;
+    const LookaheadSearch& l1 = next.back[size_t(c)];
+    const std::vector<int32_t>& c0v = a == 1 ? b.interCost : b.fwd[size_t(a)].cost;
+    const std::vector<int16_t>& mx0 = a == 1 ? b.mvx : b.fwd[size_t(a)].mvx;
+    const std::vector<int16_t>& my0 = a == 1 ? b.mvy : b.fwd[size_t(a)].mvy;
+    const int w1 = weighted ? 64 * a / (a + c) : 32;
+    std::vector<int32_t>& out = next.bi[size_t(bComboIndex(a, c, maxB))];
+    out.assign(n, 0);
+    double sum = 0;
+    for (int by = 0; by < mbH_; ++by)
+        for (int bx = 0; bx < mbW_; ++bx) {
+            const size_t m = size_t(by) * mbW_ + bx;
+            const size_t off = size_t(by * 8 + kMargin) * stride + size_t(bx * 8 + kMargin);
+            const uint8_t* cur = b.half.data() + off;
+            uint8_t p0[64], p1[64], avg[64];
+            predHalf(r0.half.data() + off, stride, mx0[m], my0[m], p0);
+            predHalf(next.half.data() + off, stride, l1.mvx[m], l1.mvy[m], p1);
+            for (int i = 0; i < 64; ++i)
+                avg[i] = uint8_t(w1 == 32 ? (p0[i] + p1[i] + 1) >> 1 : (p0[i] * (64 - w1) + p1[i] * w1 + 32) >> 6);
+            // The average's SATD plus what the two searches paid for their vectors.
+            const int c0 = c0v[m], c1 = l1.cost[m];
+            const int s0 = satd8x8U8Fast(cur, stride, p0, 8), s1 = satd8x8U8Fast(cur, stride, p1, 8);
+            const int cb = satd8x8U8Fast(cur, stride, avg, 8) + std::max(0, c0 - s0) + std::max(0, c1 - s1);
+            out[m] = cb;
+            sum += std::min({b.intraCost[m], c0, c1, cb});
+        }
+    next.biSum[size_t(bComboIndex(a, c, maxB))] = sum;
+}
+
+void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool weighted) const
+{
+    const size_t n = size_t(mbW_) * mbH_;
+    for (LookaheadFrame& f : frames)
+        f.propagate.assign(n, 0.0f);
+    // Spreads amount over the up to four macroblocks of ref that the block at (bx, by), moved by
+    // the half-pel vector (mvx, mvy) of the half picture, overlaps (by area).
+    auto add = [&](LookaheadFrame& ref, int bx, int by, int mvx, int mvy, float amount) {
+        const int px = bx * 16 + mvx, py = by * 16 + mvy;
+        const int ix = px >> 4, iy = py >> 4;
+        const int fx = px - ix * 16, fy = py - iy * 16;
+        const int w[4] = {(16 - fx) * (16 - fy), fx * (16 - fy), (16 - fx) * fy, fx * fy};
+        for (int k = 0; k < 4; ++k) {
+            if (!w[k])
+                continue;
+            const int x = ix + (k & 1), y = iy + (k >> 1);
+            if (x < 0 || y < 0 || x >= mbW_ || y >= mbH_)
+                continue;
+            ref.propagate[size_t(y) * mbW_ + x] += amount * float(w[k]) / 256.0f;
+        }
+    };
+    const int count = int(frames.size());
+    // B pictures first: nothing references them, they only pass on their own cost.
+    for (int j = 0; j < count; ++j) {
+        LookaheadFrame& f = frames[size_t(j)];
+        if (f.type != 2 || f.intraCost.size() != n)
+            continue;
+        const int a = f.refDist, c = f.nextDist, r = j - a, s = j + c;
+        if (s >= count || a < 1 || c < 1 || a + c > maxB + 1)
+            continue;
+        LookaheadFrame& l1f = frames[size_t(s)];
+        if (size_t(c) >= l1f.back.size() || !l1f.back[size_t(c)].valid())
+            continue;
+        const LookaheadSearch& l1 = l1f.back[size_t(c)];
+        static const std::vector<int32_t> kNoBi;
+        const size_t combo = size_t(bComboIndex(a, c, maxB));
+        const std::vector<int32_t>& bi = combo < l1f.bi.size() ? l1f.bi[combo] : kNoBi;
+        const bool haveL0 = a == 1 || (size_t(a) < f.fwd.size() && f.fwd[size_t(a)].valid());
+        const std::vector<int32_t>* c0v = !haveL0 ? nullptr : a == 1 ? &f.interCost : &f.fwd[size_t(a)].cost;
+        const std::vector<int16_t>* mx0 = !haveL0 ? nullptr : a == 1 ? &f.mvx : &f.fwd[size_t(a)].mvx;
+        const std::vector<int16_t>* my0 = !haveL0 ? nullptr : a == 1 ? &f.mvy : &f.fwd[size_t(a)].mvy;
+        const float w0 = weighted ? 1.0f - float(64 * a / (a + c)) / 64.0f : 0.5f;
+        for (int by = 0; by < mbH_; ++by)
+            for (int bx = 0; bx < mbW_; ++bx) {
+                const size_t m = size_t(by) * mbW_ + bx;
+                const int intra = f.intraCost[m];
+                const int c0 = c0v ? (*c0v)[m] : INT32_MAX, c1 = l1.cost[m];
+                const int cb = c0v && bi.size() == n ? bi[m] : INT32_MAX;
+                const int best = std::min({c0, c1, cb});
+                if (intra <= 0 || best >= intra)
+                    continue;
+                const float amount = (float(intra) + f.propagate[m]) * float(intra - best) / float(intra);
+                if (best == cb) {
+                    if (r >= 0)
+                        add(frames[size_t(r)], bx, by, (*mx0)[m], (*my0)[m], amount * w0);
+                    add(l1f, bx, by, l1.mvx[m], l1.mvy[m], amount * (1.0f - w0));
+                } else if (best == c0) {
+                    if (r >= 0)
+                        add(frames[size_t(r)], bx, by, (*mx0)[m], (*my0)[m], amount);
+                } else {
+                    add(l1f, bx, by, l1.mvx[m], l1.mvy[m], amount);
+                }
+            }
+    }
+    // Reference pictures, last first: each passes what it received and its own cost on.
+    for (int j = count; j-- > 0;) {
+        LookaheadFrame& f = frames[size_t(j)];
+        if (f.type == 2 || f.keyframe || f.intraCost.size() != n)
+            continue;
+        const int d = f.refDist, r = j - d;
+        if (r < 0 || d < 1)
+            continue;
+        if (d > 1 && (size_t(d) >= f.fwd.size() || !f.fwd[size_t(d)].valid()))
+            continue;
+        const std::vector<int32_t>& cv = d == 1 ? f.interCost : f.fwd[size_t(d)].cost;
+        const std::vector<int16_t>& mx = d == 1 ? f.mvx : f.fwd[size_t(d)].mvx;
+        const std::vector<int16_t>& my = d == 1 ? f.mvy : f.fwd[size_t(d)].mvy;
+        LookaheadFrame& ref = frames[size_t(r)];
+        for (int by = 0; by < mbH_; ++by)
+            for (int bx = 0; bx < mbW_; ++bx) {
+                const size_t m = size_t(by) * mbW_ + bx;
+                const int intra = f.intraCost[m], inter = cv[m];
+                if (intra <= 0 || inter >= intra)
+                    continue;
+                const float amount = (float(intra) + f.propagate[m]) * float(intra - inter) / float(intra);
+                add(ref, bx, by, mx[m], my[m], amount);
+            }
     }
 }
 

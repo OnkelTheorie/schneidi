@@ -31,7 +31,6 @@ enum class IntraMode {
 struct FirstPassStats {
     std::vector<double> intraSum, interSum; // per picture, like LookaheadFrame
     std::vector<uint8_t> sceneChange, forceKeyframe;
-    std::vector<double> bScore; // per picture (LookaheadFrame::bScore), only with FirstPass(.., forB = true)
     // The lookahead analysis of the first pictures (per macroblock, as LookaheadFrame has it): the
     // encoder takes it instead of analysing the same pictures again. Kept up to a memory limit
     // (FirstPass), so it may cover fewer pictures than the rest, or none.
@@ -42,6 +41,11 @@ struct FirstPassStats {
         bool sceneChange = false;
     };
     std::vector<std::shared_ptr<const Analysis>> analysis;
+    // B picture placement (FirstPass with bframes > 0 = bMax): per picture the longest run of B
+    // pictures that pays there (BProbe, 0 = none), so the whole clip's picture types can be planned
+    // before encoding. Empty = not measured, B pictures everywhere.
+    int bMax = 0;
+    std::vector<uint8_t> bGate;
     size_t size() const { return intraSum.size(); }
 };
 
@@ -64,6 +68,7 @@ struct EncoderConfig {
     int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
     bool mbtree = true;       // macroblock tree: finer QP where later pictures reference a block (needs lookahead)
     double mbtreeStrength = 2.0;
+    double mbtreeStrengthB = 1.0; // for reference pictures with B pictures before or after them
     // Bitrate mode with a first pass over the whole clip (FirstPass): one QP for the clip, only a
     // small correction while encoding. The pictures must come in the same order as analysed.
     std::shared_ptr<const FirstPassStats> firstPass;
@@ -85,8 +90,9 @@ struct EncoderConfig {
     // option). Access units come out in coding order: lastDisplayIndex() says which picture one is.
     int bframes = 0;
     int bQpOffset = 2;     // QP of a B picture above the P QP
-    // Fewer B pictures where the motion changes too much for them to pay (LookaheadFrame::bScore;
-    // with a first pass it must have been made with forB).
+    // Places B pictures only where they pay (BProbe: a few pictures coded with and without them;
+    // with a first pass over the whole clip, which must then have been made with at least this
+    // many bframes). false = runs of bframes B pictures everywhere.
     bool bAdaptive = true;
     // Predictions from both lists weighted by the distance to the two reference pictures
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
@@ -139,6 +145,36 @@ struct ChunkPlan {
 // clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 
+// Where B pictures pay, measured instead of estimated: every kInterval pictures and after each
+// scene change or keyframe the caller asks for, the next few half-size pictures (the lookahead's)
+// are coded for real - with runs of two B pictures and twice without (two QPs, for the slope of
+// bits over distortion). From there on B pictures are placed only if they needed clearly fewer
+// bits at equal distortion; where they did and longer runs are allowed, the long run is measured
+// against the short one the same way. The lookahead costs cannot tell any of this: a slow zoom (B
+// pictures at a third of the bits) and noise that changes with every picture (B pictures a loss)
+// look alike to them, and they see a zoom's distant P pictures as far too expensive.
+class BProbe {
+public:
+    static constexpr int kInterval = 120;
+    // The next picture in display order (prepared by the lookahead). True when an answer came
+    // with it: run() then holds from picture resultStart() on (the second answer for the same
+    // pictures replaces the first).
+    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
+    int run() const { return run_; } // longest run of B pictures that pays, 0 = none
+    int resultStart() const { return resultStart_; }
+    // Bits of "I B.. P .." with runs of runs[k] B pictures against "I P.. P" at equal distortion,
+    // counted over the pictures after the first (gains[k] = -0.5: half the bits; 0 = no
+    // measurement). pics: w x h luma each, in display order.
+    static void measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
+                        double* gains);
+
+private:
+    bool startsAt(const LookaheadFrame& f, int index) const;
+    std::vector<std::vector<uint8_t>> pics_;
+    int start_ = -1, lastStart_ = -1, resultStart_ = 0;
+    int run_ = 0;
+};
+
 struct Picture {
     const uint8_t* y = nullptr;
     const uint8_t* u = nullptr;
@@ -152,10 +188,11 @@ struct Picture {
 class FirstPass {
 public:
     // threads > 1: pictures are analysed in batches side by side (same numbers).
-    // forB: also what the adaptive B picture placement needs (one more search per picture).
+    // bframes > 0: also what the adaptive B picture placement needs for runs of up to that many
+    // (the probe: about 3 pictures' worth of encoding at half size every 120 pictures).
     // keepAnalysisBytes: memory for FirstPassStats::analysis (about 12 bytes per macroblock and
     // picture: 1080p ~100 KB); pictures beyond it are analysed again by the encoder.
-    FirstPass(int width, int height, int threads = 1, bool forB = false, size_t keepAnalysisBytes = size_t(1) << 30);
+    FirstPass(int width, int height, int threads = 1, int bframes = 0, size_t keepAnalysisBytes = size_t(1) << 30);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
     std::shared_ptr<const FirstPassStats> stats() const;
@@ -167,14 +204,15 @@ private:
     int width_, height_, threads_;
     std::unique_ptr<Lookahead> la_;
     // Pictures waiting for the next batch, the batch under analysis (on worker_ with threads > 1,
-    // which alone touches it, prev_ and the statistics until joined) and the last analysed picture
-    // (their predecessor).
+    // which alone touches it, prev_, the probe and the statistics until joined) and the last
+    // analysed picture (their predecessor).
     mutable std::vector<LookaheadFrame> batch_, job_;
     mutable std::thread worker_;
     mutable std::exception_ptr workerError_;
-    mutable LookaheadFrame prev_, prev2_;
-    mutable bool havePrev_ = false, havePrev2_ = false;
-    bool forB_ = false;
+    mutable LookaheadFrame prev_;
+    mutable bool havePrev_ = false;
+    mutable BProbe probe_;
+    int bframes_ = 0;
     size_t keepBytes_ = 0;
     mutable size_t keptBytes_ = 0;
     std::shared_ptr<FirstPassStats> stats_;
@@ -255,8 +293,21 @@ private:
     // Explicit weighted prediction is not part of the Baseline profile (no CABAC = Baseline here).
     bool useWeightedPred() const { return cfg_.weightedPred && useCabac() && cfg_.gop > 1; }
     // Adaptive placement: from the first pass when there is one (so its plan holds), else from the queue.
-    bool bAdapt() const { return useB() && cfg_.bAdaptive && (!cfg_.firstPass || !cfg_.firstPass->bScore.empty()); }
-    double bScoreOf(const LookaheadFrame& f) const;
+    bool bAdapt() const { return useB() && cfg_.bAdaptive && (!cfg_.firstPass || cfg_.firstPass->bMax >= cfg_.bframes); }
+    // Picture types of the whole clip from the first pass (bAdapt with a first pass), and the
+    // lookahead cost of each picture as planned.
+    void planFromStats();
+    // Without a first pass: the probe sees every picture as it joins the queue; from each
+    // measurement's first picture on its result holds.
+    BProbe probe_;
+    std::vector<std::pair<int, int>> gate_; // (first picture, longest run of B pictures that pays), in order
+    void noteGate(const LookaheadFrame& f);
+    void ensureBSearches();
+    bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
+    int gateAt(int index) const;
+    std::vector<uint8_t> statType_;
+    std::vector<double> statCost_;
+    double queueCost(size_t j) const; // lookahead cost of queued picture j as planned (no tree)
     void planQueue();
     LookaheadFrame* pickNext();
     std::vector<uint8_t> codeNext();
@@ -304,7 +355,6 @@ private:
     double rcNeedSeen_ = 0; // predicted bits at QP 0 of the pictures coded so far
     int rcFramesSeen_ = 0;
     // First-pass rate control: predicted keyframes and the costs of the pictures not coded yet.
-    std::vector<uint8_t> tpKey_, tpType_;
     double tpRemI_ = 0, tpRemP_ = 0, tpRemB_ = 0;
     // P pictures by cost per macroblock (half octaves): bits per cost are far from constant (a calm
     // picture's residual mostly quantises to nothing, a busy one's does not), so k is learned per
@@ -315,13 +365,15 @@ private:
     double tpAllI_ = 0, tpAllB_ = 0;
     // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass
     // complexity compression) and the cost weight 2^(-offset/6) the bit model applies with it.
+    std::vector<uint8_t> tpKey_, tpType_;
     std::vector<float> tpOff_;
     double tpCost(size_t i) const;
     int rcBin(double cost) const;
     double kPOfBin(int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB) const;
     double twoPassPlanQp(double kI, double kP, double kB) const;
-    double frameCost(const LookaheadFrame& f, bool intra) const;
+    double frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter = nullptr) const;
+    double treeStrength(const LookaheadFrame& f) const;
 
 };
 
