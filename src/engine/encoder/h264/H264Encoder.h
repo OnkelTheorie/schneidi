@@ -60,7 +60,7 @@ struct EncoderConfig {
     int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
-    double aqStrength = 1.0; // adaptive quantisation (finer QP on flat areas); 0 = off
+    double aqStrength = 1.5; // adaptive quantisation (finer QP on flat areas); 0 = off. 1.0 until 14.11.2026
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
     bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
@@ -113,10 +113,10 @@ struct EncoderConfig {
     // coefficients to a candidate's cost, so one that keeps the texture or grain of the source
     // beats one that is closer in squared error but smoother; the winner is also tried with a
     // quantisation that keeps more of the small coefficients. PSNR and SSIM drop by design.
-    double psyRd = 0.0;
+    double psyRd = 1.0; // 0.0 until 14.11.2026
     // The psy strength by the picture's QP: psyRd up to psyQpFull, falling linearly to 0 at psyQpOff
     // (psyQpOff <= psyQpFull = the same strength at every QP).
-    int psyQpFull = 0, psyQpOff = 0;
+    int psyQpFull = 26, psyQpOff = 38;
     // Two-pass complexity compression: a picture's QP follows its complexity (first-pass cost,
     // averaged over +-1.5 s) by qcomp * 6 * log2(complexity / the clip's mean), at most +-4, so
     // calm, flat or dark stretches (a fade, a death screen) get a finer QP than busy ones. 0 = one
