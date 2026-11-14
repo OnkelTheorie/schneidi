@@ -71,6 +71,9 @@ void Lookahead::prepare(LookaheadFrame& f) const
             _mm_storel_epi64(reinterpret_cast<__m128i*>(out + x),
                              _mm_packus_epi16(_mm_srli_epi16(_mm_add_epi16(sum, two), 2), _mm_setzero_si128()));
         }
+#elif defined(SCHNEIDI_H264_NEON)
+        for (; x + 8 <= inside; x += 8) // pairwise sums of both rows, (sum + 2) >> 2
+            vst1_u8(out + x, vrshrn_n_u16(vaddq_u16(vpaddlq_u8(vld1q_u8(r0 + 2 * x)), vpaddlq_u8(vld1q_u8(r1 + 2 * x))), 2));
 #endif
         for (; x < inside; ++x)
             out[x] = uint8_t((r0[2 * x] + r0[2 * x + 1] + r1[2 * x] + r1[2 * x + 1] + 2) >> 2);
@@ -114,6 +117,15 @@ void Lookahead::prepare(LookaheadFrame& f) const
                 const __m128i four = _mm_srli_epi32(_mm_add_epi32(_mm_madd_epi16(sum, ones), eight), 4); // pairs of pairs
                 const __m128i bytes = _mm_packus_epi16(_mm_packs_epi32(four, four), four);
                 const int32_t v = _mm_cvtsi128_si32(bytes);
+                std::memcpy(&f.thumb[size_t(y) * tw + x], &v, 4);
+            }
+#elif defined(SCHNEIDI_H264_NEON)
+            for (; x + 4 <= inside; x += 4) {
+                uint16x8_t sum = vdupq_n_u16(0);
+                for (int dy = 0; dy < 4; ++dy)
+                    sum = vpadalq_u8(sum, vld1q_u8(rows[dy] + 4 * x));
+                const uint16x4_t four = vrshrn_n_u32(vpaddlq_u16(sum), 4); // (sum + 8) >> 4
+                const uint32_t v = vget_lane_u32(vreinterpret_u32_u8(vmovn_u16(vcombine_u16(four, four))), 0);
                 std::memcpy(&f.thumb[size_t(y) * tw + x], &v, 4);
             }
 #endif
@@ -223,6 +235,24 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                                 int m = _mm_movemask_ps(_mm_castsi128_ps(_mm_cmplt_epi32(ad, _mm_set1_epi32(best))));
                                 for (; m; m &= m - 1) {
                                     const int k = mx + std::countr_zero(unsigned(m));
+                                    best = std::min(best, sadBlock(cur, tw, ref + k, tw, 8, 8));
+                                }
+                            }
+                        }
+#elif defined(SCHNEIDI_H264_NEON)
+                        {
+                            const uint32_t* top = &integral[size_t(by + my) * iw + bx];
+                            const uint32_t* bottom = &integral[size_t(by + my + 8) * iw + bx];
+                            const int32x4_t vsum = vdupq_n_s32(sum);
+                            auto ld = [](const uint32_t* p) { return vreinterpretq_s32_u32(vld1q_u32(p)); };
+                            static const uint32x4_t kBits = {1, 2, 4, 8};
+                            for (; mx + 3 <= mx1; mx += 4) {
+                                const int32x4_t ps = vaddq_s32(vsubq_s32(ld(bottom + mx + 8), ld(top + mx + 8)),
+                                                               vsubq_s32(ld(top + mx), ld(bottom + mx)));
+                                const uint32x4_t lt = vcltq_s32(vabsq_s32(vsubq_s32(vsum, ps)), vdupq_n_s32(best));
+                                unsigned m = vaddvq_u32(vandq_u32(lt, kBits));
+                                for (; m; m &= m - 1) {
+                                    const int k = mx + std::countr_zero(m);
                                     best = std::min(best, sadBlock(cur, tw, ref + k, tw, 8, 8));
                                 }
                             }
@@ -397,6 +427,13 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                                                       _mm_add_epi16(load(q + oy * stride), load(q + oy * stride + ox)));
                     const __m128i v = _mm_srli_epi16(_mm_add_epi16(sum, two), 2);
                     _mm_storel_epi64(reinterpret_cast<__m128i*>(p + y * 8), _mm_packus_epi16(v, v));
+                }
+#elif defined(SCHNEIDI_H264_NEON)
+                for (int y = 0; y < 8; ++y) {
+                    const uint8_t* q = ref + y * stride;
+                    const uint16x8_t sum = vaddq_u16(vaddl_u8(vld1_u8(q), vld1_u8(q + ox)),
+                                                     vaddl_u8(vld1_u8(q + oy * stride), vld1_u8(q + oy * stride + ox)));
+                    vst1_u8(p + y * 8, vrshrn_n_u16(sum, 2));
                 }
 #else
                 for (int y = 0; y < 8; ++y)

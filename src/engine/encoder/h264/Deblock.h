@@ -1,7 +1,7 @@
 // Deblocking filter kernels of the H.264 encoder (8.7.2.3, 8.7.2.4): one call filters a whole edge of a
 // macroblock (16 luma lines, or 8 Cb + 8 Cr lines). SSE2 with a plain C++ fallback that gives the same
-// samples (the bitstream must not depend on the platform). A NEON version fits the same interface:
-// the SSE2 code only loads the lines of one edge, filters 16 lanes at once and stores them back.
+// samples (the bitstream must not depend on the platform), and NEON (the same steps): load the lines
+// of one edge, filter 16 lanes at once, store them back.
 #pragma once
 
 #include <algorithm>
@@ -13,6 +13,8 @@
 #include "Simd.h"
 #ifdef SCHNEIDI_H264_SSE2
 #define SCHNEIDI_H264_DEBLOCK_SSE2 1
+#elif defined(SCHNEIDI_H264_NEON)
+#define SCHNEIDI_H264_DEBLOCK_NEON 1
 #endif
 
 namespace schneidi::h264 {
@@ -227,6 +229,136 @@ inline void st4(uint8_t* p, __m128i v)
 }
 #endif
 
+#ifdef SCHNEIDI_H264_DEBLOCK_NEON
+// The SSE2 steps with NEON (16 lanes as two halves of 8 x int16; the same 16-bit wrap-around).
+struct Wn {
+    int16x8_t lo, hi;
+};
+inline Wn widen(uint8x16_t v) { return {vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(v))), vreinterpretq_s16_u16(vmovl_high_u8(v))}; }
+inline uint8x16_t narrow(Wn v) { return vcombine_u8(vqmovun_s16(v.lo), vqmovun_s16(v.hi)); } // = clip1
+inline Wn add(Wn a, Wn b) { return {vaddq_s16(a.lo, b.lo), vaddq_s16(a.hi, b.hi)}; }
+inline Wn sub(Wn a, Wn b) { return {vsubq_s16(a.lo, b.lo), vsubq_s16(a.hi, b.hi)}; }
+inline Wn addc(Wn a, int c) { const int16x8_t k = vdupq_n_s16(int16_t(c)); return {vaddq_s16(a.lo, k), vaddq_s16(a.hi, k)}; }
+template <int S> inline Wn shl(Wn a) { return {vshlq_n_s16(a.lo, S), vshlq_n_s16(a.hi, S)}; }
+template <int S> inline Wn sra(Wn a) { return {vshrq_n_s16(a.lo, S), vshrq_n_s16(a.hi, S)}; }
+inline Wn clampw(Wn a, Wn lo, Wn hi) { return {vminq_s16(vmaxq_s16(a.lo, lo.lo), hi.lo), vminq_s16(vmaxq_s16(a.hi, lo.hi), hi.hi)}; }
+inline Wn neg(Wn a) { return {vnegq_s16(a.lo), vnegq_s16(a.hi)}; }
+inline uint8x16_t absLess(uint8x16_t a, uint8x16_t b, uint8x16_t t) { return vcltq_u8(vabdq_u8(a, b), t); }
+inline Wn maskWiden(uint8x16_t m) // all-ones / zero bytes -> -1 / 0 per int16
+{
+    const int8x16_t s = vreinterpretq_s8_u8(m);
+    return {vmovl_s8(vget_low_s8(s)), vmovl_high_s8(s)};
+}
+
+// Filters 16 lanes; v[0..7] = p3 p2 p1 p0 q0 q1 q2 q3, tc0 per lane (int8, -1 = not filtered).
+inline bool lumaCoreN(uint8x16_t* v, const DeblockEdge& e, uint8x16_t tc0v)
+{
+    const uint8x16_t p2 = v[1], p1 = v[2], p0 = v[3], q0 = v[4], q1 = v[5], q2 = v[6];
+    const uint8x16_t alpha = vdupq_n_u8(uint8_t(e.alpha)), beta = vdupq_n_u8(uint8_t(e.beta));
+    uint8x16_t mask = vandq_u8(absLess(p0, q0, alpha), vandq_u8(absLess(p1, p0, beta), absLess(q1, q0, beta)));
+    if (!e.bs4)
+        mask = vbicq_u8(mask, vceqq_u8(tc0v, vdupq_n_u8(0xff)));
+    if (vmaxvq_u8(mask) == 0)
+        return false;
+    const uint8x16_t ap = absLess(p2, p0, beta), aq = absLess(q2, q0, beta);
+    const Wn P1 = widen(p1), P0 = widen(p0), Q0 = widen(q0), Q1 = widen(q1), P2 = widen(p2), Q2 = widen(q2);
+    if (!e.bs4) {
+        const Wn tc0 = widen(tc0v); // masked lanes don't matter
+        const Wn tc = sub(sub(tc0, maskWiden(ap)), maskWiden(aq));
+        const Wn delta = clampw(sra<3>(addc(add(shl<2>(sub(Q0, P0)), sub(P1, Q1)), 4)), neg(tc), tc);
+        v[3] = vbslq_u8(mask, narrow(add(P0, delta)), p0);
+        v[4] = vbslq_u8(mask, narrow(sub(Q0, delta)), q0);
+        const Wn avg = sra<1>(addc(add(P0, Q0), 1));
+        const Wn nt = neg(tc0);
+        const Wn np1 = add(P1, clampw(sra<1>(sub(add(P2, avg), shl<1>(P1))), nt, tc0));
+        const Wn nq1 = add(Q1, clampw(sra<1>(sub(add(Q2, avg), shl<1>(Q1))), nt, tc0));
+        v[2] = vbslq_u8(vandq_u8(mask, ap), narrow(np1), p1);
+        v[5] = vbslq_u8(vandq_u8(mask, aq), narrow(nq1), q1);
+        return true;
+    }
+    const Wn P3 = widen(v[0]), Q3 = widen(v[7]);
+    const uint8x16_t strong = absLess(p0, q0, vdupq_n_u8(uint8_t((e.alpha >> 2) + 2)));
+    const uint8x16_t sp = vandq_u8(mask, vandq_u8(ap, strong));
+    const uint8x16_t sq = vandq_u8(mask, vandq_u8(aq, strong));
+    const Wn p0q0 = add(P0, Q0);
+    const uint8x16_t wp0 = narrow(sra<2>(addc(add(add(shl<1>(P1), P0), Q1), 2)));
+    const uint8x16_t wq0 = narrow(sra<2>(addc(add(add(shl<1>(Q1), Q0), P1), 2)));
+    const uint8x16_t sp0 = narrow(sra<3>(addc(add(add(P2, shl<1>(add(P1, p0q0))), Q1), 4)));
+    const uint8x16_t sp1 = narrow(sra<2>(addc(add(add(P2, P1), p0q0), 2)));
+    const uint8x16_t sp2 = narrow(sra<3>(addc(add(add(shl<1>(P3), add(shl<1>(P2), P2)), add(P1, p0q0)), 4)));
+    const uint8x16_t sq0 = narrow(sra<3>(addc(add(add(Q2, shl<1>(add(Q1, p0q0))), P1), 4)));
+    const uint8x16_t sq1 = narrow(sra<2>(addc(add(add(Q2, Q1), p0q0), 2)));
+    const uint8x16_t sq2 = narrow(sra<3>(addc(add(add(shl<1>(Q3), add(shl<1>(Q2), Q2)), add(Q1, p0q0)), 4)));
+    v[3] = vbslq_u8(mask, vbslq_u8(sp, sp0, wp0), p0);
+    v[2] = vbslq_u8(sp, sp1, p1);
+    v[1] = vbslq_u8(sp, sp2, p2);
+    v[4] = vbslq_u8(mask, vbslq_u8(sq, sq0, wq0), q0);
+    v[5] = vbslq_u8(sq, sq1, q1);
+    v[6] = vbslq_u8(sq, sq2, q2);
+    return true;
+}
+
+// v[0..3] = p1 p0 q0 q1.
+inline bool chromaCoreN(uint8x16_t* v, const DeblockEdge& e, uint8x16_t tc0v)
+{
+    const uint8x16_t p1 = v[0], p0 = v[1], q0 = v[2], q1 = v[3];
+    const uint8x16_t alpha = vdupq_n_u8(uint8_t(e.alpha)), beta = vdupq_n_u8(uint8_t(e.beta));
+    uint8x16_t mask = vandq_u8(absLess(p0, q0, alpha), vandq_u8(absLess(p1, p0, beta), absLess(q1, q0, beta)));
+    if (!e.bs4)
+        mask = vbicq_u8(mask, vceqq_u8(tc0v, vdupq_n_u8(0xff)));
+    if (vmaxvq_u8(mask) == 0)
+        return false;
+    const Wn P1 = widen(p1), P0 = widen(p0), Q0 = widen(q0), Q1 = widen(q1);
+    if (!e.bs4) {
+        const Wn tc = addc(widen(tc0v), 1);
+        const Wn delta = clampw(sra<3>(addc(add(shl<2>(sub(Q0, P0)), sub(P1, Q1)), 4)), neg(tc), tc);
+        v[1] = vbslq_u8(mask, narrow(add(P0, delta)), p0);
+        v[2] = vbslq_u8(mask, narrow(sub(Q0, delta)), q0);
+        return true;
+    }
+    v[1] = vbslq_u8(mask, narrow(sra<2>(addc(add(add(shl<1>(P1), P0), Q1), 2))), p0);
+    v[2] = vbslq_u8(mask, narrow(sra<2>(addc(add(add(shl<1>(Q1), Q0), P1), 2))), q0);
+    return true;
+}
+
+// tc0 per lane: luma lane i -> segment i / 4, chroma lane i (Cb 0..7, Cr 8..15) -> segment (i & 7) / 2.
+inline uint8x16_t lumaTc0N(const DeblockEdge& e)
+{
+    uint8_t t[16];
+    for (int i = 0; i < 16; ++i)
+        t[i] = uint8_t(e.tc0[i >> 2]);
+    return vld1q_u8(t);
+}
+inline uint8x16_t chromaTc0N(const DeblockEdge& e)
+{
+    uint8_t t[16];
+    for (int i = 0; i < 16; ++i)
+        t[i] = uint8_t(e.tc0[(i & 7) >> 1]);
+    return vld1q_u8(t);
+}
+
+// Transposes two 8 x 8 byte matrices at once (low and high halves of x[0..7]); its own inverse.
+inline void transpose8x8x2(uint8x16_t* x)
+{
+    uint8x16_t a[8], b[8];
+    for (int i = 0; i < 8; i += 2) {
+        a[i] = vtrn1q_u8(x[i], x[i + 1]);
+        a[i + 1] = vtrn2q_u8(x[i], x[i + 1]);
+    }
+    auto u16 = [](uint8x16_t v) { return vreinterpretq_u16_u8(v); };
+    auto u32 = [](uint8x16_t v) { return vreinterpretq_u32_u8(v); };
+    for (int i = 0; i < 8; i += 4)
+        for (int k = 0; k < 2; ++k) {
+            b[i + k] = vreinterpretq_u8_u16(vtrn1q_u16(u16(a[i + k]), u16(a[i + 2 + k])));
+            b[i + 2 + k] = vreinterpretq_u8_u16(vtrn2q_u16(u16(a[i + k]), u16(a[i + 2 + k])));
+        }
+    for (int k = 0; k < 4; ++k) {
+        x[k] = vreinterpretq_u8_u32(vtrn1q_u32(u32(b[k]), u32(b[4 + k])));
+        x[4 + k] = vreinterpretq_u8_u32(vtrn2q_u32(u32(b[k]), u32(b[4 + k])));
+    }
+}
+#endif
+
 } // namespace deblock_detail
 
 // Vertical edge (filtering across columns): q = first line's q0 sample, 16 lines down by stride.
@@ -279,6 +411,18 @@ inline void deblockLumaEdgeV(uint8_t* q, ptrdiff_t stride, const DeblockEdge& e)
         st8(o + 6 * stride, g3);
         st8(o + 7 * stride, _mm_unpackhi_epi64(g3, g3));
     }
+#elif defined(SCHNEIDI_H264_DEBLOCK_NEON)
+    uint8x16_t v[8]; // lines i and i + 8 in the halves, then transposed: v[k] = column k (lane = line)
+    for (int i = 0; i < 8; ++i)
+        v[i] = vcombine_u8(vld1_u8(q + i * stride - 4), vld1_u8(q + (i + 8) * stride - 4));
+    transpose8x8x2(v);
+    if (!lumaCoreN(v, e, lumaTc0N(e)))
+        return;
+    transpose8x8x2(v);
+    for (int i = 0; i < 8; ++i) {
+        vst1_u8(q + i * stride - 4, vget_low_u8(v[i]));
+        vst1_u8(q + (i + 8) * stride - 4, vget_high_u8(v[i]));
+    }
 #else
     for (int i = 0; i < 16; ++i)
         if (e.bs4 || e.tc0[i >> 2] >= 0)
@@ -298,6 +442,14 @@ inline void deblockLumaEdgeH(uint8_t* q, ptrdiff_t stride, const DeblockEdge& e)
         return;
     for (int i = e.bs4 ? 1 : 2; i < (e.bs4 ? 7 : 6); ++i)
         _mm_storeu_si128(reinterpret_cast<__m128i*>(q + (i - 4) * stride), v[i]);
+#elif defined(SCHNEIDI_H264_DEBLOCK_NEON)
+    uint8x16_t v[8];
+    for (int i = 0; i < 8; ++i)
+        v[i] = vld1q_u8(q + (i - 4) * stride);
+    if (!lumaCoreN(v, e, lumaTc0N(e)))
+        return;
+    for (int i = e.bs4 ? 1 : 2; i < (e.bs4 ? 7 : 6); ++i)
+        vst1q_u8(q + (i - 4) * stride, v[i]);
 #else
     for (int i = 0; i < 16; ++i)
         if (e.bs4 || e.tc0[i >> 2] >= 0)
@@ -335,6 +487,17 @@ inline void deblockChromaEdgeV(uint8_t* qu, uint8_t* qv, ptrdiff_t stride, const
         st4(base + 2 * stride - 2, _mm_shuffle_epi32(f[i], 2));
         st4(base + 3 * stride - 2, _mm_shuffle_epi32(f[i], 3));
     }
+#elif defined(SCHNEIDI_H264_DEBLOCK_NEON)
+    // The 16 lines' four samples side by side, split into p1 / p0 / q0 / q1 by the interleaved load.
+    uint8_t buf[64];
+    for (int i = 0; i < 16; ++i)
+        std::memcpy(buf + 4 * i, (i < 8 ? qu + i * stride : qv + (i - 8) * stride) - 2, 4);
+    uint8x16x4_t t = vld4q_u8(buf);
+    if (!chromaCoreN(t.val, e, chromaTc0N(e)))
+        return;
+    vst4q_u8(buf, t);
+    for (int i = 0; i < 16; ++i)
+        std::memcpy((i < 8 ? qu + i * stride : qv + (i - 8) * stride) - 2, buf + 4 * i, 4);
 #else
     for (int i = 0; i < 8; ++i)
         if (e.bs4 || e.tc0[i >> 1] >= 0) {
@@ -356,6 +519,16 @@ inline void deblockChromaEdgeH(uint8_t* qu, uint8_t* qv, ptrdiff_t stride, const
     for (int i = 1; i < 3; ++i) {
         st8(qu + (i - 2) * stride, v[i]);
         st8(qv + (i - 2) * stride, _mm_unpackhi_epi64(v[i], v[i]));
+    }
+#elif defined(SCHNEIDI_H264_DEBLOCK_NEON)
+    uint8x16_t v[4];
+    for (int i = 0; i < 4; ++i)
+        v[i] = vcombine_u8(vld1_u8(qu + (i - 2) * stride), vld1_u8(qv + (i - 2) * stride));
+    if (!chromaCoreN(v, e, chromaTc0N(e)))
+        return;
+    for (int i = 1; i < 3; ++i) {
+        vst1_u8(qu + (i - 2) * stride, vget_low_u8(v[i]));
+        vst1_u8(qv + (i - 2) * stride, vget_high_u8(v[i]));
     }
 #else
     for (int i = 0; i < 8; ++i)

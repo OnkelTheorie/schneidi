@@ -104,6 +104,80 @@ inline void fwd8(const __m128i* x, __m128i* y)
 }
 #endif
 
+#ifdef SCHNEIDI_H264_NEON
+inline void transpose4(int32x4_t& a, int32x4_t& b, int32x4_t& c, int32x4_t& d)
+{
+    const int32x4_t t0 = vtrn1q_s32(a, b), t1 = vtrn2q_s32(a, b), t2 = vtrn1q_s32(c, d), t3 = vtrn2q_s32(c, d);
+    a = vreinterpretq_s32_s64(vtrn1q_s64(vreinterpretq_s64_s32(t0), vreinterpretq_s64_s32(t2)));
+    b = vreinterpretq_s32_s64(vtrn1q_s64(vreinterpretq_s64_s32(t1), vreinterpretq_s64_s32(t3)));
+    c = vreinterpretq_s32_s64(vtrn2q_s64(vreinterpretq_s64_s32(t0), vreinterpretq_s64_s32(t2)));
+    d = vreinterpretq_s32_s64(vtrn2q_s64(vreinterpretq_s64_s32(t1), vreinterpretq_s64_s32(t3)));
+}
+inline void transpose8(int32x4_t (*m)[2])
+{
+    transpose4(m[0][0], m[1][0], m[2][0], m[3][0]);
+    transpose4(m[4][1], m[5][1], m[6][1], m[7][1]);
+    transpose4(m[0][1], m[1][1], m[2][1], m[3][1]);
+    transpose4(m[4][0], m[5][0], m[6][0], m[7][0]);
+    for (int i = 0; i < 4; ++i) {
+        const int32x4_t t = m[i][1];
+        m[i][1] = m[4 + i][0];
+        m[4 + i][0] = t;
+    }
+}
+inline void inv8(const int32x4_t* d, int32x4_t* g)
+{
+    auto add = [](int32x4_t a, int32x4_t b) { return vaddq_s32(a, b); };
+    auto sub = [](int32x4_t a, int32x4_t b) { return vsubq_s32(a, b); };
+    auto h = [](int32x4_t a) { return vshrq_n_s32(a, 1); };
+    auto q = [](int32x4_t a) { return vshrq_n_s32(a, 2); };
+    const int32x4_t e0 = add(d[0], d[4]), e1 = sub(sub(sub(d[5], d[3]), d[7]), h(d[7])), e2 = sub(d[0], d[4]);
+    const int32x4_t e3 = sub(sub(add(d[1], d[7]), d[3]), h(d[3])), e4 = sub(h(d[2]), d[6]);
+    const int32x4_t e5 = add(add(sub(d[7], d[1]), d[5]), h(d[5]));
+    const int32x4_t e6 = add(d[2], h(d[6])), e7 = add(add(add(d[3], d[5]), d[1]), h(d[1]));
+    const int32x4_t f0 = add(e0, e6), f1 = add(e1, q(e7)), f2 = add(e2, e4), f3 = add(e3, q(e5));
+    const int32x4_t f4 = sub(e2, e4), f5 = sub(q(e3), e5), f6 = sub(e0, e6), f7 = sub(e7, q(e1));
+    g[0] = add(f0, f7);
+    g[1] = add(f2, f5);
+    g[2] = add(f4, f3);
+    g[3] = add(f6, f1);
+    g[4] = sub(f6, f1);
+    g[5] = sub(f4, f3);
+    g[6] = sub(f2, f5);
+    g[7] = sub(f0, f7);
+}
+inline void fwd8(const int32x4_t* x, int32x4_t* y)
+{
+    const int32x4_t a0 = vaddq_s32(x[0], x[7]), a1 = vaddq_s32(x[1], x[6]), a2 = vaddq_s32(x[2], x[5]), a3 = vaddq_s32(x[3], x[4]);
+    const int32x4_t a4 = vsubq_s32(x[0], x[7]), a5 = vsubq_s32(x[1], x[6]), a6 = vsubq_s32(x[2], x[5]), a7 = vsubq_s32(x[3], x[4]);
+    const int32x4_t b0 = vaddq_s32(a0, a3), b1 = vaddq_s32(a1, a2), b2 = vsubq_s32(a0, a3), b3 = vsubq_s32(a1, a2);
+    y[0] = vshlq_n_s32(vaddq_s32(b0, b1), 3);
+    y[4] = vshlq_n_s32(vsubq_s32(b0, b1), 3);
+    y[2] = vmlaq_n_s32(vmulq_n_s32(b2, 8), b3, 4);
+    y[6] = vmlsq_n_s32(vmulq_n_s32(b2, 4), b3, 8);
+    y[1] = vmlaq_n_s32(vmlaq_n_s32(vmlaq_n_s32(vmulq_n_s32(a4, 12), a5, 10), a6, 6), a7, 3);
+    y[3] = vmlsq_n_s32(vmlsq_n_s32(vmlsq_n_s32(vmulq_n_s32(a4, 10), a5, 3), a6, 12), a7, 6);
+    y[5] = vmlaq_n_s32(vmlaq_n_s32(vmlsq_n_s32(vmulq_n_s32(a4, 6), a5, 12), a6, 3), a7, 10);
+    y[7] = vmlsq_n_s32(vmlaq_n_s32(vmlsq_n_s32(vmulq_n_s32(a4, 3), a5, 6), a6, 10), a7, 12);
+}
+inline int32x4_t ldn(const int* p) { return vld1q_s32(p); }
+inline void stn(int* p, int32x4_t v) { vst1q_s32(p, v); }
+// The forward 4x4 core on four rows (lanes = columns), then on the columns.
+inline void fwd4x4n(int32x4_t r0, int32x4_t r1, int32x4_t r2, int32x4_t r3, int* out)
+{
+    auto add = [](int32x4_t a, int32x4_t b) { return vaddq_s32(a, b); };
+    auto sub = [](int32x4_t a, int32x4_t b) { return vsubq_s32(a, b); };
+    auto dbl = [](int32x4_t a) { return vshlq_n_s32(a, 1); };
+    int32x4_t v[4], w[4];
+    fwd4(r0, r1, r2, r3, v, add, sub, dbl);
+    transpose4(v[0], v[1], v[2], v[3]);
+    fwd4(v[0], v[1], v[2], v[3], w, add, sub, dbl);
+    transpose4(w[0], w[1], w[2], w[3]);
+    for (int i = 0; i < 4; ++i)
+        stn(out + 4 * i, w[i]);
+}
+#endif
+
 // Scalar forms of the same.
 inline void inv8c(const int* d, int* g)
 {
@@ -155,6 +229,9 @@ inline void forward4x4(const int* in, int* out)
     transpose4(w[0], w[1], w[2], w[3]);
     for (int i = 0; i < 4; ++i)
         st(out + 4 * i, w[i]);
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    fwd4x4n(ldn(in), ldn(in + 4), ldn(in + 8), ldn(in + 12), out);
 #else
     int t[16];
     for (int y = 0; y < 4; ++y) {
@@ -201,6 +278,16 @@ inline void forward4x4Diff(const uint8_t* a, int strideA, const uint8_t* b, int 
     transpose4(w[0], w[1], w[2], w[3]);
     for (int i = 0; i < 4; ++i)
         st(out + 4 * i, w[i]);
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    auto row = [&](int i) {
+        uint32_t wa, wb;
+        std::memcpy(&wa, a + i * strideA, 4);
+        std::memcpy(&wb, b + i * strideB, 4);
+        const int16x8_t d = vreinterpretq_s16_u16(vsubl_u8(vcreate_u8(uint64_t(wa)), vcreate_u8(uint64_t(wb))));
+        return vmovl_s16(vget_low_s16(d));
+    };
+    fwd4x4n(row(0), row(1), row(2), row(3), out);
 #else
     int res[16];
     for (int y = 0; y < 4; ++y)
@@ -223,6 +310,12 @@ inline bool anyAbove4x4(const int* coef, const int* limit)
     const __m128i any = _mm_or_si128(_mm_or_si128(over(ld(coef), l0), over(ld(coef + 4), l1)),
                                      _mm_or_si128(over(ld(coef + 8), l0), over(ld(coef + 12), l1)));
     return _mm_movemask_epi8(any) != 0;
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    const int32x4_t l0 = ldn(limit), l1 = ldn(limit + 4);
+    const uint32x4_t any = vorrq_u32(vorrq_u32(vcgtq_s32(vabsq_s32(ldn(coef)), l0), vcgtq_s32(vabsq_s32(ldn(coef + 4)), l1)),
+                                     vorrq_u32(vcgtq_s32(vabsq_s32(ldn(coef + 8)), l0), vcgtq_s32(vabsq_s32(ldn(coef + 12)), l1)));
+    return vmaxvq_u32(any) != 0;
 #else
     for (int i = 0; i < 16; ++i)
         if ((coef[i] < 0 ? -coef[i] : coef[i]) > limit[i & 7])
@@ -252,6 +345,23 @@ inline bool quant4x4(const int* coef, const int* mf, int qbits, int offset, int 
         st(levels + 4 * i, _mm_sub_epi32(_mm_xor_si128(q, sign), sign));
     }
     return _mm_movemask_epi8(_mm_cmpeq_epi32(any, _mm_setzero_si128())) != 0xffff;
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    // |coef| * mf < 2^30 and the offset below 2^qbits (qbits <= 23 here): no 32-bit overflow,
+    // the same numbers as the 64-bit product.
+    const uint32x4_t m0 = vreinterpretq_u32_s32(ldn(mf)), m1 = vreinterpretq_u32_s32(ldn(mf + 4));
+    const uint32x4_t off = vdupq_n_u32(uint32_t(offset)), lim = vdupq_n_u32(uint32_t(maxLevel));
+    const int32x4_t sh = vdupq_n_s32(-qbits);
+    uint32x4_t any = vdupq_n_u32(0);
+    for (int i = 0; i < 4; ++i) {
+        const int32x4_t c = ldn(coef + 4 * i);
+        const uint32x4_t a = vreinterpretq_u32_s32(vabsq_s32(c));
+        const uint32x4_t q = vminq_u32(vshlq_u32(vmlaq_u32(off, a, i & 1 ? m1 : m0), sh), lim);
+        any = vorrq_u32(any, q);
+        const int32x4_t sq = vreinterpretq_s32_u32(q);
+        stn(levels + 4 * i, vbslq_s32(vcltq_s32(c, vdupq_n_s32(0)), vnegq_s32(sq), sq));
+    }
+    return vmaxvq_u32(any) != 0;
 #else
     bool any = false;
     for (int i = 0; i < 16; ++i) {
@@ -274,6 +384,11 @@ inline void dequant4x4(const int* levels, const int* v, int shift, int* d)
     const __m128i v0 = ld(v), v1 = ld(v + 4), cnt = _mm_cvtsi32_si128(shift);
     for (int i = 0; i < 4; ++i) // the level's low word is its value, the high word meets a zero in v
         st(d + 4 * i, _mm_sll_epi32(_mm_madd_epi16(ld(levels + 4 * i), i & 1 ? v1 : v0), cnt));
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    const int32x4_t v0 = ldn(v), v1 = ldn(v + 4), sh = vdupq_n_s32(shift);
+    for (int i = 0; i < 4; ++i)
+        stn(d + 4 * i, vreinterpretq_s32_u32(vshlq_u32(vreinterpretq_u32_s32(vmulq_s32(ldn(levels + 4 * i), i & 1 ? v1 : v0)), sh)));
 #else
     for (int i = 0; i < 16; ++i)
         d[i] = int(unsigned(levels[i] * v[i & 7]) << shift);
@@ -291,6 +406,16 @@ inline void addClip4x4(const uint8_t* pred, int stridePred, const int* r, uint8_
         std::memcpy(&p, pred + y * stridePred, 4);
         const __m128i sum = _mm_add_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(p), zero), _mm_packs_epi32(ld(r + 4 * y), zero));
         const int32_t o = _mm_cvtsi128_si32(_mm_packus_epi16(sum, zero));
+        std::memcpy(dst + y * strideDst, &o, 4);
+    }
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    for (int y = 0; y < 4; ++y) {
+        uint32_t p;
+        std::memcpy(&p, pred + y * stridePred, 4);
+        const int16x8_t pw = vreinterpretq_s16_u16(vmovl_u8(vcreate_u8(uint64_t(p))));
+        const int16x8_t sum = vaddq_s16(pw, vcombine_s16(vqmovn_s32(ldn(r + 4 * y)), vdup_n_s16(0)));
+        const uint32_t o = vget_lane_u32(vreinterpret_u32_u8(vqmovun_s16(sum)), 0);
         std::memcpy(dst + y * strideDst, &o, 4);
     }
 #else
@@ -312,6 +437,13 @@ inline void addClip8x8(const uint8_t* pred, int stridePred, const int* r, uint8_
         const __m128i p = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pred + y * stridePred)), zero);
         const __m128i sum = _mm_add_epi16(p, _mm_packs_epi32(ld(r + 8 * y), ld(r + 8 * y + 4)));
         _mm_storel_epi64(reinterpret_cast<__m128i*>(dst + y * strideDst), _mm_packus_epi16(sum, zero));
+    }
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    for (int y = 0; y < 8; ++y) {
+        const int16x8_t p = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(pred + y * stridePred)));
+        const int16x8_t sum = vaddq_s16(p, vcombine_s16(vqmovn_s32(ldn(r + 8 * y)), vqmovn_s32(ldn(r + 8 * y + 4))));
+        vst1_u8(dst + y * strideDst, vqmovun_s16(sum));
     }
 #else
     for (int y = 0; y < 8; ++y)
@@ -346,6 +478,24 @@ inline void inverse4x4(const int* in, int* out)
     const __m128i r = _mm_set1_epi32(32);
     for (int i = 0; i < 4; ++i)
         st(out + 4 * i, _mm_srai_epi32(_mm_add_epi32(o[i], r), 6));
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    int32x4_t c0 = ldn(in), c1 = ldn(in + 4), c2 = ldn(in + 8), c3 = ldn(in + 12);
+    transpose4(c0, c1, c2, c3);
+    auto pass = [](int32x4_t d0, int32x4_t d1, int32x4_t d2, int32x4_t d3, int32x4_t* o) {
+        const int32x4_t e = vaddq_s32(d0, d2), f = vsubq_s32(d0, d2);
+        const int32x4_t g = vsubq_s32(vshrq_n_s32(d1, 1), d3), h = vaddq_s32(d1, vshrq_n_s32(d3, 1));
+        o[0] = vaddq_s32(e, h);
+        o[1] = vaddq_s32(f, g);
+        o[2] = vsubq_s32(f, g);
+        o[3] = vsubq_s32(e, h);
+    };
+    int32x4_t t[4], o[4];
+    pass(c0, c1, c2, c3, t);
+    transpose4(t[0], t[1], t[2], t[3]);
+    pass(t[0], t[1], t[2], t[3], o);
+    for (int i = 0; i < 4; ++i) // (x + 32) >> 6
+        stn(out + 4 * i, vrshrq_n_s32(o[i], 6));
 #else
     int t[16];
     for (int y = 0; y < 4; ++y) {
@@ -402,6 +552,35 @@ inline void forward8x8(const int* r, int* w)
         st(w + i * 8, m[i][0]);
         st(w + i * 8 + 4, m[i][1]);
     }
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    int32x4_t lo[8], hi[8], vlo[8], vhi[8], m[8][2];
+    for (int y = 0; y < 8; ++y) {
+        lo[y] = ldn(r + y * 8);
+        hi[y] = ldn(r + y * 8 + 4);
+    }
+    fwd8(lo, vlo);
+    fwd8(hi, vhi);
+    for (int i = 0; i < 8; ++i) {
+        m[i][0] = vlo[i];
+        m[i][1] = vhi[i];
+    }
+    transpose8(m);
+    for (int x = 0; x < 8; ++x) {
+        lo[x] = m[x][0];
+        hi[x] = m[x][1];
+    }
+    fwd8(lo, vlo);
+    fwd8(hi, vhi);
+    for (int j = 0; j < 8; ++j) {
+        m[j][0] = vlo[j];
+        m[j][1] = vhi[j];
+    }
+    transpose8(m);
+    for (int i = 0; i < 8; ++i) {
+        stn(w + i * 8, m[i][0]);
+        stn(w + i * 8 + 4, m[i][1]);
+    }
 #else
     using namespace transform_detail;
     int t[64];
@@ -451,6 +630,36 @@ inline void inverse8x8(const int* d, int* out)
     for (int i = 0; i < 8; ++i) {
         st(out + i * 8, _mm_srai_epi32(_mm_add_epi32(glo[i], rnd), 6));
         st(out + i * 8 + 4, _mm_srai_epi32(_mm_add_epi32(ghi[i], rnd), 6));
+    }
+#elif defined(SCHNEIDI_H264_NEON)
+    using namespace transform_detail;
+    int32x4_t m[8][2];
+    for (int y = 0; y < 8; ++y) {
+        m[y][0] = ldn(d + y * 8);
+        m[y][1] = ldn(d + y * 8 + 4);
+    }
+    transpose8(m);
+    int32x4_t lo[8], hi[8], glo[8], ghi[8];
+    for (int x = 0; x < 8; ++x) {
+        lo[x] = m[x][0];
+        hi[x] = m[x][1];
+    }
+    inv8(lo, glo);
+    inv8(hi, ghi);
+    for (int k = 0; k < 8; ++k) {
+        m[k][0] = glo[k];
+        m[k][1] = ghi[k];
+    }
+    transpose8(m);
+    for (int y = 0; y < 8; ++y) {
+        lo[y] = m[y][0];
+        hi[y] = m[y][1];
+    }
+    inv8(lo, glo);
+    inv8(hi, ghi);
+    for (int i = 0; i < 8; ++i) {
+        stn(out + i * 8, vrshrq_n_s32(glo[i], 6));
+        stn(out + i * 8 + 4, vrshrq_n_s32(ghi[i], 6));
     }
 #else
     using namespace transform_detail;

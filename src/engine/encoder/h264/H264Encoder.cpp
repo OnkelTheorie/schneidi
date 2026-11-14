@@ -4044,6 +4044,24 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
     acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
     acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1)));
     return int64_t(uint32_t(_mm_cvtsi128_si32(acc)));
+#elif defined(SCHNEIDI_H264_NEON)
+    uint32x4_t acc = vdupq_n_u32(0);
+    auto add8 = [&](uint8x8_t a, uint8x8_t b) {
+        const uint8x8_t d = vabd_u8(a, b);
+        acc = vpadalq_u16(acc, vmull_u8(d, d));
+    };
+    for (int y = 0; y < 16; ++y) {
+        const size_t o = lo + size_t(y) * padW_;
+        const uint8x16_t a = vld1q_u8(&srcY_[o]), b = vld1q_u8(&recY_[o]);
+        add8(vget_low_u8(a), vget_low_u8(b));
+        add8(vget_high_u8(a), vget_high_u8(b));
+    }
+    for (int y = 0; y < 8; ++y) {
+        const size_t o = co + size_t(y) * cw;
+        add8(vld1_u8(&srcU_[o]), vld1_u8(&recU_[o]));
+        add8(vld1_u8(&srcV_[o]), vld1_u8(&recV_[o]));
+    }
+    return int64_t(vaddvq_u32(acc));
 #else
     int64_t s = 0;
     for (int y = 0; y < 16; ++y)
@@ -4209,6 +4227,16 @@ void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int
                         const int32_t v = _mm_cvtsi128_si32(px);
                         std::memcpy(o, &v, 4);
                     }
+                    continue;
+                }
+#elif defined(SCHNEIDI_H264_NEON)
+                // At most 64 * 255: 16 bits; r0[bw] is inside the plane (bw = 4: plain loop).
+                if (bw == 8) {
+                    uint16x8_t sum = vmull_u8(vld1_u8(r0), vdup_n_u8(uint8_t(wA)));
+                    sum = vmlal_u8(sum, vld1_u8(r0 + 1), vdup_n_u8(uint8_t(wB)));
+                    sum = vmlal_u8(sum, vld1_u8(r1), vdup_n_u8(uint8_t(wC)));
+                    sum = vmlal_u8(sum, vld1_u8(r1 + 1), vdup_n_u8(uint8_t(wD)));
+                    vst1_u8(o, vrshrn_n_u16(sum, 6));
                     continue;
                 }
 #endif
@@ -4508,6 +4536,12 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                     const __m128i sign = _mm_srai_epi16(d, 15);
                     _mm_storeu_si128(reinterpret_cast<__m128i*>(res + y * 8), _mm_unpacklo_epi16(d, sign));
                     _mm_storeu_si128(reinterpret_cast<__m128i*>(res + y * 8 + 4), _mm_unpackhi_epi16(d, sign));
+                }
+#elif defined(SCHNEIDI_H264_NEON)
+                for (; y < 8; ++y) {
+                    const int16x8_t d = vreinterpretq_s16_u16(vsubl_u8(vld1_u8(sp + size_t(y) * padW_), vld1_u8(pp + y * 16)));
+                    vst1q_s32(res + y * 8, vmovl_s16(vget_low_s16(d)));
+                    vst1q_s32(res + y * 8 + 4, vmovl_high_s16(d));
                 }
 #endif
                 for (; y < 8; ++y)
@@ -5995,6 +6029,50 @@ S264_AVX2 void halfPelCentreAvx2(const int* v, int W, uint8_t* j, int& jEnd)
 #endif
 #endif
 
+#ifdef SCHNEIDI_H264_NEON
+// NEON parts of refHalfRows (16 samples per step, the same numbers): the vertical 6-tap (32-bit
+// intermediate + rounded plane) and the horizontal 6-tap of one row, continuing at x / hEnd; the
+// centre 6-tap over the intermediate, continuing at jEnd. 16-bit lanes hold -2550..10710.
+static inline int16x8_t halfTapN(uint8x8_t a, uint8x8_t b, uint8x8_t c, uint8x8_t d, uint8x8_t e, uint8x8_t f)
+{
+    const int16x8_t outer = vreinterpretq_s16_u16(vaddl_u8(a, f));
+    const int16x8_t mid = vreinterpretq_s16_u16(vaddl_u8(c, d)), side = vreinterpretq_s16_u16(vaddl_u8(b, e));
+    return vmlsq_n_s16(vmlaq_n_s16(outer, mid, 20), side, 5);
+}
+static void halfPelRowNeon(const uint8_t* const* r, int W, int* vi, uint8_t* vb, uint8_t* hb, int& x, int& hEnd)
+{
+    for (; x + 8 <= W; x += 8) {
+        const int16x8_t vv = halfTapN(vld1_u8(r[0] + x), vld1_u8(r[1] + x), vld1_u8(r[2] + x), vld1_u8(r[3] + x),
+                                      vld1_u8(r[4] + x), vld1_u8(r[5] + x));
+        vst1q_s32(vi + x, vmovl_s16(vget_low_s16(vv)));
+        vst1q_s32(vi + x + 4, vmovl_high_s16(vv));
+        vst1_u8(vb + x, vqrshrun_n_s16(vv, 5)); // clip1((v + 16) >> 5)
+    }
+    const uint8_t* row = r[2];
+    for (; hEnd + 19 <= W; hEnd += 16) {
+        const uint8_t* q = row + hEnd;
+        const uint8x16_t m2 = vld1q_u8(q - 2), m1 = vld1q_u8(q - 1), p0 = vld1q_u8(q), p1 = vld1q_u8(q + 1);
+        const uint8x16_t p2 = vld1q_u8(q + 2), p3 = vld1q_u8(q + 3);
+        const int16x8_t lo = halfTapN(vget_low_u8(m2), vget_low_u8(m1), vget_low_u8(p0), vget_low_u8(p1), vget_low_u8(p2),
+                                      vget_low_u8(p3));
+        const int16x8_t hi = halfTapN(vget_high_u8(m2), vget_high_u8(m1), vget_high_u8(p0), vget_high_u8(p1),
+                                      vget_high_u8(p2), vget_high_u8(p3));
+        vst1q_u8(hb + hEnd, vcombine_u8(vqrshrun_n_s16(lo, 5), vqrshrun_n_s16(hi, 5)));
+    }
+}
+static void halfPelCentreNeon(const int* v, int W, uint8_t* j, int& jEnd)
+{
+    auto tap = [&](int x) { // 32-bit lanes: up to about 450000
+        const int32x4_t outer = vaddq_s32(vld1q_s32(v + x - 2), vld1q_s32(v + x + 3));
+        const int32x4_t mid = vaddq_s32(vld1q_s32(v + x), vld1q_s32(v + x + 1));
+        const int32x4_t side = vaddq_s32(vld1q_s32(v + x - 1), vld1q_s32(v + x + 2));
+        return vqmovn_s32(vrshrq_n_s32(vmlsq_n_s32(vmlaq_n_s32(outer, mid, 20), side, 5), 10)); // (j + 512) >> 10
+    };
+    for (; jEnd + 11 <= W; jEnd += 8)
+        vst1_u8(j + jEnd, vqmovun_s16(vcombine_s16(tap(jEnd), tap(jEnd + 4))));
+}
+#endif
+
 void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
 {
     const int M = kMargin;
@@ -6043,6 +6121,8 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
                 _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
             }
         }
+#elif defined(SCHNEIDI_H264_NEON)
+        halfPelRowNeon(r, W, vi, vb, hb, x, hEnd);
 #endif
         for (; x < W; ++x) {
             const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
@@ -6086,6 +6166,8 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
                 _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
             }
         }
+#elif defined(SCHNEIDI_H264_NEON)
+        halfPelCentreNeon(v, W, j, jEnd);
 #endif
         for (int x = 0; x < W; ++x) {
             if (x == 2)
@@ -6152,6 +6234,18 @@ void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, 
         }
         return;
     }
+#elif defined(SCHNEIDI_H264_NEON)
+    if (b && (w == 16 || w == 8)) {
+        for (int y = 0; y < h; ++y) {
+            const uint8_t* ra = a + size_t(y) * W;
+            const uint8_t* rb = b + size_t(y) * W;
+            if (w == 16)
+                vst1q_u8(out + y * 16, vrhaddq_u8(vld1q_u8(ra), vld1q_u8(rb)));
+            else
+                vst1_u8(out + y * 16, vrhadd_u8(vld1_u8(ra), vld1_u8(rb)));
+        }
+        return;
+    }
 #endif
     for (int y = 0; y < h; ++y) {
         const uint8_t* ra = a + size_t(y) * W;
@@ -6194,6 +6288,9 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
 #ifdef SCHNEIDI_H264_AVX2
         if ((w4 == 4 || !(h4 & 1)) && haveAvx2())
             return satdBlockAvx2(&srcY_[lo], padW_, pred, ps, w, h);
+#endif
+#ifdef SCHNEIDI_H264_NEON
+        return neon_detail::satdBlock(&srcY_[lo], padW_, pred, ps, w, h);
 #endif
         for (int by = 0; by < h4; ++by) {
             if (w4 == 4) {
