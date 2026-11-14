@@ -2530,8 +2530,11 @@ struct Renderer::Impl {
     bool gpuClip(const Clip& c, int t, const Ctx& ctx, const QString& lane)
     {
         if (!c.enabled || c.isTitle() || c.isNested() || c.mediaPath.isEmpty()) return false;
+        // A stabilizer without its analysis leaves the picture as it is: the card draws it like the raw clip (an
+        // analyzed one is checked below). Otherwise the clip would change paths, and look, when the effect is added
         for (const EffectInstance& e : c.effects)
-            if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
+            if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId) && e.effectId != QLatin1String("stabilize"))
+                return false;
         if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
         // Tilted in depth: the card draws affine placements only; the CPU draws it through its homography

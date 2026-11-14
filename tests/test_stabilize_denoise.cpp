@@ -626,7 +626,7 @@ int main(int argc, char** argv)
             for (int i = 0; i < list->count(); ++i) out << list->item(i)->text();
             return out;
         };
-        const auto audioFx = tree->findItems("Audioeffekte", Qt::MatchExactly | Qt::MatchRecursive);
+        const auto audioFx = tree->findItems(T("Audioeffekte"), Qt::MatchExactly | Qt::MatchRecursive);
         if (CHECK(audioFx.size() == 1)) {
             tree->setCurrentItem(audioFx.first());
             CHECK(names().contains(T("Rauschunterdrückung")) && !names().contains(T("Stabilisieren")));
@@ -634,10 +634,20 @@ int main(int argc, char** argv)
             app.processEvents();
             if (!dump.isEmpty()) lib.grab().save(QDir(dump).filePath("library.png"));
         }
-        const auto filters = tree->findItems(T("Filter"), Qt::MatchExactly | Qt::MatchRecursive);
-        if (CHECK(filters.size() == 1)) {
-            tree->setCurrentItem(filters.first());
+        // The stabilizer's purpose category under "Video effects" (whatever the registry files it under)
+        const auto videoFx = tree->findItems(T("Videoeffekte"), Qt::MatchExactly | Qt::MatchRecursive);
+        if (CHECK(videoFx.size() == 1)) {
+            tree->setCurrentItem(videoFx.first());
             CHECK(names().contains(T("Stabilisieren")) && !names().contains(T("Rauschunterdrückung")));
+            const EffectDescriptor* stab = EffectRegistry::find("stabilize");
+            QTreeWidgetItem* category = nullptr;
+            for (int i = 0; stab && i < videoFx.first()->childCount(); ++i)
+                if (videoFx.first()->child(i)->text(0) == EffectRegistry::categoryName(stab->category))
+                    category = videoFx.first()->child(i);
+            if (CHECK(category)) {
+                tree->setCurrentItem(category);
+                CHECK(names().contains(T("Stabilisieren")) && !names().contains(T("Rauschunterdrückung")));
+            }
         }
     }
     return Check::result();
