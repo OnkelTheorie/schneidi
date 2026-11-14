@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/studio/StudioPage.h"
 
+#include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "ui/ElidedLabel.h"
 #include "ui/studio/StudioMixer.h"
+#include "ui/studio/StudioTools.h"
 #include "ui/studio/StudioTracks.h"
 
+#include <QAction>
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -72,6 +75,10 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
                  T("Lautstärke zeichnen: über die Clips ziehen – oben lauter, unten leiser (ein Strich = ein Schritt "
                    "zum Rückgängigmachen)"));
     m_pen->setProperty("tourTarget", "studio_pen");
+    // The keys (the window's tool actions pick these tools on this page; a changed binding shows here)
+    for (auto [b, id] : {std::pair{m_select, "tool_select"}, std::pair{m_pen, "tool_draw"}})
+        if (QAction* a = InputBindings::instance().action(id); a && !a->shortcut().isEmpty())
+            b->setToolTip(T("%1 (Taste %2)").arg(b->toolTip(), a->shortcut().toString(QKeySequence::NativeText)));
     auto* group = new QButtonGroup(this);
     group->addButton(m_select);
     group->addButton(m_pen);
@@ -117,6 +124,8 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_top->addWidget(tracksBox); // the viewer comes in front of it (index 0) when the page shows
     m_top->setStretchFactor(0, 1);
     m_mixer = new StudioMixer(editor, engine);
+    m_tools = new StudioTools(editor);
+    m_mixer->setTools(m_tools);
     m_root->addWidget(m_top);
     m_root->addWidget(m_mixer);
     m_root->setStretchFactor(0, 1);

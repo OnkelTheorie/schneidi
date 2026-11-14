@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/studio/StudioMixer.h"
+#include "ui/studio/StudioTools.h"
 
 #include "app/DynamicsDialog.h"
 #include "app/EqDialog.h"
@@ -829,6 +830,33 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
 }
 
+void StudioMixer::setTools(QWidget* tools)
+{
+    m_tools = tools;
+    auto* row = static_cast<QHBoxLayout*>(layout());
+    row->insertWidget(row->indexOf(m_master), tools, 1);
+    row->setStretchFactor(m_scroll, 0);
+    m_scroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    fitStripsWidth();
+}
+
+void StudioMixer::fitStripsWidth()
+{
+    if (!m_tools) return;
+    int natural = 0;
+    for (StudioStrip* s : m_strips) natural += s->width();
+    m_scroll->setMaximumWidth(std::max(natural, 1) + m_scroll->frameWidth() * 2);
+    // A narrow page (small window, large font): the master and the loudness keep their size, the tools one card if
+    // there is room (else less, their cards scroll), the strips what is left (they scroll)
+    const int room = width() - m_master->width() - m_loudness->minimumWidth();
+    const auto* tools = qobject_cast<StudioTools*>(m_tools);
+    const int card = tools ? tools->cardWidth() + 12 : 240;
+    const int stripsWant = std::min(natural, kStripW);
+    const int toolsMin = std::clamp(room - stripsWant, std::min(160, card), card);
+    m_tools->setMinimumWidth(toolsMin);
+    m_scroll->setMinimumWidth(std::clamp(room - toolsMin, 0, stripsWant));
+}
+
 int StudioMixer::meterChannels(int track) const
 {
     if (track < 0) return m_master->fader->channels();
@@ -856,6 +884,12 @@ void StudioMixer::fitHeight()
         s->setCurvesShown(room >= s->heightWithCurves());
     }
     m_master->fitWidth();
+    // The loudness keeps its text whole (a large font, a long language): at least what its labels need
+    if (QLayout* l = m_loudness->layout()) {
+        l->invalidate();
+        m_loudness->setMinimumWidth(std::max(150, l->minimumSize().width()));
+    }
+    fitStripsWidth();
 }
 
 void StudioMixer::rebuild(int count)

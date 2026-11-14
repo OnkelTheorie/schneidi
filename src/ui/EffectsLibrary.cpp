@@ -114,6 +114,52 @@ QString soundData(const QJsonObject& fields)
 
 QString secondsText(double s) { return T("%1 s").arg(QString::number(s, 'f', 2).replace('.', I18n::decimalPoint())); }
 
+QByteArray soundJson(const QJsonObject& fields) { return QJsonDocument(fields).toJson(QJsonDocument::Compact); }
+
+// The built-in sounds: per kind its recordings, then three computed ones (a length = computed, also where recordings
+// are the default)
+QVector<EffectsLibrary::SoundEntry> builtinSoundList()
+{
+    QVector<EffectsLibrary::SoundEntry> out;
+    const QString group = T("Mitgeliefert");
+    for (SfxSynth::Kind k : SfxSynth::kKinds) {
+        const QVector<SfxSynth::Recorded> rec = SfxSynth::recorded(k);
+        for (qsizetype i = 0; i < rec.size(); ++i) {
+            const SfxSynth::Recorded& r = rec[i];
+            out << EffectsLibrary::SoundEntry{T("%1 %2 (Aufnahme)").arg(soundKindName(k)).arg(i + 1), group,
+                                              T("Aufnahme von %1 (%2), %3").arg(r.author, r.licence, secondsText(r.length)),
+                                              soundJson({{"kind", SfxSynth::kindName(k)}, {"seed", int(i + 1)}})};
+        }
+        const double length = SfxSynth::defaultLength(k);
+        for (int seed = 1; seed <= 3; ++seed)
+            out << EffectsLibrary::SoundEntry{T("%1 %2 (berechnet)").arg(soundKindName(k)).arg(seed), group,
+                                              T("Berechnet (eigener Klang, keine Aufnahme), %1").arg(secondsText(length)),
+                                              soundJson({{"kind", SfxSynth::kindName(k)}, {"seed", seed},
+                                                         {"length", QString::number(length, 'f', 3) + "s"}})};
+    }
+    return out;
+}
+
+// The sound files of the installed packs ("<pack>/<file name>")
+QVector<EffectFolders::LutEntry> scanPackSounds()
+{
+    QVector<EffectFolders::LutEntry> out;
+    for (const QString& pack : Extensions::installedSoundPacks()) {
+        QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
+        QStringList found;
+        while (it.hasNext())
+            if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
+        found.sort();
+        for (const QString& f : found) {
+            EffectFolders::LutEntry e;
+            e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
+            e.path = f;
+            out << e;
+        }
+    }
+    return out;
+}
+
 // A speaker as icon (sounds have no picture)
 QPixmap soundIcon(bool own)
 {
@@ -1136,22 +1182,8 @@ void EffectsLibrary::rebuild()
     // Effect sounds: the recordings and computed ones built in, the installed packs, the user's folder
     auto builtinSounds = [&] {
         QVector<Entry> out;
-        for (SfxSynth::Kind k : SfxSynth::kKinds) {
-            const QVector<SfxSynth::Recorded> rec = SfxSynth::recorded(k);
-            for (qsizetype i = 0; i < rec.size(); ++i) {
-                const SfxSynth::Recorded& r = rec[i];
-                out << Entry{T("%1 %2 (Aufnahme)").arg(soundKindName(k)).arg(i + 1),
-                             soundData({{"kind", SfxSynth::kindName(k)}, {"seed", int(i + 1)}}), cachedIcon("sound", [] { return soundIcon(false); }),
-                             T("Aufnahme von %1 (%2), %3").arg(r.author, r.licence, secondsText(r.length))};
-            }
-            // The computed ones (a length = computed, also where recordings are the default)
-            const double length = SfxSynth::defaultLength(k);
-            for (int seed = 1; seed <= 3; ++seed)
-                out << Entry{T("%1 %2 (berechnet)").arg(soundKindName(k)).arg(seed),
-                             soundData({{"kind", SfxSynth::kindName(k)}, {"seed", seed},
-                                        {"length", QString::number(length, 'f', 3) + "s"}}),
-                             cachedIcon("sound", [] { return soundIcon(false); }), T("Berechnet (eigener Klang, keine Aufnahme), %1").arg(secondsText(length))};
-        }
+        for (const SoundEntry& e : builtinSoundList())
+            out << Entry{e.name, kSoundPrefix + QString::fromUtf8(e.data), cachedIcon("sound", [] { return soundIcon(false); }), e.tip};
         return out;
     };
     auto soundFiles = [&](const QVector<EffectFolders::LutEntry>& list, bool own, bool inFolder) {
@@ -1169,20 +1201,7 @@ void EffectsLibrary::rebuild()
         const qint64 stamp = packsDir.exists() ? packsDir.lastModified().toMSecsSinceEpoch() : 0;
         if (stamp != m_packSoundsStamp) {
             m_packSoundsStamp = stamp;
-            m_packSounds.clear();
-            for (const QString& pack : Extensions::installedSoundPacks()) {
-                QDirIterator it(pack, QDir::Files, QDirIterator::Subdirectories);
-                QStringList found;
-                while (it.hasNext())
-                    if (const QString f = it.next(); EffectFolders::isSoundFile(f)) found << f;
-                found.sort();
-                for (const QString& f : found) {
-                    EffectFolders::LutEntry e;
-                    e.name = QFileInfo(pack).fileName() + "/" + QFileInfo(f).completeBaseName();
-                    e.path = f;
-                    m_packSounds << e;
-                }
-            }
+            m_packSounds = scanPackSounds();
         }
         return soundFiles(m_packSounds, false, false);
     };
@@ -1403,6 +1422,16 @@ const EffectsLibrary::PresetEntry& EffectsLibrary::presetEntry(const QString& pa
     e.ok = p.error.isEmpty() && !m.empty();
     e.icon = presetIcon(p.source, int(m.effects.size()) + (m.lut.isEmpty() ? 0 : 1));
     return *m_presets.insert(path, e);
+}
+
+QVector<EffectsLibrary::SoundEntry> EffectsLibrary::soundEntries()
+{
+    QVector<SoundEntry> out = builtinSoundList();
+    for (const EffectFolders::LutEntry& l : scanPackSounds())
+        out << SoundEntry{l.name, T("Pakete"), QDir::toNativeSeparators(l.path), soundJson({{"kind", l.path}})};
+    for (const EffectFolders::LutEntry& l : EffectFolders::userSounds())
+        out << SoundEntry{l.name, T("Eigene"), QDir::toNativeSeparators(l.path), soundJson({{"kind", l.path}}), true};
+    return out;
 }
 
 QString EffectsLibrary::soundFile(const QByteArray& data)

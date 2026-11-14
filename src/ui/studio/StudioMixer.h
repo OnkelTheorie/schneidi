@@ -34,6 +34,10 @@ public:
     // Levels as Engine::audioLevels sends them (tests feed them directly)
     void onLevels(const QVector<float>& db);
 
+    // The tools column (StudioTools) between the strips and the master: it takes the room the strips leave, the
+    // strips never get wider than they need (few tracks: no gap before the master)
+    void setTools(QWidget* tools);
+
     static constexpr int kStripW = 150;
 
 protected:
@@ -46,12 +50,14 @@ private:
     void tick(); // meters fall, peak hold, loudness reading
     void openEditor(int track, bool eq);
     void fitHeight(); // curves only where there is room for them
+    void fitStripsWidth(); // the strips' area no wider than its strips (the tools take the rest)
 
     Editor* m_editor;
     Project* m_project;
     Engine* m_engine;
     QHBoxLayout* m_stripLayout = nullptr;
     QScrollArea* m_scroll = nullptr;
+    QWidget* m_tools = nullptr;
     QVector<StudioStrip*> m_strips;
     StudioStrip* m_master = nullptr;
     StudioLoudness* m_loudness = nullptr;

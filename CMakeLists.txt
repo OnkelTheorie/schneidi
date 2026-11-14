@@ -449,6 +449,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/studio/StudioPage.h    src/ui/studio/StudioPage.cpp
     src/ui/studio/StudioTracks.h  src/ui/studio/StudioTracks.cpp
     src/ui/studio/StudioMixer.h   src/ui/studio/StudioMixer.cpp
+    src/ui/studio/StudioTools.h   src/ui/studio/StudioTools.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp

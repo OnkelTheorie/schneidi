@@ -406,6 +406,25 @@ int Editor::duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const D
     return ducked;
 }
 
+int Editor::unduck(const QVector<int>& ids)
+{
+    const Timeline& cur = m_project->timeline();
+    QVector<int> keyed;
+    for (int id : ids) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(cur, id, &ref);
+        if (c && ref.kind == TrackKind::Audio && !TimelineOps::isLocked(cur, id) && Keys::animated(*c, AnimParam::Volume)
+            && !keyed.contains(id))
+            keyed << id;
+    }
+    if (keyed.isEmpty()) return 0;
+    m_project->edit(T("Absenken aufheben"), [&](Timeline& tl) {
+        for (int id : keyed)
+            if (Clip* c = TimelineOps::findClip(tl, id)) Keys::clear(*c, AnimParam::Volume);
+    });
+    return int(keyed.size());
+}
+
 bool Editor::drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
 {
     const Timeline& cur = m_project->timeline();

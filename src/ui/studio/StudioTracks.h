@@ -3,7 +3,9 @@
 // Studio page (0.23): the audio tracks as tall lanes with large waveforms on a time axis, the playhead of the timeline
 // and the clips' volume curves. Two tools: Select (click = playhead there and the clip selected, ruler = scrub) and
 // Pen (draw the volume curve: a stroke becomes volume keyframes of the clips under it, one undo step per stroke,
-// Editor::drawVolume / core/VolumeDraw.h).
+// Editor::drawVolume / core/VolumeDraw.h). With Select a keyframe dot drags (time and level, one undo step per drag)
+// and a right click on it deletes it. An effect sound dropped onto a lane goes in at that frame (soundDropRequested);
+// a running voice-over take shows on its lane (setLiveTake).
 //
 // Core rule (docs/architektur.md): zoom and scroll are the lanes' own (ViewState) and change only by user input - the
 // mouse wheel (the wheel settings of the timeline), the scrollbars, the Fit button. A model change never touches them;
@@ -22,6 +24,7 @@ class Editor;
 class MediaCache;
 class QScrollBar;
 struct Clip;
+namespace Voiceover { class LiveTake; }
 
 class StudioTracks : public QWidget {
     Q_OBJECT
@@ -49,6 +52,10 @@ public:
     double xOf(double frame) const;
     double frameAt(double x) const;
     int laneHeight() const { return m_laneH; }
+    // Where volume keyframe `index` of clip `clipId` is drawn (tests); null = not drawn (off view, curve too dense)
+    QPointF keyPoint(int clipId, int index) const;
+    // The take being recorded and the track it lands on (nullptr = none)
+    void setLiveTake(const Voiceover::LiveTake* take, int track);
 
     static constexpr int kHeaderW = 132;
     static constexpr int kRulerH = 24;
@@ -56,6 +63,7 @@ public:
 
 signals:
     void seekRequested(int frame);
+    void soundDropRequested(const QByteArray& sound, int frame); // EffectsLibrary::SoundMimeType data
     void toolChanged(StudioTracks::Tool tool);
 
 protected:
@@ -66,6 +74,10 @@ protected:
     void mouseReleaseEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void leaveEvent(QEvent* e) override;
+    void contextMenuEvent(QContextMenuEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
 private:
     void layoutLanes();      // lane height, scrollbar ranges (never a change of zoom or scroll)
@@ -82,6 +94,12 @@ private:
     void drawLane(class QPainter& p, int track);
     void drawWaveform(class QPainter& p, const QRect& body, const Clip& c, const QColor& color);
     void drawVolumeLine(class QPainter& p, const QRect& body, const Clip& c);
+    bool keysShown(const Clip& c) const; // the dots are drawn (room enough between them)
+    struct KeyHit {
+        int clipId = -1, index = -1;
+    };
+    KeyHit keyAt(const QPoint& pos) const;
+    void dragKey(const QPoint& pos);
 
     Editor* m_editor;
     QPointer<MediaCache> m_cache;
@@ -95,8 +113,13 @@ private:
     QScrollBar* m_vbar;
     bool m_syncing = false; // scrollbars set from the view, not by the user
 
-    enum class Drag { None, Scrub, Pen };
+    enum class Drag { None, Scrub, Pen, Key };
     Drag m_drag = Drag::None;
+    KeyHit m_key;          // the keyframe being dragged
+    QString m_keyMerge;    // its drag's undo merge key
+    int m_keyDrags = 0;
+    const Voiceover::LiveTake* m_take = nullptr;
+    int m_takeTrack = -1;
     int m_penTrack = -1;
     QVector<VolumeDraw::Point> m_stroke;
     QPoint m_hover{-1, -1};

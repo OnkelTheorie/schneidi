@@ -238,6 +238,19 @@ void testCliDuckMatchesEditor(const QString& dir)
     const Clip* cli = TimelineOps::findClip(back.timeline, musicId);
     CHECK(cli && keys(*cli) == keys(*app));
     CHECK(!keys(*app).isEmpty());
+    // remove:true takes it off again (Studio page "Aus"): the keys go, the clip volume stays; no 'under' needed
+    try {
+        const QJsonObject r = cmd->run(
+            Cli::normalize(*cmd, {{"project", path}, {"ops", R"([{"op":"duck","track":"A2","remove":true}])"}}), ctx);
+        CHECK(r["notes"].toArray().at(0).toString().contains("of 1 clip"));
+    } catch (const Cli::Error& e) {
+        CHECK(false);
+        qWarning().noquote() << e.code << e.message;
+    }
+    ProjectData off;
+    CHECK(ProjectFile::load(path, &off, &err));
+    const Clip* offClip = TimelineOps::findClip(off.timeline, musicId);
+    CHECK(offClip && keys(*offClip).isEmpty() && offClip->volumeDb == cli->volumeDb);
 }
 
 // Music ducked under speech from start to end (a podcast without pauses) has no key at its own level: a new volume

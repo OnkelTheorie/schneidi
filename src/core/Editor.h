@@ -213,6 +213,9 @@ public:
     // during `ranges` (timeline frames where the 'under' tracks have sound, AudioAnalysis::soundRanges). Locked clips
     // stay. Returns how many clips got lowered; no clip or no range = nothing changes. One undo step.
     int duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const Ducking::Params& params);
+    // Ducking off (Studio page, op duck remove:true): the volume keyframes of the audio clips `ids` go, their clip
+    // volume stays (the level ducking dipped from). Locked clips stay. Returns how many changed; one undo step.
+    int unduck(const QVector<int>& ids);
     // Pen on the Studio page (core/VolumeDraw.h): the stroke over audio track `track` becomes volume keyframes of the
     // clips under it (smoothed by `smoothing` frames, thinned). Locked tracks and clips stay. One undo step; false =
     // nothing changed (no clip under the stroke)
@@ -419,7 +422,9 @@ public:
     // "Stimme säubern" in one click (Mixer button, CLI op clean_voice): voice cleaning (engine/VoiceClean) on the audio
     // clips among ids (those that have it keep it) with the given values (keys of the "voiceclean" effect: amount,
     // gate, clicks, shape; switches it on); one undo step. Returns the clips it is on now
-    QVector<int> cleanVoice(const QVector<int>& ids, const QVariantMap& values = {});
+    // voiceEq: the EQ preset "Stimme" (Equalizer::voicePreset) on the audio tracks of those clips too, in the same
+    // undo step (Studio page "Stimme säubern", op clean_voice eq:true)
+    QVector<int> cleanVoice(const QVector<int>& ids, const QVariantMap& values = {}, bool voiceEq = false);
     // The unlocked clips on audio track `index` (whole track at once: a voice-over track, a game clip's voice chat)
     QVector<int> audioTrackClips(int index) const;
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the

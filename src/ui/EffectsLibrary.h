@@ -43,6 +43,15 @@ public:
     static constexpr const char* SoundMimeType = "application/x-schneidi-sound";
     // The file a sound entry plays (built-in: made into the cache on first use); empty = none
     static QString soundFile(const QByteArray& data);
+    // Every effect sound as a plain entry (the Studio page's browser): the built-in recordings and computed ones, the
+    // installed packs, the user's folder - in the library's order. data = the drag data (SoundMimeType), group = where
+    // it comes from ("Mitgeliefert", "Pakete", "Eigene", shown language)
+    struct SoundEntry {
+        QString name, group, tip;
+        QByteArray data;
+        bool own = false;
+    };
+    static QVector<SoundEntry> soundEntries();
 
     explicit EffectsLibrary(QWidget* parent = nullptr);
 
