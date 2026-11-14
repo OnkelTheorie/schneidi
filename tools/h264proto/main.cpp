@@ -35,12 +35,19 @@ using namespace schneidi::h264;
 
 static double psnr(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
 {
-    double sse = 0;
-    for (int y = 0; y < h; ++y)
+    // Whole-number sums per row (the compiler vectorises them); the total is exact either way.
+    uint64_t total = 0;
+    for (int y = 0; y < h; ++y) {
+        const uint8_t* ra = a + size_t(y) * strideA;
+        const uint8_t* rb = b + size_t(y) * strideB;
+        uint32_t row = 0;
         for (int x = 0; x < w; ++x) {
-            const int d = int(a[size_t(y) * strideA + x]) - int(b[size_t(y) * strideB + x]);
-            sse += double(d * d);
+            const int d = int(ra[x]) - int(rb[x]);
+            row += uint32_t(d * d);
         }
+        total += row;
+    }
+    const double sse = double(total);
     if (sse == 0)
         return 99.0;
     return 10.0 * std::log10(255.0 * 255.0 * w * h / sse);
