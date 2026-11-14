@@ -187,6 +187,19 @@ void testEval()
                                       {{"n2.path", "/x/b.png"}, {"n2.from", 2.0}});
     CHECK(run(moved, 10, &c) && c.alpha() == 0);
     CHECK(run(moved, 60, &c) && c == blue);
+    // Nodes that place something give nothing outside their range (not their input unplaced over the whole frame):
+    // a sticker's transform (sticker_track: media -> transform -> merge fg) and a corner pin (screen_replace)
+    const EffectInstance sticker = comp({"clip", "media", "transform", "merge"}, {{1, 4, "bg"}, {2, 3, "src"}, {3, 4, "fg"}}, 4,
+                                        {{"n2.path", "/x/b.png"}, {"n3.from", 2.0}});
+    CHECK(run(sticker, 10, &c) && c == green);
+    CHECK(run(sticker, 60, &c) && c == blue);
+    const EffectInstance screen = comp({"clip", "media", "corner_pin", "merge"}, {{1, 4, "bg"}, {2, 3, "src"}, {3, 4, "fg"}}, 4,
+                                       {{"n2.path", "/x/b.png"}, {"n3.until", 1.0}});
+    CHECK(run(screen, 30, &c) && c == green);
+    // ... a transform of the clip itself (through a filter) still hands its input on
+    const EffectInstance own = comp({"clip", "blur", "transform"}, {{1, 2, "src"}, {2, 3, "src"}}, 3,
+                                    {{"n3.x", 1.0}, {"n3.from", 1.0}});
+    CHECK(run(own, 10, &c, 1, 4) && c == green);
     // Two generators out of range share the one transparent node
     const EffectInstance two = comp({"clip", "color", "color", "merge", "merge"},
                                     {{1, 4, "bg"}, {2, 4, "fg"}, {4, 5, "bg"}, {3, 5, "fg"}}, 5,

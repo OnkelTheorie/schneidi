@@ -314,6 +314,17 @@ void testMedia(const QTemporaryDir& dir)
         CHECK(near(b->kbit, srcK, 0.15));
         CHECK(b->size == QSize(640, 360));
     }
+    // MPEG-TS names sizes only after a stream analysis: a short one (1 MB, half a second) still finds them
+    const QString ts = Check::makeMedia(dir.filePath("src.ts"), input + video);
+    if (CHECK(!ts.isEmpty())) {
+        const std::optional<SourceBitrate::Video> t = MediaProbe::videoRate(ts);
+        if (CHECK(t.has_value())) {
+            std::printf("       ts: %.0f kbit/s\n", t->kbit);
+            CHECK(t->size == QSize(640, 360));
+            CHECK(std::abs(t->fps - 25) < 0.01);
+            CHECK(near(t->kbit, srcK, 0.25));
+        }
+    }
     CHECK(!MediaProbe::videoRate(png).has_value());
     CHECK(!MediaProbe::videoRate(dir.filePath("missing.mp4")).has_value());
 

@@ -97,7 +97,7 @@ bool strokeFromJson(const QJsonObject& o, DrawStroke* out, QString* error)
     }
     const QColor c(o.value("color").toString());
     if (c.isValid()) s.color = c;
-    s.width = std::clamp(o.value("width").toDouble(s.width), 0.0, 1.0);
+    s.width = std::clamp(o.value("width").toDouble(s.width), 0.0, kMaxWidth);
     s.opacity = std::clamp(o.value("opacity").toDouble(1), 0.0, 1.0);
     *out = s;
     return true;
@@ -279,7 +279,7 @@ void scaleFormat(DrawingStyle& d, double fromW, double fromH, double toW, double
     if (std::abs(kx - 1) < 1e-12 && std::abs(ky - 1) < 1e-12) return;
     for (DrawStroke& st : d.strokes) {
         for (QPointF& p : st.points) p = QPointF(0.5 + (p.x() - 0.5) * kx, 0.5 + (p.y() - 0.5) * ky);
-        st.width *= kw;
+        st.width = std::min(st.width * kw, kMaxWidth);
     }
 }
 

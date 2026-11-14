@@ -36,6 +36,10 @@ CompOverlay::CompOverlay(Editor* editor, QObject* parent)
     : ViewerOverlay(parent), m_editor(editor),
       m_tolerance(std::clamp(QSettings().value("comp/pickTolerance", RegionPick::kDefaultTolerance).toDouble(), 0.0, 1.0))
 {
+    // Any other change of the undo stack (an edit, undo, redo) ends the run of repicks that merge into one step
+    connect(m_editor->project()->undoStack(), &QUndoStack::indexChanged, this, [this] {
+        if (!m_inRepick) m_repickIndex = -1;
+    });
 }
 
 void CompOverlay::setTarget(int clipId, int node, int playhead)
@@ -434,6 +438,14 @@ int CompOverlay::repick()
     int id = 0;
     if (r.ok()) {
         QUndoStack* undo = m_editor->project()->undoStack();
+        m_inRepick = true;
+        // The previous repick of this mask right before: taken back, this one replaces it (one undo step)
+        if (m_repickIndex >= 0 && m_repickNode == m_last.node && undo->index() == m_repickIndex
+            && undo->count() == m_repickIndex) {
+            undo->undo();
+            m_last.placed = m_repickPlaced;
+        }
+        m_repickPlaced = m_last.placed;
         undo->beginMacro(T("Fläche wählen"));
         QString err;
         id = RegionPick::applyPick(*m_editor, m_editor->project()->timelineFormat(), m_last.clipId, m_last.node,
@@ -455,6 +467,9 @@ int CompOverlay::repick()
             }
         }
         undo->endMacro();
+        m_repickIndex = id ? undo->index() : -1;
+        m_repickNode = m_last.node;
+        m_inRepick = false;
     }
     emit picked(m_pickStatus);
     emit changed();

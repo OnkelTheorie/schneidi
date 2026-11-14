@@ -90,6 +90,12 @@ private:
         QPointF placed{-1, -1}; // where it put the tracker's point (-1 = not)
     };
     LastPick m_last;
+    // The undo step of the last repick (its stack index after it; -1 = none or something else came since): the next
+    // repick of the same mask replaces it, so a run of tolerance changes is one undo step
+    int m_repickIndex = -1;
+    int m_repickNode = 0;
+    QPointF m_repickPlaced{-1, -1}; // m_last.placed before that step
+    bool m_inRepick = false;
     QString m_pickStatus;
     std::function<QImage(int, int)> m_source;
     QString m_sourceKey;

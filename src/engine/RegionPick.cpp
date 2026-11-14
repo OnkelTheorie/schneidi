@@ -610,6 +610,15 @@ int applyPick(Editor& editor, const ProjectFormat& format, int clipId, int node,
         QUndoStack* u;
         ~End() { u->endMacro(); }
     } end{undo};
+    // Failed after the mask changed: its values back (inside the macro, so it also works within a caller's macro)
+    const QVector<EffectInstance> effectsBefore = c->effects;
+    const auto keysBefore = c->keys;
+    const auto rollback = [&] {
+        editor.modifyClips({clipId}, T("Fläche wählen"), [&](Clip& x) {
+            x.effects = effectsBefore;
+            x.keys = keysBefore;
+        });
+    };
     int id = node;
     if (mode == Combine::Replace) {
         values["rotate"] = 0.0; // the corners are where they were picked
@@ -628,7 +637,10 @@ int applyPick(Editor& editor, const ProjectFormat& format, int clipId, int node,
         const double side = now && tk ? PC::numValue(*tk, nodeValues(*now, follow), QStringLiteral("size")) : 0.05;
         const QPointF tp = trackablePoint(*picture, polygon, side);
         const QVariantMap v{{"ax", std::round(tp.x() * 1e4) / 1e4}, {"ay", std::round(tp.y() * 1e4) / 1e4}};
-        if (!editor.setCompNodeValues(clipId, follow, v, &why)) return failed(why.isEmpty() ? QString("could not move the tracker") : why);
+        if (!editor.setCompNodeValues(clipId, follow, v, &why)) {
+            rollback();
+            return failed(why.isEmpty() ? QString("could not move the tracker") : why);
+        }
         if (trackerPoint) *trackerPoint = QPointF(v["ax"].toDouble(), v["ay"].toDouble());
     }
     return id;

@@ -563,6 +563,9 @@ std::optional<SourceBitrate::Video> readVideoRate(const QString& path, const QFi
     };
     // Other containers (MPEG-TS, …) know sizes and lengths only after the stream analysis
     if (!headerSuffices(fmt->iformat) || v < 0 || !settled(v)) {
+        // A short analysis (the first 1 MB, half a second, as the Exporter's): this runs on the GUI thread
+        fmt->probesize = 1 << 20;
+        fmt->max_analyze_duration = AV_TIME_BASE / 2;
         if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
         v = bestVideo();
     }

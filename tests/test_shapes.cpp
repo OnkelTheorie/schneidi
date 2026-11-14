@@ -719,6 +719,7 @@ void testCli(const QString& dir)
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","kind":"hexagon"}])"}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","fill":"glitter"}])"}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","follow":7}])"}}), QString("BAD_ARGUMENT"));
+    CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","feather":600}])"}}), QString("BAD_ARGUMENT")); // as the Inspector: 0..500
     // clip_shape: a circle with a stroke; none removes it
     edit(QString(R"([{"op":"clip_shape","clips":[%1],"shape":"ellipse","size":70,"stroke_color":"#ffffff","shadow":true}])").arg(tracked));
     d = saved();
@@ -928,6 +929,32 @@ void testOverlay()
         CHECK(source.mousePress(&press, frame));
         QMouseEvent release(QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         source.mouseRelease(&release, frame);
+    }
+    // A line: its corners sit on its ends, only the ends are handles. Dragging an end changes length and angle, never
+    // the thickness (a corner hit would set it from the end's height: the line got thin or vanished).
+    e.modifyClips({id}, "line", [](Clip& x) {
+        x.title.shape.kind = ShapeKind::Line;
+        x.title.shape.width = 100;
+        x.title.shape.height = 4;
+        x.title.shape.rotation = 0;
+        x.title.posX = 0;
+        x.title.posY = 0;
+    });
+    {
+        const QPointF end = ov.handlePos(3, frame), mid = ov.centerPos(frame);
+        CHECK(std::abs(end.x() - 210) < 0.01 && std::abs(end.y() - 90) < 0.01);
+        CHECK(drag(end, mid + QPointF(0, 80))); // straight down from the centre: a quarter turn, length 160
+        s = TimelineOps::findClip(p.timeline(), id);
+        CHECK(s && s->title.shape.height == 4);
+        CHECK(s && std::abs(s->title.shape.width - 160) < 1.01);
+        CHECK(s && std::abs(s->title.shape.rotation - 90) < 0.5);
+        const QPointF other = ov.handlePos(7, frame); // the other end (now above the centre), dragged to the left
+        CHECK(std::abs(other.x() - 160) < 0.5 && std::abs(other.y() - 10) < 0.5);
+        CHECK(drag(other, mid + QPointF(-50, 0)));
+        s = TimelineOps::findClip(p.timeline(), id);
+        CHECK(s && s->title.shape.height == 4);
+        CHECK(s && std::abs(s->title.shape.width - 100) < 1.01);
+        CHECK(s && std::abs(s->title.shape.rotation - 0) < 0.5);
     }
     // Outside the clip's time: nothing to grab
     playhead = 200;

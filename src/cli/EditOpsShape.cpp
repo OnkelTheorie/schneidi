@@ -185,7 +185,7 @@ void opShape(Session& s, const QJsonObject& op)
     }
     if (op.contains("color")) t.color = colorOf(op.value("color"), "color"), t.colorRef = 0;
     if (op.contains("amount")) sh.amount = numberOf(op, "amount", 0, 100);
-    if (op.contains("feather")) sh.feather = numberOf(op, "feather", 0, 10000);
+    if (op.contains("feather")) sh.feather = numberOf(op, "feather", 0, 500); // as the Inspector: costly per frame
     if (op.contains("spotlight")) sh.spotlight = numberOf(op, "spotlight", 0, 100);
     if (op.contains("reveal")) sh.reveal = numberOf(op, "reveal", 0, 100);
     if (op.contains("stroke")) {
@@ -313,7 +313,7 @@ void addShapeOps(QVector<OpDef>& ops)
                  "inner radius (0.05..1). fill: color (default, in `color` \"#rrggbb\"/\"#aarrggbb\"), none (stroke "
                  "only), blur or pixelate (the picture below is blurred / a mosaic inside the shape: a face, a number "
                  "plate, a name; amount 0..100, blur 100 = 1/20 of the frame height, pixelate 100 = blocks 1/10 of it), "
-                 "feather = soft edge in pixels. stroke true/false or a colour, stroke_color, stroke_width (drawn on the "
+                 "feather = soft edge in pixels (0..500). stroke true/false or a colour, stroke_color, stroke_width (drawn on the "
                  "outline). shadow true/false or {x, y, soft, color, opacity}. opacity 0..100. spotlight 0..100 darkens "
                  "the picture outside the shape (\"look here\"). reveal 0..100 = how much of the stroke is drawn; "
                  "draw_on:'1s' makes it draw itself from the shape's start (keyframes shape_reveal 0 -> 100; other "

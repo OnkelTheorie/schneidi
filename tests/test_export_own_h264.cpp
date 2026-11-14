@@ -507,6 +507,13 @@ void testReview()
     CHECK(!s.smartRender);
     j.review = false;
     CHECK(ExportWriter::isOwnH264(RenderQueue::exportSettings(j, kFmt).videoCodec));
+    // Quality "Like source": the review still small and fast (a constant quality, not the recordings' bit rate)
+    ExportSettings like;
+    like.sourceQuality = true;
+    like.crf = 18;
+    RenderQueue::makeReview(like);
+    CHECK(!like.sourceQuality);
+    CHECK(like.crf >= 28);
 }
 
 // Cancel while encoding and during the first pass of the "web" mode: a long timeline (60 s of noise), so neither is

@@ -460,7 +460,7 @@ void DrawOverlay::commitStroke(const QRectF& frame)
     if (c && Keys::hasTransform(*c)) { // as wide on the screen as the brush, whatever the drawing's zoom
         const int t = localFrame(*c);
         const double z = std::sqrt(std::abs(Keys::valueAt(*c, AnimParam::ZoomX, t) * Keys::valueAt(*c, AnimParam::ZoomY, t)));
-        if (z > 1e-3) s.width /= z;
+        if (z > 1e-3) s.width = std::min(s.width / z, Drawing::kMaxWidth); // as a file keeps it
     }
     for (const QPointF& w : m_stroke) s.points << Drawing::within(toDrawing(c, w, frame)); // far off: at -1..2
     if (std::any_of(m_pressure.begin(), m_pressure.end(), [](float v) { return v < 0.999f; })) s.pressure = m_pressure;

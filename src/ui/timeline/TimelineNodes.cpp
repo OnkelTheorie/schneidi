@@ -26,6 +26,13 @@ using namespace TimelineViewDetail;
 
 namespace {
 
+// std::clamp with the lower bound above the upper one is undefined (a hard stop in builds with library assertions):
+// a bar of zero width or a range outside its clip gives such bounds - the lower bound wins then
+int bound(int v, int lo, int hi)
+{
+    return std::max(lo, std::min(v, hi));
+}
+
 constexpr int kMaxNodeBars = 3;
 constexpr int kNodeBarH = 4;
 constexpr int kNodeBarGap = 2;
@@ -82,7 +89,7 @@ QVector<TimelineView::NodeBar> TimelineView::nodeBars(const QRect& r, const Clip
         const int x1 = int(std::ceil(r.left() + (b.end - c.start) * m_view.pxPerFrame));
         const int y = body.bottom() - 2 - (i + 1) * kNodeBarH - i * kNodeBarGap + 1;
         b.rect = QRect(x0, y, std::max(3, x1 - x0), kNodeBarH).intersected(r.adjusted(1, 0, -1, 0));
-        if (b.rect.width() < 3) b.rect = QRect(std::clamp(x0, r.left() + 1, r.right() - 3), y, 3, kNodeBarH);
+        if (b.rect.width() < 3) b.rect = QRect(bound(x0, r.left() + 1, r.right() - 3), y, 3, kNodeBarH);
         bars << b;
     }
     if (more) *more = int(ranges.size()) - shown;
@@ -249,17 +256,17 @@ void TimelineView::nodeBarDrag(const QPoint& pos)
     int first = m_nodeStartFirst, end = m_nodeStartEnd;
     if (m_nodeDrag.part == 0) {
         const int len = end - first;
-        int d = std::clamp(dx, c->start - first, c->end() - end);
+        int d = bound(dx, c->start - first, c->end() - end);
         d += nodeSnapDelta({first + d, end + d});
-        d = std::clamp(d, c->start - first, c->end() - end);
+        d = bound(d, c->start - first, c->end() - end);
         first += d;
         end = first + len;
     } else if (m_nodeDrag.part < 0) {
-        first = std::clamp(first + dx, c->start, end - 1);
-        first = std::clamp(first + nodeSnapDelta({first}), c->start, end - 1);
+        first = bound(first + dx, c->start, end - 1);
+        first = bound(first + nodeSnapDelta({first}), c->start, end - 1);
     } else {
-        end = std::clamp(end + dx, first + 1, c->end());
-        end = std::clamp(end + nodeSnapDelta({end}), first + 1, c->end());
+        end = bound(end + dx, first + 1, c->end());
+        end = bound(end + nodeSnapDelta({end}), first + 1, c->end());
     }
     if (first != m_nodeFirst || end != m_nodeEnd) {
         m_nodeFirst = first;
@@ -279,7 +286,7 @@ void TimelineView::nodeBarRelease()
     // stored from; a moved bar stays "to the end" when it was and still ends at the clip's end
     double from = 0, until = 0;
     Comp::rangeValues(*c, m_nodeFirst, m_nodeEnd, fpsOf(m_editor), &from, &until, h.part == 0 && m_nodeUntil == 0);
-    if (h.part < 0) until = m_nodeUntil;
+    if (h.part < 0 && m_nodeUntil >= 0) until = m_nodeUntil; // a stored end before the clip (head trimmed past it): as shown
     if (h.part > 0) from = m_nodeFrom;
     QString err;
     if (!m_editor->setCompNodeRange(h.clipId, h.node, from, until, &err)) emit message(err);

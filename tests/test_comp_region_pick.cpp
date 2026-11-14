@@ -520,6 +520,14 @@ void testCli(const QString& dir)
     CHECK(recipes.contains("text_behind_object") && recipes.contains("sticker_behind_object"));
 }
 
+QString maskPointsOf(const Project& p, int clip, int node)
+{
+    const EffectInstance* e = EffectRegistry::instance(*TimelineOps::findClip(p.timeline(), clip), ::Comp::kEffectId);
+    QStringList l;
+    for (int i = 0; i < 32; ++i) l << e->params.value(CompGraph::paramKey(node, QString("p%1x").arg(i))).toString();
+    return l.join(',');
+}
+
 // The app: the viewer's pick mode (CompOverlay) and the Inspector's row
 void testApp()
 {
@@ -544,6 +552,16 @@ void testApp()
     // The tolerance picks the last click again: one more step, the same node
     overlay.setPickTolerance(0.2);
     CHECK_EQ(p.undoStack()->index(), steps + 2);
+    // Further tolerance steps right after (the slider moved by keys): still that one step, holding the latest pick
+    const QString at02 = maskPointsOf(p, clip, id);
+    overlay.setPickTolerance(0.6);
+    CHECK_EQ(p.undoStack()->index(), steps + 2);
+    CHECK_EQ(p.undoStack()->count(), steps + 2);
+    const QString at06 = maskPointsOf(p, clip, id);
+    overlay.setPickTolerance(0.2);
+    CHECK_EQ(p.undoStack()->index(), steps + 2);
+    CHECK(maskPointsOf(p, clip, id) == at02);
+    if (at06 == at02) std::printf("       note: tolerance 0.6 picked the same outline\n");
     // Not after picking ended, not on another mask, not after points were dragged by hand
     const auto maskPoints = [&](int node) {
         const EffectInstance* e = EffectRegistry::instance(*TimelineOps::findClip(p.timeline(), clip), ::Comp::kEffectId);
