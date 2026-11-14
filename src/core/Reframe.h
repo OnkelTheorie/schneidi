@@ -122,7 +122,8 @@ struct FeedState {
 };
 // The stretches of a measured feed over a clip of `length` frames: a line missing for a moment (a flash, a sample
 // that missed it) does not count, nor one seen for a moment only (a moment in the clip or in the file: a slowed clip
-// does not show a one-sample blip longer); the widest line of a stretch sets its left edge.
+// does not show a one-sample blip longer; such a moment between two counts takes the larger: a new line that reads
+// as none while it slides in shows at once); the widest line of a stretch sets its left edge.
 // Empty when the feed is not measured.
 QVector<FeedState> feedStates(const Feed& f, int length);
 // How the copy of a kill feed shows: Follow = its lines (measured, with lines), Whole = the whole region all the time

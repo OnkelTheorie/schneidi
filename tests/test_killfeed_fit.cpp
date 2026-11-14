@@ -7,7 +7,8 @@
 // its crop fitting one and then three lines, the rendered frame showing the lines only then; a recording without any
 // line gets no copy. Review fixes: a blip-only feed is none, a long clip without lines keeps the whole region, smoothing
 // in file time for sped up and slowed clips, a freeze frame's nearest sample, compositing off, the base's opacity keys,
-// a picture shape changed after the reframe, a measurement of a broken-off file not cached.
+// a picture shape changed after the reframe, a measurement of a broken-off file not cached. Window shutters above the
+// feed's rows are no line; a new line that reads as none while it slides in shows at once (the copy one line taller).
 #include "render_check.h"
 #include "timeline_guard.h"
 
@@ -118,6 +119,73 @@ void testDetect()
     s = KillFeedLines::detect(img, g);
     CHECK_EQ(s.lines, 2);
     CHECK(near(s.left * 1920, 1609, 6));
+}
+
+Reframe::Feed timeline();
+
+// Window shutters (thin horizontal slats, 120 px wide, ending where the box would) at the top right, above the rows CS2 draws its feed in (first line top 75,
+// or 95): their slats look like a box's flat rows with an edge above and below. A real game picture made the copy
+// show an empty box over a wall for the first 0.4 s of a short (12.11. clip, 14.0-14.4 s: one "line" 84-115 px wide
+// with its top at 64-73)
+void testShutters()
+{
+    const GameHud::Game& g = cs2();
+    for (int top : {60, 64}) {
+        QImage img = background(QColor(120, 100, 80), QColor(110, 90, 70), false);
+        {
+            QPainter p(&img);
+            for (int y = top - 12; y < top + 34; y += 6) {
+                p.fillRect(1790, y, 120, 3, QColor(220, 212, 196)); // (the shutter's frame right of x 1910)
+                p.fillRect(1790, y + 3, 120, 3, QColor(150, 140, 124));
+            }
+        }
+        const KillFeedLines::Sample s = KillFeedLines::detect(img, g);
+        if (!CHECK_EQ(s.lines, 0)) std::printf("shutters at %d: %d line(s), left %.0f\n", top, s.lines, s.left * 1920);
+        // A real line below them is still found
+        line(img, 75 + 34, 260);
+        line(img, 75, 300);
+        CHECK_EQ(KillFeedLines::detect(img, g).lines, 2);
+    }
+}
+
+// A new line slides in: the frames as it comes read no line at all (two samples), then three. The copy shows three
+// lines from the first of those samples on, not only once the third line reads (its last line was cut off for 0.2 s)
+void testNewLineSlidesIn()
+{
+    Reframe::Feed f;
+    f.measured = true;
+    f.fps = 30;
+    f.lineHeight = 31.0 / 1080;
+    for (int frame = 0; frame < 300; frame += 3) {
+        Reframe::FeedSample s;
+        s.frame = frame;
+        if (frame < 150) s.lines = 2, s.left = 1550 / 1920.0, s.bottom = 140 / 1080.0;
+        else if (frame >= 156) s.lines = 3, s.left = 1470 / 1920.0, s.bottom = 173 / 1080.0;
+        f.samples << s;
+    }
+    const QVector<Reframe::FeedState> st = Reframe::feedStates(f, 300);
+    if (CHECK_EQ(st.size(), 2)) {
+        CHECK_EQ(st[0].lines, 2);
+        CHECK_EQ(st[1].lines, 3);
+        CHECK(near(st[1].from, 148.5, 1)); // halfway between the last two-line sample and the first that read none
+        CHECK(near(st[1].bottom * 1080, 173, 1e-6));
+    }
+    // Going the other way (the oldest line leaves, a frame or two read none): the larger box a moment longer
+    for (Reframe::FeedSample& s : f.samples) {
+        const int frame = int(s.frame);
+        s.lines = 0;
+        if (frame < 150) s.lines = 3, s.left = 1470 / 1920.0, s.bottom = 173 / 1080.0;
+        else if (frame >= 156) s.lines = 2, s.left = 1550 / 1920.0, s.bottom = 140 / 1080.0;
+    }
+    const QVector<Reframe::FeedState> down = Reframe::feedStates(f, 300);
+    if (CHECK_EQ(down.size(), 2)) {
+        CHECK_EQ(down[0].lines, 3);
+        CHECK(near(down[1].from, 154.5, 1));
+        CHECK_EQ(down[1].lines, 2);
+    }
+    // A flash inside one stretch still does not split it
+    const QVector<Reframe::FeedState> one = Reframe::feedStates(timeline(), 300);
+    CHECK(one.size() == 4 && one[1].lines == 1);
 }
 
 // A line timeline (10 samples a second at 30 fps): none, one line (missing in one sample: a flash), three lines,
@@ -583,7 +651,9 @@ int main(int argc, char** argv)
     Check::initApp("killfeed_fit");
     std::setlocale(LC_NUMERIC, "C");
     testDetect();
+    testShutters();
     testStates();
+    testNewLineSlidesIn();
     testKeys();
     testSpeed();
     testFallback();
