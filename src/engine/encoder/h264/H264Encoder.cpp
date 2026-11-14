@@ -5015,23 +5015,31 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
     }
     bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
-    if (skipSplits && kSplitQuad > 0 && cfg_.effort > 0) {
-        const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
-        const RefPic& R = *refs_[size_t(whole.ref[0])];
-        int qMax = 0, qSum = 0;
-        for (int q = 0; q < 4; ++q) {
-            const int s = sadPart(R, mbx, mby, (q & 1) * 2, (q >> 1) * 2, 2, 2, whole.mv[0][0], whole.mv[0][1], true);
-            qMax = std::max(qMax, s);
-            qSum += s;
+    // The 16x16 prediction's cost sits in one quarter (see above): -1 not measured, else 0 / 1.
+    int concentrated = -1;
+    auto isConcentrated = [&] {
+        if (concentrated < 0) {
+            const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
+            const RefPic& R = *refs_[size_t(whole.ref[0])];
+            int qMax = 0, qSum = 0;
+            for (int q = 0; q < 4; ++q) {
+                const int s = sadPart(R, mbx, mby, (q & 1) * 2, (q >> 1) * 2, 2, 2, whole.mv[0][0], whole.mv[0][1], true);
+                qMax = std::max(qMax, s);
+                qSum += s;
+            }
+            concentrated = qMax >= quadLim && qMax >= kSplitConc * qSum;
         }
-        skipSplits = !(qMax >= quadLim && qMax >= kSplitConc * qSum);
-    }
+        return concentrated != 0;
+    };
+    if (skipSplits && kSplitQuad > 0 && cfg_.effort > 0)
+        skipSplits = !isConcentrated();
     if (wholeZero && kZeroNoSplit)
         skipSplits = true;
     // With the mode decision by estimate the split search waits until the 16x16 layout is coded:
     // where skip costs no more than kSkipWins times that, the splits are not searched at all.
     // H264_SKIPWINS=0: the search before the 16x16 coding, always.
     static const double kSkipWins = std::getenv("H264_SKIPWINS") ? std::atof(std::getenv("H264_SKIPWINS")) : 1.0;
+    static const bool kSkipWinsConc = !std::getenv("H264_SKIPWINSCONC") || std::atoi(std::getenv("H264_SKIPWINSCONC")) != 0;
     static const double kSkipIntra = std::getenv("H264_SKIPINTRA") ? std::atof(std::getenv("H264_SKIPINTRA")) : 0.0;
     const bool deferSplits = kSkipWins > 0 && kRdEst && cabacByTop_[size_t(rowKey_[size_t(mby)])] && cfg_.effort > 0 &&
                              useT8() && !(gExp & (32 | 512)) && tPsy.weight <= 0;
@@ -5109,7 +5117,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 auto agree = [&](int a, int b) {
                     return quads.mv[a][0] == quads.mv[b][0] && quads.mv[a][1] == quads.mv[b][1] && quads.ref[a] == quads.ref[b];
                 };
-                const bool fast = kRectFast == 1 || kRectFast == 3 || (kRectFast == 2 && (li == 1 ? agree(0, 1) && agree(2, 3) : agree(0, 2) && agree(1, 3)));
+                const bool fast = kRectFast == 1 || kRectFast == 3 || (kRectFast == 4 && !isConcentrated()) || (kRectFast == 2 && (li == 1 ? agree(0, 1) && agree(2, 3) : agree(0, 2) && agree(1, 3)));
                 const Choice c = fast ? tryRect(li) : tryLayout(li);
                 if (c.cost < split.cost)
                     split = c;
@@ -5346,7 +5354,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         Plan pw;
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
-        if (deferSplits && costSkip > costWhole * kSkipWins)
+        if (deferSplits && (costSkip > costWhole * kSkipWins || (kSkipWinsConc && kSplitQuad > 0 && isConcentrated())))
             searchSplits();
         if (split.cost < whole.cost * kSplitTry) {
             Plan ps;

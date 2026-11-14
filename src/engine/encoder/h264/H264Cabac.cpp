@@ -754,33 +754,25 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         }
         return lbCache[i];
     };
-    double runErr = 0, runSig = 0; // squared errors / significance bits of the level-0 positions not added yet
-    auto flushRun = [&] {
-        if (runErr == 0 && runSig == 0)
-            return;
-        for (unsigned m = live & 0xFF; m; m &= m - 1) {
-            const int n = std::countr_zero(m);
-            cost[n] += runErr + runSig;
-        }
-        if (live & (1u << kEmpty))
-            cost[kEmpty] += runErr;
-        runErr = runSig = 0;
-    };
     for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
         const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
         if (ax < 0.5) {
-            // Only level 0: every path keeps its node, so a run of such positions is summed up
-            // first and added to the nodes once (flushRun).
+            // Only level 0: the same sums as the general case below, without the node bookkeeping.
             const double err = ax * scale[k];
             const double errSq0 = err * err;
-            runErr += errSq0;
-            if (live & 0xFF)
-                runSig += lk * ce.binCost(sigCtx(k), 0);
+            if (live & 0xFF) {
+                const double sig = lk * ce.binCost(sigCtx(k), 0);
+                for (unsigned m = live & 0xFF; m; m &= m - 1) {
+                    const int n = std::countr_zero(m);
+                    cost[n] = cost[n] + errSq0 + sig;
+                }
+            }
+            if (live & (1u << kEmpty))
+                cost[kEmpty] += errSq0;
             pass |= uint64_t(1) << k;
             continue;
         }
-        flushRun();
         int cand[3] = {0, 0, 0}, nc = 1;
         if (ax >= 0.5) {
             const int fl = int(ax);
@@ -831,7 +823,6 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         std::copy(fresh, fresh + 9, cost);
         live = reached;
     }
-    flushRun();
     int best = kEmpty;
     double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
     if (zeroCost)
