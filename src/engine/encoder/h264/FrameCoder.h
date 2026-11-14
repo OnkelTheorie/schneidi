@@ -304,6 +304,7 @@ public:
     void motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
                           uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
+    void traceMb(int mbx, int mby, const MbSyntax& syn) const;
     // Psycho-visual RD (cfg_.psyRd). psyBegin, before a macroblock is decided: the Hadamard
     // coefficient magnitudes of its source luma, kept for the thread. psyCost: the weighted distance
     // between those and the magnitudes of the luma reconstruction as it stands in recY_, to add to

@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <thread>
 #include <utility>
 #include <condition_variable>
@@ -80,6 +81,8 @@ const int gAqEdge = std::getenv("H264_AQEDGE") ? std::atoi(std::getenv("H264_AQE
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
+// H264_MB_TRACE: the costs of the last P macroblock's full decision (see FrameCoder::traceMb).
+thread_local char tDecision[160] = {};
 // Intra try in an inter picture: the caller's Intra 16x16 SATD estimate (-1 = none). With it the
 // three intra types are first compared by SATD (+ mode bits) and only those within kIntraSel of the
 // best are coded in full (H264_INTRASEL = factor, 0 = off: all of them as before). Measured with
@@ -2230,6 +2233,51 @@ void FrameCoder::waveRowRun(int r)
 // the macroblocks, the rest of the deblocking of the row above, the band that became final. With
 // block it waits wherever it cannot go on (a thread per row); without, it returns 0 there and
 // goes on from the same place when called again (the pool parks the row). -1 when the picture failed.
+// Debug trace (H264_MB_TRACE="x0,x1,y0,y1", macroblock columns and rows): one line per macroblock of
+// that window with its type, vectors (ref:x,y of the four 8x8 corners), QP and the mean squared
+// error of its reconstruction (before deblocking) against the source in Y, U and V; P macroblocks
+// that went through the full decision add lambda and the costs of skip, inter and intra.
+void FrameCoder::traceMb(int mbx, int mby, const MbSyntax& syn) const
+{
+    static const std::array<int, 4> win = [] {
+        std::array<int, 4> w = {-1, -1, -1, -1};
+        if (const char* e = std::getenv("H264_MB_TRACE"))
+            std::sscanf(e, "%d,%d,%d,%d", &w[0], &w[1], &w[2], &w[3]);
+        return w;
+    }();
+    if (win[0] < 0 || mbx < win[0] || mbx > win[1] || mby < win[2] || mby > win[3])
+        return;
+    const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
+    const int cw = padW_ / 2;
+    const size_t co = size_t(mby * 8) * cw + mbx * 8;
+    int64_t sy = 0, su = 0, sv = 0;
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) {
+            const int d = int(srcY_[lo + size_t(y) * padW_ + x]) - int(recY_[lo + size_t(y) * padW_ + x]);
+            sy += d * d;
+        }
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            const size_t o = co + size_t(y) * cw + x;
+            const int du = int(srcU_[o]) - int(recU_[o]), dv = int(srcV_[o]) - int(recV_[o]);
+            su += du * du;
+            sv += dv * dv;
+        }
+    static const char* const kKinds[] = {"skip", "i16", "i4", "inter"};
+    const size_t lw = size_t(mbW_) * 4, b0 = size_t(mby * 4) * lw + mbx * 4;
+    std::string mvs;
+    for (int k : {0, 2, 8, 10}) {
+        const size_t o = b0 + size_t(k >> 2) * lw + (k & 3);
+        char buf[48];
+        std::snprintf(buf, sizeof buf, " %d:%d,%d", int(refIdx_[o]), int(mvX_[o]), int(mvY_[o]));
+        mvs += buf;
+    }
+    std::fprintf(stderr, "MB d%d %c %d,%d %s t%d b%d qp%d cbp%d/%d mv%s mse %.1f %.1f %.1f%s\n", displayIndex_,
+                 bSlice_ ? 'B' : pSlice_ ? 'P' : 'I', mbx, mby, kKinds[int(syn.kind)], syn.interType, int(syn.bType),
+                 int(mbQpFinal_[size_t(mby) * mbW_ + mbx]), syn.cbpLuma, syn.cbpChroma, mvs.c_str(), double(sy) / 256.0,
+                 double(su) / 64.0, double(sv) / 64.0, pSlice_ && !bSlice_ ? tDecision : "");
+}
+
 int FrameCoder::waveRowBody(int r, bool block)
 {
     WaveState& w = wave_;
@@ -2327,6 +2375,7 @@ int FrameCoder::waveRowBody(int r, bool block)
                 encodeMbP(mb, mbx, r);
             else
                 commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
+            traceMb(mbx, r, mb.syn);
             cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
             mbSyn_[size_t(r) * mbW_ + mbx].assignUsed(mb.syn);
             if (mbx == std::min(1, mbW_ - 1))
@@ -5360,6 +5409,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
     const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    tDecision[0] = 0;
     MbState skipState;
     saveMb(mbx, mby, skipState);
 
@@ -5382,7 +5432,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         return est;
     };
     fullPelCost_[mbIndex] = -1.0f;
-    if (skipResidualIsZero(mbx, mby, lp, cp, qp)) {
+    // H264_EARLYSKIP=0: no early skip (measurements; skip then goes through the full decision).
+    static const bool kEarlySkip = !std::getenv("H264_EARLYSKIP") || std::atoi(std::getenv("H264_EARLYSKIP")) != 0;
+    if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
         return false;
@@ -5969,6 +6021,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
     }
 
+    static const bool kTrace = std::getenv("H264_MB_TRACE") != nullptr;
+    if (kTrace)
+        std::snprintf(tDecision, sizeof tDecision, " | lam %.0f skip %.0f inter %.0f (layout %d mv %d,%d) intra %.0f", lambda,
+                      costSkip, costInter, best.layout, best.mv[0][0], best.mv[0][1], costIntra < 1e299 ? costIntra : -1.0);
     if (costSkip <= costInter && costSkip <= costIntra) {
         restoreMb(mbx, mby, skipState);
         result.syn.kind = MbSyntax::Kind::Skip;
