@@ -415,7 +415,7 @@ double trackerValue(const QVariantMap& values, const QString& key)
     ft.fps = fps;
     const NodeType* k = find(::Comp::kTrackerType);
     if (k)
-        ft.lost = ::Comp::lostModeOf(values.value(QString::fromLatin1(::Comp::kLostKey)).toString(),
+        ft.lost = ::Comp::lostModeOf(textValue(*k, values, QString::fromLatin1(::Comp::kLostKey)), // an index too
                                      textValue(*k, values, QStringLiteral("mode")));
     // The keys as they are (not cut to the clip): a gap trimmed half off still holds to the frame before it
     if (clip) ft.gaps = ::Comp::trackGaps(::Comp::seenKeys(*clip, node), std::max(0, clip->length() - 1));

@@ -338,6 +338,11 @@ void testEdges(const TrackRun& r)
         CHECK(::Comp::lostModeOf("", "face") == ::Comp::LostMode::Hold);
         CHECK(::Comp::lostModeOf("auto", "point") == ::Comp::LostMode::Fade);
         CHECK(::Comp::lostModeOf("fade", "face") == ::Comp::LostMode::Fade);
+        // The choice as an index (a project may store it so): read like "mode", not as "auto"
+        const QVariantMap indexed{{"mode", "point"}, {"lost", 2}}; // auto, fade, hold, bridge
+        CHECK(Picture::Comp::followTime(nullptr, 1, indexed, 0, 25).lost == ::Comp::LostMode::Hold);
+        CHECK(Picture::Comp::followTime(nullptr, 1, QVariantMap{{"mode", "point"}, {"lost", "bridge"}}, 0, 25).lost
+              == ::Comp::LostMode::Bridge);
     }
     // Trimmed: the gaps shown are cut to the clip; one trimmed off is gone; a cut gap is no "short" one
     {
