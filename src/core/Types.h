@@ -626,6 +626,10 @@ struct Clip {
     QString keepRegion;
     // Placeholder of a template (0.18, core/TemplateFill.h); not set = an ordinary clip
     ClipSlot slot;
+    // Audio only: the channels of the audio stream the clip plays (0-based, one = mono in the middle, two = left and
+    // right), e.g. {2, 3} for a wireless microphone on channels 3/4 of a camera file. Empty = all channels as the
+    // stream has them (0.23, channel routing).
+    QVector<int> sourceChannels;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
     bool hasRamp() const { return !ramp.isEmpty() && !freeze; }
@@ -736,6 +740,12 @@ struct Track {
     // Audio only: EQ -> compressor -> fader/pan
     TrackEq eq;
     TrackDynamics dynamics;
+    // Audio only, surround panner (mix in 5.1/7.1, ChannelLayout::surroundPan; a stereo mix ignores it): front (0)
+    // to surround (100), share of the front pair in the centre speaker (0..100), send to the LFE (dB, <= -60 = off)
+    double panDepth = 0.0;
+    double panCenter = 0.0;
+    double lfeDb = kMinVolumeDb;
+    bool hasSurroundPan() const { return panDepth != 0.0 || panCenter != 0.0 || lfeDb > kMinVolumeDb; }
     TrackUid uid; // (last: aggregate initialisation Track{kind} stays as it is)
     bool operator==(const Track&) const = default;
 };
@@ -885,12 +895,15 @@ struct Timeline {
     // values in seconds from a clip's start (comp text from/until, Comp::followHead) follow a cut or head trim.
     // 0 = unknown (a timeline edited outside a Project): those values stay. Never saved, not part of undo.
     double frameRate = 0;
+    // For rendering only (Project::renderTimeline): channels of the mix (ProjectFormat::audioChannels, 2/6/8);
+    // Audio::Mixer mixes in this format. Never saved, not part of undo.
+    int audioChannels = 2;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
-    // Same cut (without `nested`/`angles`/`frameSize`/`frameRate`, which only serve rendering and editing).
+    // Same cut (without `nested`/`angles`/`frameSize`/`frameRate`/`audioChannels`, which only serve rendering and editing).
     // By hand: enter new fields here, otherwise changes to them do not end up in undo
     bool operator==(const Timeline& o) const
     {

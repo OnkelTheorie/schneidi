@@ -266,6 +266,7 @@ QJsonObject RenderSettings::toJson() const
     if (quality == kQualitySource) o["qualitySource"] = true;
     if (shortSide > 0) o["shortSide"] = shortSide;
     if (audioBits != 24) o["audioBits"] = audioBits;
+    if (audioChannels > 0) o["audioChannels"] = audioChannels;
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
     if (maxFps > 0) o["maxFps"] = maxFps;
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
@@ -289,6 +290,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     s.audioBitrateK = std::clamp(o.value("audioBitrate").toInt(320), 32, 512);
     s.shortSide = std::max(0, o.value("shortSide").toInt());
     s.audioBits = o.value("audioBits").toInt(24);
+    if (const int ch = o.value("audioChannels").toInt(); ch == 2 || ch == 6 || ch == 8) s.audioChannels = ch;
     const QStringList rate = o.value("rate").toString().split('/');
     if (rate.size() == 2 && rate[0].toInt() > 0 && rate[1].toInt() > 0) {
         s.rateNum = rate[0].toInt();
@@ -317,7 +319,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
            && embedSubtitles == o.embedSubtitles
-           && audioBits == o.audioBits && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && audioChannels == o.audioChannels && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Presets

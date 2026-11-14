@@ -104,6 +104,7 @@ MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<Usa
             x.audioStream = placed[i][k].stream;
             x.enabled = placed[i][k].enabled;
             x.volumeDb = placed[i][k].volumeDb;
+            x.sourceChannels = placed[i][k].channels;
             inner.audio[a.audioTracks[k]].clips << x;
         }
         prevEnd = c.end();

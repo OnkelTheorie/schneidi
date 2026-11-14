@@ -166,6 +166,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
+    src/core/ChannelLayout.h      src/core/ChannelLayout.cpp
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h

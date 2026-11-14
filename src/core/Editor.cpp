@@ -200,6 +200,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
                 a.audioStream = placed[k].stream;
                 a.enabled = placed[k].enabled;
                 a.volumeDb = placed[k].volumeDb;
+                a.sourceChannels = placed[k].channels;
                 if (tl.audio[at].name.isEmpty()) tl.audio[at].name = placed[k].trackLabel;
                 TimelineOps::placeClip(tl.audio[at], a, newId, tl.frameRate);
                 sound << a.id;

@@ -100,6 +100,9 @@ QVector<StreamPlacement> StreamPresets::placements(const MediaInfo& m) const
         s.enabled = p[k].action != StreamRule::Action::Mute;
         s.volumeDb = std::clamp(p[k].volumeDb, kMinVolumeDb, kMaxVolumeDb);
         s.trackLabel = p[k].trackName.isEmpty() ? m.audioStreamTrackLabel(k) : p[k].trackName;
+        const int have = k < m.audioStreams.size() ? m.audioStreams[k].channels : 2;
+        for (int ch : p[k].channels) // a rule for another file with more channels: what this stream lacks is left out
+            if (ch >= 0 && ch < have) s.channels << ch;
         out << s;
     }
     return out;
@@ -131,6 +134,7 @@ QVector<StreamRule> StreamPresets::learn(const Timeline& tl, const MediaInfo& m,
         } else {
             r.action = clips[k]->enabled ? StreamRule::Action::Place : StreamRule::Action::Mute;
             r.volumeDb = clips[k]->volumeDb;
+            r.channels = clips[k]->sourceChannels;
             const QString name = tracks[k]->name.trimmed();
             if (!name.isEmpty() && name != r.title) r.trackName = name;
         }
@@ -161,6 +165,11 @@ QJsonObject StreamPresets::toJson() const
         QJsonObject o{{"title", r.title}, {"action", actionName(r.action)}};
         if (r.volumeDb != 0) o["volumeDb"] = r.volumeDb;
         if (!r.trackName.isEmpty()) o["track"] = r.trackName;
+        if (!r.channels.isEmpty()) {
+            QJsonArray channels;
+            for (int ch : r.channels) channels << ch + 1;
+            o["channels"] = channels;
+        }
         list << o;
     }
     return {{"muteMix", muteMix}, {"rules", list}};
@@ -179,6 +188,8 @@ StreamPresets StreamPresets::fromJson(const QJsonObject& o)
         rule.action = a == "mute" ? StreamRule::Action::Mute : a == "skip" ? StreamRule::Action::Skip : StreamRule::Action::Place;
         rule.volumeDb = std::clamp(r.value("volumeDb").toDouble(), kMinVolumeDb, kMaxVolumeDb);
         rule.trackName = r.value("track").toString().trimmed();
+        for (const QJsonValue& ch : r.value("channels").toArray())
+            if (const int n = ch.toInt(); n >= 1 && n <= 64 && rule.channels.size() < 2) rule.channels << n - 1;
         p.rules << rule;
     }
     return p;

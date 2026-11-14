@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/audio/Mixer.h"
 
+#include "core/ChannelLayout.h"
 #include "core/Dynamics.h"
 #include "core/EffectRegistry.h"
 #include "core/Equalizer.h"
@@ -45,7 +46,8 @@ double dbToGain(double db)
 // the nested sequences
 bool sameSound(const Timeline& a, const Timeline& b)
 {
-    if (a.audio.size() != b.audio.size() || a.masterLimiter != b.masterLimiter) return false;
+    if (a.audio.size() != b.audio.size() || a.masterLimiter != b.masterLimiter || a.audioChannels != b.audioChannels)
+        return false;
     for (int i = 0; i < a.audio.size(); ++i) {
         Track x = a.audio[i], y = b.audio[i];
         for (Track* t : {&x, &y}) {
@@ -53,6 +55,8 @@ bool sameSound(const Timeline& a, const Timeline& b)
             t->muted = t->solo = false;
             t->eq = {};
             t->dynamics = {};
+            t->panDepth = t->panCenter = 0;
+            t->lfeDb = kMinVolumeDb;
         }
         if (!(x == y)) return false;
     }
@@ -134,6 +138,22 @@ struct TrackPlan {
     TrackDynamics dynamics;
     double gain = 1.0;
     double pan = 0.0;
+    double panDepth = 0.0, panCenter = 0.0, lfeDb = kMinVolumeDb; // surround panner (5.1/7.1 mix)
+};
+
+// LFE send: 2nd-order Butterworth low pass at 120 Hz
+struct LowPass {
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+    void design(int rate)
+    {
+        const double k = std::tan(M_PI * 120.0 / rate), q = M_SQRT1_2;
+        const double norm = 1 / (1 + k / q + k * k);
+        b0 = k * k * norm;
+        b1 = 2 * b0;
+        b2 = b0;
+        a1 = 2 * (k * k - 1) * norm;
+        a2 = (1 - k / q + k * k) * norm;
+    }
 };
 
 } // namespace
@@ -141,6 +161,9 @@ struct TrackPlan {
 struct Mixer::Impl {
     Options opt;
     Clock clock;
+    int nch = 2;    // channels of the mix
+    int outCh = 2;  // channels render() writes (outermost mixer)
+    LowPass lfeLowPass;
     std::shared_ptr<const NestedTimelines> nested;
     Stats* stats = nullptr; // the outermost mixer's
     Stats ownStats;
@@ -164,32 +187,46 @@ struct Mixer::Impl {
         int64_t nextU = INT64_MIN; // where the voice continues (u); anything else starts it over
         std::vector<std::unique_ptr<Denoise::Processor>> denoisers;
         std::unique_ptr<VoiceClean::Processor> cleaner;
+        int channels = 0; // what the source gives (2 or the mix's), known once opened
     };
     struct TrackState {
         Equalizer eq;
         Compressor comp;
         std::vector<VoiceState> voices;
         size_t firstVoice = 0; // voices before it have ended
-        // Gain per channel (fader, pan, mute) applied so far; a new value glides there (updateMix)
-        double applied[kChannels] = {};
+        // Gain per channel (fader, pan, mute) applied so far; a new value glides there (updateMix). Stereo: L, R.
+        // 5.1/7.1: the panner matrix (output o from left/right at [o * 2 + i]), then the LFE send, then the gain of
+        // the channels that pass through.
+        std::vector<double> applied;
         bool levelSet = false;
+        double lfeZ1 = 0, lfeZ2 = 0; // LFE send low pass
     };
     std::vector<TrackState> trackStates;
     PeakLimiter peakLimiter;
     double masterApplied = 1.0;
     bool metering = false;
     std::vector<float> peaks; // per track L, R of the last render (metering)
+    std::vector<float> converted; // Mixer::render with outputChannels != channels: the mix before the conversion
     int meterBlock = 0;            // setMeterBlock
     std::vector<float> blockPeaks; // peaks per stretch of meterBlock samples of the last render
     int chunkWarm = -1;            // setChunked: >= 0 = a jump keeps filters and processors
     int64_t expected = INT64_MIN; // next render position
     int latency = 0;              // master (limiter), compensated
-    std::vector<float> mix[kChannels], track[kChannels], voice[kChannels], scratch;
+    std::vector<std::vector<float>> mix, track, voice;
+    std::vector<float> scratch;
 
-    Impl(const Options& o, FrameRate fps) : opt(o)
+    Impl(const Options& o, FrameRate fps, int channels) : opt(o), nch(ChannelLayout::valid(channels))
     {
         clock = {o.rate, fps};
+        mix.resize(size_t(nch));
+        track.resize(size_t(nch));
+        voice.resize(size_t(nch));
+        if (nch > 2) lfeLowPass.design(o.rate);
     }
+
+    // The gains a track's fader, pan and mute ask for (TrackState::applied)
+    std::vector<double> trackTarget(const TrackPlan& tp) const;
+    void open(Voice& v, VoiceState& st);
 
     int fileLength(const QString& path);
     void plan(const Timeline& tl);
@@ -208,7 +245,7 @@ int Mixer::Impl::fileLength(const QString& path)
     if (opt.fileLength)
         if (const int n = opt.fileLength(path); n > 0) return n;
     if (const auto it = lengths.constFind(path); it != lengths.cend()) return *it;
-    auto r = Reader::open(path, 0, Reader::Options{opt.rate, kChannels});
+    auto r = Reader::open(path, 0, Reader::Options{opt.rate, 2});
     const int n = r ? int(std::ceil(double(r->info().end) * clock.fps.fps() / opt.rate)) : 0;
     lengths.insert(path, n);
     return n;
@@ -241,6 +278,9 @@ void Mixer::Impl::applyMixValues(const Timeline& tl)
         p.dynamics = t.dynamics;
         p.gain = t.volumeDb == 0.0 ? 1.0 : dbToGain(t.volumeDb);
         p.pan = t.pan / 100.0;
+        p.panDepth = t.panDepth;
+        p.panCenter = t.panCenter;
+        p.lfeDb = t.lfeDb;
     }
     masterGain = tl.masterVolumeDb == 0.0 ? 1.0 : dbToGain(tl.masterVolumeDb);
     limiterDb = std::clamp(tl.masterLimiterDb, -40.0, 0.0);
@@ -261,7 +301,8 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
     // Hard cuts get a short ramp against the click: clip edges without a fade
     // that do not continue seamlessly (split clip)
     auto continues = [](const Clip& a, const Clip& b) {
-        return !a.mediaPath.isEmpty() && a.mediaPath == b.mediaPath && a.audioStream == b.audioStream && a.enabled
+        return !a.mediaPath.isEmpty() && a.mediaPath == b.mediaPath && a.audioStream == b.audioStream
+            && a.sourceChannels == b.sourceChannels && a.enabled
             && b.enabled && b.start == a.end() && b.in == a.out + 1 && a.speed == b.speed && !a.reverse && !b.reverse
             && a.ramp.isEmpty() && b.ramp.isEmpty();
     };
@@ -423,6 +464,7 @@ void Mixer::Impl::restart()
         }
         ts.firstVoice = 0;
         ts.levelSet = false;
+        ts.lfeZ1 = ts.lfeZ2 = 0;
         ts.eq = Equalizer{};
         ts.eq.setEq(tracks[i].eq);
         ts.comp = Compressor{};
@@ -430,7 +472,7 @@ void Mixer::Impl::restart()
     }
     peakLimiter = PeakLimiter{};
     peakLimiter.setCeilingDb(limiterDb);
-    peakLimiter.prepare(kChannels, opt.rate);
+    peakLimiter.prepare(nch, opt.rate);
     latency = limiter ? peakLimiter.latency() : 0;
     masterApplied = masterGain;
 }
@@ -446,30 +488,44 @@ void Mixer::Impl::continueChunk()
     }
 }
 
+void Mixer::Impl::open(Voice& v, VoiceState& st)
+{
+    if (st.opened) return;
+    st.opened = true;
+    st.channels = nch;
+    if (v.sequence) {
+        auto sub = std::make_unique<Impl>(opt, clock.fps, nch); // a nested sequence mixes in the same format
+        sub->outCh = nch;
+        sub->nested = nested;
+        sub->stats = stats;
+        sub->depth = depth + 1;
+        sub->stack = stack;
+        sub->stack.insert(v.clip.sequenceId);
+        sub->plan(v.multicam ? v.angleContent : *v.sequence);
+        st.sub = std::move(sub);
+    } else {
+        QString error;
+        // Stereo: as always. 5.1/7.1: a source of up to two channels stays stereo (the track's panner places it),
+        // a wider one is read in the mix's format. Routed clips read the picked channels as stereo.
+        Reader::Options ro{opt.rate, nch};
+        ro.stereoBelow = nch > 2;
+        ro.pick.assign(v.clip.sourceChannels.begin(), v.clip.sourceChannels.end());
+        st.reader = Reader::open(v.path, v.stream, ro, &error);
+        if (st.reader) ++stats->readersOpened;
+        else ++stats->missing;
+        if (st.reader) st.channels = std::min(nch, st.reader->channels());
+        if (st.reader && v.retimed)
+            st.retimer = std::make_unique<Retimer>(std::move(st.reader), v.clip, v.fileFrames,
+                                                   double(opt.rate) / clock.fps.fps());
+    }
+}
+
 bool Mixer::Impl::readSource(Voice& v, VoiceState& st, int64_t u, int count, float* const* out)
 {
-    if (!st.opened) {
-        st.opened = true;
-        if (v.sequence) {
-            auto sub = std::make_unique<Impl>(opt, clock.fps);
-            sub->nested = nested;
-            sub->stats = stats;
-            sub->depth = depth + 1;
-            sub->stack = stack;
-            sub->stack.insert(v.clip.sequenceId);
-            sub->plan(v.multicam ? v.angleContent : *v.sequence);
-            st.sub = std::move(sub);
-        } else {
-            QString error;
-            st.reader = Reader::open(v.path, v.stream, Reader::Options{opt.rate, kChannels}, &error);
-            if (st.reader) ++stats->readersOpened;
-            else ++stats->missing;
-            if (st.reader && v.retimed)
-                st.retimer = std::make_unique<Retimer>(std::move(st.reader), v.clip, v.fileFrames,
-                                                       double(opt.rate) / clock.fps.fps());
-        }
-    }
+    open(v, st);
     const int64_t pos = u + v.sourceOffset;
+    // Channels the source does not give (a stereo source in a 5.1 mix) are silent
+    for (int c = st.channels; c < nch; ++c) std::fill(out[c], out[c] + count, 0.f);
     if (st.sub) {
         st.sub->chunkWarm = chunkWarm;
         st.sub->render(pos, count, out);
@@ -480,7 +536,7 @@ bool Mixer::Impl::readSource(Voice& v, VoiceState& st, int64_t u, int count, flo
         return true;
     }
     if (st.reader) return st.reader->read(pos, count, out);
-    for (int c = 0; c < kChannels; ++c) std::fill(out[c], out[c] + count, 0.f);
+    for (int c = 0; c < nch; ++c) std::fill(out[c], out[c] + count, 0.f);
     return false;
 }
 
@@ -489,6 +545,8 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
 {
     const bool fresh = u != st.nextU;
     st.nextU = u + count;
+    open(v, st);
+    const int vch = st.channels; // channels the voice has (the rest of the mix's stay silent)
     if (v.denoise || v.clean) {
         // Backwards in chunks (setChunked): the processors keep what they learnt from the neighbouring chunk
         const bool have = (!v.denoise || !st.denoisers.empty()) && (!v.clean || st.cleaner);
@@ -496,7 +554,7 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
         if ((fresh && !keep) || !have) {
             st.denoisers.clear();
             st.cleaner.reset();
-            for (int c = 0; v.denoise && c < kChannels; ++c) {
+            for (int c = 0; v.denoise && c < vch; ++c) {
                 st.denoisers.push_back(std::make_unique<Denoise::Processor>(opt.rate));
                 st.denoisers.back()->setParams(v.denoiseReduction, v.denoiseFloor, v.denoiseTrack);
             }
@@ -519,11 +577,11 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
             stats->warmed += warm + lead;
             for (int64_t p = u - warm, end = u + lead; p < end;) {
                 const int n = int(std::min<int64_t>(end - p, p < v.uStart ? v.uStart - p : 4096));
-                scratch.resize(size_t(n) * kChannels);
-                float* pre[kChannels];
-                for (int c = 0; c < kChannels; ++c) pre[c] = scratch.data() + size_t(c) * n;
+                scratch.resize(size_t(n) * size_t(nch));
+                float* pre[kMaxChannels];
+                for (int c = 0; c < nch; ++c) pre[c] = scratch.data() + size_t(c) * n;
                 if (p < v.uStart)
-                    std::fill(scratch.begin(), scratch.begin() + ptrdiff_t(n) * kChannels, 0.f);
+                    std::fill(scratch.begin(), scratch.begin() + ptrdiff_t(n) * nch, 0.f);
                 else
                     readSource(v, st, p, n, pre);
                 process(pre, n);
@@ -552,7 +610,11 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
                     *l = float(*l * g);
                     *r = float(*r * g);
                 }
-            } else { // balance: the far side is turned down linearly
+                for (int c = 2; c < vch; ++c) { // the further channels of a 5.1/7.1 source
+                    float* x = out[c] + (a - u);
+                    for (int64_t i = a; i < b; ++i, ++x) *x = float(*x * (g0 + step * double(i - f0)));
+                }
+            } else { // balance of the front pair: the far side is turned down linearly
                 for (int64_t i = a; i < b; ++i, ++l, ++r) {
                     const double w = g0 + step * double(i - f0);
                     *l = float(*l * (w < 0 ? 1.0 : std::max(0.0, 1.0 - w)));
@@ -565,35 +627,51 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
     auto ramp = [&](int64_t from, int len, bool in) {
         for (int64_t i = std::max(from, u); i < std::min(from + len, u + count); ++i) {
             const float g = in ? float(i - from) / len : float(from + len - 1 - i) / len;
-            for (int c = 0; c < kChannels; ++c) out[c][i - u] *= g;
+            for (int c = 0; c < vch; ++c) out[c][i - u] *= g;
         }
     };
     if (v.declickIn >= 0) ramp(v.declickIn, v.declickInLen, true);
     if (v.declickOut >= 0) ramp(v.declickOut - v.declickOutLen, v.declickOutLen, false);
 }
 
+std::vector<double> Mixer::Impl::trackTarget(const TrackPlan& tp) const
+{
+    if (nch == 2) { // fader, then balance
+        const double side[2] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
+                                tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
+        return {tp.audible ? tp.gain * side[0] : 0.0, tp.audible ? tp.gain * side[1] : 0.0};
+    }
+    const ChannelLayout::PanGains g = ChannelLayout::surroundPan(nch, tp.pan * 100.0, tp.panDepth, tp.panCenter, tp.lfeDb);
+    const double gain = tp.audible ? tp.gain : 0.0;
+    std::vector<double> t(size_t(nch) * 2 + 2);
+    for (int o = 0; o < nch; ++o)
+        for (int i = 0; i < 2; ++i) t[size_t(o) * 2 + size_t(i)] = gain * g.m[size_t(o)][size_t(i)];
+    t[size_t(nch) * 2] = gain * g.lfe;
+    t[size_t(nch) * 2 + 1] = gain; // channels 2.. of the track pass through
+    return t;
+}
+
 // Track and master mix of [pos, pos + count) into `mix`, before the master limiter
 void Mixer::Impl::renderMix(int64_t pos, int count)
 {
-    for (auto& m : mix) std::fill(m.begin(), m.begin() + count, 0.f);
+    for (int c = 0; c < nch; ++c) std::fill(mix[size_t(c)].begin(), mix[size_t(c)].begin() + count, 0.f);
     const size_t stride = tracks.size() * 2;
     if (metering && meterBlock > 0) blockPeaks.assign(size_t((count + meterBlock - 1) / meterBlock) * stride, 0.f);
     const int64_t end = pos + count;
+    // Meters: the left speakers to L, the right ones to R, centre and LFE to both
+    const auto meterSide = [this](int c) { return nch == 2 ? c : c == ChannelLayout::FC || c == ChannelLayout::LFE ? -1 : c % 2; };
     for (size_t ti = 0; ti < tracks.size(); ++ti) {
         TrackPlan& tp = tracks[ti];
         TrackState& ts = trackStates[ti];
-        // Fader, then balance; a changed value glides (updateMix)
-        const double side[kChannels] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
-                                        tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
-        double target[kChannels];
-        for (int c = 0; c < kChannels; ++c) target[c] = tp.audible ? tp.gain * side[c] : 0.0;
-        if (!ts.levelSet) std::copy(target, target + kChannels, ts.applied);
+        // Fader, then balance (5.1/7.1: the surround panner); a changed value glides (updateMix)
+        const std::vector<double> target = trackTarget(tp);
+        if (!ts.levelSet) ts.applied = target;
         ts.levelSet = true;
-        const bool glide = !std::equal(target, target + kChannels, ts.applied);
+        const bool glide = target != ts.applied;
         float* peak = metering ? peaks.data() + 2 * ti : nullptr;
         if (peak) peak[0] = peak[1] = 0.f;
         if (!tp.audible && !glide) continue;
-        for (auto& t : track) std::fill(t.begin(), t.begin() + count, 0.f);
+        for (int c = 0; c < nch; ++c) std::fill(track[size_t(c)].begin(), track[size_t(c)].begin() + count, 0.f);
         while (ts.firstVoice < tp.voices.size() && tp.voices[ts.firstVoice].tEnd <= pos) {
             ts.voices[ts.firstVoice] = {}; // done: close its reader
             ++ts.firstVoice;
@@ -604,73 +682,123 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
             if (v.tStart() >= end) break;
             const int64_t a = std::max(pos, v.tStart()), b = std::min(end, v.tEnd);
             if (b <= a) continue;
-            float* out[kChannels];
-            for (int c = 0; c < kChannels; ++c) out[c] = voice[c].data();
+            float* out[kMaxChannels];
+            for (int c = 0; c < nch; ++c) out[c] = voice[size_t(c)].data();
             renderVoice(v, ts.voices[vi], a - v.shift, int(b - a), out);
-            for (int c = 0; c < kChannels; ++c)
-                for (int64_t i = 0; i < b - a; ++i) track[c][size_t(a - pos + i)] += out[c][i];
+            for (int c = 0; c < nch; ++c)
+                for (int64_t i = 0; i < b - a; ++i) track[size_t(c)][size_t(a - pos + i)] += out[c][i];
             any = true;
         }
-        // EQ and compressor run on silence too (their tails)
-        if (!any && !tp.eq.on && !tp.dynamics.on) {
-            std::copy(target, target + kChannels, ts.applied);
+        // EQ and compressor run on silence too (their tails), so does the LFE send's low pass
+        if (!any && !tp.eq.on && !tp.dynamics.on && (nch == 2 || (ts.lfeZ1 == 0 && ts.lfeZ2 == 0))) {
+            ts.applied = target;
             continue;
         }
         if (tp.eq.on || tp.dynamics.on) {
-            scratch.resize(size_t(count) * kChannels);
+            scratch.resize(size_t(count) * size_t(nch));
             float* planar = scratch.data();
-            for (int c = 0; c < kChannels; ++c) std::copy(track[c].begin(), track[c].begin() + count, planar + size_t(c) * count);
-            if (tp.eq.on) ts.eq.processPlanar(planar, count, kChannels, opt.rate);
-            if (tp.dynamics.on) ts.comp.processPlanar(planar, count, kChannels, opt.rate);
-            for (int c = 0; c < kChannels; ++c) std::copy(planar + size_t(c) * count, planar + size_t(c + 1) * count, track[c].begin());
+            for (int c = 0; c < nch; ++c)
+                std::copy(track[size_t(c)].begin(), track[size_t(c)].begin() + count, planar + size_t(c) * count);
+            if (tp.eq.on) ts.eq.processPlanar(planar, count, nch, opt.rate);
+            if (tp.dynamics.on) ts.comp.processPlanar(planar, count, nch, opt.rate);
+            for (int c = 0; c < nch; ++c)
+                std::copy(planar + size_t(c) * count, planar + size_t(c + 1) * count, track[size_t(c)].begin());
         }
-        if (!glide) { // fader, then pan (each rounds to float)
-            for (int c = 0; c < kChannels; ++c)
-                for (int i = 0; i < count; ++i) {
-                    float x = track[c][size_t(i)];
-                    if (tp.gain != 1.0) x = float(x * tp.gain);
-                    if (tp.pan != 0.0) x = float(x * side[c]);
-                    track[c][size_t(i)] = x;
+        if (nch == 2) {
+            const double side[2] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
+                                    tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
+            if (!glide) { // fader, then pan (each rounds to float)
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < count; ++i) {
+                        float x = track[size_t(c)][size_t(i)];
+                        if (tp.gain != 1.0) x = float(x * tp.gain);
+                        if (tp.pan != 0.0) x = float(x * side[c]);
+                        track[size_t(c)][size_t(i)] = x;
+                    }
+            } else {
+                const int len = std::min(count, kGlide);
+                for (int c = 0; c < 2; ++c) {
+                    const double from = ts.applied[size_t(c)], to = target[size_t(c)];
+                    for (int i = 0; i < count; ++i) {
+                        const double g = i < len ? from + (to - from) * (i + 1) / len : to;
+                        track[size_t(c)][size_t(i)] = float(track[size_t(c)][size_t(i)] * g);
+                    }
+                    ts.applied[size_t(c)] = to;
                 }
+            }
         } else {
-            const int len = std::min(count, kGlide);
-            for (int c = 0; c < kChannels; ++c) {
-                const double from = ts.applied[c], to = target[c];
-                for (int i = 0; i < count; ++i) {
-                    const double g = i < len ? from + (to - from) * (i + 1) / len : to;
-                    track[c][size_t(i)] = float(track[c][size_t(i)] * g);
+            // Surround panner: the front pair into the speakers, the LFE send through its low pass, channels 2.. of
+            // the track (a 5.1/7.1 source's centre, LFE, surrounds) with the fader only
+            const int len = glide ? std::min(count, kGlide) : 0;
+            const size_t n = target.size(), lfeAt = size_t(nch) * 2, passAt = lfeAt + 1;
+            std::vector<double> g = target;
+            const LowPass& lp = lfeLowPass;
+            for (int i = 0; i < count; ++i) {
+                if (i < len)
+                    for (size_t k = 0; k < n; ++k) g[k] = ts.applied[k] + (target[k] - ts.applied[k]) * (i + 1) / len;
+                else if (i == len && len > 0)
+                    g = target;
+                const double l = track[0][size_t(i)], r = track[1][size_t(i)];
+                double y[kMaxChannels];
+                for (int o = 0; o < nch; ++o) {
+                    y[o] = g[size_t(o) * 2] * l + g[size_t(o) * 2 + 1] * r;
+                    if (o >= 2) y[o] += g[passAt] * track[size_t(o)][size_t(i)];
                 }
-                ts.applied[c] = to;
+                // LFE send (direct form II transposed)
+                const double x = g[lfeAt] * (l + r); // surroundPan's lfe holds the 1/2 of (L + R) / 2
+                const double lfe = lp.b0 * x + ts.lfeZ1;
+                ts.lfeZ1 = lp.b1 * x - lp.a1 * lfe + ts.lfeZ2;
+                ts.lfeZ2 = lp.b2 * x - lp.a2 * lfe;
+                if (std::abs(ts.lfeZ1) < 1e-25 && std::abs(ts.lfeZ2) < 1e-25) ts.lfeZ1 = ts.lfeZ2 = 0; // no denormals
+                y[ChannelLayout::LFE] += lfe;
+                for (int o = 0; o < nch; ++o) track[size_t(o)][size_t(i)] = float(y[o]);
+            }
+            ts.applied = target;
+        }
+        for (int c = 0; c < nch; ++c) {
+            const int side = meterSide(c);
+            for (int i = 0; i < count; ++i) {
+                mix[size_t(c)][size_t(i)] += track[size_t(c)][size_t(i)];
+                if (peak) {
+                    const float x = std::abs(track[size_t(c)][size_t(i)]);
+                    if (side != 1) peak[0] = std::max(peak[0], x);
+                    if (side != 0) peak[1] = std::max(peak[1], x);
+                }
             }
         }
-        for (int c = 0; c < kChannels; ++c)
-            for (int i = 0; i < count; ++i) {
-                mix[c][size_t(i)] += track[c][size_t(i)];
-                if (peak) peak[c] = std::max(peak[c], std::abs(track[c][size_t(i)]));
-            }
         if (peak && meterBlock > 0)
             for (int b = 0, from = 0; from < count; ++b, from += meterBlock)
-                for (int c = 0; c < kChannels; ++c) {
-                    float& q = blockPeaks[size_t(b) * stride + 2 * ti + size_t(c)];
-                    for (int i = from, to = std::min(count, from + meterBlock); i < to; ++i)
-                        q = std::max(q, std::abs(track[c][size_t(i)]));
+                for (int c = 0; c < nch; ++c) {
+                    const int side = meterSide(c);
+                    for (int sideIndex = 0; sideIndex < 2; ++sideIndex) {
+                        if (side == 1 - sideIndex) continue;
+                        float& q = blockPeaks[size_t(b) * stride + 2 * ti + size_t(sideIndex)];
+                        for (int i = from, to = std::min(count, from + meterBlock); i < to; ++i)
+                            q = std::max(q, std::abs(track[size_t(c)][size_t(i)]));
+                    }
                 }
     }
     if (masterGain != masterApplied) {
         const int len = std::min(count, kGlide);
-        for (auto& m : mix)
+        for (int c = 0; c < nch; ++c) {
+            std::vector<float>& m = mix[size_t(c)];
             for (int i = 0; i < count; ++i)
                 m[size_t(i)] = float(m[size_t(i)] * (i < len ? masterApplied + (masterGain - masterApplied) * (i + 1) / len : masterGain));
+        }
         masterApplied = masterGain;
     } else if (masterGain != 1.0) {
-        for (auto& m : mix)
+        for (int c = 0; c < nch; ++c) {
+            std::vector<float>& m = mix[size_t(c)];
             for (int i = 0; i < count; ++i) m[size_t(i)] = float(m[size_t(i)] * masterGain);
+        }
     }
 }
 
 Mixer::Mixer(const Timeline& timeline, FrameRate fps, const Options& options)
-    : d(std::make_unique<Impl>(options, fps))
+    : d(std::make_unique<Impl>(options, fps, options.channels > 0 ? options.channels : timeline.audioChannels))
 {
+    d->outCh = options.outputChannels > 0 ? std::clamp(options.outputChannels, 1, kMaxChannels) : d->nch;
+    if (d->outCh != 1) d->outCh = ChannelLayout::valid(d->outCh);
     d->nested = timeline.nested;
     d->stats = &d->ownStats;
     d->plan(timeline);
@@ -679,6 +807,9 @@ Mixer::Mixer(const Timeline& timeline, FrameRate fps, const Options& options)
 Mixer::~Mixer() = default;
 
 int Mixer::rate() const { return d->opt.rate; }
+int Mixer::channels() const { return d->nch; }
+int Mixer::outputChannels() const { return d->outCh; }
+const std::vector<float>& Mixer::lastMix() const { return d->converted; }
 int64_t Mixer::length() const { return d->endSample; }
 int64_t Mixer::frameStart(int64_t frame) const { return d->clock.start(frame); }
 int64_t Mixer::frameAt(int64_t sample) const { return d->clock.frameAt(sample); }
@@ -700,7 +831,38 @@ std::vector<std::pair<int64_t, int64_t>> Mixer::soundSpans() const
     return merged;
 }
 
-void Mixer::render(int64_t pos, int count, float* const* out) { d->render(pos, count, out); }
+void Mixer::render(int64_t pos, int count, float* const* out)
+{
+    Impl& m = *d;
+    if (m.outCh == m.nch) {
+        m.render(pos, count, out);
+        return;
+    }
+    // Another format than the mix (monitor downmix, export): mixed in the mix's format, then converted
+    m.converted.resize(size_t(std::max(count, 0)) * size_t(m.nch));
+    float* in[kMaxChannels];
+    for (int c = 0; c < m.nch; ++c) in[c] = m.converted.data() + size_t(c) * size_t(count);
+    m.render(pos, count, in);
+    if (count <= 0) return;
+    if (m.outCh == 1) { // mono: the mean of the stereo downmix
+        const ChannelLayout::Matrix k = ChannelLayout::conversion(m.nch, 2);
+        for (int i = 0; i < count; ++i) {
+            double sum = 0;
+            for (int o = 0; o < 2; ++o)
+                for (int c = 0; c < m.nch; ++c) sum += k[size_t(o)][size_t(c)] * in[c][i];
+            out[0][i] = float(0.5 * sum);
+        }
+        return;
+    }
+    const ChannelLayout::Matrix k = ChannelLayout::conversion(m.nch, m.outCh);
+    for (int o = 0; o < m.outCh; ++o)
+        for (int i = 0; i < count; ++i) {
+            double y = 0;
+            for (int c = 0; c < m.nch; ++c)
+                if (const double g = k[size_t(o)][size_t(c)]; g != 0.0) y += g * in[c][i];
+            out[o][i] = float(y);
+        }
+}
 
 void Mixer::setMetering(bool on)
 {
@@ -747,17 +909,19 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
     }
     m.expected = pos + count;
     const size_t need = size_t(std::max(count, m.latency));
-    for (int c = 0; c < kChannels; ++c) {
-        for (auto* v : {&m.mix[c], &m.track[c], &m.voice[c]})
+    const int nch = m.nch;
+    for (int c = 0; c < nch; ++c) {
+        for (auto* v : {&m.mix[size_t(c)], &m.track[size_t(c)], &m.voice[size_t(c)]})
             if (v->size() < need) v->resize(need);
     }
     auto limit = [&](int n) {
         if (!m.limiter) return;
-        m.scratch.resize(size_t(n) * kChannels);
-        for (int c = 0; c < kChannels; ++c) std::copy(m.mix[c].begin(), m.mix[c].begin() + n, m.scratch.begin() + ptrdiff_t(c) * n);
-        m.peakLimiter.processPlanar(m.scratch.data(), n, kChannels, m.opt.rate);
-        for (int c = 0; c < kChannels; ++c)
-            std::copy(m.scratch.begin() + ptrdiff_t(c) * n, m.scratch.begin() + ptrdiff_t(c + 1) * n, m.mix[c].begin());
+        m.scratch.resize(size_t(n) * size_t(nch));
+        for (int c = 0; c < nch; ++c)
+            std::copy(m.mix[size_t(c)].begin(), m.mix[size_t(c)].begin() + n, m.scratch.begin() + ptrdiff_t(c) * n);
+        m.peakLimiter.processPlanar(m.scratch.data(), n, nch, m.opt.rate);
+        for (int c = 0; c < nch; ++c)
+            std::copy(m.scratch.begin() + ptrdiff_t(c) * n, m.scratch.begin() + ptrdiff_t(c + 1) * n, m.mix[size_t(c)].begin());
     };
     // The limiter's delay is compensated by mixing that far ahead (primed on a fresh start)
     if (restarted && m.latency > 0) {
@@ -766,7 +930,7 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
     }
     m.renderMix(pos + m.latency, count);
     limit(count);
-    for (int c = 0; c < kChannels; ++c) std::copy(m.mix[c].begin(), m.mix[c].begin() + count, out[c]);
+    for (int c = 0; c < nch; ++c) std::copy(m.mix[size_t(c)].begin(), m.mix[size_t(c)].begin() + count, out[c]);
 }
 
 } // namespace Audio

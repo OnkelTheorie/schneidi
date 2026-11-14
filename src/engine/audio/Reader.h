@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace Audio {
 
@@ -33,7 +34,14 @@ class Reader {
 public:
     struct Options {
         int rate = 48000;
-        int channels = 0; // 0 = like the source; otherwise remixed (FFmpeg's standard matrix)
+        int channels = 0; // 0 = like the source; otherwise remixed (FFmpeg's standard matrix; 6/8 = 5.1/7.1 in the
+                          // order of core/ChannelLayout.h)
+        // With channels 6 or 8 (a surround mix): a source of one or two channels gives stereo instead (the mixer
+        // pans it into the surround mix); channels() says what was chosen
+        bool stereoBelow = false;
+        // Routing (Clip::sourceChannels): only these channels of the stream (0-based, at most two), always stereo out:
+        // two = left and right, one = in the middle (-3 dB each side). A channel the stream lacks is silent.
+        std::vector<int> pick;
     };
 
     // `stream` = n-th audio stream of the file (Clip::audioStream, 0 = first). nullptr if there is none.

@@ -54,15 +54,15 @@ std::vector<std::pair<int, int>> soundFrames(const Audio::Mixer& mixer, int from
     return out;
 }
 
-// Own engine: the mixer's frames [from, to) one by one into sink (stereo). false = canceled.
+// Own engine: the mixer's frames [from, to) one by one into sink (Mixer::outputChannels). false = canceled.
 // skipSilence: frames without any sound (see soundFrames) are not mixed but go to sink as pcm == nullptr - a clip
 // far out on the timeline must not make an analysis mix months of silence.
 bool renderFrames(Audio::Mixer& mixer, int from, int to, const Progress& progress, const Sink& sink,
                   bool skipSilence = false)
 {
-    constexpr int ch = Audio::Mixer::kChannels;
+    const int ch = mixer.outputChannels();
     std::vector<float> buf;
-    float* out[ch];
+    float* out[Audio::Mixer::kMaxChannels];
     const std::vector<std::pair<int, int>> parts =
         skipSilence ? soundFrames(mixer, from, to) : std::vector<std::pair<int, int>>{{from, to}};
     size_t part = 0;
@@ -125,12 +125,14 @@ bool decode(const ProjectFormat& format, const Clip& clip, const Progress& progr
 }
 
 // The mix of timeline frames [from, to) as it is exported, frame by frame. false = could not mix or canceled.
-// Frames without sound reach sink as pcm == nullptr (renderFrames skipSilence).
+// Frames without sound reach sink as pcm == nullptr (renderFrames skipSilence). channels: 0 = the mix's own (all
+// channels of a 5.1/7.1 mix: loudness, peaks), 2 = stereo (a surround mix downmixed).
 bool mix(const ProjectFormat& format, const Timeline& timeline, int from, int to, const Progress& progress,
-         const Sink& sink)
+         const Sink& sink, int channels = 0)
 {
     Audio::Mixer::Options o;
     o.rate = kRate;
+    o.outputChannels = channels;
     Audio::Mixer mixer(timeline, format.rate, o);
     return renderFrames(mixer, from, to, progress, sink, true);
 }
@@ -284,7 +286,7 @@ bool clipSound(const ProjectFormat& format, const Clip& clip, const SoundSink& s
 }
 
 bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int from, int to, const SoundSink& sink,
-                   const std::function<bool(double)>& progress)
+                   const std::function<bool(double)>& progress, int channels)
 {
     // Skipped silence is real silence here (nullptr means "could not be decoded" to these sinks)
     std::vector<float> zeros;
@@ -295,7 +297,7 @@ bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int fr
         }
         sink(pcm, samples, channels, rate);
     };
-    return to > from && mix(format, timeline, from, to, progress, silent);
+    return to > from && mix(format, timeline, from, to, progress, silent, channels);
 }
 
 std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,

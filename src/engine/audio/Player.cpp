@@ -433,6 +433,7 @@ void Player::Impl::takeTimeline(Feed& f, const Timeline& tl, FrameRate fps, bool
     }
     Mixer::Options o;
     o.rate = opt.rate;
+    o.outputChannels = kChannels; // the device hears stereo: a 5.1/7.1 mix as its ITU downmix
     o.fileLength = [&f, fps, rate = opt.rate](const QString& path) {
         if (const int n = f.project.value(path); n > 0) return n;
         const QString key = QString("%1/%2:%3").arg(fps.num).arg(fps.den).arg(path);
@@ -574,9 +575,19 @@ void Player::Impl::produce(Feed& f, float* const* out, int n)
     }
     if (SharedLoudness* live = loudness.load(std::memory_order_relaxed); live && live->active && f.speed == 1.0) {
         std::lock_guard<std::mutex> g(live->mutex);
-        auto sample = [&](int c, int i) { return out[c][i]; };
-        live->meter.add(n, kChannels, opt.rate, sample);
-        live->truePeak.add(n, kChannels, opt.rate, sample);
+        // A 5.1/7.1 mix is measured over all its channels (as the export writes it), not its downmix
+        static const std::vector<float> kNone;
+        const std::vector<float>& full = f.mixer ? f.mixer->lastMix() : kNone;
+        const int ch = f.mixer ? f.mixer->channels() : kChannels;
+        if (ch > kChannels && full.size() == size_t(n) * size_t(ch)) {
+            auto sample = [&](int c, int i) { return full[size_t(c) * size_t(n) + size_t(i)]; };
+            live->meter.add(n, ch, opt.rate, sample);
+            live->truePeak.add(n, ch, opt.rate, sample);
+        } else {
+            auto sample = [&](int c, int i) { return out[c][i]; };
+            live->meter.add(n, kChannels, opt.rate, sample);
+            live->truePeak.add(n, kChannels, opt.rate, sample);
+        }
     }
     f.master.resetPeaks();
     f.master.add(n, kChannels, opt.rate, [&](int c, int i) { return out[c][i]; });

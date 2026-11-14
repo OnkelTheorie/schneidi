@@ -11,6 +11,13 @@
 // sub-frame offset; per track: EQ -> compressor -> fader/pan, solo/mute; master: fader -> limiter. Latency of noise
 // reduction, voice cleaning and limiter is compensated (the sound stays where it is in the timeline).
 //
+// Channels (0.23): the mix runs in the timeline's format (Timeline::audioChannels = the project's: stereo, 5.1 or 7.1,
+// order in core/ChannelLayout.h). Stereo is the mix it always was. In 5.1/7.1 a source of one or two channels is read
+// as stereo and placed by the track's surround panner (ChannelLayout::surroundPan: pan, depth, centre, LFE send);
+// a 5.1/7.1 source is read in the mix's format and its centre, LFE and surrounds pass straight through. A clip can
+// play only some channels of its stream (Clip::sourceChannels: routing). render() writes the mix's channels, or with
+// Options::outputChannels another count (2 = the ITU downmix the monitor hears).
+//
 // Not thread-safe: one mixer per user. render() is meant to be called with increasing positions; any jump starts the
 // state (filters, readers) over at the new position.
 
@@ -27,10 +34,16 @@ namespace Audio {
 
 class Mixer {
 public:
-    static constexpr int kChannels = 2; // the mix is stereo; sources are mixed down or spread on reading
+    static constexpr int kChannels = 2;    // a stereo mix (the default format)
+    static constexpr int kMaxChannels = 8; // 7.1
 
     struct Options {
         int rate = 48000;
+        // Channels of the mix: 0 = the timeline's (Timeline::audioChannels); 2, 6 (5.1) or 8 (7.1)
+        int channels = 0;
+        // Channels render() writes: 0 = the mix's; else the mix converted (ChannelLayout::conversion; 2 = stereo
+        // downmix after ITU-R BS.775 for the monitor, 6/8 from a stereo mix = front pair only)
+        int outputChannels = 0;
         // Length of a media file in frames of the project rate (the length the project knows, needed for
         // transition handles and reversed clips); unset or <= 0 = taken from the file
         std::function<int(const QString& path)> fileLength;
@@ -43,6 +56,9 @@ public:
     ~Mixer();
 
     int rate() const;
+    // Channels of the mix (2, 6, 8; ChannelLayout) and of what render() writes. UI meters and the export ask here.
+    int channels() const;
+    int outputChannels() const;
     // Samples up to the end of the timeline's content
     int64_t length() const;
     // First sample of timeline frame f, and the frame a sample belongs to
@@ -54,15 +70,20 @@ public:
     // and limiter (well under a second). Analyses skip the rest (a clip far out on the timeline, empty stretches).
     std::vector<std::pair<int64_t, int64_t>> soundSpans() const;
 
-    // Mixes [pos, pos + count) into out[0..kChannels) (planar). Positions outside the timeline give silence.
+    // Mixes [pos, pos + count) into out[0..outputChannels()) (planar). Positions outside the timeline give silence.
     void render(int64_t pos, int count, float* const* out);
+    // When outputChannels() differs from channels(): the mix of the last render() in the mix's own format, before the
+    // conversion (planar, channel c at [c * count]); empty otherwise. The monitor plays the stereo downmix but measures
+    // loudness and true peak over all channels of the mix (what the export writes).
+    const std::vector<float>& lastMix() const;
 
     // Live (preview): takes over what the mixer panel changes – track fader, pan, mute/solo, EQ, compressor, master
     // fader, limiter ceiling – without starting over; gains glide to the new value within the next render().
     // false = the timeline differs in more than that (build a new mixer).
     bool updateMix(const Timeline& timeline);
     // Level meters (preview): peak of the last render() per audio track after fader/pan, L and R (linear, 0 =
-    // silent or muted). Off by default.
+    // silent or muted); in 5.1/7.1 L = the loudest of the left speakers, R of the right ones, centre and LFE count
+    // to both. Off by default.
     void setMetering(bool on);
     const std::vector<float>& trackPeaks() const;
     // The same per stretch of `block` samples of the last render() (0 = off, the default): stretch b, track t,

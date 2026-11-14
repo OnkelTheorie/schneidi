@@ -2,6 +2,7 @@
 // schneidi-cli edit operations on timelines (sequences) and compound clips, like the Media Pool in the app
 #include "cli/CommandsDetail.h"
 
+#include "core/ChannelLayout.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 
@@ -156,6 +157,8 @@ void opFormat(Session& s, const QJsonObject& op)
 {
     if (op.contains("timeline")) {
         if (op.contains("fps")) fail("BAD_ARGUMENT", "the frame rate belongs to the project: leave out 'timeline' for fps");
+        if (op.contains("channels"))
+            fail("BAD_ARGUMENT", "the sound channels belong to the project: leave out 'timeline' for channels");
         const int id = s.sequenceOf(op.value("timeline"));
         bool useProject = false;
         const QSize size = sizeOf(op, &useProject, s.project.sequenceFormat(id).size());
@@ -205,6 +208,11 @@ void opFormat(Session& s, const QJsonObject& op)
                      .arg(f.height)
                      .arg(others.join(", ")));
     }
+    if (op.contains("channels")) {
+        const int n = ChannelLayout::parse(op.value("channels").toString());
+        if (n == 0) fail("BAD_ARGUMENT", "channels must be stereo, 5.1 or 7.1");
+        f.audioChannels = n;
+    }
     const FrameRate oldRate = s.project.format().rate;
     s.project.setFormat(f);
     if (f.rate == oldRate) return;
@@ -243,16 +251,22 @@ void addTimelineOps(QVector<OpDef>& ops)
         << OpDef{"place_timeline", "{op:'place_timeline', timeline, at?, track?}",
                  "put another timeline (or compound clip) as one clip into this one (default: at the end)", {},
                  opPlaceTimeline}
-        << OpDef{"format", "{op:'format', timeline?, aspect?, width?, height?, fps?, confirm?}",
+        << OpDef{"format", "{op:'format', timeline?, aspect?, width?, height?, fps?, channels?, confirm?}",
                  "with timeline: only that timeline's resolution (a 9:16 short next to the 16:9 edit); without: the "
-                 "project's resolution (all timelines without their own) and frame rate (only while all are empty)",
+                 "project's resolution (all timelines without their own), frame rate (only while all are empty) and "
+                 "sound channels (channels: stereo, 5.1 or 7.1)",
                  "timeline = id or name: that timeline gets its own resolution, positions/sizes in it are scaled, the "
                  "project and the other timelines stay; aspect:'project' gives it the project's again. aspect: 16:9, "
                  "9:16 (1080x1920), 1:1, 4:5, 4:3, or width+height (even). Without timeline it changes the project's "
                  "resolution: every timeline without its own resolution is scaled (bars for clips of the old shape). "
                  "With the project open in the app (@app) that is refused while other such timelines hold clips: ask "
                  "the user first and send confirm:true only after they said yes. fps never takes timeline (one rate "
-                 "per project; 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100 or 120, others are refused). Nested timelines of another resolution are fitted in like a clip of that shape.",
+                 "per project; 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100 or 120, others are refused). Nested timelines of another resolution are fitted in like a clip of that shape. "
+                 "channels (project only): the mix's format - stereo (default), 5.1 (FL FR FC LFE Ls Rs) or 7.1 (… Lss "
+                 "Rss). In 5.1/7.1 mono and stereo clips are placed by their track's surround panner ({op:'mixer', "
+                 "track, pan, depth, center, lfe_db}), 5.1/7.1 files keep their channels; the app plays the stereo "
+                 "downmix, `render` writes the format (channels arg to choose another), `loudness`/`check` measure "
+                 "over all channels. Projects in 5.1/7.1 open only in schneidi 0.23 or newer.",
                  opFormat, {"_rate"}}; // _rate: an imported timeline's exact rate (import timeline_file)
 }
 
