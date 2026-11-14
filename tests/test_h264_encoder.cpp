@@ -10,6 +10,7 @@
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/Deblock.h"
 #include "engine/encoder/h264/Satd.h"
+#include "engine/encoder/h264/Transform.h"
 #include "engine/encoder/h264/H264Encoder.h"
 #include "engine/encoder/h264/ThreadErrors.h"
 
@@ -337,6 +338,204 @@ bool kernelsMatchReference()
     return true;
 }
 
+// The distortion, transform and quantisation kernels (SSE2 / AVX2 / NEON where available) against
+// plain references written out here, on random blocks: the stream must not depend on the platform.
+bool vectorKernelsMatchReference()
+{
+    using namespace transform_detail;
+    uint32_t seed = 777;
+    auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    constexpr int S = 48;
+    std::vector<uint8_t> a(S * 24), b(S * 24);
+    auto satdRef = [&](const uint8_t* p, int sp, const uint8_t* q, int sq, int w, int h) {
+        int s = 0;
+        for (int y = 0; y < h; y += 4)
+            for (int x = 0; x < w; x += 4) {
+                int d[16];
+                for (int i = 0; i < 16; ++i)
+                    d[i] = int(p[(y + i / 4) * sp + x + i % 4]) - int(q[(y + i / 4) * sq + x + i % 4]);
+                s += satd4x4(d);
+            }
+        return s;
+    };
+    for (int it = 0; it < 4000; ++it) {
+        const int base = int(rnd() % 256), amp = it % 3 == 0 ? 255 : 1 + int(rnd() % 30);
+        for (auto* v : {&a, &b})
+            for (auto& x : *v)
+                x = it % 5 == 4 ? uint8_t(rnd() & 1 ? 255 : 0) : uint8_t(std::clamp(base + int(rnd() % unsigned(2 * amp + 1)) - amp, 0, 255));
+        const uint8_t* p = a.data() + it % 3;
+        const uint8_t* q = b.data() + it % 5;
+        const int sp = S - it % 2, sq = S;
+        if (satdU8(p, sp, q, sq) != satdRef(p, sp, q, sq, 4, 4) || satd8x4U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 4) ||
+            satd8x8U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 8) || satd8x8U8Fast(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 8) ||
+            satd16x4U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 16, 4))
+            return false;
+        for (int w : {8, 16})
+            for (int h : {2, 4, 8, 16}) {
+                int ref = 0;
+                for (int y = 0; y < h; ++y)
+                    for (int x = 0; x < w; ++x)
+                        ref += std::abs(int(p[y * sp + x]) - int(q[y * sq + x]));
+                if (sadBlock(p, sp, q, sq, w, h) != ref)
+                    return false;
+            }
+        for (int w : {4, 8, 16}) {
+            int ref = 0;
+            for (int x = 0; x < w; ++x)
+                ref += std::abs(int(p[x]) - int(q[x]));
+            if (sadRow(p, q, w) != ref)
+                return false;
+        }
+        { // sa8d: 8-point Hadamard both ways, (sum + 2) >> 2
+            int d[64];
+            for (int i = 0; i < 64; ++i)
+                d[i] = int(p[(i / 8) * sp + i % 8]) - int(q[(i / 8) * sq + i % 8]);
+            for (int pass = 0; pass < 2; ++pass)
+                for (int line = 0; line < 8; ++line)
+                    for (int step = 1; step < 8; step <<= 1)
+                        for (int i = 0; i < 8; i += 2 * step)
+                            for (int j = i; j < i + step; ++j) {
+                                int& u = pass ? d[j * 8 + line] : d[line * 8 + j];
+                                int& v = pass ? d[(j + step) * 8 + line] : d[line * 8 + j + step];
+                                const int x = u, y = v;
+                                u = x + y;
+                                v = x - y;
+                            }
+            int sum = 0;
+            for (int v : d)
+                sum += std::abs(v);
+            if (sa8dU8(p, sp, q, sq) != (sum + 2) >> 2)
+                return false;
+        }
+        // Transforms: forward 4x4 / 8x8 against the scalar cores, inverses against the standard's steps.
+        int res[64], out[64], ref[64];
+        for (int i = 0; i < 64; ++i)
+            res[i] = int(p[(i / 8) * sp + i % 8]) - int(q[(i / 8) * sq + i % 8]);
+        {
+            int r16[16];
+            for (int i = 0; i < 16; ++i)
+                r16[i] = res[(i / 4) * 8 + i % 4];
+            int t[16];
+            for (int y = 0; y < 4; ++y) {
+                const int* r = r16 + y * 4;
+                t[y * 4 + 0] = r[0] + r[1] + r[2] + r[3];
+                t[y * 4 + 1] = 2 * (r[0] - r[3]) + (r[1] - r[2]);
+                t[y * 4 + 2] = r[0] - r[1] - r[2] + r[3];
+                t[y * 4 + 3] = (r[0] - r[3]) - 2 * (r[1] - r[2]);
+            }
+            for (int x = 0; x < 4; ++x) {
+                ref[x] = t[x] + t[4 + x] + t[8 + x] + t[12 + x];
+                ref[4 + x] = 2 * (t[x] - t[12 + x]) + (t[4 + x] - t[8 + x]);
+                ref[8 + x] = t[x] - t[4 + x] - t[8 + x] + t[12 + x];
+                ref[12 + x] = (t[x] - t[12 + x]) - 2 * (t[4 + x] - t[8 + x]);
+            }
+            forward4x4(r16, out);
+            if (!std::equal(out, out + 16, ref))
+                return false;
+            forward4x4Diff(p, sp, q, sq, out);
+            if (!std::equal(out, out + 16, ref))
+                return false;
+        }
+        {
+            int t[64];
+            for (int y = 0; y < 8; ++y)
+                fwd8c(res + y * 8, t + y * 8);
+            for (int j = 0; j < 8; ++j) {
+                int col[8], o[8];
+                for (int y = 0; y < 8; ++y)
+                    col[y] = t[y * 8 + j];
+                fwd8c(col, o);
+                for (int i = 0; i < 8; ++i)
+                    ref[i * 8 + j] = o[i];
+            }
+            forward8x8(res, out);
+            if (!std::equal(out, out + 64, ref))
+                return false;
+        }
+        int coef[64];
+        for (int& c : coef)
+            c = int(rnd() % 8001) - 4000;
+        {
+            int t[64];
+            for (int i = 0; i < 8; ++i)
+                inv8c(coef + i * 8, t + i * 8);
+            for (int j = 0; j < 8; ++j) {
+                int col[8], o[8];
+                for (int i = 0; i < 8; ++i)
+                    col[i] = t[i * 8 + j];
+                inv8c(col, o);
+                for (int i = 0; i < 8; ++i)
+                    ref[i * 8 + j] = (o[i] + 32) >> 6;
+            }
+            inverse8x8(coef, out);
+            if (!std::equal(out, out + 64, ref))
+                return false;
+            for (int y = 0; y < 4; ++y) {
+                const int* d = coef + y * 4;
+                const int e = d[0] + d[2], f = d[0] - d[2], g = (d[1] >> 1) - d[3], h = d[1] + (d[3] >> 1);
+                t[y * 4 + 0] = e + h;
+                t[y * 4 + 1] = f + g;
+                t[y * 4 + 2] = f - g;
+                t[y * 4 + 3] = e - h;
+            }
+            for (int x = 0; x < 4; ++x) {
+                const int e = t[x] + t[8 + x], f = t[x] - t[8 + x];
+                const int g = (t[4 + x] >> 1) - t[12 + x], h = t[4 + x] + (t[12 + x] >> 1);
+                ref[x] = (e + h + 32) >> 6;
+                ref[4 + x] = (f + g + 32) >> 6;
+                ref[8 + x] = (f - g + 32) >> 6;
+                ref[12 + x] = (e - h + 32) >> 6;
+            }
+            inverse4x4(coef, out);
+            if (!std::equal(out, out + 16, ref))
+                return false;
+        }
+        { // quantisation, dequantisation, the threshold test, adding the residual back
+            int mf[8], lim[8], lv[16], dv[8];
+            for (int i = 0; i < 8; ++i) {
+                mf[i] = 1 + int(rnd() % 13107);
+                lim[i] = int(rnd() % 300);
+                dv[i] = 16 * (10 + int(rnd() % 16));
+            }
+            const int qbits = 15 + it % 9, offset = (1 << qbits) / (it % 2 ? 3 : 6);
+            bool any = false;
+            for (int i = 0; i < 16; ++i) {
+                const int m = std::abs(coef[i]);
+                const int l = std::min(int((int64_t(m) * mf[i & 7] + offset) >> qbits), 2063);
+                ref[i] = coef[i] < 0 ? -l : l;
+                any |= l != 0;
+            }
+            if (quant4x4(coef, mf, qbits, offset, 2063, lv) != any || !std::equal(lv, lv + 16, ref))
+                return false;
+            bool above = false;
+            for (int i = 0; i < 16; ++i)
+                above |= std::abs(coef[i]) > lim[i & 7];
+            if (anyAbove4x4(coef, lim) != above)
+                return false;
+            const int shift = it % 4;
+            dequant4x4(lv, dv, shift, out);
+            for (int i = 0; i < 16; ++i)
+                if (out[i] != int(unsigned(lv[i] * dv[i & 7]) << shift))
+                    return false;
+            uint8_t o8[64];
+            for (int& r : res)
+                r = int(rnd() % 1201) - 600;
+            addClip8x8(p, sp, res, o8, 8);
+            for (int i = 0; i < 64; ++i)
+                if (o8[i] != std::clamp(int(p[(i / 8) * sp + i % 8]) + res[i], 0, 255))
+                    return false;
+            addClip4x4(p, sp, res, o8, 4);
+            for (int i = 0; i < 16; ++i)
+                if (o8[i] != std::clamp(int(p[(i / 4) * sp + i % 4]) + res[i], 0, 255))
+                    return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -344,6 +543,7 @@ int main()
     Check::initEnv();
     CHECK(selfTestTables());
     CHECK(kernelsMatchReference());
+    CHECK(vectorKernelsMatchReference());
     for (const bool cabac : {false, true}) {
     gCabac = cabac;
 

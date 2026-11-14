@@ -36,6 +36,13 @@ published literature. No code, tables or thresholds were copied from another enc
     quadrants); scene-change detection that stops once its threshold comparison is decided; the
     first pass analysing consecutive pictures side by side.
 
+- **Vector kernels** (SSE2, AVX2 and, since 14.11.2026, NEON for AArch64): our own ports of our own
+  plain C++ kernels, written from the vendors' intrinsics references (Intel Intrinsics Guide, Arm
+  NEON Intrinsics Reference) and checked to give exactly the numbers of the C++ fallbacks. The
+  identity |x + y| + |x - y| = 2 max(|x|, |y|) used for the last Hadamard stage of the NEON SATD
+  is elementary algebra; byte transposes by interleaving (trn/zip) and table lookups (tbl) are the
+  standard uses of those instructions.
+
 ## Other encoders
 
 x264 (and OpenH264) were used only as external benchmark binaries: their output was measured
