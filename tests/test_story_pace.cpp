@@ -243,6 +243,13 @@ void testStory()
     outro.video[1].clips << title(3, 440, 60);
     CHECK(ExportCheck::story(outro, 0, 500, v, {10}, true, {}, shorts).isEmpty());
     CHECK(ExportCheck::story(plain, 0, 500, v, {10}, true, {}).isEmpty()); // no platform: no guess
+    // Only a hook and free sections (the moments `short` marks): no story planned, the call to action is guessed as
+    // without sections (no cta section asked for)
+    Timeline montage = plain;
+    montage.sections = {{StoryKind::Hook, {}, 0, 150}, {StoryKind::Free, {}, 150, 330}, {StoryKind::Free, {}, 330, 500}};
+    CHECK(ExportCheck::story(montage, 0, 500, v, {10}, true, {}).isEmpty());
+    CHECK_EQ(checks(ExportCheck::story(montage, 0, 500, v, {10}, true, {}, shorts)), QStringList({"story_no_cta"}));
+    CHECK(ExportCheck::story(montage, 0, 500, v, {10}, true, {470}, shorts).isEmpty());
 
     // Sections: a good story is quiet
     Timeline good = plain;

@@ -13,6 +13,7 @@
 #include "check.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -217,13 +218,26 @@ int main(int argc, char** argv)
         CHECK_EQ(info["timeline"]["width"].toInt(), 1080);
         CHECK_EQ(info["timeline"]["height"].toInt(), 1920);
         {
+            // The hook, then every other moment a section of its own: no time without a section (check story_gap),
+            // and no call-to-action section asked for (a montage of moments, no planned story)
             const QJsonArray sections = info["timeline"]["sections"].toArray();
-            if (CHECK_EQ(sections.size(), 1)) {
+            if (CHECK_EQ(sections.size(), moments.size())) {
                 CHECK_EQ(sections[0]["kind"].toString(), QString("hook"));
                 CHECK_EQ(sections[0]["from"].toInt(), 0);
                 const double hookLen = moments[0]["to_s"].toDouble() - moments[0]["from_s"].toDouble();
                 CHECK(std::abs(sections[0]["to_s"].toDouble() - hookLen) < 0.1);
+                for (int k = 1; k < sections.size(); ++k) {
+                    CHECK_EQ(sections[k]["kind"].toString(), QString("free"));
+                    CHECK_EQ(sections[k]["from"].toInt(), sections[k - 1]["to"].toInt());
+                    CHECK(sections[k]["name"].toString().startsWith("cs2_clip_test "));
+                }
+                CHECK(std::abs(sections.last()["to_s"].toDouble() - len) < 0.1);
             }
+            for (const QJsonValue& i : r["check"]["issues"].toArray()) {
+                CHECK(i["check"].toString() != "story_gap");
+                if (i["check"].toString() == "story_no_cta") CHECK(i.toObject().contains("from")); // the guess only
+            }
+            CHECK(!r.contains("unused")); // its one recording is in it
         }
         // The rendered file passes the platform check's sound part (true peak under -1 dBTP)
         const QJsonObject fileCheck = run("check", {{"source", out}, {"for", "shorts"}});
@@ -266,6 +280,35 @@ int main(int argc, char** argv)
         CHECK_EQ(fromTimeline["platform"].toString(), QString("TikTok"));
         CHECK_EQ(fromTimeline["timeline"].toString(), QString("Short 2"));
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"aspect", "16:9"}})["error"].toString(), QString("BAD_ARGUMENT"));
+        // Recordings without a moment in the short, each with why: a quiet one (no moment found) and a copy of the
+        // first whose moments did not fit after the first's best one (max_s 7)
+        {
+            const QString quiet = Check::makeMedia(
+                dir.filePath("clips/quiet.mp4"),
+                {"-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=12", "-f", "lavfi", "-i",
+                 "aevalsrc='0.02*sin(2*PI*220*t)':d=12:s=48000", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a",
+                 "aac", "-shortest"});
+            const QString copy = dir.filePath("clips/cs2/cs2_clip_copy.mp4");
+            CHECK(QFile::copy(clip, copy));
+            const QJsonObject few = run("short", {{"files", QJsonArray{clip, copy, quiet}}, {"game", "none"},
+                                                  {"captions", "off"}, {"min_s", 6}, {"max_s", 7},
+                                                  {"out", dir.filePath("out/few.mp4")}});
+            CHECK(!few.contains("error"));
+            const QJsonArray unused = few["unused"].toArray();
+            if (CHECK_EQ(unused.size(), 2)) {
+                CHECK_EQ(unused[0]["file"].toString(), copy);
+                CHECK_EQ(unused[0]["reason"].toString(), QString("length"));
+                CHECK(unused[0]["candidates"].toInt() >= 1);
+                CHECK_EQ(unused[1]["file"].toString(), quiet);
+                CHECK_EQ(unused[1]["reason"].toString(), QString("no_moment"));
+            } else {
+                std::printf("       %s\n", QJsonDocument(few).toJson().constData());
+            }
+            const QString said = QJsonDocument(few["notes"].toArray()).toJson();
+            CHECK(said.contains("quiet.mp4 not used: no loud moment found"));
+            CHECK(said.contains("cs2_clip_copy.mp4 not used:"));
+            CHECK(QJsonDocument(few["done"].toArray()).toJson().contains("in 2 of 3 recordings"));
+        }
         // An existing project of another shape (9:16): the cut is in the recordings' shape as the help says (it got
         // the project's 9:16 before, the recording sat in bars and the reframe had nothing to do)
         const QString tall = dir.filePath("out/tall.schneidi");

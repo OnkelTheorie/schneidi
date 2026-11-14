@@ -141,6 +141,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
 
     QJsonArray done, notes;
     QJsonArray moments;
+    QJsonArray unused; // recordings without a moment in the short, and why
     QString cutTimeline;
 
     if (!files.isEmpty()) {
@@ -176,6 +177,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         }
         // 3. The best moments of every recording
         QVector<ShortPick::Moment> candidates;
+        QVector<int> found(files.size(), 0); // candidates per recording
         for (int i = 0; i < files.size(); ++i) {
             QJsonObject h{{"file", files[i]}, {"project", project}};
             h["game"] = game ? game->id : QString("none");
@@ -183,16 +185,42 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             const QJsonObject hl = run("highlights", h, step(f0, f1));
             for (const QJsonValue& c : hl["candidates"].toArray())
                 candidates << ShortPick::Moment{i, c["from_s"].toDouble(), c["to_s"].toDouble(), c["score"].toDouble()};
+            found[i] = int(hl["candidates"].toArray().size());
         }
         std::stable_sort(candidates.begin(), candidates.end(),
                          [](const ShortPick::Moment& x, const ShortPick::Moment& y) { return x.score > y.score; });
-        done << QString("highlights: %1 candidate%2%3")
+        const int withSome = int(std::count_if(found.begin(), found.end(), [](int n) { return n > 0; }));
+        done << QString("highlights: %1 candidate%2%3 in %4 of %5 recording%6")
                     .arg(candidates.size())
                     .arg(candidates.size() == 1 ? "" : "s")
-                    .arg(game ? QString(" (kill feed of %1)").arg(game->id) : QString(" (loud moments)"));
+                    .arg(game ? QString(" (kill feed of %1)").arg(game->id) : QString(" (loud moments)"))
+                    .arg(withSome)
+                    .arg(files.size())
+                    .arg(files.size() == 1 ? "" : "s");
         const QVector<ShortPick::Moment> picked = ShortPick::pick(candidates, durations, pick);
         if (candidates.isEmpty())
             notes << "no highlight found: the short is the end of the recording (where a clip tool saves the moment)";
+        // Why a recording has no moment in the short: none found in it, or its moments did not fit (better ones of
+        // the others filled max_s first)
+        for (int i = 0; i < files.size(); ++i) {
+            if (std::any_of(picked.begin(), picked.end(), [i](const ShortPick::Moment& m) { return m.file == i; }))
+                continue;
+            QJsonObject u{{"file", files[i]}, {"candidates", found[i]}};
+            const QString name = QFileInfo(files[i]).fileName();
+            if (found[i] == 0) {
+                u["reason"] = "no_moment";
+                u["message"] = game ? QString("no kill of the player found in its kill feed (%1)").arg(game->id)
+                                    : QString("no loud moment found");
+            } else {
+                u["reason"] = "length";
+                u["message"] = QString("%1 moment%2 found, none fit: the better ones filled the short to max_s %3 s")
+                                   .arg(found[i])
+                                   .arg(found[i] == 1 ? "" : "s")
+                                   .arg(pick.maxS);
+            }
+            notes << QString("%1 not used: %2").arg(name, u["message"].toString());
+            unused << u;
+        }
         // 4. A cut of them in the recordings' shape (the user can rework it), one keep per recording
         const QJsonObject before = run("info", {{"project", project}, {"summary", true}}, step(0.3, 0.3));
         cutTimeline = uniqueTimelineName(before["timelines"].toArray(), T("Short-Schnitt"));
@@ -234,11 +262,27 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             }
             if (!ranges.isEmpty()) ops << QJsonObject{{"op", "keep"}, {"media", files[i]}, {"ranges", ranges}};
         }
-        // The story: the first moment is the hook (`check` story_no_hook reads it; the short's copy keeps it)
-        if (!picked.isEmpty()) {
-            const ShortPick::Moment& first = best >= 0 ? picked[best] : picked.first();
-            ops << QJsonObject{{"op", "section"}, {"kind", "hook"}, {"from", 0},
-                               {"to", QString("%1s").arg(std::max(0.04, first.to - first.from), 0, 'f', 3)}};
+        // The story: the first moment is the hook (`check` story_no_hook reads it), every other one a section of
+        // its own (no stretch without a section; the short's copy keeps them). The moments lie one after the other in
+        // the order of `moments`; each boundary is the same time for both sections next to it.
+        {
+            QVector<ShortPick::Moment> order;
+            if (best >= 0) order << picked[best];
+            for (int i = 0; i < files.size(); ++i)
+                for (int k = 0; k < picked.size(); ++k)
+                    if (picked[k].file == i && k != best) order << picked[k];
+            double at = 0;
+            QString from = "0";
+            for (int k = 0; k < order.size(); ++k) {
+                at += std::max(0.04, order[k].to - order[k].from);
+                const QString to = QString("%1s").arg(at, 0, 'f', 3);
+                QJsonObject sec{{"op", "section"}, {"kind", k == 0 ? "hook" : "free"}, {"from", from}, {"to", to}};
+                if (k > 0)
+                    sec["name"] = QString("%1 %2 s").arg(QFileInfo(files[order[k].file]).completeBaseName())
+                                      .arg(secondsOf(order[k].from));
+                ops << sec;
+                from = to;
+            }
         }
         run("edit", {{"project", project}, {"ops", ops}}, step(0.3, 0.32));
         if (best >= 0) done << QString("hook: the best moment first (%1 s of %2)").arg(secondsOf(picked[best].from)).arg(QFileInfo(files[picked[best].file]).fileName());
@@ -373,6 +417,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                   {"check", checked},
                   {"render_s", rendered["render_s"]}};
     if (!moments.isEmpty()) o["moments"] = moments;
+    if (!unused.isEmpty()) o["unused"] = unused;
     if (rendered.contains("encoder")) o["encoder"] = rendered["encoder"];
     for (const char* k : {"threads", "threads_reason"}) // how many render threads, fewer when little RAM was free
         if (rendered.contains(k)) o[k] = rendered[k];
