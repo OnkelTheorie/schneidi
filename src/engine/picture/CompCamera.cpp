@@ -41,7 +41,10 @@ double finite(double v, double fallback) { return std::isfinite(v) ? v : fallbac
 double driftPush(double perSecond, double seconds)
 {
     const double x = perSecond * seconds;
-    if (!(seconds > 0) || !std::isfinite(x)) return std::isfinite(x) ? x : 0.0; // before the start: straight on
+    if (!std::isfinite(x)) return 0.0;
+    // Before the start: straight on, within the cap too (a negative drift_offset with a negative push would pull the
+    // layers through the camera)
+    if (!(seconds > 0)) return std::clamp(x, -kDriftPushCap, kDriftPushCap);
     // Starts at perSecond, eases towards +-kDriftPushCap: never through the picture plane, never shrinking to nothing
     return std::copysign(kDriftPushCap * (1 - std::exp(-std::abs(x) / kDriftPushCap)), x);
 }

@@ -375,6 +375,7 @@ void testBounds()
     CHECK(std::abs(driftPush(0.03, 1) - 0.03) < 0.001);
     CHECK(driftPush(0.03, 1e6) <= kDriftPushCap && driftPush(-0.03, 1e6) >= -kDriftPushCap);
     CHECK(driftPush(0.03, -2) == -0.06); // before the start (trimmed back out): straight on
+    CHECK(driftPush(-0.03, -1e6) <= kDriftPushCap && driftPush(0.03, -1e6) >= -kDriftPushCap); // ... within the cap
     // The recipe's camera (push 0.03/s) over 60 s at 25 fps: the person (z 1) grows at most 1 / (1 - cap) and is never
     // hidden
     g_clipPic = marker(W, H, 200, 60);
