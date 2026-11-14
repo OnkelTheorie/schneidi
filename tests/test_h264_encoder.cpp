@@ -37,6 +37,9 @@ struct Yuv {
     std::vector<uint8_t> y, u, v;
 };
 
+// > 0: the synthetic clip fades in from black over this many pictures (weighted prediction).
+int gFadeFrames = 0;
+
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
 Yuv synthFrame(int w, int h, int t)
 {
@@ -61,6 +64,15 @@ Yuv synthFrame(int w, int h, int t)
             f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + t);
             f.v[size_t(y) * (w / 2) + x] = uint8_t(128 + (y - h / 4) / 2);
         }
+    if (gFadeFrames > 0 && t < gFadeFrames) {
+        const int num = t, den = gFadeFrames;
+        for (uint8_t& p : f.y)
+            p = uint8_t(16 + (int(p) - 16) * num / den);
+        for (uint8_t& p : f.u)
+            p = uint8_t(128 + (int(p) - 128) * num / den);
+        for (uint8_t& p : f.v)
+            p = uint8_t(128 + (int(p) - 128) * num / den);
+    }
     return f;
 }
 
@@ -775,6 +787,44 @@ int main()
                 q.weightedBipred = true;
                 CHECK(roundTrip(q, 12));
             }
+        }
+        {
+            // Explicit weighted prediction: a fade in from black decodes bit-exactly (one and several references,
+            // with B pictures, rate control), is clearly smaller than without the weights and the same with any
+            // thread count; without a fade the option changes nothing but the headers (a second parameter set).
+            gFadeFrames = 20;
+            for (int refs : {1, 3}) {
+                size_t with = 0, without = 0;
+                StreamInfo one, four;
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 1);
+                c.refs = refs;
+                CHECK(roundTrip(c, 26, &with, -1, nullptr, &one));
+                c.threads = 4;
+                CHECK(roundTrip(c, 26, nullptr, -1, nullptr, &four));
+                CHECK(one.hash == four.hash);
+                CHECK(one.minPsnrY >= 30.0);
+                c.weightedPred = false;
+                CHECK(roundTrip(c, 26, &without));
+                std::fprintf(stderr, "fade, %d refs: %zu bytes with weighted prediction, %zu without\n", refs, with, without);
+                CHECK(with * 10 < without * 9);
+            }
+            {
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 3);
+                c.bframes = 2;
+                c.bAdaptive = false;
+                CHECK(roundTrip(c, 26));
+                EncoderConfig r = config(320, 192, IntraMode::Auto, 60, 2);
+                r.bitrateKbps = 600;
+                r.fps = 30;
+                CHECK(roundTrip(r, 40));
+            }
+            gFadeFrames = 0;
+            size_t with = 0, without = 0;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            CHECK(roundTrip(c, 12, &with));
+            c.weightedPred = false;
+            CHECK(roundTrip(c, 12, &without));
+            CHECK(with > without && with - without < 16);
         }
         {
             // Adaptive placement (the default): any mix of run lengths decodes, with any thread count the same
