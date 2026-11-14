@@ -410,9 +410,12 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
     if (threads == 1) {
         for (int by = 0; by < mbH_; ++by) {
             // Pictures side by side: a row reads prev's vectors of the same row.
-            if (prevRows)
-                for (int v = prevRows->load(std::memory_order_acquire); v <= by; v = prevRows->load(std::memory_order_acquire))
+            // (Once it has to wait it waits for a few rows more, to go on without waiting again.)
+            if (prevRows && prevRows->load(std::memory_order_acquire) <= by) {
+                const int need = std::min(by + 4, mbH_);
+                for (int v = prevRows->load(std::memory_order_acquire); v < need; v = prevRows->load(std::memory_order_acquire))
                     prevRows->wait(v, std::memory_order_acquire);
+            }
             for (int bx = 0; bx < mbW_; ++bx)
                 doMb(bx, by, rowIntra[size_t(by)], rowInter[size_t(by)]);
             if (ownRows) {
