@@ -719,6 +719,7 @@ void testCli(const QString& dir)
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","kind":"hexagon"}])"}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","fill":"glitter"}])"}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","follow":7}])"}}), QString("BAD_ARGUMENT"));
+    CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"shape","feather":600}])"}}), QString("BAD_ARGUMENT")); // as the Inspector: 0..500
     // clip_shape: a circle with a stroke; none removes it
     edit(QString(R"([{"op":"clip_shape","clips":[%1],"shape":"ellipse","size":70,"stroke_color":"#ffffff","shadow":true}])").arg(tracked));
     d = saved();
