@@ -1,5 +1,6 @@
 // schneidi's own H.264 encoder (prototype): CAVLC tables and residual coding.
 // Tables are transcribed from ITU-T H.264 tables 9-5, 9-7, 9-8, 9-9 and 9-10.
+#include "Simd.h" // first: no floating-point contraction (see there)
 #include "Cavlc.h"
 
 #include <cstdio>

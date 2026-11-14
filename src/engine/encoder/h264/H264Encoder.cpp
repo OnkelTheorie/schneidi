@@ -1,6 +1,7 @@
 // schneidi's own H.264 encoder (prototype).
 // Clause numbers refer to ITU-T H.264. The encoder mirrors the decoder's
 // reconstruction exactly (8.3, 8.5), so later P frames can reference it.
+#include "Simd.h" // first: no floating-point contraction (see there)
 #include "H264Encoder.h"
 #include "FrameCoder.h"
 
@@ -27,9 +28,6 @@
 #include <condition_variable>
 #include <mutex>
 
-#if defined(__SSE2__) || defined(_M_X64)
-#include <emmintrin.h>
-#endif
 
 namespace schneidi::h264 {
 
@@ -243,9 +241,7 @@ inline void waitAtLeast(const std::atomic<int>& counter, int need, int spin = 12
     for (int i = 0; i < spin; ++i) {
         if (counter.load(std::memory_order_acquire) >= need)
             return;
-#if defined(__SSE2__) || defined(_M_X64)
-        _mm_pause();
-#endif
+        cpuRelax();
     }
     for (int v = counter.load(std::memory_order_acquire); v < need; v = counter.load(std::memory_order_acquire))
         counter.wait(v, std::memory_order_acquire);
@@ -266,9 +262,7 @@ enum : uint8_t { kRowNew = 0, kRowMbs = 1, kRowTail = 2, kRowPublish = 3, kRowDo
 
 inline void spinWait()
 {
-#if defined(__SSE2__) || defined(_M_X64)
-    _mm_pause();
-#endif
+    cpuRelax();
     std::this_thread::yield();
 }
 
@@ -1177,9 +1171,7 @@ struct Encoder::Pool {
             // Nothing can move: a short spin, then sleep until something changed (the timeout only
             // bounds the damage of a wake-up that should ever be missed).
             for (int i = 0; i < spin && sig.epoch.load(std::memory_order_relaxed) == epoch; ++i) {
-#if defined(__SSE2__) || defined(_M_X64)
-                _mm_pause();
-#endif
+                cpuRelax();
             }
             if (sig.epoch.load(std::memory_order_seq_cst) != epoch)
                 continue;
@@ -3071,6 +3063,29 @@ __attribute__((target("avx2"))) void intra4PredictAll(const uint8_t* g, uint8_t 
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(group[k] + r * 32), v);
         }
 }
+inline bool haveIntraAll() { return haveAvx2(); }
+#elif defined(SCHNEIDI_H264_NEON)
+// The same with NEON table lookups (g = 48 bytes, the DC value at 38): one lookup per group row.
+void intra4PredictAll(const uint8_t* g, uint8_t (*group)[64])
+{
+    static const auto kIdx = [] {
+        std::array<std::array<uint8_t, 16>, 12> t{}; // [group * 4 + row]
+        const IntraDirTable<4>& dir = intraDir4();
+        for (int k = 0; k < 3; ++k)
+            for (int y = 0; y < 4; ++y)
+                for (int j = 0; j < 4; ++j) {
+                    const int mode = std::min(4 * k + j, 8);
+                    for (int x = 0; x < 4; ++x)
+                        t[size_t(k * 4 + y)][size_t(j * 4 + x)] = uint8_t(mode == 2 ? 38 : dir.idx[mode][y * 4 + x]);
+                }
+        return t;
+    }();
+    const uint8x16x3_t tbl = {{vld1q_u8(g), vld1q_u8(g + 16), vld1q_u8(g + 32)}};
+    for (int k = 0; k < 3; ++k)
+        for (int y = 0; y < 4; ++y)
+            vst1q_u8(group[k] + y * 16, vqtbl3q_u8(tbl, vld1q_u8(kIdx[size_t(k * 4 + y)].data())));
+}
+inline bool haveIntraAll() { return true; }
 #endif
 const IntraDirTable<8>& intraDir8()
 {
@@ -3107,6 +3122,28 @@ __attribute__((target("avx2"))) void intra8PredictAll(const uint8_t* g, uint8_t 
             for (int part = 1; part < 5; ++part)
                 v = _mm256_or_si256(v, _mm256_shuffle_epi8(gp[part], _mm256_load_si256(reinterpret_cast<const __m256i*>(t.s[mode][h][part]))));
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(out[mode] + h * 32), v);
+        }
+}
+#elif defined(SCHNEIDI_H264_NEON)
+// The same with NEON table lookups (g = 80 bytes, the DC value at 74): 64-byte table, then the rest.
+void intra8PredictAll(const uint8_t* g, uint8_t (*out)[64])
+{
+    static const auto kIdx = [] {
+        std::array<std::array<uint8_t, 64>, 9> t{};
+        const IntraDirTable<8>& dir = intraDir8();
+        for (int mode = 0; mode < 9; ++mode)
+            for (int p = 0; p < 64; ++p)
+                t[size_t(mode)][size_t(p)] = uint8_t(mode == 2 ? 74 : dir.idx[mode][p]);
+        return t;
+    }();
+    const uint8x16x4_t lo = {{vld1q_u8(g), vld1q_u8(g + 16), vld1q_u8(g + 32), vld1q_u8(g + 48)}};
+    const uint8x16_t hi = vld1q_u8(g + 64);
+    const uint8x16_t k64 = vdupq_n_u8(64);
+    for (int mode = 0; mode < 9; ++mode)
+        for (int p = 0; p < 64; p += 16) {
+            const uint8x16_t i = vld1q_u8(kIdx[size_t(mode)].data() + p);
+            // Indices 64..79 from the fifth part; below 64 the subtraction wraps out of range.
+            vst1q_u8(out[mode] + p, vqtbx1q_u8(vqtbl4q_u8(lo, i), hi, vsubq_u8(i, k64)));
         }
 }
 #endif
@@ -3420,8 +3457,8 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             // costs and the same first-lowest pick as trying them one by one).
             alignas(16) uint8_t group[3][64];
             int modeOf[9], n = 0;
-#ifdef SCHNEIDI_H264_AVX2
-            if (dir.ok && top && left && haveAvx2()) {
+#if defined(SCHNEIDI_H264_AVX2) || defined(SCHNEIDI_H264_NEON)
+            if (dir.ok && top && left && haveIntraAll()) {
                 edge[38] = uint8_t((T[1] + T[2] + T[3] + T[4] + L[0] + L[1] + L[2] + L[3] + 4) >> 3);
                 intra4PredictAll(edge, group);
                 for (; n < 9; ++n)
@@ -3888,11 +3925,18 @@ void quantize8x8Scan(const int* residual, int qp, double* xs)
     const double step2 = double(1 << (qp / 6));
     const double* scale = kScaleScan[size_t(qp % 6)].data();
     int s = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     const __m128d four = _mm_set1_pd(4.0), st = _mm_set1_pd(step2);
     for (; s < 64; s += 2) {
         const __m128d w = _mm_cvtepi32_pd(_mm_setr_epi32(w64[kZigzag8[s]], w64[kZigzag8[s + 1]], 0, 0));
         _mm_storeu_pd(xs + s, _mm_div_pd(_mm_mul_pd(four, w), _mm_mul_pd(_mm_loadu_pd(scale + s), st)));
+    }
+#elif defined(SCHNEIDI_H264_NEON)
+    const float64x2_t st = vdupq_n_f64(step2);
+    for (; s < 64; s += 2) {
+        const int32x2_t wi = {w64[kZigzag8[s]], w64[kZigzag8[s + 1]]};
+        const float64x2_t w = vcvtq_f64_s64(vmovl_s32(wi));
+        vst1q_f64(xs + s, vdivq_f64(vmulq_n_f64(w, 4.0), vmulq_f64(vld1q_f64(scale + s), st)));
     }
 #endif
     for (; s < 64; ++s)
@@ -3992,8 +4036,8 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             }
             return cost;
         };
-#ifdef SCHNEIDI_H264_AVX2
-        if (!(gExp & 64) && dir.ok && corner && haveAvx2()) {
+#if defined(SCHNEIDI_H264_AVX2) || defined(SCHNEIDI_H264_NEON)
+        if (!(gExp & 64) && dir.ok && corner && haveIntraAll()) {
             // All nine directions at once (same costs, same first-lowest pick as below).
             int st = 0, sl = 0;
             for (int i = 0; i < 8; ++i) {
@@ -4135,7 +4179,7 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
     const size_t lo = size_t(mby * 16) * padW_ + mbx * 16;
     const int cw = padW_ / 2;
     const size_t co = size_t(mby * 8) * cw + mbx * 8;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     // At most 256 * 255^2 + 128 * 255^2: fits 32 bits.
     const __m128i zero = _mm_setzero_si128();
     __m128i acc = zero;
@@ -4160,6 +4204,24 @@ int64_t FrameCoder::mbSsd(int mbx, int mby) const
     acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2)));
     acc = _mm_add_epi32(acc, _mm_shuffle_epi32(acc, _MM_SHUFFLE(2, 3, 0, 1)));
     return int64_t(uint32_t(_mm_cvtsi128_si32(acc)));
+#elif defined(SCHNEIDI_H264_NEON)
+    uint32x4_t acc = vdupq_n_u32(0);
+    auto add8 = [&](uint8x8_t a, uint8x8_t b) {
+        const uint8x8_t d = vabd_u8(a, b);
+        acc = vpadalq_u16(acc, vmull_u8(d, d));
+    };
+    for (int y = 0; y < 16; ++y) {
+        const size_t o = lo + size_t(y) * padW_;
+        const uint8x16_t a = vld1q_u8(&srcY_[o]), b = vld1q_u8(&recY_[o]);
+        add8(vget_low_u8(a), vget_low_u8(b));
+        add8(vget_high_u8(a), vget_high_u8(b));
+    }
+    for (int y = 0; y < 8; ++y) {
+        const size_t o = co + size_t(y) * cw;
+        add8(vld1_u8(&srcU_[o]), vld1_u8(&recU_[o]));
+        add8(vld1_u8(&srcV_[o]), vld1_u8(&recV_[o]));
+    }
+    return int64_t(vaddvq_u32(acc));
 #else
     int64_t s = 0;
     for (int y = 0; y < 16; ++y)
@@ -4302,7 +4364,7 @@ void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int
                 const uint8_t* r0 = p + size_t(by0 + y) * cw + bx0;
                 const uint8_t* r1 = r0 + cw;
                 uint8_t* o = chroma[c] + (y4 * 2 + y) * 8 + x4 * 2;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
                 // Same sums in 16-bit lanes (at most 64 * 255 + 32); r0[bw] is inside the plane.
                 if (bw == 8 || bw == 4) {
                     const __m128i zero = _mm_setzero_si128();
@@ -4325,6 +4387,16 @@ void FrameCoder::motionCompensate(const RefPic& R, int mbx, int mby, int x4, int
                         const int32_t v = _mm_cvtsi128_si32(px);
                         std::memcpy(o, &v, 4);
                     }
+                    continue;
+                }
+#elif defined(SCHNEIDI_H264_NEON)
+                // At most 64 * 255: 16 bits; r0[bw] is inside the plane (bw = 4: plain loop).
+                if (bw == 8) {
+                    uint16x8_t sum = vmull_u8(vld1_u8(r0), vdup_n_u8(uint8_t(wA)));
+                    sum = vmlal_u8(sum, vld1_u8(r0 + 1), vdup_n_u8(uint8_t(wB)));
+                    sum = vmlal_u8(sum, vld1_u8(r1), vdup_n_u8(uint8_t(wC)));
+                    sum = vmlal_u8(sum, vld1_u8(r1 + 1), vdup_n_u8(uint8_t(wD)));
+                    vst1_u8(o, vrshrn_n_u16(sum, 6));
                     continue;
                 }
 #endif
@@ -4615,7 +4687,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 const uint8_t* sp = &srcY_[lumaOff + size_t(oy) * padW_ + ox];
                 const uint8_t* pp = lp + oy * 16 + ox;
                 int y = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
                 const __m128i zero = _mm_setzero_si128();
                 for (; y < 8; ++y) {
                     const __m128i d = _mm_sub_epi16(
@@ -4624,6 +4696,12 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                     const __m128i sign = _mm_srai_epi16(d, 15);
                     _mm_storeu_si128(reinterpret_cast<__m128i*>(res + y * 8), _mm_unpacklo_epi16(d, sign));
                     _mm_storeu_si128(reinterpret_cast<__m128i*>(res + y * 8 + 4), _mm_unpackhi_epi16(d, sign));
+                }
+#elif defined(SCHNEIDI_H264_NEON)
+                for (; y < 8; ++y) {
+                    const int16x8_t d = vreinterpretq_s16_u16(vsubl_u8(vld1_u8(sp + size_t(y) * padW_), vld1_u8(pp + y * 16)));
+                    vst1q_s32(res + y * 8, vmovl_s16(vget_low_s16(d)));
+                    vst1q_s32(res + y * 8 + 4, vmovl_high_s16(d));
                 }
 #endif
                 for (; y < 8; ++y)
@@ -6111,6 +6189,50 @@ S264_AVX2 void halfPelCentreAvx2(const int* v, int W, uint8_t* j, int& jEnd)
 #endif
 #endif
 
+#ifdef SCHNEIDI_H264_NEON
+// NEON parts of refHalfRows (16 samples per step, the same numbers): the vertical 6-tap (32-bit
+// intermediate + rounded plane) and the horizontal 6-tap of one row, continuing at x / hEnd; the
+// centre 6-tap over the intermediate, continuing at jEnd. 16-bit lanes hold -2550..10710.
+static inline int16x8_t halfTapN(uint8x8_t a, uint8x8_t b, uint8x8_t c, uint8x8_t d, uint8x8_t e, uint8x8_t f)
+{
+    const int16x8_t outer = vreinterpretq_s16_u16(vaddl_u8(a, f));
+    const int16x8_t mid = vreinterpretq_s16_u16(vaddl_u8(c, d)), side = vreinterpretq_s16_u16(vaddl_u8(b, e));
+    return vmlsq_n_s16(vmlaq_n_s16(outer, mid, 20), side, 5);
+}
+static void halfPelRowNeon(const uint8_t* const* r, int W, int* vi, uint8_t* vb, uint8_t* hb, int& x, int& hEnd)
+{
+    for (; x + 8 <= W; x += 8) {
+        const int16x8_t vv = halfTapN(vld1_u8(r[0] + x), vld1_u8(r[1] + x), vld1_u8(r[2] + x), vld1_u8(r[3] + x),
+                                      vld1_u8(r[4] + x), vld1_u8(r[5] + x));
+        vst1q_s32(vi + x, vmovl_s16(vget_low_s16(vv)));
+        vst1q_s32(vi + x + 4, vmovl_high_s16(vv));
+        vst1_u8(vb + x, vqrshrun_n_s16(vv, 5)); // clip1((v + 16) >> 5)
+    }
+    const uint8_t* row = r[2];
+    for (; hEnd + 19 <= W; hEnd += 16) {
+        const uint8_t* q = row + hEnd;
+        const uint8x16_t m2 = vld1q_u8(q - 2), m1 = vld1q_u8(q - 1), p0 = vld1q_u8(q), p1 = vld1q_u8(q + 1);
+        const uint8x16_t p2 = vld1q_u8(q + 2), p3 = vld1q_u8(q + 3);
+        const int16x8_t lo = halfTapN(vget_low_u8(m2), vget_low_u8(m1), vget_low_u8(p0), vget_low_u8(p1), vget_low_u8(p2),
+                                      vget_low_u8(p3));
+        const int16x8_t hi = halfTapN(vget_high_u8(m2), vget_high_u8(m1), vget_high_u8(p0), vget_high_u8(p1),
+                                      vget_high_u8(p2), vget_high_u8(p3));
+        vst1q_u8(hb + hEnd, vcombine_u8(vqrshrun_n_s16(lo, 5), vqrshrun_n_s16(hi, 5)));
+    }
+}
+static void halfPelCentreNeon(const int* v, int W, uint8_t* j, int& jEnd)
+{
+    auto tap = [&](int x) { // 32-bit lanes: up to about 450000
+        const int32x4_t outer = vaddq_s32(vld1q_s32(v + x - 2), vld1q_s32(v + x + 3));
+        const int32x4_t mid = vaddq_s32(vld1q_s32(v + x), vld1q_s32(v + x + 1));
+        const int32x4_t side = vaddq_s32(vld1q_s32(v + x - 1), vld1q_s32(v + x + 2));
+        return vqmovn_s32(vrshrq_n_s32(vmlsq_n_s32(vmlaq_n_s32(outer, mid, 20), side, 5), 10)); // (j + 512) >> 10
+    };
+    for (; jEnd + 11 <= W; jEnd += 8)
+        vst1_u8(j + jEnd, vqmovun_s16(vcombine_s16(tap(jEnd), tap(jEnd + 4))));
+}
+#endif
+
 void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
 {
     const int M = kMargin;
@@ -6132,7 +6254,7 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
         if (haveAvx2())
             halfPelRowAvx2(r, W, vi, vb, hb, x, hEnd);
 #endif
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
         // Same arithmetic eight samples at a time (16-bit lanes hold -2550..10710).
         {
             const __m128i zero = _mm_setzero_si128(), c5 = _mm_set1_epi16(5), c20 = _mm_set1_epi16(20);
@@ -6159,6 +6281,8 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
                 _mm_storel_epi64(reinterpret_cast<__m128i*>(hb + hEnd), _mm_packus_epi16(b8, b8));
             }
         }
+#elif defined(SCHNEIDI_H264_NEON)
+        halfPelRowNeon(r, W, vi, vb, hb, x, hEnd);
 #endif
         for (; x < W; ++x) {
             const int vv = tap6(r[0][x], r[1][x], r[2][x], r[3][x], r[4][x], r[5][x]);
@@ -6186,7 +6310,7 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
         if (haveAvx2())
             halfPelCentreAvx2(v, W, j, jEnd);
 #endif
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
         {
             auto ld = [&](int x) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + x)); };
             auto tap = [&](int x) { // 32-bit lanes: up to about 450000
@@ -6202,6 +6326,8 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
                 _mm_storel_epi64(reinterpret_cast<__m128i*>(j + jEnd), _mm_packus_epi16(w, w));
             }
         }
+#elif defined(SCHNEIDI_H264_NEON)
+        halfPelCentreNeon(v, W, j, jEnd);
 #endif
         for (int x = 0; x < W; ++x) {
             if (x == 2)
@@ -6252,7 +6378,7 @@ void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, 
     case 14: a = J; b = B + W; break;
     default: a = V + 1; b = B + W; break;
     }
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
     if (b && (w == 16 || w == 8)) {
         for (int y = 0; y < h; ++y) {
             const uint8_t* ra = a + size_t(y) * W;
@@ -6265,6 +6391,18 @@ void FrameCoder::mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, 
                 _mm_storel_epi64(reinterpret_cast<__m128i*>(out + y * 16),
                                  _mm_avg_epu8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(ra)),
                                               _mm_loadl_epi64(reinterpret_cast<const __m128i*>(rb))));
+        }
+        return;
+    }
+#elif defined(SCHNEIDI_H264_NEON)
+    if (w == 16 || w == 8) { // averages, or plain copies without a library call per row
+        for (int y = 0; y < h; ++y) {
+            const uint8_t* ra = a + size_t(y) * W;
+            const uint8_t* rb = b ? b + size_t(y) * W : ra;
+            if (w == 16)
+                vst1q_u8(out + y * 16, vrhaddq_u8(vld1q_u8(ra), vld1q_u8(rb)));
+            else
+                vst1_u8(out + y * 16, vrhadd_u8(vld1_u8(ra), vld1_u8(rb)));
         }
         return;
     }
@@ -6310,6 +6448,9 @@ int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w
 #ifdef SCHNEIDI_H264_AVX2
         if ((w4 == 4 || !(h4 & 1)) && haveAvx2())
             return satdBlockAvx2(&srcY_[lo], padW_, pred, ps, w, h);
+#endif
+#ifdef SCHNEIDI_H264_NEON
+        return neon_detail::satdBlock(&srcY_[lo], padW_, pred, ps, w, h);
 #endif
         for (int by = 0; by < h4; ++by) {
             if (w4 == 4) {
@@ -6528,7 +6669,7 @@ void FrameCoder::planMacroblockQp()
     for (int mby = 0; mby < mbH_; ++mby)
         for (int mbx = 0; mbx < mbW_; ++mbx) {
             int64_t sum = 0, sq = 0;
-#if defined(__SSE2__) || defined(_M_X64)
+#ifdef SCHNEIDI_H264_SSE2
             {
                 const __m128i zero = _mm_setzero_si128();
                 __m128i s = zero, q = zero; // 64-bit sums / 32-bit sums of squares (at most 256 * 255^2)
