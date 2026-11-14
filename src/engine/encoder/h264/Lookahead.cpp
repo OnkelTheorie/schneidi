@@ -165,6 +165,12 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                 return int(integral[size_t(y + 8) * iw + x + 8] - integral[size_t(y) * iw + x + 8] - integral[size_t(y + 8) * iw + x] +
                            integral[size_t(y) * iw + x]);
             };
+            // Only the comparison at the end is needed: every block's sum and intra cost first, then
+            // the motion search stops as soon as the blocks left cannot change the answer (the inter
+            // cost only grows, by at most the intra cost per block).
+            const int blocksX = tw / 8, blocksY = th / 8;
+            std::vector<int> sums(size_t(blocksX) * blocksY), intras(size_t(blocksX) * blocksY);
+            int64_t intraLeft = 0;
             for (int by = 0; by + 8 <= th; by += 8)
                 for (int bx = 0; bx + 8 <= tw; bx += 8) {
                     int sum = 0;
@@ -176,11 +182,23 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                     for (int y = 0; y < 8; ++y)
                         for (int x = 0; x < 8; ++x)
                             intra += std::abs(thumb[size_t(by + y) * tw + bx + x] - mean);
+                    const size_t b = size_t(by / 8) * blocksX + bx / 8;
+                    sums[b] = sum;
+                    intras[b] = intra;
+                    intraLeft += intra;
+                    intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
+                }
+            bool decided = false;
+            for (int by = 0; by + 8 <= th && !decided; by += 8)
+                for (int bx = 0; bx + 8 <= tw; bx += 8) {
+                    const size_t b = size_t(by / 8) * blocksX + bx / 8;
+                    const int sum = sums[b], intra = intras[b];
                     // The same place first: usually close to the best, so the bound below bites early.
                     int best = sadBlock(&thumb[size_t(by) * tw + bx], tw, &prevThumb[size_t(by) * tw + bx], tw, 8, 8);
                     const uint8_t* cur = &thumb[size_t(by) * tw + bx];
                     const int mx0 = std::max(-kRange, -bx), mx1 = std::min(kRange, tw - 8 - bx); // inclusive
-                    for (int my = -kRange; my <= kRange && best > 0; ++my) {
+                    for (int i = 0; i <= 2 * kRange && best > 0; ++i) {
+                        const int my = (i & 1) ? -((i + 1) / 2) : i / 2; // nearest rows first: the bound bites sooner
                         if (by + my < 0 || by + my + 8 > th)
                             continue;
                         const uint8_t* ref = &prevThumb[size_t(by + my) * tw + bx];
@@ -214,7 +232,11 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                         }
                     }
                     interCost += std::min(best, intra);
-                    intraCost += intra + 16; // a little bias so flat pictures do not count as cuts
+                    intraLeft -= intra;
+                    if (interCost * 100 > intraCost * 85 || (interCost + intraLeft) * 100 <= intraCost * 85) {
+                        decided = true;
+                        break;
+                    }
                 }
             // Real cuts measured ~0.92-0.95, fast game motion up to ~0.72.
             f.sceneChange = interCost * 100 > intraCost * 85;
