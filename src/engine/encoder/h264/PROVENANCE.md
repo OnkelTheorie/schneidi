@@ -36,6 +36,12 @@ published literature. No code, tables or thresholds were copied from another enc
     quadrants); scene-change detection that stops once its threshold comparison is decided; the
     first pass analysing consecutive pictures side by side.
 
+- Two-pass rate control (14.11.): the bit model's k learned per class of picture cost, a limit
+  on how far a picture's QP may leave the whole-clip plan, and complexity compression (a
+  picture's quantiser scale following a power of its smoothed complexity, the "qcomp" idea
+  described in public rate-control literature and encoder documentation); all own code, tuned
+  by measurement.
+
 ## Other encoders
 
 x264 (and OpenH264) were used only as external benchmark binaries: their output was measured
