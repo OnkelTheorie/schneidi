@@ -7,9 +7,11 @@
 //
 // Channels: the meters show as many bars as the mix has channels. Engine::audioLevels sends one value per channel for
 // every track and the master ([A1 ch1..chN, A2 …, master ch1..chN]), so the count is levels / (tracks + 1); until the
-// first levels arrive the strips show a stereo pair.
+// first levels arrive the strips show a stereo pair. The levels come from Engine::audioSpeakerLevels: in stereo the
+// master is true peak as everywhere, in 5.1/7.1 every speaker's sample peak with its name under the bar (L R C LFE …).
 
 #include <QElapsedTimer>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
@@ -31,6 +33,8 @@ public:
     int stripCount() const { return int(m_strips.size()); }
     // Bars the meter of track `track` shows (-1 = the master)
     int meterChannels(int track) const;
+    // Names under the bars of that meter: the master in 5.1/7.1 (ChannelLayout::label), else none
+    QStringList meterLabels(int track) const;
     // Levels as Engine::audioLevels sends them (tests feed them directly)
     void onLevels(const QVector<float>& db);
 

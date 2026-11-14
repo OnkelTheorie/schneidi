@@ -222,6 +222,10 @@ signals:
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
     // the master measures true peak (dBTP, BS.1770 4x oversampled) like the delivery check
     void audioLevels(const QVector<float>& db);
+    // The same per speaker (0.23, the Studio's meters): one value per channel of the mix for every track and the master,
+    // [A1 ch1..chN, A2 …, Master ch1..chN] in ChannelLayout order. Stereo: exactly audioLevels (the master as true
+    // peak); 5.1/7.1: sample peaks of the mix before the monitor's downmix (the master after its limiter).
+    void audioSpeakerLevels(const QVector<float>& db);
     // internal: position from the pump thread, epoch = jump counter when displaying (older ones are discarded)
     void framePosition(int frame, int epoch);
     // internal: loop playback crossed the range's end (pump thread) -> jump back on the UI thread

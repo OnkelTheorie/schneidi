@@ -17,6 +17,7 @@ class RenderQueue;
 class RenderQueuePanel;
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLineEdit;
 class QPushButton;
 class QLabel;
@@ -109,6 +110,8 @@ private:
     int m_maxFps = 0; // from the preset (Shorts/Reels/TikTok: up to 60 fps) while the frame rate follows the timeline
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;
+    QComboBox* m_audioFormat = nullptr; // sound codec of the MP4 formats: AAC / AC-3 (RenderSettings::audioFormat)
+    QFormLayout* m_form = nullptr;
     QComboBox* m_threads; // threads for rendering (data: count, 0 = all)
     QComboBox* m_range; // whole timeline / In-Out range
     QCheckBox* m_smart; // smart render (H.264/H.265 only)

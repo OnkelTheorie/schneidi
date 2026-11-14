@@ -71,8 +71,10 @@ public:
     double position() const;
 
     // Peak levels of the sound heard since the last call (linear): per audio track L, R after fader/pan, then the
-    // master L, R as true peak; empty = nothing heard
-    std::vector<float> takeLevels();
+    // master L, R as true peak; empty = nothing heard. speakers (0.23): in a 5.1/7.1 mix also one value per channel
+    // of the mix for every track and the master ([A1 ch1..chN, A2 …, master ch1..chN], sample peaks, the master after
+    // its limiter, before the monitor's downmix; Mixer::channelPeaks); empty in stereo
+    std::vector<float> takeLevels(std::vector<float>* speakers = nullptr);
     // Master loudness while it is active (only speed 1); nullptr = none. The meter must outlive the player.
     void setLoudness(SharedLoudness* loudness);
 

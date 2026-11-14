@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <optional>
@@ -56,8 +57,12 @@ struct RenderSettings {
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
     // Channels of the file: 0 = the project's mix (stereo, 5.1, 7.1), 2 = stereo (a surround mix downmixed), 6 = 5.1,
-    // 8 = 7.1 (a stereo mix in the front pair). An encoder without that many (MP3) writes the stereo downmix.
+    // 8 = 7.1 (a stereo mix in the front pair). An encoder without that many writes 7.1 as 5.1 (AC-3, ALAC) or stereo (MP3).
     int audioChannels = 0;
+    // Sound codec of an MP4 video instead of the format's AAC (0.23): "" = the format's own, "ac3" = AC-3 (Dolby
+    // Digital: up to 5.1, plays on every TV, AV receiver and Blu-ray/DVD tool; a 7.1 mix is written as 5.1). Only
+    // offered where the FFmpeg has the encoder (the Deliver page and the CLI ask HardwareEncoders::builtIn("ac3")).
+    QString audioFormat;
     int rateNum = 0, rateDen = 1; // frame rate of the output, 0 = like the timeline
     // With rateNum 0: highest frame rate; a faster timeline renders at its rate divided by the smallest whole number
     // that gets there (120 -> 60, 100 -> 50, 144 -> 48), so every output frame is a timeline frame. 0 = no limit
@@ -79,6 +84,9 @@ struct RenderSettings {
     bool hasEncoderChoice() const; // H.264/H.265: software or hardware encoder
     bool hasAudioBitrate() const;   // AAC/MP3
     QVector<int> audioBitChoices() const; // selectable bit depths (empty = not adjustable)
+    // audioFormat values this format takes besides "" (its own): {"ac3"} for the MP4 video formats, else empty
+    QStringList audioFormatChoices() const;
+    static int ac3BitrateK(int channels) { return channels > 2 ? 640 : 320; } // fixed: AC-3's best (Blu-ray: 640)
     QString audioCodec() const;     // FFmpeg codec with the chosen bit depth, e.g. pcm_f32le
     QString audioSampleFormat() const; // Apple Lossless: s16p/s32p, FLAC: s16/s32, otherwise empty
     FrameRate outputRate(FrameRate timeline) const;
