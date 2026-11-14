@@ -41,6 +41,7 @@
 #include <QVBoxLayout>
 #include <QScrollBar>
 #include <QScrollArea>
+#include <QEvent>
 #include <algorithm>
 
 namespace {
@@ -78,13 +79,34 @@ QString smartTip()
              "werden kodiert. Passt etwas nicht, wird automatisch normal kodiert.");
 }
 
+// Scroll area for the settings form: at least as wide as the form's minimum *now* (combo boxes are filled and polished
+// after the constructor, so a minimum width fixed there was too small and the panel cut the form off at the right)
+class FormScroll : public QScrollArea
+{
+public:
+    using QScrollArea::QScrollArea;
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget()) s.setWidth(widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width());
+        return s;
+    }
+    // The form's minimum changes later (filled combo boxes): the panel's layout must ask again (QScrollArea watches
+    // its widget through an event filter already)
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        if (o == widget() && e->type() == QEvent::LayoutRequest) updateGeometry();
+        return QScrollArea::eventFilter(o, e);
+    }
+};
+
 } // namespace
 
 DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     : QWidget(parent), m_project(project), m_queue(new RenderQueue(project, this))
 {
     setObjectName("Panel");
-    setMinimumWidth(300);
+    // No fixed minimum width: the layout's (the settings form, FormScroll) keeps the splitter from cutting the form off
     m_queuePanel = new RenderQueuePanel(project, m_queue);
 
     auto* title = new QLabel(T("Render-Einstellungen"));
@@ -284,13 +306,12 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     formLay->setContentsMargins(0, 0, 0, 0);
     formLay->addLayout(form);
     formLay->addStretch(1);
-    auto* formScroll = new QScrollArea;
+    auto* formScroll = new FormScroll;
     formScroll->setWidget(formPage);
     formScroll->setWidgetResizable(true);
     formScroll->setFrameShape(QFrame::NoFrame);
     formScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // As wide as the form (the panel never cuts it off at the right)
-    formScroll->setMinimumWidth(formPage->minimumSizeHint().width() + formScroll->verticalScrollBar()->sizeHint().width());
+    // As wide as the form (the panel never cuts it off at the right): FormScroll::minimumSizeHint
     lay->addWidget(formScroll, 1);
     WheelGuard::install(formPage); // scrolling over a choice box scrolls the page, does not change the box
     auto* bottom = new QVBoxLayout;
