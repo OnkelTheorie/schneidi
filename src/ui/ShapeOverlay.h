@@ -2,7 +2,7 @@
 #pragma once
 // The selected shape title (0.22, TitleKind::Shape) over the viewer on the Edit page: its box (turned with it), drag
 // inside = move, the eight handles = size (around the centre; Shift on a corner keeps the shape's proportions), the knob
-// above = rotate (Shift: 15 degree steps). Values change like the Inspector's (a keyframe at the playhead when the value
+// above = rotate (Shift: 15 degree steps). A line has only its two ends: length and angle (Shift: 15 degree steps). Values change like the Inspector's (a keyframe at the playhead when the value
 // is animated), one undo step per drag. A shape following a tracker shows no box (the tracker places it).
 
 #include "ui/ViewerOverlay.h"
@@ -36,6 +36,7 @@ private:
     enum Part { None = -1, Inside = 100 };
     const Clip* clip() const;
     int localFrame(const Clip& c) const;
+    bool isLine() const; // a line: only its two ends are handles (length and angle)
     // Project pixels -> widget; shape-local pixels (centre origin, not turned) -> project pixels
     bool transforms(const QRectF& frame, QTransform* toWidget, QTransform* local, double* hw, double* hh) const;
     int partAt(const QPointF& pos, const QRectF& frame) const;

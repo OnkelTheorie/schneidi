@@ -22,6 +22,8 @@ constexpr double kHit = 8;      // grab distance
 constexpr double kKnob = 22;    // distance of the rotate knob above the box (widget pixels)
 constexpr double kHandles[8][2] = {{-1, -1}, {0, -1}, {1, -1}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}};
 constexpr int kRotate = 8;
+// A line's box is only as tall as the line is thick: its corners sit on its ends. Only the two ends (3, 7) are handles.
+bool lineHandle(int handle) { return handle == 3 || handle == 7; }
 
 } // namespace
 
@@ -41,6 +43,12 @@ const Clip* ShapeOverlay::clip() const
     if (!c || !c->isTitle() || !c->title.isShape() || c->title.shape.followClip > 0) return nullptr;
     const int f = m_playhead ? m_playhead() : c->start;
     return f >= c->start && f < c->end() ? c : nullptr;
+}
+
+bool ShapeOverlay::isLine() const
+{
+    const Clip* c = clip();
+    return c && c->title.shape.kind == ShapeKind::Line;
 }
 
 int ShapeOverlay::localFrame(const Clip& c) const
@@ -123,7 +131,9 @@ void ShapeOverlay::paint(QPainter& p, const QRectF& frame)
     p.setPen(QPen(QColor(0, 0, 0, 160), 1));
     p.drawEllipse(knob, kHandle, kHandle);
     p.setBrush(QColor(255, 255, 255));
+    const bool line = isLine();
     for (int i = 0; i < 8; ++i) {
+        if (line && !lineHandle(i)) continue;
         const QPointF h = handlePos(i, frame);
         p.drawRect(QRectF(h.x() - kHandle, h.y() - kHandle, 2 * kHandle, 2 * kHandle));
     }
@@ -137,8 +147,9 @@ int ShapeOverlay::partAt(const QPointF& pos, const QRectF& frame) const
     if (!transforms(frame, &w, &l, &hw, &hh)) return None;
     const auto near = [&](const QPointF& h) { return std::hypot(h.x() - pos.x(), h.y() - pos.y()) <= kHit; };
     if (near(handlePos(kRotate, frame))) return kRotate;
+    const bool line = isLine();
     for (int i = 0; i < 8; ++i)
-        if (near(handlePos(i, frame))) return i;
+        if ((!line || lineHandle(i)) && near(handlePos(i, frame))) return i;
     bool ok = false;
     const QTransform inv = (l * w).inverted(&ok);
     if (!ok) return None;
@@ -202,6 +213,15 @@ bool ShapeOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         const double now = c ? Keys::valueAt(*c, AnimParam::ShapeRotation, localFrame(*c)) : 0.0;
         angle += std::round((now - angle) / 360) * 360;
         set({{int(AnimParam::ShapeRotation), angle}});
+    } else if (isLine()) { // an end of a line: length and angle around the centre, the thickness stays
+        QPointF v = pos - l.map(QPointF(0, 0));
+        if (m_part == 7) v = -v; // the left end: the line points the other way
+        double angle = std::atan2(v.y(), v.x()) * 180 / M_PI; // clockwise (y down), 0 = the right end to the right
+        if (e->modifiers() & Qt::ShiftModifier) angle = std::round(angle / 15) * 15;
+        const Clip* c = clip();
+        const double now = c ? Keys::valueAt(*c, AnimParam::ShapeRotation, localFrame(*c)) : 0.0;
+        angle += std::round((now - angle) / 360) * 360;
+        set({{int(AnimParam::ShapeWidth), std::round(std::hypot(v.x(), v.y()) * 2)}, {int(AnimParam::ShapeRotation), angle}});
     } else {
         const QPointF q = l.inverted().map(pos); // around the centre
         const bool sx = kHandles[m_part][0] != 0, sy = kHandles[m_part][1] != 0;
