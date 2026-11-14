@@ -28,6 +28,14 @@ published literature. No code, tables or thresholds were copied from another enc
     thresholds and the bit model in `planInterLuma` were fitted by measurement on our own test
     material).
 
+  - Speed shortcuts of the mode decision (round 6, 14.11.2026), all our own and tuned by BD-rate
+    measurement on our test material: sub-pel refinement that measures the four direct neighbours
+    and only the two diagonals beside the best one (a reduced search pattern of the kind described
+    throughout the fast-motion-estimation literature); skipping work that the 8x8 trellis plan of
+    the 16x16 prediction shows to be pointless (late skip, no split search, no 4x4 plan for empty
+    quadrants); scene-change detection that stops once its threshold comparison is decided; the
+    first pass analysing consecutive pictures side by side.
+
 ## Other encoders
 
 x264 (and OpenH264) were used only as external benchmark binaries: their output was measured
