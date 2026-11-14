@@ -150,10 +150,16 @@ public:
 
 private:
     void analyseBatch() const;
+    void startBatch() const;
+    void joinWorker() const;
     int width_, height_, threads_;
     std::unique_ptr<Lookahead> la_;
-    // Pictures waiting for the next batch, and the last analysed one (their predecessor).
-    mutable std::vector<LookaheadFrame> batch_;
+    // Pictures waiting for the next batch, the batch under analysis (on worker_ with threads > 1,
+    // which alone touches it, prev_ and the statistics until joined) and the last analysed picture
+    // (their predecessor).
+    mutable std::vector<LookaheadFrame> batch_, job_;
+    mutable std::thread worker_;
+    mutable std::exception_ptr workerError_;
     mutable LookaheadFrame prev_, prev2_;
     mutable bool havePrev_ = false, havePrev2_ = false;
     bool forB_ = false;

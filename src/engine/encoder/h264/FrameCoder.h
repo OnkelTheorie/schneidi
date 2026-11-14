@@ -268,6 +268,7 @@ public:
         int levels8[4][64];
         int cbpLuma;
         double energy8[4]; // 8x8 plan with estimate: squared error of each quadrant left empty
+        int small8;        // 8x8 plan with estimate: quadrants with every coefficient below half a level
     };
     void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
                        InterResidual& ir, double fineLambda = -1.0);

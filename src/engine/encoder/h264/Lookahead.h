@@ -3,6 +3,7 @@
 // macroblock tree (lower QP where later pictures will reference a block).
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <vector>
@@ -57,8 +58,11 @@ public:
     // pictures go one after another).
     void sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const;
     // seed: another start point of the search, that picture's vector times seedScale.
+    // prevRows / ownRows (threads = 1): for analysing consecutive pictures side by side; a row waits
+    // until prev's analysis (on another thread) counts more rows done than its index, and the rows
+    // done here are counted in ownRows (the caller sets it past the last row should this throw).
     void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1, const LookaheadFrame* seed = nullptr,
-               int seedScale = 1) const;
+               int seedScale = 1, const std::atomic<int>* prevRows = nullptr, std::atomic<int>* ownRows = nullptr) const;
     // bScore of f (analysed against prev) from a second search against prev2, the picture before prev.
     double bScore(const LookaheadFrame& f, const LookaheadFrame& prev, const LookaheadFrame& prev2) const;
 

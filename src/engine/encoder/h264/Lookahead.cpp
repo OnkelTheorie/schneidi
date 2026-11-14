@@ -233,7 +233,7 @@ double Lookahead::bScore(const LookaheadFrame& f, const LookaheadFrame& prev, co
 }
 
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
-                      int seedScale) const
+                      int seedScale, const std::atomic<int>* prevRows, std::atomic<int>* ownRows) const
 {
     const int stride = halfW_ + 2 * kMargin;
     const size_t n = size_t(mbW_) * mbH_;
@@ -408,9 +408,18 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
     std::vector<double> rowIntra(size_t(mbH_), 0.0), rowInter(size_t(mbH_), 0.0);
     threads = std::clamp(threads, 1, mbH_);
     if (threads == 1) {
-        for (int by = 0; by < mbH_; ++by)
+        for (int by = 0; by < mbH_; ++by) {
+            // Pictures side by side: a row reads prev's vectors of the same row.
+            if (prevRows)
+                for (int v = prevRows->load(std::memory_order_acquire); v <= by; v = prevRows->load(std::memory_order_acquire))
+                    prevRows->wait(v, std::memory_order_acquire);
             for (int bx = 0; bx < mbW_; ++bx)
                 doMb(bx, by, rowIntra[size_t(by)], rowInter[size_t(by)]);
+            if (ownRows) {
+                ownRows->store(by + 1, std::memory_order_release);
+                ownRows->notify_all();
+            }
+        }
     } else {
         std::unique_ptr<std::atomic<int>[]> done(new std::atomic<int>[size_t(mbH_)]);
         for (int r = 0; r < mbH_; ++r)

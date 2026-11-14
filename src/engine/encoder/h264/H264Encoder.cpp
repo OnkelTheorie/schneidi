@@ -754,6 +754,9 @@ Picture pictureOf(const LookaheadFrame& f, int w)
 
 } // namespace
 
+// H264_FPASYNC=0: the first pass analyses each batch on the caller's thread (as before 14.11.).
+static const bool gFirstPassAsync = !std::getenv("H264_FPASYNC") || std::atoi(std::getenv("H264_FPASYNC")) != 0;
+
 FirstPass::FirstPass(int width, int height, int threads, bool forB, size_t keepAnalysisBytes)
     : width_(width), height_(height), threads_(std::max(1, threads)),
       la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
@@ -764,7 +767,11 @@ FirstPass::FirstPass(int width, int height, int threads, bool forB, size_t keepA
         keepBytes_ = std::atoi(e) ? keepBytes_ : 0;
 }
 
-FirstPass::~FirstPass() = default;
+FirstPass::~FirstPass()
+{
+    if (worker_.joinable())
+        worker_.join();
+}
 
 void FirstPass::add(const Picture& pic, bool forceKeyframe)
 {
@@ -774,15 +781,52 @@ void FirstPass::add(const Picture& pic, bool forceKeyframe)
     for (int y = 0; y < height_; ++y)
         std::memcpy(f.y.data() + size_t(y) * width_, pic.y + size_t(y) * pic.strideY, size_t(width_));
     batch_.push_back(std::move(f));
-    if (int(batch_.size()) >= 4 * threads_)
-        analyseBatch();
+    // With threads the batch is analysed on a thread of its own while the caller brings the next
+    // pictures (half the batch size, so as many pictures wait as without it).
+    if (int(batch_.size()) >= (threads_ > 1 && gFirstPassAsync ? 2 : 4) * threads_)
+        startBatch();
+}
+
+// Waits for the batch under analysis; what its thread threw comes out here.
+void FirstPass::joinWorker() const
+{
+    if (worker_.joinable())
+        worker_.join();
+    if (workerError_) {
+        const std::exception_ptr e = workerError_;
+        workerError_ = nullptr;
+        job_.clear();
+        std::rethrow_exception(e);
+    }
+}
+
+// Hands the waiting pictures to the analysis: on a thread (threads > 1) or right here.
+void FirstPass::startBatch() const
+{
+    joinWorker();
+    job_ = std::move(batch_);
+    batch_.clear();
+    if (threads_ > 1 && gFirstPassAsync) {
+        try {
+            worker_ = std::thread([this] {
+                try {
+                    analyseBatch();
+                } catch (...) {
+                    workerError_ = std::current_exception();
+                }
+            });
+            return;
+        } catch (const std::system_error&) { // no thread: analysed here
+        }
+    }
+    analyseBatch();
 }
 
 // Half pictures, thumbnails and scene changes of the whole batch side by side, then the costs
 // in order (each against its predecessor, the last one of the batch before for the first).
 void FirstPass::analyseBatch() const
 {
-    const int n = int(batch_.size());
+    const int n = int(job_.size());
     if (!n)
         return;
     auto parallel = [&](auto&& fn) {
@@ -792,18 +836,46 @@ void FirstPass::analyseBatch() const
                 fn(i);
         });
     };
-    auto prevOf = [&](int i) { return i > 0 ? &batch_[size_t(i) - 1] : havePrev_ ? &prev_ : nullptr; };
+    auto prevOf = [&](int i) { return i > 0 ? &job_[size_t(i) - 1] : havePrev_ ? &prev_ : nullptr; };
+    PhaseClock clock;
     parallel([&](int i) {
         failurePoint(FailPoint::FirstPassWorker);
-        la_->prepare(batch_[size_t(i)]);
+        la_->prepare(job_[size_t(i)]);
     });
-    parallel([&](int i) { la_->sceneCut(batch_[size_t(i)], prevOf(i)); });
+    clock.lap(0);
+    parallel([&](int i) { la_->sceneCut(job_[size_t(i)], prevOf(i)); });
+    clock.lap(1);
     // The motion search starts from the predecessor's vectors: in order.
-    for (int i = 0; i < n; ++i)
-        la_->costs(batch_[size_t(i)], prevOf(i), threads_);
+    if (threads_ > 1 && n > 1 && gFirstPassAsync) {
+        // Pictures side by side, one thread each: a row needs the predecessor's vectors of the same
+        // row only, so each picture runs one row behind the one before it (the same numbers as
+        // one picture after the other).
+        std::unique_ptr<std::atomic<int>[]> rows(new std::atomic<int>[size_t(n)]);
+        for (int i = 0; i < n; ++i)
+            rows[size_t(i)].store(0, std::memory_order_relaxed);
+        std::atomic<int> next{0};
+        runOnThreads(std::min(threads_, n), [&] {
+            for (int i; (i = next.fetch_add(1)) < n;) {
+                try {
+                    la_->costs(job_[size_t(i)], prevOf(i), 1, nullptr, 1, i > 0 ? &rows[size_t(i) - 1] : nullptr, &rows[size_t(i)]);
+                } catch (...) { // the picture after this one must not wait for ever
+                    rows[size_t(i)].store(INT_MAX, std::memory_order_release);
+                    rows[size_t(i)].notify_all();
+                    throw;
+                }
+            }
+        });
+    } else {
+        for (int i = 0; i < n; ++i)
+            la_->costs(job_[size_t(i)], prevOf(i), threads_);
+    }
+    clock.lap(2);
+    if (gTiming)
+        std::fprintf(stderr, "first pass batch of %d, ms: prepare %.1f scenecut %.1f costs %.1f\n", n, clock.ms[0], clock.ms[1],
+                     clock.ms[2]);
     // Kept from the start without gaps (the encoder's analysis of a picture needs its predecessor's).
     for (int i = 0; i < n; ++i) {
-        const LookaheadFrame& f = batch_[size_t(i)];
+        const LookaheadFrame& f = job_[size_t(i)];
         const size_t bytes = f.intraCost.size() * 12;
         if (stats_->analysis.size() != stats_->intraSum.size() + size_t(i) || keptBytes_ + bytes > keepBytes_)
             break;
@@ -819,15 +891,15 @@ void FirstPass::analyseBatch() const
         keptBytes_ += bytes;
     }
     if (forB_) {
-        auto prev2Of = [&](int i) { return i > 1 ? &batch_[size_t(i) - 2] : i == 1 ? (havePrev_ ? &prev_ : nullptr) : havePrev2_ ? &prev2_ : nullptr; };
+        auto prev2Of = [&](int i) { return i > 1 ? &job_[size_t(i) - 2] : i == 1 ? (havePrev_ ? &prev_ : nullptr) : havePrev2_ ? &prev2_ : nullptr; };
         parallel([&](int i) {
             if (prev2Of(i))
-                batch_[size_t(i)].bScore = la_->bScore(batch_[size_t(i)], *prevOf(i), *prev2Of(i));
+                job_[size_t(i)].bScore = la_->bScore(job_[size_t(i)], *prevOf(i), *prev2Of(i));
         });
-        for (const LookaheadFrame& f : batch_)
+        for (const LookaheadFrame& f : job_)
             stats_->bScore.push_back(f.bScore);
         if (n >= 2) {
-            prev2_ = std::move(batch_[size_t(n) - 2]);
+            prev2_ = std::move(job_[size_t(n) - 2]);
             havePrev2_ = true;
         } else {
             prev2_ = std::move(prev_);
@@ -835,21 +907,26 @@ void FirstPass::analyseBatch() const
         }
         prev2_.y = {};
     }
-    for (LookaheadFrame& f : batch_) {
+    for (LookaheadFrame& f : job_) {
         stats_->intraSum.push_back(f.intraSum);
         stats_->interSum.push_back(f.interSum);
         stats_->sceneChange.push_back(f.sceneChange ? 1 : 0);
         stats_->forceKeyframe.push_back(f.forceKeyframe ? 1 : 0);
     }
-    prev_ = std::move(batch_.back());
+    prev_ = std::move(job_.back());
     prev_.y = {};
     havePrev_ = true;
-    batch_.clear();
+    job_.clear();
 }
 
 std::shared_ptr<const FirstPassStats> FirstPass::stats() const
 {
-    analyseBatch();
+    joinWorker();
+    if (!batch_.empty()) {
+        job_ = std::move(batch_);
+        batch_.clear();
+        analyseBatch();
+    }
     return stats_;
 }
 
@@ -4389,6 +4466,8 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
 // squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
 // fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
 // above the lowest frequencies are decided with fineLambda instead of lambda.
+static const int gZeroQuad = std::getenv("H264_ZEROQ") ? std::atoi(std::getenv("H264_ZEROQ")) : 1;
+
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
                                InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8)
 {
@@ -4402,6 +4481,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     if (est)
         *est = -1;
+    ir.small8 = 0;
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
@@ -4460,6 +4540,13 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 }
                 sum += any ? j : energy;
                 ir.energy8[b8] = energy;
+                if (est) {
+                    bool small = true; // every coefficient below half a level: empty before any decision
+                    for (int k = 0; k < 64 && small; ++k)
+                        small = std::abs(xs[k]) < 0.5;
+                    if (small)
+                        ir.small8 |= 1 << b8;
+                }
                 if (any)
                     cbpLuma |= 1 << b8;
             } else {
@@ -4505,7 +4592,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     double gain[16];
     const bool trellisPath = cfg_.effort > 0 && live && trellis;
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
-        if (emptyOf8 && est && trellisPath && !((emptyOf8->cbpLuma >> (blkIdx >> 2)) & 1)) {
+        if (emptyOf8 && est && trellisPath && !((emptyOf8->cbpLuma >> (blkIdx >> 2)) & 1) &&
+            (gZeroQuad == 1 || ((emptyOf8->small8 >> (blkIdx >> 2)) & 1))) {
             // The 8x8 plan left this quadrant without a level: taken as empty here too, at the
             // same squared error (the quadrant's, in equal shares).
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
@@ -4931,6 +5019,14 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     if (wholeZero && kZeroNoSplit)
         skipSplits = true;
+    // With the mode decision by estimate the split search waits until the 16x16 layout is coded:
+    // where skip costs no more than kSkipWins times that, the splits are not searched at all.
+    // H264_SKIPWINS=0: the search before the 16x16 coding, always.
+    static const double kSkipWins = std::getenv("H264_SKIPWINS") ? std::atof(std::getenv("H264_SKIPWINS")) : 1.0;
+    static const double kSkipIntra = std::getenv("H264_SKIPINTRA") ? std::atof(std::getenv("H264_SKIPINTRA")) : 0.0;
+    const bool deferSplits = kSkipWins > 0 && kRdEst && cabacByTop_[size_t(rowKey_[size_t(mby)])] && cfg_.effort > 0 &&
+                             useT8() && !(gExp & (32 | 512)) && tPsy.weight <= 0;
+    auto searchSplits = [&] {
     if (cfg_.effort > 0 && !skipSplits) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
         // one gets the sub-pel refinement, and only when it is close.
@@ -4945,7 +5041,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         // 16x8 / 8x16 without a search of their own: each half takes the better of the vectors the
         // two 8x8 parts it covers ended on, or the 16x16 one (SATD + vector bits, like the search).
         // H264_RECTFAST=0: both layouts searched like the others.
-        static const bool kRectFast = !std::getenv("H264_RECTFAST") || std::atoi(std::getenv("H264_RECTFAST")) != 0;
+        static const int kRectFast = std::getenv("H264_RECTFAST") ? std::atoi(std::getenv("H264_RECTFAST")) : 1;
         const Choice quads = split;
         auto tryRect = [&](int li) {
             const Layout& L = kLayouts[li];
@@ -4990,7 +5086,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         };
         if (split.cost < whole.cost * 1.1) { // 16x8 / 8x16 only where splitting looks worth it
             for (int li : {1, 2}) {
-                const Choice c = kRectFast ? tryRect(li) : tryLayout(li);
+                // 2: only when both halves' 8x8 parts agree pairwise (else the search).
+                auto agree = [&](int a, int b) {
+                    return quads.mv[a][0] == quads.mv[b][0] && quads.mv[a][1] == quads.mv[b][1] && quads.ref[a] == quads.ref[b];
+                };
+                const bool fast = kRectFast == 1 || (kRectFast == 2 && (li == 1 ? agree(0, 1) && agree(2, 3) : agree(0, 2) && agree(1, 3)));
+                const Choice c = fast ? tryRect(li) : tryLayout(li);
                 if (c.cost < split.cost)
                     split = c;
             }
@@ -5019,6 +5120,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             }
         }
     }
+    };
+    if (!deferSplits)
+        searchSplits();
 
     // Encodes one inter choice; leaves its state in the macroblock and returns SSD + lambda * bits
     // (+ the psy cost, also left in interPsy).
@@ -5165,7 +5269,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
     // (without levels both transforms are the same macroblock). H264_ZERO8=0: plan both.
-    static const bool kZeroQuad = !std::getenv("H264_ZEROQ") || std::atoi(std::getenv("H264_ZEROQ")) != 0;
+    const bool kZeroQuad = gZeroQuad != 0;
     static const bool kZero8 = !std::getenv("H264_ZERO8") || std::atoi(std::getenv("H264_ZERO8")) != 0;
     if (useEst) {
         struct Plan {
@@ -5223,6 +5327,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         Plan pw;
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
+        if (deferSplits && costSkip > costWhole * kSkipWins)
+            searchSplits();
         if (split.cost < whole.cost * kSplitTry) {
             Plan ps;
             plan(split, ps);
@@ -5348,7 +5454,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         const int intraEstimate = intraEstimate16();
         // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
-        if (double(intraEstimate) < best.cost * gIntraFactor) {
+        if (double(intraEstimate) < best.cost * gIntraFactor && !(kSkipIntra > 0 && costSkip <= costInter * kSkipIntra)) {
             // Borderline cases (estimate above the inter cost) rarely win: only the cheap
             // intra types there.
             const bool borderline = double(intraEstimate) >= best.cost;
