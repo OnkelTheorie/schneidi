@@ -5,6 +5,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/ExportCheck.h"
+#include "core/SourceBitrate.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -46,10 +47,10 @@
 
 namespace {
 
-// Smart render copies at "High" and "Web" (below its cap) only: copied pictures keep the file's bit rate
+// Smart render copies at "High", "Web" (below its cap) and "Like source" only: copied pictures keep the file's bit rate
 bool smartQuality(int quality)
 {
-    return quality == 0 || quality == RenderSettings::kQualityWeb;
+    return quality == 0 || quality == RenderSettings::kQualityWeb || quality == RenderSettings::kQualitySource;
 }
 
 // Same output? (resolution resolved via the timeline, quality/bit rate only where they take effect)
@@ -149,6 +150,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     }
 
     m_resolution = new QComboBox;
+    m_resolution->setObjectName("renderResolution");
     // Like DaVinci "Frame rate" when rendering: default = timeline, otherwise converted on export
     m_rate = new QComboBox;
     m_rate->setObjectName("renderRate");
@@ -159,11 +161,17 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
                          "wiederholt (der Ton bleibt unverändert)."));
 
     m_quality = new QComboBox;
+    m_quality->setObjectName("renderQuality");
     m_quality->addItem(T("Hoch"));
     m_quality->addItem(T("Mittel"));
     m_quality->addItem(T("Klein"));
     m_quality->addItem(T("Web (begrenzte Bitrate)"));
     m_quality->setItemData(RenderSettings::kQualityWeb, T("Hohe Qualität, Bitrate begrenzt wie für YouTube empfohlen (kleinere Datei)"), Qt::ToolTipRole);
+    m_quality->addItem(T("Wie Quelle"));
+    m_quality->setItemData(RenderSettings::kQualitySource,
+                           T("Bitrate wie die verwendeten Aufnahmen: Datei etwa so groß wie das Original, sichtbar ohne "
+                             "Verlust"),
+                           Qt::ToolTipRole);
 
     // Like DaVinci's "Encoder" (Auto / Native / NVIDIA …): only hardware encoders that work on this computer
     m_encoder = new QComboBox;
@@ -544,7 +552,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_maxFps = s.maxFps;
     updateRateLabel();
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
-    m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualityWeb));
+    m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualitySource));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
     m_audioBitrate->setCurrentIndex(br >= 0 ? br : m_audioBitrate->count() - 1);
     updateControls(); // Bit depths of the format
@@ -586,6 +594,7 @@ void DeliverPanel::updateControls()
         if (QStandardItem* item = model->item(RenderSettings::kQualityWeb)) item->setEnabled(f.webQuality);
     if (!f.webQuality && f.hasQuality() && m_quality->currentIndex() == RenderSettings::kQualityWeb)
         m_quality->setCurrentIndex(0);
+    updateSourceBitrate();
     updateEncoders();
     const bool copies = smartQuality(m_quality->currentIndex());
     m_smart->setEnabled(f.hardware && copies); // H.264/H.265
@@ -623,9 +632,33 @@ void DeliverPanel::updateControls()
     if (review) m_smart->setEnabled(false);
 }
 
+void DeliverPanel::updateSourceBitrate()
+{
+    // "Like source" shows the bit rate it aims at (the timeline as it is now, this output); only while it is chosen
+    // (it reads the files' headers)
+    QString text = T("Wie Quelle");
+    if (m_quality->currentIndex() == RenderSettings::kQualitySource && m_quality->isEnabled() && isVisible()) {
+        RenderJob job;
+        job.settings = settings();
+        if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();
+        job.sequence = m_project->currentSequence();
+        if (m_range->currentIndex() == 1) {
+            const Timeline& tl = m_project->timeline();
+            job.inOut = true;
+            job.from = std::max(0, tl.markIn);
+            job.to = tl.markOut;
+        }
+        const int k = RenderQueue::sourceBitrateK(job, *m_project);
+        text += QStringLiteral(" (") + (k > 0 ? SourceBitrate::label(k) : T("unbekannt: wie Hoch")) + ')';
+    }
+    if (m_quality->itemText(RenderSettings::kQualitySource) != text)
+        m_quality->setItemText(RenderSettings::kQualitySource, text);
+}
+
 void DeliverPanel::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
+    updateSourceBitrate();
     HardwareEncoders::probeInBackground(); // once: which hardware encoders work (does not block)
 }
 
@@ -792,6 +825,7 @@ RenderJob DeliverPanel::makeJob() const
     int maxId = 0;
     for (const RenderJob& j : m_project->renderQueue()) maxId = std::max(maxId, j.id);
     job.id = maxId + 1;
+    job.sourceBitrateK = RenderQueue::sourceBitrateK(job, *m_project); // shown in the queue ("≈ 30 Mbit/s")
     return job;
 }
 

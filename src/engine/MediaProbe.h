@@ -10,6 +10,7 @@
 // takes the picture alone). Thread-safe (the Media Pool probes several files at once).
 
 #include "core/ProjectFormat.h"
+#include "core/SourceBitrate.h"
 #include "core/Types.h"
 
 #include <QString>
@@ -41,5 +42,12 @@ int longAnalysesForTest();
 void forgetForTest();
 // Sound files by extension (mp3, wav, …): an embedded cover is no picture for the timeline
 bool isAudioFile(const QString& path);
+
+// The video stream's bit rate, picture size and frame rate (export quality "like source", core/SourceBitrate): the
+// stream's bit rate from the container (MP4/MOV: its samples' sizes; Matroska: a "BPS" statistics tag), else the
+// file's average bit rate (size / length) minus its sound streams'. nullopt: no video, a still picture or cover, or no
+// bit rate known. From the header where it suffices (~1 ms), remembered per file while its size and time stay the
+// same. Thread-safe.
+std::optional<SourceBitrate::Video> videoRate(const QString& path);
 
 } // namespace MediaProbe

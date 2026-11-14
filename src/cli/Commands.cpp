@@ -1098,7 +1098,13 @@ const QVector<Command>& commands()
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
            "<name>.<track name>.srt, listed in srt_more); vtt = the same as WebVTT"},
-          {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
+          {"quality", T::String, "high (default, or 0), medium (1), small (2), web (3): high with a bit rate cap like YouTube "
+                                 "recommends (H.264/H.265 only; the YouTube and phone presets use it), source (4): the "
+                                 "video bit rate of the recordings used (weighted by how long each shows, scaled to the "
+                                 "output's size and frame rate, less when scaled up), so the file is about as big as the "
+                                 "source and visibly "
+                                 "lossless; the answer's 'video_bitrate_k' is the rate aimed at, unknown = high and a "
+                                 "note in 'encoder_note'. ProRes, DNxHR, GIF and images have a fixed quality"},
           {"height", T::Integer, "shorter image edge, e.g. 720: 16 to 8192, an odd one rounded down to even (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's): 10, 12, 15, 23.976, 24, 25, 29.97, 30, 48, 50, "

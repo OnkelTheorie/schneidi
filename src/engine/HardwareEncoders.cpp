@@ -367,6 +367,38 @@ QVector<QPair<QString, QString>> codecOptions(const QString& codec, int crf)
     return {};
 }
 
+namespace {
+QVector<QPair<QString, QString>> averageRate(int kbit)
+{
+    const auto k = [](qint64 v) { return QString::number(std::max<qint64>(1, v)) + "k"; };
+    return {{"b", k(kbit)}, {"maxrate", k(qint64(kbit) * 3 / 2)}, {"bufsize", k(qint64(kbit) * 2)}};
+}
+} // namespace
+
+QVector<QPair<QString, QString>> bitrateOptions(const QString& codec, int kbit)
+{
+    if (kbit <= 0) return {};
+    QVector<QPair<QString, QString>> o;
+    switch (encoderOfCodec(codec)) {
+    case VideoEncoder::Nvenc: o = {{"preset", "p5"}, {"tune", "hq"}, {"rc", "vbr"}}; break;
+    case VideoEncoder::Vaapi: o = {{"rc_mode", "VBR"}}; break;
+    case VideoEncoder::Qsv: o = {{"preset", "medium"}}; break; // b < maxrate = VBR
+    case VideoEncoder::Auto:
+    case VideoEncoder::Software: return {};
+    }
+    return o + averageRate(kbit);
+}
+
+QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, int kbit)
+{
+    if (kbit <= 0) return {};
+    const QString k = QString::number(kbit) + "k";
+    if (codec == "libopenh264") return {{"rc_mode", "bitrate"}, {"b", k}, {"allow_skip_frames", "0"}, {"profile", "high"}, {"coder", "cabac"}};
+    if (codec == "libkvazaar") return {{"b", k}, {"kvazaar-params", "preset=fast"}};
+    if (codec == "libsvtav1") return {{"b", k}}; // VBR; its peak rate needs CRF mode
+    return averageRate(kbit); // libx264, libx265, libvpx-vp9
+}
+
 QString pixelFormat(const QString& codec)
 {
     switch (encoderOfCodec(codec)) {

@@ -77,6 +77,7 @@ private:
     void updateFormat(); // resolutions matching the project settings
     void updateRateLabel(); // timeline entry of the frame rate, with the preset's cap
     void updateControls(); // fields depending on the format (audio only, quality)
+    void updateSourceBitrate(); // quality "like source": its target in the choice ("Wie Quelle (≈ 30 Mbit/s)")
     void reloadPresets(const QString& select = {});
     void syncPresetToSettings(); // setting changed -> matching preset or "Eigene Einstellungen"
     // The fix button for the sound findings of a check (loudness measured on the checked timeline `tl`)

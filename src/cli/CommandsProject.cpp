@@ -890,7 +890,18 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
     job.path = out;
     if (!srtOnly) job.settings.format = formatId;
-    if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, RenderSettings::kQualityWeb);
+    if (a.contains("quality")) {
+        // A name or its number (older callers send 0-3)
+        static const QStringList names{"high", "medium", "small", "web", "source"};
+        const QString q = a["quality"].isDouble() ? QString::number(a["quality"].toDouble())
+                                                  : a["quality"].toString().trimmed().toLower();
+        bool number = false;
+        const int n = q.toInt(&number);
+        const int i = number ? n : int(names.indexOf(q));
+        if (i < 0 || i > RenderSettings::kQualitySource)
+            fail("BAD_ARGUMENT", "quality must be high, medium, small, web or source (or 0-4)");
+        job.settings.quality = i;
+    }
     // Review video: small (540 p) and the fastest encoder setting unless a size is given
     if (reviewVideo && !a.contains("height") && !a.contains("size")) {
         job.settings.shortSide = 540;
@@ -1049,6 +1060,10 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();
     }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
+    if (job.settings.sourceQuality() && !marks) {
+        o["quality"] = "source";
+        o["video_bitrate_k"] = ex.targetBitrateK(); // 0: no source bit rate known, rendered as "high"
+    }
     // Free H.264/H.265 encoder because neither a graphics card encoder nor x264/x265 is there: how to get better
     if (const QString hint = HardwareEncoders::betterQualityHint(ex.usedCodec()); !hint.isEmpty()) {
         o["encoder_hint"] = hint;

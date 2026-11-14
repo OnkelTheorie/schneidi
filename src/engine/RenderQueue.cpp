@@ -5,6 +5,8 @@
 #include "core/Project.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/MediaProbe.h"
+#include "core/SourceBitrate.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -73,10 +75,13 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
     if (job.settings.audioOnly()) s.size = format.size(); // is not rendered, but convert nothing
     s.burnSubtitles = job.settings.subtitles == RenderSettings::BurnSubtitles;
-    // H.264/H.265 at quality "High" or "Web": copied pictures keep the file's bit rate (a camera or game recording often
-    // has 50–130 Mbit/s), so "Medium"/"Small" encode everything and "Web" copies only below its cap (ExportWriter)
+    // H.264/H.265 at quality "High", "Web" or "Like source": copied pictures keep the file's bit rate (a camera or game
+    // recording often has 50–130 Mbit/s), so "Medium"/"Small" encode everything and "Web" copies only below its cap
+    // (ExportWriter); "Like source" aims at the files' rate anyway
     s.smartRender = job.settings.smartRender && f.hardware
-                    && (job.settings.quality == 0 || job.settings.quality == RenderSettings::kQualityWeb);
+                    && (job.settings.quality == 0 || job.settings.quality == RenderSettings::kQualityWeb
+                        || job.settings.quality == RenderSettings::kQualitySource);
+    s.sourceQuality = job.settings.sourceQuality();
     if (job.settings.subtitles == RenderSettings::SrtFile || job.settings.subtitles == RenderSettings::VttFile) {
         const QFileInfo fi(job.path);
         s.subtitlePath = fi.dir().filePath(fi.completeBaseName()
@@ -113,6 +118,18 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& 
     ExportSettings s = exportSettings(job, project.sequenceFormat(job.sequence)); // the timeline's own resolution
     for (const MediaInfo& m : project.media()) s.mediaLengths.insert(m.path, m.length);
     return s;
+}
+
+int RenderQueue::sourceBitrateK(const RenderJob& job, const Project& project)
+{
+    if (!job.settings.sourceQuality()) return 0;
+    const ProjectFormat format = project.sequenceFormat(job.sequence);
+    const QSize size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
+    const Timeline tl = project.renderTimeline(job.sequence);
+    return SourceBitrate::target(tl, job.inOut ? job.from : 0, job.inOut ? job.to : -1, size,
+                                 job.settings.outputRate(format.rate),
+                                 [](const QString& path) { return MediaProbe::videoRate(path); })
+        .targetK;
 }
 
 bool RenderQueue::start(const QVector<int>& ids)
@@ -256,7 +273,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
     }
     // Done: the encoder note (e.g. hardware encoder fell back to software) stays with the job
     setStatus(id, status, m_canceling ? QString() : ok ? m_exporter->note() : message, m_clock.elapsed(),
-              ok ? m_exporter->usedCodec() : QString());
+              ok ? m_exporter->usedCodec() : QString(), ok ? m_exporter->targetBitrateK() : -1);
     emit jobFinished(id, status);
     if (m_canceling) {
         m_canceling = false;
@@ -299,7 +316,8 @@ void RenderQueue::cancel()
     m_exporter->cancel(); // reports finished() immediately
 }
 
-void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms, const QString& encoder)
+void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms, const QString& encoder,
+                            int sourceBitrateK)
 {
     QVector<RenderJob> q = m_project->renderQueue();
     for (RenderJob& j : q)
@@ -308,6 +326,7 @@ void RenderQueue::setStatus(int id, RenderStatus status, const QString& message,
             j.message = message;
             if (ms >= 0) j.renderMs = ms;
             if (!encoder.isEmpty()) j.encoderUsed = encoder;
+            if (sourceBitrateK >= 0 && j.settings.sourceQuality()) j.sourceBitrateK = sourceBitrateK;
         }
     m_project->setRenderQueue(q);
 }
