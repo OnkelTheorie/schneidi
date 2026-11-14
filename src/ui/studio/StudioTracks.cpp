@@ -808,13 +808,27 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
         addPenPoint(pos);
         return;
     }
-    // Select on a keyframe dot: drag it (time and level, one undo step)
+    // Select/Points on a dot: drag it (time and level, one undo step); Alt+click puts it at 0 dB
     if (const KeyHit hit = keyAt(pos); hit.valid() && !tl.audio[track].locked) {
+        if (e->modifiers() & Qt::AltModifier) {
+            resetPoint(hit);
+            return;
+        }
         m_drag = Drag::Key;
         m_key = hit;
         m_keyMerge = QString("studio-key-%1").arg(++m_keyDrags);
         m_editor->project()->closeMerge();
         return;
+    }
+    // Points on the line: a new point there, dragged right away (adding and dragging = one undo step)
+    if (m_tool == Tool::Points && !tl.audio[track].locked && onLine(track, pos)) {
+        m_keyMerge = QString("studio-key-%1").arg(++m_keyDrags);
+        m_editor->project()->closeMerge();
+        if (const KeyHit hit = addPointAt(track, pos); hit.valid()) {
+            m_drag = Drag::Key;
+            m_key = hit;
+            return;
+        }
     }
     // Select: the playhead there, the clip under it selected (with its linked partner, like a click in the timeline)
     const double frame = frameAt(pos.x());
@@ -842,8 +856,10 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
     } else {
         const int track = trackAt(pos.y());
         const bool overButton = track >= 0 && (muteRect(track).contains(pos) || soloRect(track).contains(pos));
-        const bool overKey = m_tool == Tool::Select && !overButton && keyAt(pos).valid();
-        setCursor(overButton                                      ? Qt::PointingHandCursor
+        const bool overKey = m_tool != Tool::Pen && !overButton && keyAt(pos).valid();
+        const bool overLine = m_tool == Tool::Points && !overButton && !overKey && track >= 0 && pos.x() >= kHeaderW
+                              && onLine(track, pos);
+        setCursor(overButton || overLine                          ? Qt::PointingHandCursor
                   : overKey                                       ? Qt::SizeAllCursor
                   : m_tool == Tool::Pen && pos.x() >= kHeaderW ? Qt::CrossCursor
                                                                   : Qt::ArrowCursor);
@@ -851,6 +867,8 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
             setToolTip(formatVolumeDb(dbAtY(track, pos.y())));
         else if (overKey)
             setToolTip(T("Keyframe: ziehen = verschieben, Rechtsklick = löschen"));
+        else if (overLine)
+            setToolTip(T("Klick setzt einen Punkt"));
         else
             setToolTip({});
     }
@@ -876,6 +894,81 @@ void StudioTracks::mouseReleaseEvent(QMouseEvent* e)
         m_key = {};
     }
     m_drag = Drag::None;
+}
+
+void StudioTracks::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    // Double click on a point: 0 dB (the press before it may have just set the point - then it is that one)
+    if (e->button() != Qt::LeftButton || m_tool == Tool::Pen) return QWidget::mouseDoubleClickEvent(e);
+    const KeyHit hit = keyAt(e->position().toPoint());
+    if (!hit.valid()) return;
+    m_drag = Drag::None;
+    m_key = {};
+    m_editor->project()->closeMerge();
+    resetPoint(hit);
+}
+
+bool StudioTracks::onLine(int track, const QPoint& pos) const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    if (track < 0 || track >= tl.audio.size() || pos.x() < kHeaderW) return false;
+    const QRect body = laneRect(track).adjusted(0, 4, 0, -4);
+    const auto yOf = [&](double db) { return body.bottom() - VolumeDraw::posOf(db) * (body.height() - 1); };
+    const double frame = std::max(0.0, frameAt(pos.x()));
+    double level;
+    if (m_penTarget == PenTarget::Track) {
+        level = Automation::levelAt(tl.audio[track], frame);
+    } else {
+        const Clip* c = clipAt(track, frame);
+        if (!c || c->isTitle()) return false;
+        level = Keys::valueAt(*c, AnimParam::Volume, std::clamp(frame - c->start, 0.0, double(c->length() - 1)));
+    }
+    return std::abs(pos.y() - yOf(level)) <= 5;
+}
+
+StudioTracks::KeyHit StudioTracks::addPointAt(int track, const QPoint& pos)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    const int frame = std::max(0, int(std::lround(frameAt(pos.x()))));
+    if (m_penTarget == PenTarget::Track) {
+        AutoCurve a = tl.audio[track].volumeAuto;
+        const double v = Automation::valueAt(a, frame); // on the line: the level stays until it is dragged
+        a << AutoPoint{frame, v};
+        m_editor->setTrackAutomation(track, Automation::normalized(a), T("Automationspunkt setzen"), m_keyMerge); // a point there already: that one
+        const AutoCurve& now = m_editor->project()->timeline().audio[track].volumeAuto;
+        for (int i = 0; i < now.size(); ++i)
+            if (now[i].frame == frame) return {-1, i, track};
+        return {};
+    }
+    const Clip* c = clipAt(track, frame);
+    if (!c || c->isTitle()) return {};
+    const int id = c->id, t = std::clamp(frame - c->start, 0, c->length() - 1);
+    const double v = Keys::valueAt(*c, AnimParam::Volume, t);
+    m_editor->modifyClips({id}, T("Keyframe setzen"), [&](Clip& clip) { Keys::setKey(clip, AnimParam::Volume, t, v); }, m_keyMerge);
+    const Clip* now = TimelineOps::findClip(m_editor->project()->timeline(), id);
+    if (!now) return {};
+    const KeyTrack& k = now->keys.value(AnimParam::Volume);
+    for (int i = 0; i < k.size(); ++i)
+        if (k[i].frame == now->in + t) return {id, i, -1};
+    return {};
+}
+
+void StudioTracks::resetPoint(const KeyHit& hit)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    if (hit.track >= 0) {
+        if (hit.track >= tl.audio.size() || tl.audio[hit.track].locked) return;
+        AutoCurve a = tl.audio[hit.track].volumeAuto;
+        if (hit.index >= a.size()) return;
+        a[hit.index].db = -tl.audio[hit.track].volumeDb; // fader + curve = 0 dB
+        m_editor->setTrackAutomation(hit.track, a, T("Automationspunkt auf 0 dB"));
+        return;
+    }
+    const int index = hit.index;
+    m_editor->modifyClips({hit.clipId}, T("Keyframe auf 0 dB"), [index](Clip& clip) {
+        auto it = clip.keys.find(AnimParam::Volume);
+        if (it != clip.keys.end() && index < it->size()) (*it)[index].value = 0;
+    });
 }
 
 void StudioTracks::leaveEvent(QEvent* e)

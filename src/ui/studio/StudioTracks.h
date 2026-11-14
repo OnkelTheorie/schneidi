@@ -32,7 +32,9 @@ namespace Voiceover { class LiveTake; }
 class StudioTracks : public QWidget {
     Q_OBJECT
 public:
-    enum class Tool { Select, Pen };
+    // Select: click = playhead + clip; Points (the page's default, rubber band): a click on the volume line sets a
+    // point there, a point drags, right click deletes, double click / Alt+click puts it at 0 dB; Pen: free-hand strokes
+    enum class Tool { Select, Points, Pen };
     enum class PenTarget { Clip, Track };
 
     StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent = nullptr);
@@ -86,6 +88,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void leaveEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
@@ -123,6 +126,11 @@ private:
     };
     KeyHit keyAt(const QPoint& pos) const;
     void dragKey(const QPoint& pos);
+    // Points: a point on the line under pos (the track's level line in track mode, the clip's volume line in clip
+    // mode), already one undo step under m_keyMerge (the drag that follows joins it); invalid = not on the line
+    KeyHit addPointAt(int track, const QPoint& pos);
+    bool onLine(int track, const QPoint& pos) const;
+    void resetPoint(const KeyHit& hit); // to 0 dB (the level heard)
 
     Editor* m_editor;
     QPointer<MediaCache> m_cache;
