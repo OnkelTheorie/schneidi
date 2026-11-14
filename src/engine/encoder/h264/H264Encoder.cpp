@@ -2836,6 +2836,12 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         cfg_.qp = std::clamp(baseQp + cfg_.bQpOffset, 0, 51); // nothing depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
+    // Psy strength follows the picture's QP (EncoderConfig::psyQpFull / psyQpOff): full below, none
+    // above, linear between - texture is kept where there are bits for it and not invented where
+    // the picture is starved.
+    fc.cfg_.psyRd = cfg_.psyRd;
+    if (cfg_.psyRd > 0 && cfg_.psyQpOff > cfg_.psyQpFull)
+        fc.cfg_.psyRd = cfg_.psyRd * std::clamp(double(cfg_.psyQpOff - cfg_.qp) / double(cfg_.psyQpOff - cfg_.psyQpFull), 0.0, 1.0);
     fc.mbTypeOffset_ = idr ? 0 : 5;
     fc.frameNo_ = frameIndex_;
     fc.displayIndex_ = frame.index;

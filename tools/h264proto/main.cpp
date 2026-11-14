@@ -216,7 +216,10 @@ int main(int argc, char** argv)
             cfg.weightedBipred = true;
         else if (a == "--psy-rd" && i + 1 < argc)
             cfg.psyRd = std::atof(argv[++i]);
-        else if (a == "--qcomp" && i + 1 < argc)
+        else if (a == "--psy-qp" && i + 2 < argc) {
+            cfg.psyQpFull = std::atoi(argv[++i]);
+            cfg.psyQpOff = std::atoi(argv[++i]);
+        } else if (a == "--qcomp" && i + 1 < argc)
             cfg.qcomp = std::atof(argv[++i]);
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
