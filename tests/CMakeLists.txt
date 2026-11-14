@@ -275,6 +275,8 @@ schneidi_test(test_media_unreadable) # pipes and devices, undecodable stills, su
 schneidi_test(test_audio_mixer)
 schneidi_test(test_multichannel) # 0.23: 5.1/7.1 mix, surround panner, channel routing, export layouts, loudness, project format 8
 add_dependencies(test_multichannel schneidi-cli)
+schneidi_test(test_track_automation) # 0.23: track volume automation (model, ripple, mixer, export, project file, CLI)
+add_dependencies(test_track_automation schneidi-cli)
 schneidi_test(test_stretch) # own time stretcher (keep pitch)
 schneidi_test(test_export_audio)
 schneidi_test(test_audio_analysis)

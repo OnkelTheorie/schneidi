@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/audio/Mixer.h"
 
+#include "core/Automation.h"
 #include "core/ChannelLayout.h"
 #include "core/Dynamics.h"
 #include "core/EffectRegistry.h"
@@ -57,6 +58,7 @@ bool sameSound(const Timeline& a, const Timeline& b)
             t->dynamics = {};
             t->panDepth = t->panCenter = 0;
             t->lfeDb = kMinVolumeDb;
+            t->volumeAuto.clear(); // automation is a gain like the fader (glides when changed live)
         }
         if (!(x == y)) return false;
     }
@@ -139,6 +141,10 @@ struct TrackPlan {
     double gain = 1.0;
     double pan = 0.0;
     double panDepth = 0.0, panCenter = 0.0, lfeDb = kMinVolumeDb; // surround panner (5.1/7.1 mix)
+    // Volume automation (Track::volumeAuto): with a curve the fader is part of it (gain stays 1), applied sample by
+    // sample before the pan (Impl::applyAutomation)
+    AutoCurve autoCurve;
+    double faderDb = 0.0;
 };
 
 // LFE send: 2nd-order Butterworth low pass at 120 Hz
@@ -220,6 +226,9 @@ struct Mixer::Impl {
         std::vector<double> applied;
         bool levelSet = false;
         double lfeZ1 = 0, lfeZ2 = 0; // LFE send low pass
+        // Automation: the gain of the curve at the last sample (1 = none), and whether a live change glides from it
+        double autoLast = 1.0;
+        bool autoGlide = false;
     };
     std::vector<TrackState> trackStates;
     PeakLimiter peakLimiter;
@@ -252,6 +261,9 @@ struct Mixer::Impl {
 
     // The gains a track's fader, pan and mute ask for (TrackState::applied)
     std::vector<double> trackTarget(const TrackPlan& tp) const;
+    // Volume automation on track[0..nch) for [pos, pos + count): gains at the frame boundaries, linear in between
+    double autoGain(const TrackPlan& tp, int64_t frame) const;
+    void applyAutomation(const TrackPlan& tp, TrackState& ts, int64_t pos, int count);
     void open(Voice& v, VoiceState& st);
 
     int fileLength(const QString& path);
@@ -302,7 +314,9 @@ void Mixer::Impl::applyMixValues(const Timeline& tl)
         p.audible = !t.muted && (!anySolo || t.solo);
         p.eq = t.eq;
         p.dynamics = t.dynamics;
-        p.gain = t.volumeDb == 0.0 ? 1.0 : dbToGain(t.volumeDb);
+        p.gain = t.volumeDb == 0.0 || !t.volumeAuto.isEmpty() ? 1.0 : dbToGain(t.volumeDb);
+        p.autoCurve = t.volumeAuto;
+        p.faderDb = t.volumeDb;
         p.pan = t.pan / 100.0;
         p.panDepth = t.panDepth;
         p.panCenter = t.panCenter;
@@ -492,6 +506,8 @@ void Mixer::Impl::restart()
         }
         ts.firstVoice = 0;
         ts.levelSet = false;
+        ts.autoLast = 1.0;
+        ts.autoGlide = false;
         ts.lfeZ1 = ts.lfeZ2 = 0;
         ts.eq = Equalizer{};
         ts.eq.setEq(tracks[i].eq);
@@ -704,6 +720,40 @@ std::vector<double> Mixer::Impl::trackTarget(const TrackPlan& tp) const
     return t;
 }
 
+double Mixer::Impl::autoGain(const TrackPlan& tp, int64_t frame) const
+{
+    return dbToGain(std::clamp(tp.faderDb + Automation::valueAt(tp.autoCurve, double(frame)), kMinVolumeDb, kMaxVolumeDb));
+}
+
+void Mixer::Impl::applyAutomation(const TrackPlan& tp, TrackState& ts, int64_t pos, int count)
+{
+    // One gain per frame boundary like the clip curves, a frame runs linearly from its start value to its end value:
+    // the curve is continuous, so there is no step anywhere. Without a curve (just removed) the gain is 1.
+    const bool on = !tp.autoCurve.isEmpty();
+    int64_t f = clock.frameAt(pos);
+    int64_t s0 = clock.start(f), s1 = clock.start(f + 1);
+    double g0 = on ? autoGain(tp, f) : 1.0, g1 = on ? autoGain(tp, f + 1) : 1.0;
+    // A live change (new curve, fader moved) glides from what played last, like the fader
+    const int len = ts.autoGlide ? std::min(count, kGlide) : 0;
+    const double from = ts.autoLast;
+    double g = from;
+    for (int i = 0; i < count; ++i) {
+        const int64_t s = pos + i;
+        while (s >= s1) {
+            ++f;
+            s0 = s1;
+            s1 = clock.start(f + 1);
+            g0 = g1;
+            g1 = on ? autoGain(tp, f + 1) : 1.0;
+        }
+        g = s1 > s0 ? g0 + (g1 - g0) * double(s - s0) / double(s1 - s0) : g0;
+        if (i < len) g = from + (g - from) * (i + 1) / len;
+        for (int c = 0; c < nch; ++c) track[size_t(c)][size_t(i)] = float(track[size_t(c)][size_t(i)] * g);
+    }
+    ts.autoLast = g;
+    ts.autoGlide = false;
+}
+
 // Track and master mix of [pos, pos + count) into `mix`, before the master limiter
 void Mixer::Impl::renderMix(int64_t pos, int count)
 {
@@ -754,6 +804,8 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
         // EQ and compressor run on silence too (their tails), so does the LFE send's low pass
         if (!any && !tp.eq.on && !tp.dynamics.on && (nch == 2 || (ts.lfeZ1 == 0 && ts.lfeZ2 == 0))) {
             ts.applied = target;
+            ts.autoLast = tp.autoCurve.isEmpty() ? 1.0 : autoGain(tp, clock.frameAt(end));
+            ts.autoGlide = false;
             continue;
         }
         if (tp.eq.on || tp.dynamics.on) {
@@ -766,6 +818,8 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
             for (int c = 0; c < nch; ++c)
                 std::copy(planar + size_t(c) * count, planar + size_t(c + 1) * count, track[size_t(c)].begin());
         }
+        // Automation (fader + curve) where the fader would be: after EQ and compressor, before the pan
+        if (!tp.autoCurve.isEmpty() || ts.autoGlide) applyAutomation(tp, ts, pos, count);
         if (nch == 2) {
             const double side[2] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
                                     tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
@@ -985,6 +1039,13 @@ bool Mixer::updateMix(const Timeline& timeline)
     for (int i = 0; i < timeline.audio.size(); ++i) {
         const Track& t = timeline.audio[i];
         if (!t.muted && (!anySolo || t.solo) && !m.tracks[size_t(i)].planned) return false; // silent when planned
+    }
+    // Automation changed (or the fader of an automated track): glide there from what played last
+    for (int i = 0; i < timeline.audio.size() && size_t(i) < m.trackStates.size(); ++i) {
+        const Track& was = m.planned.audio[i];
+        const Track& now = timeline.audio[i];
+        if (was.volumeAuto != now.volumeAuto || (!now.volumeAuto.isEmpty() && was.volumeDb != now.volumeDb))
+            m.trackStates[size_t(i)].autoGlide = m.trackStates[size_t(i)].levelSet;
     }
     m.applyMixValues(timeline);
     m.planned = timeline;

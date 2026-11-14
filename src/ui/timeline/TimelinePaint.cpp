@@ -2,6 +2,8 @@
 // Timeline: drawing (ruler, tracks, clips, filmstrips, waveforms, headers, playhead).
 #include "ui/timeline/TimelineView.h"
 
+#include "core/Automation.h"
+
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -243,6 +245,21 @@ void TimelineView::drawTracks(QPainter& p)
             if (row.curve && curveParam(c)) drawCurveLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
+        // Track automation (Studio page): a thin line of what the track plays (fader + curve) across the row, also
+        // between the clips; edited on the Studio page, shown here so ripple edits never move it unseen
+        if (row.ref.kind == TrackKind::Audio && !track.volumeAuto.isEmpty() && row.h - row.lane > kClipBarH + 12) {
+            const QRect body(kHeaderW, row.y + 1 + kClipBarH, width() - kHeaderW, row.h - row.lane - 4 - kClipBarH);
+            QPolygonF line;
+            for (int x = kHeaderW; x < width(); x += 2) {
+                const double frame = std::max(0.0, xToFrame(x));
+                line << QPointF(x, volumeLineY(body, Automation::levelAt(track, frame)));
+            }
+            p.save();
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setPen(QPen(Theme::alpha(Theme::secondary, 200), 1.2));
+            p.drawPolyline(line);
+            p.restore();
+        }
         if (track.locked) { // locked: darkened and hatched like DaVinci
             p.setOpacity(1.0);
             const QRect area(kHeaderW, row.y, width() - kHeaderW, row.h - 1);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
+#include "core/Automation.h"
 #include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/TitleLookJson.h"
@@ -130,10 +131,14 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //  8: multichannel sound (0.23): a mix in 5.1/7.1 (format "channels") or clips that play only some channels of their
 //     stream (clip "channels", a wireless microphone on channels 3/4). Older versions would mix stereo / play every
 //     channel (the microphone twice). Written only when used (writtenVersion): stereo projects stay as they were.
+//     Also track volume automation (track "volumeAuto", same 0.23 cycle, version 8 was not released without it):
+//     older versions would play the fader alone - the music that was drawn down under the speech at full level.
 constexpr int kFormatVersion = 8;
 
 bool usesVersion8(const Timeline& t)
 {
+    for (const Track& track : t.audio)
+        if (!track.volumeAuto.isEmpty()) return true;
     for (const Track& track : t.audio)
         for (const Clip& c : track.clips)
             if (!c.sourceChannels.isEmpty()) return true;
@@ -1016,6 +1021,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             if (t.panDepth != 0.0) o["panDepth"] = t.panDepth;
             if (t.panCenter != 0.0) o["panCenter"] = t.panCenter;
             if (t.lfeDb > kMinVolumeDb) o["lfeDb"] = t.lfeDb;
+            if (!t.volumeAuto.isEmpty()) o["volumeAuto"] = Automation::toJson(t.volumeAuto);
             arr << o;
         }
         return arr;
@@ -1264,6 +1270,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.panDepth = std::clamp(o.value("panDepth").toDouble(0.0), 0.0, 100.0);
             t.panCenter = std::clamp(o.value("panCenter").toDouble(0.0), 0.0, 100.0);
             t.lfeDb = std::clamp(o.value("lfeDb").toDouble(kMinVolumeDb), kMinVolumeDb, kMaxVolumeDb);
+            if (kind == TrackKind::Audio) t.volumeAuto = Automation::fromJson(o.value("volumeAuto").toArray());
             for (const QJsonValue& cv : o.value("clips").toArray()) {
                 Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
                 if ((fileVersion < 3 || c.cropOnFrame) && kind == TrackKind::Video)
@@ -1337,7 +1344,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                         const Track& t = std::as_const(*list)[j];
                         return (!multicam || made.value(j, -1) == i) && !t.locked && t.muted == own.muted
                                && t.hidden == own.hidden
-                               && t.solo == own.solo && t.volumeDb == own.volumeDb && t.pan == own.pan && t.eq == own.eq
+                               && t.solo == own.solo && t.volumeDb == own.volumeDb && t.volumeAuto == own.volumeAuto && t.pan == own.pan && t.eq == own.eq
                                && t.dynamics == own.dynamics
                                && std::none_of(t.clips.cbegin(), t.clips.cend(),
                                                [&](const Clip& o) { return o.start < c.end() && c.start < o.end(); });

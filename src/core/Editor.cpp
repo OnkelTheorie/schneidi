@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Editor.h"
 
+#include "core/Automation.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
@@ -436,6 +437,30 @@ bool Editor::drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int
             if (!c.isTitle()) changed |= VolumeDraw::apply(c, stroke, smoothing);
     });
     return changed;
+}
+
+bool Editor::drawTrackVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || !VolumeDraw::spansEnough(stroke))
+        return false;
+    Track t = cur.audio[track];
+    if (!VolumeDraw::applyTrack(t, stroke, smoothing) || t.volumeAuto == cur.audio[track].volumeAuto) return false;
+    emit mixerOnlyEdit(); // the preview takes it live (Audio::Mixer::updateMix)
+    m_project->edit(T("Spur-Lautstärke zeichnen"), [&](Timeline& tl) { tl.audio[track].volumeAuto = t.volumeAuto; });
+    return true;
+}
+
+bool Editor::setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText, const QString& mergeKey)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked) return false;
+    const AutoCurve next = Automation::normalized(curve);
+    if (next == cur.audio[track].volumeAuto) return false;
+    emit mixerOnlyEdit();
+    m_project->edit(undoText.isEmpty() ? T("Spur-Automation") : undoText,
+                    [&](Timeline& tl) { tl.audio[track].volumeAuto = next; }, mergeKey);
+    return true;
 }
 
 void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,

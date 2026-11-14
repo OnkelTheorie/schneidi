@@ -3,6 +3,7 @@
 // limiter) and Normalize Audio Levels (measured like the app's dialog)
 #include "cli/CommandsDetail.h"
 
+#include "core/Automation.h"
 #include "core/Dynamics.h"
 #include "core/Equalizer.h"
 #include "core/Keyframes.h"
@@ -716,6 +717,57 @@ AfterLimiter normalizeAfterLimiter(Session& s, const Timeline& before, const QVe
     return out;
 }
 
+// Track volume automation (Track::volumeAuto): points replace the curve (or the part [from, to]), clear removes it
+void opTrackVolume(Session& s, const QJsonObject& op)
+{
+    TrackKind k = TrackKind::Video;
+    const int index = parseTrack(op.value("track"), &k);
+    if (k != TrackKind::Audio || index < 0 || index >= s.project.timeline().audio.size())
+        fail("BAD_ARGUMENT", "track must be an audio track like A1");
+    const Track& t = s.project.timeline().audio[index];
+    if (t.locked) fail("LOCKED", QString("track %1 is locked").arg(trackName({k, index})));
+    const bool clear = op.value("clear").toBool();
+    if (clear == op.contains("points")) fail("BAD_ARGUMENT", "give points (a curve) or clear:true");
+    const ProjectFormat& fmt = s.project.format();
+    const bool part = op.contains("from") || op.contains("to");
+    if (clear) {
+        if (part) fail("BAD_ARGUMENT", "clear removes the whole curve (for a part give points with from/to)");
+        if (!s.editor.setTrackAutomation(index, {}, T("Spur-Automation entfernen")))
+            s.notes << QString("%1 had no volume automation").arg(trackName({k, index}));
+        return;
+    }
+    if (!op.value("points").isArray()) fail("BAD_ARGUMENT", "points must be a list like [{at:0, db:0}, {at:'2s', db:-12}]");
+    AutoCurve pts;
+    for (const QJsonValue& v : op.value("points").toArray()) {
+        QJsonValue at, db;
+        if (v.isArray() && v.toArray().size() == 2) {
+            at = v.toArray()[0];
+            db = v.toArray()[1];
+        } else if (v.isObject()) {
+            at = v.toObject().value("at");
+            db = v.toObject().value("db");
+        }
+        if (at.isUndefined() || !db.isDouble()) fail("BAD_ARGUMENT", "every point needs at (a time) and db (a number)");
+        const double d = db.toDouble();
+        if (d < Automation::kMinDb || d > Automation::kMaxDb)
+            fail("BAD_ARGUMENT", QString("db %1 out of range %2..%3 (dB on top of the fader)")
+                                     .arg(d).arg(Automation::kMinDb).arg(Automation::kMaxDb));
+        pts << AutoPoint{parseTime(at, fmt, "points.at"), d};
+    }
+    if (pts.isEmpty() && !part) fail("BAD_ARGUMENT", "points is empty (to remove the curve give clear:true)");
+    AutoCurve next = Automation::normalized(pts);
+    if (part) {
+        const int from = op.contains("from") ? parseTime(op.value("from"), fmt, "from") : (next.isEmpty() ? 0 : next.first().frame);
+        const int to = op.contains("to") ? parseTime(op.value("to"), fmt, "to") : (next.isEmpty() ? from : next.last().frame);
+        if (to < from) fail("BAD_ARGUMENT", "to lies before from");
+        AutoCurve whole = t.volumeAuto;
+        Automation::replaceRange(whole, from, to, next);
+        next = whole;
+    }
+    if (!s.editor.setTrackAutomation(index, next))
+        s.notes << QString("%1: the volume automation is already like that").arg(trackName({k, index}));
+}
+
 void opNormalize(Session& s, const QJsonObject& op)
 {
     const QString mode = op.value("mode").toString("peak");
@@ -1160,6 +1212,21 @@ void addAudioOps(QVector<OpDef>& ops)
                  "centre speaker, lfe_db = send to the LFE (-60 = off, low-passed at 120 Hz). A 5.1/7.1 file's centre, "
                  "LFE and surrounds pass through; the panner places its front pair and mono/stereo clips.",
                  opMixer}
+        << OpDef{"track_volume", "{op:'track_volume', track:'A1', points?:[{at, db}], from?, to?, clear?}",
+                 "volume automation of an audio track: a curve over the timeline's time on top of the track fader "
+                 "(music down under a voice-over without touching the clips)",
+                 "points = the curve: at = a time (frames, \"4.5s\", timecode), db = dB on top of the track fader "
+                 "(0 = the fader's level, -12 = 12 dB quieter, -72 = silent; what plays is fader + curve, clamped "
+                 "to -inf..+12). Linear between points; before the first and after the last their value holds. "
+                 "Replaces the whole curve - with from/to only that part: the curve outside stays (a point with the "
+                 "old value right before from and after to holds it), e.g. {op:'track_volume', track:'A2', from:'10s', "
+                 "to:'20s', points:[{at:'10s', db:-12}, {at:'20s', db:-12}]} = A2 12 dB down from 10 to 20 s. "
+                 "clear:true removes the curve (the fader alone again). The curve belongs to the timeline, not to "
+                 "clips: moving a clip leaves it; ripple edits (ripple delete, insert, ripple trim) move it with the "
+                 "time. The track fader ({op:'mixer', volume_db}) trims the whole curve. `info` lists it on the "
+                 "track (volume_automation: [{at, db}]). Clip volume keyframes (op 'volume', 'duck') come on top. "
+                 "Older schneidi versions cannot open a project with track automation (format 8).",
+                 opTrackVolume}
         << OpDef{"normalize", "{op:'normalize', clips, mode?:'peak'|'lufs', target?, relative?, allow_track_gain?}",
                  "Normalize Audio Levels: sets only the given clips' volume",
                  "Changes only the clips given (with their linked partners unless linked:false): one clip id = that "

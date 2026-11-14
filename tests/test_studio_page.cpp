@@ -25,6 +25,7 @@
 #include "app/Theme.h"
 #include "app/VoiceoverRecorder.h"
 #include "cli/Live.h"
+#include "core/Automation.h"
 #include "core/EffectRegistry.h"
 #include "core/Equalizer.h"
 #include "core/Selection.h"
@@ -98,6 +99,7 @@ QAbstractButton* pageButton(MainWindow& w, const char* id)
 void testWindow(Engine& engine, const QString& audioFile)
 {
     QSettings().remove("layout");
+    QSettings().remove("studio/penTarget"); // the default: the track
     MainWindow w(&engine);
     w.disableAutosave();
     w.resize(1600, 950);
@@ -163,11 +165,20 @@ void testWindow(Engine& engine, const QString& audioFile)
     project->undoStack()->undo();
     settle();
 
-    // Pen: a stroke over the clip's lane at -20 dB, one undo step, keys at that level
+    // Pen: a stroke over the clip's lane at -20 dB, one undo step, keys at that level (clip mode; the default is the
+    // track, tested below)
     auto* pen = page->findChild<QToolButton*>("studio_tool_pen");
     if (!CHECK(pen)) return;
+    CHECK(tracks->tool() == StudioTracks::Tool::Points); // the page's default: points on the line (rubber band)
     pen->click();
     CHECK(tracks->tool() == StudioTracks::Tool::Pen);
+    auto* penClip = page->findChild<QToolButton*>("studio_pen_clip");
+    auto* penTrack = page->findChild<QToolButton*>("studio_pen_track");
+    if (!CHECK(penClip && penTrack)) return;
+    CHECK(penTrack->isChecked() && tracks->penTarget() == StudioTracks::PenTarget::Track);
+    penClip->click();
+    CHECK(tracks->penTarget() == StudioTracks::PenTarget::Clip);
+    CHECK_EQ(QSettings().value("studio/penTarget").toString(), QString("clip"));
     const Clip* clip = TimelineOps::findClip(project->timeline(), clipId);
     if (!CHECK(clip)) return;
     tracks->fit(); // the user's Fit button: the whole clip in view
@@ -208,6 +219,125 @@ void testWindow(Engine& engine, const QString& audioFile)
         CHECK_EQ(undo->index(), at);
         clip = TimelineOps::findClip(project->timeline(), clipId);
         CHECK(clip && !Keys::animated(*clip, AnimParam::Volume));
+    }
+
+    // Track mode: the same stroke becomes the track's automation (one undo step), the clip keeps no keys; it reaches
+    // past the clip's end into the empty lane
+    penTrack->click();
+    CHECK(tracks->penTarget() == StudioTracks::PenTarget::Track);
+    {
+        const int at = undo->index();
+        // into the empty lane past the clip as far as the view goes (Fit shows the project: little room after it)
+        const int g0 = clip->start + clip->length() / 2;
+        const int g1 = std::min(clip->end() + 20, int(tracks->frameAt(tracks->width() - 24)));
+        mouse(tracks, QEvent::MouseButtonPress, QPoint(int(tracks->xOf(g0)), y), Qt::LeftButton);
+        for (int i = 1; i <= 10; ++i)
+            mouse(tracks, QEvent::MouseMove, QPoint(int(tracks->xOf(g0 + (g1 - g0) * i / 10.0)), y), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, QPoint(int(tracks->xOf(g1)), y), Qt::NoButton);
+        settle();
+        CHECK_EQ(undo->index(), at + 1);
+        CHECK_EQ(undo->undoText(), QString("Spur-Lautstärke zeichnen"));
+        const Track& a1 = project->timeline().audio[0];
+        clip = TimelineOps::findClip(project->timeline(), clipId);
+        CHECK(clip && !Keys::animated(*clip, AnimParam::Volume));
+        CHECK(!a1.volumeAuto.isEmpty());
+        const double mid = Automation::levelAt(a1, (g0 + clip->end()) / 2.0);
+        Check::report(std::abs(mid + 20) < 1.0, "drawn track level", __FILE__, __LINE__, QString("%1 dB").arg(mid));
+        if (g1 > clip->end() + 2) CHECK(std::abs(Automation::levelAt(a1, (clip->end() + g1) / 2.0) + 20) < 1.0); // past the clip
+        CHECK(std::abs(Automation::levelAt(a1, clip->start) - a1.volumeDb) < 1e-6); // before the stroke: the fader
+        // The dots: a point drags (one step) and a right click deletes it
+        int shownAt = -1;
+        for (int i = 0; i < a1.volumeAuto.size() && shownAt < 0; ++i)
+            if (!tracks->autoPoint(0, i).isNull() && a1.volumeAuto[i].frame > g0 + 2) shownAt = i;
+        if (CHECK(shownAt >= 0)) {
+            page->findChild<QToolButton*>("studio_tool_select")->click();
+            const QPoint dot = tracks->autoPoint(0, shownAt).toPoint();
+            const int before2 = undo->index();
+            mouse(tracks, QEvent::MouseButtonPress, dot, Qt::LeftButton);
+            mouse(tracks, QEvent::MouseMove, dot - QPoint(0, 6), Qt::LeftButton);
+            mouse(tracks, QEvent::MouseMove, dot - QPoint(0, 12), Qt::LeftButton);
+            mouse(tracks, QEvent::MouseButtonRelease, dot - QPoint(0, 12), Qt::NoButton);
+            settle();
+            CHECK_EQ(undo->index(), before2 + 1);
+            CHECK(Automation::levelAt(project->timeline().audio[0], project->timeline().audio[0].volumeAuto[shownAt].frame) > -19.5);
+            const int count = int(project->timeline().audio[0].volumeAuto.size());
+            QContextMenuEvent menu(QContextMenuEvent::Mouse, tracks->autoPoint(0, shownAt).toPoint());
+            QApplication::sendEvent(tracks, &menu);
+            settle();
+            CHECK_EQ(int(project->timeline().audio[0].volumeAuto.size()), count - 1);
+            undo->undo();
+            undo->undo();
+            pen->click();
+        }
+        // The mixer's fader shows the level at the playhead (read mode)
+        engine.seek((g0 + clip->end()) / 2);
+        settle();
+        QTest::qWait(80);
+        auto* fader = page->findChild<QWidget*>("studio_fader_A1");
+        if (CHECK(fader)) {
+            const QLabel* value = nullptr;
+            for (QLabel* l : fader->parentWidget()->findChildren<QLabel*>())
+                if (l->text().endsWith(" dB") && l->toolTip().contains("Automation")) value = l;
+            const double shown = value ? value->text().section(' ', 0, 0).replace(QChar(0x2212), '-').toDouble() : 1e9;
+            const double want = Automation::levelAt(project->timeline().audio[0], engine.position());
+            Check::report(std::abs(shown - want) < 0.11, "fader shows the automated level", __FILE__, __LINE__,
+                          QString("%1 / %2 at %3").arg(value ? value->text() : "-").arg(want).arg(engine.position()));
+        }
+        undo->undo();
+        CHECK(project->timeline().audio[0].volumeAuto.isEmpty());
+    }
+
+    // Points: a click on the track's level line sets a point, dragging it right away is the same undo step; a double
+    // click puts it at 0 dB, a right click deletes it. In clip mode the click sets a key of the clip.
+    if (auto* points = page->findChild<QToolButton*>("studio_tool_points"); CHECK(points)) {
+        points->click();
+        CHECK(tracks->tool() == StudioTracks::Tool::Points);
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const auto yAt = [&](double db) { return body.bottom() - int(std::lround(VolumeDraw::posOf(db) * (body.height() - 1))); };
+        const int f = clip->start + clip->length() / 2;
+        const double fader = project->timeline().audio[0].volumeDb;
+        const QPoint on(int(tracks->xOf(f)), yAt(fader));
+        const int at = undo->index();
+        // Beside the line: no point (a click there moves the playhead as with Select)
+        mouse(tracks, QEvent::MouseButtonPress, on + QPoint(0, 25), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, on + QPoint(0, 25), Qt::NoButton);
+        CHECK_EQ(undo->index(), at);
+        mouse(tracks, QEvent::MouseButtonPress, on, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseMove, on - QPoint(0, 10), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseMove, on - QPoint(0, 20), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, on - QPoint(0, 20), Qt::NoButton);
+        settle();
+        CHECK_EQ(undo->index(), at + 1);
+        const Track& a1 = project->timeline().audio[0];
+        CHECK_EQ(int(a1.volumeAuto.size()), 1);
+        CHECK(Automation::levelAt(a1, f) > fader + 0.5);
+        const QPoint dot = tracks->autoPoint(0, 0).toPoint();
+        if (CHECK(!dot.isNull())) {
+            QMouseEvent dbl(QEvent::MouseButtonDblClick, QPointF(dot), tracks->mapToGlobal(QPointF(dot)), Qt::LeftButton,
+                            Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(tracks, &dbl);
+            settle();
+            CHECK(std::abs(Automation::levelAt(project->timeline().audio[0], f)) < 1e-6);
+            QContextMenuEvent menu(QContextMenuEvent::Mouse, tracks->autoPoint(0, 0).toPoint());
+            QApplication::sendEvent(tracks, &menu);
+            settle();
+            CHECK(project->timeline().audio[0].volumeAuto.isEmpty());
+        }
+        while (undo->index() > at) undo->undo();
+        // Clip mode: a key of the clip on its (orange) line
+        penClip->click();
+        const int at2 = undo->index();
+        clip = TimelineOps::findClip(project->timeline(), clipId);
+        const QPoint onClip(int(tracks->xOf(f)), yAt(clip->volumeDb));
+        mouse(tracks, QEvent::MouseButtonPress, onClip, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, onClip, Qt::NoButton);
+        settle();
+        CHECK_EQ(undo->index(), at2 + 1);
+        clip = TimelineOps::findClip(project->timeline(), clipId);
+        CHECK(clip && clip->keys.value(AnimParam::Volume).size() == 1 && project->timeline().audio[0].volumeAuto.isEmpty());
+        undo->undo();
+        clip = TimelineOps::findClip(project->timeline(), clipId);
+        penTrack->click();
     }
     page->findChild<QToolButton*>("studio_tool_select")->click();
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Studio page (0.23): the audio tracks as tall lanes with large waveforms on a time axis, the playhead of the timeline
-// and the clips' volume curves. Two tools: Select (click = playhead there and the clip selected, ruler = scrub) and
-// Pen (draw the volume curve: a stroke becomes volume keyframes of the clips under it, one undo step per stroke,
-// Editor::drawVolume / core/VolumeDraw.h). With Select a keyframe dot drags (time and level, one undo step per drag)
-// and a right click on it deletes it. An effect sound dropped onto a lane goes in at that frame (soundDropRequested);
+// Studio page (0.23): the audio tracks as tall lanes with large waveforms on a time axis, the playhead of the timeline,
+// the clips' volume curves and the tracks' volume automation. Two tools: Select (click = playhead there and the clip
+// selected, ruler = scrub) and Pen (draw the volume curve, one undo step per stroke). The pen writes either the track's
+// automation (PenTarget::Track, the default: a curve over the timeline's time, gaps too, Editor::drawTrackVolume) or
+// volume keyframes of the clips under the stroke (PenTarget::Clip, Editor::drawVolume; core/VolumeDraw.h). With Select a
+// keyframe or automation dot drags (time and level, one undo step per drag) and a right click on it deletes it. An effect sound dropped onto a lane goes in at that frame (soundDropRequested);
 // a running voice-over take shows on its lane (setLiveTake).
 //
 // Core rule (docs/architektur.md): zoom and scroll are the lanes' own (ViewState) and change only by user input - the
@@ -31,7 +32,10 @@ namespace Voiceover { class LiveTake; }
 class StudioTracks : public QWidget {
     Q_OBJECT
 public:
-    enum class Tool { Select, Pen };
+    // Select: click = playhead + clip; Points (the page's default, rubber band): a click on the volume line sets a
+    // point there, a point drags, right click deletes, double click / Alt+click puts it at 0 dB; Pen: free-hand strokes
+    enum class Tool { Select, Points, Pen };
+    enum class PenTarget { Clip, Track };
 
     StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent = nullptr);
 
@@ -42,6 +46,9 @@ public:
     // Smoothing of a pen stroke: frames to each side of the moving average (0 = as drawn)
     void setSmoothing(int frames) { m_smoothing = std::max(0, frames); }
     int smoothing() const { return m_smoothing; }
+    // What the pen writes: the track's automation or the clips' volume keyframes
+    void setPenTarget(PenTarget target);
+    PenTarget penTarget() const { return m_penTarget; }
 
     const ViewState& view() const { return m_view; }
     // Zoom and scroll as given (the first showing: the timeline's)
@@ -56,6 +63,8 @@ public:
     int laneHeight() const { return m_laneH; }
     // Where volume keyframe `index` of clip `clipId` is drawn (tests); null = not drawn (off view, curve too dense)
     QPointF keyPoint(int clipId, int index) const;
+    // Where automation point `index` of audio track `track` is drawn (tests); null = not drawn
+    QPointF autoPoint(int track, int index) const;
     // The take being recorded and the track it lands on (nullptr = none); a track past the last one (a new track)
     // gets a temporary lane below the others while it records
     void setLiveTake(const Voiceover::LiveTake* take, int track);
@@ -79,6 +88,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void leaveEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
@@ -102,6 +112,8 @@ private:
     void drawLane(class QPainter& p, int track);
     void drawWaveform(class QPainter& p, const QRect& body, const Clip& c, const QColor& color);
     void drawVolumeLine(class QPainter& p, const QRect& body, const Clip& c);
+    void drawAutomation(class QPainter& p, int track); // the track's level (fader + automation) over the whole lane
+    bool autoShown(const Track& t) const; // its dots are drawn (room enough between them)
     bool keysShown(const Clip& c) const; // the dots are drawn (room enough between the keys inside the clip)
     static bool keyInside(const Clip& c, const Keyframe& k); // at a frame of the clip (0 <= t < length)
     QRect playheadRect(int frame) const;  // what the playhead at `frame` covers (line, triangle)
@@ -109,9 +121,16 @@ private:
     void drawNewTrackLane(class QPainter& p, int track);
     struct KeyHit {
         int clipId = -1, index = -1;
+        int track = -1; // an automation point of this audio track (clipId -1)
+        bool valid() const { return clipId >= 0 || track >= 0; }
     };
     KeyHit keyAt(const QPoint& pos) const;
     void dragKey(const QPoint& pos);
+    // Points: a point on the line under pos (the track's level line in track mode, the clip's volume line in clip
+    // mode), already one undo step under m_keyMerge (the drag that follows joins it); invalid = not on the line
+    KeyHit addPointAt(int track, const QPoint& pos);
+    bool onLine(int track, const QPoint& pos) const;
+    void resetPoint(const KeyHit& hit); // to 0 dB (the level heard)
 
     Editor* m_editor;
     QPointer<MediaCache> m_cache;
@@ -121,6 +140,7 @@ private:
     int m_playhead = 0;
     Tool m_tool = Tool::Select;
     int m_smoothing = 2;
+    PenTarget m_penTarget = PenTarget::Track;
     QScrollBar* m_hbar;
     QScrollBar* m_vbar;
     bool m_syncing = false; // scrollbars set from the view, not by the user

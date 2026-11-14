@@ -725,6 +725,16 @@ struct TrackUid {
     }
 };
 
+// Track automation (0.23, core/Automation.h): a point of a curve over timeline frames (not clip frames: it stays at its
+// place in the timeline when a clip moves; ripple edits move it with the time around it). Linear between points, the
+// first/last value holds before/after them.
+struct AutoPoint {
+    int frame = 0;  // timeline frame
+    double db = 0;  // volume: dB on top of the track fader (0 = the fader's level)
+    bool operator==(const AutoPoint&) const = default;
+};
+using AutoCurve = QVector<AutoPoint>; // sorted by frame, each frame at most once; empty = no automation
+
 struct Track {
     TrackKind kind = TrackKind::Video;
     QString name;  // assigned by the user (double-click in the track header); empty = default "Video 1"/"Audio 1"
@@ -746,6 +756,9 @@ struct Track {
     double panCenter = 0.0;
     double lfeDb = kMinVolumeDb;
     bool hasSurroundPan() const { return panDepth != 0.0 || panCenter != 0.0 || lfeDb > kMinVolumeDb; }
+    // Audio only, volume automation (Studio pen in track mode, CLI op track_volume): what is heard is the fader plus
+    // this curve (dB). The fader trims the whole curve; empty = the fader alone (the mix is what it always was).
+    AutoCurve volumeAuto;
     TrackUid uid; // (last: aggregate initialisation Track{kind} stays as it is)
     bool operator==(const Track&) const = default;
 };

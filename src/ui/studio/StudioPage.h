@@ -36,6 +36,7 @@ private:
     StudioMixer* m_mixer;
     StudioTools* m_tools;
     QToolButton* m_select;
+    QToolButton* m_points;
     QToolButton* m_pen;
     QComboBox* m_smoothing;
 };

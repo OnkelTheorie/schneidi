@@ -47,5 +47,10 @@ bool spansEnough(const QVector<Point>& stroke);
 // Writes the stroke into clip `c` (placed on the timeline: c.start), only where the clip is under it. Returns false
 // when the stroke does not touch the clip or is too short (spansEnough; nothing changed). The clip's keyframes under the stroke are replaced.
 bool apply(Clip& c, const QVector<Point>& stroke, int smoothing);
+// Track mode (0.23): writes the stroke into the track's volume automation (Track::volumeAuto, core/Automation.h),
+// over the whole stroke - gaps between clips too. The stroke's dB are what the track plays (fader + curve, the scale
+// of the lane); the points store them on top of the fader. Points under the stroke are replaced, the curve outside
+// stays (a point with the old value right before and after the stroke). False = too short (nothing changed).
+bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing);
 
 } // namespace VolumeDraw

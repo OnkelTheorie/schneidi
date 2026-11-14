@@ -151,6 +151,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/VolumeDraw.h         src/core/VolumeDraw.cpp
+    src/core/Automation.h         src/core/Automation.cpp
     src/core/Accents.h            src/core/Accents.cpp
     src/core/SfxSynth.h           src/core/SfxSynth.cpp
     src/core/SfxWhoosh.h          src/core/SfxWhoosh.cpp
