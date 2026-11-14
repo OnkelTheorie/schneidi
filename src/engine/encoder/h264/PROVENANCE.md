@@ -41,6 +41,14 @@ published literature. No code, tables or thresholds were copied from another enc
   picture's quantiser scale following a power of its smoothed complexity, the "qcomp" idea
   described in public rate-control literature and encoder documentation); all own code, tuned
   by measurement.
+- Explicit weighted prediction for P pictures (14.11.): syntax and sample process from the standard
+  (7.3.3.2 pred_weight_table, 8.4.2.3). The parameters are our own estimate: gain from the ratio of
+  the spreads and offset from the means of the two source pictures' 16x16 block means (the usual
+  mean/variance model of a fade from the literature on weighted prediction parameter estimation,
+  e.g. Boyce, "Weighted prediction in the H.264/MPEG AVC video coding standard", ISCAS 2004), used
+  only where it explains the difference between the block means (thresholds from our own fade tests).
+- Psy strength following the picture's QP, and the choice of defaults against other encoders'
+  output (14.11.): from our own measurements (BD-rate, block-detail measures, blind comparisons).
 - **Vector kernels** (SSE2, AVX2 and, since 14.11.2026, NEON for AArch64): our own ports of our own
   plain C++ kernels, written from the vendors' intrinsics references (Intel Intrinsics Guide, Arm
   NEON Intrinsics Reference) and checked to give exactly the numbers of the C++ fallbacks. The

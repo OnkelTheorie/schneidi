@@ -2704,6 +2704,16 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     tpOff_[i] = float(std::clamp(cfg_.qcomp * 6.0 * (local - mean), -gQcMax, gQcMax));
                 }
             }
+            // Experiment (H264_STARTBOOST = QP, H264_STARTSEC = seconds, default off): a finer QP for the
+            // clip's first pictures, fading out; the plan pays for it over the rest.
+            static const double startBoost = std::getenv("H264_STARTBOOST") ? std::atof(std::getenv("H264_STARTBOOST")) : 0.0;
+            static const double startSec = std::getenv("H264_STARTSEC") ? std::atof(std::getenv("H264_STARTSEC")) : 1.5;
+            if (startBoost > 0 && st.size() > 0) {
+                tpOff_.resize(st.size(), 0.0f);
+                const double len = std::max(1.0, startSec * cfg_.fps);
+                for (size_t i = 0; i < st.size() && double(i) < len; ++i)
+                    tpOff_[i] -= float(startBoost * (1.0 - double(i) / len));
+            }
             for (size_t i = 0; i < st.size(); ++i) {
                 (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) += tpCost(i);
                 if (tpType_[i] == 1)
