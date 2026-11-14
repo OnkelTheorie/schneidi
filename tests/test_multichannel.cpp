@@ -33,6 +33,7 @@
 #include "engine/audio/Mixer.h"
 #include "engine/audio/Player.h"
 #include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -755,7 +756,8 @@ void testDownmixLimit(const QTemporaryDir& tmp, const QString& loud51)
     CHECK(peakOf(monitor[0]) > 1.2f);
 }
 
-// ALAC has no 7.1 with side surrounds (only "7.1(wide)": a front-centre pair): stereo downmix with a note; 5.1 stays
+// ALAC has no 7.1 with side surrounds (only "7.1(wide)": a front-centre pair): 5.1 downmix with a note (since the AC-3
+// work: an encoder with 5.1 keeps the surrounds instead of the stereo downmix); 5.1 stays
 void testAlac(const QTemporaryDir& tmp, const QString& five)
 {
     Timeline tl = oneClip(audioClip(1, five, 25), 8);
@@ -763,7 +765,7 @@ void testAlac(const QTemporaryDir& tmp, const QString& five)
     int written = 0;
     const QString path = tmp.filePath("alac71.m4a");
     if (exportTo(tl, path, "alac", 0, &note, &written)) {
-        CHECK(written == 2 && ffprobeAudio(path).value("channels").toInt() == 2 && !note.isEmpty());
+        CHECK(written == 6 && ffprobeAudio(path).value("channels").toInt() == 6 && note.contains("5.1"));
         std::printf("       ALAC-7.1-Hinweis: %s\n", qPrintable(note));
     }
     tl.audioChannels = 6;
@@ -873,6 +875,35 @@ void testApp(const QTemporaryDir& tmp, const QString& video)
     CHECK(p->format().width == 640 && p->format().rate == FrameRate({30, 1}));
     if (!CHECK(p->format().audioChannels == 6)) std::printf("       Kanäle nach dem ersten Clip: %d\n", p->format().audioChannels);
     (void)tmp;
+    // Deliver page: "Audio-Codec" (AAC / AC-3) for H.264 in a 5.1 project when the FFmpeg has AC-3; not in stereo
+    auto* deliver = w.findChild<DeliverPanel*>();
+    auto* codec = deliver ? deliver->findChild<QComboBox*>("renderAudioFormat") : nullptr;
+    if (!CHECK(codec)) return;
+    RenderSettings h264 = deliver->settings();
+    h264.format = "h264";
+    deliver->setSettings(h264);
+    const bool ac3 = HardwareEncoders::builtIn("ac3");
+    CHECK_EQ(codec->isVisibleTo(deliver), ac3);
+    if (ac3) {
+        codec->setCurrentIndex(codec->findData(QStringLiteral("ac3")));
+        CHECK(deliver->settings().audioFormat == "ac3" && deliver->settings().audioCodec() == "ac3");
+        h264.format = "vp9"; // WebM: not offered, the choice is not used
+        deliver->setSettings(h264);
+        CHECK(!codec->isVisibleTo(deliver) && deliver->settings().audioFormat.isEmpty());
+        h264.format = "h264";
+        h264.audioFormat.clear();
+        deliver->setSettings(h264);
+        CHECK(codec->isVisibleTo(deliver) && deliver->settings().audioFormat.isEmpty());
+        qputenv("SCHNEIDI_IGNORE_BUILTIN", "ac3"); // an FFmpeg without the encoder: the row goes
+        deliver->setSettings(h264);
+        CHECK(!codec->isVisibleTo(deliver));
+        qunsetenv("SCHNEIDI_IGNORE_BUILTIN");
+    }
+    ProjectFormat st = p->format();
+    st.audioChannels = 2;
+    p->setFormat(st);
+    QApplication::processEvents();
+    CHECK(!codec->isVisibleTo(deliver));
 }
 
 // Waveform of a routed clip: only its channels

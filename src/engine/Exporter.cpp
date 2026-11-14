@@ -519,12 +519,14 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     m_note = s.encoderNote;
     // Channels of the file: asked for, else the mix's format (the project's: stereo, 5.1, 7.1). An encoder without
-    // that many (MP3) gets the stereo downmix, and the note says so.
+    // that many gets the 5.1 downmix of a 7.1 mix if it has 5.1 (AC-3, ALAC), else the stereo one (MP3); the note
+    // says so.
     int audioChannels = s.audioChannels > 0 ? s.audioChannels : ChannelLayout::valid(tl.audioChannels);
     if (sound && audioChannels > 2) {
         const int can = encoderChannels(s.audioCodec, audioChannels);
         if (can != audioChannels && audioChannels == 8 && encoderChannels(s.audioCodec, 6) == 6) {
-            // AC-3: at most 5.1 – the 7.1 mix with its side and back pairs folded into the surrounds
+            // AC-3 (and ALAC: its only 7.1 is "7.1(wide)"): 5.1 keeps the surrounds – the 7.1 mix with its side and
+            // back pairs folded into them (ChannelLayout::conversion)
             const QString why = T("%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.")
                                     .arg(s.audioCodec, ChannelLayout::name(audioChannels));
             m_note = m_note.isEmpty() ? why : m_note + ' ' + why;

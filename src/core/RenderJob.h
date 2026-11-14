@@ -57,7 +57,7 @@ struct RenderSettings {
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
     // Channels of the file: 0 = the project's mix (stereo, 5.1, 7.1), 2 = stereo (a surround mix downmixed), 6 = 5.1,
-    // 8 = 7.1 (a stereo mix in the front pair). An encoder without that many (MP3) writes the stereo downmix.
+    // 8 = 7.1 (a stereo mix in the front pair). An encoder without that many writes 7.1 as 5.1 (AC-3, ALAC) or stereo (MP3).
     int audioChannels = 0;
     // Sound codec of an MP4 video instead of the format's AAC (0.23): "" = the format's own, "ac3" = AC-3 (Dolby
     // Digital: up to 5.1, plays on every TV, AV receiver and Blu-ray/DVD tool; a 7.1 mix is written as 5.1). Only
