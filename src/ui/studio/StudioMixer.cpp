@@ -4,6 +4,7 @@
 #include "app/DynamicsDialog.h"
 #include "app/EqDialog.h"
 #include "app/Theme.h"
+#include "core/ChannelLayout.h"
 #include "core/Dynamics.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -427,6 +428,82 @@ private:
     double m_lastX = 0;
 };
 
+// One surround send of a strip (5.1/7.1 projects): a bar filled from the left with its name and value in it; drag
+// sideways, double click = its default
+class SendBar : public QWidget {
+public:
+    SendBar(const QString& name, double lo, double hi, double def, const QString& unit)
+        : m_name(name), m_lo(lo), m_hi(hi), m_def(def), m_v(def), m_unit(unit)
+    {
+        setFixedHeight(16);
+        setMinimumWidth(60);
+        setCursor(Qt::SizeHorCursor);
+    }
+    std::function<void(double)> onChange;
+    std::function<void()> onFinish;
+    void setValue(double v)
+    {
+        if (v == m_v) return;
+        m_v = v;
+        update();
+    }
+    double value() const { return m_v; }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        const QRect r = rect().adjusted(0, 1, -1, -1);
+        p.fillRect(r, Theme::well);
+        const double t = (m_v - m_lo) / (m_hi - m_lo);
+        p.fillRect(QRect(r.left(), r.top(), int(std::lround(t * r.width())), r.height()), Theme::alpha(Theme::primary, 140));
+        QFont f = font();
+        f.setPointSizeF(7);
+        p.setFont(f);
+        p.setPen(Theme::text);
+        const QString value = m_v <= m_lo && m_unit == "dB" ? QStringLiteral("-∞") : number(m_v, 0);
+        p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, m_name);
+        p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignRight, value + (m_unit.isEmpty() ? "" : " " + m_unit));
+    }
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        m_drag = e->button() == Qt::LeftButton;
+        m_lastX = e->position().x();
+    }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (!m_drag) return;
+        const double dx = e->position().x() - m_lastX;
+        m_lastX = e->position().x();
+        set(m_v + dx / std::max(1, width()) * (m_hi - m_lo) * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
+    }
+    void mouseReleaseEvent(QMouseEvent*) override
+    {
+        if (m_drag && onFinish) onFinish();
+        m_drag = false;
+    }
+    void mouseDoubleClickEvent(QMouseEvent*) override
+    {
+        set(m_def);
+        if (onFinish) onFinish();
+    }
+
+private:
+    void set(double v)
+    {
+        v = std::clamp(v, m_lo, m_hi);
+        if (v == m_v) return;
+        m_v = v;
+        update();
+        if (onChange) onChange(std::round(v));
+    }
+    QString m_name;
+    double m_lo, m_hi, m_def, m_v;
+    QString m_unit;
+    bool m_drag = false;
+    double m_lastX = 0;
+};
+
 class StudioStrip : public QWidget {
 public:
     StudioStrip(Editor* editor, int track) // track -1 = the master
@@ -478,6 +555,21 @@ public:
             pan = new PanBar;
             pan->setObjectName("studio_pan_" + tag);
             lay->addWidget(pan);
+            // Surround panner (5.1/7.1 projects only): front -> surround, share in the centre, send to the LFE
+            surround = new QWidget;
+            surround->setObjectName("studio_surround_" + tag);
+            auto* sl = new QVBoxLayout(surround);
+            sl->setContentsMargins(0, 0, 0, 0);
+            sl->setSpacing(2);
+            depth = new SendBar(T("Tiefe"), 0, 100, 0, {});
+            depth->setToolTip(T("Surround-Tiefe: 0 = vorn, 100 = hinten (7.1: 50 = Seite)"));
+            center = new SendBar(T("Mitte"), 0, 100, 0, {});
+            center->setToolTip(T("Anteil im Center-Lautsprecher"));
+            lfe = new SendBar(QStringLiteral("LFE"), kMinVolumeDb, 0, kMinVolumeDb, QStringLiteral("dB"));
+            lfe->setToolTip(T("Anteil im Subwoofer (LFE, unter 120 Hz)"));
+            for (SendBar* b : {depth, center, lfe}) sl->addWidget(b);
+            surround->hide();
+            lay->addWidget(surround);
             // Mute, solo, pan value and the peak in one row (room for the fader)
             auto* ms = new QHBoxLayout;
             ms->setSpacing(3);
@@ -571,6 +663,10 @@ public:
     QToolButton* dynOpen = nullptr;
     DynCurve* dynCurve = nullptr;
     PanBar* pan = nullptr;
+    QWidget* surround = nullptr; // depth, center, LFE: only in a 5.1/7.1 project
+    SendBar* depth = nullptr;
+    SendBar* center = nullptr;
+    SendBar* lfe = nullptr;
     QLabel* panLabel = nullptr;
     QToolButton* mute = nullptr;
     QToolButton* solo = nullptr;
@@ -719,6 +815,10 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     row->addWidget(m_loudness);
 
     connect(m_project, &Project::timelineChanged, this, &StudioMixer::sync);
+    connect(m_project, &Project::formatChanged, this, [this] {
+        sync();
+        fitHeight(); // the surround sends take room
+    });
     connect(m_engine, &Engine::audioLevels, this, &StudioMixer::onLevels);
     m_timer = new QTimer(this);
     m_timer->setInterval(30);
@@ -774,6 +874,15 @@ void StudioMixer::rebuild(int count)
             m_editor->setTrackPan(i, v, QString("studio-pan-%1").arg(i));
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
+        // Surround: the three sends go together (Editor::setTrackSurround), one undo step per drag
+        const auto surroundChanged = [this, i, s] {
+            m_editor->setTrackSurround(i, s->depth->value(), s->center->value(), s->lfe->value(),
+                                       QString("studio-surround-%1").arg(i));
+        };
+        for (SendBar* b : {s->depth, s->center, s->lfe}) {
+            b->onChange = [surroundChanged](double) { surroundChanged(); };
+            b->onFinish = [this] { m_project->closeMerge(); };
+        }
         const auto track = [this, i]() -> const Track* {
             return i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
         };
@@ -828,6 +937,7 @@ void StudioMixer::sync()
     const Timeline& tl = m_project->timeline();
     if (m_strips.size() != tl.audio.size()) rebuild(int(tl.audio.size()));
     const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    const bool surround = ChannelLayout::surround(m_project->format().audioChannels);
     for (int i = 0; i < m_strips.size(); ++i) {
         const Track& t = tl.audio[i];
         StudioStrip* s = m_strips[i];
@@ -840,6 +950,10 @@ void StudioMixer::sync()
                                    .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name()));
         s->setVolume(t.volumeDb);
         s->setPan(t.pan);
+        s->surround->setVisible(surround);
+        s->depth->setValue(t.panDepth);
+        s->center->setValue(t.panCenter);
+        s->lfe->setValue(t.lfeDb);
         s->mute->setChecked(t.muted);
         s->solo->setChecked(t.solo);
         s->eq->setChecked(t.eq.on);

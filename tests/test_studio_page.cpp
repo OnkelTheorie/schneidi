@@ -167,6 +167,35 @@ void testWindow(Engine& engine, const QString& audioFile)
     mixer->onLevels(QVector<float>(2 * groups + 1, -12.f)); // the track count changing: ignored
     CHECK_EQ(mixer->meterChannels(0), 2);
 
+    // 5.1 project: the surround sends show in the strips; a drag on one is one undo step (Editor::setTrackSurround)
+    QWidget* sends = page->findChild<QWidget*>("studio_surround_A1");
+    if (CHECK(sends)) {
+        CHECK(!sends->isVisible()); // stereo: as before
+        ProjectFormat f = project->format();
+        f.audioChannels = 6;
+        project->setFormat(f);
+        settle();
+        CHECK(sends->isVisible());
+        QWidget* depth = sends->findChildren<QWidget*>().value(0);
+        if (CHECK(depth)) {
+            const int idx = undo->index();
+            const QPoint a(depth->width() / 4, depth->height() / 2), b(depth->width() * 3 / 4, depth->height() / 2);
+            mouse(depth, QEvent::MouseButtonPress, a, Qt::LeftButton);
+            mouse(depth, QEvent::MouseMove, (a + b) / 2, Qt::LeftButton);
+            mouse(depth, QEvent::MouseMove, b, Qt::LeftButton);
+            mouse(depth, QEvent::MouseButtonRelease, b, Qt::NoButton);
+            settle();
+            CHECK_EQ(undo->index(), idx + 1);
+            const double got = project->timeline().audio[0].panDepth;
+            Check::report(got >= 40 && got <= 60, "depth dragged", __FILE__, __LINE__, QString::number(got));
+            undo->undo();
+        }
+        f.audioChannels = 2;
+        project->setFormat(f);
+        settle();
+        CHECK(!sends->isVisible());
+    }
+
     // The live connection: switch pages by id
     CHECK(w.liveShowPage("edit"));
     CHECK(w.currentPage() == Page::Edit);
@@ -230,6 +259,11 @@ void testLayout(Engine& engine, const QString& audioFile)
                 w.liveProject()->edit("tracks", [](Timeline& tl) {
                     while (tl.audio.size() < 3) tl.audio << Track{TrackKind::Audio};
                 });
+                if (large) { // the surround sends take room too (5.1)
+                    ProjectFormat f = w.liveProject()->format();
+                    f.audioChannels = 6;
+                    w.liveProject()->setFormat(f);
+                }
                 settle();
                 w.showPage(Page::Studio);
                 settle(5);
