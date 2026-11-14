@@ -42,6 +42,8 @@
 #include "ui/studio/StudioPage.h"
 #include "ui/studio/StudioTools.h"
 #include "ui/studio/StudioTracks.h"
+
+#include <QWheelEvent>
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -148,6 +150,16 @@ void testWindow(Engine& engine, const QString& audioFile)
     CHECK_EQ(tracks->view().pxPerFrame, zoom);
     CHECK_EQ(tracks->view().leftFrame, left);
     CHECK_EQ(page->mixer()->stripCount(), int(project->timeline().audio.size()));
+    {
+        // Alt+wheel zooms like on the timeline, although Qt delivers it on the x axis while Alt is held
+        const double before = tracks->view().pxPerFrame;
+        const QPointF at(StudioTracks::kHeaderW + 50, 40);
+        QWheelEvent alt(at, tracks->mapToGlobal(at), QPoint(), QPoint(120, 0), Qt::NoButton, Qt::AltModifier,
+                        Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(tracks, &alt);
+        CHECK(tracks->view().pxPerFrame > before * 1.05);
+        tracks->setView(before, tracks->view().leftFrame);
+    }
     project->undoStack()->undo();
     settle();
 
