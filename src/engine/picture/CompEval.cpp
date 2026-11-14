@@ -11,10 +11,12 @@
 #include <QDataStream>
 #include <QHash>
 #include <QIODevice>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 
 namespace Picture::Comp {
 
@@ -132,6 +134,16 @@ bool rangeGraph(CompGraph& g, const EffectInstance& comp, double t, double fps, 
     if (!any) return false;
     const QVector<int> order = g.evalOrder();
     const double s = t / std::max(1e-6, fps);
+    // The clip's own picture somewhere up the chain into id (a Clip node; not a sticker, text or image branch)
+    QSet<int> seen;
+    const std::function<bool(int)> fromClip = [&](int id) {
+        if (id <= 0 || seen.contains(id)) return false;
+        seen.insert(id);
+        if (const CompNode* n = g.node(id); n && n->type == QLatin1String("clip")) return true;
+        for (const CompLink& l : g.links)
+            if (l.to == id && fromClip(l.from)) return true;
+        return false;
+    };
     QHash<int, int> through; // node out of its range -> the node whose picture it hands on (-1 = none)
     for (int id : order) {
         const CompNode* n = g.node(id);
@@ -143,6 +155,13 @@ bool rangeGraph(CompGraph& g, const EffectInstance& comp, double t, double fps, 
         for (const char* name : {"src", "bg", "fg"})
             if ((l = g.linkInto(id, QString::fromLatin1(name)))) break;
         int from_ = l ? l->from : -1;
+        // A node that places something gives nothing outside its range, not its input unplaced over the whole frame:
+        // a corner pin always, a transform of anything but the clip's own picture (a sticker, a text, an image)
+        if (n->type == QLatin1String("corner_pin")) from_ = -1;
+        else if (n->type == QLatin1String("transform") && from_ > 0) {
+            seen.clear();
+            if (!fromClip(from_)) from_ = -1;
+        }
         if (from_ > 0 && through.contains(from_)) from_ = through.value(from_); // a chain (order: resolved before)
         through.insert(id, from_);
     }
