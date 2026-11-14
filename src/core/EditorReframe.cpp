@@ -132,7 +132,8 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
                 t.clips = rest;
             }
             for (const Reframe::Keep& k : keeps->value(id)) {
-                if (Reframe::feedEmpty(k.feed)) continue; // measured: no kill feed line in this clip
+                // Measured without a line in a short clip: none (a long one keeps the whole region: an unknown HUD)
+                if (Reframe::feedUse(k.feed) == Reframe::FeedUse::None) continue;
                 Clip copy = Reframe::keepCopy(base, k, MediaAspect::ofClip(base), frame);
                 copy.id = p->newClipId();
                 copy.linkId = base.linkId;

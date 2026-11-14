@@ -99,6 +99,7 @@ bool isOverlay(const Clip& c, int track, double mediaAspect, QSizeF frame);
 // widest one reaches and where the last one ends, fractions of the whole recording (as Keep::region)
 struct FeedSample {
     double frame = 0; // clip frame (0 = the clip's first)
+    double file = -1; // its time in the file, seconds (-1 = unknown: short moments count in clip frames only)
     int lines = 0;
     double left = 1, bottom = 0; // only with lines
     bool operator==(const FeedSample&) const = default;
@@ -120,11 +121,19 @@ struct FeedState {
     bool operator==(const FeedState&) const = default;
 };
 // The stretches of a measured feed over a clip of `length` frames: a line missing for a moment (a flash, a sample
-// that missed it) does not count, nor one seen for a moment only; the widest line of a stretch sets its left edge.
+// that missed it) does not count, nor one seen for a moment only (a moment in the clip or in the file: a slowed clip
+// does not show a one-sample blip longer); the widest line of a stretch sets its left edge.
 // Empty when the feed is not measured.
 QVector<FeedState> feedStates(const Feed& f, int length);
-// Does the measured feed show no line at all over the clip? (Then the copy is left out.)
-bool feedEmpty(const Feed& f);
+// How the copy of a kill feed shows: Follow = its lines (measured, with lines), Whole = the whole region all the time
+// (not measured; or measured over kFeedFallback seconds of footage or more without a single line: the game's HUD
+// probably looks other than the analysis knows - another scale or layout), None = no copy (measured, no line over a
+// shorter clip)
+enum class FeedUse { Follow, Whole, None };
+inline constexpr double kFeedFallback = 20;
+FeedUse feedUse(const Feed& f);
+// Is the feed measured without a line (feedUse None or a Whole fallback)?
+bool feedLineless(const Feed& f);
 
 struct Keep {
     QString id;    // what it keeps: "killfeed" (a game's, core/GameHud.h) or "custom"
@@ -154,7 +163,8 @@ struct KeepPlace {
 // top and right edge stay.
 Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place = {});
 // The same for a kept-region copy (its crop already in the new shape's pixels): placed anew for the new shape, unless
-// it was moved or zoomed by hand since. False = left as it is.
+// it was moved or zoomed by hand since. A copy that follows its kill feed's lines gets its zoom and place keys anew
+// (the text size limit taken from its keys). False = left as it is.
 bool reshapeKeep(Clip& c, double oldAspect, double newAspect, QSizeF frame);
 // Is `c` a kept-region copy of `base` (same file and the same part of it at the same place)?
 bool isKeepOf(const Clip& c, const Clip& base);

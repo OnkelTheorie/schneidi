@@ -895,15 +895,17 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
         s.notes << QString("overlays not reframed, they keep their place and size in the frame: clips %1 (a smaller "
                            "picture on a track above V1, e.g. a webcam; name them in clips:[…] to reframe them anyway)")
                        .arg(overlayIds.join(", "));
-    QStringList kept, followed, noLines;
+    QStringList kept, followed, noLines, whole;
     for (int id : targets)
         for (const Reframe::Keep& k : fitted.value(id)) {
-            if (Reframe::feedEmpty(k.feed)) {
+            const Reframe::FeedUse use = Reframe::feedUse(k.feed);
+            if (use == Reframe::FeedUse::None) {
                 noLines << QString::number(id);
                 continue;
             }
             kept << QString("%1: %2 (%3)").arg(id).arg(k.id, GameHud::regionText(k.region));
-            if (k.feed.measured) followed << QString::number(id);
+            if (use == Reframe::FeedUse::Follow) followed << QString::number(id);
+            else if (k.feed.measured) whole << QString::number(id);
         }
     if (!kept.isEmpty())
         s.notes << "kept readable at the top of the frame (a cropped copy of the clip on a track above, info "
@@ -913,6 +915,11 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
                        + "): hidden while the feed is empty, as tall as its lines and as wide as the widest one";
     if (!noLines.isEmpty())
         s.notes << "no kill feed line in clips " + noLines.join(", ") + ": no kill feed copy for them";
+    if (!whole.isEmpty())
+        s.notes << QString("no kill feed line found in clips %1 over %2 s of footage or more (the game's HUD may have "
+                           "another scale or layout): their copy keeps the whole kill feed region all the time")
+                       .arg(whole.join(", "))
+                       .arg(Reframe::kFeedFallback);
     QStringList cropped;
     for (auto it = contents.cbegin(); it != contents.cend(); ++it)
         if (BarDetect::hasBars(*it)) cropped << QFileInfo(it.key()).fileName() + " (" + contentText(*it) + ")";
@@ -1085,7 +1092,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "always; a region \"x,y,w,h\" (fractions 0..1 of the whole picture) = that part; 'none' = nothing. "
                  "A CS2 kill feed copy follows the feed's lines (read 10 times a second): hidden while there are none, "
                  "as tall as the lines and as wide as the widest one (keyframes on opacity, crop and place); a clip "
-                 "without any line gets no copy. "
+                 "without any line gets no copy, unless it is 20 s of footage or longer (then the HUD probably looks "
+                 "other than the analysis knows: the copy keeps the whole region, a note says so). "
                  "The copy is linked to its clip (`info` link) and follows it: move, trim, split, delete, speed go "
                  "for both; place or crop the copy itself with 'transform' on its id. "
                  "Reframing a clip again replaces its earlier copies (none removes them); `info` shows them with "

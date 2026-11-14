@@ -397,6 +397,7 @@
  "Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert": "Auto reframe cancelled: the timeline changed during the analysis",
  "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Auto reframe: %1 clips follow their subject",
  "Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar": "Auto reframe: %1 clips follow their subject, the kill feed stays readable at the top",
+ "(Killfeed-Zeilen nicht erkannt: der ganze Killfeed-Bereich bleibt stehen)": "(kill feed lines not recognized: the whole kill feed region stays)",
  "Auto-Reframe: Bild wird analysiert …": "Auto reframe: analyzing the picture …",
  "Auto-Reframe: Killfeed oben behalten": "Auto reframe: keep the kill feed at the top",
  "Auto-Reframe: keine Video-Clips (Titel, Verbund- und Multicam-Clips bleiben, wie sie sind)": "Auto reframe: no video clips (titles, compound and multicam clips stay as they are)",

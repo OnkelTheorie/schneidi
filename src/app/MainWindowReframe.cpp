@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <memory>
 
 namespace {
@@ -142,11 +143,18 @@ void MainWindow::autoReframe()
     auto keeps = m_editor->reframeKeeps(ids, Reframe::Mode::Auto, contents, reframeKeepChoice());
     KillFeedLines::attach(keeps, feeds);
     const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents, &keeps);
-    const bool kept = std::any_of(keeps.begin(), keeps.end(), [](const QVector<Reframe::Keep>& k) {
-        return std::any_of(k.begin(), k.end(), [](const Reframe::Keep& x) { return !Reframe::feedEmpty(x.feed); });
+    const auto anyKeep = [&keeps](const std::function<bool(const Reframe::Keep&)>& f) {
+        return std::any_of(keeps.begin(), keeps.end(),
+                           [&f](const QVector<Reframe::Keep>& k) { return std::any_of(k.begin(), k.end(), f); });
+    };
+    const bool kept = anyKeep([](const Reframe::Keep& x) { return Reframe::feedUse(x.feed) != Reframe::FeedUse::None; });
+    // A long clip without any line read keeps the whole region (the game's HUD looks other than the analysis knows)
+    const bool whole = anyKeep([](const Reframe::Keep& x) {
+        return x.feed.measured && Reframe::feedUse(x.feed) == Reframe::FeedUse::Whole;
     });
     QString text = kept ? T("Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
                         : T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n);
+    if (whole) text += " " + T("(Killfeed-Zeilen nicht erkannt: der ganze Killfeed-Bereich bleibt stehen)");
     if (!overlays.isEmpty()) text += " " + overlayNote(int(overlays.size()));
     statusBar()->showMessage(text, overlays.isEmpty() ? 5000 : 8000);
 }
