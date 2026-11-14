@@ -387,7 +387,7 @@ void StudioTracks::drawLane(QPainter& p, int track)
 void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, const QColor& color)
 {
     if (!m_cache || c.isTitle() || c.freeze) return;
-    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream);
+    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream, c.sourceChannels);
     if (!wave || wave->levels.isEmpty()) return;
     constexpr int N = Waveform::kBucketsPerFrame;
     const double bucketsPerPx = N / m_view.pxPerFrame;

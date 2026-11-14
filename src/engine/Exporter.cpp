@@ -137,29 +137,16 @@ bool replaceFile(const QString& from, const QString& to)
     return true;
 }
 
-// The sample format the audio encoder gets: the wanted one if the codec takes it, otherwise the codec's first; empty =
-// Channels the audio encoder writes for a mix of `want` channels: want when it has a layout of that many (or takes any),
-// else stereo (MP3). 0 = the encoder is missing.
+// Channels the audio encoder writes for a mix of `want` channels: want when it has a layout of that many with the
+// mix's channel mapping (or takes any count), else stereo (MP3; ALAC has no 7.1 with side surrounds). 0 = the encoder
+// is missing.
 int encoderChannels(const QString& codecName, int want)
 {
-    const AVCodec* codec = avcodec_find_encoder_by_name(codecName.toUtf8().constData());
-    if (!codec) return 0;
-    const AVChannelLayout* layouts = nullptr;
-    int count = 0;
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
-    const void* list = nullptr;
-    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &list, &count) < 0) count = 0;
-    layouts = static_cast<const AVChannelLayout*>(list);
-#else
-    layouts = codec->ch_layouts;
-    while (layouts && layouts[count].nb_channels) ++count;
-#endif
-    if (!layouts || count == 0) return want; // PCM, FLAC …: any count
-    for (int i = 0; i < count; ++i)
-        if (layouts[i].nb_channels == want) return want;
-    return 2;
+    if (!avcodec_find_encoder_by_name(codecName.toUtf8().constData())) return 0;
+    return ExportWriter::writesChannels(codecName, want) ? want : 2;
 }
 
+// The sample format the audio encoder gets: the wanted one if the codec takes it, otherwise the codec's first; empty =
 // unknown codec
 QString encoderSampleFormat(const QString& codecName, const QString& wanted)
 {
@@ -624,6 +611,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
                 o.rate = s.audioRate > 0 ? s.audioRate : 48000;
                 o.outputChannels = std::max(2, audioChannels); // mono: the writer takes the mean of the stereo mix
+                o.limitOutput = true; // a downmix stays under the limiter's ceiling
                 g.mixer = std::make_shared<Audio::Mixer>(*mixed, s.format.rate, o);
             }
             g.length = convertRate ? std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps()))) : length;

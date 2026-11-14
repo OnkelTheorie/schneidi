@@ -1008,6 +1008,16 @@ struct MediaInfo {
     double pictureAspect = 0;
 };
 
+// After a clip got another file or audio stream: channel routing (Clip::sourceChannels) the clip's stream of m lacks
+// is dropped, like StreamPresets placing a rule for a file with fewer channels (none left = all channels again). A
+// stream the media info does not describe (channels unknown) keeps the routing.
+inline void fitSourceChannels(Clip& c, const MediaInfo& m)
+{
+    if (c.sourceChannels.isEmpty() || c.audioStream < 0 || c.audioStream >= m.audioStreams.size()) return;
+    const int have = m.audioStreams[c.audioStream].channels;
+    c.sourceChannels.removeIf([have](int ch) { return ch < 0 || ch >= have; });
+}
+
 // Bin (folder) in the Media Pool; Master (id 0) is not in the list, parent 0 = directly under Master
 struct MediaBin {
     int id = 0;

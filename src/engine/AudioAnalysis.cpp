@@ -126,13 +126,15 @@ bool decode(const ProjectFormat& format, const Clip& clip, const Progress& progr
 
 // The mix of timeline frames [from, to) as it is exported, frame by frame. false = could not mix or canceled.
 // Frames without sound reach sink as pcm == nullptr (renderFrames skipSilence). channels: 0 = the mix's own (all
-// channels of a 5.1/7.1 mix: loudness, peaks), 2 = stereo (a surround mix downmixed).
+// channels of a 5.1/7.1 mix: loudness, peaks), 2 = stereo (a surround mix downmixed and limited like the export
+// writes it).
 bool mix(const ProjectFormat& format, const Timeline& timeline, int from, int to, const Progress& progress,
          const Sink& sink, int channels = 0)
 {
     Audio::Mixer::Options o;
     o.rate = kRate;
     o.outputChannels = channels;
+    o.limitOutput = true;
     Audio::Mixer mixer(timeline, format.rate, o);
     return renderFrames(mixer, from, to, progress, sink, true);
 }
@@ -229,9 +231,10 @@ std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& cl
 }
 
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
-                                         const std::function<bool(double)>& progress, std::vector<float>* framePeaks)
+                                         const std::function<bool(double)>& progress, std::vector<float>* framePeaks,
+                                         int channels)
 {
-    return MixMeter(format).measure(timeline, from, to, progress, framePeaks);
+    return MixMeter(format).measure(timeline, from, to, progress, framePeaks, channels);
 }
 
 MixMeter::MixMeter(const ProjectFormat& format) : m_format(format) {}
@@ -239,7 +242,8 @@ MixMeter::MixMeter(const ProjectFormat& format) : m_format(format) {}
 MixMeter::~MixMeter() = default;
 
 std::optional<Loudness> MixMeter::measure(const Timeline& timeline, int from, int to,
-                                          const std::function<bool(double)>& progress, std::vector<float>* framePeaks)
+                                          const std::function<bool(double)>& progress, std::vector<float>* framePeaks,
+                                          int channels)
 {
     if (to <= from) return std::nullopt;
     Measure m;
@@ -251,7 +255,7 @@ std::optional<Loudness> MixMeter::measure(const Timeline& timeline, int from, in
         m.add(pcm, samples, channels, freq);
         if (framePeaks) framePeaks->push_back(framePeak(pcm, samples, channels));
     };
-    if (!mix(m_format, timeline, from, to, progress, sink)) return std::nullopt;
+    if (!mix(m_format, timeline, from, to, progress, sink, channels)) return std::nullopt;
     return m.result();
 }
 

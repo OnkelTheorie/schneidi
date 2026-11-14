@@ -9,9 +9,9 @@ class QComboBox;
 class QSpinBox;
 class QLabel;
 
-// Project settings like DaVinci (File → Project Settings…, Shift+9), section "Master Settings":
-// Timeline resolution (presets or custom size) and timeline frame rate. The frame rate is, as in DaVinci,
-// locked as soon as there are clips in the timeline. Whether the first clip in an empty timeline may still change the
+// Project settings (File → Project Settings…, Shift+9): timeline resolution (presets or custom size), timeline frame
+// rate and the sound channels of the mix (stereo, 5.1, 7.1). The frame rate is locked as soon as there are clips in
+// the timeline. Whether the first clip in an empty timeline may still change the
 // resolution / frame rate (off = fixed, e.g. from a start template).
 class ProjectSettingsDialog : public QDialog {
     Q_OBJECT
@@ -30,7 +30,9 @@ private:
     QSpinBox* m_width;
     QSpinBox* m_height;
     QComboBox* m_rate;
+    QComboBox* m_channels;
     QCheckBox* m_clipResolution;
     QCheckBox* m_clipRate;
+    ProjectFormat m_current;
     bool m_updating = false;
 };

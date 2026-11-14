@@ -546,7 +546,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         const Project* project = m_editor->project();
         apply(A, {}, T("Quell-Tonspur"), [project, stream](Clip& c) {
             const MediaInfo* m = project->mediaInfo(c.mediaPath);
-            if (m && stream < m->audioStreamCount()) c.audioStream = stream; // other files without this stream stay as they are
+            if (!m || stream >= m->audioStreamCount()) return; // other files without this stream stay as they are
+            c.audioStream = stream;
+            fitSourceChannels(c, *m);
         });
     });
     m_refreshers << [this, streamBox, streamLabel] {

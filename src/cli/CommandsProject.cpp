@@ -928,7 +928,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.rateDen = r.den;
     }
     if (a.contains("channels")) {
-        const QString c = a["channels"].toString().trimmed().toLower();
+        const QString c = a["channels"].toVariant().toString().trimmed().toLower(); // "5.1" or 6
         const int n = c == "project" ? 0 : ChannelLayout::parse(c);
         if (n == 0 && c != "project") fail("BAD_ARGUMENT", "channels must be stereo, 5.1, 7.1 or project");
         job.settings.audioChannels = n;

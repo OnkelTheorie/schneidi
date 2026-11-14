@@ -49,12 +49,13 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
 }
 
 // Disk cache for waveforms: key from path, size and modification time
-QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
+QString waveCacheFile(const QString& path, int stream, const QString& channels, const FrameRate& rate)
 {
     const QFileInfo fi(path);
-    // further streams with a suffix so that existing waveforms (stream 0) stay valid; "own|": the sound as the own
-    // audio engine places it (entries without it came from the sound path before 0.10)
+    // further streams and routed channels with a suffix so that existing waveforms (stream 0) stay valid; "own|": the
+    // sound as the own audio engine places it (entries without it came from the sound path before 0.10)
     const QString id = QStringLiteral("own|") + (stream > 0 ? QString("s%1|").arg(stream) : QString())
+                       + (channels.isEmpty() ? QString() : QString("c%1|").arg(channels))
                        + QString("%1|%2|%3|%4|%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
@@ -247,10 +248,15 @@ void MediaCache::invalidateFile(const QString& path)
     emit updated(); // the timeline asks again
 }
 
-std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int stream)
+std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int stream, const QVector<int>& channels)
 {
-    // Key: path, for further streams with an appended number (\0 does not occur in paths)
-    const QString key = stream > 0 ? path + QChar(0) + QString::number(stream) : path;
+    // Key: path, for further streams with an appended number (\0 does not occur in paths), for routed channels also
+    // "|<channels>" ("|2,3")
+    QStringList picked;
+    for (int c : channels) picked << QString::number(c);
+    QString key = path;
+    if (stream > 0 || !picked.isEmpty()) key += QChar(0) + QString::number(stream);
+    if (!picked.isEmpty()) key += '|' + picked.join(',');
     FileStamp::lookLater(path); // as thumbnail()
     QMutexLocker lock(&m_mutex);
     if (!m_waveRequested.contains(key)) {
@@ -364,7 +370,7 @@ void MediaCache::waveLoop()
     constexpr int N = Waveform::kBucketsPerFrame;
 
     for (;;) {
-        QString key, path;
+        QString key, path, channels; // channels: routed ones of the stream, "2,3" (empty = all)
         int stream = 0;
         ProjectFormat format;
         int gen = 0, fileGen = 0;
@@ -380,7 +386,9 @@ void MediaCache::waveLoop()
             m_waveJobs.pop_front();
             if (const int z = key.indexOf(QChar(0)); z >= 0) {
                 path = key.left(z);
-                stream = key.mid(z + 1).toInt();
+                const QString rest = key.mid(z + 1);
+                stream = rest.section('|', 0, 0).toInt();
+                channels = rest.section('|', 1);
             }
             format = m_format;
             gen = m_generation;
@@ -396,7 +404,7 @@ void MediaCache::waveLoop()
             emit updated();
         };
 
-        const QString cacheFile = waveCacheFile(path, stream, format.rate);
+        const QString cacheFile = waveCacheFile(path, stream, channels, format.rate);
         {
             auto w = std::make_shared<Waveform>();
             if (loadWave(cacheFile, *w)) {
@@ -414,7 +422,9 @@ void MediaCache::waveLoop()
         int64_t bufFrom = 0, bufTo = 0;
         {
             constexpr int kRate = 48000;
-            reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 2});
+            Audio::Reader::Options ro{kRate, 2};
+            for (const QString& c : channels.split(',', Qt::SkipEmptyParts)) ro.pick.push_back(c.toInt()); // routing
+            reader = Audio::Reader::open(path, stream, ro);
             const FrameRate fps = format.rate;
             const auto frameStart = [fps](int64_t f) {
                 const int64_t n = f * kRate * fps.den;

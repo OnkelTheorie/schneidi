@@ -105,6 +105,11 @@ public:
     // soundOnly: and the container is one for sound (no video by default: .aac yes, .mp4 no)
     static bool containerSurelyTakes(const QString& path, const QString& videoCodec, const QString& audioCodec,
                                      bool soundOnly = false);
+    // Does the audio encoder write `channels` (1, 2, 6, 8) with the mix's channel mapping (core/ChannelLayout.h:
+    // FFmpeg's "5.1" with the back pair - or "5.1(side)", AC-3's name of the same surround pair - and "7.1")? An
+    // encoder that only has another layout of that many channels (ALAC's 7.1 is "7.1(wide)": front-centre pair in
+    // place of the side pair) does not count. Encoders without a layout list (PCM, FLAC) take any count.
+    static bool writesChannels(const QString& audioCodec, int channels);
 
     // Smart render (s.copy): the mixer delivers the sound of every output frame
     ExportWriter(const Settings& s, Own own);
