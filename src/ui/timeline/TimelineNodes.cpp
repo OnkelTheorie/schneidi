@@ -279,7 +279,7 @@ void TimelineView::nodeBarRelease()
     // stored from; a moved bar stays "to the end" when it was and still ends at the clip's end
     double from = 0, until = 0;
     Comp::rangeValues(*c, m_nodeFirst, m_nodeEnd, fpsOf(m_editor), &from, &until, h.part == 0 && m_nodeUntil == 0);
-    if (h.part < 0) until = m_nodeUntil;
+    if (h.part < 0 && m_nodeUntil >= 0) until = m_nodeUntil; // a stored end before the clip (head trimmed past it): as shown
     if (h.part > 0) from = m_nodeFrom;
     QString err;
     if (!m_editor->setCompNodeRange(h.clipId, h.node, from, until, &err)) emit message(err);
