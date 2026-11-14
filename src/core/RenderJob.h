@@ -48,8 +48,10 @@ struct RenderSettings {
     int shortSide = 0; // resolution: 0 = timeline, otherwise shorter picture edge in the timeline's aspect ratio
     QSize size;        // fixed output size (e.g. portrait 1080 x 1920); takes precedence over shortSide
     // 0 = high, 1 = medium, 2 = small, 3 = web: high with a bit rate cap for upload sites (like DaVinci's
-    // "Restrict to"); only H.264/H.265
+    // "Restrict to"); only H.264/H.265. 4 = like source: the video bit rate of the media used (core/SourceBitrate),
+    // every format with a quality choice; saved as "quality" 0 + "qualitySource" (older versions read "High")
     static constexpr int kQualityWeb = 3;
+    static constexpr int kQualitySource = 4;
     int quality = 0;
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
@@ -82,8 +84,11 @@ struct RenderSettings {
     // Bit rate cap in kbit/s for the output (0 = none): quality "web", about 1.3x YouTube's recommendation
     int maxBitrateK(QSize output, FrameRate rate) const;
     QString qualityLabel() const;
-    // Short description for the queue, e.g. "H.264 (MP4) · 1920 × 1080 · High"
-    QString summary(QSize output) const;
+    // Quality "like source" and a format that has a quality choice (others ignore it: fixed quality)
+    bool sourceQuality() const;
+    // Short description for the queue, e.g. "H.264 (MP4) · 1920 × 1080 · High"; sourceBitrateK: the target of quality
+    // "like source" when known ("Like source ≈ 30 Mbit/s")
+    QString summary(QSize output, int sourceBitrateK = 0) const;
 
     QJsonObject toJson() const;
     static RenderSettings fromJson(const QJsonObject& o);
@@ -158,6 +163,9 @@ struct RenderJob {
     RenderStatus status = RenderStatus::Queued;
     QString message;     // error text or note (e.g. hardware encoder fell back to software)
     QString encoderUsed; // FFmpeg video codec of the last render, e.g. "h264_nvenc" (empty = not rendered yet)
+    // Quality "like source": the video bit rate (kbit/s) aimed at, from adding the job, then of the last render
+    // (0 = unknown / other quality)
+    int sourceBitrateK = 0;
     qint64 renderMs = 0; // duration of the last render
 
     bool operator==(const RenderJob& o) const;

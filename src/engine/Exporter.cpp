@@ -5,6 +5,7 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/RenderJob.h"
+#include "core/SourceBitrate.h"
 #include "core/Subtitles.h"
 #include "core/SystemMemory.h"
 #include "core/TimelineOps.h"
@@ -507,6 +508,20 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         break;
     }
     m_note = s.encoderNote;
+    // Quality "like source": the bit rate of the media shown, at the output's size and frame rate
+    m_targetBitrateK = 0;
+    if (s.sourceQuality && !s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
+        const SourceBitrate::Result r = SourceBitrate::target(tl, m_from, m_from + m_length - 1, out.size(), rate,
+                                                              [](const QString& path) { return MediaProbe::videoRate(path); });
+        m_targetBitrateK = r.targetK;
+        if (r.targetK > 0) {
+            qInfo("Export: quality like source, %d kbit/s (%d files, %d frames)", r.targetK, r.files, r.frames);
+        } else {
+            qInfo("Export: quality like source, no source bit rate known: quality High");
+            const QString why = T("Bitrate der Quelle unbekannt, mit Qualität „Hoch“ gerendert.");
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+        }
+    }
     m_usedCodec.clear();
     m_copiedPercent = 0;
     // Effects this engine does not have (frei0r/LADSPA plugins, ids of newer versions) stay in the project but are
@@ -709,12 +724,23 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     const ExportSettings& s = m_settings;
     QVector<QPair<QByteArray, QByteArray>> o;
     if (s.videoCodec.isEmpty()) return o;
+    const int target = m_targetBitrateK; // quality "like source": a bit rate instead of a constant quality
     if (ExportWriter::isOwnH264(codec)) {
         // Own encoder: a fixed QP from the quality level; "Web" adds the cap as "bitrate" (the writer keeps the QP when
-        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter)
+        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter).
+        // "Like source": the source's rate as that cap - two passes towards it, or "High" when that stays below it
         o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
-        if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
+        if (target > 0) o.append({"bitrate", QByteArray::number(target)});
+        else if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
         if (m_shortLookahead) o += lowMemoryOptions(codec); // (8K, low memory)
+    } else if (target > 0) {
+        // Average bit rate with some room for hard scenes (VBV: 1.5x peak, 2x buffer); one pass
+        const QVector<QPair<QString, QString>> rate = HardwareEncoders::isHardwareCodec(codec)
+                                                          ? HardwareEncoders::bitrateOptions(codec, target)
+                                                          : HardwareEncoders::softwareBitrateOptions(codec, target);
+        for (const auto& [key, value] : rate) o.append({key.toUtf8(), value.toUtf8()});
+        if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
+        if (m_shortLookahead) o += lowMemoryOptions(codec);
     } else if (HardwareEncoders::isHardwareCodec(codec)) {
         for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
     } else {
@@ -729,12 +755,14 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
         // (shortLookahead, also with threads asked for: 8K, 40 frames = 4 GB): shorter lookahead
         if (m_shortLookahead) o += lowMemoryOptions(codec);
     }
-    if (s.maxBitrateK > 0 && !ExportWriter::isOwnH264(codec)) { // quality target as before, but capped (VBV)
+    if (s.maxBitrateK > 0 && target <= 0 && !ExportWriter::isOwnH264(codec)) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
         o.append({"bufsize", QByteArray::number(s.maxBitrateK * 2) + "k"});
     }
     for (const QString& option : s.codecOptions) { // "key=value" from the format (profile, speed …)
         const qsizetype eq = option.indexOf('=');
+        // (VP9's "vb=0" is its constant quality mode: not with a bit rate target)
+        if (eq > 0 && target > 0 && (option.left(eq) == "vb" || option.left(eq) == "b")) continue;
         if (eq > 0) o.append({option.left(eq).toUtf8(), option.mid(eq + 1).toUtf8()});
     }
     return o;

@@ -121,6 +121,9 @@ schneidi_test(test_export_writer)
 # Own H.264 encoder as the export format h264_own: containers, colour tags, level, key frames, bit rate mode, cancel
 schneidi_test(test_export_own_h264)
 schneidi_test(test_export_timing)
+# Export quality "Like source": target bit rate (weighting, scaling, fallback), probe, export within 25 %, CLI
+schneidi_test(test_source_bitrate)
+target_link_libraries(test_source_bitrate PRIVATE schneidi_cli_lib)
 schneidi_test(test_smart_render)
 schneidi_test(test_storage_thumbs) # Media Storage thumbnails: key frame near 1 s decoded alone (rotation, VP9, 10-bit, MJPEG lowres), disk cache
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command

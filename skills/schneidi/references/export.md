@@ -7,7 +7,9 @@ By id or name: `youtube-1080p`, `youtube-4k`, `phone` (Phone / Vertical 9:16), `
 the preset. `help` `render` lists the current set with the user's own presets.
 
 ## Choosing
-- Upload anywhere / play anywhere: H.264 MP4 (default), `quality` 3 = web (bit rate like YouTube recommends).
+- Upload anywhere / play anywhere: H.264 MP4 (default), `quality` `web` (bit rate like YouTube recommends).
+- Keep the recordings' quality (archive, re-upload, a master): `quality` `source` - the bit rate of the clips used,
+  so the file is about as big as the source; the answer's `video_bitrate_k` says the rate aimed at.
 - Smaller at the same quality: H.265 (Apple and modern players), AV1 (smallest, slower).
 - More editing elsewhere: ProRes or DNxHR (big files).
 - `encoder` `auto` uses the graphics card when it works and falls back to software - leave it unless asked.

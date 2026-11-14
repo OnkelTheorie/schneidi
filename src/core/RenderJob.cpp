@@ -4,6 +4,7 @@
 #include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/ProjectFormat.h"
+#include "core/SourceBitrate.h"
 
 #include <QDir>
 #include <QFile>
@@ -208,8 +209,8 @@ QSize RenderSettings::outputSize(QSize timeline) const
 
 int RenderSettings::crf() const
 {
-    // Web = high quality with a bit rate cap
-    return renderFormat(format).crf[quality == kQualityWeb ? 0 : std::clamp(quality, 0, 2)];
+    // Web = high quality with a bit rate cap; like source = a bit rate target, "High" where it is unknown
+    return renderFormat(format).crf[quality >= kQualityWeb ? 0 : std::clamp(quality, 0, 2)];
 }
 
 int RenderSettings::maxBitrateK(QSize output, FrameRate rate) const
@@ -226,16 +227,23 @@ int RenderSettings::maxBitrateK(QSize output, FrameRate rate) const
 
 QString RenderSettings::qualityLabel() const
 {
-    static const char* names[] = {N_("Hoch"), N_("Mittel"), N_("Klein"), N_("Web (begrenzte Bitrate)")};
-    return T(names[std::clamp(quality, 0, kQualityWeb)]);
+    static const char* names[] = {N_("Hoch"), N_("Mittel"), N_("Klein"), N_("Web (begrenzte Bitrate)"), N_("Wie Quelle")};
+    return T(names[std::clamp(quality, 0, kQualitySource)]);
 }
 
-QString RenderSettings::summary(QSize output) const
+bool RenderSettings::sourceQuality() const
+{
+    return quality == kQualitySource && renderFormat(format).hasQuality() && !audioOnly();
+}
+
+QString RenderSettings::summary(QSize output, int sourceBitrateK) const
 {
     const RenderFormatInfo& f = renderFormat(format);
     QStringList parts{T(f.label)};
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
-    if (f.hasQuality()) parts << (quality == kQualityWeb && !f.webQuality ? T("Hoch") : qualityLabel());
+    if (sourceQuality())
+        parts << (sourceBitrateK > 0 ? qualityLabel() + ' ' + SourceBitrate::label(sourceBitrateK) : qualityLabel());
+    else if (f.hasQuality()) parts << (quality == kQualityWeb && !f.webQuality ? T("Hoch") : qualityLabel());
     if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)
         parts << videoEncoderLabel(encoder);
     if (!audioOnly() && rateNum > 0) parts << QString("%1 fps").arg(FrameRate{rateNum, rateDen}.label());
@@ -253,7 +261,9 @@ QString RenderSettings::summary(QSize output) const
 
 QJsonObject RenderSettings::toJson() const
 {
-    QJsonObject o{{"format", format}, {"quality", quality}, {"audioBitrate", audioBitrateK}};
+    // "Like source" is unknown to versions before 0.22, which clamp "quality" to 0-3: they read "High" (0), not "Web"
+    QJsonObject o{{"format", format}, {"quality", quality == kQualitySource ? 0 : quality}, {"audioBitrate", audioBitrateK}};
+    if (quality == kQualitySource) o["qualitySource"] = true;
     if (shortSide > 0) o["shortSide"] = shortSide;
     if (audioBits != 24) o["audioBits"] = audioBits;
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
@@ -275,7 +285,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
 {
     RenderSettings s;
     s.format = renderFormat(o.value("format").toString()).id;
-    s.quality = std::clamp(o.value("quality").toInt(0), 0, kQualityWeb);
+    s.quality = o.value("qualitySource").toBool() ? kQualitySource : std::clamp(o.value("quality").toInt(0), 0, kQualityWeb);
     s.audioBitrateK = std::clamp(o.value("audioBitrate").toInt(320), 32, 512);
     s.shortSide = std::max(0, o.value("shortSide").toInt());
     s.audioBits = o.value("audioBits").toInt(24);
@@ -454,7 +464,7 @@ bool RenderJob::operator==(const RenderJob& o) const
 {
     return id == o.id && path == o.path && preset == o.preset && settings == o.settings && size == o.size
            && inOut == o.inOut && sequence == o.sequence && review == o.review && from == o.from && to == o.to && status == o.status && message == o.message
-           && renderMs == o.renderMs && encoderUsed == o.encoderUsed;
+           && renderMs == o.renderMs && encoderUsed == o.encoderUsed && sourceBitrateK == o.sourceBitrateK;
 }
 
 namespace {
@@ -484,6 +494,7 @@ QJsonArray toJson(const QVector<RenderJob>& jobs)
         if (!j.message.isEmpty()) o["message"] = j.message;
         if (j.renderMs > 0) o["renderMs"] = double(j.renderMs);
         if (!j.encoderUsed.isEmpty()) o["encoderUsed"] = j.encoderUsed;
+        if (j.sourceBitrateK > 0) o["sourceBitrateK"] = j.sourceBitrateK;
         arr << o;
     }
     return arr;
@@ -521,6 +532,7 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
         j.message = o.value("message").toString();
         j.renderMs = qint64(std::clamp(o.value("renderMs").toDouble(), 0.0, 1e15)); // beyond qint64 would be undefined
         j.encoderUsed = o.value("encoderUsed").toString();
+        j.sourceBitrateK = std::clamp(o.value("sourceBitrateK").toInt(), 0, 10000000);
         jobs << j;
     }
     return jobs;

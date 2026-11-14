@@ -525,4 +525,99 @@ QString why(const QString& path)
 
 } // namespace
 
+namespace {
+
+// A stream's bit rate from its parameters or a Matroska statistics tag ("BPS", "BPS-eng"), 0 = unknown
+int64_t streamBitRate(const AVStream* st)
+{
+    if (st->codecpar->bit_rate > 0) return st->codecpar->bit_rate;
+    for (const char* key : {"BPS", "BPS-eng"})
+        if (const AVDictionaryEntry* e = av_dict_get(st->metadata, key, nullptr, 0)) {
+            const qint64 v = QByteArray(e->value).toLongLong();
+            if (v > 0) return v;
+        }
+    return 0;
+}
+
+struct RateEntry {
+    qint64 size = -1, modified = 0;
+    std::optional<SourceBitrate::Video> video;
+};
+
+std::optional<SourceBitrate::Video> readVideoRate(const QString& path, const QFileInfo& fi)
+{
+    if (stillSuffix(fi.suffix().toLower()) || forOtherProducer(fi.suffix().toLower()) || isAudioFile(path))
+        return std::nullopt;
+    AVFormatContext* raw = nullptr;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
+    std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    if (pictureDemuxer(fmt->iformat)) return std::nullopt;
+    const auto bestVideo = [&] {
+        const int v = av_find_best_stream(fmt.get(), AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+        return v >= 0 && !(fmt->streams[v]->disposition & AV_DISPOSITION_ATTACHED_PIC) ? v : -1;
+    };
+    int v = bestVideo();
+    const auto settled = [&](int i) {
+        const AVCodecParameters* p = fmt->streams[i]->codecpar;
+        return p->width > 0 && p->height > 0 && fmt->duration > 0;
+    };
+    // Other containers (MPEG-TS, …) know sizes and lengths only after the stream analysis
+    if (!headerSuffices(fmt->iformat) || v < 0 || !settled(v)) {
+        if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
+        v = bestVideo();
+    }
+    if (v < 0) return std::nullopt;
+    const AVStream* st = fmt->streams[v];
+    SourceBitrate::Video out;
+    if (st->codecpar->width > 0 && st->codecpar->height > 0) out.size = QSize(st->codecpar->width, st->codecpar->height);
+    const AVRational r = st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0 ? st->avg_frame_rate : st->r_frame_rate;
+    if (r.num > 0 && r.den > 0) out.fps = av_q2d(r);
+    if (out.fps > 1000) out.fps = 0; // a container's time base, not a frame rate
+    int64_t bits = streamBitRate(st);
+    if (bits <= 0) {
+        // The whole file's rate, without the sound (and other streams) where their rates are known
+        int64_t total = fmt->bit_rate;
+        if (total <= 0 && fmt->duration > 0 && fi.size() > 0)
+            total = int64_t(double(fi.size()) * 8 * AV_TIME_BASE / double(fmt->duration));
+        int64_t others = 0;
+        for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+            if (int(i) == v) continue;
+            const AVStream* o = fmt->streams[i];
+            int64_t b = streamBitRate(o);
+            const AVCodecParameters* p = o->codecpar;
+            if (b <= 0 && p->codec_type == AVMEDIA_TYPE_AUDIO && p->sample_rate > 0 && p->ch_layout.nb_channels > 0) {
+                const int depth = av_get_bits_per_sample(p->codec_id); // PCM: exact
+                if (depth > 0) b = int64_t(p->sample_rate) * p->ch_layout.nb_channels * depth;
+            }
+            others += std::max<int64_t>(0, b);
+        }
+        bits = total - others;
+        if (total > 0 && bits < total / 10) bits = total / 10; // rates that do not add up: never next to nothing
+    }
+    if (bits <= 0) return std::nullopt;
+    out.kbit = double(bits) / 1000.0;
+    return out;
+}
+
+} // namespace
+
+std::optional<SourceBitrate::Video> videoRate(const QString& path)
+{
+    static std::mutex mutex;
+    static QHash<QString, RateEntry> cache;
+    const QFileInfo fi(path);
+    if (!fi.isFile()) return std::nullopt;
+    const qint64 size = fi.size(), modified = fi.lastModified().toMSecsSinceEpoch();
+    {
+        std::lock_guard lock(mutex);
+        const auto it = cache.constFind(path);
+        if (it != cache.cend() && it->size == size && it->modified == modified) return it->video;
+    }
+    RateEntry e{size, modified, readVideoRate(path, fi)};
+    std::lock_guard lock(mutex);
+    if (cache.size() > 2000) cache.clear(); // a long session with very many files: start over
+    cache.insert(path, e);
+    return e.video;
+}
+
 } // namespace MediaProbe

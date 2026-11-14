@@ -204,6 +204,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Dynamics.h           src/core/Dynamics.cpp
     src/core/Equalizer.h          src/core/Equalizer.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
+    src/core/SourceBitrate.h      src/core/SourceBitrate.cpp
     src/core/ShortPick.h          src/core/ShortPick.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp

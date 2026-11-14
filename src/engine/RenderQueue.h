@@ -47,6 +47,9 @@ public:
     static ExportSettings exportSettings(const RenderJob& job, const ProjectFormat& format);
     // The same with the project's media lengths (ExportSettings::mediaLengths)
     static ExportSettings exportSettings(const RenderJob& job, const Project& project);
+    // Quality "like source": the video bit rate (kbit/s) the job would aim at with the timeline as it is now (its range,
+    // output size and frame rate); 0 = another quality or nothing known (renders as "High"). Probes the files' headers.
+    static int sourceBitrateK(const RenderJob& job, const Project& project);
     // A review render (marks drawn onto every frame): no smart render, the fastest encoder setting, lower quality; the
     // own H.264 encoder (no fast setting) becomes plain H.264
     static void makeReview(ExportSettings& s);
@@ -73,7 +76,9 @@ private:
     bool launch(); // starts the exporter for m_current; false = failed at once (status set)
     void makeReviewMarks(const RenderJob& job); // in a worker thread, then launch() again with m_overlay
     void onExportFinished(bool ok, const QString& message);
-    void setStatus(int id, RenderStatus status, const QString& message = {}, qint64 ms = -1, const QString& encoder = {});
+    // sourceBitrateK >= 0: quality "like source" aimed at it (0 = unknown, "High"); kept with the job
+    void setStatus(int id, RenderStatus status, const QString& message = {}, qint64 ms = -1, const QString& encoder = {},
+                   int sourceBitrateK = -1);
 
     Project* m_project;
     Exporter* m_exporter;
