@@ -232,6 +232,23 @@ void Editor::setTrackPan(int track, double pan, const QString& mergeKey)
     m_project->edit(T("Spur-Panorama"), [&](Timeline& t) { t.audio[track].pan = pan; }, mergeKey);
 }
 
+void Editor::setTrackSurround(int track, double depth, double center, double lfeDb, const QString& mergeKey)
+{
+    if (track < 0 || track >= m_project->timeline().audio.size()) return;
+    depth = std::clamp(depth, 0.0, 100.0);
+    center = std::clamp(center, 0.0, 100.0);
+    lfeDb = std::clamp(lfeDb, kMinVolumeDb, kMaxVolumeDb);
+    const Track& now = m_project->timeline().audio[track];
+    if (now.panDepth == depth && now.panCenter == center && now.lfeDb == lfeDb) return;
+    emit mixerOnlyEdit(); // live like the pan (Audio::Mixer::updateMix)
+    m_project->edit(T("Surround-Panorama"), [&](Timeline& t) {
+        Track& a = t.audio[track];
+        a.panDepth = depth;
+        a.panCenter = center;
+        a.lfeDb = lfeDb;
+    }, mergeKey);
+}
+
 void Editor::setTrackMuted(int track, bool on)
 {
     if (track < 0 || track >= m_project->timeline().audio.size() || m_project->timeline().audio[track].muted == on) return;

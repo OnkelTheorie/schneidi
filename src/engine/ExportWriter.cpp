@@ -393,7 +393,7 @@ struct ExportWriter::Impl {
     int frameBytes = 0;
     AVBufferRef* hwDevice = nullptr;          // VAAPI
     AVBufferRef* hwFrames = nullptr;
-    std::vector<float> mixL, mixR;            // fetch thread: the mix of one output frame
+    std::vector<std::vector<float>> mixPlanes; // fetch thread: the mix of one output frame (Mixer::outputChannels)
 
     // Timeline frame shown at output frame i (frame rate conversion): the one showing at that time, floor(i * fps_tl /
     // fps_out). Rounding to the nearest even (lrint, as RateConverter did) repeated and dropped frames unevenly (30 ->
@@ -585,10 +585,16 @@ struct ExportWriter::Impl {
         }
         const int count = int(std::max<int64_t>(0, b - a));
         if (count <= 0) return;
-        mixL.resize(size_t(count));
-        mixR.resize(size_t(count));
-        float* planes[] = {mixL.data(), mixR.data()};
+        const int mixed = mixer.outputChannels();
+        mixPlanes.resize(size_t(mixed));
+        float* planes[Audio::Mixer::kMaxChannels];
+        for (int c = 0; c < mixed; ++c) {
+            mixPlanes[size_t(c)].resize(size_t(count));
+            planes[c] = mixPlanes[size_t(c)].data();
+        }
         mixer.render(a, count, planes);
+        const float* mixL = planes[0];
+        const float* mixR = planes[std::min(1, mixed - 1)];
         const int channels = s.audioChannels;
         const size_t at = pcm.size();
         pcm.resize(at + size_t(count) * channels * sampleBytes);
@@ -597,7 +603,11 @@ struct ExportWriter::Impl {
         const int bits = packed == AV_SAMPLE_FMT_S16 ? 16 : std::clamp(o.audioBits > 0 ? o.audioBits : 32, 8, 32);
         for (int k = 0; k < count; ++k)
             for (int c = 0; c < channels; ++c, out += sampleBytes) {
-                const double v = channels == 1 ? 0.5 * (double(mixL[k]) + double(mixR[k])) : c == 0 ? mixL[k] : c == 1 ? mixR[k] : 0.0;
+                const double v = channels == 1 ? 0.5 * (double(mixL[k]) + double(mixR[k]))
+                                 : c == 0      ? mixL[k]
+                                 : c == 1      ? mixR[k]
+                                 : c < mixed   ? planes[c][k]
+                                               : 0.0;
                 switch (packed) {
                 case AV_SAMPLE_FMT_S16: {
                     const auto q = int16_t(std::clamp(std::nearbyint(v * 32768.0), -32768.0, 32767.0));
@@ -1178,7 +1188,7 @@ struct ExportWriter::Impl {
             }
             aenc->sample_fmt = sampleFmt;
             aenc->sample_rate = s.audioRate;
-            av_channel_layout_default(&aenc->ch_layout, s.audioChannels);
+            setEncoderLayout(acodec, s.audioChannels);
             aenc->time_base = AVRational{1, s.audioRate};
             ast->time_base = aenc->time_base;
             if (s.audioBitrateK > 0) aenc->bit_rate = int64_t(s.audioBitrateK) * 1000;
@@ -1535,6 +1545,35 @@ struct ExportWriter::Impl {
             }
         }
         return true;
+    }
+
+    // Channel layout of the audio encoder: the mix's order (core/ChannelLayout.h: FFmpeg's "5.1" with the back pair,
+    // "7.1"). An encoder that has another layout of that many channels gets it (AC-3 names the same pair "side"); the
+    // samples stay in place, only the label differs.
+    void setEncoderLayout(const AVCodec* codec, int channels)
+    {
+        av_channel_layout_uninit(&aenc->ch_layout);
+        AVChannelLayout want{};
+        if (channels == 6) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_5POINT1_BACK);
+        else if (channels == 8) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_7POINT1);
+        else av_channel_layout_default(&want, channels);
+        const AVChannelLayout* layouts = nullptr;
+        int count = 0;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+        const void* list = nullptr;
+        if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &list, &count) < 0) count = 0;
+        layouts = static_cast<const AVChannelLayout*>(list);
+#else
+        layouts = codec->ch_layouts;
+        while (layouts && layouts[count].nb_channels) ++count;
+#endif
+        const AVChannelLayout* pick = nullptr;
+        for (int i = 0; i < count && !pick; ++i)
+            if (av_channel_layout_compare(&layouts[i], &want) == 0) pick = &layouts[i];
+        for (int i = 0; i < count && !pick; ++i)
+            if (layouts[i].nb_channels == channels) pick = &layouts[i];
+        av_channel_layout_copy(&aenc->ch_layout, pick ? pick : &want);
+        av_channel_layout_uninit(&want);
     }
 
     bool writeHeader()

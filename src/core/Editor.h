@@ -135,6 +135,9 @@ public:
     // takes them live. Same mergeKey = one undo step (dragging a fader). Mixer panel and CLI both go through these.
     void setTrackVolume(int track, double db, const QString& mergeKey = {});
     void setTrackPan(int track, double pan, const QString& mergeKey = {});
+    // Surround panner of an audio track (5.1/7.1 mix; Track::panDepth/panCenter/lfeDb): depth 0..100 (front ->
+    // surround), center 0..100 (share in the centre speaker), lfeDb send to the LFE (<= -60 = off). One undo step.
+    void setTrackSurround(int track, double depth, double center, double lfeDb, const QString& mergeKey = {});
     void setTrackMuted(int track, bool on);
     void setTrackSolo(int track, bool on);
     // Master limiter (like a bus limiter in Fairlight): on/off; a new ceiling (dBFS, -20..0) switches it on

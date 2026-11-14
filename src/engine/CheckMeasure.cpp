@@ -94,7 +94,8 @@ std::optional<QVector<ExportCheck::Issue>> mix(const ProjectFormat& f, const Tim
             [&](double p) {
                 if (progress && !progress((k + p) / tracks.size())) canceled = true;
                 return !canceled;
-            });
+            },
+            0); // every channel of a 5.1/7.1 mix (loudness)
         if (canceled) return std::nullopt;
         if (!ok) continue;
         const bool music = roles[i] == SoundRole::Music

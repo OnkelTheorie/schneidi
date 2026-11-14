@@ -273,6 +273,8 @@ schneidi_test(test_audio_reader_damage) # vanishing files, timestamp gaps and ou
 schneidi_test(test_media_probe)
 schneidi_test(test_media_unreadable) # pipes and devices, undecodable stills, sub-frame sounds, why a file is unreadable
 schneidi_test(test_audio_mixer)
+schneidi_test(test_multichannel) # 0.23: 5.1/7.1 mix, surround panner, channel routing, export layouts, loudness, project format 8
+add_dependencies(test_multichannel schneidi-cli)
 schneidi_test(test_stretch) # own time stretcher (keep pitch)
 schneidi_test(test_export_audio)
 schneidi_test(test_audio_analysis)

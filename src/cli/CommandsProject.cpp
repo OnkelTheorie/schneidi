@@ -5,6 +5,7 @@
 #include "cli/Sandbox.h"
 
 #include "core/Accents.h"
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/CompRecipes.h"
 #include "core/Editor.h"
@@ -926,6 +927,12 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.rateNum = r.num;
         job.settings.rateDen = r.den;
     }
+    if (a.contains("channels")) {
+        const QString c = a["channels"].toString().trimmed().toLower();
+        const int n = c == "project" ? 0 : ChannelLayout::parse(c);
+        if (n == 0 && c != "project") fail("BAD_ARGUMENT", "channels must be stereo, 5.1, 7.1 or project");
+        job.settings.audioChannels = n;
+    }
     if (a.contains("encoder")) {
         bool ok = false;
         job.settings.encoder = videoEncoderFromId(a["encoder"].toString(), VideoEncoder::Auto, &ok);
@@ -1060,6 +1067,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();
     }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
+    if (job.settings.hasAudio() && !srtOnly) o["channels"] = ex.audioChannels() == 1 ? QStringLiteral("mono") : ChannelLayout::name(ex.audioChannels());
     if (job.settings.sourceQuality() && !marks) {
         o["quality"] = "source";
         o["video_bitrate_k"] = ex.targetBitrateK(); // 0: no source bit rate known, rendered as "high"

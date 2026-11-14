@@ -6,6 +6,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/Captions.h"
 #include "core/Editor.h"
@@ -258,7 +259,8 @@ FrameRate templateFrameRate(double fps)
 QJsonObject formatJson(const ProjectFormat& f)
 {
     return {{"width", f.width}, {"height", f.height}, {"fps", std::round(f.rate.fps() * 1000) / 1000},
-            {"fps_label", QString("%1/%2").arg(f.rate.num).arg(f.rate.den)}};
+            {"fps_label", QString("%1/%2").arg(f.rate.num).arg(f.rate.den)},
+            {"channels", ChannelLayout::name(f.audioChannels)}};
 }
 
 // ---------- Projects ----------
@@ -559,6 +561,11 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (ref.kind == TrackKind::Audio && c.volumeDb != 0) o["volume_db"] = c.volumeDb;
     if (ref.kind == TrackKind::Audio && c.pan != 0) o["pan"] = c.pan;
     if (ref.kind == TrackKind::Audio && c.audioStream != 0) o["audio_stream"] = c.audioStream;
+    if (ref.kind == TrackKind::Audio && !c.sourceChannels.isEmpty()) { // routing (op 'route'), counted from 1
+        QJsonArray channels;
+        for (int ch : c.sourceChannels) channels << ch + 1;
+        o["channels"] = channels;
+    }
     if (ref.kind == TrackKind::Video) {
         // Values also while their Inspector section is switched off (then they do not apply)
         const ClipTransform& t = c.transform;
@@ -673,6 +680,9 @@ QJsonObject timelineJson(const Project& p)
             if (k == TrackKind::Audio) {
                 if (t.volumeDb != 0) o["volume_db"] = t.volumeDb;
                 if (t.pan != 0) o["pan"] = t.pan;
+                if (t.panDepth != 0) o["depth"] = t.panDepth; // surround panner (5.1/7.1 mix)
+                if (t.panCenter != 0) o["center"] = t.panCenter;
+                if (t.lfeDb > kMinVolumeDb) o["lfe_db"] = t.lfeDb;
                 if (t.solo) o["solo"] = true;
                 if (t.dynamics != TrackDynamics{}) {
                     const TrackDynamics& d = t.dynamics;
@@ -1122,6 +1132,10 @@ const QVector<Command>& commands()
                                  "'better_encoder' (install it with `extensions` install x264, ask the user first: "
                                  "72 MB download, GPL)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
+          {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
+                                  "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
+                                  "Ls Rs [Lss Rss]; AAC, Opus, FLAC, WAV/AIFF, ALAC 5.1). MP3 has no 5.1: it writes the "
+                                  "stereo downmix and says so in 'encoder_note'. The answer has 'channels'"},
           {"subtitles", T::String, "none (default), burn (into the picture), srt or vtt (files next to the video: the "
                                   "visible track as <name>.srt, other tracks with entries as <name>.<track name>.srt; "
                                   "vtt = WebVTT for web players)"},
@@ -1195,7 +1209,9 @@ const QVector<Command>& commands()
           {"threads", T::Integer, "as in `render`"},
           {"overwrite", T::Boolean, "replace an existing out file"}},
          cmdShort},
-        {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "
+        {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams (audio_channels: count "
+                  "and layout per stream, e.g. 5.1(side) or '4 channels' of a camera with two microphones - op 'route' "
+                  "plays single channels). With gaps: the stutter "
                   "of a recording with variable frame rate (variable_frame_rate true: game capture keeps the time "
                   "stamps of the frames it got, so where the game lagged the picture stands still).",
          {{"file", T::Path, "media file", false, true},

@@ -70,6 +70,7 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.codecOptions = QString(f.options).split(' ', Qt::SkipEmptyParts);
     s.crf = job.settings.crf();
     s.audioBitrateK = job.settings.audioBitrateK;
+    s.audioChannels = job.settings.audioChannels; // 0 = the mix's format (Timeline::audioChannels)
     s.threads = Exporter::savedThreads(); // applies per machine, not per job
     // Size fixed when adding; without it (audio only, old file) per the settings
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;

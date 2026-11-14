@@ -44,6 +44,7 @@ ProjectFormat withinLimits(ProjectFormat f)
     f.height = std::clamp(f.height, kMinFrameSize, kMaxFrameSize);
     if (f.rate.num <= 0 || f.rate.den <= 0 || f.rate.fps() < 1 || f.rate.fps() > 1000)
         f.rate = nearestFrameRate(f.rate.num > 0 && f.rate.den > 0 ? f.rate.fps() : 25);
+    if (f.audioChannels != 6 && f.audioChannels != 8) f.audioChannels = 2;
     return f;
 }
 

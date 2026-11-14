@@ -769,12 +769,14 @@ Timeline Project::renderTimeline(int sequenceId) const
     const Sequence* s = sequenceId ? sequence(sequenceId) : &current();
     Timeline tl = s ? s->timeline : timeline();
     tl.frameSize = sequenceFormat(s ? s->id : 0).size();
+    tl.audioChannels = m_format.audioChannels;
     auto nested = std::make_shared<NestedTimelines>();
     for (const Sequence& x : m_sequences) {
         Timeline t = x.timeline;
         t.nested.reset();
         t.angles = x.multicam ? x.angles : QVector<MulticamAngle>{};
         t.frameSize = sequenceFormat(x.id).size();
+        t.audioChannels = m_format.audioChannels;
         nested->insert(x.id, t);
     }
     tl.nested = std::move(nested);

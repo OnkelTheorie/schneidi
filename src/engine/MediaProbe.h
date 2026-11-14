@@ -50,4 +50,12 @@ bool isAudioFile(const QString& path);
 // same. Thread-safe.
 std::optional<SourceBitrate::Video> videoRate(const QString& path);
 
+// Channel layout of every audio stream in file order (`probe`, channel routing): FFmpeg's name ("stereo", "5.1(side)",
+// "7.1", "4 channels" without positions) and the count. From the header (~1 ms); empty = not readable.
+struct AudioLayout {
+    int channels = 0;
+    QString layout;
+};
+QVector<AudioLayout> audioLayouts(const QString& path);
+
 } // namespace MediaProbe
