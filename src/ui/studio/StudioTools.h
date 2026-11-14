@@ -7,7 +7,7 @@
 // - "Stimme säubern": voice cleaning (RNNoise, effect voiceclean) on those clips and the EQ preset "Stimme" on the
 //   track, one undo step (Editor::cleanVoice with voiceEq).
 // - "Musik unter Sprache absenken": ducking of those clips under the other audible tracks (Editor::duck, amount
-//   remembered), "Aus" takes it off (Editor::unduck); the curve shows in the lanes.
+//   remembered), "Aufheben" takes it off (Editor::unduck); the curve shows in the lanes.
 // - "Lautheit auf Ziel": the whole mix to YouTube -14 / Podcast -16 / Broadcast -23 LUFS through op mixer
 //   target_lufs (the existing logic, master limiter on), one undo step; shows before -> after.
 // - "Aufnahme": voice-over from this page (the app's VoiceoverRecorder): track (auto or armed), record/stop, input level.

@@ -256,7 +256,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
                             "Keyframes, in den Spuren als Kurve zu sehen; nochmal = mit dem neuen Wert)"),
                           true);
         connect(on, &QToolButton::clicked, this, [this] { duck(); });
-        m_unduck = button(T("Aus"), "studio_unduck",
+        m_unduck = button(T("Aufheben"), "studio_unduck",
                           T("Nimmt das Absenken zurück: die Lautstärke-Keyframes der Clips gehen (auch gezeichnete), "
                             "ihre Lautstärke bleibt"));
         connect(m_unduck, &QToolButton::clicked, this, [this] { unduck(); });
