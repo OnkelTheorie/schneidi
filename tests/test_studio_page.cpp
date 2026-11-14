@@ -287,6 +287,24 @@ void testWindow(Engine& engine, const QString& audioFile)
     CHECK_EQ(mixer->meterChannels(0), 2);
     mixer->onLevels(QVector<float>(2 * groups + 1, -12.f)); // the track count changing: ignored
     CHECK_EQ(mixer->meterChannels(0), 2);
+    // 5.1/7.1: the master names its speakers under the bars (wider bars, the strip grows); tracks and stereo do not
+    CHECK(mixer->meterLabels(-1).isEmpty() && mixer->meterLabels(0).isEmpty());
+    QWidget* masterFader = page->findChild<QWidget*>("studio_fader_master");
+    const int stereoW = masterFader ? masterFader->width() : 0;
+    mixer->onLevels(QVector<float>(6 * groups, -12.f));
+    settle();
+    CHECK(mixer->meterLabels(-1) == QStringList({"L", "R", "C", "LFE", "Ls", "Rs"}));
+    CHECK(mixer->meterLabels(0).isEmpty());
+    if (CHECK(masterFader)) {
+        CHECK(masterFader->width() >= masterFader->minimumWidth() && masterFader->width() >= stereoW);
+        std::printf("Master-Pegel 5.1: %d px breit (Stereo %d)\n", masterFader->width(), stereoW);
+    }
+    mixer->onLevels(QVector<float>(8 * groups, -12.f));
+    settle();
+    CHECK(mixer->meterLabels(-1) == QStringList({"L", "R", "C", "LFE", "Lrs", "Rrs", "Lss", "Rss"}));
+    if (masterFader) CHECK(masterFader->width() >= masterFader->minimumWidth());
+    mixer->onLevels(QVector<float>(2 * groups, -12.f));
+    CHECK(mixer->meterLabels(-1).isEmpty());
 
     // 5.1 project: the surround sends show in the strips; a drag on one is one undo step (Editor::setTrackSurround)
     QWidget* sends = page->findChild<QWidget*>("studio_surround_A1");

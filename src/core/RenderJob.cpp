@@ -112,8 +112,15 @@ bool RenderSettings::hasEncoderChoice() const { return renderFormat(format).hard
 
 bool RenderSettings::hasAudioBitrate() const
 {
-    const QLatin1String c(renderFormat(format).audioCodec);
+    const QString c = audioCodec(); // AC-3: fixed (ac3BitrateK)
     return c == QLatin1String("aac") || c == QLatin1String("libmp3lame") || c == QLatin1String("libopus");
+}
+
+QStringList RenderSettings::audioFormatChoices() const
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    if (f.kind == RenderKind::Video && QLatin1String(f.extension) == QLatin1String("mp4")) return {QStringLiteral("ac3")};
+    return {};
 }
 
 QVector<int> RenderSettings::audioBitChoices() const
@@ -135,6 +142,7 @@ static int validBits(const RenderSettings& s)
 QString RenderSettings::audioCodec() const
 {
     const QString c = renderFormat(format).audioCodec;
+    if (!audioFormat.isEmpty() && audioFormatChoices().contains(audioFormat)) return audioFormat;
     if (!c.startsWith("pcm_")) return c;
     const QString endian = c.right(2); // le/be
     switch (validBits(*this)) {
@@ -247,7 +255,8 @@ QString RenderSettings::summary(QSize output, int sourceBitrateK) const
     if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)
         parts << videoEncoderLabel(encoder);
     if (!audioOnly() && rateNum > 0) parts << QString("%1 fps").arg(FrameRate{rateNum, rateDen}.label());
-    if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << "AAC " + T("%1 kbit/s").arg(audioBitrateK);
+    if (audioCodec() == QLatin1String("ac3")) parts << QStringLiteral("AC-3");
+    else if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << "AAC " + T("%1 kbit/s").arg(audioBitrateK);
     else if (QLatin1String(f.audioCodec) == QLatin1String("libopus") && !audioOnly())
         parts << "Opus " + T("%1 kbit/s").arg(audioBitrateK);
     else if (hasAudioBitrate()) parts << T("%1 kbit/s").arg(audioBitrateK);
@@ -267,6 +276,7 @@ QJsonObject RenderSettings::toJson() const
     if (shortSide > 0) o["shortSide"] = shortSide;
     if (audioBits != 24) o["audioBits"] = audioBits;
     if (audioChannels > 0) o["audioChannels"] = audioChannels;
+    if (!audioFormat.isEmpty()) o["audioFormat"] = audioFormat;
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
     if (maxFps > 0) o["maxFps"] = maxFps;
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
@@ -291,6 +301,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     s.shortSide = std::max(0, o.value("shortSide").toInt());
     s.audioBits = o.value("audioBits").toInt(24);
     if (const int ch = o.value("audioChannels").toInt(); ch == 2 || ch == 6 || ch == 8) s.audioChannels = ch;
+    if (o.value("audioFormat").toString() == QLatin1String("ac3")) s.audioFormat = QStringLiteral("ac3");
     const QStringList rate = o.value("rate").toString().split('/');
     if (rate.size() == 2 && rate[0].toInt() > 0 && rate[1].toInt() > 0) {
         s.rateNum = rate[0].toInt();
@@ -319,7 +330,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
            && embedSubtitles == o.embedSubtitles
-           && audioBits == o.audioBits && audioChannels == o.audioChannels && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && audioChannels == o.audioChannels && audioFormat == o.audioFormat && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Presets

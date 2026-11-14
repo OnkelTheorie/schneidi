@@ -3,6 +3,7 @@
 #include "ui/WheelGuard.h"
 
 #include "app/Theme.h"
+#include "core/ChannelLayout.h"
 #include "core/I18n.h"
 #include "core/ExportCheck.h"
 #include "core/SourceBitrate.h"
@@ -48,6 +49,12 @@
 namespace {
 
 // Smart render copies at "High", "Web" (below its cap) and "Like source" only: copied pictures keep the file's bit rate
+// AC-3 instead of the format's AAC: an MP4 format and an FFmpeg with the encoder (the bundled LGPL one since 0.23)
+bool ac3Offered(const RenderSettings& s)
+{
+    return s.audioFormatChoices().contains(QStringLiteral("ac3")) && HardwareEncoders::builtIn(QStringLiteral("ac3"));
+}
+
 bool smartQuality(int quality)
 {
     return quality == 0 || quality == RenderSettings::kQualityWeb || quality == RenderSettings::kQualitySource;
@@ -63,7 +70,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (f.hardware && a.encoder != b.encoder) return false;
     if (f.hardware && smartQuality(a.quality) && a.smartRender != b.smartRender) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
-    if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
+    if ((!a.audioBitChoices().isEmpty() || !a.audioFormatChoices().isEmpty()) && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
     const FrameRate none{0, 1};
     if (!a.audioOnly() && a.outputRate(none) != b.outputRate(none)) return false;
@@ -197,6 +204,15 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(m_audioBits, qOverload<int>(&QComboBox::activated), this,
             [this] { m_wantedBits = m_audioBits->currentData().toInt(); });
 
+    // Sound codec of the MP4 formats: AAC or AC-3 (5.1 for TVs and AV receivers); only in surround projects (or once
+    // chosen) and only where the FFmpeg has the AC-3 encoder (updateControls)
+    m_audioFormat = new QComboBox;
+    m_audioFormat->setObjectName("renderAudioFormat");
+    m_audioFormat->addItem(QStringLiteral("AAC"), QString());
+    m_audioFormat->addItem(T("AC-3 (Dolby Digital)"), QStringLiteral("ac3"));
+    m_audioFormat->setToolTip(T("AC-3 spielt 5.1 auf Fernsehern, AV-Receivern und in Blu-ray-/DVD-Programmen "
+                                "(640 kbit/s, 7.1 wird zu 5.1). AAC: kleiner, für Upload-Seiten und Handys."));
+
     // Like DaVinci: "Render: Entire Timeline / In/Out Range"
     // Subtitles like DaVinci "Subtitle Settings": burn in the visible subtitle track or as a separate file
     m_subtitles = new QComboBox;
@@ -232,6 +248,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(project, &Project::sequencesChanged, this, &DeliverPanel::updateName);
     updateName();
     connect(project, &Project::timelineFormatChanged, this, &DeliverPanel::updateFormat); // also a timeline's own
+    connect(project, &Project::formatChanged, this, [this] {
+        if (m_form) updateControls(); // 5.1/7.1: the AC-3 choice
+    });
     updateFormat();
 
     // Threads (logical processors) for rendering: applies per machine (not in presets/jobs), takes effect from the next job
@@ -275,7 +294,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     betterLayout->addWidget(betterBtn, 0, Qt::AlignTop);
     m_betterRow->hide();
     form->addRow(QString(), m_betterRow);
+    form->addRow(T("Audio-Codec"), m_audioFormat);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
+    m_form = form;
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(QString(), m_embed);
@@ -332,7 +353,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->addWidget(m_status);
 
     connect(m_preset, qOverload<int>(&QComboBox::activated), this, &DeliverPanel::applyPreset);
-    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_encoder, m_audioBitrate, m_audioBits, m_subtitles})
+    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_encoder, m_audioFormat, m_audioBitrate, m_audioBits, m_subtitles})
         connect(c, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             updateControls();
             syncPresetToSettings();
@@ -523,6 +544,7 @@ RenderSettings DeliverPanel::settings() const
     if (m_encoder->currentIndex() >= 0) s.encoder = VideoEncoder(m_encoder->currentData().toInt());
     s.audioBitrateK = m_audioBitrate->currentData().toInt();
     if (m_audioBits->currentIndex() >= 0) s.audioBits = m_audioBits->currentData().toInt();
+    if (ac3Offered(s)) s.audioFormat = m_audioFormat->currentData().toString();
     if (const QSize r = m_rate->currentData().toSize(); r.isValid() && !s.audioOnly()) {
         s.rateNum = r.width();
         s.rateDen = r.height();
@@ -548,6 +570,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     const bool wasApplying = m_applying;
     m_applying = true;
     m_wantedBits = s.audioBits;
+    m_audioFormat->setCurrentIndex(std::max(0, m_audioFormat->findData(s.audioFormat)));
     m_wantedEncoder = s.encoder;
     m_maxFps = s.maxFps;
     updateRateLabel();
@@ -604,6 +627,13 @@ void DeliverPanel::updateControls()
                                 "der Originaldatei."));
     RenderSettings probe;
     probe.format = f.id;
+    // AC-3: the row only where it is offered and makes sense (a 5.1/7.1 project, or chosen before)
+    // (the combo keeps its choice across format changes: it is never cleared)
+    const bool ac3 = m_audioFormat && ac3Offered(probe);
+    probe.audioFormat = ac3 ? m_audioFormat->currentData().toString() : QString();
+    if (m_form)
+        m_form->setRowVisible(m_audioFormat, ac3 && (ChannelLayout::surround(m_project->format().audioChannels)
+                                                     || !probe.audioFormat.isEmpty()));
     m_audioBitrate->setEnabled(probe.hasAudioBitrate());
     m_rate->setEnabled(video);
     // Bit depths of the format; the wanted one (preset/last choice) stays, otherwise 24 bit

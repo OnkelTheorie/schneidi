@@ -1108,11 +1108,17 @@ int Engine::timelineFramesOnGpu() const
 void Engine::emitLevels()
 {
     // Peaks of what was heard since the last frame
-    const std::vector<float> peaks = m_player->takeLevels();
+    std::vector<float> speakers;
+    const std::vector<float> peaks = m_player->takeLevels(&speakers);
     if (peaks.empty()) return;
-    QVector<float> levels;
-    levels.reserve(int(peaks.size()));
-    for (const float p : peaks) levels << (p > 1e-10f ? 20.f * std::log10(p) : -200.f);
+    const auto toDb = [](const std::vector<float>& linear) {
+        QVector<float> db;
+        db.reserve(int(linear.size()));
+        for (const float p : linear) db << (p > 1e-10f ? 20.f * std::log10(p) : -200.f);
+        return db;
+    };
+    const QVector<float> levels = toDb(peaks);
     emit audioLevels(levels); // queued -> UI thread
+    emit audioSpeakerLevels(speakers.empty() ? levels : toDb(speakers));
 }
 

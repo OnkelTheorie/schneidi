@@ -1136,6 +1136,10 @@ const QVector<Command>& commands()
                                   "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
                                   "Ls Rs [Lss Rss]; AAC, Opus, FLAC, WAV/AIFF, ALAC 5.1). MP3 has no 5.1: it writes the "
                                   "stereo downmix and says so in 'encoder_note'. The answer has 'channels'"},
+          {"audio_codec", T::String, "sound codec of an MP4 video (h264, h265, av1): aac (default, the format's own) "
+                                     "or ac3 (AC-3/Dolby Digital at 640 kbit/s for 5.1: TVs, AV receivers, Blu-ray "
+                                     "tools; a 7.1 mix is written as 5.1). Only when this FFmpeg has the AC-3 encoder "
+                                     "(else BAD_ARGUMENT); the answer then has 'audio_codec'"},
           {"subtitles", T::String, "none (default), burn (into the picture), srt or vtt (files next to the video: the "
                                   "visible track as <name>.srt, other tracks with entries as <name>.<track name>.srt; "
                                   "vtt = WebVTT for web players)"},

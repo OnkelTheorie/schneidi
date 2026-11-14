@@ -933,6 +933,19 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         if (n == 0 && c != "project") fail("BAD_ARGUMENT", "channels must be stereo, 5.1, 7.1 or project");
         job.settings.audioChannels = n;
     }
+    if (a.contains("audio_codec")) {
+        const QString c = a["audio_codec"].toString().trimmed().toLower().remove('-'); // "ac3", "AC-3"
+        if (c == "ac3") {
+            if (!job.settings.audioFormatChoices().contains("ac3"))
+                fail("BAD_ARGUMENT", "audio_codec ac3 needs an MP4 video format (h264, h265, av1, h264_own)");
+            if (!HardwareEncoders::builtIn("ac3")) fail("BAD_ARGUMENT", "this build of FFmpeg has no AC-3 encoder");
+            job.settings.audioFormat = "ac3";
+        } else if (c.isEmpty() || c == "default" || c == "aac") {
+            job.settings.audioFormat.clear();
+        } else {
+            fail("BAD_ARGUMENT", "audio_codec must be aac (the format's own, default) or ac3");
+        }
+    }
     if (a.contains("encoder")) {
         bool ok = false;
         job.settings.encoder = videoEncoderFromId(a["encoder"].toString(), VideoEncoder::Auto, &ok);
@@ -1068,6 +1081,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
     if (job.settings.hasAudio() && !srtOnly) o["channels"] = ex.audioChannels() == 1 ? QStringLiteral("mono") : ChannelLayout::name(ex.audioChannels());
+    if (job.settings.hasAudio() && !srtOnly && !job.settings.audioFormat.isEmpty()) o["audio_codec"] = job.settings.audioCodec();
     if (job.settings.sourceQuality() && !marks) {
         o["quality"] = "source";
         o["video_bitrate_k"] = ex.targetBitrateK(); // 0: no source bit rate known, rendered as "high"

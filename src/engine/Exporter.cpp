@@ -523,7 +523,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     int audioChannels = s.audioChannels > 0 ? s.audioChannels : ChannelLayout::valid(tl.audioChannels);
     if (sound && audioChannels > 2) {
         const int can = encoderChannels(s.audioCodec, audioChannels);
-        if (can != audioChannels) {
+        if (can != audioChannels && audioChannels == 8 && encoderChannels(s.audioCodec, 6) == 6) {
+            // AC-3: at most 5.1 – the 7.1 mix with its side and back pairs folded into the surrounds
+            const QString why = T("%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.")
+                                    .arg(s.audioCodec, ChannelLayout::name(audioChannels));
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+            audioChannels = 6;
+        } else if (can != audioChannels) {
             const QString why = T("%1 schreibt kein %2, der Ton ist auf Stereo heruntergemischt.")
                                     .arg(s.audioCodec, ChannelLayout::name(audioChannels));
             m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
@@ -802,6 +808,7 @@ int Exporter::audioBitrateK() const
 {
     const QString& c = m_settings.audioCodec;
     if (c.isEmpty() || c.startsWith("pcm_") || c == "alac" || c == "flac") return 0;
+    if (c == "ac3") return RenderSettings::ac3BitrateK(m_settings.audioChannels);
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
 

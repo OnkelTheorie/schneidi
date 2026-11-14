@@ -6,6 +6,8 @@
 //   a 5.1 file passing through channel by channel, the stereo downmix for the monitor, 7.1
 // - loudness over all channels (surround +1.5 dB, LFE not counted)
 // - export in 5.1/7.1 (AAC, FLAC, WAV: ffprobe channel_layout), MP3 falls back to stereo with a note
+// - per-speaker meters (Mixer::channelPeaks, Player::takeLevels speakers, Engine::audioSpeakerLevels)
+// - AC-3 for the MP4 formats (RenderSettings::audioFormat): 5.1(side), 7.1 as 5.1, CLI audio_codec, Deliver page
 // - the project file: format 8 only when used (stereo projects unchanged), roundtrip, older versions refuse it
 // - review fixes: voice cleaning of a 5.1 source (centre cleaned, LFE/surrounds aligned), a loud 5.1 mix exported as
 //   stereo stays under the limiter (limiter after the downmix; loudness/check measure it with channels 'stereo'),
@@ -27,7 +29,10 @@
 #include "engine/Exporter.h"
 #include "engine/MediaProbe.h"
 #include "engine/RenderQueue.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/audio/Mixer.h"
+#include "engine/audio/Player.h"
+#include "ui/DeliverPanel.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -40,6 +45,7 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 
 #include <cmath>
@@ -115,13 +121,14 @@ QJsonObject ffprobeAudio(const QString& path)
 }
 
 bool exportTo(const Timeline& tl, const QString& path, const QString& format, int channels, QString* note = nullptr,
-              int* written = nullptr)
+              int* written = nullptr, const QString& audioFormat = {})
 {
     RenderJob job;
     job.id = 1;
     job.path = path;
     job.settings.format = format;
     job.settings.audioChannels = channels;
+    job.settings.audioFormat = audioFormat;
     Exporter ex;
     QEventLoop loop;
     bool ok = false;
@@ -358,6 +365,171 @@ void testSurroundMix(const QString& stereo, const QString& five, const QString& 
         m.render(4800, 4800, p);
         CHECK(m.channels() == 6 && m.outputChannels() == 6 && m.trackPeaks().size() == 2 && m.trackPeaks()[0] > 0.19);
     }
+}
+
+// Per-speaker meters: a 5.1 file with channel c at amplitude 0.1 * (c + 1), a stereo clip panned into the surrounds
+void testSpeakerMeters(const QString& levels51, const QString& stereo)
+{
+    const Timeline tl = oneClip(audioClip(1, levels51, 25), 6);
+    for (int outCh : {6, 2}) { // the export's format and the monitor's downmix: the speakers of the mix either way
+        Audio::Mixer::Options o;
+        o.rate = kRate;
+        o.outputChannels = outCh;
+        Audio::Mixer m(tl, kFmt.rate, o);
+        m.setMetering(true);
+        m.setMeterBlock(outCh == 2 ? 512 : 0);
+        std::vector<std::vector<float>> buf(size_t(outCh), std::vector<float>(4800));
+        float* p[8];
+        for (int c = 0; c < outCh; ++c) p[c] = buf[size_t(c)].data();
+        m.render(0, 4800, p); // the start, then on
+        m.render(4800, 4800, p);
+        const std::vector<float>& peaks = m.channelPeaks();
+        if (!CHECK_EQ(int(peaks.size()), 12)) continue;
+        for (int c = 0; c < 6; ++c) {
+            const float want = 0.1f * float(c + 1);
+            if (!CHECK(std::abs(peaks[size_t(c)] - want) < 0.01f && std::abs(peaks[size_t(6 + c)] - want) < 0.01f))
+                std::printf("       Ausgang %d, Kanal %d: Spur %.3f Master %.3f statt %.2f\n", outCh, c, peaks[size_t(c)],
+                            peaks[size_t(6 + c)], want);
+        }
+        // the stereo pair as before: L the loudest of FL, C, LFE, Ls; R of FR, C, LFE, Rs
+        CHECK(m.trackPeaks().size() == 2 && std::abs(m.trackPeaks()[0] - 0.5f) < 0.01f
+              && std::abs(m.trackPeaks()[1] - 0.6f) < 0.01f);
+        if (outCh == 2) { // per block (backwards playback): each block of 512 samples (> 1 period of 300 Hz)
+            const std::vector<float>& bp = m.blockChannelPeaks();
+            if (CHECK_EQ(int(bp.size()), 10 * 12))
+                for (int b : {0, 5, 9})
+                    for (int c = 0; c < 6; ++c)
+                        CHECK(std::abs(bp[size_t(b * 12 + c)] - 0.1f * float(c + 1)) < 0.02f
+                              && std::abs(bp[size_t(b * 12 + 6 + c)] - 0.1f * float(c + 1)) < 0.02f);
+        }
+    }
+    // A stereo clip at depth 100: only the surround speakers move
+    {
+        Timeline st = oneClip(audioClip(1, stereo, 25), 6);
+        st.audio[0].panDepth = 100;
+        Audio::Mixer::Options o;
+        o.rate = kRate;
+        Audio::Mixer m(st, kFmt.rate, o);
+        m.setMetering(true);
+        std::vector<std::vector<float>> buf(6, std::vector<float>(4800));
+        float* p[6];
+        for (int c = 0; c < 6; ++c) p[c] = buf[size_t(c)].data();
+        m.render(4800, 4800, p);
+        const std::vector<float>& peaks = m.channelPeaks();
+        if (CHECK_EQ(int(peaks.size()), 12))
+            CHECK(peaks[0] < 1e-6f && peaks[1] < 1e-6f && peaks[2] < 1e-6f && peaks[3] < 1e-6f && peaks[4] > 0.19f
+                  && peaks[5] > 0.19f && peaks[10] > 0.19f && peaks[11] > 0.19f && peaks[6] < 1e-6f);
+    }
+    // Stereo: L, R as the track meters
+    {
+        Audio::Mixer::Options o;
+        o.rate = kRate;
+        Audio::Mixer m(oneClip(audioClip(1, stereo, 25), 2), kFmt.rate, o);
+        m.setMetering(true);
+        std::vector<std::vector<float>> buf(2, std::vector<float>(4800));
+        float* p[2] = {buf[0].data(), buf[1].data()};
+        m.render(4800, 4800, p);
+        CHECK(m.channelPeaks().size() == 4 && m.channelPeaks()[0] == m.trackPeaks()[0]
+              && m.channelPeaks()[1] == m.trackPeaks()[1]);
+    }
+    // The player hands them on (null device): forward and backwards; nothing extra in stereo
+    qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
+    for (const double speed : {1.0, -1.0}) {
+        Audio::Player player;
+        player.setTimeline(tl, kFmt.rate);
+        player.play(speed > 0 ? 0.0 : 3.5 * kRate, speed);
+        player.release();
+        QElapsedTimer t;
+        t.start();
+        std::vector<float> speakers, levels;
+        while (t.elapsed() < 3000 && (speakers.empty() || speakers[11] < 0.5f)) {
+            QThread::msleep(30);
+            std::vector<float> sp;
+            const std::vector<float> lv = player.takeLevels(&sp);
+            if (!lv.empty()) levels = lv;
+            if (!sp.empty()) speakers = sp;
+        }
+        player.pause();
+        if (!CHECK_EQ(int(speakers.size()), 12)) continue;
+        CHECK_EQ(int(levels.size()), 4); // track L, R + master L, R as before
+        for (int c = 0; c < 6; ++c)
+            if (!CHECK(std::abs(speakers[size_t(6 + c)] - 0.1f * float(c + 1)) < 0.02f))
+                std::printf("       Player %+.0f: Master-Kanal %d %.3f\n", speed, c, speakers[size_t(6 + c)]);
+    }
+    {
+        Audio::Player player;
+        player.setTimeline(oneClip(audioClip(1, stereo, 25), 2), kFmt.rate);
+        player.play(0, 1.0);
+        player.release();
+        QThread::msleep(300);
+        std::vector<float> sp{1.f};
+        const std::vector<float> lv = player.takeLevels(&sp);
+        CHECK(lv.size() == 4 && sp.empty());
+        player.pause();
+    }
+}
+
+// AC-3 for 5.1 in the MP4 formats, when this FFmpeg has the encoder (the bundled one since 0.23, Debian's always)
+void testAc3(const QTemporaryDir& tmp, const QString& five)
+{
+    RenderSettings s;
+    s.audioFormat = "ac3";
+    CHECK(s.audioCodec() == "ac3" && !s.hasAudioBitrate() && s.summary(QSize(320, 180)).contains("AC-3"));
+    CHECK(RenderSettings::fromJson(s.toJson()) == s && RenderSettings::fromJson(s.toJson()).audioFormat == "ac3");
+    RenderSettings plain;
+    CHECK(plain != s && !plain.toJson().contains("audioFormat"));
+    s.format = "vp9"; // WebM: Opus, AC-3 not offered
+    CHECK(s.audioCodec() == "libopus" && s.audioFormatChoices().isEmpty());
+    s.format = "prores";
+    CHECK(s.audioCodec().startsWith("pcm_"));
+    if (!HardwareEncoders::builtIn("ac3")) {
+        std::printf("       ÜBERSPRUNGEN: dieses FFmpeg hat keinen AC-3-Encoder\n");
+        return;
+    }
+    Timeline tl = oneClip(audioClip(1, five, 25), 6);
+    const QString path = tmp.filePath("ac3.mp4");
+    int written = 0;
+    if (exportTo(tl, path, "h264", 0, nullptr, &written, "ac3")) {
+        const QJsonObject a = ffprobeAudio(path);
+        if (!CHECK(a.value("codec_name").toString() == "ac3" && a.value("channel_layout").toString() == "5.1(side)"
+                   && a.value("channels").toInt() == 6 && written == 6))
+            std::printf("       AC-3: %s\n", QJsonDocument(a).toJson(QJsonDocument::Compact).constData());
+        CHECK(std::abs(a.value("bit_rate").toString().toInt() - 640000) < 1000);
+    }
+    // 7.1 as 5.1 with a note (not stereo)
+    {
+        Timeline t8 = oneClip(audioClip(1, five, 25), 8);
+        QString note;
+        const QString p8 = tmp.filePath("ac3-71.mkv");
+        if (exportTo(t8, p8, "h264", 0, &note, &written, "ac3")) {
+            const QJsonObject a = ffprobeAudio(p8);
+            CHECK(a.value("codec_name").toString() == "ac3" && a.value("channels").toInt() == 6 && written == 6
+                  && note.contains("5.1"));
+            std::printf("       AC-3 7.1: %s\n", qPrintable(note));
+        }
+    }
+    // CLI: audio_codec ac3; refused for WebM and when the FFmpeg lacks the encoder
+    const QString project = tmp.filePath("ac3.schneidi");
+    CHECK(cli({"new", project, "--template", "neutral", "--media", QString("[\"%1\"]").arg(five)}).value("ok").toBool());
+    CHECK(ops(project, {QJsonObject{{"op", "append"}, {"media", five}}, QJsonObject{{"op", "format"}, {"channels", "5.1"}}})
+              .value("ok")
+              .toBool());
+    const QJsonObject r = cli({"render", project, "--out", tmp.filePath("cli-ac3.mp4"), "--audio_codec", "ac3", "--to", "1s"});
+    CHECK(r.value("audio_codec").toString() == "ac3" && r.value("channels").toString() == "5.1"
+          && ffprobeAudio(tmp.filePath("cli-ac3.mp4")).value("codec_name").toString() == "ac3");
+    QProcess p;
+    p.start(Check::cliPath(), {"render", project, "--out", tmp.filePath("cli-ac3.webm"), "--format", "vp9", "--audio_codec", "ac3"});
+    p.waitForFinished(60000);
+    CHECK(QJsonDocument::fromJson(p.readAllStandardOutput()).object().value("error").toObject().value("code").toString()
+          == "BAD_ARGUMENT");
+    QProcess q;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("SCHNEIDI_IGNORE_BUILTIN", "ac3");
+    q.setProcessEnvironment(env);
+    q.start(Check::cliPath(), {"render", project, "--out", tmp.filePath("cli-no-ac3.mp4"), "--audio_codec", "ac3"});
+    q.waitForFinished(60000);
+    const QJsonObject no = QJsonDocument::fromJson(q.readAllStandardOutput()).object();
+    CHECK(!no.value("ok").toBool() && no.value("error").toObject().value("message").toString().contains("AC-3"));
 }
 
 void testLoudness(const QString& tone1k)
@@ -764,7 +936,16 @@ int main(int argc, char** argv)
     testRouting(quad);
     testSurroundMix(stereo, five, bass);
     testLoudness(tone1k);
+    {
+        QStringList exprs;
+        for (int c = 0; c < 6; ++c) exprs << QString("%1*sin(2*PI*%2*t)").arg(0.1 * (c + 1)).arg(kFreq[c]);
+        const QString levels51 = Check::makeMedia(
+            tmp.filePath("levels51.wav"),
+            {"-f", "lavfi", "-i", QString("aevalsrc=%1:s=48000:d=4:c=5.1(side)").arg(exprs.join('|')), "-c:a", "pcm_f32le"});
+        if (CHECK(!levels51.isEmpty())) testSpeakerMeters(levels51, stereo);
+    }
     testExport(tmp, stereo, five);
+    testAc3(tmp, five);
     testCli(tmp, quad);
 
     // Review fixes

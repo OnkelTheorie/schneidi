@@ -96,6 +96,13 @@ public:
     // a chunk block by block.
     void setMeterBlock(int block);
     const std::vector<float>& blockPeaks() const;
+    // Per speaker (0.23, the Studio's 5.1/7.1 meters): the peak of the last render() per audio track and channel of
+    // the mix (track t, channel c at [t * channels() + c], after fader and panner), then the master's channels after
+    // its fader and limiter at [tracks * channels() + c] – in the mix's own format, before any conversion (with
+    // Options::limitOutput and a downmix: before the limiter). Linear, with metering on; stereo: L, R as trackPeaks.
+    const std::vector<float>& channelPeaks() const;
+    // The same per stretch of setMeterBlock samples: stretch b at [b * (tracks + 1) * channels() ..]
+    const std::vector<float>& blockChannelPeaks() const;
 
     // Backwards preview: chunks mixed forward one before the other, each a jump. With warm >= 0 a jump keeps the
     // track EQ, compressor and master limiter where they were (their level goes on from the neighbouring chunk
