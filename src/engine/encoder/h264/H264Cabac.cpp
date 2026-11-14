@@ -627,6 +627,40 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
     };
     tail = lanes(tl);
     energy = tail + lanes(hd);
+#elif defined(SCHNEIDI_H264_NEON)
+    // The SSE2 steps (multiplies and adds kept apart: no fused multiply-add).
+    const float64x2_t half = vdupq_n_f64(0.5);
+    float64x2_t tl[2] = {vdupq_n_f64(0.0), vdupq_n_f64(0.0)}, hd[2] = {vdupq_n_f64(0.0), vdupq_n_f64(0.0)};
+    for (int g = count - 4; g >= 0; g -= 4) {
+        for (int h = 1; h >= 0; --h) {
+            const int k = g + 2 * h;
+            const float64x2_t v = vld1q_f64(x + k);
+            const float64x2_t e = vmulq_f64(v, vld1q_f64(scale + k));
+            const float64x2_t sq = vmulq_f64(e, e);
+            if (found) {
+                hd[h] = vaddq_f64(hd[h], sq);
+                continue;
+            }
+            const uint64x2_t ge = vcgeq_f64(vabsq_f64(v), half);
+            const bool g0 = vgetq_lane_u64(ge, 0) != 0, g1 = vgetq_lane_u64(ge, 1) != 0;
+            if (!g0 && !g1) {
+                tl[h] = vaddq_f64(tl[h], sq);
+                continue;
+            }
+            found = true;
+            end = k + (g1 ? 2 : 1);
+            // Lane k + 1 is at or after end; lane k only when k + 1 is the last one.
+            const uint64x2_t before = g1 ? vdupq_n_u64(~0ull) : vcombine_u64(vcreate_u64(~0ull), vcreate_u64(0));
+            const float64x2_t zero = vdupq_n_f64(0.0);
+            hd[h] = vaddq_f64(hd[h], vbslq_f64(before, sq, zero));
+            tl[h] = vaddq_f64(tl[h], vbslq_f64(before, zero, sq));
+        }
+    }
+    auto lanes = [](const float64x2_t* v) {
+        return (vgetq_lane_f64(v[0], 0) + vgetq_lane_f64(v[0], 1)) + (vgetq_lane_f64(v[1], 0) + vgetq_lane_f64(v[1], 1));
+    };
+    tail = lanes(tl);
+    energy = tail + lanes(hd);
 #else
     double tl[4] = {0, 0, 0, 0}, hd[4] = {0, 0, 0, 0};
     for (int k = count - 1; k >= 0; --k) {
@@ -674,6 +708,19 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(_mm_loadu_pd(x + end - 2), absMask), half));
             if (m) {
                 end -= (m & 2) ? 0 : 1;
+                break;
+            }
+            end -= 2;
+        }
+#elif defined(SCHNEIDI_H264_NEON)
+        const float64x2_t half = vdupq_n_f64(0.5);
+        while (end >= 2) {
+            const uint64x2_t ge = vcgeq_f64(vabsq_f64(vld1q_f64(x + end - 2)), half);
+            if (vgetq_lane_u64(ge, 1)) {
+                break;
+            }
+            if (vgetq_lane_u64(ge, 0)) {
+                end -= 1;
                 break;
             }
             end -= 2;

@@ -3823,6 +3823,13 @@ void quantize8x8Scan(const int* residual, int qp, double* xs)
         const __m128d w = _mm_cvtepi32_pd(_mm_setr_epi32(w64[kZigzag8[s]], w64[kZigzag8[s + 1]], 0, 0));
         _mm_storeu_pd(xs + s, _mm_div_pd(_mm_mul_pd(four, w), _mm_mul_pd(_mm_loadu_pd(scale + s), st)));
     }
+#elif defined(SCHNEIDI_H264_NEON)
+    const float64x2_t st = vdupq_n_f64(step2);
+    for (; s < 64; s += 2) {
+        const int32x2_t wi = {w64[kZigzag8[s]], w64[kZigzag8[s + 1]]};
+        const float64x2_t w = vcvtq_f64_s64(vmovl_s32(wi));
+        vst1q_f64(xs + s, vdivq_f64(vmulq_n_f64(w, 4.0), vmulq_f64(vld1q_f64(scale + s), st)));
+    }
 #endif
     for (; s < 64; ++s)
         xs[s] = 4.0 * double(w64[kZigzag8[s]]) / (scale[s] * step2);
