@@ -523,7 +523,15 @@ QVector<FeedState> feedStates(const Feed& f, int length)
     };
     std::vector<int> count(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) count[size_t(i)] = std::max(0, in[i].lines);
-    count = pass(pass(count, kFeedGap, true), kFeedGap, false);
+    // A filled dip takes the larger count next to it, not the smaller: a new line slides in for a few frames that
+    // read none (or a flash hides the feed just as a line comes), and the copy must not stay a line short while it
+    // shows (its last line cut off)
+    {
+        const std::vector<int> raw = count, grown = pass(count, kFeedGap, true);
+        count = pass(grown, kFeedGap, false);
+        for (size_t i = 0; i < count.size(); ++i)
+            if (count[i] > raw[i]) count[i] = grown[i];
+    }
     count = pass(pass(count, kFeedBlip, false), kFeedBlip, true);
 
     QVector<FeedState> out;

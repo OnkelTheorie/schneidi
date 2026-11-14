@@ -32,7 +32,7 @@ namespace KillFeedLines {
 
 namespace {
 
-constexpr int kVersion = 1; // bump when the measurement changes (old results are not reused)
+constexpr int kVersion = 2; // bump when the measurement changes (old results are not reused)
 constexpr const char* kHeader = "schneidi-killfeed 1";
 constexpr const char* kSuffix = ".killfeed";
 constexpr double kSamplesPerSecond = 10;
@@ -92,7 +92,10 @@ Geometry geometryOf(const GameHud::Game& g, int pw, int ph)
 // The part of the picture the lines can be in (pixels at the 1080p scale), with room for the rows around them
 QRect areaOf(const Geometry& g, int pw, int ph)
 {
-    const int top = std::max(0, g.firstMin - 4);
+    // From the picture's top: measure crops the frame at this row scaled to the file's size, and a row that does not
+    // fall on a whole (even) row of the file shifts the picture there by a fraction of a row (a 4:2:0 picture its
+    // colour half a row) - the boxes' edges blur and lines go missing. The rows above the feed cost little.
+    const int top = 0;
     const int bottom = std::min(ph, int(std::ceil(g.firstMax + (kMaxLines - 1) * g.pitch)) + g.lineH + 6);
     const int right = std::min(pw, g.edge + 8);
     return QRect(QPoint(g.leftmost, top), QPoint(right - 1, bottom - 1));
