@@ -2955,6 +2955,29 @@ __attribute__((target("avx2"))) void intra4PredictAll(const uint8_t* g, uint8_t 
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(group[k] + r * 32), v);
         }
 }
+inline bool haveIntraAll() { return haveAvx2(); }
+#elif defined(SCHNEIDI_H264_NEON)
+// The same with NEON table lookups (g = 48 bytes, the DC value at 38): one lookup per group row.
+void intra4PredictAll(const uint8_t* g, uint8_t (*group)[64])
+{
+    static const auto kIdx = [] {
+        std::array<std::array<uint8_t, 16>, 12> t{}; // [group * 4 + row]
+        const IntraDirTable<4>& dir = intraDir4();
+        for (int k = 0; k < 3; ++k)
+            for (int y = 0; y < 4; ++y)
+                for (int j = 0; j < 4; ++j) {
+                    const int mode = std::min(4 * k + j, 8);
+                    for (int x = 0; x < 4; ++x)
+                        t[size_t(k * 4 + y)][size_t(j * 4 + x)] = uint8_t(mode == 2 ? 38 : dir.idx[mode][y * 4 + x]);
+                }
+        return t;
+    }();
+    const uint8x16x3_t tbl = {{vld1q_u8(g), vld1q_u8(g + 16), vld1q_u8(g + 32)}};
+    for (int k = 0; k < 3; ++k)
+        for (int y = 0; y < 4; ++y)
+            vst1q_u8(group[k] + y * 16, vqtbl3q_u8(tbl, vld1q_u8(kIdx[size_t(k * 4 + y)].data())));
+}
+inline bool haveIntraAll() { return true; }
 #endif
 const IntraDirTable<8>& intraDir8()
 {
@@ -2991,6 +3014,28 @@ __attribute__((target("avx2"))) void intra8PredictAll(const uint8_t* g, uint8_t 
             for (int part = 1; part < 5; ++part)
                 v = _mm256_or_si256(v, _mm256_shuffle_epi8(gp[part], _mm256_load_si256(reinterpret_cast<const __m256i*>(t.s[mode][h][part]))));
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(out[mode] + h * 32), v);
+        }
+}
+#elif defined(SCHNEIDI_H264_NEON)
+// The same with NEON table lookups (g = 80 bytes, the DC value at 74): 64-byte table, then the rest.
+void intra8PredictAll(const uint8_t* g, uint8_t (*out)[64])
+{
+    static const auto kIdx = [] {
+        std::array<std::array<uint8_t, 64>, 9> t{};
+        const IntraDirTable<8>& dir = intraDir8();
+        for (int mode = 0; mode < 9; ++mode)
+            for (int p = 0; p < 64; ++p)
+                t[size_t(mode)][size_t(p)] = uint8_t(mode == 2 ? 74 : dir.idx[mode][p]);
+        return t;
+    }();
+    const uint8x16x4_t lo = {{vld1q_u8(g), vld1q_u8(g + 16), vld1q_u8(g + 32), vld1q_u8(g + 48)}};
+    const uint8x16_t hi = vld1q_u8(g + 64);
+    const uint8x16_t k64 = vdupq_n_u8(64);
+    for (int mode = 0; mode < 9; ++mode)
+        for (int p = 0; p < 64; p += 16) {
+            const uint8x16_t i = vld1q_u8(kIdx[size_t(mode)].data() + p);
+            // Indices 64..79 from the fifth part; below 64 the subtraction wraps out of range.
+            vst1q_u8(out[mode] + p, vqtbx1q_u8(vqtbl4q_u8(lo, i), hi, vsubq_u8(i, k64)));
         }
 }
 #endif
@@ -3304,8 +3349,8 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             // costs and the same first-lowest pick as trying them one by one).
             alignas(16) uint8_t group[3][64];
             int modeOf[9], n = 0;
-#ifdef SCHNEIDI_H264_AVX2
-            if (dir.ok && top && left && haveAvx2()) {
+#if defined(SCHNEIDI_H264_AVX2) || defined(SCHNEIDI_H264_NEON)
+            if (dir.ok && top && left && haveIntraAll()) {
                 edge[38] = uint8_t((T[1] + T[2] + T[3] + T[4] + L[0] + L[1] + L[2] + L[3] + 4) >> 3);
                 intra4PredictAll(edge, group);
                 for (; n < 9; ++n)
@@ -3876,8 +3921,8 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
             }
             return cost;
         };
-#ifdef SCHNEIDI_H264_AVX2
-        if (!(gExp & 64) && dir.ok && corner && haveAvx2()) {
+#if defined(SCHNEIDI_H264_AVX2) || defined(SCHNEIDI_H264_NEON)
+        if (!(gExp & 64) && dir.ok && corner && haveIntraAll()) {
             // All nine directions at once (same costs, same first-lowest pick as below).
             int st = 0, sl = 0;
             for (int i = 0; i < 8; ++i) {
