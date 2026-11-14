@@ -51,15 +51,41 @@
 
 using namespace InspectorDetail;
 
+namespace {
+
+// The reset arrow follows the font's size (a large UI font gets a larger arrow), not its glyphs (resetIcon)
+class ResetButton : public QToolButton {
+public:
+    ResetButton()
+    {
+        setText("↺"); // not shown (the icon is), names the button (tests, accessibility)
+        setIcon(resetIcon());
+        setToolButtonStyle(Qt::ToolButtonIconOnly);
+        fitIcon();
+    }
+
+protected:
+    void changeEvent(QEvent* e) override
+    {
+        QToolButton::changeEvent(e);
+        if (e->type() == QEvent::FontChange) fitIcon();
+    }
+
+private:
+    void fitIcon() { setIconSize(QSize(1, 1) * std::max(10, int(std::lround(fontMetrics().height() * 0.7)))); }
+};
+
+} // namespace
+
 QToolButton* Inspector::resetButton(const std::function<void()>& fn)
 {
-    auto* b = new QToolButton;
-    b->setText("↺");
+    auto* b = new ResetButton;
     b->setToolTip(T("Zurücksetzen"));
     b->setAutoRaise(true);
     b->setFocusPolicy(Qt::NoFocus);
-    // Narrow padding: the reset column is in every row, its width counts towards the panel's minimum width
-    b->setStyleSheet(QString("QToolButton { color: %1; padding: 3px 2px; }").arg(Theme::textDim.name()));
+    // Narrow side padding: the reset column is in every row, its width counts towards the panel's minimum width (the
+    // style's own margin still leaves air around the arrow)
+    b->setStyleSheet("QToolButton { padding: 3px 1px; }");
     connect(b, &QToolButton::clicked, this, fn);
     return b;
 }
