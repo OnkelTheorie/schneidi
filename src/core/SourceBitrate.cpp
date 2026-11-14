@@ -67,7 +67,10 @@ void collect(const Timeline& tl, const NestedTimelines* nested, int from, int to
             if (out.pixels > 0 && out.fps > 0) {
                 const double pixels = v->size.isEmpty() ? out.pixels : double(v->size.width()) * v->size.height();
                 const double fps = v->fps > 0 ? v->fps : out.fps;
-                kbit *= (out.pixels * out.fps) / (pixels * fps);
+                // Scaled up, a picture has no more detail than its source: only the square root of the factor
+                // (1080p -> 4K: 2x, not 4x); down (smaller, fewer frames) linear
+                const double factor = (out.pixels * out.fps) / (pixels * fps);
+                kbit *= factor > 1 ? std::sqrt(factor) : factor;
             }
             sum.weighted += kbit * (b - a);
             sum.frames += b - a;

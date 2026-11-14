@@ -3,7 +3,9 @@
 // output / source pixel rate; titles, stills, hidden tracks, disabled clips and unknown files left out; nested
 // sequences counted; nothing known -> 0), its label, the settings' JSON (older versions read "High"), the encoder
 // options per codec, MediaProbe::videoRate of MP4/Matroska/stills, an export that lands within 25 % of the source's
-// bit rate (also scaled down), and `render quality:"source"` with its answer, fallback note and help text.
+// bit rate (also scaled down), `render quality:"source"` with its answer, fallback note and help text, and the Deliver
+// page's choice showing the target ("Wie Quelle (≈ 3,1 Mbit/s)", kept with the job).
+// SOURCE_QUALITY_DUMP=<file.png>: picture of the Deliver page with "Wie Quelle" chosen (German).
 #include "check.h"
 
 #include "cli/Commands.h"
@@ -13,9 +15,16 @@
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MediaProbe.h"
+#include "engine/Engine.h"
 #include "engine/RenderQueue.h"
+#include "core/Project.h"
+#include "core/TimelineOps.h"
+#include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QLineEdit>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -78,8 +87,11 @@ void testTarget()
     CHECK_EQ(SourceBitrate::target(tl, 50, 149, hd, r60, lookup).targetK, 6000);
     // Scaled: half the size and half the frame rate = an eighth
     CHECK_EQ(SourceBitrate::target(tl, 0, 99, QSize(960, 540), {30, 1}, lookup).targetK, 1250);
-    // 4K output of a 1080p source: four times
-    CHECK_EQ(SourceBitrate::target(tl, 0, 99, QSize(3840, 2160), r60, lookup).targetK, 40000);
+    // Scaled up: only the square root (no new detail): 1080p -> 4K = 2x, not 4x; 4K at 120 fps = sqrt(8)
+    CHECK_EQ(SourceBitrate::target(tl, 0, 99, QSize(3840, 2160), r60, lookup).targetK, 20000);
+    CHECK_EQ(SourceBitrate::target(tl, 0, 99, QSize(3840, 2160), {120, 1}, lookup).targetK, 28284);
+    // Mixed up and down: 4K at 30 fps = factor 2 -> sqrt(2)
+    CHECK_EQ(SourceBitrate::target(tl, 0, 99, QSize(3840, 2160), {30, 1}, lookup).targetK, 14142);
     // A source of unknown size and rate keeps its rate
     Timeline unknownSize;
     unknownSize.video.resize(1);
@@ -270,6 +282,8 @@ QString errorOf(const QString& name, const QJsonObject& raw)
     return "none";
 }
 
+void testDeliver(const QTemporaryDir& dir, const QString& src, double srcK);
+
 void testMedia(const QTemporaryDir& dir)
 {
     // A demanding picture (noise) at an average bit rate of 3 Mbit/s, with sound; MP4 knows the stream's rate,
@@ -320,8 +334,10 @@ void testMedia(const QTemporaryDir& dir)
         CHECK(near(got, target, 0.25));
     }
 
+    testDeliver(dir, mp4, srcK);
+
     // CLI
-    // (the timeline as big as the source: a 1080p timeline would ask for 9 times the bits, scaled up)
+    // (the timeline as big as the source: a 1080p timeline would ask for 3 times the bits, scaled up)
     const QString proj = dir.filePath("p.schneidi");
     run("new", {{"project", proj}, {"width", 640}, {"height", 360}, {"fps", 25}});
     run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(mkv)}, {"full", true}});
@@ -359,6 +375,51 @@ void testMedia(const QTemporaryDir& dir)
     CHECK_EQ(still["video_bitrate_k"].toInt(-1), 0);
     CHECK(still["encoder_note"].toString().contains(unknown));
     CHECK(QFileInfo(still["out"].toString()).size() > 0);
+}
+
+void testDeliver(const QTemporaryDir& dir, const QString& src, double srcK)
+{
+    const QString dump = qEnvironmentVariable("SOURCE_QUALITY_DUMP");
+    if (!dump.isEmpty()) I18n::setLanguage("de");
+    Project p;
+    {
+        ProjectData d;
+        d.format.width = 640;
+        d.format.height = 360;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        d.timeline.video[0].clips << media(1, src, 0, 150);
+        d.lastClipId = 1;
+        p.load(d);
+        p.addMedia(Engine::probe(p.format(), src));
+    }
+    DeliverPanel panel(&p);
+    panel.resize(520, 900);
+    auto* quality = panel.findChild<QComboBox*>("renderQuality");
+    if (!CHECK(quality)) return;
+    if (auto* folder = panel.findChild<QLineEdit*>("renderFolder")) folder->setText(dir.path());
+    panel.show();
+    if (auto* res = panel.findChild<QComboBox*>("renderResolution"))
+        if (const int i = res->findData(QSize(640, 360)); i >= 0) res->setCurrentIndex(i);
+    quality->setCurrentIndex(RenderSettings::kQualitySource);
+    QApplication::processEvents();
+    const QString text = quality->itemText(RenderSettings::kQualitySource);
+    std::printf("       Deliver: %s\n", qPrintable(text));
+    CHECK(text.startsWith(T("Wie Quelle")) && text.contains(QStringLiteral("≈")));
+    const RenderJob job = panel.makeJob();
+    CHECK(job.settings.sourceQuality());
+    // At the chosen output size (the panel may offer 1080p for this small timeline: scaled up = the square root)
+    const double f = job.size.isEmpty() ? 1.0 : double(job.size.width()) * job.size.height() / (640.0 * 360.0);
+    CHECK(near(job.sourceBitrateK, srcK * (f > 1 ? std::sqrt(f) : f), 0.05));
+    // Another quality: the plain name again
+    quality->setCurrentIndex(0);
+    CHECK_EQ(quality->itemText(RenderSettings::kQualitySource), T("Wie Quelle"));
+    CHECK_EQ(panel.makeJob().sourceBitrateK, 0);
+    if (!dump.isEmpty()) {
+        quality->setCurrentIndex(RenderSettings::kQualitySource);
+        QApplication::processEvents();
+        panel.grab().save(dump);
+    }
 }
 
 void testHelp()

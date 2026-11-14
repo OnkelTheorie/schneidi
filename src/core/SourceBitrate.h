@@ -4,7 +4,7 @@
 // is about as big as the recordings it was cut from. The average of the video bit rates of the media files the range
 // shows on the video tracks, weighted by how long each one is visible; each file's rate scaled by the output's pixel
 // rate (width x height x fps) over its own, so a 4K source in a 1080p export, or a 60 fps one exported at 30, asks for
-// fewer bits. Titles, stills, freeze frames, generated media and files whose bit rate is unknown do not count. Pure
+// fewer bits; scaled up only by the square root of that factor (no new detail: 1080p -> 4K = 2x, not 4x). Titles, stills, freeze frames, generated media and files whose bit rate is unknown do not count. Pure
 // computation: the media's numbers come from a lookup (engine: MediaProbe::videoRate).
 
 #include "core/ProjectFormat.h"

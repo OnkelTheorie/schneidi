@@ -150,6 +150,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     }
 
     m_resolution = new QComboBox;
+    m_resolution->setObjectName("renderResolution");
     // Like DaVinci "Frame rate" when rendering: default = timeline, otherwise converted on export
     m_rate = new QComboBox;
     m_rate->setObjectName("renderRate");
@@ -160,6 +161,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
                          "wiederholt (der Ton bleibt unverändert)."));
 
     m_quality = new QComboBox;
+    m_quality->setObjectName("renderQuality");
     m_quality->addItem(T("Hoch"));
     m_quality->addItem(T("Mittel"));
     m_quality->addItem(T("Klein"));
