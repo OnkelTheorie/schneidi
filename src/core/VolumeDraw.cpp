@@ -107,8 +107,20 @@ QVector<int> thin(const QVector<double>& values, double tolerance)
     return out;
 }
 
+bool spansEnough(const QVector<Point>& stroke)
+{
+    if (stroke.isEmpty()) return false;
+    double lo = stroke.first().frame, hi = lo;
+    for (const Point& p : stroke) {
+        lo = std::min(lo, p.frame);
+        hi = std::max(hi, p.frame);
+    }
+    return std::lround(hi) - std::lround(lo) >= kMinSpan;
+}
+
 bool apply(Clip& c, const QVector<Point>& stroke, int smoothing)
 {
+    if (!spansEnough(stroke)) return false;
     int first = 0;
     const QVector<double> raw = resample(stroke, &first);
     if (raw.isEmpty()) return false;

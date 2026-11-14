@@ -6,13 +6,18 @@
 //   all its clips.
 // - "Stimme säubern": voice cleaning (RNNoise, effect voiceclean) on those clips and the EQ preset "Stimme" on the
 //   track, one undo step (Editor::cleanVoice with voiceEq).
-// - "Musik unter Sprache absenken": ducking of those clips under the other audible tracks (Editor::duck, amount
-//   remembered), "Aufheben" takes it off (Editor::unduck); the curve shows in the lanes.
+// - "Musik unter Sprache absenken": ducking of those clips under the other audible tracks or the tracks picked under
+//   "Durch" (Editor::duck; amount and picked tracks remembered), "Aufheben" takes it off (Editor::unduck); the curve
+//   shows in the lanes.
 // - "Lautheit auf Ziel": the whole mix to YouTube -14 / Podcast -16 / Broadcast -23 LUFS through op mixer
-//   target_lufs (the existing logic, master limiter on), one undo step; shows before -> after.
-// - "Aufnahme": voice-over from this page (the app's VoiceoverRecorder): track (auto or armed), record/stop, input level.
+//   target_lufs (the existing logic, master limiter on), one undo step; shows before -> after. It measures behind a
+//   dialog with progress and cancel (core/TaskProgress.h); a cancel changes nothing.
+// - "Aufnahme": voice-over from this page (the app's VoiceoverRecorder): track (auto or armed), input device (the
+//   Sound menu's choice), record/stop, input level.
 // - "Effektklänge": the effect sounds (EffectsLibrary::soundEntries) with search; double-click / Anhören plays it in
-//   the player, "Einfügen" puts it at the playhead, dragging it onto a lane puts it there.
+//   the player, "Einfügen" puts it at the playhead, dragging it onto a lane puts it there. The list follows the
+//   own sounds' and the packs' folders.
+// While the page is hidden, timeline changes are only noted; the combos and the target follow when it shows.
 
 #include <QJsonObject>
 #include <QPointer>
@@ -60,6 +65,11 @@ public:
 
     // Natural width of one card (font dependent)
     int cardWidth() const;
+    // Ducking "Durch": the tracks picked to make the music duck (empty = all other audible tracks, the default;
+    // remembered in the settings like the amount) and the tracks that duck it now
+    void setDuckBy(const QVector<int>& tracks);
+    QVector<int> duckBy() const { return m_duckBy; }
+    QVector<int> duckTracks() const { return underTracks(); }
 
 signals:
     void recordRequested(); // start or stop the voice-over (MainWindow::toggleVoiceover)
@@ -68,15 +78,23 @@ signals:
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
+    void showEvent(QShowEvent* e) override;
     bool eventFilter(QObject* watched, QEvent* e) override;
 
 private:
     QWidget* card(const QString& title, const QString& name, QWidget* body);
     void reflow();
-    void syncTargets(); // track lists of the combos, target info
+    void syncTargets(); // track lists of the combos, target info (while hidden only marked: m_syncPending)
+    bool m_syncPending = false;
     void syncRecorder();
     void fillSounds();
-    QVector<int> underTracks() const; // the other audible tracks with clips (what ducks the music)
+    QVector<int> underTracks() const; // what ducks the music: the picked tracks with clips, else the other audible ones
+    QVector<int> pickedDuckTracks() const; // m_duckBy that exist here and are not the target
+    QString duckByText() const;
+    void fillDuckByMenu(class QMenu* menu);
+    void filterSounds(const QString& text);
+    void watchSounds();
+    void fillInputs();
     void say(QLabel* line, const QString& text, bool bad = false);
 
     Editor* m_editor;
@@ -95,12 +113,17 @@ private:
     QLabel* m_duckValue = nullptr;
     QLabel* m_duckLine = nullptr;
     QToolButton* m_unduck = nullptr;
+    QToolButton* m_duckByButton = nullptr;
+    QVector<int> m_duckBy;
     QComboBox* m_loudPreset = nullptr;
     QLabel* m_loudLine = nullptr;
     QComboBox* m_recordTrack = nullptr;
+    QComboBox* m_recordInput = nullptr;
     QToolButton* m_record = nullptr;
     StudioInputMeter* m_input = nullptr;
     QLabel* m_recordLine = nullptr;
     QLineEdit* m_soundSearch = nullptr;
     QListWidget* m_sounds = nullptr;
+    class QFileSystemWatcher* m_soundWatcher = nullptr;
+    class QTimer* m_soundRescan = nullptr;
 };

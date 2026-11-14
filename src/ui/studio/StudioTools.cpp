@@ -5,18 +5,23 @@
 #include "app/ToolErrors.h"
 #include "app/VoiceoverRecorder.h"
 #include "core/Ducking.h"
+#include "core/EffectFolders.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/TaskProgress.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/Extensions.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/ElidedLabel.h"
 
 #include <QApplication>
 #include <QComboBox>
+#include <QDirIterator>
+#include <QFileSystemWatcher>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -24,12 +29,14 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMimeData>
 #include <QPainter>
 #include <QProgressDialog>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -104,6 +111,18 @@ protected:
         return data;
     }
     QStringList mimeTypes() const override { return {EffectsLibrary::SoundMimeType}; }
+};
+
+// The input devices are listed when the list opens (asking the system for them takes a moment, and a headset may
+// have come since)
+class InputCombo : public QComboBox {
+public:
+    std::function<void()> beforePopup;
+    void showPopup() override
+    {
+        if (beforePopup) beforePopup();
+        QComboBox::showPopup();
+    }
 };
 
 QToolButton* button(const QString& text, const QString& name, const QString& tip, bool primary = false)
@@ -249,6 +268,21 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         row->addWidget(m_duckAmount, 1);
         row->addWidget(m_duckValue);
         lay->addLayout(row);
+        // Which tracks make it duck: all other audible tracks (the default) or the ones picked here (remembered)
+        auto* byRow = new QHBoxLayout;
+        byRow->setSpacing(6);
+        byRow->addWidget(new QLabel(T("Durch")));
+        m_duckByButton = button(QString(), "studio_duck_by",
+                                T("Welche Spuren die Musik absenken: alle anderen hörbaren Spuren oder nur die hier "
+                                  "gewählten"));
+        m_duckByButton->setPopupMode(QToolButton::InstantPopup);
+        auto* byMenu = new QMenu(m_duckByButton);
+        byMenu->setObjectName("studio_duck_by_menu");
+        m_duckByButton->setMenu(byMenu);
+        connect(byMenu, &QMenu::aboutToShow, this, [this, byMenu] { fillDuckByMenu(byMenu); });
+        for (const QVariant& v : QSettings().value("studio/duckBy").toList()) m_duckBy << v.toInt();
+        byRow->addWidget(m_duckByButton, 1);
+        lay->addLayout(byRow);
         auto* buttons = new QHBoxLayout;
         buttons->setSpacing(6);
         auto* on = button(T("Absenken"), "studio_duck",
@@ -313,6 +347,25 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         m_recordTrack->setMinimumContentsLength(8);
         row->addWidget(m_recordTrack, 1);
         lay->addLayout(row);
+        // The input device (the same choice as Wiedergabe › Audio-Ausgabe › Eingabegerät)
+        auto* inputRow = new QHBoxLayout;
+        inputRow->setSpacing(6);
+        inputRow->addWidget(new QLabel(T("Eingang")));
+        auto* input = new InputCombo;
+        m_recordInput = input;
+        input->setObjectName("studio_record_input");
+        input->setToolTip(T("Das Mikrofon für die Aufnahme (dasselbe wie Wiedergabe › Audio-Ausgabe › Eingabegerät)"));
+        input->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        input->setMinimumContentsLength(8);
+        input->beforePopup = [this] { fillInputs(); };
+        connect(input, &QComboBox::activated, this, [this](int i) {
+            const QString id = m_recordInput->itemData(i).toString();
+            if (id == Voiceover::Settings::load().input) return;
+            VoiceoverRecorder::setInput(id);
+            if (m_recorder) m_recorder->inputChanged();
+        });
+        inputRow->addWidget(input, 1);
+        lay->addLayout(inputRow);
         auto* row2 = new QHBoxLayout;
         row2->setSpacing(6);
         m_record = button("● " + T("Aufnehmen"), "studio_record",
@@ -378,23 +431,23 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         connect(place, &QToolButton::clicked, this, [this, current] {
             if (const QByteArray d = current(); !d.isEmpty()) emit placeSoundRequested(d);
         });
-        connect(m_soundSearch, &QLineEdit::textChanged, this, [this](const QString& text) {
-            const QStringList words = text.simplified().split(' ', Qt::SkipEmptyParts);
-            QListWidgetItem* first = nullptr;
-            for (int i = 0; i < m_sounds->count(); ++i) {
-                QListWidgetItem* it = m_sounds->item(i);
-                const QString hay = it->text() + ' ' + it->toolTip();
-                const bool show = std::all_of(words.begin(), words.end(),
-                                              [&](const QString& w) { return hay.contains(w, Qt::CaseInsensitive); });
-                it->setHidden(!show);
-                if (show && !first) first = it;
-            }
-            if (m_sounds->currentItem() && m_sounds->currentItem()->isHidden()) m_sounds->setCurrentItem(first);
-        });
+        connect(m_soundSearch, &QLineEdit::textChanged, this, &StudioTools::filterSounds);
         auto* c = card(T("Effektklänge"), "studio_card_sounds", body);
         c->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         m_cards << c;
         fillSounds();
+        // Sound packs installed or removed, own sounds added: the list anew (the folders watched like the Effects
+        // Library's, changes collected after a short pause)
+        m_soundWatcher = new QFileSystemWatcher(this);
+        m_soundRescan = new QTimer(this);
+        m_soundRescan->setSingleShot(true);
+        m_soundRescan->setInterval(300);
+        connect(m_soundWatcher, &QFileSystemWatcher::directoryChanged, m_soundRescan, qOverload<>(&QTimer::start));
+        connect(m_soundRescan, &QTimer::timeout, this, [this] {
+            watchSounds();
+            fillSounds();
+        });
+        watchSounds();
     }
 
     Project* project = m_editor->project();
@@ -521,19 +574,39 @@ QVector<int> StudioTools::targetClips() const
     return m_editor->audioTrackClips(m_target);
 }
 
+void StudioTools::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    if (m_syncPending) syncTargets();
+    if (m_recordInput->count() == 0) fillInputs(); // the devices once the page shows, not when it is built
+}
+
 void StudioTools::syncTargets()
 {
     const Timeline& tl = m_editor->project()->timeline();
     const int count = int(tl.audio.size());
     m_target = std::clamp(m_target, 0, std::max(0, count - 1));
+    // Every change of the timeline lands here: on another page only remembered (done when the page shows)
+    if (!isVisible()) {
+        m_syncPending = true;
+        return;
+    }
+    m_syncPending = false;
+    QStringList names;
+    for (int i = 0; i < count; ++i) {
+        const TrackRef ref{TrackKind::Audio, i};
+        const QString name = trackDisplayName(tl.audio[i], ref), shortName = trackShortName(ref);
+        names << (name == shortName ? shortName : QString("%1 · %2").arg(shortName, name));
+    }
     const auto fill = [&](QComboBox* box, bool automatic, int current) {
         const QSignalBlocker b(box);
-        box->clear();
-        if (automatic) box->addItem(T("Automatisch"), -1);
-        for (int i = 0; i < count; ++i) {
-            const TrackRef ref{TrackKind::Audio, i};
-            const QString name = trackDisplayName(tl.audio[i], ref), shortName = trackShortName(ref);
-            box->addItem(name == shortName ? shortName : QString("%1 · %2").arg(shortName, name), i);
+        // Refilled only when the tracks changed (most edits change clips, not tracks; an open list stays as it is)
+        bool same = box->count() == names.size() + (automatic ? 1 : 0);
+        for (int i = 0; same && i < names.size(); ++i) same = box->itemText(i + (automatic ? 1 : 0)) == names[i];
+        if (!same) {
+            box->clear();
+            if (automatic) box->addItem(T("Automatisch"), -1);
+            for (int i = 0; i < count; ++i) box->addItem(names[i], i);
         }
         box->setCurrentIndex(std::max(0, box->findData(current)));
     };
@@ -560,6 +633,7 @@ void StudioTools::syncTargets()
     for (int id : targetClips())
         if (const Clip* c = TimelineOps::findClip(tl, id)) keyed |= Keys::animated(*c, AnimParam::Volume);
     m_unduck->setEnabled(keyed);
+    m_duckByButton->setText(duckByText());
 }
 
 void StudioTools::say(QLabel* line, const QString& text, bool bad)
@@ -587,6 +661,13 @@ int StudioTools::cleanVoice()
 QVector<int> StudioTools::underTracks() const
 {
     const Timeline& tl = m_editor->project()->timeline();
+    // The tracks picked under "Durch" (muted or not: they were chosen), those with clips
+    if (const QVector<int> picked = pickedDuckTracks(); !picked.isEmpty()) {
+        QVector<int> out;
+        for (int i : picked)
+            if (!tl.audio[i].clips.isEmpty()) out << i;
+        return out;
+    }
     const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     QVector<int> out;
     for (int i = 0; i < tl.audio.size(); ++i) {
@@ -658,14 +739,36 @@ bool StudioTools::loudnessToTarget()
     if (!m_run) return false; // no command layer (a bare library build)
     const double target = loudnessPreset();
     const QJsonObject op{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"target_lufs", target}};
-    QApplication::setOverrideCursor(Qt::WaitCursor);
+    // Measuring the whole mix several times takes a while on a long edit (~50 s for 30 min): a dialog with progress and
+    // cancel, like the ducking's. It shows at once: its event loop runs inside the command's open undo step, so the
+    // window must not take input meanwhile (the AIs wait too, Cli::Live), nor may a recording start.
+    QProgressDialog progress(T("Mix wird gemessen…"), T("Abbrechen"), 0, 1000, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    const bool recordable = m_record->isEnabled();
+    m_record->setEnabled(false);
     say(m_loudLine, T("Mix wird gemessen…"));
-    QApplication::processEvents();
-    const QJsonObject reply = m_run("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Lautheit auf Ziel"));
-    QApplication::restoreOverrideCursor();
-    if (!reply["ok"].toBool()) {
-        const QJsonObject error = reply["error"].toObject();
+    QJsonObject reply;
+    {
+        const TaskProgress::Scope scope([&](double f) {
+            if (progress.wasCanceled()) return false;
+            progress.setValue(int(f * 1000));
+            QApplication::processEvents();
+            return !progress.wasCanceled();
+        });
+        reply = m_run("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Lautheit auf Ziel"));
+    }
+    progress.reset();
+    m_record->setEnabled(recordable);
+    syncRecorder();
+    if (!reply.value("ok").toBool()) {
+        const QJsonObject error = reply.value("error").toObject();
         const QString code = error["code"].toString();
+        if (code == "CANCELED") {
+            say(m_loudLine, T("Abgebrochen – nichts geändert"));
+            return false;
+        }
         say(m_loudLine, code == "FAILED" || code == "EMPTY_TIMELINE" ? T("Kein Ton zum Messen")
                                                                      : ToolErrors::text(code, error["message"].toString()),
             true);
@@ -673,7 +776,7 @@ bool StudioTools::loudnessToTarget()
     }
     // The meter's target follows (its color says "on target")
     QSettings().setValue("audio/loudnessTarget", target);
-    for (const QJsonValue& n : reply["result"]["notes"].toArray())
+    for (const QJsonValue& n : reply.value("result").toObject().value("notes").toArray())
         if (const QJsonObject r = n.toObject()["loudness"].toObject(); !r.isEmpty()) {
             const double after = r["after_lufs"].toDouble();
             QString text = T("Vorher %1 LUFS → jetzt %2 LUFS, True Peak %3 dBTP")
@@ -720,15 +823,126 @@ void StudioTools::syncRecorder()
     m_record->setChecked(on);
     m_record->setText(on ? "■ " + T("Beenden") : "● " + T("Aufnehmen"));
     m_recordTrack->setEnabled(!on);
+    m_recordInput->setEnabled(!on);
 }
 
 void StudioTools::fillSounds()
 {
+    // Again after a change of the folders: the chosen sound and the search stay
+    const QByteArray current = m_sounds->currentItem() ? m_sounds->currentItem()->data(Qt::UserRole).toByteArray() : QByteArray();
     m_sounds->clear();
+    QListWidgetItem* again = nullptr;
     for (const EffectsLibrary::SoundEntry& e : EffectsLibrary::soundEntries()) {
         auto* it = new QListWidgetItem(e.name, m_sounds);
         it->setData(Qt::UserRole, e.data);
         it->setToolTip(e.group + " · " + e.tip);
+        if (!current.isEmpty() && e.data == current) again = it;
     }
-    if (m_sounds->count()) m_sounds->setCurrentRow(0);
+    if (again) m_sounds->setCurrentItem(again);
+    else if (m_sounds->count()) m_sounds->setCurrentRow(0);
+    filterSounds(m_soundSearch->text());
+}
+
+void StudioTools::filterSounds(const QString& text)
+{
+    const QStringList words = text.simplified().split(' ', Qt::SkipEmptyParts);
+    QListWidgetItem* first = nullptr;
+    for (int i = 0; i < m_sounds->count(); ++i) {
+        QListWidgetItem* it = m_sounds->item(i);
+        const QString hay = it->text() + ' ' + it->toolTip();
+        const bool show = std::all_of(words.begin(), words.end(),
+                                      [&](const QString& w) { return hay.contains(w, Qt::CaseInsensitive); });
+        it->setHidden(!show);
+        if (show && !first) first = it;
+    }
+    if (m_sounds->currentItem() && m_sounds->currentItem()->isHidden()) m_sounds->setCurrentItem(first);
+}
+
+void StudioTools::watchSounds()
+{
+    // The own sounds' folder with its subfolders and the packs' folder (installing one renames a folder in it);
+    // a folder that does not exist yet: its parent, so that its making is seen
+    QStringList dirs;
+    const auto add = [&](const QString& dir, bool deep) {
+        QString d = dir;
+        while (!d.isEmpty() && !QFileInfo(d).isDir()) {
+            const QString up = QFileInfo(d).absolutePath();
+            if (up == d) return;
+            d = up;
+            deep = false;
+        }
+        dirs << d;
+        if (!deep) return;
+        QDirIterator it(d, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+        while (it.hasNext()) dirs << it.next();
+    };
+    add(EffectFolders::soundDir(), true);
+    add(Extensions::soundPacksDir(), false);
+    dirs.removeDuplicates();
+    if (!m_soundWatcher->directories().isEmpty()) m_soundWatcher->removePaths(m_soundWatcher->directories());
+    m_soundWatcher->addPaths(dirs);
+}
+
+void StudioTools::fillInputs()
+{
+    const QString current = Voiceover::Settings::load().input;
+    const QSignalBlocker b(m_recordInput);
+    m_recordInput->clear();
+    for (const VoiceoverRecorder::InputChoice& c : VoiceoverRecorder::inputChoices()) m_recordInput->addItem(c.name, c.id);
+    m_recordInput->setCurrentIndex(std::max(0, m_recordInput->findData(current)));
+}
+
+QString StudioTools::duckByText() const
+{
+    const QVector<int> picked = pickedDuckTracks();
+    if (picked.isEmpty()) return T("Alle anderen Spuren");
+    QStringList names;
+    for (int i : picked) names << trackShortName({TrackKind::Audio, i});
+    return names.join(", ");
+}
+
+void StudioTools::fillDuckByMenu(QMenu* menu)
+{
+    menu->clear();
+    const Timeline& tl = m_editor->project()->timeline();
+    const QVector<int> picked = pickedDuckTracks();
+    QAction* all = menu->addAction(T("Alle anderen hörbaren Spuren"));
+    all->setCheckable(true);
+    all->setChecked(picked.isEmpty());
+    connect(all, &QAction::triggered, this, [this] { setDuckBy({}); });
+    menu->addSeparator();
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        if (i == m_target) continue; // the music itself
+        const TrackRef ref{TrackKind::Audio, i};
+        const QString name = trackDisplayName(tl.audio[i], ref), shortName = trackShortName(ref);
+        QAction* a = menu->addAction(name == shortName ? shortName : QString("%1 · %2").arg(shortName, name));
+        a->setCheckable(true);
+        a->setChecked(picked.contains(i));
+        connect(a, &QAction::triggered, this, [this, i](bool on) {
+            QVector<int> by = pickedDuckTracks();
+            if (on && !by.contains(i)) by << i;
+            if (!on) by.removeAll(i);
+            std::sort(by.begin(), by.end());
+            setDuckBy(by);
+        });
+    }
+}
+
+void StudioTools::setDuckBy(const QVector<int>& tracks)
+{
+    m_duckBy = tracks;
+    QVariantList list;
+    for (int i : tracks) list << i;
+    QSettings().setValue("studio/duckBy", list);
+    m_duckByButton->setText(duckByText());
+}
+
+QVector<int> StudioTools::pickedDuckTracks() const
+{
+    // The picked tracks that are there in this project (the choice is remembered across projects) and not the music
+    const Timeline& tl = m_editor->project()->timeline();
+    QVector<int> out;
+    for (int i : m_duckBy)
+        if (i >= 0 && i < tl.audio.size() && i != m_target && !out.contains(i)) out << i;
+    return out;
 }

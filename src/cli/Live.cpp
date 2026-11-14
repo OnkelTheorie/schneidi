@@ -48,6 +48,9 @@ namespace Cli::Live {
 namespace {
 
 LiveHost* g_host = nullptr;
+// While a command of the user's own runs (g_host set by runForUser) the AIs wait
+const char* const userBusy = "the user runs a command in the schneidi app (it measures, a progress dialog is open); "
+                             "try again in a moment";
 bool g_isApp = false; // this process runs a server (or is told so by disable()): never connect to an app as a client
 QString g_clientName = "schneidi-cli";
 
@@ -379,7 +382,7 @@ void Server::openPending()
 {
     if (m_pendingOpen.isEmpty() || !m_waiting.isEmpty()) return; // setWaiting({}) comes back here
     // An AI command or an earlier hand-over (its question still open) runs: right after it
-    if (m_running || m_opening) return void(QTimer::singleShot(200, this, &Server::openPending));
+    if (m_running || m_opening || g_host) return void(QTimer::singleShot(200, this, &Server::openPending));
     const QStringList files = std::exchange(m_pendingOpen, {});
     m_opening = true;
     // The host may ask "save changes?" (a modal dialog with its own event loop, which delivers live requests): AIs
@@ -584,6 +587,9 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                       {"trusted_code", trusted},
                       {"app", appState(m_host)}});
     }
+    // A command of the user's own runs (runForUser: "Lautheit auf Ziel" measures for a while behind a progress dialog,
+    // whose event loop delivers requests): an edit now would land in its open undo step and go with its cancel
+    if (type == "run" && g_host && !m_running) return reply(errorReply("APP_BUSY", userBusy));
     if (type == "run") {
         QPointer<QLocalSocket> guard(s);
         m_running = true;
@@ -606,6 +612,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
 QJsonObject Server::runForChat(const QString& command, const QJsonObject& args)
 {
     if (m_running) return errorReply("APP_BUSY", "another command runs in the app");
+    if (g_host) return errorReply("APP_BUSY", userBusy);
     bool readsAllowed = false;
     if (const QString waiting = waitingNow(&readsAllowed);
         !waiting.isEmpty() && !(readsAllowed && readOnlyRun(command, args)))

@@ -75,8 +75,20 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
 void StudioTracks::setPlayhead(int frame)
 {
     if (frame == m_playhead) return;
+    // The view stays where it is (no follow while playing: core rule). Only the old and the new playhead column and
+    // the timecode corner are drawn anew (playing moves it every frame; the lanes under it stay as they are)
+    const int old = m_playhead;
     m_playhead = frame;
-    update(); // the view stays where it is (no follow while playing: core rule)
+    update(playheadRect(old));
+    update(playheadRect(frame));
+    update(QRect(0, 0, kHeaderW, kRulerH));
+}
+
+QRect StudioTracks::playheadRect(int frame) const
+{
+    // The line (1 px at x + 0.5) and the ruler's triangle (x - 5 .. x + 6), with a pixel to spare for rounding
+    const int x = int(std::floor(xOf(frame)));
+    return QRect(x - 7, 0, 15, height());
 }
 
 void StudioTracks::setTool(Tool tool)
@@ -161,7 +173,7 @@ double StudioTracks::dbAtY(int track, int y) const
 
 void StudioTracks::layoutLanes()
 {
-    const int tracks = std::max<qsizetype>(1, m_editor->project()->timeline().audio.size());
+    const int tracks = std::max(1, laneCount());
     const int sb = m_hbar->sizeHint().height();
     const int room = std::max(0, height() - kRulerH - sb);
     // Tall lanes that fill the room (a few tracks: big waveforms); many tracks scroll at the minimum height
@@ -190,7 +202,7 @@ void StudioTracks::syncScrollBars()
     m_hbar->setPageStep(std::max(1, area.width()));
     m_hbar->setSingleStep(std::max(1, area.width() / 20));
     m_hbar->setValue(int(std::lround(m_view.leftFrame * px)));
-    const int content = m_laneH * int(m_editor->project()->timeline().audio.size());
+    const int content = m_laneH * laneCount();
     m_vbar->setRange(0, std::max(0, content - area.height()));
     m_vbar->setPageStep(std::max(1, area.height()));
     m_vbar->setSingleStep(std::max(1, m_laneH / 4));
@@ -206,17 +218,34 @@ void StudioTracks::resizeEvent(QResizeEvent* e)
 
 // ---------- Painting ----------
 
-void StudioTracks::paintEvent(QPaintEvent*)
+void StudioTracks::paintEvent(QPaintEvent* e)
 {
+    ++m_paints;
+    // The waveforms and curves are drawn only where needed: part by part of the region (a playhead move: its two
+    // columns and the timecode corner, not everything between them)
     QPainter p(this);
-    p.fillRect(rect(), Theme::timelineBg);
+    for (const QRect& r : e->region()) {
+        m_dirty = r;
+        p.save();
+        p.setClipRect(r);
+        paintPart(p);
+        p.restore();
+    }
+    m_painted = e->region();
+}
+
+void StudioTracks::paintPart(QPainter& p)
+{
+    p.fillRect(m_dirty, Theme::timelineBg);
     const Timeline& tl = m_editor->project()->timeline();
     const QRect area = clipArea();
     p.save();
-    p.setClipRect(QRect(0, area.top(), width(), area.height()));
+    p.setClipRect(QRect(0, area.top(), width(), area.height()), Qt::IntersectClip);
     for (int i = 0; i < tl.audio.size(); ++i) drawLane(p, i);
+    // A take onto a new track (Automatisch without a free track): a lane for it below the others until it is placed
+    if (takeOnNewTrack()) drawNewTrackLane(p, int(tl.audio.size()));
     // The take being recorded grows on its lane (red, its peaks), like in the timeline
-    if (m_take && m_takeTrack >= 0 && m_takeTrack < tl.audio.size() && m_take->lengthFrames() > 0) {
+    if (m_take && m_takeTrack >= 0 && m_takeTrack <= tl.audio.size() && m_take->lengthFrames() > 0) {
         const QRect body = laneRect(m_takeTrack).adjusted(0, 4, 0, -4);
         const double x0 = std::max<double>(kHeaderW, xOf(m_take->start())), x1 = std::min<double>(area.right(), xOf(m_take->end()));
         if (x1 > x0) {
@@ -225,7 +254,7 @@ void StudioTracks::paintEvent(QPaintEvent*)
             p.setPen(Theme::alpha(Theme::recording.lighter(150), 230));
             const int mid = body.center().y();
             const double half = body.height() / 2.0 - 2;
-            for (int x = r.left(); x <= r.right(); ++x) {
+            for (int x = std::max(r.left(), m_dirty.left()); x <= std::min(r.right(), m_dirty.right()); ++x) {
                 const float pk = m_take->peak(frameAt(x), frameAt(x + 1));
                 if (pk <= 0) continue;
                 const double v = std::max(0.0, 1.0 + 20.0 * std::log10(pk) / 48.0);
@@ -266,7 +295,7 @@ void StudioTracks::paintEvent(QPaintEvent*)
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(Theme::secondary, 2));
         p.setBrush(Qt::NoBrush);
-        p.setClipRect(area);
+        p.setClipRect(area, Qt::IntersectClip);
         p.drawPath(path);
     }
 }
@@ -295,7 +324,7 @@ void StudioTracks::drawRuler(QPainter& p)
     int minor = major % 5 == 0 ? major / 5 : (major % 2 == 0 ? major / 2 : major);
     if (minor * m_view.pxPerFrame < 6) minor = major;
     p.save();
-    p.setClipRect(kHeaderW, 0, width() - kHeaderW, kRulerH);
+    p.setClipRect(QRect(kHeaderW, 0, width() - kHeaderW, kRulerH), Qt::IntersectClip);
     f.setPointSizeF(7.5);
     p.setFont(f);
     const int first = int(m_view.leftFrame) / minor * minor;
@@ -327,10 +356,11 @@ void StudioTracks::drawLane(QPainter& p, int track)
     }
     const QColor tint = trackTint(t);
     p.save();
-    p.setClipRect(clipArea().intersected(lane));
+    p.setClipRect(clipArea().intersected(lane), Qt::IntersectClip);
     for (const Clip& c : t.clips) {
         const double x0 = xOf(c.start), x1 = xOf(c.end());
         if (x1 < lane.left() || x0 > lane.right()) continue;
+        if (x1 < m_dirty.left() - 2 || x0 > m_dirty.right() + 2) continue; // not in the part being drawn
         const QRect r(int(x0), body.top(), std::max(1, int(x1 - x0)), body.height());
         const bool selected = m_editor->selection()->contains(c.id);
         p.fillRect(r, Theme::mix(Theme::trackBg, tint, silent || !c.enabled ? 0.18 : 0.38));
@@ -409,7 +439,7 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
     const int mid = body.top() + body.height() / 2;
     const double half = body.height() / 2.0 - 2;
     const double clipX = xOf(c.start);
-    const int x0 = std::max(body.left(), kHeaderW), x1 = std::min(body.right(), width() - 1);
+    const int x0 = std::max({body.left(), kHeaderW, m_dirty.left() - 1}), x1 = std::min({body.right(), width() - 1, m_dirty.right() + 1});
     QVector<QLine> lines;
     lines.reserve(std::max(0, x1 - x0 + 1));
     for (int x = x0; x <= x1; ++x) {
@@ -448,7 +478,8 @@ void StudioTracks::drawVolumeLine(QPainter& p, const QRect& body, const Clip& c)
     if (c.isTitle()) return;
     const double clipX = xOf(c.start);
     const auto yOf = [&](double db) { return body.bottom() - VolumeDraw::posOf(db) * (body.height() - 1); };
-    const int x0 = std::max(body.left(), kHeaderW), x1 = std::min(body.right(), width() - 1);
+    // Only the part being drawn, a few pixels more (the line's width, the dots' radius)
+    const int x0 = std::max({body.left(), kHeaderW, m_dirty.left() - 4}), x1 = std::min({body.right(), width() - 1, m_dirty.right() + 4});
     if (x1 < x0) return;
     QPainterPath path;
     for (int x = x0; x <= x1; ++x) {
@@ -461,12 +492,14 @@ void StudioTracks::drawVolumeLine(QPainter& p, const QRect& body, const Clip& c)
     p.setPen(QPen(Theme::primary, 1.5));
     p.setBrush(Qt::NoBrush);
     p.drawPath(path);
-    // Keyframes as small dots (dense curves of the pen: only where there is room)
+    // Keyframes as small dots (dense curves of the pen: only where there is room); keys of a trimmed clip outside
+    // it are not shown
     const auto it = c.keys.constFind(AnimParam::Volume);
     if (keysShown(c)) {
         p.setBrush(Theme::primary);
         p.setPen(QPen(Theme::border, 1));
         for (const Keyframe& k : *it) {
+            if (!keyInside(c, k)) continue;
             const double x = xOf(c.start + (k.frame - c.in));
             if (x < x0 - 3 || x > x1 + 3) continue;
             p.drawEllipse(QPointF(x, yOf(k.value)), 2.5, 2.5);
@@ -475,10 +508,22 @@ void StudioTracks::drawVolumeLine(QPainter& p, const QRect& body, const Clip& c)
     p.setRenderHint(QPainter::Antialiasing, false);
 }
 
+bool StudioTracks::keyInside(const Clip& c, const Keyframe& k)
+{
+    const int t = k.frame - c.in;
+    return t >= 0 && t < c.length();
+}
+
 bool StudioTracks::keysShown(const Clip& c) const
 {
+    // Room enough between the dots: counted are the keys inside the clip (a trimmed clip keeps the others)
     const auto it = c.keys.constFind(AnimParam::Volume);
-    return it != c.keys.constEnd() && !it->isEmpty() && m_view.pxPerFrame * c.length() / it->size() >= 6;
+    if (it == c.keys.constEnd() || it->isEmpty()) return false;
+    const auto byFrame = [](const Keyframe& k, int f) { return k.frame < f; };
+    const auto first = std::lower_bound(it->cbegin(), it->cend(), c.in, byFrame);
+    const auto last = std::lower_bound(first, it->cend(), c.in + c.length(), byFrame);
+    const auto inside = last - first;
+    return inside > 0 && m_view.pxPerFrame * c.length() / inside >= 6;
 }
 
 QPointF StudioTracks::keyPoint(int clipId, int index) const
@@ -488,7 +533,7 @@ QPointF StudioTracks::keyPoint(int clipId, int index) const
     const Clip* c = TimelineOps::findClip(tl, clipId, &ref);
     if (!c || ref.kind != TrackKind::Audio || !keysShown(*c)) return {};
     const KeyTrack& k = c->keys.value(AnimParam::Volume);
-    if (index < 0 || index >= k.size()) return {};
+    if (index < 0 || index >= k.size() || !keyInside(*c, k[index])) return {}; // outside a trimmed clip: hidden
     const QRect body = laneRect(ref.index).adjusted(0, 4, 0, -4);
     const double x = xOf(c->start + (k[index].frame - c->in));
     if (x < kHeaderW - 3 || x > width() + 3) return {};
@@ -525,9 +570,9 @@ void StudioTracks::dragKey(const QPoint& pos)
     if (!c || ref.kind != TrackKind::Audio) return;
     const KeyTrack& k = c->keys.value(AnimParam::Volume);
     if (m_key.index >= k.size()) return;
-    // Between its neighbours (the order stays), inside the clip
-    const int lo = m_key.index > 0 ? k[m_key.index - 1].frame - c->in + 1 : 0;
-    const int hi = m_key.index + 1 < k.size() ? k[m_key.index + 1].frame - c->in - 1 : c->length() - 1;
+    // Between its neighbours (the order stays), inside the clip (a trimmed clip's hidden keys may lie outside)
+    const int lo = std::max(0, m_key.index > 0 ? k[m_key.index - 1].frame - c->in + 1 : 0);
+    const int hi = std::min(c->length() - 1, m_key.index + 1 < k.size() ? k[m_key.index + 1].frame - c->in - 1 : c->length() - 1);
     if (hi < lo) return;
     const int t = std::clamp(int(std::lround(frameAt(pos.x()))) - c->start, lo, hi);
     const QRect area = clipArea();
@@ -544,9 +589,46 @@ void StudioTracks::dragKey(const QPoint& pos)
 
 void StudioTracks::setLiveTake(const Voiceover::LiveTake* take, int track)
 {
+    const bool newLane = takeOnNewTrack();
     m_take = take;
     m_takeTrack = take ? track : -1;
+    if (takeOnNewTrack() != newLane) layoutLanes(); // its temporary lane comes or goes
     update();
+}
+
+bool StudioTracks::takeOnNewTrack() const
+{
+    return m_take && m_takeTrack >= m_editor->project()->timeline().audio.size();
+}
+
+int StudioTracks::laneCount() const
+{
+    return int(m_editor->project()->timeline().audio.size()) + (takeOnNewTrack() ? 1 : 0);
+}
+
+void StudioTracks::drawNewTrackLane(QPainter& p, int track)
+{
+    const QRect lane = laneRect(track);
+    if (lane.bottom() < kRulerH || lane.top() > height()) return;
+    p.fillRect(lane, track % 2 ? Theme::trackBgAlt : Theme::trackBg);
+    const QRect h = headerRect(track);
+    p.fillRect(h.adjusted(0, 0, 0, -1), Theme::trackHeader);
+    p.fillRect(QRect(h.left(), h.top(), 3, h.height() - 1), Theme::recording);
+    p.fillRect(QRect(h.left(), h.bottom(), width(), 1), Theme::border);
+    QFont f = font();
+    f.setBold(true);
+    f.setPointSizeF(9);
+    p.setFont(f);
+    p.setPen(Theme::text);
+    p.drawText(QRect(h.left() + 10, h.top() + 6, h.width() - 16, 18), Qt::AlignLeft | Qt::AlignVCenter,
+               trackShortName({TrackKind::Audio, track}));
+    f.setBold(false);
+    f.setPointSizeF(8);
+    p.setFont(f);
+    p.setPen(Theme::textDim);
+    if (h.height() >= 50)
+        p.drawText(QRect(h.left() + 10, h.top() + 24, h.width() - 16, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                   QFontMetrics(f).elidedText(T("Neue Spur (Aufnahme)"), Qt::ElideRight, h.width() - 16));
 }
 
 void StudioTracks::contextMenuEvent(QContextMenuEvent* e)
@@ -672,7 +754,8 @@ void StudioTracks::mouseReleaseEvent(QMouseEvent* e)
         addPenPoint(e->position().toPoint());
         const QVector<VolumeDraw::Point> stroke = std::exchange(m_stroke, {});
         m_drag = Drag::None;
-        m_editor->drawVolume(m_penTrack, stroke, m_smoothing); // one undo step per stroke
+        // One undo step per stroke; a click without dragging (or a stroke straight up and down) changes nothing
+        if (VolumeDraw::spansEnough(stroke)) m_editor->drawVolume(m_penTrack, stroke, m_smoothing);
         update();
         return;
     }

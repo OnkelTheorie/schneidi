@@ -38,8 +38,14 @@ QVector<double> smooth(const QVector<double>& values, int radius);
 // them stay within `tolerance` of every value
 QVector<int> thin(const QVector<double>& values, double tolerance = kTolerance);
 
+// Frames a stroke must span (first to last drawn frame) to change anything: a click without dragging, or a stroke
+// straight up and down in place, would leave a 1-frame dip or spike (old level, new level, old level)
+inline constexpr int kMinSpan = 2;
+// True when the stroke spans at least kMinSpan frames
+bool spansEnough(const QVector<Point>& stroke);
+
 // Writes the stroke into clip `c` (placed on the timeline: c.start), only where the clip is under it. Returns false
-// when the stroke does not touch the clip (nothing changed). The clip's keyframes under the stroke are replaced.
+// when the stroke does not touch the clip or is too short (spansEnough; nothing changed). The clip's keyframes under the stroke are replaced.
 bool apply(Clip& c, const QVector<Point>& stroke, int smoothing);
 
 } // namespace VolumeDraw

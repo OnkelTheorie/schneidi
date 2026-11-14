@@ -179,6 +179,18 @@ void testEditor()
     CHECK(!ed.drawVolume(1, {{10, -10}, {50, -10}}, 0));
     CHECK(!ed.drawVolume(0, {}, 0));
     CHECK(!ed.drawVolume(5, {{10, -10}}, 0));
+    // A click without dragging, a stroke straight up and down in place, one frame wide: ignored (no 1-frame dip/spike)
+    CHECK(!ed.drawVolume(0, {{50, -10}}, 0));
+    CHECK(!ed.drawVolume(0, {{50, -30}, {50.2, 6}, {49.9, -40}, {50, 0}}, 0));
+    CHECK(!ed.drawVolume(0, {{50, -30}, {51, -30}}, 0));
+    CHECK(!VolumeDraw::spansEnough({{50, -30}, {51, -30}}));
+    CHECK(VolumeDraw::spansEnough({{50, -30}, {52, -30}}));
+    CHECK(VolumeDraw::spansEnough({{52, -30}, {50, -30}}));
+    {
+        Clip c = audioClip(9, 0, 100);
+        CHECK(!VolumeDraw::apply(c, {{50, -30}, {50, 6}}, 0));
+        CHECK(!Keys::animated(c, AnimParam::Volume));
+    }
     CHECK_EQ(undo->index(), idx);
     CHECK(!Keys::animated(clipOf(p, 1, 0), AnimParam::Volume));
 

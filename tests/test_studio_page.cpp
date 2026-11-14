@@ -31,7 +31,10 @@
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
+#include "core/EffectFolders.h"
+#include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
+#include "core/Voiceover.h"
 #include "engine/Engine.h"
 #include "ui/Viewer.h"
 #include "ui/studio/StudioMixer.h"
@@ -49,6 +52,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
+#include <QFile>
+#include <QDir>
+#include <QProgressDialog>
+#include <QMenu>
 #include <QScrollArea>
 #include <QSlider>
 #include <QLabel>
@@ -57,6 +64,7 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QToolButton>
 #include <QUndoStack>
 #include <clocale>
@@ -174,6 +182,99 @@ void testWindow(Engine& engine, const QString& audioFile)
     undo->undo();
     clip = TimelineOps::findClip(project->timeline(), clipId);
     CHECK(clip && !Keys::animated(*clip, AnimParam::Volume));
+    // A click without dragging, a stroke straight up and down in place: nothing (no 1-frame dip or spike)
+    {
+        const int at = undo->index();
+        const QPoint here(int(tracks->xOf(clip->start + clip->length() / 2)), y);
+        mouse(tracks, QEvent::MouseButtonPress, here, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, here, Qt::NoButton);
+        mouse(tracks, QEvent::MouseButtonPress, here, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseMove, here - QPoint(0, 20), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseMove, here + QPoint(0, 20), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, here + QPoint(0, 20), Qt::NoButton);
+        settle();
+        CHECK_EQ(undo->index(), at);
+        clip = TimelineOps::findClip(project->timeline(), clipId);
+        CHECK(clip && !Keys::animated(*clip, AnimParam::Volume));
+    }
+    page->findChild<QToolButton*>("studio_tool_select")->click();
+
+    // Playing moves the playhead every frame: only its old and new column are drawn anew, not the whole lanes
+    {
+        tracks->setPlayhead(clip->start + 10);
+        settle();
+        const int paints = tracks->paintCount();
+        tracks->setPlayhead(clip->start + 11);
+        settle();
+        CHECK(tracks->paintCount() > paints);
+        const QRegion drawn = tracks->lastPaintRegion();
+        int area = 0, widest = 0;
+        for (const QRect& r : drawn) {
+            area += r.width() * r.height();
+            widest = std::max(widest, r.width());
+        }
+        Check::report(widest <= StudioTracks::kHeaderW && area < tracks->width() * tracks->height() / 10
+                          && drawn.contains(QPoint(int(tracks->xOf(clip->start + 11)), tracks->height() / 2)),
+                      "playhead move draws its columns only", __FILE__, __LINE__,
+                      QString("widest %1 px, %2 px² of %3").arg(widest).arg(area).arg(tracks->width() * tracks->height()));
+    }
+
+    // A trimmed clip's keys outside it are not shown, not grabbed, and a drag stays inside the clip
+    {
+        const int in0 = clip->in;
+        project->edit("trimmed keys", [&](Timeline& tl) {
+            Clip& c = tl.audio[0].clips[0];
+            c.in = in0 + 20; // trimmed at the start: keys before it are outside
+            Keys::setKey(c, AnimParam::Volume, -15, -10); // source frame in - 15: hidden
+            Keys::setKey(c, AnimParam::Volume, 10, -5);
+            Keys::setKey(c, AnimParam::Volume, 40, -5);
+        });
+        tracks->fit();
+        settle();
+        const Clip* c = TimelineOps::findClip(project->timeline(), clipId);
+        if (CHECK(c) && CHECK_EQ(c->keys.value(AnimParam::Volume).size(), 3)) {
+            CHECK(tracks->keyPoint(clipId, 0).isNull()); // outside: hidden
+            const QPointF k1 = tracks->keyPoint(clipId, 1);
+            if (CHECK(!k1.isNull())) {
+                // Dragged far to the left: stops at the clip's first frame, not at its hidden neighbour
+                const int at = undo->index();
+                const QPoint from = k1.toPoint(), to(int(tracks->xOf(c->start - 40)), from.y());
+                mouse(tracks, QEvent::MouseButtonPress, from, Qt::LeftButton);
+                mouse(tracks, QEvent::MouseMove, to, Qt::LeftButton);
+                mouse(tracks, QEvent::MouseButtonRelease, to, Qt::NoButton);
+                settle();
+                CHECK_EQ(undo->index(), at + 1);
+                c = TimelineOps::findClip(project->timeline(), clipId);
+                if (CHECK(c)) CHECK_EQ(c->keys.value(AnimParam::Volume).value(1).frame - c->in, 0);
+            }
+            // Pressing where the hidden key would be (left of the clip) grabs nothing
+            const QPoint hidden(int(tracks->xOf(c->start - 15)), tracks->laneRect(0).center().y());
+            const int at = undo->index();
+            mouse(tracks, QEvent::MouseButtonPress, hidden, Qt::LeftButton);
+            mouse(tracks, QEvent::MouseMove, hidden + QPoint(30, 0), Qt::LeftButton);
+            mouse(tracks, QEvent::MouseButtonRelease, hidden + QPoint(30, 0), Qt::NoButton);
+            settle();
+            CHECK_EQ(undo->index(), at);
+        }
+        while (undo->index() > 0 && undo->undoText() != "trimmed keys") undo->undo();
+        undo->undo();
+        clip = TimelineOps::findClip(project->timeline(), clipId);
+        CHECK(clip && clip->in == in0 && !Keys::animated(*clip, AnimParam::Volume));
+    }
+
+    // A take onto a new track shows on a lane of its own below the others while it records
+    {
+        const int lanes = tracks->laneCount();
+        CHECK_EQ(lanes, int(project->timeline().audio.size()));
+        Voiceover::LiveTake take(0, 0, project->frameRate(), 48000);
+        take.add(96000, 0.5f); // two seconds
+        tracks->setLiveTake(&take, int(project->timeline().audio.size()));
+        settle();
+        CHECK_EQ(tracks->laneCount(), lanes + 1);
+        tracks->setLiveTake(nullptr, -1);
+        settle();
+        CHECK_EQ(tracks->laneCount(), lanes);
+    }
 
     // Meters: as many bars as the mix has channels
     StudioMixer* mixer = page->mixer();
@@ -219,6 +320,27 @@ void testWindow(Engine& engine, const QString& audioFile)
     // The live connection: switch pages by id
     CHECK(w.liveShowPage("edit"));
     CHECK(w.currentPage() == Page::Edit);
+    // Hidden: the mixer's meters stop and timeline changes wait until the page shows again
+    {
+        const auto running = [mixer] {
+            for (QTimer* t : mixer->findChildren<QTimer*>(Qt::FindDirectChildrenOnly))
+                if (t->isActive()) return true;
+            return false;
+        };
+        CHECK(!running());
+        const int strips = mixer->stripCount();
+        project->edit("track", [](Timeline& tl) { tl.audio << Track{TrackKind::Audio}; });
+        settle();
+        CHECK_EQ(mixer->stripCount(), strips); // not yet
+        CHECK(w.liveShowPage("studio"));
+        settle();
+        CHECK_EQ(mixer->stripCount(), strips + 1);
+        CHECK(running());
+        project->undoStack()->undo();
+        settle();
+        CHECK_EQ(mixer->stripCount(), strips);
+        CHECK(w.liveShowPage("edit"));
+    }
     CHECK(!w.liveShowPage("fairlight"));
     CHECK(w.liveShowPage("studio"));
     CHECK(w.currentPage() == Page::Studio);
@@ -252,6 +374,7 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
 {
     QSettings().remove("layout");
     QSettings().remove("studio/duckAmount");
+    QSettings().remove("studio/duckBy");
     QSettings().setValue("audio/loudnessTarget", -14.0);
     MainWindow w(&engine);
     w.disableAutosave();
@@ -357,6 +480,34 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
     CHECK_EQ(undo->index(), at + 1);
     CHECK(clip(2) && !Keys::animated(*clip(2), AnimParam::Volume));
     CHECK(unduck && !unduck->isEnabled());
+    // Durch: all other audible tracks by default; picked tracks instead (remembered); the music's own track or one
+    // that is not there does not count (then the default again)
+    auto* duckBy = tools->findChild<QToolButton*>("studio_duck_by");
+    if (CHECK(duckBy)) CHECK_EQ(duckBy->text(), QString("Alle anderen Spuren"));
+    CHECK_EQ(tools->duckTracks(), QVector<int>{0});
+    p->edit("third", [](Timeline& tl) { tl.audio << Track{TrackKind::Audio}; });
+    p->edit("third clip", [&](Timeline& tl) {
+        Clip c = *TimelineOps::findClip(tl, 1);
+        c.id = 3;
+        c.start = 300;
+        tl.audio[2].clips << c;
+    });
+    settle();
+    CHECK_EQ(tools->duckTracks(), (QVector<int>{0, 2}));
+    tools->setDuckBy({2});
+    CHECK_EQ(tools->duckTracks(), QVector<int>{2});
+    if (duckBy) CHECK_EQ(duckBy->text(), QString("A3"));
+    CHECK_EQ(QSettings().value("studio/duckBy").toList(), QVariantList{2});
+    if (QMenu* m = duckBy ? duckBy->menu() : nullptr; CHECK(m)) {
+        emit m->aboutToShow();
+        CHECK_EQ(m->actions().size(), 4); // all others, separator, A1, A3 (not the music's A2)
+    }
+    tools->setDuckBy({1, 7}); // the music itself, a track not there
+    CHECK_EQ(tools->duckTracks(), (QVector<int>{0, 2}));
+    tools->setDuckBy({});
+    undo->undo();
+    undo->undo();
+    settle();
 
     // Lautheit auf Ziel: Podcast -16, the master limiter on, one step, before -> after shown
     auto* preset = tools->findChild<QComboBox*>("studio_loudness_preset");
@@ -364,6 +515,35 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
     CHECK_EQ(preset->currentData().toDouble(), -14.0); // the meter's target
     preset->setCurrentIndex(1);
     CHECK_EQ(tools->loudnessPreset(), -16.0);
+    // Canceled while it measures (a dialog with progress): nothing changed, no step; recording is off meanwhile and
+    // AIs wait (the user's command holds the app)
+    {
+        auto* record = tools->findChild<QToolButton*>("studio_record");
+        const QByteArray before = ProjectFile::toJson(p->data(), QString());
+        const int at = undo->index();
+        int ticks = 0;
+        bool recordOff = false, aiWaits = false;
+        QTimer poll;
+        poll.setInterval(0);
+        QObject::connect(&poll, &QTimer::timeout, [&] {
+            auto* d = tools->findChild<QProgressDialog*>();
+            if (!d || d->wasCanceled() || ++ticks < 3) return;
+            recordOff = record && !record->isEnabled();
+            aiWaits = Cli::Live::runForUser(&w, "info", {{"project", "@app"}}, "x").value("error").toObject().value("code").toString() == "APP_BUSY";
+            d->cancel();
+        });
+        poll.start();
+        CHECK(!tools->loudnessToTarget());
+        poll.stop();
+        CHECK(ticks >= 3);
+        CHECK(recordOff);
+        CHECK(aiWaits);
+        CHECK(record && record->isEnabled());
+        CHECK_EQ(undo->index(), at);
+        CHECK(ProjectFile::toJson(p->data(), QString()) == before);
+        if (auto* line = tools->findChild<QLabel*>("studio_loudness_result"); CHECK(line))
+            CHECK(line->text().startsWith("Abgebrochen"));
+    }
     const double masterBefore = p->timeline().masterVolumeDb;
     const bool limiterBefore = p->timeline().masterLimiter;
     at = undo->index();
@@ -426,6 +606,18 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
         undo->undo();
     }
     search->clear();
+    // An own sound added to the sounds folder: in the list without a restart (the folder is watched)
+    {
+        const QString own = EffectFolders::soundDir() + "/studio-test-own.wav";
+        QDir().mkpath(EffectFolders::soundDir());
+        QFile::remove(own);
+        const int count = sounds->count();
+        CHECK(QFile::copy(voiceFile, own));
+        CHECK(waitFor([&] { return sounds->count() == count + 1; }, 5000));
+        CHECK(!sounds->findItems("studio-test-own", Qt::MatchContains).isEmpty());
+        QFile::remove(own);
+        CHECK(waitFor([&] { return sounds->count() == count; }, 5000));
+    }
 
     // A volume keyframe on the lane: dragged (one step, later and lower), deleted with a right click (one step)
     p->edit("keys", [](Timeline& tl) {
@@ -477,6 +669,13 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
     auto* recorder = w.findChild<VoiceoverRecorder*>();
     auto* record = tools->findChild<QToolButton*>("studio_record");
     auto* recordTrack = tools->findChild<QComboBox*>("studio_record_track");
+    // The input device, the same choice as in the Sound menu: the system default first
+    auto* input = tools->findChild<QComboBox*>("studio_record_input");
+    if (CHECK(input) && CHECK(input->count() >= 1)) {
+        CHECK_EQ(input->itemText(0), QString("Systemstandard"));
+        CHECK_EQ(input->itemData(0).toString(), QString());
+        CHECK(input->isEnabled());
+    }
     if (CHECK(recorder && record && recordTrack) && CHECK(record->isEnabled())) {
         CHECK_EQ(recordTrack->currentData().toInt(), -1); // Automatisch
         const int a2 = recordTrack->findData(1);
@@ -491,6 +690,7 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
         CHECK(recorder->recording());
         if (CHECK(waitFor([&] { return recorder->live(); }))) {
             CHECK(record->isChecked());
+            CHECK(input && !input->isEnabled()); // not while it records
             QTest::qWait(1200);
             record->click(); // stop
             CHECK(waitFor([&] { return !recorder->recording(); }));

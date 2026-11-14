@@ -8,6 +8,7 @@
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/Speech.h"
+#include "core/TaskProgress.h"
 #include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/AudioAnalysis.h"
@@ -185,7 +186,8 @@ using Range = std::pair<int, int>; // timeline frames [first, second)
 // The 400 ms loudness blocks of the mix in each of `ranges` (sorted, not overlapping), loudness only (the steps
 // below need no true peak, which costs as much again). One pass over [first start, last end); what lies between the
 // ranges is mixed too, so callers give ranges close together (clips one after the other) or call it per range.
-std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timeline& tl, const std::vector<Range>& ranges)
+std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timeline& tl, const std::vector<Range>& ranges,
+                                             const std::function<bool(double)>& progress = {})
 {
     std::vector<LoudnessMeter> meters(ranges.size());
     if (ranges.empty()) return {};
@@ -198,7 +200,7 @@ std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timel
                                          meters[r].addPlanar(pcm, samples, channels, rate);
                                      ++frame;
                                  },
-                                 {}, 0); // loudness over every channel of a 5.1/7.1 mix
+                                 progress, 0); // loudness over every channel of a 5.1/7.1 mix
     std::vector<std::vector<double>> out;
     out.reserve(meters.size());
     for (const LoudnessMeter& m : meters) out.push_back(m.blocks());
@@ -228,11 +230,6 @@ void mixToLoudness(Session& s, int track, double target)
     };
     const int end = TimelineOps::endFrame(s.project.renderTimeline());
     if (end <= 0) s.failEmpty();
-    const auto measure = [&] { // the whole, with true peak (what the answer shows)
-        const auto l = meter.measure(timeline(), 0, end);
-        if (!l || l->integrated <= LoudnessMeter::kSilence) fail("FAILED", "no sound to measure");
-        return *l;
-    };
     // Where the steps measure: the whole, or on a long edit 8 windows of 10 s spread over it
     std::vector<Range> windows;
     const int window = int(std::lround(10 * f.rate.fps()));
@@ -241,11 +238,40 @@ void mixToLoudness(Session& s, int track, double target)
             const int mid = int((i + 0.5) * end / 8);
             windows.push_back({mid - window / 2, mid + window / 2});
         }
+    // Progress for a caller that follows it (TaskProgress: the Studio page's dialog, ~50 s on a 30 min edit) and its
+    // cancel. In units of one measurement of the whole; how many there are is known only at the end: about the first,
+    // the steps (on the windows a fraction of one each) and the check of the whole
+    const double windowUnit = windows.empty() ? 1.0 : double(windows.size()) * window / end;
+    const double expected = windows.empty() ? 3.0 : 2.0 + 4 * windowUnit;
+    double done = 0, shown = 0;
+    const auto progressOf = [&](double unit) -> std::function<bool(double)> {
+        if (!TaskProgress::active()) return {};
+        return [&, unit](double fraction) {
+            shown = std::clamp((done + fraction * unit) / std::max(expected, done + unit), shown, 0.99);
+            return TaskProgress::report(shown);
+        };
+    };
+    const auto stopIfCanceled = [](bool canceled) {
+        if (canceled) fail("CANCELED", "canceled");
+    };
+    const auto measure = [&] { // the whole, with true peak (what the answer shows)
+        stopIfCanceled(!TaskProgress::report(shown));
+        const auto l = meter.measure(timeline(), 0, end, progressOf(1.0));
+        stopIfCanceled(!TaskProgress::report(shown));
+        done += 1.0;
+        if (!l || l->integrated <= LoudnessMeter::kSilence) fail("FAILED", "no sound to measure");
+        return *l;
+    };
     const auto sampled = [&] {
         const Timeline tl = timeline();
         std::vector<double> blocks;
-        for (const Range& w : windows)
-            for (const std::vector<double>& b : rangeBlocks(f, tl, {w})) blocks.insert(blocks.end(), b.begin(), b.end());
+        const double each = windowUnit / std::max<size_t>(1, windows.size());
+        for (const Range& w : windows) {
+            for (const std::vector<double>& b : rangeBlocks(f, tl, {w}, progressOf(each)))
+                blocks.insert(blocks.end(), b.begin(), b.end());
+            stopIfCanceled(!TaskProgress::report(shown));
+            done += each;
+        }
         return LoudnessMeter::integratedOf(blocks);
     };
     const QString what = track >= 0 ? QString("A%1").arg(track + 1) : QString("mix");
@@ -839,9 +865,33 @@ void opDuck(Session& s, const QJsonObject& op)
         s.notes << QString("removed the volume keyframes (ducking) of %1 of %2 clip(s)").arg(n).arg(ids.size());
         return;
     }
-    if (!op.contains("under")) fail("BAD_ARGUMENT", "missing 'under' (the tracks whose sound lowers the music, e.g. \"A1\")");
+    // The tracks whose sound lowers it: by (a list ["A1","A3"] or "A1,A3"; 'under' is the same), default all
+    // other audible tracks with clips (solo wins), as the Studio page does
+    if (op.contains("by") && op.contains("under")) fail("BAD_ARGUMENT", "give 'by' or 'under', not both");
+    QJsonValue by = op.contains("by") ? op.value("by") : op.value("under");
+    if (by.isArray()) {
+        QStringList names;
+        for (const QJsonValue& v : by.toArray()) names << (v.isDouble() ? QString("A%1").arg(v.toInt()) : v.toString());
+        by = names.join(',');
+    }
     const Timeline tl = s.project.renderTimeline();
-    const QVector<int> voice = audioTracksOf(s.project, tl, op.value("under"));
+    QVector<int> voice;
+    if (!by.isUndefined() && !by.isNull()) {
+        voice = audioTracksOf(s.project, tl, by);
+        if (voice.isEmpty()) fail("BAD_ARGUMENT", "'by' names no track");
+    } else {
+        const bool solo = std::any_of(cur.audio.begin(), cur.audio.end(), [](const Track& t) { return t.solo; });
+        QStringList names;
+        for (int i = 0; i < cur.audio.size(); ++i) {
+            const Track& t = cur.audio[i];
+            const bool music = std::any_of(t.clips.begin(), t.clips.end(), [&](const Clip& c) { return ids.contains(c.id); });
+            if (music || t.clips.isEmpty() || (solo ? !t.solo : t.muted)) continue;
+            voice << i;
+            names << QString("A%1").arg(i + 1);
+        }
+        if (voice.isEmpty()) fail("BAD_ARGUMENT", "no other audible track with clips to duck under; give 'by'");
+        by = names.join(',');
+    }
     for (int id : ids)
         for (const int v : voice)
             for (const Clip& c : cur.audio.value(v).clips)
@@ -872,7 +922,7 @@ void opDuck(Session& s, const QJsonObject& op)
                        .arg(ids.size())
                        .arg(params.amountDb, 0, 'f', 1)
                        .arg(ranges->size())
-                       .arg(op.value("under").toVariant().toString())
+                       .arg(by.toString())
                        .arg(covered / fps, 0, 'f', 1)
                        .arg(length / fps, 0, 'f', 1)
                        .arg(params.thresholdDb, 0, 'f', 0);
@@ -1124,14 +1174,15 @@ void addAudioOps(QVector<OpDef>& ops)
                  "limiter; relative: all together) and corrected toward the target (never the master); the notes "
                  "say what was reached and why when not. Measures the files (takes a while).",
                  opNormalize, kClipKeys}
-        << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?, remove?}",
+        << OpDef{"duck", "{op:'duck', clips|track, by?, under?, amount_db?, threshold_db?, attack?, release?, hold?, remove?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
-                 "clips or track = the music; under = the tracks that duck it (\"A1\", \"A1,A3\" or stream/track "
-                 "names like \"Mikrofon\"). amount_db: how far down (default -12), threshold_db: what counts as "
+                 "clips or track = the music; by = the tracks that duck it ([\"A1\",\"A3\"], \"A1,A3\" or stream/"
+                 "track names like \"Mikrofon\"; 'under' is the same), default all other audible tracks with clips "
+                 "(solo wins). amount_db: how far down (default -12), threshold_db: what counts as "
                  "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
                  "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
                  "keyframes; run it again after editing. remove:true takes the ducking off again (the clips' volume "
-                 "keyframes go, their volume stays; no 'under' needed).",
+                 "keyframes go, their volume stays; no 'by' needed).",
                  opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes
         << OpDef{"clean_voice", "{op:'clean_voice', clips|track, amount?, gate?, clicks?, shape?, room?, eq?, remove?}",
                  "\"Stimme säubern\": clean speech in one call (voice-overs, TTS, voice chat in game clips) - noise "

@@ -391,10 +391,12 @@ double valueAt(const Clip& c, AnimParam p, double t)
     const double s = c.in + t; // source frame
     if (s <= k.first().frame) return k.first().value;
     if (s >= k.last().frame) return k.last().value;
-    for (int i = 1; i < k.size(); ++i) {
-        if (s > k[i].frame) continue;
-        const Keyframe& a = k[i - 1];
-        const Keyframe& b = k[i];
+    // The first key at or after s (binary search; keys are sorted by frame). k[0] < s < k.last() here, so it is one of
+    // k[1..]; with several keys on one frame the first of them, as a linear search from the front would find
+    const auto bIt = std::partition_point(k.cbegin() + 1, k.cend(), [s](const Keyframe& key) { return s > key.frame; });
+    if (bIt != k.cend()) {
+        const Keyframe& a = *(bIt - 1);
+        const Keyframe& b = *bIt;
         const double u = (s - a.frame) / double(b.frame - a.frame);
         const bool color = info(p).color;
         if (bezierSegment(a, b) && !color) return bezierValue(a, b, s - a.frame);

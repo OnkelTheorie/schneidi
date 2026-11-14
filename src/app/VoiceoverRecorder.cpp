@@ -334,6 +334,26 @@ void VoiceoverRecorder::inputChanged()
     updateMeter();
 }
 
+QVector<VoiceoverRecorder::InputChoice> VoiceoverRecorder::inputChoices()
+{
+    const QString current = Voiceover::Settings::load().input;
+    QVector<InputChoice> out{{QString(), T("Systemstandard")}};
+    bool found = current.isEmpty();
+    for (const Audio::Device::Output& o : Audio::Capture::inputs(Engine::audioDriver())) {
+        out << InputChoice{o.id, o.name};
+        found = found || o.id == current;
+    }
+    if (!found) out << InputChoice{current, T("%1 (nicht angeschlossen)").arg(current)};
+    return out;
+}
+
+void VoiceoverRecorder::setInput(const QString& id)
+{
+    Voiceover::Settings s = Voiceover::Settings::load();
+    s.input = id;
+    s.save();
+}
+
 QString VoiceoverRecorder::runningTake()
 {
     QSettings settings;

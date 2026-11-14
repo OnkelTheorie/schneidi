@@ -42,10 +42,14 @@ public:
 
 protected:
     void showEvent(QShowEvent* e) override;
+    void hideEvent(QHideEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
 
 private:
-    void sync(); // model -> strips (rebuilt when the track count changed)
+    // model -> strips (rebuilt when the track count changed); while the page is hidden only marked (m_syncPending),
+    // done when it shows
+    void sync();
+    bool m_syncPending = false;
     void rebuild(int count);
     void tick(); // meters fall, peak hold, loudness reading
     void openEditor(int track, bool eq);
