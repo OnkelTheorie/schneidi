@@ -55,6 +55,9 @@ struct RenderSettings {
     int quality = 0;
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
+    // Channels of the file: 0 = the project's mix (stereo, 5.1, 7.1), 2 = stereo (a surround mix downmixed), 6 = 5.1,
+    // 8 = 7.1 (a stereo mix in the front pair). An encoder without that many (MP3) writes the stereo downmix.
+    int audioChannels = 0;
     int rateNum = 0, rateDen = 1; // frame rate of the output, 0 = like the timeline
     // With rateNum 0: highest frame rate; a faster timeline renders at its rate divided by the smallest whole number
     // that gets there (120 -> 60, 100 -> 50, 144 -> 48), so every output frame is a timeline frame. 0 = no limit

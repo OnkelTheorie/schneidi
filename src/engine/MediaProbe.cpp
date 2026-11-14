@@ -5,6 +5,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
 }
 
@@ -603,6 +604,28 @@ std::optional<SourceBitrate::Video> readVideoRate(const QString& path, const QFi
 }
 
 } // namespace
+
+QVector<AudioLayout> audioLayouts(const QString& path)
+{
+    QVector<AudioLayout> out;
+    AVFormatContext* raw = nullptr;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return out;
+    const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        const AVCodecParameters* p = fmt->streams[i]->codecpar;
+        if (p->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+        AudioLayout a;
+        a.channels = p->ch_layout.nb_channels;
+        if (p->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC || a.channels <= 0) {
+            a.layout = a.channels > 0 ? QStringLiteral("%1 channels").arg(a.channels) : QStringLiteral("unknown");
+        } else {
+            char name[128] = {};
+            if (av_channel_layout_describe(&p->ch_layout, name, sizeof name) > 0) a.layout = QString::fromUtf8(name);
+        }
+        out << a;
+    }
+    return out;
+}
 
 std::optional<SourceBitrate::Video> videoRate(const QString& path)
 {

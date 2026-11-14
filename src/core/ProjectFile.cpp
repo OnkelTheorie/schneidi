@@ -58,6 +58,13 @@ qint64 msOf(const QJsonValue& v)
 }
 
 // Track EQ/compressor: only written when not the default; loading clamps the values (hand-edited files)
+QJsonObject formatToJson(const ProjectFormat& f)
+{
+    QJsonObject o{{"width", f.width}, {"height", f.height}, {"fpsNum", f.rate.num}, {"fpsDen", f.rate.den}};
+    if (f.audioChannels != 2) o["channels"] = f.audioChannels; // stereo projects stay as they were
+    return o;
+}
+
 QJsonObject eqToJson(const TrackEq& eq)
 {
     QJsonArray bands;
@@ -120,7 +127,18 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //     push/whip transitions, in-between pictures in slow motion, word captions.
 //  7: pictures tilted in depth (clip transform tiltX/tiltY, comp transform node tilt_x/tilt_y, 0.20). Older versions
 //     would show and export them flat without a word. Written only when something is tilted (writtenVersion).
-constexpr int kFormatVersion = 7;
+//  8: multichannel sound (0.23): a mix in 5.1/7.1 (format "channels") or clips that play only some channels of their
+//     stream (clip "channels", a wireless microphone on channels 3/4). Older versions would mix stereo / play every
+//     channel (the microphone twice). Written only when used (writtenVersion): stereo projects stay as they were.
+constexpr int kFormatVersion = 8;
+
+bool usesVersion8(const Timeline& t)
+{
+    for (const Track& track : t.audio)
+        for (const Clip& c : track.clips)
+            if (!c.sourceChannels.isEmpty()) return true;
+    return false;
+}
 
 // Tilted in depth anywhere (a static value or a keyframe off 0): the clip transform or a comp transform node
 bool usesTilt(const Clip& c)
@@ -177,6 +195,9 @@ bool usesVersion6(const Timeline& t)
 // The version a file is written with: the newest one only when it uses what needs it
 int writtenVersion(const ProjectData& d)
 {
+    if (d.format.audioChannels != 2 || usesVersion8(d.timeline)
+        || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion8(s.timeline); }))
+        return 8;
     if (usesVersion7(d.timeline)
         || std::any_of(d.sequences.begin(), d.sequences.end(), [](const Sequence& s) { return usesVersion7(s.timeline); }))
         return 7;
@@ -201,6 +222,7 @@ const std::array<Migration, kFormatVersion - 1> kMigrations = {
     [](QJsonObject&) {}, // 4 -> 5: nothing to convert (sequences without "width"/"height" use the project's)
     [](QJsonObject&) {}, // 5 -> 6: nothing to convert (windows 5 to 8 are new)
     [](QJsonObject&) {}, // 6 -> 7: nothing to convert (tilt in depth is new)
+    [](QJsonObject&) {}, // 7 -> 8: nothing to convert (a stereo mix and clips with all channels are the defaults)
 };
 
 // Format 4: pixelate windows have a finer scale (GradeWindows::pixelBlock: amount 100 = 1/50 of the picture height,
@@ -761,6 +783,11 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
     if (c.pan != 0.0) o["pan"] = c.pan;
     if (c.audioStream != 0) o["audioStream"] = c.audioStream;
+    if (!c.sourceChannels.isEmpty()) {
+        QJsonArray channels;
+        for (int ch : c.sourceChannels) channels << ch;
+        o["channels"] = channels;
+    }
     if (c.subframe != 0) o["subframe"] = c.subframe;
     if (c.cropOnFrame) o["cropOnFrame"] = true; // optional: crop not converted to format 3 yet (convertCrop)
     if (!c.enabled) o["enabled"] = false;
@@ -840,6 +867,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
     c.audioStream = std::max(0, o.value("audioStream").toInt());
+    for (const QJsonValue& v : o.value("channels").toArray()) // at most two, each 0..63
+        if (const int ch = v.toInt(-1); ch >= 0 && ch < 64 && c.sourceChannels.size() < 2) c.sourceChannels << ch;
     c.subframe = std::clamp(o.value("subframe").toInt(), 0, 99);
     c.cropOnFrame = c.kind == ClipKind::Media && o.value("cropOnFrame").toBool();
     c.enabled = o.value("enabled").toBool(true);
@@ -984,6 +1013,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             if (t.solo) o["solo"] = true;
             if (t.eq != TrackEq{}) o["eq"] = eqToJson(t.eq);
             if (t.dynamics != TrackDynamics{}) o["dynamics"] = dynamicsToJson(t.dynamics);
+            if (t.panDepth != 0.0) o["panDepth"] = t.panDepth;
+            if (t.panCenter != 0.0) o["panCenter"] = t.panCenter;
+            if (t.lfeDb > kMinVolumeDb) o["lfeDb"] = t.lfeDb;
             arr << o;
         }
         return arr;
@@ -1052,8 +1084,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     QJsonObject root{
         {"app", "schneidi"},       {"version", writtenVersion(data)},
         {"fps", data.format.rate.timebase()}, // for older versions
-        {"format", QJsonObject{{"width", data.format.width}, {"height", data.format.height},
-                               {"fpsNum", data.format.rate.num}, {"fpsDen", data.format.rate.den}}},
+        {"format", formatToJson(data.format)},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
         {"media", media},           {"bins", bins},
         {"timeline", current}, // opened timeline (older versions read only this one)
@@ -1150,6 +1181,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.format.height = fmt.value("height").toInt(1080);
     d.format.rate.num = fmt.value("fpsNum").toInt(root.value("fps").toInt(25));
     d.format.rate.den = fmt.value("fpsDen").toInt(1);
+    d.format.audioChannels = fmt.value("channels").toInt(2); // withinLimits: 2, 6 or 8
     d.format = withinLimits(d.format);
     d.playhead = intOf(root.value("playhead"));
     for (const QJsonValue& v : root.value("views").toArray()) {
@@ -1229,6 +1261,9 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.solo = o.value("solo").toBool();
             if (o.contains("eq")) t.eq = eqFromJson(o.value("eq").toObject());
             if (o.contains("dynamics")) t.dynamics = dynamicsFromJson(o.value("dynamics").toObject());
+            t.panDepth = std::clamp(o.value("panDepth").toDouble(0.0), 0.0, 100.0);
+            t.panCenter = std::clamp(o.value("panCenter").toDouble(0.0), 0.0, 100.0);
+            t.lfeDb = std::clamp(o.value("lfeDb").toDouble(kMinVolumeDb), kMinVolumeDb, kMaxVolumeDb);
             for (const QJsonValue& cv : o.value("clips").toArray()) {
                 Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
                 if ((fileVersion < 3 || c.cropOnFrame) && kind == TrackKind::Video)

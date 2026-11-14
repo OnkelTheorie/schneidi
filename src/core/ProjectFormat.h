@@ -39,9 +39,14 @@ FrameRate nearestFrameRate(double fps, bool integerOnly = false);
 struct ProjectFormat {
     int width = 1920, height = 1080;
     FrameRate rate;
+    // Channels of the mix: 2 = stereo, 6 = 5.1, 8 = 7.1 (core/ChannelLayout.h). Saved only when not stereo.
+    int audioChannels = 2;
 
     QSize size() const { return {width, height}; }
-    bool operator==(const ProjectFormat& o) const { return width == o.width && height == o.height && rate == o.rate; }
+    bool operator==(const ProjectFormat& o) const
+    {
+        return width == o.width && height == o.height && rate == o.rate && audioChannels == o.audioChannels;
+    }
     bool operator!=(const ProjectFormat& o) const { return !(*this == o); }
 };
 

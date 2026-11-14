@@ -50,7 +50,9 @@ struct ExportSettings {
     QString preset = "medium"; // speed vs. file size
     int audioBitrateK = 192;
     QString audioSampleFormat; // empty = codec default (Apple Lossless: s16p/s32p for 16/24 bit)
-    int audioRate = 0, audioChannels = 0; // 0 = 48 kHz stereo (speech to text wants 16 kHz mono)
+    // 0 = 48 kHz and the mix's channels (Timeline::audioChannels: stereo, 5.1, 7.1; speech to text wants 16 kHz mono).
+    // More channels than the encoder writes (MP3 and 5.1): the stereo downmix, said in note().
+    int audioRate = 0, audioChannels = 0;
     FrameRate rate{0, 1};      // frame rate of the file; num 0 = like the timeline (format.rate)
     bool burnSubtitles = false; // burn the visible subtitle track into the image
     // Additionally write the visible subtitle track as SRT here, the other tracks with entries next to it
@@ -154,6 +156,8 @@ public:
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
+    // After start(): channels of the file's sound (1, 2, 6, 8)
+    int audioChannels() const { return m_settings.audioChannels; }
     // Quality "like source": the video bit rate aimed at (kbit/s) of the last start(), 0 = none (unknown: crf)
     int targetBitrateK() const { return m_targetBitrateK; }
     // After start(): effects the render leaves out because this version does not have them (frei0r/LADSPA plugins of

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Exporter.h"
 
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
@@ -137,6 +138,28 @@ bool replaceFile(const QString& from, const QString& to)
 }
 
 // The sample format the audio encoder gets: the wanted one if the codec takes it, otherwise the codec's first; empty =
+// Channels the audio encoder writes for a mix of `want` channels: want when it has a layout of that many (or takes any),
+// else stereo (MP3). 0 = the encoder is missing.
+int encoderChannels(const QString& codecName, int want)
+{
+    const AVCodec* codec = avcodec_find_encoder_by_name(codecName.toUtf8().constData());
+    if (!codec) return 0;
+    const AVChannelLayout* layouts = nullptr;
+    int count = 0;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    const void* list = nullptr;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &list, &count) < 0) count = 0;
+    layouts = static_cast<const AVChannelLayout*>(list);
+#else
+    layouts = codec->ch_layouts;
+    while (layouts && layouts[count].nb_channels) ++count;
+#endif
+    if (!layouts || count == 0) return want; // PCM, FLAC …: any count
+    for (int i = 0; i < count; ++i)
+        if (layouts[i].nb_channels == want) return want;
+    return 2;
+}
+
 // unknown codec
 QString encoderSampleFormat(const QString& codecName, const QString& wanted)
 {
@@ -508,6 +531,19 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         break;
     }
     m_note = s.encoderNote;
+    // Channels of the file: asked for, else the mix's format (the project's: stereo, 5.1, 7.1). An encoder without
+    // that many (MP3) gets the stereo downmix, and the note says so.
+    int audioChannels = s.audioChannels > 0 ? s.audioChannels : ChannelLayout::valid(tl.audioChannels);
+    if (sound && audioChannels > 2) {
+        const int can = encoderChannels(s.audioCodec, audioChannels);
+        if (can != audioChannels) {
+            const QString why = T("%1 schreibt kein %2, der Ton ist auf Stereo heruntergemischt.")
+                                    .arg(s.audioCodec, ChannelLayout::name(audioChannels));
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+            audioChannels = 2;
+        }
+    }
+    m_settings.audioChannels = audioChannels;
     // Quality "like source": the bit rate of the media shown, at the output's size and frame rate
     m_targetBitrateK = 0;
     if (s.sourceQuality && !s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
@@ -563,7 +599,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // A cancel (stopBuild) waits for this thread: it stops between its steps and between the files it opens. What it
     // made then is never used (its finished() is stale).
     m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), mixed = std::move(mixed), out, s,
-                               threads, from, length, frames, rate, convertRate, smart, copy = m_copy] {
+                               threads, from, length, frames, rate, convertRate, smart, audioChannels, copy = m_copy] {
         Graph& g = *graph;
         {
             if (smart)
@@ -587,6 +623,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 Audio::Mixer::Options o;
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
                 o.rate = s.audioRate > 0 ? s.audioRate : 48000;
+                o.outputChannels = std::max(2, audioChannels); // mono: the writer takes the mean of the stereo mix
                 g.mixer = std::make_shared<Audio::Mixer>(*mixed, s.format.rate, o);
             }
             g.length = convertRate ? std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps()))) : length;

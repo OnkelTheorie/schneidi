@@ -272,6 +272,7 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
             x.audioStream = tg.stream.stream;
             x.enabled = tg.stream.enabled;
             x.volumeDb = tg.stream.volumeDb;
+            x.sourceChannels = tg.stream.channels;
             if (t.name.isEmpty()) t.name = tg.stream.trackLabel;
             sound << x.id;
         }

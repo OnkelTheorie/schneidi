@@ -50,7 +50,8 @@ struct ClipLevels {
 std::optional<ClipLevels> measureClips(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& ids,
                                        bool loudness, const std::function<bool(double)>& progress = {});
 
-// Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter).
+// Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter); a 5.1/7.1
+// mix over all its channels (BS.1770 weights: surrounds +1.5 dB, LFE not counted), true peak over all channels.
 // framePeaks: also the sample peak of every frame like timelineFramePeaks, in the same pass (the check before export)
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
                                          const std::function<bool(double)>& progress = {},
@@ -86,8 +87,9 @@ std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format
 using SoundSink = std::function<void(const float* pcm, int samples, int channels, int rate)>;
 bool clipSound(const ProjectFormat& format, const Clip& clip, const SoundSink& sink,
                const std::function<bool(double)>& progress = {});
+// channels: 2 = stereo (a 5.1/7.1 mix as its downmix: beats, waveforms), 0 = every channel of the mix (loudness).
 bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int from, int to, const SoundSink& sink,
-                   const std::function<bool(double)>& progress = {});
+                   const std::function<bool(double)>& progress = {}, int channels = 2);
 
 // Ducking: where the audio tracks `under` (indices; the others are muted, solo ignored) have sound in the timeline
 // mix (render timeline, see Project::renderTimeline). nullopt = could not mix or canceled; no tracks / empty = no range.

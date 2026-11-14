@@ -5,6 +5,7 @@
 #include "cli/Live.h"
 
 #include "core/I18n.h"
+#include "engine/MediaProbe.h"
 #include "engine/BarDetect.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
@@ -333,6 +334,12 @@ QJsonObject probeOne(const QJsonObject& a)
         }
         o["audio_streams"] = streams;
         if (!dead.isEmpty()) o["unplayable_audio_streams"] = dead;
+        // Channels and layout per stream (channel routing: op 'route' counts channels from 1)
+        QJsonArray layouts;
+        const QVector<MediaProbe::AudioLayout> found = MediaProbe::audioLayouts(m.info.path);
+        for (int i = 0; i < found.size(); ++i)
+            layouts << QJsonObject{{"stream", i}, {"channels", found[i].channels}, {"layout", found[i].layout}};
+        if (!layouts.isEmpty()) o["audio_channels"] = layouts;
     }
     if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
     if (m.info.hasVideo) {
