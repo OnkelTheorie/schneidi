@@ -770,6 +770,10 @@ void Inspector::refresh()
     if (t) ensurePage(kTitlePage); // its fields and m_params before the values are shown below
     m_tabs->button(kTitlePage)->setEnabled(t);
     m_tabs->button(kTitlePage)->setVisible(t);
+    if (t) // the same page edits a shape or a drawing: named after what is selected
+        m_tabs->button(kTitlePage)->setText(QString("T\n%1").arg(t->title.isShape()     ? T("Form")
+                                                                 : t->title.isDrawing() ? T("Zeichnung")
+                                                                                        : T("Titel")));
     const int fx = v ? effectCount(*v) : 0;
     m_tabs->button(kEffectsPage)->setText(QString("fx\n%1").arg(fx ? T("Effekte (%1)").arg(fx) : T("Effekte")));
     m_tabs->button(kEffectsPage)->setVisible(fx > 0);

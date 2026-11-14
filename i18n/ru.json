@@ -551,6 +551,7 @@
  "Clip-Geschwindigkeit ändern…": "Изменить скорость клипа…",
  "Clip: %1, %2 fps\nProjekt: %3, %4 fps\n\nNeu: %5, %6 fps": "Клип: %1, %2 кадр/с\nПроект: %3, %4 кадр/с\n\nНовое: %5, %6 кадр/с",
  "Clipdauer anzeigen": "Показывать длительность клипов",
+ "Clipende": "Конец клипа",
  "Clipfarbe": "Цвет клипа",
  "Clipfarbe (%1)": "Цвет клипа (%1)",
  "Clipfarbe entfernen": "Удалить цвет клипа",

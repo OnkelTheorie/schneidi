@@ -196,11 +196,15 @@ QStringList CompInspector::shownKeys(const Clip& c) const
     const bool luma = key && PC::textValue(*k, values, QStringLiteral("mode")) == QLatin1String("luma");
     static const QStringList chromaKeys{"color", "tolerance", "softness", "spill"};
     static const QStringList lumaKeys{"low", "high", "soft"};
+    static const QStringList maskBoxKeys{"x", "y", "w", "h"};
     for (const EffectParam& p : k->params) {
         int index = 0;
         if (key && (luma ? chromaKeys : lumaKeys).contains(p.key)) continue;
         if (k->id == QLatin1String("mask") && pointKey(p.key, &index) && index >= points) continue;
         if (k->id == QLatin1String("mask") && handleKey(p.key)) continue;
+        // Position and size belong to rectangle and ellipse; a polygon, curve or gradient is its points (rotation
+        // still turns it around their middle, core/Masks.cpp)
+        if (k->id == QLatin1String("mask") && points > 0 && maskBoxKeys.contains(p.key)) continue;
         // The tracker's seen keys are its analysis' result (shown as the warning in its analysis row, not a field)
         if (k->id == QLatin1String(::Comp::kTrackerType) && p.key == QLatin1String(::Comp::kSeenKey)) continue;
         // Four corners (mode quad): the start corners only in that mode; the corners found are drawn in the viewer
@@ -309,6 +313,8 @@ void CompInspector::rebuild(const Clip& c, const QStringList& keys)
             field->setToolTip(p->description);
             field->onChange = [this, key](double v) { set(key, v, true); };
             field->onFinish = [this] { m_editor->project()->closeMerge(); };
+            // until 0 = to the clip's end (core/CompGraph.h), not a time "0.00"
+            if (key == QLatin1String(::Comp::kUntilKey)) field->setZeroText(T("Clipende"));
             // Slider + number like the Inspector's effect rows (the same control for the same kind of value)
             auto* slider = new QSlider(Qt::Horizontal);
             slider->setObjectName("comp_slider_" + key);

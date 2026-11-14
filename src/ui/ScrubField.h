@@ -15,6 +15,8 @@ public:
     void setSuffix(const QString& s);
     // Display for the smallest value (e.g. "-∞")
     void setMinimumText(const QString& t);
+    // Display for the value 0 when 0 means something else than a number (a range's end "0 = to the clip's end")
+    void setZeroText(const QString& t);
     // May get narrower than its usual width when the panel is narrow (the Inspector): wider only for a long value,
     // never narrower than the text it shows (sign, suffix, "-∞")
     void setShrinkable(bool on);
@@ -42,7 +44,7 @@ private:
     double m_value = 0, m_min, m_max, m_step;
     int m_decimals;
     bool m_shrinkable = false;
-    QString m_suffix, m_minText;
+    QString m_suffix, m_minText, m_zeroText;
     bool m_editing = false;
     bool m_pressed = false, m_dragging = false;
     int m_lastX = 0, m_pressX = 0;
