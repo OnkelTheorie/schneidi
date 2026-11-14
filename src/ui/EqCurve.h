@@ -22,7 +22,14 @@ public:
         m_drag = -1;
         update();
     }
-    QSize sizeHint() const override { return {480, 220}; }
+    // Small (Studio page mixer strips): no scale labels, smaller points without numbers
+    void setCompact(bool on)
+    {
+        m_compact = on;
+        update();
+    }
+    QSize sizeHint() const override { return m_compact ? QSize(140, 56) : QSize(480, 220); }
+    QSize minimumSizeHint() const override { return m_compact ? QSize(80, 40) : QWidget::minimumSizeHint(); }
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -43,4 +50,5 @@ private:
     int m_track;
     int m_drag = -1;  // band being dragged
     QPointF m_grab;   // mouse minus band point at the press (the point stays under the mouse)
+    bool m_compact = false;
 };

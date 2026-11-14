@@ -34,7 +34,10 @@ EqCurve::EqCurve(Editor* editor, int track, QWidget* parent) : QWidget(parent), 
     connect(editor->project(), &Project::timelineChanged, this, qOverload<>(&QWidget::update));
 }
 
-QRectF EqCurve::plot() const { return QRectF(rect()).adjusted(28, 8, -8, -18); }
+QRectF EqCurve::plot() const
+{
+    return m_compact ? QRectF(rect()).adjusted(5, 5, -5, -5) : QRectF(rect()).adjusted(28, 8, -8, -18);
+}
 
 double EqCurve::xOf(double hz) const
 {
@@ -143,14 +146,17 @@ void EqCurve::paintEvent(QPaintEvent*)
             const double x = xOf(hz);
             p.setPen(QPen(m == 1 ? Theme::controlLight : Theme::control, 1));
             p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+            if (m_compact) continue;
             p.setPen(Theme::textDim);
             const QString label = hz >= 1000 ? QString("%1k").arg(hz / 1000) : QString::number(hz);
             p.drawText(QRectF(x - 20, r.bottom() + 2, 40, 14), Qt::AlignCenter, label);
         }
     for (int db = -24; db <= 24; db += 6) {
         const double y = yOf(db);
+        if (m_compact && db % 12 != 0) continue;
         p.setPen(QPen(db == 0 ? Theme::controlLight : Theme::control, 1));
         p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+        if (m_compact) continue;
         p.setPen(Theme::textDim);
         p.drawText(QRectF(0, y - 7, r.left() - 4, 14), Qt::AlignRight | Qt::AlignVCenter,
                    db > 0 ? QString("+%1").arg(db) : QString::number(db));
@@ -165,14 +171,15 @@ void EqCurve::paintEvent(QPaintEvent*)
         else path.lineTo(pt);
     }
     const QColor curve = eq.on ? Theme::primary : Theme::controlOff;
-    p.setPen(QPen(curve, 2));
+    p.setPen(QPen(curve, m_compact ? 1.5 : 2));
     p.drawPath(path);
     for (int i = 0; i < 6; ++i) {
         const EqBand& b = eq.bands[size_t(i)];
         const QPointF pt = pointFor(i);
         p.setPen(QPen(Theme::border, 1));
         p.setBrush(b.on && eq.on ? Theme::secondary : Theme::controlOff);
-        p.drawEllipse(pt, 6, 6);
+        p.drawEllipse(pt, m_compact ? 3.5 : 6, m_compact ? 3.5 : 6);
+        if (m_compact) continue;
         p.setPen(Theme::readableOn(b.on && eq.on ? Theme::secondary : Theme::controlOff));
         p.drawText(QRectF(pt.x() - 6, pt.y() - 6, 12, 12), Qt::AlignCenter, QString::number(i + 1));
     }

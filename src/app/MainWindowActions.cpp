@@ -796,6 +796,7 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_edit", T("Seite Schneiden"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_comp", T("Seite Compositing"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
+    makeAction(workspace, "page_studio", T("Seite Studio"), QKeySequence("Shift+7"), [this] { showPage(Page::Studio); });
     makeAction(workspace, "page_deliver", T("Seite Export"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
     // The same checkboxes as the right-click on the page bar
     QMenu* visiblePages = workspace->addMenu(T("Sichtbare Seiten"));

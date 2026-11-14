@@ -58,6 +58,14 @@ public:
     virtual bool livePlaying() const = 0;
     virtual void liveSeek(int frame) = 0;
     virtual void livePlay(bool play) = 0;
+    // The page the app shows ("media", "edit", "comp", "color", "studio", "deliver"; empty = the host has none) and
+    // switching to one (false = no such page)
+    virtual QString livePage() const { return {}; }
+    virtual bool liveShowPage(const QString& page)
+    {
+        Q_UNUSED(page);
+        return false;
+    }
     // Saves to the project's file, or to `path` (a project never saved; the caller checks it is a new file)
     virtual bool liveSave(const QString& path, QString* error) = 0;
     // Proxy media: generate (in the background), and the state per file ("ready", "pending" with percent, "none")

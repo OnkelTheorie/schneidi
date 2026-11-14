@@ -14,6 +14,7 @@
 #include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
+#include "core/VolumeDraw.h"
 
 #include <QHash>
 #include <QObject>
@@ -209,6 +210,10 @@ public:
     // during `ranges` (timeline frames where the 'under' tracks have sound, AudioAnalysis::soundRanges). Locked clips
     // stay. Returns how many clips got lowered; no clip or no range = nothing changes. One undo step.
     int duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const Ducking::Params& params);
+    // Pen on the Studio page (core/VolumeDraw.h): the stroke over audio track `track` becomes volume keyframes of the
+    // clips under it (smoothed by `smoothing` frames, thinned). Locked tracks and clips stay. One undo step; false =
+    // nothing changed (no clip under the stroke)
+    bool drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
     // Audio clips for normalizing: selection (with linked partners), audio only, not locked
     QVector<int> selectedAudioClips() const;
     // Change any clip property (Inspector). Same mergeKey = one undo step.

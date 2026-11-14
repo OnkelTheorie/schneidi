@@ -150,6 +150,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/ProxyChoice.h        src/core/ProxyChoice.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
+    src/core/VolumeDraw.h         src/core/VolumeDraw.cpp
     src/core/Accents.h            src/core/Accents.cpp
     src/core/SfxSynth.h           src/core/SfxSynth.cpp
     src/core/SfxWhoosh.h          src/core/SfxWhoosh.cpp
@@ -356,6 +357,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
     src/app/MainWindowComp.cpp
+    src/app/MainWindowStudio.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
@@ -443,6 +445,9 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/comp/CompInspector.h   src/ui/comp/CompInspector.cpp
     src/ui/comp/CompOverlay.h     src/ui/comp/CompOverlay.cpp
     src/ui/comp/CompPage.h        src/ui/comp/CompPage.cpp
+    src/ui/studio/StudioPage.h    src/ui/studio/StudioPage.cpp
+    src/ui/studio/StudioTracks.h  src/ui/studio/StudioTracks.cpp
+    src/ui/studio/StudioMixer.h   src/ui/studio/StudioMixer.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp

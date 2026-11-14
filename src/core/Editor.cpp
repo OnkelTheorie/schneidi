@@ -405,6 +405,18 @@ int Editor::duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const D
     return ducked;
 }
 
+bool Editor::drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || stroke.isEmpty()) return false;
+    bool changed = false;
+    m_project->edit(T("Lautstärke zeichnen"), [&](Timeline& tl) {
+        for (Clip& c : tl.audio[track].clips)
+            if (!c.isTitle()) changed |= VolumeDraw::apply(c, stroke, smoothing);
+    });
+    return changed;
+}
+
 void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,
                             std::optional<double> relativeRef)
 {
