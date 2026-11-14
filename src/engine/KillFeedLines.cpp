@@ -359,21 +359,37 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
     const double step = std::max(1.0, srcFps / kSamplesPerSecond); // in positions (a 25 fps file: every 2.5th)
     const int64_t endFrame = info.duration > 0 ? int64_t(std::ceil(double(info.duration) / AV_TIME_BASE * srcFps)) : 0;
 
-    SwsContext* sws = nullptr;
+    std::unique_ptr<SwsContext, void (*)(SwsContext*)> sws(nullptr, [](SwsContext* x) { sws_freeContext(x); });
     std::vector<uint8_t> rgb;
     Samples out;
     Geometry g;
     QRect area;
     int pw = 0, ph = kScale;
     int64_t done = first - 1; // the last position read
+    // Read up to `last` or the end of the file: only then is the result the whole range (a read error stops early:
+    // what was read is used, but not cached under the whole range's name)
+    bool complete = false, stale = false;
     for (int k = 0;; ++k) {
         const int64_t pos = first + int64_t(std::llround(k * step));
-        if (pos > last) break;
+        if (pos > last) {
+            complete = true;
+            break;
+        }
         if (pos <= done) continue; // the file skipped there
         if (cancel && cancel->load()) break;
         const auto pic = reader->picture(pos);
-        if (!pic || !pic->frame) break;
-        if (pic->position < pos && (endFrame <= 0 || pos >= endFrame)) break; // past the end
+        if (!pic || !pic->frame) {
+            // No picture at the end of the file (its length is rounded) is the end; elsewhere an error
+            complete = endFrame > 0 && pos >= endFrame - int64_t(std::ceil(step)) - 1;
+            break;
+        }
+        if (pic->position < pos && (endFrame <= 0 || pos >= endFrame)) { // past the end
+            complete = true;
+            break;
+        }
+        // Far behind the position inside the file: the file broke off (an earlier picture again); what follows is read
+        // as far as it goes, but not cached as the whole range
+        if (pic->position < pos - int64_t(std::ceil(2 * step)) - 1) stale = true;
         const AVFrame* f = pic->frame;
         // The game picture (bars cut off) as displayed, at the 1080p scale; only the kill feed's part is read
         const double sar = f->sample_aspect_ratio.num > 0 && f->sample_aspect_ratio.den > 0
@@ -399,15 +415,15 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
         cropped->crop_bottom = size_t(std::clamp(long(f->height) - b, 0L, long(f->height) - long(cropped->crop_top) - 2));
         if (av_frame_apply_cropping(cropped, AV_FRAME_CROP_UNALIGNED) < 0) break;
         const int aw = area.width(), ah = area.height();
-        sws = sws_getCachedContext(sws, cropped->width, cropped->height, AVPixelFormat(cropped->format), aw, ah,
-                                   AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
+        sws.reset(sws_getCachedContext(sws.release(), cropped->width, cropped->height, AVPixelFormat(cropped->format), aw, ah,
+                                   AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr));
         if (!sws) break;
         // Rows aligned and room after the last: swscale writes whole SIMD blocks
         const int stride = (aw * 3 + 63) & ~63;
         rgb.resize(size_t(stride) * size_t(ah + 1) + 64);
         uint8_t* planes[4] = {rgb.data(), nullptr, nullptr, nullptr};
         int strides[4] = {stride, 0, 0, 0};
-        sws_scale(sws, cropped->data, cropped->linesize, 0, cropped->height, planes, strides);
+        sws_scale(sws.get(), cropped->data, cropped->linesize, 0, cropped->height, planes, strides);
         View v;
         v.bits = rgb.data();
         v.stride = stride;
@@ -423,11 +439,12 @@ std::optional<Samples> measure(const QString& file, double from, double to, cons
         done = std::max(pos, int64_t(pic->position)); // positions the file skips
         if (progress) progress(int(std::min<int64_t>(999, (done - first + 1) * 1000 / (last - first + 1))));
     }
-    sws_freeContext(sws);
+    sws.reset();
     reader.reset();
     if (cancel && cancel->load()) return fail(T("Abgebrochen."));
     if (out.isEmpty()) return fail(T("Kein Bild vom Clip"));
     if (progress) progress(1000);
+    if (!complete || stale) return out; // a part only: not cached as the whole range
 
     QDir().mkpath(cacheDir());
     const QString target = QDir(cacheDir()).filePath(QString("%1_%2_%3%4")
@@ -449,24 +466,32 @@ Reframe::Feed feedOf(const Clip& c, FrameRate rate, int fileLength, const Sample
     feed.fps = rate.fps() > 0 ? rate.fps() : 25.0;
     feed.lineHeight = game.lineHeight * content.height();
     const RetimeMap map(c, fileLength);
-    for (const Sample& s : samples) {
-        const double file = s.seconds * feed.fps;
-        double t = 0;
-        if (c.freeze) {
-            t = 0;
-        } else {
-            const double material = c.isRetimed() ? map.materialForPicture(file) : file;
-            t = material - c.in;
-        }
-        if (t < -0.5 || t >= c.length()) continue;
+    const auto sample = [&](const Sample& s, double t) {
         Reframe::FeedSample x;
         x.frame = std::max(0.0, t);
+        x.file = s.seconds;
         x.lines = s.lines;
         if (s.lines > 0) {
             x.left = content.left() + s.left * content.width();
             x.bottom = content.top() + s.bottom * content.height();
         }
-        feed.samples << x;
+        return x;
+    };
+    if (c.freeze) {
+        // One picture: the sample closest to it (as ReframeAnalysis::targets)
+        const double at = map.pictureFrame(c.stillFrame()) / feed.fps;
+        const Sample* best = nullptr;
+        for (const Sample& s : samples)
+            if (!best || std::abs(s.seconds - at) < std::abs(best->seconds - at)) best = &s;
+        if (best) feed.samples << sample(*best, 0);
+        return feed;
+    }
+    for (const Sample& s : samples) {
+        const double file = s.seconds * feed.fps;
+        const double material = c.isRetimed() ? map.materialForPicture(file) : file;
+        const double t = material - c.in;
+        if (t < -0.5 || t >= c.length()) continue;
+        feed.samples << sample(s, t);
     }
     std::stable_sort(feed.samples.begin(), feed.samples.end(),
                      [](const Reframe::FeedSample& a, const Reframe::FeedSample& b) { return a.frame < b.frame; });

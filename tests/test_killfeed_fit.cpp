@@ -5,7 +5,9 @@
 // without lines, short gaps and blips ignored, as tall as its lines and as wide as the widest, text not blown up),
 // and a short of a synthetic CS2 recording through the CLI (new_timeline with reframe): hidden before the first line,
 // its crop fitting one and then three lines, the rendered frame showing the lines only then; a recording without any
-// line gets no copy.
+// line gets no copy. Review fixes: a blip-only feed is none, a long clip without lines keeps the whole region, smoothing
+// in file time for sped up and slowed clips, a freeze frame's nearest sample, compositing off, the base's opacity keys,
+// a picture shape changed after the reframe, a measurement of a broken-off file not cached.
 #include "render_check.h"
 #include "timeline_guard.h"
 
@@ -21,6 +23,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QPainter>
 #include <QTemporaryDir>
@@ -157,9 +160,108 @@ void testStates()
     CHECK(Reframe::feedStates(Reframe::Feed{}, 300).isEmpty()); // not measured
     Reframe::Feed none = f;
     for (Reframe::FeedSample& s : none.samples) s.lines = 0;
-    CHECK(Reframe::feedEmpty(none));
-    CHECK(!Reframe::feedEmpty(f));
-    CHECK(!Reframe::feedEmpty(Reframe::Feed{}));
+    CHECK(Reframe::feedUse(none) == Reframe::FeedUse::None);
+    CHECK(Reframe::feedUse(f) == Reframe::FeedUse::Follow);
+    CHECK(Reframe::feedUse(Reframe::Feed{}) == Reframe::FeedUse::Whole); // not measured
+    // A single sample of a line (a blip) is no line either
+    Reframe::Feed blip = none;
+    blip.samples[50].lines = 1, blip.samples[50].left = 0.8, blip.samples[50].bottom = 0.1;
+    CHECK(Reframe::feedUse(blip) == Reframe::FeedUse::None);
+    CHECK(Reframe::feedLineless(blip));
+    CHECK(!Reframe::feedLineless(f));
+    CHECK(!Reframe::feedLineless(Reframe::Feed{}));
+}
+
+// Samples of a file as KillFeedLines::measure gives them: 10 a second over `seconds`, one line from 1 s to 4 s
+// except one sample (a flash), and one sample with a line at 7.5 s (a sign in the picture)
+KillFeedLines::Samples fileSamples(double seconds)
+{
+    KillFeedLines::Samples out;
+    for (int i = 0; i < int(seconds * 10); ++i) {
+        KillFeedLines::Sample s;
+        s.seconds = i / 10.0;
+        if ((i >= 10 && i < 40 && i != 25) || i == 75) s.lines = 1, s.left = 0.86, s.bottom = 0.1;
+        out << s;
+    }
+    return out;
+}
+
+// A sped up or slowed clip: the flash and the blip are moments of the file, whether the clip shows them shorter or
+// longer (a slowed clip has its samples further apart than the moments: one sample each)
+void testSpeed()
+{
+    const FrameRate rate{30, 1};
+    const int fileLength = 10 * 30;
+    for (double speed : {4.0, 1.0, 0.25}) {
+        Clip c;
+        c.mediaPath = "/x/cs2/a.mkv";
+        c.speed = speed;
+        c.in = 0;
+        c.out = int(std::floor(fileLength / speed)) - 1;
+        const Reframe::Feed f = KillFeedLines::feedOf(c, rate, fileLength, fileSamples(10), QRectF(0, 0, 1, 1), cs2());
+        CHECK(!f.samples.isEmpty() && f.samples.first().file >= 0);
+        const QVector<Reframe::FeedState> st = Reframe::feedStates(f, c.length());
+        if (!CHECK_EQ(st.size(), 3)) {
+            for (const auto& x : st) std::printf("speed %.2f: %d..%d lines %d\n", speed, x.from, x.to, x.lines);
+            continue;
+        }
+        CHECK_EQ(st[0].lines, 0);
+        CHECK_EQ(st[1].lines, 1); // not split by the flash
+        CHECK(near(st[1].from, 0.95 * 30 / speed, 0.06 * 30 / speed + 1));
+        CHECK(near(st[1].to, 3.95 * 30 / speed, 0.06 * 30 / speed + 1));
+        CHECK_EQ(st[2].lines, 0); // the blip at 7.5 s is none
+        CHECK_EQ(st[2].to, c.length());
+    }
+    // A freeze frame: the sample nearest its picture (a line at 2 s), not the last one
+    Clip still;
+    still.mediaPath = "/x/cs2/a.mkv";
+    still.in = 60;
+    still.out = 89;
+    still.freeze = true;
+    const Reframe::Feed f = KillFeedLines::feedOf(still, rate, fileLength, fileSamples(10), QRectF(0, 0, 1, 1), cs2());
+    if (CHECK_EQ(f.samples.size(), 1)) {
+        CHECK_EQ(f.samples[0].lines, 1);
+        CHECK(near(f.samples[0].file, 2, 1e-9));
+    }
+}
+
+// A measured clip without any line: a short one gets no copy, one of 20 s or more keeps the whole region (the game's
+// HUD may look other than the analysis knows)
+void testFallback()
+{
+    const auto empty = [](double seconds, bool fileTimes) {
+        Reframe::Feed f;
+        f.measured = true;
+        f.fps = 30;
+        for (int i = 0; i < int(seconds * 10); ++i) {
+            Reframe::FeedSample s;
+            s.frame = i * 3;
+            if (fileTimes) s.file = 100 + i / 10.0;
+            f.samples << s;
+        }
+        return f;
+    };
+    CHECK(Reframe::feedUse(empty(10, true)) == Reframe::FeedUse::None);
+    CHECK(Reframe::feedUse(empty(19, true)) == Reframe::FeedUse::None);
+    CHECK(Reframe::feedUse(empty(20, true)) == Reframe::FeedUse::Whole);
+    CHECK(Reframe::feedUse(empty(25, false)) == Reframe::FeedUse::Whole);
+    CHECK(Reframe::feedLineless(empty(25, true)));
+    // The copy of the long one: the whole region, no keys, shown as the base is
+    Clip base;
+    base.mediaPath = "/x/cs2/a.mkv";
+    base.in = 0;
+    base.out = 25 * 30 - 1;
+    const QSizeF frame(1080, 1920);
+    const Clip whole = Reframe::keepCopy(base, {"killfeed", cs2().feed, empty(25, true)}, 16.0 / 9, frame);
+    const Clip fixed = Reframe::keepCopy(base, {"killfeed", cs2().feed, {}}, 16.0 / 9, frame);
+    CHECK(whole.keys.isEmpty());
+    CHECK(whole.transform == fixed.transform);
+    // The short one, if made anyway: hidden (with compositing, else its opacity would not apply)
+    base.out = 10 * 30 - 1;
+    const Clip hidden = Reframe::keepCopy(base, {"killfeed", cs2().feed, empty(10, true)}, 16.0 / 9, frame);
+    CHECK(!hidden.keys.contains(AnimParam::Opacity));
+    CHECK(near(hidden.transform.opacity, 0, 1e-9));
+    CHECK(hidden.transform.compositeOn);
 }
 
 void testKeys()
@@ -223,6 +325,105 @@ void testKeys()
     }
     // The copy's static values are its first shown shape (a copy with its keys removed shows one line)
     CHECK(near(c.transform.cropLeft, left1, 1e-6));
+}
+
+// Compositing off on the base: a copy shown all along has no opacity track (the base's keys, which do not apply
+// without compositing, are not carried), a hidden one turns compositing on
+void testCompositingOff()
+{
+    Clip base;
+    base.mediaPath = "/x/cs2/a.mkv";
+    base.in = 0;
+    base.out = 299;
+    base.transform.compositeOn = false;
+    base.keys[AnimParam::Opacity] = {Keyframe{0, 100, KeyEase::Linear}, Keyframe{299, 20, KeyEase::Linear}};
+    const QSizeF frame(1080, 1920);
+    Reframe::Feed all = timeline();
+    for (Reframe::FeedSample& s : all.samples) s.lines = 1, s.left = 0.86, s.bottom = 0.1;
+    const Clip shown = Reframe::keepCopy(base, {"killfeed", cs2().feed, all}, 16.0 / 9, frame);
+    CHECK(!shown.keys.contains(AnimParam::Opacity));
+    CHECK(near(Keys::valueAt(shown, AnimParam::Opacity, 150), 100, 1e-9));
+    // Lines and none: keyed, with compositing
+    const Clip c = Reframe::keepCopy(base, {"killfeed", cs2().feed, timeline()}, 16.0 / 9, frame);
+    CHECK(c.transform.compositeOn);
+    CHECK(near(Keys::valueAt(c, AnimParam::Opacity, 20), 0, 1e-9));
+    CHECK(near(Keys::valueAt(c, AnimParam::Opacity, 180), 100, 1e-9));
+}
+
+// The base's own opacity keys carry into the copy: its opacity where the copy is shown, at every key of the base
+void testBaseOpacity()
+{
+    Clip base;
+    base.mediaPath = "/x/cs2/a.mkv";
+    base.in = 100;
+    base.out = 399;
+    base.transform.compositeOn = true;
+    // 100 until clip frame 150, 50 from 160
+    base.keys[AnimParam::Opacity] = {Keyframe{250, 100, KeyEase::Linear}, Keyframe{260, 50, KeyEase::Linear}};
+    const Clip c = Reframe::keepCopy(base, {"killfeed", cs2().feed, timeline()}, 16.0 / 9, QSizeF(1080, 1920));
+    const auto at = [&](int t) { return Keys::valueAt(c, AnimParam::Opacity, t); };
+    CHECK(near(at(20), 0, 1e-9));
+    CHECK(near(at(90), 100, 1e-9));
+    CHECK(near(at(150), 100, 1e-9));
+    CHECK(near(at(160), 50, 1e-9));
+    CHECK(near(at(180), 50, 1e-9));
+    CHECK(near(at(270), 0, 1e-9));
+}
+
+// A changed picture shape after the reframe (a stretched 4:3 recording): the copy that follows its lines is placed
+// for the new shape as a new copy would be; one placed by hand stays
+void testReshape()
+{
+    Clip base;
+    base.mediaPath = "/x/cs2/a.mkv";
+    base.in = 100;
+    base.out = 399;
+    const QSizeF frame(1080, 1920);
+    const QRectF region = cs2().feed;
+    const Reframe::Keep keep{"killfeed", region, timeline()};
+    for (double aspect : {4.0 / 3, 21.0 / 9}) {
+        Clip copy = Reframe::keepCopy(base, keep, 16.0 / 9, frame);
+        // As Editor::setPictureAspect gives it the new shape: the crop keeps its share of the picture
+        const QSizeF a = MediaAspect::fit(16.0 / 9, frame), b = MediaAspect::fit(aspect, frame);
+        copy.pictureAspect = aspect;
+        for (AnimParam p : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}) {
+            const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? b.width() / a.width()
+                                                                                    : b.height() / a.height();
+            Keys::convert(copy, p, [k](double v) { return v * k; }, k);
+        }
+        Clip byHand = copy;
+        CHECK(Reframe::reshapeKeep(copy, 16.0 / 9, aspect, frame));
+        // About the size a new copy for the new shape has (its padding left of the lines differs a little: a part
+        // of the line height), at the top of the frame and centred, within the limits of a kept region
+        Clip shaped = base;
+        shaped.pictureAspect = aspect;
+        const Clip want = Reframe::keepCopy(shaped, keep, aspect, frame);
+        const Reframe::KeepPlace place;
+        const double line = 31.0 / 1080 * b.height();
+        for (int t : {0, 56, 59, 90, 119, 150, 180, 240, 299}) { // (keys: not halfway through an eased change)
+            const auto at = [&](AnimParam p) { return Keys::valueAt(copy, p, t); };
+            const double z = at(AnimParam::ZoomX);
+            CHECK(near(z, at(AnimParam::ZoomY), 1e-9));
+            if (!CHECK(near(z, Keys::valueAt(want, AnimParam::ZoomX, t), 0.015 * z)))
+                std::printf("aspect %.3f frame %d: zoom %.4f, want %.4f\n", aspect, t, z, Keys::valueAt(want, AnimParam::ZoomX, t));
+            const double w = b.width() - at(AnimParam::CropLeft) - at(AnimParam::CropRight);
+            const double h = b.height() - at(AnimParam::CropTop) - at(AnimParam::CropBottom);
+            CHECK(z * line <= place.maxLine * frame.height() + 1e-6);
+            CHECK(z * w <= place.width * frame.width() + 1e-6);
+            CHECK(z * h <= place.maxHeight * frame.height() + 1e-6);
+            const double topEdge = frame.height() / 2 - at(AnimParam::PosY) + z * (at(AnimParam::CropTop) - b.height() / 2);
+            CHECK(near(topEdge, place.top * frame.height(), 0.5));
+            const double leftEdge = frame.width() / 2 + at(AnimParam::PosX) + z * (at(AnimParam::CropLeft) - b.width() / 2);
+            if (!CHECK(near(leftEdge + z * w / 2, frame.width() / 2, 0.5)))
+                std::printf("aspect %.3f frame %d: centre %.3f\n", aspect, t, leftEdge + z * w / 2);
+        }
+        // Moved by hand: left as it is
+        KeyTrack& x = byHand.keys[AnimParam::PosX];
+        x[x.size() / 2].value += 40;
+        const Clip before = byHand;
+        CHECK(!Reframe::reshapeKeep(byHand, 16.0 / 9, aspect, frame));
+        CHECK(byHand.keys == before.keys);
+    }
 }
 
 QJsonObject run(const QString& name, const QJsonObject& args)
@@ -289,6 +490,22 @@ void testCli(const QString& dir)
             auto all = *KillFeedLines::measure(game, 0, 6, QRectF(0, 0, 1, 1), cs2());
             return std::optional<KillFeedLines::Samples>(all);
         }());
+    }
+
+    // A file that breaks off (cut short after it was written: its header still names the whole length): what was read
+    // is not cached as the whole range
+    {
+        const QString cut = dir + "/cs2/cut.mkv";
+        if (CHECK(QFile::copy(game, cut))) {
+            QFile f(cut);
+            CHECK(f.resize(f.size() / 2));
+            const auto count = [] { return QDir(KillFeedLines::cacheDir()).entryList({"*.killfeed"}, QDir::Files).size(); };
+            const qsizetype before = count();
+            QString error;
+            const auto samples = KillFeedLines::measure(cut, 0, 6, QRectF(0, 0, 1, 1), cs2(), &error);
+            if (samples) CHECK(samples->size() < 50); // a part only
+            CHECK_EQ(count(), before);
+        }
     }
 
     const QString path = dir + "/fit.schneidi";
@@ -368,6 +585,11 @@ int main(int argc, char** argv)
     testDetect();
     testStates();
     testKeys();
+    testSpeed();
+    testFallback();
+    testCompositingOff();
+    testBaseOpacity();
+    testReshape();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

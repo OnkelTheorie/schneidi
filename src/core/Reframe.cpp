@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 namespace Reframe {
@@ -404,8 +405,9 @@ namespace {
 
 // The crop and placement of a copy showing region `r` (fractions of the picture fitted as `fitted`) at `place` in
 // `frame`; lineHeight > 0 (part of the picture height): its text at most place.maxLine of the frame height
+// maxZoom > 0: at most that zoom (the text size limit when the line height is not known)
 void placeRegion(ClipTransform& t, const QRectF& r, QSizeF fitted, QSizeF frame, const KeepPlace& place,
-                 double lineHeight = 0)
+                 double lineHeight = 0, double maxZoom = 0)
 {
     t.cropLeft = r.left() * fitted.width();
     t.cropRight = (1 - r.right()) * fitted.width();
@@ -418,6 +420,7 @@ void placeRegion(ClipTransform& t, const QRectF& r, QSizeF fitted, QSizeF frame,
         double z = std::min(place.width * frame.width() / w, place.maxHeight * frame.height() / h);
         if (lineHeight > 0 && place.maxLine > 0)
             z = std::min(z, place.maxLine * frame.height() / (lineHeight * fitted.height()));
+        if (maxZoom > 0) z = std::min(z, maxZoom);
         t.zoomX = t.zoomY = z;
         // Zoom and position act on the whole picture around its centre: move the region's centre to the place
         const double dx = (r.center().x() - 0.5) * fitted.width(), dy = (r.center().y() - 0.5) * fitted.height();
@@ -461,10 +464,32 @@ QRectF stateRegion(const FeedState& s, const QRectF& region, double lineHeight, 
 
 } // namespace
 
-bool feedEmpty(const Feed& f)
+FeedUse feedUse(const Feed& f)
 {
-    return f.measured && std::none_of(f.samples.begin(), f.samples.end(), [](const FeedSample& s) { return s.lines > 0; });
+    if (!f.measured) return FeedUse::Whole;
+    // A line in a stretch after the blips and gaps are filtered (a single sample is none)
+    double first = 0, last = -1;
+    for (const FeedSample& s : f.samples) {
+        first = std::min(first, s.frame);
+        last = std::max(last, s.frame);
+    }
+    const QVector<FeedState> states = feedStates(f, int(std::ceil(last)) + 1);
+    if (std::any_of(states.begin(), states.end(), [](const FeedState& s) { return s.lines > 0; })) return FeedUse::Follow;
+    // None over a long stretch of footage: the analysis does not know this HUD, the whole region stays
+    double seconds = 0;
+    const bool files = !f.samples.isEmpty()
+                       && std::all_of(f.samples.begin(), f.samples.end(), [](const FeedSample& s) { return s.file >= 0; });
+    if (files) {
+        const auto [lo, hi] = std::minmax_element(f.samples.begin(), f.samples.end(),
+                                                  [](const FeedSample& a, const FeedSample& b) { return a.file < b.file; });
+        seconds = hi->file - lo->file;
+    } else if (!f.samples.isEmpty()) {
+        seconds = (last - first) / (f.fps > 0 ? f.fps : 25);
+    }
+    return seconds >= kFeedFallback - 0.5 ? FeedUse::Whole : FeedUse::None; // (samples a tenth of a second apart)
 }
+
+bool feedLineless(const Feed& f) { return f.measured && feedUse(f) != FeedUse::Follow; }
 
 QVector<FeedState> feedStates(const Feed& f, int length)
 {
@@ -476,15 +501,21 @@ QVector<FeedState> feedStates(const Feed& f, int length)
     const int n = int(in.size());
     const double fps = f.fps > 0 ? f.fps : 25;
     // Closing (fills dips shorter than kFeedGap), then opening (drops peaks shorter than kFeedBlip): per sample the
-    // largest (smallest) count within half the time either side, then the smallest (largest) of those
+    // largest (smallest) count within half the time either side, then the smallest (largest) of those. Time in the
+    // clip or in the file, whichever reaches further: a fast clip shows a moment of the file shorter (it must not
+    // flicker), a slowed one longer (its samples lie further apart than the moment: a blip is one sample still)
     const auto pass = [&](const std::vector<int>& v, double seconds, bool largest) {
         std::vector<int> out(v.size());
-        const double half = seconds * fps / 2;
+        const double half = seconds / 2;
+        const auto within = [&](int i, int j) {
+            return std::abs(in[i].frame - in[j].frame) <= half * fps
+                   || (in[i].file >= 0 && in[j].file >= 0 && std::abs(in[i].file - in[j].file) <= half + 1e-9);
+        };
         for (int i = 0; i < n; ++i) {
             int x = v[size_t(i)];
-            for (int j = i - 1; j >= 0 && in[i].frame - in[j].frame <= half; --j)
+            for (int j = i - 1; j >= 0 && within(i, j); --j)
                 x = largest ? std::max(x, v[size_t(j)]) : std::min(x, v[size_t(j)]);
-            for (int j = i + 1; j < n && in[j].frame - in[i].frame <= half; ++j)
+            for (int j = i + 1; j < n && within(i, j); ++j)
                 x = largest ? std::max(x, v[size_t(j)]) : std::min(x, v[size_t(j)]);
             out[size_t(i)] = x;
         }
@@ -554,7 +585,16 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
     t.compositeOn = base.transform.compositeOn;
     placeRegion(t, r, fitted, frame, place);
     c.transform = t;
-    const QVector<FeedState> states = feedStates(k.feed, c.length());
+    const FeedUse use = feedUse(k.feed);
+    if (use == FeedUse::None) {
+        // No line: hidden all along (the callers leave such a copy out)
+        c.keys.remove(AnimParam::Opacity);
+        c.transform.opacity = 0;
+        c.transform.compositeOn = true;
+        return c;
+    }
+    // Whole: the region all the time, as the base shows (its own opacity keys stay)
+    const QVector<FeedState> states = use == FeedUse::Follow ? feedStates(k.feed, c.length()) : QVector<FeedState>{};
     if (states.isEmpty() || frame.isEmpty()) return c;
 
     // Follows the feed: per state its crop and place, keys where they change
@@ -589,12 +629,9 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
         frame = std::clamp(frame, 0, last);
         for (AnimParam p : shapeParams) keys[p] << Key{frame, valueOf(x, p)};
     };
-    // Opacity: the base's (with its own keys; 100 with compositing off) times shown (1) or hidden (0)
-    const auto opacityKey = [&](int frame, double shown) {
-        frame = std::clamp(frame, 0, last);
-        const double opacity = base.transform.compositeOn ? Keys::valueAt(base, AnimParam::Opacity, frame) : 100.0;
-        keys[AnimParam::Opacity] << Key{frame, opacity * shown};
-    };
+    // Shown (1) or hidden (0); the opacity is the base's times that (below)
+    QVector<Key> shown;
+    const auto opacityKey = [&](int frame, double on) { shown << Key{std::clamp(frame, 0, last), on}; };
     // The first shape shown is the static one too (a copy without keys looks like that)
     const FeedState* firstShown = nullptr;
     for (const FeedState& s : states)
@@ -638,6 +675,30 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
             shapeKey(grows ? at : at + move, shape(b));
         }
     }
+    // Opacity: the base's (with its own keys; 100 with compositing off) times shown, at the keys of both
+    {
+        std::stable_sort(shown.begin(), shown.end(), [](const Key& x, const Key& y) { return x.frame < y.frame; });
+        Clip on; // the shown curve, eased as the copy's keys are
+        on.in = 0;
+        KeyTrack& track = on.keys[AnimParam::Opacity];
+        for (const Key& key : shown) {
+            if (!track.isEmpty() && track.last().frame == key.frame) track.removeLast();
+            track << Keyframe{key.frame, key.value, KeyEase::EaseInOut};
+        }
+        QVector<int> frames;
+        for (const Keyframe& key : track) frames << key.frame;
+        if (base.transform.compositeOn && base.keys.contains(AnimParam::Opacity)) {
+            frames << 0 << last; // (its keys before and after the clip: their values at its ends)
+            for (const Keyframe& key : base.keys.value(AnimParam::Opacity))
+                if (key.frame - base.in >= 0 && key.frame - base.in <= last) frames << key.frame - base.in;
+        }
+        std::sort(frames.begin(), frames.end());
+        frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+        for (int f : frames) {
+            const double opacity = base.transform.compositeOn ? Keys::valueAt(base, AnimParam::Opacity, f) : 100.0;
+            keys[AnimParam::Opacity] << Key{f, opacity * Keys::valueAt(on, AnimParam::Opacity, f)};
+        }
+    }
     // Into the clip's keys (source frames), sorted, a key per frame (the later one), eased; a track that never
     // changes is no track (the static value holds)
     for (auto it = keys.begin(); it != keys.end(); ++it) {
@@ -655,7 +716,11 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
             return std::abs(x.value - track.first().value) < 1e-9;
         });
         if (flat) {
-            if (!track.isEmpty()) Keys::setStaticValue(c, it.key(), track.first().value);
+            c.keys.remove(it.key()); // (the base's own opacity keys too)
+            if (track.isEmpty()) continue;
+            Keys::setStaticValue(c, it.key(), track.first().value);
+            if (it.key() == AnimParam::Opacity && std::abs(track.first().value - 100) > 1e-9)
+                c.transform.compositeOn = true; // else the opacity does not apply
             continue;
         }
         c.keys[it.key()] = track;
@@ -664,11 +729,76 @@ Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame,
     return c;
 }
 
+namespace {
+
+// reshapeKeep of a copy with keys (one that follows its kill feed's lines): per key its region from the crop there,
+// placed for the old shape as the keys show it (else placed by hand: false) and anew for the new one. The line height
+// is not stored: the largest zoom of the keys is taken as the text size limit (exact when a key was held by it; the
+// limit grows or shrinks with the picture's height)
+bool reshapeKeyedKeep(Clip& c, double oldAspect, double newAspect, QSizeF frame)
+{
+    const QSizeF a = MediaAspect::fit(oldAspect, frame), b = MediaAspect::fit(newAspect, frame);
+    if (a.isEmpty() || b.isEmpty()) return false;
+    const QVector<AnimParam> crops{AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom};
+    const QVector<AnimParam> places{AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY};
+    QVector<int> frames = Keys::keyTimes(c, crops + places);
+    if (frames.isEmpty()) frames << 0;
+    // The region at a clip frame (fractions of the picture; the crop is in the new shape's pixels already)
+    const auto regionAt = [&](const std::function<double(AnimParam)>& value) {
+        const double l = value(AnimParam::CropLeft) / b.width(), r = value(AnimParam::CropRight) / b.width();
+        const double top = value(AnimParam::CropTop) / b.height(), bottom = value(AnimParam::CropBottom) / b.height();
+        return valid(QRectF(l, top, 1 - l - r, 1 - top - bottom));
+    };
+    const auto keyed = [&](int f) { return [&c, f](AnimParam p) { return Keys::valueAt(c, p, f); }; };
+    double largest = 0;
+    for (int f : frames) largest = std::max(largest, Keys::valueAt(c, AnimParam::ZoomX, f));
+    if (largest <= 0) return false;
+    const KeepPlace place;
+    const auto valueOf = [](const ClipTransform& x, AnimParam p) {
+        return p == AnimParam::ZoomX ? x.zoomX : p == AnimParam::ZoomY ? x.zoomY : p == AnimParam::PosX ? x.posX : x.posY;
+    };
+    // Placed as before?
+    for (int f : frames) {
+        ClipTransform was;
+        placeRegion(was, regionAt(keyed(f)), a, frame, place, 0, largest);
+        for (AnimParam p : places)
+            if (std::abs(valueOf(was, p) - Keys::valueAt(c, p, f)) > 1e-4 * std::max(1.0, std::abs(valueOf(was, p))))
+                return false; // placed by hand
+    }
+    const double limit = largest * a.height() / b.height();
+    QHash<AnimParam, KeyTrack> tracks;
+    for (int f : frames) {
+        ClipTransform now;
+        placeRegion(now, regionAt(keyed(f)), b, frame, place, 0, limit);
+        for (AnimParam p : places) tracks[p] << Keyframe{c.in + f, valueOf(now, p), KeyEase::EaseInOut};
+    }
+    // The static values: the static crop's region
+    ClipTransform still;
+    placeRegion(still, regionAt([&c](AnimParam p) { return Keys::staticValue(c, p); }), b, frame, place, 0, limit);
+    for (AnimParam p : places) {
+        Keys::setStaticValue(c, p, valueOf(still, p));
+        KeyTrack track = tracks.value(p);
+        for (int i = int(track.size()) - 2; i >= 1; --i)
+            if (same(track[i].value, track[i - 1].value) && same(track[i].value, track[i + 1].value)) track.removeAt(i);
+        const bool flat = std::all_of(track.begin(), track.end(), [&](const Keyframe& x) { return same(x.value, track.first().value); });
+        if (flat) {
+            c.keys.remove(p);
+            if (!track.isEmpty()) Keys::setStaticValue(c, p, track.first().value);
+        } else {
+            c.keys[p] = track;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 bool reshapeKeep(Clip& c, double oldAspect, double newAspect, QSizeF frame)
 {
     if (c.keepRegion.isEmpty() || oldAspect <= 0 || newAspect <= 0 || frame.isEmpty()) return false;
-    for (AnimParam a : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY})
-        if (c.keys.contains(a)) return false;
+    for (AnimParam a : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::CropLeft,
+                        AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
+        if (c.keys.contains(a)) return reshapeKeyedKeep(c, oldAspect, newAspect, frame);
     const Keep k{c.keepRegion, cropContent(c, MediaAspect::fit(newAspect, frame))};
     const ClipTransform was = keepCopy(c, k, oldAspect, frame).transform;
     ClipTransform& t = c.transform;
