@@ -104,7 +104,11 @@ void testIsolation()
 {
     CHECK(QSettings().fileName().contains("schneidi-tests"));
     CHECK(StartTemplates::dir().contains("schneidi-test-start-templates"));
-    CHECK(StartTemplates::dir().contains("qttest")); // QStandardPaths test mode (".qttest" on Linux, "qttest" on Windows)
+#if !defined(Q_OS_WIN) && !defined(Q_OS_DARWIN)
+    // QStandardPaths test mode; on Windows/macOS a test run uses its own XDG_* folders instead (core/AppPaths.h),
+    // checked by the folder name above
+    CHECK(StartTemplates::dir().contains(".qttest"));
+#endif
 }
 
 // Neutral = the project schneidi always started with, byte for byte, and the default
