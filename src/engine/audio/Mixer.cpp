@@ -156,6 +156,19 @@ struct LowPass {
     }
 };
 
+// Planar conversion of `count` samples from `from` channels to `to` (ChannelLayout::conversion)
+void convertChannels(const float* const* in, int from, float* const* out, int to, int count)
+{
+    const ChannelLayout::Matrix k = ChannelLayout::conversion(from, to);
+    for (int o = 0; o < to; ++o)
+        for (int i = 0; i < count; ++i) {
+            double y = 0;
+            for (int c = 0; c < from; ++c)
+                if (const double g = k[size_t(o)][size_t(c)]; g != 0.0) y += g * in[c][i];
+            out[o][i] = float(y);
+        }
+}
+
 } // namespace
 
 struct Mixer::Impl {
@@ -163,6 +176,9 @@ struct Mixer::Impl {
     Clock clock;
     int nch = 2;    // channels of the mix
     int outCh = 2;  // channels render() writes (outermost mixer)
+    // > 0: the master limiter runs on the mix converted to this many channels (Options::limitOutput with a downmix);
+    // Impl::render then writes these channels
+    int limitCh = 0;
     LowPass lfeLowPass;
     std::shared_ptr<const NestedTimelines> nested;
     Stats* stats = nullptr; // the outermost mixer's
@@ -187,6 +203,10 @@ struct Mixer::Impl {
         int64_t nextU = INT64_MIN; // where the voice continues (u); anything else starts it over
         std::vector<std::unique_ptr<Denoise::Processor>> denoisers;
         std::unique_ptr<VoiceClean::Processor> cleaner;
+        // 5.1/7.1 source: the centre (dialogue) cleaned by its own processor; LFE and surrounds delayed by the
+        // cleaner's latency (cleanDelay[c - 3]), so every channel stays aligned with the cleaned front
+        std::unique_ptr<VoiceClean::Processor> centreCleaner;
+        std::vector<std::vector<float>> cleanDelay;
         int channels = 0; // what the source gives (2 or the mix's), known once opened
     };
     struct TrackState {
@@ -213,7 +233,10 @@ struct Mixer::Impl {
     int64_t expected = INT64_MIN; // next render position
     int latency = 0;              // master (limiter), compensated
     std::vector<std::vector<float>> mix, track, voice;
+    std::vector<std::vector<float>> post; // limitCh > 0: the converted mix the limiter works on
+    std::vector<float> post2;             // limitCh > 0, mono output: the limited stereo downmix
     std::vector<float> scratch;
+    std::vector<float> centreCopy, delayed; // voice cleaning of a 5.1/7.1 source (renderVoice)
 
     Impl(const Options& o, FrameRate fps, int channels) : opt(o), nch(ChannelLayout::valid(channels))
     {
@@ -461,6 +484,8 @@ void Mixer::Impl::restart()
             v.nextU = INT64_MIN;
             v.denoisers.clear();
             v.cleaner.reset();
+            v.centreCleaner.reset();
+            v.cleanDelay.clear();
         }
         ts.firstVoice = 0;
         ts.levelSet = false;
@@ -472,7 +497,7 @@ void Mixer::Impl::restart()
     }
     peakLimiter = PeakLimiter{};
     peakLimiter.setCeilingDb(limiterDb);
-    peakLimiter.prepare(nch, opt.rate);
+    peakLimiter.prepare(limitCh > 0 ? limitCh : nch, opt.rate);
     latency = limiter ? peakLimiter.latency() : 0;
     masterApplied = masterGain;
 }
@@ -549,11 +574,14 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
     const int vch = st.channels; // channels the voice has (the rest of the mix's stay silent)
     if (v.denoise || v.clean) {
         // Backwards in chunks (setChunked): the processors keep what they learnt from the neighbouring chunk
-        const bool have = (!v.denoise || !st.denoisers.empty()) && (!v.clean || st.cleaner);
+        const bool surround = vch > ChannelLayout::FC; // a source with a centre channel
+        const bool have = (!v.denoise || !st.denoisers.empty()) && (!v.clean || (st.cleaner && (!surround || st.centreCleaner)));
         const bool keep = fresh && have && chunkWarm >= 0;
         if ((fresh && !keep) || !have) {
             st.denoisers.clear();
             st.cleaner.reset();
+            st.centreCleaner.reset();
+            st.cleanDelay.clear();
             for (int c = 0; v.denoise && c < vch; ++c) {
                 st.denoisers.push_back(std::make_unique<Denoise::Processor>(opt.rate));
                 st.denoisers.back()->setParams(v.denoiseReduction, v.denoiseFloor, v.denoiseTrack);
@@ -561,11 +589,33 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
             if (v.clean) {
                 st.cleaner = std::make_unique<VoiceClean::Processor>(opt.rate);
                 st.cleaner->setParams(v.cleanParams);
+                if (surround) {
+                    st.centreCleaner = std::make_unique<VoiceClean::Processor>(opt.rate);
+                    st.centreCleaner->setParams(v.cleanParams);
+                    st.cleanDelay.assign(size_t(vch - ChannelLayout::LFE), std::vector<float>(size_t(st.cleaner->latency()), 0.f));
+                }
             }
         }
         auto process = [&](float* const* data, int n) {
             for (int c = 0; c < int(st.denoisers.size()); ++c) st.denoisers[size_t(c)]->process(data[c], n);
             if (st.cleaner) st.cleaner->process(data, n);
+            if (st.centreCleaner) {
+                // The centre on its own (a copy as the processor's second channel: linked, it sees one sound)
+                centreCopy.assign(data[ChannelLayout::FC], data[ChannelLayout::FC] + n);
+                float* centre[2] = {data[ChannelLayout::FC], centreCopy.data()};
+                st.centreCleaner->process(centre, n);
+                // The other channels come that much later, as the cleaned ones
+                for (size_t k = 0; k < st.cleanDelay.size(); ++k) {
+                    std::vector<float>& held = st.cleanDelay[k];
+                    float* x = data[size_t(ChannelLayout::LFE) + k];
+                    const size_t len = held.size();
+                    delayed.resize(len + size_t(n));
+                    std::copy(held.begin(), held.end(), delayed.begin());
+                    std::copy(x, x + n, delayed.begin() + ptrdiff_t(len));
+                    std::copy(delayed.begin(), delayed.begin() + n, x);
+                    std::copy(delayed.begin() + n, delayed.end(), held.begin());
+                }
+            }
         };
         // The processors run `lead` samples ahead, their output lines up with the timeline. Starting inside the
         // clip, the voice cleaning first listens to up to half a second before u (its noise and voice level settle),
@@ -799,6 +849,8 @@ Mixer::Mixer(const Timeline& timeline, FrameRate fps, const Options& options)
 {
     d->outCh = options.outputChannels > 0 ? std::clamp(options.outputChannels, 1, kMaxChannels) : d->nch;
     if (d->outCh != 1) d->outCh = ChannelLayout::valid(d->outCh);
+    if (options.limitOutput)
+        if (const int lc = d->outCh == 1 ? 2 : d->outCh; lc < d->nch) d->limitCh = lc; // a downmix only
     d->nested = timeline.nested;
     d->stats = &d->ownStats;
     d->plan(timeline);
@@ -838,6 +890,17 @@ void Mixer::render(int64_t pos, int count, float* const* out)
         m.render(pos, count, out);
         return;
     }
+    if (m.limitCh > 0) { // export of a downmix: converted and limited inside (Options::limitOutput)
+        if (m.outCh == m.limitCh) {
+            m.render(pos, count, out);
+            return;
+        }
+        m.post2.resize(size_t(std::max(count, 0)) * 2); // mono: the mean of the limited stereo downmix
+        float* lr[2] = {m.post2.data(), m.post2.data() + std::max(count, 0)};
+        m.render(pos, count, lr);
+        for (int i = 0; i < count; ++i) out[0][i] = float(0.5 * (double(lr[0][i]) + lr[1][i]));
+        return;
+    }
     // Another format than the mix (monitor downmix, export): mixed in the mix's format, then converted
     m.converted.resize(size_t(std::max(count, 0)) * size_t(m.nch));
     float* in[kMaxChannels];
@@ -854,14 +917,9 @@ void Mixer::render(int64_t pos, int count, float* const* out)
         }
         return;
     }
-    const ChannelLayout::Matrix k = ChannelLayout::conversion(m.nch, m.outCh);
-    for (int o = 0; o < m.outCh; ++o)
-        for (int i = 0; i < count; ++i) {
-            double y = 0;
-            for (int c = 0; c < m.nch; ++c)
-                if (const double g = k[size_t(o)][size_t(c)]; g != 0.0) y += g * in[c][i];
-            out[o][i] = float(y);
-        }
+    const float* from[kMaxChannels];
+    for (int c = 0; c < m.nch; ++c) from[c] = in[c];
+    convertChannels(from, m.nch, out, m.outCh, count);
 }
 
 void Mixer::setMetering(bool on)
@@ -914,14 +972,29 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
         for (auto* v : {&m.mix[size_t(c)], &m.track[size_t(c)], &m.voice[size_t(c)]})
             if (v->size() < need) v->resize(need);
     }
+    // Options::limitOutput with a downmix: the mix converted first, the limiter on what is written
+    const int lch = m.limitCh > 0 ? m.limitCh : nch;
+    std::vector<std::vector<float>>& limited = m.limitCh > 0 ? m.post : m.mix;
+    if (m.limitCh > 0) {
+        m.post.resize(size_t(lch));
+        for (auto& v : m.post)
+            if (v.size() < need) v.resize(need);
+    }
     auto limit = [&](int n) {
+        if (m.limitCh > 0) {
+            const float* in[kMaxChannels];
+            float* to[kMaxChannels];
+            for (int c = 0; c < nch; ++c) in[c] = m.mix[size_t(c)].data();
+            for (int c = 0; c < lch; ++c) to[c] = m.post[size_t(c)].data();
+            convertChannels(in, nch, to, lch, n);
+        }
         if (!m.limiter) return;
-        m.scratch.resize(size_t(n) * size_t(nch));
-        for (int c = 0; c < nch; ++c)
-            std::copy(m.mix[size_t(c)].begin(), m.mix[size_t(c)].begin() + n, m.scratch.begin() + ptrdiff_t(c) * n);
-        m.peakLimiter.processPlanar(m.scratch.data(), n, nch, m.opt.rate);
-        for (int c = 0; c < nch; ++c)
-            std::copy(m.scratch.begin() + ptrdiff_t(c) * n, m.scratch.begin() + ptrdiff_t(c + 1) * n, m.mix[size_t(c)].begin());
+        m.scratch.resize(size_t(n) * size_t(lch));
+        for (int c = 0; c < lch; ++c)
+            std::copy(limited[size_t(c)].begin(), limited[size_t(c)].begin() + n, m.scratch.begin() + ptrdiff_t(c) * n);
+        m.peakLimiter.processPlanar(m.scratch.data(), n, lch, m.opt.rate);
+        for (int c = 0; c < lch; ++c)
+            std::copy(m.scratch.begin() + ptrdiff_t(c) * n, m.scratch.begin() + ptrdiff_t(c + 1) * n, limited[size_t(c)].begin());
     };
     // The limiter's delay is compensated by mixing that far ahead (primed on a fresh start)
     if (restarted && m.latency > 0) {
@@ -930,7 +1003,7 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
     }
     m.renderMix(pos + m.latency, count);
     limit(count);
-    for (int c = 0; c < nch; ++c) std::copy(m.mix[size_t(c)].begin(), m.mix[size_t(c)].begin() + count, out[c]);
+    for (int c = 0; c < lch; ++c) std::copy(limited[size_t(c)].begin(), limited[size_t(c)].begin() + count, out[c]);
 }
 
 } // namespace Audio

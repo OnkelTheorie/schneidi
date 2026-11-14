@@ -7,20 +7,32 @@
 // - loudness over all channels (surround +1.5 dB, LFE not counted)
 // - export in 5.1/7.1 (AAC, FLAC, WAV: ffprobe channel_layout), MP3 falls back to stereo with a note
 // - the project file: format 8 only when used (stereo projects unchanged), roundtrip, older versions refuse it
+// - review fixes: voice cleaning of a 5.1 source (centre cleaned, LFE/surrounds aligned), a loud 5.1 mix exported as
+//   stereo stays under the limiter (limiter after the downmix; loudness/check measure it with channels 'stereo'),
+//   ALAC 7.1 downmixed with a note, routing dropped on a stream change, channels as JSON numbers, Project Settings
+//   and the first clip's format keep the channels, the waveform of a routed clip shows its channels only
 
 #include "check.h"
 
+#include "app/MainWindow.h"
+#include "app/ProjectSettingsDialog.h"
 #include "core/ChannelLayout.h"
+#include "core/Project.h"
 #include "core/Loudness.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/Engine.h"
+#include "engine/MediaCache.h"
 #include "engine/Exporter.h"
 #include "engine/MediaProbe.h"
 #include "engine/RenderQueue.h"
 #include "engine/audio/Mixer.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -492,6 +504,231 @@ void testProjectFile(const QTemporaryDir& tmp)
     CHECK(ProjectFile::fromJson(QJsonDocument(odd).toJson(), path, &back, &error) && back.format.audioChannels == 2);
 }
 
+
+// Planar float samples of an audio file (ffmpeg), channel by channel
+std::vector<std::vector<float>> decodeFile(const QString& path, int channels)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-v", "error", "-nostdin", "-i", path, "-f", "f32le", "-"});
+    p.waitForFinished(60000);
+    const QByteArray d = p.readAllStandardOutput();
+    const auto* f = reinterpret_cast<const float*>(d.constData());
+    const size_t frames = size_t(d.size()) / sizeof(float) / size_t(channels);
+    std::vector<std::vector<float>> ch(size_t(channels), std::vector<float>(frames, 0.f));
+    for (size_t i = 0; i < frames; ++i)
+        for (int c = 0; c < channels; ++c) ch[size_t(c)][i] = f[i * size_t(channels) + size_t(c)];
+    return ch;
+}
+
+float peakOf(const std::vector<float>& x)
+{
+    float p = 0;
+    for (float v : x) p = std::max(p, std::abs(v));
+    return p;
+}
+
+// Voice cleaning of a 5.1 source: the centre (dialogue) is cleaned like the front pair, LFE and surrounds come as
+// late as the cleaned channels (they were read ~57 ms early: an echo against the front)
+void testVoiceClean51(const QString& voice51)
+{
+    Clip c = audioClip(1, voice51, 100);
+    c.effects << EffectInstance{"voiceclean", {}, true};
+    const auto out = renderMix(oneClip(c, 6), 0, 3 * kRate);
+    if (!CHECK(out.size() == 6)) return;
+    // The click on LFE and surrounds at 2 s stays at 2 s
+    for (int ch : {3, 4, 5}) {
+        size_t at = 0;
+        for (size_t i = 0; i < out[size_t(ch)].size(); ++i)
+            if (std::abs(out[size_t(ch)][i]) > std::abs(out[size_t(ch)][at])) at = i;
+        if (!CHECK(std::abs(int64_t(at) - 2 * kRate) <= 1)) std::printf("       Kanal %d: Klick bei %zu statt %d\n", ch, at, 2 * kRate);
+    }
+    // Centre = front left (the same sound through an equal processor): cleaned and aligned
+    double diff = 0, ref = 0;
+    for (size_t i = 0; i < out[0].size(); ++i) {
+        diff += double(out[2][i] - out[0][i]) * (out[2][i] - out[0][i]);
+        ref += double(out[0][i]) * out[0][i];
+    }
+    if (!CHECK(ref > 1e-3 && diff < 1e-6 * ref)) std::printf("       Mitte gegen links: %.3g / %.3g\n", diff, ref);
+}
+
+// A loud 5.1 mix exported as stereo: the ITU downmix adds centre and surrounds to the front pair; the limiter runs
+// after the downmix, so the file stays under its ceiling. loudness/check measure that with channels 'stereo'.
+void testDownmixLimit(const QTemporaryDir& tmp, const QString& loud51)
+{
+    Timeline tl = oneClip(audioClip(1, loud51, 50), 6);
+    tl.masterLimiter = true;
+    tl.masterLimiterDb = -1.0;
+    const double ceiling = std::pow(10.0, -1.0 / 20.0);
+    const QString path = tmp.filePath("loud-stereo.flac");
+    int written = 0;
+    if (exportTo(tl, path, "flac", 2, nullptr, &written)) {
+        CHECK(written == 2);
+        const auto ch = decodeFile(path, 2);
+        const float peak = std::max(peakOf(ch[0]), peakOf(ch[1]));
+        if (!CHECK(peak > 0.5 && peak <= ceiling + 1e-3)) std::printf("       Spitze %.3f (Grenze %.3f)\n", peak, ceiling);
+    }
+    // The 5.1 export keeps every channel under the ceiling as before
+    const QString path51 = tmp.filePath("loud-51.flac");
+    if (exportTo(tl, path51, "flac", 0)) {
+        const auto ch = decodeFile(path51, 6);
+        float peak = 0;
+        for (const auto& x : ch) peak = std::max(peak, peakOf(x));
+        CHECK(peak > 0.5 && peak <= ceiling + 1e-3);
+    }
+    // Measured as written
+    const auto stereo = AudioAnalysis::timelineLoudness(kFmt, tl, 0, 50, {}, nullptr, 2);
+    if (!CHECK(stereo && stereo->truePeakDb < -0.5)) std::printf("       True Peak Stereo %.2f\n", stereo ? stereo->truePeakDb : 0.0);
+    // Monitoring (no limitOutput) is unchanged: the limiter on the mix, the downmix after it goes over
+    const auto monitor = renderMix(tl, kRate / 2, kRate / 2, 2);
+    CHECK(peakOf(monitor[0]) > 1.2f);
+}
+
+// ALAC has no 7.1 with side surrounds (only "7.1(wide)": a front-centre pair): stereo downmix with a note; 5.1 stays
+void testAlac(const QTemporaryDir& tmp, const QString& five)
+{
+    Timeline tl = oneClip(audioClip(1, five, 25), 8);
+    QString note;
+    int written = 0;
+    const QString path = tmp.filePath("alac71.m4a");
+    if (exportTo(tl, path, "alac", 0, &note, &written)) {
+        CHECK(written == 2 && ffprobeAudio(path).value("channels").toInt() == 2 && !note.isEmpty());
+        std::printf("       ALAC-7.1-Hinweis: %s\n", qPrintable(note));
+    }
+    tl.audioChannels = 6;
+    const QString path51 = tmp.filePath("alac51.m4a");
+    if (exportTo(tl, path51, "alac", 0, &note, &written))
+        CHECK(written == 6 && ffprobeAudio(path51).value("channels").toInt() == 6);
+}
+
+// Routing a new stream lacks is dropped (none left = all channels); unknown streams keep it
+void testFitRouting()
+{
+    MediaInfo m;
+    m.path = "/x/cam.mov";
+    m.hasAudio = true;
+    m.audioStreams = {AudioStreamInfo{4, {}, true}, AudioStreamInfo{2, {}, true}};
+    Clip c;
+    c.mediaPath = m.path;
+    c.sourceChannels = {2, 3};
+    fitSourceChannels(c, m);
+    CHECK(c.sourceChannels == QVector<int>({2, 3}));
+    c.audioStream = 1;
+    fitSourceChannels(c, m);
+    CHECK(c.sourceChannels.isEmpty());
+    c.sourceChannels = {1, 2};
+    fitSourceChannels(c, m);
+    CHECK(c.sourceChannels == QVector<int>({1}));
+    c.audioStream = 5; // not described: kept
+    c.sourceChannels = {2, 3};
+    fitSourceChannels(c, m);
+    CHECK(c.sourceChannels == QVector<int>({2, 3}));
+}
+
+// CLI: op audio_stream drops routing the new stream lacks; channels as JSON numbers; loudness/check channels
+void testCliFixes(const QTemporaryDir& tmp, const QString& twoStreams, const QString& loud51)
+{
+    if (Check::cliPath().isEmpty()) return;
+    const QString project = tmp.filePath("fix.schneidi");
+    CHECK(cli({"new", project, "--template", "neutral"}).value("ok").toBool());
+    CHECK(ops(project, {QJsonObject{{"op", "append"}, {"media", twoStreams}}}).value("ok").toBool());
+    QJsonObject info = cli({"info", project});
+    int id = 0;
+    for (const QJsonValue& t : info.value("timeline").toObject().value("tracks").toArray())
+        for (const QJsonValue& c : t.toObject().value("clips").toArray())
+            if (!id) id = c.toObject().value("id").toInt();
+    CHECK(id > 0);
+    CHECK(ops(project, {QJsonObject{{"op", "route"}, {"clips", QJsonArray{id}}, {"channels", "3-4"}}}).value("ok").toBool());
+    CHECK(ops(project, {QJsonObject{{"op", "audio_stream"}, {"clips", QJsonArray{id}}, {"stream", 1}}}).value("ok").toBool());
+    ProjectData d;
+    QString error;
+    if (CHECK(ProjectFile::load(project, &d, &error) && !d.timeline.audio.isEmpty()))
+        CHECK(d.timeline.audio[0].clips.value(0).audioStream == 1 && d.timeline.audio[0].clips.value(0).sourceChannels.isEmpty());
+
+    // channels as numbers: format op and render
+    CHECK(ops(project, {QJsonObject{{"op", "format"}, {"channels", 8}}}).value("ok").toBool());
+    CHECK(cli({"info", project}).value("format").toObject().value("channels").toString() == "7.1");
+    CHECK(ops(project, {QJsonObject{{"op", "format"}, {"channels", 6}}}).value("ok").toBool());
+    CHECK(cli({"info", project}).value("format").toObject().value("channels").toString() == "5.1");
+    CHECK(!ops(project, {QJsonObject{{"op", "format"}, {"channels", 4}}}).value("ok").toBool());
+    const QString out = tmp.filePath("fix-num.flac");
+    const QJsonObject r = cli({"render", project, "--out", out, "--format", "flac", "--channels", "2"});
+    CHECK(r.value("channels").toString() == "stereo" && ffprobeAudio(out).value("channels").toInt() == 2);
+
+    // loudness: the 5.1 mix with a note, the stereo downmix when asked; check the same
+    const QString loud = tmp.filePath("loud.schneidi");
+    CHECK(cli({"new", loud, "--template", "neutral"}).value("ok").toBool());
+    CHECK(ops(loud, {QJsonObject{{"op", "format"}, {"channels", "5.1"}}, QJsonObject{{"op", "append"}, {"media", loud51}},
+                     QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", -1}}})
+              .value("ok").toBool());
+    const QJsonObject all = cli({"loudness", loud});
+    CHECK(all.value("channels").toString() == "5.1" && !all.value("note").toString().isEmpty());
+    const QJsonObject st = cli({"loudness", loud, "--channels", "stereo"});
+    CHECK(st.value("channels").toString() == "stereo" && st.value("note").toString().isEmpty());
+    const double tp = st.value("loudness").toObject().value("true_peak_db").toDouble(99);
+    if (!CHECK(tp < -0.5)) std::printf("       loudness stereo true peak %.2f\n", tp);
+    const QJsonObject chk = cli({"check", loud, "--channels", "stereo"});
+    CHECK(chk.value("sound").toObject().value("channels").toString() == "stereo");
+    CHECK(!cli({"loudness", loud, "--channels", "quad"}).value("ok").toBool());
+}
+
+// App: Project Settings shows and keeps the channels; the first clip's format keeps them too
+void testApp(const QTemporaryDir& tmp, const QString& video)
+{
+    ProjectFormat f51 = kFmt;
+    f51.audioChannels = 6;
+    {
+        ProjectSettingsDialog dlg(f51, false);
+        CHECK(dlg.format().audioChannels == 6 && dlg.format() == f51); // OK without changes = the same format
+        auto* box = dlg.findChild<QComboBox*>("audio_channels");
+        if (CHECK(box && box->count() == 3)) {
+            box->setCurrentIndex(box->findData(8));
+            CHECK(dlg.format().audioChannels == 8);
+            box->setCurrentIndex(box->findData(2));
+            CHECK(dlg.format().audioChannels == 2);
+        }
+    }
+    if (video.isEmpty()) return;
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    MainWindow w(&engine);
+    w.disableAutosave();
+    Project* p = w.liveProject();
+    p->setFormat(f51);
+    CHECK(p->format().audioChannels == 6);
+    w.importFiles({video}, true, true); // 640x360 at 30 fps: the project takes its format
+    QApplication::processEvents();
+    CHECK(p->format().width == 640 && p->format().rate == FrameRate({30, 1}));
+    if (!CHECK(p->format().audioChannels == 6)) std::printf("       Kanäle nach dem ersten Clip: %d\n", p->format().audioChannels);
+    (void)tmp;
+}
+
+// Waveform of a routed clip: only its channels
+void testWaveform(const QString& frontOnly)
+{
+    QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks").removeRecursively();
+    MediaCache cache;
+    cache.setFormat(kFmt);
+    auto get = [&](const QVector<int>& channels) {
+        QElapsedTimer t;
+        t.start();
+        std::shared_ptr<const Waveform> w = cache.waveform(frontOnly, 0, channels);
+        while ((!w || !w->complete) && t.elapsed() < 60000) {
+            QEventLoop loop;
+            QObject::connect(&cache, &MediaCache::updated, &loop, &QEventLoop::quit);
+            QTimer::singleShot(50, &loop, &QEventLoop::quit);
+            loop.exec();
+            w = cache.waveform(frontOnly, 0, channels);
+        }
+        int peak = 0;
+        if (w && w->complete && !w->levels.isEmpty())
+            for (quint8 v : w->levels[0]) peak = std::max(peak, int(v));
+        return w && w->complete ? peak : -1;
+    };
+    const int all = get({}), routed = get({2, 3}), front = get({0});
+    if (!CHECK(all > 50 && routed == 0 && front > 50)) std::printf("       Wellenform alle %d, 3/4 %d, 1 %d\n", all, routed, front);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -529,5 +766,35 @@ int main(int argc, char** argv)
     testLoudness(tone1k);
     testExport(tmp, stereo, five);
     testCli(tmp, quad);
+
+    // Review fixes
+    testFitRouting();
+    // 5.1: front pair and centre the same "voice" (a 300 Hz tone with a slow tremolo from 0.5 s), a click on LFE and
+    // the surrounds at 2 s
+    const QString voice = "0.3*sin(2*PI*300*t)*(0.6+0.4*sin(2*PI*3*t))*gt(t,0.5)";
+    const QString click = "if(eq(n,96000),0.8,0)";
+    const QString voice51 = Check::makeMedia(
+        tmp.filePath("voice51.wav"),
+        {"-f", "lavfi", "-i",
+         QString("aevalsrc=%1|%1|%1|%2|%2|%2:s=48000:d=4:c=5.1(side)").arg(voice, click).replace(",", "\\,"), // (filter commas)
+         "-c:a", "pcm_s16le"});
+    const QString loud51 = Check::makeMedia(
+        tmp.filePath("loud51.wav"),
+        {"-f", "lavfi", "-i", "aevalsrc=0.9*sin(2*PI*200*t)|0.9*sin(2*PI*200*t)|0.9*sin(2*PI*200*t)|0|0.9*sin(2*PI*200*t)|0.9*sin(2*PI*200*t):s=48000:d=2:c=5.1(side)",
+         "-c:a", "pcm_f32le"});
+    const QString frontOnly = Check::makeMedia(
+        tmp.filePath("front.wav"),
+        {"-f", "lavfi", "-i", "aevalsrc=0.5*sin(2*PI*300*t)|0.5*sin(2*PI*500*t)|0|0:s=48000:d=2:c=4.0", "-c:a", "pcm_s16le"});
+    const QString twoStreams = Check::makeMedia(
+        tmp.filePath("two.mkv"), {"-i", quad, "-i", stereo, "-map", "0:a", "-map", "1:a", "-c:a", "pcm_s16le"});
+    const QString video = Check::makeMedia(
+        tmp.filePath("v30.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=1", "-f", "lavfi", "-i",
+                                  "sine=d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+    if (CHECK(!voice51.isEmpty())) testVoiceClean51(voice51);
+    if (CHECK(!loud51.isEmpty())) testDownmixLimit(tmp, loud51);
+    testAlac(tmp, five);
+    if (CHECK(!frontOnly.isEmpty())) testWaveform(frontOnly);
+    if (CHECK(!twoStreams.isEmpty() && !loud51.isEmpty())) testCliFixes(tmp, twoStreams, loud51);
+    testApp(tmp, video);
     return Check::result();
 }

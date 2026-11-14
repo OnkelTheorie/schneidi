@@ -53,9 +53,10 @@ std::optional<ClipLevels> measureClips(const ProjectFormat& format, const Timeli
 // Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter); a 5.1/7.1
 // mix over all its channels (BS.1770 weights: surrounds +1.5 dB, LFE not counted), true peak over all channels.
 // framePeaks: also the sample peak of every frame like timelineFramePeaks, in the same pass (the check before export)
+// channels: 0 = the mix's own; 2 = the stereo downmix as an export in stereo writes it (limiter after the downmix)
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
                                          const std::function<bool(double)>& progress = {},
-                                         std::vector<float>* framePeaks = nullptr);
+                                         std::vector<float>* framePeaks = nullptr, int channels = 0);
 
 // The same for measuring one timeline several times (fader changes): the own engine opens a file in about a
 // millisecond and mixes each measurement afresh.
@@ -65,7 +66,7 @@ public:
     ~MixMeter();
     std::optional<Loudness> measure(const Timeline& timeline, int from, int to,
                                     const std::function<bool(double)>& progress = {},
-                                    std::vector<float>* framePeaks = nullptr);
+                                    std::vector<float>* framePeaks = nullptr, int channels = 0);
 
 private:
     ProjectFormat m_format;

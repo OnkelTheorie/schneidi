@@ -210,7 +210,53 @@ void freePackets(std::vector<AVPacket*>& packets)
 
 std::atomic<bool> g_failSoundBuffer{false}; // ExportWriter::failSoundBufferForTests
 
+// The layout the encoder gets for a mix of `channels` (the mix's order, core/ChannelLayout.h: FFmpeg's "5.1" with the
+// back pair, "7.1"): that one, or for 5.1 the encoder's "5.1(side)" (AC-3 names the same surround pair so: the samples
+// stay in place, only the label differs). Never a layout with another mapping (ALAC's "7.1(wide)" would turn the side
+// surrounds into a front-centre pair). Mono/stereo: else any of that count. false = the encoder lists layouts and has
+// none of these (out gets the wanted one anyway); true for encoders without a list (PCM, FLAC: any count).
+bool encoderLayout(const AVCodec* codec, int channels, AVChannelLayout* out)
+{
+    AVChannelLayout want{};
+    if (channels == 6) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_5POINT1_BACK);
+    else if (channels == 8) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_7POINT1);
+    else av_channel_layout_default(&want, channels);
+    AVChannelLayout side{};
+    av_channel_layout_from_mask(&side, AV_CH_LAYOUT_5POINT1);
+    const AVChannelLayout* layouts = nullptr;
+    int count = 0;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    const void* list = nullptr;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &list, &count) < 0) count = 0;
+    layouts = static_cast<const AVChannelLayout*>(list);
+#else
+    layouts = codec->ch_layouts;
+    while (layouts && layouts[count].nb_channels) ++count;
+#endif
+    const AVChannelLayout* pick = nullptr;
+    for (int i = 0; i < count && !pick; ++i)
+        if (av_channel_layout_compare(&layouts[i], &want) == 0) pick = &layouts[i];
+    for (int i = 0; channels == 6 && i < count && !pick; ++i)
+        if (av_channel_layout_compare(&layouts[i], &side) == 0) pick = &layouts[i];
+    for (int i = 0; channels <= 2 && i < count && !pick; ++i)
+        if (layouts[i].nb_channels == channels) pick = &layouts[i];
+    av_channel_layout_copy(out, pick ? pick : &want);
+    av_channel_layout_uninit(&want);
+    av_channel_layout_uninit(&side);
+    return pick || !layouts || count == 0;
+}
+
 } // namespace
+
+bool ExportWriter::writesChannels(const QString& audioCodec, int channels)
+{
+    const AVCodec* codec = avcodec_find_encoder_by_name(audioCodec.toUtf8().constData());
+    if (!codec) return false;
+    AVChannelLayout l{};
+    const bool ok = encoderLayout(codec, channels, &l);
+    av_channel_layout_uninit(&l);
+    return ok;
+}
 
 bool ExportWriter::containerTakes(const QString& path, const QString& muxer, const QString& videoCodec,
                                   const QString& audioCodec, QString* why)
@@ -1547,33 +1593,12 @@ struct ExportWriter::Impl {
         return true;
     }
 
-    // Channel layout of the audio encoder: the mix's order (core/ChannelLayout.h: FFmpeg's "5.1" with the back pair,
-    // "7.1"). An encoder that has another layout of that many channels gets it (AC-3 names the same pair "side"); the
-    // samples stay in place, only the label differs.
+    // Channel layout of the audio encoder: the mix's order (encoderLayout); the exporter has already downmixed what
+    // the encoder cannot write with that mapping
     void setEncoderLayout(const AVCodec* codec, int channels)
     {
         av_channel_layout_uninit(&aenc->ch_layout);
-        AVChannelLayout want{};
-        if (channels == 6) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_5POINT1_BACK);
-        else if (channels == 8) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_7POINT1);
-        else av_channel_layout_default(&want, channels);
-        const AVChannelLayout* layouts = nullptr;
-        int count = 0;
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
-        const void* list = nullptr;
-        if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &list, &count) < 0) count = 0;
-        layouts = static_cast<const AVChannelLayout*>(list);
-#else
-        layouts = codec->ch_layouts;
-        while (layouts && layouts[count].nb_channels) ++count;
-#endif
-        const AVChannelLayout* pick = nullptr;
-        for (int i = 0; i < count && !pick; ++i)
-            if (av_channel_layout_compare(&layouts[i], &want) == 0) pick = &layouts[i];
-        for (int i = 0; i < count && !pick; ++i)
-            if (layouts[i].nb_channels == channels) pick = &layouts[i];
-        av_channel_layout_copy(&aenc->ch_layout, pick ? pick : &want);
-        av_channel_layout_uninit(&want);
+        encoderLayout(codec, channels, &aenc->ch_layout);
     }
 
     bool writeHeader()

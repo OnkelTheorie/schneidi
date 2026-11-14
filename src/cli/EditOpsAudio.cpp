@@ -74,7 +74,10 @@ void opAudioStream(Session& s, const QJsonObject& op)
             fail("BAD_ARGUMENT", QString("clip %1 has %2 audio stream(s); stream counts from 0").arg(id).arg(m ? m->audioStreamCount() : 0));
         requirePlayableStream(*m, stream);
     }
-    s.editor.modifyClips(ids, "Audio stream", [stream](Clip& c) { c.audioStream = stream; });
+    s.editor.modifyClips(ids, "Audio stream", [&s, stream](Clip& c) {
+        c.audioStream = stream;
+        if (const MediaInfo* m = s.project.mediaInfo(c.mediaPath)) fitSourceChannels(c, *m);
+    });
 }
 
 // Channel routing: which channels of their stream the clips play (Clip::sourceChannels), e.g. a wireless microphone on

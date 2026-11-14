@@ -741,8 +741,8 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         const ClipFormat cf = detectClipFormat(path);
         if (!cf.ok) return;
         const ProjectFormat cur = m_project->format();
-        // A fixed resolution or frame rate (start template, Project Settings) stays as it is
-        ProjectFormat want;
+        // A fixed resolution or frame rate (start template, Project Settings) stays as it is; so do the sound channels
+        ProjectFormat want = cur;
         want.width = fixedSize ? cur.width : cf.width;
         want.height = fixedSize ? cur.height : cf.height;
         want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;

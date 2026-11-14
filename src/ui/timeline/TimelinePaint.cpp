@@ -872,7 +872,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
                                 const QVector<TimelineOps::TransitionSpan>& spans, const QColor& color)
 {
     if (!m_cache) return;
-    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream);
+    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream, c.sourceChannels);
     if (!wave || wave->levels.isEmpty()) return;
 
     constexpr int N = Waveform::kBucketsPerFrame;

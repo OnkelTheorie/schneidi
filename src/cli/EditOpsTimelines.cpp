@@ -209,7 +209,7 @@ void opFormat(Session& s, const QJsonObject& op)
                      .arg(others.join(", ")));
     }
     if (op.contains("channels")) {
-        const int n = ChannelLayout::parse(op.value("channels").toString());
+        const int n = ChannelLayout::parse(op.value("channels").toVariant().toString()); // "5.1" or 6
         if (n == 0) fail("BAD_ARGUMENT", "channels must be stereo, 5.1 or 7.1");
         f.audioChannels = n;
     }

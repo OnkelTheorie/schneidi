@@ -1422,6 +1422,10 @@ const QVector<Command>& commands()
           {"to", T::Time, "for a project: end of the range"},
           {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A1,A2\" or by name \"Mikrofon\" (track or audio stream name)"},
           {"clips", T::Times, "for a project: measure these clips (ids) one by one instead of the mix"},
+          {"channels", T::String, "for a project: the channel format to measure, like render's channels: project "
+                                  "(default: the mix's own; a 5.1/7.1 mix over all its channels, with a note), stereo "
+                                  "(what a stereo export - MP3, render --channels stereo - writes: the downmix, "
+                                  "limited after downmixing), 5.1 or 7.1"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
          cmdLoudness},
         {"check", "Check before export or before handing a video over: what typically goes wrong. A project "
@@ -1485,6 +1489,9 @@ const QVector<Command>& commands()
           {"for", T::String, "the platform the video is for: shorts, reels or tiktok - also too_long (longer than "
                              "the platform takes as a short: Shorts and Reels 3 min, TikTok 10 min) and its loudness "
                              "target"},
+          {"channels", T::String, "project: the channel format the sound checks measure, like render's channels: "
+                                  "project (default: the mix's own), stereo (a 5.1/7.1 mix as a stereo export writes "
+                                  "it - MP3, render --channels stereo), 5.1 or 7.1"},
           {"sound", T::Boolean, "measure the sound (default true; false = no mixing: no sound and no under_music "
                                 "checks)"},
           {"max_still_s", T::Number, "pace: seconds without a change that count as too still (default 3)"},

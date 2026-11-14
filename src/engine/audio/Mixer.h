@@ -49,6 +49,11 @@ public:
         std::function<int(const QString& path)> fileLength;
         // Short ramps at hard cuts against clicks; off to measure the plain source of a clip (analyses)
         bool declick = true;
+        // Export: with outputChannels below the mix's (a 5.1/7.1 mix written as stereo or mono), the master limiter
+        // runs on the downmix instead of the mix, so what is written stays under its ceiling (the downmix sums the
+        // centre and the surrounds into the front pair and could go over it). Off (the monitor): the limiter works on
+        // the mix as before, the downmix comes after it. lastMix() stays empty then.
+        bool limitOutput = false;
     };
 
     Mixer(const Timeline& timeline, FrameRate fps, const Options& options);
