@@ -206,6 +206,18 @@ void testCli(const QTemporaryDir& tmp, const QString& quad)
     // Too many channels / a channel the file lacks: refused
     CHECK(!ops(project, {QJsonObject{{"op", "route"}, {"clips", QJsonArray{id}}, {"channels", QJsonArray{1, 2, 3}}}}).value("ok").toBool());
     CHECK(!ops(project, {QJsonObject{{"op", "route"}, {"clips", QJsonArray{id}}, {"channels", 5}}}).value("ok").toBool());
+    // Copies onto one track that would overlap each other (A1's clip and its copy on "Funk" lie at the same time):
+    // refused, nothing changed
+    {
+        QJsonArray both;
+        for (const QJsonValue& t : cli({"info", project}).value("timeline").toObject().value("tracks").toArray())
+            for (const QJsonValue& c : t.toObject().value("clips").toArray()) both << c.toObject().value("id").toInt(); // (audio only)
+        CHECK_EQ(int(both.size()), 2);
+        const int tracksBefore = int(cli({"info", project}).value("timeline").toObject().value("tracks").toArray().size());
+        const QJsonObject r = ops(project, {QJsonObject{{"op", "route"}, {"clips", both}, {"channels", "1-2"}, {"track", "new"}}});
+        CHECK(!r.value("ok").toBool() && QJsonDocument(r).toJson().contains("overlap"));
+        CHECK_EQ(int(cli({"info", project}).value("timeline").toObject().value("tracks").toArray().size()), tracksBefore);
+    }
     // 5.1 and the panner
     CHECK(ops(project, {QJsonObject{{"op", "format"}, {"channels", "5.1"}},
                         QJsonObject{{"op", "mixer"}, {"track", "A1"}, {"depth", 100}, {"lfe_db", -6}}}).value("ok").toBool());

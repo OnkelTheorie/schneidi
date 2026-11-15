@@ -156,6 +156,16 @@ void opRoute(Session& s, const QJsonObject& op)
                                        .arg(trackName({TrackKind::Audio, track})).arg(id).arg(tc(c.start, s.format())));
         }
     }
+    // The copies land on one track: they must not overlap each other either (clips of A1 and A2 at the same time)
+    for (int i = 0; i < ids.size(); ++i)
+        for (int j = i + 1; j < ids.size(); ++j) {
+            const Clip& a = *TimelineOps::findClip(tl, ids[i]);
+            const Clip& b = *TimelineOps::findClip(tl, ids[j]);
+            if (a.start < b.end() && b.start < a.end())
+                fail("FAILED", QString("clips %1 and %2 overlap in time (%3): their copies cannot share one track; route "
+                                       "them one at a time onto different tracks")
+                                   .arg(ids[i]).arg(ids[j]).arg(tc(std::max(a.start, b.start), s.format())));
+        }
     const QString name = op.value("name").toString().trimmed();
     QVector<int> made;
     s.project.edit(T("Kanäle auf eigene Spur"), [&](Timeline& t) {
