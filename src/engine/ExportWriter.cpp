@@ -1308,8 +1308,8 @@ struct ExportWriter::Impl {
         par->color_range = c.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
         par->field_order = AV_FIELD_PROGRESSIVE;
         par->sample_aspect_ratio = aspect;
-        // Pictures shown after a later-decoded one (B pictures: 1, the dts shift writeOwn uses; 0 = decode order =
-        // picture order). MP4/MOV get their ctts and edit list from pts != dts, Matroska its BlockGroups
+        // Pictures shown after a later-decoded one (the dts shift writeOwn uses: B pictures 1, B pyramid 2; 0 =
+        // decode order = picture order). MP4/MOV get their ctts and edit list from pts != dts, Matroska its BlockGroups
         par->video_delay = ownEnc->reorderDelay();
         // Level as the encoder writes it into the SPS; the profile from the SPS (after its start code and NAL header)
         par->level = schneidi::h264::levelIdcFor(c);
@@ -1331,8 +1331,9 @@ struct ExportWriter::Impl {
 
     // Own encoder: one access unit (Annex B, one picture) into the muxer, in coding order. pts = the picture's place in
     // display order (lastDisplayIndex), dts = the access unit's number minus the encoder's reorder delay (B pictures:
-    // the reference picture after a run is decoded one frame time before the first B picture of the run is shown;
-    // without B pictures pts = dts = the number). The first dts is -1 with B pictures: MP4/MOV write an edit list,
+    // the reference picture after a run is decoded one frame time before the first B picture of the run is shown, with
+    // the B pyramid two, as the middle B reference comes before its outer B pictures; without B pictures pts = dts =
+    // the number). The first dts is -reorderDelay() with B pictures: MP4/MOV write an edit list,
     // Matroska shifts every stream by the same amount (avoid_negative_ts), so sound and picture stay together.
     bool writeOwn(const std::vector<uint8_t>& au)
     {

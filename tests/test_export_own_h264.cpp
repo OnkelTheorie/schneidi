@@ -322,8 +322,9 @@ void testContainers(const QString& dir)
     }
 }
 
-// B pictures (the encoder's default, adaptive): access units come in coding order, the writer takes pts from the
-// encoder's display index and dts from the access unit count minus its reorder delay. In MP4 and MKV: dts strictly
+// B pictures (the encoder's default, adaptive; with bframes=3 short runs as a B pyramid): access units come in coding
+// order, the writer takes pts from the encoder's display index and dts from the access unit count minus its reorder
+// delay (2 with the pyramid). In MP4 and MKV: dts strictly
 // rising (MP4; Matroska stores no dts, FFmpeg guesses them: never falling), every picture's pts once (one frame
 // apart in display order), pts never before dts, B pictures really there, the right length, clean decoding, sound and
 // picture start apart by the same amount as in the reference export (x264 where built in, else the own encoder
@@ -350,14 +351,18 @@ void testBFrames(const QString& dir)
         std::printf("  reference %s (%s): video starts %.4f s, audio %.4f s\n", ext, qPrintable(s.videoCodec), pk.videoStart,
                     pk.audioStart);
     }
-    for (const bool withB : {true, false})
+    // 0 = the default (runs of up to 8 B pictures here: longer than the pyramid's 4, so plain runs), 1 = runs of at most
+    // 3 (bframes=3): B pyramid, the middle B picture decoded before its outer ones, 2 = no B pictures
+    for (const int variant : {0, 1, 2})
         for (const char* name : {"b.mp4", "b.mkv"}) {
-            const QString path = dir + "/" + (withB ? "" : "nob-") + name;
+            const bool withB = variant != 2, pyramid = variant == 1;
+            const QString path = dir + "/" + QStringList{"", "pyr-", "nob-"}[variant] + name;
             const bool mkv = QString(name).endsWith("mkv");
             Timeline tl = timeline(g_media);
             tl.video[0].clips[0].mediaPath = g_zoom;
             ExportSettings s = settings(path);
             if (!withB) s.codecOptions << "bframes=0";
+            if (pyramid) s.codecOptions << "bframes=3";
             if (!CHECK(render(tl, s))) continue;
             {
                 QProcess md5;
@@ -372,15 +377,19 @@ void testBFrames(const QString& dir)
             const Packets pk = packets(path);
             if (!CHECK_EQ(int(pk.pts.size()), kFrames) || !CHECK(pk.timeBase > 0)) continue;
             const qint64 step = std::llround(1.0 / 25 / pk.timeBase); // one frame in the stream's time base
-            bool rising = true, shownAfterDecode = true, reordered = false;
+            bool rising = true, shownAfterDecode = true, reordered = false, pyramidOrder = false;
             for (int i = 0; i < pk.dts.size(); ++i) {
                 if (i > 0 && (mkv ? pk.dts[i] < pk.dts[i - 1] : pk.dts[i] <= pk.dts[i - 1])) rising = false;
                 if (pk.pts[i] < pk.dts[i]) shownAfterDecode = false;
                 if (pk.pts[i] != pk.dts[i] + (pk.pts[0] - pk.dts[0])) reordered = true;
+                // Two pictures in a row decoded before an earlier-shown one (P4 B2 B1): only the pyramid does that,
+                // plain runs fall once (P9 B1 B2 ...). Needs the reorder delay 2 or B1 would be shown before decoded
+                if (i >= 2 && pk.pts[i - 2] > pk.pts[i - 1] && pk.pts[i - 1] > pk.pts[i]) pyramidOrder = true;
             }
             if (!CHECK(rising)) qDebug() << path << "dts" << pk.dts;
-            CHECK(shownAfterDecode);
+            if (!CHECK(shownAfterDecode)) qDebug() << path << "pts" << pk.pts << "dts" << pk.dts;
             CHECK_EQ(reordered, withB);
+            if (!CHECK_EQ(pyramidOrder, pyramid)) qDebug() << path << "pts" << pk.pts.mid(0, 20) << types.left(30);
             QVector<qint64> sorted = pk.pts;
             std::sort(sorted.begin(), sorted.end());
             bool steps = true;
@@ -388,6 +397,9 @@ void testBFrames(const QString& dir)
                 if (std::llabs(sorted[i] - sorted[i - 1] - step) > 1) steps = false; // (MKV: milliseconds, rounded)
             if (!CHECK(steps)) qDebug() << path << "pts" << sorted;
             const QJsonObject v = probe(path);
+            // The stream says how far pictures are reordered (SPS max_num_reorder_frames = the writer's dts shift): 2
+            // whenever the pyramid may be used (bframes >= 3, also where the runs come out too long for it), else 0
+            CHECK_EQ(v.value("has_b_frames").toInt(-1), withB ? 2 : 0);
             const double duration = v.value("format_duration").toString().toDouble();
             if (!CHECK(std::abs(duration - kFrames / 25.0) < 0.1)) std::printf("       %s: %.3f s\n", qPrintable(path), duration);
             const QString errors = decodeErrors(path);
