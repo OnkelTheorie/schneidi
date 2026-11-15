@@ -805,10 +805,12 @@ static const bool kBProbeOneWay = std::getenv("H264_BPROBE_ONEWAY") && std::atoi
 static const bool kBProbeLongClear = !std::getenv("H264_BPROBE_LONGCLEAR") || std::atoi(std::getenv("H264_BPROBE_LONGCLEAR")) != 0;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
-// B pictures from a gain of 3 % on (15 % until 15.11.2026: the B pictures did not pay on moving
-// material then). Measured gains: slow zoom -0.3 .. -0.6, moving phases of a calm game scene
-// -0.08 .. -0.3, a pan -0.04 .. -0.2, camera footage -0.05 .. -0.06, action -0.02 .. +0.5.
-static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.03;
+// B pictures from a gain of 4.5 % on (15 % until 15.11.2026: the B pictures did not pay on moving
+// material then). Measured gains (probe with B QP +2): slow zoom -0.3 .. -0.6, moving phases of a
+// calm game scene -0.09 .. -0.3, a pan -0.055 .. -0.25, camera footage -0.05 .. -0.06, action
+// -0.04 .. +0.5. The pan with the crosshair trail (-0.055) and the calmest start of an action clip
+// (-0.037) lie close together: the threshold sits between them.
+static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.045;
 
 namespace {
 
@@ -939,6 +941,7 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         c.weightedPred = false;
         c.aqStrength = 1.0; // the probe's threshold was measured with these
         c.psyRd = 0.0;
+        c.bQpOffsetShort = 2; // B pictures as cheap as they can be: at the P pictures' QP their gain hardly shows
         Encoder e(c);
         bits = ssd = 0;
         auto take = [&](const std::vector<uint8_t>& au) {

@@ -96,7 +96,10 @@ struct EncoderConfig {
     // or set bframes = 0.
     int bframes = 8;
     int bQpOffset = 2;     // QP of a B picture above the P QP
-    int bQpOffsetShort = 1; // the same in runs of up to four B pictures (never more than bQpOffset)
+    // The same in runs of up to four B pictures (never more than bQpOffset). Their P pictures have
+    // the tree's full strength; with +2 on top the B pictures fall 1.1 dB below them in a pan (a
+    // flicker at a quarter of the frame rate), with 0 it is 0.8 dB at the same BD-rate.
+    int bQpOffsetShort = 0;
     // Places B pictures only where they pay (BProbe: a few pictures coded with and without them;
     // with a first pass over the whole clip, which must then have been made with at least this
     // many bframes). false = runs of bframes B pictures everywhere.
