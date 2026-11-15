@@ -723,11 +723,15 @@ int main()
     }
     // B pictures (CABAC only): coding order, display order and timestamps, every picture bit-exact
     if (gCabac) {
-        for (int bframes : {1, 2, 3}) {
+        for (int bframes : {1, 2, 3, 4}) { // 4 = 3 with the B pyramid
+            const bool pyramid = bframes == 4;
+            if (pyramid)
+                bframes = 3;
             for (int threads : {1, 3}) {
                 EncoderConfig c = config(176, 144, IntraMode::Auto, 30, threads);
                 c.bframes = bframes;
                 c.bAdaptive = false;
+                c.bPyramid = pyramid;
                 StreamInfo info;
                 size_t bytes = 0;
                 CHECK(roundTrip(c, 14, &bytes, -1, nullptr, &info));
@@ -741,7 +745,8 @@ int main()
                 int before = -1, after = 0, lastB = -1;
                 for (size_t i = 1; orderOk && i < info.order.size(); ++i) {
                     if (info.types[i] == 'B') {
-                        orderOk = info.order[i] > std::max(before, lastB) && info.order[i] < after;
+                        // B pyramid: the middle B picture of a run comes first, the others ascend around it.
+                        orderOk = info.order[i] > (pyramid ? before : std::max(before, lastB)) && info.order[i] < after;
                         lastB = info.order[i];
                     } else {
                         orderOk = info.order[i] > after;
@@ -751,15 +756,21 @@ int main()
                     }
                 }
                 CHECK(orderOk);
+                if (pyramid) {
+                    const std::vector<int> expectOrder = {0, 4, 2, 1, 3, 8, 6, 5, 7, 12, 10, 9, 11, 13};
+                    CHECK(info.order == expectOrder);
+                }
                 if (info.minPsnrY < 30.0)
                     std::fprintf(stderr, "bframes %d: PSNR-Y %.2f dB\n", bframes, info.minPsnrY);
                 CHECK(info.minPsnrY >= 30.0);
                 // The same stream with any thread count.
-                static size_t bytesOne[4] = {};
+                static size_t bytesOne[5] = {};
                 if (threads == 1)
-                    bytesOne[bframes] = bytes;
-                CHECK(bytes == bytesOne[bframes]);
+                    bytesOne[bframes + pyramid] = bytes;
+                CHECK(bytes == bytesOne[bframes + pyramid]);
             }
+            if (pyramid)
+                break;
         }
         {
             // Smaller than without B pictures at the same QP on this (easy) material: with fixed runs. Placed
@@ -900,7 +911,7 @@ int main()
         {
             // Placement: a slow zoom gets runs of B pictures (the probe finds them worth it, the lookahead costs
             // pick the runs; one pass and from a first pass with the same plan) and is smaller with them at the
-            // same QP. A still picture gets none: nothing is coded there with or without them.
+            // same QP.
             gSynthKind = 2;
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
             size_t plain = 0, withB = 0;
@@ -915,11 +926,19 @@ int main()
             CHECK(withB < plain);
             {
                 gSynthKind = 1;
+                // A still picture: the probe has nothing to measure. Since 15.11.2026 it then gets runs of
+                // three (with the pyramid they gain a little on screen recordings and the standing phases
+                // of game clips; before: none). They must not cost anything here.
                 StreamInfo still;
-                CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &still));
-                if (still.types.find('B') != std::string::npos)
-                    std::fprintf(stderr, "still picture: types %s\n", still.types.c_str());
-                CHECK(still.types.find('B') == std::string::npos);
+                size_t stillB = 0, stillPlain = 0;
+                CHECK(roundTrip(c, 24, &stillB, -1, nullptr, &still));
+                EncoderConfig noB = c;
+                noB.bframes = 0;
+                CHECK(roundTrip(noB, 24, &stillPlain));
+                if (still.types != "IPBBBPBBBPBBBPBBBPBBBPBB" || stillB > stillPlain + 64)
+                    std::fprintf(stderr, "still picture: types %s, %zu bytes, without B %zu\n", still.types.c_str(), stillB, stillPlain);
+                CHECK(still.types == "IPBBBPBBBPBBBPBBBPBBBPBB");
+                CHECK(stillB <= stillPlain + 64);
                 gSynthKind = 2;
             }
             FirstPass fp(c.width, c.height, 2, c.bframes);
