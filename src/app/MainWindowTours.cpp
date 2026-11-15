@@ -14,6 +14,7 @@
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
 #include "ui/studio/StudioPage.h"
+#include "ui/studio/StudioTracks.h"
 #include "engine/Engine.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
@@ -552,6 +553,9 @@ void MainWindow::enterTourMode(const Tour& tour)
     s.compClip = m_compPage ? m_compPage->clip() : 0;
     s.clipboards = m_editor->clipboards();
     s.views = s.data.views;
+    if (m_studioPage) s.studioView = QPointF(m_studioPage->tracks()->view().pxPerFrame, m_studioPage->tracks()->view().leftFrame);
+    s.studioSized = m_studioSized;
+    s.studioSideSizes = m_page == Page::Studio && m_studioPage ? m_studioPage->side()->sizes() : m_studioSideSizes;
 
     // The tour's layout: the default panels at their default sizes, every page reachable (the settings stay as they are)
     setViewerLarge(false);
@@ -569,6 +573,7 @@ void MainWindow::enterTourMode(const Tour& tour)
                         "set aside); try again once the user ended it";
     updateLiveWaiting();
     m_project->setHistoryAside(true); // the user's undo history waits untouched; the practice project gets its own
+    m_studioSized = false;            // the Studio page at its defaults (the user's sizes come back at the end)
     m_tourSwap = true;
     buildPracticeProject(tour.practice);
     m_tourSwap = false;
@@ -658,12 +663,18 @@ void MainWindow::leaveTourMode()
     m_tourSaved.active = false;
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     m_tourSwap = true; // the page as it was: no page entry moves the user's playhead or changes the Comp clip
+    m_studioSized = false; // the user's sizes (saved ones, else the defaults), then the ones kept aside below
     showPage(s.page);
     m_tourSwap = false;
     if (m_compPage) m_compPage->setClip(s.compClip);
     updatePageButtons();
     for (const auto& [sp, sizes] : s.sizes)
         if (sp && sp->count() == sizes.size()) sp->setSizes(sizes);
+    // The Studio page as the user had it (the sizes above), kept from now on as before the tour
+    if (m_studioPage && s.studioSized) {
+        m_studioSized = true;
+        m_studioSideSizes = s.studioSideSizes;
+    }
     if (s.large) setViewerLarge(true);
     if (!isMaximized() && !isFullScreen() && s.window.isValid() && size() != s.window) resize(s.window);
     m_timeline->view()->setTool(TimelineView::Tool(s.tool)); // the user's tool, whatever the steps chose
