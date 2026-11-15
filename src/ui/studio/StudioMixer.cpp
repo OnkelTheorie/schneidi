@@ -243,6 +243,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_dragging) return;
+        if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dy = e->position().y() - m_lastY;
         m_lastY = e->position().y();
         const double h = std::max(1, bottom() - top());
@@ -251,11 +252,11 @@ protected:
         if (std::abs(db) < 0.4) db = 0; // 0 dB snaps
         change(db);
     }
-    void mouseReleaseEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
+    void hideEvent(QHideEvent* e) override
     {
-        if (!m_dragging) return;
-        m_dragging = false;
-        if (onFinish) onFinish();
+        QWidget::hideEvent(e);
+        endDrag(); // hidden mid-drag (another page): the drag ends as on a release, its undo step closed
     }
     void mouseDoubleClickEvent(QMouseEvent*) override
     {
@@ -264,6 +265,12 @@ protected:
     }
 
 private:
+    void endDrag()
+    {
+        if (!m_dragging) return;
+        m_dragging = false;
+        if (onFinish) onFinish();
+    }
     double posY() const { return bottom() - VolumeDraw::posOf(m_db) * (bottom() - top()); }
     void jumpTo(double y) { change(VolumeDraw::dbAt(double(bottom() - y) / std::max(1, bottom() - top()))); }
     void change(double db)
@@ -326,14 +333,16 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_drag) return;
+        if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dx = e->position().x() - m_lastX;
         m_lastX = e->position().x();
         set(m_v + dx / std::max(1, width() / 2) * 100 * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
     }
-    void mouseReleaseEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
+    void hideEvent(QHideEvent* e) override
     {
-        if (m_drag && onFinish) onFinish();
-        m_drag = false;
+        QWidget::hideEvent(e);
+        endDrag(); // hidden mid-drag (another page): the drag ends as on a release
     }
     void mouseDoubleClickEvent(QMouseEvent*) override
     {
@@ -342,6 +351,12 @@ protected:
     }
 
 private:
+    void endDrag()
+    {
+        if (!m_drag) return;
+        m_drag = false;
+        if (onFinish) onFinish();
+    }
     void set(double v)
     {
         v = std::clamp(v, -100.0, 100.0);
@@ -401,14 +416,16 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_drag) return;
+        if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dx = e->position().x() - m_lastX;
         m_lastX = e->position().x();
         set(m_v + dx / std::max(1, width()) * (m_hi - m_lo) * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
     }
-    void mouseReleaseEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
+    void hideEvent(QHideEvent* e) override
     {
-        if (m_drag && onFinish) onFinish();
-        m_drag = false;
+        QWidget::hideEvent(e);
+        endDrag(); // hidden mid-drag (another page): the drag ends as on a release
     }
     void mouseDoubleClickEvent(QMouseEvent*) override
     {
@@ -417,6 +434,12 @@ protected:
     }
 
 private:
+    void endDrag()
+    {
+        if (!m_drag) return;
+        m_drag = false;
+        if (onFinish) onFinish();
+    }
     void set(double v)
     {
         v = std::clamp(v, m_lo, m_hi);

@@ -891,6 +891,8 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
 {
     const QPoint pos = e->position().toPoint();
     m_hover = pos;
+    // A drag whose release went elsewhere (the page changed under the mouse): it ends here as on a release
+    if (m_drag != Drag::None && !(e->buttons() & Qt::LeftButton)) endDrag(pos, false);
     if (m_drag == Drag::Scrub) {
         emit seekRequested(std::max(0, int(std::lround(frameAt(std::max(kHeaderW, pos.x()))))));
     } else if (m_drag == Drag::Pen) {
@@ -921,8 +923,19 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
 void StudioTracks::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return QWidget::mouseReleaseEvent(e);
+    endDrag(e->position().toPoint(), true);
+}
+
+void StudioTracks::hideEvent(QHideEvent* e)
+{
+    QWidget::hideEvent(e);
+    endDrag({}, false); // hidden mid-drag (another page): ends as on a release (the stroke so far, the merge closed)
+}
+
+void StudioTracks::endDrag(const QPoint& pos, bool addPoint)
+{
     if (m_drag == Drag::Pen) {
-        addPenPoint(e->position().toPoint());
+        if (addPoint) addPenPoint(pos);
         const QVector<VolumeDraw::Point> stroke = std::exchange(m_stroke, {});
         m_drag = Drag::None;
         // One undo step per stroke; a click without dragging (or a stroke straight up and down) changes nothing

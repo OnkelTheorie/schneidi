@@ -98,6 +98,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
+    void hideEvent(QHideEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void leaveEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
@@ -121,6 +122,9 @@ private:
     double valueAtY(int track, int y) const;
     QString valueText(double v) const;
     void addPenPoint(const QPoint& pos);
+    // The drag ends (a release; also a move without the button or the lanes hidden mid-drag): the pen's stroke
+    // becomes one undo step (addPoint: the release point too), a dragged point's merge closes
+    void endDrag(const QPoint& pos, bool addPoint);
     void paintPart(class QPainter& p); // what lies in m_dirty
     void drawRuler(class QPainter& p);
     void drawLane(class QPainter& p, int track);

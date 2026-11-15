@@ -1314,6 +1314,77 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         settle();
         while (undo->index() > at) undo->undo();
     }
+
+    // (2) A drag whose release never arrives (the page changed under the mouse) ends: a move without the button, or
+    // the page hidden, ends it like a release - nothing moves afterwards, the next drag is its own undo step
+    {
+        page->findChild<QToolButton*>("studio_tool_points")->click();
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const int y0 = body.bottom() - int(std::lround(VolumeDraw::posOf(0) * (body.height() - 1)));
+        const QPoint on(int(tracks->xOf(100)), y0);
+        for (int how = 0; how < 2; ++how) {
+            const int at = undo->index();
+            mouse(tracks, QEvent::MouseButtonPress, on, Qt::LeftButton);
+            settle();
+            if (!CHECK_EQ(undo->index(), at + 1)) break; // the point set
+            if (how == 0) {
+                mouse(tracks, QEvent::MouseMove, on - QPoint(0, 30), Qt::NoButton);
+            } else {
+                w.showPage(Page::Edit);
+                settle();
+                w.showPage(Page::Studio);
+                settle();
+            }
+            mouse(tracks, QEvent::MouseMove, on - QPoint(0, 40), Qt::LeftButton);
+            settle();
+            const AutoCurve& a = p->timeline().audio[0].volumeAuto;
+            Check::report(a.size() == 1 && std::abs(Automation::levelAt(p->timeline().audio[0], 100)) < 0.01,
+                          how == 0 ? "a move without the button ends the point drag" : "hiding ends the point drag",
+                          __FILE__, __LINE__, QString::number(Automation::levelAt(p->timeline().audio[0], 100)));
+            CHECK_EQ(undo->index(), at + 1);
+            mouse(tracks, QEvent::MouseButtonRelease, on - QPoint(0, 40), Qt::NoButton);
+            while (undo->index() > at) undo->undo();
+        }
+        // The mixer's fader and pan bar: hidden mid-drag (they have no mouse tracking, so a move without the button
+        // never reaches them) - the drag ends, its undo step closed
+        QWidget* pan = mixer->findChild<QWidget*>("studio_pan_A1");
+        if (CHECK(pan)) {
+            for (QWidget* control : {faderA1, pan}) {
+                for (int how = 1; how < 2; ++how) {
+                    const bool vertical = control == faderA1;
+                    const QPoint c(vertical ? control->width() * 3 / 4 : control->width() / 2, control->height() / 2);
+                    const QPoint step = vertical ? QPoint(0, -10) : QPoint(10, 0);
+                    const Track before = p->timeline().audio[0];
+                    mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                    mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                    settle();
+                    const int at = undo->index();
+                    const double moved = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                    CHECK(moved != (vertical ? before.volumeDb : before.pan));
+                    if (how == 0) {
+                        mouse(control, QEvent::MouseMove, c + 2 * step, Qt::NoButton);
+                    } else {
+                        w.showPage(Page::Edit);
+                        settle();
+                        w.showPage(Page::Studio);
+                        settle();
+                    }
+                    mouse(control, QEvent::MouseMove, c + 4 * step, Qt::LeftButton);
+                    settle();
+                    const double now = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                    Check::report(now == moved, vertical ? "fader drag ended" : "pan drag ended", __FILE__, __LINE__,
+                                  QString("%1 -> %2 (%3)").arg(moved).arg(now).arg(how));
+                    // The merge is closed: the next drag (same merge key) is a step of its own
+                    mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                    mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                    mouse(control, QEvent::MouseButtonRelease, c + step, Qt::NoButton);
+                    settle();
+                    CHECK_EQ(undo->index(), at + 1);
+                    while (undo->index() > at - 1) undo->undo();
+                }
+            }
+        }
+    }
 }
 
 } // namespace
