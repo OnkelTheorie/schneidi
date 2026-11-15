@@ -787,6 +787,12 @@ static const double kBProbeChange = std::getenv("H264_BPROBE_CHANGE") ? std::ato
 static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::getenv("H264_BPROBE_GAP")) : 30;
 // Nothing to measure (next to nothing is coded: a still picture, a desktop, the player standing):
 // runs of the short length (1, default) or no B pictures (0, as before 15.11.2026).
+// Adaptive placement: the first pictures after the clip's first one are P pictures. The rate
+// control's model starts from a probe that misses by up to 2x and settles on the first P pictures;
+// with B pictures from the start the plain P pictures of the rest of the clip keep that seed for as
+// long as the B pictures last (measured on a game clip: QP 34 instead of 37.5 for 70 pictures, then
+// 39 for the rest). 0 = none.
+static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
 static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
@@ -1527,6 +1533,8 @@ int Encoder::gateAt(int index) const
 {
     if (!kBProbe)
         return cfg_.bframes;
+    if (index <= kBWarmup)
+        return 0;
     for (size_t i = gate_.size(); i-- > 0;)
         if (gate_[i].first <= index)
             return gate_[i].second;
@@ -1632,7 +1640,11 @@ void Encoder::planFromStats()
         const int len = int(e - i);
         // Runs of B pictures, each ended by a P picture; the last picture before a keyframe is P.
         // Adaptive: only where the probe found them worth it.
-        auto gate = [&](size_t k) { return !adapt || !kBProbe || k >= st.bGate.size() ? cfg_.bframes : std::min<int>(cfg_.bframes, st.bGate[k]); };
+        auto gate = [&](size_t k) {
+            if (adapt && kBProbe && int(k) <= kBWarmup)
+                return 0;
+            return !adapt || !kBProbe || k >= st.bGate.size() ? cfg_.bframes : std::min<int>(cfg_.bframes, st.bGate[k]);
+        };
         std::vector<uint8_t> types(size_t(len) + 1, 1);
         for (int t = 1, run = 0; t < len; ++t)
             if (run < gate(i + size_t(t) - 1)) {
