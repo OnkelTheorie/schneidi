@@ -4,6 +4,8 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "core/Project.h"
+#include "core/Editor.h"
 #include "ui/ElidedLabel.h"
 #include "ui/studio/StudioMixer.h"
 #include "ui/studio/StudioTools.h"
@@ -29,14 +31,16 @@ constexpr Smoothing kSmoothing[] = {{N_("Aus"), 0}, {N_("Leicht"), 2}, {N_("Mitt
 constexpr int kDefaultSmoothing = 1;
 } // namespace
 
-StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidget* parent) : QWidget(parent)
+StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidget* parent)
+    : QWidget(parent), m_editor(editor)
 {
     setObjectName("studio_page");
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
-    m_root = new QSplitter(Qt::Vertical);
-    m_top = new QSplitter(Qt::Horizontal);
+    m_root = new QSplitter(Qt::Horizontal);
+    m_left = new QSplitter(Qt::Vertical);
+    m_side = new QSplitter(Qt::Vertical);
 
     // Tracks with their tool row
     auto* tracksBox = new QWidget;
@@ -51,7 +55,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     // Two rows: the tools (and Fit) on top, what the pen/points write and the smoothing below - one row was wider
     // than a 1024 px window with a large font
     auto* barRows = new QVBoxLayout(bar);
-    barRows->setContentsMargins(6, 2, 6, 2);
+    barRows->setContentsMargins(4, 2, 4, 2);
     barRows->setSpacing(2);
     auto* barLay = new QHBoxLayout;
     barLay->setSpacing(4);
@@ -119,7 +123,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     targetGroup->addButton(penClip);
     targetGroup->addButton(penTrack);
     // Which curve of the track (track mode): its level or its pan
-    barLay->addSpacing(8);
+    barLay->addSpacing(6);
     auto* autoVolume = tool(T("Pegel"), "studio_auto_volume", T("Punkte und Stift bearbeiten die Lautstärke-Automation der Spur"));
     auto* autoPan = tool(T("Pan"), "studio_auto_pan",
                          T("Punkte und Stift bearbeiten die Pan-Automation der Spur (oben rechts, Mitte Mitte, unten links)"));
@@ -127,8 +131,10 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     autoGroup->addButton(autoVolume);
     autoGroup->addButton(autoPan);
     autoVolume->setChecked(true);
-    barLay->addSpacing(8);
-    auto* smoothLabel = new QLabel(T("Glätten"));
+    barLay->addSpacing(6);
+    // The label gives way in a narrow row (the box keeps its tooltip)
+    auto* smoothLabel = new ElidedLabel;
+    smoothLabel->setFullText(T("Glätten"));
     barLay->addWidget(smoothLabel);
     m_smoothing = new QComboBox;
     m_smoothing->setObjectName("studio_smoothing");
@@ -136,6 +142,10 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     for (const Smoothing& s : kSmoothing) m_smoothing->addItem(T(s.name), s.frames);
     barLay->addWidget(m_smoothing);
     barLay->addStretch(1);
+    // The tools drawer under the lanes: closed until wanted (the lanes keep the height)
+    m_toolsButton = tool(T("Werkzeuge"), "studio_tools_toggle",
+                         T("Werkzeuge ein- und ausklappen: Stimme säubern, Musik absenken, Lautheit auf Ziel, Aufnahme, "
+                           "Effektklänge"));
     tracksLay->addWidget(bar);
     m_tracks = new StudioTracks(editor, cache);
     tracksLay->addWidget(m_tracks, 1);
@@ -184,16 +194,71 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     });
     connect(fit, &QToolButton::clicked, m_tracks, &StudioTracks::fit);
 
-    m_top->addWidget(tracksBox); // the viewer comes in front of it (index 0) when the page shows
-    m_top->setStretchFactor(0, 1);
+    m_left->addWidget(tracksBox);
+    m_tools = new StudioTools(editor);
+    m_left->addWidget(m_tools);
+    m_left->setStretchFactor(0, 1);
+    m_left->setChildrenCollapsible(false);
+    m_tools->hide();
+    connect(m_toolsButton, &QToolButton::toggled, this, &StudioPage::setToolsOpen);
+    connect(m_tools, &StudioTools::closeRequested, this, [this] { setToolsOpen(false); });
+
+    // The right column: the viewer comes on top (index 0) when the page shows, then the loudness and the mixer
     m_mixer = new StudioMixer(editor, engine);
     connect(write, &QToolButton::toggled, m_mixer, &StudioMixer::setWriteMode); // off by default
-    m_tools = new StudioTools(editor);
-    m_mixer->setTools(m_tools);
-    m_root->addWidget(m_top);
-    m_root->addWidget(m_mixer);
+    m_sideBox = new QWidget;
+    m_sideBox->setObjectName("studio_side");
+    auto* sideLay = new QVBoxLayout(m_sideBox);
+    sideLay->setContentsMargins(0, 0, 0, 0);
+    sideLay->setSpacing(0);
+    sideLay->addWidget(m_mixer->loudness());
+    sideLay->addWidget(m_mixer, 1);
+    m_side->addWidget(m_sideBox);
+    m_side->setChildrenCollapsible(false);
+
+    m_root->addWidget(m_left);
+    m_root->addWidget(m_side);
     m_root->setStretchFactor(0, 1);
-    m_root->setStretchFactor(1, 1);
+    m_root->setStretchFactor(1, 0);
     m_root->setChildrenCollapsible(false);
     lay->addWidget(m_root);
+}
+
+bool StudioPage::toolsOpen() const { return !m_tools->isHidden(); }
+
+void StudioPage::setToolsOpen(bool open)
+{
+    if (m_toolsButton->isChecked() != open) {
+        const QSignalBlocker block(m_toolsButton);
+        m_toolsButton->setChecked(open);
+    }
+    if (open == toolsOpen()) return;
+    m_tools->setVisible(open);
+    if (!open) return;
+    // As tall as the tools need (their list), at most 45 % of the lanes' height; a size dragged before stays
+    QList<int> sizes = m_left->sizes();
+    const int total = sizes.value(0) + sizes.value(1);
+    if (total <= 0) return; // not laid out yet (the page's first showing sets the sizes)
+    if (sizes.value(1) <= 0 || sizes.value(1) > total * 0.6) {
+        const int want = std::max(m_tools->sizeHint().height(), m_tools->minimumSizeHint().height()) + 40;
+        const int h = std::clamp(want, std::min(160, total / 2), std::max(1, int(total * 0.45)));
+        m_left->setSizes({std::max(1, total - h), h});
+    }
+}
+
+int StudioPage::defaultSideWidth(int pageWidth) const
+{
+    // A few strips beside the master (more tracks scroll), a fifth of the page at least (the viewer), at most 42 %
+    const int tracks = std::clamp(int(m_editor->project()->timeline().audio.size()), 3, 5);
+    const int strips = m_mixer->preferredWidth(tracks) + 2;
+    const int want = std::max(strips, int(pageWidth * 0.2));
+    return std::clamp(want, std::min(300, pageWidth / 2), std::max(300, int(pageWidth * 0.42)));
+}
+
+int StudioPage::defaultViewerHeight(int sideWidth, int pageHeight) const
+{
+    // The picture 16:9 across the column plus the viewer's controls, as long as the mixer keeps its height
+    const int want = sideWidth * 9 / 16 + 80;
+    const int mixerNeeds = m_sideBox->minimumSizeHint().height() + 40;
+    return std::clamp(want, std::min(120, pageHeight / 3), std::max(120, pageHeight - mixerNeeds));
 }

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Studio page (0.23 Block 2): the tools column between the track strips and the master. It takes the room the
-// strips leave (few tracks: a wide area, cards side by side; many tracks: one narrow column that scrolls).
+// Studio page (0.23 Block 2): the tools drawer under the lanes (closed by default, the page's "Werkzeuge" button
+// opens it). A title row with the target track, below it the tools as a list on the left and the chosen one beside
+// it (remembered: one click away once the drawer opens).
 // - Ziel: one audio track (follows the selection); the clip tools act on the selected clips of that track, else on
 //   all its clips.
 // - "Stimme säubern": voice cleaning (RNNoise, effect voiceclean) on those clips and the EQ preset "Stimme" on the
@@ -28,7 +29,6 @@
 
 class Editor;
 class QComboBox;
-class QGridLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -52,8 +52,10 @@ public:
     int targetTrack() const { return m_target; }
     void setTargetTrack(int track);
     QVector<int> targetClips() const;
-    // Columns the cards are laid out in now (1-3, by width)
-    int columns() const { return m_columns; }
+    // The tools in the list (0 = clean voice, 1 = ducking, 2 = loudness, 3 = recording, 4 = effect sounds)
+    int toolCount() const;
+    int currentTool() const;
+    void setCurrentTool(int index);
 
     // The tools (their buttons call these; tests too). Each is one undo step; the result line of the card says
     // what happened.
@@ -63,8 +65,6 @@ public:
     bool loudnessToTarget();     // false = not run / failed (the line says why)
     double loudnessPreset() const; // LUFS of the chosen preset
 
-    // Natural width of one card (font dependent)
-    int cardWidth() const;
     // Ducking "Durch": the tracks picked to make the music duck (empty = all other audible tracks, the default;
     // remembered in the settings like the amount) and the tracks that duck it now
     void setDuckBy(const QVector<int>& tracks);
@@ -74,16 +74,17 @@ public:
 signals:
     void recordRequested(); // start or stop the voice-over (MainWindow::toggleVoiceover)
     void soundPreviewRequested(const QString& file);
+    void closeRequested(); // the drawer's close button
     void placeSoundRequested(const QByteArray& sound); // at the playhead
 
 protected:
-    void resizeEvent(QResizeEvent* e) override;
     void showEvent(QShowEvent* e) override;
     bool eventFilter(QObject* watched, QEvent* e) override;
 
 private:
-    QWidget* card(const QString& title, const QString& name, QWidget* body);
-    void reflow();
+    // A tool: its button in the list (tab text, objectName studio_tab_<id>) and its page (studio_card_<id>, headed by
+    // the title, else the tab text)
+    void addTool(const QString& tab, const QString& id, QWidget* body, const QString& title = {});
     void syncTargets(); // track lists of the combos, target info (while hidden only marked: m_syncPending)
     bool m_syncPending = false;
     void syncRecorder();
@@ -101,11 +102,11 @@ private:
     Runner m_run;
     QPointer<VoiceoverRecorder> m_recorder;
     int m_target = 0;
-    int m_columns = 0;
-    QGridLayout* m_grid = nullptr;
+    class QVBoxLayout* m_list = nullptr;
+    class QButtonGroup* m_tabs = nullptr;
+    class QStackedWidget* m_stack = nullptr;
     class QScrollArea* m_scroll = nullptr;
-    void fitInnerHeight(); // wrapped hints: the cards as tall as their text at this width (the area scrolls)
-    QVector<QWidget*> m_cards;
+    void fitInnerHeight(); // wrapped hints: the chosen tool as tall as its text at this width (the area scrolls)
     QComboBox* m_targetBox = nullptr;
     QLabel* m_targetInfo = nullptr;
     QLabel* m_cleanLine = nullptr;

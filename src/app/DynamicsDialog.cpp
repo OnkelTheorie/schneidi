@@ -5,6 +5,7 @@
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
+#include "ui/DynCurve.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -50,6 +51,9 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     m_on = new QCheckBox(T("Kompressor an"));
     m_on->setObjectName("dynamicsOn");
     root->addWidget(m_on);
+    m_curve = new DynCurve(editor, track);
+    m_curve->setObjectName("dynamicsCurve");
+    root->addWidget(m_curve, 1);
     auto* form = new QFormLayout;
     auto field = [&](const char* name, const QString& label, const QString& unit, const QString& tip) {
         auto* e = new QLineEdit;
@@ -124,6 +128,7 @@ void DynamicsDialog::followTrack()
     }
     if (t != m_track) {
         m_track = t;
+        m_curve->setTrack(t);
         showTitle();
         if (property("mixerStrip").isValid()) setProperty("mixerStrip", t); // the Mixer finds it at its strip
     }
@@ -135,6 +140,7 @@ void DynamicsDialog::detach()
     // Typed text is dropped, never committed: closing takes the focus away (editingFinished), and the track number
     // would now point at a track of the other project/timeline
     m_track = -1;
+    m_curve->setTrack(-1);
     for (QLineEdit* e : findChildren<QLineEdit*>()) {
         const QSignalBlocker block(e);
         e->setModified(false);

@@ -13,6 +13,7 @@
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompPage.h"
 #include "ui/comp/CompShared.h"
+#include "ui/studio/StudioPage.h"
 #include "engine/Engine.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
@@ -98,6 +99,11 @@ void MainWindow::setupTours(QMenu* help)
     host.actions["comp_nodes"] = [this] {
         ensureCompPage();
         if (auto* b = m_compPage->findChild<QToolButton*>("comp_view_nodes")) b->setChecked(true);
+    };
+    // The Studio page's tools drawer (closed by default: the tour's tools step opens it)
+    host.actions["studio_tools"] = [this] {
+        ensureStudioPage();
+        m_studioPage->setToolsOpen(true);
     };
     host.conditions["timeline_has_merge"] = [this] { return timelineHas("merge"); };
     host.conditions["timeline_has_key"] = [this] { return timelineHas("key"); };
