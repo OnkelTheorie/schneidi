@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollBar>
+#include <QTimer>
 #include <QUndoStack>
 #include <QWheelEvent>
 
@@ -175,6 +176,7 @@ void StudioTracks::setTool(Tool tool)
 
 void StudioTracks::setView(double pxPerFrame, double leftFrame)
 {
+    m_fitPending = false;
     m_view.pxPerFrame = std::clamp(pxPerFrame, ViewState::kMinPxPerFrame, ViewState::kMaxPxPerFrame);
     m_view.leftFrame = std::max(0.0, leftFrame);
     syncScrollBars();
@@ -186,6 +188,23 @@ void StudioTracks::fit()
     const int end = std::max(1, TimelineOps::endFrame(m_editor->project()->timeline()));
     const int w = std::max(1, clipArea().width() - 12);
     setView(double(w) / end, 0);
+}
+
+void StudioTracks::fitOnShow()
+{
+    m_fitPending = true;
+    // After the layout (the page may be resized in the same pass): queued
+    if (isVisible()) QTimer::singleShot(0, this, [this] {
+            if (m_fitPending && isVisible()) fit();
+        });
+}
+
+void StudioTracks::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    if (m_fitPending) QTimer::singleShot(0, this, [this] {
+            if (m_fitPending && isVisible()) fit();
+        });
 }
 
 void StudioTracks::zoomBy(double factor)

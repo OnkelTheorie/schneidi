@@ -687,6 +687,8 @@ void MainWindow::leaveTourMode()
     };
     restoreView();
     QTimer::singleShot(0, m_timeline->view(), restoreView); // after restoreViews' own (queued) one and the layout
+    // The Studio lanes as the user left them too (the practice project had them fitted to its clips)
+    if (m_studioPage && s.studioView) m_studioPage->tracks()->setView(s.studioView->x(), s.studioView->y());
     m_liveTourMessage.clear(); // AIs may work on the user's project again
     updateLiveWaiting();
     checkProjectFile();

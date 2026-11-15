@@ -56,10 +56,15 @@ public:
     AutoTarget autoTarget() const { return m_autoTarget; }
 
     const ViewState& view() const { return m_view; }
-    // Zoom and scroll as given (the first showing: the timeline's)
+    // Zoom and scroll as given (the first showing: the timeline's; a tour's end: the user's again). Drops a pending
+    // fitOnShow.
     void setView(double pxPerFrame, double leftFrame);
     // The whole project in view (the Fit button: user input)
     void fit();
+    // Another project was loaded (a new view, like the timeline's restoreViews): fit, now if the lanes show, else
+    // when they show next (their width is known then)
+    void fitOnShow();
+    bool fitPending() const { return m_fitPending; }
     // Keyboard zoom (Ctrl+= / Ctrl+-: user input): around the playhead when it is in view, else the view's centre
     void zoomBy(double factor);
 
@@ -97,6 +102,7 @@ signals:
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
+    void showEvent(QShowEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
@@ -158,6 +164,7 @@ private:
     Editor* m_editor;
     QPointer<MediaCache> m_cache;
     ViewState m_view;
+    bool m_fitPending = false;
     int m_scrollY = 0; // pixels through the lanes
     int m_laneH = 96;
     int m_userLaneH = 0; // 0 = fill the room
