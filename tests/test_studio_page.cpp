@@ -1404,6 +1404,37 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         while (undo->index() > at) undo->undo();
         settle();
     }
+
+    // (4) The pen's stroke while drawing the pan sits where the pan is drawn (pan scale), not on the volume scale
+    {
+        page->findChild<QToolButton*>("studio_tool_pen")->click();
+        page->findChild<QToolButton*>("studio_pen_track")->click();
+        page->findChild<QToolButton*>("studio_auto_pan")->click();
+        CHECK(tracks->autoTarget() == AutoTarget::Pan);
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const int py = body.bottom() - int(std::lround(0.2 * (body.height() - 1))); // pan -60
+        const int x0 = int(tracks->xOf(60)), x1 = int(tracks->xOf(140));
+        mouse(tracks, QEvent::MouseButtonPress, QPoint(x0, py), Qt::LeftButton);
+        for (int i = 1; i <= 10; ++i) mouse(tracks, QEvent::MouseMove, QPoint(x0 + (x1 - x0) * i / 10, py), Qt::LeftButton);
+        const QImage shot = tracks->grab().toImage();
+        const int x = (x0 + x1) / 2;
+        int found = -1;
+        for (int y = body.top(); y <= body.bottom(); ++y) {
+            const QColor c = shot.pixelColor(x, y);
+            if (std::abs(c.red() - Theme::secondary.red()) + std::abs(c.green() - Theme::secondary.green())
+                    + std::abs(c.blue() - Theme::secondary.blue()) < 40
+                && std::abs(y - py) < std::abs(found - py))
+                found = y;
+        }
+        Check::report(std::abs(found - py) <= 3, "pan stroke drawn on the pan scale", __FILE__, __LINE__,
+                      QString("y %1, want %2").arg(found).arg(py));
+        const int at = undo->index();
+        mouse(tracks, QEvent::MouseButtonRelease, QPoint(x1, py), Qt::NoButton);
+        settle();
+        while (undo->index() > at) undo->undo();
+        page->findChild<QToolButton*>("studio_auto_volume")->click();
+        page->findChild<QToolButton*>("studio_tool_points")->click();
+    }
 }
 
 } // namespace

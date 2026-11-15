@@ -330,12 +330,12 @@ void StudioTracks::paintPart(QPainter& p)
         p.setPen(Qt::NoPen);
         p.drawPolygon(tri, 3);
     }
-    // The stroke being drawn
+    // The stroke being drawn (on the scale of the curve it writes: volume or pan)
     if (m_drag == Drag::Pen && m_stroke.size() > 1) {
         const QRect lane = laneRect(m_penTrack).adjusted(0, 4, 0, -4);
         QPainterPath path;
         for (int i = 0; i < m_stroke.size(); ++i) {
-            const QPointF pt(xOf(m_stroke[i].frame), lane.bottom() - VolumeDraw::posOf(m_stroke[i].db) * (lane.height() - 1));
+            const QPointF pt(xOf(m_stroke[i].frame), lane.bottom() - posOfValue(m_stroke[i].db) * (lane.height() - 1));
             if (i == 0) path.moveTo(pt);
             else path.lineTo(pt);
         }
