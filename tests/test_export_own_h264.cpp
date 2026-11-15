@@ -21,6 +21,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -326,8 +327,9 @@ void testContainers(const QString& dir)
 // rising (MP4; Matroska stores no dts, FFmpeg guesses them: never falling), every picture's pts once (one frame
 // apart in display order), pts never before dts, B pictures really there, the right length, clean decoding, sound and
 // picture start apart by the same amount as in the reference export (x264 where built in, else the own encoder
-// without B pictures). With "bframes=0": no B pictures, pts = dts. A slow zoom (mandelbrot): B pictures pay there
-// (on testsrc2 and still pictures the adaptive placement keeps P pictures).
+// without B pictures). With "bframes=0": no B pictures, pts = dts. A slow zoom with grain: B pictures pay there
+// (on testsrc2 and still pictures the adaptive placement keeps P pictures). Prints the MD5 of the video stream (the
+// same input and settings must give the same stream on every run, whatever the load).
 void testBFrames(const QString& dir)
 {
     // Start of the picture minus start of the sound in the reference export per container
@@ -357,6 +359,13 @@ void testBFrames(const QString& dir)
             ExportSettings s = settings(path);
             if (!withB) s.codecOptions << "bframes=0";
             if (!CHECK(render(tl, s))) continue;
+            {
+                QProcess md5;
+                md5.start("ffmpeg", {"-nostdin", "-v", "error", "-i", path, "-map", "0:v", "-c", "copy", "-f", "md5", "-"});
+                md5.waitForFinished(60000);
+                std::printf("  %s video stream %s\n", qPrintable(QFileInfo(path).fileName()),
+                            md5.readAllStandardOutput().trimmed().constData());
+            }
             const QString types = pictureTypes(path);
             if (!CHECK_EQ(int(types.size()), kFrames)) std::printf("       %s: %s\n", qPrintable(path), qPrintable(types));
             if (!CHECK_EQ(types.contains('B'), withB)) std::printf("       %s: %s\n", qPrintable(path), qPrintable(types));
@@ -387,8 +396,8 @@ void testBFrames(const QString& dir)
             const double offset = pk.videoStart - pk.audioStart;
             if (!CHECK(std::abs(offset - referenceOffset.value(mkv ? "mkv" : "mp4", 1e9)) < 0.002))
                 std::printf("       %s: video starts %.4f s, audio %.4f s\n", qPrintable(path), pk.videoStart, pk.audioStart);
-            // The picture is the source's, decoded in display order (pictures out of order: far below 30 dB; the zoom's
-            // fine detail costs a few dB against the testsrc2 clips)
+            // The picture is the source's, decoded in display order (pictures out of order: far below 30 dB; the grain
+            // costs a few dB against the testsrc2 clips)
             const double db = psnr(path, g_zoom, kFrames);
             if (!CHECK(db > 35)) std::printf("       %s: PSNR %.2f dB\n", qPrintable(path), db);
         }
@@ -723,9 +732,14 @@ int main(int argc, char** argv)
                                "-color_primaries", "bt709", "-color_trc", "bt709", "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
     g_still = Check::makeMedia(tmp.filePath("still.mkv"), {"-f", "lavfi", "-i", "smptebars=size=640x360:rate=25:duration=3",
                                                            "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
-    // A slow zoom: the adaptive B picture placement takes B pictures there (testBFrames)
-    g_zoom = Check::makeMedia(tmp.filePath("zoom.mkv"), {"-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=25", "-t", "3",
-                                                         "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
+    // A slow zoom into a still picture with grain: the adaptive B picture placement takes B pictures there
+    // (testBFrames), far from its threshold (probe gain about -0.5 against -0.15, on the CPU and the GPU picture
+    // engine alike; a mandelbrot zoom sat at -0.167 on the CPU, -0.149 on the GPU = no B pictures there)
+    g_zoom = Check::makeMedia(tmp.filePath("zoom.mkv"),
+                              {"-f", "lavfi", "-i",
+                               "testsrc2=size=640x360:rate=25:duration=1,trim=end_frame=1,loop=loop=-1:size=1,"
+                               "zoompan=z='1+0.002*on':d=1:s=640x360:fps=25,noise=alls=5:allf=t",
+                               "-t", "3", "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_media.isEmpty() && !g_near.isEmpty() && !g_noisy.isEmpty() && !g_still.isEmpty() && !g_zoom.isEmpty()))
         return Check::result();
     testContainers(tmp.path());
