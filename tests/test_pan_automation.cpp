@@ -619,6 +619,25 @@ void testTimelineView()
               && tv.view().scrollY == view0.scrollY);
         CHECK(project.timeline().audio[1].panAuto.isEmpty()); // display only: the project is untouched
     }
+
+    // The choice stays with its track (Track::uid), not its index: a track inserted above moves it along, another
+    // project starts with the volume everywhere
+    {
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Pan);
+        editor.addTrack(TrackKind::Audio, 0);
+        QApplication::processEvents();
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Volume);
+        CHECK(tv.autoShown(2) == AutoTarget::Pan);
+        project.undoStack()->undo(); // the same track again (undo keeps its identity)
+        CHECK(tv.autoShown(1) == AutoTarget::Pan);
+        Timeline other; // tracks of their own (a project opened from a file)
+        other.video.resize(1);
+        other.audio.resize(2);
+        for (Track& t : other.audio) t.kind = TrackKind::Audio;
+        project.load(ProjectData{kFmt, 0, {}, {}, other, 1, 0});
+        QApplication::processEvents();
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Volume);
+    }
 }
 
 } // namespace
