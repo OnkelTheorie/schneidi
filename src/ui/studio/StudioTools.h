@@ -101,6 +101,7 @@ private:
     void watchSounds();
     void fillInputs();
     void say(QLabel* line, const QString& text, bool bad = false);
+    void keysBack(); // after a progress dialog: the window active again (its keys work at once)
 
     Editor* m_editor;
     Runner m_run;

@@ -663,6 +663,14 @@ void StudioTools::syncTargets()
     m_duckByButton->setText(duckByText());
 }
 
+void StudioTools::keysBack()
+{
+    // A closed modal dialog leaves no window active where no window manager hands the focus back (X11 without one,
+    // some setups): the next Ctrl+Z would go nowhere and the user presses it twice. The window takes the keys again.
+    // (asked always: Qt may still count the window active while the system has given the focus to none)
+    if (QWidget* top = window(); top && top->isVisible()) top->activateWindow();
+}
+
 void StudioTools::say(QLabel* line, const QString& text, bool bad)
 {
     line->setText(text);
@@ -738,6 +746,7 @@ int StudioTools::duck()
     const auto ranges = AudioAnalysis::soundRanges(project->format(), project->renderTimeline(), under, params, step);
     const bool canceled = progress.wasCanceled();
     progress.reset();
+    keysBack();
     if (canceled) return 0;
     QStringList names;
     for (int i : under) names << trackShortName({TrackKind::Audio, i});
@@ -796,6 +805,7 @@ bool StudioTools::loudnessToTarget()
         reply = m_run("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Lautheit auf Ziel"));
     }
     progress.reset();
+    keysBack();
     m_record->setEnabled(recordable);
     syncRecorder();
     if (!reply.value("ok").toBool()) {
