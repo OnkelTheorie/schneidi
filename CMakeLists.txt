@@ -416,6 +416,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/DisplayLoss.h         src/app/DisplayLoss.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 
+    src/ui/FlowLayout.h           src/ui/FlowLayout.cpp
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/BackgroundJobs.h       src/ui/BackgroundJobs.cpp
     src/ui/ProxyProgress.h        src/ui/ProxyProgress.cpp

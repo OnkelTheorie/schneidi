@@ -7,6 +7,7 @@
 #include "core/Project.h"
 #include "core/Editor.h"
 #include "ui/ElidedLabel.h"
+#include "ui/FlowLayout.h"
 #include "ui/studio/StudioMixer.h"
 #include "ui/studio/StudioTools.h"
 #include "ui/studio/StudioTracks.h"
@@ -52,23 +53,24 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     bar->setObjectName("PanelTitle");
     bar->setAttribute(Qt::WA_StyledBackground);
     bar->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
-    // Two rows: the tools (and Fit) on top, what the pen/points write and the smoothing below - one row was wider
-    // than a 1024 px window with a large font
-    auto* barRows = new QVBoxLayout(bar);
-    barRows->setContentsMargins(4, 2, 4, 2);
-    barRows->setSpacing(2);
-    auto* barLay = new QHBoxLayout;
-    barLay->setSpacing(4);
-    barRows->addLayout(barLay);
-    auto* optionsLay = new QHBoxLayout;
-    optionsLay->setSpacing(4);
-    barRows->addLayout(optionsLay);
-    // The title gives way first in a narrow row (a long language, a large font): the tools stay whole
+    // Groups of buttons that wrap into further rows when the width runs out (a long language, a large font: the page
+    // never widens a 1024 px window); a wide window has them in one row
+    auto* flow = new FlowLayout(bar, 12, 2);
+    flow->setContentsMargins(4, 2, 4, 2);
+    QHBoxLayout* barLay = nullptr;
+    const auto newGroup = [&] {
+        auto* g = new QWidget;
+        barLay = new QHBoxLayout(g);
+        barLay->setContentsMargins(0, 0, 0, 0);
+        barLay->setSpacing(4);
+        flow->addWidget(g);
+    };
+    newGroup();
     auto* title = new ElidedLabel;
     title->setFullText(T("Tonspuren"));
     title->setObjectName("PanelTitle");
-    barLay->addWidget(title, 1);
-    barLay->addSpacing(8);
+    barLay->addWidget(title);
+    newGroup();
     auto tool = [&](const QString& text, const QString& name, const QString& tip) {
         auto* b = new QToolButton;
         b->setText(text);
@@ -105,13 +107,13 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     fit->setText(T("Einpassen"));
     fit->setFocusPolicy(Qt::NoFocus);
     fit->setToolTip(T("Das ganze Projekt in die Breite einpassen"));
-    barLay->addSpacing(8);
+    newGroup();
     barLay->addWidget(fit);
     // Write mode (touch): playing, a moved fader or pan knob writes the track's automation
     auto* write = tool(T("Schreiben"), "studio_write",
                        T("Schreibmodus: beim Abspielen schreiben Fader und Pan-Regler die Automation ihrer Spur; beim "
                          "Loslassen gleitet der Wert zur Kurve zurück. Ein Durchlauf = ein Schritt zum Rückgängigmachen"));
-    barLay = optionsLay; // the second row (tool() adds there now)
+    newGroup(); // what the pen/points write (tool() adds to the group begun last)
     // What the pen writes: the track's automation (a curve over the timeline's time, also between clips; it stays
     // when clips move) or the volume keyframes of the clips under the stroke (they move with their clip)
     auto* penClip = tool(T("Clip"), "studio_pen_clip",
@@ -123,7 +125,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     targetGroup->addButton(penClip);
     targetGroup->addButton(penTrack);
     // Which curve of the track (track mode): its level or its pan
-    barLay->addSpacing(6);
+    newGroup();
     auto* autoVolume = tool(T("Pegel"), "studio_auto_volume", T("Punkte und Stift bearbeiten die Lautstärke-Automation der Spur"));
     auto* autoPan = tool(T("Pan"), "studio_auto_pan",
                          T("Punkte und Stift bearbeiten die Pan-Automation der Spur (oben rechts, Mitte Mitte, unten links)"));
@@ -131,7 +133,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     autoGroup->addButton(autoVolume);
     autoGroup->addButton(autoPan);
     autoVolume->setChecked(true);
-    barLay->addSpacing(6);
+    newGroup();
     // The label gives way in a narrow row (the box keeps its tooltip)
     auto* smoothLabel = new ElidedLabel;
     smoothLabel->setFullText(T("Glätten"));
@@ -141,7 +143,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_smoothing->setToolTip(T("Wie stark ein gezeichneter Strich geglättet wird"));
     for (const Smoothing& s : kSmoothing) m_smoothing->addItem(T(s.name), s.frames);
     barLay->addWidget(m_smoothing);
-    barLay->addStretch(1);
+    newGroup();
     // The tools drawer under the lanes: closed until wanted (the lanes keep the height)
     m_toolsButton = tool(T("Werkzeuge"), "studio_tools_toggle",
                          T("Werkzeuge ein- und ausklappen: Stimme säubern, Musik absenken, Lautheit auf Ziel, Aufnahme, "

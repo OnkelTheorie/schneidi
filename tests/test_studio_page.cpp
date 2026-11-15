@@ -7,7 +7,7 @@
 //   more) never changes them (core rule);
 // - the pen: a drag over a clip's lane makes volume keyframes at the drawn level, one undo step per stroke;
 // - the meters take the channel count from the levels (6 channels = 5.1 bars; back to 2), never a fixed stereo pair;
-// - layout: at 1024 px wide, in German and Russian, normal and large font, nothing of the page is cut off (every label,
+// - layout: at 1024 px wide, in German, Russian and Ukrainian, normal and large font, nothing of the page is cut off (every label,
 //   button, box at least its minimum width and inside its parent) and the window does not grow; the
 //   lanes are the widest part, the master is pinned at the mixer column's right end, the tools drawer is closed (open:
 //   still nothing cut off, every tool's page); at 1920 px every strip shown; 12 tracks: the narrow strips scroll
@@ -1015,7 +1015,7 @@ void testLayout(Engine& engine, const QString& audioFile)
     QFont big = normal;
     big.setPointSizeF(normal.pointSizeF() * 1.5);
     const QString dumpDir = qEnvironmentVariable("STUDIO_PAGE_DUMP");
-    for (const char* lang : {"de", "ru"})
+    for (const char* lang : {"de", "ru", "uk"}) // (ru and uk: the longest words of the tool bar)
         for (bool large : {false, true}) {
             const QString where = QString("%1 %2").arg(lang, large ? "large" : "normal");
             I18n::install(lang);
