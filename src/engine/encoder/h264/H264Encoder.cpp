@@ -142,9 +142,6 @@ const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8
 // B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
 // the average of the two vectors as found), tried where the average is within this factor of the
 // better single list.
-// Experiment: lambda of the decisions in B pictures (non-reference / reference) against P pictures'.
-const double gBLambda = std::getenv("H264_BLAMBDA") ? std::atof(std::getenv("H264_BLAMBDA")) : 1.0;
-const double gBRefLambda = std::getenv("H264_BREFLAMBDA") ? std::atof(std::getenv("H264_BREFLAMBDA")) : 1.0;
 const int gBiRefine = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : 2;
 const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::getenv("H264_BIREFINE_NEAR")) : 1.15;
 double gPhaseMs[8] = {};
@@ -799,7 +796,10 @@ static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
-static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
+// B pictures from a gain of 6 % on (15 % until 15.11.2026: the B pictures did not pay on moving
+// material then). Measured gains: slow zoom -0.3 .. -0.6, standing phases and pans of game clips
+// -0.07 .. -0.3, action 0 .. +0.5 (its calmest start -0.05: B pictures there cost 0.07 dB).
+static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.06;
 
 namespace {
 
@@ -6357,7 +6357,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const size_t mbIndex = size_t(mby) * mbW_ + mbx;
     const int qp = mbQp_[mbIndex];
-    const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0) * (refPic_ ? gBRefLambda : gBLambda);
+    const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0);
     const double lambdaSad = std::sqrt(lambda);
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int cw = padW_ / 2;

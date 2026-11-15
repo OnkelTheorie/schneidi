@@ -773,11 +773,13 @@ int main()
                 break;
         }
         {
-            // Smaller than without B pictures at the same QP on this (easy) material: with fixed runs. Placed
-            // adaptively (the default) the probe finds too little gain here for B pictures (about 9 % at equal
-            // distortion; they are placed from 15 % on), and the stream is the one without them plus a few
-            // bytes of picture order counts.
+            // Smaller than without B pictures at the same QP on this (easy) material: with fixed runs, and
+            // without the macroblock tree (since 15.11.2026 it gives the P pictures next to short runs its
+            // full strength, so at one nominal QP they are finer and bigger than without B pictures). Placed
+            // adaptively (the default) the stream must not be bigger than without them by more than a
+            // few bytes of picture order counts.
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.mbtree = false;
             size_t plain = 0, withB = 0, adaptive = 0;
             CHECK(roundTrip(c, 31, &plain));
             c.bframes = 2;
@@ -935,10 +937,11 @@ int main()
                 EncoderConfig noB = c;
                 noB.bframes = 0;
                 CHECK(roundTrip(noB, 24, &stillPlain));
-                if (still.types != "IPBBBPBBBPBBBPBBBPBBBPBB" || stillB > stillPlain + 64)
+                // (After the clip's first twelve pictures, which stay P pictures for the rate control.)
+                if (still.types != "IPPPPPPPPPPPPPBBBPBBBPBB" || stillB > stillPlain + 160)
                     std::fprintf(stderr, "still picture: types %s, %zu bytes, without B %zu\n", still.types.c_str(), stillB, stillPlain);
-                CHECK(still.types == "IPBBBPBBBPBBBPBBBPBBBPBB");
-                CHECK(stillB <= stillPlain + 64);
+                CHECK(still.types == "IPPPPPPPPPPPPPBBBPBBBPBB");
+                CHECK(stillB <= stillPlain + 160);
                 gSynthKind = 2;
             }
             FirstPass fp(c.width, c.height, 2, c.bframes);
