@@ -121,15 +121,17 @@ struct EncoderConfig {
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
     // no gain (+0.7 % BD-rate), so off by default.
     bool weightedBipred = false;
-    // B pictures keep the texture of their reference pictures: a prediction from both lists (the
-    // average of two pictures - skip, direct or searched) is not used where it has lost more than
-    // this share of the fine detail its two single predictions have (textured macroblocks only);
-    // the macroblock then copies from one picture. On a slowly drifting textured wall the average
-    // of the two pictures is softer than either, so the B pictures were softer than the P pictures
-    // around them and the texture pulsed at the P pictures' rate (seen in a blind test against
-    // x264, which hardly averages there). 0 = off (the stream is then the same as without this
-    // option).
-    double bSharp = 0.02;
+    // B pictures keep the texture of their reference pictures. A prediction from both lists is the
+    // average of two pictures; on a slowly drifting textured wall they show the texture at
+    // different sub-sample positions and the average is softer than either. Skipped, it costs
+    // nothing, so the B pictures were softer than the P pictures around them and the texture
+    // pulsed at the P pictures' rate (seen in a blind test against x264, whose mode decision
+    // weighs lost texture). The detail such an average has lost against its two single
+    // predictions (4x4 Hadamard AC magnitudes) counts bSharp * sqrt(lambda) per unit in the cost
+    // of every B candidate that uses it - skip, direct or searched; where that outweighs what the
+    // average saves, the macroblock copies from one picture. 0 = off (the stream is then the same
+    // as without this option).
+    double bSharp = 1.0;
     // Mode decision of inter macroblocks in P pictures by estimate (CABAC with the 8x8 transform):
     // the candidates (16x16 or the best split, 4x4 or 8x8 transform) are ranked by the trellis
     // quantisation's own cost and only the best one per layout is reconstructed and counted in
