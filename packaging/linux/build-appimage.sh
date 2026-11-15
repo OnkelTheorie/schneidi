@@ -177,6 +177,12 @@ cd "$BUILD/out"
 # Qt plugins only there because the build machine has them installed (kimageformats, virtual keyboard: ~20 MB with
 # their libraries) out, then packed
 python3 -I "$ROOT/packaging/linux/prune-appdir.py" "$APPDIR"
+# .DirIcon must be a PNG (file managers, the AppImage catalog test refuses the package without it); linuxdeploy only
+# links the SVG. The PNG is rendered from assets/schneidi.svg once and kept in the repo (no SVG renderer needed here).
+mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+cp "$ROOT/assets/schneidi-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/schneidi.png"
+rm -f "$APPDIR/.DirIcon"
+cp "$ROOT/assets/schneidi-256.png" "$APPDIR/.DirIcon"
 "$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" --output appimage
 APPIMAGE="$(ls -1t "$BUILD"/out/schneidi*.AppImage | head -1)"
 if [ "$GPL_ENCODERS" = 0 ]; then
