@@ -24,14 +24,16 @@ case "$GPL_ENCODERS" in 0 | 1) ;; *) echo "!! GPL_ENCODERS must be 0 or 1" >&2; 
 export GPL_ENCODERS # for build-ffmpeg-lgpl.sh
 CMAKE_EXTRA=()
 SUFFIX=""
+# Where the build folders go (build-appimage-docker.sh: build-docker/, apart from a host build)
+BUILD_ROOT="${APPIMAGE_BUILD_ROOT:-$ROOT}"
 if [ "$GPL_ENCODERS" = 1 ]; then
-    BUILD="$ROOT/build-appimage"
-    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$ROOT/build-ffmpeg/prefix}"
+    BUILD="$BUILD_ROOT/build-appimage"
+    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$BUILD_ROOT/build-ffmpeg/prefix}"
     # schneidi itself is built the same way; only the GPL-free build refuses a GPL FFmpeg
     CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=OFF)
 else
-    BUILD="$ROOT/build-appimage-lgpl"
-    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$ROOT/build-ffmpeg-lgpl/prefix}"
+    BUILD="$BUILD_ROOT/build-appimage-lgpl"
+    FFMPEG_PREFIX="${FFMPEG_PREFIX:-$BUILD_ROOT/build-ffmpeg-lgpl/prefix}"
     CMAKE_EXTRA+=(-DSCHNEIDI_NO_GPL=ON)
     SUFFIX="-lgpl"
 fi
@@ -43,7 +45,7 @@ DIST="$ROOT/dist"
 if [ ! -x "$FFMPEG_PREFIX/bin/ffmpeg" ] || [ ! -f "$FFMPEG_PREFIX/share/licenses/ffmpeg/LICENSE.md" ] ||
     [ "$(cat "$FFMPEG_PREFIX/share/schneidi/ffmpeg-build.txt" 2>/dev/null)" != "$("$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" --stamp)" ] ||
     find "$FFMPEG_PREFIX/lib" -name 'libpostproc*' 2>/dev/null | grep -q .; then
-    "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+    FFMPEG_WORK="${FFMPEG_WORK:-$(dirname "$FFMPEG_PREFIX")}" "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
 fi
 # A prefix of the other variant (FFMPEG_PREFIX given by hand) would give a package that is not what its name says
 if [ "$GPL_ENCODERS" = 1 ]; then
@@ -127,7 +129,7 @@ fi
 
 # GL dispatch libraries (libglvnd) as a fallback for systems without a desktop: AppRun adds a folder to the library
 # path only if the system lacks that library (a bundled one could clash with the system's GPU driver)
-for lib in libEGL.so.1 libOpenGL.so.0 libGLdispatch.so.0; do
+for lib in libEGL.so.1 libOpenGL.so.0 libGL.so.1 libGLX.so.0 libGLdispatch.so.0; do
     src="/usr/lib/$MULTIARCH/$lib"
     [ -f "$src" ] || src="$(ldconfig -p | awk -v l="$lib" '$1 == l { print $NF; exit }')"
     if [ -n "$src" ] && [ -f "$src" ]; then
@@ -139,7 +141,8 @@ for lib in libEGL.so.1 libOpenGL.so.0 libGLdispatch.so.0; do
 done
 
 # --- Abhängigkeiten + Qt einsammeln, AppImage bauen ---
-QMAKE_BIN="$(command -v qmake6 || true)"
+# QMAKE from the environment: a Qt outside the system (the Ubuntu 22.04 build container, Dockerfile.appimage)
+QMAKE_BIN="${QMAKE:-$(command -v qmake6 || true)}"
 [ -n "$QMAKE_BIN" ] || QMAKE_BIN="/usr/lib/qt6/bin/qmake"
 export QMAKE="$QMAKE_BIN"
 export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqoffscreen.so" # offscreen: --screenshot-Testlauf
@@ -194,6 +197,12 @@ else
     done
     env -u LD_LIBRARY_PATH QT_QPA_PLATFORM=offscreen "$APPIMAGE" cli --licenses >"$BUILD/licenses.json" || true
     grep -q '"x264' "$BUILD/licenses.json" || { echo "!! schneidi-cli --licenses does not list x264" >&2; exit 1; }
+fi
+# Built for an older system (build-appimage-docker.sh: Ubuntu 22.04): nothing in the package may need newer glibc or
+# libstdc++ symbol versions than that system has
+if [ -n "${ABI_LIMITS:-}" ]; then
+    # shellcheck disable=SC2086
+    python3 -I "$ROOT/packaging/linux/check-abi.py" "$APPDIR" $ABI_LIMITS
 fi
 NAME="$(basename "$APPIMAGE" .AppImage)$SUFFIX.AppImage"
 mv -f "$APPIMAGE" "$DIST/$NAME"
