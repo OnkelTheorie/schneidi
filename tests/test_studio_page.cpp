@@ -1934,6 +1934,76 @@ void testUiFindings(Engine& engine, const QString& voiceFile)
         CHECK_EQ(p->timeline().masterLimiter, limiterBefore);
     }
 
+    // (4b) After the measuring dialog the window takes the keys back only if it had them and the user stayed: gone to
+    // another program meanwhile (the application inactive; here another window of ours stands for it) it stays there
+    {
+        QWidget other;
+        other.resize(200, 100);
+        for (bool leave : {false, true}) {
+            w.activateWindow();
+            QTest::qWaitForWindowActive(&w);
+            const int at = undo->index();
+            bool left = false;
+            QTimer poll;
+            poll.setInterval(0);
+            QObject::connect(&poll, &QTimer::timeout, [&] {
+                if (!leave || left || !tools->findChild<QProgressDialog*>()) return;
+                left = true;
+                other.show();
+                other.activateWindow();
+                emit qApp->applicationStateChanged(Qt::ApplicationInactive);
+            });
+            poll.start();
+            CHECK(tools->loudnessToTarget());
+            poll.stop();
+            settle(5);
+            if (leave) {
+                CHECK(left);
+                Check::report(QApplication::activeWindow() != &w, "the window does not take the keys back from another program",
+                              __FILE__, __LINE__, QApplication::activeWindow() ? QApplication::activeWindow()->objectName() : "none");
+                other.hide();
+            } else {
+                CHECK(QApplication::activeWindow() == &w);
+            }
+            while (undo->index() > at) undo->undo();
+        }
+        w.activateWindow();
+        settle();
+    }
+
+    // (2b) A drawer the user dragged smaller than its tool needs stays so (it scrolls): the scroll bar that comes, the
+    // text that wraps anew never grow it back; choosing a tool or a result line may
+    {
+        // A narrow column (the text wraps, and wraps anew when the scroll bar takes width)
+        const QList<int> rootSizes = page->root()->sizes();
+        page->root()->setSizes({420, rootSizes.value(0) + rootSizes.value(1) - 420});
+        tools->setCurrentTool(2);
+        settle(3);
+        CHECK(tools->loudnessToTarget()); // a long result line
+        settle(5);
+        const QList<int> sizes = page->left()->sizes();
+        const int total = sizes.value(0) + sizes.value(1);
+        const int small = std::max(tools->minimumSizeHint().height(), 110);
+        Check::report(small < tools->neededHeight(), "the drawer needs more than the dragged size", __FILE__, __LINE__,
+                      QString("%1 / %2").arg(small).arg(tools->neededHeight()));
+        page->left()->setSizes({total - small, small});
+        for (int i = 0; i < 5; ++i) {
+            settle(3);
+            const int h = page->left()->sizes().value(1);
+            Check::report(std::abs(h - small) <= 2, "a drawer dragged smaller stays smaller", __FILE__, __LINE__,
+                          QString("%1 px, dragged to %2, needs %3").arg(h).arg(small).arg(tools->neededHeight()));
+            if (std::abs(h - small) > 2) break;
+        }
+        auto* scroll = tools->findChild<QScrollArea*>("studio_tools_scroll");
+        CHECK(scroll && scroll->verticalScrollBar()->maximum() > 0);
+        undo->undo();
+        page->root()->setSizes(rootSizes);
+        page->setToolsOpen(false);
+        settle();
+        page->setToolsOpen(true);
+        settle();
+    }
+
     // (2) Every tool whole in the drawer (1432 x 822, five tracks), also in a large font in a 1024 x 700 window
     for (int t = 0; t < tools->toolCount(); ++t) {
         tools->setCurrentTool(t);
@@ -2080,6 +2150,49 @@ void testUiFindings(Engine& engine, const QString& voiceFile)
         }
         CHECK_EQ(tracks->view().pxPerFrame, user.pxPerFrame);
         CHECK_EQ(tracks->view().leftFrame, user.leftFrame);
+
+        // An outside change of the open file (schneidi-cli, an AI): read again, the same project - the lanes keep the
+        // user's zoom like the timeline (core rule)
+        if (CHECK(!p->isModified())) {
+            ProjectData d = p->data();
+            d.timeline.audio[0].clips[0].out = 39;
+            QString err;
+            QTest::qWait(1100); // another modification time than the file had
+            CHECK(ProjectFile::save(d, file, &err));
+            CHECK(waitFor([&] { return p->timeline().audio[0].clips[0].out == 39; }, 6000));
+            settle(5);
+            CHECK_EQ(tracks->view().pxPerFrame, user.pxPerFrame);
+            CHECK_EQ(tracks->view().leftFrame, user.leftFrame);
+            CHECK(!tracks->fitPending());
+        }
+
+        // A project opened while the page is hidden, then a tour: its end leaves the lanes to be fitted to that
+        // project (not the zoom of the one before, nor the practice project's)
+        tracks->setView(3.0, 20);
+        w.showPage(Page::Edit);
+        settle();
+        CHECK(w.openProject(file));
+        settle(3);
+        CHECK(tracks->fitPending());
+        w.tours()->start("studio");
+        settle(10);
+        w.tours()->stop();
+        settle(10);
+        w.showPage(Page::Studio);
+        settle(5);
+        Check::report(fitted(), "fitted after the tour", __FILE__, __LINE__,
+                      QString("zoom %1, left %2").arg(tracks->view().pxPerFrame).arg(tracks->view().leftFrame));
+    }
+
+    // No "−0" on the mixer: the loudness target near zero reads "0"
+    {
+        QSettings().setValue("audio/loudnessTarget", -0.2);
+        mixer->refreshLoudnessSettings();
+        settle();
+        for (QLabel* l : mixer->loudness()->findChildren<QLabel*>())
+            if (l->text().endsWith(" LUFS")) CHECK_EQ(l->text(), QString("Ziel 0 LUFS"));
+        QSettings().setValue("audio/loudnessTarget", -14.0);
+        mixer->refreshLoudnessSettings();
     }
 }
 

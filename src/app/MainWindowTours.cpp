@@ -553,7 +553,10 @@ void MainWindow::enterTourMode(const Tour& tour)
     s.compClip = m_compPage ? m_compPage->clip() : 0;
     s.clipboards = m_editor->clipboards();
     s.views = s.data.views;
-    if (m_studioPage) s.studioView = QPointF(m_studioPage->tracks()->view().pxPerFrame, m_studioPage->tracks()->view().leftFrame);
+    if (m_studioPage) {
+        s.studioView = QPointF(m_studioPage->tracks()->view().pxPerFrame, m_studioPage->tracks()->view().leftFrame);
+        s.studioFitPending = m_studioPage->tracks()->fitPending();
+    }
     s.studioSized = m_studioSized;
     s.studioSideSizes = m_page == Page::Studio && m_studioPage ? m_studioPage->side()->sizes() : m_studioSideSizes;
 
@@ -688,7 +691,9 @@ void MainWindow::leaveTourMode()
     restoreView();
     QTimer::singleShot(0, m_timeline->view(), restoreView); // after restoreViews' own (queued) one and the layout
     // The Studio lanes as the user left them too (the practice project had them fitted to its clips)
-    if (m_studioPage && s.studioView) m_studioPage->tracks()->setView(s.studioView->x(), s.studioView->y());
+    // (still to be fitted then - a project opened while they were hidden: that, not the zoom of the one before)
+    if (m_studioPage && s.studioFitPending) m_studioPage->tracks()->fitOnShow();
+    else if (m_studioPage && s.studioView) m_studioPage->tracks()->setView(s.studioView->x(), s.studioView->y());
     m_liveTourMessage.clear(); // AIs may work on the user's project again
     updateLiveWaiting();
     checkProjectFile();

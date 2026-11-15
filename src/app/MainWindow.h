@@ -749,6 +749,7 @@ private:
         std::shared_ptr<const Editor::Clipboards> clipboards; // the user's copied clips and grade
         QVector<SavedView> views; // the timelines' zoom and scroll, set again once the layout is back
         std::optional<QPointF> studioView; // the Studio lanes' zoom (x) and left frame (y), if the page was built
+        bool studioFitPending = false;     // the lanes were still to be fitted (a project opened while hidden)
         bool studioSized = false;          // its sizes were set (m_studioSized) and the viewer's height there
         QList<int> studioSideSizes;
     } m_tourSaved;
