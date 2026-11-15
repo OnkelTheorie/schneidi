@@ -562,7 +562,11 @@ void MainWindow::buildActions()
     viewOpts->addSeparator();
     makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
-    makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
+    // On the Studio page the key fits its tracks (its own view, the page's "Fit" button), elsewhere the timeline
+    makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [this, tv] {
+        if (m_page == Page::Studio && m_studioPage) m_studioPage->tracks()->fit();
+        else tv->zoomToFit();
+    });
     // No default key: editors share none for it (Kdenlive's Shift+L sits in the J/K/L transport family)
     timeline->addSeparator();
     makeAction(timeline, "lock_tracks", T("Spuren sperren/entsperren (Auswahl, sonst Zielspuren)"), QKeySequence(),

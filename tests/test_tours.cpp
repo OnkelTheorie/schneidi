@@ -14,6 +14,7 @@
 //   panels, sizes and settings are back as they were; with unsaved changes the tour asks first.
 // - the cutting tour after the user's mistakes (testCutTour): everything deleted at one step = the clips back at the
 //   next one (with a note), the Inspector shows a clip; the split step puts the playhead in its clip's middle
+// - the Studio tour in a 1024 px window (runNarrowStudio); targets side by side share one hole
 // TOURS_DUMP=<folder>: a picture of every step (the user-settings runs, the questions) for a look. A large font: the
 // whole test with QT_FONT_DPI=120 (every check holds there too).
 
@@ -347,6 +348,12 @@ void checkStep(MainWindow& w, const QString& where)
         Check::report(hole.height() >= 20 && hole.width() * hole.height() >= 40 * 20, "target big enough", __FILE__,
                       __LINE__, QString("%1: %2 %3x%4").arg(where, t.part).arg(t.rect.width()).arg(t.rect.height()));
     }
+    // Targets side by side share one hole (two soft rings over each other cut into the buttons' text)
+    const QVector<QRect> holes = o->holes();
+    for (int i = 0; i < holes.size(); ++i)
+        for (int j = i + 1; j < holes.size(); ++j)
+            Check::report(!holes[i].adjusted(-14, -14, 14, 14).intersects(holes[j]), "holes apart", __FILE__, __LINE__,
+                          QString("%1: holes %2 and %3").arg(where).arg(i + 1).arg(j + 1));
     const QString p = bubbleProblems(o);
     Check::report(p.isEmpty(), "bubble fits", __FILE__, __LINE__, where + ": " + p);
     Check::report(insideAndOff(o), "bubble in the window and off the holes", __FILE__, __LINE__, where);
@@ -1268,6 +1275,33 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     }
 }
 
+// A narrow window (1024 px, a small laptop or a window beside another one): the Studio page's tour finds every
+// target whole and the bubble fits (its tool row and the mixer's tool column are the tightest page)
+void runNarrowStudio(Engine& engine, const QString& lang, bool dumpIt)
+{
+    QSettings().clear();
+    for (QTranslator* t : qApp->findChildren<QTranslator*>()) {
+        QCoreApplication::removeTranslator(t);
+        delete t;
+    }
+    I18n::install(lang);
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1024, 700);
+    w.show();
+    w.activateWindow();
+    CHECK(QTest::qWaitForWindowActive(&w));
+    QTest::qWait(50);
+    const QString run = "narrow-" + lang;
+    for (const Tour& t : Tours::builtIn()) {
+        if (t.id != "studio") continue;
+        const Look before = look(w);
+        walk(w, t, run, dumpIt);
+        QTest::qWait(30);
+        sameLook(before, look(w), run + " after " + t.id);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1297,6 +1331,9 @@ int main(int argc, char** argv)
     runWindow(engine, "user-ru", user, "ru", QSize(1920, 1050), true);
     // A small laptop screen (the Color page scrolls its controls: the window never grows past it)
     runWindow(engine, "default-ru", {}, "ru", QSize(1366, 768), false);
+    // The Studio page in a 1024 px window, German and English (the languages written so far)
+    runNarrowStudio(engine, "de", true);
+    runNarrowStudio(engine, "en", true);
     return Check::result();
 }
 

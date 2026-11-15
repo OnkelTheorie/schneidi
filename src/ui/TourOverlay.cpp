@@ -418,6 +418,18 @@ void TourOverlay::relayout()
     if (!m_question && m_targets)
         for (const QRect& t : m_targets())
             if (t.isValid()) holes << t.adjusted(-kPad, -kPad, kPad, kPad).intersected(rect());
+    // Neighbours (buttons side by side: "Points" and "Pen") get one hole round both: two rings drawn over each other
+    // cut into the buttons' text. The first (main) hole keeps its place in the list
+    for (bool merged = true; merged;) {
+        merged = false;
+        for (int i = 0; i < holes.size() && !merged; ++i)
+            for (int j = i + 1; j < holes.size() && !merged; ++j)
+                if (holes[i].adjusted(-kFeather, -kFeather, kFeather, kFeather).intersects(holes[j])) {
+                    holes[i] = holes[i].united(holes[j]);
+                    holes.removeAt(j);
+                    merged = true;
+                }
+    }
     QVector<QRect> keep, avoid;
     if (!m_question && m_keep)
         for (const QRect& k : m_keep()) keep << k.adjusted(-kPad, -kPad, kPad, kPad);

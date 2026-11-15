@@ -9,7 +9,8 @@
 // - the meters take the channel count from the levels (6 channels = 5.1 bars; back to 2), never a fixed stereo pair;
 // - layout: at 1024 px wide, in German and Russian, normal and large font, nothing of the page is cut off (every label,
 //   button, box at least its minimum width and inside its parent) and the window does not grow; the tools column is
-//   there; at 1920 px with two tracks it fills the room between the strips and the master (no gap), cards side by side.
+//   there; at 1920 px with two tracks it fills the room between the strips and the master (no gap), cards side by side,
+//   every strip shown whole.
 // - tools (Block 2), each one undo step with the right effect on the project: "Stimme säubern" (voiceclean on the
 //   target clips + EQ preset on the track), ducking (keys down while the voice sounds; again with another amount;
 //   off), "Lautheit auf Ziel" (op mixer target_lufs through the user runner, limiter on, before -> after shown), the
@@ -19,6 +20,8 @@
 // STUDIO_PAGE_DUMP=<folder>: a picture of the window per layout case.
 
 #include "check.h"
+
+#include <QScrollBar>
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
@@ -181,8 +184,14 @@ void testWindow(Engine& engine, const QString& audioFile)
     CHECK_EQ(QSettings().value("studio/penTarget").toString(), QString("clip"));
     const Clip* clip = TimelineOps::findClip(project->timeline(), clipId);
     if (!CHECK(clip)) return;
+    // Shift+Z (zoom_fit) on this page fits the tracks like the Fit button, not the hidden timeline
+    tracks->setView(tracks->view().pxPerFrame * 4, 10);
+    if (QAction* fitKey = InputBindings::instance().action("zoom_fit"); CHECK(fitKey)) fitKey->trigger();
+    settle();
+    const ViewState byKey = tracks->view();
     tracks->fit(); // the user's Fit button: the whole clip in view
     settle();
+    CHECK(byKey.pxPerFrame == tracks->view().pxPerFrame && byKey.leftFrame == tracks->view().leftFrame);
     const QRect lane = tracks->laneRect(0).adjusted(0, 4, 0, -4);
     const int y = lane.bottom() - int(std::lround(VolumeDraw::posOf(-20) * (lane.height() - 1)));
     const int f0 = clip->start + clip->length() / 4, f1 = clip->start + clip->length() * 3 / 4;
@@ -1023,6 +1032,10 @@ void testLayout(Engine& engine, const QString& audioFile)
                           __FILE__, __LINE__, QString("strips end %1, tools %2-%3, master %4").arg(stripsRight)
                                                   .arg(toolsLeft).arg(toolsRight).arg(masterLeft));
             Check::report(tools->columns() >= 2, "cards side by side", __FILE__, __LINE__, QString::number(tools->columns()));
+            // Every strip whole (the scroll area once took its own small size hint: one strip, the tools the rest)
+            Check::report(strips->horizontalScrollBar()->maximum() == 0, "all strips shown", __FILE__, __LINE__,
+                          QString("%1 px for %2 strips, scrolls %3 px").arg(strips->width()).arg(page->mixer()->stripCount())
+                              .arg(strips->horizontalScrollBar()->maximum()));
             const QString cut = cutOff(page);
             Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, "1920: " + cut);
         }

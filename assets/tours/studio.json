@@ -5,9 +5,12 @@
  "offerOn": "page:studio",
  "steps": [
   {"target": "studio_tracks", "page": "studio", "text": "Die Tonspuren mit großen Wellenformen. Ein Klick setzt den Abspielkopf und wählt den Clip, das Mausrad scrollt wie in der Timeline."},
-  {"target": "studio_pen", "page": "studio", "text": "Mit dem Stift zeichnest du die Lautstärke direkt über die Clips: oben lauter, unten leiser. Jeder Strich lässt sich als ein Schritt rückgängig machen."},
+  {"target": "studio_tool_points|studio_pen", "page": "studio", "text": "Mit „Punkte“ klickst du auf die Linie und ziehst Punkte hoch oder runter. Mit dem Stift zeichnest du die Kurve in einem Strich. Jeder Strich ist ein Schritt zum Rückgängigmachen."},
+  {"target": "studio_pen_clip|studio_pen_track|studio_auto_volume|studio_auto_pan", "page": "studio", "text": "„Spur“ bearbeitet die Automation der ganzen Spur, „Clip“ die Keyframes der Clips. Mit „Pegel“ und „Pan“ wählst du, ob du die Lautstärke oder das Panorama formst."},
   {"target": "studio_smoothing", "page": "studio", "text": "Glätten bestimmt, wie ruhig ein gezeichneter Strich wird. Bei „Aus“ bleibt er genau so, wie du ihn gezogen hast."},
-  {"target": "studio_mixer", "page": "studio", "text": "Das Mischpult: Fader, Panorama, Stumm und Solo, dazu für jede Spur EQ und Kompressor als Kurve zum Anfassen."},
-  {"target": "studio_loudness", "page": "studio", "text": "Beim Abspielen misst schneidi hier die Lautheit am Master: Integriert sollte beim Ziel liegen, True Peak unter der Grenze bleiben."}
+  {"target": "studio_write", "page": "studio", "text": "Mit „Schreiben“ nimmt schneidi beim Abspielen auf, was du an Fader und Pan-Regler drehst, als Automation der Spur. Ein Durchlauf ist ein Schritt zum Rückgängigmachen."},
+  {"target": "studio_mixer", "page": "studio", "text": "Das Mischpult: je Spur Fader, Panorama, Stumm und Solo, dazu EQ und Kompressor als Kurven zum Anfassen. „…“ öffnet das volle Fenster."},
+  {"target": "studio_loudness", "page": "studio", "text": "Beim Abspielen misst schneidi hier die Lautheit am Master: Integriert sollte beim Ziel liegen, True Peak unter der Grenze bleiben."},
+  {"target": "studio_tools", "page": "studio", "text": "Die Werkzeuge: Stimme säubern, Musik unter Sprache absenken, Lautheit auf Ziel bringen, Voiceover aufnehmen und Effektklänge einfügen. Oben wählst du die Spur, auf die sie wirken."}
  ]
 }
