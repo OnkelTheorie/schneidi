@@ -815,7 +815,9 @@ static const double kPlanLong = planEnv("H264_BPLAN_LONG", 0.85);
 static const double kPlanKeep = planEnv("H264_BPLAN_KEEP", 0.5);
 // Below this cost per block and picture there is nothing to weigh: B pictures.
 static const double kPlanStill = planEnv("H264_BPLAN_STILL", 12);
-static const double kPlanPatchArea = planEnv("H264_BPLAN_PATCHAREA", 0.2), kPlanPatchCost = planEnv("H264_BPLAN_PATCHCOST", 400);
+// "Patchy change" guard (off since B pictures search from the lookahead's vectors and choose
+// their transforms by estimate; H264_BPLAN_PATCHAREA=0.2 is the guard as it was).
+static const double kPlanPatchArea = planEnv("H264_BPLAN_PATCHAREA", 0), kPlanPatchCost = planEnv("H264_BPLAN_PATCHCOST", 400);
 static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
 // The planner searches every kPlanGrid-th block in both directions: its sums need no more, and
 // the searches are its whole cost.
@@ -972,10 +974,10 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         gate_ = uint8_t(shortRun | (gate_ & kClear));
     } else {
         // A small part of the picture changing heavily (noise or new content in a few blocks of
-        // an otherwise still picture): no B pictures. They pay through blocks their references
-        // explain; here the still part costs nothing as P pictures either, and the costs promise
-        // a gain on the rest that the coder does not get (measured on a synthetic animation with
-        // noise patches: +16 % bits at equal PSNR with runs of three, the costs said -13 %).
+        // an otherwise still picture): no B pictures - a guard from when B pictures cost more
+        // there than the costs promised (a synthetic animation with noise patches: +16 % bits
+        // at equal PSNR with runs of three, the costs said -13 %). With today's B pictures the
+        // same runs measure -9 % there, so the guard is off by default (kPlanPatchArea 0).
         const bool patchy = double(live) < kPlanPatchArea * double(n) * p && sumP > kPlanPatchCost * double(live);
         on_ = !patchy && ratio < (on_ ? kPlanOff : kPlanOn);
         const bool clear = on_ && ratio < kPlanLong;

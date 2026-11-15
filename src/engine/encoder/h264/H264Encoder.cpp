@@ -1434,10 +1434,12 @@ static const double gTpDev = std::getenv("H264_TPDEV") ? std::atof(std::getenv("
 static const bool gTpSeedTree = !std::getenv("H264_TPSEEDTREE") || std::atoi(std::getenv("H264_TPSEEDTREE")) != 0;
 static const double gTpFollow = std::getenv("H264_TPFOLLOW") ? std::atof(std::getenv("H264_TPFOLLOW")) : 0.25;
 // The rest of the way is gone slowly: the gap between the two QPs, averaged over about this many
-// seconds of pictures, is added in full less the quarter above (H264_TPLAG; 0 = not at all, as
-// before: a model that stays wrong in one direction then misses the clip's size by what it is
-// wrong). A stretch the model misjudges for a moment moves the QP little, a lasting debt is paid.
-static const double gTpLag = std::getenv("H264_TPLAG") ? std::atof(std::getenv("H264_TPLAG")) : 0.0;
+// seconds of pictures, is added in full less the quarter above (H264_TPLAG, default 2; 0 = not at
+// all: a model that stays wrong in one direction then misses the clip's size by what it is wrong,
+// measured up to 7 %). A stretch the model misjudges for a moment moves the QP little, a lasting
+// debt is paid. Measured on seven clips of 4 to 30 s: every target within 2 % at 2 s (within 2.5 %
+// at 4 s), for 0.2 to 0.5 % of BD-rate; H264_TPFOLLOW=0 with it is 0.5 to 1 % better and misses by up to 3.3 %.
+static const double gTpLag = std::getenv("H264_TPLAG") ? std::atof(std::getenv("H264_TPLAG")) : 2.0;
 // The least budget the pictures left are planned with: this share of what they cost at the plan
 // QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
