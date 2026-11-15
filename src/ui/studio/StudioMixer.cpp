@@ -32,6 +32,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -1010,6 +1011,22 @@ bool StudioMixer::eventFilter(QObject* watched, QEvent* e)
 {
     // The strips' height follows the viewport's (the horizontal scrollbar takes some when it shows)
     if (watched == m_scroll->viewport() && e->type() == QEvent::Resize) fitHeight();
+    // The wheel scrolls the strips sideways (they never scroll up and down), plain or with Shift, over any part of
+    // them: the faders, pans and sends take no wheel, so it comes here. One notch = one strip.
+    if (watched == m_scroll->viewport() && e->type() == QEvent::Wheel) {
+        auto* wheel = static_cast<QWheelEvent*>(e);
+        QScrollBar* bar = m_scroll->horizontalScrollBar();
+        const QPoint px = wheel->pixelDelta(), angle = wheel->angleDelta();
+        // A touchpad's own sideways swipe (x) counts as it is; up/down (and Shift, which some systems turn into x)
+        // moves right on "down", like a timeline's
+        const int a = angle.y() != 0 ? angle.y() : angle.x();
+        const int p = px.y() != 0 ? px.y() : px.x();
+        if (bar->maximum() <= 0 || (a == 0 && p == 0)) return QWidget::eventFilter(watched, e);
+        const int step = p != 0 ? p : int(std::lround(a / 120.0 * bar->singleStep()));
+        bar->setValue(bar->value() - step);
+        wheel->accept();
+        return true;
+    }
     return QWidget::eventFilter(watched, e);
 }
 
