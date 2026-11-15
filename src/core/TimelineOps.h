@@ -29,15 +29,21 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 // shifts: (from frame, offset) - a clip moves by the sum of the offsets whose frame is <= its start.
 // If a track would overwrite a clip that stays (or slide before frame 0), it stays
 // entirely put - never overwrite.
+// What happens to timeline markers in time a ripple takes out: only removing real content (ripple delete, ripple trim
+// of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap or trimming clips for a
+// transition moves them to the cut point (they mark a moment, not the removed content).
+enum class MarkerCut { Delete, MoveToCut };
 // Timeline markers follow (rippleMarkers) with `markerShifts` if given (ripple trim: the trimmed clip's content),
 // else with `shifts`.
 void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
-                  const QVector<QPair<int, int>>* markerShifts = nullptr);
+                  const QVector<QPair<int, int>>* markerShifts = nullptr, MarkerCut markerCut = MarkerCut::Delete);
 // Timeline markers follow a ripple (shifts as in rippleTracks, in frames before the edit), but only when it moves
 // the whole timeline: if a track outside `moving` (locked, or held by an overlap) has a clip that ends after the
 // first edit point, they all stay - they belong to the timeline, not to one track. Markers in time taken out
-// [from + offset, from) go, except one exactly at its start; markers from `from` on move by the offsets.
-void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving);
+// [from + offset, from) go (MarkerCut::Delete) or land on the cut point (MoveToCut), except one exactly at its start
+// (stays); markers from `from` on move by the offsets. Equal markers merge.
+void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving,
+                   MarkerCut markerCut = MarkerCut::Delete);
 // How far (frames to the left) the other tracks can move up from `from` without overwriting
 // (unlocked subtitle tracks count too)
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip);
@@ -174,7 +180,9 @@ struct TrimEdit {
 };
 // Largest allowed delta in the direction of `delta` (source material, at least 1 frame, neighbors, frame 0)
 int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength);
-void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength);
+// `markerCut`: what a ripple trim does to timeline markers on the trimmed-off part (a transition's trim moves them)
+void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength,
+                   MarkerCut markerCut = MarkerCut::Delete);
 
 // Effective transition on a track (see Clip::transIn/transOut)
 struct TransitionSpan {

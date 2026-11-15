@@ -666,7 +666,10 @@ bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
                           "auseinanderlaufen; die Spur entsperren");
         return false;
     }
-    m_project->edit(T("Lücke schließen"), [&](Timeline& tl) { TimelineOps::rippleTracks(tl, {{to, from - to}}, {}); });
+    // Markers in the empty gap mark a moment, not content: they land on the cut point
+    m_project->edit(T("Lücke schließen"), [&](Timeline& tl) {
+        TimelineOps::rippleTracks(tl, {{to, from - to}}, {}, nullptr, TimelineOps::MarkerCut::MoveToCut);
+    });
     return true;
 }
 

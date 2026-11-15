@@ -597,13 +597,24 @@ int main(int argc, char** argv)
         CHECK_EQ(q.timeline().markers, QVector<int>({10, 40, 65, 110}));
         q.undoStack()->undo();
         CHECK_EQ(q.timeline().markers, before);
-        // Closing a gap: the marker in the gap goes, undo brings it back
-        q.edit("gap", [&](Timeline& tl) { TimelineOps::removeClip(tl, 2); });
+        // Closing a gap (no content removed): markers in the gap land on the cut point (merging), one step, undo
+        // brings them back
+        q.edit("gap", [&](Timeline& tl) {
+            TimelineOps::removeClip(tl, 2);
+            tl.markers = {10, 60, 75, 120};
+        });
+        const QVector<int> inGap = q.timeline().markers;
+        const int gapIdx = q.undoStack()->index();
         CHECK(e.closeGap(TrackRef{TrackKind::Video, 0}, 50, 100));
+        CHECK_EQ(q.undoStack()->index(), gapIdx + 1);
         CHECK_EQ(q.timeline().markers, QVector<int>({10, 50, 70}));
         q.undoStack()->undo();
-        CHECK_EQ(q.timeline().markers, before);
+        CHECK_EQ(q.timeline().markers, inGap);
+        q.undoStack()->redo();
+        CHECK_EQ(q.timeline().markers, QVector<int>({10, 50, 70}));
         q.undoStack()->undo();
+        q.undoStack()->undo();
+        CHECK_EQ(q.timeline().markers, before);
         // A locked track with content after the cut: clips move, the markers stay
         q.edit("lock", [&](Timeline& tl) {
             tl.audio[0].clips << clip(9, 0, 150);
@@ -612,6 +623,45 @@ int main(int argc, char** argv)
         s.set({2});
         e.rippleDeleteSelection();
         CHECK_EQ(TimelineOps::findClip(q.timeline(), 3)->start, 50);
+        CHECK_EQ(q.timeline().markers, before);
+    }
+    // A transition that trims its clips (no material past the cut on either side): markers on the trimmed pieces land
+    // on the new cut instead of going (no content is removed); one step, undo exact
+    {
+        Project q;
+        TimelineGuard guard_q{q};
+        Selection s;
+        Editor e(&q, &s);
+        q.addMedia({"/x/a.mp4", "a.mp4", 1000, true, true, false});
+        auto clip = [](int id, int start, int in, int len) {
+            Clip c;
+            c.id = id;
+            c.mediaPath = "/x/a.mp4";
+            c.start = start;
+            c.in = in;
+            c.out = in + len - 1;
+            return c;
+        };
+        q.edit("setup", [&](Timeline& tl) {
+            tl.video = {Track{TrackKind::Video}};
+            tl.audio = {Track{TrackKind::Audio}};
+            tl.video[0].clips << clip(1, 0, 900, 100) << clip(2, 100, 0, 100); // left ends at its end, right starts at 0
+            tl.markers = {50, 95, 99, 103, 150};
+        });
+        const QVector<int> before = q.timeline().markers;
+        const int idx = q.undoStack()->index();
+        CHECK(e.addTransitionAt(1, 2, TransitionStyle{}, true));
+        CHECK_EQ(q.undoStack()->index(), idx + 1);
+        const Clip* l = TimelineOps::findClip(q.timeline(), 1);
+        const Clip* r = TimelineOps::findClip(q.timeline(), 2);
+        if (CHECK(l && r)) {
+            const int cut = r->start, removed = 200 - r->end();
+            CHECK(l->length() < 100 && r->length() < 100 && removed > 0);
+            const QVector<int> want{50, cut, 150 - removed};
+            if (!CHECK_EQ(q.timeline().markers, want))
+                std::printf("       markers %s, cut %d\n", qPrintable(QString::number(q.timeline().markers.size())), cut);
+        }
+        q.undoStack()->undo();
         CHECK_EQ(q.timeline().markers, before);
     }
     return Check::result();
