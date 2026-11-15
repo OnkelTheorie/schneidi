@@ -157,6 +157,13 @@ struct EncoderConfig {
     // calm, flat or dark stretches (a fade, a death screen) get a finer QP than busy ones. 0 = one
     // QP for the whole clip (the stream before 14.11.).
     double qcomp = 0.3;
+    // Two-pass: the clip's first startBoostSeconds get a QP finer by startBoostQp, fading out over as
+    // long again; the rest of the clip pays for it through the plan. What a viewer sees first decides
+    // the impression, and there is no picture before it that hides anything. The boost shrinks where
+    // its bits would be more than 2.5 % of the clip's (a short clip with a costly start). 0 = off
+    // (the stream before 16.11.2026). Chunks after the first never get it.
+    double startBoostQp = 2.0;
+    double startBoostSeconds = 1.0;
     // Explicit weighted prediction for P pictures (8.4.2.3; Main/High only, so not without CABAC):
     // when the brightness of a picture differs from a reference picture's as a whole (a fade, a
     // flash), the slice carries a weight and an offset per reference and the prediction is scaled
@@ -459,6 +466,8 @@ private:
     std::vector<uint8_t> tpClass_;
     double tpNeed(size_t i, double qp) const;
     void tpRow(size_t i, double* row) const;
+    void tpBuildTables();
+    void tpStartBoost(double kI, double kP);
     double tpBits(const std::vector<double>& tab, double qp, double kI, double kP, double kB) const;
     double tpSolve(const std::vector<double>& tab, double budget, double kI, double kP, double kB) const;
     // P pictures by cost per macroblock (half octaves): bits per cost are far from constant (a calm

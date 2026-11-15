@@ -1432,6 +1432,8 @@ EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads)
     EncoderConfig c = cfg;
     c.threads = threads;
     c.idrPicIdBase = (i * 4096) & 0xFFFF; // far from the ids of the chunk before
+    if (i > 0)
+        c.startBoostQp = 0; // only the clip starts
     if (size_t(i) < bitrateKbps.size()) {
         c.bitrateKbps = bitrateKbps[size_t(i)];
         c.firstPass = firstPass[size_t(i)];
@@ -1574,6 +1576,72 @@ double Encoder::kPOfBin(int kind, int bin, double kP) const
         den += w * rcCostBin_[kind][j];
     }
     return num / den;
+}
+
+// The need tables (all pictures of the plan, by class) from the pictures' QP offsets as they stand.
+void Encoder::tpBuildTables()
+{
+    const FirstPassStats& st = *cfg_.firstPass;
+    tpRemTab_.assign(size_t(kTpClasses) * kTpQSteps, 0.0);
+    std::vector<double> row(kTpQSteps);
+    for (size_t i = 0; i < st.size(); ++i) {
+        tpRow(i, row.data());
+        double* into = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+        for (int k = 0; k < kTpQSteps; ++k)
+            into[k] += row[size_t(k)];
+    }
+    tpAllTab_ = tpRemTab_;
+}
+
+// The most the clip's start may take from the rest of the clip, as a share of the clip's bits (H264_STARTSHARE).
+static const double gStartShare = std::getenv("H264_STARTSHARE") ? std::atof(std::getenv("H264_STARTSHARE")) : 0.025;
+
+// The clip's start (EncoderConfig::startBoostQp): the first startBoostSeconds get a finer QP, fading out over as
+// long again, as far as the bits for it stay within gStartShare of the clip's (the model as the probe left it:
+// kI, kP; B pictures guessed as elsewhere). The rest of the clip pays through the plan.
+void Encoder::tpStartBoost(double kI, double kP)
+{
+    const FirstPassStats& st = *cfg_.firstPass;
+    const size_t n = st.size();
+    if (cfg_.startBoostQp <= 0 || cfg_.startBoostSeconds <= 0 || n == 0)
+        return;
+    const double hold = cfg_.startBoostSeconds * cfg_.fps, fade = std::max(1.0, hold);
+    const size_t end = std::min(n, size_t(std::ceil(hold + fade)));
+    auto weight = [&](size_t i) { return std::clamp(1.0 - (double(i) - hold) / fade, 0.0, 1.0); }; // 1 while held, 0 after the fade
+    auto kOfPicture = [&](size_t i) {
+        const int cls = tpClass_[i];
+        return cls == 0 ? kI : cls == 1 || cls >= 2 + 2 * kRcBins ? 0.4 * kP : cls >= 2 + kRcBins && gTpAfterB > 0 ? kP * gTpAfterB : kP;
+    };
+    const double planQp = twoPassPlanQp(kI, kP, 0.4 * kP);
+    double total = 0;
+    for (size_t i = 0; i < n; ++i)
+        total += kOfPicture(i) * tpNeed(i, planQp + tpQOff_[i]);
+    auto extra = [&](double boost) {
+        double bits = 0;
+        for (size_t i = 0; i < end; ++i)
+            bits += kOfPicture(i) * (tpNeed(i, planQp + tpQOff_[i] - boost * weight(i)) - tpNeed(i, planQp + tpQOff_[i]));
+        return bits;
+    };
+    double boost = cfg_.startBoostQp;
+    if (gStartShare > 0 && extra(boost) > gStartShare * total) {
+        double lo = 0;
+        for (int it = 0; it < 20; ++it) {
+            const double mid = 0.5 * (lo + boost);
+            (extra(mid) > gStartShare * total ? boost : lo) = mid;
+        }
+        boost = lo;
+    }
+    if (std::getenv("H264_RC_TRACE"))
+        std::fprintf(stderr, "rc: start boost %.2f QP (%.1f %% of the clip's bits)\n", boost, 100.0 * extra(boost) / std::max(1.0, total));
+    if (boost < 0.05)
+        return;
+    tpOff_.resize(n, 0.0f);
+    for (size_t i = 0; i < end; ++i) {
+        const float off = float(boost * weight(i));
+        tpOff_[i] -= off;
+        tpQOff_[i] -= off;
+    }
+    tpBuildTables();
 }
 
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
@@ -3310,23 +3378,6 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     tpOff_[i] = float(std::clamp(cfg_.qcomp * 6.0 * (local - mean), -gQcMax, gQcMax));
                 }
             }
-            // Experiment knobs for the clip's start: H264_STARTBOOST = QP finer, held for H264_STARTSEC seconds and
-            // faded out over H264_STARTFADE more; H264_STARTQC = 1: the complexity compression's coarser QP
-            // (positive offsets) fades in over the same time instead.
-            static const double startBoost = std::getenv("H264_STARTBOOST") ? std::atof(std::getenv("H264_STARTBOOST")) : 0.0;
-            static const double startSec = std::getenv("H264_STARTSEC") ? std::atof(std::getenv("H264_STARTSEC")) : 1.0;
-            static const double startFade = std::getenv("H264_STARTFADE") ? std::atof(std::getenv("H264_STARTFADE")) : 1.0;
-            static const bool startQc = std::getenv("H264_STARTQC") && std::atoi(std::getenv("H264_STARTQC")) != 0;
-            if ((startBoost > 0 || startQc) && st.size() > 0) {
-                tpOff_.resize(st.size(), 0.0f);
-                const double hold = startSec * cfg_.fps, fade = std::max(1.0, startFade * cfg_.fps);
-                for (size_t i = 0; i < st.size() && double(i) < hold + fade; ++i) {
-                    const double w = std::clamp(1.0 - (double(i) - hold) / fade, 0.0, 1.0); // 1 while held, 0 after the fade
-                    if (startQc && tpOff_[i] > 0)
-                        tpOff_[i] *= float(1.0 - w);
-                    tpOff_[i] -= float(startBoost * w);
-                }
-            }
             // Each picture's class and its QP against the P QP: I pictures 3 below, B pictures by their
             // run's length (planQueue), all by the complexity compression.
             tpClass_.assign(st.size(), 0);
@@ -3352,17 +3403,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             }
             for (size_t i = 0; i < st.size() && i < tpOff_.size(); ++i)
                 tpQOff_[i] += tpOff_[i];
-            tpRemTab_.assign(size_t(kTpClasses) * kTpQSteps, 0.0);
-            {
-                std::vector<double> row(kTpQSteps);
-                for (size_t i = 0; i < st.size(); ++i) {
-                    tpRow(i, row.data());
-                    double* into = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
-                    for (int k = 0; k < kTpQSteps; ++k)
-                        into[k] += row[size_t(k)];
-                }
-            }
-            tpAllTab_ = tpRemTab_;
+            tpBuildTables();
         }
         auto steadyQp = [&] {
             if (twoPass) {
@@ -3432,6 +3473,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     break;
                 probeQp = std::clamp(int(std::lround(std::clamp(predicted, probeQp - 6.0, probeQp + 6.0))), 10, 51);
             }
+            if (twoPass)
+                tpStartBoost(kOf(true), kOf(false));
             rcQp_ = 0;
         }
         // The debt only nudges the QP (at most +-3, paid back over 10 s): a quiet passage must not

@@ -9,6 +9,8 @@
 // --psy-rd S: psycho-visual mode decision (keeps texture and grain at the cost of PSNR), 0 = off.
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip,
 // moved per picture by --qcomp S times its complexity against the clip's (0 = one QP throughout).
+// --start-boost Q / --start-sec S: two-pass, the clip's first S seconds (1) get a QP finer by up to Q (2; 0 = off),
+// fading out over S more.
 // --order file: one line per access unit, "display index, bytes", in coding order (a muxer needs it for
 // the timestamps of streams with B pictures; not with --chunks).
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
@@ -234,6 +236,10 @@ int main(int argc, char** argv)
             cfg.psyQpOff = std::atoi(argv[++i]);
         } else if (a == "--qcomp" && i + 1 < argc)
             cfg.qcomp = std::atof(argv[++i]);
+        else if (a == "--start-boost" && i + 1 < argc)
+            cfg.startBoostQp = std::atof(argv[++i]);
+        else if (a == "--start-sec" && i + 1 < argc)
+            cfg.startBoostSeconds = std::atof(argv[++i]);
         else if (a == "--recon" && i + 1 < argc)
             reconPath = argv[++i];
         else if (a == "--order" && i + 1 < argc)

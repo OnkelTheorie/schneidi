@@ -107,6 +107,7 @@ Yuv synthFrame(int w, int h, int t)
 struct StreamInfo {
     std::string types;      // picture types in coding order
     std::vector<int> order; // display index of each access unit, in coding order
+    std::vector<size_t> sizes; // bytes of each access unit, in coding order
     double minPsnrY = 99;   // lowest luma PSNR of a reconstruction against its source picture
     uint64_t hash = 1469598103934665603ull; // FNV-1a of the whole stream
     // Psy distance (hadamardMagsDistance) between the source's and the reconstruction's whole 8x8 luma blocks,
@@ -186,6 +187,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         if (info) {
             info->types += encPtr->lastType();
             info->order.push_back(display);
+            info->sizes.push_back(au.size());
             const Yuv src = synthFrame(cfg.width, cfg.height, display);
             double sse = 0;
             for (size_t i = 0; i < src.y.size(); ++i)
@@ -277,6 +279,7 @@ EncoderConfig config(int w, int h, IntraMode mode, int gop, int threads = 1)
     c.aqStrength = 1.0;
     c.psyRd = 0.0;
     c.bSharp = 0.0; // B pictures average both lists wherever that is cheapest (1.5 since 16.11.2026; a case below)
+    c.startBoostQp = 0.0; // two-pass: no finer start of the clip (2 QP since 16.11.2026; a case below)
     return c;
 }
 
@@ -684,6 +687,36 @@ int main()
         if (std::abs(kbps2 - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
+        // The clip's start (startBoostQp): the first half second gets more of the clip's bits than without, the
+        // clip keeps its size, the stream decodes bit-exact and is the same when coded again; the
+        // boost stays within its share of the clip's bits (a third of the pictures here: far less than 2 QP).
+        {
+            auto startBytes = [&](const EncoderConfig& cfg, size_t* all, uint64_t* hash) {
+                StreamInfo info;
+                CHECK(roundTrip(cfg, 60, all, -1, nullptr, &info));
+                size_t first = 0;
+                for (size_t i = 0; i < info.order.size(); ++i)
+                    if (info.order[i] < 15)
+                        first += info.sizes[i];
+                if (hash)
+                    *hash = info.hash;
+                return first;
+            };
+            size_t allPlain = 0, allBoost = 0, allOne = 0;
+            uint64_t hashBoost = 0, hashOne = 0;
+            const size_t plain = startBytes(c, &allPlain, nullptr);
+            EncoderConfig b = c;
+            b.startBoostQp = 2.0;
+            b.startBoostSeconds = 0.5;
+            const size_t boosted = startBytes(b, &allBoost, &hashBoost);
+            if (!(boosted > plain) || !(double(boosted) < 1.25 * double(plain)))
+                std::fprintf(stderr, "start boost: first half second %zu -> %zu bytes, clip %zu -> %zu\n", plain, boosted, allPlain, allBoost);
+            CHECK(boosted > plain);
+            CHECK(double(boosted) < 1.25 * double(plain));
+            CHECK(std::abs(double(allBoost) - double(allPlain)) < 0.05 * double(allPlain));
+            startBytes(b, &allOne, &hashOne); // the same again
+            CHECK(allOne == allBoost && hashOne == hashBoost);
+        }
         // With threads the first pass analyses its batches on a thread of its own, the pictures of
         // a batch side by side: the same numbers as one picture after the other (also with the
         // B probe, and with a scene change in the clip).
