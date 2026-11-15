@@ -84,15 +84,19 @@ public:
     // done here are counted in ownRows (the caller sets it past the last row should this throw).
     void costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads = 1, const LookaheadFrame* seed = nullptr,
                int seedScale = 1, const LookaheadFrame* src = nullptr, const std::atomic<int>* prevRows = nullptr,
-               std::atomic<int>* ownRows = nullptr) const;
+               std::atomic<int>* ownRows = nullptr, int grid = 1) const;
     // B pictures: the searches the macroblock tree and the rate control need along the planned
     // references (maxB = longest run). searchFwd: f from ref, the picture d >= 2 before it (f.fwd[d]).
     // searchBack: b, the picture c before next, from next (next.back[c]); after = the picture right
     // after b (next itself for c = 1), whose vectors start the search. biCost: b between r0 (a
     // before it) and next (c after it), after both of its searches (next.bi, next.biSum).
-    void searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads = 1) const;
-    void searchBack(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& after, int c, int maxB, int threads = 1) const;
-    void biCost(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& r0, int a, int c, int maxB, bool weighted) const;
+    // grid > 1 (threads = 1): only every grid-th block in both directions is searched (the others
+    // keep cost 0), each starting from its neighbours on that grid - for sums over a sample.
+    void searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads = 1, int grid = 1) const;
+    void searchBack(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& after, int c, int maxB, int threads = 1,
+                    int grid = 1) const;
+    void biCost(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& r0, int a, int c, int maxB, bool weighted,
+                int grid = 1) const;
 
     // Macroblock tree over the queue: propagates the cost of every block back through the
     // motion vectors to the blocks it was predicted from, last picture first. Keyframes do not
@@ -114,8 +118,35 @@ public:
 
 private:
     void searchInto(const LookaheadFrame& cur, const LookaheadFrame& ref, LookaheadSearch& out, const LookaheadFrame* seed,
-                    int seedScale, int threads) const;
+                    int seedScale, int threads, int grid = 1) const;
     int width_, height_, mbW_, mbH_, halfW_, halfH_;
+};
+
+// Where B pictures pay, from the lookahead's costs: the pictures come in display order; every
+// run + 1 of them (a short run of B pictures and the P picture after it, the way the encoder
+// would code them: with the pyramid's reference B picture in the middle of a run of three) are
+// searched along that structure's references, and what the structure would cost is held against
+// the same pictures as P pictures, each from the one before. The costs count as the coder pays:
+// a block whose prediction error stays below the quantiser's reach costs nothing in either.
+class BPlanner {
+public:
+    BPlanner() = default;
+    // The next picture in display order (analysed). True when an answer came with it: gate()
+    // holds from picture resultStart() on.
+    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int maxB, int threads);
+    int resultStart() const { return resultStart_; }
+    // Longest run of B pictures that pays (0 = none), with kClear where they are a clear gain.
+    static constexpr int kClear = 0x80;
+    uint8_t gate() const { return gate_; }
+
+private:
+    void evaluate(const Lookahead& la, int maxB, int threads);
+    std::deque<LookaheadFrame> win_; // the reference picture before the run, then the run's pictures (no source planes)
+    int anchor_ = -1;                // display index of win_[0]
+    int resultStart_ = 0;
+    uint8_t gate_ = 0;
+    double accP_ = 0, accB_ = 0; // the last windows' costs as P pictures / with B pictures, fading
+    bool on_ = false;
 };
 
 } // namespace schneidi::h264

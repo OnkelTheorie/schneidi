@@ -911,9 +911,8 @@ int main()
             }
         }
         {
-            // Placement: a slow zoom gets runs of B pictures (the probe finds them worth it, the lookahead costs
-            // pick the runs; one pass and from a first pass with the same plan) and is smaller with them at the
-            // same QP.
+            // Placement: a slow zoom gets runs of B pictures (the planner finds them worth it from the lookahead's
+            // costs; one pass and from a first pass with the same plan) and is smaller with them at the same QP.
             gSynthKind = 2;
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
             size_t plain = 0, withB = 0;
@@ -928,19 +927,20 @@ int main()
             CHECK(withB < plain);
             {
                 gSynthKind = 1;
-                // A still picture: the probe has nothing to measure. Since 15.11.2026 it then gets runs of
-                // three (with the pyramid they gain a little on screen recordings and the standing phases
-                // of game clips; before: none). They must not cost anything here.
+                // A still picture (with a little noise): runs of three (with the pyramid they gain a little on
+                // screen recordings and the standing phases of game clips). They must not cost anything here.
                 StreamInfo still;
                 size_t stillB = 0, stillPlain = 0;
                 CHECK(roundTrip(c, 24, &stillB, -1, nullptr, &still));
                 EncoderConfig noB = c;
                 noB.bframes = 0;
                 CHECK(roundTrip(noB, 24, &stillPlain));
-                // (After the clip's first twelve pictures, which stay P pictures for the rate control.)
-                if (still.types != "IPPPPPPPPPPPPPBBBPBBBPBB" || stillB > stillPlain + 160)
+                // (The planner sees them as a clear gain on this noisy still, so the clip starts with them; a
+                // clean still would keep its first twelve pictures as P pictures for the rate control.)
+                const auto stillCount = std::count(still.types.begin(), still.types.end(), 'B');
+                if (stillCount < 9 || stillB > stillPlain + 160)
                     std::fprintf(stderr, "still picture: types %s, %zu bytes, without B %zu\n", still.types.c_str(), stillB, stillPlain);
-                CHECK(still.types == "IPPPPPPPPPPPPPBBBPBBBPBB");
+                CHECK(stillCount >= 9);
                 CHECK(stillB <= stillPlain + 160);
                 gSynthKind = 2;
             }

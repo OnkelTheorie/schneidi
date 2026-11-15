@@ -781,6 +781,10 @@ void FrameCoder::loadSource(const Picture& pic)
 // (H264_BPROBE_GAIN; measured: slow zoom -0.3 .. -0.5, game, camera and noise -0.05 .. +0.6).
 // H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
 static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
+// Where B pictures pay is decided from the lookahead's costs (BPlanner) since 15.11.2026;
+// H264_BPLAN=0: by the probe's small encodes as before (the fallback, and for comparisons).
+static const bool kBPlan = !std::getenv("H264_BPLAN") || std::atoi(std::getenv("H264_BPLAN")) != 0;
+static const bool kBGate = kBPlan || kBProbe; // false: runs of B pictures everywhere
 // The probe's first question: runs of this many B pictures against none (3 = with the pyramid).
 static const int kBProbeShort = std::getenv("H264_BPROBE_SHORT") ? std::atoi(std::getenv("H264_BPROBE_SHORT")) : 3;
 // A new measurement before the interval is over when the pictures' activity (lookahead cost with
@@ -1222,12 +1226,28 @@ void FirstPass::analyseBatch() const
         keptBytes_ += bytes;
     }
     // B pictures: where they pay (the probe needs the half pictures and the scene changes).
-    if (bframes_ > 0 && kBProbe) {
+    if (bframes_ > 0 && kBPlan) {
+        const int base = int(stats_->intraSum.size());
+        for (int i = 0; i < n; ++i) {
+            stats_->bGate.push_back(planner_.gate());
+            if (planner_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_))
+                std::fill(stats_->bGate.begin() + planner_.resultStart(), stats_->bGate.end(), planner_.gate());
+        }
+    } else if (bframes_ > 0 && kBProbe) {
         const int base = int(stats_->intraSum.size());
         for (int i = 0; i < n; ++i) {
             stats_->bGate.push_back(probe_.gate());
             if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_, true))
                 std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), probe_.gate());
+        }
+    }
+    if (const char* dump = std::getenv("H264_FP_DUMP")) { // per picture: intra and inter cost of every macroblock (int32)
+        if (FILE* fp = std::fopen(dump, stats_->intraSum.empty() ? "wb" : "ab")) {
+            for (const LookaheadFrame& f : job_) {
+                std::fwrite(f.intraCost.data(), 4, f.intraCost.size(), fp);
+                std::fwrite(f.interCost.data(), 4, f.interCost.size(), fp);
+            }
+            std::fclose(fp);
         }
     }
     for (LookaheadFrame& f : job_) {
@@ -1250,7 +1270,7 @@ std::shared_ptr<const FirstPassStats> FirstPass::stats() const
         batch_.clear();
         analyseBatch();
     }
-    if (probe_.collectFirst()) // an answer still being measured
+    if (!kBPlan && probe_.collectFirst()) // an answer still being measured
         std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), probe_.gate());
     return stats_;
 }
@@ -1591,8 +1611,13 @@ void Encoder::joinPending()
 
 void Encoder::noteGate(const LookaheadFrame& f)
 {
-    if (!bAdapt() || cfg_.firstPass || !kBProbe)
+    if (!bAdapt() || cfg_.firstPass || !kBGate)
         return;
+    if (kBPlan) {
+        if (planner_.add(*la_, f, f.index, cfg_.bframes, cfg_.threads))
+            gate_.emplace_back(planner_.resultStart(), planner_.gate());
+        return;
+    }
     if (!probe_.add(*la_, f, f.index, cfg_.bframes, cfg_.threads))
         return;
     if (!gate_.empty() && gate_.back().first == probe_.resultStart())
@@ -1687,7 +1712,7 @@ void Encoder::joinBSearches()
 // Longest run of B pictures a picture may be part of, by the probe.
 int Encoder::gateAt(int index) const
 {
-    if (!kBProbe)
+    if (!kBGate)
         return cfg_.bframes;
     for (size_t i = gate_.size(); i-- > 0;)
         if (gate_[i].first <= index)
@@ -1795,7 +1820,7 @@ void Encoder::planFromStats()
         // Runs of B pictures, each ended by a P picture; the last picture before a keyframe is P.
         // Adaptive: only where the probe found them worth it.
         auto gate = [&](size_t k) {
-            if (!adapt || !kBProbe || k >= st.bGate.size())
+            if (!adapt || !kBGate || k >= st.bGate.size())
                 return cfg_.bframes;
             if (int(k) <= kBWarmup && !(st.bGate[k] & BProbe::kClear))
                 return 0;
@@ -3255,6 +3280,14 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         cfg_.qp = std::clamp(baseQp + (bRef ? bRefQp : bQp), 0, 51); // nothing (little) depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
+    static const bool kQpTrace = std::getenv("H264_QP_TRACE") != nullptr;
+    if (kQpTrace && lookahead) {
+        double tm = 0;
+        for (float o : fc.treeOffset_)
+            tm += o;
+        std::fprintf(stderr, "qp: picture %d %c qp %d tree %.2f cost %.0f\n", frame.index, "IPB"[type], cfg_.qp,
+                     fc.treeOffset_.empty() ? 0.0 : tm / double(fc.treeOffset_.size()), costUsed);
+    }
     // Psy strength follows the picture's QP (EncoderConfig::psyQpFull / psyQpOff): full below, none
     // above, linear between - texture is kept where there are bits for it and not invented where
     // the picture is starved.

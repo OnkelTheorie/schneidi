@@ -15,6 +15,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <thread>
@@ -293,7 +294,8 @@ std::vector<uint8_t> Lookahead::halfPicture(const LookaheadFrame& f) const
 static const bool gLaSubpel = !std::getenv("H264_LASUBPEL") || std::atoi(std::getenv("H264_LASUBPEL")) != 0;
 
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
-                      int seedScale, const LookaheadFrame* src, const std::atomic<int>* prevRows, std::atomic<int>* ownRows) const
+                      int seedScale, const LookaheadFrame* src, const std::atomic<int>* prevRows, std::atomic<int>* ownRows,
+                      int grid) const
 {
     if (!src)
         src = &f;
@@ -314,6 +316,8 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
     constexpr int kIntraPenalty = 8;
     // One macroblock; its vector predictor reads the left, top and top-right vectors.
     auto doMb = [&](int bx, int by, double& intraSum, double& interSum) {
+        if (grid > 1 && (bx % grid || by % grid))
+            return; // a sample of the blocks (BPlanner): the others keep cost 0
         {
             const size_t m = size_t(by) * mbW_ + bx;
             const uint8_t* cur = at(src->half, bx * 8, by * 8);
@@ -347,7 +351,7 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
 
             // Motion: predictor = median of the left, top and top-right vectors (half-pel units).
             auto mvOf = [&](int dx, int dy, int& vx, int& vy) {
-                const int x = bx + dx, y = by + dy;
+                const int x = bx + dx * grid, y = by + dy * grid;
                 if (x < 0 || y < 0 || x >= mbW_ || y >= mbH_ || (dy == 0 && dx > 0)) {
                     vx = vy = 0;
                     return false;
@@ -618,31 +622,31 @@ void Lookahead::propagate(std::deque<LookaheadFrame>& frames) const
 }
 
 void Lookahead::searchInto(const LookaheadFrame& cur, const LookaheadFrame& ref, LookaheadSearch& out,
-                           const LookaheadFrame* seed, int seedScale, int threads) const
+                           const LookaheadFrame* seed, int seedScale, int threads, int grid) const
 {
     LookaheadFrame t;
-    costs(t, &ref, threads, seed, seedScale, &cur);
+    costs(t, &ref, threads, seed, seedScale, &cur, nullptr, nullptr, grid);
     out.cost = std::move(t.interCost);
     out.mvx = std::move(t.mvx);
     out.mvy = std::move(t.mvy);
     out.sum = t.interSum;
 }
 
-void Lookahead::searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads) const
+void Lookahead::searchFwd(LookaheadFrame& f, const LookaheadFrame& ref, int d, int maxB, int threads, int grid) const
 {
     if (f.fwd.size() != size_t(maxB) + 2)
         f.fwd.assign(size_t(maxB) + 2, LookaheadSearch{});
     // Start: the picture's own one-step vector times the distance.
-    searchInto(f, ref, f.fwd[size_t(d)], &f, d, threads);
+    searchInto(f, ref, f.fwd[size_t(d)], &f, d, threads, grid);
 }
 
 void Lookahead::searchBack(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& after, int c, int maxB,
-                           int threads) const
+                           int threads, int grid) const
 {
     if (next.back.size() != size_t(maxB) + 1)
         next.back.assign(size_t(maxB) + 1, LookaheadSearch{});
     // Start: the one-step vector of the picture after b, reversed and times the distance.
-    searchInto(b, next, next.back[size_t(c)], &after, -c, threads);
+    searchInto(b, next, next.back[size_t(c)], &after, -c, threads, grid);
 }
 
 namespace {
@@ -662,7 +666,7 @@ void predHalf(const uint8_t* ref, int stride, int hx, int hy, uint8_t* out)
 } // namespace
 
 void Lookahead::biCost(LookaheadFrame& next, const LookaheadFrame& b, const LookaheadFrame& r0, int a, int c, int maxB,
-                       bool weighted) const
+                       bool weighted, int grid) const
 {
     const int stride = halfW_ + 2 * kMargin;
     const size_t n = size_t(mbW_) * mbH_;
@@ -681,8 +685,8 @@ void Lookahead::biCost(LookaheadFrame& next, const LookaheadFrame& b, const Look
     std::vector<int32_t>& out = next.bi[size_t(bComboIndex(a, c, maxB))];
     out.assign(n, 0);
     double sum = 0;
-    for (int by = 0; by < mbH_; ++by)
-        for (int bx = 0; bx < mbW_; ++bx) {
+    for (int by = 0; by < mbH_; by += grid)
+        for (int bx = 0; bx < mbW_; bx += grid) {
             const size_t m = size_t(by) * mbW_ + bx;
             const size_t off = size_t(by * 8 + kMargin) * stride + size_t(bx * 8 + kMargin);
             const uint8_t* cur = b.half.data() + off;
@@ -791,6 +795,192 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
                 add(ref, bx, by, mx[m], my[m], amount);
             }
     }
+}
+
+// The planner's numbers (BPlanner; H264_BPLAN_* for measurements), fitted on our own material:
+// fixed QP, runs of three with the pyramid against none, BD-rate PSNR / SSIM - a slow zoom -53 / -56 %
+// at a ratio of 0.73, a pan in a game -1 / -6 % at 0.97, camera footage +0 / -1 % at 1.03, game
+// action +8 / +6 % at 1.06.
+static double planEnv(const char* name, double def)
+{
+    const char* e = std::getenv(name);
+    return e ? std::atof(e) : def;
+}
+// Dead zone of a block's cost (SATD of the half picture's 8x8 block).
+static const int kPlanDead = int(planEnv("H264_BPLAN_DEAD", 128));
+// B pictures from a cost ratio (structure with B pictures / all P pictures) below kPlanOn on,
+// until it passes kPlanOff; long runs below kPlanLong.
+static const double kPlanOn = planEnv("H264_BPLAN_ON", 1.02), kPlanOff = planEnv("H264_BPLAN_OFF", 1.05);
+static const double kPlanLong = planEnv("H264_BPLAN_LONG", 0.85);
+static const double kPlanKeep = planEnv("H264_BPLAN_KEEP", 0.5);
+// Below this cost per block and picture there is nothing to weigh: B pictures.
+static const double kPlanStill = planEnv("H264_BPLAN_STILL", 12);
+static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
+// The planner searches every kPlanGrid-th block in both directions: its sums need no more, and
+// the searches are its whole cost.
+static const int kPlanGrid = std::max(1, int(planEnv("H264_BPLAN_GRID", 2)));
+
+namespace {
+
+// A picture of the planner's window: what the searches read, without the source planes.
+LookaheadFrame planCopy(const LookaheadFrame& f)
+{
+    LookaheadFrame c;
+    c.half = f.half;
+    c.intraCost = f.intraCost;
+    c.interCost = f.interCost;
+    c.mvx = f.mvx;
+    c.mvy = f.mvy;
+    c.intraSum = f.intraSum;
+    c.interSum = f.interSum;
+    c.sceneChange = f.sceneChange;
+    c.forceKeyframe = f.forceKeyframe;
+    return c;
+}
+
+} // namespace
+
+bool BPlanner::add(const Lookahead& la, const LookaheadFrame& f, int index, int maxB, int threads)
+{
+    if (maxB <= 0)
+        return false;
+    // A cut: no picture predicts across it, the window starts again there.
+    if (win_.empty() || f.sceneChange || f.forceKeyframe) {
+        if (!win_.empty())
+            accP_ = accB_ = 0;
+        win_.clear();
+        win_.push_back(planCopy(f));
+        anchor_ = index;
+        return false;
+    }
+    win_.push_back(planCopy(f));
+    const int run = std::min(maxB, 3);
+    if (int(win_.size()) < run + 2)
+        return false;
+    evaluate(la, maxB, threads);
+    resultStart_ = anchor_ + 1;
+    // The run's P picture is the reference before the next run.
+    anchor_ = index;
+    win_.erase(win_.begin(), win_.end() - 1);
+    win_.front().fwd.clear();
+    win_.front().back.clear();
+    win_.front().bi.clear();
+    win_.front().biSum.clear();
+    return true;
+}
+
+void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
+{
+    const int run = int(win_.size()) - 2, p = run + 1; // win_[1 .. run] B pictures, win_[p] the P picture
+    const int tableB = std::max(maxB, 3);
+    const int mid = run >= 3 ? 1 + run / 2 : 0; // the pyramid's reference B picture
+    // Every B picture's references: a pictures before it, c after it.
+    struct Place {
+        int k, a, c;
+    };
+    std::vector<Place> places;
+    for (int k = 1; k <= run; ++k) {
+        const int before = mid && k > mid ? mid : 0, after = mid && k < mid ? mid : p;
+        places.push_back({k, k - before, after - k});
+    }
+    for (LookaheadFrame& f : win_) {
+        f.fwd.assign(size_t(tableB) + 2, LookaheadSearch{});
+        f.back.assign(size_t(tableB) + 1, LookaheadSearch{});
+        f.bi.assign(size_t(bComboCount(tableB)), {});
+        f.biSum.assign(size_t(bComboCount(tableB)), -1.0);
+    }
+    // The searches, side by side: each reads the one-step vectors only.
+    struct Job {
+        int kind, k, a, c;
+    };
+    std::vector<Job> jobs;
+    jobs.push_back({0, p, p, 0});
+    for (const Place& b : places) {
+        if (b.a > 1)
+            jobs.push_back({0, b.k, b.a, 0});
+        jobs.push_back({1, b.k, b.a, b.c});
+    }
+    {
+        std::atomic<int> next{0};
+        const int count = int(jobs.size());
+        runOnThreads(std::clamp(threads, 1, count), [&] {
+            for (int i; (i = next.fetch_add(1)) < count;) {
+                const Job& j = jobs[size_t(i)];
+                if (j.kind == 0)
+                    la.searchFwd(win_[size_t(j.k)], win_[size_t(j.k - j.a)], j.a, tableB, 1, kPlanGrid);
+                else
+                    la.searchBack(win_[size_t(j.k + j.c)], win_[size_t(j.k)], win_[size_t(j.k) + 1], j.c, tableB, 1, kPlanGrid);
+            }
+        });
+    }
+    {
+        std::atomic<int> next{0};
+        const int count = int(places.size());
+        runOnThreads(std::clamp(threads, 1, count), [&] {
+            for (int i; (i = next.fetch_add(1)) < count;) {
+                const Place& b = places[size_t(i)];
+                la.biCost(win_[size_t(b.k + b.c)], win_[size_t(b.k)], win_[size_t(b.k - b.a)], b.a, b.c, tableB, false, kPlanGrid);
+            }
+        });
+    }
+    // What each structure costs: per macroblock the best prediction's cost above the dead zone (a
+    // block whose error stays below it is skipped or costs next to nothing in either structure).
+    const int mbW = la.halfW() / 8, mbH = la.halfH() / 8;
+    auto dz = [&](int c) { return double(std::max(0, c - kPlanDead)); };
+    double sumP = 0, sumB = 0, sumFar = 0, sumNear = 0; // sumNear: the run's pictures as P pictures
+    size_t n = 0; // blocks counted: every kPlanGrid-th in both directions
+    const LookaheadFrame& pf = win_[size_t(p)];
+    const std::vector<int32_t>& far = pf.fwd[size_t(p)].cost;
+    for (int by = 0; by < mbH; by += kPlanGrid)
+        for (int bx = 0; bx < mbW; bx += kPlanGrid) {
+            const size_t m = size_t(by) * mbW + bx;
+            ++n;
+            for (int k = 1; k <= p; ++k) {
+                const LookaheadFrame& f = win_[size_t(k)];
+                const double c = dz(std::min(f.intraCost[m], f.interCost[m]));
+                sumP += c;
+                if (k < p)
+                    sumNear += c;
+            }
+            const double farCost = dz(std::min(pf.intraCost[m], far[m]));
+            sumB += farCost;
+            sumFar += farCost;
+            for (const Place& b : places) {
+                const LookaheadFrame& f = win_[size_t(b.k)];
+                const LookaheadFrame& nx = win_[size_t(b.k + b.c)];
+                const int c0 = b.a == 1 ? f.interCost[m] : f.fwd[size_t(b.a)].cost[m];
+                sumB += dz(std::min({f.intraCost[m], c0, nx.back[size_t(b.c)].cost[m], nx.bi[size_t(bComboIndex(b.a, b.c, tableB))][m]}));
+            }
+        }
+    const double perMb = sumP / (double(n) * p);
+    const bool still = perMb < kPlanStill;
+    if (!still) {
+        // The last windows count too (half as much each step back): single windows scatter.
+        accP_ = kPlanKeep * accP_ + sumP;
+        accB_ = kPlanKeep * accB_ + sumB;
+    }
+    const double ratio = accP_ > 0 ? accB_ / accP_ : 1.0;
+    const int shortRun = std::min(maxB, 3);
+    if (still) {
+        // Next to nothing to code (a still picture, a desktop, the player standing): B pictures
+        // are skipped there, P pictures refine with the tree picture by picture.
+        // (Still where B pictures were a clear gain: no P pictures between for the warm-up.)
+        gate_ = uint8_t(shortRun | (gate_ & kClear));
+    } else {
+        on_ = ratio < (on_ ? kPlanOff : kPlanOn);
+        const bool clear = on_ && ratio < kPlanLong;
+        // B pictures that cost next to nothing between their references (a clean zoom, a fade):
+        // placed whatever the P picture after them seems to cost. The half picture's search sees
+        // a picture several steps from its reference as far too expensive there, and it cannot
+        // cost more than the steps together.
+        const bool free = sumB - sumFar < kPlanFree * sumNear;
+        gate_ = uint8_t(!on_ ? (free ? shortRun | kClear : 0) : clear ? (maxB | kClear) : shortRun);
+    }
+    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    if (trace)
+        std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held: run %d\n",
+                     anchor_ + 1, sumP / (double(n) * p), sumB / (double(n) * p), sumFar / double(n), sumP > 0 ? sumB / sumP : 0.0, ratio,
+                     gate_ & (kClear - 1));
 }
 
 float Lookahead::qpOffset(const LookaheadFrame& f, int mb, double strength)

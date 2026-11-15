@@ -260,6 +260,7 @@ private:
     mutable LookaheadFrame prev_;
     mutable bool havePrev_ = false;
     mutable BProbe probe_;
+    mutable BPlanner planner_;
     int bframes_ = 0;
     size_t keepBytes_ = 0;
     mutable size_t keptBytes_ = 0;
@@ -351,6 +352,7 @@ private:
     // Without a first pass: the probe sees every picture as it joins the queue; from each
     // measurement's first picture on its result holds.
     BProbe probe_;
+    BPlanner planner_;
     std::vector<std::pair<int, int>> gate_; // (first picture, longest run of B pictures that pays), in order
     void noteGate(const LookaheadFrame& f);
     // The lookahead's searches along the planned references of B pictures: collected when a
