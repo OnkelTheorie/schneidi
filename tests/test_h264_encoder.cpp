@@ -41,6 +41,8 @@ struct Yuv {
 int gFadeFrames = 0;
 // Picture kind of synthFrame: 0 = the moving pictures below, 1 = still (only the noise changes), 2 = a slow zoom.
 int gSynthKind = 0;
+// > 1: every picture of the synthetic clip is shown this many times (a recording at a higher frame rate than the game's).
+int gSynthHold = 0;
 
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
 // A texture under a slow zoom with a little noise (gSynthKind 2): the material B pictures pay on.
@@ -64,6 +66,8 @@ int zoomSample(int x, int y, int w, int h, int t)
 
 Yuv synthFrame(int w, int h, int t)
 {
+    if (gSynthHold > 1)
+        t -= t % gSynthHold;
     const int tm = gSynthKind != 0 ? 0 : t;
     Yuv f;
     f.w = w;
@@ -108,6 +112,7 @@ struct StreamInfo {
     std::string types;      // picture types in coding order
     std::vector<int> order; // display index of each access unit, in coding order
     std::vector<size_t> sizes; // bytes of each access unit, in coding order
+    std::vector<int> qps;      // QP of each access unit's picture, in coding order
     double minPsnrY = 99;   // lowest luma PSNR of a reconstruction against its source picture
     uint64_t hash = 1469598103934665603ull; // FNV-1a of the whole stream
     // Psy distance (hadamardMagsDistance) between the source's and the reconstruction's whole 8x8 luma blocks,
@@ -188,6 +193,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
             info->types += encPtr->lastType();
             info->order.push_back(display);
             info->sizes.push_back(au.size());
+            info->qps.push_back(encPtr->lastQp());
             const Yuv src = synthFrame(cfg.width, cfg.height, display);
             double sse = 0;
             for (size_t i = 0; i < src.y.size(); ++i)
@@ -760,6 +766,115 @@ int main()
             CHECK(bytesKeep == bytes);
         }
     }
+    // Duplicated pictures cost next to nothing: a picture that repeats the one before is a run of skipped
+    // macroblocks (fixed QP, P pictures only; every picture shown four times).
+    {
+        gSynthHold = 4;
+        EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 2);
+        StreamInfo info;
+        CHECK(roundTrip(c, 40, nullptr, -1, nullptr, &info));
+        size_t worst = 0, fresh = 0;
+        for (size_t i = 0; i < info.order.size(); ++i)
+            (info.order[i] % 4 ? worst : fresh) = std::max(info.order[i] % 4 ? worst : fresh, info.sizes[i]);
+        if (worst * 50 > fresh)
+            std::fprintf(stderr, "duplicated pictures: up to %zu bytes each (new pictures up to %zu)\n", worst, fresh);
+        CHECK(worst * 50 <= fresh);
+        gSynthHold = 0;
+    }
+    // Constant quality (crf): no size target. Every picture decodes bit-exact, a higher value gives a smaller
+    // file and a lower quality, a still clip a far smaller file than a moving one, the stream does not depend
+    // on the thread count, and a bitrate target switches the mode off.
+    {
+        EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+        c.fps = 30;
+        size_t size[3] = {};
+        double worstPsnr[3] = {};
+        const double values[3] = {18, 23, 28};
+        for (int k = 0; k < 3; ++k) {
+            c.crf = values[k];
+            StreamInfo info;
+            CHECK(roundTrip(c, 45, &size[k], -1, nullptr, &info));
+            worstPsnr[k] = info.minPsnrY;
+        }
+        if (!(size[0] > size[1] && size[1] > size[2]) || !(double(size[0]) < 6.0 * double(size[2])))
+            std::fprintf(stderr, "crf 18/23/28: %zu %zu %zu bytes\n", size[0], size[1], size[2]);
+        CHECK(size[0] > size[1] && size[1] > size[2]);
+        CHECK(double(size[0]) < 6.0 * double(size[2])); // ten steps: about a third, never a sixth
+        if (!(worstPsnr[0] > worstPsnr[2]))
+            std::fprintf(stderr, "crf 18/23/28: worst picture %.2f %.2f %.2f dB\n", worstPsnr[0], worstPsnr[1], worstPsnr[2]);
+        CHECK(worstPsnr[0] > worstPsnr[2]); // (the clip's noise caps the quality of the two finer ones)
+        c.crf = 23;
+        // qp is not used
+        {
+            EncoderConfig other = c;
+            other.qp = 40;
+            size_t bytes = 0;
+            CHECK(roundTrip(other, 45, &bytes));
+            CHECK(bytes == size[1]);
+        }
+        // Threads
+        uint64_t hashOne = 0;
+        for (int threads : {1, 2, 4}) {
+            EncoderConfig t = c;
+            t.threads = threads;
+            StreamInfo info;
+            size_t bytes = 0;
+            CHECK(roundTrip(t, 45, &bytes, -1, nullptr, &info));
+            if (threads == 1)
+                hashOne = info.hash;
+            CHECK(gCabac ? info.hash == hashOne : bytes > 0); // (CAVLC: one slice per thread)
+        }
+        // A still clip (only the noise changes)
+        gSynthKind = 1;
+        size_t still = 0;
+        CHECK(roundTrip(c, 45, &still));
+        gSynthKind = 0;
+        if (!(still * 2 < size[1]))
+            std::fprintf(stderr, "crf 23: still clip %zu bytes, moving %zu\n", still, size[1]);
+        CHECK(still * 2 < size[1]);
+        // With a bitrate target the value is ignored
+        {
+            EncoderConfig b = c;
+            b.bitrateKbps = 800;
+            StreamInfo withCrf, without;
+            CHECK(roundTrip(b, 45, nullptr, -1, nullptr, &withCrf));
+            b.crf = -1;
+            CHECK(roundTrip(b, 45, nullptr, -1, nullptr, &without));
+            CHECK(withCrf.hash == without.hash);
+        }
+        // Without lookahead or with intra pictures only: one QP from the value
+        {
+            EncoderConfig n = c;
+            n.lookahead = 0;
+            n.mbtree = false;
+            CHECK(roundTrip(n, 20));
+            n = c;
+            n.gop = 1;
+            CHECK(roundTrip(n, 6));
+        }
+        // The encoder's defaults (B pictures with the probe and the pyramid, psy, AQ 1.5), and in chunks
+        if (gCabac) {
+            EncoderConfig d;
+            d.width = 320;
+            d.height = 192;
+            d.gop = 30;
+            d.threads = 3;
+            d.fps = 30;
+            d.crf = 23;
+            StreamInfo info, again;
+            CHECK(roundTrip(d, 70, nullptr, -1, nullptr, &info));
+            CHECK(roundTrip(d, 70, nullptr, -1, nullptr, &again));
+            CHECK(info.hash == again.hash);
+            FirstPass fp(d.width, d.height, 2, d.bframes);
+            for (int t = 0; t < 70; ++t) {
+                const Yuv src = synthFrame(d.width, d.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            const ChunkPlan plan = planChunks(*fp.stats(), d, 2, 20);
+            CHECK(plan.start.size() == 2);
+            CHECK(roundTrip(d, 70, nullptr, -1, &plan));
+        }
+    }
     // B pictures (CABAC only): coding order, display order and timestamps, every picture bit-exact
     if (gCabac) {
         for (int bframes : {1, 2, 3, 4}) { // 4 = 3 with the B pyramid
@@ -1028,6 +1143,56 @@ int main()
                 std::fprintf(stderr, "slow zoom, first pass: types %s instead of %s\n", info2.types.c_str(), info.types.c_str());
             CHECK(info2.types == info.types);
             gSynthKind = 0;
+        }
+        {
+            // Duplicated pictures (a game at 12 pictures per second recorded at 60): every picture is shown five
+            // times, B pictures come in runs of three. The first pass sees each picture against the one before - a
+            // P picture that repeats the B picture before it looks free and carries the change, the B picture on
+            // the change looks expensive and copies. The two-pass plan goes by the pictures' real references: the
+            // clip meets its size and the P pictures' QP stays put after the first pictures.
+            gSynthHold = 5;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 2);
+            c.bframes = 3;
+            c.bAdaptive = false;
+            c.bitrateKbps = 300;
+            c.fps = 60;
+            FirstPass fp(c.width, c.height, 2, c.bframes);
+            for (int t = 0; t < 120; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            size_t bytes = 0;
+            StreamInfo info;
+            CHECK(roundTrip(c, 120, &bytes, -1, nullptr, &info));
+            const double kbps = bytes * 8.0 / 2.0 / 1000.0;
+            int qpLow = 99, qpHigh = 0;
+            for (size_t i = 0; i < info.types.size(); ++i)
+                if (info.types[i] == 'P' && info.order[i] >= 20) {
+                    qpLow = std::min(qpLow, info.qps[i]);
+                    qpHigh = std::max(qpHigh, info.qps[i]);
+                }
+            if (std::abs(kbps - 300.0) >= 30.0 || qpHigh - qpLow > 4)
+                std::fprintf(stderr, "duplicated pictures, two-pass: %.0f kbit/s instead of 300, P QP %d..%d\n", kbps, qpLow, qpHigh);
+            CHECK(std::abs(kbps - 300.0) < 30.0);
+            CHECK(qpHigh - qpLow <= 4);
+            // One pass (the lookahead measures every picture against its real references) and constant quality.
+            c.firstPass.reset();
+            CHECK(roundTrip(c, 120, &bytes));
+            if (std::abs(bytes * 8.0 / 2.0 / 1000.0 - 300.0) >= 75.0)
+                std::fprintf(stderr, "duplicated pictures, one pass: %.0f kbit/s instead of 300\n", bytes * 8.0 / 2.0 / 1000.0);
+            CHECK(std::abs(bytes * 8.0 / 2.0 / 1000.0 - 300.0) < 75.0);
+            c.bitrateKbps = 0;
+            c.crf = 23;
+            size_t held = 0, moving = 0;
+            CHECK(roundTrip(c, 120, &held));
+            gSynthHold = 0;
+            CHECK(roundTrip(c, 120, &moving));
+            // (a fifth of the pictures are new, each kept five times as long and so coded finer: fewer bytes
+            // than with every picture new, and the repeats do not count as a calm clip that earns a finer QP still)
+            if (!(held < moving))
+                std::fprintf(stderr, "duplicated pictures, crf: %zu bytes held, %zu moving\n", held, moving);
+            CHECK(held < moving);
         }
         {
             // Rate control with B pictures: one pass, with a first pass, and in chunks

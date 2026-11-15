@@ -1717,6 +1717,63 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
     return tpSolve(tpAllTab_, double(st.size()) * perFrame, kI, kP, kB);
 }
 
+// Constant quality (EncoderConfig::crf): the scale's zero point against the P pictures' QP at 30 pictures per
+// second and at the reference complexity, what a doubling of the frame rate adds, and the reference complexity
+// (log2 of the lookahead cost per macroblock + 1). Fitted so that a crf value gives about the file size of
+// x264's --crf with the same value (medium preset) on game and camera footage; see the notes of 16.11.2026.
+static const double gCrfBase = std::getenv("H264_CRFBASE") ? std::atof(std::getenv("H264_CRFBASE")) : 6.0;
+static const double gCrfFps = std::getenv("H264_CRFFPS") ? std::atof(std::getenv("H264_CRFFPS")) : 2.4;
+// A picture whose lookahead cost per macroblock is below this repeats the picture before (an exact copy costs 2).
+static const double gCrfRepeat = std::getenv("H264_CRFREPEAT") ? std::atof(std::getenv("H264_CRFREPEAT")) : 4.0;
+static const double gCrfRef = std::getenv("H264_CRFREF") ? std::atof(std::getenv("H264_CRFREF")) : 7.0;
+
+// The lookahead cost of each picture as it joins the queue (constant quality: the complexity around a picture).
+void Encoder::noteCost(const LookaheadFrame& f)
+{
+    if (!crfOn())
+        return;
+    if (crfCost_.size() <= size_t(f.index))
+        crfCost_.resize(size_t(f.index) + 1, 0.0f);
+    crfCost_[size_t(f.index)] = float(f.interSum);
+    if (std::getenv("H264_RC_TRACE"))
+        std::fprintf(stderr, "crfcost: picture %d cost per macroblock %.2f\n", f.index, f.interSum / (double(mbW_) * mbH_));
+}
+
+// Constant quality: the QP of a P picture at this place of the clip (I and B pictures have their offsets from
+// it). The crf value moved to the QP scale, the frame rate (a picture shown half as long may be coarser), and
+// qcomp times the complexity around the picture against the reference: the mean lookahead cost of the pictures
+// up to gQcBlur seconds before and as far after it as the queue reaches.
+double Encoder::crfQp(const LookaheadFrame& frame, double* complexity) const
+{
+    double qp = cfg_.crf + gCrfBase + gCrfFps * std::log2(std::clamp(cfg_.fps, 1.0, 1000.0) / 30.0);
+    if (complexity)
+        *complexity = 0;
+    if (cfg_.qcomp > 0 && !crfCost_.empty()) {
+        const size_t w = size_t(std::max(0.0, gQcBlur * cfg_.fps));
+        const size_t i = std::min(size_t(std::max(0, frame.index)), crfCost_.size() - 1);
+        const size_t a = i > w ? i - w : 0, b = std::min(crfCost_.size(), i + w + 1);
+        // Pictures that repeat the one before (a lookahead cost of next to nothing per macroblock) do not
+        // count: how long a picture stays is the macroblock tree's business - it gives a picture that is
+        // shown five times the finer QP. Counted here as well, a game recorded at a multiple of its frame
+        // rate was coded 4 QP finer than the same pictures without the repeats.
+        const double mbs = double(mbW_) * mbH_;
+        double sum = 0, all = 0;
+        size_t count = 0;
+        for (size_t j = a; j < b; ++j) {
+            all += crfCost_[j];
+            if (crfCost_[j] >= gCrfRepeat * mbs) {
+                sum += crfCost_[j];
+                ++count;
+            }
+        }
+        const double local = std::log2((count ? sum / double(count) : all / double(b - a)) / mbs + 1.0);
+        if (complexity)
+            *complexity = local;
+        qp += std::clamp(cfg_.qcomp * 6.0 * (local - gCrfRef), -gQcMax, gQcMax);
+    }
+    return qp;
+}
+
 int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? kInFlight - 1 : 0); }
 
 // Workers of the frame threading. Rows are not waited in: a worker takes a row that can go on (of
@@ -1857,6 +1914,7 @@ void Encoder::joinPending()
         queue_.push_back(std::move(*pendingFrame_));
         pendingFrame_.reset();
         noteGate(queue_.back());
+        noteCost(queue_.back());
     }
 }
 
@@ -2069,6 +2127,7 @@ std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyfr
         analyseFrame(f, queue_.empty() ? nullptr : &queue_.back());
         queue_.push_back(std::move(f));
         noteGate(queue_.back());
+        noteCost(queue_.back());
     }
     if (!full)
         return {};
@@ -3329,6 +3388,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     // most 2 away from the last one. I pictures use the P QP - 3. The first picture is probed at a
     // fixed QP so the stream starts near the right QP instead of paying for a huge first picture.
     const int baseQp = cfg_.qp;
+    float qpFrac = 0; // constant quality: the picture's QP is cfg_.qp + qpFrac
     applyRc(frameIndex_ - inFlightAt(frameIndex_));
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
@@ -3489,6 +3549,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             for (int round = 0; round < 3; ++round) {
                 EncoderConfig pc = cfg_;
                 pc.bitrateKbps = 0;
+                pc.crf = -1;
                 pc.lookahead = 0;
                 pc.bframes = 0;
                 pc.weightedPred = false;
@@ -3595,6 +3656,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // The probe aims at an I picture of about four P budgets.
             EncoderConfig pc = cfg_;
             pc.bitrateKbps = 0;
+            pc.crf = -1;
             pc.lookahead = 0;
             pc.bframes = 0;
             pc.weightedPred = false;
@@ -3618,12 +3680,23 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             qp = std::clamp(qp, rcQp_ - 2.0, rcQp_ + 2.0);
         }
         cfg_.qp = std::clamp(int(std::lround(qp)), 10, 51);
+    } else if (crfOn()) {
+        // Constant quality: no budget and no model, the QP follows the content (crfQp); the fraction of a QP
+        // goes into the macroblocks' offsets, so neighbouring pictures do not step by a whole QP.
+        double complexity = 0;
+        const double p = crfQp(frame, &complexity);
+        const double q = std::clamp(idr ? (cfg_.gop > 1 ? p - 3 : p) : type == 2 ? p + (bRef ? bRefQp : bQp) : p, 10.0, 51.0);
+        cfg_.qp = int(std::lround(q));
+        qpFrac = float(q - cfg_.qp);
+        if (std::getenv("H264_RC_TRACE"))
+            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f\n", frame.index, complexity, p);
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
         cfg_.qp = std::clamp(baseQp + (bRef ? bRefQp : bQp), 0, 51); // nothing (little) depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
+    fc.qpFrac_ = qpFrac;
     static const bool kQpTrace = std::getenv("H264_QP_TRACE") != nullptr;
     if (kQpTrace && lookahead) {
         double tm = 0;
@@ -8389,7 +8462,7 @@ void FrameCoder::planMacroblockQp()
             return;
         }
         for (int m = 0; m < n; ++m)
-            mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + treeOffset_[size_t(m)])), 0, 51));
+            mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + treeOffset_[size_t(m)])), 0, 51));
         return;
     }
     double mean = 0;
@@ -8457,7 +8530,7 @@ void FrameCoder::planMacroblockQp()
         double offset = std::clamp(cfg_.aqStrength * (mbEnergy_[size_t(m)] - mean) * 0.5, -8.0, 8.0);
         if (tree)
             offset += treeOffset_[size_t(m)];
-        mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + offset)), 0, 51));
+        mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + offset)), 0, 51));
     }
 }
 

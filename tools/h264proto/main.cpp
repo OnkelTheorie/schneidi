@@ -1,12 +1,13 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
+//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--mbtree-strength-b S] [--2pass] [--recon out.yuv]
 //                     [--bframes N (8)] [--b-qp offset (2)] [--b-qp-short offset] [--b-sharp weight (1.5)] [--no-b-adapt] [--no-b-pyramid] [--weightb] [--psy-rd S (1)] [--psy-qp full off (26 38)] [--qcomp S (0.3)]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
 // PSNR and --recon go by display order.
 // --psy-rd S: psycho-visual mode decision (keeps texture and grain at the cost of PSNR), 0 = off.
+// --crf N: constant quality on x264's scale (one pass, no size target; 18 very good, 23 good, 28 small); not with --bitrate.
 // --2pass (with --bitrate): analyse the whole input first (lookahead only), then one QP for the clip,
 // moved per picture by --qcomp S times its complexity against the clip's (0 = one QP throughout).
 // --start-boost Q / --start-sec S: two-pass, the clip's first S seconds (1) get a QP finer by up to Q (2; 0 = off),
@@ -142,7 +143,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
@@ -173,6 +174,8 @@ int main(int argc, char** argv)
             cfg.threads = std::atoi(argv[++i]);
         else if (a == "--bitrate" && i + 1 < argc)
             cfg.bitrateKbps = std::atoi(argv[++i]);
+        else if (a == "--crf" && i + 1 < argc)
+            cfg.crf = std::atof(argv[++i]);
         else if (a == "--effort" && i + 1 < argc)
             cfg.effort = std::atoi(argv[++i]);
         else if (a == "--aq" && i + 1 < argc)

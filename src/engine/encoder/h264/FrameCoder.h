@@ -427,6 +427,7 @@ public:
     bool deblockedInline_ = false; // the wavefront filtered the picture already
     bool detectSceneCut(std::vector<uint8_t>& prevThumb);
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
+    float qpFrac_ = 0;              // the picture's QP is cfg_.qp + qpFrac_ (constant quality), spread by planMacroblockQp
 };
 
 } // namespace schneidi::h264

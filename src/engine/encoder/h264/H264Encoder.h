@@ -68,6 +68,13 @@ struct EncoderConfig {
     int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
+    // Constant quality (>= 0; < 0 = off; ignored with bitrateKbps > 0): one pass, no size target - the file is as
+    // large as the content needs. The scale is x264's: a value gives about the file size of x264 --crf with the
+    // same value (18 = very good, 23 = good, 28 = small; +6 halves the size roughly). Each picture's QP comes
+    // from the value, the frame rate and qcomp times the complexity around the picture (lookahead costs, so
+    // lookahead > 0 and gop > 1 for that; without them one QP); the macroblock tree and the adaptive
+    // quantisation work as in the other modes. qp is not used.
+    double crf = -1.0;
     double aqStrength = 1.5; // adaptive quantisation (finer QP on flat areas); 0 = off. 1.0 until 14.11.2026
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
@@ -364,9 +371,14 @@ private:
     };
     std::deque<RcRecord> rcDone_;
     void markKeyframes();
+    // Constant quality (EncoderConfig::crf).
+    bool crfOn() const { return cfg_.crf >= 0 && cfg_.bitrateKbps <= 0; }
+    std::vector<float> crfCost_; // per picture (display index): its lookahead cost against the picture before
+    void noteCost(const LookaheadFrame& f);
+    double crfQp(const LookaheadFrame& frame, double* complexity = nullptr) const;
     bool useLookahead() const
     {
-        return (cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree)) || useB();
+        return (cfg_.lookahead > 0 && cfg_.gop > 1 && (cfg_.bitrateKbps > 0 || cfg_.mbtree || crfOn())) || useB();
     }
     // B pictures: the queue holds the pictures in display order; planQueue gives the undecided
     // ones their type, pickNext the next one in coding order (the reference picture after a run
