@@ -54,15 +54,15 @@ echo "$FFMPEG_SHA256  $OUT/ffmpeg/$TARBALL" | sha256sum -c - >/dev/null || { ech
 cp "$BUILD_SCRIPT" "$OUT/ffmpeg/build-ffmpeg-lgpl.sh"
 cp "$ROOT/packaging/windows/build-ffmpeg-lgpl.sh" "$OUT/ffmpeg/build-ffmpeg-lgpl-windows.sh"
 cp "$ROOT/packaging/ffmpeg-components.txt" "$OUT/ffmpeg/"
-cp "$ROOT/packaging/linux/Dockerfile.ffmpeg-lgpl" "$OUT/ffmpeg/"
+cp "$ROOT/packaging/linux/Dockerfile.ffmpeg-lgpl" "$ROOT/packaging/linux/Dockerfile.appimage" "$OUT/ffmpeg/"
 cat >"$OUT/ffmpeg/README.txt" <<EOF
 FFmpeg $FFMPEG_VERSION as bundled by schneidi $VERSION (AppImage, Windows, Docker).
 $TARBALL is the unchanged release of https://ffmpeg.org/releases/ (SHA-256 $FFMPEG_SHA256).
 build-ffmpeg-lgpl.sh unpacks it, patches configure (sed, see the script) and configures it with
 --disable-everything plus one --enable-<type>=<name> per line of ffmpeg-components.txt; GPL_ENCODERS=1 (default)
 adds --enable-gpl --disable-postproc --enable-libx264 --enable-libx265. The Windows package runs the same script in
-MSYS2 UCRT64 (build-ffmpeg-lgpl-windows.sh checks its packages and calls it). Build environment (Debian 13):
-Dockerfile.ffmpeg-lgpl.
+MSYS2 UCRT64 (build-ffmpeg-lgpl-windows.sh checks its packages and calls it). Build environment of the AppImage
+(Ubuntu 22.04, its x264/x265/numactl packages): Dockerfile.appimage; of the Docker image (Debian 13): Dockerfile.ffmpeg-lgpl.
 EOF
 
 # --- Debian source packages ---
@@ -79,15 +79,20 @@ debian_source() { # source-package version
     fi
     # pool of the current release: the .dsc names the other files
     case "$src" in lib*) pool="$(printf '%s' "$src" | cut -c1-4)" ;; *) pool="$(printf '%s' "$src" | cut -c1)" ;; esac
-    base="https://deb.debian.org/debian/pool/main/$pool/$src"
+    # (the AppImage is built on Ubuntu 22.04 since 0.22.1: its versions, like numactl 2.0.14-3ubuntu2, are in Ubuntu's
+    # pool, not Debian's)
     dsc="${src}_$noepoch.dsc"
-    if download "$base/$dsc" "$dir/$dsc"; then
-        ok=1
-        for f in $(awk '/^Files:/ { f = 1; next } /^[^ ]/ { f = 0 } f && NF == 3 { print $3 }' "$dir/$dsc"); do
-            download "$base/$f" "$dir/$f" || ok=0
-        done
-        [ "$ok" = 1 ] && return 0
-    fi
+    for base in "https://deb.debian.org/debian/pool/main/$pool/$src" \
+        "http://archive.ubuntu.com/ubuntu/pool/main/$pool/$src" "http://archive.ubuntu.com/ubuntu/pool/universe/$pool/$src"; do
+        if download "$base/$dsc" "$dir/$dsc" 2>/dev/null; then
+            ok=1
+            for f in $(awk '/^Files:/ { f = 1; next } /^[^ ]/ { f = 0 } f && NF == 3 { print $3 }' "$dir/$dsc"); do
+                download "$base/$f" "$dir/$f" || ok=0
+            done
+            [ "$ok" = 1 ] && return 0
+        fi
+        rm -f "$dir/$dsc"
+    done
     # snapshot.debian.org: every version Debian ever had
     command -v python3 >/dev/null 2>&1 || { echo "!! $src $ver: not in the pool, snapshot needs python3" >&2; return 1; }
     list="$(curl -fsSL "https://snapshot.debian.org/mr/package/$src/$ver/srcfiles?fileinfo=1" | python3 -I -c '
