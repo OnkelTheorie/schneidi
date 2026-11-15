@@ -1099,6 +1099,20 @@ void testLayout(Engine& engine, const QString& audioFile)
                                                       .arg(page->tracks()->laneHeight()));
                 if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-%2-%3-tools.png").arg(dumpDir, lang, large ? "large" : "normal"));
                 Check::report(w.width() == 1024, "window not wider with the tools", __FILE__, __LINE__, where);
+                // The tool bar's rows (wrapped in a narrow column) whole, also with the tools drawer dragged as tall as
+                // the splitter lets it (the lanes at their least)
+                if (QWidget* bar = page->left()->widget(0)->findChild<QWidget*>("PanelTitle", Qt::FindDirectChildrenOnly);
+                    CHECK(bar)) {
+                    const QList<int> before = page->left()->sizes();
+                    page->left()->setSizes({1, before.value(0) + before.value(1)});
+                    settle(3);
+                    Check::report(bar->height() >= bar->heightForWidth(bar->width()) && page->tracks()->height() > 0,
+                                  "tool bar rows whole", __FILE__, __LINE__,
+                                  QString("%1: bar %2 < %3, lanes %4").arg(where).arg(bar->height())
+                                      .arg(bar->heightForWidth(bar->width())).arg(page->tracks()->height()));
+                    page->left()->setSizes(before);
+                    settle(2);
+                }
                 page->setToolsOpen(false);
             }
         }
@@ -1350,38 +1364,32 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         QWidget* pan = mixer->findChild<QWidget*>("studio_pan_A1");
         if (CHECK(pan)) {
             for (QWidget* control : {faderA1, pan}) {
-                for (int how = 1; how < 2; ++how) {
-                    const bool vertical = control == faderA1;
-                    const QPoint c(vertical ? control->width() * 3 / 4 : control->width() / 2, control->height() / 2);
-                    const QPoint step = vertical ? QPoint(0, -10) : QPoint(10, 0);
-                    const Track before = p->timeline().audio[0];
-                    mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
-                    mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
-                    settle();
-                    const int at = undo->index();
-                    const double moved = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
-                    CHECK(moved != (vertical ? before.volumeDb : before.pan));
-                    if (how == 0) {
-                        mouse(control, QEvent::MouseMove, c + 2 * step, Qt::NoButton);
-                    } else {
-                        w.showPage(Page::Edit);
-                        settle();
-                        w.showPage(Page::Studio);
-                        settle();
-                    }
-                    mouse(control, QEvent::MouseMove, c + 4 * step, Qt::LeftButton);
-                    settle();
-                    const double now = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
-                    Check::report(now == moved, vertical ? "fader drag ended" : "pan drag ended", __FILE__, __LINE__,
-                                  QString("%1 -> %2 (%3)").arg(moved).arg(now).arg(how));
-                    // The merge is closed: the next drag (same merge key) is a step of its own
-                    mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
-                    mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
-                    mouse(control, QEvent::MouseButtonRelease, c + step, Qt::NoButton);
-                    settle();
-                    CHECK_EQ(undo->index(), at + 1);
-                    while (undo->index() > at - 1) undo->undo();
-                }
+                const bool vertical = control == faderA1;
+                const QPoint c(vertical ? control->width() * 3 / 4 : control->width() / 2, control->height() / 2);
+                const QPoint step = vertical ? QPoint(0, -10) : QPoint(10, 0);
+                const Track before = p->timeline().audio[0];
+                mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                settle();
+                const int at = undo->index();
+                const double moved = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                CHECK(moved != (vertical ? before.volumeDb : before.pan));
+                w.showPage(Page::Edit);
+                settle();
+                w.showPage(Page::Studio);
+                settle();
+                mouse(control, QEvent::MouseMove, c + 4 * step, Qt::LeftButton);
+                settle();
+                const double now = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                Check::report(now == moved, vertical ? "fader drag ended" : "pan drag ended", __FILE__, __LINE__,
+                              QString("%1 -> %2").arg(moved).arg(now));
+                // The merge is closed: the next drag (same merge key) is a step of its own
+                mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                mouse(control, QEvent::MouseButtonRelease, c + step, Qt::NoButton);
+                settle();
+                CHECK_EQ(undo->index(), at + 1);
+                while (undo->index() > at - 1) undo->undo();
             }
         }
     }
@@ -1491,6 +1499,29 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
             CHECK(eqPaints.paints > 0);
             CHECK_EQ(dynPaints.paints, 0);
             CHECK_EQ(tracks->paintCount(), lanePaints2);
+            // Tracks swapped (A1 has the changed EQ): both EQ pictures and both lanes drawn anew; undone: again
+            QWidget* eqA2 = mixer->findChild<QWidget*>("studio_eqthumb_A2");
+            if (CHECK(eqA2)) {
+                PaintCounter eq2Paints;
+                eqA2->installEventFilter(&eq2Paints);
+                for (int step = 0; step < 2; ++step) {
+                    eqPaints.paints = eq2Paints.paints = 0;
+                    if (step == 0) p->edit("swap", [](Timeline& tl) { std::swap(tl.audio[0], tl.audio[1]); });
+                    else undo->undo();
+                    settle();
+                    CHECK(eqPaints.paints > 0 && eq2Paints.paints > 0);
+                    const QRegion lanes = tracks->lastPaintRegion();
+                    Check::report(lanes.intersects(tracks->laneRect(0)) && lanes.intersects(tracks->laneRect(1)),
+                                  step == 0 ? "lanes drawn after a track swap" : "lanes drawn after its undo", __FILE__,
+                                  __LINE__);
+                }
+                eqA2->removeEventFilter(&eq2Paints);
+            }
+            // The EQ change undone: its picture drawn again
+            eqPaints.paints = 0;
+            undo->undo();
+            settle();
+            CHECK(eqPaints.paints > 0);
             eqA1->removeEventFilter(&eqPaints);
             dynA1->removeEventFilter(&dynPaints);
             while (undo->index() > at) undo->undo();
@@ -1593,6 +1624,49 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
     }
 }
 
+// The Studio page first shown while the viewer previews a file (Source mode): the automated faders show the level at
+// the timeline's playhead (MainWindow tells the mixer), not at frame 0 or the file's frame
+void testSourceOnFirstShow(Engine& engine, const QString& voiceFile, const QString& musicFile)
+{
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    {
+        ProjectData d;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = voiceFile;
+        v.out = 99;
+        d.timeline.audio[0].clips << v;
+        d.timeline.audio[0].volumeAuto = {{0, 0}, {40, 0}, {60, -20}, {100, -20}};
+        d.lastClipId = 1;
+        p->load(d);
+        p->addMedia(Engine::probe(p->format(), voiceFile));
+    }
+    settle();
+    engine.seek(80);
+    settle();
+    engine.showSource(musicFile, 10); // at 10 the curve would say 0 dB
+    settle();
+    w.showPage(Page::Studio);
+    settle(5);
+    QTest::qWait(80);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    QWidget* fader = page->mixer()->findChild<QWidget*>("studio_fader_A1");
+    if (engine.mode() == Engine::Mode::Source)
+        Check::report(std::abs(faderShown(fader) + 20) < 0.11, "first shown in Source mode: the timeline's level",
+                      __FILE__, __LINE__, QString::number(faderShown(fader)));
+    engine.showTimeline(0);
+    settle();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1618,5 +1692,6 @@ int main(int argc, char** argv)
     testTools(engine, audio, music);
     testLayout(engine, audio);
     testReviewFixes(engine, audio, music);
+    testSourceOnFirstShow(engine, audio, music);
     return Check::result();
 }

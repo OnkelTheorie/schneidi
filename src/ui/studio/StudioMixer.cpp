@@ -962,6 +962,11 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
         fitHeight(); // the surround sends take room
     });
     connect(m_engine, &Engine::audioSpeakerLevels, this, &StudioMixer::onLevels);
+    // A seek or a loop wrap while a control is held: the touches end where they were played (the stretch jumped over
+    // keeps its curve); the next move starts a new touch
+    connect(m_engine, &Engine::seeked, this, [this] {
+        if (m_writer.touching()) m_writer.jumped();
+    });
     m_timer = new QTimer(this);
     m_timer->setInterval(30);
     connect(m_timer, &QTimer::timeout, this, &StudioMixer::tick);
@@ -1033,8 +1038,10 @@ bool StudioMixer::playing() const { return m_engine->timelinePositions() && !std
 
 int StudioMixer::timelinePosition() const
 {
-    // In Source mode the engine's position is a frame of the previewed file: the timeline's last one stays
+    // In Source mode the engine's position is a frame of the previewed file: the timeline's playhead (MainWindow
+    // tells it; also when the page first shows while a file is previewed), else the last one seen here
     if (m_engine->timelinePositions()) m_lastTimelinePos = m_engine->position();
+    else if (m_timelinePlayhead) m_lastTimelinePos = m_timelinePlayhead();
     return m_lastTimelinePos;
 }
 

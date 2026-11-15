@@ -997,6 +997,32 @@ void testRelinkRouting(const QTemporaryDir& tmp, const QString& stereo)
         CHECK(b.sourceChannels == QVector<int>({1})); // channel 2 of the stereo file is there
         CHECK(d.media.value(0).audioStreams.value(0).channels == 2);
     }
+    // Relink: a clip on stream 1 (channels 3/4) of a two-stream file, found as a file with one stereo stream: stream
+    // 0 and the routing it lacks dropped (not a silent clip)
+    {
+        ProjectData d;
+        d.format = kFmt;
+        MediaInfo m;
+        m.path = "/gone/away/rec.wav";
+        m.hasAudio = true;
+        m.length = 50;
+        m.audioStreams = {AudioStreamInfo{2, {}, true}, AudioStreamInfo{4, {}, true}};
+        d.media << m;
+        d.timeline.audio.resize(1);
+        d.timeline.audio[0].kind = TrackKind::Audio;
+        Clip c;
+        c.id = 1;
+        c.mediaPath = m.path;
+        c.out = 24;
+        c.audioStream = 1;
+        c.sourceChannels = {2, 3};
+        d.timeline.audio[0].clips << c;
+        QDir().mkpath(tmp.filePath("found2"));
+        CHECK(QFile::copy(stereo, tmp.filePath("found2/rec.wav")));
+        CHECK_EQ(ProjectFile::relink(&d, tmp.filePath("found2"), [](const QString& f) { return Engine::probe(kFmt, f); }), 1);
+        const Clip& r = d.timeline.audio[0].clips[0];
+        CHECK(r.audioStream == 0 && r.sourceChannels.isEmpty());
+    }
 }
 
 // Read "as the source" (Reader::Options channels 0: waveforms, room tone, sound sync): six or eight channels that are
