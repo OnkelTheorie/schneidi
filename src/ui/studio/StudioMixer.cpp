@@ -941,6 +941,8 @@ void StudioMixer::hideEvent(QHideEvent* e)
 {
     QWidget::hideEvent(e);
     m_timer->stop(); // another page: no meters to move
+    // Without the timer tick() cannot see playback stop: a write pass ends here (open touches released, one undo step)
+    if (m_writer.inPass()) m_writer.endPass(m_engine->position());
 }
 
 void StudioMixer::resizeEvent(QResizeEvent* e)
