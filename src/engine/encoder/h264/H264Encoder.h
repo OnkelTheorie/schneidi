@@ -42,11 +42,10 @@ struct FirstPassStats {
     };
     std::vector<std::shared_ptr<const Analysis>> analysis;
     // B picture placement (FirstPass with bframes > 0 = bMax): per picture the longest run of B
-    // pictures that pays there (BProbe, 0 = none), so the whole clip's picture types can be planned
-    // before encoding. Empty = not measured, B pictures everywhere.
+    // pictures that pays there (BProbe::gate: the run, 0 = none, with BProbe::kClear), so the whole
+    // clip's picture types can be planned before encoding. Empty = not measured, B pictures everywhere.
     int bMax = 0;
     std::vector<uint8_t> bGate;
-    bool bWarmup = true; // the first pictures of the clip stay P pictures (BProbe::warmup)
     size_t size() const { return intraSum.size(); }
 };
 
@@ -185,8 +184,10 @@ public:
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
     int run() const { return run_; } // longest run of B pictures that pays, 0 = none
     int resultStart() const { return resultStart_; }
-    // The clip's first pictures stay P pictures (unless its first measurement found B pictures a clear gain).
-    bool warmup() const { return warmup_; }
+    // run() with kClear set where the measurement found B pictures a clear gain or chose long runs
+    // (FirstPassStats::bGate): such a clip may start with B pictures.
+    static constexpr int kClear = 0x80;
+    uint8_t gate() const { return uint8_t(run_ | (clear_ && run_ > 0 ? kClear : 0)); }
     // Bits of "I B.. P .." with runs of runs[k] B pictures against "I P.. P" at equal distortion,
     // counted over the pictures after the first (gains[k] = -0.5: half the bits; 0 = no
     // measurement). pics: w x h luma each, in display order.
@@ -199,7 +200,7 @@ private:
     std::vector<std::vector<uint8_t>> pics_;
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
     int run_ = 0;
-    bool warmup_ = true;
+    bool clear_ = false;
     // Activity (lookahead cost with motion / intra) of the last picture, summed over the pictures
     // being collected, and the mean of the last measurement's pictures.
     double lastActivity_ = 0, activitySum_ = 0, sampleActivity_ = 0;

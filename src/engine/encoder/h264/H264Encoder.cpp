@@ -788,9 +788,9 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // control's model starts from a probe that misses by up to 2x and settles on the first P pictures;
 // with B pictures from the start the plain P pictures of the rest of the clip keep that seed for as
 // long as the B pictures last (measured on a game clip: QP 34 instead of 37.5 for 70 pictures, then
-// 39 for the rest). 0 = none. Not where the clip's first measurement finds B pictures a clear gain
-// (below kBWarmGain): such material keeps them throughout, and twelve P pictures cost it a lot
-// (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
+// 39 for the rest). 0 = none. Not where the probe found B pictures a clear gain (below kBWarmGain)
+// or chose long runs: such material keeps its B pictures throughout, and twelve P pictures cost it
+// a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
@@ -872,8 +872,7 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
         run_ = result == 0 ? (gain < kBProbeGain ? shortRun : 0) : result == 1 && kBProbeStill ? shortRun : 0;
         const bool still = result != 0;
         resultStart_ = start_;
-        if (start_ == 0)
-            warmup_ = still || gain > kBWarmGain;
+        clear_ = result == 0 && gain < kBWarmGain;
         sampleActivity_ = activitySum_ / double(count - 1);
         if (trace)
             std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
@@ -891,6 +890,7 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     double gains[2] = {};
     measure(pics_, la.halfW(), la.halfH(), threads, runs, 2, gains);
     run_ = gains[1] < gains[0] ? bframes : shortRun;
+    clear_ = clear_ || run_ > kPyramidMaxRun;
     if (trace)
         std::fprintf(stderr, "bprobe: picture %d gain %+.3f with %d, %+.3f with %d: run %d\n", resultStart_, gains[0], shortRun, gains[1],
                      bframes, run_);
@@ -1132,11 +1132,9 @@ void FirstPass::analyseBatch() const
     if (bframes_ > 0 && kBProbe) {
         const int base = int(stats_->intraSum.size());
         for (int i = 0; i < n; ++i) {
-            stats_->bGate.push_back(uint8_t(probe_.run()));
-            if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_)) {
-                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.run()));
-                stats_->bWarmup = probe_.warmup();
-            }
+            stats_->bGate.push_back(probe_.gate());
+            if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_))
+                std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), probe_.gate());
         }
     }
     for (LookaheadFrame& f : job_) {
@@ -1229,7 +1227,6 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->sceneChange.push_back(st.sceneChange[i]);
             part->forceKeyframe.push_back(st.forceKeyframe[i]);
             part->bMax = st.bMax;
-            part->bWarmup = true; // a part's own start: its measurement is not known here
             if (!st.bGate.empty())
                 part->bGate.push_back(st.bGate[i]);
             // Only the first chunk analyses its pictures like the first pass did (the others
@@ -1502,9 +1499,9 @@ void Encoder::noteGate(const LookaheadFrame& f)
     if (!probe_.add(*la_, f, f.index, cfg_.bframes, cfg_.threads))
         return;
     if (!gate_.empty() && gate_.back().first == probe_.resultStart())
-        gate_.back().second = probe_.run(); // the second answer for the same pictures
+        gate_.back().second = probe_.gate(); // the second answer for the same pictures
     else
-        gate_.emplace_back(probe_.resultStart(), probe_.run());
+        gate_.emplace_back(probe_.resultStart(), probe_.gate());
 }
 
 // The lookahead's searches along the planned references of B pictures (macroblock tree, rate
@@ -1548,11 +1545,9 @@ int Encoder::gateAt(int index) const
 {
     if (!kBProbe)
         return cfg_.bframes;
-    if (index <= kBWarmup && probe_.warmup())
-        return 0;
     for (size_t i = gate_.size(); i-- > 0;)
         if (gate_[i].first <= index)
-            return gate_[i].second;
+            return index <= kBWarmup && !(gate_[i].second & BProbe::kClear) ? 0 : gate_[i].second & (BProbe::kClear - 1);
     return 0;
 }
 
@@ -1656,9 +1651,11 @@ void Encoder::planFromStats()
         // Runs of B pictures, each ended by a P picture; the last picture before a keyframe is P.
         // Adaptive: only where the probe found them worth it.
         auto gate = [&](size_t k) {
-            if (adapt && kBProbe && int(k) <= kBWarmup && st.bWarmup)
+            if (!adapt || !kBProbe || k >= st.bGate.size())
+                return cfg_.bframes;
+            if (int(k) <= kBWarmup && !(st.bGate[k] & BProbe::kClear))
                 return 0;
-            return !adapt || !kBProbe || k >= st.bGate.size() ? cfg_.bframes : std::min<int>(cfg_.bframes, st.bGate[k]);
+            return std::min<int>(cfg_.bframes, st.bGate[k] & (BProbe::kClear - 1));
         };
         std::vector<uint8_t> types(size_t(len) + 1, 1);
         for (int t = 1, run = 0; t < len; ++t)
