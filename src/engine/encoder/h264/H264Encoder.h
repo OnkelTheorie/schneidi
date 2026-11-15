@@ -98,6 +98,11 @@ struct EncoderConfig {
     // with a first pass over the whole clip, which must then have been made with at least this
     // many bframes). false = runs of bframes B pictures everywhere.
     bool bAdaptive = true;
+    // B pyramid: in a run of three or more B pictures the middle one is a reference picture for
+    // the B pictures on both sides of it (one more picture in the decoder's buffer and of
+    // reordering: reorderDelay() 2). The B pictures then predict from near pictures on both
+    // sides, which is what makes them pay on moving material. Runs of one or two are unchanged.
+    bool bPyramid = true;
     // Predictions from both lists weighted by the distance to the two reference pictures
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
     // no gain (+0.7 % BD-rate), so off by default.
@@ -258,7 +263,7 @@ public:
     int weightedPictures() const { return weightedPictures_; }
     char lastType() const { return lastType_; }
     // Pictures an access unit may come out ahead of its display turn (the dts shift a muxer needs).
-    int reorderDelay() const { return useB() ? 1 : 0; }
+    int reorderDelay() const { return usePyramid() ? 2 : useB() ? 1 : 0; }
 
     // Reconstruction of the last picture that came out, as the decoder outputs it (padded size).
     const std::vector<uint8_t>& reconY() const;
@@ -305,6 +310,7 @@ private:
     // ones their type, pickNext the next one in coding order (the reference picture after a run
     // of B pictures goes first and stays queued until they are coded).
     bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
+    bool usePyramid() const { return useB() && cfg_.bPyramid && cfg_.bframes >= 3 && cfg_.refs < 16; }
     // Explicit weighted prediction is not part of the Baseline profile (no CABAC = Baseline here).
     int chromaOffset() const { return cfg_.chromaQpOffset; } // clamped by the constructor
     bool useWeightedPred() const { return cfg_.weightedPred && useCabac() && cfg_.gop > 1; }
@@ -337,6 +343,11 @@ private:
     int nextCoder_ = 0;
     const FrameCoder* last_ = nullptr;
     std::deque<std::shared_ptr<RefPic>> refList_; // reference pictures, newest first
+    // B pyramid: the reference B picture of the run being coded (its display index and frame_num);
+    // the next P or I picture takes it out of the decoder's buffer again.
+    std::shared_ptr<RefPic> bRefPic_;
+    int bRefIndex_ = -1, bRefFrameNum_ = -1;
+    int lastRefIndex_ = -1; // display index of the last I or P picture that left the queue
     std::vector<std::shared_ptr<RefPic>> refSpare_; // retired ones, used again once no picture in flight holds them
     int lastQp_ = 0;
     int frameIndex_ = 0;

@@ -585,7 +585,8 @@ int levelIdcFor(const EncoderConfig& cfg)
     const bool high = cfg.cabac && cfg.transform8x8 && cfg.mode != IntraMode::Pcm;
     const double brFactor = high ? 1250.0 : 1000.0;
     const bool bPictures = cfg.bframes > 0 && cfg.cabac && cfg.mode != IntraMode::Pcm && cfg.gop > 1;
-    const int64_t dpb = std::max(bPictures ? 2 : 1, cfg.refs);
+    const bool pyramid = bPictures && cfg.bPyramid && std::min(cfg.bframes, 8) >= 3 && cfg.refs < 16;
+    const int64_t dpb = std::max(bPictures ? 2 : 1, cfg.refs) + (pyramid ? 1 : 0);
     for (const Level& l : kLevels) {
         const int64_t side = int64_t(std::sqrt(double(l.maxFs) * 8.0)); // A.3.1: width and height in macroblocks
         if (double(fs) * fps > double(l.maxMbps) * 1.0001 || fs > l.maxFs || mbW > side || mbH > side)
@@ -625,7 +626,8 @@ std::vector<uint8_t> Encoder::headers() const
         }
         bw.ue(0);      // log2_max_frame_num_minus4
         // B pictures keep the reference pictures on both sides: two frames at least.
-        const uint32_t refFrames = uint32_t(std::max(useB() ? 2 : 1, cfg_.refs));
+        // B pyramid: one more for the reference B picture.
+        const uint32_t refFrames = uint32_t(std::max(useB() ? 2 : 1, cfg_.refs) + (usePyramid() ? 1 : 0));
         if (useB()) {
             bw.ue(0); // pic_order_cnt_type: pic_order_cnt_lsb in every slice header
             bw.ue(4); // log2_max_pic_order_cnt_lsb_minus4 (8 bits)
@@ -682,7 +684,8 @@ std::vector<uint8_t> Encoder::headers() const
         bw.ue(0);        // max_bits_per_mb_denom
         bw.ue(16);       // log2_max_mv_length_horizontal
         bw.ue(16);       // log2_max_mv_length_vertical
-        bw.ue(useB() ? 1 : 0); // max_num_reorder_frames (B pictures: the reference picture after them comes first)
+        bw.ue(usePyramid() ? 2 : useB() ? 1 : 0); // max_num_reorder_frames (B pictures: the reference picture after them
+                                                  // comes first; B pyramid: and the reference B picture)
         bw.ue(refFrames);      // max_dec_frame_buffering (at least max_num_ref_frames)
         bw.rbspTrailing();
         appendNal(out, 3, 7, bw.bytes());
@@ -1660,9 +1663,40 @@ void Encoder::planQueue()
         }
         f.gopPos = pos++;
     }
+    if (usePyramid()) {
+        // B pyramid: the middle B picture of a run of three or more is a reference for the others.
+        // The run may start before the queue (its first pictures and the reference picture before
+        // it are coded and gone): the place of that reference picture is known from its index.
+        const int n = int(queue_.size());
+        const int none = INT32_MIN;
+        int last = lastRefIndex_ >= 0 && n > 0 ? lastRefIndex_ - queue_[0].index : none;
+        for (int j = 0; j < n;) {
+            LookaheadFrame& f = queue_[size_t(j)];
+            if (f.type != 2) {
+                if (last != none)
+                    f.refDist = j - last;
+                f.bRef = false;
+                last = j++;
+                continue;
+            }
+            int s = j;
+            while (s < n && queue_[size_t(s)].type == 2)
+                ++s;
+            const int first = last == none ? j : last + 1, count = s - first;
+            const int mid = last != none && count >= 3 ? first + count / 2 : none;
+            for (int k = j; k < s; ++k) {
+                LookaheadFrame& b = queue_[size_t(k)];
+                b.bRef = k == mid;
+                if (last != none)
+                    b.refDist = mid != none && k > mid ? k - mid : k - last;
+                b.nextDist = mid != none && k < mid ? mid - k : s - k;
+            }
+            j = s;
+        }
+    }
     // Distances to the reference pictures (pictures whose reference left the queue keep theirs).
     int lastRef = -1;
-    for (size_t j = 0; j < queue_.size(); ++j) {
+    for (size_t j = 0; !usePyramid() && j < queue_.size(); ++j) {
         LookaheadFrame& f = queue_[j];
         if (f.type == 2) {
             if (lastRef >= 0)
@@ -1711,8 +1745,21 @@ LookaheadFrame* Encoder::pickNext()
     if (front.type != 2)
         return &front;
     for (LookaheadFrame& f : queue_)
-        if (f.type != 2)
-            return f.coded ? &front : &f;
+        if (f.type != 2) {
+            if (!f.coded)
+                return &f;
+            // B pyramid: the reference B picture next, then the others in display order.
+            for (LookaheadFrame& b : queue_) {
+                if (&b == &f)
+                    break;
+                if (b.bRef && !b.coded)
+                    return &b;
+            }
+            for (LookaheadFrame& b : queue_)
+                if (!b.coded)
+                    return &b;
+            return &front;
+        }
     return &front; // not reached: a run of B pictures always has its reference picture
 }
 
@@ -1722,8 +1769,11 @@ std::vector<uint8_t> Encoder::codeNext()
     std::vector<uint8_t> out = step(f);
     if (f) {
         f->coded = true;
-        while (!queue_.empty() && queue_.front().coded)
+        while (!queue_.empty() && queue_.front().coded) {
+            if (queue_.front().type != 2)
+                lastRefIndex_ = queue_.front().index;
             queue_.pop_front();
+        }
     }
     return out;
 }
@@ -1928,7 +1978,13 @@ void FrameCoder::sliceHeader(BitWriter& bw, int s) const
         bw.flag(activeRefs_ > 1); // num_ref_idx_active_override_flag
         if (activeRefs_ > 1)
             bw.ue(uint32_t(activeRefs_ - 1)); // num_ref_idx_l0_active_minus1
-        bw.flag(false); // ref_pic_list_modification_flag_l0
+        bw.flag(!listMod_.empty()); // ref_pic_list_modification_flag_l0
+        for (int v : listMod_) {
+            bw.ue(0);           // modification_of_pic_nums_idc: subtract
+            bw.ue(uint32_t(v)); // abs_diff_pic_num_minus1
+        }
+        if (!listMod_.empty())
+            bw.ue(3);
         if (bSlice_)
             bw.flag(false); // ref_pic_list_modification_flag_l1
     }
@@ -1955,8 +2011,14 @@ void FrameCoder::sliceHeader(BitWriter& bw, int s) const
         bw.flag(false); // no_output_of_prior_pics_flag
         bw.flag(false); // long_term_reference_flag
     } else {
-        if (refPic_)
-            bw.flag(false); // adaptive_ref_pic_marking_mode_flag
+        if (refPic_) {
+            bw.flag(mmcoDiff_ >= 0); // adaptive_ref_pic_marking_mode_flag
+            if (mmcoDiff_ >= 0) {
+                bw.ue(1);                   // memory_management_control_operation: a short-term picture unused
+                bw.ue(uint32_t(mmcoDiff_)); // difference_of_pic_nums_minus1
+                bw.ue(0);
+            }
+        }
         if (useCabac())
             bw.ue(0); // cabac_init_idc
     }
@@ -2441,15 +2503,29 @@ void FrameCoder::publishBand(int k)
     const int hLim = last ? extH_ : M + 16 * k + 16;
     refHalfRows(R, w.hBuilt, hLim);
     w.hBuilt = hLim;
-    if (!R.ref.empty()) { // the row's motion, for the B pictures that use this picture
-        const size_t o = size_t(k) * 4 * (size_t(mbW_) * 4), n = 4 * (size_t(mbW_) * 4);
-        std::memcpy(&R.mvx[o], &mvX_[o], n * sizeof(int16_t));
-        std::memcpy(&R.mvy[o], &mvY_[o], n * sizeof(int16_t));
-        std::memcpy(&R.ref[o], &refIdx_[o], n);
-    }
+    if (!R.ref.empty()) // the row's motion, for the B pictures that use this picture
+        publishMotion(R, k, k + 1);
     raiseTo(R.rowsReady, k + 1);
     if (w.signal)
         w.signal->wake(true); // rows of the next picture, and the row that publishes the next band
+}
+
+// The motion of macroblock rows [row0, row1) as the co-located picture of a later B picture shows
+// it (8.4.1.2.1): list 0 where a block uses it, else list 1 (a reference B picture).
+void FrameCoder::publishMotion(RefPic& R, int row0, int row1) const
+{
+    const size_t lw = size_t(mbW_) * 4, o = size_t(row0) * 4 * lw, n = size_t(row1 - row0) * 4 * lw;
+    std::memcpy(&R.mvx[o], &mvX_[o], n * sizeof(int16_t));
+    std::memcpy(&R.mvy[o], &mvY_[o], n * sizeof(int16_t));
+    std::memcpy(&R.ref[o], &refIdx_[o], n);
+    if (!bSlice_)
+        return;
+    for (size_t i = o; i < o + n; ++i)
+        if (refIdx_[i] < 0 && refIdx1_[i] >= 0) {
+            R.mvx[i] = mvX1_[i];
+            R.mvy[i] = mvY1_[i];
+            R.ref[i] = refIdx1_[i];
+        }
 }
 
 // Entropy coding in raster order, mb_qp_delta against the real predecessor. It follows the
@@ -2628,22 +2704,47 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     if (idr)
         framesSinceIdr_ = 0;
     lastWasSceneCut_ = cut;
+    const bool bRef = type == 2 && frame.bRef && usePyramid();
+    // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
+    const int frameNum = bMode ? (idr ? 0 : refCount_) : framesSinceIdr_;
     if (idr)
         refList_.clear(); // an IDR picture marks all references unused
     fc.pSlice_ = !idr;
     fc.bSlice_ = type == 2;
-    fc.refPic_ = type != 2;
+    fc.refPic_ = type != 2 || bRef;
+    fc.listMod_.clear();
+    fc.mmcoDiff_ = -1;
     fc.pocLsb_ = bMode;
     fc.gopPos_ = frame.gopPos;
     if (type == 2) {
         // The reference pictures around it in display order: the one before (list 0) and the
         // one after, which was coded just before this run of B pictures (list 1).
-        fc.refs_.assign(1, refList_[1]);
-        fc.refs1_.assign(1, refList_[0]);
+        // B pyramid: the B pictures before the run's reference B picture lie between the picture
+        // before and it, those after between it and the picture after.
+        const bool withRef = bRefPic_ && !bRef;
+        fc.refs_.assign(1, withRef && frame.index > bRefIndex_ ? bRefPic_ : refList_[1]);
+        fc.refs1_.assign(1, withRef && frame.index < bRefIndex_ ? bRefPic_ : refList_[0]);
         fc.setBiWeights();
     } else {
         fc.refs_.assign(refList_.begin(), refList_.begin() + std::min<ptrdiff_t>(ptrdiff_t(refList_.size()), std::max(1, cfg_.refs)));
         fc.refs1_.clear();
+        if (bRefPic_) {
+            // The run before had a reference B picture: it is the newest picture in the decoder's
+            // buffer and would lead list 0. The list is put in the order of refs_ and the B
+            // picture marked unused, so the buffer holds the I and P pictures again.
+            if (!idr) {
+                int pred = frameNum;
+                for (const auto& r : fc.refs_) {
+                    fc.listMod_.push_back(pred - r->frameNum - 1);
+                    pred = r->frameNum;
+                }
+                fc.mmcoDiff_ = frameNum - bRefFrameNum_ - 1;
+            }
+            refSpare_.push_back(std::move(bRefPic_));
+            bRefPic_.reset();
+            if (refSpare_.size() > size_t(kInFlight + 3))
+                refSpare_.erase(refSpare_.begin());
+        }
     }
     fc.wpAny_ = false;
     if (useWeightedPred() && type != 2) {
@@ -2676,7 +2777,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         } else
             markKeyframes();
         frame.keyframe = idr;
-        if (type == 2) {
+        if (type == 2 && !bRef) {
             fc.treeOffset_.clear(); // nothing references a B picture
         } else if (cfg_.mbtree) {
             if (bMode)
@@ -2863,7 +2964,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         rcQp_ = std::clamp(qp, 10.0, 51.0);
         if (twoPass && size_t(frame.index) < tpOff_.size())
             qp += tpOff_[size_t(frame.index)];
-        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + cfg_.bQpOffset : qp)), 10, 51);
+        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? (cfg_.bQpOffset + 1) / 2 : cfg_.bQpOffset) : qp)), 10, 51);
         rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {
@@ -2898,7 +2999,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
-        cfg_.qp = std::clamp(baseQp + cfg_.bQpOffset, 0, 51); // nothing depends on a B picture
+        cfg_.qp = std::clamp(baseQp + (bRef ? (cfg_.bQpOffset + 1) / 2 : cfg_.bQpOffset), 0, 51); // nothing (little) depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
     // Psy strength follows the picture's QP (EncoderConfig::psyQpFull / psyQpOff): full below, none
@@ -2921,8 +3022,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     clock.lap(3);
     // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
     std::shared_ptr<RefPic> pic;
-    if (cfg_.gop > 1 && type != 2) {
-        if (int(refList_.size()) >= std::max(bMode ? 2 : 1, cfg_.refs)) {
+    if (cfg_.gop > 1 && (type != 2 || bRef)) {
+        if (!bRef && int(refList_.size()) >= std::max(bMode ? 2 : 1, cfg_.refs)) {
             pic = std::move(refList_.back());
             refList_.pop_back();
         }
@@ -2942,16 +3043,22 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (!pic)
             pic = std::make_shared<RefPic>();
         pic->gopPos = frame.gopPos;
-        if (useWeightedPred()) {
+        pic->refGopPos = fc.refs_.empty() ? frame.gopPos : fc.refs_[0]->gopPos;
+        pic->frameNum = frameNum;
+        if (useWeightedPred() && !bRef) {
             pic->dcY = fc.dcY_;
             pic->dcU = fc.dcU_;
             pic->dcV = fc.dcV_;
         }
-        refList_.push_front(pic);
+        if (bRef) {
+            bRefPic_ = pic;
+            bRefIndex_ = frame.index;
+            bRefFrameNum_ = frameNum;
+        } else {
+            refList_.push_front(pic);
+        }
     }
-    // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
-    const int frameNum = bMode ? (idr ? 0 : refCount_) : framesSinceIdr_;
-    if (bMode && type != 2)
+    if (bMode && fc.refPic_)
         refCount_ = idr ? 1 : refCount_ + 1;
     if (pipelined()) {
         // Rows go to the workers; finished rows go into the reference picture band by band.
@@ -2969,9 +3076,10 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             pic->u = fc.recU_;
             pic->v = fc.recV_;
             if (cfg_.bframes > 0) {
-                pic->mvx = fc.mvX_;
-                pic->mvy = fc.mvY_;
-                pic->ref = fc.refIdx_;
+                pic->mvx.resize(fc.mvX_.size());
+                pic->mvy.resize(fc.mvX_.size());
+                pic->ref.resize(fc.mvX_.size());
+                fc.publishMotion(*pic, 0, mbH_);
             }
             fc.buildRefPlanes(*pic);
             pic->rowsReady.store(mbH_, std::memory_order_release);
@@ -6258,11 +6366,16 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     {
         const RefPic& col = *refs1_[0];
         const size_t o = size_t(mby * 4 + 1) * lw + size_t(mbx * 4 + 1);
-        const int td = col.gopPos - refs_[0]->gopPos, tb = gopPos_ - refs_[0]->gopPos;
-        if (col.ref[o] == 0 && td > 0) {
+        const int td = col.gopPos - col.refGopPos, tb = gopPos_ - refs_[0]->gopPos;
+        if (col.ref[o] == 0 && td > 0 && col.refGopPos == refs_[0]->gopPos) {
             const int fx = col.mvx[o] * tb / td, fy = col.mvy[o] * tb / td;
             starts[0][startCount[0]++] = {fx, fy};
             starts[1][startCount[1]++] = {fx - col.mvx[o], fy - col.mvy[o]};
+        } else if (col.ref[o] == 0 && td != 0) {
+            // B pyramid: the co-located picture's vectors point to another picture than list 0.
+            const int tc = gopPos_ - col.gopPos;
+            starts[0][startCount[0]++] = {col.mvx[o] * tb / td, col.mvy[o] * tb / td};
+            starts[1][startCount[1]++] = {col.mvx[o] * tc / td, col.mvy[o] * tc / td};
         }
     }
     // Bits of an mb_type by its number of bins (the first three have adaptive contexts).

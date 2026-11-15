@@ -34,6 +34,8 @@ struct RefPic {
     std::vector<int16_t> mvx, mvy;
     std::vector<int8_t> ref;
     int gopPos = 0; // display distance from the IDR picture
+    int refGopPos = 0; // gopPos of the picture its vectors point to (list 0)
+    int frameNum = 0;  // reference pictures since the IDR picture before this one (frame_num, not wrapped)
     // Means of the source picture's 16x16 luma blocks and 8x8 chroma blocks (weighted prediction:
     // a later picture compares its own with them to find a fade).
     std::vector<float> dcY, dcU, dcV;
@@ -392,6 +394,12 @@ public:
     int activeRefs_ = 0;
     bool bSlice_ = false;  // B picture (pSlice_ is set too: an inter slice)
     bool refPic_ = true;   // the picture is a reference (nal_ref_idc)
+    // After a reference B picture (B pyramid): the P picture's list 0 is put back in the order of
+    // refs_ (ref_pic_list_modification: abs_diff_pic_num_minus1 per entry) and the B picture is
+    // marked unused (memory_management_control_operation 1: difference_of_pic_nums_minus1, -1 = none).
+    std::vector<int> listMod_;
+    int mmcoDiff_ = -1;
+    void publishMotion(RefPic& R, int row0, int row1) const;
     bool pocLsb_ = false;  // pic_order_cnt_type 0: the slice header carries pic_order_cnt_lsb
     int gopPos_ = 0;       // display distance from the IDR picture
     // P picture with explicit weighted prediction: per reference of refs_ (wpAny_ = at least one

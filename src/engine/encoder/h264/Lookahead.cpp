@@ -723,10 +723,12 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
         }
     };
     const int count = int(frames.size());
-    // B pictures first: nothing references them, they only pass on their own cost.
+    // B pictures first: nothing references them, they only pass on their own cost - except the
+    // reference B picture of a pyramid, which comes after the others and passes theirs on too.
+    for (int pass = 0; pass < 2; ++pass)
     for (int j = 0; j < count; ++j) {
         LookaheadFrame& f = frames[size_t(j)];
-        if (f.type != 2 || f.intraCost.size() != n)
+        if (f.type != 2 || f.intraCost.size() != n || f.bRef != (pass == 1))
             continue;
         const int a = f.refDist, c = f.nextDist, r = j - a, s = j + c;
         if (s >= count || a < 1 || c < 1 || a + c > maxB + 1)
