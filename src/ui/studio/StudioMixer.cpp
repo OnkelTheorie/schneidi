@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <optional>
 
 namespace {
 
@@ -472,6 +473,25 @@ public:
     }
     std::function<void()> onOpen;
     std::function<void()> onToggle;
+    // The model changed: drawn anew only when this track's EQ / compressor did (every timeline change lands here)
+    void refresh()
+    {
+        const auto& audio = m_editor->project()->timeline().audio;
+        if (m_track >= audio.size()) {
+            m_shownEq.reset();
+            m_shownDyn.reset();
+            return update();
+        }
+        const Track& t = audio[m_track];
+        if (m_eq) {
+            if (m_shownEq && *m_shownEq == t.eq) return;
+            m_shownEq = t.eq;
+        } else {
+            if (m_shownDyn && *m_shownDyn == t.dynamics) return;
+            m_shownDyn = t.dynamics;
+        }
+        update();
+    }
     bool isOn() const
     {
         const auto& audio = m_editor->project()->timeline().audio;
@@ -558,6 +578,8 @@ private:
     Editor* m_editor;
     int m_track;
     bool m_eq;
+    std::optional<TrackEq> m_shownEq; // what the last refresh() asked to be drawn
+    std::optional<TrackDynamics> m_shownDyn;
 };
 
 // One narrow mixer strip (a fixed width; many tracks scroll beside each other). From the top: name, EQ and compressor
@@ -1203,8 +1225,8 @@ void StudioMixer::sync()
         s->solo->setChecked(t.solo);
         s->eqOpen->setToolTip(t.eq.on ? T("EQ-Fenster öffnen (EQ an)") : T("EQ-Fenster öffnen (EQ aus)"));
         s->dynOpen->setToolTip(t.dynamics.on ? T("Kompressor-Fenster öffnen (Kompressor an)") : T("Kompressor-Fenster öffnen (Kompressor aus)"));
-        s->eqThumb->update();
-        s->dynThumb->update();
+        s->eqThumb->refresh();
+        s->dynThumb->refresh();
     }
     m_master->setVolume(tl.masterVolumeDb);
     m_master->limiter->setChecked(tl.masterLimiter);

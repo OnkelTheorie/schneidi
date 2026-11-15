@@ -66,12 +66,43 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
         update();
     });
     Project* project = m_editor->project();
+    m_shownAudio = project->timeline().audio;
     connect(project, &Project::timelineChanged, this, [this] {
         layoutLanes(); // a track more or less: lane heights and ranges, never zoom or scroll
-        update();
+        updateChangedLanes();
     });
     if (m_cache) connect(m_cache, &MediaCache::updated, this, qOverload<>(&QWidget::update));
     connect(m_editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
+}
+
+namespace {
+// What a lane shows of its track (the mixer-only parts - EQ, compressor, surround sends - are not drawn here)
+bool sameLane(const Track& a, const Track& b)
+{
+    return a.uid.value == b.uid.value && a.clips == b.clips && a.name == b.name && a.color == b.color
+           && a.locked == b.locked && a.muted == b.muted && a.solo == b.solo && a.volumeDb == b.volumeDb
+           && a.pan == b.pan && a.volumeAuto == b.volumeAuto && a.panAuto == b.panAuto;
+}
+} // namespace
+
+void StudioTracks::updateChangedLanes()
+{
+    // Every timeline change lands here (a fader drag: dozens a second): only lanes whose content changed are drawn
+    // anew; an EQ or compressor change, a video edit draw none
+    const QVector<Track>& now = m_editor->project()->timeline().audio;
+    const QVector<Track> before = std::exchange(m_shownAudio, now);
+    const auto anySolo = [](const QVector<Track>& v) {
+        return std::any_of(v.begin(), v.end(), [](const Track& t) { return t.solo; });
+    };
+    if (before.size() != now.size() || anySolo(before) != anySolo(now)) return update(); // all lanes change
+    QRegion dirty;
+    for (int i = 0; i < now.size(); ++i) {
+        if (sameLane(before[i], now[i])) continue;
+        if (before[i].uid.value != now[i].uid.value) return update(); // other tracks (moved, another project)
+        const QRect lane = laneRect(i);
+        dirty += QRect(0, lane.top(), width(), lane.height()); // header and lane
+    }
+    if (!dirty.isEmpty()) update(dirty);
 }
 
 void StudioTracks::setPlayhead(int frame)

@@ -1451,6 +1451,52 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         page->setToolsOpen(false);
         settle();
     }
+
+    // (6) A mixer-only change repaints only what shows it: a fader move of A2 only A2's lane (not A1's, not the EQ
+    // pictures), an EQ change of A1 only A1's EQ picture (no lane)
+    {
+        struct PaintCounter : QObject {
+            int paints = 0;
+            bool eventFilter(QObject*, QEvent* e) override
+            {
+                if (e->type() == QEvent::Paint) ++paints;
+                return false;
+            }
+        };
+        QWidget* eqA1 = mixer->findChild<QWidget*>("studio_eqthumb_A1");
+        QWidget* dynA1 = mixer->findChild<QWidget*>("studio_dynthumb_A1");
+        if (CHECK(eqA1 && dynA1 && eqA1->isVisible())) {
+            PaintCounter eqPaints, dynPaints;
+            eqA1->installEventFilter(&eqPaints);
+            dynA1->installEventFilter(&dynPaints);
+            const int at = undo->index();
+            settle();
+            eqPaints.paints = dynPaints.paints = 0;
+            const int lanePaints = tracks->paintCount();
+            w.editor()->setTrackVolume(1, -7, "test-vol");
+            p->closeMerge();
+            settle();
+            CHECK_EQ(eqPaints.paints, 0);
+            CHECK_EQ(dynPaints.paints, 0);
+            CHECK(tracks->paintCount() > lanePaints);
+            const QRegion painted = tracks->lastPaintRegion();
+            CHECK(painted.intersects(tracks->laneRect(1)));
+            Check::report(!painted.intersects(tracks->laneRect(0).adjusted(0, 0, 0, -1)), "only the changed lane drawn",
+                          __FILE__, __LINE__);
+            TrackEq eq = p->timeline().audio[0].eq;
+            eq.on = !eq.on;
+            const int lanePaints2 = tracks->paintCount();
+            w.editor()->setTrackEq(0, eq);
+            settle();
+            CHECK(eqPaints.paints > 0);
+            CHECK_EQ(dynPaints.paints, 0);
+            CHECK_EQ(tracks->paintCount(), lanePaints2);
+            eqA1->removeEventFilter(&eqPaints);
+            dynA1->removeEventFilter(&dynPaints);
+            while (undo->index() > at) undo->undo();
+            settle();
+        }
+    }
 }
 
 } // namespace

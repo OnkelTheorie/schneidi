@@ -21,6 +21,7 @@
 #include <QVector>
 #include <QWidget>
 
+#include "core/Types.h"
 #include "core/VolumeDraw.h"
 
 class Editor;
@@ -107,6 +108,8 @@ protected:
     void dropEvent(QDropEvent* e) override;
 
 private:
+    void updateChangedLanes(); // the model changed: repaint only the lanes whose track changed
+    QVector<Track> m_shownAudio; // the audio tracks as last drawn (updateChangedLanes)
     void layoutLanes();      // lane height, scrollbar ranges (never a change of zoom or scroll)
     void syncScrollBars();
     int trackAt(int y) const; // -1 = none
