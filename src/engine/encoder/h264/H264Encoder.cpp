@@ -926,7 +926,7 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         return 2;
     const std::vector<uint8_t> grey(size_t(w / 2) * (h / 2), 128);
     // Bits and luma error of the pictures after the first one.
-    auto code = [&](int qp, int bframes, double& bits, double& ssd) {
+    auto code = [&](int qp, int bframes, double& bits, double& ssd, int encThreads) {
         EncoderConfig c;
         c.width = w;
         c.height = h;
@@ -935,7 +935,7 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         c.sceneCut = false;
         c.lookahead = 0;
         c.mbtree = false;
-        c.threads = threads;
+        c.threads = encThreads;
         c.bframes = bframes;
         c.bAdaptive = false;
         c.weightedPred = false;
@@ -981,7 +981,7 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
     };
     constexpr int kQp = 28, kQpStep = 3;
     double r0, d0, r1 = 0, d1 = 0;
-    code(kQp, 0, r0, d0);
+    code(kQp, 0, r0, d0, threads);
     const double floorBits = (0.002 * w * h + 256.0) * (count - 1);
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
     if (r0 < floorBits) {
@@ -989,7 +989,23 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
             std::fprintf(stderr, "bprobe: P runs %.0f bits at QP %d, under the floor of %.0f\n", r0, kQp, floorBits);
         return 1;
     }
-    code(kQp + kQpStep, 0, r1, d1);
+    // The other runs side by side (each with a share of the threads; the streams do not depend on
+    // the thread count): the probe sits in the first pass's one analysis thread, and three small
+    // encodes one after another were most of that pass's time on game footage.
+    double rb[2] = {0, 0}, db[2] = {0, 0};
+    {
+        const int jobs = 1 + std::min(runCount, 2);
+        const int share = std::max(1, (threads + jobs - 1) / jobs);
+        std::atomic<int> next{0};
+        runOnThreads(std::min(jobs, std::max(1, threads)), [&] {
+            for (int j; (j = next.fetch_add(1)) < jobs;) {
+                if (j == 0)
+                    code(kQp + kQpStep, 0, r1, d1, share);
+                else
+                    code(kQp, runs[j - 1], rb[j - 1], db[j - 1], share);
+            }
+        });
+    }
     // The two P runs give no slope: no measurement, no B pictures. (Next to nothing coded - a still
     // picture, a desktop: the slice headers alone are some 100 bits - was answered above; with the
     // B pyramid runs of three gain 0 .. 3 % on screen recordings.)
@@ -1004,12 +1020,9 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
     if (r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0)
         return 2;
     const double slope = std::log(r1 / r0) / std::log(d1 / d0); // < 0
-    for (int k = 0; k < runCount; ++k) {
-        double rb, db;
-        code(kQp, runs[k], rb, db);
-        if (db > 0)
-            gains[k] = rb / (r0 * std::exp(slope * std::log(db / d0))) - 1.0; // against the P runs' bits at this error
-    }
+    for (int k = 0; k < runCount && k < 2; ++k)
+        if (db[k] > 0)
+            gains[k] = rb[k] / (r0 * std::exp(slope * std::log(db[k] / d0))) - 1.0; // against the P runs' bits at this error
     return 0;
 }
 
