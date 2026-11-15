@@ -129,7 +129,7 @@ fi
 
 # GL dispatch libraries (libglvnd) as a fallback for systems without a desktop: AppRun adds a folder to the library
 # path only if the system lacks that library (a bundled one could clash with the system's GPU driver)
-for lib in libEGL.so.1 libOpenGL.so.0 libGLdispatch.so.0; do
+for lib in libEGL.so.1 libOpenGL.so.0 libGL.so.1 libGLX.so.0 libGLdispatch.so.0; do
     src="/usr/lib/$MULTIARCH/$lib"
     [ -f "$src" ] || src="$(ldconfig -p | awk -v l="$lib" '$1 == l { print $NF; exit }')"
     if [ -n "$src" ] && [ -f "$src" ]; then
