@@ -188,6 +188,16 @@ void StudioTracks::fit()
     setView(double(w) / end, 0);
 }
 
+void StudioTracks::zoomBy(double factor)
+{
+    const QRect area = clipArea();
+    double x = xOf(m_playhead);
+    if (x < area.left() || x > area.right()) x = area.left() + area.width() / 2.0;
+    m_view.setZoomAround(m_view.pxPerFrame * factor, frameAt(x), x - kHeaderW);
+    syncScrollBars();
+    update();
+}
+
 QRect StudioTracks::clipArea() const
 {
     const int sb = m_hbar->sizeHint().height();

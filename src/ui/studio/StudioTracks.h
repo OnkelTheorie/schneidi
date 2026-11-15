@@ -60,6 +60,8 @@ public:
     void setView(double pxPerFrame, double leftFrame);
     // The whole project in view (the Fit button: user input)
     void fit();
+    // Keyboard zoom (Ctrl+= / Ctrl+-: user input): around the playhead when it is in view, else the view's centre
+    void zoomBy(double factor);
 
     // Geometry (tests, tours): the lane of audio track `track` (its clip area, right of the header); x of a frame
     QRect laneRect(int track) const;

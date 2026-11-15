@@ -1567,6 +1567,30 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         CHECK(p->timeline().audio[0].volumeAuto.isEmpty());
         undo->undo();
     }
+
+    // (10) Ctrl+= / Ctrl+- on the Studio page zoom its tracks (around the playhead), not the hidden timeline
+    {
+        TimelineView* tv = w.findChild<TimelineView*>();
+        QAction* in = InputBindings::instance().action("zoom_in");
+        QAction* out = InputBindings::instance().action("zoom_out");
+        if (CHECK(tv && in && out)) {
+            tracks->fit();
+            engine.seek(100);
+            settle();
+            const ViewState timelineBefore = tv->view();
+            const double before = tracks->view().pxPerFrame;
+            const double xBefore = tracks->xOf(100);
+            in->trigger();
+            settle();
+            CHECK(std::abs(tracks->view().pxPerFrame - before * 1.5) < 1e-9);
+            CHECK(std::abs(tracks->xOf(100) - xBefore) < 1.0); // around the playhead
+            out->trigger();
+            settle();
+            CHECK(std::abs(tracks->view().pxPerFrame - before) < 1e-9);
+            CHECK_EQ(tv->view().pxPerFrame, timelineBefore.pxPerFrame);
+            CHECK_EQ(tv->view().leftFrame, timelineBefore.leftFrame);
+        }
+    }
 }
 
 } // namespace
