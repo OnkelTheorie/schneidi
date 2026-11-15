@@ -74,7 +74,8 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds)
     return refs;
 }
 
-void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving)
+void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving,
+                   MarkerCut markerCut)
 {
     if (tl.markers.isEmpty() || shifts.isEmpty()) return;
     int first = INT_MAX; // first frame the ripple touches
@@ -89,13 +90,18 @@ void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const Q
     QVector<int> out;
     out.reserve(tl.markers.size());
     for (int m : std::as_const(tl.markers)) {
-        int d = 0;
+        int at = m; // where the marker counts from: a moved one from the end of the time taken out
         bool cut = false;
-        for (const auto& s : shifts) {
-            if (s.second < 0 && s.first + s.second < m && m < s.first) cut = true;
-            if (s.first <= m) d += s.second;
-        }
-        if (!cut) out << std::max(0, m + d);
+        for (const auto& s : shifts)
+            if (s.second < 0 && s.first + s.second < at && at < s.first) {
+                if (markerCut == MarkerCut::MoveToCut) at = s.first;
+                else cut = true;
+            }
+        if (cut) continue;
+        int d = 0;
+        for (const auto& s : shifts)
+            if (s.first <= at) d += s.second;
+        out << std::max(0, at + d);
     }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
@@ -103,7 +109,7 @@ void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const Q
 }
 
 void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
-                  const QVector<QPair<int, int>>* markerShifts)
+                  const QVector<QPair<int, int>>* markerShifts, MarkerCut markerCut)
 {
     if (shifts.isEmpty()) return;
     QVector<TrackRef> moving = skip; // tracks that go along (for the markers)
@@ -149,7 +155,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
     // Subtitle tracks move along the same way (locked ones stay put, like DaVinci)
     for (SubtitleTrack& st : tl.subtitles)
         if (!st.locked) Subtitles::ripple(st, shifts);
-    rippleMarkers(tl, markerShifts ? *markerShifts : shifts, moving);
+    rippleMarkers(tl, markerShifts ? *markerShifts : shifts, moving, markerCut);
 }
 
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
@@ -834,7 +840,7 @@ int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const Source
     return std::clamp(delta, std::min(lo, 0), std::max(hi, 0));
 }
 
-void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength)
+void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength, MarkerCut markerCut)
 {
     delta = clampTrimEdit(tl, e, delta, sourceLength);
     if (delta == 0) return;
@@ -893,7 +899,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
         // Markers follow the content of the lead track's trimmed clips (head: from the clip's start, like its
         // automation), so a marker on the trimmed-off part goes and one on the rest stays on its picture
         const QVector<QPair<int, int>> markerShifts = autoShifts.value(lead);
-        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited, &markerShifts);
+        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited, &markerShifts, markerCut);
         break;
     }
     case TrimKind::Roll:

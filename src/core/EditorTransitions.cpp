@@ -256,15 +256,16 @@ bool Editor::trimForTransition(Timeline& tl, int leftId, int rightId, Transition
         const int dl = std::max(0, after - handleOut), dr = std::max(0, before - handleIn);
         if (l->length() - dl < std::max(1, before) || r->length() - dr < std::max(1, after)) continue;
         Timeline t = tl;
+        // The trim makes room for the transition, no content is cut: markers on the trimmed piece go to the cut
         if (dl > 0) {
             const TrimEdit e = trimEdit(TrimKind::Ripple, leftId, Edge::End);
             if (TimelineOps::clampTrimEdit(t, e, -dl, len) != -dl) return false;
-            TimelineOps::applyTrimEdit(t, e, -dl, len);
+            TimelineOps::applyTrimEdit(t, e, -dl, len, TimelineOps::MarkerCut::MoveToCut);
         }
         if (dr > 0) {
             const TrimEdit e = trimEdit(TrimKind::Ripple, rightId, Edge::Start);
             if (TimelineOps::clampTrimEdit(t, e, dr, len) != dr) return false;
-            TimelineOps::applyTrimEdit(t, e, dr, len);
+            TimelineOps::applyTrimEdit(t, e, dr, len, TimelineOps::MarkerCut::MoveToCut);
         }
         tl = t;
         return true;

@@ -604,13 +604,50 @@ int main(int argc, char** argv)
         applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc);
         CHECK_EQ(tl.markers, M({45, 70}));
 
-        // Closing a gap (rippleTracks on every track): a marker in the gap goes, the rest moves up
+        // Taking out time by default (content removed: ripple delete, ranges): a marker in it goes, the rest moves up
         tl = tracks(1, 1);
         tl.video[0].clips << mk(1, "a", 0, 50) << mk(3, "c", 80, 50);
         tl.markers = {50, 60, 80, 140};
         rippleTracks(tl, {{80, -30}}, {});
         CHECK_EQ(findClip(tl, 3)->start, 50);
         CHECK_EQ(tl.markers, M({50, 110}));
+        // Closing an empty gap / a transition's trim (MarkerCut::MoveToCut): markers in the gap land on the cut point
+        // and merge there, the rest moves up
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 50) << mk(3, "c", 80, 50);
+        tl.markers = {20, 55, 60, 79, 80, 140};
+        rippleTracks(tl, {{80, -30}}, {}, nullptr, MarkerCut::MoveToCut);
+        CHECK_EQ(findClip(tl, 3)->start, 50);
+        CHECK_EQ(tl.markers, M({20, 50, 110}));
+        tl.markers = {55, 140};
+        rippleMarkers(tl, {{100, -20}, {60, -10}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, MarkerCut::MoveToCut);
+        CHECK_EQ(tl.markers, M({50, 110})); // each range to its own cut, the offsets add up
+        // ... a locked track holding content later keeps them, as for every ripple
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 50) << mk(3, "c", 80, 50);
+        tl.audio[0].clips << mk(9, "s", 0, 150);
+        tl.audio[0].locked = true;
+        tl.markers = {60, 140};
+        rippleTracks(tl, {{80, -30}}, {}, nullptr, MarkerCut::MoveToCut);
+        CHECK_EQ(tl.markers, M({60, 140}));
+        // Ripple trim with MoveToCut (a transition's trim): the trimmed-off tail's markers land on the new cut
+        tl = three();
+        tl.markers = {40, 45, 49, 50, 70};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc, MarkerCut::MoveToCut);
+        CHECK_EQ(tl.markers, M({40, 60}));
+        tl = three();
+        tl.markers = {30, 45, 70};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc, MarkerCut::MoveToCut);
+        CHECK_EQ(tl.markers, M({30, 40, 60}));
+        // ... the head: the trimmed-off head's markers land on the clip's start
+        tl = three();
+        tl.markers = {50, 55, 70, 100};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {2}, {}, Edge::Start}, 10, kSrc, MarkerCut::MoveToCut);
+        CHECK_EQ(tl.markers, M({50, 60, 90}));
+        tl = three();
+        tl.markers = {52, 70, 100};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {2}, {}, Edge::Start}, 10, kSrc, MarkerCut::MoveToCut);
+        CHECK_EQ(tl.markers, M({50, 60, 90}));
 
         // Insert (rippleMarkers with the tracks that moved): from the insert point on, markers move
         tl = tracks(1, 1);

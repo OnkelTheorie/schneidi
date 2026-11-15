@@ -41,6 +41,7 @@
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
 #include "ui/Viewer.h"
+#include "core/AutomationWriter.h"
 #include "ui/studio/StudioMixer.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/studio/StudioPage.h"
@@ -308,6 +309,30 @@ void testWindow(Engine& engine, const QString& audioFile)
         CHECK(page->mixer()->writeMode());
         write->click();
         CHECK(!page->mixer()->writeMode());
+        // A write pass ends when the page is hidden (its timer stops, tick() cannot see playback stop) and when write
+        // mode is switched off: open touches are released, the pass is one closed undo step
+        AutomationWriter& writer = page->mixer()->writer();
+        for (int pass = 0; pass < 2; ++pass) {
+            const int before = undo->index();
+            write->click();
+            for (int f = 10; f <= 30; ++f) writer.move(0, AutoTarget::Volume, f, -3 - f * 0.1);
+            CHECK(writer.inPass() && writer.touching(0, AutoTarget::Volume));
+            if (pass == 0) {
+                CHECK(page->mixer()->isVisible());
+                page->mixer()->hide();
+                CHECK(!writer.inPass() && !writer.touching());
+                page->mixer()->show();
+                write->click();
+            } else {
+                write->click();
+                CHECK(!writer.inPass() && !writer.touching());
+            }
+            CHECK(!page->mixer()->writeMode());
+            CHECK_EQ(undo->index(), before + 1);
+            CHECK_EQ(undo->undoText(), QString("Automation schreiben"));
+            undo->undo();
+            CHECK(project->timeline().audio[0].volumeAuto.isEmpty());
+        }
         pen->click();
         autoPan->click();
         CHECK(tracks->autoTarget() == AutoTarget::Pan);
