@@ -1385,6 +1385,25 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
             }
         }
     }
+
+    // (3) One window per track: an EQ window follows its track when a track is inserted before it - a click on that
+    // track's strip brings it up, a click on the track now at its old place opens that track's own
+    {
+        const int at = undo->index();
+        QDialog* eqA2 = mixer->openEditor(1, true);
+        if (CHECK(eqA2)) {
+            w.editor()->addTrack(TrackKind::Audio, 0);
+            settle();
+            CHECK(mixer->openEditor(2, true) == eqA2);
+            QDialog* other = mixer->openEditor(1, true);
+            CHECK(other && other != eqA2);
+            if (other) other->close();
+            eqA2->close();
+            settle();
+        }
+        while (undo->index() > at) undo->undo();
+        settle();
+    }
 }
 
 } // namespace

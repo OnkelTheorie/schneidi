@@ -1132,9 +1132,15 @@ void StudioMixer::rebuild(int count)
 
 QDialog* StudioMixer::openEditor(int track, bool eq)
 {
-    // One window per track and kind: a second click brings the open one up
+    // One window per track and kind: a second click brings the open one up (the windows follow their track when
+    // tracks are added, removed or reordered: compare the track they show now)
+    const auto shows = [](const QDialog* d) {
+        if (const auto* e = qobject_cast<const EqDialog*>(d)) return e->track();
+        if (const auto* c = qobject_cast<const DynamicsDialog*>(d)) return c->track();
+        return -1;
+    };
     for (QDialog* d : findChildren<QDialog*>(Qt::FindDirectChildrenOnly))
-        if (d->isVisible() && d->property("studioTrack").toInt() == track && d->property("studioEq").toBool() == eq) {
+        if (d->isVisible() && track >= 0 && shows(d) == track && d->property("studioEq").toBool() == eq) {
             d->raise();
             d->activateWindow();
             return d;
@@ -1142,7 +1148,6 @@ QDialog* StudioMixer::openEditor(int track, bool eq)
     QDialog* d = eq ? static_cast<QDialog*>(new EqDialog(m_editor, track, this))
                     : static_cast<QDialog*>(new DynamicsDialog(m_editor, track, this));
     d->setObjectName(eq ? "studio_eq_window" : "studio_dyn_window");
-    d->setProperty("studioTrack", track);
     d->setProperty("studioEq", eq);
     d->setAttribute(Qt::WA_DeleteOnClose);
     d->adjustSize();

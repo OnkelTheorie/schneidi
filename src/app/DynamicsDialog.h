@@ -14,6 +14,7 @@ class DynamicsDialog : public QDialog {
     Q_OBJECT
 public:
     DynamicsDialog(Editor* editor, int track, QWidget* parent = nullptr);
+    int track() const { return m_track; } // follows its track when tracks move; -1 = detached
 
 private:
     void sync();   // model -> controls
