@@ -299,6 +299,7 @@ private:
     struct RcRecord {
         int index;
         int type; // 0 I, 1 P, 2 B
+        bool afterB; // a P picture after a run of B pictures
         bool lookahead;
         double cost;
         int qp;
@@ -391,8 +392,15 @@ private:
     // picture's residual mostly quantises to nothing, a busy one's does not), so k is learned per
     // class and the not yet coded pictures of each class are predicted with their own k.
     static constexpr int kRcBins = 28;
-    double rcKBin_[kRcBins] = {}, rcCostBin_[kRcBins] = {};
-    double tpRemPBin_[kRcBins] = {}, tpAllPBin_[kRcBins] = {};
+    // Two kinds of P pictures, each with its own classes: [0] after another I or P picture, [1]
+    // after a run of B pictures. The first pass knows every picture against the one before only; a P
+    // picture several pictures after its reference needs more bits per cost than that (and with the
+    // macroblock tree it carries the run's quality), and how much more depends on the material, so
+    // where B pictures are placed in parts of a clip the two must not share one k.
+    double rcKBin_[2][kRcBins] = {}, rcCostBin_[2][kRcBins] = {};
+    double tpRemPBin_[2][kRcBins] = {}, tpAllPBin_[2][kRcBins] = {};
+    double rcKSumPb_ = 0, rcCostSumPb_ = 0; // all P pictures after B runs coded so far
+    std::vector<uint8_t> tpAfterB_;         // per picture of the plan: a P picture after a run of B pictures
     double tpAllI_ = 0, tpAllB_ = 0;
     // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass
     // complexity compression) and the cost weight 2^(-offset/6) the bit model applies with it.
@@ -400,7 +408,7 @@ private:
     std::vector<float> tpOff_;
     double tpCost(size_t i) const;
     int rcBin(double cost) const;
-    double kPOfBin(int bin, double kP) const;
+    double kPOfBin(int kind, int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB) const;
     double twoPassPlanQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter = nullptr) const;

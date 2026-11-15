@@ -1241,6 +1241,9 @@ EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads)
 
 // Classes of P pictures for the first-pass rate control (H264_TPBIN=0: one k for all).
 static const bool gTpBin = !std::getenv("H264_TPBIN") || std::atoi(std::getenv("H264_TPBIN")) != 0;
+// Two-pass: P pictures after a run of B pictures are their own kind in the bit model; until one is
+// coded their k is this factor times the other P pictures'. 0 = one kind (as before 15.11.2026).
+static const double gTpAfterB = std::getenv("H264_TPAFTERB") ? std::atof(std::getenv("H264_TPAFTERB")) : 1.6;
 // How far (in QP) the two-pass QP may leave the QP that fits the whole clip's budget with the model
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
@@ -1267,18 +1270,21 @@ int Encoder::rcBin(double cost) const
 
 // k of a class of P pictures: its own and its neighbours' pictures (weight halving per half
 // octave), drawn towards the k of all P pictures while a class has seen little.
-double Encoder::kPOfBin(int bin, double kP) const
+double Encoder::kPOfBin(int kind, int bin, double kP) const
 {
+    // P pictures after B runs: their own k once some are coded, a guess from the others before.
+    if (kind == 1)
+        kP = rcCostSumPb_ > 0 ? rcKSumPb_ / rcCostSumPb_ : kP * gTpAfterB;
     if (!gTpBin)
         return kP;
     const double prior = 4.0 * (mbW_ * mbH_) * std::exp2(bin * 0.5); // about four pictures of this class
     double num = kP * prior, den = prior;
     for (int j = 0; j < kRcBins; ++j) {
-        if (rcCostBin_[j] <= 0)
+        if (rcCostBin_[kind][j] <= 0)
             continue;
         const double w = std::exp2(-std::abs(j - bin));
-        num += w * rcKBin_[j];
-        den += w * rcCostBin_[j];
+        num += w * rcKBin_[kind][j];
+        den += w * rcCostBin_[kind][j];
     }
     return num / den;
 }
@@ -1293,9 +1299,10 @@ double Encoder::twoPassQp(double kI, double kP, double kB) const
     const double budget = std::max(double(st.size()) * perFrame - rcBits_, 0.5 * left * perFrame);
     double needP = 0;
     if (gTpBin) {
-        for (int b = 0; b < kRcBins; ++b)
-            if (tpRemPBin_[b] > 0)
-                needP += kPOfBin(b, kP) * tpRemPBin_[b];
+        for (int kind = 0; kind < 2; ++kind)
+            for (int b = 0; b < kRcBins; ++b)
+                if (tpRemPBin_[kind][b] > 0)
+                    needP += kPOfBin(kind, b, kP) * tpRemPBin_[kind][b];
     } else {
         needP = kP * tpRemP_;
     }
@@ -1316,9 +1323,10 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
     const FirstPassStats& st = *cfg_.firstPass;
     const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
     double needP = 0;
-    for (int b = 0; b < kRcBins; ++b)
-        if (tpAllPBin_[b] > 0)
-            needP += kPOfBin(b, kP) * tpAllPBin_[b];
+    for (int kind = 0; kind < 2; ++kind)
+        for (int b = 0; b < kRcBins; ++b)
+            if (tpAllPBin_[kind][b] > 0)
+                needP += kPOfBin(kind, b, kP) * tpAllPBin_[kind][b];
     double need = kI * tpAllI_ * std::exp2(0.5) + needP;
     if (tpAllB_ > 0)
         need += kB * tpAllB_ * std::exp2(-cfg_.bQpOffset / 6.0);
@@ -1882,12 +1890,18 @@ void Encoder::applyRc(int upTo)
         rcDone_.pop_front();
         if (r.lookahead) {
             if (r.cost > 0) {
-                rcKSum_[r.type] += r.bits * std::exp2(r.qp / 6.0);
-                rcCostSum_[r.type] += r.cost;
+                const bool pb = r.type == 1 && r.afterB && gTpAfterB > 0;
+                if (pb) {
+                    rcKSumPb_ += r.bits * std::exp2(r.qp / 6.0);
+                    rcCostSumPb_ += r.cost;
+                } else {
+                    rcKSum_[r.type] += r.bits * std::exp2(r.qp / 6.0);
+                    rcCostSum_[r.type] += r.cost;
+                }
                 if (r.type == 1) {
                     const int b = rcBin(r.cost);
-                    rcKBin_[b] += r.bits * std::exp2(r.qp / 6.0);
-                    rcCostBin_[b] += r.cost;
+                    rcKBin_[pb][b] += r.bits * std::exp2(r.qp / 6.0);
+                    rcCostBin_[pb][b] += r.cost;
                 }
             }
         } else if (r.type != 0) {
@@ -1920,7 +1934,7 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     lastDisplayIndex_ = fc.displayIndex_;
     lastType_ = "IPB"[fc.rcType_];
     if (cfg_.bitrateKbps > 0)
-        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
+        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcAfterB_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
     if (gTiming) {
         for (int i = 4; i < 8; ++i)
             gPhaseMs[i] += clock.ms[i];
@@ -2885,9 +2899,11 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             const FirstPassStats& st = *cfg_.firstPass;
             tpKey_.assign(st.size(), 0);
             tpType_.assign(st.size(), 1);
+            tpAfterB_.assign(st.size(), 0);
             for (size_t i = 0; i < st.size() && i < statType_.size(); ++i) {
                 tpType_[i] = statType_[i];
                 tpKey_[i] = statType_[i] == 0;
+                tpAfterB_[i] = gTpAfterB > 0 && statType_[i] == 1 && i > 0 && statType_[i - 1] == 2;
             }
             tpOff_.clear();
             if (cfg_.qcomp > 0 && st.size() > 0) {
@@ -2918,9 +2934,10 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             for (size_t i = 0; i < st.size(); ++i) {
                 (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) += tpCost(i);
                 if (tpType_[i] == 1)
-                    tpRemPBin_[rcBin(st.interSum[i])] += tpCost(i);
+                    tpRemPBin_[tpAfterB_[i]][rcBin(st.interSum[i])] += tpCost(i);
             }
-            std::copy(std::begin(tpRemPBin_), std::end(tpRemPBin_), std::begin(tpAllPBin_));
+            for (int kind = 0; kind < 2; ++kind)
+                std::copy(std::begin(tpRemPBin_[kind]), std::end(tpRemPBin_[kind]), std::begin(tpAllPBin_[kind]));
             tpAllI_ = tpRemI_;
             tpAllB_ = tpRemB_;
         }
@@ -3000,7 +3017,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             const size_t i = std::min(size_t(frame.index), st.size() - 1);
             (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) -= tpCost(i);
             if (tpType_[i] == 1)
-                tpRemPBin_[rcBin(st.interSum[i])] -= tpCost(i);
+                tpRemPBin_[tpAfterB_[i]][rcBin(st.interSum[i])] -= tpCost(i);
             if (std::getenv("H264_RC_TRACE"))
                 std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
         } else if (rcQp_ > 0) {
@@ -3059,6 +3076,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.outQp_ = cfg_.qp;
     fc.outSceneCut_ = cut;
     fc.rcType_ = type;
+    // Two-pass only: the one-pass model takes a P picture's cost over its real distance.
+    fc.rcAfterB_ = type == 1 && bMode && frame.refDist > 1 && cfg_.firstPass && size_t(frame.index) < cfg_.firstPass->size();
     fc.rcLookahead_ = lookahead;
     fc.rcCost_ = costUsed;
 

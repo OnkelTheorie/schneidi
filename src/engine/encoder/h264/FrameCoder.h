@@ -159,7 +159,7 @@ public:
     std::shared_ptr<RefPic> outPic_; // the reference picture being filled, kept alive while coding
     int frameNo_ = 0, outQp_ = 0, displayIndex_ = 0;
     int rcType_ = 0; // 0 I, 1 P, 2 B
-    bool outSceneCut_ = false, rcLookahead_ = false;
+    bool outSceneCut_ = false, rcLookahead_ = false, rcAfterB_ = false;
     double rcCost_ = 0;
     bool idr_ = false;
     int framesSinceIdr_ = 0, idrCount_ = 0;
