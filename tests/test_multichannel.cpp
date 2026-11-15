@@ -13,6 +13,9 @@
 //   stereo stays under the limiter (limiter after the downmix; loudness/check measure it with channels 'stereo'),
 //   ALAC 7.1 downmixed with a note, routing dropped on a stream change, channels as JSON numbers, Project Settings
 //   and the first clip's format keep the channels, the waveform of a routed clip shows its channels only
+// - routed waveforms: peaks of exactly the routed channels (a 4-channel file, a stream of a multi-stream file) within
+//   one step of the mixer's sound, all routings of a stream from one decode (also from disk), unrouted unchanged,
+//   old/damaged per-channel cache files rebuilt. WAVE_BENCH=<file>: waveform build times of a file, then exit
 
 #include "check.h"
 
@@ -31,6 +34,7 @@
 #include "engine/RenderQueue.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/audio/Mixer.h"
+#include "engine/audio/Reader.h"
 #include "engine/audio/Player.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
@@ -39,7 +43,10 @@
 #include <QComboBox>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QDataStream>
 #include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -49,7 +56,9 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 namespace {
@@ -932,6 +941,183 @@ void testWaveform(const QString& frontOnly)
     if (!CHECK(all > 50 && routed == 0 && front > 50)) std::printf("       Wellenform alle %d, 3/4 %d, 1 %d\n", all, routed, front);
 }
 
+// Routed waveforms (docs/plan-0.23.md "Wellenform je Strom/Kanal"): peaks of exactly what the clip plays, per-channel
+// peaks decoded once per stream and shared by its routings, old/damaged cache files rebuilt
+std::shared_ptr<const Waveform> waitWave(MediaCache& cache, const QString& path, int stream, const QVector<int>& pick)
+{
+    QElapsedTimer t;
+    t.start();
+    std::shared_ptr<const Waveform> w = cache.waveform(path, stream, pick);
+    while ((!w || !w->complete) && t.elapsed() < 60000) {
+        QEventLoop loop;
+        QObject::connect(&cache, &MediaCache::updated, &loop, &QEventLoop::quit);
+        QTimer::singleShot(20, &loop, &QEventLoop::quit);
+        loop.exec();
+        w = cache.waveform(path, stream, pick);
+    }
+    return w && w->complete ? w : nullptr;
+}
+
+// Reference: the bucket peaks of what the mixer reads for the clip (Audio::Reader with the routing, stereo)
+QVector<quint8> refPeaks(const QString& path, int stream, const QVector<int>& pick)
+{
+    constexpr int N = Waveform::kBucketsPerFrame;
+    Audio::Reader::Options ro{kRate, 2};
+    for (int c : pick) ro.pick.push_back(c);
+    const auto reader = Audio::Reader::open(path, stream, ro);
+    if (!reader) return {};
+    const FrameRate fps = kFmt.rate;
+    const auto frameStart = [fps](int64_t f) { return (2 * f * kRate * fps.den + fps.num) / (2 * int64_t(fps.num)); };
+    const int length = int(std::ceil(double(reader->info().end) * fps.num / (double(kRate) * fps.den)));
+    const int64_t total = frameStart(length);
+    std::vector<float> l(static_cast<size_t>(total)), r(static_cast<size_t>(total));
+    float* out[2] = {l.data(), r.data()};
+    reader->read(0, int(total), out);
+    QVector<quint8> peaks(length * N, 0);
+    for (int i = 0; i < length; ++i) {
+        const int64_t a = frameStart(i);
+        const int samples = int(frameStart(i + 1) - a);
+        for (int k = 0; k < N; ++k) {
+            float peak = 0.f;
+            for (int64_t s = a + samples * k / N; s < a + samples * (k + 1) / N; ++s)
+                peak = std::max({peak, std::abs(l[size_t(s)]), std::abs(r[size_t(s)])});
+            peaks[i * N + k] = quint8(std::min(255, int(std::min(peak, 1.f) * 32767.f) >> 7));
+        }
+    }
+    return peaks;
+}
+
+// Largest difference of a waveform's finest level to the reference (-1 = sizes differ / no waveform)
+int waveDiff(const std::shared_ptr<const Waveform>& w, const QVector<quint8>& ref)
+{
+    if (!w || w->levels.isEmpty() || w->levels[0].size() != ref.size() || ref.isEmpty()) return -1;
+    int d = 0;
+    for (qsizetype i = 0; i < ref.size(); ++i) d = std::max(d, std::abs(int(w->levels[0][i]) - int(ref[i])));
+    return d;
+}
+
+void testRoutedWaveforms(const QTemporaryDir& tmp)
+{
+    // Four channels, each its own level and slow envelope (peaks change over time and between channels)
+    QStringList exprs;
+    const double amp[4] = {0.1, 0.25, 0.5, 0.9};
+    for (int c = 0; c < 4; ++c)
+        exprs << QString("%1*sin(2*PI*%2*t)*(0.55+0.45*sin(2*PI*%3*t))").arg(amp[c]).arg(kFreq[c]).arg(0.7 * (c + 1));
+    const QString quad = Check::makeMedia(
+        tmp.filePath("wave-quad.wav"),
+        {"-f", "lavfi", "-i", QString("aevalsrc=%1:s=48000:d=3:c=4.0").arg(exprs.join('|')).replace(",", "\\,"),
+         "-c:a", "pcm_s16le"});
+    // A recorder-like file: stream 0 a stereo mix, stream 1 the four channels (a camera's radio mic on 3/4)
+    const QString multi = Check::makeMedia(
+        tmp.filePath("wave-multi.mkv"),
+        {"-f", "lavfi", "-i", "aevalsrc=0.05*sin(2*PI*440*t)|0.07*sin(2*PI*660*t):s=48000:d=3:c=stereo", "-i", quad,
+         "-map", "0:a", "-map", "1:a", "-c:a", "pcm_s16le"});
+    if (!CHECK(!quad.isEmpty() && !multi.isEmpty())) return;
+    QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks").removeRecursively();
+
+    struct Case {
+        QString path;
+        int stream;
+        QVector<int> pick;
+    };
+    const QList<Case> cases{{quad, 0, {2, 3}}, {quad, 0, {0}}, {quad, 0, {3, 1}}, {multi, 1, {2}}, {multi, 1, {0, 1}}};
+    {
+        MediaCache cache;
+        cache.setFormat(kFmt);
+        for (const Case& c : cases) {
+            const int d = waveDiff(waitWave(cache, c.path, c.stream, c.pick), refPeaks(c.path, c.stream, c.pick));
+            if (!CHECK(d >= 0 && d <= 1)) std::printf("       Wellenform Strom %d Kanäle %d…: Abstand %d\n", c.stream, c.pick.value(0), d);
+        }
+        // Three routings of the quad file and two of the multi file's stream 1: each stream decoded once
+        if (!CHECK_EQ(cache.waveDecodes(), 2)) std::printf("       Dekodierungen %d\n", cache.waveDecodes());
+        // The distinct channel levels really show: channel 4 (0.9) far above channel 1 (0.1)
+        const auto loud = waitWave(cache, quad, 0, {3}), quiet = waitWave(cache, quad, 0, {0});
+        CHECK(loud && quiet && *std::max_element(loud->levels[0].begin(), loud->levels[0].end())
+                                   > 4 * *std::max_element(quiet->levels[0].begin(), quiet->levels[0].end()));
+        // Unrouted streams keep their own stereo path (exact, its own decode) and the other stream is not mixed in
+        CHECK_EQ(waveDiff(waitWave(cache, multi, 0, {}), refPeaks(multi, 0, {})), 0);
+        CHECK_EQ(waveDiff(waitWave(cache, multi, 1, {}), refPeaks(multi, 1, {})), 0);
+        CHECK_EQ(cache.waveDecodes(), 4);
+        // A channel the stream lacks is silent, as in the mixer
+        const auto none = waitWave(cache, quad, 0, {7});
+        CHECK(none && *std::max_element(none->levels[0].begin(), none->levels[0].end()) == 0);
+        CHECK_EQ(cache.waveDecodes(), 4);
+    }
+    {
+        // A new session: the per-channel peaks come from disk, a routing never asked for before decodes nothing
+        MediaCache cache;
+        cache.setFormat(kFmt);
+        const int d = waveDiff(waitWave(cache, quad, 0, {1}), refPeaks(quad, 0, {1}));
+        CHECK(d >= 0 && d <= 1);
+        CHECK_EQ(cache.waveDecodes(), 0);
+    }
+    // Old or damaged files where the per-channel peaks live are rebuilt, never misread
+    const QString file = MediaCache::channelPeaksFile(quad, 0, kFmt.rate);
+    CHECK(QFileInfo::exists(file));
+    const int frames = 3 * 25;
+    const auto writeFile = [&](const std::function<void(QDataStream&)>& fill) {
+        QFile f(file);
+        CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QDataStream out(&f);
+        fill(out);
+    };
+    const QByteArray full(frames * Waveform::kBucketsPerFrame, char(255));
+    const QList<std::function<void(QDataStream&)>> broken{
+        [&](QDataStream& o) { o << quint32(0x53574631) << qint32(frames) << full; }, // an unrouted (SWF1) file
+        [&](QDataStream& o) { o << quint32(0x53574632) << qint32(2) << qint32(4) << qint32(frames) << full.repeated(4); }, // newer version
+        [&](QDataStream& o) { o << quint32(0x53574632) << qint32(1) << qint32(4) << qint32(frames) << full; }, // too short
+        [&](QDataStream& o) { o << quint32(0x53574632) << qint32(1) << qint32(4); }, // cut off
+    };
+    for (const auto& fill : broken) {
+        writeFile(fill);
+        MediaCache cache;
+        cache.setFormat(kFmt);
+        const int d = waveDiff(waitWave(cache, quad, 0, {2, 3}), refPeaks(quad, 0, {2, 3}));
+        if (!CHECK(d >= 0 && d <= 1 && cache.waveDecodes() == 1))
+            std::printf("       altes Format: Abstand %d, Dekodierungen %d\n", d, cache.waveDecodes());
+    }
+    // The rebuilt peaks were saved again
+    {
+        MediaCache cache;
+        cache.setFormat(kFmt);
+        waitWave(cache, quad, 0, {2, 3});
+        CHECK_EQ(cache.waveDecodes(), 0); // rebuilt and saved by the last round
+    }
+}
+
+// WAVE_BENCH=<file>: build time of its waveforms (stream 0 unrouted, then two routings of stream 0), disk cache emptied
+// before each build, best of 3; prints and ends the test
+int waveBench(const QString& file)
+{
+    const QString peaks = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks";
+    const auto build = [&](const QVector<QVector<int>>& routings) {
+        qint64 best = -1;
+        for (int run = 0; run < 3; ++run) {
+            QDir(peaks).removeRecursively();
+            MediaCache cache;
+            cache.setFormat(ProjectFormat{1920, 1080, {60, 1}});
+            QElapsedTimer t;
+            t.start();
+            for (const QVector<int>& r : routings) {
+                std::shared_ptr<const Waveform> w = cache.waveform(file, 0, r);
+                while ((!w || !w->complete) && t.elapsed() < 120000) {
+                    QEventLoop loop;
+                    QObject::connect(&cache, &MediaCache::updated, &loop, &QEventLoop::quit);
+                    QTimer::singleShot(5, &loop, &QEventLoop::quit);
+                    loop.exec();
+                    w = cache.waveform(file, 0, r);
+                }
+            }
+            const qint64 ms = t.elapsed();
+            best = best < 0 ? ms : std::min(best, ms);
+        }
+        return best;
+    };
+    std::printf("waveform unrouted: %lld ms\n", (long long)build({{}}));
+    std::printf("waveform routed {0} + {1}: %lld ms\n", (long long)build({{0}, {1}}));
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -939,6 +1125,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("multichannel");
+    if (const QString b = qEnvironmentVariable("WAVE_BENCH"); !b.isEmpty()) return waveBench(b);
     testLayout();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
@@ -1006,6 +1193,7 @@ int main(int argc, char** argv)
     if (CHECK(!loud51.isEmpty())) testDownmixLimit(tmp, loud51);
     testAlac(tmp, five);
     if (CHECK(!frontOnly.isEmpty())) testWaveform(frontOnly);
+    testRoutedWaveforms(tmp);
     if (CHECK(!twoStreams.isEmpty() && !loud51.isEmpty())) testCliFixes(tmp, twoStreams, loud51);
     testApp(tmp, video);
     return Check::result();
