@@ -46,6 +46,14 @@ struct FirstPassStats {
     // clip's picture types can be planned before encoding. Empty = not measured, B pictures everywhere.
     int bMax = 0;
     std::vector<uint8_t> bGate;
+    // Per picture two histograms of its macroblocks' lookahead costs - [0] intra, [1] the better of
+    // intra and motion, as intraSum / interSum add them up - in quarter octaves from 8 on (count
+    // and sum per class): [picture * 2 * kHistBins + which * kHistBins + class]. The rate control
+    // predicts a picture's bits at a QP from them: a block whose cost stays below the quantiser's
+    // reach costs next to nothing, however many such blocks a picture has.
+    static constexpr int kHistBins = 56;
+    std::vector<uint32_t> histCount;
+    std::vector<float> histSum;
     size_t size() const { return intraSum.size(); }
 };
 
@@ -424,8 +432,17 @@ private:
     double rcKSum_[3] = {0, 0, 0}, rcCostSum_[3] = {0, 0, 0}; // [0] I, [1] P, [2] B
     double rcNeedSeen_ = 0; // predicted bits at QP 0 of the pictures coded so far
     int rcFramesSeen_ = 0;
-    // First-pass rate control: predicted keyframes and the costs of the pictures not coded yet.
-    double tpRemI_ = 0, tpRemP_ = 0, tpRemB_ = 0;
+    // First-pass rate control: the pictures' need (bits per k, see tpNeed) by class of picture and
+    // QP of the clip's P pictures, summed over the pictures not coded yet / over all of them.
+    // Classes: 0 I, 1 B, then the P pictures by kind and cost class (see below).
+    static constexpr int kTpQMin = -12, kTpQSteps = 2 * 76 + 1; // QP -12 .. 64 in half steps
+    std::vector<double> tpRemTab_, tpAllTab_;                   // [class * kTpQSteps + step]
+    std::vector<float> tpQOff_;                                 // per picture: its QP against the P QP (type, run, qcomp)
+    std::vector<uint8_t> tpClass_;
+    double tpNeed(size_t i, double qp) const;
+    void tpRow(size_t i, double* row) const;
+    double tpBits(const std::vector<double>& tab, double qp, double kI, double kP, double kB) const;
+    double tpSolve(const std::vector<double>& tab, double budget, double kI, double kP, double kB) const;
     // P pictures by cost per macroblock (half octaves): bits per cost are far from constant (a calm
     // picture's residual mostly quantises to nothing, a busy one's does not), so k is learned per
     // class and the not yet coded pictures of each class are predicted with their own k.
@@ -436,15 +453,13 @@ private:
     // macroblock tree it carries the run's quality), and how much more depends on the material, so
     // where B pictures are placed in parts of a clip the two must not share one k.
     double rcKBin_[2][kRcBins] = {}, rcCostBin_[2][kRcBins] = {};
-    double tpRemPBin_[2][kRcBins] = {}, tpAllPBin_[2][kRcBins] = {};
+    static constexpr int kTpClasses = 2 + 2 * kRcBins;
     double rcKSumPb_ = 0, rcCostSumPb_ = 0; // all P pictures after B runs coded so far
     std::vector<uint8_t> tpAfterB_;         // per picture of the plan: a P picture after a run of B pictures
-    double tpAllI_ = 0, tpAllB_ = 0;
     // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass
     // complexity compression) and the cost weight 2^(-offset/6) the bit model applies with it.
     std::vector<uint8_t> tpKey_, tpType_;
     std::vector<float> tpOff_;
-    double tpCost(size_t i) const;
     int rcBin(double cost) const;
     double kPOfBin(int kind, int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB) const;

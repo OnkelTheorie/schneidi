@@ -804,6 +804,7 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
+static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
 static const double kBProbeFlat = std::getenv("H264_BPROBE_FLAT") ? std::atof(std::getenv("H264_BPROBE_FLAT")) : 0.75;
 static const bool kBProbeOneWay = std::getenv("H264_BPROBE_ONEWAY") && std::atoi(std::getenv("H264_BPROBE_ONEWAY")) != 0;
@@ -844,6 +845,40 @@ Picture pictureOf(const LookaheadFrame& f, int w)
     p.strideY = w;
     p.strideC = w / 2;
     return p;
+}
+
+} // namespace
+
+namespace {
+
+// Class of a cost in FirstPassStats' histograms: quarter octaves from 8 on, in whole numbers (the
+// same class on every platform).
+int costHistBin(int32_t c)
+{
+    if (c < 8)
+        return 0;
+    const int oct = std::bit_width(uint32_t(c)) - 1; // 2^oct <= c
+    const int64_t m = (int64_t(c) << 10) >> oct;     // c / 2^oct in 1/1024: 1024 .. 2047
+    const int quarter = m >= 1722 ? 3 : m >= 1448 ? 2 : m >= 1218 ? 1 : 0;
+    return std::min(FirstPassStats::kHistBins - 1, (oct - 3) * 4 + quarter);
+}
+
+void addCostHist(FirstPassStats& st, const LookaheadFrame& f)
+{
+    const size_t base = st.histCount.size();
+    st.histCount.resize(base + 2 * FirstPassStats::kHistBins, 0);
+    st.histSum.resize(base + 2 * FirstPassStats::kHistBins, 0.0f);
+    std::array<int64_t, 2 * FirstPassStats::kHistBins> sum{};
+    for (size_t m = 0; m < f.intraCost.size(); ++m) {
+        const int32_t costs[2] = {f.intraCost[m], std::min(f.intraCost[m], f.interCost[m])};
+        for (int w = 0; w < 2; ++w) {
+            const size_t b = size_t(w * FirstPassStats::kHistBins + costHistBin(costs[w]));
+            ++st.histCount[base + b];
+            sum[b] += costs[w];
+        }
+    }
+    for (size_t b = 0; b < sum.size(); ++b)
+        st.histSum[base + b] = float(sum[b]);
 }
 
 } // namespace
@@ -1250,6 +1285,8 @@ void FirstPass::analyseBatch() const
             std::fclose(fp);
         }
     }
+    for (const LookaheadFrame& f : job_)
+        addCostHist(*stats_, f);
     for (LookaheadFrame& f : job_) {
         stats_->intraSum.push_back(f.intraSum);
         stats_->interSum.push_back(f.interSum);
@@ -1344,6 +1381,11 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->bMax = st.bMax;
             if (!st.bGate.empty())
                 part->bGate.push_back(st.bGate[i]);
+            if (st.histCount.size() == st.size() * 2 * FirstPassStats::kHistBins) {
+                const size_t h = i * 2 * FirstPassStats::kHistBins, e = h + 2 * FirstPassStats::kHistBins;
+                part->histCount.insert(part->histCount.end(), st.histCount.begin() + ptrdiff_t(h), st.histCount.begin() + ptrdiff_t(e));
+                part->histSum.insert(part->histSum.end(), st.histSum.begin() + ptrdiff_t(h), st.histSum.begin() + ptrdiff_t(e));
+            }
             // Only the first chunk analyses its pictures like the first pass did (the others
             // start without a predecessor).
             if (c == 0 && i < st.analysis.size())
@@ -1381,18 +1423,88 @@ static const double gTpAfterB = std::getenv("H264_TPAFTERB") ? std::atof(std::ge
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
 static const double gTpDev = std::getenv("H264_TPDEV") ? std::atof(std::getenv("H264_TPDEV")) : 2.0;
+// How much of the way from that plan QP to the QP that spends exactly what is left the picture's QP
+// goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
+// learns; the other also swings with every stretch the model misjudged, and near the clip's end with
+// little left to spread an error over.
+static const double gTpFollow = std::getenv("H264_TPFOLLOW") ? std::atof(std::getenv("H264_TPFOLLOW")) : 0.25;
 
 // Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
 // largest QP offset (H264_QCBLUR, H264_QCMAX: experiment knobs).
 static const double gQcBlur = std::getenv("H264_QCBLUR") ? std::atof(std::getenv("H264_QCBLUR")) : 1.5;
 static const double gQcMax = std::getenv("H264_QCMAX") ? std::atof(std::getenv("H264_QCMAX")) : 4.0;
 
-// First-pass cost of picture i as the bit model counts it (its type, its QP offset).
-double Encoder::tpCost(size_t i) const
+// The bit model's dead zone: a block costs bits in proportion to its lookahead cost over the
+// quantiser step (cost * 2^(-qp/6)) above gTpDead; below it nothing (H264_TPDEAD; 0 = the model
+// before 15.11.2026, bits = k * cost * 2^(-qp/6)). Measured on a game clip with standing and moving
+// phases, fixed QP 30 and 36: without it the same pictures' bits per cost differ by 2.6x between
+// the two QPs and by 3-4x between standing and moving pictures, with a dead zone of 2 by 1.2x and
+// 1.5-2x. gTpFloor: what a picture costs per macroblock whatever its content (headers, skips).
+static const double gTpDead = std::getenv("H264_TPDEAD") ? std::atof(std::getenv("H264_TPDEAD")) : 2.0;
+static const double gTpFloor = std::getenv("H264_TPFLOOR") ? std::atof(std::getenv("H264_TPFLOOR")) : 0.03;
+
+// What picture i needs at QP qp, in bits per k: its blocks' first-pass costs over the quantiser
+// step, each above the dead zone (from the picture's cost histogram; without one, the plain sum).
+double Encoder::tpNeed(size_t i, double qp) const
 {
     const FirstPassStats& st = *cfg_.firstPass;
-    const double c = tpKey_[i] ? st.intraSum[i] : st.interSum[i];
-    return i < tpOff_.size() ? c * std::exp2(-tpOff_[i] / 6.0) : c;
+    const double scale = std::exp2(-qp / 6.0);
+    const bool key = i < tpClass_.size() && tpClass_[i] == 0;
+    const double floorNeed = gTpFloor * double(mbW_) * mbH_;
+    if (st.histCount.size() != st.size() * 2 * FirstPassStats::kHistBins)
+        return (key ? st.intraSum[i] : st.interSum[i]) * scale + floorNeed;
+    const size_t base = (i * 2 + (key ? 0 : 1)) * FirstPassStats::kHistBins;
+    double need = floorNeed;
+    for (int b = 0; b < FirstPassStats::kHistBins; ++b) {
+        const uint32_t count = st.histCount[base + size_t(b)];
+        if (!count)
+            continue;
+        const double over = double(st.histSum[base + size_t(b)]) * scale - gTpDead * count; // the class's mean cost against the dead zone
+        if (over > 0)
+            need += over;
+    }
+    return need;
+}
+
+// Picture i's need at every step of the P QP (the picture's own QP offset applied).
+void Encoder::tpRow(size_t i, double* row) const
+{
+    for (int k = 0; k < kTpQSteps; ++k)
+        row[k] = tpNeed(i, kTpQMin + 0.5 * k + tpQOff_[i]);
+}
+
+// Bits of the pictures in tab (by class) at P QP qp with the model's k as it stands.
+double Encoder::tpBits(const std::vector<double>& tab, double qp, double kI, double kP, double kB) const
+{
+    const double pos = std::clamp((qp - kTpQMin) * 2.0, 0.0, double(kTpQSteps - 1));
+    const int k0 = std::min(int(pos), kTpQSteps - 2);
+    const double t = pos - k0;
+    auto at = [&](int cls) {
+        const double* row = tab.data() + size_t(cls) * kTpQSteps;
+        return row[k0] + (row[k0 + 1] - row[k0]) * t;
+    };
+    double bits = kI * at(0) + kB * at(1);
+    for (int kind = 0; kind < 2; ++kind)
+        for (int b = 0; b < kRcBins; ++b) {
+            const double need = at(2 + kind * kRcBins + b);
+            if (need > 0)
+                bits += (gTpBin ? kPOfBin(kind, b, kP) : kP) * need;
+        }
+    return bits;
+}
+
+// The P QP at which the pictures in tab cost budget bits (bits fall with the QP: bisection).
+double Encoder::tpSolve(const std::vector<double>& tab, double budget, double kI, double kP, double kB) const
+{
+    double lo = 0.0, hi = 60.0;
+    for (int it = 0; it < 24; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        if (tpBits(tab, mid, kI, kP, kB) > budget)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return 0.5 * (lo + hi);
 }
 
 int Encoder::rcBin(double cost) const
@@ -1430,23 +1542,11 @@ double Encoder::twoPassQp(double kI, double kP, double kB) const
     const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
     const double left = double(st.size()) - frameIndex_;
     const double budget = std::max(double(st.size()) * perFrame - rcBits_, 0.5 * left * perFrame);
-    double needP = 0;
-    if (gTpBin) {
-        for (int kind = 0; kind < 2; ++kind)
-            for (int b = 0; b < kRcBins; ++b)
-                if (tpRemPBin_[kind][b] > 0)
-                    needP += kPOfBin(kind, b, kP) * tpRemPBin_[kind][b];
-    } else {
-        needP = kP * tpRemP_;
-    }
-    double need = kI * tpRemI_ * std::exp2(0.5) + needP;
-    if (tpRemB_ > 0)
-        need += kB * tpRemB_ * std::exp2(-cfg_.bQpOffset / 6.0);
+    const double qp = tpSolve(tpRemTab_, budget, kI, kP, kB);
     static const bool trace = std::getenv("H264_RC_TRACE") != nullptr;
     if (trace)
-        std::fprintf(stderr, "tp: frame %d left %.0f budget %.0f needI %.0f needP %.0f needB %.0f\n", frameIndex_, left, budget,
-                     kI * tpRemI_ * std::exp2(0.5), needP, tpRemB_ > 0 ? kB * tpRemB_ * std::exp2(-cfg_.bQpOffset / 6.0) : 0.0);
-    return 6.0 * std::log2(std::max(1.0, need) / budget);
+        std::fprintf(stderr, "tp: frame %d left %.0f budget %.0f qp %.2f\n", frameIndex_, left, budget, qp);
+    return qp;
 }
 
 // The one QP at which the whole clip (coded pictures included) meets its budget with the model as
@@ -1455,15 +1555,7 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 {
     const FirstPassStats& st = *cfg_.firstPass;
     const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
-    double needP = 0;
-    for (int kind = 0; kind < 2; ++kind)
-        for (int b = 0; b < kRcBins; ++b)
-            if (tpAllPBin_[kind][b] > 0)
-                needP += kPOfBin(kind, b, kP) * tpAllPBin_[kind][b];
-    double need = kI * tpAllI_ * std::exp2(0.5) + needP;
-    if (tpAllB_ > 0)
-        need += kB * tpAllB_ * std::exp2(-cfg_.bQpOffset / 6.0);
-    return 6.0 * std::log2(std::max(1.0, need) / (double(st.size()) * perFrame));
+    return tpSolve(tpAllTab_, double(st.size()) * perFrame, kI, kP, kB);
 }
 
 int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? kInFlight - 1 : 0); }
@@ -2973,7 +3065,6 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     lastWasSceneCut_ = cut;
     const bool bRef = type == 2 && frame.bRef && usePyramid();
     // QP of a reference B picture above the P QP: between the P pictures' and the other B pictures'.
-    static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
     // B pictures of short runs (up to kPyramidMaxRun, as placed on moving material): bQpOffsetShort.
     // Their P pictures have the tree's full strength, and with the long runs' offset on top the B
     // pictures fall up to 2 dB below them (a flicker at a quarter of the frame rate).
@@ -3111,7 +3202,6 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // Keyframes and picture types as the encoder will place them, with their costs.
             if (statType_.empty())
                 planFromStats();
-            tpRemI_ = tpRemP_ = tpRemB_ = 0;
             const FirstPassStats& st = *cfg_.firstPass;
             tpKey_.assign(st.size(), 0);
             tpType_.assign(st.size(), 1);
@@ -3147,15 +3237,42 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 for (size_t i = 0; i < st.size() && double(i) < len; ++i)
                     tpOff_[i] -= float(startBoost * (1.0 - double(i) / len));
             }
-            for (size_t i = 0; i < st.size(); ++i) {
-                (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) += tpCost(i);
-                if (tpType_[i] == 1)
-                    tpRemPBin_[tpAfterB_[i]][rcBin(st.interSum[i])] += tpCost(i);
+            // Each picture's class and its QP against the P QP: I pictures 3 below, B pictures by their
+            // run's length (planQueue), all by the complexity compression.
+            tpClass_.assign(st.size(), 0);
+            tpQOff_.assign(st.size(), 0.0f);
+            for (size_t i = 0; i < st.size();) {
+                if (tpType_[i] != 2) {
+                    tpClass_[i] = tpType_[i] == 0 ? 0 : uint8_t(2 + tpAfterB_[i] * kRcBins + rcBin(st.interSum[i]));
+                    tpQOff_[i] = tpType_[i] == 0 ? -3.0f : 0.0f;
+                    ++i;
+                    continue;
+                }
+                size_t e = i;
+                while (e < st.size() && tpType_[e] == 2)
+                    ++e;
+                const int count = int(e - i);
+                const int bQpRun = count <= kPyramidMaxRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
+                const size_t mid = usePyramid() && count >= 3 && count <= kPyramidMaxRun ? i + size_t(count / 2) : st.size();
+                for (size_t k = i; k < e; ++k) {
+                    tpClass_[k] = 1;
+                    tpQOff_[k] = float(k == mid ? (kBRefQpEnv >= 0 ? kBRefQpEnv : (bQpRun + 1) / 2) : bQpRun);
+                }
+                i = e;
             }
-            for (int kind = 0; kind < 2; ++kind)
-                std::copy(std::begin(tpRemPBin_[kind]), std::end(tpRemPBin_[kind]), std::begin(tpAllPBin_[kind]));
-            tpAllI_ = tpRemI_;
-            tpAllB_ = tpRemB_;
+            for (size_t i = 0; i < st.size() && i < tpOff_.size(); ++i)
+                tpQOff_[i] += tpOff_[i];
+            tpRemTab_.assign(size_t(kTpClasses) * kTpQSteps, 0.0);
+            {
+                std::vector<double> row(kTpQSteps);
+                for (size_t i = 0; i < st.size(); ++i) {
+                    tpRow(i, row.data());
+                    double* into = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+                    for (int k = 0; k < kTpQSteps; ++k)
+                        into[k] += row[size_t(k)];
+                }
+            }
+            tpAllTab_ = tpRemTab_;
         }
         auto steadyQp = [&] {
             if (twoPass) {
@@ -3193,12 +3310,20 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
                 rcKSum_[0] = kI;
                 rcCostSum_[0] = 1; // seeds only: the first real pictures outweigh them
-                rcKSum_[1] = kI;
+                if (twoPass) // the two-pass model counts need above the dead zone (tpNeed)
+                    rcKSum_[0] = bitsI / std::max(1.0, tpNeed(0, probeQp - 3));
+                rcKSum_[1] = rcKSum_[0];
                 rcCostSum_[1] = 1;
                 if (queue_.size() > 1) {
                     const LookaheadFrame& second = queue_[1];
                     const double bitsP = double(probe.encode(pictureOf(second, cfg_.width)).size()) * 8.0;
                     rcKSum_[1] = bitsP * std::exp2(probeQp / 6.0) / std::max(1.0, second.interSum);
+                    if (twoPass && cfg_.firstPass->size() > 1) {
+                        // (The second picture as a P picture, whatever the plan makes of it.)
+                        const uint8_t cls = std::exchange(tpClass_[1], uint8_t(2));
+                        rcKSum_[1] = bitsP / std::max(1.0, tpNeed(1, probeQp));
+                        tpClass_[1] = cls;
+                    }
                 }
                 const double predicted = steadyQp();
                 if (std::getenv("H264_RC_TRACE"))
@@ -3222,18 +3347,26 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
             // slowly (at most half a QP per picture).
             qp = twoPassQp(kOf(true), kOf(false), kB());
-            if (gTpDev > 0 && rcFramesSeen_ >= 12) {
-                const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
+            const double rest = qp;
+            const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
+            if (rcFramesSeen_ >= 12)
+                qp = plan + gTpFollow * (qp - plan);
+            if (gTpDev > 0 && rcFramesSeen_ >= 12)
                 qp = std::clamp(qp, plan - gTpDev, plan + gTpDev);
-            }
+            if (std::getenv("H264_RC_TRACE"))
+                std::fprintf(stderr, "rc3: frame %d rest %.2f plan %.2f\n", frameIndex_, rest, plan);
             const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
             if (rcQp_ > 0)
                 qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
             const FirstPassStats& st = *cfg_.firstPass;
             const size_t i = std::min(size_t(frame.index), st.size() - 1);
-            (tpType_[i] == 0 ? tpRemI_ : tpType_[i] == 2 ? tpRemB_ : tpRemP_) -= tpCost(i);
-            if (tpType_[i] == 1)
-                tpRemPBin_[tpAfterB_[i]][rcBin(st.interSum[i])] -= tpCost(i);
+            {
+                std::vector<double> row(kTpQSteps);
+                tpRow(i, row.data());
+                double* from = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+                for (int k = 0; k < kTpQSteps; ++k)
+                    from[k] = std::max(0.0, from[k] - row[size_t(k)]);
+            }
             if (std::getenv("H264_RC_TRACE"))
                 std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
         } else if (rcQp_ > 0) {
@@ -3243,6 +3376,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (twoPass && size_t(frame.index) < tpOff_.size())
             qp += tpOff_[size_t(frame.index)];
         cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : bQp) : qp)), 10, 51);
+        if (twoPass) // the model's cost of this picture: its need at the QP it is coded with, as cost * 2^(-qp/6)
+            costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1), cfg_.qp) * std::exp2(cfg_.qp / 6.0);
         rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {

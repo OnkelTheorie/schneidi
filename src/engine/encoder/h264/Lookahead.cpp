@@ -815,6 +815,7 @@ static const double kPlanLong = planEnv("H264_BPLAN_LONG", 0.85);
 static const double kPlanKeep = planEnv("H264_BPLAN_KEEP", 0.5);
 // Below this cost per block and picture there is nothing to weigh: B pictures.
 static const double kPlanStill = planEnv("H264_BPLAN_STILL", 12);
+static const double kPlanPatchArea = planEnv("H264_BPLAN_PATCHAREA", 0.2), kPlanPatchCost = planEnv("H264_BPLAN_PATCHCOST", 400);
 static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
 // The planner searches every kPlanGrid-th block in both directions: its sums need no more, and
 // the searches are its whole cost.
@@ -928,6 +929,9 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
     const int mbW = la.halfW() / 8, mbH = la.halfH() / 8;
     auto dz = [&](int c) { return double(std::max(0, c - kPlanDead)); };
     double sumP = 0, sumB = 0, sumFar = 0, sumNear = 0; // sumNear: the run's pictures as P pictures
+    static constexpr int kStudy[6] = {0, 128, 256, 384, 512, 768};
+    double study[6] = {};
+    size_t live = 0; // blocks above the dead zone as P pictures
     size_t n = 0; // blocks counted: every kPlanGrid-th in both directions
     const LookaheadFrame& pf = win_[size_t(p)];
     const std::vector<int32_t>& far = pf.fwd[size_t(p)].cost;
@@ -939,6 +943,7 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
                 const LookaheadFrame& f = win_[size_t(k)];
                 const double c = dz(std::min(f.intraCost[m], f.interCost[m]));
                 sumP += c;
+                live += c > 0;
                 if (k < p)
                     sumNear += c;
             }
@@ -949,7 +954,10 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
                 const LookaheadFrame& f = win_[size_t(b.k)];
                 const LookaheadFrame& nx = win_[size_t(b.k + b.c)];
                 const int c0 = b.a == 1 ? f.interCost[m] : f.fwd[size_t(b.a)].cost[m];
-                sumB += dz(std::min({f.intraCost[m], c0, nx.back[size_t(b.c)].cost[m], nx.bi[size_t(bComboIndex(b.a, b.c, tableB))][m]}));
+                const int cb = std::min({f.intraCost[m], c0, nx.back[size_t(b.c)].cost[m], nx.bi[size_t(bComboIndex(b.a, b.c, tableB))][m]});
+                sumB += dz(cb);
+                for (int t = 0; t < 6; ++t)
+                    study[t] += std::max(0, cb - kStudy[t]);
             }
         }
     const double perMb = sumP / (double(n) * p);
@@ -967,16 +975,26 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         // (Still where B pictures were a clear gain: no P pictures between for the warm-up.)
         gate_ = uint8_t(shortRun | (gate_ & kClear));
     } else {
-        on_ = ratio < (on_ ? kPlanOff : kPlanOn);
+        // A small part of the picture changing heavily (noise or new content in a few blocks of
+        // an otherwise still picture): no B pictures. They pay through blocks their references
+        // explain; here the still part costs nothing as P pictures either, and the costs promise
+        // a gain on the rest that the coder does not get (measured on a synthetic animation with
+        // noise patches: +16 % bits at equal PSNR with runs of three, the costs said -13 %).
+        const bool patchy = double(live) < kPlanPatchArea * double(n) * p && sumP > kPlanPatchCost * double(live);
+        on_ = !patchy && ratio < (on_ ? kPlanOff : kPlanOn);
         const bool clear = on_ && ratio < kPlanLong;
         // B pictures that cost next to nothing between their references (a clean zoom, a fade):
         // placed whatever the P picture after them seems to cost. The half picture's search sees
         // a picture several steps from its reference as far too expensive there, and it cannot
         // cost more than the steps together.
-        const bool free = sumB - sumFar < kPlanFree * sumNear;
+        const bool free = !patchy && sumB - sumFar < kPlanFree * sumNear;
         gate_ = uint8_t(!on_ ? (free ? shortRun | kClear : 0) : clear ? (maxB | kClear) : shortRun);
     }
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    if (std::getenv("H264_BPLAN_STUDY"))
+        std::fprintf(stderr, "bstudy: %d P %.0f near %.0f far %.0f b %.0f %.0f %.0f %.0f %.0f %.0f\n", anchor_ + 1, sumP / double(n),
+                     sumNear / double(n), sumFar / double(n), study[0] / double(n), study[1] / double(n), study[2] / double(n),
+                     study[3] / double(n), study[4] / double(n), study[5] / double(n));
     if (trace)
         std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held: run %d\n",
                      anchor_ + 1, sumP / (double(n) * p), sumB / (double(n) * p), sumFar / double(n), sumP > 0 ? sumB / sumP : 0.0, ratio,
