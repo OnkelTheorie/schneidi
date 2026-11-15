@@ -769,8 +769,30 @@ void StudioTracks::setLiveTake(const Voiceover::LiveTake* take, int track)
     const bool newLane = takeOnNewTrack();
     m_take = take;
     m_takeTrack = take ? track : -1;
-    if (takeOnNewTrack() != newLane) layoutLanes(); // its temporary lane comes or goes
-    update();
+    if (takeOnNewTrack() != newLane) { // its temporary lane comes or goes
+        layoutLanes();
+        m_takeRect = takeRect();
+        return update();
+    }
+    // Every captured chunk lands here (many a second): only what the take grew by is drawn, with its right edge
+    // before (the border moves); a take that moved or ended: its old and new place
+    const QRect now = takeRect();
+    const QRect old = std::exchange(m_takeRect, now);
+    if (old.isEmpty() || now.isEmpty() || old.left() != now.left() || old.top() != now.top() || old.height() != now.height())
+        return update(old.united(now));
+    const int from = std::min(old.right(), now.right()) - 4, to = std::max(old.right(), now.right());
+    update(QRect(from, now.top(), to - from + 1, now.height()));
+}
+
+QRect StudioTracks::takeRect() const
+{
+    // What paintPart draws of the take (its body and the 2 px border), with a pixel or two to spare for rounding
+    if (!m_take || m_takeTrack < 0 || m_take->lengthFrames() <= 0) return {};
+    const QRect body = laneRect(m_takeTrack).adjusted(0, 4, 0, -4);
+    const double x0 = std::max<double>(kHeaderW, xOf(m_take->start()));
+    const double x1 = std::min<double>(clipArea().right(), xOf(m_take->end()));
+    if (x1 <= x0) return {};
+    return QRect(int(x0) - 2, body.top() - 2, int(x1 - x0) + 5, body.height() + 4);
 }
 
 bool StudioTracks::takeOnNewTrack() const

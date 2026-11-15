@@ -175,6 +175,8 @@ private:
     int m_keyDrags = 0;
     const Voiceover::LiveTake* m_take = nullptr;
     int m_takeTrack = -1;
+    QRect m_takeRect; // where the take was drawn last (setLiveTake draws only what it grew by)
+    QRect takeRect() const;
     int m_penTrack = -1;
     QVector<VolumeDraw::Point> m_stroke;
     QPoint m_hover{-1, -1};

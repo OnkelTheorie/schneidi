@@ -1497,6 +1497,29 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
             settle();
         }
     }
+
+    // (7) A take growing on its lane draws only the part it grew by (and its right edge), not the whole view
+    {
+        tracks->fit();
+        settle();
+        Voiceover::LiveTake take(10, 10, p->frameRate(), 48000);
+        take.add(48000, 0.5f); // one second
+        tracks->setLiveTake(&take, 0);
+        settle();
+        const double x2 = tracks->xOf(take.end());
+        take.add(72000, 0.5f); // half a second more
+        const double x3 = tracks->xOf(take.end());
+        const int before = tracks->paintCount();
+        tracks->setLiveTake(&take, 0);
+        settle();
+        CHECK(tracks->paintCount() > before);
+        const QRect drawn = tracks->lastPaintRegion().boundingRect();
+        Check::report(drawn.left() >= int(x2) - 8 && drawn.right() <= int(x3) + 8 && drawn.width() < tracks->width() / 2,
+                      "only the grown part of the take drawn", __FILE__, __LINE__,
+                      QString("%1..%2, grew %3..%4").arg(drawn.left()).arg(drawn.right()).arg(x2).arg(x3));
+        tracks->setLiveTake(nullptr, -1);
+        settle();
+    }
 }
 
 } // namespace
