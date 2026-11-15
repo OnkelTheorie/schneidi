@@ -1085,6 +1085,30 @@ void testRoutedWaveforms(const QTemporaryDir& tmp)
     }
 }
 
+// Room tone of a routed take (op room_tone, AudioAnalysis::fileBlockLevels pick): measured on its channels only
+void testRoutedBlockLevels(const QTemporaryDir& tmp)
+{
+    // Channels 1/2 loud (0.5), channels 3/4 quiet (0.01): the radio mic's floor is far below the camera's
+    const QString file = Check::makeMedia(
+        tmp.filePath("levels-quad.wav"),
+        {"-f", "lavfi", "-i",
+         "aevalsrc=0.5*sin(2*PI*300*t)|0.5*sin(2*PI*500*t)|0.01*sin(2*PI*700*t)|0.01*sin(2*PI*900*t):s=48000:d=2:c=4.0",
+         "-c:a", "pcm_s16le"});
+    if (!CHECK(!file.isEmpty())) return;
+    const auto mean = [&](const QVector<int>& pick) {
+        const auto l = AudioAnalysis::fileBlockLevels(file, 0, 0.2, 1.8, 0.1, nullptr, 0, pick);
+        if (!l || l->empty()) return 1000.0;
+        double sum = 0;
+        for (double v : *l) sum += v;
+        return sum / double(l->size());
+    };
+    const double all = mean({}), mic = mean({2, 3}), one = mean({2});
+    // all four: power mean of 0.5 and 0.01 sines ~ -11 dB; 3/4 alone: 0.01 sine = -43 dBFS (RMS -40 - 3); one channel in
+    // the middle: -3 dB each side, the same per-channel power mean
+    if (!CHECK(std::abs(all - -12.0) < 1.5 && std::abs(mic - -43.0) < 0.5 && std::abs(one - -46.0) < 0.5))
+        std::printf("       Blockpegel alle %.1f, 3/4 %.1f, 3 %.1f\n", all, mic, one);
+}
+
 // WAVE_BENCH=<file>: build time of its waveforms (stream 0 unrouted, then two routings of stream 0), disk cache emptied
 // before each build, best of 3; prints and ends the test
 int waveBench(const QString& file)
@@ -1194,6 +1218,7 @@ int main(int argc, char** argv)
     testAlac(tmp, five);
     if (CHECK(!frontOnly.isEmpty())) testWaveform(frontOnly);
     testRoutedWaveforms(tmp);
+    testRoutedBlockLevels(tmp);
     if (CHECK(!twoStreams.isEmpty() && !loud51.isEmpty())) testCliFixes(tmp, twoStreams, loud51);
     testApp(tmp, video);
     return Check::result();

@@ -102,8 +102,9 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
 // from `from` to `to` seconds (file time as Audio::Reader counts it: 0 = the picture's first frame). Room tone looks
 // for the quiet of a take with it. nullopt = no such stream. speech: also the blocks with words in them (the
 // heuristic voice detection of engine/AudioEvents in the same pass, `speechMargin` seconds around each), one per level.
+// pick: only these channels of the stream, as a routed clip plays them (Clip::sourceChannels; empty = all).
 std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
                                                    double blockSeconds, std::vector<bool>* speech = nullptr,
-                                                   double speechMargin = 0);
+                                                   double speechMargin = 0, const QVector<int>& pick = {});
 
 } // namespace AudioAnalysis
