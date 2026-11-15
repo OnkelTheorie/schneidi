@@ -42,8 +42,8 @@ struct FirstPassStats {
     };
     std::vector<std::shared_ptr<const Analysis>> analysis;
     // B picture placement (FirstPass with bframes > 0 = bMax): per picture the longest run of B
-    // pictures that pays there (BProbe, 0 = none), so the whole clip's picture types can be planned
-    // before encoding. Empty = not measured, B pictures everywhere.
+    // pictures that pays there (BProbe::gate: the run, 0 = none, with BProbe::kClear), so the whole
+    // clip's picture types can be planned before encoding. Empty = not measured, B pictures everywhere.
     int bMax = 0;
     std::vector<uint8_t> bGate;
     size_t size() const { return intraSum.size(); }
@@ -68,7 +68,9 @@ struct EncoderConfig {
     int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
     bool mbtree = true;       // macroblock tree: finer QP where later pictures reference a block (needs lookahead)
     double mbtreeStrength = 2.0;
-    double mbtreeStrengthB = 1.0; // for reference pictures with B pictures before or after them
+    // For reference pictures with runs of more than four B pictures before or after them (a slow
+    // zoom; next to shorter runs the full strength, see Encoder::treeStrength).
+    double mbtreeStrengthB = 1.0;
     // Bitrate mode with a first pass over the whole clip (FirstPass): one QP for the clip, only a
     // small correction while encoding. The pictures must come in the same order as analysed.
     std::shared_ptr<const FirstPassStats> firstPass;
@@ -94,10 +96,19 @@ struct EncoderConfig {
     // or set bframes = 0.
     int bframes = 8;
     int bQpOffset = 2;     // QP of a B picture above the P QP
+    // The same in runs of up to four B pictures (never more than bQpOffset). Their P pictures have
+    // the tree's full strength; with +2 on top the B pictures fall 1.1 dB below them in a pan (a
+    // flicker at a quarter of the frame rate), with 0 it is 0.8 dB at the same BD-rate.
+    int bQpOffsetShort = 0;
     // Places B pictures only where they pay (BProbe: a few pictures coded with and without them;
     // with a first pass over the whole clip, which must then have been made with at least this
     // many bframes). false = runs of bframes B pictures everywhere.
     bool bAdaptive = true;
+    // B pyramid: in a run of three or four B pictures the middle one is a reference picture for
+    // the B pictures on both sides of it (one more picture in the decoder's buffer and of
+    // reordering: reorderDelay() 2). The B pictures then predict from near pictures on both
+    // sides, which is what makes them pay on moving material. Shorter and longer runs are unchanged.
+    bool bPyramid = true;
     // Predictions from both lists weighted by the distance to the two reference pictures
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
     // no gain (+0.7 % BD-rate), so off by default.
@@ -174,20 +185,42 @@ public:
     // The next picture in display order (prepared by the lookahead). True when an answer came
     // with it: run() then holds from picture resultStart() on (the second answer for the same
     // pictures replaces the first).
-    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
+    // background: the first answer is measured on its own thread and comes with a later call (or
+    // collectFirst()); its content does not depend on when.
+    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads, bool background = false);
+    bool collectFirst();
+    BProbe() = default;
+    ~BProbe();
+    BProbe(const BProbe&) = delete;
+    BProbe& operator=(const BProbe&) = delete;
     int run() const { return run_; } // longest run of B pictures that pays, 0 = none
     int resultStart() const { return resultStart_; }
+    // run() with kClear set where the measurement found B pictures a clear gain or chose long runs
+    // (FirstPassStats::bGate): such a clip may start with B pictures.
+    static constexpr int kClear = 0x80;
+    uint8_t gate() const { return uint8_t(run_ | (clear_ && run_ > 0 ? kClear : 0)); }
     // Bits of "I B.. P .." with runs of runs[k] B pictures against "I P.. P" at equal distortion,
     // counted over the pictures after the first (gains[k] = -0.5: half the bits; 0 = no
     // measurement). pics: w x h luma each, in display order.
-    static void measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
-                        double* gains);
+    // Returns 0 = measured, 1 = next to nothing is coded (a still picture), 2 = no usable measurement.
+    static int measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
+                       double* gains);
 
 private:
     bool startsAt(const LookaheadFrame& f, int index) const;
     std::vector<std::vector<uint8_t>> pics_;
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
     int run_ = 0;
+    bool clear_ = false;
+    // The first answer under way: where it starts, what was asked, and the measurement (thread).
+    bool firstPending_ = false;
+    int firstStart_ = 0, firstShort_ = 0, firstBframes_ = 0, firstResult_ = 0;
+    double firstGain_ = 0;
+    std::thread firstThread_;
+    std::exception_ptr firstError_;
+    // Activity (lookahead cost with motion / intra) of the last picture, summed over the pictures
+    // being collected, and the mean of the last measurement's pictures.
+    double lastActivity_ = 0, activitySum_ = 0, sampleActivity_ = 0;
 };
 
 struct Picture {
@@ -258,7 +291,7 @@ public:
     int weightedPictures() const { return weightedPictures_; }
     char lastType() const { return lastType_; }
     // Pictures an access unit may come out ahead of its display turn (the dts shift a muxer needs).
-    int reorderDelay() const { return useB() ? 1 : 0; }
+    int reorderDelay() const { return usePyramid() ? 2 : useB() ? 1 : 0; }
 
     // Reconstruction of the last picture that came out, as the decoder outputs it (padded size).
     const std::vector<uint8_t>& reconY() const;
@@ -290,6 +323,7 @@ private:
     struct RcRecord {
         int index;
         int type; // 0 I, 1 P, 2 B
+        bool afterB; // a P picture after a run of B pictures
         bool lookahead;
         double cost;
         int qp;
@@ -305,6 +339,7 @@ private:
     // ones their type, pickNext the next one in coding order (the reference picture after a run
     // of B pictures goes first and stays queued until they are coded).
     bool useB() const { return cfg_.bframes > 0 && useCabac() && cfg_.gop > 1; }
+    bool usePyramid() const { return useB() && cfg_.bPyramid && cfg_.bframes >= 3 && cfg_.refs < 16; }
     // Explicit weighted prediction is not part of the Baseline profile (no CABAC = Baseline here).
     int chromaOffset() const { return cfg_.chromaQpOffset; } // clamped by the constructor
     bool useWeightedPred() const { return cfg_.weightedPred && useCabac() && cfg_.gop > 1; }
@@ -318,7 +353,19 @@ private:
     BProbe probe_;
     std::vector<std::pair<int, int>> gate_; // (first picture, longest run of B pictures that pays), in order
     void noteGate(const LookaheadFrame& f);
+    // The lookahead's searches along the planned references of B pictures: collected when a
+    // picture starts, run beside it (frame threading) and finished before the next one's tree.
+    struct BSearchJob {
+        int kind; // 0 searchFwd(f from other), 1 searchBack(f from other, third = the picture after f), 2 biCost(f between third and other)
+        LookaheadFrame *f, *other, *third;
+        int a, c;
+    };
+    std::vector<BSearchJob> bSearchJobs_;
+    std::thread bSearchThread_;
+    std::exception_ptr bSearchError_;
     void ensureBSearches();
+    void runBSearches(int threads);
+    void joinBSearches();
     bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
     int gateAt(int index) const;
     std::vector<uint8_t> statType_;
@@ -337,6 +384,11 @@ private:
     int nextCoder_ = 0;
     const FrameCoder* last_ = nullptr;
     std::deque<std::shared_ptr<RefPic>> refList_; // reference pictures, newest first
+    // B pyramid: the reference B picture of the run being coded (its display index and frame_num);
+    // the next P or I picture takes it out of the decoder's buffer again.
+    std::shared_ptr<RefPic> bRefPic_;
+    int bRefIndex_ = -1, bRefFrameNum_ = -1;
+    int lastRefIndex_ = -1; // display index of the last I or P picture that left the queue
     std::vector<std::shared_ptr<RefPic>> refSpare_; // retired ones, used again once no picture in flight holds them
     int lastQp_ = 0;
     int frameIndex_ = 0;
@@ -376,8 +428,15 @@ private:
     // picture's residual mostly quantises to nothing, a busy one's does not), so k is learned per
     // class and the not yet coded pictures of each class are predicted with their own k.
     static constexpr int kRcBins = 28;
-    double rcKBin_[kRcBins] = {}, rcCostBin_[kRcBins] = {};
-    double tpRemPBin_[kRcBins] = {}, tpAllPBin_[kRcBins] = {};
+    // Two kinds of P pictures, each with its own classes: [0] after another I or P picture, [1]
+    // after a run of B pictures. The first pass knows every picture against the one before only; a P
+    // picture several pictures after its reference needs more bits per cost than that (and with the
+    // macroblock tree it carries the run's quality), and how much more depends on the material, so
+    // where B pictures are placed in parts of a clip the two must not share one k.
+    double rcKBin_[2][kRcBins] = {}, rcCostBin_[2][kRcBins] = {};
+    double tpRemPBin_[2][kRcBins] = {}, tpAllPBin_[2][kRcBins] = {};
+    double rcKSumPb_ = 0, rcCostSumPb_ = 0; // all P pictures after B runs coded so far
+    std::vector<uint8_t> tpAfterB_;         // per picture of the plan: a P picture after a run of B pictures
     double tpAllI_ = 0, tpAllB_ = 0;
     // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass
     // complexity compression) and the cost weight 2^(-offset/6) the bit model applies with it.
@@ -385,7 +444,7 @@ private:
     std::vector<float> tpOff_;
     double tpCost(size_t i) const;
     int rcBin(double cost) const;
-    double kPOfBin(int bin, double kP) const;
+    double kPOfBin(int kind, int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB) const;
     double twoPassPlanQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter = nullptr) const;
