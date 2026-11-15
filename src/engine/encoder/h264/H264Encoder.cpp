@@ -140,10 +140,12 @@ thread_local bool tIntraFine = false;
 // B pictures: B_8x8 with direct 8x8 blocks (H264_B8X8=0 turns it off, for measurements).
 const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8")) != 0;
 // B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
-// the average of the two vectors as found, the default), tried where the average is within this
-// factor of the better single list. Measured with 2 rounds: -0.6 % of the B pictures' bits for
-// +16 % instructions on a pan with B pictures - off.
-const int gBiRefine = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : 0;
+// the average of the two vectors as found), tried where the average is within this factor of the
+// better single list. In long runs only (a slow zoom: +0.06 dB at 2 Mbit/s, and most macroblocks
+// are skipped before it); in short runs it costs +16 % instructions for 0.6 % of the B pictures'
+// bits (a pan with B pictures). H264_BIREFINE sets the rounds for all runs.
+const int gBiRefineEnv = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : -1;
+constexpr int kBiRefineLong = 2;
 // B pictures: the splits (16x8, 8x16, 8x8) are not searched where the 16x16 estimate is below this
 // many lambda (as for P pictures, H264_SPLITSKIP). 0 = always.
 const double gBSplitSkip = std::getenv("H264_BSPLITSKIP") ? std::atof(std::getenv("H264_BSPLITSKIP")) : 200.0;
@@ -799,7 +801,7 @@ static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv(
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
 static const double kBProbeFlat = std::getenv("H264_BPROBE_FLAT") ? std::atof(std::getenv("H264_BPROBE_FLAT")) : 0.75;
-static const bool kBProbeOneWay = !std::getenv("H264_BPROBE_ONEWAY") || std::atoi(std::getenv("H264_BPROBE_ONEWAY")) != 0;
+static const bool kBProbeOneWay = std::getenv("H264_BPROBE_ONEWAY") && std::atoi(std::getenv("H264_BPROBE_ONEWAY")) != 0;
 static const bool kBProbeLongClear = !std::getenv("H264_BPROBE_LONGCLEAR") || std::atoi(std::getenv("H264_BPROBE_LONGCLEAR")) != 0;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
@@ -854,8 +856,9 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     if (!kBProbe || bframes <= 0)
         return false;
     const double activity = f.intraSum > 0 ? f.interSum / f.intraSum : 0.0;
-    // Only in the direction that can turn the answer: with B pictures placed more activity, without
-    // them less (a probe costs about four pictures' worth of coding).
+    // H264_BPROBE_ONEWAY=1 (experiment, off): only with B pictures placed on more activity, without
+    // them on less. Saves probes (each costs about four pictures' worth of coding) but misses pans:
+    // their activity is high and B pictures pay there all the same (the crosshair trail came back).
     auto far = [&](double a) {
         const bool more = a > sampleActivity_ * kBProbeChange, less = a < sampleActivity_ / kBProbeChange;
         return kBProbeOneWay ? (run_ > 0 ? more : less) : more || less;
@@ -3134,6 +3137,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.displayIndex_ = frame.index;
     fc.outQp_ = cfg_.qp;
     fc.outSceneCut_ = cut;
+    fc.biRefine_ = type != 2 ? 0 : gBiRefineEnv >= 0 ? gBiRefineEnv : frame.nearRun > kPyramidMaxRun ? kBiRefineLong : 0;
     fc.rcType_ = type;
     // Two-pass only: the one-pass model takes a P picture's cost over its real distance.
     fc.rcAfterB_ = type == 1 && bMode && frame.refDist > 1 && cfg_.firstPass && size_t(frame.index) < cfg_.firstPass->size();
@@ -6513,7 +6517,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4, w = P.w4 * 4, h = P.h4 * 4;
         const size_t so = lumaOff + size_t(P.y4 * 4) * padW_ + P.x4 * 4;
         uint8_t t[256], avg[256];
-        for (int round = 0; round < gBiRefine; ++round) {
+        for (int round = 0; round < biRefine_; ++round) {
             bool moved = false;
             for (int list = 0; list < 2; ++list) {
                 int* mv = list ? mv1 : mv0;
@@ -6589,7 +6593,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 for (int ox = 0; ox < w; ox += 8)
                     satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, av + oy * 16 + ox, 16);
             double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
-            if (gBiRefine > 0 && costBi < gBiRefineNear * std::min(cost[0], cost[1])) {
+            if (biRefine_ > 0 && costBi < gBiRefineNear * std::min(cost[0], cost[1])) {
                 int m0[2] = {c.mv[p][0][0], c.mv[p][0][1]}, m1[2] = {c.mv[p][1][0], c.mv[p][1][1]};
                 costBi = refineBi(P, m0, m1, c.mvp[p][0], c.mvp[p][1], a, b, costBi);
                 if (costBi < cost[0] && costBi < cost[1]) {
