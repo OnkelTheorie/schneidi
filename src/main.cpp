@@ -520,7 +520,7 @@ int main(int argc, char* argv[])
     // on the main thread while the window was built). A helper thread does it meanwhile; the font database keeps the
     // lists for all threads
     QThreadPool::globalInstance()->start([font = QApplication::font()] {
-        QTextLayout layout(QString::fromUtf8("…−∞↺→⇅▣▤▥▦▶◀◆◇●☰♪♫⚠✂✓✕✦✧⧓🔍"), font);
+        QTextLayout layout(QString::fromUtf8("…−∞↺→⇅▣▤▥▦▶◀◆◇●◉☰♪♫⚠✂✓✕✦✧⧓🔍"), font);
         layout.beginLayout();
         layout.createLine();
         layout.endLayout();

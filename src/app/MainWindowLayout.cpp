@@ -340,7 +340,7 @@ QWidget* MainWindow::buildPageBar()
         {"✂", N_("Schneiden"), Page::Edit},
         {"◇", N_("Compositing"), Page::Comp},
         {"◐", N_("Farbe"), Page::Color},
-        {"♪", N_("Studio"), Page::Studio},
+        {"◉", N_("Studio"), Page::Studio}, // ♪ comes from Noto Sans Symbols on Noto-only systems: a taller line, a taller bar
         {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
