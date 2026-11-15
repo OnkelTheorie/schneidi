@@ -30,8 +30,8 @@ double posOf(double db);
 double dbAt(double pos);
 
 // One value per whole timeline frame from frame `first` on (resampled, later strokes over earlier ones); empty for an
-// empty stroke
-QVector<double> resample(const QVector<Point>& stroke, int* first);
+// empty stroke. Values clamped to [lo, hi] (the volume range; a pan stroke -100..+100)
+QVector<double> resample(const QVector<Point>& stroke, int* first, double lo = kMinVolumeDb, double hi = kMaxVolumeDb);
 // Moving average, `radius` frames to each side (0 = unchanged); the ends average over what is there
 QVector<double> smooth(const QVector<double>& values, int radius);
 // Indices of the values to keep as keyframes (always the first and the last), so that the straight lines between
@@ -51,6 +51,7 @@ bool apply(Clip& c, const QVector<Point>& stroke, int smoothing);
 // over the whole stroke - gaps between clips too. The stroke's dB are what the track plays (fader + curve, the scale
 // of the lane); the points store them on top of the fader. Points under the stroke are replaced, the curve outside
 // stays (a point with the old value right before and after the stroke). False = too short (nothing changed).
-bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing);
+// With AutoTarget::Pan the stroke's values are the pan heard (-100..+100) and go into Track::panAuto on top of the knob.
+bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing, AutoTarget target = AutoTarget::Volume);
 
 } // namespace VolumeDraw

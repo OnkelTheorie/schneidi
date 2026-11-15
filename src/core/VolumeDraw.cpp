@@ -25,7 +25,7 @@ double dbAt(double pos)
     return (pos - 0.75) / 0.25 * kMaxVolumeDb;
 }
 
-QVector<double> resample(const QVector<Point>& stroke, int* first)
+QVector<double> resample(const QVector<Point>& stroke, int* first, double minValue, double maxValue)
 {
     if (stroke.isEmpty()) return {};
     double lo = stroke.first().frame, hi = lo;
@@ -40,7 +40,7 @@ QVector<double> resample(const QVector<Point>& stroke, int* first)
     auto put = [&](int f, double db) {
         const int i = f - from;
         if (i < 0 || i >= v.size()) return;
-        v[i] = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
+        v[i] = std::clamp(db, minValue, maxValue);
         set[i] = true;
     };
     put(int(std::lround(stroke.first().frame)), stroke.first().db);
@@ -150,11 +150,12 @@ bool apply(Clip& c, const QVector<Point>& stroke, int smoothing)
     return true;
 }
 
-bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing)
+bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing, AutoTarget target)
 {
     if (!spansEnough(stroke)) return false;
     int first = 0;
-    const QVector<double> raw = resample(stroke, &first);
+    const bool pan = target == AutoTarget::Pan;
+    const QVector<double> raw = pan ? resample(stroke, &first, -100, 100) : resample(stroke, &first);
     if (raw.isEmpty()) return false;
     const QVector<double> all = smooth(raw, smoothing);
     // Frames before 0 (a stroke started left of the timeline's start) are left out
@@ -163,8 +164,10 @@ bool applyTrack(Track& t, const QVector<Point>& stroke, int smoothing)
     const QVector<double> part = all.mid(skip);
     const int from = first + skip;
     AutoCurve inside;
-    for (int i : thin(part)) inside << AutoPoint{from + i, std::round(part[i] * 100) / 100 - t.volumeDb};
-    Automation::replaceRange(t.volumeAuto, from, from + int(part.size()) - 1, inside);
+    // Pan: thinned to half a step (a pan curve has 200 steps where the volume has 0.25 dB)
+    for (int i : thin(part, pan ? 0.5 : kTolerance))
+        inside << AutoPoint{from + i, std::round(part[i] * 100) / 100 - Automation::base(t, target)};
+    Automation::replaceRange(t.automation(target), from, from + int(part.size()) - 1, inside, target);
     return true;
 }
 

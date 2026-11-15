@@ -70,7 +70,7 @@ std::optional<TrackRef> rippleRetimed(Timeline& tl, const QVector<RetimedTrack>&
         if (!fits(clips)) return tracks[i].ref;
         Track& t = tl.track(tracks[i].ref);
         t.clips = clips;
-        if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, together ? shifts : tracks[i].own);
+        Automation::rippleTrack(t, together ? shifts : tracks[i].own);
         edited << tracks[i].ref;
     }
     TimelineOps::rippleTracks(tl, shifts, edited);

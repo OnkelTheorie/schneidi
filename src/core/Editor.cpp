@@ -451,15 +451,28 @@ bool Editor::drawTrackVolume(int track, const QVector<VolumeDraw::Point>& stroke
     return true;
 }
 
-bool Editor::setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText, const QString& mergeKey)
+bool Editor::drawTrackPan(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || !VolumeDraw::spansEnough(stroke))
+        return false;
+    Track t = cur.audio[track];
+    if (!VolumeDraw::applyTrack(t, stroke, smoothing, AutoTarget::Pan) || t.panAuto == cur.audio[track].panAuto) return false;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Spur-Pan zeichnen"), [&](Timeline& tl) { tl.audio[track].panAuto = t.panAuto; });
+    return true;
+}
+
+bool Editor::setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText, const QString& mergeKey,
+                                AutoTarget target)
 {
     const Timeline& cur = m_project->timeline();
     if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked) return false;
-    const AutoCurve next = Automation::normalized(curve);
-    if (next == cur.audio[track].volumeAuto) return false;
+    const AutoCurve next = Automation::normalized(curve, target);
+    if (next == cur.audio[track].automation(target)) return false;
     emit mixerOnlyEdit();
     m_project->edit(undoText.isEmpty() ? T("Spur-Automation") : undoText,
-                    [&](Timeline& tl) { tl.audio[track].volumeAuto = next; }, mergeKey);
+                    [&](Timeline& tl) { tl.audio[track].automation(target) = next; }, mergeKey);
     return true;
 }
 

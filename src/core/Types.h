@@ -730,10 +730,12 @@ struct TrackUid {
 // first/last value holds before/after them.
 struct AutoPoint {
     int frame = 0;  // timeline frame
-    double db = 0;  // volume: dB on top of the track fader (0 = the fader's level)
+    double db = 0;  // volume: dB on top of the track fader (0 = the fader's level); pan: on top of the pan knob
     bool operator==(const AutoPoint&) const = default;
 };
 using AutoCurve = QVector<AutoPoint>; // sorted by frame, each frame at most once; empty = no automation
+// Which automation curve of a track (Track::volumeAuto / Track::panAuto)
+enum class AutoTarget { Volume, Pan };
 
 struct Track {
     TrackKind kind = TrackKind::Video;
@@ -759,6 +761,12 @@ struct Track {
     // Audio only, volume automation (Studio pen in track mode, CLI op track_volume): what is heard is the fader plus
     // this curve (dB). The fader trims the whole curve; empty = the fader alone (the mix is what it always was).
     AutoCurve volumeAuto;
+    // Audio only, pan automation (0.23, Studio Points/pen in track mode with "Pan", write mode, CLI op track_pan): what
+    // is heard is the pan knob plus this curve (-100..+100 after adding), the same model as the volume. In 5.1/7.1 it
+    // moves the surround panner's left-right position; depth, centre and LFE stay as set.
+    AutoCurve panAuto;
+    AutoCurve& automation(AutoTarget t) { return t == AutoTarget::Pan ? panAuto : volumeAuto; }
+    const AutoCurve& automation(AutoTarget t) const { return t == AutoTarget::Pan ? panAuto : volumeAuto; }
     TrackUid uid; // (last: aggregate initialisation Track{kind} stays as it is)
     bool operator==(const Track&) const = default;
 };

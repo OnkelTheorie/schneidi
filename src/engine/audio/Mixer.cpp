@@ -59,6 +59,7 @@ bool sameSound(const Timeline& a, const Timeline& b)
             t->panDepth = t->panCenter = 0;
             t->lfeDb = kMinVolumeDb;
             t->volumeAuto.clear(); // automation is a gain like the fader (glides when changed live)
+            t->panAuto.clear();
         }
         if (!(x == y)) return false;
     }
@@ -145,6 +146,9 @@ struct TrackPlan {
     // sample before the pan (Impl::applyAutomation)
     AutoCurve autoCurve;
     double faderDb = 0.0;
+    // Pan automation (Track::panAuto): pan = knob + curve per frame boundary, the gains linear in between
+    // (Impl::panGains); empty = the constant pan above
+    AutoCurve panCurve;
 };
 
 // LFE send: 2nd-order Butterworth low pass at 120 Hz
@@ -260,7 +264,13 @@ struct Mixer::Impl {
     }
 
     // The gains a track's fader, pan and mute ask for (TrackState::applied)
-    std::vector<double> trackTarget(const TrackPlan& tp) const;
+    std::vector<double> trackTarget(const TrackPlan& tp) const { return trackTarget(tp, tp.pan); }
+    std::vector<double> trackTarget(const TrackPlan& tp, double pan) const;
+    // Pan automation: the gains at sample `s` (those of the frame boundaries around it, linear in between)
+    std::vector<double> panGains(const TrackPlan& tp, int64_t s) const;
+    double panAtFrame(const TrackPlan& tp, int64_t frame) const;
+    // Pan automation on track[0..nch) for [pos, pos + count), gliding from ts.applied when `glide`
+    void applyPanAutomation(const TrackPlan& tp, TrackState& ts, int64_t pos, int count, bool glide);
     // Volume automation on track[0..nch) for [pos, pos + count): gains at the frame boundaries, linear in between
     double autoGain(const TrackPlan& tp, int64_t frame) const;
     void applyAutomation(const TrackPlan& tp, TrackState& ts, int64_t pos, int count);
@@ -318,6 +328,7 @@ void Mixer::Impl::applyMixValues(const Timeline& tl)
         p.autoCurve = t.volumeAuto;
         p.faderDb = t.volumeDb;
         p.pan = t.pan / 100.0;
+        p.panCurve = t.panAuto;
         p.panDepth = t.panDepth;
         p.panCenter = t.panCenter;
         p.lfeDb = t.lfeDb;
@@ -703,14 +714,13 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
     if (v.declickOut >= 0) ramp(v.declickOut - v.declickOutLen, v.declickOutLen, false);
 }
 
-std::vector<double> Mixer::Impl::trackTarget(const TrackPlan& tp) const
+std::vector<double> Mixer::Impl::trackTarget(const TrackPlan& tp, double pan) const
 {
     if (nch == 2) { // fader, then balance
-        const double side[2] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
-                                tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
+        const double side[2] = {pan < 0 ? 1.0 : std::max(0.0, 1.0 - pan), pan < 0 ? std::max(0.0, pan + 1.0) : 1.0};
         return {tp.audible ? tp.gain * side[0] : 0.0, tp.audible ? tp.gain * side[1] : 0.0};
     }
-    const ChannelLayout::PanGains g = ChannelLayout::surroundPan(nch, tp.pan * 100.0, tp.panDepth, tp.panCenter, tp.lfeDb);
+    const ChannelLayout::PanGains g = ChannelLayout::surroundPan(nch, pan * 100.0, tp.panDepth, tp.panCenter, tp.lfeDb);
     const double gain = tp.audible ? tp.gain : 0.0;
     std::vector<double> t(size_t(nch) * 2 + 2);
     for (int o = 0; o < nch; ++o)
@@ -718,6 +728,71 @@ std::vector<double> Mixer::Impl::trackTarget(const TrackPlan& tp) const
     t[size_t(nch) * 2] = gain * g.lfe;
     t[size_t(nch) * 2 + 1] = gain; // channels 2.. of the track pass through
     return t;
+}
+
+double Mixer::Impl::panAtFrame(const TrackPlan& tp, int64_t frame) const
+{
+    return std::clamp(tp.pan * 100.0 + Automation::valueAt(tp.panCurve, double(frame)), -100.0, 100.0) / 100.0;
+}
+
+std::vector<double> Mixer::Impl::panGains(const TrackPlan& tp, int64_t s) const
+{
+    const int64_t f = clock.frameAt(s);
+    const int64_t s0 = clock.start(f), s1 = clock.start(f + 1);
+    std::vector<double> a = trackTarget(tp, panAtFrame(tp, f));
+    if (s1 <= s0 || s == s0) return a;
+    const std::vector<double> b = trackTarget(tp, panAtFrame(tp, f + 1));
+    const double t = double(s - s0) / double(s1 - s0);
+    for (size_t k = 0; k < a.size(); ++k) a[k] += (b[k] - a[k]) * t;
+    return a;
+}
+
+void Mixer::Impl::applyPanAutomation(const TrackPlan& tp, TrackState& ts, int64_t pos, int count, bool glide)
+{
+    // Like the volume automation: gains per frame boundary, linear inside a frame (no steps); a live change glides
+    int64_t f = clock.frameAt(pos);
+    int64_t s0 = clock.start(f), s1 = clock.start(f + 1);
+    std::vector<double> g0 = trackTarget(tp, panAtFrame(tp, f)), g1 = trackTarget(tp, panAtFrame(tp, f + 1));
+    const size_t n = g0.size();
+    const int len = glide ? std::min(count, kGlide) : 0;
+    const std::vector<double> from = ts.applied;
+    std::vector<double> g(n);
+    const size_t lfeAt = size_t(nch) * 2, passAt = lfeAt + 1;
+    const LowPass& lp = lfeLowPass;
+    for (int i = 0; i < count; ++i) {
+        const int64_t s = pos + i;
+        while (s >= s1) {
+            ++f;
+            s0 = s1;
+            s1 = clock.start(f + 1);
+            g0 = std::move(g1);
+            g1 = trackTarget(tp, panAtFrame(tp, f + 1));
+        }
+        const double t = s1 > s0 ? double(s - s0) / double(s1 - s0) : 0.0;
+        for (size_t k = 0; k < n; ++k) {
+            g[k] = g0[k] + (g1[k] - g0[k]) * t;
+            if (i < len && k < from.size()) g[k] = from[k] + (g[k] - from[k]) * (i + 1) / len;
+        }
+        if (nch == 2) {
+            for (int c = 0; c < 2; ++c) track[size_t(c)][size_t(i)] = float(track[size_t(c)][size_t(i)] * g[size_t(c)]);
+            continue;
+        }
+        // Surround panner as in renderMix
+        const double l = track[0][size_t(i)], r = track[1][size_t(i)];
+        double y[kMaxChannels];
+        for (int o = 0; o < nch; ++o) {
+            y[o] = g[size_t(o) * 2] * l + g[size_t(o) * 2 + 1] * r;
+            if (o >= 2) y[o] += g[passAt] * track[size_t(o)][size_t(i)];
+        }
+        const double x = g[lfeAt] * (l + r);
+        const double lfe = lp.b0 * x + ts.lfeZ1;
+        ts.lfeZ1 = lp.b1 * x - lp.a1 * lfe + ts.lfeZ2;
+        ts.lfeZ2 = lp.b2 * x - lp.a2 * lfe;
+        if (std::abs(ts.lfeZ1) < 1e-25 && std::abs(ts.lfeZ2) < 1e-25) ts.lfeZ1 = ts.lfeZ2 = 0;
+        y[ChannelLayout::LFE] += lfe;
+        for (int o = 0; o < nch; ++o) track[size_t(o)][size_t(i)] = float(y[o]);
+    }
+    ts.applied = panGains(tp, pos + count); // what the next block starts from (no glide when nothing changed)
 }
 
 double Mixer::Impl::autoGain(const TrackPlan& tp, int64_t frame) const
@@ -771,8 +846,10 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
     for (size_t ti = 0; ti < tracks.size(); ++ti) {
         TrackPlan& tp = tracks[ti];
         TrackState& ts = trackStates[ti];
-        // Fader, then balance (5.1/7.1: the surround panner); a changed value glides (updateMix)
-        const std::vector<double> target = trackTarget(tp);
+        // Fader, then balance (5.1/7.1: the surround panner); a changed value glides (updateMix). With pan
+        // automation the target is the gains at this block's first sample.
+        const bool panAuto = !tp.panCurve.isEmpty();
+        const std::vector<double> target = panAuto ? panGains(tp, pos) : trackTarget(tp);
         if (!ts.levelSet) ts.applied = target;
         ts.levelSet = true;
         const bool glide = target != ts.applied;
@@ -803,7 +880,7 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
         }
         // EQ and compressor run on silence too (their tails), so does the LFE send's low pass
         if (!any && !tp.eq.on && !tp.dynamics.on && (nch == 2 || (ts.lfeZ1 == 0 && ts.lfeZ2 == 0))) {
-            ts.applied = target;
+            ts.applied = panAuto ? panGains(tp, end) : target;
             ts.autoLast = tp.autoCurve.isEmpty() ? 1.0 : autoGain(tp, clock.frameAt(end));
             ts.autoGlide = false;
             continue;
@@ -820,7 +897,9 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
         }
         // Automation (fader + curve) where the fader would be: after EQ and compressor, before the pan
         if (!tp.autoCurve.isEmpty() || ts.autoGlide) applyAutomation(tp, ts, pos, count);
-        if (nch == 2) {
+        if (panAuto) {
+            applyPanAutomation(tp, ts, pos, count, glide);
+        } else if (nch == 2) {
             const double side[2] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
                                     tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
             if (!glide) { // fader, then pan (each rounds to float)
