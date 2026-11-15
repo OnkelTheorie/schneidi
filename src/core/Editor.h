@@ -14,6 +14,7 @@
 #include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
+#include "core/VolumeDraw.h"
 
 #include <QHash>
 #include <QObject>
@@ -104,7 +105,9 @@ public:
     // above all clips in that range (missing track is created); track >= 0 = fixed track (drag from the Media Pool),
     // overwritten only in [frame, frame + length). New clip is selected. kind: text, counter or progress bar (a
     // progress bar without length spans the whole timeline from frame 0, on a free track when `track` has clips)
-    void addTitle(int frame, int track = -1, int length = 0, TitleKind kind = TitleKind::Text);
+    // setup: changes the new clip before it is placed (a drawing's first stroke: one undo step with the clip)
+    void addTitle(int frame, int track = -1, int length = 0, TitleKind kind = TitleKind::Text,
+                  const std::function<void(Clip&)>& setup = {});
     // New length of a title from its start: shorter frees the end, longer overwrites what lies in the new range on
     // its track (like a new title there; nothing after it changes)
     void setTitleLength(int clipId, int length);
@@ -132,6 +135,9 @@ public:
     // takes them live. Same mergeKey = one undo step (dragging a fader). Mixer panel and CLI both go through these.
     void setTrackVolume(int track, double db, const QString& mergeKey = {});
     void setTrackPan(int track, double pan, const QString& mergeKey = {});
+    // Surround panner of an audio track (5.1/7.1 mix; Track::panDepth/panCenter/lfeDb): depth 0..100 (front ->
+    // surround), center 0..100 (share in the centre speaker), lfeDb send to the LFE (<= -60 = off). One undo step.
+    void setTrackSurround(int track, double depth, double center, double lfeDb, const QString& mergeKey = {});
     void setTrackMuted(int track, bool on);
     void setTrackSolo(int track, bool on);
     // Master limiter (like a bus limiter in Fairlight): on/off; a new ceiling (dBFS, -20..0) switches it on
@@ -207,6 +213,20 @@ public:
     // during `ranges` (timeline frames where the 'under' tracks have sound, AudioAnalysis::soundRanges). Locked clips
     // stay. Returns how many clips got lowered; no clip or no range = nothing changes. One undo step.
     int duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const Ducking::Params& params);
+    // Ducking off (Studio page, op duck remove:true): the volume keyframes of the audio clips `ids` go, their clip
+    // volume stays (the level ducking dipped from). Locked clips stay. Returns how many changed; one undo step.
+    int unduck(const QVector<int>& ids);
+    // Pen on the Studio page (core/VolumeDraw.h): the stroke over audio track `track` becomes volume keyframes of the
+    // clips under it (smoothed by `smoothing` frames, thinned). Locked tracks and clips stay. One undo step; false =
+    // nothing changed (no clip under the stroke)
+    bool drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
+    // Pen in track mode (VolumeDraw::applyTrack): the stroke becomes the volume automation of audio track `track`
+    // where it was drawn. Locked tracks stay. One undo step per stroke; false = nothing changed.
+    bool drawTrackVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
+    // The volume automation of audio track `track` replaced (CLI op track_volume; empty = off, the fader alone).
+    // Normalized (Automation::normalized). Locked tracks stay. One undo step (same mergeKey: one step, dragging a
+    // point on the Studio page); false = nothing changed.
+    bool setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText = {}, const QString& mergeKey = {});
     // Audio clips for normalizing: selection (with linked partners), audio only, not locked
     QVector<int> selectedAudioClips() const;
     // Change any clip property (Inspector). Same mergeKey = one undo step.
@@ -409,7 +429,9 @@ public:
     // "Stimme säubern" in one click (Mixer button, CLI op clean_voice): voice cleaning (engine/VoiceClean) on the audio
     // clips among ids (those that have it keep it) with the given values (keys of the "voiceclean" effect: amount,
     // gate, clicks, shape; switches it on); one undo step. Returns the clips it is on now
-    QVector<int> cleanVoice(const QVector<int>& ids, const QVariantMap& values = {});
+    // voiceEq: the EQ preset "Stimme" (Equalizer::voicePreset) on the audio tracks of those clips too, in the same
+    // undo step (Studio page "Stimme säubern", op clean_voice eq:true)
+    QVector<int> cleanVoice(const QVector<int>& ids, const QVariantMap& values = {}, bool voiceEq = false);
     // The unlocked clips on audio track `index` (whole track at once: a voice-over track, a game clip's voice chat)
     QVector<int> audioTrackClips(int index) const;
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
@@ -455,8 +477,10 @@ public:
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
     // Tracking result of a tracker node of the clip's "comp" graph: keyframes of n<node>.x/.y/.scale/.angle on every
     // point (keyframes between the first and the last point are replaced, others stay). One undo step. false = no
-    // such clip, comp effect or tracker node, or no points
-    bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points);
+    // such clip, comp effect or tracker node, or no points. loss = what it did not find (0.22, Comp::TrackLoss):
+    // keyframes n<node>.seen (1 found, 0 lost; one key on each side of a change) over the analyzed range, the seen
+    // value before and after it stays. Gave up: the rest of the asked range is lost and its old path removed
+    bool trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>& points, const Comp::TrackLoss& loss = {});
     // The cutout node `node` of the clip's graph uses analysis `cache` (its matte file, engine/picture/CompCutout):
     // sets the node's value "cache" as one undo step (core/EditorCutout.cpp). false + *err = no such clip or node, or
     // the node is no cutout
@@ -503,6 +527,9 @@ public:
                              QString* err = nullptr);
     // A copy of node `node` with its values and keyframes (no links) at `pos`; returns its id, 0 = nothing changed
     int duplicateCompNode(int clipId, int node, const QPointF& pos, QString* err = nullptr);
+    // Time range of a node (0.22, Comp::hasRange kinds): from/until in seconds from the clip's start as stored (0 = from
+    // the start / to the end); a drag of its bar in the timeline, op 'node' range. One undo step. false = no such node, a kind without a range, until <= from (and until != 0)
+    bool setCompNodeRange(int clipId, int node, double from, double until, QString* err = nullptr);
     // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
     // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
     // only; masks beyond them are left out and counted in `dropped` (their names stay visible). Clips on locked tracks

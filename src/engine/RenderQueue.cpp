@@ -3,7 +3,10 @@
 
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/MediaProbe.h"
+#include "core/SourceBitrate.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -67,15 +70,19 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.codecOptions = QString(f.options).split(' ', Qt::SkipEmptyParts);
     s.crf = job.settings.crf();
     s.audioBitrateK = job.settings.audioBitrateK;
+    s.audioChannels = job.settings.audioChannels; // 0 = the mix's format (Timeline::audioChannels)
     s.threads = Exporter::savedThreads(); // applies per machine, not per job
     // Size fixed when adding; without it (audio only, old file) per the settings
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
     if (job.settings.audioOnly()) s.size = format.size(); // is not rendered, but convert nothing
     s.burnSubtitles = job.settings.subtitles == RenderSettings::BurnSubtitles;
-    // H.264/H.265 at quality "High" or "Web": copied pictures keep the file's bit rate (a camera or game recording often
-    // has 50–130 Mbit/s), so "Medium"/"Small" encode everything and "Web" copies only below its cap (ExportWriter)
+    // H.264/H.265 at quality "High", "Web" or "Like source": copied pictures keep the file's bit rate (a camera or game
+    // recording often has 50–130 Mbit/s), so "Medium"/"Small" encode everything and "Web" copies only below its cap
+    // (ExportWriter); "Like source" aims at the files' rate anyway
     s.smartRender = job.settings.smartRender && f.hardware
-                    && (job.settings.quality == 0 || job.settings.quality == RenderSettings::kQualityWeb);
+                    && (job.settings.quality == 0 || job.settings.quality == RenderSettings::kQualityWeb
+                        || job.settings.quality == RenderSettings::kQualitySource);
+    s.sourceQuality = job.settings.sourceQuality();
     if (job.settings.subtitles == RenderSettings::SrtFile || job.settings.subtitles == RenderSettings::VttFile) {
         const QFileInfo fi(job.path);
         s.subtitlePath = fi.dir().filePath(fi.completeBaseName()
@@ -87,12 +94,25 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
         s.from = std::max(0, job.from);
         s.to = job.to;
     }
-    if (job.review) { // small and fast: every frame is drawn on (nothing copied), the fastest encoder setting
-        s.smartRender = false;
-        s.preset = "ultrafast";
-        s.crf = std::max(s.crf, 28);
-    }
+    if (job.review) makeReview(s);
     return s;
+}
+
+void RenderQueue::makeReview(ExportSettings& s)
+{
+    // Small and fast: every frame is drawn on (nothing copied), the fastest encoder setting
+    s.smartRender = false;
+    s.preset = "ultrafast";
+    s.crf = std::max(s.crf, 28);
+    s.sourceQuality = false; // quality "Like source" would aim at the recordings' full bit rate: a constant quality
+    // The own H.264 encoder has no fast preset (it ignores "preset"; two passes with a cap): plain H.264 instead
+    if (ExportWriter::isOwnH264(s.videoCodec)) {
+        const HardwareEncoders::Choice c = HardwareEncoders::resolve(VideoEncoder::Software, QStringLiteral("h264"));
+        if (!c.codec.isEmpty()) {
+            s.videoCodec = c.codec;
+            s.softwareCodec = c.fallback;
+        }
+    }
 }
 
 ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& project)
@@ -100,6 +120,18 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& 
     ExportSettings s = exportSettings(job, project.sequenceFormat(job.sequence)); // the timeline's own resolution
     for (const MediaInfo& m : project.media()) s.mediaLengths.insert(m.path, m.length);
     return s;
+}
+
+int RenderQueue::sourceBitrateK(const RenderJob& job, const Project& project)
+{
+    if (!job.settings.sourceQuality()) return 0;
+    const ProjectFormat format = project.sequenceFormat(job.sequence);
+    const QSize size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
+    const Timeline tl = project.renderTimeline(job.sequence);
+    return SourceBitrate::target(tl, job.inOut ? job.from : 0, job.inOut ? job.to : -1, size,
+                                 job.settings.outputRate(format.rate),
+                                 [](const QString& path) { return MediaProbe::videoRate(path); })
+        .targetK;
 }
 
 bool RenderQueue::start(const QVector<int>& ids)
@@ -243,7 +275,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
     }
     // Done: the encoder note (e.g. hardware encoder fell back to software) stays with the job
     setStatus(id, status, m_canceling ? QString() : ok ? m_exporter->note() : message, m_clock.elapsed(),
-              ok ? m_exporter->usedCodec() : QString());
+              ok ? m_exporter->usedCodec() : QString(), ok ? m_exporter->targetBitrateK() : -1);
     emit jobFinished(id, status);
     if (m_canceling) {
         m_canceling = false;
@@ -286,7 +318,8 @@ void RenderQueue::cancel()
     m_exporter->cancel(); // reports finished() immediately
 }
 
-void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms, const QString& encoder)
+void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms, const QString& encoder,
+                            int sourceBitrateK)
 {
     QVector<RenderJob> q = m_project->renderQueue();
     for (RenderJob& j : q)
@@ -295,6 +328,7 @@ void RenderQueue::setStatus(int id, RenderStatus status, const QString& message,
             j.message = message;
             if (ms >= 0) j.renderMs = ms;
             if (!encoder.isEmpty()) j.encoderUsed = encoder;
+            if (sourceBitrateK >= 0 && j.settings.sourceQuality()) j.sourceBitrateK = sourceBitrateK;
         }
     m_project->setRenderQueue(q);
 }

@@ -132,6 +132,8 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
                 t.clips = rest;
             }
             for (const Reframe::Keep& k : keeps->value(id)) {
+                // Measured without a line in a short clip: none (a long one keeps the whole region: an unknown HUD)
+                if (Reframe::feedUse(k.feed) == Reframe::FeedUse::None) continue;
                 Clip copy = Reframe::keepCopy(base, k, MediaAspect::ofClip(base), frame);
                 copy.id = p->newClipId();
                 copy.linkId = base.linkId;
@@ -161,20 +163,9 @@ QHash<int, QVector<Reframe::Keep>> Editor::reframeKeeps(const QVector<int>& ids,
     for (int id : ids) {
         const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
         if (!c) continue;
-        QVector<Reframe::Keep>& list = out[id];
-        if (choice.kind == Reframe::KeepChoice::None) continue;
-        if (choice.kind == Reframe::KeepChoice::Custom) {
-            list << Reframe::Keep{QStringLiteral("custom"), choice.region};
-            continue;
-        }
-        const GameHud::Game* game = choice.game.isEmpty() ? GameHud::guess(c->mediaPath) : GameHud::find(choice.game);
-        const QRectF content = contents.value(c->mediaPath, QRectF(0, 0, 1, 1));
-        if (!game) {
-            if (choice.kind == Reframe::KeepChoice::KillFeed && noGame) *noGame << id;
-            continue;
-        }
-        if (choice.kind == Reframe::KeepChoice::KillFeed || Reframe::cropsSides(mode, MediaAspect::ofClip(*c), frame, content))
-            list << Reframe::Keep{QStringLiteral("killfeed"), Reframe::inContent(game->feed, content)};
+        bool unknown = false;
+        out[id] = Reframe::keepsOf(*c, mode, frame, contents.value(c->mediaPath, QRectF(0, 0, 1, 1)), choice, &unknown);
+        if (unknown && noGame) *noGame << id;
     }
     return out;
 }

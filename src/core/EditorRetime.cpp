@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Editor: clip speed and speed ramps.
 #include "core/Editor.h"
+#include "core/Automation.h"
 #include "core/EditorDetail.h"
 
 #include "core/EffectFolders.h"
@@ -67,7 +68,9 @@ std::optional<TrackRef> rippleRetimed(Timeline& tl, const QVector<RetimedTrack>&
     for (qsizetype i = 0; i < tracks.size(); ++i) {
         QVector<Clip> clips = together ? joint[i] : moved(tracks[i].clips, tracks[i].own);
         if (!fits(clips)) return tracks[i].ref;
-        tl.track(tracks[i].ref).clips = clips;
+        Track& t = tl.track(tracks[i].ref);
+        t.clips = clips;
+        if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, together ? shifts : tracks[i].own);
         edited << tracks[i].ref;
     }
     TimelineOps::rippleTracks(tl, shifts, edited);

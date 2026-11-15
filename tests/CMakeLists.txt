@@ -36,6 +36,8 @@ schneidi_test(test_interchange_app)
 schneidi_test(test_projectfile)
 schneidi_test(test_generators)
 target_link_libraries(test_generators PRIVATE schneidi_cli_lib)
+schneidi_test(test_audio_stream_arg) # CLI analyses: audio_stream not given = the first stream that plays
+target_link_libraries(test_audio_stream_arg PRIVATE schneidi_cli_lib)
 schneidi_test(test_project_versions)
 schneidi_test(test_undo)
 schneidi_test(test_h264_encoder) # own H.264 encoder: bit-exact against FFmpeg's decoder (sources in schneidi_lib)
@@ -119,6 +121,9 @@ schneidi_test(test_export_writer)
 # Own H.264 encoder as the export format h264_own: containers, colour tags, level, key frames, bit rate mode, cancel
 schneidi_test(test_export_own_h264)
 schneidi_test(test_export_timing)
+# Export quality "Like source": target bit rate (weighting, scaling, fallback), probe, export within 25 %, CLI
+schneidi_test(test_source_bitrate)
+target_link_libraries(test_source_bitrate PRIVATE schneidi_cli_lib)
 schneidi_test(test_smart_render)
 schneidi_test(test_storage_thumbs) # Media Storage thumbnails: key frame near 1 s decoded alone (rotation, VP9, 10-bit, MJPEG lowres), disk cache
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
@@ -268,6 +273,10 @@ schneidi_test(test_audio_reader_damage) # vanishing files, timestamp gaps and ou
 schneidi_test(test_media_probe)
 schneidi_test(test_media_unreadable) # pipes and devices, undecodable stills, sub-frame sounds, why a file is unreadable
 schneidi_test(test_audio_mixer)
+schneidi_test(test_multichannel) # 0.23: 5.1/7.1 mix, surround panner, channel routing, export layouts, loudness, project format 8
+add_dependencies(test_multichannel schneidi-cli)
+schneidi_test(test_track_automation) # 0.23: track volume automation (model, ripple, mixer, export, project file, CLI)
+add_dependencies(test_track_automation schneidi-cli)
 schneidi_test(test_stretch) # own time stretcher (keep pitch)
 schneidi_test(test_export_audio)
 schneidi_test(test_audio_analysis)
@@ -321,6 +330,8 @@ target_link_libraries(test_blur_fill PRIVATE schneidi_cli_lib)
 schneidi_test(test_reframe) # Auto-Reframe: camera path, fill geometry, Editor op + undo, subject measurement, CLI ops
 schneidi_test(test_reframe_keep) # Auto-Reframe keeps the kill feed (picture in picture at the top), game kill feed regions in highlights
 target_link_libraries(test_reframe_keep PRIVATE schneidi_cli_lib)
+schneidi_test(test_killfeed_fit) # the kept kill feed follows its lines: line detection, keyframes from a line timeline, CLI short
+target_link_libraries(test_killfeed_fit PRIVATE schneidi_cli_lib)
 schneidi_test(test_game43) # 4:3 game footage: black bar detection, reframe inside the content, crop_bars, stretched 4:3 (picture aspect), CLI ops
 target_link_libraries(test_game43 PRIVATE schneidi_cli_lib)
 target_link_libraries(test_reframe PRIVATE schneidi_cli_lib)
@@ -345,7 +356,7 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators test_fit_music
+             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_killfeed_fit test_game43 test_generators test_fit_music
              test_story_pace test_review_render test_data_rows)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
@@ -424,6 +435,8 @@ add_executable(bench_multicam bench_multicam.cpp)
 target_link_libraries(bench_multicam PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_probe bench_probe.cpp)
 target_link_libraries(bench_probe PRIVATE schneidi_test_support Qt6::Test)
+add_executable(bench_shape bench_shape.cpp)
+target_link_libraries(bench_shape PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_compose bench_compose.cpp)
 target_link_libraries(bench_compose PRIVATE schneidi_test_support Qt6::Test)
 add_executable(bench_export bench_export.cpp)
@@ -462,6 +475,8 @@ schneidi_test(test_sfx) # effect sounds: synthesis deterministic and mild, place
 target_link_libraries(test_sfx PRIVATE schneidi_cli_lib)
 schneidi_test(test_sfx_library) # Effects Library "Klänge": list, drag data, drop = op sfx as one undo step, nothing placed by itself
 target_link_libraries(test_sfx_library PRIVATE schneidi_cli_lib)
+schneidi_test(test_studio_page) # Studio page: lazy, pen, meters, layout, tools column (Block 2) through the user runner
+target_link_libraries(test_studio_page PRIVATE schneidi_cli_lib)
 schneidi_test(test_builtin_templates) # the five built-in templates: listed, filled, brand kit, logo default, size guard
 target_link_libraries(test_builtin_templates PRIVATE schneidi_cli_lib)
 
@@ -485,8 +500,20 @@ schneidi_test(test_comp_tracker_face)
 schneidi_test(test_comp_eval) # compositing evaluation (0.19 A): merge modes vs formula, graph = effect list bit-identical, comp_from, cache, unknown kinds
 schneidi_test(test_comp_follow) # tracker follow rule (0.19): followers relative to rx/ry, no jump when the analysis lands, transform/mask alike
 schneidi_test(test_comp_timeline) # comp graphs through timeline edits: media offset and text from/until follow cuts and head trims, slip keeps them, undo
+schneidi_test(test_comp_range) # time range of any node (0.22): from/until, engine passes a node out of range, cuts/trims, setCompNodeRange, CLI range/info/frames, timeline bars (ru, big font)
+target_link_libraries(test_comp_range PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_range_gpu) # time ranges on the card (0.22): the active graph planned on the GPU = the CPU picture
+set_tests_properties(test_comp_range_gpu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 schneidi_test(test_comp_cli) # compositing through the CLI (0.19 G): ops comp/comp_from/node/track_node, keyframes comp.n<id>.<key>, effects kind nodes, frames at a node, comp checks, undo
 target_link_libraries(test_comp_cli PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_tracker_lost) # losing the tracked point (0.22): seen keys, lost modes bridge/hold/fade of masks and transforms, check tracker_lost/_ended, CLI
+target_link_libraries(test_comp_tracker_lost PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_corner_pin) # four-corner tracking (0.22): QuadTracker, mode quad, node corner_pin, CLI track_node corners, recipe screen_replace
+target_link_libraries(test_comp_corner_pin PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_region_pick) # text behind a wall (0.22): RegionPick polygon within 2 px, masks following a quad tracker, recipe text_behind_object, op pick_region, the pick mode of the Comp page
+target_link_libraries(test_comp_region_pick PRIVATE schneidi_cli_lib)
+schneidi_test(test_comp_camera) # shared 2.5D camera (0.22): map, parallax of transform/media/text/text3d, bit-identical without it, tracker follow, drift/cache/head trim, tables, check, CLI, recipe parallax_photo
+target_link_libraries(test_comp_camera PRIVATE schneidi_cli_lib)
 # Compositing graphs on the graphics card (0.19 package F) vs CompEval: merge modes, masks, keys, blur, recipes;
 # decides about the card itself (77 without a hardware device)
 schneidi_test(test_comp_gpu)
@@ -549,3 +576,9 @@ foreach(_t ${_schneidi_all_tests})
         "SCHNEIDI_TEST_SETTINGS=set:${_dir}" "XDG_CONFIG_HOME=set:${_dir}/config" "XDG_DATA_HOME=set:${_dir}/data"
         "XDG_CACHE_HOME=set:${_dir}/cache" "SCHNEIDI_TEST_SETTINGS_READY=unset:")
 endforeach()
+
+schneidi_test(test_shapes) # shapes (0.22): shape titles per kind, stroke reveal, keyframes, file, blur/pixelate/spotlight below, clip_shape, tracker follow, CLI ops, check
+target_link_libraries(test_shapes PRIVATE schneidi_cli_lib)
+schneidi_test(test_idle_render) # the app at rest renders nothing: a blur shape selected in the Inspector, after an edit no repaint loop (frames, CPU)
+schneidi_test(test_drawing) # drawings (0.22): strokes at known pixels, reveal timing, file, smoothing, painting (undo per stroke, eraser, box), tracker follow, CLI op draw, check, Inspector
+target_link_libraries(test_drawing PRIVATE schneidi_cli_lib)

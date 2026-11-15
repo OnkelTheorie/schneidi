@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/RenderJob.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/ProjectFormat.h"
+#include "core/SourceBitrate.h"
 
 #include <QDir>
 #include <QFile>
@@ -110,8 +112,15 @@ bool RenderSettings::hasEncoderChoice() const { return renderFormat(format).hard
 
 bool RenderSettings::hasAudioBitrate() const
 {
-    const QLatin1String c(renderFormat(format).audioCodec);
+    const QString c = audioCodec(); // AC-3: fixed (ac3BitrateK)
     return c == QLatin1String("aac") || c == QLatin1String("libmp3lame") || c == QLatin1String("libopus");
+}
+
+QStringList RenderSettings::audioFormatChoices() const
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    if (f.kind == RenderKind::Video && QLatin1String(f.extension) == QLatin1String("mp4")) return {QStringLiteral("ac3")};
+    return {};
 }
 
 QVector<int> RenderSettings::audioBitChoices() const
@@ -133,6 +142,7 @@ static int validBits(const RenderSettings& s)
 QString RenderSettings::audioCodec() const
 {
     const QString c = renderFormat(format).audioCodec;
+    if (!audioFormat.isEmpty() && audioFormatChoices().contains(audioFormat)) return audioFormat;
     if (!c.startsWith("pcm_")) return c;
     const QString endian = c.right(2); // le/be
     switch (validBits(*this)) {
@@ -207,8 +217,8 @@ QSize RenderSettings::outputSize(QSize timeline) const
 
 int RenderSettings::crf() const
 {
-    // Web = high quality with a bit rate cap
-    return renderFormat(format).crf[quality == kQualityWeb ? 0 : std::clamp(quality, 0, 2)];
+    // Web = high quality with a bit rate cap; like source = a bit rate target, "High" where it is unknown
+    return renderFormat(format).crf[quality >= kQualityWeb ? 0 : std::clamp(quality, 0, 2)];
 }
 
 int RenderSettings::maxBitrateK(QSize output, FrameRate rate) const
@@ -225,20 +235,28 @@ int RenderSettings::maxBitrateK(QSize output, FrameRate rate) const
 
 QString RenderSettings::qualityLabel() const
 {
-    static const char* names[] = {N_("Hoch"), N_("Mittel"), N_("Klein"), N_("Web (begrenzte Bitrate)")};
-    return T(names[std::clamp(quality, 0, kQualityWeb)]);
+    static const char* names[] = {N_("Hoch"), N_("Mittel"), N_("Klein"), N_("Web (begrenzte Bitrate)"), N_("Wie Quelle")};
+    return T(names[std::clamp(quality, 0, kQualitySource)]);
 }
 
-QString RenderSettings::summary(QSize output) const
+bool RenderSettings::sourceQuality() const
+{
+    return quality == kQualitySource && renderFormat(format).hasQuality() && !audioOnly();
+}
+
+QString RenderSettings::summary(QSize output, int sourceBitrateK) const
 {
     const RenderFormatInfo& f = renderFormat(format);
     QStringList parts{T(f.label)};
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
-    if (f.hasQuality()) parts << (quality == kQualityWeb && !f.webQuality ? T("Hoch") : qualityLabel());
+    if (sourceQuality())
+        parts << (sourceBitrateK > 0 ? qualityLabel() + ' ' + SourceBitrate::label(sourceBitrateK) : qualityLabel());
+    else if (f.hasQuality()) parts << (quality == kQualityWeb && !f.webQuality ? T("Hoch") : qualityLabel());
     if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)
         parts << videoEncoderLabel(encoder);
     if (!audioOnly() && rateNum > 0) parts << QString("%1 fps").arg(FrameRate{rateNum, rateDen}.label());
-    if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << "AAC " + T("%1 kbit/s").arg(audioBitrateK);
+    if (audioCodec() == QLatin1String("ac3")) parts << QStringLiteral("AC-3");
+    else if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << "AAC " + T("%1 kbit/s").arg(audioBitrateK);
     else if (QLatin1String(f.audioCodec) == QLatin1String("libopus") && !audioOnly())
         parts << "Opus " + T("%1 kbit/s").arg(audioBitrateK);
     else if (hasAudioBitrate()) parts << T("%1 kbit/s").arg(audioBitrateK);
@@ -252,9 +270,13 @@ QString RenderSettings::summary(QSize output) const
 
 QJsonObject RenderSettings::toJson() const
 {
-    QJsonObject o{{"format", format}, {"quality", quality}, {"audioBitrate", audioBitrateK}};
+    // "Like source" is unknown to versions before 0.22, which clamp "quality" to 0-3: they read "High" (0), not "Web"
+    QJsonObject o{{"format", format}, {"quality", quality == kQualitySource ? 0 : quality}, {"audioBitrate", audioBitrateK}};
+    if (quality == kQualitySource) o["qualitySource"] = true;
     if (shortSide > 0) o["shortSide"] = shortSide;
     if (audioBits != 24) o["audioBits"] = audioBits;
+    if (audioChannels > 0) o["audioChannels"] = audioChannels;
+    if (!audioFormat.isEmpty()) o["audioFormat"] = audioFormat;
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
     if (maxFps > 0) o["maxFps"] = maxFps;
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
@@ -274,10 +296,12 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
 {
     RenderSettings s;
     s.format = renderFormat(o.value("format").toString()).id;
-    s.quality = std::clamp(o.value("quality").toInt(0), 0, kQualityWeb);
+    s.quality = o.value("qualitySource").toBool() ? kQualitySource : std::clamp(o.value("quality").toInt(0), 0, kQualityWeb);
     s.audioBitrateK = std::clamp(o.value("audioBitrate").toInt(320), 32, 512);
     s.shortSide = std::max(0, o.value("shortSide").toInt());
     s.audioBits = o.value("audioBits").toInt(24);
+    if (const int ch = o.value("audioChannels").toInt(); ch == 2 || ch == 6 || ch == 8) s.audioChannels = ch;
+    if (o.value("audioFormat").toString() == QLatin1String("ac3")) s.audioFormat = QStringLiteral("ac3");
     const QStringList rate = o.value("rate").toString().split('/');
     if (rate.size() == 2 && rate[0].toInt() > 0 && rate[1].toInt() > 0) {
         s.rateNum = rate[0].toInt();
@@ -306,7 +330,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
            && embedSubtitles == o.embedSubtitles
-           && audioBits == o.audioBits && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && audioChannels == o.audioChannels && audioFormat == o.audioFormat && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Presets
@@ -386,7 +410,7 @@ QVector<RenderPreset> builtins()
 
 QString userFile()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("render-presets.json");
+    return QDir(AppPaths::writable(QStandardPaths::AppConfigLocation)).filePath("render-presets.json");
 }
 
 QVector<RenderPreset> loadUser()
@@ -453,7 +477,7 @@ bool RenderJob::operator==(const RenderJob& o) const
 {
     return id == o.id && path == o.path && preset == o.preset && settings == o.settings && size == o.size
            && inOut == o.inOut && sequence == o.sequence && review == o.review && from == o.from && to == o.to && status == o.status && message == o.message
-           && renderMs == o.renderMs && encoderUsed == o.encoderUsed;
+           && renderMs == o.renderMs && encoderUsed == o.encoderUsed && sourceBitrateK == o.sourceBitrateK;
 }
 
 namespace {
@@ -483,6 +507,7 @@ QJsonArray toJson(const QVector<RenderJob>& jobs)
         if (!j.message.isEmpty()) o["message"] = j.message;
         if (j.renderMs > 0) o["renderMs"] = double(j.renderMs);
         if (!j.encoderUsed.isEmpty()) o["encoderUsed"] = j.encoderUsed;
+        if (j.sourceBitrateK > 0) o["sourceBitrateK"] = j.sourceBitrateK;
         arr << o;
     }
     return arr;
@@ -520,6 +545,7 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
         j.message = o.value("message").toString();
         j.renderMs = qint64(std::clamp(o.value("renderMs").toDouble(), 0.0, 1e15)); // beyond qint64 would be undefined
         j.encoderUsed = o.value("encoderUsed").toString();
+        j.sourceBitrateK = std::clamp(o.value("sourceBitrateK").toInt(), 0, 10000000);
         jobs << j;
     }
     return jobs;

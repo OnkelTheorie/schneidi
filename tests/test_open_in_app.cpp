@@ -10,6 +10,7 @@
 //   window's first paint), and switching projects back and forth shows each one's own length
 #include "app/MainWindow.h"
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -286,7 +287,7 @@ int main(int argc, char* argv[])
     Check::initEnv();
     QApplication app(argc, argv);
     // Like the program (no organization on Linux): schneidi-cli finds the registry
-    QApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, tmp.path() + "/config");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg fehlt");

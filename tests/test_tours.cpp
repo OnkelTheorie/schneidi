@@ -24,6 +24,7 @@
 #include "cli/Live.h"
 #include "app/Theme.h"
 #include "app/TourManager.h"
+#include "core/AppPaths.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -501,7 +502,7 @@ void walk(MainWindow& w, const Tour& t, const QString& run, bool dumpIt)
     if (!CHECK(r->running())) return;
     DialogWatch dialogs;
     // The practice project: the sample clips, never the user's own
-    const QString sample = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
+    const QString sample = AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
     CHECK_EQ(w.liveProject()->media().size(), qsizetype(3));
     for (const MediaInfo& m : w.liveProject()->media()) CHECK(m.path.startsWith(sample));
     CHECK_EQ(clipCount(w.liveProject()) == 0, t.practice == "pool");
@@ -1153,6 +1154,18 @@ void ownProject(MainWindow& w)
     if (CHECK(!tl.video.isEmpty() && !tl.video[0].clips.isEmpty())) w.liveSelection()->set({tl.video[0].clips[0].id});
     CHECK(w.liveProject()->isModified());
     CHECK(w.liveProject()->media().isEmpty());
+    // As the user sees it before starting a tour: the Inspector filled with the clip and the splitters laid out again.
+    // Taken right after the selection, a column narrower than the Inspector's new minimum (a wider font than Noto: 308 of
+    // 316 px) was still pending; the tour's setSizes applied it, so the column looked widened by the tour. The layout
+    // requests go up one widget per round (Inspector, column, row): all of them, not only what a short wait under load
+    // gets to
+    for (int i = 0; i < 10; ++i) QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    QTest::qWait(30);
+    // The column never narrower than its Inspector (nothing cut off on the right), whatever the font
+    if (auto* row = w.findChild<QSplitter*>("editRow"); row && row->widget(1) && row->widget(1)->isVisible())
+        Check::report(row->sizes().value(1) >= row->widget(1)->minimumSizeHint().width(), "right column fits the Inspector",
+                      __FILE__, __LINE__, QString("%1 of %2 px").arg(row->sizes().value(1))
+                                              .arg(row->widget(1)->minimumSizeHint().width()));
 }
 
 void runWindow(Engine& engine, const QString& run, const QString& settingsFile, const QString& lang, const QSize& size,
@@ -1228,7 +1241,7 @@ void runWindow(Engine& engine, const QString& run, const QString& settingsFile, 
     CHECK_EQ(clipCount(w.liveProject()), 1);
     if (!user) {
         // The empty graph's button starts the Compositing tour (in the user's project: a video clip without a graph)
-        w.importFiles({QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample/clip1.mp4"}, true, true);
+        w.importFiles({AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample/clip1.mp4"}, true, true);
         int video = 0;
         for (const Track& tr : w.liveProject()->timeline().video)
             for (const Clip& c : tr.clips)

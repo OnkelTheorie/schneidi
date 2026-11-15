@@ -8,6 +8,7 @@
 #include "core/Beats.h"
 #include "core/ExportCheck.h"
 #include "core/GameHud.h"
+#include "core/PathKey.h"
 #include "core/Retime.h"
 #include "core/ReviewSheet.h"
 #include "core/TimelineOps.h"
@@ -214,7 +215,8 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(const Project& p, const Proj
         for (const Track& t : tl.video) {
             if (t.hidden) continue;
             for (const Clip& c : t.clips)
-                if (c.kind == ClipKind::Media && !files.contains(c.mediaPath))
+                if (c.kind == ClipKind::Media
+                    && std::none_of(files.cbegin(), files.cend(), [&](const QString& f) { return PathKey::same(f, c.mediaPath); }))
                     if (const MediaInfo* m = p.mediaInfo(c.mediaPath); m && m->hasVideo && !m->isImage)
                         files << c.mediaPath;
         }
@@ -250,7 +252,7 @@ std::shared_ptr<const ReviewSheet::Data> reviewData(const Project& p, const Proj
                         for (const Track& t : tl.video) {
                             if (t.hidden) continue;
                             for (const Clip& c : t.clips) {
-                                if (c.kind != ClipKind::Media || c.mediaPath != file) continue;
+                                if (c.kind != ClipKind::Media || !PathKey::same(c.mediaPath, file)) continue;
                                 const int f = timelineAtSource(p, c, source);
                                 if (f < 0 || f >= end || !seen.insert({int(kind), f}).second) continue;
                                 d->marks << Mark{kind, f, nameOf(p, &c), c.id};

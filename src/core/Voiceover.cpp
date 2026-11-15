@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Voiceover.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/Types.h"
 
@@ -36,7 +37,7 @@ void Settings::save() const
 QString folder(const QString& projectPath)
 {
     if (projectPath.isEmpty())
-        return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("voiceover");
+        return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("voiceover");
     const QFileInfo fi(projectPath);
     return fi.absoluteDir().filePath(fi.completeBaseName() + "-voiceover");
 }

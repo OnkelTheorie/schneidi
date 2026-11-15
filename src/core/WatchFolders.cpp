@@ -188,12 +188,14 @@ Scanner::Result Scanner::scan(const QVector<WatchFolder>& watches, const std::fu
             if (present.contains(key)) continue; // two watches cover it: the first one takes it
             present.insert(key);
             auto it = m_seen.find(key);
-            if (it == m_seen.end()) {
+            const bool firstLook = it == m_seen.end();
+            if (firstLook) {
                 it = m_seen.insert(key, {});
                 it->appeared = firstListing ? 0 : nowMs;
             }
             Seen& s = *it;
-            if (s.size != f.size || s.modified != f.modified) {
+            const bool changed = s.size != f.size || s.modified != f.modified;
+            if (changed) {
                 s.size = f.size;
                 s.modified = f.modified;
                 s.unchangedSince = nowMs;
@@ -205,11 +207,20 @@ Scanner::Result Scanner::scan(const QVector<WatchFolder>& watches, const std::fu
             const qint64 arrived = std::max({f.modified, f.created, s.appeared});
             if (w.since.isValid() && arrived < w.since.toMSecsSinceEpoch()) continue;
             // Complete: nothing written for a while (by its time, or as seen by an earlier scan - the clock of a
-            // network share may differ from this one)
-            const bool settled = nowMs - f.modified >= m_settleMs
-                                 || (s.unchangedSince > 0 && nowMs - s.unchangedSince >= m_settleMs);
-            if (settled) r.ready << Found{f.path, wi};
-            else r.pending << f.path;
+            // network share may differ from this one), and seen with the same size and time by an earlier look: a
+            // file seen for the first time can be a recording still being written whose time lags (a recorder
+            // that writes in bursts, a network share): taken at once it would stay cut short in the pool forever.
+            // settleMs 0 (asked for: take files at once) needs no second look.
+            const bool aged = nowMs - f.modified >= m_settleMs;
+            const bool settled = m_settleMs == 0
+                                 || (!firstLook && !changed
+                                     && (aged || (s.unchangedSince > 0 && nowMs - s.unchangedSince >= m_settleMs)));
+            if (settled) {
+                r.ready << Found{f.path, wi};
+            } else {
+                r.pending << f.path;
+                if (firstLook && aged) ++r.unconfirmed;
+            }
         }
     }
     // Forget files that are gone (memory stays small) and folders not listed now

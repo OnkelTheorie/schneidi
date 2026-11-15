@@ -11,6 +11,13 @@
 // sub-frame offset; per track: EQ -> compressor -> fader/pan, solo/mute; master: fader -> limiter. Latency of noise
 // reduction, voice cleaning and limiter is compensated (the sound stays where it is in the timeline).
 //
+// Channels (0.23): the mix runs in the timeline's format (Timeline::audioChannels = the project's: stereo, 5.1 or 7.1,
+// order in core/ChannelLayout.h). Stereo is the mix it always was. In 5.1/7.1 a source of one or two channels is read
+// as stereo and placed by the track's surround panner (ChannelLayout::surroundPan: pan, depth, centre, LFE send);
+// a 5.1/7.1 source is read in the mix's format and its centre, LFE and surrounds pass straight through. A clip can
+// play only some channels of its stream (Clip::sourceChannels: routing). render() writes the mix's channels, or with
+// Options::outputChannels another count (2 = the ITU downmix the monitor hears).
+//
 // Not thread-safe: one mixer per user. render() is meant to be called with increasing positions; any jump starts the
 // state (filters, readers) over at the new position.
 
@@ -27,15 +34,26 @@ namespace Audio {
 
 class Mixer {
 public:
-    static constexpr int kChannels = 2; // the mix is stereo; sources are mixed down or spread on reading
+    static constexpr int kChannels = 2;    // a stereo mix (the default format)
+    static constexpr int kMaxChannels = 8; // 7.1
 
     struct Options {
         int rate = 48000;
+        // Channels of the mix: 0 = the timeline's (Timeline::audioChannels); 2, 6 (5.1) or 8 (7.1)
+        int channels = 0;
+        // Channels render() writes: 0 = the mix's; else the mix converted (ChannelLayout::conversion; 2 = stereo
+        // downmix after ITU-R BS.775 for the monitor, 6/8 from a stereo mix = front pair only)
+        int outputChannels = 0;
         // Length of a media file in frames of the project rate (the length the project knows, needed for
         // transition handles and reversed clips); unset or <= 0 = taken from the file
         std::function<int(const QString& path)> fileLength;
         // Short ramps at hard cuts against clicks; off to measure the plain source of a clip (analyses)
         bool declick = true;
+        // Export: with outputChannels below the mix's (a 5.1/7.1 mix written as stereo or mono), the master limiter
+        // runs on the downmix instead of the mix, so what is written stays under its ceiling (the downmix sums the
+        // centre and the surrounds into the front pair and could go over it). Off (the monitor): the limiter works on
+        // the mix as before, the downmix comes after it. lastMix() stays empty then.
+        bool limitOutput = false;
     };
 
     Mixer(const Timeline& timeline, FrameRate fps, const Options& options);
@@ -43,6 +61,9 @@ public:
     ~Mixer();
 
     int rate() const;
+    // Channels of the mix (2, 6, 8; ChannelLayout) and of what render() writes. UI meters and the export ask here.
+    int channels() const;
+    int outputChannels() const;
     // Samples up to the end of the timeline's content
     int64_t length() const;
     // First sample of timeline frame f, and the frame a sample belongs to
@@ -54,17 +75,41 @@ public:
     // and limiter (well under a second). Analyses skip the rest (a clip far out on the timeline, empty stretches).
     std::vector<std::pair<int64_t, int64_t>> soundSpans() const;
 
-    // Mixes [pos, pos + count) into out[0..kChannels) (planar). Positions outside the timeline give silence.
+    // Mixes [pos, pos + count) into out[0..outputChannels()) (planar). Positions outside the timeline give silence.
     void render(int64_t pos, int count, float* const* out);
+    // When outputChannels() differs from channels(): the mix of the last render() in the mix's own format, before the
+    // conversion (planar, channel c at [c * count]); empty otherwise. The monitor plays the stereo downmix but measures
+    // loudness and true peak over all channels of the mix (what the export writes).
+    const std::vector<float>& lastMix() const;
 
     // Live (preview): takes over what the mixer panel changes – track fader, pan, mute/solo, EQ, compressor, master
     // fader, limiter ceiling – without starting over; gains glide to the new value within the next render().
     // false = the timeline differs in more than that (build a new mixer).
     bool updateMix(const Timeline& timeline);
     // Level meters (preview): peak of the last render() per audio track after fader/pan, L and R (linear, 0 =
-    // silent or muted). Off by default.
+    // silent or muted); in 5.1/7.1 L = the loudest of the left speakers, R of the right ones, centre and LFE count
+    // to both. Off by default.
     void setMetering(bool on);
     const std::vector<float>& trackPeaks() const;
+    // The same per stretch of `block` samples of the last render() (0 = off, the default): stretch b, track t,
+    // channel c at [(b * tracks + t) * 2 + c]; the last stretch may be shorter. Backwards playback shows the meters of
+    // a chunk block by block.
+    void setMeterBlock(int block);
+    const std::vector<float>& blockPeaks() const;
+    // Per speaker (0.23, the Studio's 5.1/7.1 meters): the peak of the last render() per audio track and channel of
+    // the mix (track t, channel c at [t * channels() + c], after fader and panner), then the master's channels after
+    // its fader and limiter at [tracks * channels() + c] – in the mix's own format, before any conversion (with
+    // Options::limitOutput and a downmix: before the limiter). Linear, with metering on; stereo: L, R as trackPeaks.
+    const std::vector<float>& channelPeaks() const;
+    // The same per stretch of setMeterBlock samples: stretch b at [b * (tracks + 1) * channels() ..]
+    const std::vector<float>& blockChannelPeaks() const;
+
+    // Backwards preview: chunks mixed forward one before the other, each a jump. With warm >= 0 a jump keeps the
+    // track EQ, compressor and master limiter where they were (their level goes on from the neighbouring chunk
+    // instead of starting over every chunk: no flutter at the chunk rate) and keeps the noise reduction and voice
+    // cleaning of a voice, which then listen only `warm` samples before the new position instead of up to half a
+    // second (no seek, little decoding per chunk). -1 (the default): every jump starts over, like the export.
+    void setChunked(int warm);
 
     // Counters for tests and the log
     struct Stats {
@@ -72,6 +117,7 @@ public:
         int readersOpened = 0;
         int missing = 0;     // sources that could not be opened (silent)
         int restarts = 0;    // render() calls that did not continue the previous one
+        int64_t warmed = 0;  // samples run through noise reduction/voice cleaning ahead of a jump (warm-up)
     };
     const Stats& stats() const;
 

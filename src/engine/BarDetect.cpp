@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/BarDetect.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "engine/video/Thumbnails.h"
 
@@ -224,7 +225,7 @@ std::optional<QRectF> readCache(const QString& path)
 
 } // namespace
 
-QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/bars"; }
+QString cacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/bars"; }
 
 bool hasBars(const QRectF& c) { return c.left() > 1e-4 || c.top() > 1e-4 || c.right() < 1 - 1e-4 || c.bottom() < 1 - 1e-4; }
 

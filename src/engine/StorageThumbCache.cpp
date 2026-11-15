@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/StorageThumbCache.h"
+#include "core/AppPaths.h"
 
 #include <QCryptographicHash>
 #include <QDate>
@@ -26,7 +27,7 @@ constexpr int kUnusedDays = 60;
 
 QString dir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/storage-thumbs");
+    return AppPaths::writable(QStandardPaths::CacheLocation) + QStringLiteral("/storage-thumbs");
 }
 
 QString fileFor(const QFileInfo& file)

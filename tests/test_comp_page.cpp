@@ -14,6 +14,7 @@
 #include "app/MainWindow.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
+#include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -303,6 +304,33 @@ int main(int argc, char** argv)
         CHECK(std::abs(Keys::valueAt(*c, p, 0) - 0.5) < 0.01);
     }
     dump(&w, "comp-inspector-mask");
+
+    // A polygon mask is its points: no position/size fields (they do nothing for it), rotation and points stay
+    if (Editor* editor = w.findChild<Editor*>(); CHECK(editor)) {
+        QString e;
+        CHECK(editor->setCompNodeValues(clipId, mask, {{"shape", "polygon"}}, &e));
+        settle();
+        for (const char* key : {"x", "y", "w", "h"})
+            Check::report(!page->inspector()->findChild<QLineEdit*>(QString("comp_param_") + key), "no box field on a polygon",
+                          __FILE__, __LINE__, key);
+        CHECK(page->inspector()->findChild<QLineEdit*>("comp_param_rotate") != nullptr);
+        CHECK(page->inspector()->findChild<QLineEdit*>("comp_param_p0x") != nullptr);
+        dump(&w, "comp-inspector-polygon");
+        undo->undo();
+        settle();
+        CHECK(page->inspector()->findChild<QLineEdit*>("comp_param_x") != nullptr); // a rectangle again
+    }
+    // A node's range end 0 = to the clip's end: shown as that, not as the time "0.00"
+    page->selectNode(merge);
+    settle();
+    if (auto* until = dynamic_cast<ScrubField*>(page->inspector()->findChild<QLineEdit*>("comp_param_until"));
+        CHECK(until)) {
+        CHECK_EQ(until->value(), 0.0);
+        CHECK_EQ(until->text(), T("Clipende"));
+        dump(&w, "comp-inspector-until");
+    }
+    page->selectNode(mask);
+    settle();
 
     // Ctrl+D: a copy of the mask with its values and keyframes
     page->setView(CompPage::View::Nodes);

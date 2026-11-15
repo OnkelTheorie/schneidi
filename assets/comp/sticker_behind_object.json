@@ -1,0 +1,30 @@
+{
+    "name": "Sticker behind an object",
+    "description": "A logo, picture or video in the scene that disappears behind a wall, a pillar or a car: one click on the object makes a mask of its even surface, the object stays in front and both follow a tracker.",
+    "name_de": "Sticker hinter Objekt",
+    "description_de": "Ein Logo, Bild oder Video in der Szene, das hinter einer Wand, einer Säule oder einem Auto verschwindet: ein Klick auf das Objekt macht aus seiner gleichfarbigen Fläche eine Maske, das Objekt bleibt davor und beides folgt einem Tracker.",
+    "name_en": "Sticker behind an object",
+    "description_en": "A logo, picture or video in the scene that disappears behind a wall, a pillar or a car: one click on the object makes a mask of its even surface, the object stays in front and both follow a tracker.",
+    "note": "Pick the object in front: {op:'pick_region', clip, at, point:[x, y], add:true} (0..1 of the picture; look with `frames` first) makes mask 6 the outline of the even surface you point at and puts tracker 2's point on structure at its edge; combine:'add' / 'subtract' adds or takes away another surface. Then {op:'track_node', clip, node:2} so sticker and mask stay in the scene when the camera moves. Check with `frames` {clip, node:7}.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 120},
+            {"id": 2, "type": "tracker", "x": 160, "y": 120, "params": {"mode": "point", "lost": "hold"}},
+            {"id": 3, "type": "media", "x": 0, "y": 240},
+            {"id": 4, "type": "transform", "x": 160, "y": 240, "params": {"x": 0.5, "y": 0.5, "size": 0.25, "follow": 2}},
+            {"id": 5, "type": "merge", "x": 320, "y": 60},
+            {"id": 6, "type": "mask", "x": 320, "y": 360, "params": {"shape": "polygon", "follow": 2, "soft": 1,
+                "p0x": 0.6, "p0y": 0.15, "p1x": 0.75, "p1y": 0.15, "p2x": 0.75, "p2y": 0.85, "p3x": 0.6, "p3y": 0.85}},
+            {"id": 7, "type": "merge", "x": 480, "y": 180}
+        ],
+        "links": [[1, 2, "src"], [3, 4, "src"], [2, 5, "bg"], [4, 5, "fg"], [5, 7, "bg"], [2, 7, "fg"], [6, 7, "mask"]],
+        "out": 7
+    },
+    "slots": {
+        "sticker": {"type": "media", "required": true, "description": "the logo, picture or video", "targets": ["3.path"]},
+        "x": {"type": "number", "description": "where it sits, 0..1 from the left", "targets": ["4.x"]},
+        "y": {"type": "number", "description": "where it sits, 0..1 from the top", "targets": ["4.y"]},
+        "size": {"type": "number", "description": "size of the sticker (1 = full picture)", "targets": ["4.size"]},
+        "soft": {"type": "number", "description": "soft edge of the object's outline in project pixels", "targets": ["6.soft"]}
+    }
+}

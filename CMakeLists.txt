@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.20.0 LANGUAGES CXX)
+project(schneidi VERSION 0.22.0 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
-set(SCHNEIDI_NEXT_VERSION 0.21.0)
+set(SCHNEIDI_NEXT_VERSION 0.23.0)
 
 # Build optimized when nothing is given (debug builds stutter in playback: own filters run per frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -143,12 +143,15 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/TitleLookJson.h      src/core/TitleLookJson.cpp
     src/core/I18n.h               src/core/I18n.cpp
     src/core/SettingsIsolation.h  src/core/SettingsIsolation.cpp
+    src/core/AppPaths.h           src/core/AppPaths.cpp
     src/core/CodeTrust.h          src/core/CodeTrust.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/ProxyChoice.h        src/core/ProxyChoice.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
+    src/core/VolumeDraw.h         src/core/VolumeDraw.cpp
+    src/core/Automation.h         src/core/Automation.cpp
     src/core/Accents.h            src/core/Accents.cpp
     src/core/SfxSynth.h           src/core/SfxSynth.cpp
     src/core/SfxWhoosh.h          src/core/SfxWhoosh.cpp
@@ -159,14 +162,17 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/SystemMemory.h       src/core/SystemMemory.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
+    src/core/CompTrack.h          src/core/CompTrack.cpp
     src/core/CompRecipes.h        src/core/CompRecipes.cpp
     src/core/CompRecipeText.cpp
     src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
+    src/core/ChannelLayout.h      src/core/ChannelLayout.cpp
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h
+    src/core/TaskProgress.h
     src/core/PathKey.h
     src/core/Selection.h
     src/core/PlaybackMeter.h
@@ -194,6 +200,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/GameHud.h            src/core/GameHud.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
+    src/core/EffectFavorites.h    src/core/EffectFavorites.cpp
     src/core/Presets.h            src/core/Presets.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
     src/core/TruePeak.h           src/core/TruePeak.cpp
@@ -201,6 +208,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Dynamics.h           src/core/Dynamics.cpp
     src/core/Equalizer.h          src/core/Equalizer.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
+    src/core/SourceBitrate.h      src/core/SourceBitrate.cpp
     src/core/ShortPick.h          src/core/ShortPick.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
@@ -212,6 +220,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Story.h              src/core/Story.cpp
     src/core/Voiceover.h          src/core/Voiceover.cpp
     src/core/Generators.h         src/core/Generators.cpp
+    src/core/Shapes.h             src/core/Shapes.cpp
+    src/core/Drawing.h            src/core/Drawing.cpp
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Beats.h              src/core/Beats.cpp
@@ -296,7 +306,10 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/CompNodesCore.cpp src/engine/picture/CompNodesMask.cpp src/engine/picture/CompNodesKey.cpp
     src/engine/picture/CompNodesTrack.cpp src/engine/picture/CompNodesStyle.cpp
     src/engine/picture/CompNodesText3d.cpp src/engine/text3d/Text3d.h src/engine/text3d/Text3d.cpp
+    src/engine/picture/CompCamera.h src/engine/picture/CompCamera.cpp
     src/engine/picture/TitleLook.h src/engine/picture/TitleLook.cpp
+    src/engine/picture/ShapePaint.h src/engine/picture/ShapePaint.cpp
+    src/engine/picture/DrawPaint.h src/engine/picture/DrawPaint.cpp
     src/engine/picture/CustomEffects.h src/engine/picture/FilterEffect.cpp src/engine/picture/ShaderEffect.cpp
     src/engine/picture/CustomEffectsClip.cpp
     src/core/Masks.h              src/core/Masks.cpp
@@ -314,8 +327,10 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/gpu/CompGpu.h src/engine/picture/gpu/CompGpu.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
+    src/engine/RegionPick.h       src/engine/RegionPick.cpp
     src/engine/TextRegions.h      src/engine/TextRegions.cpp
     src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
+    src/engine/KillFeedLines.h    src/engine/KillFeedLines.cpp
     src/engine/BarDetect.h        src/engine/BarDetect.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
@@ -341,9 +356,11 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindow.h          src/app/MainWindow.cpp
     src/app/LaunchArgs.h          src/app/LaunchArgs.cpp
     src/app/PageVisibility.h      src/app/PageVisibility.cpp
+    src/app/UiScale.h             src/app/UiScale.cpp
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
     src/app/MainWindowComp.cpp
+    src/app/MainWindowStudio.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
@@ -394,6 +411,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/VoiceoverRecorder.h src/app/VoiceoverRecorder.cpp
     src/app/WatchFoldersDialog.h src/app/WatchFoldersDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
+    src/app/HangWatch.h           src/app/HangWatch.cpp
     src/app/DisplayLoss.h         src/app/DisplayLoss.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 
@@ -408,6 +426,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
     src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
     src/ui/WheelGuard.h           src/ui/WheelGuard.cpp
+    src/ui/CompactButton.h        src/ui/CompactButton.cpp
     src/ui/ElidedLabel.h
     src/ui/SplitterMemory.h
     src/ui/FileManager.h          src/ui/FileManager.cpp
@@ -420,6 +439,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
+    src/ui/ShapeOverlay.h         src/ui/ShapeOverlay.cpp
+    src/ui/DrawOverlay.h          src/ui/DrawOverlay.cpp
     src/ui/TourOverlay.h          src/ui/TourOverlay.cpp
     src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp
     src/ui/comp/CompCanvas.h      src/ui/comp/CompCanvas.cpp
@@ -427,6 +448,10 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/comp/CompInspector.h   src/ui/comp/CompInspector.cpp
     src/ui/comp/CompOverlay.h     src/ui/comp/CompOverlay.cpp
     src/ui/comp/CompPage.h        src/ui/comp/CompPage.cpp
+    src/ui/studio/StudioPage.h    src/ui/studio/StudioPage.cpp
+    src/ui/studio/StudioTracks.h  src/ui/studio/StudioTracks.cpp
+    src/ui/studio/StudioMixer.h   src/ui/studio/StudioMixer.cpp
+    src/ui/studio/StudioTools.h   src/ui/studio/StudioTools.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp
@@ -454,6 +479,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelineCurves.cpp
     src/ui/timeline/TimelinePaint.cpp
     src/ui/timeline/TimelineMouse.cpp
+    src/ui/timeline/TimelineNodes.cpp
     src/ui/timeline/TimelineDrop.cpp
     src/ui/timeline/TimelineMenus.cpp
     src/ui/timeline/TimelineSubtitles.cpp
@@ -468,7 +494,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
 # is a known multiple of the vector width). OutputColor: 3.5 -> 1.6 ms per 1080p frame.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp src/engine/BlurFill.cpp
-                                src/engine/video/Compose.cpp
+                                src/engine/video/Compose.cpp src/engine/picture/ShapePaint.cpp
                                 src/engine/VideoEffects.cpp src/engine/ColorGrade.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 
@@ -598,7 +624,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
-    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp
+    src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp src/cli/EditOpsShape.cpp src/cli/EditOpsDraw.cpp
     src/cli/EditOpsCutout.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisKillFeed.cpp

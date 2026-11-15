@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/SfxSynth.h"
 
+#include "core/AppPaths.h"
 #include "core/SfxForge.h"
 #include "core/SfxWhoosh.h"
 
@@ -233,7 +234,7 @@ const QVector<Recorded>& recordedTable()
 
 QString recordedCachePath(const Recorded& r)
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/sfx/cc0/" + QFileInfo(r.file).fileName();
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/sfx/cc0/" + QFileInfo(r.file).fileName();
 }
 
 // The recording as a file of its own (FFmpeg reads files, not the program's resources); empty = could not
@@ -347,7 +348,7 @@ QString cachedFile(Kind kind, unsigned seed, double length)
     // kind-seed-<ms>ms[-a<asked ms>]-v<version>.wav; the sound is made only when the file is not there yet
     const Shape shape = shapeOf(kind, seed, length);
     const QString asked = length > 0 ? QString("-a%1").arg(std::lround(std::clamp(length, minLength(kind), maxLength(kind)) * 1000)) : QString();
-    const QString path = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+    const QString path = AppPaths::writable(QStandardPaths::CacheLocation)
                          + QString("/sfx/%1-%2-%3ms%4-v%5.wav")
                                .arg(kindName(kind))
                                .arg(seed)

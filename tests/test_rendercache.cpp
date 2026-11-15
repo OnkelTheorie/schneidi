@@ -24,6 +24,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QThread>
@@ -478,6 +479,64 @@ void testBackground()
     waitFor([] { return false; }, 500);
     CHECK(!rc.isRendering());
     CHECK(QFileInfo::exists(rc.path(f))); // rendered all the way: kept (the marking may come back by undo)
+    rc.clear();
+
+    // Paused by the user (the ✕ of its background job): rendering stops, what waits is forgotten, and it stays so
+    // while the timeline wants only what was paused - moving the clip, syncing again. A changed clip resumes.
+    Clip h = c;
+    h.in = 2;
+    Clip h2 = h;
+    h2.id = 2;
+    h2.start = 40;
+    h2.in = 3;
+    Timeline two = one(h);
+    two.video[0].clips << h2;
+    rc.sync(two);
+    CHECK(waitFor([&] { return rc.isRendering(); }, 5000));
+    CHECK_EQ(rc.currentName(), QFileInfo(g_media).fileName());
+    CHECK_EQ(rc.pendingNames(), QStringList{QFileInfo(g_media).fileName()}); // h2 waits
+    rc.pauseUntilChange();
+    CHECK(rc.isPaused());
+    CHECK(!rc.isRendering());
+    CHECK_EQ(rc.pendingCount(), 0);
+    CHECK(QDir(RenderCache::cacheDir()).entryList({"*.part.mov"}).isEmpty());
+    Timeline moved = two;
+    moved.video[0].clips[1].start = 60; // moving needs no new render
+    rc.sync(moved);
+    waitFor([] { return false; }, 2500); // longer than the rest before rendering
+    CHECK(rc.isPaused());
+    CHECK(!rc.isRendering());
+    CHECK(rc.resolve(h).isEmpty());
+    const QVector<RenderCache::Span> waiting = rc.spans(moved);
+    CHECK(waiting.size() == 2 && waiting[0].done == 0 && waiting[0].name == QFileInfo(g_media).fileName());
+    // Changed: resumes - the changed clip and the ones paused before
+    Timeline changedTl = moved;
+    changedTl.video[0].clips[1].in = 4;
+    rc.sync(changedTl);
+    CHECK(!rc.isPaused());
+    CHECK_EQ(rc.pendingCount(), 2);
+    CHECK(waitFor([&] { return !rc.resolve(h).isEmpty() && !rc.resolve(changedTl.video[0].clips[1]).isEmpty(); }, 60000));
+    // Nothing waits any more: no longer paused (the state said "paused" with all rendered)
+    rc.pauseUntilChange();
+    CHECK(rc.isPaused());
+    rc.sync(changedTl);
+    CHECK(!rc.isPaused());
+    // Clearing, resume() and another mode end a pause as well
+    Timeline third = changedTl;
+    third.video[0].clips[1].in = 5;
+    rc.sync(third);
+    rc.pauseUntilChange();
+    rc.clear();
+    CHECK(!rc.isPaused());
+    rc.pauseUntilChange();
+    rc.resume();
+    CHECK(!rc.isPaused());
+    rc.sync(third);
+    CHECK(rc.pendingCount() > 0);
+    rc.pauseUntilChange();
+    CHECK(rc.isPaused());
+    rc.setMode(RenderCache::Mode::Smart);
+    CHECK(!rc.isPaused());
     rc.clear();
 }
 

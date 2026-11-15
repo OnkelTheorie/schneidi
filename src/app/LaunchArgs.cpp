@@ -41,4 +41,35 @@ QStringList restart(const QString& projectPath)
     return args;
 }
 
+Info info(const QStringList& args)
+{
+    for (const QString& a : args) {
+        if (a == QLatin1String("--")) break; // file names after it
+        if (a == QLatin1String("--help") || a == QLatin1String("-h") || a == QLatin1String("-?")) return Info::Help;
+        if (a == QLatin1String("--version") || a == QLatin1String("-v")) return Info::Version;
+    }
+    return Info::None;
+}
+
+QString helpText(const QString& program, const QString& version)
+{
+    return QString("schneidi %1 - video editor\n"
+                   "\n"
+                   "Usage: %2 [options] [files or folders ...]\n"
+                   "\n"
+                   "Files are imported (a .schneidi project is opened); with schneidi already running they go to it.\n"
+                   "\n"
+                   "Options:\n"
+                   "  -h, --help          show this help and quit\n"
+                   "  -v, --version       show the version and quit\n"
+                   "  --open <file>       open or import a file (same as giving it alone)\n"
+                   "  --new-instance      open a window of its own even when schneidi already runs\n"
+                   "  --lang <code>       user interface language for this run (en, de, fr, ...)\n"
+                   "  --design <name>     colour design for this run\n"
+                   "  --verbose           also log FFmpeg warnings\n"
+                   "\n"
+                   "Editing from scripts and AIs: schneidi-cli --help\n")
+        .arg(version, program);
+}
+
 } // namespace LaunchArgs

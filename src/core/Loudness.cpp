@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Loudness.h"
 
+#include "core/ChannelLayout.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -44,12 +46,9 @@ void LoudnessMeter::configure(int channels, int rate)
         m_hp.a1 = 2.0 * (K * K - 1.0) / a0;
         m_hp.a2 = (1.0 - K / Q + K * K) / a0;
     }
-    // Channel weights: L/R/C = 1; for 5.1 (L R C LFE Ls Rs) LFE ignored, surround +1.5 dB
-    for (int c = 0; c < kMaxChannels; ++c) m_weight[c] = c < channels ? 1.0 : 0.0;
-    if (channels == 6) {
-        m_weight[3] = 0.0;
-        m_weight[4] = m_weight[5] = 1.41;
-    }
+    // Channel weights: L/R/C = 1; 5.1 (L R C LFE Ls Rs) and 7.1 (… Lrs Rrs Lss Rss): LFE ignored, surrounds +1.5 dB
+    for (int c = 0; c < kMaxChannels; ++c)
+        m_weight[c] = c >= channels ? 0.0 : channels == 6 || channels == 8 ? ChannelLayout::loudnessWeight(channels, c) : 1.0;
 }
 
 void LoudnessMeter::finishSubBlock()

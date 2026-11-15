@@ -18,10 +18,21 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPointer>
+#include <QRandomGenerator>
 #include <QTimer>
 #include <QUrl>
 
 #include <algorithm>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // std::min/std::max below
+#endif
+#include <windows.h>
+#else
+#include <filesystem>
+#include <system_error>
+#endif
 
 namespace Cli::Serve {
 
@@ -120,6 +131,59 @@ QString tooLongMessage(const QString& name)
         .arg(name.left(40));
 }
 
+// Where a QSaveFile for `target` writes. QSaveFile writes "<name>.XXXXXX" next to the target first (Windows, macOS;
+// Linux uses an unnamed file): a name close to the 255 limit has no room for that and opening failed ("cannot write"
+// with a 500 for a name the file system takes). Such a target is written under a short hidden name of the same
+// folder and renamed at the end (commitTo).
+QString writePath(const QString& target)
+{
+    const QFileInfo fi(target);
+#ifdef Q_OS_WIN
+    const qsizetype length = fi.fileName().size();
+#else
+    const qsizetype length = fi.fileName().toUtf8().size();
+#endif
+    if (length <= 240) return target;
+    return fi.absolutePath() + "/.schneidi-upload-" + QString::number(QRandomGenerator::global()->generate64(), 36);
+}
+
+} // namespace
+
+bool replaceFile(const QString& from, const QString& to)
+{
+#ifdef Q_OS_WIN
+    // QFile::rename does not replace an existing file. The long-path form (\\?\C:\..., \\?\UNC\server\...): a name
+    // near 255 characters makes the whole path longer than MAX_PATH.
+    const auto native = [](const QString& path) {
+        const QString plain = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+        return plain.startsWith("\\\\") ? "\\\\?\\UNC\\" + plain.mid(2) : "\\\\?\\" + plain;
+    };
+    const QString src = native(from), dst = native(to);
+    return MoveFileExW(reinterpret_cast<const wchar_t*>(src.utf16()), reinterpret_cast<const wchar_t*>(dst.utf16()),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+#else
+    // rename(2) replaces `to` atomically (never onto a folder)
+    std::error_code error;
+    std::filesystem::rename(std::filesystem::path(QFile::encodeName(from).toStdString()),
+                            std::filesystem::path(QFile::encodeName(to).toStdString()), error);
+    return !error;
+#endif
+}
+
+namespace {
+
+// Commits `file` (opened on writePath(target)) and puts it at `target`. A long name: the new file replaces the old one
+// in one step (replaceFile); when that fails (Windows: a virus scanner or the indexer has the old file open) the old
+// file is still there and only the new one goes.
+bool commitTo(QSaveFile& file, const QString& target)
+{
+    if (!file.commit()) return false;
+    if (file.fileName() == target) return true;
+    if (replaceFile(file.fileName(), target)) return true;
+    QFile::remove(file.fileName());
+    return false;
+}
+
 } // namespace
 
 // `givenPath` as the client wrote it: a trailing separator means a folder (normalizing drops it)
@@ -192,7 +256,7 @@ void Server::download(const QString& id)
     const QUrl url(j->args["url"].toString());
     const QString target = j->args["path"].toString();
     QDir().mkpath(QFileInfo(target).absolutePath());
-    auto file = std::make_unique<QSaveFile>(target);
+    auto file = std::make_unique<QSaveFile>(writePath(target));
     if (!file->open(QIODevice::WriteOnly)) {
         m_jobs->end(j, Mcp::toolError("WRITE_FAILED", "cannot write " + Sandbox::mapBack(target)));
         return;
@@ -244,7 +308,7 @@ void Server::download(const QString& id)
             m_jobs->end(job, Mcp::toolError("DOWNLOAD_FAILED", reply->errorString()));
         } else {
             out->write(reply->readAll());
-            if (!out->commit()) {
+            if (!commitTo(*out, target)) {
                 m_jobs->end(job, Mcp::toolError("WRITE_FAILED", "cannot write " + Sandbox::mapBack(target)));
                 return;
             }
@@ -324,7 +388,7 @@ void Server::filesHead(Http::Connection* c)
         return;
     }
     QDir().mkpath(fi.absolutePath());
-    Upload up{std::make_unique<QSaveFile>(target), fi.exists()};
+    Upload up{std::make_unique<QSaveFile>(writePath(target)), target, fi.exists()};
     if (!up.file->open(QIODevice::WriteOnly)) {
         c->respondJson(500, errorJson("WRITE_FAILED", "cannot write " + Sandbox::relative(target)), cors(r));
         return;
@@ -344,8 +408,8 @@ void Server::filesPutDone(Http::Connection* c)
     }
     Upload up = std::move(it->second);
     m_uploads.erase(it);
-    const QString target = up.file->fileName();
-    if (!up.file->commit()) {
+    const QString target = up.target;
+    if (!commitTo(*up.file, target)) {
         c->respondJson(500, errorJson("WRITE_FAILED", "cannot write " + Sandbox::relative(target)), cors(r));
         return;
     }

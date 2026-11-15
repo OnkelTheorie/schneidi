@@ -39,26 +39,20 @@ void fillInputMenu(QMenu* menu, const std::function<void()>& changed)
     menu->clear();
     auto* group = new QActionGroup(menu);
     const QString current = Voiceover::Settings::load().input;
-    auto add = [&](const QString& id, const QString& text) {
-        QAction* a = menu->addAction(text);
+    const QVector<VoiceoverRecorder::InputChoice> choices = VoiceoverRecorder::inputChoices();
+    for (int i = 0; i < choices.size(); ++i) {
+        const VoiceoverRecorder::InputChoice& c = choices[i];
+        QAction* a = menu->addAction(c.name);
         a->setCheckable(true);
-        a->setChecked(id == current);
+        a->setChecked(c.id == current);
         group->addAction(a);
+        const QString id = c.id;
         QObject::connect(a, &QAction::triggered, menu, [id, changed] {
-            Voiceover::Settings s = Voiceover::Settings::load();
-            s.input = id;
-            s.save();
+            VoiceoverRecorder::setInput(id);
             if (changed) changed();
         });
-    };
-    add(QString(), T("Systemstandard"));
-    menu->addSeparator();
-    bool found = current.isEmpty();
-    for (const Audio::Device::Output& o : Audio::Capture::inputs(Engine::audioDriver())) {
-        add(o.id, o.name);
-        found = found || o.id == current;
+        if (i == 0) menu->addSeparator(); // the system default above the devices
     }
-    if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
 }
 
 } // namespace
@@ -119,11 +113,7 @@ void MainWindow::setupVoiceover()
     });
     m_voiceoverEscape->setEnabled(false);
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
-        m_voiceoverEscape->setEnabled(on);
-        if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
-        // A window action bound to Esc gives it up while either one uses it (InputBindings::holdWindowKey)
-        InputBindings::instance().holdWindowKey("voiceover", "Esc", on);
-        if (m_largeEscape) InputBindings::instance().holdWindowKey("large_viewer", "Esc", m_largeEscape->isEnabled());
+        updateEscapeKeys(); // Esc ends the recording first
         if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input opens, the timeline not yet heard
         else {
             m_viewer->setRecording(false);

@@ -48,8 +48,9 @@ public:
     // Only look up, request nothing (for substitute images from coarser levels)
     QImage cachedThumbnail(const QString& path, int frame);
 
-    // Waveform (possibly still incomplete) or nullptr; requests it if needed. stream: audio stream of the file (0 = first)
-    std::shared_ptr<const Waveform> waveform(const QString& path, int stream = 0);
+    // Waveform (possibly still incomplete) or nullptr; requests it if needed. stream: audio stream of the file (0 =
+    // first); channels: only these channels of it (Clip::sourceChannels, channel routing; empty = all)
+    std::shared_ptr<const Waveform> waveform(const QString& path, int stream = 0, const QVector<int>& channels = {});
 
     // Project settings changed: frames count in the new frame rate, images in the new aspect ratio
     // -> discard everything computed (waveforms on disk are separated by frame rate)

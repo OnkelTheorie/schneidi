@@ -4,6 +4,7 @@
 #include "core/TimelineOps.h"
 #include "core/Types.h"
 
+#include <QHash>
 #include <QSize>
 #include <QWidget>
 #include <functional>
@@ -34,6 +35,8 @@ public:
     explicit Inspector(Editor* editor, QWidget* parent = nullptr);
     ~Inspector() override;
     void setFrameSize(const QSize& size);
+    // Builds the pages still waiting for their first use (title, transition, subtitles; see ensurePage)
+    void ensureAllPages();
 
 public slots:
     // Playhead (timeline frame): values show the interpolated value there, keyframes are set there
@@ -59,6 +62,8 @@ signals:
     void keyPickCancelled();
     // "Comp: N Knoten – Öffnen" of a clip with a compositing graph: show it on the Comp page
     void compOpenRequested(int clipId);
+    // "Malen" of a drawing title: the paint tool in the viewer on (MainWindow)
+    void drawToolRequested();
 
 private:
     using Field = std::function<double&(Clip&)>;
@@ -108,6 +113,10 @@ private:
     void endEffectDrag(bool apply);
     // Row with slider + number field
     // anim: animatable parameter -> keyframe diamonds on the right (field stays for non-animatable values)
+    // Undo steps of a slider: a drag (press to release) is one, and so is a click that sets it where it lands
+    // (absolute set) with the drag after it; a click into the groove (page step) is one of its own. Connect after the
+    // slider's valueChanged handler that applies the value.
+    void separateSliderSteps(QSlider* slider);
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
                      double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
     // Row with X/Y fields (like Zoom/Position in DaVinci); link = chain icon in between
@@ -140,6 +149,14 @@ private:
     // Section "Placeholder" of a template clip of `kind` (InspectorSlot.cpp): only shown for a placeholder
     void buildSlotSection(QVBoxLayout* page, TrackKind kind);
     void buildGeneratorSections(QVBoxLayout* page, const Section& outline);
+    // Shape title (0.22): kind, size, fill, spotlight, stroke reveal, tracker; showFor = shown for shapes only
+    void buildShapeSection(QVBoxLayout* page,
+                           const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor);
+    // Drawing title (0.22): strokes (count, clear, paint), reveal time, brush of new strokes, tracker
+    void buildDrawingSection(QVBoxLayout* page,
+                             const std::function<void(const Section&, std::function<bool(const TitleStyle&)>)>& showFor);
+    // Row "Folgt Tracker" of a shape or drawing (is: which titles it is for)
+    void addFollowRow(Section& sec, const std::function<bool(const TitleStyle&)>& is, const QString& tip);
     // Fill, 2.5D edge, shadow, glow of a text/counter title (TitleLook, 0.19)
     void buildLookSections(QVBoxLayout* page);
     void buildTransitionPage(QVBoxLayout* page);
@@ -154,10 +171,21 @@ private:
     // Sort effect sections into the render order of the shown clip: fixed stages first, then the clip's order
     void arrangeEffectSections();
     void refresh();
+    // Title, transition and subtitle pages are built on first use (the start does not need them): every path that shows
+    // or fills one calls this first. finishPage: the size rules for boxes, number fields and check boxes of a new page
+    void ensurePage(int page);
+    void finishPage(QWidget* root);
+    QHash<int, QVBoxLayout*> m_unbuilt; // page index -> its still empty layout
 
     Editor* m_editor;
+    // What the selection was when it last changed (Selection::changed also comes for keyframe diamonds only)
+    QSet<int> m_shownIds;
+    QHash<int, double> m_heightBeforeLine; // shape clip id -> its height before it became a line (back to it after)
+    TransitionKey m_shownTransition;
+    EditPoint m_shownEditPoint;
     QSize m_frameSize{1920, 1080};
     int m_playhead = 0;
+    bool m_valuesOnly = false; // refresh() from setPlayhead: no geometry update (see refresh)
     ElidedLabel* m_clipName; // a long file name ends in "…" (all of it in the tooltip), never widens the panel
     QLabel* m_empty;
     QWidget* m_content;

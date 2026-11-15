@@ -2,12 +2,16 @@
 // Timeline: drawing (ruler, tracks, clips, filmstrips, waveforms, headers, playhead).
 #include "ui/timeline/TimelineView.h"
 
+#include "core/Automation.h"
+
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/EffectFolders.h"
 #include "core/I18n.h"
 #include "core/EffectRegistry.h"
+#include "core/CompGraph.h"
+#include "core/CompTrack.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Project.h"
@@ -241,6 +245,21 @@ void TimelineView::drawTracks(QPainter& p)
             if (row.curve && curveParam(c)) drawCurveLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
+        // Track automation (Studio page): a thin line of what the track plays (fader + curve) across the row, also
+        // between the clips; edited on the Studio page, shown here so ripple edits never move it unseen
+        if (row.ref.kind == TrackKind::Audio && !track.volumeAuto.isEmpty() && row.h - row.lane > kClipBarH + 12) {
+            const QRect body(kHeaderW, row.y + 1 + kClipBarH, width() - kHeaderW, row.h - row.lane - 4 - kClipBarH);
+            QPolygonF line;
+            for (int x = kHeaderW; x < width(); x += 2) {
+                const double frame = std::max(0.0, xToFrame(x));
+                line << QPointF(x, volumeLineY(body, Automation::levelAt(track, frame)));
+            }
+            p.save();
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setPen(QPen(Theme::alpha(Theme::secondary, 200), 1.2));
+            p.drawPolyline(line);
+            p.restore();
+        }
         if (track.locked) { // locked: darkened and hatched like DaVinci
             p.setOpacity(1.0);
             const QRect area(kHeaderW, row.y, width() - kHeaderW, row.h - 1);
@@ -491,6 +510,20 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     p.setPen(Theme::control);
     p.drawRect(lane.adjusted(0, 0, -1, -1));
     p.setClipRect(lane.adjusted(-6, 0, 6, 0), Qt::IntersectClip);
+    // Where a tracker of the clip's compositing graph lost its point (gaps its followers do not bridge): red strokes
+    // along the lane's bottom (core/CompTrack.h)
+    if (const EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId)) {
+        CompGraph g;
+        if (Comp::graphOf(*e, &g))
+            for (const CompNode& n : g.nodes) {
+                if (n.type != QLatin1String(Comp::kTrackerType)) continue;
+                for (const Comp::TrackGap& gap : Comp::trackGaps(c, n.id)) {
+                    if (gap.bridged()) continue;
+                    const double x0 = frameToX(c.pos() + gap.from), x1 = frameToX(c.pos() + std::min(gap.to + 1, c.length()));
+                    p.fillRect(QRectF(x0, lane.bottom() - 3, std::max(2.0, x1 - x0), 3), Theme::warning);
+                }
+            }
+    }
     p.setRenderHint(QPainter::Antialiasing);
     const double y = lane.center().y() + 0.5;
     // selected last, so they lie above others while dragging
@@ -732,6 +765,9 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
     }
 
+    // Time ranges of compositing nodes (bars at the bottom, TimelineNodes.cpp)
+    if (!ghost && kind == TrackKind::Video) drawNodeBars(p, r, c);
+
     // Keyframe icon bottom right (like DaVinci): click opens the keyframe lane
     if (!ghost && r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c)) {
         const QRectF k = keyIconRect(r);
@@ -853,7 +889,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
                                 const QVector<TimelineOps::TransitionSpan>& spans, const QColor& color)
 {
     if (!m_cache) return;
-    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream);
+    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream, c.sourceChannels);
     if (!wave || wave->levels.isEmpty()) return;
 
     constexpr int N = Waveform::kBucketsPerFrame;

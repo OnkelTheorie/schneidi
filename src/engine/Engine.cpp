@@ -142,8 +142,10 @@ Engine::Engine(QObject* parent)
         if (!m_renderer) return;
         m_renderCache->sync(m_built);
         // Paused: the still again. Playing: newly drawn frames take the correction (a refresh drops the frames
-        // prepared ahead - a hitch for each analysis that finishes)
+        // prepared ahead - a hitch for each analysis that finishes), but the frames kept for stepping back are of
+        // before: forgotten, or stepping back after the stop showed them unstabilized
         if (m_mode == Mode::Timeline && m_speed == 0.0) refresh();
+        else if (m_pump) m_pump->forgetRecent();
     });
     // ... with the recently shown frames (up to 192 MB): stepping back after a pause renders again
     connect(m_idleRelease, &IdleRelease::releasing, this, [this] {
@@ -536,6 +538,10 @@ Picture::Options Engine::previewOptions(const QSize& output) const
     o.renderCache = [resolved](const Clip& c) { return resolved->cached(c); };
     o.gradeBypass = m_gradeBypass;
     o.parallelFrames = m_pump ? m_pump->workers() : 1;
+    // From a rendering thread: the signal is queued to the receivers (the window names the file)
+    o.sourceLost = [self = QPointer<Engine>(const_cast<Engine*>(this))](const QString& path) {
+        if (self) emit self->sourceLost(path);
+    };
     return o;
 }
 
@@ -1026,6 +1032,7 @@ void Engine::setSpeed(double speed)
         seek(looping() && m_mode == Mode::Timeline && m_loopIn < lastFrame() ? m_loopIn.load() : 0);
     }
     const bool wasPlaying = m_speed != 0.0;
+    if (!wasPlaying && speed != 0.0) retryLostSources();
     const double before = m_speed;
     m_speed = speed;
     // The pump goes on from the shown frame first (nothing from before is shown after this), then the sound
@@ -1059,6 +1066,7 @@ void Engine::seek(int frame)
     const bool playing = m_speed != 0.0;
     // Stopped and the last seek moments ago: scrubbing (dragging, a held arrow key)
     const bool scrub = !playing && m_lastSeek.isValid() && m_lastSeek.elapsed() < kScrubMs;
+    retryLostSources(); // before the pump renders the new frame
     m_pump->seek(at, scrub); // first: no frame from before the jump is shown after this
     ++m_seekEpoch; // then: a frame shown while the pump was being told carries the old epoch and is dropped
     if (playing) {
@@ -1076,6 +1084,17 @@ void Engine::seek(int frame)
     stopAtEnd(); // a click behind the end while playing: nothing to show there, stop instead of playing over nothing
 }
 
+void Engine::syncRenderCache()
+{
+    if (m_renderer) m_renderCache->sync(m_built);
+}
+
+void Engine::retryLostSources()
+{
+    if (m_renderer) m_renderer->retryLost();
+    if (m_sourceRenderer) m_sourceRenderer->retryLost();
+}
+
 Picture::Pump::Stats Engine::pictureStats() const
 {
     return m_pump ? m_pump->stats() : Picture::Pump::Stats{};
@@ -1089,11 +1108,17 @@ int Engine::timelineFramesOnGpu() const
 void Engine::emitLevels()
 {
     // Peaks of what was heard since the last frame
-    const std::vector<float> peaks = m_player->takeLevels();
+    std::vector<float> speakers;
+    const std::vector<float> peaks = m_player->takeLevels(&speakers);
     if (peaks.empty()) return;
-    QVector<float> levels;
-    levels.reserve(int(peaks.size()));
-    for (const float p : peaks) levels << (p > 1e-10f ? 20.f * std::log10(p) : -200.f);
+    const auto toDb = [](const std::vector<float>& linear) {
+        QVector<float> db;
+        db.reserve(int(linear.size()));
+        for (const float p : linear) db << (p > 1e-10f ? 20.f * std::log10(p) : -200.f);
+        return db;
+    };
+    const QVector<float> levels = toDb(peaks);
     emit audioLevels(levels); // queued -> UI thread
+    emit audioSpeakerLevels(speakers.empty() ? levels : toDb(speakers));
 }
 

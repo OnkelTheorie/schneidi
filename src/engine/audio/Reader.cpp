@@ -113,6 +113,9 @@ struct Reader::Impl {
     bool zeroKnown = false;
     int outRate = 48000;
     int outChannels = 0;
+    bool channelsDecided = false; // outChannels fixed at the first frame (Options::stereoBelow, pick)
+    bool stereoBelow = false;
+    std::vector<int> pick;
     StreamInfo info;
     Stats stats;
     bool error = false;
@@ -305,10 +308,19 @@ struct Reader::Impl {
             av_channel_layout_default(&inLayout, std::max(1, f->ch_layout.nb_channels));
         else
             av_channel_layout_copy(&inLayout, &f->ch_layout);
+        if (!channelsDecided) {
+            channelsDecided = true;
+            if (!pick.empty()) outChannels = 2;
+            else if (stereoBelow && outChannels > 2 && inLayout.nb_channels <= 2) outChannels = 2;
+        }
         if (outChannels <= 0) outChannels = inLayout.nb_channels;
         if (outLayout.nb_channels != outChannels) {
             av_channel_layout_uninit(&outLayout);
-            if (inLayout.nb_channels == outChannels) av_channel_layout_copy(&outLayout, &inLayout);
+            // 5.1 and 7.1 in the mix's order (core/ChannelLayout.h): FFmpeg's "5.1" (back pair, its default for six
+            // channels is the side pair) and "7.1"; FFmpeg maps a side pair to the back pair and back
+            if (outChannels == 6) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_5POINT1_BACK);
+            else if (outChannels == 8) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_7POINT1);
+            else if (inLayout.nb_channels == outChannels) av_channel_layout_copy(&outLayout, &inLayout);
             else av_channel_layout_default(&outLayout, outChannels);
         }
         if (swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLTP, outRate, &inLayout, AVSampleFormat(f->format),
@@ -321,7 +333,26 @@ struct Reader::Impl {
         // Channels without positions (no standard layout for that count: a 64-channel recorder track) give FFmpeg
         // nothing to mix by, and swr_init failed: silence. Own matrix: input channel i goes to output i % out, every
         // output the mean of its inputs (fewer inputs than outputs: the inputs repeat).
-        if (inLayout.order == AV_CHANNEL_ORDER_UNSPEC && inLayout.nb_channels != outChannels) {
+        if (!pick.empty()) {
+            // Picked channels (routing): the first to the left, the second to the right; one alone in the middle
+            // (-3 dB each side, like FFmpeg's mono -> stereo). A channel the stream does not have stays silent.
+            const int in = inLayout.nb_channels;
+            std::vector<double> matrix(size_t(in) * 2, 0.0);
+            const auto set = [&](int row, int ch, double g) {
+                if (ch >= 0 && ch < in) matrix[size_t(row) * size_t(in) + size_t(ch)] = g;
+            };
+            if (pick.size() == 1) {
+                set(0, pick[0], 0.70710678118654752440);
+                set(1, pick[0], 0.70710678118654752440);
+            } else {
+                set(0, pick[0], 1.0);
+                set(1, pick[1], 1.0);
+            }
+            if (swr_set_matrix(swr, matrix.data(), in) < 0) {
+                swr_free(&swr);
+                return false;
+            }
+        } else if (inLayout.order == AV_CHANNEL_ORDER_UNSPEC && inLayout.nb_channels != outChannels) {
             const int in = inLayout.nb_channels, out = outChannels;
             std::vector<double> matrix(size_t(in) * size_t(out), 0.0);
             for (int o = 0; o < out; ++o) {
@@ -816,6 +847,9 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     Impl& d = *r->d;
     d.outRate = options.rate > 0 ? options.rate : 48000;
     d.outChannels = options.channels;
+    d.stereoBelow = options.stereoBelow;
+    d.pick = options.pick;
+    if (d.pick.size() > 2) d.pick.resize(2);
     int e = OpenMedia::input(&d.fmt, path.toUtf8().constData());
     if (e < 0) return fail(errorText(e));
 

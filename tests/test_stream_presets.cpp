@@ -669,7 +669,7 @@ void testCliFollowsPresets(const QString& dir)
         ProjectData d;
         d.timeline = emptyTimeline();
         p.load(d);
-        p.addMedia(obs("/x/obs.mkv", 100, kObs));
+        p.addMedia(obs(Check::absPath("/x/obs.mkv"), 100, kObs)); // as the CLI makes the op's path absolute
         QString error;
         CHECK(ProjectFile::save(p.data(), path, &error));
     }

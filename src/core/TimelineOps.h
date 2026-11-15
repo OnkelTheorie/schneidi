@@ -221,4 +221,9 @@ bool sameNested(const Timeline& a, const Timeline& b);
 // Is the file anywhere on a video track? (e.g. only rebuild the preview if a proxy belongs to it)
 bool usesMediaOnVideo(const Timeline& tl, const QString& path);
 
+// Where the track with `uid` (Track::uid) is now in `tracks` (a window bound to a track follows it when tracks are
+// added, removed or reordered, by hand or by undo); -1 = gone. `index` = where it was: kept when a copy of the track
+// (same uid) lies elsewhere too.
+int followTrack(const QVector<Track>& tracks, quint64 uid, int index);
+
 } // namespace TimelineOps

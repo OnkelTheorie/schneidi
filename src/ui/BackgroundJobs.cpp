@@ -161,7 +161,10 @@ void BackgroundJobs::refresh()
     }
     m_bar->setVisible(!shown->done && !shown->job.notice);
     m_cancel->setVisible(!shown->done && bool(shown->job.cancel));
-    m_cancel->setToolTip(shown->done ? QString() : shown->job.notice ? T("Meldung schließen") : T("Abbrechen"));
+    m_cancel->setToolTip(shown->done                          ? QString()
+                         : !shown->job.cancelToolTip.isEmpty() ? shown->job.cancelToolTip
+                         : shown->job.notice                   ? T("Meldung schließen")
+                                                               : T("Abbrechen"));
     m_text->setStyleSheet(QString("color: %1;").arg((shown->job.notice ? Theme::warning : Theme::textDim).name()));
     show();
 }

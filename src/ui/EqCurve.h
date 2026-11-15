@@ -15,7 +15,21 @@ public:
 
     // Where band `band` (0..5) is drawn (widget coordinates)
     QPointF pointFor(int band) const;
-    QSize sizeHint() const override { return {480, 220}; }
+    // The window's track moved (tracks added/removed/reordered): draw and edit that one
+    void setTrack(int track)
+    {
+        m_track = track;
+        m_drag = -1;
+        update();
+    }
+    // Small (Studio page mixer strips): no scale labels, smaller points without numbers
+    void setCompact(bool on)
+    {
+        m_compact = on;
+        setMinimumSize(on ? QSize(80, 40) : QSize(320, 160)); // the full size is the constructor's
+        update();
+    }
+    QSize sizeHint() const override { return m_compact ? QSize(140, 56) : QSize(480, 220); }
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -36,4 +50,5 @@ private:
     int m_track;
     int m_drag = -1;  // band being dragged
     QPointF m_grab;   // mouse minus band point at the press (the point stays under the mouse)
+    bool m_compact = false;
 };

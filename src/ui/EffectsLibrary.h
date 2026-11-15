@@ -5,19 +5,25 @@
 #include "core/EffectFolders.h"
 
 #include <QHash>
+#include <QKeySequence>
 #include <QPixmap>
 #include <QWidget>
+#include <functional>
 
 class QFileSystemWatcher;
 class QLineEdit;
 class QTimer;
 class QListWidget;
 class QTreeWidget;
+class QUndoStack;
 
-// Effects Library (Edit page like DaVinci): on the left categories (Toolbox → Video Transitions, Audio Transitions,
-// Titles; Open FX → Filters; Presets (Shotcut/Kdenlive); LUTs and gradient wipes → each Bundled/Custom, Custom = effects folder,
-// its subfolders as subcategories), on the right the entries with preview icon. Categories can be collapsed
-// (saved). "Import effects…" opens the effects folder, new files appear on their own. Dragging onto a cut/clip edge creates
+// Effects Library (Edit page): on the left categories (Favourites, Recently used; Transitions → Video, Audio, gradient
+// wipes; Titles; Shapes & drawing; Video effects and Audio effects → their purpose (EffectCategory, the registry's);
+// LUTs; Sounds; Compositing recipes; Presets (Shotcut/Kdenlive); bundled/custom below those with files, custom = effects
+// folder, its subfolders as subcategories), on the right the entries with preview icon, under small group headers
+// where a category shows several groups. The search looks through everything and names each hit's group. Categories
+// can be collapsed (saved). Favourites: context menu or key F on an entry (a star on its icon), recently used = the
+// last entries applied (double-click or a drop that was taken; core/EffectFavorites). "Import effects…" opens the effects folder, new files appear on their own. Dragging onto a cut/clip edge creates
 // the transition, "Text" ends up as a title on the video track, a filter on a video clip attaches the effect;
 // double-click applies the entry at the playhead/to the selection. "Klänge" (effect sounds of op 'sfx': built-in
 // recordings and computed ones, installed sound packs, the user's own folder): double-click = listen, dragging into
@@ -37,6 +43,15 @@ public:
     static constexpr const char* SoundMimeType = "application/x-schneidi-sound";
     // The file a sound entry plays (built-in: made into the cache on first use); empty = none
     static QString soundFile(const QByteArray& data);
+    // Every effect sound as a plain entry (the Studio page's browser): the built-in recordings and computed ones, the
+    // installed packs, the user's folder - in the library's order. data = the drag data (SoundMimeType), group = where
+    // it comes from ("Mitgeliefert", "Pakete", "Eigene", shown language)
+    struct SoundEntry {
+        QString name, group, tip;
+        QByteArray data;
+        bool own = false;
+    };
+    static QVector<SoundEntry> soundEntries();
 
     explicit EffectsLibrary(QWidget* parent = nullptr);
 
@@ -47,20 +62,39 @@ public:
     void showRecipes();
     bool exportRecipe(const QString& id, const QString& zipPath, QString* err = nullptr);
     QString importRecipe(const QString& zipPath, QString* err = nullptr);
+    // The paint tool's key, shown in the "Malen" entry ("Malen (P)"); empty = none
+    void setDrawShortcut(const QKeySequence& key);
+    // Favourite of the list entry with this data (tests; the user: context menu, key F)
+    void toggleFavorite(const QString& data);
+    // The history a double-click's change lands in (MainWindow: the project's undo stack): an entry counts as
+    // recently used only when applying it pushed a step. Not set (tests): every double-click counts
+    void setHistory(std::function<QUndoStack*()> history);
     QListWidget* list() const { return m_list; } // tests
+    qsizetype cachedIconCount() const { return m_icons.size(); } // tests
 
 signals:
     void transitionRequested(TrackKind kind, const TransitionStyle& style);
     void titleRequested(int kind); // TitleKind
     void effectRequested(const QString& effectId);
     void soundPreviewRequested(const QString& file); // double-click on a sound: hear it (nothing is placed)
+    void shapeRequested(const QString& kindId);       // a shape title of this kind ("arrow") at the playhead
+    void drawRequested();                             // "Malen": the paint tool on
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void rebuild();
     void rescanFolders(); // re-read custom LUTs/transitions (folder changed), subcategories anew
     void fillGroups(class QTreeWidgetItem* root, int groupCategory, const QVector<EffectFolders::LutEntry>& entries);
     QPixmap fileIcon(const QString& path, bool lut, QString* error); // LUT: sample image, transition: A -> B
+    // Drawn icons (transitions, filters, titles, sounds, recipes) per entry key, made once: typing in the search
+    // rebuilds the list on every key, the icons are reused (the filter icons render a picture each)
+    const QPixmap& cachedIcon(const QString& key, const std::function<QPixmap()>& make);
     void saveCollapsed();
+    void applyEntry(const QString& data); // what a double-click does (signals)
+    void noteUsed(const QString& data); // recently used (and the list anew when it is shown)
+    void rebuildKeepingPlace();         // rebuild with the same entry selected and the same scroll position
     struct PresetEntry {
         qint64 stamp = 0;
         QString name, tip;
@@ -86,4 +120,10 @@ private:
     };
     QHash<QString, IconEntry> m_lutIcons;
     QHash<QString, PresetEntry> m_presets;
+    QHash<QString, QPixmap> m_icons; // cachedIcon
+    QString m_drawKey;
+    std::function<QUndoStack*()> m_history;
+    // Files of the installed sound packs (read once per change of the packs folder, not on every search key)
+    QVector<EffectFolders::LutEntry> m_packSounds;
+    qint64 m_packSoundsStamp = -1;
 };

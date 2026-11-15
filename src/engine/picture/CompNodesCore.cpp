@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Compositing node kinds of package A (0.19): clip, media, color, gradient, merge, transform, crop, blur, grade, fx
 #include "engine/picture/CompNodes.h"
+#include "engine/picture/CompCamera.h"
 
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
@@ -176,12 +177,18 @@ bool evalMerge(NodeCtx& ctx, Buf* out)
 // Where the transform puts the source: anchor (ax, ay of the picture) to (x, y), scaled by size, turned by angle
 // (clockwise); with "follow" the tracker carries that placement by the follow rule (core/CompTrack.h): moved by the
 // tracker's (x, y) - (rx, ry), scaled by its scale and turned by its angle around (x, y). Not analyzed = unchanged
-Compose::Affine transformOf(NodeCtx& ctx, bool* identity)
+// seen (may be null): the tracker's visibility 0..1 (a lost point fades the follower out), 1 without one
+Compose::Affine transformOf(NodeCtx& ctx, bool* identity, double* seen = nullptr)
 {
     const double W = ctx.size.width(), H = ctx.size.height();
     double x = ctx.num("x"), y = ctx.num("y"), size = ctx.num("size"), angle = ctx.num("angle");
     const int follow = ::Comp::followId(ctx.num("follow"));
+    if (seen) *seen = 1;
     if (follow > 0 && ctx.numOf) {
+        if (seen) {
+            const double v = ctx.numOf(follow, ::Comp::kSeenKey);
+            *seen = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 1.0;
+        }
         double ts = ctx.numOf(follow, "scale");
         ts = ts > 0 && std::isfinite(ts) ? ts : 1.0;
         double ta = ctx.numOf(follow, "angle");
@@ -223,18 +230,28 @@ QVector<EffectParam> visibleRangeParams()
     };
 }
 
+QVector<EffectParam> rangeParams()
+{
+    return {
+        // Like visibleRangeParams, for a node that changes a picture (outside its range it hands its input on)
+        {"from", T("Wirkt ab"), {}, EffectParam::Double, 0.0, -36000.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, ab denen der Knoten wirkt; davor reicht er sein Bild unverändert weiter (Knopf „Hier“: der Abspielkopf)")},
+        {"until", T("Wirkt bis"), {}, EffectParam::Double, 0.0, -36000.0, 36000.0, AnimParam::Count, 0.01, 2, {},
+         T("Sekunden ab Clipanfang, bis zu denen der Knoten wirkt; 0 = bis zum Ende (Knopf „Hier“: der Abspielkopf)")},
+    };
+}
+
 double visibleWeight(const NodeCtx& ctx)
 {
-    const double from = std::max(0.0, ctx.num("from")), until = ctx.num("until");
-    if (until < 0) return 0.0;               // over before the clip's start (its head was trimmed or cut off)
-    if (from <= 0 && until <= 0) return 1.0; // the whole clip
-    const double s = ctx.t / std::max(1.0, ctx.fps), fade = std::max(0.0, ctx.num("fade"));
-    const double end = until > 0 ? until : 1e12;
-    if (s < from || s >= end || end <= from) return 0.0;
+    const double from = ctx.num("from"), until = ctx.num("until");
+    const double s = ctx.t / std::max(1.0, ctx.fps);
+    if (!::Comp::inRange(from, until, s)) return 0.0; // the shared rule (core/CompGraph.h), also for every other node
+    if (from <= 0 && until <= 0) return 1.0;          // the whole clip
+    const double fade = std::max(0.0, ctx.num("fade"));
     double w = 1.0;
     if (fade > 0) {
         if (from > 0) w = std::min(w, (s - from) / fade);
-        if (until > 0) w = std::min(w, (end - s) / fade);
+        if (until > 0) w = std::min(w, (until - s) / fade);
     }
     return std::clamp(w, 0.0, 1.0);
 }
@@ -262,8 +279,15 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
     const Buf* src = ctx.input("src");
     if (!src || src->kind != Buf::Rgba) return false;
     bool identity = false;
-    const Compose::Affine m = transformOf(ctx, &identity);
+    double seen = 1;
+    const Compose::Affine m = transformOf(ctx, &identity, &seen);
     *out = ctx.take(Buf::Rgba);
+    if (seen <= 0) return true; // the tracked point is lost: the follower is gone (transparent)
+    // In a camera's space (0.22): the placement then the camera's map of its depth, one projective draw
+    Compose::Homography cam;
+    bool camHidden = false;
+    const bool camera = layerCamera(ctx, &cam, &camHidden);
+    if (camera && camHidden) return true; // behind the camera: nothing
     // Clamped like a clip's tilt (a hand-edited project may hold 90: edge-on, a degenerate quad)
     const double tiltX = std::clamp(ctx.num("tilt_x"), -89.0, 89.0), tiltY = std::clamp(ctx.num("tilt_y"), -89.0, 89.0);
     if (std::abs(tiltX) > 1e-6 || std::abs(tiltY) > 1e-6) { // tilted in depth: a projective draw around the position
@@ -271,15 +295,25 @@ bool evalTransform(NodeCtx& ctx, Buf* out)
         const double ax = ctx.num("ax") * ctx.size.width(), ay = ctx.num("ay") * ctx.size.height();
         Compose::Homography h;
         if (Compose::tilted(m, src->w, src->h, m.a * ax + m.b * ay + m.c, m.d * ax + m.e * ay + m.f, tiltX, tiltY,
-                            std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h))
-            Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, 1.0);
+                            std::clamp(ctx.num("fov"), 5.0, 120.0), out->w, out->h, &h)) {
+            if (camera) h = Compose::multiply(cam, h);
+            // The placed picture may reach beyond the frame: all of it in front of the camera, else nothing (card alike)
+            if (!camera || inFront(h, src->w, src->h))
+                Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, seen);
+        }
+        return true;
+    }
+    if (camera) {
+        const Compose::Homography h = Compose::multiply(cam, {{m.a, m.b, m.c, m.d, m.e, m.f, 0, 0, 1}});
+        if (inFront(h, src->w, src->h)) Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, h, seen);
         return true;
     }
     if (identity) {
         copyBuf(*src, *out);
+        fadeContent(*out, seen);
         return true;
     }
-    Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, m, 1.0);
+    Compose::draw(out->data(), out->w, out->h, src->data(), src->w, src->h, m, seen);
     return true;
 }
 
@@ -339,18 +373,9 @@ bool evalBlur(NodeCtx& ctx, Buf* out)
 constexpr const char* kWheels[] = {"lift", "gamma", "gain", "offset"};
 constexpr const char* kWheelParts[] = {"y", "r", "g", "b"};
 
-// Loaded LUTs by path (read-only once loaded; shared by every render like the Renderer's own LUT cache)
-std::shared_ptr<const ColorGrade::Lut> lutOf(const QString& path)
-{
-    static std::mutex mutex;
-    static std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
-    std::lock_guard lock(mutex);
-    if (auto it = luts.find(path); it != luts.end()) return it->second;
-    auto l = ColorGrade::loadLut(path);
-    if (luts.size() > 16) luts.clear();
-    luts.emplace(path, l);
-    return l;
-}
+// Loaded LUTs by path: loadLut keeps them and reads a file again once its time or size changed (an own cache by path
+// kept an overwritten LUT, or a missing one after its drive was mounted, for the program's life)
+std::shared_ptr<const ColorGrade::Lut> lutOf(const QString& path) { return ColorGrade::loadLut(path); }
 
 // Baked tables by values + LUT (baking costs more than applying at preview size; a static correction bakes once).
 // The entry holds its LUT, so a LUT's address cannot be reused by another while it is here

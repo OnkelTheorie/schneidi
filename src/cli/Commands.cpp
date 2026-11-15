@@ -6,6 +6,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/Captions.h"
 #include "core/Editor.h"
@@ -52,6 +53,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 
 namespace Cli {
 
@@ -114,6 +116,7 @@ int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
         // "HH:MM:SS;FF" at 29.97/59.94: drop-frame timecode (cameras, ffprobe, other editors), not a separator
         if (semicolon >= 0 && Timecode::isDropFrameRate(fmt.rate.num, fmt.rate.den))
             frames = Timecode::dropFrameNumber(v[0], v[1], v[2], v[3], timebase);
+        if (frames < 0) bad("is too long"); // dropFrameNumber: -1 beyond 100000 hours (was taken as frame -1)
     } else {
         for (int i = 1; i < v.size(); ++i)
             if (v[i] >= 60) bad("has minutes or seconds above 59");
@@ -123,6 +126,22 @@ int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
     const double total = timecode ? double(frames) : std::round(seconds * fmt.rate.fps());
     if (total > 2e9) bad("is too long");
     return int(total);
+}
+
+// A number given as text (--gain 1.5): "." is the decimal point; a lone "," is a decimal comma too ("1,5" = 1.5 -
+// German writing, as in times "6,95s"). No thousands separators: QLocale::c() read "1,500" as 1500. "1,500" itself
+// (one comma, three digits after it) is refused: in English it is 1500, in German 1.5 - neither is guessed
+double numberFromText(const QString& text, bool* ok, const QString& what)
+{
+    QString t = text.trimmed();
+    static const QRegularExpression ambiguous(R"(^[+-]?\d{1,3},\d{3}$)");
+    if (ambiguous.match(t).hasMatch())
+        fail("BAD_ARGUMENT", QString("%1: '%2' is ambiguous (thousands separator or decimal comma?); write %3 or %4")
+                                 .arg(what, t, QString(t).remove(','), QString(t).replace(',', '.')));
+    if (t.count(',') == 1 && !t.contains('.')) t.replace(',', '.');
+    QLocale c = QLocale::c();
+    c.setNumberOptions(QLocale::RejectGroupSeparator);
+    return c.toDouble(t, ok);
 }
 
 } // namespace
@@ -176,18 +195,72 @@ ProjectFormat parseFormat(const QJsonObject& a, ProjectFormat f)
     if (a.contains("height")) f.height = a["height"].toInt();
     if (f.width < 16 || f.height < 16 || f.width > 8192 || f.height > 8192 || f.width % 2 || f.height % 2)
         fail("BAD_ARGUMENT", "width/height must be even numbers between 16 and 8192");
-    if (a.contains("fps")) {
-        const double fps = a["fps"].toDouble();
-        if (fps < 1 || fps > 120) fail("BAD_ARGUMENT", "fps must be between 1 and 120");
-        f.rate = nearestFrameRate(fps);
-    }
+    if (a.contains("fps")) f.rate = projectFrameRate(a["fps"].toDouble());
     return f;
+}
+
+namespace {
+
+// The rates a user may type: the standard rates, plus high frame rates of cameras and phones (48 for cinema HFR,
+// 100/120 for slow motion; the engine plays and renders any rate, the lists in the app only offer the standard
+// ones), for an export also the small ones (10/12/15 for GIFs and small files). Ascending
+QVector<FrameRate> offeredRates(bool exportRates)
+{
+    static const FrameRate high[] = {{48, 1}, {100, 1}, {120, 1}};
+    QVector<FrameRate> rates(std::begin(kFrameRates), std::end(kFrameRates));
+    for (const FrameRate& r : high) rates << r;
+    if (exportRates)
+        for (const FrameRate& r : kExportOnlyRates) rates << r;
+    std::sort(rates.begin(), rates.end(), [](const FrameRate& x, const FrameRate& y) { return x.fps() < y.fps(); });
+    return rates;
+}
+
+std::optional<FrameRate> findRate(double fps, bool exportRates)
+{
+    // 29.97 and 23.976 as written by hand (30000/1001 = 29.97003, 24000/1001 = 23.976)
+    for (const FrameRate& r : offeredRates(exportRates))
+        if (std::abs(r.fps() - fps) < 0.01) return r;
+    return std::nullopt;
+}
+
+[[noreturn]] void refuseRate(double fps, bool exportRates, const QString& what)
+{
+    QStringList allowed;
+    for (const FrameRate& r : offeredRates(exportRates))
+        allowed << (r.isInteger() ? QString::number(r.num) : QString::number(r.fps(), 'f', r.num == 24000 ? 3 : 2));
+    // Never snapped to another rate in silence (12 became 23.976, 120 became 60)
+    fail("BAD_ARGUMENT", QString("%1 %2 is not a frame rate schneidi offers; use one of %3")
+                             .arg(what)
+                             .arg(fps)
+                             .arg(allowed.join(", ")));
+}
+
+} // namespace
+
+FrameRate projectFrameRate(double fps, const QString& what)
+{
+    if (const auto r = findRate(fps, false)) return *r;
+    refuseRate(fps, false, what);
+}
+
+FrameRate exportFrameRate(double fps)
+{
+    if (const auto r = findRate(fps, true)) return *r;
+    refuseRate(fps, true, "fps");
+}
+
+FrameRate templateFrameRate(double fps)
+{
+    if (const auto r = findRate(fps, true)) return *r;
+    // A template file's own rate (only lengths are counted with it): kept to a thousandth, never another rate
+    return withinLimits({1920, 1080, {int(std::lround(std::clamp(fps, 1.0, 1000.0) * 1000)), 1000}}).rate;
 }
 
 QJsonObject formatJson(const ProjectFormat& f)
 {
     return {{"width", f.width}, {"height", f.height}, {"fps", std::round(f.rate.fps() * 1000) / 1000},
-            {"fps_label", QString("%1/%2").arg(f.rate.num).arg(f.rate.den)}};
+            {"fps_label", QString("%1/%2").arg(f.rate.num).arg(f.rate.den)},
+            {"channels", ChannelLayout::name(f.audioChannels)}};
 }
 
 // ---------- Projects ----------
@@ -446,7 +519,13 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     const ProjectFormat& f = p.format();
     QJsonObject o{{"id", c.id}, {"track", trackName(ref)}, {"name", p.clipName(c)},
                   {"start", c.start}, {"end", c.end()}, {"start_tc", tc(c.start, f)}, {"end_tc", tc(c.end(), f)}};
-    if (c.isTitle()) {
+    if (c.isTitle() && c.title.isShape()) {
+        o["kind"] = "shape"; // op 'shape' takes these fields
+        o["shape"] = shapeJson(c.title);
+    } else if (c.isTitle() && c.title.isDrawing()) {
+        o["kind"] = "drawing"; // op 'draw' takes these fields
+        o["drawing"] = drawingJson(c.title, p.timelineFormat());
+    } else if (c.isTitle()) {
         o["kind"] = "title";
         o["text"] = c.title.text;
         o["style"] = titleStyleJson(c.title, TitleStyle{});
@@ -482,6 +561,11 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (ref.kind == TrackKind::Audio && c.volumeDb != 0) o["volume_db"] = c.volumeDb;
     if (ref.kind == TrackKind::Audio && c.pan != 0) o["pan"] = c.pan;
     if (ref.kind == TrackKind::Audio && c.audioStream != 0) o["audio_stream"] = c.audioStream;
+    if (ref.kind == TrackKind::Audio && !c.sourceChannels.isEmpty()) { // routing (op 'route'), counted from 1
+        QJsonArray channels;
+        for (int ch : c.sourceChannels) channels << ch + 1;
+        o["channels"] = channels;
+    }
     if (ref.kind == TrackKind::Video) {
         // Values also while their Inspector section is switched off (then they do not apply)
         const ClipTransform& t = c.transform;
@@ -561,7 +645,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
             }
             if (e.effectId == QLatin1String(::Comp::kEffectId)) { // the graph short: nodes, links, out, cost
                 eo.remove("params");
-                eo["graph"] = compJson(e, f);
+                eo["graph"] = compJson(e, f, &c);
             }
             if (!e.enabled) eo["enabled"] = false;
             // Not in this version (a frei0r/LADSPA plugin of an older project, an id of a newer one): kept, but skipped
@@ -596,6 +680,14 @@ QJsonObject timelineJson(const Project& p)
             if (k == TrackKind::Audio) {
                 if (t.volumeDb != 0) o["volume_db"] = t.volumeDb;
                 if (t.pan != 0) o["pan"] = t.pan;
+                if (t.panDepth != 0) o["depth"] = t.panDepth; // surround panner (5.1/7.1 mix)
+                if (t.panCenter != 0) o["center"] = t.panCenter;
+                if (t.lfeDb > kMinVolumeDb) o["lfe_db"] = t.lfeDb;
+                if (!t.volumeAuto.isEmpty()) { // track automation: dB on top of the fader at timeline frames
+                    QJsonArray pts;
+                    for (const AutoPoint& a : t.volumeAuto) pts << QJsonObject{{"at", a.frame}, {"db", std::round(a.db * 100) / 100}};
+                    o["volume_automation"] = pts;
+                }
                 if (t.solo) o["solo"] = true;
                 if (t.dynamics != TrackDynamics{}) {
                     const TrackDynamics& d = t.dynamics;
@@ -806,7 +898,7 @@ const QVector<Command>& commands()
           {"width", T::Integer, "timeline width (default: the first video in media, else the template's, 1920)"},
           {"height", T::Integer, "timeline height (default: the first video in media, else the template's, 1080)"},
           {"fps", T::Number, "frame rate (default: the first video in media - its nearest standard rate -, else the "
-                             "template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60). A template's fixed size or "
+                             "template's, 25; 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100, 120; others are refused). A template's fixed size or "
                              "rate stays; the answer's format_from names the video"},
           {"media", T::Paths, "media files to import"},
           {"overwrite", T::Boolean, "replace an existing project (its last state goes into the backups; not while "
@@ -884,7 +976,8 @@ const QVector<Command>& commands()
           {"search", T::Paths, "folders to look for media of the timeline that are not where the file says "
                                "(another computer); default: the folder of the timeline file"},
           {"name", T::String, "name of the new timeline (default: the one in the file)"},
-          {"fps", T::Number, "EDL only (it has no frame rate): its frame rate (default: the project's)"}},
+          {"fps", T::Number, "EDL only (it has no frame rate): its frame rate (default: the project's; 23.976 … 60, 48, "
+                            "100 or 120, others are refused)"}},
          cmdImport},
         {"export_timeline", "Write a timeline for another editor: FCP7 XML (Premiere Pro: File › Import; DaVinci "
                             "Resolve: File › Import › Timeline), OpenTimelineIO (.otio, DaVinci Resolve 18.5+) or EDL "
@@ -928,21 +1021,32 @@ const QVector<Command>& commands()
         {"app", "The schneidi app (live, when it has the project open): see what the user sees (playhead, selection, "
                 "open timeline) and control it. `info`, `edit` and the other commands already work on the open "
                 "project there (an edit is one undo step in the app; the user saves).",
-         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save {path?}, open "
+         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, page {page} (show a page of the "
+                                "app: media, edit, comp, color, studio = sound with the big mixer, deliver; `state` "
+                                "tells the current one), undo, redo, save {path?}, open "
                                 "{files} (show files in the app: a .schneidi project opens there - refused while the "
                                 "open one has unsaved changes -, media files come into its media pool and are "
                                 "selected; the window comes to the front), proxies "
-                                "{files?, generate?} (preview proxies; default all video files), clean_proxies "
+                                "{files?, generate?} (preview proxies; default all video files), render_cache "
+                                "{mode?, pause?} (the preview renders clips with effects or changed speed ahead in "
+                                "the background - `state` tells it as render_cache: mode, state rendering/waiting/"
+                                "paused/idle/off, clip, percent; mode off/smart/user, pause: true stops it until the "
+                                "next change, false resumes), clean_proxies "
                                 "{delete?} (proxy files neither this project nor a recently opened one needs, with the "
                                 "reason: missing/changed original, unused, other size, leftover; a dry run unless "
                                 "delete is true)", true, true},
           {"project", T::Path, "project file open in the app (default \"@app\" = the project of the running app)"},
           {"at", T::Time, "seek/play: position in the open timeline"},
           {"clips", T::Times, "select: clip ids (empty = nothing selected)"},
+          {"page", T::String, "page: media, edit, comp, color, studio or deliver"},
           {"files", T::Paths, "proxies: media files (default: all video in the project); open: a .schneidi project "
                               "and/or media files"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
+          {"mode", T::String, "render_cache: off, smart (clips with effects or changed speed) or user (only clips "
+                              "marked for it)"},
+          {"pause", T::Boolean, "render_cache: true stops rendering ahead until the next change of a cached clip, "
+                                "false resumes"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"},
           {"trust_custom_code", T::Boolean, "open: ask the user to run its custom code; only when the user said so"}},
          cmdApp},
@@ -1012,10 +1116,17 @@ const QVector<Command>& commands()
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
            "<name>.<track name>.srt, listed in srt_more); vtt = the same as WebVTT"},
-          {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
+          {"quality", T::String, "high (default, or 0), medium (1), small (2), web (3): high with a bit rate cap like YouTube "
+                                 "recommends (H.264/H.265 only; the YouTube and phone presets use it), source (4): the "
+                                 "video bit rate of the recordings used (weighted by how long each shows, scaled to the "
+                                 "output's size and frame rate, less when scaled up), so the file is about as big as the "
+                                 "source and visibly "
+                                 "lossless; the answer's 'video_bitrate_k' is the rate aimed at, unknown = high and a "
+                                 "note in 'encoder_note'. ProRes, DNxHR, GIF and images have a fixed quality"},
           {"height", T::Integer, "shorter image edge, e.g. 720: 16 to 8192, an odd one rounded down to even (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
-          {"fps", T::Number, "output frame rate (default: the timeline's)"},
+          {"fps", T::Number, "output frame rate (default: the timeline's): 10, 12, 15, 23.976, 24, 25, 29.97, 30, 48, 50, "
+                            "59.94, 60, 100 or 120, others are refused"},
           {"encoder", T::String, "H.264/H.265 video encoder: auto (default: a hardware encoder of the graphics card when "
                                  "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
                                  "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
@@ -1026,6 +1137,14 @@ const QVector<Command>& commands()
                                  "'better_encoder' (install it with `extensions` install x264, ask the user first: "
                                  "72 MB download, GPL)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
+          {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
+                                  "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
+                                  "Ls Rs [Lss Rss]; AAC, Opus, FLAC, WAV/AIFF, ALAC 5.1). MP3 has no 5.1: it writes the "
+                                  "stereo downmix and says so in 'encoder_note'. The answer has 'channels'"},
+          {"audio_codec", T::String, "sound codec of an MP4 video (h264, h265, av1): aac (default, the format's own) "
+                                     "or ac3 (AC-3/Dolby Digital at 640 kbit/s for 5.1: TVs, AV receivers, Blu-ray "
+                                     "tools; a 7.1 mix is written as 5.1). Only when this FFmpeg has the AC-3 encoder "
+                                     "(else BAD_ARGUMENT); the answer then has 'audio_codec'"},
           {"subtitles", T::String, "none (default), burn (into the picture), srt or vtt (files next to the video: the "
                                   "visible track as <name>.srt, other tracks with entries as <name>.<track name>.srt; "
                                   "vtt = WebVTT for web players)"},
@@ -1071,8 +1190,10 @@ const QVector<Command>& commands()
                   "the install command - never installs), runs `check` for the platform and applies its fixes "
                   "(master limiter, loudness to -14 LUFS), and renders with the platform's preset. Instead of "
                   "recordings: an existing timeline of a project (or \"@app\": the timelines appear in the app) as the "
-                  "cut. Answer: out, length_s, the moments used, done (each step), check (what it fixed, what is "
-                  "left: look at it), notes. Takes a while (progress lines on stderr); look at the result with "
+                  "cut. Answer: out, length_s, the moments used, unused (each recording without a moment in the short "
+                  "and why: reason no_moment = highlights found none in it, length = its moments did not fit after "
+                  "the better ones), done (each step), check (what it fixed, what is left: look at it), notes. The "
+                  "cut marks the first moment as the hook section and every other one as a section of its own. Takes a while (progress lines on stderr); look at the result with "
                   "`frames` afterwards.",
          {{"files", T::Paths, "recordings (video files) to make the short of", false, true},
           {"project", T::Path, "project for the timelines: with files a new one next to out unless given (an existing "
@@ -1097,7 +1218,9 @@ const QVector<Command>& commands()
           {"threads", T::Integer, "as in `render`"},
           {"overwrite", T::Boolean, "replace an existing out file"}},
          cmdShort},
-        {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "
+        {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams (audio_channels: count "
+                  "and layout per stream, e.g. 5.1(side) or '4 channels' of a camera with two microphones - op 'route' "
+                  "plays single channels). With gaps: the stutter "
                   "of a recording with variable frame rate (variable_frame_rate true: game capture keeps the time "
                   "stamps of the frames it got, so where the game lagged the picture stands still).",
          {{"file", T::Path, "media file", false, true},
@@ -1308,6 +1431,10 @@ const QVector<Command>& commands()
           {"to", T::Time, "for a project: end of the range"},
           {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A1,A2\" or by name \"Mikrofon\" (track or audio stream name)"},
           {"clips", T::Times, "for a project: measure these clips (ids) one by one instead of the mix"},
+          {"channels", T::String, "for a project: the channel format to measure, like render's channels: project "
+                                  "(default: the mix's own; a 5.1/7.1 mix over all its channels, with a note), stereo "
+                                  "(what a stereo export - MP3, render --channels stereo - writes: the downmix, "
+                                  "limited after downmixing), 5.1 or 7.1"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
          cmdLoudness},
         {"check", "Check before export or before handing a video over: what typically goes wrong. A project "
@@ -1321,7 +1448,8 @@ const QVector<Command>& commands()
                   "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
                   "clip; fix: edit op crop_bars, or reframe), compositing graphs (comp_unused_input: nodes that do not "
                   "reach the output; comp_output_mask: the output node gives a mask, the graph does nothing; comp_slow: estimated above 40 ms per frame, playback may stutter; key_edges: a "
-                  "key's matte with many half-transparent pixels in the subject), and the sound of the mix as exported: no "
+                  "key's matte with many half-transparent pixels in the subject; tracker_lost: a followed tracker lost "
+                  "its point for more than 5 frames, range = the gap; tracker_ended: it never found it again), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "
@@ -1354,9 +1482,10 @@ const QVector<Command>& commands()
                   "(info). With story sections of the timeline also story_no_hook (no hook section at the start), "
                   "story_open_question (a question section without a later turn or resolution), "
                   "story_resolution_late (resolution after 90 % of the length; info: it runs to the end with no "
-                  "room for the cta), story_no_cta (info, no cta section), story_gap (info, time without a "
-                  "section); without sections and with 'for' story_no_cta (info) when no text or word comes near the "
-                  "end. 'story': {sections, first_strong_s, first_strong_by: loud|word|text, note?}. "
+                  "room for the cta), story_no_cta (info, no cta section in a story with build, question, turn or "
+                  "resolution sections), story_gap (info, time without a section); without sections (or only hook "
+                  "and free ones, as `short` marks its moments) and with 'for' story_no_cta (info) when no text or "
+                  "word comes near the end. 'story': {sections, first_strong_s, first_strong_by: loud|word|text, note?}. "
                   "retention (a CSV of the published video's audience retention: time in seconds or M:SS, or a "
                   "position in % when its header says so, and the retention in %) adds retention_drop (info): a fall "
                   "of at least 5 points (and 3 x the usual) within 2 s after the first second, 'at'/'at_s' and "
@@ -1369,6 +1498,9 @@ const QVector<Command>& commands()
           {"for", T::String, "the platform the video is for: shorts, reels or tiktok - also too_long (longer than "
                              "the platform takes as a short: Shorts and Reels 3 min, TikTok 10 min) and its loudness "
                              "target"},
+          {"channels", T::String, "project: the channel format the sound checks measure, like render's channels: "
+                                  "project (default: the mix's own), stereo (a 5.1/7.1 mix as a stereo export writes "
+                                  "it - MP3, render --channels stereo), 5.1 or 7.1"},
           {"sound", T::Boolean, "measure the sound (default true; false = no mixing: no sound and no under_music "
                                 "checks)"},
           {"max_still_s", T::Number, "pace: seconds without a change that count as too still (default 3)"},
@@ -1399,11 +1531,19 @@ const QVector<Command>& commands()
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},
-        {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind and parameter "
-                    "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
+        {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind, category (what "
+                    "it is for) and parameter names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
                     "luma images (op 'transition'), effect presets (op 'effect' preset), accent presets (op "
                     "'accent': zoom punch, flash, shake on kills, beats, drops) and effect sounds (op 'sfx').",
          {{"effect", T::String, "only this effect, with parameter details", false, true},
+          {"category", T::String, "only the effects of this category (what they are for): " + [] {
+               QStringList ids;
+               for (const EffectCategoryInfo& c : kEffectCategories) ids << QString::fromLatin1(c.id);
+               return ids.join(", ");
+           }()},
+          {"favorites", T::Boolean, "only the user's favourites and recently used entries of the app's Effects Library "
+                                    "(effects, transitions, titles, shapes, LUTs, sounds, recipes, presets) as the ops "
+                                    "take them; entries the user marked carry favorite:true in the full list too"},
           {"kind", T::String, "'sfx': only the effect sounds; 'nodes': the node kinds of the compositing graph (edit "
                               "ops 'comp', 'node') with inputs and parameters; 'recipes': ready compositing graphs "
                               "(edit op comp recipe) with their slots", false, true},
@@ -1663,7 +1803,7 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             break;
         case ParamType::Number:
             if (v.isDouble()) out[p.name] = v.toDouble();
-            else if (const double d = QLocale::c().toDouble(str, &ok); ok && !std::isfinite(d)) ok = false; // "nan", "inf"
+            else if (const double d = numberFromText(str, &ok, p.name); ok && !std::isfinite(d)) ok = false; // "nan", "inf"
             else out[p.name] = d;
             break;
         case ParamType::Boolean:
@@ -1852,7 +1992,8 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                  "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
                  "Long commands (render, transcribe, highlights, short …) write progress lines on stderr: "
                  "{\"progress\":45,\"stage\":\"transcribe\",\"eta_s\":30} (percent, the step running now, "
-                 "estimated seconds left). --verbose: also progress notes and engine messages on stderr.";
+                 "estimated seconds left). --verbose: also progress notes and engine messages on stderr. Numbers: "
+                 "\"1.5\" or with a decimal comma \"1,5\" (\"1,500\" is refused as ambiguous: write 1500 or 1.5).";
     o["servers"] = servers;
     return o;
 }

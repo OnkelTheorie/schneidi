@@ -44,10 +44,15 @@ struct ExportSettings {
     QStringList codecOptions; // further encoder options "key=value" (ProRes/DNxHR profile, VP9 speed …)
     int crf = 20;             // quality: smaller = better
     int maxBitrateK = 0;      // video bit rate cap (kbit/s), 0 = none
+    // Quality "like source" (RenderSettings::kQualitySource): start() aims the video at the bit rate of the media the
+    // range shows (core/SourceBitrate, targetBitrateK()); unknown = crf ("High") and a note saying so
+    bool sourceQuality = false;
     QString preset = "medium"; // speed vs. file size
     int audioBitrateK = 192;
     QString audioSampleFormat; // empty = codec default (Apple Lossless: s16p/s32p for 16/24 bit)
-    int audioRate = 0, audioChannels = 0; // 0 = 48 kHz stereo (speech to text wants 16 kHz mono)
+    // 0 = 48 kHz and the mix's channels (Timeline::audioChannels: stereo, 5.1, 7.1; speech to text wants 16 kHz mono).
+    // More channels than the encoder writes (MP3 and 5.1): the stereo downmix, said in note().
+    int audioRate = 0, audioChannels = 0;
     FrameRate rate{0, 1};      // frame rate of the file; num 0 = like the timeline (format.rate)
     bool burnSubtitles = false; // burn the visible subtitle track into the image
     // Additionally write the visible subtitle track as SRT here, the other tracks with entries next to it
@@ -151,6 +156,10 @@ public:
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
+    // After start(): channels of the file's sound (1, 2, 6, 8)
+    int audioChannels() const { return m_settings.audioChannels; }
+    // Quality "like source": the video bit rate aimed at (kbit/s) of the last start(), 0 = none (unknown: crf)
+    int targetBitrateK() const { return m_targetBitrateK; }
     // After start(): effects the render leaves out because this version does not have them (frei0r/LADSPA plugins of
     // older projects, ids of newer versions); only those of what is written (picture, sound)
     const QVector<Picture::SkippedEffect>& skippedEffects() const { return m_skipped; }
@@ -259,6 +268,7 @@ private:
     int m_threads = 0, m_frames = 1;
     bool m_threadsLowMemory = false;
     bool m_shortLookahead = false; // lowMemoryOptions (shortLookahead or lowMemoryLookahead)
+    int m_targetBitrateK = 0;      // quality "like source" (ExportSettings::sourceQuality), 0 = crf
     QString m_usedCodec, m_note;
     QVector<Picture::SkippedEffect> m_skipped;
     QTimer m_timer;

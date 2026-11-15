@@ -139,6 +139,13 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
 ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const QColor& color, double lineHeight,
                              double rightEdge, double lineLeft, const std::function<void(double)>& progress);
 
+// ---------- Sound channels (AnalysisAudio.cpp) ----------
+
+// Argument `channels` of `loudness`/`check` for a project mixing in `project` channels: which channel format to
+// measure, like `render --channels` (project/absent = the mix's own -> 0; "stereo"/2, "5.1"/6, "7.1"/8). *note:
+// for a 5.1/7.1 mix measured as it is, how to measure what a stereo export (MP3, --channels stereo) writes instead.
+int measuredChannels(const QJsonObject& a, int project, QString* note);
+
 // ---------- Highlights (AnalysisHighlights.cpp) ----------
 
 // `highlights` of one file (`file`, the command's settings): from the cache (CacheLocation/highlights, key = file,

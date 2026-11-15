@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <optional>
@@ -48,11 +49,20 @@ struct RenderSettings {
     int shortSide = 0; // resolution: 0 = timeline, otherwise shorter picture edge in the timeline's aspect ratio
     QSize size;        // fixed output size (e.g. portrait 1080 x 1920); takes precedence over shortSide
     // 0 = high, 1 = medium, 2 = small, 3 = web: high with a bit rate cap for upload sites (like DaVinci's
-    // "Restrict to"); only H.264/H.265
+    // "Restrict to"); only H.264/H.265. 4 = like source: the video bit rate of the media used (core/SourceBitrate),
+    // every format with a quality choice; saved as "quality" 0 + "qualitySource" (older versions read "High")
     static constexpr int kQualityWeb = 3;
+    static constexpr int kQualitySource = 4;
     int quality = 0;
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
+    // Channels of the file: 0 = the project's mix (stereo, 5.1, 7.1), 2 = stereo (a surround mix downmixed), 6 = 5.1,
+    // 8 = 7.1 (a stereo mix in the front pair). An encoder without that many writes 7.1 as 5.1 (AC-3, ALAC) or stereo (MP3).
+    int audioChannels = 0;
+    // Sound codec of an MP4 video instead of the format's AAC (0.23): "" = the format's own, "ac3" = AC-3 (Dolby
+    // Digital: up to 5.1, plays on every TV, AV receiver and Blu-ray/DVD tool; a 7.1 mix is written as 5.1). Only
+    // offered where the FFmpeg has the encoder (the Deliver page and the CLI ask HardwareEncoders::builtIn("ac3")).
+    QString audioFormat;
     int rateNum = 0, rateDen = 1; // frame rate of the output, 0 = like the timeline
     // With rateNum 0: highest frame rate; a faster timeline renders at its rate divided by the smallest whole number
     // that gets there (120 -> 60, 100 -> 50, 144 -> 48), so every output frame is a timeline frame. 0 = no limit
@@ -74,6 +84,9 @@ struct RenderSettings {
     bool hasEncoderChoice() const; // H.264/H.265: software or hardware encoder
     bool hasAudioBitrate() const;   // AAC/MP3
     QVector<int> audioBitChoices() const; // selectable bit depths (empty = not adjustable)
+    // audioFormat values this format takes besides "" (its own): {"ac3"} for the MP4 video formats, else empty
+    QStringList audioFormatChoices() const;
+    static int ac3BitrateK(int channels) { return channels > 2 ? 640 : 320; } // fixed: AC-3's best (Blu-ray: 640)
     QString audioCodec() const;     // FFmpeg codec with the chosen bit depth, e.g. pcm_f32le
     QString audioSampleFormat() const; // Apple Lossless: s16p/s32p, FLAC: s16/s32, otherwise empty
     FrameRate outputRate(FrameRate timeline) const;
@@ -82,8 +95,11 @@ struct RenderSettings {
     // Bit rate cap in kbit/s for the output (0 = none): quality "web", about 1.3x YouTube's recommendation
     int maxBitrateK(QSize output, FrameRate rate) const;
     QString qualityLabel() const;
-    // Short description for the queue, e.g. "H.264 (MP4) · 1920 × 1080 · High"
-    QString summary(QSize output) const;
+    // Quality "like source" and a format that has a quality choice (others ignore it: fixed quality)
+    bool sourceQuality() const;
+    // Short description for the queue, e.g. "H.264 (MP4) · 1920 × 1080 · High"; sourceBitrateK: the target of quality
+    // "like source" when known ("Like source ≈ 30 Mbit/s")
+    QString summary(QSize output, int sourceBitrateK = 0) const;
 
     QJsonObject toJson() const;
     static RenderSettings fromJson(const QJsonObject& o);
@@ -158,6 +174,9 @@ struct RenderJob {
     RenderStatus status = RenderStatus::Queued;
     QString message;     // error text or note (e.g. hardware encoder fell back to software)
     QString encoderUsed; // FFmpeg video codec of the last render, e.g. "h264_nvenc" (empty = not rendered yet)
+    // Quality "like source": the video bit rate (kbit/s) aimed at, from adding the job, then of the last render
+    // (0 = unknown / other quality)
+    int sourceBitrateK = 0;
     qint64 renderMs = 0; // duration of the last render
 
     bool operator==(const RenderJob& o) const;

@@ -8,6 +8,7 @@
 #include <QRectF>
 
 class QMouseEvent;
+class QTabletEvent;
 class QPainter;
 
 class ViewerOverlay : public QObject {
@@ -19,6 +20,8 @@ public:
     virtual bool mousePress(QMouseEvent*, const QRectF&) { return false; }
     virtual bool mouseMove(QMouseEvent*, const QRectF&) { return false; }
     virtual bool mouseRelease(QMouseEvent*, const QRectF&) { return false; }
+    // A pen on a tablet (press, move, release with its pressure); true = taken (no mouse event is made of it)
+    virtual bool tablet(QTabletEvent*, const QRectF&) { return false; }
     // Cursor shape over a point (no button pressed); Qt::ArrowCursor = nothing there
     virtual Qt::CursorShape cursorAt(const QPointF&, const QRectF&) const { return Qt::ArrowCursor; }
     // Mouse over the picture without a button pressed, resp. left the viewer

@@ -3,6 +3,7 @@
 // and the result matches the same ops run on the project file. While the user's hand-over (`schneidi <file>`) asks its
 // "save changes?" question, an AI command waits (it would run inside the question's event loop and be lost or saved).
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -60,11 +61,12 @@ void setup(Project& p)
     ProjectData d;
     d.timeline = emptyTimeline();
     p.load(d);
-    p.addMedia({"/x/a.mp4", "a.mp4", 300, true, true, false});
+    // Made-up media, absolute as an op makes its path (Windows: with the drive)
+    p.addMedia({Check::absPath("/x/a.mp4"), "a.mp4", 300, true, true, false});
     p.edit("setup", [&](Timeline& tl) {
         Clip v;
         v.id = p.newClipId();
-        v.mediaPath = "/x/a.mp4";
+        v.mediaPath = Check::absPath("/x/a.mp4");
         v.out = 199;
         v.linkId = p.newLinkId();
         Clip a = v;
@@ -124,7 +126,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8());
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     FakeApp fake;
     setup(fake.project);
@@ -138,9 +140,12 @@ int main(int argc, char* argv[])
     if (!CHECK(server.start(&error))) return Check::result();
     {
         // The registry entry holds the token: only the user may read it
-        const QFileInfo entry(QString("%1/data/schneidi/live/%2.json").arg(tmp.path()).arg(QCoreApplication::applicationPid()));
+        const QFileInfo entry(QString("%1/%2.json").arg(Cli::Live::registryDir()).arg(QCoreApplication::applicationPid()));
+        CHECK(entry.filePath().startsWith(tmp.path() + "/data/"));
         CHECK(entry.exists());
+#ifndef Q_OS_WIN // no group/other bits there: Qt reports them from the read-only flag alone (the profile's ACL protects AppData)
         CHECK(!(entry.permissions() & (QFile::ReadGroup | QFile::ReadOther)));
+#endif
     }
     // The file copy is edited without the app (no live connection for it: another path)
     QProcessEnvironment noLive = QProcessEnvironment::systemEnvironment();

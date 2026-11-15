@@ -42,7 +42,7 @@ MulticamView::MulticamView(Project* project, Selection* selection, Editor* edito
     : QWidget(parent), m_project(project), m_selection(selection), m_editor(editor)
 {
     setObjectName("MulticamView");
-    setMinimumSize(320, 200);
+    setMinimumSize(240, 150); // in the viewer's stack: never wider than the viewer's own minimum
     setMouseTracking(false);
 
     m_bar = new QWidget(this);

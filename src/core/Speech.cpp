@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Speech.h"
+#include "core/AppPaths.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -94,7 +95,7 @@ QString fileName(const QString& text, const Options& options)
 QString folder(const QString& projectPath)
 {
     if (projectPath.isEmpty() || projectPath.startsWith('@'))
-        return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("tts");
+        return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("tts");
     const QFileInfo fi(projectPath);
     return fi.absoluteDir().filePath(fi.completeBaseName() + "-tts");
 }

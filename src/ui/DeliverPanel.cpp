@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/DeliverPanel.h"
+#include "ui/WheelGuard.h"
 
 #include "app/Theme.h"
+#include "core/ChannelLayout.h"
 #include "core/I18n.h"
 #include "core/ExportCheck.h"
+#include "core/SourceBitrate.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -38,14 +41,23 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QScrollBar>
+#include <QScrollArea>
+#include <QEvent>
 #include <algorithm>
 
 namespace {
 
-// Smart render copies at "High" and "Web" (below its cap) only: copied pictures keep the file's bit rate
+// Smart render copies at "High", "Web" (below its cap) and "Like source" only: copied pictures keep the file's bit rate
+// AC-3 instead of the format's AAC: an MP4 format and an FFmpeg with the encoder (the bundled LGPL one since 0.23)
+bool ac3Offered(const RenderSettings& s)
+{
+    return s.audioFormatChoices().contains(QStringLiteral("ac3")) && HardwareEncoders::builtIn(QStringLiteral("ac3"));
+}
+
 bool smartQuality(int quality)
 {
-    return quality == 0 || quality == RenderSettings::kQualityWeb;
+    return quality == 0 || quality == RenderSettings::kQualityWeb || quality == RenderSettings::kQualitySource;
 }
 
 // Same output? (resolution resolved via the timeline, quality/bit rate only where they take effect)
@@ -58,7 +70,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (f.hardware && a.encoder != b.encoder) return false;
     if (f.hardware && smartQuality(a.quality) && a.smartRender != b.smartRender) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
-    if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
+    if ((!a.audioBitChoices().isEmpty() || !a.audioFormatChoices().isEmpty()) && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
     const FrameRate none{0, 1};
     if (!a.audioOnly() && a.outputRate(none) != b.outputRate(none)) return false;
@@ -75,13 +87,34 @@ QString smartTip()
              "werden kodiert. Passt etwas nicht, wird automatisch normal kodiert.");
 }
 
+// Scroll area for the settings form: at least as wide as the form's minimum *now* (combo boxes are filled and polished
+// after the constructor, so a minimum width fixed there was too small and the panel cut the form off at the right)
+class FormScroll : public QScrollArea
+{
+public:
+    using QScrollArea::QScrollArea;
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget()) s.setWidth(widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width());
+        return s;
+    }
+    // The form's minimum changes later (filled combo boxes): the panel's layout must ask again (QScrollArea watches
+    // its widget through an event filter already)
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        if (o == widget() && e->type() == QEvent::LayoutRequest) updateGeometry();
+        return QScrollArea::eventFilter(o, e);
+    }
+};
+
 } // namespace
 
 DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     : QWidget(parent), m_project(project), m_queue(new RenderQueue(project, this))
 {
     setObjectName("Panel");
-    setMinimumWidth(300);
+    // No fixed minimum width: the layout's (the settings form, FormScroll) keeps the splitter from cutting the form off
     m_queuePanel = new RenderQueuePanel(project, m_queue);
 
     auto* title = new QLabel(T("Render-Einstellungen"));
@@ -124,6 +157,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     }
 
     m_resolution = new QComboBox;
+    m_resolution->setObjectName("renderResolution");
     // Like DaVinci "Frame rate" when rendering: default = timeline, otherwise converted on export
     m_rate = new QComboBox;
     m_rate->setObjectName("renderRate");
@@ -134,11 +168,17 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
                          "wiederholt (der Ton bleibt unverändert)."));
 
     m_quality = new QComboBox;
+    m_quality->setObjectName("renderQuality");
     m_quality->addItem(T("Hoch"));
     m_quality->addItem(T("Mittel"));
     m_quality->addItem(T("Klein"));
     m_quality->addItem(T("Web (begrenzte Bitrate)"));
     m_quality->setItemData(RenderSettings::kQualityWeb, T("Hohe Qualität, Bitrate begrenzt wie für YouTube empfohlen (kleinere Datei)"), Qt::ToolTipRole);
+    m_quality->addItem(T("Wie Quelle"));
+    m_quality->setItemData(RenderSettings::kQualitySource,
+                           T("Bitrate wie die verwendeten Aufnahmen: Datei etwa so groß wie das Original, sichtbar ohne "
+                             "Verlust"),
+                           Qt::ToolTipRole);
 
     // Like DaVinci's "Encoder" (Auto / Native / NVIDIA …): only hardware encoders that work on this computer
     m_encoder = new QComboBox;
@@ -163,6 +203,15 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_audioBits->setPlaceholderText(T("Bei diesem Format fest")); // compressed formats: no choices, not an empty box
     connect(m_audioBits, qOverload<int>(&QComboBox::activated), this,
             [this] { m_wantedBits = m_audioBits->currentData().toInt(); });
+
+    // Sound codec of the MP4 formats: AAC or AC-3 (5.1 for TVs and AV receivers); only in surround projects (or once
+    // chosen) and only where the FFmpeg has the AC-3 encoder (updateControls)
+    m_audioFormat = new QComboBox;
+    m_audioFormat->setObjectName("renderAudioFormat");
+    m_audioFormat->addItem(QStringLiteral("AAC"), QString());
+    m_audioFormat->addItem(T("AC-3 (Dolby Digital)"), QStringLiteral("ac3"));
+    m_audioFormat->setToolTip(T("AC-3 spielt 5.1 auf Fernsehern, AV-Receivern und in Blu-ray-/DVD-Programmen "
+                                "(640 kbit/s, 7.1 wird zu 5.1). AAC: kleiner, für Upload-Seiten und Handys."));
 
     // Like DaVinci: "Render: Entire Timeline / In/Out Range"
     // Subtitles like DaVinci "Subtitle Settings": burn in the visible subtitle track or as a separate file
@@ -199,6 +248,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(project, &Project::sequencesChanged, this, &DeliverPanel::updateName);
     updateName();
     connect(project, &Project::timelineFormatChanged, this, &DeliverPanel::updateFormat); // also a timeline's own
+    connect(project, &Project::formatChanged, this, [this] {
+        if (m_form) updateControls(); // 5.1/7.1: the AC-3 choice
+    });
     updateFormat();
 
     // Threads (logical processors) for rendering: applies per machine (not in presets/jobs), takes effect from the next job
@@ -242,7 +294,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     betterLayout->addWidget(betterBtn, 0, Qt::AlignTop);
     m_betterRow->hide();
     form->addRow(QString(), m_betterRow);
+    form->addRow(T("Audio-Codec"), m_audioFormat);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
+    m_form = form;
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(QString(), m_embed);
@@ -275,8 +329,20 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->setContentsMargins(0, 0, 0, 12);
     lay->setSpacing(6);
     lay->addWidget(title);
-    lay->addLayout(form);
-    lay->addStretch(1);
+    // The settings scroll when the window is low (a 1024x768 screen): the window's minimum height was this form's
+    auto* formPage = new QWidget;
+    auto* formLay = new QVBoxLayout(formPage);
+    formLay->setContentsMargins(0, 0, 0, 0);
+    formLay->addLayout(form);
+    formLay->addStretch(1);
+    auto* formScroll = new FormScroll;
+    formScroll->setWidget(formPage);
+    formScroll->setWidgetResizable(true);
+    formScroll->setFrameShape(QFrame::NoFrame);
+    formScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // As wide as the form (the panel never cuts it off at the right): FormScroll::minimumSizeHint
+    lay->addWidget(formScroll, 1);
+    WheelGuard::install(formPage); // scrolling over a choice box scrolls the page, does not change the box
     auto* bottom = new QVBoxLayout;
     bottom->setContentsMargins(12, 0, 12, 0);
     bottom->addWidget(m_checkList);
@@ -287,7 +353,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->addWidget(m_status);
 
     connect(m_preset, qOverload<int>(&QComboBox::activated), this, &DeliverPanel::applyPreset);
-    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_encoder, m_audioBitrate, m_audioBits, m_subtitles})
+    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_encoder, m_audioFormat, m_audioBitrate, m_audioBits, m_subtitles})
         connect(c, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             updateControls();
             syncPresetToSettings();
@@ -478,6 +544,7 @@ RenderSettings DeliverPanel::settings() const
     if (m_encoder->currentIndex() >= 0) s.encoder = VideoEncoder(m_encoder->currentData().toInt());
     s.audioBitrateK = m_audioBitrate->currentData().toInt();
     if (m_audioBits->currentIndex() >= 0) s.audioBits = m_audioBits->currentData().toInt();
+    if (ac3Offered(s)) s.audioFormat = m_audioFormat->currentData().toString();
     if (const QSize r = m_rate->currentData().toSize(); r.isValid() && !s.audioOnly()) {
         s.rateNum = r.width();
         s.rateDen = r.height();
@@ -503,11 +570,12 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     const bool wasApplying = m_applying;
     m_applying = true;
     m_wantedBits = s.audioBits;
+    m_audioFormat->setCurrentIndex(std::max(0, m_audioFormat->findData(s.audioFormat)));
     m_wantedEncoder = s.encoder;
     m_maxFps = s.maxFps;
     updateRateLabel();
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
-    m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualityWeb));
+    m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualitySource));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
     m_audioBitrate->setCurrentIndex(br >= 0 ? br : m_audioBitrate->count() - 1);
     updateControls(); // Bit depths of the format
@@ -549,6 +617,7 @@ void DeliverPanel::updateControls()
         if (QStandardItem* item = model->item(RenderSettings::kQualityWeb)) item->setEnabled(f.webQuality);
     if (!f.webQuality && f.hasQuality() && m_quality->currentIndex() == RenderSettings::kQualityWeb)
         m_quality->setCurrentIndex(0);
+    updateSourceBitrate();
     updateEncoders();
     const bool copies = smartQuality(m_quality->currentIndex());
     m_smart->setEnabled(f.hardware && copies); // H.264/H.265
@@ -558,6 +627,13 @@ void DeliverPanel::updateControls()
                                 "der Originaldatei."));
     RenderSettings probe;
     probe.format = f.id;
+    // AC-3: the row only where it is offered and makes sense (a 5.1/7.1 project, or chosen before)
+    // (the combo keeps its choice across format changes: it is never cleared)
+    const bool ac3 = m_audioFormat && ac3Offered(probe);
+    probe.audioFormat = ac3 ? m_audioFormat->currentData().toString() : QString();
+    if (m_form)
+        m_form->setRowVisible(m_audioFormat, ac3 && (ChannelLayout::surround(m_project->format().audioChannels)
+                                                     || !probe.audioFormat.isEmpty()));
     m_audioBitrate->setEnabled(probe.hasAudioBitrate());
     m_rate->setEnabled(video);
     // Bit depths of the format; the wanted one (preset/last choice) stays, otherwise 24 bit
@@ -586,9 +662,33 @@ void DeliverPanel::updateControls()
     if (review) m_smart->setEnabled(false);
 }
 
+void DeliverPanel::updateSourceBitrate()
+{
+    // "Like source" shows the bit rate it aims at (the timeline as it is now, this output); only while it is chosen
+    // (it reads the files' headers)
+    QString text = T("Wie Quelle");
+    if (m_quality->currentIndex() == RenderSettings::kQualitySource && m_quality->isEnabled() && isVisible()) {
+        RenderJob job;
+        job.settings = settings();
+        if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();
+        job.sequence = m_project->currentSequence();
+        if (m_range->currentIndex() == 1) {
+            const Timeline& tl = m_project->timeline();
+            job.inOut = true;
+            job.from = std::max(0, tl.markIn);
+            job.to = tl.markOut;
+        }
+        const int k = RenderQueue::sourceBitrateK(job, *m_project);
+        text += QStringLiteral(" (") + (k > 0 ? SourceBitrate::label(k) : T("unbekannt: wie Hoch")) + ')';
+    }
+    if (m_quality->itemText(RenderSettings::kQualitySource) != text)
+        m_quality->setItemText(RenderSettings::kQualitySource, text);
+}
+
 void DeliverPanel::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
+    updateSourceBitrate();
     HardwareEncoders::probeInBackground(); // once: which hardware encoders work (does not block)
 }
 
@@ -755,6 +855,7 @@ RenderJob DeliverPanel::makeJob() const
     int maxId = 0;
     for (const RenderJob& j : m_project->renderQueue()) maxId = std::max(maxId, j.id);
     job.id = maxId + 1;
+    job.sourceBitrateK = RenderQueue::sourceBitrateK(job, *m_project); // shown in the queue ("≈ 30 Mbit/s")
     return job;
 }
 

@@ -13,6 +13,7 @@
 #include "app/NormalizeDialog.h"
 #include "app/OpenTrace.h"
 #include "app/PasteAttributesDialog.h"
+#include "core/AppPaths.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "app/StartTemplatesPage.h"
@@ -35,6 +36,7 @@
 #include "engine/RenderCache.h"
 #include "ui/TrustDialog.h"
 #include "ui/DeliverPanel.h"
+#include "ui/ElidedLabel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
@@ -90,7 +92,7 @@ namespace {
 // A function, not a global: a global would be built before the dictionary is loaded (always German)
 QString fileFilter() { return T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension); }
 
-QDir autosaveDir() { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)); }
+QDir autosaveDir() { return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)); }
 QString autosaveLockPath(int slot) { return autosaveDir().filePath(QString("autosave-%1.lock").arg(slot)); }
 QString autosaveFile(int slot)
 {
@@ -143,7 +145,7 @@ void MainWindow::updateTitle()
     const QString name = m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName();
     const QString shown = name + (m_project->isModified() ? " *" : "");
     setWindowTitle(shown + " – " + appName());
-    if (m_titleLabel) m_titleLabel->setText(shown);
+    if (m_titleLabel) m_titleLabel->setFullText(shown);
 }
 
 void MainWindow::setProjectPath(const QString& path)
@@ -263,8 +265,21 @@ void MainWindow::startProject(const StartTemplate& t)
     m_templateCopies.clear();
     const ProjectData d = StartTemplates::apply(t); // Neutral: the empty project as always
     m_engine->setFormat(d.format); // media lengths already fit (empty) -> do not re-read
+    // The old project's per-timeline zoom/scroll/playhead belong to it: the switch handler (currentSequenceChanged)
+    // must neither keep them nor restore them for the new project's timelines (same ids)
+    m_sequenceView.clear();
+    m_sequencePos.clear();
+    m_shownSequence = d.currentSequence;
     m_project->load(d);
+    m_sequenceView.clear(); // nothing the switch kept during loading (a template without its current sequence: 0)
+    m_sequencePos.clear();
+    m_shownSequence = m_project->currentSequence();
     m_sourcePos.clear();
+    // New project = the user's step: keep the zoom, start at the front and top (like a timeline never shown)
+    TimelineView* tv = m_timeline->view();
+    const ViewState v = tv->view();
+    tv->setZoomAndScroll(v.pxPerFrame, 0, 0);
+    tv->setPlayhead(0);
     m_engine->showTimeline(0);
     setProjectPath({});
     removeAutosave();
@@ -342,6 +357,7 @@ void MainWindow::openMediaAsProjectDialog()
 
 void MainWindow::openMediaAsProject(const QStringList& files)
 {
+    warmUpVideoDecoding();
     // Neutral, not the default start template: the clip decides the format, not a template's fixed 9:16
     startProject(StartTemplates::find(StartTemplates::NeutralId).value_or(StartTemplates::builtIn().value(0)));
     QStringList paths;
@@ -413,6 +429,7 @@ void MainWindow::saveEffectPreset()
 bool MainWindow::openProject(const QString& path)
 {
     OpenTrace::begin();
+    warmUpVideoDecoding();
     ProjectData data;
     QString error, warning;
     if (!ProjectFile::load(path, &data, &error, &warning)) {
@@ -511,6 +528,8 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     // (currentSequenceChanged) has nothing to keep of the old project's and must not seek the engine, which still
     // has the old timeline - it drew the old project's picture once more before the new one
     m_shownSequence = data.currentSequence;
+    m_sequenceView.clear(); // the old project's (same ids): restoreViews sets the new ones
+    m_sequencePos.clear();
     m_project->load(data);
     OpenTrace::mark("project loaded (signals handled)");
     if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
@@ -518,6 +537,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     // The new timeline reaches the picture engine now, not after the edit debounce (m_engineTimer): its first frame
     // renders while the window paints, instead of the old project's picture being shown first
     m_engineTimer.stop();
+    m_engine->setLoadPosition(data.playhead);
     m_engine->updateTimeline(previewTimeline());
     OpenTrace::timelineSent();
     updateRenderCacheBar();
@@ -580,14 +600,23 @@ void MainWindow::openBackupDialog()
     QDir().mkpath(dir);
     const QString path = QFileDialog::getOpenFileName(this, T("Sicherungskopie öffnen"), dir, fileFilter());
     if (path.isEmpty()) return;
+    openBackup(path);
+}
+
+bool MainWindow::openBackup(const QString& path)
+{
     ProjectData data;
     QString error;
     if (!ProjectFile::load(path, &data, &error)) {
         QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
-        return;
+        return false;
     }
-    if (!applyLoaded(std::move(data), {})) return;
+    if (!applyLoaded(std::move(data), {})) return false;
+    // The project left (saved or discarded) is not what a crash should offer now; the backup is autosaved anew.
+    // The automatic backup itself opened: that is the file the user picked, it stays.
+    if (QFileInfo(path) != QFileInfo(autosavePath())) removeAutosave(); // (same file: canonical, case per system)
     m_project->markModified();
+    return true;
 }
 
 bool MainWindow::save()
@@ -731,7 +760,10 @@ void MainWindow::rebuildRecentMenu()
             if (maybeLeaveProject()) openProject(path);
         });
         a->setToolTip(path);
-        a->setEnabled(QFileInfo::exists(path));
+        // Runs each time the menu opens. A network path (UNC) whose server is offline can make this check stall for
+        // seconds on Windows: such entries stay enabled (opening says so if the file is gone)
+        const bool network = path.startsWith(QLatin1String("//")) || path.startsWith(QLatin1String("\\\\"));
+        a->setEnabled(network || QFileInfo::exists(path));
     }
     m_recentMenu->setEnabled(!recent.isEmpty());
 }

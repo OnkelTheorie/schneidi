@@ -93,6 +93,16 @@ QImage frameWhere(Engine& engine, const std::function<void()>& action, const std
     return got;
 }
 
+// A picture with strong colors somewhere (the test clip), not a black frame
+bool hasPicture(const QImage& a)
+{
+    if (a.isNull()) return false;
+    for (int y = 1; y < 8; ++y)
+        for (int x = 1; x < 8; ++x)
+            if (qGray(a.pixel(a.width() * x / 8, a.height() * y / 8)) > 60) return true;
+    return false;
+}
+
 // `b` is the negative of `a` where `a` has strong colors (at least one such place)
 bool negativeOf(const QImage& a, const QImage& b)
 {
@@ -133,6 +143,7 @@ int main(int argc, char** argv)
     QTemporaryDir dir;
     resetAll();
     Engine engine;
+
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
     std::setlocale(LC_NUMERIC, "C");
@@ -162,7 +173,9 @@ int main(int argc, char** argv)
         values[2] = {{"effect", effect}, {key, code}};
         QString why;
         bool set = false;
-        const QImage before = nextFrame(engine, [&] { set = w.editor()->setCompGraph({clipId}, g, values, CompUi::kinds(), &why); });
+        // The clip's picture (not a black frame still on its way from before the clip was decoded)
+        const QImage before = frameWhere(
+            engine, [&] { set = w.editor()->setCompGraph({clipId}, g, values, CompUi::kinds(), &why); }, hasPicture);
         if (!CHECK(set)) continue;
         CHECK(!CodeTrust::isTrusted(code)); // set by an op of someone else's file: not trusted
         w.openComp(clipId);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/SettingsDialog.h"
+#include "app/UiScale.h"
 
 #include "app/AiSettingsPage.h"
 #include "app/StartTemplatesPage.h"
@@ -26,6 +27,8 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <algorithm>
+#include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -34,10 +37,24 @@
 
 namespace {
 
+// Scrolls only downwards: the dialog is at least as wide as the page's narrowest layout (long labels already put
+// their fields below them, hints wrap), so nothing is cut off at the right in a long language with a large font
+class PageArea : public QScrollArea {
+public:
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget())
+            s.setWidth(std::max(s.width(), widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width()
+                                               + 2 * frameWidth()));
+        return s;
+    }
+};
+
 // Pages scroll when they get longer than the dialog (the AI page grows with the chat settings)
 QScrollArea* scrolling(QWidget* page)
 {
-    auto* area = new QScrollArea;
+    auto* area = new PageArea;
     area->setWidget(page);
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);
@@ -95,6 +112,18 @@ QWidget* SettingsDialog::buildGeneral()
     for (const I18n::Language& l : I18n::languages()) m_language->addItem(l.name, l.code);
     m_language->setCurrentIndex(std::max(0, m_language->findData(I18n::language())));
     form->addRow(T("Sprache"), m_language);
+    // The whole interface larger (fonts, panels, icons): for a 4K screen at 100 % (app/UiScale.h)
+    m_uiScale = new QComboBox;
+    m_uiScale->addItem(T("Wie das System"), 0.0);
+    const auto percent = [](double f) { return QString::number(qRound(f * 100)) + " %"; };
+    for (double f : UiScale::steps()) m_uiScale->addItem(percent(f), f);
+    // A saved size the list lacks (set by hand in the settings file): shown as it is, OK keeps it
+    if (const double saved = UiScale::saved(); saved > 0 && m_uiScale->findData(saved) < 0)
+        m_uiScale->addItem(percent(saved), saved);
+    m_uiScale->setCurrentIndex(std::max(0, m_uiScale->findData(UiScale::saved())));
+    form->addRow(T("Größe"), m_uiScale);
+    if (const QString own = UiScale::userFactor(); !own.isEmpty())
+        form->addRow(hint(T("Wird von QT_SCALE_FACTOR=%1 überschrieben (beim Start gesetzt).").arg(own)));
     auto* buttons = new QHBoxLayout;
     auto* design = new QPushButton(T("Design…"));
     connect(design, &QPushButton::clicked, this, &SettingsDialog::designRequested);
@@ -104,7 +133,7 @@ QWidget* SettingsDialog::buildGeneral()
     buttons->addWidget(keys);
     buttons->addStretch(1);
     form->addRow(buttons);
-    form->addRow(hint(T("Sprache und Design ändern sich nach dem Neustart von schneidi.")));
+    form->addRow(hint(T("Sprache, Größe und Design ändern sich nach dem Neustart von schneidi.")));
     lay->addWidget(look);
 
     // Update hint (the check itself happens in the main window; "Check now" asks right here)
@@ -364,3 +393,5 @@ void SettingsDialog::showTab(Tab tab)
 AiSettings SettingsDialog::aiSettings() const { return m_aiPage->settings(); }
 
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
+
+double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }

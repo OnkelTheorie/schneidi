@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <functional>
 #include <random>
@@ -404,6 +405,13 @@ void testMaxOffsetLimitsSearch()
     const AudioSync::Match m = AudioSync::match(env(ref, shared), env(other, shared), o);
     CHECK(m.found);
     CHECK(near(m.offsetS, 20, 0.002));
+    // Far beyond any file (1e300 s overflowed the lag in envelope samples): the same as "any offset"
+    for (double huge : {1e300, 1e18, std::numeric_limits<double>::infinity()}) {
+        o.maxOffsetS = huge;
+        const AudioSync::Match h = AudioSync::match(env(ref, shared), env(other, shared), o);
+        CHECK(h.found);
+        CHECK(near(h.offsetS, 20, 0.002));
+    }
 }
 
 void testDriftIsReported()

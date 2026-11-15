@@ -206,6 +206,7 @@ Clip prepared(const Clip& base, const MediaInfo& m)
     c.cropOnFrame = false;
     c.keepRegion.clear();
     if (c.audioStream >= m.audioStreamCount()) c.audioStream = 0;
+    fitSourceChannels(c, m);
     return c;
 }
 

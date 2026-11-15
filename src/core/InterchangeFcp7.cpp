@@ -15,6 +15,7 @@
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 
@@ -94,14 +95,30 @@ struct Node {
         }
         return n->text.trimmed();
     }
-    // Number of a child path, rounded ("1055.0" in files of Nuke Studio)
+    // Number of a child path, rounded ("1055.0" in files of Nuke Studio); kept inside +-10^9 (int(lround) of 10^30
+    // was undefined), callers bring sizes and rates inside their own limits
     int num(const QString& path, int fallback = 0) const
     {
         bool ok = false;
         const double v = at(path).toDouble(&ok);
-        return ok ? int(std::lround(v)) : fallback;
+        if (!ok || !std::isfinite(v)) return fallback;
+        return int(std::lround(std::clamp(v, -1e9, 1e9)));
+    }
+    // A time (in/out/start/end/duration) of a child path: beyond kMaxFrames the file is broken - Error (sums of such
+    // times overflowed)
+    int frames(const QString& path, int fallback = 0) const
+    {
+        bool ok = false;
+        const double v = at(path).toDouble(&ok);
+        if (!ok) return fallback;
+        checkFrames(v);
+        return int(std::lround(v));
     }
 };
+
+// Deeper than any real FCP7 file (about 15 levels): a deeper tree would overflow the stack in the recursive walks
+// below and in Node's destructor (imports run in the app and in `serve` on uploaded files)
+constexpr int kMaxXmlDepth = 256;
 
 Node parseTree(const QByteArray& data)
 {
@@ -111,6 +128,8 @@ Node parseTree(const QByteArray& data)
     while (!r.atEnd()) {
         r.readNext();
         if (r.isStartElement()) {
+            if (stack.size() > kMaxXmlDepth)
+                throw Error{T("Die XML-Datei ist zu tief verschachtelt (Zeile %1)").arg(r.lineNumber())};
             Node n;
             n.name = r.name().toString();
             for (const QXmlStreamAttribute& a : r.attributes()) n.attrs.insert(a.name().toString(), a.value().toString());
@@ -126,11 +145,23 @@ Node parseTree(const QByteArray& data)
     return root;
 }
 
+// First descendant named `name` in document order (depth first), without recursion
 const Node* findFirst(const Node& n, const QString& name)
 {
-    for (const Node& c : n.children) {
+    struct Level {
+        const Node* node;
+        qsizetype next;
+    };
+    QVector<Level> stack{{&n, 0}};
+    while (!stack.isEmpty()) {
+        Level& l = stack.last();
+        if (l.next >= l.node->children.size()) {
+            stack.removeLast();
+            continue;
+        }
+        const Node& c = l.node->children[l.next++];
         if (c.name == name) return &c;
-        if (const Node* f = findFirst(c, name)) return f;
+        stack.append({&c, 0});
     }
     return nullptr;
 }
@@ -404,7 +435,7 @@ Sequence readFcp7(const QByteArray& data)
     seq.format = withinLimits(seq.format); // an empty project takes it
     QHash<QString, const Node*> files;
     collectFiles(root, files);
-    for (const Node* m : sq->all("marker")) seq.markers << m->num("in");
+    for (const Node* m : sq->all("marker")) seq.markers << m->frames("in");
 
     // Links: union of linkclipref ids -> one link number per group
     QHash<QString, int> linkOf;
@@ -425,7 +456,7 @@ Sequence readFcp7(const QByteArray& data)
             for (const Node& el : tn->children)
                 if (el.name == "clipitem" || el.name == "transitionitem" || el.name == "generatoritem") els << &el;
             const auto cutOf = [](const Node& tr) {
-                const int start = tr.num("start"), end = tr.num("end");
+                const int start = tr.frames("start"), end = tr.frames("end");
                 const QString align = tr.at("alignment").toLower();
                 return align.startsWith("start") ? start : align.startsWith("end") ? end : (start + end) / 2;
             };
@@ -451,19 +482,26 @@ Sequence readFcp7(const QByteArray& data)
                     continue;
                 }
                 it.path = pathFromUrl(url);
-                if (const int d = def->num("duration"); d > 0)
-                    it.mediaLength = int(std::lround(d * seq.format.rate.fps() / rateOf(*def, seq.format.rate).fps()));
+                if (const int d = def->frames("duration"); d > 0) {
+                    const double frames = d * seq.format.rate.fps() / rateOf(*def, seq.format.rate).fps();
+                    checkFrames(frames);
+                    it.mediaLength = int(std::lround(frames));
+                }
                 it.enabled = el.at("enabled").toUpper() != "FALSE";
                 // in/out count in the clip item's own rate (Premiere: the file's), start/end in the sequence's
                 const double k = seq.format.rate.fps() / rateOf(el, seq.format.rate).fps();
-                const int in = int(std::lround(el.num("in") * k)), out = int(std::lround(el.num("out") * k));
+                // (k up to 1000: the bound again after the conversion)
+                const double inK = el.frames("in") * k, outK = el.frames("out") * k;
+                checkFrames(inK);
+                checkFrames(outK);
+                const int in = int(std::lround(inK)), out = int(std::lround(outK));
                 const Node* before = e > 0 && els[e - 1]->name == "transitionitem" ? els[e - 1] : nullptr;
                 const Node* after = e + 1 < els.size() && els[e + 1]->name == "transitionitem" ? els[e + 1] : nullptr;
-                int start = el.num("start", -1), end = el.num("end", -1);
+                int start = el.frames("start", -1), end = el.frames("end", -1);
                 it.in = in;
                 if (start < 0 && before) {
                     start = cutOf(*before);
-                    it.in += start - before->num("start");
+                    it.in += start - before->frames("start");
                 }
                 if (end < 0 && after) end = cutOf(*after);
                 if (start < 0) start = end >= 0 ? end - (out - in) : 0;
@@ -475,6 +513,7 @@ Sequence readFcp7(const QByteArray& data)
                 it.in += cut;
                 it.start = start;
                 it.length = std::max(0, end - start);
+                checkFrames(double(it.start) + it.length); // later sums of start and length stay inside int
                 if (it.name.isEmpty()) it.name = QFileInfo(it.path).fileName();
                 if (!video) it.audioStream = std::max(1, el.num("sourcetrack/trackindex", 1)) - 1;
                 for (const Node* filter : el.all("filter")) {
@@ -489,7 +528,8 @@ Sequence readFcp7(const QByteArray& data)
                     const auto keys = [k](const Node* p, const std::function<double(double)>& convert) {
                         QVector<Key> out;
                         for (const Node* key : p->all("keyframe"))
-                            out << Key{int(std::lround(key->num("when") * k)), convert(key->at("value").toDouble())};
+                            out << Key{int(std::lround(std::clamp(key->frames("when") * k, -double(kMaxFrames), double(kMaxFrames)))),
+                                   convert(key->at("value").toDouble())};
                         return out;
                     };
                     if (id == "timeremap") {
@@ -534,8 +574,8 @@ Sequence readFcp7(const QByteArray& data)
                 const Node& el = *els[e];
                 if (el.name != "transitionitem") continue;
                 Transition tr;
-                tr.start = el.num("start");
-                tr.end = el.num("end");
+                tr.start = el.frames("start");
+                tr.end = el.frames("end");
                 const QString align = el.at("alignment").toLower();
                 if (align != "start-black") tr.left = e > 0 ? itemOf[e - 1] : -1;
                 if (align != "end-black") tr.right = e + 1 < els.size() ? itemOf[e + 1] : -1;

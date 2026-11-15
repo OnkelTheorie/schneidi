@@ -1,6 +1,6 @@
 #version 440
 // SPDX-License-Identifier: AGPL-3.0-only
-// Picture engine (GPU): draws one source through an affine map onto the target, like Compose::draw (bilinear in
+// Picture engine (GPU): draws one source through an affine or projective map onto the target, like Compose::draw (bilinear in
 // premultiplied alpha, texels outside the source transparent, mip level chosen by the caller for 2:1 and more, a grid
 // of taps for what is still 2:1 or more at that level),
 // optionally converting Y'CbCr planes and applying the colour grade (baked 3D LUT) on the way. Output premultiplied;
@@ -19,6 +19,7 @@ layout(std140, binding = 0) uniform Uniforms {
     mat4 yuv;     // columns: R G B (A unused) = yuv * vec4(Y, U, V, 1)
     vec4 lut;     // 3D LUT: scale, offset; source texels of the mip level per target pixel along source x, y
     vec4 crop;    // source pixels kept: x0, y0, x1, y1 (x1 < x0 = no crop)
+    vec4 persp;   // destination -> source w = dot(persp.xyz, (x, y, 1)) (projective; affine: 0, 0, 1)
 };
 layout(binding = 1) uniform sampler2D tex0;
 layout(binding = 2) uniform sampler2D tex1;
@@ -95,7 +96,9 @@ void main()
     int lod = int(inv1.w + 0.5);
     float scale = exp2(-float(lod));
     // Source position of this pixel's centre (dpos is the centre already), in texels of the mip level
-    vec2 s = vec2(dot(inv0.xyz, vec3(dpos, 1.0)), dot(inv1.xyz, vec3(dpos, 1.0)));
+    float w = dot(persp.xyz, vec3(dpos, 1.0));
+    if (w <= 1e-6) discard; // beyond the horizon of a picture tilted in depth
+    vec2 s = vec2(dot(inv0.xyz, vec3(dpos, 1.0)), dot(inv1.xyz, vec3(dpos, 1.0))) / w;
     vec2 q = s * scale - 0.5;
     ivec2 size = textureSize(tex0, lod);
     // Still 2:1 or more along a source axis at this level (no mips, or squeezed more along one axis than the level

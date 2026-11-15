@@ -10,11 +10,14 @@
 
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
+#include "engine/ColorGrade.h"
 #include "engine/OutputColor.h"
 #include "engine/picture/Renderer.h"
 #include "engine/picture/gpu/Gpu.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QTemporaryDir>
@@ -403,6 +406,53 @@ int main(int argc, char** argv)
         const Picture::Frame c = gpu.render(12, hints);
         CHECK(!c.isNull() && !c.yuvWritten() && c.bits());
         CHECK(gpu.stats().framesGpu >= 3);
+    }
+
+    // A LUT file that changes under one GPU renderer: missing first (drive not mounted yet), then there, then
+    // overwritten. The card's baked LUTs were kept by path (for the context's life, shared by preview and export):
+    // the appeared LUT was never drawn, the overwritten one stayed
+    {
+        auto cubeFile = [](const QString& path, int n, bool invert) {
+            QByteArray s = "LUT_3D_SIZE " + QByteArray::number(n) + "\n";
+            for (int b = 0; b < n; ++b)
+                for (int g = 0; g < n; ++g)
+                    for (int r = 0; r < n; ++r) {
+                        const int rgb[3] = {r, g, b};
+                        for (int k = 0; k < 3; ++k) {
+                            const double v = rgb[k] / double(n - 1);
+                            s += QByteArray::number(invert ? 1 - v : v, 'f', 6) + (k == 2 ? "\n" : " ");
+                        }
+                    }
+            QFile f(path);
+            if (!f.open(QIODevice::WriteOnly) || f.write(s) != s.size()) return false;
+            f.close();
+            // a later time than any write before (the same second would be told apart by the size alone)
+            return f.open(QIODevice::ReadWrite)
+                   && f.setFileTime(QDateTime::currentDateTime().addSecs(n), QFileDevice::FileModificationTime);
+        };
+        const QString lutPath = tmp.filePath("changing.cube");
+        Clip c = media(1, g_a, 0, 30);
+        EffectRegistry::add(c, "grade");
+        EffectRegistry::instance(c, "grade")->params["lut"] = lutPath;
+        Picture::Renderer gpu(oneTrack({c}), options(Picture::Mode::Export, true)),
+            plain(oneTrack({media(1, g_a, 0, 30)}), options(Picture::Mode::Export, true));
+        auto meanTo = [&](int f) {
+            const Picture::Frame a = plain.render(f), b = gpu.render(f);
+            if (!CHECK(!a.isNull() && !b.isNull() && b.gpu())) return -1.0;
+            return compare(a.bits(), b.bits(), size_t(a.width()) * a.height() * 4).mean;
+        };
+        const double missing = meanTo(2);
+        CHECK(cubeFile(lutPath, 5, true));
+        ColorGrade::revalidateLuts(); // (loadLut looks at a file at most every kLutRecheckMs)
+        const double appeared = meanTo(3);
+        CHECK(cubeFile(lutPath, 3, false));
+        ColorGrade::revalidateLuts();
+        const double overwritten = meanTo(4);
+        std::printf("  changing LUT: missing %.2f, appeared (invert) %.2f, overwritten (identity) %.2f\n", missing,
+                    appeared, overwritten);
+        CHECK(missing >= 0 && missing <= 1.0);
+        CHECK(appeared > 40);
+        CHECK(overwritten >= 0 && overwritten <= 1.5);
     }
 
     // Before/After in the preview: the grade bypass reaches the GPU path

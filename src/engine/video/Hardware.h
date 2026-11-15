@@ -31,6 +31,9 @@ bool deviceReady(const AVCodec* codec);
 // Opens the device the readers will use (the first that works, as deviceFor), in the background: CUDA takes 100-250 ms
 // to open, which the first picture of a project otherwise waits for (Windows' D3D11VA opens in a few). Nothing when
 // hardware decoding is off. A deviceFor() meanwhile waits for it instead of opening a second one. Thread-safe, once.
+// The app calls it when there is video to show: at once when started with a project or media (beside the window's
+// setup), when a project or media is opened, else a while after the window settled (a device costs 100-300 MB of video
+// memory and wakes a laptop's graphics card).
 void warmUp();
 
 // The setting (Wiedergabe › Grafikkarte zum Dekodieren nutzen); the environment variable wins

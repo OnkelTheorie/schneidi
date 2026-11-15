@@ -9,6 +9,7 @@
 #include "cli/Sandbox.h"
 #include "cli/ServeDetail.h"
 #include "cli/ServeJobs.h"
+#include "core/AppPaths.h"
 #include "core/ProjectFile.h"
 
 #include <QCoreApplication>
@@ -652,7 +653,7 @@ namespace {
 
 // ---------- Options ----------
 
-QString tokenFile() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/serve-token"; }
+QString tokenFile() { return AppPaths::writable(QStandardPaths::AppDataLocation) + "/serve-token"; }
 
 Options parse(const QStringList& args)
 {

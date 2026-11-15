@@ -221,6 +221,7 @@ bool Inspector::refreshTransition()
     for (int id : {0, 1, kTitlePage, kEffectsPage}) m_tabs->button(id)->setVisible(!on);
     m_tabs->button(kTransitionPage)->setVisible(on);
     if (!on) return false;
+    ensurePage(kTransitionPage);
     m_transKey = m_editor->selection()->transition();
     m_content->setVisible(true);
     m_empty->setVisible(false);

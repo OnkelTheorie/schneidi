@@ -15,6 +15,7 @@
 #include "app/MainWindow.h"
 #include "app/TemplateDialogs.h"
 #include "app/Theme.h"
+#include "core/AppPaths.h"
 #include "core/BrandKit.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -170,7 +171,7 @@ void clean()
 {
     QDir(TemplateLibrary::dir()).removeRecursively();
     // The built-in ones' copies too (each test's own built-in folder starts from an empty cache)
-    QDir(QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("templates-builtin")).removeRecursively();
+    QDir(QDir(AppPaths::writable(QStandardPaths::CacheLocation)).filePath("templates-builtin")).removeRecursively();
     QSettings().remove("templates");
 }
 

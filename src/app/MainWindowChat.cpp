@@ -66,12 +66,9 @@ void MainWindow::buildChat()
     });
     m_chat->setLanguage(languageName(I18n::language()));
     m_chat->setCompact(m_aiSettings.compact);
-    m_chatPanel = new AiChatPanel(m_chat);
+    m_chatPanel = new AiChatPanel(m_chat, m_chatSplit); // right in its splitter (placeChat orders it)
     m_chatPanel->setKeyHint([this](const QString& provider) { return chatKeyHint(provider); });
     m_chatPanel->setSender([this](const QString& text) { return sendChat(text); });
-    m_chatSplit = new QSplitter(Qt::Horizontal);
-    m_chatSplit->setObjectName("aiChatSplit");
-    m_chatSplit->addWidget(m_pages);
     m_chatSplit->setChildrenCollapsible(false);
     connect(m_chatSplit, &QSplitter::splitterMoved, this, [this] {
         if (m_autosaveDisabled || m_chatPanel->isHidden()) return; // test runs leave the user's layout alone

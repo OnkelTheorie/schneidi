@@ -4,6 +4,7 @@
 
 #include "app/TourManager.h"
 #include "app/VoiceoverRecorder.h"
+#include "core/AppPaths.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
 #include "core/I18n.h"
@@ -51,6 +52,7 @@ const QPair<MainWindow::Page, const char*> kPageNames[] = {{MainWindow::Page::Me
                                                            {MainWindow::Page::Edit, "edit"},
                                                            {MainWindow::Page::Comp, "comp"},
                                                            {MainWindow::Page::Color, "color"},
+                                                           {MainWindow::Page::Studio, "studio"},
                                                            {MainWindow::Page::Deliver, "deliver"}};
 } // namespace
 
@@ -340,6 +342,10 @@ void MainWindow::setupTours(QMenu* help)
             QListWidget* list = m_effects->list();
             for (int i = 0; i < list->count(); ++i)
                 if (list->item(i)->data(Qt::UserRole).toString() == CompUi::kRecipePrefix + recipe && !list->item(i)->isHidden()) {
+                    // More recipes than the list shows (0.22: ten; longer names in Russian, a big font): scrolled into
+                    // view, so the step points at it instead of nowhere
+                    if (!list->viewport()->rect().contains(list->visualItemRect(list->item(i))))
+                        list->scrollToItem(list->item(i), QAbstractItemView::EnsureVisible);
                     const QRect r = list->visualItemRect(list->item(i)).intersected(list->viewport()->rect());
                     return {list->viewport(), r};
                 }
@@ -484,7 +490,7 @@ QStringList MainWindow::tourSampleFiles()
 {
     // Built in, nothing is downloaded: the short game clips of the built-in highlight template, copied to the app's data
     // folder (the engine reads files, not resources)
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
+    const QString dir = AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/tour-sample";
     QDir().mkpath(dir);
     QStringList files;
     for (const QString& name : {QStringLiteral("clip1.mp4"), QStringLiteral("clip2.mp4"), QStringLiteral("clip3.mp4")}) {

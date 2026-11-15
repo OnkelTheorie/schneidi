@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringDecoder>
@@ -46,15 +47,15 @@ QString decode(const QByteArray& data)
     return out;
 }
 
-// "01:02:03,456" (also "." and hours without leading zero) -> ms, -1 = invalid (also beyond 100000 hours: in ms
-// they would not even fit into 64 bits)
+// "01:02:03,456" (also "." and hours without leading zero; WebVTT leaves out the hours: "02:03.456") -> ms,
+// -1 = invalid (also beyond 100000 hours: in ms they would not even fit into 64 bits)
 qint64 parseTime(const QString& s)
 {
-    static const QRegularExpression re(QStringLiteral("^\\s*(\\d+):(\\d{1,2}):(\\d{1,2})(?:[,.](\\d{1,3}))?\\s*$"));
+    static const QRegularExpression re(QStringLiteral("^\\s*(?:(\\d+):)?(\\d{1,2}):(\\d{1,2})(?:[,.](\\d{1,3}))?\\s*$"));
     const auto m = re.match(s);
     if (!m.hasMatch()) return -1;
-    bool ok = false;
-    const qint64 hours = m.captured(1).toLongLong(&ok);
+    bool ok = true;
+    const qint64 hours = m.captured(1).isEmpty() ? 0 : m.captured(1).toLongLong(&ok);
     if (!ok || hours > 100000) return -1;
     QString frac = m.captured(4);
     while (frac.size() < 3) frac += '0'; // ",5" = 500 ms
@@ -107,6 +108,38 @@ QString srtTime(qint64 ms)
         .arg(ms % 1000, 3, 10, QChar('0'));
 }
 
+namespace {
+
+// WebVTT character references (toVtt writes &amp; &lt; &gt;): the named ones WebVTT files use and numeric ones
+// ("&#233;", "&#x2019;"), in one pass ("&amp;lt;" is the text "&lt;"). Unknown or invalid ones stay as written
+QString unescapeVtt(const QString& text)
+{
+    if (!text.contains(QLatin1Char('&'))) return text;
+    static const QRegularExpression ref(QStringLiteral("&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|lt|gt|nbsp|lrm|rlm));"));
+    QString out;
+    qsizetype last = 0;
+    for (auto it = ref.globalMatch(text); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        QString with;
+        if (!m.captured(3).isEmpty()) {
+            static const QHash<QString, QString> named{{"amp", "&"}, {"lt", "<"}, {"gt", ">"}, {"nbsp", QString(QChar(0x00A0))},
+                                                      {"lrm", QString(QChar(0x200E))}, {"rlm", QString(QChar(0x200F))}};
+            with = named.value(m.captured(3));
+        } else {
+            const uint code = !m.captured(1).isEmpty() ? m.captured(1).toUInt() : m.captured(2).toUInt(nullptr, 16);
+            // NUL, surrogates and beyond Unicode are no characters: kept as written
+            if (code == 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) continue;
+            const char32_t c = code;
+            with = QString::fromUcs4(&c, 1);
+        }
+        out += text.mid(last, m.capturedStart() - last) + with;
+        last = m.capturedEnd();
+    }
+    return out + text.mid(last);
+}
+
+} // namespace
+
 QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped)
 {
     QString text = decode(data);
@@ -114,23 +147,45 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped)
     const QStringList lines = text.split('\n');
     QVector<SubtitleCue> cues;
     int bad = 0;
+    bool vtt = false;
     for (int i = 0; i < lines.size();) {
-        // Block: [number] / time line / text up to blank line
+        // Block: [number or WebVTT cue id] / time line / text up to blank line
         while (i < lines.size() && lines[i].trimmed().isEmpty()) ++i;
         if (i >= lines.size()) break;
-        if (!lines[i].contains(QLatin1String("-->")) && i + 1 < lines.size()) ++i; // number (also faulty ones)
-        const QString timing = lines[i++];
+        QStringList block;
+        while (i < lines.size() && !lines[i].trimmed().isEmpty()) block << lines[i++];
+        const QString first = block[0].trimmed();
+        // WebVTT: the header block ("WEBVTT", optional title and header lines) and NOTE/STYLE/REGION blocks carry no
+        // cue (they cannot contain "-->"; a cue id that merely starts with such a word has a time line)
+        const bool timed = std::any_of(block.cbegin(), block.cend(), [](const QString& l) { return l.contains(QLatin1String("-->")); });
+        // The signature is "WEBVTT" alone or followed by a space or tab (a title); "WEBVTTX" is none
+        const bool signature = first == QLatin1String("WEBVTT") || first.startsWith(QLatin1String("WEBVTT "))
+                               || first.startsWith(QLatin1String("WEBVTT\t"));
+        if (cues.isEmpty() && bad == 0 && !vtt && signature) {
+            vtt = true;
+            if (!timed) continue;
+            // a header written without the blank line before the first cue: the cue starts at its time line
+            const auto t = std::find_if(block.cbegin(), block.cend(), [](const QString& l) { return l.contains(QLatin1String("-->")); });
+            block = QStringList(t, block.cend());
+        } else if (vtt && !timed &&
+                   (first == QLatin1String("NOTE") || first.startsWith(QLatin1String("NOTE ")) || first.startsWith(QLatin1String("NOTE\t")) ||
+                    first == QLatin1String("STYLE") || first == QLatin1String("REGION"))) {
+            continue;
+        }
+        int at = 0;
+        if (!block[0].contains(QLatin1String("-->")) && block.size() > 1) at = 1; // number/id (also faulty ones)
+        const QString timing = block[at];
         const int arrow = timing.indexOf(QLatin1String("-->"));
-        QStringList body;
-        while (i < lines.size() && !lines[i].trimmed().isEmpty()) body << lines[i++];
         if (arrow < 0) {
             ++bad;
             continue;
         }
-        // Position info can follow the end time ("X1:... Y1:...")
+        // Position info can follow the end time (SRT "X1:... Y1:...", WebVTT "align:start line:0")
         const qint64 from = parseTime(timing.left(arrow));
-        const qint64 to = parseTime(timing.mid(arrow + 3).trimmed().section(' ', 0, 0));
-        const QString t = stripFormatting(body.join('\n'));
+        static const QRegularExpression space(QStringLiteral("\\s+"));
+        const qint64 to = parseTime(timing.mid(arrow + 3).trimmed().section(space, 0, 0));
+        QString t = stripFormatting(block.mid(at + 1).join('\n'));
+        if (vtt) t = unescapeVtt(t); // after the tags are gone, so "&lt;b&gt;" stays text
         // Beyond 2^30 frames (years) the frame numbers would overflow: broken as well
         if (from < 0 || to < 0 || t.isEmpty() || std::max(from, to) * fps / 1000.0 > (1 << 30)) {
             ++bad;

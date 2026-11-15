@@ -18,6 +18,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMutex>
 #include <QSet>
 #include <QThread>
 #include <QThreadPool>
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 
 namespace Cli::detail {
 
@@ -112,16 +114,63 @@ struct Pass {
     QStringList pending, unreadable;
 };
 
-Pass scanOnce(Project& p, int settle)
+// One scanner per project for the life of this process (`follow`, the MCP server, serve): what it saw in the last pass
+// counts as a look, so a file still being written is not taken on a single look at its modification time. Each has
+// its own lock (one scan at a time per project, other projects are not held up); the map forgets scanners unused for
+// an hour and never holds more than kMaxScanners
+struct KeptScanner {
+    explicit KeptScanner(int settle) : scanner(settle) {}
+    QMutex mutex;
+    WatchFolders::Scanner scanner;
+    qint64 lastUse = 0; // ms since the epoch, under the map's lock
+};
+
+std::shared_ptr<KeptScanner> scannerFor(const QString& projectPath, int settle)
+{
+    constexpr int kMaxScanners = 64;
+    constexpr qint64 kUnusedMs = 3600 * 1000;
+    static QMutex mutex;
+    static QHash<QString, std::shared_ptr<KeptScanner>> scanners;
+    const QMutexLocker lock(&mutex);
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (auto it = scanners.begin(); it != scanners.end();)
+        it = now - it.value()->lastUse > kUnusedMs ? scanners.erase(it) : std::next(it);
+    const QString key = WatchFolders::pathKey(projectPath);
+    if (!scanners.contains(key) && scanners.size() >= kMaxScanners) {
+        auto oldest = scanners.begin();
+        for (auto it = scanners.begin(); it != scanners.end(); ++it)
+            if (it.value()->lastUse < oldest.value()->lastUse) oldest = it;
+        scanners.erase(oldest); // a scan still running keeps its own (shared) copy
+    }
+    std::shared_ptr<KeptScanner>& kept = scanners[key];
+    if (!kept) kept = std::make_shared<KeptScanner>(settle);
+    kept->lastUse = now;
+    return kept;
+}
+
+// live: the project is open in the app - no waiting there (the app's own watching takes files seen only once)
+Pass scanOnce(Project& p, const QString& projectPath, int settle, bool live)
 {
     const QVector<WatchFolder> watches = p.watchFolders();
     QSet<QString> pool;
     for (const MediaInfo& m : p.media()) pool.insert(WatchFolders::pathKey(m.path));
-    WatchFolders::Scanner scanner(settle);
-    const WatchFolders::Scanner::Result found = scanner.scan(watches, [&](const QString& key) { return pool.contains(key); });
+    const std::shared_ptr<KeptScanner> kept = scannerFor(projectPath, settle);
+    const auto inPool = [&](const QString& key) { return pool.contains(key); };
+    WatchFolders::Scanner::Result found;
+    {
+        const QMutexLocker lock(&kept->mutex);
+        kept->scanner.setSettleMs(settle);
+        found = kept->scanner.scan(watches, inPool);
+        // Files seen for the first time (a one-off `watch` call starts without memory) that look complete by their
+        // time: a second look a moment later must find them unchanged
+        if (found.unconfirmed > 0 && !live) {
+            QThread::msleep(std::clamp(settle / 3, 250, 1000));
+            found = kept->scanner.scan(watches, inPool);
+        }
+    }
     QStringList paths;
     for (const WatchFolders::Scanner::Found& f : found.ready) paths << f.path;
-    const QVector<MediaInfo> infos = probeAll(p.format(), paths);
+    const QVector<MediaInfo> infos = probeAll(p.format(), paths); // without the lock: probing can take a while
     Pass pass;
     pass.pending = found.pending;
     QVector<WatchImport> imports;
@@ -129,6 +178,11 @@ Pass scanOnce(Project& p, int settle)
         // Not readable (yet): an MP4 whose recorder writes the index last and paused, or a broken file
         if (infos[i].length <= 0 || (!infos[i].hasVideo && !infos[i].hasAudio)) pass.unreadable << paths[i];
         else imports << WatchImport{infos[i], watches[found.ready[i].watch].path};
+    }
+    if (!pass.unreadable.isEmpty()) {
+        // Tried again only once it changes (not probed on every pass of `follow`)
+        const QMutexLocker lock(&kept->mutex);
+        for (const QString& path : pass.unreadable) kept->scanner.rejected(path);
     }
     pass.arrivals = p.addWatchedMedia(imports);
     return pass;
@@ -185,7 +239,7 @@ QJsonObject watchOnce(const QJsonObject& a)
             o["notes"] = QJsonArray{"the project watches no folder: add one with 'add' (its new media files then come "
                                     "into the media pool on their own)"};
         else
-            pass = scanOnce(p, settle);
+            pass = scanOnce(p, s.path, settle, s.live);
     }
     o["revision"] = p.watchRevision();
     o["folders"] = foldersJson(p);

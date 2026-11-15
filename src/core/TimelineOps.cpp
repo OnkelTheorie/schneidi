@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TimelineOps.h"
 
+#include "core/Automation.h"
 #include "core/CompGraph.h"
 #include "core/Keyframes.h"
 #include "core/Subtitles.h"
@@ -80,7 +81,11 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
         auto& tracks = tl.tracks(k);
         for (int i = 0; i < tracks.size(); ++i) {
             Track& t = tracks[i];
-            if (t.locked || skip.contains(TrackRef{k, i}) || t.clips.isEmpty()) continue;
+            if (t.locked || skip.contains(TrackRef{k, i})) continue;
+            if (t.clips.isEmpty()) {
+                if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
+                continue;
+            }
             QVector<Clip> moved = t.clips;
             bool changed = false;
             for (Clip& c : moved) {
@@ -90,11 +95,13 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
                 c.start += d;
                 changed |= d != 0;
             }
-            if (!changed) continue;
-            // Order stays; if anything overlaps, the track stays as it is
+            // Order stays; if anything overlaps, the track stays as it is (its automation too)
             bool ok = moved.first().start >= 0;
             for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end();
             if (!ok) continue;
+            // The automation moves with the time even where no clip of the track moved (points after the last clip)
+            if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
+            if (!changed) continue;
             // release a dissolve that has been pushed apart (otherwise it would turn into fade out and fade in)
             for (int j = 1; j < moved.size(); ++j)
                 if (t.clips[j - 1].end() == t.clips[j].start && moved[j - 1].end() != moved[j].start
@@ -436,6 +443,7 @@ void shiftFrom(Track& track, int frame, int delta)
     for (Clip& c : track.clips)
         if (c.start >= frame) c.start += delta;
     sortTrack(track);
+    if (delta != 0 && !std::as_const(track).volumeAuto.isEmpty()) Automation::ripple(track.volumeAuto, {{frame, delta}});
 }
 
 void clearDissolveAt(Track& track, int frame)
@@ -553,6 +561,7 @@ RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
         Track& t = tl.track(edited[i]);
         t.clips = rest;
         sortTrack(t);
+        if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
     }
     rippleTracks(tl, shifts, edited);
     RippleResult result;
@@ -810,6 +819,22 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
         QVector<QPair<int, int>> shifts;
         for (const auto& list : perTrack)
             if (list.size() > shifts.size()) shifts = list;
+        // Automation of the trimmed tracks: the time trimmed off goes (head: at the clip's start, where its content
+        // moves from), time added comes in there
+        QMap<QPair<int, int>, QVector<QPair<int, int>>> autoShifts;
+        for (int id : e.ids) {
+            TrackRef ref;
+            if (const Clip* c = findClip(tl, id, &ref)) {
+                auto& list = autoShifts[qMakePair(int(ref.kind), ref.index)];
+                if (e.edge == Edge::End) list << qMakePair(c->end(), delta);
+                else if (delta > 0) list << qMakePair(c->start + delta, -delta);
+                else list << qMakePair(c->start, -delta);
+            }
+        }
+        for (auto it = autoShifts.cbegin(); it != autoShifts.cend(); ++it) {
+            Track& t = tl.track(TrackRef{TrackKind(it.key().first), it.key().second});
+            if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, it.value());
+        }
         for (int id : e.ids) {
             TrackRef ref;
             Clip* c = findClip(tl, id, &ref);
@@ -1151,6 +1176,14 @@ bool usesMediaOnVideo(const Timeline& tl, const QString& path)
                 if (e.effectId == QLatin1String(Comp::kEffectId) && Comp::mediaPaths(e).contains(path)) return true;
         }
     return false;
+}
+
+int followTrack(const QVector<Track>& tracks, quint64 uid, int index)
+{
+    if (index >= 0 && index < tracks.size() && tracks[index].uid.value == uid) return index;
+    for (int i = 0; i < tracks.size(); ++i)
+        if (tracks[i].uid.value == uid) return i;
+    return -1;
 }
 
 } // namespace TimelineOps

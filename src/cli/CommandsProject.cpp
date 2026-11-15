@@ -5,10 +5,15 @@
 #include "cli/Sandbox.h"
 
 #include "core/Accents.h"
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/CompRecipes.h"
 #include "core/Editor.h"
+#include "core/Presets.h"
+#include "core/SfxSynth.h"
+#include "core/Shapes.h"
 #include "core/StreamPresets.h"
+#include "core/EffectFavorites.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/GradeWindows.h"
@@ -886,7 +891,18 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
     job.path = out;
     if (!srtOnly) job.settings.format = formatId;
-    if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, RenderSettings::kQualityWeb);
+    if (a.contains("quality")) {
+        // A name or its number (older callers send 0-3)
+        static const QStringList names{"high", "medium", "small", "web", "source"};
+        const QString q = a["quality"].isDouble() ? QString::number(a["quality"].toDouble())
+                                                  : a["quality"].toString().trimmed().toLower();
+        bool number = false;
+        const int n = q.toInt(&number);
+        const int i = number ? n : int(names.indexOf(q));
+        if (i < 0 || i > RenderSettings::kQualitySource)
+            fail("BAD_ARGUMENT", "quality must be high, medium, small, web or source (or 0-4)");
+        job.settings.quality = i;
+    }
     // Review video: small (540 p) and the fastest encoder setting unless a size is given
     if (reviewVideo && !a.contains("height") && !a.contains("size")) {
         job.settings.shortSide = 540;
@@ -906,9 +922,29 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.size = QSize(w & ~1, h & ~1);
     }
     if (a.contains("fps")) {
-        const FrameRate r = nearestExportRate(a["fps"].toDouble());
+        // 48/100/120 from a 120 fps project too (nearestExportRate stopped at 60); anything else is refused
+        const FrameRate r = exportFrameRate(a["fps"].toDouble());
         job.settings.rateNum = r.num;
         job.settings.rateDen = r.den;
+    }
+    if (a.contains("channels")) {
+        const QString c = a["channels"].toVariant().toString().trimmed().toLower(); // "5.1" or 6
+        const int n = c == "project" ? 0 : ChannelLayout::parse(c);
+        if (n == 0 && c != "project") fail("BAD_ARGUMENT", "channels must be stereo, 5.1, 7.1 or project");
+        job.settings.audioChannels = n;
+    }
+    if (a.contains("audio_codec")) {
+        const QString c = a["audio_codec"].toString().trimmed().toLower().remove('-'); // "ac3", "AC-3"
+        if (c == "ac3") {
+            if (!job.settings.audioFormatChoices().contains("ac3"))
+                fail("BAD_ARGUMENT", "audio_codec ac3 needs an MP4 video format (h264, h265, av1, h264_own)");
+            if (!HardwareEncoders::builtIn("ac3")) fail("BAD_ARGUMENT", "this build of FFmpeg has no AC-3 encoder");
+            job.settings.audioFormat = "ac3";
+        } else if (c.isEmpty() || c == "default" || c == "aac") {
+            job.settings.audioFormat.clear();
+        } else {
+            fail("BAD_ARGUMENT", "audio_codec must be aac (the format's own, default) or ac3");
+        }
     }
     if (a.contains("encoder")) {
         bool ok = false;
@@ -1019,9 +1055,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (marks) {
         // The marks drawn onto every frame after compositing; the timeline itself stays as it is
         es.overlay = Picture::reviewOverlay(marks);
-        es.smartRender = false;
-        es.preset = "ultrafast";
-        es.crf = std::max(es.crf, 28);
+        RenderQueue::makeReview(es);
     }
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
@@ -1046,6 +1080,12 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();
     }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
+    if (job.settings.hasAudio() && !srtOnly) o["channels"] = ex.audioChannels() == 1 ? QStringLiteral("mono") : ChannelLayout::name(ex.audioChannels());
+    if (job.settings.hasAudio() && !srtOnly && !job.settings.audioFormat.isEmpty()) o["audio_codec"] = job.settings.audioCodec();
+    if (job.settings.sourceQuality() && !marks) {
+        o["quality"] = "source";
+        o["video_bitrate_k"] = ex.targetBitrateK(); // 0: no source bit rate known, rendered as "high"
+    }
     // Free H.264/H.265 encoder because neither a graphics card encoder nor x264/x265 is there: how to get better
     if (const QString hint = HardwareEncoders::betterQualityHint(ex.usedCodec()); !hint.isEmpty()) {
         o["encoder_hint"] = hint;
@@ -1082,16 +1122,95 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 
 namespace {
 // LUTs, luma images and presets for `effects`: built-in ones by id, the user's by folder/name
-QJsonArray assetsJson(const QVector<EffectFolders::LutEntry>& list)
+// prefix: the Effects Library's data prefix of these entries ("lut:", "luma:", "preset:"), for the favourite mark
+QJsonObject assetJson(const EffectFolders::LutEntry& e, const QString& prefix)
+{
+    const bool builtin = EffectFolders::isBuiltin(e.path);
+    QJsonObject o{{"name", builtin ? EffectFolders::builtinId(e.path) : (e.group.isEmpty() ? e.name : e.group + "/" + e.name)},
+                  {"label", builtin ? e.name : QFileInfo(e.path).fileName()}};
+    if (const QString d = EffectFolders::builtinPresetDescription(e.path); !d.isEmpty()) o["description"] = d;
+    if (EffectFavorites::isFavorite(EffectFavorites::key(prefix + e.path))) o["favorite"] = true;
+    return o;
+}
+
+QJsonArray assetsJson(const QVector<EffectFolders::LutEntry>& list, const QString& prefix)
 {
     QJsonArray out;
-    for (const EffectFolders::LutEntry& e : list) {
-        const bool builtin = EffectFolders::isBuiltin(e.path);
-        QJsonObject o{{"name", builtin ? EffectFolders::builtinId(e.path) : (e.group.isEmpty() ? e.name : e.group + "/" + e.name)},
-                      {"label", builtin ? e.name : QFileInfo(e.path).fileName()}};
-        if (const QString d = EffectFolders::builtinPresetDescription(e.path); !d.isEmpty()) o["description"] = d;
-        out << o;
+    for (const EffectFolders::LutEntry& e : list) out << assetJson(e, prefix);
+    return out;
+}
+
+QJsonObject effectJson(const EffectDescriptor& d)
+{
+    QJsonObject o{{"effect", d.id}, {"name", d.name}, {"kind", d.video ? "video" : "audio"},
+                  {"category", EffectRegistry::categoryId(d.category)}};
+    if (EffectFavorites::isFavorite("fx:" + d.id)) o["favorite"] = true;
+    return o;
+}
+
+// An Effects Library entry by its favourite key (core/EffectFavorites) as what the ops take; empty = no longer there
+// or nothing the CLI applies (the paint tool)
+QJsonObject libraryEntryJson(const QString& key)
+{
+    const int colon = int(key.indexOf(':'));
+    const QString prefix = colon < 0 ? key : key.left(colon + 1), rest = colon < 0 ? QString() : key.mid(colon + 1);
+    if (prefix == "fx:") {
+        const EffectDescriptor* d = EffectRegistry::find(rest);
+        if (!d) return {};
+        QJsonObject o = effectJson(*d);
+        o.remove("kind");
+        o.remove("favorite");
+        o["type"] = d->video ? "video_effect" : "audio_effect";
+        return o;
     }
+    if (prefix == "video:")
+        for (const auto& t : kTransitionTypes)
+            if (rest == QLatin1String(t.id)) return {{"type", "transition"}, {"transition", rest}};
+    if (prefix == "audio:")
+        for (const auto& c : kAudioCurves)
+            if (rest == QLatin1String(c.id)) return {{"type", "audio_transition"}, {"curve", rest}};
+    if (key == "title") return {{"type", "title"}, {"title", "text"}};
+    if (key == "title:counter" || key == "title:progress") return {{"type", "title"}, {"title", rest}};
+    if (prefix == "shape:") {
+        ShapeKind k;
+        if (Shapes::kindFromId(rest, &k)) return {{"type", "shape"}, {"shape", rest}};
+    }
+    if (prefix == "recipe:" && CompRecipes::find(rest)) return {{"type", "recipe"}, {"recipe", rest}};
+    if (prefix == "lut:" || prefix == "luma:" || prefix == "preset:") {
+        const QString path = EffectFavorites::filePath(key);
+        const QVector<EffectFolders::LutEntry> list =
+            prefix == "lut:"    ? EffectFolders::builtinLuts() + EffectFolders::userLuts()
+            : prefix == "luma:" ? EffectFolders::builtinTransitions() + EffectFolders::userTransitions()
+                                : EffectFolders::builtinPresets() + EffectFolders::userPresets();
+        for (const EffectFolders::LutEntry& e : list)
+            if (e.path == path) {
+                QJsonObject o = assetJson(e, prefix);
+                o.remove("favorite");
+                o["type"] = prefix.chopped(1);
+                return o;
+            }
+        return {};
+    }
+    if (prefix == "sound:") { // the fields of op 'sfx'
+        QJsonObject o = QJsonDocument::fromJson(rest.toUtf8()).object();
+        const QString kind = o["kind"].toString();
+        if (kind.isEmpty()) return {};
+        if (!SfxSynth::kindFrom(kind)) {
+            const QString file = EffectFavorites::absolutePath(kind);
+            if (!QFileInfo(file).isFile()) return {};
+            o["kind"] = QDir::toNativeSeparators(file);
+        }
+        o["type"] = "sfx";
+        return o;
+    }
+    return {};
+}
+
+QJsonArray libraryEntriesJson(const QStringList& keys)
+{
+    QJsonArray out;
+    for (const QString& key : keys)
+        if (QJsonObject o = libraryEntryJson(key); !o.isEmpty()) out << o;
     return out;
 }
 } // namespace
@@ -1136,11 +1255,24 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     if (a.contains("export") || a.contains("import") || a.contains("remove"))
         fail("BAD_ARGUMENT", "export, import and remove belong to kind:'recipes'");
     if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx', 'nodes' or 'recipes' (or leave it out)");
+    // The user's favourites and recently used entries of the Effects Library (marked in the app), as the ops take them
+    if (a["favorites"].toBool())
+        return {{"favorites", libraryEntriesJson(EffectFavorites::favorites())},
+                {"recent", libraryEntriesJson(EffectFavorites::recent())},
+                {"note", "marked by the user in the app's Effects Library (right click › favourite, key F); recent = "
+                         "last applied there, newest first"}};
     const QString only = a["effect"].toString();
+    EffectCategory category = EffectCategory::None;
+    if (const QString c = a["category"].toString(); !c.isEmpty() && !EffectRegistry::categoryFromId(c, &category)) {
+        QStringList ids;
+        for (const EffectCategoryInfo& i : kEffectCategories) ids << QString::fromLatin1(i.id);
+        fail("BAD_ARGUMENT", "category: one of " + ids.join(", "));
+    }
     QJsonArray list;
     for (const EffectDescriptor& d : EffectRegistry::all()) {
         if (!only.isEmpty() && d.id != only) continue;
-        QJsonObject o{{"effect", d.id}, {"name", d.name}, {"kind", d.video ? "video" : "audio"}};
+        if (category != EffectCategory::None && d.category != category) continue;
+        QJsonObject o = effectJson(d);
         if (d.id == "grade")
             o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT); windows (shape masks) via the `window` op";
         if (d.id == "chromakey")
@@ -1191,7 +1323,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         list << o;
     }
     if (list.isEmpty() && !only.isEmpty()) fail("NOT_FOUND", "no effect " + only);
-    if (!only.isEmpty()) return {{"effects", list}};
+    if (!only.isEmpty() || category != EffectCategory::None) return {{"effects", list}};
     QJsonArray types;
     for (const auto& t : kTransitionTypes) types << t.id;
     // Accents on hits (op 'accent'): what each preset does, so a model picks one instead of writing keyframes
@@ -1199,10 +1331,10 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     for (const Accents::Preset& p : Accents::presets())
         accents << QJsonObject{{"preset", p.id}, {"description", p.description}};
     return {{"effects", list},
-            {"luts", assetsJson(EffectFolders::builtinLuts() + EffectFolders::userLuts())},
+            {"luts", assetsJson(EffectFolders::builtinLuts() + EffectFolders::userLuts(), EffectFolders::LutPrefix)},
             {"transition_types", types},
-            {"lumas", assetsJson(EffectFolders::builtinTransitions() + EffectFolders::userTransitions())},
-            {"presets", assetsJson(EffectFolders::builtinPresets() + EffectFolders::userPresets())},
+            {"lumas", assetsJson(EffectFolders::builtinTransitions() + EffectFolders::userTransitions(), "luma:")},
+            {"presets", assetsJson(EffectFolders::builtinPresets() + EffectFolders::userPresets(), Presets::Prefix)},
             {"accents", accents},
             {"sounds", sfxSounds()}};
 }
@@ -1242,6 +1374,12 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             ids.insert(id);
         }
         h->liveSelection()->set(ids);
+    } else if (action == "page") {
+        // The app's page (the bar at the bottom): a hidden page shows while it is the current one
+        const QString page = a["page"].toString().trimmed().toLower();
+        if (page.isEmpty()) fail("BAD_ARGUMENT", "page needs 'page': media, edit, comp, color, studio or deliver");
+        if (!h->liveShowPage(page))
+            fail("BAD_ARGUMENT", "page: one of media, edit, comp, color, studio, deliver (not '" + page + "')");
     } else if (action == "undo" || action == "redo") {
         QUndoStack* u = p->undoStack();
         const bool undo = action == "undo";
@@ -1277,6 +1415,14 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             list << st;
         }
         o["proxies"] = list;
+    } else if (action == "render_cache") {
+        // The preview's render cache (Playback > Render Cache): mode and/or pause until the next change
+        const QString mode = a["mode"].toString().trimmed().toLower();
+        if (!mode.isEmpty() && mode != "off" && mode != "smart" && mode != "user")
+            fail("BAD_ARGUMENT", "render_cache: mode must be off, smart or user");
+        if (mode.isEmpty() && !a.contains("pause"))
+            fail("BAD_ARGUMENT", "render_cache needs 'mode' and/or 'pause' (true pauses, false resumes)");
+        h->liveRenderCacheControl(mode, a["pause"].toBool());
     } else if (action == "clean_proxies") {
         // Proxy files neither the app's project (unsaved changes included) nor a recent project needs
         // (engine/ProxyCleanup): listed, deleted only with delete:true
@@ -1329,8 +1475,8 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             o["media"] = list;
         }
     } else {
-        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, open, proxies or "
-                             "clean_proxies");
+        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, page, undo, redo, save, open, proxies, "
+                             "render_cache or clean_proxies");
     }
     o["app"] = Live::appState(h);
     return o;

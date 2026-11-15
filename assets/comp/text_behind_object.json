@@ -1,0 +1,32 @@
+{
+    "name": "Text behind an object",
+    "description": "A title in the scene that disappears behind a wall, a pillar or a car: one click on the object makes a mask of its even surface, the object stays in front of the words and both follow a tracker.",
+    "name_de": "Text hinter Objekt",
+    "description_de": "Ein Titel in der Szene, der hinter einer Wand, einer Säule oder einem Auto verschwindet: ein Klick auf das Objekt macht aus seiner gleichfarbigen Fläche eine Maske, das Objekt bleibt vor den Worten und beides folgt einem Tracker.",
+    "name_en": "Text behind an object",
+    "description_en": "A title in the scene that disappears behind a wall, a pillar or a car: one click on the object makes a mask of its even surface, the object stays in front of the words and both follow a tracker.",
+    "note": "Pick the object in front: {op:'pick_region', clip, at, point:[x, y], add:true} (0..1 of the picture; look with `frames` first) makes mask 6 the outline of the even surface you point at and puts tracker 2's point on structure at its edge; combine:'add' / 'subtract' adds or takes away another surface. Then {op:'track_node', clip, node:2} so text and mask stay in the scene when the camera moves (a surface in perspective: track_node with mode:'quad' and corners - the mask follows them in perspective). Check with `frames` {clip, node:7}.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 120},
+            {"id": 2, "type": "tracker", "x": 160, "y": 120, "params": {"mode": "point", "lost": "hold"}},
+            {"id": 3, "type": "text", "x": 0, "y": 240, "params": {"text": "Title"}},
+            {"id": 4, "type": "transform", "x": 160, "y": 240, "params": {"follow": 2}},
+            {"id": 5, "type": "merge", "x": 320, "y": 60},
+            {"id": 6, "type": "mask", "x": 320, "y": 360, "params": {"shape": "polygon", "follow": 2, "soft": 1,
+                "p0x": 0.6, "p0y": 0.15, "p1x": 0.75, "p1y": 0.15, "p2x": 0.75, "p2y": 0.85, "p3x": 0.6, "p3y": 0.85}},
+            {"id": 7, "type": "merge", "x": 480, "y": 180}
+        ],
+        "links": [[1, 2, "src"], [3, 4, "src"], [2, 5, "bg"], [4, 5, "fg"], [5, 7, "bg"], [2, 7, "fg"], [6, 7, "mask"]],
+        "out": 7
+    },
+    "slots": {
+        "text": {"type": "text", "description": "the words", "targets": ["3.text"]},
+        "color": {"type": "color", "description": "text color", "targets": ["3.color"]},
+        "font": {"type": "text", "description": "font family", "targets": ["3.font"]},
+        "size": {"type": "number", "description": "text size in project pixels", "targets": ["3.size"]},
+        "x": {"type": "number", "description": "text position 0..1 from the left", "targets": ["3.x"]},
+        "y": {"type": "number", "description": "text position 0..1 from the top", "targets": ["3.y"]},
+        "soft": {"type": "number", "description": "soft edge of the object's outline in project pixels", "targets": ["6.soft"]}
+    }
+}

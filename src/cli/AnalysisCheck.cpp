@@ -3,6 +3,7 @@
 // before handing it over
 #include "cli/AnalysisDetail.h"
 
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
@@ -374,6 +375,8 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     };
     QVector<ExportCheck::Issue> issues;
     Measured measured;
+    QString soundNote;     // project in 5.1/7.1 measured as it is: how to measure a stereo export
+    int soundChannels = 0; // project: the channel format measured
     QJsonObject result{{"source", absolute(src)}};
     QJsonObject fix, suggest;
     QVector<ExportCheck::Change> changes; // pace changes of a project's range (for the retention drops)
@@ -486,7 +489,9 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         if (withSound) {
             std::vector<float> peaks;
             const int soundTo = ExportCheck::soundEnd(from, to, f, &issues);
-            const auto loud = AudioAnalysis::timelineLoudness(f, render, from, soundTo, progress(scanned, 0.55), &peaks);
+            const int channels = measuredChannels(a, f.audioChannels, &soundNote);
+            soundChannels = channels > 0 ? channels : f.audioChannels;
+            const auto loud = AudioAnalysis::timelineLoudness(f, render, from, soundTo, progress(scanned, 0.55), &peaks, channels);
             if (!loud) fail("DECODE_FAILED", "could not mix the sound");
             measured = {peaks, *loud};
             const QVector<ExportCheck::Issue> heard =
@@ -582,6 +587,8 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     if (withSound) {
         QJsonObject m = measuredJson(measured);
         m["target_lufs"] = opt.targetLufs;
+        if (soundChannels > 0) m["channels"] = ChannelLayout::name(soundChannels);
+        if (!soundNote.isEmpty()) m["note"] = soundNote;
         result["sound"] = m;
     }
     if (!fix.isEmpty()) result["fix"] = fix;

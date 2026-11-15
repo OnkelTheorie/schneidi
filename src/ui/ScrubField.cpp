@@ -35,6 +35,7 @@ int ScrubField::widestText() const
     };
     int width = std::max(shown(m_min), shown(m_max));
     if (!m_minText.isEmpty()) width = std::max(width, fm.horizontalAdvance(m_minText));
+    if (!m_zeroText.isEmpty()) width = std::max(width, fm.horizontalAdvance(m_zeroText));
     return width;
 }
 
@@ -97,9 +98,17 @@ void ScrubField::setMinimumText(const QString& t)
     showValue();
 }
 
+void ScrubField::setZeroText(const QString& t)
+{
+    m_zeroText = t;
+    fitWidth();
+    showValue();
+}
+
 void ScrubField::showValue()
 {
     if (!m_minText.isEmpty() && m_value <= m_min) setText(m_minText);
+    else if (!m_zeroText.isEmpty() && m_value == 0) setText(m_zeroText);
     else setText(number() + m_suffix);
     if (m_shrinkable) fitWidth(); // never narrower than the text shown now
 }

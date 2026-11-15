@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFormat.h"
 
+#include "core/Automation.h"
 #include "core/CompGraph.h"
+#include "core/EffectRegistry.h"
 #include "core/Generators.h"
 #include "core/GradeWindows.h"
+#include "core/Drawing.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
+#include "core/Shapes.h"
 #include "core/TimelineStory.h"
 #include "core/Types.h"
 
@@ -41,6 +45,7 @@ ProjectFormat withinLimits(ProjectFormat f)
     f.height = std::clamp(f.height, kMinFrameSize, kMaxFrameSize);
     if (f.rate.num <= 0 || f.rate.den <= 0 || f.rate.fps() < 1 || f.rate.fps() > 1000)
         f.rate = nearestFrameRate(f.rate.num > 0 && f.rate.den > 0 ? f.rate.fps() : 25);
+    if (f.audioChannels != 6 && f.audioChannels != 8) f.audioChannels = 2;
     return f;
 }
 
@@ -116,6 +121,16 @@ double titleFit(const Clip& c, double s, double fromW, double toW)
 // Node values of compositing graphs in project pixels (Comp::pixelKeys: a text node's size, a blur radius, a shadow
 // offset ...) times k, static values and keyframes; positions as 0..1 of the picture stay. A value never set keeps
 // its node default (the engine's, unknown here) - like a fresh node in the new resolution.
+// Clip in a shape (0.22): its pixel values (stroke, soft edge, shadow softness), static and keyframed; size and place
+// are percent of the picture and stay
+void scaleClipShape(Clip& c, double k)
+{
+    const QString id = QString::fromLatin1(Shapes::kClipShapeEffect);
+    if (!EffectRegistry::has(c, id)) return;
+    for (const char* key : {"stroke_width", "feather", "shadow_soft"}) // static value (into the effect) and keyframes
+        Keys::convert(c, Keys::effectParam(id, QString::fromLatin1(key)), [k](double v) { return v * k; }, k);
+}
+
 void scaleCompPixels(Clip& c, double k)
 {
     QVector<AnimParam> scaled; // keyframes belong to the effect id: two comp instances share them
@@ -216,9 +231,13 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     *v *= ts;
                 ti.barThickness *= sy;
                 ti.barMargin *= sy;
+                for (double* v : {&ti.shape.width, &ti.shape.height, &ti.shape.corner, &ti.shape.feather}) *v *= s;
+                if (ti.isDrawing()) // strokes in 0..1 of the frame: only a frame of another shape moves them
+                    Drawing::scaleFormat(ti.drawing, from.width(), from.height(), to.width(), to.height(), s);
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
                 if (tracks == &tl.video) scaleCompPixels(c, s);
+                if (tracks == &tl.video) scaleClipShape(c, s);
                 // Convert keyframe values in pixels likewise
                 for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
                     double f = 1;
@@ -226,6 +245,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     case AnimParam::PosX: case AnimParam::TitlePosX: f = sx; break;
                     case AnimParam::PosY: case AnimParam::TitlePosY: f = sy; break;
                     case AnimParam::TitleSize: f = ts; break;
+                    case AnimParam::ShapeWidth: case AnimParam::ShapeHeight: f = s; break;
                     default: continue;
                     }
                     for (Keyframe& k : it.value()) {
@@ -276,6 +296,8 @@ void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)
     }
     for (int& m : tl.markers) m = at(m);
     tl.markers.erase(std::unique(tl.markers.begin(), tl.markers.end()), tl.markers.end());
+    for (Track& t : tl.audio) // track automation lies in timeline frames like the markers
+        if (!std::as_const(t).volumeAuto.isEmpty()) Automation::retime(t.volumeAuto, at);
     tl.markIn = at(tl.markIn);
     tl.markOut = at(tl.markOut);
     if (tl.markIn >= 0 && tl.markOut >= 0) tl.markOut = std::max(tl.markOut, tl.markIn);

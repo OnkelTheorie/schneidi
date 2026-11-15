@@ -3,6 +3,7 @@
 #include "cli/Live.h"
 
 #include "cli/CommandsDetail.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/CodeTrust.h"
 #include "core/LiveHost.h"
@@ -47,6 +48,9 @@ namespace Cli::Live {
 namespace {
 
 LiveHost* g_host = nullptr;
+// While a command of the user's own runs (g_host set by runForUser) the AIs wait
+const char* const userBusy = "the user runs a command in the schneidi app (it measures, a progress dialog is open); "
+                             "try again in a moment";
 bool g_isApp = false; // this process runs a server (or is told so by disable()): never connect to an app as a client
 QString g_clientName = "schneidi-cli";
 
@@ -208,7 +212,7 @@ bool isAppProject(const QString& project) { return project.trimmed() == AppProje
 
 QString registryDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/live";
+    return AppPaths::writable(QStandardPaths::AppLocalDataLocation) + "/live";
 }
 
 LiveHost* host() { return g_host; }
@@ -228,11 +232,14 @@ QJsonObject appState(LiveHost* h)
                   {"playhead", playhead},
                   {"playhead_tc", detail::tc(playhead, fmt)},
                   {"playing", h->livePlaying()},
+                  {"page", h->livePage()},
                   {"selection", selected}};
     if (p->undoStack()->canUndo()) o["undo"] = p->undoStack()->undoText(); // what `app` undo would take back
     const Timeline& tl = p->timeline();
     if (tl.markIn >= 0 || tl.markOut >= 0)
         o["marks"] = QJsonObject{{"in", tl.markIn}, {"out", tl.markOut}};
+    // Background work of the preview the user sees (bottom right): rendering clips ahead
+    if (const QJsonObject cache = h->liveRenderCache(); !cache.isEmpty()) o["render_cache"] = cache;
     return o;
 }
 
@@ -375,7 +382,7 @@ void Server::openPending()
 {
     if (m_pendingOpen.isEmpty() || !m_waiting.isEmpty()) return; // setWaiting({}) comes back here
     // An AI command or an earlier hand-over (its question still open) runs: right after it
-    if (m_running || m_opening) return void(QTimer::singleShot(200, this, &Server::openPending));
+    if (m_running || m_opening || g_host) return void(QTimer::singleShot(200, this, &Server::openPending));
     const QStringList files = std::exchange(m_pendingOpen, {});
     m_opening = true;
     // The host may ask "save changes?" (a modal dialog with its own event loop, which delivers live requests): AIs
@@ -580,6 +587,9 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                       {"trusted_code", trusted},
                       {"app", appState(m_host)}});
     }
+    // A command of the user's own runs (runForUser: "Lautheit auf Ziel" measures for a while behind a progress dialog,
+    // whose event loop delivers requests): an edit now would land in its open undo step and go with its cancel
+    if (type == "run" && g_host && !m_running) return reply(errorReply("APP_BUSY", userBusy));
     if (type == "run") {
         QPointer<QLocalSocket> guard(s);
         m_running = true;
@@ -602,6 +612,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
 QJsonObject Server::runForChat(const QString& command, const QJsonObject& args)
 {
     if (m_running) return errorReply("APP_BUSY", "another command runs in the app");
+    if (g_host) return errorReply("APP_BUSY", userBusy);
     bool readsAllowed = false;
     if (const QString waiting = waitingNow(&readsAllowed);
         !waiting.isEmpty() && !(readsAllowed && readOnlyRun(command, args)))
@@ -682,9 +693,8 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     LiveChange change;
     change.command = name;
     change.ownChat = ownChat;
-    try {
-        result = cmd->run(args, ctx);
-    } catch (const Error& e) {
+    // A failed command: its open undo macro closed and taken back, the reply and the AI log say why
+    const auto failed = [&](const QString& code, const QString& message) {
         if (step) {
             undo->endMacro();
             if (undo->index() > index) undo->undo(); // all or nothing, like on the file
@@ -694,10 +704,19 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
         }
         if (logged) {
             change.step = stepText(name, args, {}, *p);
-            change.error = e.message;
+            change.error = message;
             m_host->liveChanged(change);
         }
-        return errorReply(e.code, e.message);
+        return errorReply(code, message);
+    };
+    try {
+        result = cmd->run(args, ctx);
+    } catch (const Error& e) {
+        return failed(e.code, e.message);
+    } catch (const std::exception& e) { // not an Error (std::bad_alloc …): the macro must not stay open either
+        return failed("INTERNAL", QString("the command failed: %1").arg(e.what()));
+    } catch (...) {
+        return failed("INTERNAL", "the command failed");
     }
     if (step) {
         undo->endMacro();

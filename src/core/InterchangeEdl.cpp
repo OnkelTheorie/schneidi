@@ -46,6 +46,13 @@ QString eventLine(int number, const Line& l, int fps)
 QByteArray writeEdl(Sequence& seq)
 {
     const int fps = seq.format.rate.timebase();
+    // CMX3600 timecodes have two frame digits: a 100 or 120 fps timeline would write HH:MM:SS:FFF, which no
+    // program reads (or worse, reads wrong)
+    if (fps > kMaxEdlFps)
+        throw Error{T("EDL kann höchstens %1 fps (zwei Stellen für Bilder im Timecode); diese Timeline hat %2 fps. "
+                      "FCP7-XML oder OTIO nehmen.")
+                        .arg(kMaxEdlFps)
+                        .arg(seq.format.rate.label())};
     const int offset = 3600 * fps; // record timecode of timeline frame 0
     QString out;
     QTextStream ts(&out);
@@ -196,7 +203,10 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             const QString kind = m.captured(4).toUpper();
             e.dissolve = kind != "C";
             wipes = wipes || kind.startsWith('W') || kind.startsWith('K');
-            e.dur = m.captured(5).trimmed().toInt();
+            // A transition longer than any timeline (a damaged or crafted file): refused, sums stay inside int
+            const double dur = m.captured(5).trimmed().toDouble();
+            checkFrames(dur);
+            e.dur = int(dur);
             e.srcIn = tc(m.captured(6), true);
             e.srcOut = tc(m.captured(7), true);
             e.recIn = tc(m.captured(8), false);
@@ -247,7 +257,15 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
         if (f == "A" || f == "B" || f == "AA" || f.startsWith("AA/") || f.startsWith("A/")) targets << qMakePair(TrackKind::Audio, 0);
         if (f == "AA" || f.startsWith("AA/")) targets << qMakePair(TrackKind::Audio, 1);
         static const QRegularExpression an("^A(\\d+)$");
-        if (const auto m = an.match(f); m.hasMatch() && m.captured(1).toInt() >= 2) targets << qMakePair(TrackKind::Audio, m.captured(1).toInt() - 1);
+        if (const auto m = an.match(f); m.hasMatch()) {
+            // "A99999999" created that many tracks (billions: out of memory); toDouble: 20 digits are no 0
+            const double n = m.captured(1).toDouble();
+            if (n > kMaxReadTracks)
+                throw Error{T("EDL: Audiospur %1 - mehr als %2 Audiospuren werden nicht gelesen")
+                                .arg(m.captured(1).left(12))
+                                .arg(kMaxReadTracks)};
+            if (n >= 2) targets << qMakePair(TrackKind::Audio, int(n) - 1);
+        }
         if (targets.isEmpty()) continue;
         ++link;
         for (const auto& [kind, index] : targets) {

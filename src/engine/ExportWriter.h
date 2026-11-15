@@ -75,6 +75,11 @@ public:
     static bool isOwnH264(const QString& codec) { return codec == QLatin1String(kOwnH264); }
     // The own encoder's fixed QP for an x264-like CRF (the export's quality levels)
     static int ownH264Qp(int crf);
+    // Why the own encoder cannot write pictures of this size at this frame rate (empty = it can): smaller than
+    // kOwnMinSide on a side, or above the highest H.264 level (6.2: more than 8K, 8K over 120 fps). The writer refuses
+    // those itself; a bit rate cap above 6.2's is refused once the first pass has decided on two passes.
+    static constexpr int kOwnMinSide = 32;
+    static QString ownSizeProblem(QSize size, double fps);
     // Picture engine and audio mixer
     struct Own {
         std::shared_ptr<Picture::Renderer> renderer; // nullptr = audio only
@@ -100,6 +105,11 @@ public:
     // soundOnly: and the container is one for sound (no video by default: .aac yes, .mp4 no)
     static bool containerSurelyTakes(const QString& path, const QString& videoCodec, const QString& audioCodec,
                                      bool soundOnly = false);
+    // Does the audio encoder write `channels` (1, 2, 6, 8) with the mix's channel mapping (core/ChannelLayout.h:
+    // FFmpeg's "5.1" with the back pair - or "5.1(side)", AC-3's name of the same surround pair - and "7.1")? An
+    // encoder that only has another layout of that many channels (ALAC's 7.1 is "7.1(wide)": front-centre pair in
+    // place of the side pair) does not count. Encoders without a layout list (PCM, FLAC) take any count.
+    static bool writesChannels(const QString& audioCodec, int channels);
 
     // Smart render (s.copy): the mixer delivers the sound of every output frame
     ExportWriter(const Settings& s, Own own);

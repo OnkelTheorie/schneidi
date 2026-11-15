@@ -56,6 +56,12 @@ QString vaapiDevice();
 // Encoder options for a hardware codec (passed to the export writer and to the ffmpeg test the same way).
 // crf = quality of the software encoder (18/22/28): mapped to the encoder's own constant quality scale.
 QVector<QPair<QString, QString>> codecOptions(const QString& codec, int crf);
+// The same for a video bit rate target (export quality "like source", kbit/s): variable bit rate around it with a peak
+// of 1.5x and a buffer of 2x (NVENC VBR, VAAPI VBR, Quick Sync VBR)
+QVector<QPair<QString, QString>> bitrateOptions(const QString& codec, int kbit);
+// A software codec's options for a bit rate target: x264/x265/VP9 average bit rate with the same peak and buffer,
+// SVT-AV1 its VBR, OpenH264/kvazaar their bit rate modes
+QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, int kbit);
 // Pixel format given to the writer ("vaapi" = upload to the VAAPI device)
 QString pixelFormat(const QString& codec);
 // ffmpeg arguments for a test encode of a few frames of this size (black picture, output discarded)

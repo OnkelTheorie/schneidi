@@ -50,6 +50,7 @@ struct Info {
     bool hasBFrames = false;
     int64_t duration = 0;         // container duration in AV_TIME_BASE units, < 0 if unknown
     QString codec;                // decoder name
+    int fieldOrder = 0;           // the stream's AVFieldOrder (0 unknown, 1 progressive, else interlaced)
 };
 
 struct Picture {
@@ -59,6 +60,16 @@ struct Picture {
     bool topFieldFirst = false;
     ~Picture();
 };
+
+// Is the top field shown first? As the decoder flags an interlaced picture `frame` (may be null), else as the stream's
+// AVFieldOrder `fieldOrder` states it; nullopt when neither says (progressive or unknown). The decoder's flag goes
+// first: H.264 in MP4/MOV/TS states the parser's guess (TT also for a bottom-first stream without timing SEI), while
+// the decoder knows the order from the fields' picture order counts. libavcodec/defs.h documents TB as "top coded
+// first, bottom displayed first", but FFmpeg itself treats TB as top field first and BT as bottom first: the ffmpeg
+// program writes TB/BT for top/bottom-first pictures (fftools/ffmpeg_enc.c; a bottom-first H.264 in MKV reads back as
+// BT), the rawvideo, v210 and FFV1 decoders flag TB pictures top-first, the yuv4mpeg, AVI and MXF muxers write TB as
+// top-first. Files carry that meaning, so it is followed here (TT/TB top first, BB/BT bottom first).
+std::optional<bool> topFieldShownFirst(const AVFrame* frame, int fieldOrder);
 
 // Degrees clockwise the stream's pictures are turned to show them upright (rotation tag or display matrix), in [0, 360)
 double streamRotation(const AVStream* stream);
@@ -115,6 +126,21 @@ public:
 
     static std::unique_ptr<Reader> open(const QString& path, const Options& options, QString* error = nullptr);
     static std::unique_ptr<Reader> open(const QString& path) { return open(path, Options{}); }
+    // Opens `path` ahead of its use, on a helper thread: the app started with a project opens the files of its first
+    // picture while the window is built (file, stream analysis, the graphics card's decoder: 100-300 ms). The next
+    // open() of the same path with the same threads and hardware options and the same kind of user (autoBackward,
+    // keepBytes zero or not: a preview's reader, not a thumbnail's) takes that reader with its own options (waiting
+    // for it while it is being opened; one whose job has not started yet is cancelled and the file opened directly)
+    // instead of opening the file again. One not taken within kPreparedMs after it opened is closed (by the next
+    // prepare(), open() or dropPrepared(); at the application's quit). No thread waits for a taker. Thread-safe.
+    static void prepare(const QString& path, const Options& options);
+    static void prepare(const QString& path);
+    // Closes the prepared readers not taken yet (expired ones also close at the next prepare()/open()); a job still
+    // waiting for the pool is cancelled. Thread-safe.
+    static void dropPrepared();
+    // Readers prepared and not taken yet (tests)
+    static int preparedCount();
+    static constexpr int kPreparedMs = 8000;
     ~Reader();
 
     const Info& info() const;
@@ -152,11 +178,13 @@ public:
     // Long stream analyses run by this process (files the first analysis could not describe; once per file and session)
     static int longAnalyses();
     // The decoder is lost for good: it could not be opened again (software after a hardware failure, after
-    // hibernating). Every picture() answers nullptr from then on, at once.
+    // hibernating) or the file could not be read any more (its disk gone). Every picture() answers nullptr from then on.
     bool failed() const;
     // Tests only: the next decoder thread to look acts as if its hardware decoder failed, and from then on no software
     // decoder opens (false: back to normal)
     static void loseDecoderForTests(bool on);
+    // Tests only: the end of every file reads as EIO (as some demuxers say for data cut short)
+    static void eioAtEndForTests(bool on);
 
 private:
     Reader();

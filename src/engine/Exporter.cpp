@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Exporter.h"
 
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/RenderJob.h"
+#include "core/SourceBitrate.h"
 #include "core/Subtitles.h"
 #include "core/SystemMemory.h"
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/ClipFormat.h"
+#include "engine/ColorGrade.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MemoryRelease.h"
@@ -132,6 +135,15 @@ bool replaceFile(const QString& from, const QString& to)
     }
     QFile::remove(aside);
     return true;
+}
+
+// Channels the audio encoder writes for a mix of `want` channels: want when it has a layout of that many with the
+// mix's channel mapping (or takes any count), else stereo (MP3; ALAC has no 7.1 with side surrounds). 0 = the encoder
+// is missing.
+int encoderChannels(const QString& codecName, int want)
+{
+    if (!avcodec_find_encoder_by_name(codecName.toUtf8().constData())) return 0;
+    return ExportWriter::writesChannels(codecName, want) ? want : 2;
 }
 
 // The sample format the audio encoder gets: the wanted one if the codec takes it, otherwise the codec's first; empty =
@@ -363,6 +375,7 @@ Exporter::~Exporter()
 bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error)
 {
     if (isRunning()) return false;
+    ColorGrade::revalidateLuts(); // a LUT file changed just before: the export uses it as it is now
     const int end = TimelineOps::endFrame(tl);
     m_from = std::clamp(s.from, 0, std::max(0, end - 1));
     const int to = s.to < 0 ? end - 1 : std::min(s.to, end - 1);
@@ -505,6 +518,41 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         break;
     }
     m_note = s.encoderNote;
+    // Channels of the file: asked for, else the mix's format (the project's: stereo, 5.1, 7.1). An encoder without
+    // that many gets the 5.1 downmix of a 7.1 mix if it has 5.1 (AC-3, ALAC), else the stereo one (MP3); the note
+    // says so.
+    int audioChannels = s.audioChannels > 0 ? s.audioChannels : ChannelLayout::valid(tl.audioChannels);
+    if (sound && audioChannels > 2) {
+        const int can = encoderChannels(s.audioCodec, audioChannels);
+        if (can != audioChannels && audioChannels == 8 && encoderChannels(s.audioCodec, 6) == 6) {
+            // AC-3 (and ALAC: its only 7.1 is "7.1(wide)"): 5.1 keeps the surrounds – the 7.1 mix with its side and
+            // back pairs folded into them (ChannelLayout::conversion)
+            const QString why = T("%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.")
+                                    .arg(s.audioCodec, ChannelLayout::name(audioChannels));
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+            audioChannels = 6;
+        } else if (can != audioChannels) {
+            const QString why = T("%1 schreibt kein %2, der Ton ist auf Stereo heruntergemischt.")
+                                    .arg(s.audioCodec, ChannelLayout::name(audioChannels));
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+            audioChannels = 2;
+        }
+    }
+    m_settings.audioChannels = audioChannels;
+    // Quality "like source": the bit rate of the media shown, at the output's size and frame rate
+    m_targetBitrateK = 0;
+    if (s.sourceQuality && !s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
+        const SourceBitrate::Result r = SourceBitrate::target(tl, m_from, m_from + m_length - 1, out.size(), rate,
+                                                              [](const QString& path) { return MediaProbe::videoRate(path); });
+        m_targetBitrateK = r.targetK;
+        if (r.targetK > 0) {
+            qInfo("Export: quality like source, %d kbit/s (%d files, %d frames)", r.targetK, r.files, r.frames);
+        } else {
+            qInfo("Export: quality like source, no source bit rate known: quality High");
+            const QString why = T("Bitrate der Quelle unbekannt, mit Qualität „Hoch“ gerendert.");
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+        }
+    }
     m_usedCodec.clear();
     m_copiedPercent = 0;
     // Effects this engine does not have (frei0r/LADSPA plugins, ids of newer versions) stay in the project but are
@@ -546,7 +594,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // A cancel (stopBuild) waits for this thread: it stops between its steps and between the files it opens. What it
     // made then is never used (its finished() is stale).
     m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), mixed = std::move(mixed), out, s,
-                               threads, from, length, frames, rate, convertRate, smart, copy = m_copy] {
+                               threads, from, length, frames, rate, convertRate, smart, audioChannels, copy = m_copy] {
         Graph& g = *graph;
         {
             if (smart)
@@ -570,6 +618,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 Audio::Mixer::Options o;
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
                 o.rate = s.audioRate > 0 ? s.audioRate : 48000;
+                o.outputChannels = std::max(2, audioChannels); // mono: the writer takes the mean of the stereo mix
+                o.limitOutput = true; // a downmix stays under the limiter's ceiling
                 g.mixer = std::make_shared<Audio::Mixer>(*mixed, s.format.rate, o);
             }
             g.length = convertRate ? std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps()))) : length;
@@ -707,12 +757,23 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     const ExportSettings& s = m_settings;
     QVector<QPair<QByteArray, QByteArray>> o;
     if (s.videoCodec.isEmpty()) return o;
+    const int target = m_targetBitrateK; // quality "like source": a bit rate instead of a constant quality
     if (ExportWriter::isOwnH264(codec)) {
         // Own encoder: a fixed QP from the quality level; "Web" adds the cap as "bitrate" (the writer keeps the QP when
-        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter)
+        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter).
+        // "Like source": the source's rate as that cap - two passes towards it, or "High" when that stays below it
         o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
-        if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
+        if (target > 0) o.append({"bitrate", QByteArray::number(target)});
+        else if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
         if (m_shortLookahead) o += lowMemoryOptions(codec); // (8K, low memory)
+    } else if (target > 0) {
+        // Average bit rate with some room for hard scenes (VBV: 1.5x peak, 2x buffer); one pass
+        const QVector<QPair<QString, QString>> rate = HardwareEncoders::isHardwareCodec(codec)
+                                                          ? HardwareEncoders::bitrateOptions(codec, target)
+                                                          : HardwareEncoders::softwareBitrateOptions(codec, target);
+        for (const auto& [key, value] : rate) o.append({key.toUtf8(), value.toUtf8()});
+        if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
+        if (m_shortLookahead) o += lowMemoryOptions(codec);
     } else if (HardwareEncoders::isHardwareCodec(codec)) {
         for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
     } else {
@@ -727,12 +788,14 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
         // (shortLookahead, also with threads asked for: 8K, 40 frames = 4 GB): shorter lookahead
         if (m_shortLookahead) o += lowMemoryOptions(codec);
     }
-    if (s.maxBitrateK > 0 && !ExportWriter::isOwnH264(codec)) { // quality target as before, but capped (VBV)
+    if (s.maxBitrateK > 0 && target <= 0 && !ExportWriter::isOwnH264(codec)) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
         o.append({"bufsize", QByteArray::number(s.maxBitrateK * 2) + "k"});
     }
     for (const QString& option : s.codecOptions) { // "key=value" from the format (profile, speed …)
         const qsizetype eq = option.indexOf('=');
+        // (VP9's "vb=0" is its constant quality mode: not with a bit rate target)
+        if (eq > 0 && target > 0 && (option.left(eq) == "vb" || option.left(eq) == "b")) continue;
         if (eq > 0) o.append({option.left(eq).toUtf8(), option.mid(eq + 1).toUtf8()});
     }
     return o;
@@ -747,6 +810,7 @@ int Exporter::audioBitrateK() const
 {
     const QString& c = m_settings.audioCodec;
     if (c.isEmpty() || c.startsWith("pcm_") || c == "alac" || c == "flac") return 0;
+    if (c == "ac3") return RenderSettings::ac3BitrateK(m_settings.audioChannels);
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
 

@@ -52,6 +52,11 @@ QString nodeSummary(const Clip& c, const CompNode& n);
 // when rendering; empty = none, or trusted
 QString untrustedCode(const Clip& c, int node);
 
+// Tracker node `node` of clip c lost its point (gaps its followers do not bridge, core/CompTrack.h): where, for the
+// node's warning badge and the Inspector ("Punkt verloren: 00:12–00:14 · ab 00:20 nicht wiedergefunden"); empty = no
+// such gap, or no tracker. fps = the timeline's (the times are timeline times)
+QString trackerWarning(const Clip& c, int node, double fps);
+
 // `tl` with the graph of clip `clipId` ending at node `node` (0 = its own output) and, with `matte`, the alpha of
 // that picture as gray (a mask node always shows as gray): what the viewer plays on the Comp page. Unchanged when the
 // clip has no graph or the node is missing.

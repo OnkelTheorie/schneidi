@@ -136,6 +136,14 @@ int main(int argc, char** argv)
         if (!CHECK(std::abs(got + 14) <= 0.5)) std::printf("       mix %.2f LUFS, notes %s\n", got, qPrintable(notesOf(r)));
         CHECK(notesOf(r).contains("after the master limiter"));
         CHECK(!notesOf(r).contains("not reachable"));
+        // The same in numbers (the Studio page's "Lautheit auf Ziel" shows before -> after)
+        QJsonObject numbers;
+        for (const QJsonValue& n : r["notes"].toArray())
+            if (n.isObject()) numbers = n["loudness"].toObject();
+        CHECK_EQ(numbers["of"].toString(), QString("mix"));
+        CHECK_EQ(numbers["target_lufs"].toDouble(), -14.0);
+        CHECK(std::abs(numbers["after_lufs"].toDouble() - got) < 0.3);
+        CHECK(numbers["before_lufs"].toDouble() < -20 && numbers["limiter"].toBool());
         const QJsonObject master = run("info", {{"project", p}})["timeline"]["master"].toObject();
         CHECK(master["limiter"].toBool());
         CHECK(master["volume_db"].toDouble() <= 12.0);

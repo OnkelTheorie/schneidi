@@ -21,6 +21,7 @@
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
 #include "ui/ProxyProgress.h"
+#include "ui/CompactButton.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "ui/TimelineFormatDialog.h"
@@ -32,6 +33,7 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDrag>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QFileDialog>
@@ -90,12 +92,25 @@ protected:
         QStringList paths;
         for (QListWidgetItem* it : items) {
             const QString path = it->data(Qt::UserRole).toString();
-            if (path != MediaPool::TitleItem) paths << path; // sequences too: can be moved into bins
+            if (!MediaPool::isTitleItem(path)) paths << path; // sequences too: can be moved into bins
         }
         if (!paths.isEmpty()) data->setData(MediaPool::ListMimeType, paths.join('\n').toUtf8());
         return data;
     }
     QStringList mimeTypes() const override { return {MediaPool::MimeType, MediaPool::ListMimeType}; }
+    // Never QAbstractItemView::startDrag: a drop that ends as a Move (Shift held over a target that takes the proposed
+    // action, a bin) would make it delete the dragged rows itself - the clip gone from the list and MediaPool's
+    // path -> item map left with a freed item. The pool rebuilds itself after a move into a bin.
+    void startDrag(Qt::DropActions actions) override
+    {
+        const QList<QListWidgetItem*> items = selectedItems();
+        if (items.isEmpty()) return;
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mimeData(items));
+        const QIcon icon = items.first()->icon();
+        if (!icon.isNull()) drag->setPixmap(icon.pixmap(iconSize().isValid() ? iconSize() : kListIcon));
+        drag->exec(actions, Qt::CopyAction);
+    }
 };
 
 // Bin list: drag clips or bins onto it = move (Delete removes the selected bin: MediaPool::keyActions)
@@ -308,10 +323,13 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_sortKey = sort == "date" ? SortKey::Date : sort == "duration" ? SortKey::Duration : SortKey::Name;
     m_sortAscending = settings.value("mediaPool/sortAscending", true).toBool();
 
-    auto* title = new QLabel(T("Medienpool"));
+    // A narrow pool (1024 px wide window, a long language): the title ends in "…", the import button shows "+"
+    auto* title = new ElidedLabel;
+    title->setFullText(T("Medienpool"));
     title->setObjectName("PanelTitle");
-    auto* importBtn = new QToolButton;
+    auto* importBtn = new CompactButton;
     importBtn->setText(T("Importieren…"));
+    importBtn->setCompactText("+");
     connect(importBtn, &QToolButton::clicked, this, &MediaPool::importDialog);
 
     // View like DaVinci at the top right of the Media Pool: icon/list view, sorting
@@ -383,8 +401,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setObjectName("pool_search");
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
-    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
+    // The field takes the room of the title it replaces and needs no more (the title elides down to nothing): opening
+    // the search never widens the pool, the Viewer beside stays put; with room the field stretches (stretch 1)
+    m_search->setSizePolicy(QSizePolicy::Ignored, m_search->sizePolicy().verticalPolicy());
     connect(m_search, &QLineEdit::textChanged, this, [this] {
         rebuildClips();
         m_indexTimer->start(); // the material search after a short pause in typing
@@ -417,6 +436,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     header->addWidget(m_listView);
     header->addWidget(m_sortBtn);
     header->addWidget(importBtn);
+    // The symbol buttons with narrow padding and the sort menu without its arrow (the symbol says it): the header
+    // decides the pool's minimum width, which counts for a 1024 px wide window with a long language or a big font
+    for (QToolButton* b : {m_searchBtn, m_thumbView, m_listView, m_sortBtn})
+        b->setStyleSheet("QToolButton { padding: 3px 3px; } QToolButton::menu-indicator { image: none; }");
 
     // Bin list on the left (Master on top, sub-bins indented)
     auto* bins = new BinTree;
@@ -503,7 +526,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
         if (const int seq = sequenceOfItem(path)) emit sequenceOpenRequested(seq);
-        else if (path != TitleItem) emit sourceRequested(path);
+        else if (!isTitleItem(path)) emit sourceRequested(path);
     });
 
     auto* clipArea = new QWidget;
@@ -1102,6 +1125,25 @@ void MediaPool::rebuildClips()
         titleItem->setData(Qt::UserRole, QString(TitleItem));
         titleItem->setToolTip(T("Titel – in die Timeline ziehen"));
         m_list->addItem(titleItem);
+        // Shape (0.22): circle, rectangle, arrow … as a clip of its own
+        QPixmap shapeThumb(kThumb);
+        shapeThumb.fill(Theme::titleClip.darker(135));
+        {
+            QPainter p(&shapeThumb);
+            p.setRenderHint(QPainter::Antialiasing);
+            const double side = std::min(shapeThumb.width(), shapeThumb.height()) * 0.42;
+            const QPointF c(shapeThumb.width() / 2.0, shapeThumb.height() / 2.0);
+            p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 3));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(c + QPointF(-side * 0.35, 0), side / 2, side / 2);
+            p.setBrush(QColor(255, 214, 0));
+            p.setPen(Qt::NoPen);
+            p.drawRect(QRectF(c.x() + side * 0.05, c.y() - side * 0.4, side * 0.8, side * 0.8));
+        }
+        auto* shapeItem = new QListWidgetItem(QIcon(shapeThumb), T("Form\nKreis, Pfeil …"));
+        shapeItem->setData(Qt::UserRole, QString(ShapeItem));
+        shapeItem->setToolTip(T("Form (Kreis, Rechteck, Pfeil, Stern …) – in die Timeline ziehen"));
+        m_list->addItem(shapeItem);
     }
 
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
@@ -1329,6 +1371,8 @@ QRect MediaPool::itemArea(const QString& path) const
 {
     QListWidgetItem* it = m_items.value(path);
     if (!it || it->isHidden() || !m_list->isVisible()) return {};
+    // A tour points at this item: bring it into view first (the Text/Form entries can push it below the fold)
+    m_list->scrollToItem(it, QAbstractItemView::EnsureVisible);
     const QRect r = m_list->visualItemRect(it).intersected(m_list->viewport()->rect());
     if (r.isEmpty()) return {};
     return QRect(m_list->viewport()->mapTo(this, r.topLeft()), r.size());
@@ -1339,7 +1383,7 @@ QStringList MediaPool::selectedMedia() const
     QStringList paths;
     for (QListWidgetItem* it : m_list->selectedItems()) {
         const QString path = it->data(Qt::UserRole).toString();
-        if (path != TitleItem && !sequenceOfItem(path)) paths << path;
+        if (!isTitleItem(path) && !sequenceOfItem(path)) paths << path;
     }
     return paths;
 }

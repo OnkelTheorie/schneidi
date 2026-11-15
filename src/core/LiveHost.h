@@ -58,6 +58,14 @@ public:
     virtual bool livePlaying() const = 0;
     virtual void liveSeek(int frame) = 0;
     virtual void livePlay(bool play) = 0;
+    // The page the app shows ("media", "edit", "comp", "color", "studio", "deliver"; empty = the host has none) and
+    // switching to one (false = no such page)
+    virtual QString livePage() const { return {}; }
+    virtual bool liveShowPage(const QString& page)
+    {
+        Q_UNUSED(page);
+        return false;
+    }
     // Saves to the project's file, or to `path` (a project never saved; the caller checks it is a new file)
     virtual bool liveSave(const QString& path, QString* error) = 0;
     // Proxy media: generate (in the background), and the state per file ("ready", "pending" with percent, "none")
@@ -65,6 +73,15 @@ public:
     virtual QJsonObject liveProxyState(const QString& file) const = 0;
     // Proxy file being written right now (empty = none): cleaning up the proxy folder leaves it alone
     virtual QString liveProxyWriting() const { return {}; }
+    // Render cache of the preview (engine/RenderCache): {mode, state, clip?, percent?, waiting, cached, clips}; empty =
+    // the host has none. Control: mode "off"/"smart"/"user" (empty = unchanged), pause = stop until the next change,
+    // otherwise a pause ends
+    virtual QJsonObject liveRenderCache() const { return {}; }
+    virtual void liveRenderCacheControl(const QString& mode, bool pause)
+    {
+        Q_UNUSED(mode);
+        Q_UNUSED(pause);
+    }
     // Files handed to the app (`schneidi <file>` while it runs, `app open`): a project file (.schneidi) opens, media
     // files come into the Media Pool and are selected there, the window comes to the front. byUser = the user's own
     // hand-over (asks "save changes?" before another project opens); an AI never replaces a project with unsaved

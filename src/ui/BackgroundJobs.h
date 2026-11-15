@@ -25,6 +25,7 @@ public:
         double fraction = -1;        // 0..1, below 0 = busy without a known amount
         QString toolTip;             // details (what is waiting)
         std::function<void()> cancel; // empty = no ✕
+        QString cancelToolTip;        // what the ✕ does, when not "Abbrechen" (e.g. it pauses)
         // A message, not work (e.g. "3 proxies failed", details in the tooltip): no bar, not counted as running, shown
         // when nothing runs, stays until its ✕ (cancel: dismiss it) or removeJob
         bool notice = false;

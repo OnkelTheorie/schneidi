@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ExportWriter.h"
+#include "core/I18n.h"
 
 #include "engine/ExternalEncoder.h"
 #include "engine/OpenMedia.h"
@@ -9,6 +10,7 @@
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
@@ -37,6 +39,33 @@ extern "C" {
 }
 
 namespace {
+
+// Does the highest H.264 level (6.2, Table A-1) take this configuration? levelIdcFor (engine/encoder/h264) falls back
+// to 6.2 when no level fits (above 8K, 8K over 120 fps), the stream would then claim a level it breaks: its limits
+// checked here the way levelIdcFor checks every level
+bool ownLevelFits(const schneidi::h264::EncoderConfig& c)
+{
+    constexpr int64_t kMaxMbps = 16711680, kMaxFs = 139264, kMaxDpbMbs = 696320, kMaxBr = 800000;
+    const int64_t mbW = (c.width + 15) / 16, mbH = (c.height + 15) / 16, fs = mbW * mbH;
+    const double fps = c.fps > 0 ? c.fps : 60.0;
+    const int64_t side = int64_t(std::sqrt(double(kMaxFs) * 8.0)); // A.3.1: width and height in macroblocks
+    if (double(fs) * fps > double(kMaxMbps) * 1.0001 || fs > kMaxFs || mbW > side || mbH > side) return false;
+    if (fs * std::max(1, c.refs) > kMaxDpbMbs) return false;
+    const bool high = c.cabac && c.transform8x8 && c.mode != schneidi::h264::IntraMode::Pcm;
+    return c.bitrateKbps <= 0 || c.bitrateKbps * 1.5 * 1000.0 <= double(kMaxBr) * (high ? 1250.0 : 1000.0);
+}
+
+QString ownLevelProblem(const schneidi::h264::EncoderConfig& c)
+{
+    if (ownLevelFits(c)) return {};
+    return QStringLiteral("the own H.264 encoder cannot write %1x%2 at %3 fps%4: above the highest H.264 level (6.2: "
+                          "up to 8K at 120 fps); use H.264 or H.265")
+        .arg(c.width)
+        .arg(c.height)
+        .arg(c.fps, 0, 'g', 4)
+        .arg(c.bitrateKbps > 0 ? QStringLiteral(" and %1 kbit/s").arg(c.bitrateKbps) : QString());
+}
+
 
 // Sample formats the writer delivers: interleaved, the encode thread splits planar formats
 bool soundFormat(AVSampleFormat f)
@@ -181,7 +210,53 @@ void freePackets(std::vector<AVPacket*>& packets)
 
 std::atomic<bool> g_failSoundBuffer{false}; // ExportWriter::failSoundBufferForTests
 
+// The layout the encoder gets for a mix of `channels` (the mix's order, core/ChannelLayout.h: FFmpeg's "5.1" with the
+// back pair, "7.1"): that one, or for 5.1 the encoder's "5.1(side)" (AC-3 names the same surround pair so: the samples
+// stay in place, only the label differs). Never a layout with another mapping (ALAC's "7.1(wide)" would turn the side
+// surrounds into a front-centre pair). Mono/stereo: else any of that count. false = the encoder lists layouts and has
+// none of these (out gets the wanted one anyway); true for encoders without a list (PCM, FLAC: any count).
+bool encoderLayout(const AVCodec* codec, int channels, AVChannelLayout* out)
+{
+    AVChannelLayout want{};
+    if (channels == 6) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_5POINT1_BACK);
+    else if (channels == 8) av_channel_layout_from_mask(&want, AV_CH_LAYOUT_7POINT1);
+    else av_channel_layout_default(&want, channels);
+    AVChannelLayout side{};
+    av_channel_layout_from_mask(&side, AV_CH_LAYOUT_5POINT1);
+    const AVChannelLayout* layouts = nullptr;
+    int count = 0;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    const void* list = nullptr;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &list, &count) < 0) count = 0;
+    layouts = static_cast<const AVChannelLayout*>(list);
+#else
+    layouts = codec->ch_layouts;
+    while (layouts && layouts[count].nb_channels) ++count;
+#endif
+    const AVChannelLayout* pick = nullptr;
+    for (int i = 0; i < count && !pick; ++i)
+        if (av_channel_layout_compare(&layouts[i], &want) == 0) pick = &layouts[i];
+    for (int i = 0; channels == 6 && i < count && !pick; ++i)
+        if (av_channel_layout_compare(&layouts[i], &side) == 0) pick = &layouts[i];
+    for (int i = 0; channels <= 2 && i < count && !pick; ++i)
+        if (layouts[i].nb_channels == channels) pick = &layouts[i];
+    av_channel_layout_copy(out, pick ? pick : &want);
+    av_channel_layout_uninit(&want);
+    av_channel_layout_uninit(&side);
+    return pick || !layouts || count == 0;
+}
+
 } // namespace
+
+bool ExportWriter::writesChannels(const QString& audioCodec, int channels)
+{
+    const AVCodec* codec = avcodec_find_encoder_by_name(audioCodec.toUtf8().constData());
+    if (!codec) return false;
+    AVChannelLayout l{};
+    const bool ok = encoderLayout(codec, channels, &l);
+    av_channel_layout_uninit(&l);
+    return ok;
+}
 
 bool ExportWriter::containerTakes(const QString& path, const QString& muxer, const QString& videoCodec,
                                   const QString& audioCodec, QString* why)
@@ -269,6 +344,7 @@ struct ExportWriter::Impl {
 
     // Smart render
     bool smart = false;
+    bool sampleEntries = false; // smart render: each piece's parameter sets as a sample entry (newSampleEntry)
     int soundNext = 0; // fetch thread: output frame whose sound comes next
     AVCodecID codecId = AV_CODEC_ID_NONE;
     std::atomic<int> copied{0};
@@ -363,7 +439,7 @@ struct ExportWriter::Impl {
     int frameBytes = 0;
     AVBufferRef* hwDevice = nullptr;          // VAAPI
     AVBufferRef* hwFrames = nullptr;
-    std::vector<float> mixL, mixR;            // fetch thread: the mix of one output frame
+    std::vector<std::vector<float>> mixPlanes; // fetch thread: the mix of one output frame (Mixer::outputChannels)
 
     // Timeline frame shown at output frame i (frame rate conversion): the one showing at that time, floor(i * fps_tl /
     // fps_out). Rounding to the nearest even (lrint, as RateConverter did) repeated and dropped frames unevenly (30 ->
@@ -555,10 +631,16 @@ struct ExportWriter::Impl {
         }
         const int count = int(std::max<int64_t>(0, b - a));
         if (count <= 0) return;
-        mixL.resize(size_t(count));
-        mixR.resize(size_t(count));
-        float* planes[] = {mixL.data(), mixR.data()};
+        const int mixed = mixer.outputChannels();
+        mixPlanes.resize(size_t(mixed));
+        float* planes[Audio::Mixer::kMaxChannels];
+        for (int c = 0; c < mixed; ++c) {
+            mixPlanes[size_t(c)].resize(size_t(count));
+            planes[c] = mixPlanes[size_t(c)].data();
+        }
         mixer.render(a, count, planes);
+        const float* mixL = planes[0];
+        const float* mixR = planes[std::min(1, mixed - 1)];
         const int channels = s.audioChannels;
         const size_t at = pcm.size();
         pcm.resize(at + size_t(count) * channels * sampleBytes);
@@ -567,7 +649,11 @@ struct ExportWriter::Impl {
         const int bits = packed == AV_SAMPLE_FMT_S16 ? 16 : std::clamp(o.audioBits > 0 ? o.audioBits : 32, 8, 32);
         for (int k = 0; k < count; ++k)
             for (int c = 0; c < channels; ++c, out += sampleBytes) {
-                const double v = channels == 1 ? 0.5 * (double(mixL[k]) + double(mixR[k])) : c == 0 ? mixL[k] : c == 1 ? mixR[k] : 0.0;
+                const double v = channels == 1 ? 0.5 * (double(mixL[k]) + double(mixR[k]))
+                                 : c == 0      ? mixL[k]
+                                 : c == 1      ? mixR[k]
+                                 : c < mixed   ? planes[c][k]
+                                               : 0.0;
                 switch (packed) {
                 case AV_SAMPLE_FMT_S16: {
                     const auto q = int16_t(std::clamp(std::nearbyint(v * 32768.0), -32768.0, 32767.0));
@@ -602,7 +688,7 @@ struct ExportWriter::Impl {
             if (pump) {
                 item.picture = pump->take(i);
                 if (!item.picture) {
-                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    if (!stop) fail(noFrame(i));
                     return false;
                 }
                 item.restart = restart && i == a;
@@ -611,6 +697,15 @@ struct ExportWriter::Impl {
             if (!push(std::move(item))) return false;
         }
         return !stop;
+    }
+
+    // Why output frame i has no picture: a source file lost while exporting is named (the user can bring it back)
+    QString noFrame(int i) const
+    {
+        const QString lost = o.renderer ? o.renderer->lostSource() : QString();
+        if (!lost.isEmpty())
+            return T("Quelldatei nicht mehr lesbar: %1 (Bild %2)").arg(QDir::toNativeSeparators(lost)).arg(i);
+        return QStringLiteral("no frame %1 from the timeline").arg(i);
     }
 
     void fail(const QString& message, bool encoderProblem = false)
@@ -654,24 +749,33 @@ struct ExportWriter::Impl {
         std::vector<int> probeAt;
         for (int a : {0, s.length / 3, 2 * s.length / 3})
             if (a + 1 < s.length && (probeAt.empty() || a > probeAt.back() + 1)) probeAt.push_back(a);
-        std::vector<std::pair<int, FramePtr>> kept;
+        // Each pair is coded as soon as its second picture is there: only the key picture waits (one clone), not up to
+        // six whole pictures for the whole first pass
+        std::vector<OwnProbe> probes;
+        FramePtr waiting;
         try {
             schneidi::h264::FirstPass pass(width, height, ownThreads()); // (batches side by side, same numbers)
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
                 if (!f) {
-                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    if (!stop) fail(noFrame(i));
                     return false;
                 }
                 pass.add(ownPicture(f.get()), ownKeyAt(i));
-                for (int a : probeAt)
-                    if (i == a || i == a + 1) kept.emplace_back(i, FramePtr(av_frame_clone(f.get())));
+                for (int a : probeAt) {
+                    if (i == a) waiting.reset(av_frame_clone(f.get()));
+                    else if (i == a + 1 && waiting) {
+                        probes.push_back(probeOwnPair(a, waiting.get(), f.get()));
+                        waiting.reset();
+                    }
+                }
                 ++analysed;
             }
+            waiting.reset();
             if (stop) return false;
             ownStats = pass.stats();
-            const double bits = probeOwnBits(*ownStats, kept);
+            const double bits = probeOwnBits(*ownStats, probes);
             const double cap = ownBitrateK * 1000.0 * s.length / std::max(1.0, fps);
             // Margin for what the probe does not see (macroblock tree, the model's error): on 720p30 noise the
             // prediction was 21 % under the real size at that QP
@@ -686,18 +790,43 @@ struct ExportWriter::Impl {
         return !stop;
     }
     static constexpr double kOwnFixedShare = 0.7;
+    static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (startOwn, probeOwnBits)
 
-    // Bits of the whole clip at ownQp: per kept pair, a small fixed-QP encoder codes the key picture and the next as a
-    // P picture; bits per first-pass cost of each type times the clip's costs (key pictures placed as the encoder
-    // places them). 0 = no usable pair.
-    double probeOwnBits(const schneidi::h264::FirstPassStats& st, const std::vector<std::pair<int, FramePtr>>& kept) const
+    // A probe pair coded at ownQp: the key picture at `at` and the next one as a P picture
+    struct OwnProbe {
+        int at = 0;
+        double bitsI = 0, bitsP = 0;
+    };
+    OwnProbe probeOwnPair(int at, const AVFrame* key, const AVFrame* next) const
     {
-        constexpr int kGop = 250; // (startOwn)
+        schneidi::h264::EncoderConfig c;
+        c.width = width;
+        c.height = height;
+        c.qp = ownQp;
+        c.gop = kOwnGop;
+        c.threads = ownThreads();
+        c.fps = fps;
+        c.lookahead = 0; // (no macroblock tree either)
+        c.sceneCut = false;
+        c.frameThreads = false;
+        schneidi::h264::Encoder probe(c);
+        OwnProbe p;
+        p.at = at;
+        p.bitsI = double(probe.encode(ownPicture(key)).size()) * 8;
+        p.bitsP = double(probe.encode(ownPicture(next)).size()) * 8;
+        return p;
+    }
+
+    // Bits of the whole clip at ownQp: per probe pair (probeOwnPair) bits per first-pass cost of each type times the
+    // clip's costs (key pictures placed as the encoder places them; a pair whose second picture is a key picture there
+    // does not count). 0 = no usable pair.
+    double probeOwnBits(const schneidi::h264::FirstPassStats& st, const std::vector<OwnProbe>& probes) const
+    {
         std::vector<char> key(st.size(), 0);
         double costI = 0, costP = 0;
         int since = 0;
         for (size_t i = 0; i < st.size(); ++i, ++since) {
-            if (i == 0 || since >= kGop || st.forceKeyframe[i] || (st.sceneChange[i] && since >= 6)) {
+            if (i == 0 || since >= kOwnGop || st.forceKeyframe[i] || (st.sceneChange[i] && since >= 6)) {
                 key[i] = 1;
                 since = 0;
             }
@@ -705,24 +834,11 @@ struct ExportWriter::Impl {
         }
         double kI = 0, kP = 0;
         int pairs = 0;
-        for (size_t j = 0; j + 1 < kept.size(); j += 2) {
-            const int a = kept[j].first;
-            if (kept[j + 1].first != a + 1 || size_t(a + 1) >= st.size() || key[size_t(a + 1)]) continue;
-            schneidi::h264::EncoderConfig c;
-            c.width = width;
-            c.height = height;
-            c.qp = ownQp;
-            c.gop = kGop;
-            c.threads = ownThreads();
-            c.fps = fps;
-            c.lookahead = 0; // (no macroblock tree either)
-            c.sceneCut = false;
-            c.frameThreads = false;
-            schneidi::h264::Encoder probe(c);
-            const double bitsI = double(probe.encode(ownPicture(kept[j].second.get())).size()) * 8;
-            const double bitsP = double(probe.encode(ownPicture(kept[j + 1].second.get())).size()) * 8;
-            kI += bitsI / std::max(1.0, st.intraSum[size_t(a)]);
-            kP += bitsP / std::max(1.0, st.interSum[size_t(a + 1)]);
+        for (const OwnProbe& p : probes) {
+            const size_t a = size_t(p.at);
+            if (a + 1 >= st.size() || key[a + 1]) continue;
+            kI += p.bitsI / std::max(1.0, st.intraSum[a]);
+            kP += p.bitsP / std::max(1.0, st.interSum[a + 1]);
             ++pairs;
         }
         if (pairs == 0) return 0;
@@ -915,7 +1031,7 @@ struct ExportWriter::Impl {
             Item item;
             item.picture = pump->take(i);
             if (!item.picture) {
-                if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                if (!stop) fail(noFrame(i));
                 return false;
             }
             item.restart = i == a;
@@ -1084,6 +1200,13 @@ struct ExportWriter::Impl {
                 fail(QStringLiteral("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not %1").arg(s.pixFmt));
                 return false;
             }
+            // ... and not tiny pictures or ones above the highest level (before the first pass, not after it)
+            if (isOwnH264(s.videoCodec)) {
+                if (const QString problem = ownSizeProblem(QSize(width, height), fps); !problem.isEmpty()) {
+                    fail(problem);
+                    return false;
+                }
+            }
             if (pixFmt == AV_PIX_FMT_VAAPI && !openHardware()) return false;
             vst = avformat_new_stream(oc, nullptr);
             if (!vst) {
@@ -1111,7 +1234,7 @@ struct ExportWriter::Impl {
             }
             aenc->sample_fmt = sampleFmt;
             aenc->sample_rate = s.audioRate;
-            av_channel_layout_default(&aenc->ch_layout, s.audioChannels);
+            setEncoderLayout(acodec, s.audioChannels);
             aenc->time_base = AVRational{1, s.audioRate};
             ast->time_base = aenc->time_base;
             if (s.audioBitrateK > 0) aenc->bit_rate = int64_t(s.audioBitrateK) * 1000;
@@ -1136,7 +1259,7 @@ struct ExportWriter::Impl {
         c.height = height;
         c.qp = ownQp;
         // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
-        c.gop = 250;
+        c.gop = kOwnGop;
         c.threads = ownThreads();
         c.fps = fps;
         if (ownBitrateK > 0 && !ownFixedQp) {
@@ -1153,6 +1276,11 @@ struct ExportWriter::Impl {
         c.transferCharacteristics = int(trc);
         c.matrixCoefficients = int(matrix);
         c.fullRange = target.fullRange;
+        // The bit rate is known now (two passes): the level must take it too
+        if (const QString problem = ownLevelProblem(c); !problem.isEmpty()) {
+            fail(problem);
+            return false;
+        }
         std::vector<uint8_t> header;
         try {
             ownEnc = std::make_unique<schneidi::h264::Encoder>(c);
@@ -1465,6 +1593,14 @@ struct ExportWriter::Impl {
         return true;
     }
 
+    // Channel layout of the audio encoder: the mix's order (encoderLayout); the exporter has already downmixed what
+    // the encoder cannot write with that mapping
+    void setEncoderLayout(const AVCodec* codec, int channels)
+    {
+        av_channel_layout_uninit(&aenc->ch_layout);
+        encoderLayout(codec, channels, &aenc->ch_layout);
+    }
+
     bool writeHeader()
     {
         const QByteArray path = s.path.toUtf8();
@@ -1481,9 +1617,13 @@ struct ExportWriter::Impl {
         if (std::strcmp(oc->oformat->name, "mp4") == 0)
             av_dict_set(&options, "movflags", "+negative_cts_offsets", AV_DICT_APPEND);
         // HEVC in MP4/MOV as 'hvc1' instead of FFmpeg's default 'hev1': Apple players (QuickTime, Safari, iPhone) play
-        // no 'hev1'. Smart render's in-band parameter sets per piece then work as they do in H.264's 'avc1'.
+        // no 'hev1'. Smart render: in-band parameter sets per piece (FFmpeg 7 keeps them) and a sample entry per
+        // distinct set (FFmpeg 8+ drops them from 'hvc1' samples, newSampleEntry).
         const bool mov = std::strcmp(oc->oformat->name, "mp4") == 0 || std::strcmp(oc->oformat->name, "mov") == 0;
-        if (mov && vst && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+        if (mov && vst && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) {
+            vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+            sampleEntries = smart;
+        }
         r = avformat_write_header(oc, &options);
         av_dict_free(&options);
         if (r < 0) {
@@ -1600,6 +1740,7 @@ struct ExportWriter::Impl {
             }
             std::memmove(p->data + extra, p->data, size_t(size));
             std::memcpy(p->data, pieceHeader.data(), size_t(extra));
+            if (!newSampleEntry(p, pieceHeader.data(), extra)) return false;
         }
         p->dts = videoPackets - kDelay;
         if (p->pts == AV_NOPTS_VALUE || p->dts > p->pts) {
@@ -1617,6 +1758,25 @@ struct ExportWriter::Impl {
             smartBroke = true;
             return false;
         }
+        return true;
+    }
+
+    // Smart render, HEVC in MP4/MOV ('hvc1'): the parameter sets of the piece that starts with packet p as a sample
+    // entry of its own. FFmpeg 8+ keeps 'hvc1' to the spec there and drops parameter sets from the samples, the
+    // decoder then took every piece with the stream's first ones: copied GOPs came out in decode order (the encoded
+    // piece's sps_max_num_reorder_pics 0) and with wrong pictures. The muxer starts a new sample description for each
+    // distinct set (an equal one is reused), the demuxer hands it to the decoder on the switch. FFmpeg 7 ignores the
+    // side data and keeps the in-band parameter sets (as before).
+    bool newSampleEntry(AVPacket* p, const uint8_t* params, int size)
+    {
+        if (!sampleEntries || size <= 0) return true;
+        uint8_t* side = av_packet_new_side_data(p, AV_PKT_DATA_NEW_EXTRADATA, size_t(size));
+        if (!side) {
+            fail(QStringLiteral("out of memory"));
+            smartBroke = true;
+            return false;
+        }
+        std::memcpy(side, params, size_t(size));
         return true;
     }
 
@@ -1774,6 +1934,8 @@ struct ExportWriter::Impl {
             if (!item.packets.empty()) { // copied GOP
                 pieceFed = false;
                 bool ok = finishPiece();
+                if (ok && item.params)
+                    ok = newSampleEntry(item.packets.front(), item.params->extradata, item.params->extradata_size);
                 for (AVPacket* q : item.packets)
                     if (ok) ok = writeVideo(q, false);
                 freeItem(item);
@@ -2002,6 +2164,20 @@ QString ExportWriter::error() const
 {
     std::lock_guard<std::mutex> lock(d->errorMutex);
     return d->error;
+}
+
+QString ExportWriter::ownSizeProblem(QSize size, double fps)
+{
+    if (size.width() < kOwnMinSide || size.height() < kOwnMinSide)
+        return QStringLiteral("the own H.264 encoder needs at least %1x%1 pixels, not %2x%3")
+            .arg(kOwnMinSide)
+            .arg(size.width())
+            .arg(size.height());
+    schneidi::h264::EncoderConfig c; // the export's defaults: no bit rate (that one is checked when it is known)
+    c.width = size.width();
+    c.height = size.height();
+    c.fps = fps;
+    return ownLevelProblem(c);
 }
 
 int ExportWriter::ownH264Qp(int crf)

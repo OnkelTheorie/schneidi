@@ -82,16 +82,17 @@ QString v1()
     return s;
 }
 
-// Empty project with three POVs (not on disk: the ops here need only their lengths) and two markers
+// Empty project with three POVs (not on disk: the ops here need only their lengths) and two markers. Stored absolute
+// like the CLI makes the ops' paths (Windows: with the drive)
 void writeProject()
 {
     Project p;
     ProjectData d;
     d.timeline = emptyTimeline();
     p.load(d);
-    p.addMedia({"/x/pov1.mp4", "pov1.mp4", 1000, true, true, false});
-    p.addMedia({"/x/pov2.mp4", "pov2.mp4", 1000, true, true, false});
-    p.addMedia({"/x/pov3.mp4", "pov3.mp4", 800, true, true, false});
+    p.addMedia({Check::absPath("/x/pov1.mp4"), "pov1.mp4", 1000, true, true, false});
+    p.addMedia({Check::absPath("/x/pov2.mp4"), "pov2.mp4", 1000, true, true, false});
+    p.addMedia({Check::absPath("/x/pov3.mp4"), "pov3.mp4", 800, true, true, false});
     QString error;
     CHECK(ProjectFile::save(p.data(), g_path, &error));
 }
@@ -121,7 +122,7 @@ void testMulticamOpStartSyncCreatesAndPlaces()
     const QJsonArray angles = mc["angles"].toArray();
     if (!CHECK_EQ(angles.size(), 3)) return;
     CHECK_EQ(angles[2]["angle"].toInt(), 3);
-    CHECK_EQ(angles[2]["files"][0]["path"].toString(), QString("/x/pov3.mp4"));
+    CHECK_EQ(angles[2]["files"][0]["path"].toString(), Check::absPath("/x/pov3.mp4"));
     CHECK_EQ(angles[2]["files"][0]["start"].toInt(), 0);
     // Not placed without `at`; a second multicam clip numbered on
     const QJsonObject r2 = edit(R"([{"op":"multicam","sync":"start","angles":[{"name":"A","files":["/x/pov1.mp4"]},

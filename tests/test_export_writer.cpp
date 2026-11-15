@@ -66,6 +66,11 @@ ExportSettings settings(const QString& path)
     s.pixFmt = "yuv420p";
     s.crf = 0;
     s.audioCodec = "pcm_s16le";
+    // The slim FFmpeg of the packages has no ffv1 encoder: ProRes there (only cancelling is checked here)
+    if (!avcodec_find_encoder_by_name("ffv1")) {
+        s.videoCodec = "prores_ks";
+        s.pixFmt = "yuv422p10le";
+    }
     return s;
 }
 
@@ -92,7 +97,6 @@ bool render(const Timeline& tl, const ExportSettings& s, QString* used = nullptr
     return ok;
 }
 
-// Decoded stream as raw data: md5 and size (frames/samples follow from the size)
 void testCancel(const QString& dir)
 {
     Timeline tl = timeline();
@@ -117,7 +121,7 @@ void testCancel(const QString& dir)
             if (percent >= 1 && !finished) ex.cancel();
         });
         QString error;
-        if (!CHECK(ex.start(tl, s, &error))) return;
+        if (!CHECK(ex.start(tl, s, &error))) return (void)std::printf("       %s\n", qPrintable(error));
         QTimer::singleShot(30000, &loop, &QEventLoop::quit);
         loop.exec();
         CHECK(finished && !ok);
@@ -126,7 +130,7 @@ void testCancel(const QString& dir)
     {
         auto ex = std::make_unique<Exporter>();
         QString error;
-        if (!CHECK(ex->start(tl, s, &error))) return;
+        if (!CHECK(ex->start(tl, s, &error))) return (void)std::printf("       %s\n", qPrintable(error));
         QEventLoop loop;
         QObject::connect(ex.get(), &Exporter::progress, &loop, [&](int percent) {
             if (percent >= 1) loop.quit();

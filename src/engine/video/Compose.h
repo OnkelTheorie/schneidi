@@ -35,6 +35,15 @@ struct Homography {
 // The homography taking the source rectangle's corners (0,0) (sw,0) (sw,sh) (0,sh) onto the four destination points
 // `to` (x, y pairs in that order); false if they do not make a quad (three on a line, crossed)
 bool homography(int sw, int sh, const double to[8], Homography* out);
+// The homography taking the four points `from` onto the four points `to` (x, y pairs, same order); false if either
+// does not make a quad (three on a line, crossed)
+bool homography(const double from[8], const double to[8], Homography* out);
+// a then b (b * a)
+Homography multiply(const Homography& b, const Homography& a);
+// The inverse map; false when singular
+bool invert(const Homography& h, Homography* out);
+// Where h puts (x, y); false when the point lands at or behind the horizon (w <= 0)
+bool mapPoint(const Homography& h, double x, double y, double* X, double* Y);
 // The affine placement `m` of a sw x sh source, tilted in depth around the destination point (px, py): tiltX turns
 // about the horizontal axis (positive = the top goes away), tiltY about the vertical one (positive = the right side
 // goes away), both in degrees; seen by a camera with vertical field of view fov (degrees) centered on the dw x dh

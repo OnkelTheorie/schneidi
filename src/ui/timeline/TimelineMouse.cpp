@@ -322,6 +322,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         }
         return;
     }
+    // A node's time range bar (moves, its ends trim it); clip edges, fade handles and transitions above win
+    if (!edgeAt(pos) && nodeBarPress(pos)) return;
     if (const auto hit = edgeAt(pos)) {
         // Alt-drag at a cut (a clip touches it on the other side): only this track's edge rolls, the linked partners
         // keep their cut and stay linked (J/L cut: the sound starts early or runs on under the next picture)
@@ -606,6 +608,9 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         }
         return;
     }
+    case Drag::NodeRange:
+        nodeBarDrag(pos);
+        return;
     case Drag::CurvePoint:
     case Drag::CurveHandle:
         curveMove(pos, mods);
@@ -703,6 +708,13 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         updateHoverCursor(e->position().toPoint());
         return;
     }
+    if (m_drag == Drag::NodeRange) {
+        m_drag = Drag::None;
+        nodeBarRelease();
+        updateHoverCursor(e->position().toPoint());
+        update();
+        return;
+    }
     if (m_drag == Drag::Marks) {
         m_drag = Drag::None;
         marksRelease();
@@ -796,6 +808,7 @@ void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::LeftButton && pos.x() >= kHeaderW && curveDoubleClick(pos)) return;
+    if (e->button() == Qt::LeftButton && nodeBarDoubleClick(pos)) return; // the node on the Comp page
     // Double-click on the track name: rename (like DaVinci)
     if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
         if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {

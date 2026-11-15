@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/CompGraph.h"
 
+#include "core/CompTrack.h"
 #include "core/Keyframes.h"
 #include "core/Types.h"
 
@@ -312,8 +313,6 @@ void followHead(Clip& c, int frames, double fps)
         if (x.effectId == QLatin1String(kEffectId)) e = &x;
     CompGraph g;
     if (!e || !graphOf(*e, &g)) return;
-    // Node kinds with a visible range from/until (seconds from the clip's start; Picture::Comp::visibleRangeParams)
-    static const QStringList ranged{QString::fromLatin1(kTextType), QStringLiteral("text3d")};
     for (const CompNode& n : g.nodes) {
         if (n.type == QLatin1String(kMediaType)) {
             // It plays frame offset + t * speed at clip frame t (engine defaults: offset 0, speed 1)
@@ -328,18 +327,188 @@ void followHead(Clip& c, int frames, double fps)
             const auto k = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), key));
             if (k != c.keys.end())
                 for (Keyframe& f : *k) f.value += shift;
-        } else if (ranged.contains(n.type)) {
-            // 0 means "from the start" / "to the end" and stays; any other value moves, also below 0 (from < 0 = from
-            // the start, until < 0 = over before the start: invisible; Picture::Comp::visibleWeight), so trimming
-            // back out gives the exact values again. A value landing on 0 stays just below it (not "the end")
-            const double s = frames / fps;
-            const auto moved = [s](double v) { return std::abs(v - s) < 1e-9 ? -1e-9 : v - s; };
-            for (const char* name : {"from", "until"}) {
-                const QString k = CompGraph::paramKey(n.id, QString::fromLatin1(name));
-                if (const double v = e->params.value(k, 0.0).toDouble(); v != 0) e->params[k] = moved(v);
-            }
+        }
+        // A camera's drift counts seconds from the clip's start: its own clock (drift_offset) moves along, so the
+        // camera at a timeline frame stays where it was (its pan/push keyframes are source frames: they stay)
+        if (n.type == QLatin1String(kCameraType)) {
+            bool drifts = false;
+            for (const char* d : {"drift_x", "drift_y", "drift_push"})
+                drifts = drifts || e->params.value(CompGraph::paramKey(n.id, QLatin1String(d)), 0.0).toDouble() != 0;
+            const QString key = CompGraph::paramKey(n.id, QStringLiteral("drift_offset"));
+            if (drifts || e->params.contains(key)) e->params[key] = e->params.value(key, 0.0).toDouble() + frames / fps;
+        }
+        // The time range (every kind that has one; also a newer version's kind: from/until mean the same for all).
+        // 0 means "from the start" / "to the end" and stays; any other value moves, also below 0 (from < 0 = from
+        // the start, until < 0 = over before the start: never; inRange), so trimming back out gives the exact values
+        // again. A value landing on 0 stays just below it (not "the end")
+        const double s = frames / fps;
+        const auto moved = [s](double v) { return std::abs(v - s) < 1e-9 ? -1e-9 : v - s; };
+        for (const char* name : {kFromKey, kUntilKey}) {
+            const QString k = CompGraph::paramKey(n.id, QString::fromLatin1(name));
+            if (const double v = e->params.value(k, 0.0).toDouble(); v != 0) e->params[k] = moved(v);
+            // Keyframed (seconds as values; their times are source frames and stay right): the same move
+            const auto kf = c.keys.find(Keys::effectParam(QString::fromLatin1(kEffectId), k));
+            if (kf != c.keys.end())
+                for (Keyframe& f : *kf)
+                    if (f.value != 0) f.value = moved(f.value);
         }
     }
+}
+
+bool hasRange(const QString& type)
+{
+    return !type.isEmpty() && !outputsMask(type) && type != QLatin1String("tracker") && type != QLatin1String(kCameraType);
+}
+
+bool takesCamera(const QString& type)
+{
+    return type == QLatin1String("transform") || type == QLatin1String(kMediaType) || type == QLatin1String(kTextType)
+           || type == QLatin1String("text3d");
+}
+
+int graphCamera(const CompGraph& g)
+{
+    for (const CompNode& n : g.nodes)
+        if (n.type == QLatin1String(kCameraType)) return n.id;
+    return 0;
+}
+
+double nodeNumber(const EffectInstance& e, const Clip* clip, int node, const QString& key, double t, double fallback)
+{
+    const QString full = CompGraph::paramKey(node, key);
+    if (clip) {
+        const AnimParam p = Keys::effectParam(QString::fromLatin1(kEffectId), full);
+        if (Keys::animated(*clip, p)) return Keys::valueAt(*clip, p, t);
+    }
+    return e.params.value(full, fallback).toDouble();
+}
+
+bool everPositive(const EffectInstance& e, const Clip* clip, int node, const QString& key)
+{
+    const QString full = CompGraph::paramKey(node, key);
+    if (clip) {
+        const auto k = clip->keys.constFind(Keys::effectParam(QString::fromLatin1(kEffectId), full));
+        if (k != clip->keys.cend() && !k->isEmpty()) {
+            for (const Keyframe& f : *k)
+                if (f.value > 0) return true;
+            return false;
+        }
+    }
+    return e.params.value(full, 0.0).toDouble() > 0;
+}
+
+int layerCameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip)
+{
+    return everPositive(e, clip, node, QLatin1String(kLayerDepthKey)) ? cameraOf(e, g, node, clip, 0) : 0;
+}
+
+int cameraOf(const EffectInstance& e, const CompGraph& g, int node, const Clip* clip, double t)
+{
+    const CompNode* n = g.node(node);
+    if (!n || !takesCamera(n->type)) return 0;
+    int id = followId(nodeNumber(e, clip, node, QLatin1String(kCameraKey), t));
+    if (id == 0) id = graphCamera(g);
+    const CompNode* cam = id != node ? g.node(id) : nullptr;
+    return cam && cam->type == QLatin1String(kCameraType) ? id : 0;
+}
+
+QSet<int> valueReads(const EffectInstance& e, const CompGraph& g, const QVector<int>& nodes, const Clip* clip)
+{
+    QSet<int> out;
+    const auto followOf = [&](int id) { return followId(nodeNumber(e, clip, id, QStringLiteral("follow"), 0)); };
+    for (int id : nodes) {
+        if (const int f = followOf(id)) out.insert(f);
+        if (const int c = cameraOf(e, g, id, clip)) {
+            out.insert(c);
+            if (const int f = followOf(c)) out.insert(f);
+        }
+    }
+    return out;
+}
+
+bool rangeSet(double from, double until) { return from > 0 || until != 0; }
+
+bool inRange(double from, double until, double s)
+{
+    if (until < 0) return false; // over before the clip's start (its head was trimmed or cut off)
+    if (from <= 0 && until <= 0) return true;
+    const double end = until > 0 ? until : 1e12;
+    return s >= std::max(0.0, from) && s < end;
+}
+
+void rangeAt(const EffectInstance& e, const Clip* clip, int node, double t, double* from, double* until, bool* keyed)
+{
+    if (keyed) *keyed = false;
+    double* out[2] = {from, until};
+    const char* keys[2] = {kFromKey, kUntilKey};
+    for (int i = 0; i < 2; ++i) {
+        const QString full = CompGraph::paramKey(node, QString::fromLatin1(keys[i]));
+        if (clip) {
+            const AnimParam p = Keys::effectParam(QString::fromLatin1(kEffectId), full);
+            if (Keys::animated(*clip, p)) {
+                *out[i] = Keys::valueAt(*clip, p, t);
+                if (keyed) *keyed = true;
+                continue;
+            }
+        }
+        *out[i] = e.params.value(full, 0.0).toDouble();
+    }
+}
+
+namespace {
+bool rangeIn(const EffectInstance& e, const CompGraph& g, int node, NodeRange* r, const Clip* clip, double t)
+{
+    const CompNode* n = g.node(node);
+    if (!n || !hasRange(n->type)) return false;
+    double from = 0, until = 0;
+    bool keyed = false;
+    rangeAt(e, clip, node, t, &from, &until, &keyed);
+    if (!rangeSet(from, until)) return false;
+    if (r) *r = {node, n->type, from, until, keyed};
+    return true;
+}
+} // namespace
+
+bool activeRange(const EffectInstance& e, int node, NodeRange* r, const Clip* clip, double t)
+{
+    CompGraph g;
+    return graphOf(e, &g) && rangeIn(e, g, node, r, clip, t);
+}
+
+QVector<NodeRange> nodeRanges(const EffectInstance& e, const Clip* clip, double t)
+{
+    QVector<NodeRange> out;
+    CompGraph g;
+    if (!graphOf(e, &g)) return out;
+    for (const CompNode& n : g.nodes)
+        if (NodeRange r; rangeIn(e, g, n.id, &r, clip, t)) out << r;
+    return out;
+}
+
+void rangeFrames(const Clip& c, const NodeRange& r, double fps, int* first, int* end)
+{
+    fps = std::max(1e-6, fps);
+    // The first clip frame t with t / fps >= from, the first one with t / fps >= until (inRange, frame by frame)
+    const int len = c.length();
+    int a = r.from > 0 ? int(std::ceil(r.from * fps - 1e-6)) : 0;
+    int b = r.until > 0 ? int(std::ceil(r.until * fps - 1e-6)) : r.until < 0 ? 0 : len;
+    a = std::clamp(a, 0, len);
+    b = std::clamp(b, a, len);
+    *first = c.start + a;
+    *end = c.start + b;
+}
+
+void rangeValues(const Clip& c, int first, int end, double fps, double* from, double* until, bool openEnd)
+{
+    fps = std::max(1e-6, fps);
+    const int a = std::clamp(first - c.start, 0, c.length()), b = std::clamp(end - c.start, a, c.length());
+    *from = a / fps;
+    if (openEnd && b == c.length() && a < b) {
+        *until = 0;
+        return;
+    }
+    // A range that ends where it starts would read as "to the end" (until 0): one frame at least
+    *until = std::max(b, a + 1) / fps;
 }
 
 } // namespace Comp

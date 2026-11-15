@@ -5,6 +5,7 @@
 #include "check.h"
 
 #include "cli/Setup.h"
+#include "core/AppPaths.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -44,7 +45,7 @@ int main(int argc, char** argv)
     const QString code = tmp.filePath("claude");
     QDir().mkpath(code);
     qputenv("CLAUDE_CONFIG_DIR", code.toUtf8());
-    const QString desktop = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)).filePath("Claude");
+    const QString desktop = QDir(AppPaths::writable(QStandardPaths::GenericConfigLocation)).filePath("Claude");
     QDir(desktop).removeRecursively();
     resetOffer();
 

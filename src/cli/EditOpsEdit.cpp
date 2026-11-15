@@ -197,9 +197,12 @@ MotionEase easeOf(const QJsonObject& op, const char* key)
 TitleKind titleKindOf(const QJsonObject& op)
 {
     const QString id = op.value("kind").toString();
+    // Shapes and drawings have ops of their own (a title op would leave them empty)
+    if (id == QLatin1String("shape") || id == QLatin1String("drawing"))
+        fail("BAD_ARGUMENT", QString("kind %1 has its own op: %2").arg(id, id == QLatin1String("shape") ? "shape" : "draw"));
     for (const auto& k : kTitleKinds)
         if (id == QLatin1String(k.id)) return k.kind;
-    fail("BAD_ARGUMENT", "kind must be text, counter or progress");
+    fail("BAD_ARGUMENT", "kind must be text, counter or progress (shapes have their own op: shape, drawings op draw)");
 }
 
 void applyGenerator(TitleStyle& t, const QJsonObject& op)
@@ -263,6 +266,8 @@ bool applyCaptions(CaptionStyle& c, const QJsonObject& op, const char* modeKey)
     return any;
 }
 
+} // namespace
+
 // Clips of the video track `track` that [from, to) overlaps, by id (before a title is placed or lengthened there)
 QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
 {
@@ -274,7 +279,12 @@ QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
     return out;
 }
 
-QString clipWord(const Clip& c) { return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip"); }
+static QString clipWord(const Clip& c)
+{
+    if (c.isTitle() && c.title.isShape()) return QString("shape \"%1\"").arg(c.title.firstLine());
+    if (c.isTitle() && c.title.isDrawing()) return QString("drawing (%1 strokes)").arg(c.title.drawing.strokes.size());
+    return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip");
+}
 
 // Placing on a track overwrites what is there (like `place`); say what happened to each clip that was in the range,
 // so that a second title over the first one does not silently replace it
@@ -304,6 +314,8 @@ void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before)
         s.notes << "a track holds one clip at a time: to show two titles at once, leave out `track` (the new title "
                    "goes on a free track above) or give each its own track";
 }
+
+namespace {
 
 void opTitle(Session& s, const QJsonObject& op)
 {

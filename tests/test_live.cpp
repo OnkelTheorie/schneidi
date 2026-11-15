@@ -6,6 +6,7 @@
 // (added/changed/removed clips with the place of the removed ones, the step, failures) and, while an AI session is
 // connected, its work outside the app (analyses: start, progress, end with a short result).
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/EffectRegistry.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -30,6 +31,8 @@
 #include <QUndoStack>
 #include <QWindow>
 
+#include <stdexcept>
+
 namespace {
 
 class FakeApp : public LiveHost {
@@ -45,13 +48,30 @@ public:
     QVector<LiveActivity> activities;
     QStringList proxies;
 
+    mutable bool throwOnPath = false; // once: a command fails with something that is no Cli::Error
+
     Project* liveProject() override { return &project; }
-    QString liveProjectPath() const override { return path; }
+    QString liveProjectPath() const override
+    {
+        if (throwOnPath) {
+            throwOnPath = false;
+            throw std::runtime_error("test failure");
+        }
+        return path;
+    }
     Selection* liveSelection() override { return &selection; }
     int livePlayhead() const override { return playhead; }
     bool livePlaying() const override { return playing; }
     void liveSeek(int frame) override { playhead = frame; }
     void livePlay(bool play) override { playing = play; }
+    QString page = "edit";
+    QString livePage() const override { return page; }
+    bool liveShowPage(const QString& id) override
+    {
+        if (!QStringList{"media", "edit", "comp", "color", "studio", "deliver"}.contains(id)) return false;
+        page = id;
+        return true;
+    }
     bool liveSave(const QString& to, QString* error) override
     {
         if (!to.isEmpty()) path = to;
@@ -144,7 +164,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // own registry of running apps (and backups)
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8()); // own proxy folder (clean_proxies deletes there)
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     FakeApp fake;
     setup(fake.project);
@@ -326,6 +346,14 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(r), QString("ok"));
     CHECK(fake.selection.contains(first));
     CHECK_EQ(code(cli({"app", "select", "--clips", "999"})), QString("NOT_FOUND"));
+    // page: the app shows a page by its id (Studio 0.23), `state` tells it
+    r = cli({"app", "page", "--page", "studio"});
+    CHECK_EQ(code(r), QString("ok"));
+    CHECK_EQ(fake.page, QString("studio"));
+    CHECK_EQ(r["app"].toObject()["page"].toString(), QString("studio"));
+    CHECK_EQ(code(cli({"app", "page", "--page", "fairlight"})), QString("BAD_ARGUMENT"));
+    CHECK_EQ(code(cli({"app", "page"})), QString("BAD_ARGUMENT"));
+    CHECK_EQ(fake.page, QString("studio"));
     cli({"app", "play"});
     CHECK(fake.playing);
     cli({"app", "stop"});
@@ -337,7 +365,7 @@ int main(int argc, char* argv[])
     CHECK_EQ(fake.proxies, QStringList({"/x/a.mp4"}));
     CHECK_EQ(r["proxies"].toArray().size(), 1);
     if (!ProxyManager::cacheDir().startsWith(tmp.path())) {
-        // Windows ignores XDG_CACHE_HOME: never clean up the real proxy folder of whoever runs the tests
+        // Never clean up a proxy folder outside the test folder (the real one of whoever runs the tests)
         std::printf("       clean_proxies skipped: the proxy folder is not in the test folder (%s)\n",
                     qPrintable(ProxyManager::cacheDir()));
     } else {
@@ -656,7 +684,9 @@ int main(int argc, char* argv[])
         QFile f(Cli::Live::registryDir() + QString("/%1.json").arg(QCoreApplication::applicationPid()));
         CHECK(f.open(QIODevice::ReadOnly));
         const QJsonObject entry = QJsonDocument::fromJson(f.readAll()).object();
+#ifndef Q_OS_WIN // no other bits there: Qt reports them from the read-only flag alone (the profile's ACL protects AppData)
         CHECK(!f.permissions().testFlag(QFile::ReadOther));
+#endif
         QLocalSocket s;
         s.connectToServer(entry["server"].toString());
         CHECK(s.waitForConnected(1000));
@@ -712,11 +742,14 @@ int main(int argc, char* argv[])
                              + server.chatEnvironment().value(Cli::Live::ChatSecretEnv).toUtf8() + "\"}\n"
                              + R"({"type":"attach","client":"chat"})" "\n", 2).contains("\"ok\":true"));
         fake.activities.clear();
-        talk(outside, job, 0);
+        // The chat's job first, on its own: which socket the app reads first is up to the system (Windows: often the
+        // other order)
         talk(chat, job, 0);
-        for (int i = 0; i < 20; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        for (int i = 0; i < 50 && fake.activities.isEmpty(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        const int chatJob = fake.activities.value(0).id;
+        talk(outside, job, 0);
+        for (int i = 0; i < 50 && fake.activities.size() < 2; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (CHECK_EQ(fake.activities.size(), qsizetype(2))) CHECK(fake.activities[0].id != fake.activities[1].id);
-        const int chatJob = fake.activities.value(1).id;
         chat.disconnectFromServer();
         for (int i = 0; i < 50 && fake.activities.size() < 3; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (CHECK_EQ(fake.activities.size(), qsizetype(3))) {
@@ -789,6 +822,26 @@ int main(int argc, char* argv[])
         CHECK(!server.attached());
         server.setAllowed(true);
         first.disconnectFromServer();
+    }
+
+    // A command that fails with something other than Cli::Error (std::bad_alloc …): an error answer, its undo macro
+    // closed and taken back (it stayed open: every later change of the user went into it)
+    {
+        QUndoStack* undo = fake.project.undoStack();
+        const int index = undo->index();
+        const int clipsBefore = videoClips(fake.project);
+        const QJsonArray ops = QJsonDocument::fromJson(R"([{"op":"split","at":30}])").array();
+        fake.throwOnPath = true;
+        const QJsonObject r = server.runForChat("edit", {{"project", fake.path}, {"ops", ops}});
+        CHECK(!fake.throwOnPath); // reached inside the command
+        CHECK_EQ(r["error"].toObject()["code"].toString(), QString("INTERNAL"));
+        CHECK(r["error"].toObject()["message"].toString().contains("test failure"));
+        CHECK_EQ(undo->index(), index);
+        CHECK_EQ(videoClips(fake.project), clipsBefore);
+        // The next edit is a step of its own (no macro left open)
+        CHECK(server.runForChat("edit", {{"project", fake.path}, {"ops", ops}})["ok"].toBool());
+        CHECK_EQ(undo->index(), index + 1);
+        CHECK_EQ(videoClips(fake.project), clipsBefore + 1);
     }
 
     return Check::result();

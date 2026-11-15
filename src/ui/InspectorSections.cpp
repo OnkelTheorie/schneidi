@@ -51,15 +51,41 @@
 
 using namespace InspectorDetail;
 
+namespace {
+
+// The reset arrow follows the font's size (a large UI font gets a larger arrow), not its glyphs (resetIcon)
+class ResetButton : public QToolButton {
+public:
+    ResetButton()
+    {
+        setText("↺"); // not shown (the icon is), names the button (tests, accessibility)
+        setIcon(resetIcon());
+        setToolButtonStyle(Qt::ToolButtonIconOnly);
+        fitIcon();
+    }
+
+protected:
+    void changeEvent(QEvent* e) override
+    {
+        QToolButton::changeEvent(e);
+        if (e->type() == QEvent::FontChange) fitIcon();
+    }
+
+private:
+    void fitIcon() { setIconSize(QSize(1, 1) * std::max(10, int(std::lround(fontMetrics().height() * 0.7)))); }
+};
+
+} // namespace
+
 QToolButton* Inspector::resetButton(const std::function<void()>& fn)
 {
-    auto* b = new QToolButton;
-    b->setText("↺");
+    auto* b = new ResetButton;
     b->setToolTip(T("Zurücksetzen"));
     b->setAutoRaise(true);
     b->setFocusPolicy(Qt::NoFocus);
-    // Narrow padding: the reset column is in every row, its width counts towards the panel's minimum width
-    b->setStyleSheet(QString("QToolButton { color: %1; padding: 3px 2px; }").arg(Theme::textDim.name()));
+    // Narrow side padding: the reset column is in every row, its width counts towards the panel's minimum width (the
+    // style's own margin still leaves air around the arrow)
+    b->setStyleSheet("QToolButton { padding: 3px 1px; }");
     connect(b, &QToolButton::clicked, this, fn);
     return b;
 }
@@ -763,6 +789,26 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
     return p;
 }
 
+void Inspector::separateSliderSteps(QSlider* slider)
+{
+    static constexpr char kStep[] = "schneidiUndoStep";
+    // Every action the user starts without holding the handle begins a new step. The value is applied after
+    // actionTriggered (valueChanged follows), so a page/single step is closed there; an absolute-set click
+    // (SliderMove before the press counts) stays open for the drag that follows, its release closes it.
+    connect(slider, &QAbstractSlider::actionTriggered, this, [this, slider](int action) {
+        if (slider->isSliderDown() || action == QAbstractSlider::SliderNoAction) return; // a drag: closed on release
+        m_editor->project()->closeMerge();
+        slider->setProperty(kStep, action != QAbstractSlider::SliderMove);
+    });
+    connect(slider, &QSlider::valueChanged, this, [this, slider] {
+        if (!slider->property(kStep).toBool()) return;
+        slider->setProperty(kStep, false);
+        m_editor->project()->closeMerge();
+    });
+    connect(slider, &QSlider::sliderPressed, this, [slider] { slider->setProperty(kStep, false); }); // (step at the end)
+    connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+}
+
 Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QString& label, double min, double max,
                                        double def, double step, int decimals, const Field& field,
                                        std::optional<AnimParam> anim)
@@ -778,7 +824,7 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
         const QSignalBlocker b(p->slider); // avoid feedback
         if (p->edit->onChange) p->edit->onChange(p->edit->value());
     });
-    connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+    separateSliderSteps(slider);
 
     auto* box = new QHBoxLayout;
     box->setContentsMargins(0, 0, 0, 0);

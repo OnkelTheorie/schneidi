@@ -14,6 +14,7 @@
 #include <QSize>
 #include <QTimer>
 #include <QVector>
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -88,6 +89,8 @@ public:
     bool showsProxy() const { return m_showsProxy; }
     // Render cache: preview plays pre-rendered clip outputs (export never); updateTimeline() queues missing ones
     RenderCache* renderCache() const { return m_renderCache; }
+    // Queue what the render cache misses of the shown timeline now (after its mode changed or a pause ended)
+    void syncRenderCache();
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
     StillFetcher* stills() const { return m_stills; }
     // Looks at the shown timeline's media files on the disk (FileStamp::now, in the background): one overwritten under its name
@@ -127,6 +130,9 @@ public:
     // Model changed: the renderer takes it as a new snapshot (playback goes on); files open lazily in the render
     // threads, the window never waits for them
     void updateTimeline(const Timeline& tl);
+    // A project being loaded: the position its timeline will be shown at (showTimeline right after updateTimeline).
+    // The first renderer starts its first frame there instead of at the old position (rendered for nothing).
+    void setLoadPosition(int position) { m_position = std::max(0, position); }
     // Kept for callers from the time files were opened ahead: the own engine never waits for files
     void setOpenInBackground(bool) {}
     bool opening() const { return false; }
@@ -210,9 +216,16 @@ signals:
     void loopChanged(bool on); // setLoopRange switched loop playback on or off
     void modeChanged(Engine::Mode mode);
     void showsProxyChanged(bool on);
+    // A media file that played before cannot be read any more (its disk gone, moved away): the preview shows nothing
+    // for it and tries again on the next play or seek (Picture::Options::sourceLost; any thread, at most every 1.5 s)
+    void sourceLost(const QString& path);
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
     // the master measures true peak (dBTP, BS.1770 4x oversampled) like the delivery check
     void audioLevels(const QVector<float>& db);
+    // The same per speaker (0.23, the Studio's meters): one value per channel of the mix for every track and the master,
+    // [A1 ch1..chN, A2 …, Master ch1..chN] in ChannelLayout order. Stereo: exactly audioLevels (the master as true
+    // peak); 5.1/7.1: sample peaks of the mix before the monitor's downmix (the master after its limiter).
+    void audioSpeakerLevels(const QVector<float>& db);
     // internal: position from the pump thread, epoch = jump counter when displaying (older ones are discarded)
     void framePosition(int frame, int epoch);
     // internal: loop playback crossed the range's end (pump thread) -> jump back on the UI thread
@@ -230,6 +243,7 @@ private:
     void refresh();
     void mediaFileChanged(); // FileStamp saw a media file change (UI thread)
     void applyAudioState();
+    void retryLostSources(); // a seek or play start: lost sources may be back (Picture::Renderer::retryLost)
     void applyTimeline(const Timeline& tl);
     void emitLevels();
     // The pump shows `content` from `position` (Timeline/Source/Multicam), frames come to onPumpShown (pump thread)

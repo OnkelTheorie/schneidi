@@ -6,6 +6,7 @@
 // the mixer compensates the latency (preview from the middle = export), the editor adds it in one undo step on audio
 // clips only, project file round trip, CLI op clean_voice (room) and `effects`.
 #include "check.h"
+#include "core/Equalizer.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Editor.h"
@@ -516,6 +517,22 @@ int main(int argc, char** argv)
         CHECK_EQ(EffectRegistry::value(*TimelineOps::findClip(loaded(), audio), "voiceclean", "room").toDouble(), -70.0);
         edit(R"([{"op":"clean_voice","track":"A1","remove":true}])");
         CHECK(!EffectRegistry::has(*TimelineOps::findClip(loaded(), audio), "voiceclean"));
+        // eq:true: the EQ preset "voice" on the clips' track too (Studio page "Stimme säubern"); mixer eq:'voice'
+        CHECK(loaded().audio[0].eq == TrackEq{});
+        edit(R"([{"op":"clean_voice","track":"A1","eq":true}])");
+        CHECK(EffectRegistry::has(*TimelineOps::findClip(loaded(), audio), "voiceclean"));
+        CHECK(loaded().audio[0].eq == Equalizer::voicePreset());
+        err.clear();
+        edit(R"([{"op":"clean_voice","track":"A1","eq":"yes"}])", &err);
+        CHECK_EQ(err, QString("BAD_ARGUMENT"));
+        edit(R"([{"op":"mixer","track":"A1","eq":{"on":false}}])");
+        CHECK(!loaded().audio[0].eq.on);
+        edit(R"([{"op":"mixer","track":"A1","eq":"voice"}])");
+        CHECK(loaded().audio[0].eq == Equalizer::voicePreset());
+        err.clear();
+        edit(R"([{"op":"mixer","track":"A1","eq":"radio"}])", &err);
+        CHECK_EQ(err, QString("BAD_ARGUMENT"));
+        edit(R"([{"op":"clean_voice","track":"A1","remove":true}])");
         // The generic effect op works as well
         edit(QString(R"([{"op":"effect","clips":[%1],"effect":"voiceclean","params":{"shape":false}}])").arg(audio));
         CHECK(!EffectRegistry::value(*TimelineOps::findClip(loaded(), audio), "voiceclean", "shape").toBool());

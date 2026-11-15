@@ -19,6 +19,7 @@
 #include <QImage>
 #include <QLockFile>
 #include <QMainWindow>
+#include <QMargins>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -36,6 +37,7 @@ class MediaStorage;
 class Viewer;
 class Inspector;
 class ColorPanel;
+class ShapeOverlay;
 class TranscriptPanel;
 class ScopesPanel;
 class Mixer;
@@ -62,6 +64,8 @@ public:
     ~MainWindow() override;
     // placeOnTimeline (test helper --demo): one after another on V1/A1; adoptFormat = project format from the first clip
     void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
+    // Opens the graphics card's video decoder in the background (Video::Hardware::warmUp): there is video to show
+    static void warmUpVideoDecoding();
     // Workspace › Brand Kit…: the dialog; the result is saved and applied to the open project (one undo step)
     void editBrandKit();
     // Timeline of another editor (FCP7 XML, OTIO, EDL) as a new timeline; false = not readable (message shown)
@@ -74,7 +78,7 @@ public:
     int generateProxies(int scope);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
-    enum class Page { Media, Edit, Deliver, Color, Comp };
+    enum class Page { Media, Edit, Deliver, Color, Comp, Studio };
     void showPage(Page page);
     // A voice-over take a crash left unfinished: into the Media Pool? (once, not modal; also at the start)
     void offerCrashedTake();
@@ -100,9 +104,15 @@ public:
     void openCompForSelection();
     void compFromSelection();
     class CompPage* compPage() const { return m_compPage; } // nullptr until the page was shown
+    // Studio page (0.23, MainWindowStudio.cpp): sound - tracks with waveforms and the volume pen, the big mixer; built
+    // on its first showing
+    class StudioPage* studioPage() const { return m_studioPage; } // nullptr until the page was shown
     // In-app tours (MainWindowTours.cpp, app/TourManager.h): Help › Tours; offerTours = the one question at the end of
     // the start (main.cpp, never in test runs); pageName = a page's name in the tour files ("media", "edit", ...)
     void offerTours();
+    // A larger interface for a screen with many pixels at 100 % (app/UiScale.h): a bar under the top bar, "Larger
+    // (factor)" / "Leave it"; either answer is kept, a yes takes effect after a restart (main.cpp, never in test runs)
+    void offerUiScale(double factor);
     class TourManager* tours() const { return m_tours; }
     // A tour asks or runs, or an AI drives the app: no unasked questions (the Claude offer) now
     bool busyForQuestions() const;
@@ -134,7 +144,20 @@ public:
     // "Check Fields": the placeholders of the open project and what is wrong with them
     void checkPlaceholders();
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
+    // File › Open Backup… after the file dialog: the backup as an untitled, modified project; the automatic backup
+    // of the project left is removed (false = not readable, message shown)
+    bool openBackup(const QString& path);
     void disableAutosave();      // test runs: do not write/delete a backup
+    // The window's normal geometry on its screen before the first show (main.cpp, then maximized): most of the available
+    // area (90 %, centred), so it never starts larger than the screen (1024x768, a scale factor) and is not small on a
+    // big one. fitToScreen: a wanted geometry (a size given for a test run) shrunk/moved so that it and its frame
+    // (`frame`: title bar and borders the window system adds, estimated) lie inside `available`; invalid, larger than
+    // the screen or off it = 90 % of the room, centred
+    void placeOnScreen(const QRect& wanted = {});
+    // The screen a new window starts on: the one under the mouse cursor, else the primary screen (null = none)
+    static class QScreen* startScreen();
+    static QRect fitToScreen(const QRect& wanted, const QRect& available, const QMargins& frame = kFrameEstimate);
+    static constexpr QMargins kFrameEstimate{4, 32, 4, 4};
     // Set project settings (one undo step); test helper --format
     void setProjectFormat(const ProjectFormat& format);
     // Restart (design/language): main() restarts schneidi with these arguments after quitting
@@ -150,11 +173,15 @@ public:
     int livePlayhead() const override;
     bool livePlaying() const override;
     void liveSeek(int frame) override;
+    QString livePage() const override;
+    bool liveShowPage(const QString& page) override;
     void livePlay(bool play) override;
     bool liveSave(const QString& path, QString* error) override;
     void liveGenerateProxies(const QStringList& files) override;
     QJsonObject liveProxyState(const QString& file) const override;
     QString liveProxyWriting() const override;
+    QJsonObject liveRenderCache() const override;
+    void liveRenderCacheControl(const QString& mode, bool pause) override;
     bool liveOpen(const QStringList& files, bool byUser, QString* error) override;
     bool liveAskTrust(const ProjectData& data, const QString& path) override;
     void bringToFront(); // window up and active (files handed over from another process)
@@ -281,6 +308,7 @@ private:
     // Panel set of the Edit page (Workspace → Panels): which toggles are on
     void applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector);
     void onDrop(const QStringList& paths, int frame, int track, PlaceParts parts = PlaceParts::Both);
+    void addShape(int frame, int track, const QString& kindId);
     // Subtitles (SRT): every file becomes a new subtitle track; export of the visible track
     void importSubtitleFiles(const QStringList& paths);
     void importSubtitlesDialog();
@@ -304,6 +332,7 @@ private:
     void startKeyPick(int clipId);
     void stopKeyPick();
     void updateRenderCacheBar(); // render cache bar above the timeline
+    void updateRenderCacheJob(bool allDone); // its job at the bottom right (ui/BackgroundJobs)
     void clipSpeedDialog();
     void normalizeAudioDialog();
     // Import presets for audio streams and ducking (MainWindowAudio.cpp)
@@ -373,6 +402,7 @@ private:
     void createCompoundClip(); // ask for the name like DaVinci
     // Comp page (MainWindowComp.cpp)
     void ensureCompPage();
+    void ensureStudioPage();
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -417,9 +447,10 @@ private:
     void reframedCopy(int sequenceId);
     // What a reframe from the app keeps above the picture (menu switch "reframe/keepKillFeed", default on)
     Reframe::KeepChoice reframeKeepChoice() const;
-    // Measures the clips with a progress dialog (window modal); false = cancelled
+    // Measures the clips with a progress dialog (window modal); false = cancelled. feeds: the kill feed lines of the
+    // clips a reframe keeps a kill feed of (engine/KillFeedLines)
     bool measureReframe(const QVector<Clip>& clips, const ProjectFormat& format, QHash<int, QVector<Reframe::Key>>* paths,
-                        QHash<QString, QRectF>* contents = nullptr);
+                        QHash<QString, QRectF>* contents = nullptr, QHash<int, Reframe::Feed>* feeds = nullptr);
     // Clip menu: crop the black bars baked into the selected clips (engine/BarDetect), show them as stretched 4:3
     void cropBlackBars();
     void setStretched43(bool on);
@@ -434,6 +465,7 @@ private:
 
     MediaPool* m_mediaPool = nullptr;
     class BackgroundJobs* m_backgroundJobs = nullptr;
+    bool m_renderCacheJob = false; // the render cache's job is shown as running (updateRenderCacheJob)
     EffectsLibrary* m_effects = nullptr;
     MediaStorage* m_storage = nullptr;
     Viewer* m_viewer = nullptr;
@@ -464,6 +496,14 @@ private:
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
+    ShapeOverlay* m_shapeOverlay = nullptr; // the selected shape's box over the viewer (Edit page, 0.22)
+    // Painting in the viewer (tool "Malen", key P, 0.22): the Edit page's overlay (the shape box below it) and the
+    // brush bar over the viewer while the tool is on
+    class DrawOverlay* m_drawOverlay = nullptr;
+    class DrawBar* m_drawBar = nullptr;
+    QAction* m_drawAction = nullptr;
+    void setDrawTool(bool on);
+    void drawToolChanged(bool on);
     QPointer<class KeyTrainer> m_keyTrainer;     // Help › Practice keys, while open
     QPointer<class KeyColorPicker> m_keyPicker; // while the pipette is on
     QPointer<class KeyPickWindow> m_keyPickWindow; // its large picture, while the pipette is on
@@ -473,6 +513,7 @@ private:
     TimelinePanel* m_timeline = nullptr;
     DeliverPanel* m_deliver = nullptr;
     class CompPage* m_compPage = nullptr; // built on the first showing (startup stays fast)
+    class StudioPage* m_studioPage = nullptr; // built on the first showing (startup stays fast)
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
@@ -493,7 +534,7 @@ private:
     QButtonGroup* m_pageButtons = nullptr;
     class ElidedLabel* m_statusText = nullptr; // left in the page bar: status messages (the status bar is hidden)
     class QHBoxLayout* m_pageBarRight = nullptr; // right in the page bar: background work
-    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "deliver"}}; // bar order
+    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "studio", "deliver"}}; // bar order
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
     QToolButton* m_storageToggle = nullptr;
@@ -509,6 +550,10 @@ private:
     } m_large;
     QAction* m_largeAction = nullptr;
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
+    class QShortcut* m_drawEscape = nullptr;  // Esc ends painting (only enabled while it is on)
+    void updateEscapeKeys(); // which Esc shortcut is on: recording, then painting, then the large viewer
+    // Esc with the focus in a text/number field: handed to the field and the focus taken out of it (true); false = not in one
+    bool escapeToFocusedField();
     QAction* m_fullScreenAction = nullptr;
     QAction* m_appFullScreenAction = nullptr;
     bool m_maximizedBeforeFullScreen = true; // the window state setAppFullScreen(false) brings back
@@ -568,7 +613,7 @@ private:
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)
     QMenu* m_recentMenu = nullptr;
     QMenu* m_templateMenu = nullptr;
-    class QLabel* m_titleLabel = nullptr;
+    class ElidedLabel* m_titleLabel = nullptr; // project name in the top bar
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;
     int m_autosaveSlot = 0; // 0 = none assigned yet
@@ -583,6 +628,7 @@ private:
     QWidget* buildUpdateBar();
     class UpdateCheck* m_updates = nullptr;
     QWidget* m_updateBar = nullptr;
+    QWidget* m_scaleBar = nullptr; // offerUiScale
     class QLabel* m_updateText = nullptr;
     QUrl m_updatePage;
     static QString liveOffReason(); // for the AI: connections are off in the settings

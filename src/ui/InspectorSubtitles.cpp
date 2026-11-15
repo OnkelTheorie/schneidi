@@ -291,7 +291,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
             edit->setValue(val);
             set(val);
         });
-        connect(sl, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+        separateSliderSteps(sl);
         m_subRefreshers << [edit, sl, field, current, min, max] {
             if (auto t = current()) {
                 const double v = field(*t);
@@ -422,6 +422,7 @@ bool Inspector::refreshSubtitle()
     int track = -1;
     const SubtitleCue* c = selectedCue(&track);
     if (!c) return false;
+    ensurePage(kSubtitlePage);
     for (int id : {0, 1, kTitlePage, kTransitionPage, kEffectsPage}) m_tabs->button(id)->setVisible(false);
     m_tabs->button(kSubtitlePage)->setVisible(true);
     m_tabs->button(kSubtitlePage)->setEnabled(true);

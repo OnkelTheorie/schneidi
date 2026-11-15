@@ -7,6 +7,7 @@
 // app's own chat may only plan (PLAN_MODE), the user runs the plan through Server::runForChat.
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -287,7 +288,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // registry of running apps, backups and plans
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     // Plan ids across processes: the id's file is made at once, so another process that read the same counter (here:
     // the counter is gone again) cannot get that id before the first one wrote its plan

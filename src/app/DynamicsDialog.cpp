@@ -4,6 +4,7 @@
 #include "core/Dynamics.h"
 #include "core/Editor.h"
 #include "core/Project.h"
+#include "core/TimelineOps.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -42,7 +43,9 @@ bool parsed(QLineEdit* e, double* v)
 DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     : QDialog(parent), m_editor(editor), m_track(track)
 {
-    setWindowTitle(T("Kompressor – %1").arg(trackShortName({TrackKind::Audio, track})));
+    showTitle();
+    if (const QVector<Track>& audio = editor->project()->timeline().audio; track >= 0 && track < audio.size())
+        m_trackUid = audio[track].uid.value;
     auto* root = new QVBoxLayout(this);
     m_on = new QCheckBox(T("Kompressor an"));
     m_on->setObjectName("dynamicsOn");
@@ -73,7 +76,7 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     root->addWidget(buttons);
 
     connect(m_on, &QCheckBox::toggled, this, &DynamicsDialog::commit);
-    connect(editor->project(), &Project::timelineChanged, this, &DynamicsDialog::sync);
+    connect(editor->project(), &Project::timelineChanged, this, &DynamicsDialog::followTrack);
     // The track number belongs to this timeline of this project: another one closes the window
     connect(editor->project(), &Project::loaded, this, &DynamicsDialog::detach);
     connect(editor->project(), &Project::currentSequenceChanged, this, &DynamicsDialog::detach);
@@ -107,6 +110,24 @@ void DynamicsDialog::commit()
     parsed(m_makeup, &d.makeupDb);
     m_editor->setTrackDynamics(m_track, d);
     sync(); // clamped values / invalid text back to the model's value
+}
+
+void DynamicsDialog::showTitle() { setWindowTitle(T("Kompressor – %1").arg(trackShortName({TrackKind::Audio, m_track}))); }
+
+void DynamicsDialog::followTrack()
+{
+    if (m_track < 0) return; // detached
+    const int t = TimelineOps::followTrack(m_editor->project()->timeline().audio, m_trackUid, m_track);
+    if (t < 0) {
+        detach();
+        return;
+    }
+    if (t != m_track) {
+        m_track = t;
+        showTitle();
+        if (property("mixerStrip").isValid()) setProperty("mixerStrip", t); // the Mixer finds it at its strip
+    }
+    sync();
 }
 
 void DynamicsDialog::detach()
