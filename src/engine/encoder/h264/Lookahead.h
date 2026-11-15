@@ -59,6 +59,7 @@ struct LookaheadFrame {
     std::vector<double> biSum;                 // [bComboIndex(a, c)]: that picture's total as a B picture (min of intra,
                                                // both lists and the average per macroblock)
     bool bRef = false;                         // a B picture other B pictures refer to (B pyramid)
+    int nearRun = 0;                           // nearB: the longer of the B runs before and after it
     bool nearB = false;                        // a reference picture with B pictures before or after it
     int refDist = 1, nextDist = 1;             // planned distance to the reference before (P, B) / after (B)
 };

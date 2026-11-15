@@ -791,8 +791,12 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // control's model starts from a probe that misses by up to 2x and settles on the first P pictures;
 // with B pictures from the start the plain P pictures of the rest of the clip keep that seed for as
 // long as the B pictures last (measured on a game clip: QP 34 instead of 37.5 for 70 pictures, then
-// 39 for the rest). 0 = none.
+// 39 for the rest). 0 = none. Not where the clip's first measurement finds B pictures a clear gain
+// (below kBWarmGain): such material keeps them throughout, and twelve P pictures cost it a lot
+// (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
+static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
+static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
 static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
@@ -867,6 +871,8 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
         run_ = result == 0 ? (gain < kBProbeGain ? shortRun : 0) : result == 1 && kBProbeStill ? shortRun : 0;
         const bool still = result != 0;
         resultStart_ = start_;
+        if (start_ == 0)
+            warmup_ = still || gain > kBWarmGain;
         sampleActivity_ = activitySum_ / double(count - 1);
         if (trace)
             std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
@@ -1121,8 +1127,10 @@ void FirstPass::analyseBatch() const
         const int base = int(stats_->intraSum.size());
         for (int i = 0; i < n; ++i) {
             stats_->bGate.push_back(uint8_t(probe_.run()));
-            if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_))
+            if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_)) {
                 std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), uint8_t(probe_.run()));
+                stats_->bWarmup = probe_.warmup();
+            }
         }
     }
     for (LookaheadFrame& f : job_) {
@@ -1215,6 +1223,7 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
             part->sceneChange.push_back(st.sceneChange[i]);
             part->forceKeyframe.push_back(st.forceKeyframe[i]);
             part->bMax = st.bMax;
+            part->bWarmup = true; // a part's own start: its measurement is not known here
             if (!st.bGate.empty())
                 part->bGate.push_back(st.bGate[i]);
             // Only the first chunk analyses its pictures like the first pass did (the others
@@ -1533,7 +1542,7 @@ int Encoder::gateAt(int index) const
 {
     if (!kBProbe)
         return cfg_.bframes;
-    if (index <= kBWarmup)
+    if (index <= kBWarmup && probe_.warmup())
         return 0;
     for (size_t i = gate_.size(); i-- > 0;)
         if (gate_[i].first <= index)
@@ -1641,7 +1650,7 @@ void Encoder::planFromStats()
         // Runs of B pictures, each ended by a P picture; the last picture before a keyframe is P.
         // Adaptive: only where the probe found them worth it.
         auto gate = [&](size_t k) {
-            if (adapt && kBProbe && int(k) <= kBWarmup)
+            if (adapt && kBProbe && int(k) <= kBWarmup && st.bWarmup)
                 return 0;
             return !adapt || !kBProbe || k >= st.bGate.size() ? cfg_.bframes : std::min<int>(cfg_.bframes, st.bGate[k]);
         };
@@ -1748,7 +1757,10 @@ void Encoder::planQueue()
             while (s < n && queue_[size_t(s)].type == 2)
                 ++s;
             const int first = last == none ? j : last + 1, count = s - first;
-            const int mid = last != none && count >= 3 ? first + count / 2 : none;
+            // Runs of up to kPyramidMaxRun only: longer ones are chosen where B pictures cost next to
+            // nothing (a slow zoom: mostly skipped), and there a reference B picture with its
+            // residual is a loss (two-pass, 2 Mbit/s: -0.14 dB with runs of 8, 5 and 3 alike).
+            const int mid = last != none && count >= 3 && count <= kPyramidMaxRun ? first + count / 2 : none;
             for (int k = j; k < s; ++k) {
                 LookaheadFrame& b = queue_[size_t(k)];
                 b.bRef = k == mid;
@@ -1780,8 +1792,13 @@ void Encoder::planQueue()
     // ahead of its B pictures keeps what it was coded with.
     for (size_t j = 0; j < queue_.size(); ++j) {
         LookaheadFrame& f = queue_[j];
-        if (f.type != 2 && !f.coded)
+        if (f.type != 2 && !f.coded) {
             f.nearB = f.refDist > 1 || (j + 1 < queue_.size() && queue_[j + 1].type == 2);
+            size_t e = j + 1;
+            while (e < queue_.size() && queue_[e].type == 2)
+                ++e;
+            f.nearRun = std::max(f.refDist - 1, int(e - j) - 1);
+        }
     }
 }
 
@@ -1976,7 +1993,11 @@ void Encoder::markKeyframes()
 // B pictures get back (measured on a slow zoom: strength 1 -50.5 %, 1.5 -49.5 %, 2 -47.2 %).
 double Encoder::treeStrength(const LookaheadFrame& f) const
 {
-    return useB() && f.nearB ? cfg_.mbtreeStrengthB : cfg_.mbtreeStrength;
+    // Next to short runs (as placed on moving material, with the pyramid) the full strength: there
+    // the P pictures carry the B pictures as they carry each other without them (game footage,
+    // two-pass, runs of 3: 10 % fewer bits than with the reduced strength).
+    static const bool kShortFull = !std::getenv("H264_BTREE_SHORT") || std::atoi(std::getenv("H264_BTREE_SHORT")) != 0;
+    return useB() && f.nearB && !(kShortFull && f.nearRun <= kPyramidMaxRun) ? cfg_.mbtreeStrengthB : cfg_.mbtreeStrength;
 }
 
 double Encoder::frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter) const
@@ -2776,6 +2797,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         framesSinceIdr_ = 0;
     lastWasSceneCut_ = cut;
     const bool bRef = type == 2 && frame.bRef && usePyramid();
+    // QP of a reference B picture above the P QP: between the P pictures' and the other B pictures'.
+    static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
+    const int bRefQp = kBRefQpEnv >= 0 ? kBRefQpEnv : (cfg_.bQpOffset + 1) / 2;
     // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
     const int frameNum = bMode ? (idr ? 0 : refCount_) : framesSinceIdr_;
     if (idr)
@@ -2848,7 +2872,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         } else
             markKeyframes();
         frame.keyframe = idr;
-        if (type == 2 && !bRef) {
+        static const bool kBRefTree = !std::getenv("H264_BREFTREE") || std::atoi(std::getenv("H264_BREFTREE")) != 0;
+        if (type == 2 && (!bRef || !kBRefTree)) {
             fc.treeOffset_.clear(); // nothing references a B picture
         } else if (cfg_.mbtree) {
             if (bMode)
@@ -3038,7 +3063,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         rcQp_ = std::clamp(qp, 10.0, 51.0);
         if (twoPass && size_t(frame.index) < tpOff_.size())
             qp += tpOff_[size_t(frame.index)];
-        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? (cfg_.bQpOffset + 1) / 2 : cfg_.bQpOffset) : qp)), 10, 51);
+        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : cfg_.bQpOffset) : qp)), 10, 51);
         rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {
@@ -3073,7 +3098,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
-        cfg_.qp = std::clamp(baseQp + (bRef ? (cfg_.bQpOffset + 1) / 2 : cfg_.bQpOffset), 0, 51); // nothing (little) depends on a B picture
+        cfg_.qp = std::clamp(baseQp + (bRef ? bRefQp : cfg_.bQpOffset), 0, 51); // nothing (little) depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
     // Psy strength follows the picture's QP (EncoderConfig::psyQpFull / psyQpOff): full below, none

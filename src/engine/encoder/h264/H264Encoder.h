@@ -46,6 +46,7 @@ struct FirstPassStats {
     // before encoding. Empty = not measured, B pictures everywhere.
     int bMax = 0;
     std::vector<uint8_t> bGate;
+    bool bWarmup = true; // the first pictures of the clip stay P pictures (BProbe::warmup)
     size_t size() const { return intraSum.size(); }
 };
 
@@ -68,7 +69,9 @@ struct EncoderConfig {
     int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
     bool mbtree = true;       // macroblock tree: finer QP where later pictures reference a block (needs lookahead)
     double mbtreeStrength = 2.0;
-    double mbtreeStrengthB = 1.0; // for reference pictures with B pictures before or after them
+    // For reference pictures with runs of more than four B pictures before or after them (a slow
+    // zoom; next to shorter runs the full strength, see Encoder::treeStrength).
+    double mbtreeStrengthB = 1.0;
     // Bitrate mode with a first pass over the whole clip (FirstPass): one QP for the clip, only a
     // small correction while encoding. The pictures must come in the same order as analysed.
     std::shared_ptr<const FirstPassStats> firstPass;
@@ -98,10 +101,10 @@ struct EncoderConfig {
     // with a first pass over the whole clip, which must then have been made with at least this
     // many bframes). false = runs of bframes B pictures everywhere.
     bool bAdaptive = true;
-    // B pyramid: in a run of three or more B pictures the middle one is a reference picture for
+    // B pyramid: in a run of three or four B pictures the middle one is a reference picture for
     // the B pictures on both sides of it (one more picture in the decoder's buffer and of
     // reordering: reorderDelay() 2). The B pictures then predict from near pictures on both
-    // sides, which is what makes them pay on moving material. Runs of one or two are unchanged.
+    // sides, which is what makes them pay on moving material. Shorter and longer runs are unchanged.
     bool bPyramid = true;
     // Predictions from both lists weighted by the distance to the two reference pictures
     // (implicit weighted prediction) instead of their plain average. Measured on a slow zoom:
@@ -182,6 +185,8 @@ public:
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
     int run() const { return run_; } // longest run of B pictures that pays, 0 = none
     int resultStart() const { return resultStart_; }
+    // The clip's first pictures stay P pictures (unless its first measurement found B pictures a clear gain).
+    bool warmup() const { return warmup_; }
     // Bits of "I B.. P .." with runs of runs[k] B pictures against "I P.. P" at equal distortion,
     // counted over the pictures after the first (gains[k] = -0.5: half the bits; 0 = no
     // measurement). pics: w x h luma each, in display order.
@@ -194,6 +199,7 @@ private:
     std::vector<std::vector<uint8_t>> pics_;
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
     int run_ = 0;
+    bool warmup_ = true;
     // Activity (lookahead cost with motion / intra) of the last picture, summed over the pictures
     // being collected, and the mean of the last measurement's pictures.
     double lastActivity_ = 0, activitySum_ = 0, sampleActivity_ = 0;
