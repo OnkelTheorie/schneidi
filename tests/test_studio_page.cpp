@@ -1364,38 +1364,32 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         QWidget* pan = mixer->findChild<QWidget*>("studio_pan_A1");
         if (CHECK(pan)) {
             for (QWidget* control : {faderA1, pan}) {
-                for (int how = 1; how < 2; ++how) {
-                    const bool vertical = control == faderA1;
-                    const QPoint c(vertical ? control->width() * 3 / 4 : control->width() / 2, control->height() / 2);
-                    const QPoint step = vertical ? QPoint(0, -10) : QPoint(10, 0);
-                    const Track before = p->timeline().audio[0];
-                    mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
-                    mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
-                    settle();
-                    const int at = undo->index();
-                    const double moved = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
-                    CHECK(moved != (vertical ? before.volumeDb : before.pan));
-                    if (how == 0) {
-                        mouse(control, QEvent::MouseMove, c + 2 * step, Qt::NoButton);
-                    } else {
-                        w.showPage(Page::Edit);
-                        settle();
-                        w.showPage(Page::Studio);
-                        settle();
-                    }
-                    mouse(control, QEvent::MouseMove, c + 4 * step, Qt::LeftButton);
-                    settle();
-                    const double now = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
-                    Check::report(now == moved, vertical ? "fader drag ended" : "pan drag ended", __FILE__, __LINE__,
-                                  QString("%1 -> %2 (%3)").arg(moved).arg(now).arg(how));
-                    // The merge is closed: the next drag (same merge key) is a step of its own
-                    mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
-                    mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
-                    mouse(control, QEvent::MouseButtonRelease, c + step, Qt::NoButton);
-                    settle();
-                    CHECK_EQ(undo->index(), at + 1);
-                    while (undo->index() > at - 1) undo->undo();
-                }
+                const bool vertical = control == faderA1;
+                const QPoint c(vertical ? control->width() * 3 / 4 : control->width() / 2, control->height() / 2);
+                const QPoint step = vertical ? QPoint(0, -10) : QPoint(10, 0);
+                const Track before = p->timeline().audio[0];
+                mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                settle();
+                const int at = undo->index();
+                const double moved = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                CHECK(moved != (vertical ? before.volumeDb : before.pan));
+                w.showPage(Page::Edit);
+                settle();
+                w.showPage(Page::Studio);
+                settle();
+                mouse(control, QEvent::MouseMove, c + 4 * step, Qt::LeftButton);
+                settle();
+                const double now = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                Check::report(now == moved, vertical ? "fader drag ended" : "pan drag ended", __FILE__, __LINE__,
+                              QString("%1 -> %2").arg(moved).arg(now));
+                // The merge is closed: the next drag (same merge key) is a step of its own
+                mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                mouse(control, QEvent::MouseButtonRelease, c + step, Qt::NoButton);
+                settle();
+                CHECK_EQ(undo->index(), at + 1);
+                while (undo->index() > at - 1) undo->undo();
             }
         }
     }
@@ -1505,6 +1499,29 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
             CHECK(eqPaints.paints > 0);
             CHECK_EQ(dynPaints.paints, 0);
             CHECK_EQ(tracks->paintCount(), lanePaints2);
+            // Tracks swapped (A1 has the changed EQ): both EQ pictures and both lanes drawn anew; undone: again
+            QWidget* eqA2 = mixer->findChild<QWidget*>("studio_eqthumb_A2");
+            if (CHECK(eqA2)) {
+                PaintCounter eq2Paints;
+                eqA2->installEventFilter(&eq2Paints);
+                for (int step = 0; step < 2; ++step) {
+                    eqPaints.paints = eq2Paints.paints = 0;
+                    if (step == 0) p->edit("swap", [](Timeline& tl) { std::swap(tl.audio[0], tl.audio[1]); });
+                    else undo->undo();
+                    settle();
+                    CHECK(eqPaints.paints > 0 && eq2Paints.paints > 0);
+                    const QRegion lanes = tracks->lastPaintRegion();
+                    Check::report(lanes.intersects(tracks->laneRect(0)) && lanes.intersects(tracks->laneRect(1)),
+                                  step == 0 ? "lanes drawn after a track swap" : "lanes drawn after its undo", __FILE__,
+                                  __LINE__);
+                }
+                eqA2->removeEventFilter(&eq2Paints);
+            }
+            // The EQ change undone: its picture drawn again
+            eqPaints.paints = 0;
+            undo->undo();
+            settle();
+            CHECK(eqPaints.paints > 0);
             eqA1->removeEventFilter(&eqPaints);
             dynA1->removeEventFilter(&dynPaints);
             while (undo->index() > at) undo->undo();
