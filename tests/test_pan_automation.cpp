@@ -436,6 +436,35 @@ void testWriter()
     w.move(1, AutoTarget::Volume, 300, -20);
     w.endPass(310);
     CHECK_EQ(undo->index(), at);
+
+    // A jump forward while touching (a seek, more than a second): the stretch jumped over keeps its curve; what was
+    // played before goes in up to its last frame, a new touch starts after the jump. Held still while playing on
+    // (hold(), the mixer's tick) is no jump: the held value is written.
+    {
+        p.edit("ramp", [](Timeline& tl) {
+            tl.audio[0].volumeDb = 0;
+            tl.audio[0].volumeAuto = {{0, 0}, {1000, -20}};
+        });
+        const AutoCurve ramp = p.timeline().audio[0].volumeAuto;
+        for (int f = 25; f <= 50; ++f) w.move(0, AutoTarget::Volume, f, -3);
+        for (int f = 500; f <= 520; ++f) w.move(0, AutoTarget::Volume, f, -10); // jumped from 50 to 500
+        w.endPass(520);
+        const Track& t = p.timeline().audio[0];
+        CHECK(near(Automation::levelAt(t, 40), -3, 0.15));
+        Check::report(near(Automation::levelAt(t, 300), Automation::valueAt(ramp, 300), 0.05), "jumped-over stretch kept",
+                      __FILE__, __LINE__, QString("%1 vs %2").arg(Automation::levelAt(t, 300)).arg(Automation::valueAt(ramp, 300)));
+        CHECK(near(Automation::levelAt(t, 510), -10, 0.15));
+        undo->undo();
+        // Held: moves at 25..30, played on to 150 with the fader still, a move at 151
+        for (int f = 25; f <= 30; ++f) w.move(0, AutoTarget::Volume, f, -3);
+        for (int f = 31; f <= 150; f += 2) w.hold(f);
+        w.move(0, AutoTarget::Volume, 151, -4);
+        w.endPass(151);
+        const Track& h = p.timeline().audio[0];
+        Check::report(near(Automation::levelAt(h, 100), -3, 0.15), "held value written", __FILE__, __LINE__,
+                      QString::number(Automation::levelAt(h, 100)));
+        undo->undo();
+    }
 }
 
 QJsonObject cli(const QStringList& args)

@@ -1276,8 +1276,10 @@ void StudioMixer::tick()
             if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], at));
             if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], at));
         }
-    // Write mode: playback stopped - the pass ends (open touches released, one undo step closed)
+    // Write mode: playback stopped - the pass ends (open touches released, one undo step closed); playing with a
+    // control held still: the touch records the held value (a gap between moves is then only a seek)
     if (m_writer.inPass() && !playing()) m_writer.endPass(at);
+    else if (m_writer.touching()) m_writer.hold(at);
     for (StudioStrip* s : m_strips) {
         if (silent) s->fader->silence();
         s->fader->tick(dt);

@@ -20,7 +20,14 @@ public:
 
     // The fader / knob of audio track `track` moved to `heard` (dB heard / pan heard) at timeline frame `frame` while
     // playing: the first move starts a touch (and the pass), every move records and updates the curve live
+    // A move more than kJumpSeconds after the touch's last recorded frame is a jump (a seek while touching, not a
+    // fader held still - hold() records those): the touch ends at its last frame and a new one starts here, so the
+    // skipped, unplayed stretch keeps its curve
     void move(int track, AutoTarget target, int frame, double heard);
+    // Playing on with the controls held still (the mixer's tick, every few frames): every open touch records its last
+    // value up to `frame`, so a gap between two moves is a hold and only a jump leaves one
+    void hold(int frame);
+    static constexpr double kJumpSeconds = 1.0;
     // The fader / knob let go at `frame`: the recording goes in, gliding back to the old curve
     void release(int track, AutoTarget target, int frame);
     // Playback stopped (or write mode off): open touches are released at `frame`, the undo step is closed
