@@ -594,7 +594,7 @@ int levelIdcFor(const EncoderConfig& cfg)
     const double brFactor = high ? 1250.0 : 1000.0;
     const bool bPictures = cfg.bframes > 0 && cfg.cabac && cfg.mode != IntraMode::Pcm && cfg.gop > 1;
     const bool pyramid = bPictures && cfg.bPyramid && std::min(cfg.bframes, 8) >= 3 && cfg.refs < 16;
-    const int64_t dpb = std::max(bPictures ? 2 : 1, cfg.refs) + (pyramid ? 1 : 0);
+    const int64_t dpb = std::max(bPictures ? 2 : 1, cfg.refs) + (pyramid ? 2 : 0); // max_dec_frame_buffering
     for (const Level& l : kLevels) {
         const int64_t side = int64_t(std::sqrt(double(l.maxFs) * 8.0)); // A.3.1: width and height in macroblocks
         if (double(fs) * fps > double(l.maxMbps) * 1.0001 || fs > l.maxFs || mbW > side || mbH > side)
@@ -694,7 +694,11 @@ std::vector<uint8_t> Encoder::headers() const
         bw.ue(16);       // log2_max_mv_length_vertical
         bw.ue(usePyramid() ? 2 : useB() ? 1 : 0); // max_num_reorder_frames (B pictures: the reference picture after them
                                                   // comes first; B pyramid: and the reference B picture)
-        bw.ue(refFrames);      // max_dec_frame_buffering (at least max_num_ref_frames)
+        // max_dec_frame_buffering (at least max_num_ref_frames). B pyramid: one more. The B pictures
+        // after the reference B picture are decoded while it still waits for its output, with every
+        // frame buffer holding a reference picture; a decoder that stores them first needs a free
+        // one (C.4.5.2; NVDEC showed later pictures in their place without it).
+        bw.ue(refFrames + (usePyramid() ? 1 : 0));
         bw.rbspTrailing();
         appendNal(out, 3, 7, bw.bytes());
     }
