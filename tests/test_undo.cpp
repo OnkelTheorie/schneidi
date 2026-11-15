@@ -558,5 +558,61 @@ int main(int argc, char** argv)
         e.toggleMarker(25);
         CHECK(q.timeline().markers == QVector<int>({20, 25, 30}));
     }
+
+    // Timeline markers follow ripple edits in the same undo step; undo/redo bring them back exactly
+    {
+        Project q;
+        TimelineGuard guard_q{q};
+        Selection s;
+        Editor e(&q, &s);
+        auto clip = [](int id, int start, int len) {
+            Clip c;
+            c.id = id;
+            c.mediaPath = "/x/a.mp4";
+            c.start = start;
+            c.in = start;
+            c.out = start + len - 1;
+            return c;
+        };
+        q.edit("setup", [&](Timeline& tl) {
+            tl.video = {Track{TrackKind::Video}};
+            tl.audio = {Track{TrackKind::Audio}};
+            tl.video[0].clips << clip(1, 0, 50) << clip(2, 50, 50) << clip(3, 100, 50);
+            tl.markers = {10, 50, 75, 120};
+        });
+        const QVector<int> before = q.timeline().markers;
+        const int idx = q.undoStack()->index();
+        s.set({2});
+        e.rippleDeleteSelection();
+        CHECK_EQ(q.undoStack()->index(), idx + 1);
+        CHECK_EQ(q.timeline().markers, QVector<int>({10, 50, 70}));
+        q.undoStack()->undo();
+        CHECK_EQ(q.timeline().markers, before);
+        CHECK_EQ(TimelineOps::findClip(q.timeline(), 3)->start, 100);
+        q.undoStack()->redo();
+        CHECK_EQ(q.timeline().markers, QVector<int>({10, 50, 70}));
+        q.undoStack()->undo();
+        // Ripple trim through the editor (one step)
+        e.applyTrimEdit(TimelineOps::TrimEdit{TimelineOps::TrimKind::Ripple, {1}, {}, TimelineOps::Edge::End}, -10);
+        CHECK_EQ(q.timeline().markers, QVector<int>({10, 40, 65, 110}));
+        q.undoStack()->undo();
+        CHECK_EQ(q.timeline().markers, before);
+        // Closing a gap: the marker in the gap goes, undo brings it back
+        q.edit("gap", [&](Timeline& tl) { TimelineOps::removeClip(tl, 2); });
+        CHECK(e.closeGap(TrackRef{TrackKind::Video, 0}, 50, 100));
+        CHECK_EQ(q.timeline().markers, QVector<int>({10, 50, 70}));
+        q.undoStack()->undo();
+        CHECK_EQ(q.timeline().markers, before);
+        q.undoStack()->undo();
+        // A locked track with content after the cut: clips move, the markers stay
+        q.edit("lock", [&](Timeline& tl) {
+            tl.audio[0].clips << clip(9, 0, 150);
+            tl.audio[0].locked = true;
+        });
+        s.set({2});
+        e.rippleDeleteSelection();
+        CHECK_EQ(TimelineOps::findClip(q.timeline(), 3)->start, 50);
+        CHECK_EQ(q.timeline().markers, before);
+    }
     return Check::result();
 }

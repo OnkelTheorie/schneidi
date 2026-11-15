@@ -523,6 +523,119 @@ int main(int argc, char** argv)
         CHECK(std::abs(audioTransitionGain(s, 1, 110) + audioTransitionGain(s, 2, 110) - 0.95) < 1e-9);
     }
 
+    // --- Timeline markers follow ripple edits of the whole timeline
+    {
+        using M = QVector<int>;
+        const M marks{10, 50, 60, 99, 100, 120, 200};
+        auto three = [&] {
+            Timeline tl = tracks(2, 1);
+            tl.video[0].clips << mk(1, "a", 0, 50) << mk(2, "b", 50, 50, 50) << mk(3, "c", 100, 50, 100);
+            tl.markers = marks;
+            return tl;
+        };
+        // Ripple delete: before stays, inside goes (the cut start stays), after moves up; equal ones merge
+        Timeline tl = three();
+        rippleDelete(tl, {2});
+        CHECK_EQ(dump(tl).section("  ", 0, 0), QString("V1: a[0-50|0-49] c[50-100|100-149]"));
+        CHECK_EQ(tl.markers, M({10, 50, 70, 150}));
+        // Deleting the first clip: a marker at 0 stays, the rest moves by its length
+        tl = three();
+        tl.markers = {0, 25, 50};
+        rippleDelete(tl, {1});
+        CHECK_EQ(tl.markers, M({0}));
+        // Two ranges at once (a and c, b stays): each range takes its markers, the offsets add up
+        tl = three();
+        tl.markers = {5, 50, 75, 110, 160};
+        rippleDelete(tl, {1, 3});
+        CHECK_EQ(tl.markers, M({0, 25, 60}));
+        // A locked track with content after the cut: only part of the timeline moves -> the markers stay
+        tl = three();
+        tl.audio[0].clips << mk(9, "s", 0, 150);
+        tl.audio[0].locked = true;
+        rippleDelete(tl, {2});
+        CHECK_EQ(findClip(tl, 3)->start, 50);
+        CHECK_EQ(tl.markers, marks);
+        // ... content on the locked track only before the cut does not hold them
+        tl = three();
+        tl.audio[0].clips << mk(9, "s", 0, 40);
+        tl.audio[0].locked = true;
+        rippleDelete(tl, {2});
+        CHECK_EQ(tl.markers, M({10, 50, 70, 150}));
+        // ... nor an empty locked track
+        tl = three();
+        tl.video[1].locked = true;
+        rippleDelete(tl, {2});
+        CHECK_EQ(tl.markers, M({10, 50, 70, 150}));
+        // An unlocked track that stays because it would overwrite: markers stay too
+        tl = three();
+        tl.video[1].clips << mk(7, "x", 0, 80) << mk(8, "y", 110, 20);
+        rippleDelete(tl, {2});
+        CHECK_EQ(findClip(tl, 8)->start, 110);
+        CHECK_EQ(tl.markers, marks);
+
+        // Ripple trim, end: the trimmed-off tail takes its markers, the rest moves
+        tl = three();
+        tl.markers = {40, 45, 49, 50, 70};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc);
+        CHECK_EQ(findClip(tl, 2)->start, 40);
+        CHECK_EQ(tl.markers, M({40, 60}));
+        // ... longer: markers from the old end on move
+        tl = three();
+        tl.markers = {49, 50, 70};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, 10, kSrc);
+        CHECK_EQ(tl.markers, M({49, 60, 80}));
+        // Ripple trim, head: the trimmed-off head goes, the clip's rest keeps its marker on the same picture
+        tl = three();
+        tl.markers = {50, 55, 70, 100};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {2}, {}, Edge::Start}, 10, kSrc);
+        CHECK_EQ(dump(tl).section("  ", 0, 0), QString("V1: a[0-50|0-49] b[50-90|60-99] c[90-140|100-149]"));
+        CHECK_EQ(tl.markers, M({50, 60, 90}));
+        // ... longer at the head: the clip's own markers move with its content
+        tl = three();
+        tl.markers = {49, 50, 70};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {2}, {}, Edge::Start}, -10, kSrc);
+        CHECK_EQ(findClip(tl, 2)->in, 40);
+        CHECK_EQ(tl.markers, M({49, 60, 80}));
+        // Ripple trim with a locked track holding content later: markers stay
+        tl = three();
+        tl.markers = {45, 70};
+        tl.audio[0].clips << mk(9, "s", 0, 150);
+        tl.audio[0].locked = true;
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc);
+        CHECK_EQ(tl.markers, M({45, 70}));
+
+        // Closing a gap (rippleTracks on every track): a marker in the gap goes, the rest moves up
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 50) << mk(3, "c", 80, 50);
+        tl.markers = {50, 60, 80, 140};
+        rippleTracks(tl, {{80, -30}}, {});
+        CHECK_EQ(findClip(tl, 3)->start, 50);
+        CHECK_EQ(tl.markers, M({50, 110}));
+
+        // Insert (rippleMarkers with the tracks that moved): from the insert point on, markers move
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 100);
+        tl.markers = {49, 50, 60};
+        Ids gen;
+        insertGap(tl, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, 50, 20, gen.gen(), gen.gen());
+        rippleMarkers(tl, {{50, 20}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}});
+        CHECK_EQ(tl.markers, M({49, 70, 80}));
+        // ... a locked track with a clip across the insert point keeps them
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 100);
+        tl.audio[0].clips << mk(2, "s", 0, 100);
+        tl.audio[0].locked = true;
+        tl.markers = {49, 50, 60};
+        insertGap(tl, {{TrackKind::Video, 0}}, 50, 20, gen.gen(), gen.gen());
+        rippleMarkers(tl, {{50, 20}}, {{TrackKind::Video, 0}});
+        CHECK_EQ(tl.markers, M({49, 50, 60}));
+        // A moving ripple (ripple overwrite with a longer clip, retime) without markers: nothing to do
+        tl = three();
+        tl.markers.clear();
+        rippleTracks(tl, {{100, 20}}, {});
+        CHECK(tl.markers.isEmpty());
+    }
+
     CHECK_EQ(endFrame(Timeline{}), 0);
     return Check::result();
 }

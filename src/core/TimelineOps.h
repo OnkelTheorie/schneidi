@@ -29,7 +29,15 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 // shifts: (from frame, offset) - a clip moves by the sum of the offsets whose frame is <= its start.
 // If a track would overwrite a clip that stays (or slide before frame 0), it stays
 // entirely put - never overwrite.
-void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip);
+// Timeline markers follow (rippleMarkers) with `markerShifts` if given (ripple trim: the trimmed clip's content),
+// else with `shifts`.
+void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
+                  const QVector<QPair<int, int>>* markerShifts = nullptr);
+// Timeline markers follow a ripple (shifts as in rippleTracks, in frames before the edit), but only when it moves
+// the whole timeline: if a track outside `moving` (locked, or held by an overlap) has a clip that ends after the
+// first edit point, they all stay - they belong to the timeline, not to one track. Markers in time taken out
+// [from + offset, from) go, except one exactly at its start; markers from `from` on move by the offsets.
+void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving);
 // How far (frames to the left) the other tracks can move up from `from` without overwriting
 // (unlocked subtitle tracks count too)
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip);
