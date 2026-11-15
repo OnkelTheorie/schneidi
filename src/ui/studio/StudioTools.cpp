@@ -567,7 +567,7 @@ void StudioTools::setCurrentTool(int index)
                                                      : QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored));
     m_stack->setCurrentIndex(index);
     if (QAbstractButton* b = m_tabs->button(index)) b->setChecked(true);
-    fitInnerHeight();
+    fitInnerHeight(true);
 }
 
 bool StudioTools::eventFilter(QObject* watched, QEvent* e)
@@ -576,7 +576,7 @@ bool StudioTools::eventFilter(QObject* watched, QEvent* e)
     return QWidget::eventFilter(watched, e);
 }
 
-void StudioTools::fitInnerHeight()
+void StudioTools::fitInnerHeight(bool announce)
 {
     // QScrollArea sizes its widget by minimumSizeHint, which knows nothing of wrapped text (and a stack takes the
     // largest of its pages): the chosen tool as tall as its text needs at this width, the area scrolls beyond
@@ -587,11 +587,10 @@ void StudioTools::fitInnerHeight()
     l->activate();
     const int h = l->hasHeightForWidth() ? l->totalHeightForWidth(w) : l->totalMinimumSize().height();
     m_stack->setMinimumHeight(h);
-    // The drawer as tall as that if the page can give it (StudioPage): a result line that just appeared included
-    if (const int need = neededHeight(); need != m_lastNeeded) {
-        m_lastNeeded = need;
-        emit neededHeightChanged();
-    }
+    // The drawer as tall as that if the page can give it (StudioPage): another tool, a result line that just
+    // appeared. Never for a resize: a drawer the user dragged smaller rewraps (the bar takes width) and would be
+    // grown straight back - it scrolls instead
+    if (announce) emit neededHeightChanged();
 }
 
 int StudioTools::neededHeight() const
@@ -702,7 +701,7 @@ void StudioTools::say(QLabel* line, const QString& text, bool bad)
     line->setVisible(!text.isEmpty());
     // The tool grows by the line: its height anew (else the line lies under the area's bottom, out of reach), and in
     // view if the drawer must scroll
-    fitInnerHeight();
+    fitInnerHeight(true);
     if (line->isVisible() && line->isVisibleTo(m_stack->currentWidget()))
         QTimer::singleShot(0, this, [this, line] { m_scroll->ensureWidgetVisible(line, 0, 4); });
 }
