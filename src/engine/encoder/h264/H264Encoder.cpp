@@ -155,11 +155,15 @@ const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::
 // H264_BRD, the other choices of lists of the 16x16 layout.
 constexpr int kMaxBCands = 4;
 const double gBRd = std::getenv("H264_BRD") ? std::atof(std::getenv("H264_BRD")) : 0.0;
-// B pictures: every candidate coded with both transforms (else the 8x8 one only for the winner of the 4x4 codings).
-const bool gBT8All = std::getenv("H264_BT8ALL") && std::atoi(std::getenv("H264_BT8ALL")) != 0;
-// The lookahead's vectors along the planned references as start points of the motion search:
-// 1 = B pictures, 2 = also P pictures after a run of B pictures (H264_LASTART).
-const int gLaStart = std::getenv("H264_LASTART") ? std::atoi(std::getenv("H264_LASTART")) : 0;
+// B pictures: transform by estimate (see encodeMbB; EncoderConfig::modeEstimate). H264_BEST=0/1 overrides.
+const int gBEstEnv = std::getenv("H264_BEST") ? std::atoi(std::getenv("H264_BEST")) : -1;
+// The lookahead's vectors along the planned references (Encoder::takeLookaheadVectors) as start
+// points of the motion search: 1 = B pictures, 2 = also P pictures after a run of B pictures
+// (default), 0 = none (H264_LASTART). The vectors exist where the tree or the rate control asked
+// for the searches; H264_LASTART set makes them also without (fixed QP without the tree, for
+// measurements).
+const int gLaStart = std::getenv("H264_LASTART") ? std::atoi(std::getenv("H264_LASTART")) : 2;
+const bool gLaStartForce = std::getenv("H264_LASTART") && std::atoi(std::getenv("H264_LASTART")) > 0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -1616,7 +1620,7 @@ void Encoder::noteGate(const LookaheadFrame& f)
 // nothing more comes in.
 void Encoder::ensureBSearches()
 {
-    if (!useB() || (!cfg_.mbtree && cfg_.bitrateKbps <= 0 && !gLaStart))
+    if (!useB() || (!cfg_.mbtree && cfg_.bitrateKbps <= 0 && !gLaStartForce))
         return;
     const int maxB = cfg_.bframes;
     const size_t count = queue_.size();
@@ -1666,9 +1670,6 @@ void Encoder::ensureBSearches()
 // are joined) for the motion search's start points; half-pel of the half picture = full-pel.
 void Encoder::takeLookaheadVectors(const LookaheadFrame& frame, FrameCoder& fc, int type) const
 {
-    for (auto& l : fc.laMv_)
-        for (auto& v : l)
-            v.clear();
     if (gLaStart <= 0 || type == 0 || (type == 1 && (gLaStart < 2 || frame.refDist < 2)))
         return;
     auto take = [&](int list, const std::vector<int16_t>& mx, const std::vector<int16_t>& my) {
@@ -2975,6 +2976,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     FrameCoder& fc = *coders_[size_t(nextCoder_)];
     nextCoder_ = (nextCoder_ + 1) % kCoders;
     fc.loadSource(picture);
+    for (auto& l : fc.laMv_) // set again by takeLookaheadVectors where the lookahead has them
+        for (auto& v : l)
+            v.clear();
     clock.lap(0);
     const bool bMode = useB(); // the picture's type is decided already (planQueue)
     const bool lookaheadFrame = useLookahead() && !queue_.empty() && (bMode || &queue_.front() == &frame);
@@ -5408,6 +5412,48 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                 break;
         }
     }
+    // Experiments (measured 15.11., B pictures with the lookahead's start points, fixed QP, CS2):
+    // H264_MESQ=1 the four diagonal neighbours at one sample after the diamond (-0.3 % of the B
+    // pictures' bits for +1.1 % instructions), H264_MEFULL = r every full-pel position within r
+    // samples (an upper bound: r = 16 -3.6 % of all bits without the start points); H264_MEONLYB=1
+    // only in B pictures.
+    static const int kMeSq = std::getenv("H264_MESQ") ? std::atoi(std::getenv("H264_MESQ")) : 0;
+    static const bool kMeOnlyB = std::getenv("H264_MEONLYB") && std::atoi(std::getenv("H264_MEONLYB")) != 0;
+    const bool meExtra = !kMeOnlyB || bSlice_;
+    if (kMeSq && meExtra) { // the four diagonal neighbours at one sample, repeated while one is better
+        for (int iter = 0; iter < 8; ++iter) {
+            const int cx0 = bx, cy0 = by;
+            for (const auto& d : {std::pair{1, 1}, std::pair{1, -1}, std::pair{-1, 1}, std::pair{-1, -1}}) {
+                const int cx = cx0 + d.first * 4, cy = cy0 + d.second * 4;
+                if (std::abs(cx) > range || std::abs(cy) > range)
+                    continue;
+                const double c = cost(cx, cy);
+                if (c < best) {
+                    best = c;
+                    bx = cx;
+                    by = cy;
+                }
+            }
+            if (bx == cx0 && by == cy0)
+                break;
+        }
+    }
+    static const int kMeFull = std::getenv("H264_MEFULL") ? std::atoi(std::getenv("H264_MEFULL")) : 0;
+    if (kMeFull > 0 && meExtra) {
+        const int cx0 = bx, cy0 = by;
+        for (int dy = -kMeFull; dy <= kMeFull; ++dy)
+            for (int dx = -kMeFull; dx <= kMeFull; ++dx) {
+                const int cx = cx0 + dx * 4, cy = cy0 + dy * 4;
+                if (std::abs(cx) > range || std::abs(cy) > range)
+                    continue;
+                const double c = cost(cx, cy);
+                if (c < best) {
+                    best = c;
+                    bx = cx;
+                    by = cy;
+                }
+            }
+    }
     if (fullPelCost)
         *fullPelCost = best;
     useSatd = true;
@@ -6937,7 +6983,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     ChromaCache chromaCache[kMaxBCands + 1];
     bool sentDelta = false;
     double lastPsy = 0; // psy cost of the coding encodeB did last
-    auto encodeB = [&](int which, MbOut& io, bool t8, double fineLambda) {
+    auto encodeB = [&](int which, MbOut& io, bool t8, double fineLambda, const InterResidual* planned = nullptr) {
         const Cand& best = cands[which ? which - 1 : 0];
         const uint8_t* lp = which ? clp[which - 1] : dlp;
         const uint8_t (*cp)[64] = which ? ccp[which - 1] : dcp;
@@ -6952,8 +6998,12 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         } else {
             setDirect();
         }
-        InterResidual res;
-        codeInterLuma(mbx, mby, lp, qp, lambda, t8, true, io, res, fineLambda);
+        InterResidual own;
+        if (planned)
+            reconInterLuma(mbx, mby, lp, qp, t8, io, *planned);
+        else
+            codeInterLuma(mbx, mby, lp, qp, lambda, t8, true, io, own, fineLambda);
+        const InterResidual& res = planned ? *planned : own;
         ChromaCache& cc = chromaCache[which];
         ChromaMb ch;
         if (cc.valid) {
@@ -6990,16 +7040,57 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     MbOut interBits;
     int bestWhich = 0;
     bool bestT8 = false;
-    double costInter = encodeB(0, interBits, false, -1.0);
-    double bestPsy = lastPsy;
-    bool chosenDelta = sentDelta;
+    double costInter = 1e300;
+    double bestPsy = 0;
+    bool chosenDelta = false;
     MbState interState;
-    saveMb(mbx, mby, interState);
-    const bool t8All = gBT8All && useT8() && cfg_.effort > 0;
-    for (int which = 0; which <= candCount; ++which)
-        for (int t = which ? 0 : 1; t < (t8All ? 2 : 1); ++t) {
+    const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+    // Transform by estimate (H264_BEST): per candidate both transforms are quantised with the
+    // trellis, whose own cost (squared error + lambda * coefficient and side bits) picks the one
+    // that is coded for real - as in P pictures (Encoder modeEstimate), instead of 4x4 for all and
+    // 8x8 only for the winner.
+    const bool useEst = (gBEstEnv < 0 ? cfg_.modeEstimate : gBEstEnv != 0) && liveCe && useT8() && cfg_.effort > 0;
+    if (useEst) {
+        static const bool kZeroQuadB = !std::getenv("H264_ZEROQ") || std::atoi(std::getenv("H264_ZEROQ")) != 0;
+        static const bool kZero8B = !std::getenv("H264_ZERO8") || std::atoi(std::getenv("H264_ZERO8")) != 0;
+        // Experiment H264_BPRUNE = f (0 = off): a candidate whose estimate (with its vector and
+        // type bits as the CAVLC count) is above f times the best one's is not coded for real.
+        static const double kBPrune = std::getenv("H264_BPRUNE") ? std::atof(std::getenv("H264_BPRUNE")) : 0.0;
+        InterResidual r8[kMaxBCands + 1], r4[kMaxBCands + 1];
+        double jBest[kMaxBCands + 1];
+        bool use8[kMaxBCands + 1];
+        double jMin = 1e300;
+        for (int which = 0; which <= candCount; ++which) {
+            const uint8_t* lp = which ? clp[which - 1] : dlp;
+            double j8 = 0, j4 = 1e300;
+            planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+            j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r8[which].cbpLuma, true);
+            if (!(kZero8B && r8[which].cbpLuma == 0)) {
+                planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr);
+                j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r4[which].cbpLuma, false);
+            }
+            use8[which] = j8 < j4;
+            jBest[which] = std::min(j8, j4);
+            if (kBPrune > 0) {
+                int head = 1;
+                if (which) {
+                    const Cand& c = cands[which - 1];
+                    head = typeBits(c.bType);
+                    for (int p = 0; p < c.count; ++p)
+                        for (int list = 0; list < 2; ++list)
+                            if (c.use[p] & (1 << list))
+                                head += mvBits(c, p, list);
+                }
+                jBest[which] += lambda * head;
+                jMin = std::min(jMin, jBest[which]);
+            }
+        }
+        for (int which = 0; which <= candCount; ++which) {
+            if (kBPrune > 0 && jBest[which] > kBPrune * jMin)
+                continue;
+            const bool t8 = use8[which];
             MbOut candBits;
-            const double costCand = encodeB(which, candBits, t == 1, -1.0);
+            const double costCand = encodeB(which, candBits, t8, -1.0, t8 ? &r8[which] : &r4[which]);
             if (costCand < costInter) {
                 costInter = costCand;
                 bestPsy = lastPsy;
@@ -7007,11 +7098,29 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 interBits = std::move(candBits);
                 saveMb(mbx, mby, interState);
                 bestWhich = which;
-                bestT8 = t == 1;
+                bestT8 = t8;
             }
         }
+    } else {
+        costInter = encodeB(0, interBits, false, -1.0);
+        bestPsy = lastPsy;
+        chosenDelta = sentDelta;
+        saveMb(mbx, mby, interState);
+    }
+    for (int which = 1; which <= (useEst ? 0 : candCount); ++which) {
+        MbOut candBits;
+        const double costCand = encodeB(which, candBits, false, -1.0);
+        if (costCand < costInter) {
+            costInter = costCand;
+            bestPsy = lastPsy;
+            chosenDelta = sentDelta;
+            interBits = std::move(candBits);
+            saveMb(mbx, mby, interState);
+            bestWhich = which;
+        }
+    }
     // 8x8 transform for the best of them (High profile).
-    if (useT8() && cfg_.effort > 0 && !t8All) {
+    if (useT8() && cfg_.effort > 0 && !useEst) {
         MbOut t8Bits;
         const double costT8 = encodeB(bestWhich, t8Bits, true, -1.0);
         if (costT8 < costInter) {
