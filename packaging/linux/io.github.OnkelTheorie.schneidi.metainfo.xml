@@ -109,6 +109,15 @@
   </requires>
 
   <releases>
+    <release version="0.23.0" date="2026-11-15">
+      <description>
+        <p>Studio: a page for sound with large waveforms, a mixer column with EQ and compressor curves per track and
+        one-click tools (clean a voice, duck the music, loudness to a target, recording, effect sounds); track volume
+        and pan automation with a write mode; 5.1/7.1 surround with channel routing, a surround panner, meters per
+        speaker and AC-3 export; markers, notes and story sections follow ripple edits.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.23.0</url>
+    </release>
     <release version="0.22.1" date="2026-11-15">
       <description>
         <p>AppImage runs on older distributions (built on Ubuntu 22.04, glibc 2.35).</p>
