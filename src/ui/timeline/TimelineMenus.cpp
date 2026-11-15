@@ -65,6 +65,20 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
     addColor({}, T("Standard"), ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
     colors->addSeparator();
     for (const auto& i : kTrackColors) addColor(QString::fromLatin1(i.id), T(i.name), QColor::fromRgba(i.rgb));
+    if (ref.kind == TrackKind::Audio) { // which track automation the lane shows (this view only, edited in Studio)
+        QMenu* show = menu.addMenu(T("Automation anzeigen"));
+        show->setObjectName("autoShowMenu");
+        auto addTarget = [&](AutoTarget target, const QString& name, bool has) {
+            QAction* a = show->addAction(name);
+            a->setCheckable(true);
+            a->setChecked(autoShown(ref.index) == target);
+            if (!has) a->setToolTip(T("Diese Spur hat noch keine Kurve; bearbeitet wird sie auf der Studio-Seite"));
+            connect(a, &QAction::triggered, this, [this, ref, target] { setAutoShown(ref.index, target); });
+        };
+        addTarget(AutoTarget::Volume, T("Lautstärke"), !t.volumeAuto.isEmpty());
+        addTarget(AutoTarget::Pan, T("Pan"), !t.panAuto.isEmpty());
+        show->setToolTipsVisible(true);
+    }
     // Add/delete tracks (DaVinci "Add Track"/"Delete Track"). Above/below as displayed:
     // video counts from the bottom (V1 at the bottom), audio from the top (A1 at the top)
     menu.addSeparator();
@@ -94,6 +108,14 @@ void TimelineView::emptyAreaMenu(const QPoint& globalPos)
     connect(menu.addAction(T("Audiospur hinzufügen")), &QAction::triggered, this,
             [this, n = int(tl.audio.size())] { m_editor->addTrack(TrackKind::Audio, n); });
     menu.exec(globalPos);
+}
+
+void TimelineView::setAutoShown(int audioTrack, AutoTarget target)
+{
+    if (autoShown(audioTrack) == target) return;
+    if (target == AutoTarget::Pan) m_panLanes.insert(audioTrack);
+    else m_panLanes.remove(audioTrack);
+    update();
 }
 
 void TimelineView::startRename(TrackRef ref)

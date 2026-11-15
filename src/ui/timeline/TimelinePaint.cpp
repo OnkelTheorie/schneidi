@@ -245,21 +245,10 @@ void TimelineView::drawTracks(QPainter& p)
             if (row.curve && curveParam(c)) drawCurveLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
-        // Track automation (Studio page): a thin line of what the track plays (fader + curve) across the row, also
-        // between the clips; edited on the Studio page, shown here so ripple edits never move it unseen
-        if (row.ref.kind == TrackKind::Audio && !track.volumeAuto.isEmpty() && row.h - row.lane > kClipBarH + 12) {
-            const QRect body(kHeaderW, row.y + 1 + kClipBarH, width() - kHeaderW, row.h - row.lane - 4 - kClipBarH);
-            QPolygonF line;
-            for (int x = kHeaderW; x < width(); x += 2) {
-                const double frame = std::max(0.0, xToFrame(x));
-                line << QPointF(x, volumeLineY(body, Automation::levelAt(track, frame)));
-            }
-            p.save();
-            p.setRenderHint(QPainter::Antialiasing);
-            p.setPen(QPen(Theme::alpha(Theme::secondary, 200), 1.2));
-            p.drawPolyline(line);
-            p.restore();
-        }
+        // Track automation (Studio page): a thin line of what the track plays (fader + curve, or knob + pan curve when
+        // the header menu shows Pan) across the row, also between the clips; edited on the Studio page, shown here so
+        // ripple edits never move it unseen
+        if (row.ref.kind == TrackKind::Audio && row.h - row.lane > kClipBarH + 12) drawTrackAutomation(p, row, track);
         if (track.locked) { // locked: darkened and hatched like DaVinci
             p.setOpacity(1.0);
             const QRect area(kHeaderW, row.y, width() - kHeaderW, row.h - 1);
@@ -1217,5 +1206,33 @@ void TimelineView::drawAiArrows(QPainter& p)
         p.setBrush(fill);
         p.drawPolygon(tri);
     }
+    p.restore();
+}
+
+// Track automation line on an audio lane (display only, colour language of the Studio page: Theme::secondary).
+// Volume: only with a volume curve, on the clips' volume scale. Pan: a faint centre line, the pan heard (knob + curve)
+// with top = right, bottom = left; without a pan curve the knob as a dashed line (like the Studio page's flat line).
+void TimelineView::drawTrackAutomation(QPainter& p, const Row& row, const Track& track)
+{
+    const AutoTarget target = autoShown(row.ref.index);
+    const AutoCurve& curve = track.automation(target);
+    if (target == AutoTarget::Volume && curve.isEmpty()) return;
+    const QRect body(kHeaderW, row.y + 1 + kClipBarH, width() - kHeaderW, row.h - row.lane - 4 - kClipBarH);
+    const auto yOf = [&](double v) {
+        return target == AutoTarget::Pan ? double(panLineY(body, v)) : double(volumeLineY(body, v));
+    };
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    if (target == AutoTarget::Pan) {
+        const int mid = panLineY(body, 0);
+        p.setPen(QPen(Theme::alpha(Theme::secondary, 70), 1, Qt::DotLine));
+        p.drawLine(QPointF(kHeaderW, mid + 0.5), QPointF(width(), mid + 0.5));
+    }
+    QPolygonF line;
+    for (int x = kHeaderW; x < width(); x += 2)
+        line << QPointF(x, yOf(Automation::heardAt(track, target, std::max(0.0, xToFrame(x)))));
+    if (curve.isEmpty()) p.setPen(QPen(Theme::alpha(Theme::secondary, 140), 1.0, Qt::DashLine));
+    else p.setPen(QPen(Theme::alpha(Theme::secondary, 200), 1.2));
+    p.drawPolyline(line);
     p.restore();
 }

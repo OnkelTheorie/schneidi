@@ -116,6 +116,11 @@ public:
     // Curve editor under the clip (only clips with keyframes); param = shown parameter (Count = first animated)
     void setCurveEditor(const QVector<int>& ids, bool on, AnimParam param = AnimParam::Count);
     bool curveEditorShown(int clipId) const;
+    // Which track automation an audio lane shows (view state per timeline view, not in the project; header menu
+    // "Anzeigen: Lautstärke / Pan"): Volume = the level line (only with a volume curve), Pan = the pan line around the
+    // lane's middle (top = right, bottom = left). Display only: track automation is edited on the Studio page.
+    void setAutoShown(int audioTrack, AutoTarget target);
+    AutoTarget autoShown(int audioTrack) const { return m_panLanes.contains(audioTrack) ? AutoTarget::Pan : AutoTarget::Volume; }
 
     // Voice-over (app/VoiceoverRecorder): the armed audio track (its mic in the header lit, -1 = none), whether it
     // records, and the input level shown in that header (dBFS, while armed)
@@ -409,6 +414,7 @@ private:
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
                   const QVector<TimelineOps::TransitionSpan>& spans = {}, const QColor& color = {});
     void drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips);
+    void drawTrackAutomation(QPainter& p, const Row& row, const Track& track);
     void drawFilmstrip(QPainter& p, const QRect& body, const Clip& c);
     void drawWaveform(QPainter& p, const QRect& body, const Clip& c, const QVector<TimelineOps::TransitionSpan>& spans,
                       const QColor& color);
@@ -506,6 +512,7 @@ private:
 
     // Keyframe lanes: expanded clips (view state, not in the project) and dragging diamonds
     QSet<int> m_keyLanes;
+    QSet<int> m_panLanes; // audio track indices showing the pan automation instead of the volume (setAutoShown)
     int m_keyDragClip = 0;
     int m_keyDelta = 0;
 

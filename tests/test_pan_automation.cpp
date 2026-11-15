@@ -10,7 +10,10 @@
 // - project file: field panAuto, format 8, lossless roundtrip;
 // - write mode (AutomationWriter, driven like the Studio mixer does): thinned keys (<= 30/s, only real changes),
 //   glide back to the old curve on release, the curve outside the touch untouched, a whole pass = one undo step;
-// - CLI: op track_pan (points, from/to, clear, errors), `info` lists pan_automation, help text.
+// - CLI: op track_pan (points, from/to, clear, errors), `info` lists pan_automation, help text;
+// - Edit timeline: the audio header menu "Automation anzeigen: Lautstärke / Pan" switches the lane (view only, no undo
+//   step, zoom/scroll untouched); the pan line is visible only when switched, top = right, bottom = left, a dotted
+//   centre line; without a pan curve the knob as a line; volume mode keeps showing the volume curve.
 
 #include "check.h"
 
@@ -22,9 +25,16 @@
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "core/I18n.h"
 #include "engine/audio/Mixer.h"
+#include "ui/timeline/TimelineView.h"
 
+#include <QAction>
 #include <QApplication>
+#include <QContextMenuEvent>
+#include <QImage>
+#include <QMenu>
+#include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -33,6 +43,7 @@
 #include <QUndoStack>
 
 #include <cmath>
+#include <functional>
 #include <vector>
 
 namespace {
@@ -491,6 +502,125 @@ void testCli(const QTemporaryDir& tmp, const QString& tone)
     CHECK(QJsonDocument(help).toJson().contains("on top of the track's pan knob"));
 }
 
+
+// Rows (y) where two grabs of the timeline differ, in the lane area right of the header
+QSet<int> diffRows(const QImage& a, const QImage& b)
+{
+    QSet<int> ys;
+    for (int y = TimelineView::kRulerH; y < std::min(a.height(), b.height()); ++y)
+        for (int x = TimelineView::kHeaderW + 50; x < a.width() - 50; x += 3)
+            if (a.pixel(x, y) != b.pixel(x, y)) {
+                ys.insert(y);
+                break;
+            }
+    return ys;
+}
+
+double meanOf(const QSet<int>& s)
+{
+    double sum = 0;
+    for (int v : s) sum += v;
+    return s.isEmpty() ? -1 : sum / s.size();
+}
+
+void testTimelineView()
+{
+    Project project;
+    Selection sel;
+    Editor editor(&project, &sel);
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(2);
+    for (Track& t : tl.audio) t.kind = TrackKind::Audio;
+    project.load(ProjectData{kFmt, 0, {}, {}, tl, 1, 0});
+    TimelineView tv(&editor);
+    tv.resize(1000, 400);
+    tv.show();
+    QApplication::processEvents();
+    const ViewState view0 = tv.view();
+    auto shot = [&] {
+        QApplication::processEvents();
+        return tv.grab().toImage();
+    };
+    auto change = [&](const std::function<void(Track&)>& f) { project.edit("test", [&](Timeline& t) { f(t.audio[0]); }); };
+    auto setPanAuto = [&](const AutoCurve& c) { change([&](Track& t) { t.panAuto = c; }); };
+    const QImage empty = shot();
+    CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Volume);
+
+    // Volume mode: a pan curve alone draws nothing
+    setPanAuto({{0, 80}});
+    CHECK(diffRows(empty, shot()).isEmpty());
+
+    // Pan mode: the pan line (+80 = upper half) and the dotted centre line appear
+    tv.setAutoShown(0, AutoTarget::Pan);
+    CHECK(tv.autoShown(0) == AutoTarget::Pan && tv.autoShown(1) == AutoTarget::Volume);
+    const QSet<int> plus = diffRows(empty, shot());
+    setPanAuto({{0, -80}});
+    const QSet<int> minus = diffRows(empty, shot());
+    CHECK(!plus.isEmpty() && !minus.isEmpty());
+    const QSet<int> centre = QSet<int>(plus).intersect(minus);
+    const QSet<int> up = QSet<int>(plus).subtract(minus), down = QSet<int>(minus).subtract(plus);
+    CHECK(!centre.isEmpty() && !up.isEmpty() && !down.isEmpty());
+    CHECK(meanOf(up) < meanOf(centre) && meanOf(centre) < meanOf(down)); // top = right, bottom = left
+    CHECK(meanOf(down) - meanOf(up) > 15);
+
+    // No pan curve: the knob as a line (knob right = above the centre), still nothing on the other track
+    setPanAuto({});
+    change([](Track& t) { t.pan = 60; });
+    const QSet<int> knob = QSet<int>(diffRows(empty, shot())).subtract(centre);
+    CHECK(!knob.isEmpty() && meanOf(knob) < meanOf(centre));
+    change([](Track& t) { t.pan = 0; });
+
+    // Back to volume: nothing; a volume curve still shows in volume mode, not in pan mode
+    tv.setAutoShown(0, AutoTarget::Volume);
+    CHECK(diffRows(empty, shot()).isEmpty());
+    change([](Track& t) { t.volumeAuto = {{0, -20}}; });
+    const QSet<int> vol = diffRows(empty, shot());
+    CHECK(!vol.isEmpty());
+    tv.setAutoShown(0, AutoTarget::Pan);
+    const QSet<int> panOnly = diffRows(empty, shot()); // centre + knob line at 0 (on the centre)
+    CHECK(QSet<int>(vol).subtract(panOnly).size() == vol.size());
+    tv.setAutoShown(0, AutoTarget::Volume);
+    change([](Track& t) { t.volumeAuto.clear(); });
+
+    // The header menu switches it (A1, then A2 further down the header column), no undo step, view untouched;
+    // each track keeps its own setting
+    {
+        const int undo0 = project.undoStack()->count();
+        // The header column scanned top to bottom; audio rows offer "Automation anzeigen", Pan is picked there
+        bool switched = false;
+        for (int y = TimelineView::kRulerH + 2; y < tv.height() && !switched; y += 4) {
+            bool sawMenu = false, triggered = false;
+            QTimer::singleShot(0, [&] {
+                auto* m = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (!m) return;
+                auto* sub = m->findChild<QMenu*>("autoShowMenu");
+                if (sub) {
+                    sawMenu = true;
+                    for (QAction* a : sub->actions())
+                        if (a->text() == T("Pan") && !a->isChecked()) {
+                            a->trigger();
+                            triggered = true;
+                        }
+                }
+                m->close();
+            });
+            QContextMenuEvent ev(QContextMenuEvent::Mouse, QPoint(40, y), tv.mapToGlobal(QPoint(40, y)));
+            QApplication::sendEvent(&tv, &ev);
+            QApplication::processEvents();
+            if (sawMenu && triggered && tv.autoShown(1) == AutoTarget::Pan) switched = true;
+        }
+        CHECK(switched);
+        CHECK(tv.autoShown(0) == AutoTarget::Pan && tv.autoShown(1) == AutoTarget::Pan);
+        tv.setAutoShown(0, AutoTarget::Volume);
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Pan);
+        CHECK_EQ(project.undoStack()->count(), undo0);
+        CHECK(tv.view().pxPerFrame == view0.pxPerFrame && tv.view().leftFrame == view0.leftFrame
+              && tv.view().scrollY == view0.scrollY);
+        CHECK(project.timeline().audio[1].panAuto.isEmpty()); // display only: the project is untouched
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -502,6 +632,7 @@ int main(int argc, char** argv)
     testRipple();
     testEditor();
     testWriter();
+    testTimelineView();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testProjectFile(tmp);
