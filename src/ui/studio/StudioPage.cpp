@@ -238,6 +238,7 @@ void StudioPage::setToolsOpen(bool open)
     // As tall as the tools need (their list), at most 45 % of the lanes' height; a size dragged before stays
     QList<int> sizes = m_left->sizes();
     const int total = sizes.value(0) + sizes.value(1);
+    if (total <= 0) return; // not laid out yet (the page's first showing sets the sizes)
     if (sizes.value(1) <= 0 || sizes.value(1) > total * 0.6) {
         const int want = std::max(m_tools->sizeHint().height(), m_tools->minimumSizeHint().height()) + 40;
         const int h = std::clamp(want, std::min(160, total / 2), std::max(1, int(total * 0.45)));
