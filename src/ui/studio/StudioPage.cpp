@@ -206,6 +206,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     // The right column: the viewer comes on top (index 0) when the page shows, then the loudness and the mixer
     m_mixer = new StudioMixer(editor, engine);
     connect(write, &QToolButton::toggled, m_mixer, &StudioMixer::setWriteMode); // off by default
+    connect(m_tools, &StudioTools::loudnessTargetChanged, m_mixer, &StudioMixer::refreshLoudnessSettings);
     m_sideBox = new QWidget;
     m_sideBox->setObjectName("studio_side");
     auto* sideLay = new QVBoxLayout(m_sideBox);

@@ -1520,6 +1520,28 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         tracks->setLiveTake(nullptr, -1);
         settle();
     }
+
+    // (8) The loudness target is read once (not twice per 30 ms tick): again when the page shows (the Edit mixer may
+    // have changed it) and when "Lautheit auf Ziel" set it
+    {
+        const QLabel* target = nullptr;
+        for (QLabel* l : mixer->loudness()->findChildren<QLabel*>())
+            if (l->text().endsWith(" LUFS")) target = l; // "Ziel -14 LUFS" (in the language the run left)
+        if (CHECK(target)) {
+            QSettings().setValue("audio/loudnessTarget", -23.0);
+            w.showPage(Page::Edit);
+            settle();
+            w.showPage(Page::Studio);
+            settle();
+            CHECK(target->text().contains("-23 LUFS"));
+            QSettings().setValue("audio/loudnessTarget", -16.0);
+            emit page->tools()->loudnessTargetChanged();
+            settle();
+            CHECK(target->text().contains("-16 LUFS"));
+            QSettings().setValue("audio/loudnessTarget", -14.0);
+            mixer->refreshLoudnessSettings();
+        }
+    }
 }
 
 } // namespace

@@ -902,10 +902,14 @@ private:
 
 // ---------- StudioMixer ----------
 
-namespace {
-double loudnessTarget() { return QSettings().value("audio/loudnessTarget", -14.0).toDouble(); }
-double truePeakLimit() { return QSettings().value("audio/truePeakLimit", -1.0).toDouble(); }
-} // namespace
+void StudioMixer::refreshLoudnessSettings()
+{
+    // Read here, not in tick() (every 30 ms): QSettings costs
+    m_loudnessTarget = QSettings().value("audio/loudnessTarget", -14.0).toDouble();
+    m_truePeakLimit = QSettings().value("audio/truePeakLimit", -1.0).toDouble();
+    if (m_master) m_master->fader->setOver(m_truePeakLimit);
+    if (m_loudness) m_loudness->setReading(m_engine->loudness(), false, m_loudnessTarget, m_truePeakLimit);
+}
 
 StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     : QWidget(parent), m_editor(editor), m_project(editor->project()), m_engine(engine), m_writer(editor)
@@ -936,7 +940,6 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
 
     m_master = new StudioStrip(editor, -1);
     m_master->name->setFullText(T("Master"));
-    m_master->fader->setOver(truePeakLimit());
     m_master->fader->setChannels(m_channels);
     m_master->fader->onChange = [this](double db) {
         m_master->setVolume(db);
@@ -950,7 +953,7 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     connect(m_loudness->reset, &QToolButton::clicked, this, [this] {
         m_engine->resetLoudness();
         m_master->fader->resetPeak();
-        m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
+        m_loudness->setReading(m_engine->loudness(), false, m_loudnessTarget, m_truePeakLimit);
     });
 
     connect(m_project, &Project::timelineChanged, this, &StudioMixer::sync);
@@ -964,7 +967,7 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     connect(m_timer, &QTimer::timeout, this, &StudioMixer::tick);
     m_clock.start(); // the timer runs while the mixer shows (showEvent)
     sync();
-    m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
+    refreshLoudnessSettings();
 }
 
 QWidget* StudioMixer::loudness() const { return m_loudness; }
@@ -1004,6 +1007,7 @@ void StudioMixer::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
     if (m_syncPending) sync();
+    refreshLoudnessSettings(); // the target / true-peak limit may have changed on another page (the Edit mixer)
     fitHeight();
     m_clock.restart(); // the meters fall from now, not by the time it was hidden
     m_timer->start();
@@ -1282,5 +1286,5 @@ void StudioMixer::tick()
     if (silent) m_master->fader->silence();
     m_master->fader->tick(dt);
     m_master->updatePeak();
-    m_loudness->setReading(m_engine->loudness(), !silent, loudnessTarget(), truePeakLimit());
+    m_loudness->setReading(m_engine->loudness(), !silent, m_loudnessTarget, m_truePeakLimit);
 }

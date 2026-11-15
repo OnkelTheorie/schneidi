@@ -76,6 +76,7 @@ signals:
     void soundPreviewRequested(const QString& file);
     void closeRequested(); // the drawer's close button
     void placeSoundRequested(const QByteArray& sound); // at the playhead
+    void loudnessTargetChanged(); // "Lautheit auf Ziel" set the setting audio/loudnessTarget
 
 protected:
     void showEvent(QShowEvent* e) override;

@@ -780,6 +780,7 @@ bool StudioTools::loudnessToTarget()
     }
     // The meter's target follows (its color says "on target")
     QSettings().setValue("audio/loudnessTarget", target);
+    emit loudnessTargetChanged();
     for (const QJsonValue& n : reply.value("result").toObject().value("notes").toArray())
         if (const QJsonObject r = n.toObject()["loudness"].toObject(); !r.isEmpty()) {
             const double after = r["after_lufs"].toDouble();
