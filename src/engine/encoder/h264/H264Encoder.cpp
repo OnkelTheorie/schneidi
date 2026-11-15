@@ -142,6 +142,9 @@ const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8
 // B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
 // the average of the two vectors as found), tried where the average is within this factor of the
 // better single list.
+// Experiment: lambda of the decisions in B pictures (non-reference / reference) against P pictures'.
+const double gBLambda = std::getenv("H264_BLAMBDA") ? std::atof(std::getenv("H264_BLAMBDA")) : 1.0;
+const double gBRefLambda = std::getenv("H264_BREFLAMBDA") ? std::atof(std::getenv("H264_BREFLAMBDA")) : 1.0;
 const int gBiRefine = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : 2;
 const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::getenv("H264_BIREFINE_NEAR")) : 1.15;
 double gPhaseMs[8] = {};
@@ -770,6 +773,9 @@ void FrameCoder::loadSource(const Picture& pic)
 // (H264_BPROBE_GAIN; measured: slow zoom -0.3 .. -0.5, game, camera and noise -0.05 .. +0.6).
 // H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
 static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
+// The probe's first question: runs of this many B pictures against none (3 = with the pyramid).
+static const int kBProbeShort = std::getenv("H264_BPROBE_SHORT") ? std::atoi(std::getenv("H264_BPROBE_SHORT")) : 2;
+static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
 static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
 
 namespace {
@@ -810,7 +816,7 @@ static const bool gFirstPassAsync = !std::getenv("H264_FPASYNC") || std::atoi(st
 // for on (also one inside the pictures being collected: they start again there).
 bool BProbe::startsAt(const LookaheadFrame& f, int index) const
 {
-    return lastStart_ < 0 || index - lastStart_ >= kInterval || ((f.sceneChange || f.forceKeyframe) && index > lastStart_);
+    return lastStart_ < 0 || index - lastStart_ >= kBProbeInterval || ((f.sceneChange || f.forceKeyframe) && index > lastStart_);
 }
 
 bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads)
@@ -825,7 +831,7 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
         return false;
     pics_.push_back(la.halfPicture(f));
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
-    const int shortRun = std::min(bframes, 2);
+    const int shortRun = std::min(bframes, kBProbeShort);
     const int count = int(pics_.size());
     if (count == shortRun + 2) {
         // First answer, from four pictures: do runs of two B pictures pay at all?
@@ -6261,7 +6267,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const size_t mbIndex = size_t(mby) * mbW_ + mbx;
     const int qp = mbQp_[mbIndex];
-    const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0);
+    const double lambda = 0.85 * std::pow(2.0, (qp - 12) / 3.0) * (refPic_ ? gBRefLambda : gBLambda);
     const double lambdaSad = std::sqrt(lambda);
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int cw = padW_ / 2;
