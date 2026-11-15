@@ -322,9 +322,12 @@ std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Ti
 }
 
 std::optional<std::vector<double>> fileBlockLevels(const QString& path, int stream, double from, double to,
-                                                   double blockSeconds, std::vector<bool>* speech, double speechMargin)
+                                                   double blockSeconds, std::vector<bool>* speech, double speechMargin,
+                                                   const QVector<int>& pick)
 {
-    const auto reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 0});
+    Audio::Reader::Options ro{kRate, 0};
+    ro.pick.assign(pick.begin(), pick.end());
+    const auto reader = Audio::Reader::open(path, stream, ro);
     if (!reader) return std::nullopt;
     const int ch = std::max(1, reader->channels());
     const int block = std::max(1, int(std::lround(blockSeconds * kRate)));
