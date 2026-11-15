@@ -3,7 +3,7 @@
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
 //                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--mbtree-strength-b S] [--2pass] [--recon out.yuv]
-//                     [--bframes N (8)] [--b-qp offset (2)] [--b-qp-short offset] [--no-b-adapt] [--no-b-pyramid] [--weightb] [--psy-rd S (1)] [--psy-qp full off (26 38)] [--qcomp S (0.3)]
+//                     [--bframes N (8)] [--b-qp offset (2)] [--b-qp-short offset] [--b-sharp share (0.02)] [--no-b-adapt] [--no-b-pyramid] [--weightb] [--psy-rd S (1)] [--psy-qp full off (26 38)] [--qcomp S (0.3)]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
 // PSNR and --recon go by display order.
 // --psy-rd S: psycho-visual mode decision (keeps texture and grain at the cost of PSNR), 0 = off.
@@ -213,6 +213,8 @@ int main(int argc, char** argv)
             cfg.bQpOffset = std::atoi(argv[++i]);
         else if (a == "--b-qp-short" && i + 1 < argc)
             cfg.bQpOffsetShort = std::atoi(argv[++i]);
+        else if (a == "--b-sharp" && i + 1 < argc)
+            cfg.bSharp = std::atof(argv[++i]);
         else if (a == "--no-b-pyramid")
             cfg.bPyramid = false;
         else if (a == "--no-b-adapt")

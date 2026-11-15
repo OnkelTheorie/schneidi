@@ -155,6 +155,12 @@ const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::
 // H264_BRD, the other choices of lists of the 16x16 layout.
 constexpr int kMaxBCands = 4;
 const double gBRd = std::getenv("H264_BRD") ? std::atof(std::getenv("H264_BRD")) : 0.0;
+// B pictures keep their reference pictures' texture (EncoderConfig::bSharp, FrameCoder::encodeMbB):
+// the test applies to macroblocks whose single predictions have at least this much fine detail (sum
+// of the 4x4 Hadamard AC magnitudes of the macroblock; a flat wall with grain has ~1000, plaster
+// ~3000). H264_BSHARP overrides the share (0 = off), H264_BSHARPMIN this.
+const double gBSharpEnv = std::getenv("H264_BSHARP") ? std::atof(std::getenv("H264_BSHARP")) : -1.0;
+const int gBSharpMin = std::getenv("H264_BSHARPMIN") ? std::atoi(std::getenv("H264_BSHARPMIN")) : 2000;
 // B pictures: transform by estimate (see encodeMbB; EncoderConfig::modeEstimate). H264_BEST=0/1 overrides.
 const int gBEstEnv = std::getenv("H264_BEST") ? std::atoi(std::getenv("H264_BEST")) : -1;
 // The lookahead's vectors along the planned references (Encoder::takeLookaheadVectors) as start
@@ -1053,6 +1059,7 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         c.aqStrength = 1.0; // the probe's threshold was measured with these
         c.psyRd = 0.0;
         c.bQpOffsetShort = 2; // B pictures as cheap as they can be: at the P pictures' QP their gain hardly shows
+        c.bSharp = 0.0;
         Encoder e(c);
         bits = ssd = 0;
         auto take = [&](const std::vector<uint8_t>& au) {
@@ -6859,17 +6866,60 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setDirect();
-    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    // Texture kept (EncoderConfig::bSharp): the average of the predictions from both lists is not
+    // used where it has lost more than the share bSharp of the fine detail the two predictions
+    // have on their own. On a slowly drifting texture the two reference pictures show it at
+    // different sub-sample positions; their average is softer than either, and with it the B
+    // pictures are softer than the P pictures around them - the texture pulses at the P pictures'
+    // rate. Fine detail: the 4x4 Hadamard AC magnitudes (hadamardMags8x8U8) of the 8x8 blocks.
+    const double sharp = gBSharpEnv >= 0 ? gBSharpEnv : cfg_.bSharp;
+    auto detail = [](const uint8_t* p, int w, int h) { // p: stride 16
+        int sum = 0;
+        for (int y = 0; y < h; y += 8)
+            for (int x = 0; x < w; x += 8) {
+                alignas(16) int16_t m[128];
+                hadamardMags8x8U8(p + y * 16 + x, 16, m);
+                for (int i = 0; i < 64; ++i)
+                    sum += m[i];
+            }
+        return sum;
+    };
+    // e0, e1: detail of the two single predictions, eb: of their average, over w x h samples.
+    auto softer = [&](int e0, int e1, int eb, int w, int h) {
+        return e0 + e1 > 2 * (gBSharpMin * w * h / 256) && eb < (1.0 - sharp) * 0.5 * (e0 + e1);
+    };
+    bool noDirect = false; // the direct prediction (skip, direct 16x16 and 8x8) is such an average
+    if (sharp > 0 && dUse == 3) {
+        uint8_t t[256];
+        int e0 = 0, e1 = 0;
+        const int px = mbx * 16, py = mby * 16;
+        for (int list = 0; list < 2; ++list) {
+            const RefPic& R = list ? *refs1_[0] : *refs_[0];
+            int& e = list ? e1 : e0;
+            if (uniform) {
+                const int* mv = d.mv[list][0];
+                mcLuma(R, px + (mv[0] >> 2), py + (mv[1] >> 2), mv[0] & 3, mv[1] & 3, 16, 16, t);
+                e = detail(t, 16, 16);
+            } else
+                for (int q = 0; q < 4; ++q) {
+                    const int* mv = d.mv[list][q];
+                    mcLuma(R, px + (q & 1) * 8 + (mv[0] >> 2), py + (q >> 1) * 8 + (mv[1] >> 2), mv[0] & 3, mv[1] & 3, 8, 8, t);
+                    e += detail(t, 8, 8);
+                }
+        }
+        noDirect = softer(e0, e1, detail(dlp, 16, 16), 16, 16);
+    }
+    const double costSkip = noDirect ? 1e300 : double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
     MbState skipState;
     saveMb(mbx, mby, skipState);
-    if (skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
+    if (!noDirect && skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
         if (gStats)
             ++gStatB[0];
         return false;
     }
-    const double estDirect = double(satd16(dlp)) + lambdaSad;
+    const double estDirect = noDirect ? 1e300 : double(satd16(dlp)) + lambdaSad;
 
     // ---- Candidate 2: motion search in both lists. Start points: the direct vector, the
     // neighbours' vectors and the co-located block's vector scaled to this picture's distance.
@@ -7010,6 +7060,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 for (int ox = 0; ox < w; ox += 8)
                     satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, av + oy * 16 + ox, 16);
             double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
+            if (sharp > 0 && costBi < 1e299 && softer(detail(a, w, h), detail(b, w, h), detail(av, w, h), w, h))
+                costBi = 1e300; // the average would lose the texture
             if (shape == 0) {
                 for (int u = 1; u <= 3; ++u)
                     for (int list = 0; list < 2; ++list)
@@ -7018,7 +7070,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 c.alt[1] = cost[0];
                 c.alt[2] = cost[1];
             }
-            if (biRefine_ > 0 && costBi < gBiRefineNear * std::min(cost[0], cost[1])) {
+            if (biRefine_ > 0 && costBi < 1e299 && costBi < gBiRefineNear * std::min(cost[0], cost[1])) {
                 int m0[2] = {c.mv[p][0][0], c.mv[p][0][1]}, m1[2] = {c.mv[p][1][0], c.mv[p][1][1]};
                 costBi = refineBi(P, m0, m1, c.mvp[p][0], c.mvp[p][1], a, b, costBi);
                 if (shape == 0) {
@@ -7088,11 +7140,14 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4;
             mcLuma(*refs_[0], px + (c.mv[p][0][0] >> 2), py + (c.mv[p][0][1] >> 2), c.mv[p][0][0] & 3, c.mv[p][0][1] & 3, 8, 8, a);
             mcLuma(*refs1_[0], px + (c.mv[p][1][0] >> 2), py + (c.mv[p][1][1] >> 2), c.mv[p][1][0] & 3, c.mv[p][1][1] & 3, 8, 8, b);
+            const int e0 = sharp > 0 ? detail(a, 8, 8) : 0, e1 = sharp > 0 ? detail(b, 8, 8) : 0;
             for (int y = 0; y < 8; ++y)
                 for (int x = 0; x < 8; ++x)
                     a[y * 16 + x] = clip1((a[y * 16 + x] * biW0_ + b[y * 16 + x] * biW1_ + 32) >> 6);
-            const double costBi = satd8x8U8(&srcY_[so], padW_, a, 16) + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1) + 5);
-            const double costDirect = satdDirect + lambdaSad;
+            double costBi = satd8x8U8(&srcY_[so], padW_, a, 16) + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1) + 5);
+            if (sharp > 0 && softer(e0, e1, detail(a, 8, 8), 8, 8))
+                costBi = 1e300;
+            const double costDirect = noDirect ? 1e300 : satdDirect + lambdaSad;
             cost[0] += lambdaSad * 3;
             cost[1] += lambdaSad * 3;
             const double best = std::min({costDirect, costBi, cost[0], cost[1]});
@@ -7249,7 +7304,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         double jBest[kMaxBCands + 1];
         bool use8[kMaxBCands + 1];
         double jMin = 1e300;
-        for (int which = 0; which <= candCount; ++which) {
+        for (int which = noDirect ? 1 : 0; which <= candCount; ++which) {
             const uint8_t* lp = which ? clp[which - 1] : dlp;
             double j8 = 0, j4 = 1e300;
             planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
@@ -7274,7 +7329,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 jMin = std::min(jMin, jBest[which]);
             }
         }
-        for (int which = 0; which <= candCount; ++which) {
+        for (int which = noDirect ? 1 : 0; which <= candCount; ++which) {
             if (kBPrune > 0 && jBest[which] > kBPrune * jMin)
                 continue;
             const bool t8 = use8[which];
@@ -7290,7 +7345,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 bestT8 = t8;
             }
         }
-    } else {
+    } else if (!noDirect) {
         costInter = encodeB(0, interBits, false, -1.0);
         bestPsy = lastPsy;
         chosenDelta = sentDelta;
