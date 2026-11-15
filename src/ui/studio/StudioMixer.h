@@ -17,6 +17,8 @@
 #include "core/AutomationWriter.h"
 
 #include <QElapsedTimer>
+
+#include <functional>
 #include <QStringList>
 #include <QVector>
 #include <QWidget>
@@ -65,6 +67,8 @@ public:
     // The loudness target and true-peak limit (settings audio/loudnessTarget, audio/truePeakLimit) read again: on
     // showing and after "Lautheit auf Ziel" (StudioTools::loudnessTargetChanged); kept in between
     void refreshLoudnessSettings();
+    // Where the timeline's playhead is while the engine shows a file (Source mode; MainWindow: the timeline view's)
+    void setTimelinePlayhead(std::function<int()> playhead) { m_timelinePlayhead = std::move(playhead); }
 
     static constexpr int kStripW = 76;
 
@@ -102,4 +106,5 @@ private:
     // The timeline's playhead; in Source mode (a file previewed) the last one the timeline had
     int timelinePosition() const;
     mutable int m_lastTimelinePos = 0;
+    std::function<int()> m_timelinePlayhead;
 };

@@ -1607,6 +1607,49 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
     }
 }
 
+// The Studio page first shown while the viewer previews a file (Source mode): the automated faders show the level at
+// the timeline's playhead (MainWindow tells the mixer), not at frame 0 or the file's frame
+void testSourceOnFirstShow(Engine& engine, const QString& voiceFile, const QString& musicFile)
+{
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    {
+        ProjectData d;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = voiceFile;
+        v.out = 99;
+        d.timeline.audio[0].clips << v;
+        d.timeline.audio[0].volumeAuto = {{0, 0}, {40, 0}, {60, -20}, {100, -20}};
+        d.lastClipId = 1;
+        p->load(d);
+        p->addMedia(Engine::probe(p->format(), voiceFile));
+    }
+    settle();
+    engine.seek(80);
+    settle();
+    engine.showSource(musicFile, 10); // at 10 the curve would say 0 dB
+    settle();
+    w.showPage(Page::Studio);
+    settle(5);
+    QTest::qWait(80);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    QWidget* fader = page->mixer()->findChild<QWidget*>("studio_fader_A1");
+    if (engine.mode() == Engine::Mode::Source)
+        Check::report(std::abs(faderShown(fader) + 20) < 0.11, "first shown in Source mode: the timeline's level",
+                      __FILE__, __LINE__, QString::number(faderShown(fader)));
+    engine.showTimeline(0);
+    settle();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1632,5 +1675,6 @@ int main(int argc, char** argv)
     testTools(engine, audio, music);
     testLayout(engine, audio);
     testReviewFixes(engine, audio, music);
+    testSourceOnFirstShow(engine, audio, music);
     return Check::result();
 }

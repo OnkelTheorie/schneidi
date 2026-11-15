@@ -1038,8 +1038,10 @@ bool StudioMixer::playing() const { return m_engine->timelinePositions() && !std
 
 int StudioMixer::timelinePosition() const
 {
-    // In Source mode the engine's position is a frame of the previewed file: the timeline's last one stays
+    // In Source mode the engine's position is a frame of the previewed file: the timeline's playhead (MainWindow
+    // tells it; also when the page first shows while a file is previewed), else the last one seen here
     if (m_engine->timelinePositions()) m_lastTimelinePos = m_engine->position();
+    else if (m_timelinePlayhead) m_lastTimelinePos = m_timelinePlayhead();
     return m_lastTimelinePos;
 }
 
