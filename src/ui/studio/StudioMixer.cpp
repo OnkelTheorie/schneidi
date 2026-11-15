@@ -962,6 +962,11 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
         fitHeight(); // the surround sends take room
     });
     connect(m_engine, &Engine::audioSpeakerLevels, this, &StudioMixer::onLevels);
+    // A seek or a loop wrap while a control is held: the touches end where they were played (the stretch jumped over
+    // keeps its curve); the next move starts a new touch
+    connect(m_engine, &Engine::seeked, this, [this] {
+        if (m_writer.touching()) m_writer.jumped();
+    });
     m_timer = new QTimer(this);
     m_timer->setInterval(30);
     connect(m_timer, &QTimer::timeout, this, &StudioMixer::tick);
