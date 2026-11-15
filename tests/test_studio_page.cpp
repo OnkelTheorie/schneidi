@@ -1622,6 +1622,46 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
             CHECK_EQ(tv->view().leftFrame, timelineBefore.leftFrame);
         }
     }
+    // (11) A slow drag (1 px per move, as a hand moving slowly sends) moves the fader from 0 dB and the pan from the
+    // centre (with Shift too): every step is smaller than the rounding or the snap, the drag adds them up
+    {
+        p->edit("reset", [](Timeline& tl) {
+            tl.audio[0].volumeDb = 0;
+            tl.audio[0].volumeAuto.clear();
+            tl.audio[0].pan = 0;
+            tl.audio[0].panAuto.clear();
+        });
+        settle();
+        const int at = undo->index();
+        QWidget* fader = mixer->findChild<QWidget*>("studio_fader_A1"); // the strips may have been rebuilt since
+        if (!CHECK(fader)) return;
+        const int b = fader->height() - 6, t = 10;
+        QPoint c(fader->width() * 3 / 4, b - int(std::lround(VolumeDraw::posOf(0) * (b - t))));
+        mouse(fader, QEvent::MouseButtonPress, c, Qt::LeftButton);
+        for (int i = 0; i < 20; ++i) {
+            c -= QPoint(0, 1);
+            mouse(fader, QEvent::MouseMove, c, Qt::LeftButton);
+        }
+        mouse(fader, QEvent::MouseButtonRelease, c, Qt::NoButton);
+        settle();
+        Check::report(p->timeline().audio[0].volumeDb > 1.0, "slow fader drag moves it", __FILE__, __LINE__,
+                      QString::number(p->timeline().audio[0].volumeDb));
+        CHECK_EQ(undo->index(), at + 1);
+        if (QWidget* pan = mixer->findChild<QWidget*>("studio_pan_A1"); CHECK(pan)) {
+            QPoint q(pan->width() / 2, pan->height() / 2);
+            mouse(pan, QEvent::MouseButtonPress, q, Qt::LeftButton);
+            for (int i = 0; i < 10; ++i) {
+                q += QPoint(1, 0);
+                QMouseEvent ev(QEvent::MouseMove, q, pan->mapToGlobal(q), Qt::NoButton, Qt::LeftButton, Qt::ShiftModifier);
+                QApplication::sendEvent(pan, &ev);
+            }
+            mouse(pan, QEvent::MouseButtonRelease, q, Qt::NoButton);
+            settle();
+            Check::report(p->timeline().audio[0].pan > 2.5, "slow pan drag with Shift moves it", __FILE__, __LINE__,
+                          QString::number(p->timeline().audio[0].pan));
+        }
+        while (undo->index() > at) undo->undo();
+    }
 }
 
 // The Studio page first shown while the viewer previews a file (Source mode): the automated faders show the level at

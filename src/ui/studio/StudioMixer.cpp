@@ -240,6 +240,7 @@ protected:
         m_dragging = true;
         m_lastY = e->position().y();
         if (std::abs(e->position().y() - posY()) > 8) jumpTo(e->position().y()); // a click beside the handle: there
+        m_dragPos = VolumeDraw::posOf(m_db);
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
@@ -248,8 +249,10 @@ protected:
         const double dy = e->position().y() - m_lastY;
         m_lastY = e->position().y();
         const double h = std::max(1, bottom() - top());
-        double pos = VolumeDraw::posOf(m_db) - dy / h * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0);
-        double db = VolumeDraw::dbAt(pos);
+        // The drag position adds up every move unrounded: a slow drag (1 px per move, less than the 0.1 dB rounding
+        // or the 0 dB snap) still gets somewhere instead of falling back to the shown value each time
+        m_dragPos = std::clamp(m_dragPos - dy / h * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0), 0.0, 1.0);
+        double db = VolumeDraw::dbAt(m_dragPos);
         if (std::abs(db) < 0.4) db = 0; // 0 dB snaps
         change(db);
     }
@@ -292,6 +295,7 @@ private:
     double m_db = 0;
     bool m_dragging = false;
     double m_lastY = 0;
+    double m_dragPos = 0; // while dragging: the handle's position (0..1) before rounding and snapping
 };
 
 // Pan as a horizontal bar: drag sideways, double click = centre
@@ -330,6 +334,7 @@ protected:
     {
         m_drag = e->button() == Qt::LeftButton;
         m_lastX = e->position().x();
+        m_dragV = m_v;
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
@@ -337,7 +342,10 @@ protected:
         if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dx = e->position().x() - m_lastX;
         m_lastX = e->position().x();
-        set(m_v + dx / std::max(1, width() / 2) * 100 * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
+        // Added up unrounded: small moves (Shift) get past the centre snap and the rounding
+        m_dragV = std::clamp(m_dragV + dx / std::max(1, width() / 2) * 100 * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0),
+                             -100.0, 100.0);
+        set(m_dragV);
     }
     void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
     void hideEvent(QHideEvent* e) override
@@ -370,6 +378,7 @@ private:
     double m_v = 0;
     bool m_drag = false;
     double m_lastX = 0;
+    double m_dragV = 0; // while dragging: the value before rounding and snapping
 };
 
 // One surround send of a strip (5.1/7.1 projects): a bar filled from the left with its name and value in it; drag
@@ -413,6 +422,7 @@ protected:
     {
         m_drag = e->button() == Qt::LeftButton;
         m_lastX = e->position().x();
+        m_dragV = m_v;
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
@@ -420,7 +430,11 @@ protected:
         if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dx = e->position().x() - m_lastX;
         m_lastX = e->position().x();
-        set(m_v + dx / std::max(1, width()) * (m_hi - m_lo) * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
+        // Added up unrounded: the model sends the rounded value back after every move (setValue), small moves would
+        // be lost in it
+        m_dragV = std::clamp(m_dragV + dx / std::max(1, width()) * (m_hi - m_lo) * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0),
+                             m_lo, m_hi);
+        set(m_dragV);
     }
     void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
     void hideEvent(QHideEvent* e) override
@@ -454,6 +468,7 @@ private:
     QString m_unit;
     bool m_drag = false;
     double m_lastX = 0;
+    double m_dragV = 0; // while dragging: the value before rounding
 };
 // A small picture of a track's EQ or compressor curve in its strip. A click opens the full window (EqDialog with the
 // big EQ curve, DynamicsDialog with the big compressor curve - both draggable there); a click on the "EQ" / "DYN" tag
