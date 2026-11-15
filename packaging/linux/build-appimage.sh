@@ -183,6 +183,9 @@ mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 cp "$ROOT/assets/schneidi-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/schneidi.png"
 rm -f "$APPDIR/.DirIcon"
 cp "$ROOT/assets/schneidi-256.png" "$APPDIR/.DirIcon"
+# Readable for everyone: the AppImage is mounted root-owned, a 0700 folder (an AppDir made from an extracted
+# AppImage, a strict umask) keeps AppRun from starting for the user (the catalog test fails with "Permission denied")
+chmod -R a+rX "$APPDIR"
 "$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" --output appimage
 APPIMAGE="$(ls -1t "$BUILD"/out/schneidi*.AppImage | head -1)"
 if [ "$GPL_ENCODERS" = 0 ]; then
