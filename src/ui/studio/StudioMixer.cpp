@@ -906,14 +906,15 @@ void StudioMixer::fitStripsWidth()
     for (StudioStrip* s : m_strips) natural += s->width();
     m_scroll->setMaximumWidth(std::max(natural, 1) + m_scroll->frameWidth() * 2);
     // A narrow page (small window, large font): the master and the loudness keep their size, the tools one card if
-    // there is room (else less, their cards scroll), the strips what is left (they scroll)
+    // there is room beside one strip (else less, their cards scroll), the strips what is left up to all of them (they
+    // scroll beyond). Without the strips' share as a minimum the scroll area took its own small size hint: one strip
+    // of three on a 1920 px page, the tools the rest
     const int room = width() - m_master->width() - m_loudness->minimumWidth();
     const auto* tools = qobject_cast<StudioTools*>(m_tools);
     const int card = tools ? tools->cardWidth() + 12 : 240;
-    const int stripsWant = std::min(natural, kStripW);
-    const int toolsMin = std::clamp(room - stripsWant, std::min(160, card), card);
+    const int toolsMin = std::clamp(room - std::min(natural, kStripW), std::min(160, card), card);
     m_tools->setMinimumWidth(toolsMin);
-    m_scroll->setMinimumWidth(std::clamp(room - toolsMin, 0, stripsWant));
+    m_scroll->setMinimumWidth(std::clamp(room - toolsMin, 0, natural + m_scroll->frameWidth() * 2));
 }
 
 QStringList StudioMixer::meterLabels(int track) const
