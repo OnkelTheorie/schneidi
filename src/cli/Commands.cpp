@@ -1135,7 +1135,8 @@ const QVector<Command>& commands()
                                  "or installed as the extension 'x264', else the free OpenH264/kvazaar (about twice "
                                  "the file size for the same quality): then the answer has 'encoder_hint' and "
                                  "'better_encoder' (install it with `extensions` install x264, ask the user first: "
-                                 "72 MB download, GPL)"},
+                                 "72 MB download, GPL). The GPL-free build writes software H.264 with schneidi's own encoder "
+                                 "(h264_own, about x264's size; no hint)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
                                   "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
