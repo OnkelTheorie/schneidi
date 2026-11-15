@@ -297,7 +297,7 @@ void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)
     for (int& m : tl.markers) m = at(m);
     tl.markers.erase(std::unique(tl.markers.begin(), tl.markers.end()), tl.markers.end());
     for (Track& t : tl.audio) // track automation lies in timeline frames like the markers
-        if (!std::as_const(t).volumeAuto.isEmpty()) Automation::retime(t.volumeAuto, at);
+        Automation::retimeTrack(t, at);
     tl.markIn = at(tl.markIn);
     tl.markOut = at(tl.markOut);
     if (tl.markIn >= 0 && tl.markOut >= 0) tl.markOut = std::max(tl.markOut, tl.markIn);

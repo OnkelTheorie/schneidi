@@ -49,6 +49,9 @@ public:
     // What the pen writes: the track's automation or the clips' volume keyframes
     void setPenTarget(PenTarget target);
     PenTarget penTarget() const { return m_penTarget; }
+    // Which curve of the track Points and Pen edit in track mode (volume or pan; clip mode: always volume)
+    void setAutoTarget(AutoTarget target);
+    AutoTarget autoTarget() const { return m_autoTarget; }
 
     const ViewState& view() const { return m_view; }
     // Zoom and scroll as given (the first showing: the timeline's)
@@ -106,6 +109,11 @@ private:
     QRect clipArea() const;   // right of the headers, below the ruler, above the scrollbar
     const Clip* clipAt(int track, double frame) const;
     double dbAtY(int track, int y) const;
+    // The curve shown and edited (track mode: m_autoTarget, clip mode: volume); its value scale on a lane
+    AutoTarget curveTarget() const { return m_penTarget == PenTarget::Track ? m_autoTarget : AutoTarget::Volume; }
+    double posOfValue(double v) const; // 0 = bottom, 1 = top
+    double valueAtY(int track, int y) const;
+    QString valueText(double v) const;
     void addPenPoint(const QPoint& pos);
     void paintPart(class QPainter& p); // what lies in m_dirty
     void drawRuler(class QPainter& p);
@@ -141,6 +149,7 @@ private:
     Tool m_tool = Tool::Select;
     int m_smoothing = 2;
     PenTarget m_penTarget = PenTarget::Track;
+    AutoTarget m_autoTarget = AutoTarget::Volume;
     QScrollBar* m_hbar;
     QScrollBar* m_vbar;
     bool m_syncing = false; // scrollbars set from the view, not by the user

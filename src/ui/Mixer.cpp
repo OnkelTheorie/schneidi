@@ -308,6 +308,7 @@ public:
 
     std::function<void(double)> onChange;
     std::function<void()> onFinish;
+    bool dragging() const { return m_dragging; }
 
     void setValue(double v)
     {
@@ -585,9 +586,20 @@ public:
     bool automated = false;
     void setPan(double v)
     {
+        shownPan = v;
         pan->setValue(v);
         panLabel->setText(panText(v));
     }
+    // Pan automation: the knob shows the pan at the playhead (knob + curve), turning it trims the whole curve
+    void setPanAutomated(bool on)
+    {
+        if (on == panAutomated) return;
+        panAutomated = on;
+        panLabel->setStyleSheet(on ? QString("color: %1;").arg(Theme::secondary.name()) : QString());
+        panLabel->setToolTip(on ? T("Pan-Automation: zeigt den Pan am Abspielkopf; der Regler verschiebt die ganze Kurve") : QString());
+    }
+    double shownPan = 0;
+    bool panAutomated = false;
 
     QLabel* name;
     PanKnob* pan;
@@ -995,8 +1007,11 @@ void Mixer::rebuildStrips(int count)
             m_editor->setTrackVolume(i, fader, "mixer-vol-" + QString::number(i));
         };
         s->pan->onChange = [this, i, s](double v) {
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With pan automation the knob shows the pan at the playhead: a turn trims the whole curve by as much
+            const double knob = t && !t->panAuto.isEmpty() ? t->pan + (v - s->shownPan) : v;
             s->setPan(v);
-            m_editor->setTrackPan(i, v, "mixer-pan-" + QString::number(i));
+            m_editor->setTrackPan(i, knob, "mixer-pan-" + QString::number(i));
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
         const auto track = [this, i]() -> const Track* {
@@ -1153,7 +1168,8 @@ void Mixer::sync()
         s->name->setToolTip(trackDisplayName(t, {TrackKind::Audio, i}));
         s->setAutomated(!t.volumeAuto.isEmpty());
         if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
-        s->setPan(t.pan);
+        s->setPanAutomated(!t.panAuto.isEmpty());
+        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, m_engine->position()) : t.pan);
         s->mute->setChecked(t.muted); // setChecked does not trigger clicked
         s->solo->setChecked(t.solo);
         s->eq->setChecked(t.eq.on);
@@ -1192,8 +1208,10 @@ void Mixer::tick()
     // Read mode: automated faders follow their curve at the playhead
     const Timeline& tl = m_project->timeline();
     for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
-        if (ChannelStrip* s = m_strips[i]; s->automated && !s->fader->dragging())
-            s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+        if (ChannelStrip* s = m_strips[i]) {
+            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], m_engine->position()));
+        }
     for (ChannelStrip* s : m_strips) step(s);
     step(m_master);
     for (ChannelStrip* s : m_strips) s->updatePeak();

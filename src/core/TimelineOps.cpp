@@ -83,7 +83,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
             Track& t = tracks[i];
             if (t.locked || skip.contains(TrackRef{k, i})) continue;
             if (t.clips.isEmpty()) {
-                if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
+                Automation::rippleTrack(t, shifts);
                 continue;
             }
             QVector<Clip> moved = t.clips;
@@ -100,7 +100,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
             for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end();
             if (!ok) continue;
             // The automation moves with the time even where no clip of the track moved (points after the last clip)
-            if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
+            Automation::rippleTrack(t, shifts);
             if (!changed) continue;
             // release a dissolve that has been pushed apart (otherwise it would turn into fade out and fade in)
             for (int j = 1; j < moved.size(); ++j)
@@ -443,7 +443,7 @@ void shiftFrom(Track& track, int frame, int delta)
     for (Clip& c : track.clips)
         if (c.start >= frame) c.start += delta;
     sortTrack(track);
-    if (delta != 0 && !std::as_const(track).volumeAuto.isEmpty()) Automation::ripple(track.volumeAuto, {{frame, delta}});
+    if (delta != 0) Automation::rippleTrack(track, {{frame, delta}});
 }
 
 void clearDissolveAt(Track& track, int frame)
@@ -561,7 +561,7 @@ RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
         Track& t = tl.track(edited[i]);
         t.clips = rest;
         sortTrack(t);
-        if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
+        Automation::rippleTrack(t, shifts);
     }
     rippleTracks(tl, shifts, edited);
     RippleResult result;
@@ -833,7 +833,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
         }
         for (auto it = autoShifts.cbegin(); it != autoShifts.cend(); ++it) {
             Track& t = tl.track(TrackRef{TrackKind(it.key().first), it.key().second});
-            if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, it.value());
+            Automation::rippleTrack(t, it.value());
         }
         for (int id : e.ids) {
             TrackRef ref;

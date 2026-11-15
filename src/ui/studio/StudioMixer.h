@@ -10,6 +10,8 @@
 // first levels arrive the strips show a stereo pair. The levels come from Engine::audioSpeakerLevels: in stereo the
 // master is true peak as everywhere, in 5.1/7.1 every speaker's sample peak with its name under the bar (L R C LFE …).
 
+#include "core/AutomationWriter.h"
+
 #include <QElapsedTimer>
 #include <QStringList>
 #include <QVector>
@@ -42,6 +44,12 @@ public:
     // strips never get wider than they need (few tracks: no gap before the master)
     void setTools(QWidget* tools);
 
+    // Write mode ("Schreiben", touch): while playing, moving a fader or pan knob writes into the track's automation,
+    // on release it glides back to the curve; a whole pass (until playback stops) is one undo step. Off by default.
+    void setWriteMode(bool on);
+    bool writeMode() const { return m_writeMode; }
+    AutomationWriter& writer() { return m_writer; }
+
     static constexpr int kStripW = 150;
 
 protected:
@@ -72,4 +80,7 @@ private:
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock, m_lastLevels;
     int m_channels = 2; // until the first levels tell the mix's count
+    bool m_writeMode = false;
+    AutomationWriter m_writer;
+    bool playing() const;
 };

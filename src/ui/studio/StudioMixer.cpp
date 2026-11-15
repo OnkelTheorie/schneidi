@@ -406,6 +406,7 @@ public:
     }
     std::function<void(double)> onChange;
     std::function<void()> onFinish;
+    bool dragging() const { return m_drag; }
     void setValue(double v)
     {
         if (v == m_v) return;
@@ -670,9 +671,20 @@ public:
     }
     double shown = 0;       // what the fader shows (with automation: the level at the playhead)
     bool automated = false;
+    // Pan automation: the pan bar shows the pan at the playhead (knob + curve), moving it trims the whole curve
+    void setPanAutomated(bool on)
+    {
+        if (on == panAutomated || !panLabel) return;
+        panAutomated = on;
+        panLabel->setStyleSheet(on ? QString("color: %1;").arg(Theme::secondary.name()) : QString());
+        panLabel->setToolTip(on ? T("Pan-Automation: zeigt den Pan am Abspielkopf; der Regler verschiebt die ganze Kurve") : QString());
+    }
+    double shownPan = 0;
+    bool panAutomated = false;
     void setPan(double v)
     {
         if (!pan) return;
+        shownPan = v;
         pan->setValue(v);
         const int i = int(std::lround(v));
         panLabel->setText(i == 0 ? QStringLiteral("C") : QString("%1%2").arg(i < 0 ? QStringLiteral("L") : QStringLiteral("R")).arg(std::abs(i)));
@@ -824,7 +836,7 @@ double truePeakLimit() { return QSettings().value("audio/truePeakLimit", -1.0).t
 } // namespace
 
 StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
-    : QWidget(parent), m_editor(editor), m_project(editor->project()), m_engine(engine)
+    : QWidget(parent), m_editor(editor), m_project(editor->project()), m_engine(engine), m_writer(editor)
 {
     setObjectName("studio_mixer");
     setProperty("tourTarget", "studio_mixer");
@@ -937,6 +949,15 @@ void StudioMixer::resizeEvent(QResizeEvent* e)
     fitHeight();
 }
 
+bool StudioMixer::playing() const { return !std::isnan(m_engine->soundFrame()); }
+
+void StudioMixer::setWriteMode(bool on)
+{
+    if (on == m_writeMode) return;
+    m_writeMode = on;
+    if (!on) m_writer.endPass(m_engine->position());
+}
+
 void StudioMixer::fitHeight()
 {
     const int room = m_scroll->viewport()->height();
@@ -961,6 +982,12 @@ void StudioMixer::rebuild(int count)
         auto* s = new StudioStrip(m_editor, i);
         s->fader->setChannels(m_channels);
         s->fader->onChange = [this, i, s](double db) {
+            // Write mode while playing: the move is recorded into the automation (AutomationWriter)
+            if (m_writeMode && playing()) {
+                s->setVolume(db);
+                m_writer.move(i, AutoTarget::Volume, m_engine->position(), db);
+                return;
+            }
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
             // With automation the fader shows the level at the playhead: a move trims the whole curve by as much
             const double fader = t && !t->volumeAuto.isEmpty() ? t->volumeDb + (db - s->shown) : db;
@@ -968,10 +995,26 @@ void StudioMixer::rebuild(int count)
             m_editor->setTrackVolume(i, fader, QString("studio-vol-%1").arg(i));
         };
         s->pan->onChange = [this, i, s](double v) {
+            if (m_writeMode && playing()) {
+                s->setPan(v);
+                m_writer.move(i, AutoTarget::Pan, m_engine->position(), v);
+                return;
+            }
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With pan automation the bar shows the pan at the playhead: a move trims the whole curve by as much
+            const double knob = t && !t->panAuto.isEmpty() ? t->pan + (v - s->shownPan) : v;
             s->setPan(v);
-            m_editor->setTrackPan(i, v, QString("studio-pan-%1").arg(i));
+            m_editor->setTrackPan(i, knob, QString("studio-pan-%1").arg(i));
         };
-        s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
+        // A touch ends on release (the pass stays one undo step until playback stops); otherwise one step per drag
+        s->fader->onFinish = [this, i] {
+            if (m_writer.touching(i, AutoTarget::Volume)) m_writer.release(i, AutoTarget::Volume, m_engine->position());
+            else if (!m_writer.inPass()) m_project->closeMerge();
+        };
+        s->pan->onFinish = [this, i] {
+            if (m_writer.touching(i, AutoTarget::Pan)) m_writer.release(i, AutoTarget::Pan, m_engine->position());
+            else if (!m_writer.inPass()) m_project->closeMerge();
+        };
         // Surround: the three sends go together (Editor::setTrackSurround), one undo step per drag
         const auto surroundChanged = [this, i, s] {
             m_editor->setTrackSurround(i, s->depth->value(), s->center->value(), s->lfe->value(),
@@ -1056,7 +1099,8 @@ void StudioMixer::sync()
         if (s->name->styleSheet() != style) s->name->setStyleSheet(style);
         s->setAutomated(!t.volumeAuto.isEmpty());
         if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
-        s->setPan(t.pan);
+        s->setPanAutomated(!t.panAuto.isEmpty());
+        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, m_engine->position()) : t.pan);
         s->surround->setVisible(surround);
         s->depth->setValue(t.panDepth);
         s->center->setValue(t.panCenter);
@@ -1107,8 +1151,12 @@ void StudioMixer::tick()
     // Read mode: automated faders follow their curve at the playhead (playing or not)
     const Timeline& tl = m_project->timeline();
     for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
-        if (StudioStrip* s = m_strips[i]; s->automated && !s->fader->dragging())
-            s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+        if (StudioStrip* s = m_strips[i]) {
+            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], m_engine->position()));
+        }
+    // Write mode: playback stopped - the pass ends (open touches released, one undo step closed)
+    if (m_writer.inPass() && !playing()) m_writer.endPass(m_engine->position());
     for (StudioStrip* s : m_strips) {
         if (silent) s->fader->silence();
         s->fader->tick(dt);

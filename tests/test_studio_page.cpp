@@ -287,6 +287,49 @@ void testWindow(Engine& engine, const QString& audioFile)
         CHECK(project->timeline().audio[0].volumeAuto.isEmpty());
     }
 
+    // Pan mode (track mode): the pen draws the pan automation (top right, bottom left), one undo step; the mixer's
+    // pan shows the automated pan at the playhead. Write mode is a toggle, off by default.
+    auto* autoPan = page->findChild<QToolButton*>("studio_auto_pan");
+    auto* autoVolume = page->findChild<QToolButton*>("studio_auto_volume");
+    auto* write = page->findChild<QToolButton*>("studio_write");
+    if (CHECK(autoPan && autoVolume && write)) {
+        CHECK(autoVolume->isChecked() && autoPan->isEnabled() && tracks->autoTarget() == AutoTarget::Volume);
+        CHECK(!write->isChecked() && !page->mixer()->writeMode());
+        write->click();
+        CHECK(page->mixer()->writeMode());
+        write->click();
+        CHECK(!page->mixer()->writeMode());
+        pen->click();
+        autoPan->click();
+        CHECK(tracks->autoTarget() == AutoTarget::Pan);
+        const int at = undo->index();
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const int py = body.bottom() - int(std::lround(0.2 * (body.height() - 1))); // pan -60
+        const int g0 = clip->start + clip->length() / 4, g1 = clip->start + clip->length() * 3 / 4;
+        mouse(tracks, QEvent::MouseButtonPress, QPoint(int(tracks->xOf(g0)), py), Qt::LeftButton);
+        for (int i = 1; i <= 10; ++i)
+            mouse(tracks, QEvent::MouseMove, QPoint(int(tracks->xOf(g0 + (g1 - g0) * i / 10.0)), py), Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, QPoint(int(tracks->xOf(g1)), py), Qt::NoButton);
+        settle();
+        CHECK_EQ(undo->index(), at + 1);
+        CHECK_EQ(undo->undoText(), QString("Spur-Pan zeichnen"));
+        const Track& a1 = project->timeline().audio[0];
+        CHECK(a1.volumeAuto.isEmpty() && !a1.panAuto.isEmpty());
+        const double mid = Automation::panAt(a1, (g0 + g1) / 2.0);
+        Check::report(std::abs(mid + 60) < 2.0, "drawn track pan", __FILE__, __LINE__, QString::number(mid));
+        engine.seek((g0 + g1) / 2);
+        settle();
+        QTest::qWait(80);
+        bool shown = false;
+        for (QLabel* l : page->mixer()->findChildren<QLabel*>())
+            shown |= l->toolTip().contains("Pan-Automation") && l->text().startsWith("L");
+        CHECK(shown);
+        undo->undo();
+        CHECK(project->timeline().audio[0].panAuto.isEmpty());
+        autoVolume->click();
+        CHECK(tracks->autoTarget() == AutoTarget::Volume);
+    }
+
     // Points: a click on the track's level line sets a point, dragging it right away is the same undo step; a double
     // click puts it at 0 dB, a right click deletes it. In clip mode the click sets a key of the clip.
     if (auto* points = page->findChild<QToolButton*>("studio_tool_points"); CHECK(points)) {

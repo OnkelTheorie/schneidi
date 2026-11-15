@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Automation.h"
 
+#include "core/VolumeDraw.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -25,10 +27,23 @@ double levelAt(const Track& track, double frame)
     return std::clamp(track.volumeDb + valueAt(track.volumeAuto, frame), kMinVolumeDb, kMaxVolumeDb);
 }
 
-AutoCurve normalized(AutoCurve curve)
+double panAt(const Track& track, double frame)
+{
+    return std::clamp(track.pan + valueAt(track.panAuto, frame), -100.0, 100.0);
+}
+
+double heardAt(const Track& track, AutoTarget t, double frame)
+{
+    return t == AutoTarget::Pan ? panAt(track, frame) : levelAt(track, frame);
+}
+
+namespace {
+
+// Sorted, one point per frame, frames >= 0, values clamped to [lo, hi]
+AutoCurve sortedUnique(AutoCurve curve, double lo, double hi)
 {
     curve.removeIf([](const AutoPoint& p) { return p.frame < 0 || !std::isfinite(p.db); });
-    for (AutoPoint& p : curve) p.db = std::clamp(p.db, kMinDb, kMaxDb);
+    for (AutoPoint& p : curve) p.db = std::clamp(p.db, lo, hi);
     std::stable_sort(curve.begin(), curve.end(), [](const AutoPoint& a, const AutoPoint& b) { return a.frame < b.frame; });
     AutoCurve out;
     out.reserve(curve.size());
@@ -39,7 +54,17 @@ AutoCurve normalized(AutoCurve curve)
     return out;
 }
 
-void replaceRange(AutoCurve& curve, int from, int to, const AutoCurve& inside)
+// Ripple and retime only move points: values stay whatever they are (a pan value is beyond the dB range)
+AutoCurve sortedOnly(AutoCurve curve) { return sortedUnique(std::move(curve), -HUGE_VAL, HUGE_VAL); }
+
+} // namespace
+
+AutoCurve normalized(AutoCurve curve, AutoTarget target)
+{
+    return sortedUnique(std::move(curve), minValue(target), maxValue(target));
+}
+
+void replaceRange(AutoCurve& curve, int from, int to, const AutoCurve& inside, AutoTarget target)
 {
     if (to < from) std::swap(from, to);
     from = std::max(0, from);
@@ -52,7 +77,7 @@ void replaceRange(AutoCurve& curve, int from, int to, const AutoCurve& inside)
     next << AutoPoint{to + 1, after};
     for (const AutoPoint& p : inside)
         if (p.frame >= from && p.frame <= to) next << p;
-    curve = normalized(next);
+    curve = normalized(next, target);
 }
 
 void ripple(AutoCurve& curve, const QVector<QPair<int, int>>& shifts)
@@ -123,13 +148,25 @@ void ripple(AutoCurve& curve, const QVector<QPair<int, int>>& shifts)
         }
         out << it.p;
     }
-    curve = normalized(out);
+    curve = sortedOnly(out);
 }
 
 void retime(AutoCurve& curve, const std::function<int(int)>& f)
 {
     for (AutoPoint& p : curve) p.frame = f(p.frame);
-    curve = normalized(curve);
+    curve = sortedOnly(curve);
+}
+
+void rippleTrack(Track& t, const QVector<QPair<int, int>>& shifts)
+{
+    if (!std::as_const(t).volumeAuto.isEmpty()) ripple(t.volumeAuto, shifts);
+    if (!std::as_const(t).panAuto.isEmpty()) ripple(t.panAuto, shifts);
+}
+
+void retimeTrack(Track& t, const std::function<int(int)>& f)
+{
+    if (!std::as_const(t).volumeAuto.isEmpty()) retime(t.volumeAuto, f);
+    if (!std::as_const(t).panAuto.isEmpty()) retime(t.panAuto, f);
 }
 
 QJsonArray toJson(const AutoCurve& curve)
@@ -139,14 +176,95 @@ QJsonArray toJson(const AutoCurve& curve)
     return a;
 }
 
-AutoCurve fromJson(const QJsonArray& a)
+AutoCurve fromJson(const QJsonArray& a, AutoTarget target)
 {
     AutoCurve c;
     for (const QJsonValue& v : a) {
         const QJsonArray p = v.toArray();
         if (p.size() >= 2 && p[0].isDouble() && p[1].isDouble()) c << AutoPoint{p[0].toInt(), p[1].toDouble()};
     }
-    return normalized(c);
+    return normalized(c, target);
+}
+
+// ---------- Write mode (touch) ----------
+
+int glideBackFrames(double fps) { return std::max(1, int(std::lround(0.5 * fps))); }
+
+Touch beginTouch(const Track& t, AutoTarget target)
+{
+    Touch touch;
+    touch.target = target;
+    touch.original = t.automation(target);
+    touch.baseValue = base(t, target);
+    return touch;
+}
+
+void record(Touch& touch, int frame, double heard)
+{
+    if (frame < 0 || !std::isfinite(heard)) return;
+    if (!touch.heard.isEmpty()) {
+        if (frame < touch.heard.last().first) return; // a jump back: the recording keeps going forward only
+        if (frame == touch.heard.last().first) {
+            touch.heard.last().second = heard;
+            return;
+        }
+    } else {
+        touch.start = frame;
+    }
+    touch.heard << qMakePair(frame, heard);
+}
+
+AutoCurve thinned(const Touch& touch, double fps)
+{
+    if (touch.heard.isEmpty()) return {};
+    // One value per frame (frames skipped while playing get the straight line), on top of the fader / knob
+    const int first = touch.heard.first().first, last = touch.heard.last().first;
+    QVector<double> v(last - first + 1);
+    for (int i = 0; i < touch.heard.size(); ++i) {
+        const auto& [f, h] = touch.heard[i];
+        v[f - first] = h - touch.baseValue;
+        if (i + 1 < touch.heard.size()) {
+            const auto& [g, k] = touch.heard[i + 1];
+            for (int x = f + 1; x < g; ++x) v[x - first] = (h + (k - h) * double(x - f) / (g - f)) - touch.baseValue;
+        }
+    }
+    const double step = touch.target == AutoTarget::Pan ? kWriteStepPan : kWriteStepDb;
+    const QVector<int> keep = VolumeDraw::thin(v, step / 2);
+    // At most kWriteKeysPerSecond keys: a key closer than that to the one before goes (the last one stays)
+    const int gap = std::max(1, int(std::ceil(fps / kWriteKeysPerSecond - 1e-9)));
+    AutoCurve out;
+    for (int i : keep) {
+        const AutoPoint p{first + i, std::round(v[i] * 100) / 100};
+        if (!out.isEmpty() && p.frame - out.last().frame < gap) {
+            if (i != keep.last()) continue;
+            if (out.size() > 1) out.removeLast(); // the last value wins over the one too close before it
+        }
+        out << p;
+    }
+    return normalized(out, touch.target);
+}
+
+AutoCurve touchingCurve(const Touch& touch, double fps)
+{
+    if (touch.heard.isEmpty()) return touch.original;
+    AutoCurve c;
+    for (const AutoPoint& p : touch.original)
+        if (p.frame < touch.start) c << p;
+    if (touch.start > 0) c << AutoPoint{touch.start - 1, valueAt(touch.original, touch.start - 1)};
+    c << thinned(touch, fps); // after the last key its value holds
+    return normalized(c, touch.target);
+}
+
+AutoCurve releasedCurve(const Touch& touch, int frame, double fps)
+{
+    if (touch.heard.isEmpty()) return touch.original;
+    AutoCurve rec = thinned(touch, fps);
+    const int end = std::max(frame, touch.heard.last().first);
+    if (rec.last().frame < end) rec << AutoPoint{end, rec.last().db}; // held until the release
+    AutoCurve c = touch.original;
+    // The glide back: from the release to the old curve glideBackFrames later (replaceRange's point after `to`)
+    replaceRange(c, touch.start, end + glideBackFrames(fps) - 1, rec, touch.target);
+    return c;
 }
 
 } // namespace Automation

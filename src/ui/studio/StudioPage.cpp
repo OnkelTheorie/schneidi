@@ -103,6 +103,10 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     fit->setToolTip(T("Das ganze Projekt in die Breite einpassen"));
     barLay->addSpacing(8);
     barLay->addWidget(fit);
+    // Write mode (touch): playing, a moved fader or pan knob writes the track's automation
+    auto* write = tool(T("Schreiben"), "studio_write",
+                       T("Schreibmodus: beim Abspielen schreiben Fader und Pan-Regler die Automation ihrer Spur; beim "
+                         "Loslassen gleitet der Wert zur Kurve zurück. Ein Durchlauf = ein Schritt zum Rückgängigmachen"));
     barLay = optionsLay; // the second row (tool() adds there now)
     // What the pen writes: the track's automation (a curve over the timeline's time, also between clips; it stays
     // when clips move) or the volume keyframes of the clips under the stroke (they move with their clip)
@@ -114,6 +118,15 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     auto* targetGroup = new QButtonGroup(this);
     targetGroup->addButton(penClip);
     targetGroup->addButton(penTrack);
+    // Which curve of the track (track mode): its level or its pan
+    barLay->addSpacing(8);
+    auto* autoVolume = tool(T("Pegel"), "studio_auto_volume", T("Punkte und Stift bearbeiten die Lautstärke-Automation der Spur"));
+    auto* autoPan = tool(T("Pan"), "studio_auto_pan",
+                         T("Punkte und Stift bearbeiten die Pan-Automation der Spur (oben rechts, Mitte Mitte, unten links)"));
+    auto* autoGroup = new QButtonGroup(this);
+    autoGroup->addButton(autoVolume);
+    autoGroup->addButton(autoPan);
+    autoVolume->setChecked(true);
     barLay->addSpacing(8);
     auto* smoothLabel = new QLabel(T("Glätten"));
     barLay->addWidget(smoothLabel);
@@ -144,10 +157,17 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     const bool clipTarget = QSettings().value("studio/penTarget").toString() == QLatin1String("clip");
     (clipTarget ? penClip : penTrack)->setChecked(true);
     m_tracks->setPenTarget(clipTarget ? StudioTracks::PenTarget::Clip : StudioTracks::PenTarget::Track);
-    connect(penClip, &QToolButton::toggled, this, [this](bool on) {
+    autoVolume->setEnabled(!clipTarget);
+    autoPan->setEnabled(!clipTarget);
+    connect(penClip, &QToolButton::toggled, this, [this, autoVolume, autoPan](bool on) {
+        autoVolume->setEnabled(!on); // clip keyframes are volume only
+        autoPan->setEnabled(!on);
         if (!on) return;
         m_tracks->setPenTarget(StudioTracks::PenTarget::Clip);
         QSettings().setValue("studio/penTarget", "clip");
+    });
+    connect(autoPan, &QToolButton::toggled, this, [this](bool on) {
+        m_tracks->setAutoTarget(on ? AutoTarget::Pan : AutoTarget::Volume);
     });
     connect(penTrack, &QToolButton::toggled, this, [this](bool on) {
         if (!on) return;
@@ -167,6 +187,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_top->addWidget(tracksBox); // the viewer comes in front of it (index 0) when the page shows
     m_top->setStretchFactor(0, 1);
     m_mixer = new StudioMixer(editor, engine);
+    connect(write, &QToolButton::toggled, m_mixer, &StudioMixer::setWriteMode); // off by default
     m_tools = new StudioTools(editor);
     m_mixer->setTools(m_tools);
     m_root->addWidget(m_top);
