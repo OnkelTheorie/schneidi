@@ -134,9 +134,10 @@ Plan plan(const Beats::Result& r, double songLength, const Options& o)
             return p;
         }
         double s0 = 0;
-        if (o.climaxAt >= 0 && haveDrop) s0 = std::clamp(drop - o.climaxAt, 0.0, songLength - T);
+        // (songLength may be up to kEps shorter than T: the upper bound never below 0, std::clamp needs lo <= hi)
+        if (o.climaxAt >= 0 && haveDrop) s0 = std::clamp(drop - o.climaxAt, 0.0, std::max(0.0, songLength - T));
         // The drop kept: it plays a third of the way in, the rest of it rings before the fade
-        else if (o.keepDrop && (drop < s0 || drop >= s0 + T)) s0 = std::clamp(drop - T / 3, 0.0, songLength - T);
+        else if (o.keepDrop && (drop < s0 || drop >= s0 + T)) s0 = std::clamp(drop - T / 3, 0.0, std::max(0.0, songLength - T));
         bool inBar = false;
         if (s0 > 0) {
             // On the nearest start window (before a bar one) at or before that

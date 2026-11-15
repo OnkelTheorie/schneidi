@@ -560,8 +560,13 @@ void MainWindow::buildActions()
                       tv->update();
                   });
     viewOpts->addSeparator();
-    makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
-    makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
+    // On the Studio page the keys zoom its tracks (their own view), elsewhere the timeline
+    const auto zoom = [this, tv](double factor) {
+        if (m_page == Page::Studio && m_studioPage) m_studioPage->tracks()->zoomBy(factor);
+        else tv->zoomBy(factor);
+    };
+    makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [zoom] { zoom(1.5); });
+    makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [zoom] { zoom(1 / 1.5); });
     // On the Studio page the key fits its tracks (its own view, the page's "Fit" button), elsewhere the timeline
     makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [this, tv] {
         if (m_page == Page::Studio && m_studioPage) m_studioPage->tracks()->fit();

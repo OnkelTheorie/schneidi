@@ -110,11 +110,20 @@ void TimelineView::emptyAreaMenu(const QPoint& globalPos)
     menu.exec(globalPos);
 }
 
+AutoTarget TimelineView::autoShown(int audioTrack) const
+{
+    const auto& audio = m_editor->project()->timeline().audio;
+    if (audioTrack < 0 || audioTrack >= audio.size()) return AutoTarget::Volume;
+    return m_panLanes.contains(audio[audioTrack].uid.value) ? AutoTarget::Pan : AutoTarget::Volume;
+}
+
 void TimelineView::setAutoShown(int audioTrack, AutoTarget target)
 {
-    if (autoShown(audioTrack) == target) return;
-    if (target == AutoTarget::Pan) m_panLanes.insert(audioTrack);
-    else m_panLanes.remove(audioTrack);
+    const auto& audio = m_editor->project()->timeline().audio;
+    if (audioTrack < 0 || audioTrack >= audio.size() || autoShown(audioTrack) == target) return;
+    const quint64 uid = audio[audioTrack].uid.value;
+    if (target == AutoTarget::Pan) m_panLanes.insert(uid);
+    else m_panLanes.remove(uid);
     update();
 }
 

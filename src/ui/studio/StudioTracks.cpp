@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollBar>
+#include <QUndoStack>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -66,12 +67,43 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
         update();
     });
     Project* project = m_editor->project();
+    m_shownAudio = project->timeline().audio;
     connect(project, &Project::timelineChanged, this, [this] {
         layoutLanes(); // a track more or less: lane heights and ranges, never zoom or scroll
-        update();
+        updateChangedLanes();
     });
     if (m_cache) connect(m_cache, &MediaCache::updated, this, qOverload<>(&QWidget::update));
     connect(m_editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
+}
+
+namespace {
+// What a lane shows of its track (the mixer-only parts - EQ, compressor, surround sends - are not drawn here)
+bool sameLane(const Track& a, const Track& b)
+{
+    return a.uid.value == b.uid.value && a.clips == b.clips && a.name == b.name && a.color == b.color
+           && a.locked == b.locked && a.muted == b.muted && a.solo == b.solo && a.volumeDb == b.volumeDb
+           && a.pan == b.pan && a.volumeAuto == b.volumeAuto && a.panAuto == b.panAuto;
+}
+} // namespace
+
+void StudioTracks::updateChangedLanes()
+{
+    // Every timeline change lands here (a fader drag: dozens a second): only lanes whose content changed are drawn
+    // anew; an EQ or compressor change, a video edit draw none
+    const QVector<Track>& now = m_editor->project()->timeline().audio;
+    const QVector<Track> before = std::exchange(m_shownAudio, now);
+    const auto anySolo = [](const QVector<Track>& v) {
+        return std::any_of(v.begin(), v.end(), [](const Track& t) { return t.solo; });
+    };
+    if (before.size() != now.size() || anySolo(before) != anySolo(now)) return update(); // all lanes change
+    QRegion dirty;
+    for (int i = 0; i < now.size(); ++i) {
+        if (sameLane(before[i], now[i])) continue;
+        if (before[i].uid.value != now[i].uid.value) return update(); // other tracks (moved, another project)
+        const QRect lane = laneRect(i);
+        dirty += QRect(0, lane.top(), width(), lane.height()); // header and lane
+    }
+    if (!dirty.isEmpty()) update(dirty);
 }
 
 void StudioTracks::setPlayhead(int frame)
@@ -154,6 +186,16 @@ void StudioTracks::fit()
     const int end = std::max(1, TimelineOps::endFrame(m_editor->project()->timeline()));
     const int w = std::max(1, clipArea().width() - 12);
     setView(double(w) / end, 0);
+}
+
+void StudioTracks::zoomBy(double factor)
+{
+    const QRect area = clipArea();
+    double x = xOf(m_playhead);
+    if (x < area.left() || x > area.right()) x = area.left() + area.width() / 2.0;
+    m_view.setZoomAround(m_view.pxPerFrame * factor, frameAt(x), x - kHeaderW);
+    syncScrollBars();
+    update();
 }
 
 QRect StudioTracks::clipArea() const
@@ -330,12 +372,12 @@ void StudioTracks::paintPart(QPainter& p)
         p.setPen(Qt::NoPen);
         p.drawPolygon(tri, 3);
     }
-    // The stroke being drawn
+    // The stroke being drawn (on the scale of the curve it writes: volume or pan)
     if (m_drag == Drag::Pen && m_stroke.size() > 1) {
         const QRect lane = laneRect(m_penTrack).adjusted(0, 4, 0, -4);
         QPainterPath path;
         for (int i = 0; i < m_stroke.size(); ++i) {
-            const QPointF pt(xOf(m_stroke[i].frame), lane.bottom() - VolumeDraw::posOf(m_stroke[i].db) * (lane.height() - 1));
+            const QPointF pt(xOf(m_stroke[i].frame), lane.bottom() - posOfValue(m_stroke[i].db) * (lane.height() - 1));
             if (i == 0) path.moveTo(pt);
             else path.lineTo(pt);
         }
@@ -738,8 +780,30 @@ void StudioTracks::setLiveTake(const Voiceover::LiveTake* take, int track)
     const bool newLane = takeOnNewTrack();
     m_take = take;
     m_takeTrack = take ? track : -1;
-    if (takeOnNewTrack() != newLane) layoutLanes(); // its temporary lane comes or goes
-    update();
+    if (takeOnNewTrack() != newLane) { // its temporary lane comes or goes
+        layoutLanes();
+        m_takeRect = takeRect();
+        return update();
+    }
+    // Every captured chunk lands here (many a second): only what the take grew by is drawn, with its right edge
+    // before (the border moves); a take that moved or ended: its old and new place
+    const QRect now = takeRect();
+    const QRect old = std::exchange(m_takeRect, now);
+    if (old.isEmpty() || now.isEmpty() || old.left() != now.left() || old.top() != now.top() || old.height() != now.height())
+        return update(old.united(now));
+    const int from = std::min(old.right(), now.right()) - 4, to = std::max(old.right(), now.right());
+    update(QRect(from, now.top(), to - from + 1, now.height()));
+}
+
+QRect StudioTracks::takeRect() const
+{
+    // What paintPart draws of the take (its body and the 2 px border), with a pixel or two to spare for rounding
+    if (!m_take || m_takeTrack < 0 || m_take->lengthFrames() <= 0) return {};
+    const QRect body = laneRect(m_takeTrack).adjusted(0, 4, 0, -4);
+    const double x0 = std::max<double>(kHeaderW, xOf(m_take->start()));
+    const double x1 = std::min<double>(clipArea().right(), xOf(m_take->end()));
+    if (x1 <= x0) return {};
+    return QRect(int(x0) - 2, body.top() - 2, int(x1 - x0) + 5, body.height() + 4);
 }
 
 bool StudioTracks::takeOnNewTrack() const
@@ -831,6 +895,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return QWidget::mousePressEvent(e);
     const QPoint pos = e->position().toPoint();
+    m_added = {};
     if (pos.y() < kRulerH && pos.x() >= kHeaderW) { // ruler: scrub
         m_drag = Drag::Scrub;
         emit seekRequested(std::max(0, int(std::lround(frameAt(pos.x())))));
@@ -868,9 +933,14 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
     if (m_tool == Tool::Points && !tl.audio[track].locked && onLine(track, pos)) {
         m_keyMerge = QString("studio-key-%1").arg(++m_keyDrags);
         m_editor->project()->closeMerge();
+        const int before = m_editor->project()->undoStack()->index();
         if (const KeyHit hit = addPointAt(track, pos); hit.valid()) {
             m_drag = Drag::Key;
             m_key = hit;
+            if (m_editor->project()->undoStack()->index() == before + 1) { // a new point (a double click may follow)
+                m_added = hit;
+                m_addedBefore = before;
+            }
             return;
         }
     }
@@ -891,6 +961,8 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
 {
     const QPoint pos = e->position().toPoint();
     m_hover = pos;
+    // A drag whose release went elsewhere (the page changed under the mouse): it ends here as on a release
+    if (m_drag != Drag::None && !(e->buttons() & Qt::LeftButton)) endDrag(pos, false);
     if (m_drag == Drag::Scrub) {
         emit seekRequested(std::max(0, int(std::lround(frameAt(std::max(kHeaderW, pos.x()))))));
     } else if (m_drag == Drag::Pen) {
@@ -921,8 +993,19 @@ void StudioTracks::mouseMoveEvent(QMouseEvent* e)
 void StudioTracks::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return QWidget::mouseReleaseEvent(e);
+    endDrag(e->position().toPoint(), true);
+}
+
+void StudioTracks::hideEvent(QHideEvent* e)
+{
+    QWidget::hideEvent(e);
+    endDrag({}, false); // hidden mid-drag (another page): ends as on a release (the stroke so far, the merge closed)
+}
+
+void StudioTracks::endDrag(const QPoint& pos, bool addPoint)
+{
     if (m_drag == Drag::Pen) {
-        addPenPoint(e->position().toPoint());
+        if (addPoint) addPenPoint(pos);
         const QVector<VolumeDraw::Point> stroke = std::exchange(m_stroke, {});
         m_drag = Drag::None;
         // One undo step per stroke; a click without dragging (or a stroke straight up and down) changes nothing
@@ -949,8 +1032,15 @@ void StudioTracks::mouseDoubleClickEvent(QMouseEvent* e)
     if (!hit.valid()) return;
     m_drag = Drag::None;
     m_key = {};
-    m_editor->project()->closeMerge();
+    Project* project = m_editor->project();
+    project->closeMerge();
+    // The point the press before just set (nothing else since): setting it and putting it at 0 dB = one undo step
+    const bool justAdded = m_added.valid() && hit.clipId == m_added.clipId && hit.track == m_added.track
+                           && hit.index == m_added.index && project->undoStack()->index() == m_addedBefore + 1;
+    const QString addText = project->undoStack()->undoText();
     resetPoint(hit);
+    if (justAdded) project->combineSteps(m_addedBefore, addText);
+    m_added = {};
 }
 
 bool StudioTracks::onLine(int track, const QPoint& pos) const

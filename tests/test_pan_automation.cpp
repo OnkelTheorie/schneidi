@@ -436,6 +436,35 @@ void testWriter()
     w.move(1, AutoTarget::Volume, 300, -20);
     w.endPass(310);
     CHECK_EQ(undo->index(), at);
+
+    // A jump forward while touching (a seek, more than a second): the stretch jumped over keeps its curve; what was
+    // played before goes in up to its last frame, a new touch starts after the jump. Held still while playing on
+    // (hold(), the mixer's tick) is no jump: the held value is written.
+    {
+        p.edit("ramp", [](Timeline& tl) {
+            tl.audio[0].volumeDb = 0;
+            tl.audio[0].volumeAuto = {{0, 0}, {1000, -20}};
+        });
+        const AutoCurve ramp = p.timeline().audio[0].volumeAuto;
+        for (int f = 25; f <= 50; ++f) w.move(0, AutoTarget::Volume, f, -3);
+        for (int f = 500; f <= 520; ++f) w.move(0, AutoTarget::Volume, f, -10); // jumped from 50 to 500
+        w.endPass(520);
+        const Track& t = p.timeline().audio[0];
+        CHECK(near(Automation::levelAt(t, 40), -3, 0.15));
+        Check::report(near(Automation::levelAt(t, 300), Automation::valueAt(ramp, 300), 0.05), "jumped-over stretch kept",
+                      __FILE__, __LINE__, QString("%1 vs %2").arg(Automation::levelAt(t, 300)).arg(Automation::valueAt(ramp, 300)));
+        CHECK(near(Automation::levelAt(t, 510), -10, 0.15));
+        undo->undo();
+        // Held: moves at 25..30, played on to 150 with the fader still, a move at 151
+        for (int f = 25; f <= 30; ++f) w.move(0, AutoTarget::Volume, f, -3);
+        for (int f = 31; f <= 150; f += 2) w.hold(f);
+        w.move(0, AutoTarget::Volume, 151, -4);
+        w.endPass(151);
+        const Track& h = p.timeline().audio[0];
+        Check::report(near(Automation::levelAt(h, 100), -3, 0.15), "held value written", __FILE__, __LINE__,
+                      QString::number(Automation::levelAt(h, 100)));
+        undo->undo();
+    }
 }
 
 QJsonObject cli(const QStringList& args)
@@ -618,6 +647,25 @@ void testTimelineView()
         CHECK(tv.view().pxPerFrame == view0.pxPerFrame && tv.view().leftFrame == view0.leftFrame
               && tv.view().scrollY == view0.scrollY);
         CHECK(project.timeline().audio[1].panAuto.isEmpty()); // display only: the project is untouched
+    }
+
+    // The choice stays with its track (Track::uid), not its index: a track inserted above moves it along, another
+    // project starts with the volume everywhere
+    {
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Pan);
+        editor.addTrack(TrackKind::Audio, 0);
+        QApplication::processEvents();
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Volume);
+        CHECK(tv.autoShown(2) == AutoTarget::Pan);
+        project.undoStack()->undo(); // the same track again (undo keeps its identity)
+        CHECK(tv.autoShown(1) == AutoTarget::Pan);
+        Timeline other; // tracks of their own (a project opened from a file)
+        other.video.resize(1);
+        other.audio.resize(2);
+        for (Track& t : other.audio) t.kind = TrackKind::Audio;
+        project.load(ProjectData{kFmt, 0, {}, {}, other, 1, 0});
+        QApplication::processEvents();
+        CHECK(tv.autoShown(0) == AutoTarget::Volume && tv.autoShown(1) == AutoTarget::Volume);
     }
 }
 

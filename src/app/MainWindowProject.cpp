@@ -495,7 +495,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
         const QString dir = QFileDialog::getExistingDirectory(this, T("Ordner mit den Medien wählen"),
                                                               QFileInfo(path).absolutePath());
         if (dir.isEmpty()) break;
-        const int found = ProjectFile::relink(&data, dir);
+        const int found = ProjectFile::relink(&data, dir, [&data](const QString& file) { return Engine::probe(data.format, file); });
         relinked += found;
         if (found == 0)
             QMessageBox::information(this, T("Medien fehlen"), T("In diesem Ordner wurden keine der Dateien gefunden."));

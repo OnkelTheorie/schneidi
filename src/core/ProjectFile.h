@@ -14,6 +14,7 @@
 #include <QLockFile>
 #include <QString>
 
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -104,8 +105,10 @@ QByteArray fingerprint(const QString& path);
 
 // Missing media: search for a file of the same name in a folder (recursively) and redirect all references. Of several
 // files of that name the one whose folders match most; several equally good ones: the file stays offline.
-// Returns the number of files found again.
-int relink(ProjectData* data, const QString& searchDir);
+// Returns the number of files found again. `probe` (Engine::probe; empty = not known): each file found is read, its
+// audio streams taken into the media list and channel routing the new file lacks dropped (fitSourceChannels: a clip
+// routed to channels 3/4 of a camera file relinked to a stereo file would play silence).
+int relink(ProjectData* data, const QString& searchDir, const std::function<MediaInfo(const QString&)>& probe = {});
 QStringList missingMedia(const ProjectData& data);
 // Media Pool files nothing of the project reads (core/ProjectRefs: clips, compositing nodes, titles, wipes, effect
 // files, brand kit), in pool order: missing, they cost nothing (the open dialog says so)

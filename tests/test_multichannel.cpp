@@ -206,6 +206,18 @@ void testCli(const QTemporaryDir& tmp, const QString& quad)
     // Too many channels / a channel the file lacks: refused
     CHECK(!ops(project, {QJsonObject{{"op", "route"}, {"clips", QJsonArray{id}}, {"channels", QJsonArray{1, 2, 3}}}}).value("ok").toBool());
     CHECK(!ops(project, {QJsonObject{{"op", "route"}, {"clips", QJsonArray{id}}, {"channels", 5}}}).value("ok").toBool());
+    // Copies onto one track that would overlap each other (A1's clip and its copy on "Funk" lie at the same time):
+    // refused, nothing changed
+    {
+        QJsonArray both;
+        for (const QJsonValue& t : cli({"info", project}).value("timeline").toObject().value("tracks").toArray())
+            for (const QJsonValue& c : t.toObject().value("clips").toArray()) both << c.toObject().value("id").toInt(); // (audio only)
+        CHECK_EQ(int(both.size()), 2);
+        const int tracksBefore = int(cli({"info", project}).value("timeline").toObject().value("tracks").toArray().size());
+        const QJsonObject r = ops(project, {QJsonObject{{"op", "route"}, {"clips", both}, {"channels", "1-2"}, {"track", "new"}}});
+        CHECK(!r.value("ok").toBool() && QJsonDocument(r).toJson().contains("overlap"));
+        CHECK_EQ(int(cli({"info", project}).value("timeline").toObject().value("tracks").toArray().size()), tracksBefore);
+    }
     // 5.1 and the panner
     CHECK(ops(project, {QJsonObject{{"op", "format"}, {"channels", "5.1"}},
                         QJsonObject{{"op", "mixer"}, {"track", "A1"}, {"depth", 100}, {"lfe_db", -6}}}).value("ok").toBool());
@@ -913,6 +925,105 @@ void testApp(const QTemporaryDir& tmp, const QString& video)
     p->setFormat(st);
     QApplication::processEvents();
     CHECK(!codec->isVisibleTo(deliver));
+
+    // Only the channels change (stereo -> 5.1 while playing): the picture side keeps everything (no pause, the
+    // engine's picture state and caches stay), the mixer takes the new channels with the next built timeline
+    {
+        int levelCount = 0;
+        const auto conn = QObject::connect(&engine, &Engine::audioSpeakerLevels, [&](const QVector<float>& db) {
+            levelCount = int(db.size());
+        });
+        const auto wait = [](const std::function<bool()>& ok, int ms) {
+            QElapsedTimer t;
+            t.start();
+            while (!ok() && t.elapsed() < ms) {
+                QEventLoop loop;
+                QTimer::singleShot(20, &loop, &QEventLoop::quit);
+                loop.exec();
+            }
+            return ok();
+        };
+        engine.play();
+        const int groups = int(p->timeline().audio.size()) + 1;
+        if (CHECK(wait([&] { return !std::isnan(engine.soundFrame()) && levelCount == 2 * groups; }, 5000))) {
+            ProjectFormat f6 = p->format();
+            f6.audioChannels = 6;
+            p->setFormat(f6);
+            QApplication::processEvents();
+            CHECK(!std::isnan(engine.soundFrame())); // still playing
+            Check::report(wait([&] { return levelCount == 6 * groups; }, 5000), "the mixer takes the 5.1 channels",
+                          __FILE__, __LINE__, QString("%1 levels, %2 groups").arg(levelCount).arg(groups));
+        }
+        engine.pause();
+        QObject::disconnect(conn);
+    }
+}
+
+// Relink (media moved) to a file with fewer channels: routing to channels it lacks is dropped (else silence)
+void testRelinkRouting(const QTemporaryDir& tmp, const QString& stereo)
+{
+    // Relink: cam.wav was a 4-channel file routed to 3/4; the one found is stereo
+    {
+        ProjectData d;
+        d.format = kFmt;
+        MediaInfo m;
+        m.path = "/gone/away/cam.wav";
+        m.hasAudio = true;
+        m.length = 50;
+        m.audioStreams = {AudioStreamInfo{4, {}, true}};
+        d.media << m;
+        d.timeline.audio.resize(1);
+        d.timeline.audio[0].kind = TrackKind::Audio;
+        Clip c;
+        c.id = 1;
+        c.mediaPath = m.path;
+        c.out = 24;
+        c.sourceChannels = {2, 3};
+        d.timeline.audio[0].clips << c;
+        d.timeline.audio[0].clips << c;
+        d.timeline.audio[0].clips[1].id = 2;
+        d.timeline.audio[0].clips[1].start = 30;
+        d.timeline.audio[0].clips[1].sourceChannels = {1};
+        QDir().mkpath(tmp.filePath("found"));
+        CHECK(QFile::copy(stereo, tmp.filePath("found/cam.wav")));
+        ProjectData plain = d;
+        CHECK_EQ(ProjectFile::relink(&plain, tmp.filePath("found")), 1);
+        CHECK(plain.timeline.audio[0].clips[0].sourceChannels == QVector<int>({2, 3})); // without probing: as before
+        CHECK_EQ(ProjectFile::relink(&d, tmp.filePath("found"),
+                                     [](const QString& f) { return Engine::probe(kFmt, f); }), 1);
+        const Clip& a = d.timeline.audio[0].clips[0];
+        const Clip& b = d.timeline.audio[0].clips[1];
+        CHECK(a.mediaPath == tmp.filePath("found/cam.wav") && a.sourceChannels.isEmpty());
+        CHECK(b.sourceChannels == QVector<int>({1})); // channel 2 of the stereo file is there
+        CHECK(d.media.value(0).audioStreams.value(0).channels == 2);
+    }
+}
+
+// Read "as the source" (Reader::Options channels 0: waveforms, room tone, sound sync): six or eight channels that are
+// not 5.1/7.1 keep their own order - a 6.0 file's back centre (channel 4) stays channel 4, as the playback's routing
+// counts it, not remixed into a 5.1 back pair. hexagonal and 7.1(wide) the same way.
+void testSourceLayout(const QTemporaryDir& tmp)
+{
+    struct Case { const char* layout; int channels; int tone; };
+    for (const Case& k : {Case{"6.0", 6, 3}, Case{"hexagonal", 6, 5}, Case{"7.1(wide)", 8, 6}}) {
+        QStringList exprs;
+        for (int c = 0; c < k.channels; ++c) exprs << (c == k.tone ? QStringLiteral("0.5*sin(2*PI*440*t)") : QStringLiteral("0"));
+        const QString file = Check::makeMedia(
+            tmp.filePath(QString("layout-%1.wav").arg(QString(k.layout).remove('(').remove(')'))),
+            {"-f", "lavfi", "-i", QString("aevalsrc=%1:s=48000:d=1:c=%2").arg(exprs.join('|'), k.layout), "-c:a", "pcm_s16le"});
+        if (!CHECK(!file.isEmpty())) continue;
+        const auto reader = Audio::Reader::open(file, 0, Audio::Reader::Options{48000, 0});
+        if (!CHECK(reader) || !CHECK_EQ(reader->channels(), k.channels)) continue;
+        std::vector<std::vector<float>> buf(size_t(k.channels), std::vector<float>(24000));
+        std::vector<float*> out;
+        for (auto& b : buf) out.push_back(b.data());
+        reader->read(0, 24000, out.data());
+        int loud = -1, count = 0;
+        for (int c = 0; c < k.channels; ++c)
+            if (rms(buf[size_t(c)]) > 0.05) loud = c, ++count;
+        Check::report(count == 1 && loud == k.tone, "source order kept", __FILE__, __LINE__,
+                      QString("%1: tone on %2 (%3 loud), want %4").arg(k.layout).arg(loud).arg(count).arg(k.tone));
+    }
 }
 
 // Waveform of a routed clip: only its channels
@@ -1183,6 +1294,8 @@ int main(int argc, char** argv)
     if (!CHECK(!quad.isEmpty() && !stereo.isEmpty() && !five.isEmpty() && !bass.isEmpty() && !tone1k.isEmpty()))
         return Check::result();
     testRouting(quad);
+    testSourceLayout(tmp);
+    testRelinkRouting(tmp, stereo);
     testSurroundMix(stereo, five, bass);
     testLoudness(tone1k);
     {

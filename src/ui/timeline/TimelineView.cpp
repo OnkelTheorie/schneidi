@@ -80,8 +80,10 @@ QVector<TimelineView::AiArrow> TimelineView::aiArrows() const
                         : r.left() > view.right() ? Qt::RightEdge
                         : r.bottom() < view.top() ? Qt::TopEdge
                                                   : Qt::BottomEdge;
-        const QPoint at(std::clamp(r.center().x(), view.left() + 7, view.right() - 7),
-                        std::clamp(r.center().y(), view.top() + 7, view.bottom() - 7));
+        // 7 px in from the edges; a view narrower than 14 px: its middle (std::clamp needs lo <= hi)
+        const auto inside = [](int v, int lo, int hi) { return lo <= hi ? std::clamp(v, lo, hi) : (lo + hi) / 2; };
+        const QPoint at(inside(r.center().x(), view.left() + 7, view.right() - 7),
+                        inside(r.center().y(), view.top() + 7, view.bottom() - 7));
         for (AiArrow& a : out) // one arrow per spot
             if (a.edge == edge && (a.at - at).manhattanLength() < 10) {
                 a.strength = std::max(a.strength, strength);

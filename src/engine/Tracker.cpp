@@ -67,8 +67,9 @@ PointTracker::PointTracker(const Gray& first, const QRectF& region)
 {
     if (first.width <= 0 || first.height <= 0) return;
     // Template = the region, kept inside the picture and at least kTemplateMin pixels
-    const int tw = std::clamp(int(std::lround(region.width())), kTemplateMin, first.width);
-    const int th = std::clamp(int(std::lround(region.height())), kTemplateMin, first.height);
+    // (a picture smaller than kTemplateMin: all of it - std::clamp needs lo <= hi)
+    const int tw = std::clamp(int(std::lround(region.width())), std::min(kTemplateMin, first.width), first.width);
+    const int th = std::clamp(int(std::lround(region.height())), std::min(kTemplateMin, first.height), first.height);
     const int x0 = std::clamp(int(std::lround(region.center().x() - tw / 2.0)), 0, first.width - tw);
     const int y0 = std::clamp(int(std::lround(region.center().y() - th / 2.0)), 0, first.height - th);
     m_tw = tw;
