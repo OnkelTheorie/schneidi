@@ -45,7 +45,9 @@ DIST="$ROOT/dist"
 if [ ! -x "$FFMPEG_PREFIX/bin/ffmpeg" ] || [ ! -f "$FFMPEG_PREFIX/share/licenses/ffmpeg/LICENSE.md" ] ||
     [ "$(cat "$FFMPEG_PREFIX/share/schneidi/ffmpeg-build.txt" 2>/dev/null)" != "$("$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" --stamp)" ] ||
     find "$FFMPEG_PREFIX/lib" -name 'libpostproc*' 2>/dev/null | grep -q .; then
-    FFMPEG_WORK="${FFMPEG_WORK:-$(dirname "$FFMPEG_PREFIX")}" "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+    # FFMPEG_WORK (download, sources, logs) defaults to build-ffmpeg*/ in the project (build-ffmpeg-lgpl.sh); the
+    # container build sets it under build-docker/. Never next to FFMPEG_PREFIX: a prefix like /opt/ffmpeg would fill /opt.
+    "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
 fi
 # A prefix of the other variant (FFMPEG_PREFIX given by hand) would give a package that is not what its name says
 if [ "$GPL_ENCODERS" = 1 ]; then
