@@ -28,6 +28,9 @@ public:
     // Where the threshold / ratio point is drawn (tests)
     QPointF thresholdPoint() const;
     QPointF endPoint() const;
+    // The reading in the top left corner ("-20 dB  4,0:1") and its box (drawn on the background, no grid line through it)
+    QString labelText() const;
+    QRectF labelRect() const;
 
 protected:
     void paintEvent(QPaintEvent*) override;
