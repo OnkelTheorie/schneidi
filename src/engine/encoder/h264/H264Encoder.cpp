@@ -7053,9 +7053,10 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     if (useEst) {
         static const bool kZeroQuadB = !std::getenv("H264_ZEROQ") || std::atoi(std::getenv("H264_ZEROQ")) != 0;
         static const bool kZero8B = !std::getenv("H264_ZERO8") || std::atoi(std::getenv("H264_ZERO8")) != 0;
-        // Experiment H264_BPRUNE = f (0 = off): a candidate whose estimate (with its vector and
-        // type bits as the CAVLC count) is above f times the best one's is not coded for real.
-        static const double kBPrune = std::getenv("H264_BPRUNE") ? std::atof(std::getenv("H264_BPRUNE")) : 0.0;
+        // A candidate whose estimate (with its vector and type bits as the CAVLC count) is above
+        // kBPrune times the best one's is not coded for real. Measured (fixed QP, CS2, 3 B forced):
+        // 1.1 +0.1 % of the B pictures' bits for -2.1 % instructions. H264_BPRUNE overrides, 0 = off.
+        static const double kBPrune = std::getenv("H264_BPRUNE") ? std::atof(std::getenv("H264_BPRUNE")) : 1.1;
         InterResidual r8[kMaxBCands + 1], r4[kMaxBCands + 1];
         double jBest[kMaxBCands + 1];
         bool use8[kMaxBCands + 1];
