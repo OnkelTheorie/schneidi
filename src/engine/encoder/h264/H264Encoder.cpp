@@ -151,6 +151,15 @@ constexpr int kBiRefineLong = 2;
 // many lambda (as for P pictures, H264_SPLITSKIP). 0 = always.
 const double gBSplitSkip = std::getenv("H264_BSPLITSKIP") ? std::atof(std::getenv("H264_BSPLITSKIP")) : 200.0;
 const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::getenv("H264_BIREFINE_NEAR")) : 1.15;
+// B pictures: candidates coded for real (direct aside): the best 16x16, the best split and, with
+// H264_BRD, the other choices of lists of the 16x16 layout.
+constexpr int kMaxBCands = 4;
+const double gBRd = std::getenv("H264_BRD") ? std::atof(std::getenv("H264_BRD")) : 0.0;
+// B pictures: every candidate coded with both transforms (else the 8x8 one only for the winner of the 4x4 codings).
+const bool gBT8All = std::getenv("H264_BT8ALL") && std::atoi(std::getenv("H264_BT8ALL")) != 0;
+// The lookahead's vectors along the planned references as start points of the motion search:
+// 1 = B pictures, 2 = also P pictures after a run of B pictures (H264_LASTART).
+const int gLaStart = std::getenv("H264_LASTART") ? std::atoi(std::getenv("H264_LASTART")) : 0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -1607,7 +1616,7 @@ void Encoder::noteGate(const LookaheadFrame& f)
 // nothing more comes in.
 void Encoder::ensureBSearches()
 {
-    if (!useB() || (!cfg_.mbtree && cfg_.bitrateKbps <= 0))
+    if (!useB() || (!cfg_.mbtree && cfg_.bitrateKbps <= 0 && !gLaStart))
         return;
     const int maxB = cfg_.bframes;
     const size_t count = queue_.size();
@@ -1651,6 +1660,41 @@ void Encoder::ensureBSearches()
         } catch (const std::system_error&) { // no thread: they run in joinBSearches
         }
     }
+}
+
+// The lookahead's vectors of a picture into its planned references (complete here: the searches
+// are joined) for the motion search's start points; half-pel of the half picture = full-pel.
+void Encoder::takeLookaheadVectors(const LookaheadFrame& frame, FrameCoder& fc, int type) const
+{
+    for (auto& l : fc.laMv_)
+        for (auto& v : l)
+            v.clear();
+    if (gLaStart <= 0 || type == 0 || (type == 1 && (gLaStart < 2 || frame.refDist < 2)))
+        return;
+    auto take = [&](int list, const std::vector<int16_t>& mx, const std::vector<int16_t>& my) {
+        if (mx.empty() || mx.size() != my.size())
+            return;
+        fc.laMv_[list][0].resize(mx.size());
+        fc.laMv_[list][1].resize(my.size());
+        for (size_t i = 0; i < mx.size(); ++i) {
+            fc.laMv_[list][0][i] = int16_t(mx[i] * 4);
+            fc.laMv_[list][1][i] = int16_t(my[i] * 4);
+        }
+    };
+    const int a = frame.refDist;
+    if (a == 1)
+        take(0, frame.mvx, frame.mvy);
+    else if (size_t(a) < frame.fwd.size() && frame.fwd[size_t(a)].valid())
+        take(0, frame.fwd[size_t(a)].mvx, frame.fwd[size_t(a)].mvy);
+    if (type != 2)
+        return;
+    const int c = frame.nextDist;
+    for (const LookaheadFrame& n : queue_)
+        if (n.index == frame.index + c) {
+            if (size_t(c) < n.back.size() && n.back[size_t(c)].valid())
+                take(1, n.back[size_t(c)].mvx, n.back[size_t(c)].mvy);
+            break;
+        }
 }
 
 void Encoder::runBSearches(int threads)
@@ -3023,6 +3067,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (bMode) {
             planQueue(); // also the pictures that joined since the decision
             joinBSearches();
+            takeLookaheadVectors(frame, fc, type);
         } else
             markKeyframes();
         frame.keyframe = idr;
@@ -5823,6 +5868,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         const RefPic& R0 = *refs_[0];
         if (!prev_ && !R0.ref.empty() && R0.ref[o] == 0)
             starts.push_back({R0.mvx[o], R0.mvy[o]});
+        if (!laMv_[0][0].empty())
+            starts.push_back({laMv_[0][0][mbIndex], laMv_[0][1][mbIndex]});
     }
     int subpelNow = 2; // sub-pel refinement in search(): 2 quarter, 1 half, 0 none
     // Experiment H264_COARSE = factor (0 = off): a start point as good as the full-pel cost the
@@ -6607,6 +6654,9 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         int use[4] = {};       // per partition: 1 list 0, 2 list 1, 3 both; 0 = direct (B_8x8 only)
         int mv[4][2][2] = {};  // [partition][list][x, y]
         int mvp[4][2][2] = {}; // the predictors the vector differences are coded against
+        // 16x16 only: the cost of each choice of lists (1 list 0, 2 list 1, 3 both) and its vectors.
+        double alt[4] = {1e300, 1e300, 1e300, 1e300};
+        int altMv[4][2][2] = {};
     };
     const bool none[16] = {};
     std::pair<int, int> starts[2][8];
@@ -6620,6 +6670,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             if (n.ref == 0)
                 add(n.mvx, n.mvy);
         }
+        if (!laMv_[list][0].empty())
+            add(laMv_[list][0][mbIndex], laMv_[list][1][mbIndex]);
     }
     {
         const RefPic& col = *refs1_[0];
@@ -6724,9 +6776,23 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 for (int ox = 0; ox < w; ox += 8)
                     satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, av + oy * 16 + ox, 16);
             double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
+            if (shape == 0) {
+                for (int u = 1; u <= 3; ++u)
+                    for (int list = 0; list < 2; ++list)
+                        for (int k = 0; k < 2; ++k)
+                            c.altMv[u][list][k] = c.mv[0][list][k];
+                c.alt[1] = cost[0];
+                c.alt[2] = cost[1];
+            }
             if (biRefine_ > 0 && costBi < gBiRefineNear * std::min(cost[0], cost[1])) {
                 int m0[2] = {c.mv[p][0][0], c.mv[p][0][1]}, m1[2] = {c.mv[p][1][0], c.mv[p][1][1]};
                 costBi = refineBi(P, m0, m1, c.mvp[p][0], c.mvp[p][1], a, b, costBi);
+                if (shape == 0) {
+                    c.altMv[3][0][0] = m0[0];
+                    c.altMv[3][0][1] = m0[1];
+                    c.altMv[3][1][0] = m1[0];
+                    c.altMv[3][1][1] = m1[1];
+                }
                 if (costBi < cost[0] && costBi < cost[1]) {
                     c.mv[p][0][0] = m0[0];
                     c.mv[p][0][1] = m0[1];
@@ -6734,6 +6800,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                     c.mv[p][1][1] = m1[1];
                 }
             }
+            if (shape == 0)
+                c.alt[3] = costBi;
             c.use[p] = costBi < cost[0] && costBi < cost[1] ? 3 : cost[0] <= cost[1] ? 1 : 2;
             total += c.use[p] == 3 ? costBi : cost[c.use[p] - 1];
             // Later partitions predict their vectors from this one.
@@ -6749,6 +6817,9 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             c.bType = 4 + 2 * kPair[c.use[0]][c.use[1]] + (shape - 1);
         }
         c.cost = total + lambdaSad * typeBits(c.bType);
+        if (shape == 0)
+            for (int u = 1; u <= 3; ++u)
+                c.alt[u] += lambdaSad * typeBits(u);
         return c;
     };
     // B_8x8: per 8x8 block the direct prediction (sub_mb_type B_Direct_8x8, no vector coded) or
@@ -6805,7 +6876,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         return c;
     };
     // The 16x16 candidate and, where its estimate is better, the best split one (both are coded for real).
-    Cand cands[2];
+    Cand cands[kMaxBCands];
     cands[0] = tryShape(0);
     int candCount = 1;
     if (cfg_.effort > 0 && gBParts && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
@@ -6822,11 +6893,29 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         if (cands[1].cost < cands[0].cost)
             candCount = 2;
     }
-    const double estSearch = candCount == 2 ? cands[1].cost : cands[0].cost;
+    double estSearch = candCount == 2 ? cands[1].cost : cands[0].cost;
+    // Rate-distortion choice among the estimates (H264_BRD = factor, 0 = off): every candidate
+    // whose SATD estimate is within the factor of the best one is coded for real - the other
+    // choices of lists of the 16x16 layout and the best split even where it estimates worse.
+    if (gBRd > 0) {
+        const double lim = gBRd * estSearch;
+        if (candCount == 1 && cands[1].count > 0 && cands[1].cost < lim)
+            candCount = 2;
+        for (int u = 1; u <= 3; ++u) {
+            if (u == cands[0].use[0] || cands[0].alt[u] >= lim || candCount >= kMaxBCands)
+                continue;
+            Cand v = cands[0];
+            v.use[0] = u;
+            v.bType = u;
+            v.cost = cands[0].alt[u];
+            std::memcpy(v.mv[0], cands[0].altMv[u], sizeof(v.mv[0]));
+            cands[candCount++] = v;
+        }
+    }
 
     // Codes the direct prediction (which = 0) or a searched candidate (1, 2) with its residual;
     // leaves its state in the macroblock and returns SSD + lambda * bits.
-    uint8_t clp[2][256], ccp[2][2][64];
+    uint8_t clp[kMaxBCands][256], ccp[kMaxBCands][2][64];
     for (int k = 0; k < candCount; ++k)
         for (int p = 0; p < cands[k].count; ++p) {
             const Part& P = kPart[cands[k].shape][p];
@@ -6845,7 +6934,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         uint8_t recU[64], recV[64];
         ChromaMb ch;
     };
-    ChromaCache chromaCache[3];
+    ChromaCache chromaCache[kMaxBCands + 1];
     bool sentDelta = false;
     double lastPsy = 0; // psy cost of the coding encodeB did last
     auto encodeB = [&](int which, MbOut& io, bool t8, double fineLambda) {
@@ -6906,20 +6995,23 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     bool chosenDelta = sentDelta;
     MbState interState;
     saveMb(mbx, mby, interState);
-    for (int which = 1; which <= candCount; ++which) {
-        MbOut candBits;
-        const double costCand = encodeB(which, candBits, false, -1.0);
-        if (costCand < costInter) {
-            costInter = costCand;
-            bestPsy = lastPsy;
-            chosenDelta = sentDelta;
-            interBits = std::move(candBits);
-            saveMb(mbx, mby, interState);
-            bestWhich = which;
+    const bool t8All = gBT8All && useT8() && cfg_.effort > 0;
+    for (int which = 0; which <= candCount; ++which)
+        for (int t = which ? 0 : 1; t < (t8All ? 2 : 1); ++t) {
+            MbOut candBits;
+            const double costCand = encodeB(which, candBits, t == 1, -1.0);
+            if (costCand < costInter) {
+                costInter = costCand;
+                bestPsy = lastPsy;
+                chosenDelta = sentDelta;
+                interBits = std::move(candBits);
+                saveMb(mbx, mby, interState);
+                bestWhich = which;
+                bestT8 = t == 1;
+            }
         }
-    }
     // 8x8 transform for the best of them (High profile).
-    if (useT8() && cfg_.effort > 0) {
+    if (useT8() && cfg_.effort > 0 && !t8All) {
         MbOut t8Bits;
         const double costT8 = encodeB(bestWhich, t8Bits, true, -1.0);
         if (costT8 < costInter) {

@@ -365,6 +365,7 @@ private:
     std::exception_ptr bSearchError_;
     void ensureBSearches();
     void runBSearches(int threads);
+    void takeLookaheadVectors(const LookaheadFrame& frame, FrameCoder& fc, int type) const;
     void joinBSearches();
     bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
     int gateAt(int index) const;
