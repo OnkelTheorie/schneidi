@@ -29,21 +29,25 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 // shifts: (from frame, offset) - a clip moves by the sum of the offsets whose frame is <= its start.
 // If a track would overwrite a clip that stays (or slide before frame 0), it stays
 // entirely put - never overwrite.
-// What happens to timeline markers in time a ripple takes out: only removing real content (ripple delete, ripple trim
-// of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap or trimming clips for a
-// transition moves them to the cut point (they mark a moment, not the removed content).
+// What happens to timeline markers and notes in time a ripple takes out: only removing real content (ripple delete,
+// ripple trim of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap or trimming clips for
+// a transition moves them to the cut point (they mark a moment, not the removed content). Story sections get shorter
+// either way (see rippleAnnotations).
 enum class MarkerCut { Delete, MoveToCut };
-// Timeline markers follow (rippleMarkers) with `markerShifts` if given (ripple trim: the trimmed clip's content),
-// else with `shifts`.
+// Timeline markers, notes and story sections follow (rippleAnnotations) with `markerShifts` if given (ripple trim:
+// the trimmed clip's content), else with `shifts`.
 void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
                   const QVector<QPair<int, int>>* markerShifts = nullptr, MarkerCut markerCut = MarkerCut::Delete);
-// Timeline markers follow a ripple (shifts as in rippleTracks, in frames before the edit), but only when it moves
-// the whole timeline: if a track outside `moving` (locked, or held by an overlap) has a clip that ends after the
-// first edit point, they all stay - they belong to the timeline, not to one track. Markers in time taken out
-// [from + offset, from) go (MarkerCut::Delete) or land on the cut point (MoveToCut), except one exactly at its start
-// (stays); markers from `from` on move by the offsets. Equal markers merge.
-void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving,
-                   MarkerCut markerCut = MarkerCut::Delete);
+// The timeline's own annotations - markers, notes (TimelineNote::at) and story sections - follow a ripple (shifts as
+// in rippleTracks, in frames before the edit), but only when it moves the whole timeline: if a track outside
+// `moving` (locked, or held by an overlap) has a clip that ends after the first edit point, they all stay - they
+// belong to the timeline, not to one track. Markers and notes in time taken out [from + offset, from) go
+// (MarkerCut::Delete) or land on the cut point (MoveToCut), except one exactly at its start (stays); those from
+// `from` on move by the offsets. Equal markers merge (notes keep their own). A section's edges move the same way but
+// always land on the cut point: time taken out shortens it, a section only in that time goes; time inserted at an
+// edge joins the section that ends there.
+void rippleAnnotations(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving,
+                       MarkerCut markerCut = MarkerCut::Delete);
 // How far (frames to the left) the other tracks can move up from `from` without overwriting
 // (unlocked subtitle tracks count too)
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip);

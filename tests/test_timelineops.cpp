@@ -620,7 +620,7 @@ int main(int argc, char** argv)
         CHECK_EQ(findClip(tl, 3)->start, 50);
         CHECK_EQ(tl.markers, M({20, 50, 110}));
         tl.markers = {55, 140};
-        rippleMarkers(tl, {{100, -20}, {60, -10}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, MarkerCut::MoveToCut);
+        rippleAnnotations(tl, {{100, -20}, {60, -10}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, MarkerCut::MoveToCut);
         CHECK_EQ(tl.markers, M({50, 110})); // each range to its own cut, the offsets add up
         // ... a locked track holding content later keeps them, as for every ripple
         tl = tracks(1, 1);
@@ -649,13 +649,13 @@ int main(int argc, char** argv)
         applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {2}, {}, Edge::Start}, 10, kSrc, MarkerCut::MoveToCut);
         CHECK_EQ(tl.markers, M({50, 60, 90}));
 
-        // Insert (rippleMarkers with the tracks that moved): from the insert point on, markers move
+        // Insert (rippleAnnotations with the tracks that moved): from the insert point on, markers move
         tl = tracks(1, 1);
         tl.video[0].clips << mk(1, "a", 0, 100);
         tl.markers = {49, 50, 60};
         Ids gen;
         insertGap(tl, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, 50, 20, gen.gen(), gen.gen());
-        rippleMarkers(tl, {{50, 20}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}});
+        rippleAnnotations(tl, {{50, 20}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}});
         CHECK_EQ(tl.markers, M({49, 70, 80}));
         // ... a locked track with a clip across the insert point keeps them
         tl = tracks(1, 1);
@@ -664,13 +664,140 @@ int main(int argc, char** argv)
         tl.audio[0].locked = true;
         tl.markers = {49, 50, 60};
         insertGap(tl, {{TrackKind::Video, 0}}, 50, 20, gen.gen(), gen.gen());
-        rippleMarkers(tl, {{50, 20}}, {{TrackKind::Video, 0}});
+        rippleAnnotations(tl, {{50, 20}}, {{TrackKind::Video, 0}});
         CHECK_EQ(tl.markers, M({49, 50, 60}));
         // A moving ripple (ripple overwrite with a longer clip, retime) without markers: nothing to do
         tl = three();
         tl.markers.clear();
         rippleTracks(tl, {{100, 20}}, {});
         CHECK(tl.markers.isEmpty());
+    }
+
+    // Notes and story sections follow ripples by the markers' rules (rippleAnnotations, same code path)
+    {
+        using Sec = QVector<QPair<int, int>>;
+        auto note = [](int id, int at) { return TimelineNote{id, at, QString("n%1").arg(id), false}; };
+        auto notesAt = [](const Timeline& tl) {
+            QVector<QPair<int, int>> out; // (id, at)
+            for (const TimelineNote& n : tl.notes) out << qMakePair(n.id, n.at);
+            return out;
+        };
+        auto secs = [](const Timeline& tl) {
+            Sec out;
+            for (const StorySection& s : tl.sections) out << qMakePair(s.from, s.to);
+            return out;
+        };
+        auto three = [&] {
+            Timeline tl = tracks(2, 1);
+            tl.video[0].clips << mk(1, "a", 0, 50) << mk(2, "b", 50, 50, 50) << mk(3, "c", 100, 50, 100);
+            tl.notes = {note(1, 10), note(2, 50), note(3, 60), note(4, 99), note(5, 100), note(6, 140)};
+            tl.sections = {StorySection{StoryKind::Hook, {}, 0, 60}, StorySection{StoryKind::Build, "mid", 60, 90},
+                           StorySection{StoryKind::Resolution, {}, 90, 150}};
+            return tl;
+        };
+        // Ripple delete (content removed): before stays, a note at the cut start stays, inside goes, after moves up;
+        // sections get shorter, one only inside goes, one starting inside starts at the cut
+        Timeline tl = three();
+        rippleDelete(tl, {2});
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 10}, {2, 50}, {5, 50}, {6, 90}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 50}, {50, 100}}));
+        CHECK(tl.sections[0].kind == StoryKind::Hook && tl.sections[1].kind == StoryKind::Resolution);
+        CHECK_EQ(tl.notes[3].text, QString("n6"));
+        // ... a section reaching over the cut gets shorter by the time taken out
+        tl = three();
+        tl.sections = {StorySection{StoryKind::Build, {}, 20, 120}};
+        rippleDelete(tl, {2});
+        CHECK_EQ(secs(tl), (Sec{{20, 70}}));
+        // Deleting after everything: nothing changes (also not the order or the ids)
+        tl = three();
+        tl.video[0].clips << mk(4, "d", 150, 30, 150);
+        const Timeline kept = tl;
+        rippleDelete(tl, {4});
+        CHECK(tl.notes == kept.notes && tl.sections == kept.sections);
+        // Deleting before everything: all move up, the first section starts at 0
+        tl = three();
+        rippleDelete(tl, {1});
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{2, 0}, {3, 10}, {4, 49}, {5, 50}, {6, 90}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 10}, {10, 40}, {40, 100}}));
+        // A locked track with content after the cut: notes and sections stay
+        tl = three();
+        tl.audio[0].clips << mk(9, "s", 0, 150);
+        tl.audio[0].locked = true;
+        rippleDelete(tl, {2});
+        CHECK_EQ(findClip(tl, 3)->start, 50);
+        CHECK(tl.notes == three().notes && tl.sections == three().sections);
+        // ... an empty locked track does not hold them
+        tl = three();
+        tl.video[1].locked = true;
+        rippleDelete(tl, {2});
+        CHECK_EQ(secs(tl), (Sec{{0, 50}, {50, 100}}));
+
+        // Closing an empty gap (MoveToCut): notes in the gap land on the cut point (they keep their own, no merging),
+        // sections shrink to the cut, one only in the gap goes
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 50) << mk(3, "c", 80, 50);
+        tl.notes = {note(1, 20), note(2, 55), note(3, 79), note(4, 80), note(5, 140)};
+        tl.sections = {StorySection{StoryKind::Hook, {}, 0, 55}, StorySection{StoryKind::Free, {}, 60, 70},
+                       StorySection{StoryKind::Build, {}, 70, 130}};
+        rippleTracks(tl, {{80, -30}}, {}, nullptr, MarkerCut::MoveToCut);
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 20}, {2, 50}, {3, 50}, {4, 50}, {5, 110}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 50}, {50, 100}}));
+        // ... with a locked track holding content later: all stay
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 50) << mk(3, "c", 80, 50);
+        tl.audio[0].clips << mk(9, "s", 0, 150);
+        tl.audio[0].locked = true;
+        tl.notes = {note(1, 60)};
+        tl.sections = {StorySection{StoryKind::Hook, {}, 0, 100}};
+        rippleTracks(tl, {{80, -30}}, {}, nullptr, MarkerCut::MoveToCut);
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 60}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 100}}));
+
+        // Ripple trim, end: the trimmed-off tail takes its notes and shortens its section, the rest moves
+        tl = three();
+        tl.notes = {note(1, 45), note(2, 50), note(3, 70)};
+        tl.sections = {StorySection{StoryKind::Hook, {}, 0, 50}, StorySection{StoryKind::Build, {}, 50, 150}};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc);
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{2, 40}, {3, 60}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 40}, {40, 140}}));
+        // ... longer: the section that ends there grows with the clip
+        tl = three();
+        tl.notes = {note(1, 49), note(2, 50)};
+        tl.sections = {StorySection{StoryKind::Hook, {}, 0, 50}, StorySection{StoryKind::Build, {}, 50, 150}};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, 10, kSrc);
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 49}, {2, 60}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 60}, {60, 160}}));
+        // ... a transition's trim (MoveToCut): notes of the trimmed-off tail land on the new cut
+        tl = three();
+        tl.notes = {note(1, 45), note(2, 70)};
+        applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, {1}, {}, Edge::End}, -10, kSrc, MarkerCut::MoveToCut);
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 40}, {2, 60}}));
+
+        // Insert: from the insert point on notes move; time inserted inside or at a section's end joins it
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 100);
+        tl.notes = {note(1, 49), note(2, 50), note(3, 60)};
+        tl.sections = {StorySection{StoryKind::Hook, {}, 0, 50}, StorySection{StoryKind::Build, {}, 50, 80},
+                       StorySection{StoryKind::Resolution, {}, 80, 100}};
+        Ids gen;
+        insertGap(tl, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}}, 50, 20, gen.gen(), gen.gen());
+        rippleAnnotations(tl, {{50, 20}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}});
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 49}, {2, 70}, {3, 80}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 70}, {70, 100}, {100, 120}}));
+        // ... at 0 (an intro): everything moves back
+        rippleAnnotations(tl, {{0, 30}}, {{TrackKind::Video, 0}, {TrackKind::Audio, 0}});
+        CHECK_EQ(secs(tl), (Sec{{30, 100}, {100, 130}, {130, 150}}));
+        // ... a locked track with a clip across the insert point keeps them
+        tl = tracks(1, 1);
+        tl.video[0].clips << mk(1, "a", 0, 100);
+        tl.audio[0].clips << mk(2, "s", 0, 100);
+        tl.audio[0].locked = true;
+        tl.notes = {note(1, 60)};
+        tl.sections = {StorySection{StoryKind::Hook, {}, 0, 80}};
+        insertGap(tl, {{TrackKind::Video, 0}}, 50, 20, gen.gen(), gen.gen());
+        rippleAnnotations(tl, {{50, 20}}, {{TrackKind::Video, 0}});
+        CHECK_EQ(notesAt(tl), (QVector<QPair<int, int>>{{1, 60}}));
+        CHECK_EQ(secs(tl), (Sec{{0, 80}}));
     }
 
     CHECK_EQ(endFrame(Timeline{}), 0);

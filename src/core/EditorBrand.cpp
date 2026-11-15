@@ -140,7 +140,7 @@ bool Editor::addIntroOutro()
                     if (!tl.tracks(k)[i].locked) tracks << TrackRef{k, i};
             TimelineOps::insertGap(tl, tracks, 0, len, newId, [p] { return p->newLinkId(); });
             TimelineOps::insertSubtitleGap(tl, 0, len, newId);
-            TimelineOps::rippleMarkers(tl, {{0, len}}, tracks);
+            TimelineOps::rippleAnnotations(tl, {{0, len}}, tracks);
             placeSource(tl, *intro, 0, len, 0, 0, 0);
         }
     });

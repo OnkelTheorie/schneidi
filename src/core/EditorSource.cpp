@@ -533,7 +533,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         if (mode == M::Insert) {
             insertGap(tl, rippleTracks, start, len, newId, [p] { return p->newLinkId(); });
             insertSubtitleGap(tl, start, len, newId); // subtitles stay in sync (locked tracks not)
-            rippleMarkers(tl, {{start, len}}, rippleTracks); // markers too, unless a locked track holds content
+            rippleAnnotations(tl, {{start, len}}, rippleTracks); // markers, notes, sections too, unless a locked track holds content
         }
         if (mode == M::RippleOverwrite) {
             for (const TrackRef& r : rippleTracks) {

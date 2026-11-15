@@ -268,18 +268,8 @@ void opHookVariants(Session& s, const QJsonObject& op)
                 continue;
             }
             const QString name = variant("C");
+            // Sections, notes and markers follow the cut with the clips (rippleTracks -> rippleAnnotations)
             s.editor.deleteRange(0, cut, true);
-            // The sections, notes and markers follow the cut (deleteRange moves clips and subtitles only)
-            const Timeline& tl = s.project.timeline();
-            QVector<StorySection> sections = tl.sections;
-            QVector<TimelineNote> notes = tl.notes;
-            QVector<int> markers = tl.markers;
-            Story::shift(sections, notes, markers, 0, -cut);
-            s.project.edit(T("Abschnitte vorschlagen"), [&](Timeline& t) {
-                t.sections = sections;
-                t.notes = notes;
-                t.markers = markers;
-            });
             hookSection(std::min(hookMax(s), lengthOf(s)), {});
             made << QString("'%1': starts at %2, the first strong moment - 0.5 s").arg(name, tc(cut, f));
         }
