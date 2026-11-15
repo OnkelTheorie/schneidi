@@ -464,7 +464,9 @@ QPointF trackablePoint(const QImage& img, const QVector<QPointF>& polygon, doubl
     if (bestScore < 0) { // the middle of the polygon's corners, kept inside the picture
         QPointF m;
         for (const QPointF& p : poly) m += p / n;
-        best = QPointF(std::clamp(m.x(), double(r), double(w - 1 - r)), std::clamp(m.y(), double(r), double(h - 1 - r)));
+        // r from the square's size can exceed half the picture: then its middle (std::clamp needs lo <= hi)
+        const double mx = std::min(double(r), (w - 1) / 2.0), my = std::min(double(r), (h - 1) / 2.0);
+        best = QPointF(std::clamp(m.x(), mx, w - 1 - mx), std::clamp(m.y(), my, h - 1 - my));
     }
     return QPointF(best.x() / w, best.y() / h);
 }

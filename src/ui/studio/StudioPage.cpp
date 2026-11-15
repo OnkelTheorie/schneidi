@@ -241,7 +241,10 @@ void StudioPage::setToolsOpen(bool open)
     if (total <= 0) return; // not laid out yet (the page's first showing sets the sizes)
     if (sizes.value(1) <= 0 || sizes.value(1) > total * 0.6) {
         const int want = std::max(m_tools->sizeHint().height(), m_tools->minimumSizeHint().height()) + 40;
-        const int h = std::clamp(want, std::min(160, total / 2), std::max(1, int(total * 0.45)));
+        // Bounds of their own first: a low page (under ~355 px) would give lo > hi (std::clamp's precondition)
+        const int hi = std::max(1, int(total * 0.45));
+        const int lo = std::min({160, total / 2, hi});
+        const int h = std::clamp(want, lo, hi);
         m_left->setSizes({std::max(1, total - h), h});
     }
 }

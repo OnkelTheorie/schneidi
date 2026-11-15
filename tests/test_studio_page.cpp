@@ -1435,6 +1435,22 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
         page->findChild<QToolButton*>("studio_auto_volume")->click();
         page->findChild<QToolButton*>("studio_tool_points")->click();
     }
+
+    // (5) The tools drawer opened on a low page (under ~355 px for lanes + tools): its height between bounds that
+    // never invert (std::clamp with lo > hi aborts in builds with _GLIBCXX_ASSERTIONS, as some distributions build)
+    {
+        page->setToolsOpen(false);
+        QSplitter* left = page->left();
+        left->resize(left->width(), 300);
+        const int total = left->sizes().value(0) + left->sizes().value(1);
+        page->setToolsOpen(true);
+        const QList<int> sizes = left->sizes();
+        Check::report(total > 0 && total < 355 && sizes.value(0) > 0 && sizes.value(1) > 0, // (the splitter keeps minimums)
+                      "tools drawer on a low page", __FILE__, __LINE__,
+                      QString("total %1, tools %2").arg(total).arg(sizes.value(1)));
+        page->setToolsOpen(false);
+        settle();
+    }
 }
 
 } // namespace
