@@ -753,6 +753,7 @@ private:
         QList<int> studioSideSizes;
     } m_tourSaved;
     bool m_tourSwap = false; // the user's project and the practice project trade places: no "another project" effects
+    bool m_reloadingSame = false; // checkProjectFile reads the open project's file again: not a new view (core rule)
     void closePopups(); // open context menus closed (before the project under them changes)
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;
