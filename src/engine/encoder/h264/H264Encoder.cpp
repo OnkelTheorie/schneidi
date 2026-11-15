@@ -1433,6 +1433,16 @@ static const double gTpDev = std::getenv("H264_TPDEV") ? std::atof(std::getenv("
 // little left to spread an error over.
 static const bool gTpSeedTree = !std::getenv("H264_TPSEEDTREE") || std::atoi(std::getenv("H264_TPSEEDTREE")) != 0;
 static const double gTpFollow = std::getenv("H264_TPFOLLOW") ? std::atof(std::getenv("H264_TPFOLLOW")) : 0.25;
+// The rest of the way is gone slowly: the gap between the two QPs, averaged over about this many
+// seconds of pictures, is added in full less the quarter above (H264_TPLAG; 0 = not at all, as
+// before: a model that stays wrong in one direction then misses the clip's size by what it is
+// wrong). A stretch the model misjudges for a moment moves the QP little, a lasting debt is paid.
+static const double gTpLag = std::getenv("H264_TPLAG") ? std::atof(std::getenv("H264_TPLAG")) : 0.0;
+// The least budget the pictures left are planned with: this share of what they cost at the plan
+// QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
+// I pictures take a third of the bits that is more than its other pictures ever need, so an
+// overdrawn clip coded its last pictures finer than planned).
+static const double gTpRestFloor = std::getenv("H264_TPRESTFLOOR") ? std::atof(std::getenv("H264_TPRESTFLOOR")) : 0.5;
 
 // Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
 // largest QP offset (H264_QCBLUR, H264_QCMAX: experiment knobs).
@@ -1541,12 +1551,14 @@ double Encoder::kPOfBin(int kind, int bin, double kP) const
 
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
 // from the pictures coded so far) spend exactly the bits that are left of the clip's budget.
-double Encoder::twoPassQp(double kI, double kP, double kB) const
+double Encoder::twoPassQp(double kI, double kP, double kB, double planQp) const
 {
     const FirstPassStats& st = *cfg_.firstPass;
     const double perFrame = cfg_.bitrateKbps * 1000.0 / cfg_.fps;
     const double left = double(st.size()) - frameIndex_;
-    const double budget = std::max(double(st.size()) * perFrame - rcBits_, 0.5 * left * perFrame);
+    const double least = planQp >= 0 && gTpRestFloor > 0 ? gTpRestFloor * tpBits(tpRemTab_, planQp, kI, kP, kB)
+                                                         : 0.5 * left * perFrame;
+    const double budget = std::max(double(st.size()) * perFrame - rcBits_, least);
     const double qp = tpSolve(tpRemTab_, budget, kI, kP, kB);
     static const bool trace = std::getenv("H264_RC_TRACE") != nullptr;
     if (trace)
@@ -3397,11 +3409,15 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // The QP stays put; the model's k settles over the first pictures (the probe misses
             // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
             // slowly (at most half a QP per picture).
-            qp = twoPassQp(kOf(true), kOf(false), kB());
-            const double rest = qp;
             const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
-            if (rcFramesSeen_ >= 12)
-                qp = plan + gTpFollow * (qp - plan);
+            qp = twoPassQp(kOf(true), kOf(false), kB(), plan);
+            const double rest = qp;
+            if (rcFramesSeen_ >= 12) {
+                const double gap = gTpDev > 0 ? std::clamp(rest - plan, -gTpDev, gTpDev) : rest - plan;
+                if (gTpLag > 0)
+                    tpGap_ += (gap - tpGap_) / std::max(1.0, gTpLag * cfg_.fps);
+                qp = plan + gTpFollow * (qp - plan) + (1.0 - gTpFollow) * tpGap_;
+            }
             if (gTpDev > 0 && rcFramesSeen_ >= 12)
                 qp = std::clamp(qp, plan - gTpDev, plan + gTpDev);
             if (std::getenv("H264_RC_TRACE"))

@@ -465,7 +465,8 @@ private:
     std::vector<float> tpOff_;
     int rcBin(double cost) const;
     double kPOfBin(int kind, int bin, double kP) const;
-    double twoPassQp(double kI, double kP, double kB) const;
+    double twoPassQp(double kI, double kP, double kB, double planQp = -1) const;
+    double tpGap_ = 0; // two-pass: the gap between the QP that spends what is left and the plan QP, averaged (gTpLag)
     double twoPassPlanQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter = nullptr) const;
     double treeStrength(const LookaheadFrame& f) const;
