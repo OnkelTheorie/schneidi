@@ -1487,18 +1487,23 @@ static const double gQcMax = std::getenv("H264_QCMAX") ? std::atof(std::getenv("
 static const double gTpDead = std::getenv("H264_TPDEAD") ? std::atof(std::getenv("H264_TPDEAD")) : 2.0;
 static const double gTpFloor = std::getenv("H264_TPFLOOR") ? std::atof(std::getenv("H264_TPFLOOR")) : 0.03;
 
-// What picture i needs at QP qp, in bits per k: its blocks' first-pass costs over the quantiser
-// step, each above the dead zone (from the picture's cost histogram; without one, the plain sum).
-double Encoder::tpNeed(size_t i, double qp) const
+// Two-pass: the plan's costs follow the pictures' real references (H264_TPRUN=0: every picture against the
+// one before, as the first pass measured it and as before 16.11.2026). A recording with duplicated pictures (a
+// game at 12 fps captured at 60) has its changes on single pictures and nothing between: a P picture after a
+// run of B pictures that happens to be a duplicate of the picture before looked free and cost fourteen times
+// the plan, the B picture on the change looked expensive and was a copy of the P picture after it.
+static const bool gTpRun = !std::getenv("H264_TPRUN") || std::atoi(std::getenv("H264_TPRUN")) != 0;
+
+// What picture j needs at a quantiser scale against the picture before it (key: as an I picture), in bits per
+// k: its blocks' first-pass costs over the quantiser step, each above the dead zone (from the picture's cost
+// histogram; without one, the plain sum).
+double Encoder::tpRawNeed(size_t j, bool key, double scale) const
 {
     const FirstPassStats& st = *cfg_.firstPass;
-    const double scale = std::exp2(-qp / 6.0);
-    const bool key = i < tpClass_.size() && tpClass_[i] == 0;
-    const double floorNeed = gTpFloor * double(mbW_) * mbH_;
     if (st.histCount.size() != st.size() * 2 * FirstPassStats::kHistBins)
-        return (key ? st.intraSum[i] : st.interSum[i]) * scale + floorNeed;
-    const size_t base = (i * 2 + (key ? 0 : 1)) * FirstPassStats::kHistBins;
-    double need = floorNeed;
+        return (key ? st.intraSum[j] : st.interSum[j]) * scale;
+    const size_t base = (j * 2 + (key ? 0 : 1)) * FirstPassStats::kHistBins;
+    double need = 0;
     for (int b = 0; b < FirstPassStats::kHistBins; ++b) {
         const uint32_t count = st.histCount[base + size_t(b)];
         if (!count)
@@ -1508,6 +1513,48 @@ double Encoder::tpNeed(size_t i, double qp) const
             need += over;
     }
     return need;
+}
+
+// What picture i needs at QP qp, in bits per k. A picture whose reference is not the picture before it
+// (tpRef0_/tpRef1_, from the plan's picture types) needs what the largest step on the way from the reference
+// needs - a change is paid once, duplicates between are free; a B picture the smaller of its two ways. The
+// first pass knows no more than each picture against the one before; steady motion comes out as before (the
+// classes' k carry the rest). plain: the picture against the one before, whatever the plan makes of it.
+double Encoder::tpNeed(size_t i, double qp, bool plain) const
+{
+    const double scale = std::exp2(-qp / 6.0);
+    const bool key = i < tpClass_.size() && tpClass_[i] == 0;
+    const double floorNeed = gTpFloor * double(mbW_) * mbH_;
+    if (key || plain || i >= tpRef0_.size() || tpRef0_[i] < 0)
+        return tpRawNeed(i, key, scale) + floorNeed;
+    auto way = [&](size_t from, size_t to) { // the steps from picture `from` to picture `to` (from < to)
+        double most = 0;
+        for (size_t j = from + 1; j <= to; ++j)
+            most = std::max(most, tpRawNeed(j, false, scale));
+        return most;
+    };
+    double need = way(size_t(tpRef0_[i]), i);
+    if (tpRef1_[i] >= 0 && need > 0)
+        need = std::min(need, way(i, size_t(tpRef1_[i])));
+    return need + floorNeed;
+}
+
+// The same for the plain cost sums (a picture's cost class).
+double Encoder::tpRunCost(size_t i) const
+{
+    const FirstPassStats& st = *cfg_.firstPass;
+    if (i >= tpRef0_.size() || tpRef0_[i] < 0)
+        return st.interSum[i];
+    auto way = [&](size_t from, size_t to) {
+        double most = 0;
+        for (size_t j = from + 1; j <= to; ++j)
+            most = std::max(most, st.interSum[j]);
+        return most;
+    };
+    double cost = way(size_t(tpRef0_[i]), i);
+    if (tpRef1_[i] >= 0)
+        cost = std::min(cost, way(i, size_t(tpRef1_[i])));
+    return cost;
 }
 
 // Picture i's need at every step of the P QP (the picture's own QP offset applied).
@@ -3379,9 +3426,13 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 }
             }
             // Each picture's class and its QP against the P QP: I pictures 3 below, B pictures by their
-            // run's length (planQueue), all by the complexity compression.
+            // run's length (planQueue), all by the complexity compression. The references the pictures
+            // will have (tpNeed): a P picture after a run of B pictures the I or P picture before the run,
+            // a B picture the two around it (pyramid: the run's middle picture for those on either side).
             tpClass_.assign(st.size(), 0);
             tpQOff_.assign(st.size(), 0.0f);
+            tpRef0_.assign(gTpRun ? st.size() : 0, -1);
+            tpRef1_.assign(gTpRun ? st.size() : 0, -1);
             for (size_t i = 0; i < st.size();) {
                 if (tpType_[i] != 2) {
                     tpClass_[i] = tpType_[i] == 0 ? 0 : uint8_t(2 + tpAfterB_[i] * kRcBins + rcBin(st.interSum[i]));
@@ -3395,11 +3446,22 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 const int count = int(e - i);
                 const int bQpRun = count <= kPyramidMaxRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
                 const size_t mid = usePyramid() && count >= 3 && count <= kPyramidMaxRun ? i + size_t(count / 2) : st.size();
+                if (gTpRun && i > 0 && e < st.size()) {
+                    for (size_t k = i; k < e; ++k) {
+                        tpRef0_[k] = int32_t(mid < st.size() && k > mid ? mid : i - 1);
+                        tpRef1_[k] = int32_t(mid < st.size() && k < mid ? mid : e);
+                    }
+                    if (tpType_[e] == 1) {
+                        tpRef0_[e] = int32_t(i - 1);
+                        tpClass_[e] = uint8_t(2 + tpAfterB_[e] * kRcBins + rcBin(tpRunCost(e)));
+                        tpQOff_[e] = 0.0f;
+                    }
+                }
                 for (size_t k = i; k < e; ++k) {
-                    tpClass_[k] = gTpBinB ? uint8_t(2 + 2 * kRcBins + rcBin(st.interSum[k])) : uint8_t(1);
+                    tpClass_[k] = gTpBinB ? uint8_t(2 + 2 * kRcBins + rcBin(tpRunCost(k))) : uint8_t(1);
                     tpQOff_[k] = float(k == mid ? (kBRefQpEnv >= 0 ? kBRefQpEnv : (bQpRun + 1) / 2) : bQpRun);
                 }
-                i = e;
+                i = gTpRun && i > 0 && e < st.size() && tpType_[e] == 1 ? e + 1 : e;
             }
             for (size_t i = 0; i < st.size() && i < tpOff_.size(); ++i)
                 tpQOff_[i] += tpOff_[i];
@@ -3452,7 +3514,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     if (twoPass && cfg_.firstPass->size() > 1) {
                         // (The second picture as a P picture, whatever the plan makes of it.)
                         const uint8_t cls = std::exchange(tpClass_[1], uint8_t(2));
-                        rcKSum_[1] = bitsP / std::max(1.0, tpNeed(1, probeQp));
+                        rcKSum_[1] = bitsP / std::max(1.0, tpNeed(1, probeQp, true));
                         tpClass_[1] = cls;
                     }
                 }

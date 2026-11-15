@@ -464,7 +464,10 @@ private:
     std::vector<double> tpRemTab_, tpAllTab_;                   // [class * kTpQSteps + step]
     std::vector<float> tpQOff_;                                 // per picture: its QP against the P QP (type, run, qcomp)
     std::vector<uint8_t> tpClass_;
-    double tpNeed(size_t i, double qp) const;
+    std::vector<int32_t> tpRef0_, tpRef1_;                      // per picture: its references as planned, where not the picture before (-1)
+    double tpRawNeed(size_t j, bool key, double scale) const;
+    double tpNeed(size_t i, double qp, bool plain = false) const;
+    double tpRunCost(size_t i) const;
     void tpRow(size_t i, double* row) const;
     void tpBuildTables();
     void tpStartBoost(double kI, double kP);
