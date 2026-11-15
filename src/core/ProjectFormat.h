@@ -48,6 +48,9 @@ struct ProjectFormat {
         return width == o.width && height == o.height && rate == o.rate && audioChannels == o.audioChannels;
     }
     bool operator!=(const ProjectFormat& o) const { return !(*this == o); }
+    // The same picture (size and frame rate): what thumbnails, waveforms' frame grid, the render cache and the
+    // picture pump depend on. The mix's channels reach the mixer with the built timeline (Timeline::audioChannels).
+    bool samePicture(const ProjectFormat& o) const { return width == o.width && height == o.height && rate == o.rate; }
 };
 
 // What a project's format may be (settings dialog, `new`/`format` op): a format from a file (edited by hand, another

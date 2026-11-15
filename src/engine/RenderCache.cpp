@@ -120,7 +120,10 @@ void RenderCache::setMode(Mode mode)
 
 void RenderCache::setFormat(const ProjectFormat& format)
 {
-    if (format == m_format) return;
+    if (format.samePicture(m_format)) { // only the mix's channels: the cached pictures stay valid
+        m_format = format;
+        return;
+    }
     m_format = format;
     m_jobs.clear();
     cancelCurrent(); // keys depend on the format; the next sync() queues anew

@@ -925,6 +925,38 @@ void testApp(const QTemporaryDir& tmp, const QString& video)
     p->setFormat(st);
     QApplication::processEvents();
     CHECK(!codec->isVisibleTo(deliver));
+
+    // Only the channels change (stereo -> 5.1 while playing): the picture side keeps everything (no pause, the
+    // engine's picture state and caches stay), the mixer takes the new channels with the next built timeline
+    {
+        int levelCount = 0;
+        const auto conn = QObject::connect(&engine, &Engine::audioSpeakerLevels, [&](const QVector<float>& db) {
+            levelCount = int(db.size());
+        });
+        const auto wait = [](const std::function<bool()>& ok, int ms) {
+            QElapsedTimer t;
+            t.start();
+            while (!ok() && t.elapsed() < ms) {
+                QEventLoop loop;
+                QTimer::singleShot(20, &loop, &QEventLoop::quit);
+                loop.exec();
+            }
+            return ok();
+        };
+        engine.play();
+        const int groups = int(p->timeline().audio.size()) + 1;
+        if (CHECK(wait([&] { return !std::isnan(engine.soundFrame()) && levelCount == 2 * groups; }, 5000))) {
+            ProjectFormat f6 = p->format();
+            f6.audioChannels = 6;
+            p->setFormat(f6);
+            QApplication::processEvents();
+            CHECK(!std::isnan(engine.soundFrame())); // still playing
+            Check::report(wait([&] { return levelCount == 6 * groups; }, 5000), "the mixer takes the 5.1 channels",
+                          __FILE__, __LINE__, QString("%1 levels, %2 groups").arg(levelCount).arg(groups));
+        }
+        engine.pause();
+        QObject::disconnect(conn);
+    }
 }
 
 // Read "as the source" (Reader::Options channels 0: waveforms, room tone, sound sync): six or eight channels that are

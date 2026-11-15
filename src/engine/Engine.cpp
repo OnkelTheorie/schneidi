@@ -305,6 +305,12 @@ void Engine::createPump()
 void Engine::setFormat(const ProjectFormat& format)
 {
     if (format == m_format && m_formatSet) return;
+    if (m_formatSet && format.samePicture(m_format)) {
+        // Only the mix's channels: nothing of the picture to rebuild and no pause; the mixer takes the channels
+        // with the next built timeline (renderTimeline().audioChannels)
+        m_format = format;
+        return;
+    }
     m_player->pause();
     if (m_pump) m_pump->setContent(nullptr, 0, 0);
     m_timelineContent.reset();
