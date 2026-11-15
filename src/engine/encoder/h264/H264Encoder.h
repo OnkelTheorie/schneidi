@@ -185,7 +185,14 @@ public:
     // The next picture in display order (prepared by the lookahead). True when an answer came
     // with it: run() then holds from picture resultStart() on (the second answer for the same
     // pictures replaces the first).
-    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads);
+    // background: the first answer is measured on its own thread and comes with a later call (or
+    // collectFirst()); its content does not depend on when.
+    bool add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads, bool background = false);
+    bool collectFirst();
+    BProbe() = default;
+    ~BProbe();
+    BProbe(const BProbe&) = delete;
+    BProbe& operator=(const BProbe&) = delete;
     int run() const { return run_; } // longest run of B pictures that pays, 0 = none
     int resultStart() const { return resultStart_; }
     // run() with kClear set where the measurement found B pictures a clear gain or chose long runs
@@ -205,6 +212,12 @@ private:
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
     int run_ = 0;
     bool clear_ = false;
+    // The first answer under way: where it starts, what was asked, and the measurement (thread).
+    bool firstPending_ = false;
+    int firstStart_ = 0, firstShort_ = 0, firstBframes_ = 0, firstResult_ = 0;
+    double firstGain_ = 0;
+    std::thread firstThread_;
+    std::exception_ptr firstError_;
     // Activity (lookahead cost with motion / intra) of the last picture, summed over the pictures
     // being collected, and the mean of the last measurement's pictures.
     double lastActivity_ = 0, activitySum_ = 0, sampleActivity_ = 0;

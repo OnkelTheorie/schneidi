@@ -854,7 +854,42 @@ bool BProbe::startsAt(const LookaheadFrame& f, int index) const
     return lastStart_ < 0 || index - lastStart_ >= kBProbeInterval || ((f.sceneChange || f.forceKeyframe) && index > lastStart_);
 }
 
-bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads)
+BProbe::~BProbe()
+{
+    if (firstThread_.joinable())
+        firstThread_.join();
+}
+
+// The first answer is there (waits for it when it is measured in the background): run() and
+// gate() hold from resultStart() on. False when none was under way.
+bool BProbe::collectFirst()
+{
+    if (!firstPending_)
+        return false;
+    if (firstThread_.joinable())
+        firstThread_.join();
+    firstPending_ = false;
+    if (firstError_)
+        std::rethrow_exception(std::exchange(firstError_, nullptr));
+    const int result = firstResult_;
+    const double gain = firstGain_;
+    run_ = result == 0 ? (gain < kBProbeGain ? firstShort_ : 0) : result == 1 && kBProbeStill ? firstShort_ : 0;
+    const bool still = result != 0;
+    resultStart_ = firstStart_;
+    clear_ = result == 0 && gain < kBWarmGain;
+    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    if (trace)
+        std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
+    // The long run is only asked for where B pictures are a clear gain (a slow zoom: -0.3 ..
+    // -0.6): on a marginal gain it rarely wins, and its measurement costs twice the first one.
+    if ((run_ == 0 || firstBframes_ <= firstShort_ || still || (kBProbeLongClear && !clear_)) && start_ == firstStart_) {
+        start_ = -1;
+        pics_.clear();
+    }
+    return true;
+}
+
+bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bframes, int threads, bool background)
 {
     if (!kBProbe || bframes <= 0)
         return false;
@@ -866,16 +901,20 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
         const bool more = a > sampleActivity_ * kBProbeChange, less = a < sampleActivity_ / kBProbeChange;
         return kBProbeOneWay ? (run_ > 0 ? more : less) : more || less;
     };
-    const bool changed = kBProbeChange > 0 && start_ < 0 && sampleActivity_ > 0 && index - lastStart_ >= kBProbeGap && far(activity) &&
-                         far(lastActivity_);
+    // (While the first answer is still being measured the pictures for the long run are collected
+    // on; a new measurement may start all the same - it is at least the gap away.)
+    const bool changed = kBProbeChange > 0 && (start_ < 0 || firstPending_) && sampleActivity_ > 0 && index - lastStart_ >= kBProbeGap &&
+                         far(activity) && far(lastActivity_);
     lastActivity_ = activity;
+    bool answered = false;
     if (startsAt(f, index) || changed) {
+        answered = collectFirst(); // the answer before this one, in order
         pics_.clear();
         start_ = lastStart_ = index;
         activitySum_ = 0;
     }
     if (start_ < 0)
-        return false;
+        return answered;
     pics_.push_back(la.halfPicture(f));
     if (index > start_)
         activitySum_ += activity;
@@ -883,26 +922,45 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     const int shortRun = std::min(bframes, kBProbeShort);
     const int count = int(pics_.size());
     if (count == shortRun + 2) {
-        // First answer, from four pictures: do runs of two B pictures pay at all?
-        double gain = 0;
-        const int result = measure(pics_, la.halfW(), la.halfH(), threads, &shortRun, 1, &gain);
-        run_ = result == 0 ? (gain < kBProbeGain ? shortRun : 0) : result == 1 && kBProbeStill ? shortRun : 0;
-        const bool still = result != 0;
-        resultStart_ = start_;
-        clear_ = result == 0 && gain < kBWarmGain;
+        // First answer, from the pictures of one short run: do B pictures pay at all? In the
+        // background (first pass) it is measured beside the analysis of the next pictures - the
+        // probe was half of that pass's time on game footage - and taken when the next
+        // measurement starts, the long run's pictures are complete or the pass ends.
         sampleActivity_ = activitySum_ / double(count - 1);
-        if (trace)
-            std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
-        // The long run is only asked for where B pictures are a clear gain (a slow zoom: -0.3 ..
-        // -0.6): on a marginal gain it rarely wins, and its measurement costs twice the first one.
-        if (run_ == 0 || bframes <= shortRun || still || (kBProbeLongClear && !clear_)) {
+        firstStart_ = start_;
+        firstShort_ = shortRun;
+        firstBframes_ = bframes;
+        firstPending_ = true;
+        const int w = la.halfW(), h = la.halfH();
+        bool started = false;
+        if (background && !kBProbeOneWay) {
+            try {
+                firstThread_ = std::thread([this, pics = pics_, w, h, threads, shortRun] {
+                    try {
+                        firstResult_ = measure(pics, w, h, threads, &shortRun, 1, &firstGain_);
+                    } catch (...) {
+                        firstError_ = std::current_exception();
+                    }
+                });
+                started = true;
+            } catch (const std::system_error&) { // no thread: measured here
+            }
+        }
+        if (!started) {
+            firstResult_ = measure(pics_, w, h, threads, &shortRun, 1, &firstGain_);
+            return collectFirst() || answered;
+        }
+        if (bframes <= shortRun) { // nothing more to collect
             start_ = -1;
             pics_.clear();
         }
-        return true;
+        return answered;
     }
     if (count < bframes + 2)
-        return false;
+        return answered;
+    answered = collectFirst() || answered;
+    if (start_ < 0)
+        return answered; // no long run asked for
     // Second answer, where they do and longer runs are allowed: the long run against the short
     // one over the pictures of one long run.
     const int runs[2] = {shortRun, bframes};
@@ -1168,7 +1226,7 @@ void FirstPass::analyseBatch() const
         const int base = int(stats_->intraSum.size());
         for (int i = 0; i < n; ++i) {
             stats_->bGate.push_back(probe_.gate());
-            if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_))
+            if (probe_.add(*la_, job_[size_t(i)], base + i, bframes_, threads_, true))
                 std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), probe_.gate());
         }
     }
@@ -1192,6 +1250,8 @@ std::shared_ptr<const FirstPassStats> FirstPass::stats() const
         batch_.clear();
         analyseBatch();
     }
+    if (probe_.collectFirst()) // an answer still being measured
+        std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), probe_.gate());
     return stats_;
 }
 
