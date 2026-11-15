@@ -48,25 +48,41 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
     return levels;
 }
 
-// Disk cache for waveforms: key from path, size and modification time
-QString waveCacheFile(const QString& path, int stream, const QString& channels, const FrameRate& rate)
+QString peaksDir()
 {
-    const QFileInfo fi(path);
-    // further streams and routed channels with a suffix so that existing waveforms (stream 0) stay valid; "own|": the
-    // sound as the own audio engine places it (entries without it came from the sound path before 0.10)
-    const QString id = QStringLiteral("own|") + (stream > 0 ? QString("s%1|").arg(stream) : QString())
-                       + (channels.isEmpty() ? QString() : QString("c%1|").arg(channels))
-                       + QString("%1|%2|%3|%4|%5")
-                           .arg(fi.absoluteFilePath())
-                           .arg(fi.size())
-                           .arg(fi.lastModified().toMSecsSinceEpoch())
-                           .arg(QString("%1/%2").arg(rate.num).arg(rate.den))
-                           .arg(Waveform::kBucketsPerFrame);
-    const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
     const QString dir = AppPaths::writable(QStandardPaths::CacheLocation) + "/peaks";
     QDir().mkpath(dir);
-    return dir + "/" + hash + ".peaks";
+    return dir;
 }
+
+QString fileId(const QString& path, const FrameRate& rate)
+{
+    const QFileInfo fi(path);
+    return QString("%1|%2|%3|%4|%5")
+        .arg(fi.absoluteFilePath())
+        .arg(fi.size())
+        .arg(fi.lastModified().toMSecsSinceEpoch())
+        .arg(QString("%1/%2").arg(rate.num).arg(rate.den))
+        .arg(Waveform::kBucketsPerFrame);
+}
+
+// Disk cache for unrouted waveforms: key from path, size and modification time. Further streams with a suffix so that
+// existing waveforms (stream 0) stay valid; "own|": the sound as the own audio engine places it (entries without it
+// came from the sound path before 0.10). Routed waveforms (0.23 multichannel: "c<channels>|" entries) are no longer
+// written here but combined from the per-channel file (channelPeaksFile); their old files are simply never read.
+QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
+{
+    const QString id = QStringLiteral("own|") + (stream > 0 ? QString("s%1|").arg(stream) : QString()) + fileId(path, rate);
+    return peaksDir() + "/" + QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex() + ".peaks";
+}
+
+constexpr quint32 kWaveMagic = 0x53574631;    // "SWF1": one peak array (unrouted waveform)
+constexpr quint32 kChannelMagic = 0x53574632; // "SWF2": per-channel peaks of a stream
+constexpr qint32 kChannelVersion = 1;
+constexpr int kMaxChannels = 256;
+
+// Peak of a sample (0..1) as 0..255, as the s16 path did
+quint8 peakValue(float peak) { return quint8(std::min(255, int(std::min(peak, 1.f) * 32767.f) >> 7)); }
 
 bool loadWave(const QString& file, Waveform& w)
 {
@@ -77,7 +93,7 @@ bool loadWave(const QString& file, Waveform& w)
     qint32 frames = 0;
     QByteArray data;
     in >> magic >> frames >> data;
-    if (magic != 0x53574631 || in.status() != QDataStream::Ok
+    if (magic != kWaveMagic || in.status() != QDataStream::Ok
         || data.size() != frames * Waveform::kBucketsPerFrame)
         return false;
     w.levels = buildLevels(QVector<quint8>(data.begin(), data.end()));
@@ -91,9 +107,84 @@ void saveWave(const QString& file, const QVector<quint8>& base, int frames)
     QSaveFile f(file);
     if (!f.open(QIODevice::WriteOnly)) return;
     QDataStream out(&f);
-    out << quint32(0x53574631) << qint32(frames)
+    out << kWaveMagic << qint32(frames)
         << QByteArray(reinterpret_cast<const char*>(base.constData()), base.size());
     f.commit();
+}
+
+// Per-channel peaks: magic, version, channels, frames, then channel after channel (frames * kBucketsPerFrame each).
+// Anything else (an SWF1 file, another version, a short file) is not read: the peaks are decoded again.
+// Only the channels in `pick` are read (the others stay empty in `base`, which still has one entry per channel):
+// a 32-channel recorder of 3 h would otherwise hold ~166 MB for the two channels a clip plays. `bytesRead` counts them.
+bool loadChannelPeaks(const QString& file, const QVector<int>& pick, int& frames, QVector<QVector<quint8>>& base,
+                      qint64* bytesRead = nullptr)
+{
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    QDataStream in(&f);
+    quint32 magic = 0;
+    qint32 version = 0, channels = 0, count = 0;
+    in >> magic >> version;
+    if (magic != kChannelMagic || version != kChannelVersion) return false;
+    in >> channels >> count;
+    if (in.status() != QDataStream::Ok || channels < 1 || channels > kMaxChannels || count < 0) return false;
+    // The QByteArray QDataStream wrote: its length (32 bit, or the 64-bit form past 4 GB), then the bytes
+    quint32 shortSize = 0;
+    in >> shortSize;
+    qint64 size = shortSize;
+    if (shortSize == 0xfffffffeu) {
+        qint64 longSize = 0;
+        in >> longSize;
+        size = longSize;
+    }
+    const qint64 per = qint64(count) * Waveform::kBucketsPerFrame;
+    const qint64 from = f.pos();
+    if (in.status() != QDataStream::Ok || size != per * channels || f.size() < from + size) return false;
+    base = QVector<QVector<quint8>>(channels);
+    for (int i = 0; i < pick.size() && i < 2; ++i) { // combinePeaks uses the first two
+        const int c = pick[i];
+        if (c < 0 || c >= channels || !base[c].isEmpty() || per == 0) continue;
+        if (!f.seek(from + per * c)) return false;
+        const QByteArray data = f.read(per);
+        if (data.size() != per) return false;
+        base[c] = QVector<quint8>(data.begin(), data.end());
+        if (bytesRead) *bytesRead += per;
+    }
+    frames = count;
+    return true;
+}
+
+bool saveChannelPeaks(const QString& file, int frames, const QVector<QVector<quint8>>& base)
+{
+    QByteArray data;
+    data.reserve(qsizetype(base.size()) * frames * Waveform::kBucketsPerFrame);
+    for (const QVector<quint8>& ch : base) data.append(reinterpret_cast<const char*>(ch.constData()), ch.size());
+    QSaveFile f(file);
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    QDataStream out(&f);
+    out << kChannelMagic << kChannelVersion << qint32(base.size()) << qint32(frames) << data;
+    return f.commit();
+}
+
+// The waveform of the routed channels `pick` (Audio::Reader::Options::pick: the first two count; one alone plays in the
+// middle at -3 dB each side, so its peak too) from per-channel peaks, frames [0, frames). A channel the stream lacks
+// is silent.
+QVector<quint8> combinePeaks(const QVector<QVector<quint8>>& base, int frames, QVector<int> pick)
+{
+    constexpr int N = Waveform::kBucketsPerFrame;
+    if (pick.size() > 2) pick.resize(2);
+    QVector<quint8> out(qsizetype(frames) * N, 0);
+    const bool middle = pick.size() == 1;
+    for (int ch : pick) {
+        if (ch < 0 || ch >= base.size()) continue;
+        const quint8* in = base[ch].constData();
+        const qsizetype n = std::min<qsizetype>(out.size(), base[ch].size());
+        for (qsizetype i = 0; i < n; ++i) {
+            const int v = middle ? (in[i] * 46341 + 32768) >> 16 : in[i]; // 46341 / 65536 = 0.70711
+            out[i] = quint8(std::max<int>(out[i], v));
+        }
+    }
+    return out;
 }
 
 QSize thumbSize(const ProjectFormat& format)
@@ -394,6 +485,16 @@ void MediaCache::waveLoop()
             gen = m_generation;
             fileGen = m_fileGeneration.value(path);
         }
+        if (!channels.isEmpty()) {
+            QVector<int> pick;
+            for (const QString& c : channels.split(',', Qt::SkipEmptyParts)) pick << c.toInt();
+            routedWave(key, path, stream, pick, format, gen, fileGen);
+            {
+                QMutexLocker lock(&m_mutex);
+                if (m_quit) return;
+            }
+            continue;
+        }
         // Waveform counts frames in the project frame rate
         auto publish = [&](std::shared_ptr<const Waveform> w) {
             {
@@ -404,7 +505,7 @@ void MediaCache::waveLoop()
             emit updated();
         };
 
-        const QString cacheFile = waveCacheFile(path, stream, channels, format.rate);
+        const QString cacheFile = waveCacheFile(path, stream, format.rate);
         {
             auto w = std::make_shared<Waveform>();
             if (loadWave(cacheFile, *w)) {
@@ -422,9 +523,8 @@ void MediaCache::waveLoop()
         int64_t bufFrom = 0, bufTo = 0;
         {
             constexpr int kRate = 48000;
-            Audio::Reader::Options ro{kRate, 2};
-            for (const QString& c : channels.split(',', Qt::SkipEmptyParts)) ro.pick.push_back(c.toInt()); // routing
-            reader = Audio::Reader::open(path, stream, ro);
+            reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 2});
+            if (reader) ++m_waveDecodes;
             const FrameRate fps = format.rate;
             const auto frameStart = [fps](int64_t f) {
                 const int64_t n = f * kRate * fps.den;
@@ -450,7 +550,7 @@ void MediaCache::waveLoop()
                     float peak = 0.f;
                     for (int c = 0; c < 2; ++c)
                         for (int s = s0; s < s1; ++s) peak = std::max(peak, std::abs(buf[c][size_t(a - bufFrom + s)]));
-                    peaks[k] = quint8(std::min(255, int(std::min(peak, 1.f) * 32767.f) >> 7)); // as the s16 path
+                    peaks[k] = peakValue(peak);
                 }
                 return true;
             };
@@ -498,4 +598,114 @@ void MediaCache::waveLoop()
         publish(w);
         saveWave(cacheFile, base, length);
     }
+}
+
+QString MediaCache::channelPeaksFile(const QString& path, int stream, const FrameRate& rate)
+{
+    const QString id = QString("own|chan%1|s%2|").arg(kChannelVersion).arg(stream) + fileId(path, rate);
+    return peaksDir() + "/" + QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex() + ".peaks";
+}
+
+void MediaCache::routedWave(const QString& key, const QString& path, int stream, const QVector<int>& pick,
+                            const ProjectFormat& format, int gen, int fileGen)
+{
+    constexpr int N = Waveform::kBucketsPerFrame;
+    auto publish = [&](const QVector<QVector<quint8>>& base, int frames, bool complete) {
+        auto w = std::make_shared<Waveform>();
+        w->levels = buildLevels(combinePeaks(base, frames, pick)); // reads only the picked channels
+        w->frames = frames;
+        w->complete = complete;
+        {
+            QMutexLocker lock(&m_mutex);
+            if (stale(gen, path, fileGen)) return false; // new format or file in the meantime
+            m_waves.insert(key, std::move(w));
+        }
+        emit updated();
+        return true;
+    };
+
+    // The per-channel peaks live on disk only (one file per stream): another routing of the stream reads its own
+    // channels from there (cheap) instead of all channels of the stream staying in memory
+    const QString cacheFile = channelPeaksFile(path, stream, format.rate);
+    {
+        int frames = 0;
+        QVector<QVector<quint8>> loaded;
+        qint64 bytes = 0;
+        if (loadChannelPeaks(cacheFile, pick, frames, loaded, &bytes)) {
+            m_channelBytesRead += bytes;
+            publish(loaded, frames, true);
+            return;
+        }
+    }
+
+    // Every channel of the stream as it comes (48 kHz), frame i = samples of timeline frame i (as the stereo path)
+    constexpr int kRate = 48000;
+    const std::unique_ptr<Audio::Reader> reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 0});
+    if (!reader) {
+        publish({}, 0, true);
+        return;
+    }
+    ++m_waveDecodes;
+    const FrameRate fps = format.rate;
+    const auto frameStart = [fps](int64_t f) {
+        const int64_t n = f * kRate * fps.den;
+        return (2 * n + fps.num) / (2 * int64_t(fps.num)); // = Audio::Mixer::frameStart (f >= 0)
+    };
+    const int length =
+        int(std::ceil(double(std::max<int64_t>(0, reader->info().end)) * fps.num / (double(kRate) * fps.den)));
+    // The reader decides its channel count at the first decoded frame (= the stream's): room for any count it may
+    // write, the channels past the stream's own go to a scratch buffer
+    const int chans = std::clamp(reader->info().sourceChannels, 1, kMaxChannels);
+    QVector<QVector<quint8>> base(chans, QVector<quint8>(qsizetype(std::max(0, length)) * N, 0));
+    if (length <= 0) {
+        publish(base, 0, true);
+        return;
+    }
+    std::vector<std::vector<float>> buf(static_cast<size_t>(chans));
+    std::vector<float> scratch;
+    std::vector<float*> out(size_t(std::max(chans, kMaxChannels)));
+    int64_t bufFrom = 0, bufTo = 0;
+    QElapsedTimer sincePublish;
+    sincePublish.start();
+    for (int i = 0; i < length; ++i) {
+        if (i % 256 == 0) {
+            QMutexLocker lock(&m_mutex);
+            if (m_quit || stale(gen, path, fileGen)) return; // format change or quit: the result no longer applies
+        }
+        const int64_t a = frameStart(i), b = frameStart(i + 1);
+        if (b > bufTo) { // read about a second ahead
+            bufFrom = a;
+            bufTo = std::max(b, frameStart(i + 25));
+            const size_t n = size_t(bufTo - bufFrom);
+            scratch.resize(n);
+            for (size_t c = 0; c < out.size(); ++c) {
+                if (c < buf.size()) {
+                    buf[c].assign(n, 0.f);
+                    out[c] = buf[c].data();
+                } else {
+                    out[c] = scratch.data();
+                }
+            }
+            reader->read(bufFrom, int(n), out.data());
+        }
+        const int samples = int(b - a);
+        for (int c = 0; c < chans; ++c) {
+            const float* src = buf[size_t(c)].data() + (a - bufFrom);
+            quint8* peaks = base[c].data() + qsizetype(i) * N;
+            for (int k = 0; k < N; ++k) {
+                const int s0 = samples * k / N, s1 = samples * (k + 1) / N;
+                float peak = 0.f;
+                for (int s = s0; s < s1; ++s) peak = std::max(peak, std::abs(src[s]));
+                peaks[k] = peakValue(peak);
+            }
+        }
+        // Intermediate states so that long files do not stay empty forever
+        if (sincePublish.elapsed() > 700) {
+            publish(base, i + 1, false);
+            sincePublish.restart();
+        }
+    }
+    // Saved for the other routings of the stream (and later sessions); the decoded channels are freed on return.
+    // Without a writable cache another routing decodes again.
+    if (publish(base, length, true)) saveChannelPeaks(cacheFile, length, base);
 }

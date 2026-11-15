@@ -76,6 +76,9 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 ![Compositing page: the title MAIN STREET goes behind a green pillar; the pillar's outline, picked with one click, is the selected mask node, with "Pick surface in picture" and its points in the Inspector](screenshots/behind.png)
 **Text behind an object** – click "Pick surface in picture" and then the wall, pillar or car: schneidi outlines it, and the title passes behind it (the mask follows a tracker when the camera moves)
 
+![Studio page: the audio tracks fill the page with large waveforms – the music ducked under the dialog and a voiceover, a drawn level curve with points on the music track; on the right a small viewer, the loudness readout and a mixer column with a narrow strip per track (EQ and compressor curves, pan, mute/solo, fader) and the master with its limiter](screenshots/studio.png)
+**Studio** – the mix on its own page: shape a track's level or pan with points or the pen (or ride the fader in write mode while it plays), a narrow mixer strip per track with its EQ and compressor curves a click away, and one-click tools to clean a voice, duck the music under speech or bring the whole mix to a target loudness
+
 ![File › New from Template: the five built-in templates as tiles with their preview, format, length and number of fields, then the start templates](screenshots/templates.png)
 **Templates** – File › New from Template…: each template with its preview, format, length and fields; drag your clips onto the fields, or fill it from a table with `schneidi-cli template fill`
 

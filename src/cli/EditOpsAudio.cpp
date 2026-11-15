@@ -717,9 +717,13 @@ AfterLimiter normalizeAfterLimiter(Session& s, const Timeline& before, const QVe
     return out;
 }
 
-// Track volume automation (Track::volumeAuto): points replace the curve (or the part [from, to]), clear removes it
-void opTrackVolume(Session& s, const QJsonObject& op)
+// Track volume / pan automation (Track::volumeAuto / panAuto): points replace the curve (or the part [from, to]),
+// clear removes it. Volume points carry db, pan points pan (both on top of the fader / knob).
+void opTrackAutomation(Session& s, const QJsonObject& op, AutoTarget target)
 {
+    const bool pan = target == AutoTarget::Pan;
+    const char* key = pan ? "pan" : "db";
+    const QString what = pan ? QStringLiteral("pan automation") : QStringLiteral("volume automation");
     TrackKind k = TrackKind::Video;
     const int index = parseTrack(op.value("track"), &k);
     if (k != TrackKind::Audio || index < 0 || index >= s.project.timeline().audio.size())
@@ -732,41 +736,48 @@ void opTrackVolume(Session& s, const QJsonObject& op)
     const bool part = op.contains("from") || op.contains("to");
     if (clear) {
         if (part) fail("BAD_ARGUMENT", "clear removes the whole curve (for a part give points with from/to)");
-        if (!s.editor.setTrackAutomation(index, {}, T("Spur-Automation entfernen")))
-            s.notes << QString("%1 had no volume automation").arg(trackName({k, index}));
+        if (!s.editor.setTrackAutomation(index, {}, T("Spur-Automation entfernen"), {}, target))
+            s.notes << QString("%1 had no %2").arg(trackName({k, index}), what);
         return;
     }
-    if (!op.value("points").isArray()) fail("BAD_ARGUMENT", "points must be a list like [{at:0, db:0}, {at:'2s', db:-12}]");
+    if (!op.value("points").isArray())
+        fail("BAD_ARGUMENT", pan ? "points must be a list like [{at:0, pan:0}, {at:'2s', pan:-50}]"
+                                 : "points must be a list like [{at:0, db:0}, {at:'2s', db:-12}]");
     AutoCurve pts;
+    const double lo = Automation::minValue(target), hi = Automation::maxValue(target);
     for (const QJsonValue& v : op.value("points").toArray()) {
-        QJsonValue at, db;
+        QJsonValue at, val;
         if (v.isArray() && v.toArray().size() == 2) {
             at = v.toArray()[0];
-            db = v.toArray()[1];
+            val = v.toArray()[1];
         } else if (v.isObject()) {
             at = v.toObject().value("at");
-            db = v.toObject().value("db");
+            val = v.toObject().value(key);
         }
-        if (at.isUndefined() || !db.isDouble()) fail("BAD_ARGUMENT", "every point needs at (a time) and db (a number)");
-        const double d = db.toDouble();
-        if (d < Automation::kMinDb || d > Automation::kMaxDb)
-            fail("BAD_ARGUMENT", QString("db %1 out of range %2..%3 (dB on top of the fader)")
-                                     .arg(d).arg(Automation::kMinDb).arg(Automation::kMaxDb));
+        if (at.isUndefined() || !val.isDouble())
+            fail("BAD_ARGUMENT", QString("every point needs at (a time) and %1 (a number)").arg(key));
+        const double d = val.toDouble();
+        if (d < lo || d > hi)
+            fail("BAD_ARGUMENT", QString("%1 %2 out of range %3..%4 (on top of the %5)")
+                                     .arg(key).arg(d).arg(lo).arg(hi).arg(pan ? "pan knob" : "fader"));
         pts << AutoPoint{parseTime(at, fmt, "points.at"), d};
     }
     if (pts.isEmpty() && !part) fail("BAD_ARGUMENT", "points is empty (to remove the curve give clear:true)");
-    AutoCurve next = Automation::normalized(pts);
+    AutoCurve next = Automation::normalized(pts, target);
     if (part) {
         const int from = op.contains("from") ? parseTime(op.value("from"), fmt, "from") : (next.isEmpty() ? 0 : next.first().frame);
         const int to = op.contains("to") ? parseTime(op.value("to"), fmt, "to") : (next.isEmpty() ? from : next.last().frame);
         if (to < from) fail("BAD_ARGUMENT", "to lies before from");
-        AutoCurve whole = t.volumeAuto;
-        Automation::replaceRange(whole, from, to, next);
+        AutoCurve whole = t.automation(target);
+        Automation::replaceRange(whole, from, to, next, target);
         next = whole;
     }
-    if (!s.editor.setTrackAutomation(index, next))
-        s.notes << QString("%1: the volume automation is already like that").arg(trackName({k, index}));
+    if (!s.editor.setTrackAutomation(index, next, {}, {}, target))
+        s.notes << QString("%1: the %2 is already like that").arg(trackName({k, index}), what);
 }
+
+void opTrackVolume(Session& s, const QJsonObject& op) { opTrackAutomation(s, op, AutoTarget::Volume); }
+void opTrackPan(Session& s, const QJsonObject& op) { opTrackAutomation(s, op, AutoTarget::Pan); }
 
 void opNormalize(Session& s, const QJsonObject& op)
 {
@@ -1225,8 +1236,20 @@ void addAudioOps(QVector<OpDef>& ops)
                  "clips: moving a clip leaves it; ripple edits (ripple delete, insert, ripple trim) move it with the "
                  "time. The track fader ({op:'mixer', volume_db}) trims the whole curve. `info` lists it on the "
                  "track (volume_automation: [{at, db}]). Clip volume keyframes (op 'volume', 'duck') come on top. "
-                 "Older schneidi versions cannot open a project with track automation (format 8).",
+                 "Older schneidi versions cannot open a project with track automation (format 8). Pan: op 'track_pan'.",
                  opTrackVolume}
+        << OpDef{"track_pan", "{op:'track_pan', track:'A1', points?:[{at, pan}], from?, to?, clear?}",
+                 "pan automation of an audio track: a curve over the timeline's time on top of the track's pan knob "
+                 "(a sound wandering from left to right)",
+                 "Works like track_volume: points = the curve, at = a time, pan = on top of the pan knob ({op:'mixer', "
+                 "pan}; -100 = left, 0 = the knob, +100 = right; what plays is knob + curve, clamped to -100..+100, "
+                 "range -200..+200), [[at, pan]] works too. Linear between points, the first/last value holds; from/to "
+                 "replace only that part, clear:true removes the curve (the knob alone again), e.g. {op:'track_pan', "
+                 "track:'A1', points:[{at:0, pan:-100}, {at:'4s', pan:100}]} = A1 from left to right in 4 s. Ripple "
+                 "edits move it like the volume curve; the pan knob trims the whole curve. In 5.1/7.1 it moves the "
+                 "surround panner's left/right (depth, center, lfe stay). `info` lists it on the track "
+                 "(pan_automation: [{at, pan}]). Format 8 like track_volume.",
+                 opTrackPan}
         << OpDef{"normalize", "{op:'normalize', clips, mode?:'peak'|'lufs', target?, relative?, allow_track_gain?}",
                  "Normalize Audio Levels: sets only the given clips' volume",
                  "Changes only the clips given (with their linked partners unless linked:false): one clip id = that "

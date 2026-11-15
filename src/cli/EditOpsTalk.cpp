@@ -190,7 +190,8 @@ TakeQuiet measureTake(Session& s, const Clip& take, int track)
     // The parts of the file this track plays, and some of it around them (the same recording)
     int lo = INT_MAX, hi = INT_MIN;
     for (const Clip& c : s.project.timeline().audio[track].clips)
-        if (c.mediaPath == take.mediaPath && c.audioStream == take.audioStream && !c.isRetimed()) {
+        if (c.mediaPath == take.mediaPath && c.audioStream == take.audioStream && c.sourceChannels == take.sourceChannels
+            && !c.isRetimed()) {
             lo = std::min(lo, c.in);
             hi = std::max(hi, c.out + 1);
         }
@@ -199,10 +200,12 @@ TakeQuiet measureTake(Session& s, const Clip& take, int track)
     hi = std::min(m->length, hi + margin);
     if (hi <= lo) return q;
     // With the words in it (the heuristic voice detection, same pass): a quiet murmur under the floor + 6 dB must not
-    // become the room tone. A margin for the ends of a word.
+    // become the room tone. A margin for the ends of a word. A routed take (a radio mic on channels 3/4) is measured
+    // on its channels only: the loop must come from the sound it plays.
     std::vector<bool> speech;
     const auto levels = AudioAnalysis::fileBlockLevels(take.mediaPath, take.audioStream, lo / fps, hi / fps,
-                                                       RoomTone::kBlockSeconds, &speech, kSpeechMargin);
+                                                       RoomTone::kBlockSeconds, &speech, kSpeechMargin,
+                                                       take.sourceChannels);
     if (!levels) return q;
     const RoomTone::Quiet quiet = RoomTone::findQuiet(*levels, int(std::lround(kQuietWant / RoomTone::kBlockSeconds)),
                                                       int(std::lround(kQuietLeast / RoomTone::kBlockSeconds)), speech);
@@ -264,7 +267,10 @@ void opRoomTone(Session& s, const QJsonObject& op)
     QStringList keys;
     const int seam = RoomTone::seamFrames(s.project.frameRate());
     for (const Gap& g : gaps) {
-        const QString key = g.take.mediaPath + '#' + QString::number(g.take.audioStream);
+        QStringList routed; // a routed take is its own recording (other channels, other quiet)
+        for (int c : g.take.sourceChannels) routed << QString::number(c);
+        const QString key = g.take.mediaPath + '#' + QString::number(g.take.audioStream)
+                            + (routed.isEmpty() ? QString() : '|' + routed.join(','));
         if (!quiet.contains(key)) {
             quiet.insert(key, measureTake(s, g.take, track));
             keys << key;

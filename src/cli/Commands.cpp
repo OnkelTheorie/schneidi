@@ -688,6 +688,11 @@ QJsonObject timelineJson(const Project& p)
                     for (const AutoPoint& a : t.volumeAuto) pts << QJsonObject{{"at", a.frame}, {"db", std::round(a.db * 100) / 100}};
                     o["volume_automation"] = pts;
                 }
+                if (!t.panAuto.isEmpty()) { // pan automation: on top of the pan knob
+                    QJsonArray pts;
+                    for (const AutoPoint& a : t.panAuto) pts << QJsonObject{{"at", a.frame}, {"pan", std::round(a.db * 100) / 100}};
+                    o["pan_automation"] = pts;
+                }
                 if (t.solo) o["solo"] = true;
                 if (t.dynamics != TrackDynamics{}) {
                     const TrackDynamics& d = t.dynamics;

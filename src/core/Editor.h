@@ -223,10 +223,13 @@ public:
     // Pen in track mode (VolumeDraw::applyTrack): the stroke becomes the volume automation of audio track `track`
     // where it was drawn. Locked tracks stay. One undo step per stroke; false = nothing changed.
     bool drawTrackVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
-    // The volume automation of audio track `track` replaced (CLI op track_volume; empty = off, the fader alone).
-    // Normalized (Automation::normalized). Locked tracks stay. One undo step (same mergeKey: one step, dragging a
-    // point on the Studio page); false = nothing changed.
-    bool setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText = {}, const QString& mergeKey = {});
+    // The same for the pan automation (the stroke's values are the pan heard, -100..+100; "Spur-Pan zeichnen")
+    bool drawTrackPan(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing);
+    // The volume (or pan) automation of audio track `track` replaced (CLI ops track_volume / track_pan; empty = off,
+    // the fader / knob alone). Normalized (Automation::normalized). Locked tracks stay. One undo step (same mergeKey:
+    // one step - dragging a point on the Studio page, a whole write pass); false = nothing changed.
+    bool setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText = {}, const QString& mergeKey = {},
+                            AutoTarget target = AutoTarget::Volume);
     // Audio clips for normalizing: selection (with linked partners), audio only, not locked
     QVector<int> selectedAudioClips() const;
     // Change any clip property (Inspector). Same mergeKey = one undo step.

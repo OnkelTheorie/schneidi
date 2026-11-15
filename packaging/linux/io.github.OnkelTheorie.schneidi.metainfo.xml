@@ -109,6 +109,12 @@
   </requires>
 
   <releases>
+    <release version="0.22.1" date="2026-11-15">
+      <description>
+        <p>AppImage runs on older distributions (built on Ubuntu 22.04, glibc 2.35).</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.22.1</url>
+    </release>
     <release version="0.22.0" date="2026-11-14">
       <description>
         <p>Tracking Update: trackers notice a lost point, a node's time range on the timeline, text behind an object,

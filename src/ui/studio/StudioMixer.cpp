@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/studio/StudioMixer.h"
-#include "ui/studio/StudioTools.h"
 
 #include "app/DynamicsDialog.h"
 #include "app/EqDialog.h"
@@ -8,14 +7,18 @@
 #include "core/Automation.h"
 #include "core/ChannelLayout.h"
 #include "core/Dynamics.h"
+#include "core/Equalizer.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Loudness.h"
 #include "core/Project.h"
 #include "core/VolumeDraw.h"
 #include "engine/Engine.h"
-#include "ui/EqCurve.h"
+#include "ui/ElidedLabel.h"
 
+#include <QApplication>
+#include <QDialog>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
@@ -23,6 +26,7 @@
 #include <QPainterPath>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSettings>
 #include <QTimer>
@@ -39,7 +43,7 @@ constexpr float kSilent = -200.f;
 constexpr double kFloor = -60.0; // lowest value of the meters (dBFS)
 constexpr double kFall = 24.0;   // meter decay dB/s
 constexpr double kHold = 1.0;    // peak hold, s
-constexpr int kCurveH = 56;      // EQ and compressor curves in a strip
+constexpr int kThumbH = 28;      // the EQ and compressor pictures in a strip
 
 double meterPos(double db) { return std::clamp((db - kFloor) / -kFloor, 0.0, 1.0); }
 
@@ -76,7 +80,7 @@ class StudioFader : public QWidget {
 public:
     StudioFader()
     {
-        setMinimumSize(60, 90);
+        setMinimumSize(50, 80);
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         setCursor(Qt::SizeVerCursor);
     }
@@ -282,130 +286,19 @@ private:
     double m_lastY = 0;
 };
 
-// The compressor's static curve (input -60..0 dB across, output up): the threshold point slides sideways, the end
-// point at 0 dB input up and down sets the ratio. A drag switches the compressor on; one undo step per drag. Double
-// click = the full compressor window.
-class DynCurve : public QWidget {
-public:
-    DynCurve(Editor* editor, int track) : m_editor(editor), m_track(track)
-    {
-        setMinimumSize(80, 40);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setFixedHeight(kCurveH);
-        setMouseTracking(true);
-        setToolTip(T("Kompressor: Punkt seitlich = Schwelle, Ende hoch/runter = Verhältnis\nDoppelklick = alle Werte"));
-        connect(editor->project(), &Project::timelineChanged, this, qOverload<>(&QWidget::update));
-    }
-    std::function<void()> onOpen;
-
-protected:
-    TrackDynamics dyn() const
-    {
-        const auto& audio = m_editor->project()->timeline().audio;
-        return m_track < audio.size() ? audio[m_track].dynamics : TrackDynamics{};
-    }
-    QRectF plot() const { return QRectF(rect()).adjusted(5, 5, -5, -5); }
-    QPointF at(double in, double out) const
-    {
-        const QRectF r = plot();
-        return {r.left() + (in + 60) / 60 * r.width(), r.bottom() - (std::clamp(out, -60.0, 12.0) + 60) / 72 * r.height()};
-    }
-    QPointF thresholdPoint() const
-    {
-        const TrackDynamics d = dyn();
-        return at(d.thresholdDb, Compressor::curveDb(d, d.thresholdDb));
-    }
-    QPointF endPoint() const { return at(0, Compressor::curveDb(dyn(), 0)); }
-
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.fillRect(rect(), Theme::lane);
-        const QRectF r = plot();
-        p.setPen(QPen(Theme::control, 1));
-        for (double db : {-48.0, -36.0, -24.0, -12.0}) p.drawLine(at(db, -60), at(db, 12));
-        p.setPen(QPen(Theme::controlLight, 1, Qt::DashLine));
-        p.drawLine(at(-60, -60), at(0, 0)); // 1:1
-        const TrackDynamics d = dyn();
-        QPainterPath path;
-        for (int x = int(r.left()); x <= int(r.right()); ++x) {
-            const double in = (x - r.left()) / r.width() * 60 - 60;
-            const QPointF pt = at(in, Compressor::curveDb(d, in));
-            if (x == int(r.left())) path.moveTo(pt);
-            else path.lineTo(pt);
-        }
-        p.setPen(QPen(d.on ? Theme::primary : Theme::controlOff, 1.5));
-        p.drawPath(path);
-        p.setPen(QPen(Theme::border, 1));
-        p.setBrush(d.on ? Theme::secondary : Theme::controlOff);
-        p.drawEllipse(thresholdPoint(), 3.5, 3.5);
-        p.drawEllipse(endPoint(), 3.5, 3.5);
-        QFont f = font();
-        f.setPointSizeF(7);
-        p.setFont(f);
-        p.setPen(Theme::textDim);
-        p.drawText(r.adjusted(2, 0, 0, 0), Qt::AlignLeft | Qt::AlignTop,
-                   QString("%1 dB  %2:1").arg(number(d.thresholdDb, 0), number(d.ratio, d.ratio < 10 ? 1 : 0)));
-    }
-    void mousePressEvent(QMouseEvent* e) override
-    {
-        if (e->button() != Qt::LeftButton) return;
-        const QPointF pos = e->position();
-        const auto near = [&](const QPointF& a) { return std::hypot(a.x() - pos.x(), a.y() - pos.y()) <= 10; };
-        m_drag = near(endPoint()) ? 2 : near(thresholdPoint()) ? 1 : 0;
-    }
-    void mouseMoveEvent(QMouseEvent* e) override
-    {
-        const QPointF pos = e->position();
-        if (!m_drag) {
-            const auto near = [&](const QPointF& a) { return std::hypot(a.x() - pos.x(), a.y() - pos.y()) <= 10; };
-            setCursor(near(endPoint()) ? Qt::SizeVerCursor : near(thresholdPoint()) ? Qt::SizeHorCursor : Qt::ArrowCursor);
-            return;
-        }
-        TrackDynamics d = dyn();
-        d.on = true;
-        const QRectF r = plot();
-        if (m_drag == 1) {
-            d.thresholdDb = std::round((pos.x() - r.left()) / r.width() * 60 - 60);
-        } else {
-            // Output at 0 dB input (without make-up and knee): thr - thr / ratio
-            const double out = (r.bottom() - pos.y()) / r.height() * 72 - 60 - d.makeupDb;
-            const double above = out - d.thresholdDb; // what is left of the -threshold dB above it
-            d.ratio = above <= 0.01 ? Compressor::kMaxRatio : std::round(-d.thresholdDb / above * 10) / 10;
-        }
-        d = Compressor::clamped(d);
-        m_editor->setTrackDynamics(m_track, d, QString("studio-dyn-%1").arg(m_track));
-    }
-    void mouseReleaseEvent(QMouseEvent*) override
-    {
-        if (m_drag) m_editor->project()->closeMerge();
-        m_drag = 0;
-    }
-    void mouseDoubleClickEvent(QMouseEvent*) override
-    {
-        m_drag = 0;
-        if (onOpen) onOpen();
-    }
-
-private:
-    Editor* m_editor;
-    int m_track;
-    int m_drag = 0; // 1 = threshold, 2 = ratio
-};
-
 // Pan as a horizontal bar: drag sideways, double click = centre
 class PanBar : public QWidget {
 public:
     PanBar()
     {
         setFixedHeight(16);
-        setMinimumWidth(60);
+        setMinimumWidth(40);
         setCursor(Qt::SizeHorCursor);
         setToolTip(T("Panorama: ziehen = links/rechts, Doppelklick = Mitte"));
     }
     std::function<void(double)> onChange;
     std::function<void()> onFinish;
+    bool dragging() const { return m_drag; }
     void setValue(double v)
     {
         if (v == m_v) return;
@@ -471,7 +364,7 @@ public:
         : m_name(name), m_lo(lo), m_hi(hi), m_def(def), m_v(def), m_unit(unit)
     {
         setFixedHeight(16);
-        setMinimumWidth(60);
+        setMinimumWidth(40);
         setCursor(Qt::SizeHorCursor);
     }
     std::function<void(double)> onChange;
@@ -538,55 +431,160 @@ private:
     bool m_drag = false;
     double m_lastX = 0;
 };
+// A small picture of a track's EQ or compressor curve in its strip. A click opens the full window (EqDialog with the
+// big EQ curve, DynamicsDialog with the big compressor curve - both draggable there); a click on the "EQ" / "DYN" tag
+// in its corner switches it on or off. Dimmed while off.
+class CurveThumb : public QWidget {
+public:
+    CurveThumb(Editor* editor, int track, bool eq) : m_editor(editor), m_track(track), m_eq(eq)
+    {
+        setFixedHeight(kThumbH);
+        setMinimumWidth(40);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(eq ? T("EQ der Spur: Klick öffnet das EQ-Fenster mit der großen Kurve, Klick auf „EQ“ schaltet ihn "
+                          "an oder aus")
+                      : T("Kompressor der Spur: Klick öffnet das Kompressor-Fenster mit der großen Kurve, Klick auf "
+                          "„DYN“ schaltet ihn an oder aus"));
+    }
+    std::function<void()> onOpen;
+    std::function<void()> onToggle;
+    bool isOn() const
+    {
+        const auto& audio = m_editor->project()->timeline().audio;
+        if (m_track >= audio.size()) return false;
+        return m_eq ? audio[m_track].eq.on : audio[m_track].dynamics.on;
+    }
+    // The on/off tag in the top left corner
+    QRect tagRect() const
+    {
+        const QFontMetrics fm(tagFont());
+        return QRect(1, 1, fm.horizontalAdvance(tag()) + 6, fm.height());
+    }
 
+protected:
+    QString tag() const { return m_eq ? QStringLiteral("EQ") : QStringLiteral("DYN"); }
+    QFont tagFont() const
+    {
+        QFont f = font();
+        f.setPointSizeF(7);
+        f.setBold(true);
+        return f;
+    }
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.fillRect(rect(), Theme::lane);
+        const auto& audio = m_editor->project()->timeline().audio;
+        if (m_track >= audio.size()) return;
+        const Track& t = audio[m_track];
+        const bool on = isOn();
+        const QRectF r = QRectF(rect()).adjusted(2, 2, -2, -2);
+        QPainterPath path;
+        if (m_eq) {
+            // Log frequency across, +-24 dB up (the EQ window's scale)
+            TrackEq shown = t.eq;
+            shown.on = true; // the curve also while it is off (dimmed)
+            const double lo = std::log(Equalizer::kMinFreq), hi = std::log(Equalizer::kMaxFreq);
+            p.setPen(QPen(Theme::control, 1));
+            p.drawLine(QPointF(r.left(), r.center().y()), QPointF(r.right(), r.center().y()));
+            for (int x = int(r.left()); x <= int(r.right()); ++x) {
+                const double hz = std::exp(lo + (x - r.left()) / r.width() * (hi - lo));
+                const double db = std::clamp(Equalizer::responseDb(shown, hz, 48000), -24.0, 24.0);
+                const QPointF pt(x, r.center().y() - db / 24 * r.height() / 2);
+                if (x == int(r.left())) path.moveTo(pt);
+                else path.lineTo(pt);
+            }
+        } else {
+            // Input -60..0 dB across, output -60..+12 up (the compressor window's scale)
+            const TrackDynamics& d = t.dynamics;
+            const auto at = [&](double in, double out) {
+                return QPointF(r.left() + (in + 60) / 60 * r.width(), r.bottom() - (std::clamp(out, -60.0, 12.0) + 60) / 72 * r.height());
+            };
+            p.setPen(QPen(Theme::control, 1, Qt::DashLine));
+            p.drawLine(at(-60, -60), at(0, 0));
+            for (int x = int(r.left()); x <= int(r.right()); ++x) {
+                const double in = (x - r.left()) / r.width() * 60 - 60;
+                const QPointF pt = at(in, Compressor::curveDb(d, in));
+                if (x == int(r.left())) path.moveTo(pt);
+                else path.lineTo(pt);
+            }
+        }
+        p.setPen(QPen(on ? Theme::primary : Theme::controlOff, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(path);
+        const QRect tr = tagRect();
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.fillRect(tr, on ? Theme::primary : Theme::control);
+        p.setFont(tagFont());
+        p.setPen(on ? Theme::readableOn(Theme::primary) : Theme::textDim);
+        p.drawText(tr, Qt::AlignCenter, tag());
+    }
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton) return;
+        if (tagRect().adjusted(-2, -2, 2, 2).contains(e->position().toPoint())) {
+            if (onToggle) onToggle();
+        } else if (onOpen) {
+            onOpen();
+        }
+    }
+
+private:
+    Editor* m_editor;
+    int m_track;
+    bool m_eq;
+};
+
+// One narrow mixer strip (a fixed width; many tracks scroll beside each other). From the top: name, EQ and compressor
+// pictures (a click opens their window), pan (plus the surround sends in 5.1/7.1), mute/solo with the pan value, the
+// peak since the reset, fader with meters, the fader's value. The master: name, limiter, peak, fader, value.
 class StudioStrip : public QWidget {
 public:
     StudioStrip(Editor* editor, int track) // track -1 = the master
     {
         const bool master = track < 0;
+        m_master = master;
         setObjectName("StudioStrip");
         setAttribute(Qt::WA_StyledBackground);
-        setFixedWidth(StudioMixer::kStripW + (master ? 10 : 0));
+        setFixedWidth(baseWidth());
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
         setStyleSheet(QString("QWidget#StudioStrip { background: %1; border-right: 1px solid %2; %4 }"
                               "QLabel { color: %3; }")
                           .arg(Theme::panel.name(), Theme::border.name(), Theme::textDim.name(),
                                master ? QString("border-left: 2px solid %1;").arg(Theme::border.name()) : QString()));
         auto* lay = new QVBoxLayout(this);
-        lay->setContentsMargins(6, 4, 6, 4);
-        lay->setSpacing(4);
-        name = new QLabel;
-        name->setAlignment(Qt::AlignCenter);
-        name->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
+        lay->setContentsMargins(3, 3, 3, 3);
+        lay->setSpacing(2);
+        name = new ElidedLabel;
+        name->setAlignment(Qt::AlignHCenter);
+        name->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 1px;")
                                 .arg(Theme::text.name(), Theme::panelHeader.name()));
         lay->addWidget(name);
         const QString tag = master ? QStringLiteral("master") : trackShortName({TrackKind::Audio, track});
         if (!master) {
-            // EQ and compressor: their switches and windows ("…") in one row, below them their curves (draggable)
-            auto* fxRow = new QHBoxLayout;
-            fxRow->setSpacing(3);
-            eq = smallButton(QStringLiteral("EQ"), Theme::primary, T("EQ der Spur an/aus"));
-            eq->setObjectName("studio_eq_" + tag);
-            eqOpen = smallButton(QStringLiteral("…"), Theme::primary, T("EQ-Fenster öffnen"));
+            eqThumb = new CurveThumb(editor, track, true);
+            eqThumb->setObjectName("studio_eqthumb_" + tag);
+            lay->addWidget(eqThumb);
+            dynThumb = new CurveThumb(editor, track, false);
+            dynThumb->setObjectName("studio_dynthumb_" + tag);
+            lay->addWidget(dynThumb);
+            // Too little height for the pictures (a small window, a large font): two small buttons instead
+            fxRow = new QWidget;
+            auto* fx = new QHBoxLayout(fxRow);
+            fx->setContentsMargins(0, 0, 0, 0);
+            fx->setSpacing(3);
+            eqOpen = smallButton(QStringLiteral("EQ"), Theme::primary, T("EQ-Fenster öffnen"));
             eqOpen->setCheckable(false);
-            dyn = smallButton(QStringLiteral("DYN"), Theme::primary, T("Kompressor der Spur an/aus"));
-            dyn->setObjectName("studio_dyn_" + tag);
-            dynOpen = smallButton(QStringLiteral("…"), Theme::primary, T("Kompressor-Fenster öffnen"));
+            eqOpen->setObjectName("studio_eq_" + tag);
+            dynOpen = smallButton(QStringLiteral("DYN"), Theme::primary, T("Kompressor-Fenster öffnen"));
             dynOpen->setCheckable(false);
-            fxRow->addWidget(eq);
-            fxRow->addWidget(eqOpen);
-            fxRow->addStretch(1);
-            fxRow->addWidget(dyn);
-            fxRow->addWidget(dynOpen);
-            lay->addLayout(fxRow);
-            eqCurve = new EqCurve(editor, track);
-            eqCurve->setCompact(true);
-            eqCurve->setObjectName("studio_eqcurve_" + tag);
-            eqCurve->setFixedHeight(kCurveH);
-            eqCurve->setToolTip(T("EQ: Punkte ziehen = Frequenz und Verstärkung, Doppelklick = 0 dB"));
-            lay->addWidget(eqCurve);
-            dynCurve = new DynCurve(editor, track);
-            dynCurve->setObjectName("studio_dyncurve_" + tag);
-            lay->addWidget(dynCurve);
+            dynOpen->setObjectName("studio_dyn_" + tag);
+            fx->addWidget(eqOpen, 1);
+            fx->addWidget(dynOpen, 1);
+            fxRow->hide();
+            lay->addWidget(fxRow);
             pan = new PanBar;
             pan->setObjectName("studio_pan_" + tag);
             lay->addWidget(pan);
@@ -605,7 +603,7 @@ public:
             for (SendBar* b : {depth, center, lfe}) sl->addWidget(b);
             surround->hide();
             lay->addWidget(surround);
-            // Mute, solo, pan value and the peak in one row (room for the fader)
+            // Mute, solo and the pan value in one row
             auto* ms = new QHBoxLayout;
             ms->setSpacing(3);
             mute = smallButton(QStringLiteral("M"), Theme::warning, T("Stumm"));
@@ -614,20 +612,20 @@ public:
             ms->addWidget(solo);
             panLabel = new QLabel(QStringLiteral("C"));
             panLabel->setAlignment(Qt::AlignCenter);
+            panLabel->setFont(smallFont());
             ms->addWidget(panLabel, 1);
-            peak = new QLabel;
-            ms->addWidget(peak, 1);
             lay->addLayout(ms);
         } else {
             limiter = smallButton(T("Limiter"), Theme::primary, {});
             limiter->setObjectName("studio_limiter");
             lay->addWidget(limiter);
-            peak = new QLabel;
-            lay->addWidget(peak);
         }
+        peak = new QLabel;
         peak->setAlignment(Qt::AlignCenter);
+        peak->setFont(smallFont());
         peak->setToolTip(master ? T("True Peak (dBTP) seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück")
                                 : T("Spitzenpegel (dBFS) seit dem Zurücksetzen"));
+        lay->addWidget(peak);
         fader = new StudioFader;
         fader->setObjectName("studio_fader_" + tag);
         lay->addWidget(fader, 1);
@@ -637,18 +635,25 @@ public:
         lay->addWidget(value);
         setVolume(0);
         updatePeak();
-        m_master = master;
         fitWidth();
     }
 
-    // As wide as its widest row needs (a large font, a long language), never narrower than the usual strip; again
-    // once polished (the style sheet's fonts and paddings count)
+    int baseWidth() const { return StudioMixer::kStripW + (m_master ? 14 : 0); }
+    static QFont smallFont()
+    {
+        QFont f = QApplication::font();
+        f.setPointSizeF(f.pointSizeF() * 0.85);
+        return f;
+    }
+
+    // The usual narrow width; wider only when a row needs it (a large font, the master's speaker names); again once
+    // polished (the style sheet's fonts and paddings count)
     void fitWidth()
     {
         ensurePolished();
         for (QWidget* c : findChildren<QWidget*>()) c->ensurePolished();
         layout()->invalidate();
-        setFixedWidth(std::max(StudioMixer::kStripW + (m_master ? 10 : 0), layout()->minimumSize().width()));
+        setFixedWidth(std::max(baseWidth(), layout()->minimumSize().width()));
     }
 
     void setVolume(double db)
@@ -670,26 +675,41 @@ public:
     }
     double shown = 0;       // what the fader shows (with automation: the level at the playhead)
     bool automated = false;
+    // Pan automation: the pan bar shows the pan at the playhead (knob + curve), moving it trims the whole curve
+    void setPanAutomated(bool on)
+    {
+        if (on == panAutomated || !panLabel) return;
+        panAutomated = on;
+        panLabel->setStyleSheet(on ? QString("color: %1;").arg(Theme::secondary.name()) : QString());
+        panLabel->setToolTip(on ? T("Pan-Automation: zeigt den Pan am Abspielkopf; der Regler verschiebt die ganze Kurve") : QString());
+    }
+    double shownPan = 0;
+    bool panAutomated = false;
     void setPan(double v)
     {
         if (!pan) return;
+        shownPan = v;
         pan->setValue(v);
         const int i = int(std::lround(v));
         panLabel->setText(i == 0 ? QStringLiteral("C") : QString("%1%2").arg(i < 0 ? QStringLiteral("L") : QStringLiteral("R")).arg(std::abs(i)));
     }
-    // The curves need room: a low mixer hides them (their switches stay), the fader keeps its height
-    bool curvesShown() const { return eqCurve && !eqCurve->isHidden(); }
+    // The curve pictures need room: a low mixer shows two small buttons instead and leaves out the peak (the fader's
+    // overload marks stay); the fader keeps its height
+    bool curvesShown() const { return eqThumb && !eqThumb->isHidden(); }
     void setCurvesShown(bool on)
     {
-        if (!eqCurve || curvesShown() == on) return;
-        eqCurve->setVisible(on);
-        dynCurve->setVisible(on);
+        if (!eqThumb || curvesShown() == on) return;
+        eqThumb->setVisible(on);
+        dynThumb->setVisible(on);
+        peak->setVisible(on);
+        fxRow->setVisible(!on);
     }
-    // Height the strip needs with its curves shown
+    // Height the strip needs with the small buttons (its least) and with the pictures
+    int compactHeight() const { return baseHeight() + fxRow->sizeHint().height() + layout()->spacing(); }
     int heightWithCurves() const
     {
-        const int h = layout()->minimumSize().height();
-        return eqCurve && !curvesShown() ? h + 2 * (kCurveH + layout()->spacing()) : h;
+        if (!eqThumb) return layout()->minimumSize().height();
+        return baseHeight() + 2 * kThumbH + peak->sizeHint().height() + 3 * layout()->spacing();
     }
 
     void updatePeak()
@@ -704,13 +724,12 @@ public:
                                  : QString("color: %1; background: %2;").arg(Theme::textDim.name(), Theme::well.name()));
     }
 
-    QLabel* name;
-    QToolButton* eq = nullptr;
+    ElidedLabel* name;
+    CurveThumb* eqThumb = nullptr;
+    CurveThumb* dynThumb = nullptr;
+    QWidget* fxRow = nullptr;
     QToolButton* eqOpen = nullptr;
-    EqCurve* eqCurve = nullptr;
-    QToolButton* dyn = nullptr;
     QToolButton* dynOpen = nullptr;
-    DynCurve* dynCurve = nullptr;
     PanBar* pan = nullptr;
     QWidget* surround = nullptr; // depth, center, LFE: only in a 5.1/7.1 project
     SendBar* depth = nullptr;
@@ -725,13 +744,20 @@ public:
     QLabel* value;
 
 private:
+    // The strip's least height without the parts that come and go with the room (pictures + peak or the buttons)
+    int baseHeight() const
+    {
+        const int h = layout()->minimumSize().height(), sp = layout()->spacing();
+        if (!eqThumb) return h;
+        return curvesShown() ? h - 2 * kThumbH - peak->sizeHint().height() - 3 * sp : h - fxRow->sizeHint().height() - sp;
+    }
     bool m_clip = false;
     bool m_master = false;
 };
 
-// Loudness at the master, live (ITU-R BS.1770): momentary, short-term, integrated, range, true peak. Integrated green
-// within ±1 LU of the target (the mixer's setting, default -14 LUFS), yellow below, red above; true peak red over the
-// true-peak limit. Reset restarts the measurement.
+// Loudness at the master, live (ITU-R BS.1770), compact above the mixer: integrated large (green within ±1 LU of the
+// target - the mixer's setting, default -14 LUFS -, yellow below, red above) with the target under it; short-term,
+// momentary, range and true peak (red over the true-peak limit) in a 2 x 2 grid beside it; ↺ restarts the measurement.
 class StudioLoudness : public QWidget {
 public:
     StudioLoudness()
@@ -739,17 +765,13 @@ public:
         setObjectName("studio_loudness");
         setProperty("tourTarget", "studio_loudness");
         setAttribute(Qt::WA_StyledBackground);
-        setStyleSheet(QString("QWidget#studio_loudness { background: %1; }").arg(Theme::panel.name()));
-        setMinimumWidth(150);
-        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-        auto* lay = new QVBoxLayout(this);
-        lay->setContentsMargins(8, 4, 8, 6);
-        lay->setSpacing(2);
-        auto* title = new QLabel(T("Lautheit"));
-        title->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
-                                 .arg(Theme::text.name(), Theme::panelHeader.name()));
-        title->setAlignment(Qt::AlignCenter);
-        lay->addWidget(title);
+        setStyleSheet(QString("QWidget#studio_loudness { background: %1; border-bottom: 1px solid %2; }")
+                          .arg(Theme::panel.name(), Theme::border.name()));
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        auto* grid = new QGridLayout(this);
+        grid->setContentsMargins(8, 2, 8, 2);
+        grid->setHorizontalSpacing(8);
+        grid->setVerticalSpacing(0);
         const struct { const char* shortName; const char* tip; } rows[] = {
             {"I", N_("Integriert (LUFS): Lautheit seit dem Zurücksetzen")},
             {"S", N_("Kurzzeit (LUFS, 3 s)")},
@@ -757,34 +779,50 @@ public:
             {"LRA", N_("Lautheitsumfang (LU)")},
             {"TP", N_("True Peak (dBTP), höchster Wert seit dem Zurücksetzen")},
         };
-        for (const auto& r : rows) {
-            auto* row = new QHBoxLayout;
-            auto* label = new QLabel(QString::fromLatin1(r.shortName)); // EBU R128 names, as on every meter
-            label->setToolTip(T(r.tip));
-            label->setMinimumWidth(28);
+        // Where each reading goes: I big on the left (two rows), the others two by two
+        const QPoint cells[] = {{0, 0}, {2, 0}, {4, 0}, {2, 1}, {4, 1}}; // (column, row); 1 and 3 keep a gap
+        for (int i = 0; i < 5; ++i) {
+            auto* label = new QLabel(QString::fromLatin1(rows[i].shortName)); // EBU R128 names, as on every meter
+            label->setToolTip(T(rows[i].tip));
             auto* v = new QLabel(QStringLiteral("–"));
-            v->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            v->setToolTip(T(r.tip));
-            QFont f = v->font();
-            f.setPointSizeF(f.pointSizeF() * (values.isEmpty() ? 1.9 : 1.15));
-            f.setBold(values.isEmpty());
-            v->setFont(f);
-            row->addWidget(label);
-            row->addWidget(v, 1);
-            lay->addLayout(row);
+            v->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            v->setToolTip(T(rows[i].tip));
+            if (i == 0) {
+                QFont f = v->font();
+                f.setPointSizeF(f.pointSizeF() * 1.6);
+                f.setBold(true);
+                v->setFont(f);
+                v->setMinimumWidth(QFontMetrics(f).horizontalAdvance(QStringLiteral("−88,8")));
+                auto* iRow = new QHBoxLayout;
+                iRow->setSpacing(6);
+                iRow->addWidget(label);
+                iRow->addWidget(v);
+                iRow->addStretch(1);
+                grid->addLayout(iRow, 0, 0);
+            } else {
+                v->setMinimumWidth(v->fontMetrics().horizontalAdvance(QStringLiteral("−88,8")));
+                grid->addWidget(label, cells[i].y(), cells[i].x());
+                grid->addWidget(v, cells[i].y(), cells[i].x() + 1);
+            }
             values << v;
         }
         values[0]->setObjectName("studio_lufs");
         values[4]->setObjectName("studio_truepeak");
+        auto* targetRow = new QHBoxLayout;
+        targetRow->setSpacing(4);
         target = new QLabel;
-        target->setAlignment(Qt::AlignCenter);
-        lay->addWidget(target);
-        lay->addStretch(1);
+        target->setFont(StudioStrip::smallFont());
+        targetRow->addWidget(target, 1);
         reset = new QToolButton;
-        reset->setText(T("Zurücksetzen"));
+        reset->setObjectName("studio_loudness_reset");
+        reset->setText(QStringLiteral("↺"));
         reset->setFocusPolicy(Qt::NoFocus);
+        reset->setAutoRaise(true);
         reset->setToolTip(T("Messung neu beginnen"));
-        lay->addWidget(reset, 0, Qt::AlignHCenter);
+        targetRow->addWidget(reset);
+        grid->addLayout(targetRow, 1, 0);
+        grid->setColumnMinimumWidth(1, 10); // a gap after the integrated value
+        grid->setColumnStretch(6, 1);
     }
 
     void setReading(const LoudnessReading& r, bool live, double targetLufs, double tpLimit)
@@ -799,7 +837,8 @@ public:
         set(2, live ? lufs(r.momentary) : QStringLiteral("–"), Theme::text);
         set(3, r.seconds > 0 ? number(r.range) : QStringLiteral("–"), Theme::text);
         set(4, r.truePeak <= -99 ? QStringLiteral("–") : number(r.truePeak), r.truePeak > tpLimit ? Theme::warning : Theme::text);
-        target->setText(T("Ziel %1 LUFS").arg(number(targetLufs, 0)));
+        const QString t = T("Ziel %1 LUFS").arg(number(targetLufs, 0));
+        if (target->text() != t) target->setText(t);
     }
 
     QVector<QLabel*> values;
@@ -824,7 +863,7 @@ double truePeakLimit() { return QSettings().value("audio/truePeakLimit", -1.0).t
 } // namespace
 
 StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
-    : QWidget(parent), m_editor(editor), m_project(editor->project()), m_engine(engine)
+    : QWidget(parent), m_editor(editor), m_project(editor->project()), m_engine(engine), m_writer(editor)
 {
     setObjectName("studio_mixer");
     setProperty("tourTarget", "studio_mixer");
@@ -832,20 +871,26 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
     auto* strips = new QWidget;
+    strips->setObjectName("studio_strips");
     m_stripLayout = new QHBoxLayout(strips);
     m_stripLayout->setContentsMargins(0, 0, 0, 0);
     m_stripLayout->setSpacing(0);
     m_stripLayout->addStretch(1);
+    // Many tracks: the strips scroll sideways inside the column, the master stays at its right end
     m_scroll = new QScrollArea;
+    m_scroll->setObjectName("studio_strips_scroll");
     m_scroll->setWidget(strips);
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_scroll->horizontalScrollBar()->setSingleStep(kStripW);
+    m_scroll->setMinimumWidth(kStripW);
+    m_scroll->viewport()->installEventFilter(this);
     row->addWidget(m_scroll, 1);
 
     m_master = new StudioStrip(editor, -1);
-    m_master->name->setText(T("Master"));
+    m_master->name->setFullText(T("Master"));
     m_master->fader->setOver(truePeakLimit());
     m_master->fader->setChannels(m_channels);
     m_master->fader->onChange = [this](double db) {
@@ -855,13 +900,13 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     m_master->fader->onFinish = [this] { m_project->closeMerge(); };
     connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) { m_editor->setMasterLimiter(on); });
     row->addWidget(m_master);
+    // The loudness reading: StudioPage puts it above the mixer (the tours point at it on its own)
     m_loudness = new StudioLoudness;
     connect(m_loudness->reset, &QToolButton::clicked, this, [this] {
         m_engine->resetLoudness();
         m_master->fader->resetPeak();
         m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
     });
-    row->addWidget(m_loudness);
 
     connect(m_project, &Project::timelineChanged, this, &StudioMixer::sync);
     connect(m_project, &Project::formatChanged, this, [this] {
@@ -877,31 +922,25 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
 }
 
-void StudioMixer::setTools(QWidget* tools)
+QWidget* StudioMixer::loudness() const { return m_loudness; }
+
+QScrollArea* StudioMixer::stripsArea() const { return m_scroll; }
+
+QWidget* StudioMixer::masterStrip() const { return m_master; }
+
+int StudioMixer::preferredWidth(int strips) const
 {
-    m_tools = tools;
-    auto* row = static_cast<QHBoxLayout*>(layout());
-    row->insertWidget(row->indexOf(m_master), tools, 1);
-    row->setStretchFactor(m_scroll, 0);
-    m_scroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    fitStripsWidth();
+    int w = 0;
+    for (int i = 0; i < std::min<int>(strips, int(m_strips.size())); ++i) w += m_strips[i]->width();
+    if (m_strips.isEmpty()) w = kStripW;
+    return w + m_master->width();
 }
 
-void StudioMixer::fitStripsWidth()
+bool StudioMixer::eventFilter(QObject* watched, QEvent* e)
 {
-    if (!m_tools) return;
-    int natural = 0;
-    for (StudioStrip* s : m_strips) natural += s->width();
-    m_scroll->setMaximumWidth(std::max(natural, 1) + m_scroll->frameWidth() * 2);
-    // A narrow page (small window, large font): the master and the loudness keep their size, the tools one card if
-    // there is room (else less, their cards scroll), the strips what is left (they scroll)
-    const int room = width() - m_master->width() - m_loudness->minimumWidth();
-    const auto* tools = qobject_cast<StudioTools*>(m_tools);
-    const int card = tools ? tools->cardWidth() + 12 : 240;
-    const int stripsWant = std::min(natural, kStripW);
-    const int toolsMin = std::clamp(room - stripsWant, std::min(160, card), card);
-    m_tools->setMinimumWidth(toolsMin);
-    m_scroll->setMinimumWidth(std::clamp(room - toolsMin, 0, stripsWant));
+    // The strips' height follows the viewport's (the horizontal scrollbar takes some when it shows)
+    if (watched == m_scroll->viewport() && e->type() == QEvent::Resize) fitHeight();
+    return QWidget::eventFilter(watched, e);
 }
 
 QStringList StudioMixer::meterLabels(int track) const
@@ -929,6 +968,8 @@ void StudioMixer::hideEvent(QHideEvent* e)
 {
     QWidget::hideEvent(e);
     m_timer->stop(); // another page: no meters to move
+    // Without the timer tick() cannot see playback stop: a write pass ends here (open touches released, one undo step)
+    if (m_writer.inPass()) m_writer.endPass(m_engine->position());
 }
 
 void StudioMixer::resizeEvent(QResizeEvent* e)
@@ -937,20 +978,41 @@ void StudioMixer::resizeEvent(QResizeEvent* e)
     fitHeight();
 }
 
+bool StudioMixer::playing() const { return !std::isnan(m_engine->soundFrame()); }
+
+void StudioMixer::setWriteMode(bool on)
+{
+    if (on == m_writeMode) return;
+    m_writeMode = on;
+    if (!on) m_writer.endPass(m_engine->position());
+}
+
 void StudioMixer::fitHeight()
 {
+    if (m_fitting) return; // showing/hiding the pictures resizes the viewport again
+    m_fitting = true;
     const int room = m_scroll->viewport()->height();
+    int least = 0;
     for (StudioStrip* s : m_strips) {
         s->fitWidth();
         s->setCurvesShown(room >= s->heightWithCurves());
+        least = std::max(least, s->compactHeight());
     }
     m_master->fitWidth();
-    // The loudness keeps its text whole (a large font, a long language): at least what its labels need
-    if (QLayout* l = m_loudness->layout()) {
-        l->invalidate();
-        m_loudness->setMinimumWidth(std::max(150, l->minimumSize().width()));
-    }
-    fitStripsWidth();
+    // The strips never get cut at the bottom: the column keeps at least their height with the small buttons (the
+    // viewer above gives way), plus the scrollbar when they scroll
+    const QScrollBar* bar = m_scroll->horizontalScrollBar();
+    const int need = least + (bar->isVisible() || m_scroll->widget()->minimumSizeHint().width() > m_scroll->width()
+                                  ? bar->sizeHint().height() : 0);
+    if (m_scroll->minimumHeight() != need) m_scroll->setMinimumHeight(need);
+    m_fitting = false;
+}
+
+int StudioMixer::curvesShown() const
+{
+    int n = 0;
+    for (StudioStrip* s : m_strips) n += s->curvesShown() ? 1 : 0;
+    return n;
 }
 
 void StudioMixer::rebuild(int count)
@@ -961,6 +1023,12 @@ void StudioMixer::rebuild(int count)
         auto* s = new StudioStrip(m_editor, i);
         s->fader->setChannels(m_channels);
         s->fader->onChange = [this, i, s](double db) {
+            // Write mode while playing: the move is recorded into the automation (AutomationWriter)
+            if (m_writeMode && playing()) {
+                s->setVolume(db);
+                m_writer.move(i, AutoTarget::Volume, m_engine->position(), db);
+                return;
+            }
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
             // With automation the fader shows the level at the playhead: a move trims the whole curve by as much
             const double fader = t && !t->volumeAuto.isEmpty() ? t->volumeDb + (db - s->shown) : db;
@@ -968,10 +1036,26 @@ void StudioMixer::rebuild(int count)
             m_editor->setTrackVolume(i, fader, QString("studio-vol-%1").arg(i));
         };
         s->pan->onChange = [this, i, s](double v) {
+            if (m_writeMode && playing()) {
+                s->setPan(v);
+                m_writer.move(i, AutoTarget::Pan, m_engine->position(), v);
+                return;
+            }
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With pan automation the bar shows the pan at the playhead: a move trims the whole curve by as much
+            const double knob = t && !t->panAuto.isEmpty() ? t->pan + (v - s->shownPan) : v;
             s->setPan(v);
-            m_editor->setTrackPan(i, v, QString("studio-pan-%1").arg(i));
+            m_editor->setTrackPan(i, knob, QString("studio-pan-%1").arg(i));
         };
-        s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
+        // A touch ends on release (the pass stays one undo step until playback stops); otherwise one step per drag
+        s->fader->onFinish = [this, i] {
+            if (m_writer.touching(i, AutoTarget::Volume)) m_writer.release(i, AutoTarget::Volume, m_engine->position());
+            else if (!m_writer.inPass()) m_project->closeMerge();
+        };
+        s->pan->onFinish = [this, i] {
+            if (m_writer.touching(i, AutoTarget::Pan)) m_writer.release(i, AutoTarget::Pan, m_engine->position());
+            else if (!m_writer.inPass()) m_project->closeMerge();
+        };
         // Surround: the three sends go together (Editor::setTrackSurround), one undo step per drag
         const auto surroundChanged = [this, i, s] {
             m_editor->setTrackSurround(i, s->depth->value(), s->center->value(), s->lfe->value(),
@@ -990,44 +1074,60 @@ void StudioMixer::rebuild(int count)
         connect(s->solo, &QToolButton::clicked, this, [this, i, track] {
             if (const Track* t = track()) m_editor->setTrackSolo(i, !t->solo);
         });
-        connect(s->eq, &QToolButton::clicked, this, [this, i, track](bool on) {
+        s->eqThumb->onToggle = [this, i, track] {
             if (const Track* t = track()) {
                 TrackEq eq = t->eq;
-                eq.on = on;
+                eq.on = !eq.on;
                 m_editor->setTrackEq(i, eq);
             }
-        });
-        connect(s->dyn, &QToolButton::clicked, this, [this, i, track](bool on) {
+        };
+        s->dynThumb->onToggle = [this, i, track] {
             if (const Track* t = track()) {
                 TrackDynamics d = t->dynamics;
-                d.on = on;
+                d.on = !d.on;
                 m_editor->setTrackDynamics(i, d);
             }
-        });
+        };
+        s->eqThumb->onOpen = [this, i] { openEditor(i, true); };
+        s->dynThumb->onOpen = [this, i] { openEditor(i, false); };
         connect(s->eqOpen, &QToolButton::clicked, this, [this, i] { openEditor(i, true); });
         connect(s->dynOpen, &QToolButton::clicked, this, [this, i] { openEditor(i, false); });
-        s->dynCurve->onOpen = [this, i] { openEditor(i, false); };
         m_stripLayout->insertWidget(i, s);
         m_strips << s;
     }
     fitHeight();
 }
 
-void StudioMixer::openEditor(int track, bool eq)
+QDialog* StudioMixer::openEditor(int track, bool eq)
 {
     // One window per track and kind: a second click brings the open one up
     for (QDialog* d : findChildren<QDialog*>(Qt::FindDirectChildrenOnly))
         if (d->isVisible() && d->property("studioTrack").toInt() == track && d->property("studioEq").toBool() == eq) {
             d->raise();
             d->activateWindow();
-            return;
+            return d;
         }
     QDialog* d = eq ? static_cast<QDialog*>(new EqDialog(m_editor, track, this))
                     : static_cast<QDialog*>(new DynamicsDialog(m_editor, track, this));
+    d->setObjectName(eq ? "studio_eq_window" : "studio_dyn_window");
     d->setProperty("studioTrack", track);
     d->setProperty("studioEq", eq);
     d->setAttribute(Qt::WA_DeleteOnClose);
+    d->adjustSize();
+    // Beside its strip, left of the mixer column (over the lanes, not over the strips), inside the screen
+    if (track >= 0 && track < m_strips.size()) {
+        const QWidget* s = m_strips[track];
+        QPoint at = s->mapToGlobal(QPoint(0, 0)) - QPoint(d->width() + 8, 0);
+        at.setX(std::min(at.x(), mapToGlobal(QPoint(0, 0)).x() - d->width() - 8));
+        if (const QScreen* screen = s->screen()) {
+            const QRect avail = screen->availableGeometry();
+            at.setX(std::clamp(at.x(), avail.left(), std::max(avail.left(), avail.right() - d->width())));
+            at.setY(std::clamp(at.y(), avail.top(), std::max(avail.top(), avail.bottom() - d->height())));
+        }
+        d->move(at);
+    }
     d->show(); // not modal: the preview keeps playing
+    return d;
 }
 
 void StudioMixer::sync()
@@ -1047,26 +1147,27 @@ void StudioMixer::sync()
         StudioStrip* s = m_strips[i];
         const TrackRef ref{TrackKind::Audio, i};
         const QString name = trackDisplayName(t, ref);
-        s->name->setText(name == trackShortName(ref) ? name : QString("%1  %2").arg(trackShortName(ref), name));
-        s->name->setToolTip(name);
+        const QString full = name == trackShortName(ref) ? name : QString("%1 %2").arg(trackShortName(ref), name);
+        if (s->name->fullText() != full) s->name->setFullText(full);
         const bool silenced = anySolo && !t.solo && !t.muted;
         // A style sheet costs (Qt polishes the label again): set only when it changes
-        const QString style = QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
+        const QString style = QString("color: %1; font-weight: 600; background: %2; padding: 1px;")
                                   .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name());
         if (s->name->styleSheet() != style) s->name->setStyleSheet(style);
         s->setAutomated(!t.volumeAuto.isEmpty());
         if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
-        s->setPan(t.pan);
+        s->setPanAutomated(!t.panAuto.isEmpty());
+        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, m_engine->position()) : t.pan);
         s->surround->setVisible(surround);
         s->depth->setValue(t.panDepth);
         s->center->setValue(t.panCenter);
         s->lfe->setValue(t.lfeDb);
         s->mute->setChecked(t.muted);
         s->solo->setChecked(t.solo);
-        s->eq->setChecked(t.eq.on);
-        s->dyn->setChecked(t.dynamics.on);
-        s->eqCurve->update();
-        s->dynCurve->update();
+        s->eqOpen->setToolTip(t.eq.on ? T("EQ-Fenster öffnen (EQ an)") : T("EQ-Fenster öffnen (EQ aus)"));
+        s->dynOpen->setToolTip(t.dynamics.on ? T("Kompressor-Fenster öffnen (Kompressor an)") : T("Kompressor-Fenster öffnen (Kompressor aus)"));
+        s->eqThumb->update();
+        s->dynThumb->update();
     }
     m_master->setVolume(tl.masterVolumeDb);
     m_master->limiter->setChecked(tl.masterLimiter);
@@ -1092,7 +1193,6 @@ void StudioMixer::onLevels(const QVector<float>& db)
             ch > 2 ? T("Spitzenpegel (dBFS) des lautesten Lautsprechers seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück")
                    : T("True Peak (dBTP) seit dem Zurücksetzen – Klick auf die roten Marken setzt zurück"));
         m_master->fitWidth();
-        fitStripsWidth();
     }
     for (int i = 0; i < m_strips.size(); ++i) m_strips[i]->fader->setLevels(db.constData() + i * ch, ch);
     m_master->fader->setLevels(db.constData() + (groups - 1) * ch, ch);
@@ -1107,8 +1207,12 @@ void StudioMixer::tick()
     // Read mode: automated faders follow their curve at the playhead (playing or not)
     const Timeline& tl = m_project->timeline();
     for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
-        if (StudioStrip* s = m_strips[i]; s->automated && !s->fader->dragging())
-            s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+        if (StudioStrip* s = m_strips[i]) {
+            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], m_engine->position()));
+        }
+    // Write mode: playback stopped - the pass ends (open touches released, one undo step closed)
+    if (m_writer.inPass() && !playing()) m_writer.endPass(m_engine->position());
     for (StudioStrip* s : m_strips) {
         if (silent) s->fader->silence();
         s->fader->tick(dt);
