@@ -969,7 +969,7 @@ void StudioMixer::hideEvent(QHideEvent* e)
     QWidget::hideEvent(e);
     m_timer->stop(); // another page: no meters to move
     // Without the timer tick() cannot see playback stop: a write pass ends here (open touches released, one undo step)
-    if (m_writer.inPass()) m_writer.endPass(m_engine->position());
+    if (m_writer.inPass()) m_writer.endPass(timelinePosition());
 }
 
 void StudioMixer::resizeEvent(QResizeEvent* e)
@@ -978,13 +978,22 @@ void StudioMixer::resizeEvent(QResizeEvent* e)
     fitHeight();
 }
 
-bool StudioMixer::playing() const { return !std::isnan(m_engine->soundFrame()); }
+// Playing the timeline: an effect sound or a file previewed in the viewer (Source mode) plays on its own time axis -
+// its positions are frames of that file, nothing to write into the timeline's automation
+bool StudioMixer::playing() const { return m_engine->timelinePositions() && !std::isnan(m_engine->soundFrame()); }
+
+int StudioMixer::timelinePosition() const
+{
+    // In Source mode the engine's position is a frame of the previewed file: the timeline's last one stays
+    if (m_engine->timelinePositions()) m_lastTimelinePos = m_engine->position();
+    return m_lastTimelinePos;
+}
 
 void StudioMixer::setWriteMode(bool on)
 {
     if (on == m_writeMode) return;
     m_writeMode = on;
-    if (!on) m_writer.endPass(m_engine->position());
+    if (!on) m_writer.endPass(timelinePosition());
 }
 
 void StudioMixer::fitHeight()
@@ -1026,7 +1035,7 @@ void StudioMixer::rebuild(int count)
             // Write mode while playing: the move is recorded into the automation (AutomationWriter)
             if (m_writeMode && playing()) {
                 s->setVolume(db);
-                m_writer.move(i, AutoTarget::Volume, m_engine->position(), db);
+                m_writer.move(i, AutoTarget::Volume, timelinePosition(), db);
                 return;
             }
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
@@ -1038,7 +1047,7 @@ void StudioMixer::rebuild(int count)
         s->pan->onChange = [this, i, s](double v) {
             if (m_writeMode && playing()) {
                 s->setPan(v);
-                m_writer.move(i, AutoTarget::Pan, m_engine->position(), v);
+                m_writer.move(i, AutoTarget::Pan, timelinePosition(), v);
                 return;
             }
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
@@ -1049,11 +1058,11 @@ void StudioMixer::rebuild(int count)
         };
         // A touch ends on release (the pass stays one undo step until playback stops); otherwise one step per drag
         s->fader->onFinish = [this, i] {
-            if (m_writer.touching(i, AutoTarget::Volume)) m_writer.release(i, AutoTarget::Volume, m_engine->position());
+            if (m_writer.touching(i, AutoTarget::Volume)) m_writer.release(i, AutoTarget::Volume, timelinePosition());
             else if (!m_writer.inPass()) m_project->closeMerge();
         };
         s->pan->onFinish = [this, i] {
-            if (m_writer.touching(i, AutoTarget::Pan)) m_writer.release(i, AutoTarget::Pan, m_engine->position());
+            if (m_writer.touching(i, AutoTarget::Pan)) m_writer.release(i, AutoTarget::Pan, timelinePosition());
             else if (!m_writer.inPass()) m_project->closeMerge();
         };
         // Surround: the three sends go together (Editor::setTrackSurround), one undo step per drag
@@ -1155,9 +1164,9 @@ void StudioMixer::sync()
                                   .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name());
         if (s->name->styleSheet() != style) s->name->setStyleSheet(style);
         s->setAutomated(!t.volumeAuto.isEmpty());
-        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
+        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, timelinePosition()) : t.volumeDb);
         s->setPanAutomated(!t.panAuto.isEmpty());
-        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, m_engine->position()) : t.pan);
+        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, timelinePosition()) : t.pan);
         s->surround->setVisible(surround);
         s->depth->setValue(t.panDepth);
         s->center->setValue(t.panCenter);
@@ -1204,15 +1213,17 @@ void StudioMixer::tick()
     const double dt = m_clock.restart() / 1000.0;
     if (!isVisible()) return;
     const bool silent = !m_lastLevels.isValid() || m_lastLevels.elapsed() > 150;
-    // Read mode: automated faders follow their curve at the playhead (playing or not)
+    // Read mode: automated faders follow their curve at the playhead (playing or not; while a file is previewed in
+    // Source mode they stay at the timeline's last position)
     const Timeline& tl = m_project->timeline();
+    const int at = timelinePosition();
     for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
         if (StudioStrip* s = m_strips[i]) {
-            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
-            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], m_engine->position()));
+            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], at));
+            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], at));
         }
     // Write mode: playback stopped - the pass ends (open touches released, one undo step closed)
-    if (m_writer.inPass() && !playing()) m_writer.endPass(m_engine->position());
+    if (m_writer.inPass() && !playing()) m_writer.endPass(at);
     for (StudioStrip* s : m_strips) {
         if (silent) s->fader->silence();
         s->fader->tick(dt);

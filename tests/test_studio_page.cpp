@@ -1230,6 +1230,92 @@ void testLayout(Engine& engine, const QString& audioFile)
     }
 }
 
+// The value label under a strip's fader ("-20,0 dB" -> -20)
+double faderShown(QWidget* fader)
+{
+    if (!fader) return 1e9;
+    for (QLabel* l : fader->parentWidget()->findChildren<QLabel*>(Qt::FindDirectChildrenOnly))
+        if (l->text().endsWith(" dB")) return l->text().section(' ', 0, 0).replace(QChar(0x2212), '-').replace(',', '.').toDouble();
+    return 1e9;
+}
+
+// Release review of 0.23, one block per finding (two tracks: A1 voice 50-150, A2 music 0-200)
+void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& musicFile)
+{
+    QSettings().remove("layout");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    {
+        ProjectData d;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 2);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = voiceFile;
+        v.start = 50;
+        v.in = 0;
+        v.out = 99;
+        d.timeline.audio[0].clips << v;
+        Clip m;
+        m.id = 2;
+        m.mediaPath = musicFile;
+        m.in = 0;
+        m.out = 199;
+        d.timeline.audio[1].clips << m;
+        d.lastClipId = 2;
+        p->load(d);
+        p->addMedia(Engine::probe(p->format(), voiceFile));
+        p->addMedia(Engine::probe(p->format(), musicFile));
+    }
+    w.showPage(Page::Studio);
+    settle(5);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    StudioMixer* mixer = page->mixer();
+    StudioTracks* tracks = page->tracks();
+    QUndoStack* undo = p->undoStack();
+    QWidget* faderA1 = mixer->findChild<QWidget*>("studio_fader_A1");
+    if (!CHECK(faderA1)) return;
+
+    // (1) A file previewed in the viewer (Source mode, e.g. Tools > Effect sounds > Listen): its positions are frames
+    // of that file. Read-mode faders keep the timeline's last position; write mode does not record while it plays.
+    {
+        const int at = undo->index();
+        p->edit("auto", [](Timeline& tl) { tl.audio[0].volumeAuto = {{0, -20}, {60, -20}, {100, 0}}; });
+        engine.seek(30);
+        settle();
+        QTest::qWait(80);
+        CHECK(std::abs(faderShown(faderA1) + 20) < 0.11);
+        engine.showSource(musicFile, 150); // at 150 the timeline's curve would say 0 dB
+        settle();
+        QTest::qWait(80);
+        Check::report(std::abs(faderShown(faderA1) + 20) < 0.11, "source mode: fader keeps the timeline's level",
+                      __FILE__, __LINE__, QString::number(faderShown(faderA1)));
+        mixer->setWriteMode(true);
+        engine.play();
+        if (CHECK(waitFor([&] { return !std::isnan(engine.soundFrame()); }, 4000))) {
+            const QPoint c(faderA1->width() * 3 / 4, faderA1->height() / 2);
+            mouse(faderA1, QEvent::MouseButtonPress, c, Qt::LeftButton);
+            mouse(faderA1, QEvent::MouseMove, c - QPoint(0, 10), Qt::LeftButton);
+            mouse(faderA1, QEvent::MouseMove, c - QPoint(0, 20), Qt::LeftButton);
+            mouse(faderA1, QEvent::MouseButtonRelease, c - QPoint(0, 20), Qt::NoButton);
+            settle();
+            CHECK(!mixer->writer().inPass());
+            CHECK_EQ(int(p->timeline().audio[0].volumeAuto.size()), 3); // nothing written into the curve
+        }
+        engine.pause();
+        mixer->setWriteMode(false);
+        engine.showTimeline(30);
+        settle();
+        while (undo->index() > at) undo->undo();
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1254,5 +1340,6 @@ int main(int argc, char** argv)
     testWindow(engine, audio);
     testTools(engine, audio, music);
     testLayout(engine, audio);
+    testReviewFixes(engine, audio, music);
     return Check::result();
 }

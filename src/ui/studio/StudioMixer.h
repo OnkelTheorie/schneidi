@@ -93,5 +93,8 @@ private:
     int m_channels = 2; // until the first levels tell the mix's count
     bool m_writeMode = false;
     AutomationWriter m_writer;
-    bool playing() const;
+    bool playing() const; // the timeline plays (not a file previewed in Source mode)
+    // The timeline's playhead; in Source mode (a file previewed) the last one the timeline had
+    int timelinePosition() const;
+    mutable int m_lastTimelinePos = 0;
 };
