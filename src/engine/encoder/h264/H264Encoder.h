@@ -340,7 +340,19 @@ private:
     BProbe probe_;
     std::vector<std::pair<int, int>> gate_; // (first picture, longest run of B pictures that pays), in order
     void noteGate(const LookaheadFrame& f);
+    // The lookahead's searches along the planned references of B pictures: collected when a
+    // picture starts, run beside it (frame threading) and finished before the next one's tree.
+    struct BSearchJob {
+        int kind; // 0 searchFwd(f from other), 1 searchBack(f from other, third = the picture after f), 2 biCost(f between third and other)
+        LookaheadFrame *f, *other, *third;
+        int a, c;
+    };
+    std::vector<BSearchJob> bSearchJobs_;
+    std::thread bSearchThread_;
+    std::exception_ptr bSearchError_;
     void ensureBSearches();
+    void runBSearches(int threads);
+    void joinBSearches();
     bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
     int gateAt(int index) const;
     std::vector<uint8_t> statType_;

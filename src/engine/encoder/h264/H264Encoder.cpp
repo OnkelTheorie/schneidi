@@ -25,6 +25,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <system_error>
 #include <utility>
 #include <condition_variable>
 #include <mutex>
@@ -980,31 +981,33 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         }
     };
     constexpr int kQp = 28, kQpStep = 3;
-    double r0, d0, r1 = 0, d1 = 0;
-    code(kQp, 0, r0, d0, threads);
+    // All runs side by side (each with a share of the threads; the streams do not depend on the
+    // thread count): the probe sits in the first pass's one analysis thread, and its small encodes
+    // one after another were half of that pass's time on game footage. (On a still picture the
+    // runs beside the first are wasted; they cost next to nothing there.)
+    double r0 = 0, d0 = 0, r1 = 0, d1 = 0;
+    double rb[2] = {0, 0}, db[2] = {0, 0};
+    {
+        const int jobs = 2 + std::min(runCount, 2);
+        const int share = std::max(1, (threads + jobs - 1) / jobs);
+        std::atomic<int> next{0};
+        runOnThreads(std::min(jobs, std::max(1, threads)), [&] {
+            for (int j; (j = next.fetch_add(1)) < jobs;) {
+                if (j == 0)
+                    code(kQp, 0, r0, d0, share);
+                else if (j == 1)
+                    code(kQp + kQpStep, 0, r1, d1, share);
+                else
+                    code(kQp, runs[j - 2], rb[j - 2], db[j - 2], share);
+            }
+        });
+    }
     const double floorBits = (0.002 * w * h + 256.0) * (count - 1);
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
     if (r0 < floorBits) {
         if (trace)
             std::fprintf(stderr, "bprobe: P runs %.0f bits at QP %d, under the floor of %.0f\n", r0, kQp, floorBits);
         return 1;
-    }
-    // The other runs side by side (each with a share of the threads; the streams do not depend on
-    // the thread count): the probe sits in the first pass's one analysis thread, and three small
-    // encodes one after another were most of that pass's time on game footage.
-    double rb[2] = {0, 0}, db[2] = {0, 0};
-    {
-        const int jobs = 1 + std::min(runCount, 2);
-        const int share = std::max(1, (threads + jobs - 1) / jobs);
-        std::atomic<int> next{0};
-        runOnThreads(std::min(jobs, std::max(1, threads)), [&] {
-            for (int j; (j = next.fetch_add(1)) < jobs;) {
-                if (j == 0)
-                    code(kQp + kQpStep, 0, r1, d1, share);
-                else
-                    code(kQp, runs[j - 1], rb[j - 1], db[j - 1], share);
-            }
-        });
     }
     // The two P runs give no slope: no measurement, no B pictures. (Next to nothing coded - a still
     // picture, a desktop: the slice headers alone are some 100 bits - was answered above; with the
@@ -1498,6 +1501,8 @@ int Encoder::inFlightAt(int index) const
 
 Encoder::~Encoder()
 {
+    if (bSearchThread_.joinable())
+        bSearchThread_.join();
     if (pendingThread_.joinable())
         pendingThread_.join();
     for (FrameCoder* fc : inFlight_) {
@@ -1556,7 +1561,7 @@ void Encoder::ensureBSearches()
             continue; // its reference has left the queue: searched while it was there
         const bool haveFwd = a == 1 || (size_t(a) < f.fwd.size() && f.fwd[size_t(a)].valid());
         if (!haveFwd)
-            la_->searchFwd(f, queue_[j - size_t(a)], a, maxB, cfg_.threads);
+            bSearchJobs_.push_back({0, &f, &queue_[j - size_t(a)], nullptr, a, 0});
         if (f.type != 2)
             continue;
         const int c = f.nextDist;
@@ -1565,10 +1570,57 @@ void Encoder::ensureBSearches()
             continue;
         LookaheadFrame& next = queue_[s];
         if (size_t(c) >= next.back.size() || !next.back[size_t(c)].valid())
-            la_->searchBack(next, f, queue_[j + 1], c, maxB, cfg_.threads);
+            bSearchJobs_.push_back({1, &f, &next, &queue_[j + 1], a, c});
         const size_t combo = size_t(bComboIndex(a, c, maxB));
         if (combo >= next.biSum.size() || next.biSum[combo] < 0)
-            la_->biCost(next, f, queue_[j - size_t(a)], a, c, maxB, cfg_.weightedBipred);
+            bSearchJobs_.push_back({2, &f, &next, &queue_[j - size_t(a)], a, c});
+    }
+    if (bSearchJobs_.empty())
+        return;
+    // With frame threading they run beside the pictures in flight (the searches were a third of
+    // the time between two pictures on footage with B pictures); the next picture joins them.
+    if (pipelined()) {
+        try {
+            bSearchThread_ = std::thread([this] {
+                try {
+                    runBSearches(std::max(1, cfg_.threads / 2));
+                } catch (...) {
+                    bSearchError_ = std::current_exception();
+                }
+            });
+        } catch (const std::system_error&) { // no thread: they run in joinBSearches
+        }
+    }
+}
+
+void Encoder::runBSearches(int threads)
+{
+    const int maxB = cfg_.bframes;
+    for (const BSearchJob& j : bSearchJobs_) {
+        if (j.kind == 0)
+            la_->searchFwd(*j.f, *j.other, j.a, maxB, threads);
+        else if (j.kind == 1)
+            la_->searchBack(*j.other, *j.f, *j.third, j.c, maxB, threads);
+        else
+            la_->biCost(*j.other, *j.f, *j.third, j.a, j.c, maxB, cfg_.weightedBipred);
+    }
+}
+
+// The searches collected by the last ensureBSearches are done when this returns. Every picture's
+// tree and rate control see the searches up to the picture before (with any thread count), and
+// no search is under way while the queue changes.
+void Encoder::joinBSearches()
+{
+    if (bSearchThread_.joinable()) {
+        bSearchThread_.join();
+        bSearchJobs_.clear();
+        if (bSearchError_)
+            std::rethrow_exception(std::exchange(bSearchError_, nullptr));
+        return;
+    }
+    if (!bSearchJobs_.empty()) {
+        runBSearches(cfg_.threads);
+        bSearchJobs_.clear();
     }
 }
 
@@ -1886,6 +1938,7 @@ std::vector<uint8_t> Encoder::codeNext()
 {
     LookaheadFrame* f = pickNext();
     std::vector<uint8_t> out = step(f);
+    joinBSearches(); // they hold pictures of the queue
     if (f) {
         f->coded = true;
         while (!queue_.empty() && queue_.front().coded) {
@@ -2909,7 +2962,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     if (lookahead) {
         if (bMode) {
             planQueue(); // also the pictures that joined since the decision
-            ensureBSearches();
+            joinBSearches();
         } else
             markKeyframes();
         frame.keyframe = idr;
@@ -3153,6 +3206,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.displayIndex_ = frame.index;
     fc.outQp_ = cfg_.qp;
     fc.outSceneCut_ = cut;
+    if (lookahead && bMode)
+        ensureBSearches(); // for the pictures after this one (nothing below reads their results)
     fc.biRefine_ = type != 2 ? 0 : gBiRefineEnv >= 0 ? gBiRefineEnv : frame.nearRun > kPyramidMaxRun ? kBiRefineLong : 0;
     fc.rcType_ = type;
     // Two-pass only: the one-pass model takes a P picture's cost over its real distance.
