@@ -64,6 +64,8 @@ public:
     int unduck();                // clips whose ducking went
     bool loudnessToTarget();     // false = not run / failed (the line says why)
     double loudnessPreset() const; // LUFS of the chosen preset
+    // The height the drawer needs to show the chosen tool whole at its width (title row included); less: it scrolls
+    int neededHeight() const;
 
     // Ducking "Durch": the tracks picked to make the music duck (empty = all other audible tracks, the default;
     // remembered in the settings like the amount) and the tracks that duck it now
@@ -77,6 +79,7 @@ signals:
     void closeRequested(); // the drawer's close button
     void placeSoundRequested(const QByteArray& sound); // at the playhead
     void loudnessTargetChanged(); // "Lautheit auf Ziel" set the setting audio/loudnessTarget
+    void neededHeightChanged();   // the chosen tool needs another height (another tool, a result line, the width)
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -98,6 +101,7 @@ private:
     void watchSounds();
     void fillInputs();
     void say(QLabel* line, const QString& text, bool bad = false);
+    void keysBack(); // after a progress dialog: the window active again (its keys work at once)
 
     Editor* m_editor;
     Runner m_run;
@@ -108,6 +112,8 @@ private:
     class QStackedWidget* m_stack = nullptr;
     class QScrollArea* m_scroll = nullptr;
     void fitInnerHeight(); // wrapped hints: the chosen tool as tall as its text at this width (the area scrolls)
+    QWidget* m_head = nullptr;
+    int m_lastNeeded = -1;
     QComboBox* m_targetBox = nullptr;
     QLabel* m_targetInfo = nullptr;
     QLabel* m_cleanLine = nullptr;

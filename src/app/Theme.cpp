@@ -225,6 +225,12 @@ QString primaryButtonStyle()
         .arg(primary.name(), onPrimary.name(), primary.lighter(110).name(), off.name(), mix(onPrimary, off, 0.5).name());
 }
 
+QString disabledToolButtonStyle()
+{
+    return QString("QToolButton:disabled, QToolButton:checked:disabled { background: %1; color: %2; }")
+        .arg(control.name(), textFaint.name());
+}
+
 void apply(QApplication& app)
 {
     app.setStyle(QStyleFactory::create("Fusion")); // looks the same on Linux and Windows
@@ -279,7 +285,7 @@ void apply(QApplication& app)
         QToolButton { color: %5; background: transparent; border: none; padding: 3px 6px; border-radius: 3px; }
         QToolButton:hover { background: %8; }
         QToolButton:checked { color: %6; background: %8; }
-        QToolButton:disabled { color: %10; }
+        QToolButton:disabled, QToolButton:checked:disabled { color: %10; background: transparent; }
         QListWidget { background: %3; border: none; }
         QListWidget::item { border: 1px solid transparent; }
         QListWidget::item:selected { background: %8; border: 1px solid %6; }

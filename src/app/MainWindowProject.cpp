@@ -46,6 +46,8 @@
 #include "ui/ScopesPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
+#include "ui/studio/StudioPage.h"
+#include "ui/studio/StudioTracks.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -588,6 +590,9 @@ void MainWindow::restoreViews(const ProjectData& data)
     }
     if (!shown) // after the layout: the view's width is known then
         QTimer::singleShot(0, tv, [tv] { tv->zoomToFit(); });
+    // The Studio page's lanes (their view is not in the file): another project, the whole of it in view - not the
+    // zoom of the project before (a tour's end gives the user's back, leaveTourMode)
+    if (m_studioPage) m_studioPage->tracks()->fitOnShow();
 }
 
 // Load a backup (like DaVinci "Project Backups"): opens as an untitled project so that it is never

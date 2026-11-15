@@ -34,6 +34,8 @@ public:
     // The tools drawer (closed by default, not remembered; the tool chosen in it is)
     bool toolsOpen() const;
     void setToolsOpen(bool open);
+    // The drawer grows to what the chosen tool needs (up to half the height; more: it scrolls)
+    void growTools();
     // Default sizes for a page of this size (the user's own sizes win, MainWindow::applySizes): the right column as
     // wide as a few strips and the master, the viewer as tall as fits above the mixer
     int defaultSideWidth(int pageWidth) const;

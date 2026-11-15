@@ -32,6 +32,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -48,14 +49,15 @@ constexpr int kThumbH = 28;      // the EQ and compressor pictures in a strip
 
 double meterPos(double db) { return std::clamp((db - kFloor) / -kFloor, 0.0, 1.0); }
 
+// A reading in the UI language with a real minus (as the tools drawer writes them: "Ziel −14 LUFS")
 QString number(double v, int decimals = 1)
 {
-    return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint());
+    return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint()).replace('-', QChar(0x2212));
 }
 
 QString signedDb(double db)
 {
-    if (db <= -99) return QStringLiteral("-∞");
+    if (db <= -99) return QString(QChar(0x2212)) + QStringLiteral("∞");
     return (db > 0.05 ? "+" : "") + number(db);
 }
 
@@ -69,7 +71,8 @@ QToolButton* smallButton(const QString& text, const QColor& on, const QString& t
     b->setMinimumHeight(20); // the width from its text (an explicit minimum width would let the layout cut it)
     b->setStyleSheet(QString("QToolButton { background: %1; color: %2; font-weight: 600; padding: 0 3px; border: none; }"
                              "QToolButton:checked { background: %3; color: %4; }")
-                         .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()));
+                             .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()) +
+                         Theme::disabledToolButtonStyle());
     return b;
 }
 
@@ -414,7 +417,7 @@ protected:
         f.setPointSizeF(7);
         p.setFont(f);
         p.setPen(Theme::text);
-        const QString value = m_v <= m_lo && m_unit == "dB" ? QStringLiteral("-∞") : number(m_v, 0);
+        const QString value = m_v <= m_lo && m_unit == "dB" ? QString(QChar(0x2212)) + QStringLiteral("∞") : number(m_v, 0);
         p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, m_name);
         p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignRight, value + (m_unit.isEmpty() ? "" : " " + m_unit));
     }
@@ -1008,6 +1011,22 @@ bool StudioMixer::eventFilter(QObject* watched, QEvent* e)
 {
     // The strips' height follows the viewport's (the horizontal scrollbar takes some when it shows)
     if (watched == m_scroll->viewport() && e->type() == QEvent::Resize) fitHeight();
+    // The wheel scrolls the strips sideways (they never scroll up and down), plain or with Shift, over any part of
+    // them: the faders, pans and sends take no wheel, so it comes here. One notch = one strip.
+    if (watched == m_scroll->viewport() && e->type() == QEvent::Wheel) {
+        auto* wheel = static_cast<QWheelEvent*>(e);
+        QScrollBar* bar = m_scroll->horizontalScrollBar();
+        const QPoint px = wheel->pixelDelta(), angle = wheel->angleDelta();
+        // A touchpad's own sideways swipe (x) counts as it is; up/down (and Shift, which some systems turn into x)
+        // moves right on "down", like a timeline's
+        const int a = angle.y() != 0 ? angle.y() : angle.x();
+        const int p = px.y() != 0 ? px.y() : px.x();
+        if (bar->maximum() <= 0 || (a == 0 && p == 0)) return QWidget::eventFilter(watched, e);
+        const int step = p != 0 ? p : int(std::lround(a / 120.0 * bar->singleStep()));
+        bar->setValue(bar->value() - step);
+        wheel->accept();
+        return true;
+    }
     return QWidget::eventFilter(watched, e);
 }
 

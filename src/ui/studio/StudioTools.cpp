@@ -35,6 +35,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSlider>
 #include <QStackedWidget>
@@ -137,13 +138,12 @@ QToolButton* button(const QString& text, const QString& name, const QString& tip
     b->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     b->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 3px 10px; border: none; }"
                              "QToolButton:hover { background: %3; }"
-                             "QToolButton:checked { background: %4; color: %5; }"
-                             "QToolButton:disabled { color: %6; }")
-                         .arg((primary ? Theme::primary : Theme::control).name(),
-                              (primary ? Theme::onPrimary : Theme::text).name(),
-                              (primary ? Theme::primary.lighter(115) : Theme::controlLight).name(),
-                              Theme::recording.name(), Theme::readableOn(Theme::recording).name(),
-                              Theme::textFaint.name()));
+                             "QToolButton:checked { background: %4; color: %5; }")
+                             .arg((primary ? Theme::primary : Theme::control).name(),
+                                  (primary ? Theme::onPrimary : Theme::text).name(),
+                                  (primary ? Theme::primary.lighter(115) : Theme::controlLight).name(),
+                                  Theme::recording.name(), Theme::readableOn(Theme::recording).name()) +
+                         Theme::disabledToolButtonStyle());
     return b;
 }
 
@@ -181,7 +181,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     outer->setSpacing(0);
 
     // Title row: the target track, which clips the tools take, the close button
-    auto* head = new QWidget;
+    auto* head = m_head = new QWidget;
     head->setObjectName("PanelTitle");
     head->setAttribute(Qt::WA_StyledBackground);
     head->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
@@ -234,7 +234,9 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     scroll->setObjectName("studio_tools_scroll");
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Never cut at the right: the chosen tool as wide as the drawer (the others give way, setCurrentTool), and should
+    // even that not fit (a narrow drawer, a large font), the area scrolls sideways too
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_stack = new QStackedWidget;
     m_stack->setObjectName("studio_tools_inner");
     scroll->setWidget(m_stack);
@@ -535,6 +537,11 @@ int StudioTools::currentTool() const { return m_stack->currentIndex(); }
 void StudioTools::setCurrentTool(int index)
 {
     index = std::clamp(index, 0, m_stack->count() - 1);
+    // Only the chosen tool counts for the stack's size (a stack takes the largest of its pages): a wide page of
+    // another tool must not make this one wider than the drawer
+    for (int i = 0; i < m_stack->count(); ++i)
+        m_stack->widget(i)->setSizePolicy(i == index ? QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred)
+                                                     : QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored));
     m_stack->setCurrentIndex(index);
     if (QAbstractButton* b = m_tabs->button(index)) b->setChecked(true);
     fitInnerHeight();
@@ -557,6 +564,19 @@ void StudioTools::fitInnerHeight()
     l->activate();
     const int h = l->hasHeightForWidth() ? l->totalHeightForWidth(w) : l->totalMinimumSize().height();
     m_stack->setMinimumHeight(h);
+    // The drawer as tall as that if the page can give it (StudioPage): a result line that just appeared included
+    if (const int need = neededHeight(); need != m_lastNeeded) {
+        m_lastNeeded = need;
+        emit neededHeightChanged();
+    }
+}
+
+int StudioTools::neededHeight() const
+{
+    // The title row, then the taller of the tool list and the chosen tool (the area's frame and a sideways bar)
+    const int list = m_list->parentWidget()->minimumSizeHint().height();
+    const int bar = m_scroll->horizontalScrollBar()->isVisible() ? m_scroll->horizontalScrollBar()->height() : 0;
+    return m_head->sizeHint().height() + std::max(list, m_stack->minimumHeight() + bar);
 }
 
 void StudioTools::setTargetTrack(int track)
@@ -627,8 +647,11 @@ void StudioTools::syncTargets()
         int selectedOnTarget = 0;
         for (int id : clips) selectedOnTarget += m_editor->selection()->contains(id) ? 1 : 0;
         const QString track = trackShortName({TrackKind::Audio, m_target});
+        const bool one = clips.size() == 1;
         info = clips.isEmpty()       ? T("%1 hat keine Clips").arg(track)
-               : selectedOnTarget > 0 ? T("Für %1 gewählte Clips auf %2").arg(clips.size()).arg(track)
+               : selectedOnTarget > 0 ? (one ? T("Für 1 gewählten Clip auf %1").arg(track)
+                                             : T("Für %1 gewählte Clips auf %2").arg(clips.size()).arg(track))
+               : one                  ? T("Für 1 Clip auf %1").arg(track)
                                       : T("Für alle %1 Clips auf %2").arg(clips.size()).arg(track);
     }
     static_cast<ElidedLabel*>(m_targetInfo)->setFullText(info);
@@ -640,11 +663,24 @@ void StudioTools::syncTargets()
     m_duckByButton->setText(duckByText());
 }
 
+void StudioTools::keysBack()
+{
+    // A closed modal dialog leaves no window active where no window manager hands the focus back (X11 without one,
+    // some setups): the next Ctrl+Z would go nowhere and the user presses it twice. The window takes the keys again.
+    // (asked always: Qt may still count the window active while the system has given the focus to none)
+    if (QWidget* top = window(); top && top->isVisible()) top->activateWindow();
+}
+
 void StudioTools::say(QLabel* line, const QString& text, bool bad)
 {
     line->setText(text);
     line->setStyleSheet(QString("color: %1;").arg((bad ? Theme::warning : Theme::textDim).name()));
     line->setVisible(!text.isEmpty());
+    // The tool grows by the line: its height anew (else the line lies under the area's bottom, out of reach), and in
+    // view if the drawer must scroll
+    fitInnerHeight();
+    if (line->isVisible() && line->isVisibleTo(m_stack->currentWidget()))
+        QTimer::singleShot(0, this, [this, line] { m_scroll->ensureWidgetVisible(line, 0, 4); });
 }
 
 int StudioTools::cleanVoice()
@@ -655,10 +691,10 @@ int StudioTools::cleanVoice()
         say(m_cleanLine, T("Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur %1")
                              .arg(trackShortName({TrackKind::Audio, m_target})),
             true);
+    else if (const QString track = trackShortName({TrackKind::Audio, m_target}); done.size() == 1)
+        say(m_cleanLine, T("Gesäubert: 1 Clip, EQ „Stimme“ auf %1 – Strg+Z nimmt es zurück").arg(track));
     else
-        say(m_cleanLine, T("Gesäubert: %1 Clips, EQ „Stimme“ auf %2 – Strg+Z nimmt es zurück")
-                             .arg(done.size())
-                             .arg(trackShortName({TrackKind::Audio, m_target})));
+        say(m_cleanLine, T("Gesäubert: %1 Clips, EQ „Stimme“ auf %2 – Strg+Z nimmt es zurück").arg(done.size()).arg(track));
     return int(done.size());
 }
 
@@ -710,6 +746,7 @@ int StudioTools::duck()
     const auto ranges = AudioAnalysis::soundRanges(project->format(), project->renderTimeline(), under, params, step);
     const bool canceled = progress.wasCanceled();
     progress.reset();
+    keysBack();
     if (canceled) return 0;
     QStringList names;
     for (int i : under) names << trackShortName({TrackKind::Audio, i});
@@ -722,17 +759,21 @@ int StudioTools::duck()
         return 0;
     }
     const int ducked = m_editor->duck(music, *ranges, params);
-    say(m_duckLine, T("%1 Clips um %2 dB abgesenkt, wenn auf %3 Ton ist")
-                        .arg(ducked)
-                        .arg(number(params.amountDb, 0))
-                        .arg(names.join(", ")));
+    if (ducked == 1)
+        say(m_duckLine, T("1 Clip um %1 dB abgesenkt, wenn auf %2 Ton ist").arg(number(params.amountDb, 0), names.join(", ")));
+    else
+        say(m_duckLine, T("%1 Clips um %2 dB abgesenkt, wenn auf %3 Ton ist")
+                            .arg(ducked)
+                            .arg(number(params.amountDb, 0))
+                            .arg(names.join(", ")));
     return ducked;
 }
 
 int StudioTools::unduck()
 {
     const int n = m_editor->unduck(targetClips());
-    say(m_duckLine, n ? T("Absenken aufgehoben (%1 Clips)").arg(n) : T("Nichts abgesenkt"), n == 0);
+    say(m_duckLine, n == 1 ? T("Absenken aufgehoben (1 Clip)") : n ? T("Absenken aufgehoben (%1 Clips)").arg(n) : T("Nichts abgesenkt"),
+        n == 0);
     return n;
 }
 
@@ -764,6 +805,7 @@ bool StudioTools::loudnessToTarget()
         reply = m_run("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Lautheit auf Ziel"));
     }
     progress.reset();
+    keysBack();
     m_record->setEnabled(recordable);
     syncRecorder();
     if (!reply.value("ok").toBool()) {

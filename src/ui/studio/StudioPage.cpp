@@ -80,7 +80,8 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
         b->setToolTip(tip);
         b->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 8px; border: none; }"
                                  "QToolButton:checked { background: %3; color: %4; }")
-                             .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(), Theme::onPrimary.name()));
+                                 .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(), Theme::onPrimary.name()) +
+                         Theme::disabledToolButtonStyle());
         barLay->addWidget(b);
         return b;
     };
@@ -169,11 +170,19 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     const bool clipTarget = QSettings().value("studio/penTarget").toString() == QLatin1String("clip");
     (clipTarget ? penClip : penTrack)->setChecked(true);
     m_tracks->setPenTarget(clipTarget ? StudioTracks::PenTarget::Clip : StudioTracks::PenTarget::Track);
-    autoVolume->setEnabled(!clipTarget);
-    autoPan->setEnabled(!clipTarget);
-    connect(penClip, &QToolButton::toggled, this, [this, autoVolume, autoPan](bool on) {
-        autoVolume->setEnabled(!on); // clip keyframes are volume only
-        autoPan->setEnabled(!on);
+    // Level / pan pick a curve of the track's automation: with the pen on the clips (their keyframes are volume
+    // only) they are off, look it (the style's disabled rule) and their tooltip says why
+    const QString volumeTip = autoVolume->toolTip(), panTip = autoPan->toolTip();
+    const auto curvesFor = [autoVolume, autoPan, volumeTip, panTip](bool clip) {
+        const QString why = T("Nur im Modus „Spur“: „Clip“ zeichnet die Lautstärke-Keyframes der Clips");
+        autoVolume->setEnabled(!clip);
+        autoPan->setEnabled(!clip);
+        autoVolume->setToolTip(clip ? why : volumeTip);
+        autoPan->setToolTip(clip ? why : panTip);
+    };
+    curvesFor(clipTarget);
+    connect(penClip, &QToolButton::toggled, this, [this, curvesFor](bool on) {
+        curvesFor(on);
         if (!on) return;
         m_tracks->setPenTarget(StudioTracks::PenTarget::Clip);
         QSettings().setValue("studio/penTarget", "clip");
@@ -204,6 +213,10 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_tools->hide();
     connect(m_toolsButton, &QToolButton::toggled, this, &StudioPage::setToolsOpen);
     connect(m_tools, &StudioTools::closeRequested, this, [this] { setToolsOpen(false); });
+    // Another tool, a result line: the drawer grows to show it whole if the lanes can give the room
+    connect(m_tools, &StudioTools::neededHeightChanged, this, [this] {
+        if (toolsOpen()) growTools();
+    });
 
     // The right column: the viewer comes on top (index 0) when the page shows, then the loudness and the mixer
     m_mixer = new StudioMixer(editor, engine);
@@ -243,13 +256,26 @@ void StudioPage::setToolsOpen(bool open)
     const int total = sizes.value(0) + sizes.value(1);
     if (total <= 0) return; // not laid out yet (the page's first showing sets the sizes)
     if (sizes.value(1) <= 0 || sizes.value(1) > total * 0.6) {
-        const int want = std::max(m_tools->sizeHint().height(), m_tools->minimumSizeHint().height()) + 40;
+        const int want = std::max(m_tools->neededHeight(), m_tools->minimumSizeHint().height());
         // Bounds of their own first: a low page (under ~355 px) would give lo > hi (std::clamp's precondition)
         const int hi = std::max(1, int(total * 0.45));
         const int lo = std::min({160, total / 2, hi});
         const int h = std::clamp(want, lo, hi);
         m_left->setSizes({std::max(1, total - h), h});
     }
+    growTools();
+}
+
+void StudioPage::growTools()
+{
+    // Never shorter than the chosen tool needs, as long as the lanes keep half the height (then the drawer
+    // scrolls); never shrunk here (a size the user dragged larger stays)
+    const QList<int> sizes = m_left->sizes();
+    const int total = sizes.value(0) + sizes.value(1);
+    if (total <= 0 || sizes.value(1) <= 0) return;
+    const int hi = std::max(sizes.value(1), total / 2);
+    const int h = std::min(m_tools->neededHeight(), hi);
+    if (h > sizes.value(1)) m_left->setSizes({std::max(1, total - h), h});
 }
 
 int StudioPage::defaultSideWidth(int pageWidth) const

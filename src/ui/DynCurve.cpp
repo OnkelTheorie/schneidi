@@ -7,6 +7,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 
+#include <QFontMetricsF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -76,9 +77,27 @@ void DynCurve::paintEvent(QPaintEvent*)
     p.setBrush(d.on ? Theme::secondary : Theme::controlOff);
     p.drawEllipse(thresholdPoint(), 5, 5);
     p.drawEllipse(endPoint(), 5, 5);
+    // The reading on a patch of the background: the grid lines and the curve never run through its text
+    const QString label = labelText();
+    const QRectF box = labelRect();
+    p.setPen(Qt::NoPen);
+    p.setBrush(Theme::lane);
+    p.drawRoundedRect(box, 2, 2);
     p.setPen(Theme::textDim);
-    p.drawText(r.adjusted(4, 2, 0, 0), Qt::AlignLeft | Qt::AlignTop,
-               QString("%1 dB  %2:1").arg(number(d.thresholdDb, 0), number(d.ratio, d.ratio < 10 ? 1 : 0)));
+    p.drawText(box, Qt::AlignCenter, label);
+}
+
+QString DynCurve::labelText() const
+{
+    const TrackDynamics d = dyn();
+    return QString("%1 dB  %2:1").arg(number(d.thresholdDb, 0), number(d.ratio, d.ratio < 10 ? 1 : 0));
+}
+
+QRectF DynCurve::labelRect() const
+{
+    const QRectF r = plot();
+    const QFontMetricsF fm(font());
+    return QRectF(r.left() + 2, r.top() + 2, fm.horizontalAdvance(labelText()) + 6, fm.height() + 2);
 }
 
 void DynCurve::mousePressEvent(QMouseEvent* e)
