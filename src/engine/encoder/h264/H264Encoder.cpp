@@ -140,9 +140,13 @@ thread_local bool tIntraFine = false;
 // B pictures: B_8x8 with direct 8x8 blocks (H264_B8X8=0 turns it off, for measurements).
 const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8")) != 0;
 // B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
-// the average of the two vectors as found), tried where the average is within this factor of the
-// better single list.
-const int gBiRefine = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : 2;
+// the average of the two vectors as found, the default), tried where the average is within this
+// factor of the better single list. Measured with 2 rounds: -0.6 % of the B pictures' bits for
+// +16 % instructions on a pan with B pictures - off.
+const int gBiRefine = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : 0;
+// B pictures: the splits (16x8, 8x16, 8x8) are not searched where the 16x16 estimate is below this
+// many lambda (as for P pictures, H264_SPLITSKIP). 0 = always.
+const double gBSplitSkip = std::getenv("H264_BSPLITSKIP") ? std::atof(std::getenv("H264_BSPLITSKIP")) : 200.0;
 const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::getenv("H264_BIREFINE_NEAR")) : 1.15;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
@@ -795,12 +799,14 @@ static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv(
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
 static const double kBProbeFlat = std::getenv("H264_BPROBE_FLAT") ? std::atof(std::getenv("H264_BPROBE_FLAT")) : 0.75;
+static const bool kBProbeOneWay = !std::getenv("H264_BPROBE_ONEWAY") || std::atoi(std::getenv("H264_BPROBE_ONEWAY")) != 0;
+static const bool kBProbeLongClear = !std::getenv("H264_BPROBE_LONGCLEAR") || std::atoi(std::getenv("H264_BPROBE_LONGCLEAR")) != 0;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
-// B pictures from a gain of 6 % on (15 % until 15.11.2026: the B pictures did not pay on moving
-// material then). Measured gains: slow zoom -0.3 .. -0.6, standing phases and pans of game clips
-// -0.07 .. -0.3, action 0 .. +0.5 (its calmest start -0.05: B pictures there cost 0.07 dB).
-static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.06;
+// B pictures from a gain of 3 % on (15 % until 15.11.2026: the B pictures did not pay on moving
+// material then). Measured gains: slow zoom -0.3 .. -0.6, moving phases of a calm game scene
+// -0.08 .. -0.3, a pan -0.04 .. -0.2, camera footage -0.05 .. -0.06, action -0.02 .. +0.5.
+static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.03;
 
 namespace {
 
@@ -848,7 +854,12 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     if (!kBProbe || bframes <= 0)
         return false;
     const double activity = f.intraSum > 0 ? f.interSum / f.intraSum : 0.0;
-    auto far = [&](double a) { return a > sampleActivity_ * kBProbeChange || a < sampleActivity_ / kBProbeChange; };
+    // Only in the direction that can turn the answer: with B pictures placed more activity, without
+    // them less (a probe costs about four pictures' worth of coding).
+    auto far = [&](double a) {
+        const bool more = a > sampleActivity_ * kBProbeChange, less = a < sampleActivity_ / kBProbeChange;
+        return kBProbeOneWay ? (run_ > 0 ? more : less) : more || less;
+    };
     const bool changed = kBProbeChange > 0 && start_ < 0 && sampleActivity_ > 0 && index - lastStart_ >= kBProbeGap && far(activity) &&
                          far(lastActivity_);
     lastActivity_ = activity;
@@ -876,7 +887,9 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
         sampleActivity_ = activitySum_ / double(count - 1);
         if (trace)
             std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
-        if (run_ == 0 || bframes <= shortRun || still) {
+        // The long run is only asked for where B pictures are a clear gain (a slow zoom: -0.3 ..
+        // -0.6): on a marginal gain it rarely wins, and its measurement costs twice the first one.
+        if (run_ == 0 || bframes <= shortRun || still || (kBProbeLongClear && !clear_)) {
             start_ = -1;
             pics_.clear();
         }
@@ -1766,6 +1779,7 @@ void Encoder::planQueue()
             const int mid = last != none && count >= 3 && count <= kPyramidMaxRun ? first + count / 2 : none;
             for (int k = j; k < s; ++k) {
                 LookaheadFrame& b = queue_[size_t(k)];
+                b.nearRun = last != none ? count : 99; // its own run's length
                 b.bRef = k == mid;
                 if (last != none)
                     b.refDist = mid != none && k > mid ? k - mid : k - last;
@@ -1785,6 +1799,7 @@ void Encoder::planQueue()
             while (s < queue_.size() && queue_[s].type == 2)
                 ++s;
             f.nextDist = int(s - j);
+            f.nearRun = f.refDist + f.nextDist - 1; // its own run's length
         } else {
             if (lastRef >= 0)
                 f.refDist = int(j) - lastRef;
@@ -2802,7 +2817,11 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     const bool bRef = type == 2 && frame.bRef && usePyramid();
     // QP of a reference B picture above the P QP: between the P pictures' and the other B pictures'.
     static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
-    const int bRefQp = kBRefQpEnv >= 0 ? kBRefQpEnv : (cfg_.bQpOffset + 1) / 2;
+    // B pictures of short runs (up to kPyramidMaxRun, as placed on moving material): bQpOffsetShort.
+    // Their P pictures have the tree's full strength, and with the long runs' offset on top the B
+    // pictures fall up to 2 dB below them (a flicker at a quarter of the frame rate).
+    const int bQp = type == 2 && frame.nearRun <= kPyramidMaxRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
+    const int bRefQp = kBRefQpEnv >= 0 ? kBRefQpEnv : (bQp + 1) / 2;
     // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
     const int frameNum = bMode ? (idr ? 0 : refCount_) : framesSinceIdr_;
     if (idr)
@@ -3066,7 +3085,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         rcQp_ = std::clamp(qp, 10.0, 51.0);
         if (twoPass && size_t(frame.index) < tpOff_.size())
             qp += tpOff_[size_t(frame.index)];
-        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : cfg_.bQpOffset) : qp)), 10, 51);
+        cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : bQp) : qp)), 10, 51);
         rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {
@@ -3101,7 +3120,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
-        cfg_.qp = std::clamp(baseQp + (bRef ? bRefQp : cfg_.bQpOffset), 0, 51); // nothing (little) depends on a B picture
+        cfg_.qp = std::clamp(baseQp + (bRef ? bRefQp : bQp), 0, 51); // nothing (little) depends on a B picture
     }
     fc.cfg_.qp = cfg_.qp;
     // Psy strength follows the picture's QP (EncoderConfig::psyQpFull / psyQpOff): full below, none
@@ -6654,7 +6673,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     Cand cands[2];
     cands[0] = tryShape(0);
     int candCount = 1;
-    if (cfg_.effort > 0 && gBParts) {
+    if (cfg_.effort > 0 && gBParts && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         for (int shape : {1, 2}) {
             const Cand c = tryShape(shape);
             if (c.cost < cands[1].cost)

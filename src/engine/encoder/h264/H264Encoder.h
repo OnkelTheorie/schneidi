@@ -96,6 +96,7 @@ struct EncoderConfig {
     // or set bframes = 0.
     int bframes = 8;
     int bQpOffset = 2;     // QP of a B picture above the P QP
+    int bQpOffsetShort = 1; // the same in runs of up to four B pictures (never more than bQpOffset)
     // Places B pictures only where they pay (BProbe: a few pictures coded with and without them;
     // with a first pass over the whole clip, which must then have been made with at least this
     // many bframes). false = runs of bframes B pictures everywhere.
