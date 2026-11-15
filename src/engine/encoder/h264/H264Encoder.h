@@ -124,7 +124,9 @@ struct EncoderConfig {
     // Mode decision of inter macroblocks in P pictures by estimate (CABAC with the 8x8 transform):
     // the candidates (16x16 or the best split, 4x4 or 8x8 transform) are ranked by the trellis
     // quantisation's own cost and only the best one per layout is reconstructed and counted in
-    // full. false = every candidate coded in full (slower; the stream differs).
+    // full. false = every candidate coded in full (slower; the stream differs). In B pictures
+    // (since 15.11.2026) the transform of each candidate (direct, 16x16, split) is chosen the same
+    // way; false = all with 4x4 and the winner once more with 8x8 (the stream before).
     bool modeEstimate = true;
     // Psycho-visual rate-distortion: 0 = off (the stream is then the same as without this option).
     // The mode decision (skip, inter, intra and their transform sizes) adds psyRd * sqrt(lambda) *
@@ -375,6 +377,7 @@ private:
     std::exception_ptr bSearchError_;
     void ensureBSearches();
     void runBSearches(int threads);
+    void takeLookaheadVectors(const LookaheadFrame& frame, FrameCoder& fc, int type) const;
     void joinBSearches();
     bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
     int gateAt(int index) const;

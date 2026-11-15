@@ -398,6 +398,9 @@ public:
     // refs_ (ref_pic_list_modification: abs_diff_pic_num_minus1 per entry) and the B picture is
     // marked unused (memory_management_control_operation 1: difference_of_pic_nums_minus1, -1 = none).
     int biRefine_ = 0; // B picture: rounds of the joint refinement of the two vectors of a block predicted from both lists
+    // The lookahead's vectors of this picture into its references (per macroblock, quarter-pel of
+    // the full picture; empty = none): extra start points of the motion search. [list][x, y]
+    std::vector<int16_t> laMv_[2][2];
     std::vector<int> listMod_;
     int mmcoDiff_ = -1;
     void publishMotion(RefPic& R, int row0, int row1) const;
