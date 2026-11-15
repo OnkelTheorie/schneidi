@@ -1279,6 +1279,33 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(analysis);
     }
 
+    // Timeline markers follow ripple ops of the CLI (insert, ripple delete, ripple trim) like the app
+    {
+        const auto markers = [](const QJsonObject& r) {
+            QVector<int> out;
+            for (const QJsonValue& v : std::as_const(r)["timeline"]["markers"].toArray()) out << v.toInt();
+            return out;
+        };
+        const auto clipsOfV1 = [] {
+            QVector<int> out;
+            for (const QJsonValue& c : run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"].toArray())
+                out << c["id"].toInt();
+            return out;
+        };
+        QJsonObject r = edit(R"([{"op":"clear"},{"op":"append","media":"/x/a.mp4","in":0,"out":50},
+                                 {"op":"append","media":"/x/a.mp4","in":50,"out":90},
+                                 {"op":"marker","at":10},{"op":"marker","at":40},{"op":"marker","at":45},
+                                 {"op":"marker","at":60}])");
+        CHECK_EQ(markers(r), QVector<int>({10, 40, 45, 60}));
+        r = edit(R"([{"op":"insert","media":"/x/a.mp4","at":20,"in":0,"out":10}])"); // 10 frames at 20
+        CHECK_EQ(markers(r), QVector<int>({10, 50, 55, 70}));
+        const QVector<int> ids = clipsOfV1();
+        r = edit(QString(R"([{"op":"trim","clip":%1,"edge":"end","by":-5,"mode":"ripple"}])").arg(ids[2]).toUtf8().constData());
+        CHECK_EQ(markers(r), QVector<int>({10, 50, 55, 65})); // [55, 60) trimmed off, 55 = the cut stays
+        r = edit(QString(R"([{"op":"delete","clips":[%1],"ripple":true}])").arg(ids.last()).toUtf8().constData());
+        CHECK_EQ(markers(r), QVector<int>({10, 50, 55})); // the last clip [55, 95) takes 65, the one at its start stays
+    }
+
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
     if (!Check::haveFfmpeg()) return Check::result();
     Check::initEngine();

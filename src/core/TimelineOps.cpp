@@ -74,14 +74,45 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds)
     return refs;
 }
 
-void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip)
+void rippleMarkers(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving)
+{
+    if (tl.markers.isEmpty() || shifts.isEmpty()) return;
+    int first = INT_MAX; // first frame the ripple touches
+    for (const auto& s : shifts) first = std::min(first, s.first + std::min(0, s.second));
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const auto& tracks = std::as_const(tl).tracks(k);
+        for (int i = 0; i < tracks.size(); ++i)
+            if (!moving.contains(TrackRef{k, i}))
+                for (const Clip& c : tracks[i].clips)
+                    if (c.end() > first) return; // content that stays: only part of the timeline moves
+    }
+    QVector<int> out;
+    out.reserve(tl.markers.size());
+    for (int m : std::as_const(tl.markers)) {
+        int d = 0;
+        bool cut = false;
+        for (const auto& s : shifts) {
+            if (s.second < 0 && s.first + s.second < m && m < s.first) cut = true;
+            if (s.first <= m) d += s.second;
+        }
+        if (!cut) out << std::max(0, m + d);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    if (out != tl.markers) tl.markers = out;
+}
+
+void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
+                  const QVector<QPair<int, int>>* markerShifts)
 {
     if (shifts.isEmpty()) return;
+    QVector<TrackRef> moving = skip; // tracks that go along (for the markers)
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
         auto& tracks = tl.tracks(k);
         for (int i = 0; i < tracks.size(); ++i) {
             Track& t = tracks[i];
             if (t.locked || skip.contains(TrackRef{k, i})) continue;
+            moving << TrackRef{k, i};
             if (t.clips.isEmpty()) {
                 if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
                 continue;
@@ -98,7 +129,10 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
             // Order stays; if anything overlaps, the track stays as it is (its automation too)
             bool ok = moved.first().start >= 0;
             for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end();
-            if (!ok) continue;
+            if (!ok) {
+                moving.removeLast();
+                continue;
+            }
             // The automation moves with the time even where no clip of the track moved (points after the last clip)
             if (!std::as_const(t).volumeAuto.isEmpty()) Automation::ripple(t.volumeAuto, shifts);
             if (!changed) continue;
@@ -115,6 +149,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
     // Subtitle tracks move along the same way (locked ones stay put, like DaVinci)
     for (SubtitleTrack& st : tl.subtitles)
         if (!st.locked) Subtitles::ripple(st, shifts);
+    rippleMarkers(tl, markerShifts ? *markerShifts : shifts, moving);
 }
 
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
@@ -817,8 +852,12 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             if (const Clip* c = findClip(tl, id, &ref)) perTrack[qMakePair(int(ref.kind), ref.index)] << qMakePair(c->end(), shift);
         }
         QVector<QPair<int, int>> shifts;
-        for (const auto& list : perTrack)
-            if (list.size() > shifts.size()) shifts = list;
+        QPair<int, int> lead; // the track the others follow
+        for (auto it = perTrack.cbegin(); it != perTrack.cend(); ++it)
+            if (it.value().size() > shifts.size()) {
+                shifts = it.value();
+                lead = it.key();
+            }
         // Automation of the trimmed tracks: the time trimmed off goes (head: at the clip's start, where its content
         // moves from), time added comes in there
         QMap<QPair<int, int>, QVector<QPair<int, int>>> autoShifts;
@@ -851,7 +890,10 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             for (Clip& o : tl.track(ref).clips)
                 if (o.id != id && o.start >= oldEnd) o.start += shift;
         }
-        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited);
+        // Markers follow the content of the lead track's trimmed clips (head: from the clip's start, like its
+        // automation), so a marker on the trimmed-off part goes and one on the rest stays on its picture
+        const QVector<QPair<int, int>> markerShifts = autoShifts.value(lead);
+        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited, &markerShifts);
         break;
     }
     case TrimKind::Roll:
