@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi's own H.264 encoder (prototype): every stream must decode with FFmpeg's decoder to exactly the
 // pictures the encoder reconstructed (CAVLC and CABAC; I and P frames, all intra/inter modes, slices, adaptive QP,
-// rate control, odd sizes).
+// rate control, odd sizes). With B pictures the access units come in coding order: the decoder must hand the
+// pictures out in display order with the right timestamps. The psycho-visual mode decision (psyRd): off = the same
+// stream as without the option, on = decodable, the same with any thread count, and closer to the source's texture.
 
 #include "check.h"
 
 #include "engine/encoder/h264/Cavlc.h"
+#include "engine/encoder/h264/Deblock.h"
+#include "engine/encoder/h264/Satd.h"
+#include "engine/encoder/h264/Transform.h"
 #include "engine/encoder/h264/H264Encoder.h"
 #include "engine/encoder/h264/ThreadErrors.h"
 
@@ -14,9 +19,11 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -30,9 +37,34 @@ struct Yuv {
     std::vector<uint8_t> y, u, v;
 };
 
+// > 0: the synthetic clip fades in from black over this many pictures (weighted prediction).
+int gFadeFrames = 0;
+// Picture kind of synthFrame: 0 = the moving pictures below, 1 = still (only the noise changes), 2 = a slow zoom.
+int gSynthKind = 0;
+
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
+// A texture under a slow zoom with a little noise (gSynthKind 2): the material B pictures pay on.
+int zoomSample(int x, int y, int w, int h, int t)
+{
+    auto lattice = [](int ix, int iy) {
+        uint32_t s = uint32_t(ix) * 73856093u ^ uint32_t(iy) * 19349663u;
+        s = (s ^ (s >> 13)) * 1274126177u;
+        return int((s >> 16) & 255);
+    };
+    // Positions in 1/256 pixel: the picture's centre stays, the scale grows by 0.15 % per picture. Lattice cells
+    // of 6 pixels, bilinear between their corners.
+    const int scale = 65536 + t * 100;
+    const int64_t u = (int64_t(x * 2 - w) * 128 * 65536 / scale + int64_t(w) * 128) / 6;
+    const int64_t v = (int64_t(y * 2 - h) * 128 * 65536 / scale + int64_t(h) * 128) / 6;
+    const int ix = int(u >> 8), iy = int(v >> 8), fx = int(u & 255), fy = int(v & 255);
+    const int top = lattice(ix, iy) * (256 - fx) + lattice(ix + 1, iy) * fx;
+    const int bottom = lattice(ix, iy + 1) * (256 - fx) + lattice(ix + 1, iy + 1) * fx;
+    return (top * (256 - fy) + bottom * fy) >> 16;
+}
+
 Yuv synthFrame(int w, int h, int t)
 {
+    const int tm = gSynthKind != 0 ? 0 : t;
     Yuv f;
     f.w = w;
     f.h = h;
@@ -44,23 +76,46 @@ Yuv synthFrame(int w, int h, int t)
         for (int x = 0; x < w; ++x) {
             seed = seed * 1664525u + 1013904223u;
             int v = (x * 255) / w / 2 + (y * 255) / h / 3 + int(seed >> 29);
-            const int sx = (t * 3) % w, sy = (t * 2) % h;
-            if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
+            const int sx = (tm * 3) % w, sy = (tm * 2) % h;
+            if (gSynthKind == 2)
+                v = 16 + zoomSample(x, y, w, h, t) * 7 / 8 + int(seed >> 30);
+            else if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
                 v = ((x / 4 + y / 4) & 1) ? 220 : 40;
             f.y[size_t(y) * w + x] = uint8_t(std::clamp(v, 0, 255));
         }
     for (int y = 0; y < h / 2; ++y)
         for (int x = 0; x < w / 2; ++x) {
-            f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + t);
+            f.u[size_t(y) * (w / 2) + x] = uint8_t(128 + (x - w / 4) / 3 + tm);
             f.v[size_t(y) * (w / 2) + x] = uint8_t(128 + (y - h / 4) / 2);
         }
+    if (gFadeFrames > 0 && t < gFadeFrames) {
+        const int num = t, den = gFadeFrames;
+        for (uint8_t& p : f.y)
+            p = uint8_t(16 + (int(p) - 16) * num / den);
+        for (uint8_t& p : f.u)
+            p = uint8_t(128 + (int(p) - 128) * num / den);
+        for (uint8_t& p : f.v)
+            p = uint8_t(128 + (int(p) - 128) * num / den);
+    }
     return f;
 }
 
 // Encodes `frames` pictures, decodes them with libavcodec and compares with the reconstruction.
 // With a chunk plan the parts go through their own encoders and the streams are concatenated.
+// B pictures (cfg.bframes): the reconstructions are kept by display index, the packets carry the display index as
+// pts, and the decoder (with its reordering delay) must return picture i with pts i. `info` reports what came out.
+struct StreamInfo {
+    std::string types;      // picture types in coding order
+    std::vector<int> order; // display index of each access unit, in coding order
+    double minPsnrY = 99;   // lowest luma PSNR of a reconstruction against its source picture
+    uint64_t hash = 1469598103934665603ull; // FNV-1a of the whole stream
+    // Psy distance (hadamardMagsDistance) between the source's and the reconstruction's whole 8x8 luma blocks,
+    // summed over all pictures, and the same against flat blocks (all of the source's texture lost)
+    double psyDistance = 0, psyFlat = 0;
+};
+
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
-               const ChunkPlan* plan = nullptr)
+               const ChunkPlan* plan = nullptr, StreamInfo* info = nullptr)
 {
     auto encPtr = std::make_unique<Encoder>(plan ? plan->configFor(cfg, 0, cfg.threads) : cfg);
     Encoder& enc0 = *encPtr;
@@ -69,23 +124,26 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
     if (!codec)
         return false;
     AVCodecContext* ctx = avcodec_alloc_context3(codec);
-    ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    if (cfg.bframes <= 0)
+        ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     ctx->thread_count = 1;
     if (avcodec_open2(ctx, codec, nullptr) < 0)
         return false;
     AVPacket* pkt = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
 
-    std::vector<Yuv> recon;
+    std::map<int, Yuv> recon; // by display index
     size_t decoded = 0, bytes = 0;
+    int chunkBase = 0, packets = 0;
     bool ok = true;
     auto receive = [&] {
         while (avcodec_receive_frame(ctx, frame) == 0) {
-            if (decoded >= recon.size()) {
+            if (!recon.count(int(decoded)) || frame->pts != int64_t(decoded)) {
+                std::fprintf(stderr, "picture %zu: not coded yet or wrong pts %lld\n", decoded, static_cast<long long>(frame->pts));
                 ok = false;
                 return;
             }
-            const Yuv& r = recon[decoded++];
+            const Yuv& r = recon[int(decoded++)];
             for (int p = 0; p < 3; ++p) {
                 const int pw = p ? r.w / 2 : r.w, ph = p ? r.h / 2 : r.h;
                 const std::vector<uint8_t>& ref = p == 0 ? r.y : p == 1 ? r.u : r.v;
@@ -105,6 +163,9 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         if (au.empty())
             return;
         bytes += au.size();
+        if (info)
+            for (const uint8_t b : au)
+                info->hash = (info->hash ^ b) * 1099511628211ull;
         Yuv r;
         r.w = cfg.width;
         r.h = cfg.height;
@@ -115,10 +176,35 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
             r.u.insert(r.u.end(), encPtr->reconU().begin() + y * (pw / 2), encPtr->reconU().begin() + y * (pw / 2) + r.w / 2);
             r.v.insert(r.v.end(), encPtr->reconV().begin() + y * (pw / 2), encPtr->reconV().begin() + y * (pw / 2) + r.w / 2);
         }
-        recon.push_back(std::move(r));
+        const int display = chunkBase + encPtr->lastDisplayIndex();
+        if (recon.count(display)) {
+            std::fprintf(stderr, "picture %d came out twice\n", display);
+            ok = false;
+        }
+        if (info) {
+            info->types += encPtr->lastType();
+            info->order.push_back(display);
+            const Yuv src = synthFrame(cfg.width, cfg.height, display);
+            double sse = 0;
+            for (size_t i = 0; i < src.y.size(); ++i)
+                sse += double(int(src.y[i]) - int(r.y[i])) * double(int(src.y[i]) - int(r.y[i]));
+            info->minPsnrY = std::min(info->minPsnrY, sse > 0 ? 10.0 * std::log10(255.0 * 255.0 * double(src.y.size()) / sse) : 99.0);
+            for (int y = 0; y + 8 <= r.h; y += 8)
+                for (int x = 0; x + 8 <= r.w; x += 8) {
+                    alignas(16) int16_t ms[128], mr[128];
+                    alignas(16) static const int16_t kFlat[128] = {};
+                    hadamardMags8x8U8(&src.y[size_t(y) * r.w + x], r.w, ms);
+                    hadamardMags8x8U8(&r.y[size_t(y) * r.w + x], r.w, mr);
+                    info->psyDistance += hadamardMagsDistance(ms, mr);
+                    info->psyFlat += hadamardMagsDistance(ms, kFlat);
+                }
+        }
+        recon[display] = std::move(r);
 
         av_new_packet(pkt, int(au.size()));
         std::memcpy(pkt->data, au.data(), au.size());
+        pkt->pts = display;
+        pkt->dts = packets++ - encPtr->reorderDelay();
         if (avcodec_send_packet(ctx, pkt) < 0)
             ok = false;
         av_packet_unref(pkt);
@@ -137,6 +223,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
                 take(std::move(au));
             }
             ++chunk;
+            chunkBase = t;
             encPtr = std::make_unique<Encoder>(plan->configFor(cfg, int(chunk), cfg.threads));
         }
         const Yuv src = synthFrame(cfg.width, cfg.height, t);
@@ -179,7 +266,315 @@ EncoderConfig config(int w, int h, IntraMode mode, int gop, int threads = 1)
     c.gop = gop;
     c.threads = threads;
     c.qp = 28;
+    // The cases set what they test: no B pictures, the plain AQ strength and no psy unless asked for (the
+    // defaults since 14.11.2026 are 8 B pictures with the probe, AQ 1.5, psy 1.0 by QP; a case below runs them).
+    c.bframes = 0;
+    c.aqStrength = 1.0;
+    c.psyRd = 0.0;
     return c;
+}
+
+// The edge kernels (SIMD where available) against the per-line reference filter, and the
+// four-predictions SATD against single calls, on random edges and samples.
+bool kernelsMatchReference()
+{
+    using namespace deblock_detail;
+    uint32_t seed = 12345;
+    auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    constexpr int S = 40;
+    for (int it = 0; it < 20000; ++it) {
+        std::vector<uint8_t> a(S * S), c(S * S);
+        const int base = int(rnd() % 256), amp = 1 + int(rnd() % (it % 3 == 0 ? 255 : 20));
+        for (auto* v : {&a, &c})
+            for (auto& x : *v)
+                x = uint8_t(std::clamp(base + int(rnd() % unsigned(2 * amp + 1)) - amp, 0, 255));
+        DeblockEdge e;
+        e.alpha = int(rnd() % (it % 4 == 0 ? 40 : 256));
+        e.beta = int(rnd() % 19);
+        e.bs4 = rnd() % 3 == 0;
+        for (auto& t : e.tc0)
+            t = e.bs4 ? int8_t(0) : rnd() % 4 == 0 ? int8_t(-1) : int8_t(rnd() % 26);
+        std::vector<uint8_t> ra = a, rc = c;
+        uint8_t *q = &a[10 * S + 12], *qv = &c[10 * S + 12], *r = &ra[10 * S + 12], *rv = &rc[10 * S + 12];
+        switch (it % 4) {
+        case 0:
+            deblockLumaEdgeV(q, S, e);
+            for (int i = 0; i < 16; ++i)
+                if (e.bs4 || e.tc0[i >> 2] >= 0)
+                    lumaLine(r + i * S, 1, e.alpha, e.beta, e.tc0[i >> 2], e.bs4);
+            break;
+        case 1:
+            deblockLumaEdgeH(q, S, e);
+            for (int i = 0; i < 16; ++i)
+                if (e.bs4 || e.tc0[i >> 2] >= 0)
+                    lumaLine(r + i, S, e.alpha, e.beta, e.tc0[i >> 2], e.bs4);
+            break;
+        case 2:
+            deblockChromaEdgeV(q, qv, S, e);
+            for (int i = 0; i < 8; ++i)
+                if (e.bs4 || e.tc0[i >> 1] >= 0) {
+                    chromaLine(r + i * S, 1, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                    chromaLine(rv + i * S, 1, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                }
+            break;
+        default:
+            deblockChromaEdgeH(q, qv, S, e);
+            for (int i = 0; i < 8; ++i)
+                if (e.bs4 || e.tc0[i >> 1] >= 0) {
+                    chromaLine(r + i, S, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                    chromaLine(rv + i, S, e.alpha, e.beta, e.tc0[i >> 1], e.bs4);
+                }
+            break;
+        }
+        if (a != ra || c != rc)
+            return false;
+        if (it % 8 == 0) {
+            // Psy distance of two 8x8 blocks against plain Hadamard transforms: the coefficients' magnitudes
+            // compared one by one, without the DC ones
+            alignas(16) int16_t ma[128], mc[128];
+            hadamardMags8x8U8(a.data(), S, ma);
+            hadamardMags8x8U8(c.data(), S, mc);
+            int h[2][64], d4 = 0, d8 = 0;
+            for (int w = 0; w < 2; ++w)
+                for (int y = 0; y < 8; ++y)
+                    for (int x = 0; x < 8; ++x)
+                        h[w][y * 8 + x] = (w ? c : a)[size_t(y) * S + x];
+            for (int q = 0; q < 4; ++q) {
+                int in[2][16], out[2][16];
+                for (int w = 0; w < 2; ++w) {
+                    for (int i = 0; i < 16; ++i)
+                        in[w][i] = h[w][((q >> 1) * 4 + (i >> 2)) * 8 + (q & 1) * 4 + (i & 3)];
+                    hadamard4x4(in[w], out[w]);
+                }
+                for (int i = 1; i < 16; ++i)
+                    d4 += std::abs(std::abs(out[0][i]) - std::abs(out[1][i]));
+            }
+            for (int w = 0; w < 2; ++w)
+                for (int pass = 0; pass < 2; ++pass)
+                    for (int line = 0; line < 8; ++line)
+                        for (int step = 1; step < 8; step <<= 1)
+                            for (int i = 0; i < 8; i += 2 * step)
+                                for (int j = i; j < i + step; ++j) {
+                                    int& u = pass ? h[w][j * 8 + line] : h[w][line * 8 + j];
+                                    int& v = pass ? h[w][(j + step) * 8 + line] : h[w][line * 8 + j + step];
+                                    const int p = u, m = v;
+                                    u = p + m;
+                                    v = p - m;
+                                }
+            for (int i = 1; i < 64; ++i)
+                d8 += std::abs(std::abs(h[0][i]) - std::abs(h[1][i]));
+            if (hadamardMagsDistance(ma, mc) != ((d4 + 1) >> 1) + ((d8 + 2) >> 2) || hadamardMagsDistance(ma, ma) != 0)
+                return false;
+            int four[4];
+            const uint8_t* pred = c.data(); // 16 x 4 at stride 16
+            satd4x4x4U8(a.data(), S, pred, four);
+            for (int i = 0; i < 4; ++i)
+                if (four[i] != satdU8(a.data(), S, pred + 4 * i, 16))
+                    return false;
+        }
+    }
+    return true;
+}
+
+// The distortion, transform and quantisation kernels (SSE2 / AVX2 / NEON where available) against
+// plain references written out here, on random blocks: the stream must not depend on the platform.
+bool vectorKernelsMatchReference()
+{
+    using namespace transform_detail;
+    uint32_t seed = 777;
+    auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    constexpr int S = 48;
+    std::vector<uint8_t> a(S * 24), b(S * 24);
+    auto satdRef = [&](const uint8_t* p, int sp, const uint8_t* q, int sq, int w, int h) {
+        int s = 0;
+        for (int y = 0; y < h; y += 4)
+            for (int x = 0; x < w; x += 4) {
+                int d[16];
+                for (int i = 0; i < 16; ++i)
+                    d[i] = int(p[(y + i / 4) * sp + x + i % 4]) - int(q[(y + i / 4) * sq + x + i % 4]);
+                s += satd4x4(d);
+            }
+        return s;
+    };
+    for (int it = 0; it < 4000; ++it) {
+        const int base = int(rnd() % 256), amp = it % 3 == 0 ? 255 : 1 + int(rnd() % 30);
+        for (auto* v : {&a, &b})
+            for (auto& x : *v)
+                x = it % 5 == 4 ? uint8_t(rnd() & 1 ? 255 : 0) : uint8_t(std::clamp(base + int(rnd() % unsigned(2 * amp + 1)) - amp, 0, 255));
+        const uint8_t* p = a.data() + it % 3;
+        const uint8_t* q = b.data() + it % 5;
+        const int sp = S - it % 2, sq = S;
+        if (satdU8(p, sp, q, sq) != satdRef(p, sp, q, sq, 4, 4) || satd8x4U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 4) ||
+            satd8x8U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 8) || satd8x8U8Fast(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 8) ||
+            satd16x4U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 16, 4))
+            return false;
+        for (int w : {8, 16})
+            for (int h : {2, 4, 8, 16}) {
+                int ref = 0;
+                for (int y = 0; y < h; ++y)
+                    for (int x = 0; x < w; ++x)
+                        ref += std::abs(int(p[y * sp + x]) - int(q[y * sq + x]));
+                if (sadBlock(p, sp, q, sq, w, h) != ref)
+                    return false;
+            }
+        for (int w : {4, 8, 16}) {
+            int ref = 0;
+            for (int x = 0; x < w; ++x)
+                ref += std::abs(int(p[x]) - int(q[x]));
+            if (sadRow(p, q, w) != ref)
+                return false;
+        }
+        { // sa8d: 8-point Hadamard both ways, (sum + 2) >> 2
+            int d[64];
+            for (int i = 0; i < 64; ++i)
+                d[i] = int(p[(i / 8) * sp + i % 8]) - int(q[(i / 8) * sq + i % 8]);
+            for (int pass = 0; pass < 2; ++pass)
+                for (int line = 0; line < 8; ++line)
+                    for (int step = 1; step < 8; step <<= 1)
+                        for (int i = 0; i < 8; i += 2 * step)
+                            for (int j = i; j < i + step; ++j) {
+                                int& u = pass ? d[j * 8 + line] : d[line * 8 + j];
+                                int& v = pass ? d[(j + step) * 8 + line] : d[line * 8 + j + step];
+                                const int x = u, y = v;
+                                u = x + y;
+                                v = x - y;
+                            }
+            int sum = 0;
+            for (int v : d)
+                sum += std::abs(v);
+            if (sa8dU8(p, sp, q, sq) != (sum + 2) >> 2)
+                return false;
+        }
+        // Transforms: forward 4x4 / 8x8 against the scalar cores, inverses against the standard's steps.
+        int res[64], out[64], ref[64];
+        for (int i = 0; i < 64; ++i)
+            res[i] = int(p[(i / 8) * sp + i % 8]) - int(q[(i / 8) * sq + i % 8]);
+        {
+            int r16[16];
+            for (int i = 0; i < 16; ++i)
+                r16[i] = res[(i / 4) * 8 + i % 4];
+            int t[16];
+            for (int y = 0; y < 4; ++y) {
+                const int* r = r16 + y * 4;
+                t[y * 4 + 0] = r[0] + r[1] + r[2] + r[3];
+                t[y * 4 + 1] = 2 * (r[0] - r[3]) + (r[1] - r[2]);
+                t[y * 4 + 2] = r[0] - r[1] - r[2] + r[3];
+                t[y * 4 + 3] = (r[0] - r[3]) - 2 * (r[1] - r[2]);
+            }
+            for (int x = 0; x < 4; ++x) {
+                ref[x] = t[x] + t[4 + x] + t[8 + x] + t[12 + x];
+                ref[4 + x] = 2 * (t[x] - t[12 + x]) + (t[4 + x] - t[8 + x]);
+                ref[8 + x] = t[x] - t[4 + x] - t[8 + x] + t[12 + x];
+                ref[12 + x] = (t[x] - t[12 + x]) - 2 * (t[4 + x] - t[8 + x]);
+            }
+            forward4x4(r16, out);
+            if (!std::equal(out, out + 16, ref))
+                return false;
+            forward4x4Diff(p, sp, q, sq, out);
+            if (!std::equal(out, out + 16, ref))
+                return false;
+        }
+        {
+            int t[64];
+            for (int y = 0; y < 8; ++y)
+                fwd8c(res + y * 8, t + y * 8);
+            for (int j = 0; j < 8; ++j) {
+                int col[8], o[8];
+                for (int y = 0; y < 8; ++y)
+                    col[y] = t[y * 8 + j];
+                fwd8c(col, o);
+                for (int i = 0; i < 8; ++i)
+                    ref[i * 8 + j] = o[i];
+            }
+            forward8x8(res, out);
+            if (!std::equal(out, out + 64, ref))
+                return false;
+        }
+        int coef[64];
+        for (int& c : coef)
+            c = int(rnd() % 8001) - 4000;
+        {
+            int t[64];
+            for (int i = 0; i < 8; ++i)
+                inv8c(coef + i * 8, t + i * 8);
+            for (int j = 0; j < 8; ++j) {
+                int col[8], o[8];
+                for (int i = 0; i < 8; ++i)
+                    col[i] = t[i * 8 + j];
+                inv8c(col, o);
+                for (int i = 0; i < 8; ++i)
+                    ref[i * 8 + j] = (o[i] + 32) >> 6;
+            }
+            inverse8x8(coef, out);
+            if (!std::equal(out, out + 64, ref))
+                return false;
+            for (int y = 0; y < 4; ++y) {
+                const int* d = coef + y * 4;
+                const int e = d[0] + d[2], f = d[0] - d[2], g = (d[1] >> 1) - d[3], h = d[1] + (d[3] >> 1);
+                t[y * 4 + 0] = e + h;
+                t[y * 4 + 1] = f + g;
+                t[y * 4 + 2] = f - g;
+                t[y * 4 + 3] = e - h;
+            }
+            for (int x = 0; x < 4; ++x) {
+                const int e = t[x] + t[8 + x], f = t[x] - t[8 + x];
+                const int g = (t[4 + x] >> 1) - t[12 + x], h = t[4 + x] + (t[12 + x] >> 1);
+                ref[x] = (e + h + 32) >> 6;
+                ref[4 + x] = (f + g + 32) >> 6;
+                ref[8 + x] = (f - g + 32) >> 6;
+                ref[12 + x] = (e - h + 32) >> 6;
+            }
+            inverse4x4(coef, out);
+            if (!std::equal(out, out + 16, ref))
+                return false;
+        }
+        { // quantisation, dequantisation, the threshold test, adding the residual back
+            int mf[8], lim[8], lv[16], dv[8];
+            for (int i = 0; i < 8; ++i) {
+                mf[i] = 1 + int(rnd() % 13107);
+                lim[i] = int(rnd() % 300);
+                dv[i] = 16 * (10 + int(rnd() % 16));
+            }
+            const int qbits = 15 + it % 9, offset = (1 << qbits) / (it % 2 ? 3 : 6);
+            bool any = false;
+            for (int i = 0; i < 16; ++i) {
+                const int m = std::abs(coef[i]);
+                const int l = std::min(int((int64_t(m) * mf[i & 7] + offset) >> qbits), 2063);
+                ref[i] = coef[i] < 0 ? -l : l;
+                any |= l != 0;
+            }
+            if (quant4x4(coef, mf, qbits, offset, 2063, lv) != any || !std::equal(lv, lv + 16, ref))
+                return false;
+            bool above = false;
+            for (int i = 0; i < 16; ++i)
+                above |= std::abs(coef[i]) > lim[i & 7];
+            if (anyAbove4x4(coef, lim) != above)
+                return false;
+            const int shift = it % 4;
+            dequant4x4(lv, dv, shift, out);
+            for (int i = 0; i < 16; ++i)
+                if (out[i] != int(unsigned(lv[i] * dv[i & 7]) << shift))
+                    return false;
+            uint8_t o8[64];
+            for (int& r : res)
+                r = int(rnd() % 1201) - 600;
+            addClip8x8(p, sp, res, o8, 8);
+            for (int i = 0; i < 64; ++i)
+                if (o8[i] != std::clamp(int(p[(i / 8) * sp + i % 8]) + res[i], 0, 255))
+                    return false;
+            addClip4x4(p, sp, res, o8, 4);
+            for (int i = 0; i < 16; ++i)
+                if (o8[i] != std::clamp(int(p[(i / 4) * sp + i % 4]) + res[i], 0, 255))
+                    return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -188,6 +583,8 @@ int main()
 {
     Check::initEnv();
     CHECK(selfTestTables());
+    CHECK(kernelsMatchReference());
+    CHECK(vectorKernelsMatchReference());
     for (const bool cabac : {false, true}) {
     gCabac = cabac;
 
@@ -220,6 +617,20 @@ int main()
         EncoderConfig c = config(176, 144, IntraMode::Auto, 8, 2);
         c.transform8x8 = false;
         CHECK(roundTrip(c, 6));
+    }
+    if (gCabac) { // every inter candidate coded in full instead of ranked by estimate; several QPs and references
+        for (int qp : {18, 26, 38}) {
+            EncoderConfig c = config(250, 142, IntraMode::Auto, 12, 3);
+            c.qp = qp;
+            c.refs = qp == 26 ? 2 : 1;
+            size_t bytesEst = 0, bytesFull = 0;
+            CHECK(roundTrip(c, 12, &bytesEst));
+            c.modeEstimate = false;
+            CHECK(roundTrip(c, 12, &bytesFull));
+            if (std::abs(double(bytesFull) - double(bytesEst)) >= 0.05 * double(bytesFull))
+                std::fprintf(stderr, "mode estimate at QP %d: %zu bytes, full %zu\n", qp, bytesEst, bytesFull);
+            CHECK(std::abs(double(bytesFull) - double(bytesEst)) < 0.05 * double(bytesFull));
+        }
     }
     // A keyframe the caller asks for (a cut in the timeline) in the middle of a GOP
     CHECK(roundTrip(config(176, 144, IntraMode::Auto, 30), 10, nullptr, 4));
@@ -267,6 +678,431 @@ int main()
         if (std::abs(kbps2 - 1000.0) >= 250.0)
             std::fprintf(stderr, "rate control with first pass: %.0f kbit/s instead of 1000\n", kbps2);
         CHECK(std::abs(kbps2 - 1000.0) < 250.0);
+        // With threads the first pass analyses its batches on a thread of its own, the pictures of
+        // a batch side by side: the same numbers as one picture after the other (also with the
+        // B probe, and with a scene change in the clip).
+        for (bool forB : {false, true}) {
+            auto statsOf = [&](int threads) {
+                FirstPass f(c.width, c.height, threads, forB ? 3 : 0);
+                for (int t = 0; t < 45; ++t) {
+                    const Yuv src = synthFrame(c.width, c.height, t < 30 ? t : 500 + 7 * t);
+                    f.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+                }
+                return f.stats();
+            };
+            const auto one = statsOf(1);
+            for (int threads : {2, 3, 8}) {
+                const auto many = statsOf(threads);
+                bool same = many->size() == one->size() && many->intraSum == one->intraSum && many->interSum == one->interSum &&
+                            many->sceneChange == one->sceneChange && many->bGate == one->bGate &&
+                            many->analysis.size() == one->analysis.size();
+                for (size_t i = 0; same && i < one->analysis.size(); ++i)
+                    same = many->analysis[i]->interCost == one->analysis[i]->interCost &&
+                           many->analysis[i]->intraCost == one->analysis[i]->intraCost &&
+                           many->analysis[i]->mvx == one->analysis[i]->mvx && many->analysis[i]->mvy == one->analysis[i]->mvy;
+                CHECK(same);
+            }
+        }
+        // The encoder takes the first pass's analysis instead of repeating it: the same stream with
+        // none of it kept and with only the first pictures kept (memory limit).
+        CHECK(c.firstPass->analysis.size() == 60);
+        const size_t perPicture = size_t((c.width + 15) / 16) * ((c.height + 15) / 16) * 12;
+        for (size_t keep : {size_t(0), 25 * perPicture}) {
+            FirstPass fpKeep(c.width, c.height, 1, 0, keep);
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fpKeep.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            EncoderConfig k = c;
+            k.firstPass = fpKeep.stats();
+            CHECK(k.firstPass->analysis.size() == (keep ? 25u : 0u));
+            size_t bytesKeep = 0;
+            CHECK(roundTrip(k, 60, &bytesKeep));
+            CHECK(bytesKeep == bytes);
+        }
+    }
+    // B pictures (CABAC only): coding order, display order and timestamps, every picture bit-exact
+    if (gCabac) {
+        for (int bframes : {1, 2, 3}) {
+            for (int threads : {1, 3}) {
+                EncoderConfig c = config(176, 144, IntraMode::Auto, 30, threads);
+                c.bframes = bframes;
+                c.bAdaptive = false;
+                StreamInfo info;
+                size_t bytes = 0;
+                CHECK(roundTrip(c, 14, &bytes, -1, nullptr, &info));
+                // I first, then each reference picture before the B pictures in front of it; the last picture is P.
+                const char* expect = bframes == 1 ? "IPBPBPBPBPBPBP" : bframes == 2 ? "IPBBPBBPBBPBBP" : "IPBBBPBBBPBBBP";
+                if (info.types != expect)
+                    std::fprintf(stderr, "bframes %d: types %s\n", bframes, info.types.c_str());
+                CHECK(info.types == expect);
+                // A B picture lies between the two reference pictures coded before it, B pictures ascend.
+                bool orderOk = info.order.size() == 14 && info.order[0] == 0;
+                int before = -1, after = 0, lastB = -1;
+                for (size_t i = 1; orderOk && i < info.order.size(); ++i) {
+                    if (info.types[i] == 'B') {
+                        orderOk = info.order[i] > std::max(before, lastB) && info.order[i] < after;
+                        lastB = info.order[i];
+                    } else {
+                        orderOk = info.order[i] > after;
+                        before = after;
+                        after = info.order[i];
+                        lastB = -1;
+                    }
+                }
+                CHECK(orderOk);
+                if (info.minPsnrY < 30.0)
+                    std::fprintf(stderr, "bframes %d: PSNR-Y %.2f dB\n", bframes, info.minPsnrY);
+                CHECK(info.minPsnrY >= 30.0);
+                // The same stream with any thread count.
+                static size_t bytesOne[4] = {};
+                if (threads == 1)
+                    bytesOne[bframes] = bytes;
+                CHECK(bytes == bytesOne[bframes]);
+            }
+        }
+        {
+            // Smaller than without B pictures at the same QP on this (easy) material: with fixed runs. Placed
+            // adaptively (the default) the probe finds too little gain here for B pictures (about 9 % at equal
+            // distortion; they are placed from 15 % on), and the stream is the one without them plus a few
+            // bytes of picture order counts.
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            size_t plain = 0, withB = 0, adaptive = 0;
+            CHECK(roundTrip(c, 31, &plain));
+            c.bframes = 2;
+            c.bAdaptive = false;
+            CHECK(roundTrip(c, 31, &withB));
+            if (withB >= plain)
+                std::fprintf(stderr, "B pictures: %zu bytes, without %zu\n", withB, plain);
+            CHECK(withB < plain);
+            c.bAdaptive = true;
+            CHECK(roundTrip(c, 31, &adaptive));
+            if (adaptive >= plain + plain / 100)
+                std::fprintf(stderr, "adaptive B pictures: %zu bytes, without %zu\n", adaptive, plain);
+            CHECK(adaptive < plain + plain / 100);
+        }
+        {
+            // A keyframe the caller asks for and the GOP end: the picture before a keyframe is a P picture
+            EncoderConfig c = config(176, 144, IntraMode::Auto, 8, 2);
+            c.bframes = 2;
+            c.bAdaptive = false;
+            StreamInfo info;
+            CHECK(roundTrip(c, 20, nullptr, 5, nullptr, &info));
+            std::string display(20, '?');
+            for (size_t i = 0; i < info.order.size(); ++i)
+                display[size_t(info.order[i])] = info.types[i];
+            if (display != "IBBBPIBBPBBPPIBBPBBP" && display != "IBBPPIBBPBBPPIBBPBBP")
+                std::fprintf(stderr, "types in display order: %s\n", display.c_str());
+            CHECK(display == "IBBPPIBBPBBPPIBBPBBP");
+        }
+        {
+            // Without the 8x8 transform (Main), with several references, without frame threading, adaptive QP extremes
+            EncoderConfig c = config(250, 142, IntraMode::Auto, 12, 3);
+            c.bframes = 2;
+            c.transform8x8 = false;
+            CHECK(roundTrip(c, 14));
+            c.transform8x8 = true;
+            c.refs = 3;
+            CHECK(roundTrip(c, 14));
+            c.refs = 1;
+            c.frameThreads = false;
+            c.aqStrength = 3;
+            CHECK(roundTrip(c, 14));
+            c.aqStrength = 0;
+            c.lookahead = 0; // the queue grows to what the B pictures need
+            c.mbtree = false;
+            c.effort = 0;
+            CHECK(roundTrip(c, 14));
+            for (int qp : {14, 44}) {
+                EncoderConfig q = config(176, 144, IntraMode::Auto, 30, 2);
+                q.bframes = 3;
+                q.qp = qp;
+                CHECK(roundTrip(q, 12));
+            }
+            for (int bframes : {2, 3}) { // implicit weighted prediction: unequal weights off the middle
+                EncoderConfig q = config(176, 144, IntraMode::Auto, 30, 2);
+                q.bframes = bframes;
+                q.weightedBipred = true;
+                CHECK(roundTrip(q, 12));
+            }
+        }
+        {
+            // The defaults as they are (B pictures by the probe, AQ, psy by QP, weighted prediction): bit-exact,
+            // the same with any thread count, also with rate control and a first pass.
+            StreamInfo one, four;
+            EncoderConfig d;
+            d.width = 320;
+            d.height = 192;
+            d.gop = 30;
+            d.qp = 30;
+            d.threads = 1;
+            CHECK(roundTrip(d, 40, nullptr, -1, nullptr, &one));
+            d.threads = 4;
+            CHECK(roundTrip(d, 40, nullptr, -1, nullptr, &four));
+            CHECK(one.hash == four.hash);
+            d.bitrateKbps = 800;
+            d.fps = 30;
+            CHECK(roundTrip(d, 40));
+        }
+        {
+            // Explicit weighted prediction: a fade in from black decodes bit-exactly (one and several references,
+            // with B pictures, rate control), is clearly smaller than without the weights and the same with any
+            // thread count; without a fade the option changes nothing but the headers (a second parameter set).
+            gFadeFrames = 20;
+            for (int refs : {1, 3}) {
+                size_t with = 0, without = 0;
+                StreamInfo one, four;
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 1);
+                c.refs = refs;
+                CHECK(roundTrip(c, 26, &with, -1, nullptr, &one));
+                c.threads = 4;
+                CHECK(roundTrip(c, 26, nullptr, -1, nullptr, &four));
+                CHECK(one.hash == four.hash);
+                CHECK(one.minPsnrY >= 30.0);
+                c.weightedPred = false;
+                CHECK(roundTrip(c, 26, &without));
+                std::fprintf(stderr, "fade, %d refs: %zu bytes with weighted prediction, %zu without\n", refs, with, without);
+                CHECK(with * 10 < without * 9);
+            }
+            {
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 3);
+                c.bframes = 2;
+                c.bAdaptive = false;
+                CHECK(roundTrip(c, 26));
+                EncoderConfig r = config(320, 192, IntraMode::Auto, 60, 2);
+                r.bitrateKbps = 600;
+                r.fps = 30;
+                CHECK(roundTrip(r, 40));
+            }
+            gFadeFrames = 0;
+            size_t with = 0, without = 0;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            CHECK(roundTrip(c, 12, &with));
+            c.weightedPred = false;
+            CHECK(roundTrip(c, 12, &without));
+            CHECK(with > without && with - without < 16);
+        }
+        {
+            // Adaptive placement (the default): any mix of run lengths decodes, with any thread count the same
+            size_t bytesOne = 0;
+            for (int threads : {1, 4}) {
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 30, threads);
+                c.bframes = 3;
+                StreamInfo info;
+                size_t bytes = 0;
+                CHECK(roundTrip(c, 24, &bytes, -1, nullptr, &info));
+                CHECK(info.types.size() == 24 && info.types[0] == 'I' && info.minPsnrY >= 30.0);
+                if (threads == 1)
+                    bytesOne = bytes;
+                CHECK(bytes == bytesOne);
+            }
+        }
+        {
+            // Placement: a slow zoom gets runs of B pictures (the probe finds them worth it, the lookahead costs
+            // pick the runs; one pass and from a first pass with the same plan) and is smaller with them at the
+            // same QP. A still picture gets none: nothing is coded there with or without them.
+            gSynthKind = 2;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            size_t plain = 0, withB = 0;
+            CHECK(roundTrip(c, 24, &plain));
+            c.bframes = 3;
+            StreamInfo info;
+            CHECK(roundTrip(c, 24, &withB, -1, nullptr, &info));
+            const auto bCount = std::count(info.types.begin(), info.types.end(), 'B');
+            if (bCount < 12 || withB >= plain)
+                std::fprintf(stderr, "slow zoom: types %s, %zu bytes, without B %zu\n", info.types.c_str(), withB, plain);
+            CHECK(bCount >= 12);
+            CHECK(withB < plain);
+            {
+                gSynthKind = 1;
+                StreamInfo still;
+                CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &still));
+                if (still.types.find('B') != std::string::npos)
+                    std::fprintf(stderr, "still picture: types %s\n", still.types.c_str());
+                CHECK(still.types.find('B') == std::string::npos);
+                gSynthKind = 2;
+            }
+            FirstPass fp(c.width, c.height, 2, c.bframes);
+            for (int t = 0; t < 24; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            c.bitrateKbps = 300;
+            c.fps = 30;
+            StreamInfo info2;
+            CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info2));
+            if (info2.types != info.types)
+                std::fprintf(stderr, "slow zoom, first pass: types %s instead of %s\n", info2.types.c_str(), info.types.c_str());
+            CHECK(info2.types == info.types);
+            gSynthKind = 0;
+        }
+        {
+            // Rate control with B pictures: one pass, with a first pass, and in chunks
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bframes = 2;
+            c.bitrateKbps = 1000;
+            c.fps = 30;
+            size_t bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            double kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "rate control with B pictures: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+            FirstPass fp(c.width, c.height, 2, c.bframes); // with the costs of the adaptive placement
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            CHECK(c.firstPass->bMax == 2 && c.firstPass->bGate.size() == 60);
+            bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "first pass with B pictures: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+            // Mode decision by estimate (the default) and with every candidate coded in full: both
+            // bit-exact, about the same size (two-pass with B pictures).
+            {
+                EncoderConfig full = c;
+                full.modeEstimate = false;
+                size_t bytesFull = 0;
+                CHECK(roundTrip(full, 60, &bytesFull));
+                CHECK(std::abs(double(bytesFull) - double(bytes)) < 0.05 * double(bytes));
+            }
+            // Frame threading (two pictures in flight at first, then three; rows parked instead of
+            // waited in): the same stream with one thread, without frame threading and with more
+            // threads than rows can run - two-pass with B pictures and one pass without.
+            for (const bool withB : {true, false}) {
+                EncoderConfig t = c;
+                if (!withB) {
+                    t.bframes = 0;
+                    t.firstPass.reset();
+                }
+                size_t ref = 0;
+                t.threads = 1;
+                CHECK(roundTrip(t, 60, &ref));
+                for (const int threads : {2, 5, 16}) {
+                    for (const bool frameThreads : {true, false}) {
+                        t.threads = threads;
+                        t.frameThreads = frameThreads;
+                        size_t got = 0;
+                        CHECK(roundTrip(t, 60, &got));
+                        if (got != ref)
+                            std::fprintf(stderr, "threads %d frame threading %d B %d: %zu bytes, one thread %zu\n", threads,
+                                         int(frameThreads), int(withB), got, ref);
+                        CHECK(got == ref);
+                    }
+                }
+            }
+            c.firstPass.reset();
+            const ChunkPlan rated = planChunks(*fp.stats(), c, 3, 10);
+            bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes, -1, &rated));
+        }
+    }
+    // Psycho-visual mode decision (psyRd)
+    {
+        // Off (0, the default) is the stream without the option; on, every picture still decodes bit-exact, with
+        // one thread or several the same stream, and the reconstruction is closer to the source by the psy distance.
+        for (int qp : {22, 28}) { // where the source's noise is not below the quantiser altogether
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 1);
+            c.qp = qp;
+            StreamInfo plain, zero, on, onThreads, strong;
+            size_t bytesPlain = 0, bytesOn = 0;
+            CHECK(roundTrip(c, 16, &bytesPlain, -1, nullptr, &plain));
+            c.psyRd = 0.0;
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &zero));
+            CHECK(zero.hash == plain.hash);
+            c.psyRd = 1.0;
+            CHECK(roundTrip(c, 16, &bytesOn, -1, nullptr, &on));
+            CHECK(on.hash != plain.hash);
+            CHECK(on.minPsnrY >= plain.minPsnrY - 1.5);
+            c.threads = 3; // CAVLC: a slice per thread, another stream
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &onThreads));
+            CHECK(onThreads.hash == on.hash || !gCabac);
+            c.frameThreads = false;
+            StreamInfo onRows;
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &onRows));
+            CHECK(onRows.hash == onThreads.hash);
+            c.psyRd = 3.0;
+            CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &strong));
+            if (!(on.psyDistance < plain.psyDistance && strong.psyDistance < on.psyDistance) || std::getenv("H264_TEST_PSY"))
+                std::fprintf(stderr, "psy at QP %d: distance %.0f, with 1.0 %.0f, with 3.0 %.0f of %.0f; %zu -> %zu bytes\n", qp,
+                             plain.psyDistance, on.psyDistance, strong.psyDistance, plain.psyFlat, bytesPlain, bytesOn);
+            CHECK(on.psyDistance < plain.psyDistance);
+            CHECK(strong.psyDistance < on.psyDistance);
+        }
+        // With the other tools: intra only, without the 8x8 transform (CABAC), every candidate coded in full,
+        // several references, adaptive QP extremes, QP extremes, odd size with slices or the wavefront
+        {
+            EncoderConfig c = config(176, 144, IntraMode::Auto, 1);
+            c.psyRd = 1.0;
+            CHECK(roundTrip(c, 3));
+            c = config(250, 142, IntraMode::Auto, 12, 3);
+            c.psyRd = 2.0;
+            CHECK(roundTrip(c, 12));
+            c.transform8x8 = false;
+            CHECK(roundTrip(c, 12));
+            c.transform8x8 = true;
+            c.modeEstimate = false;
+            c.refs = 2;
+            CHECK(roundTrip(c, 12));
+            c.modeEstimate = true;
+            c.aqStrength = 3;
+            CHECK(roundTrip(c, 12));
+            c.aqStrength = 0;
+            c.effort = 0;
+            CHECK(roundTrip(c, 12));
+            for (int qp : {12, 44, 51}) {
+                EncoderConfig q = config(176, 144, IntraMode::Auto, 10, 2);
+                q.psyRd = 1.0;
+                q.qp = qp;
+                CHECK(roundTrip(q, 6));
+            }
+        }
+        if (gCabac) { // B pictures: fixed runs and the adaptive placement, one thread and several the same
+            for (const bool adaptive : {false, true}) {
+                uint64_t hashOne = 0;
+                for (int threads : {1, 4}) {
+                    EncoderConfig c = config(320, 192, IntraMode::Auto, 30, threads);
+                    c.bframes = 2;
+                    c.bAdaptive = adaptive;
+                    c.psyRd = 1.0;
+                    StreamInfo info;
+                    CHECK(roundTrip(c, 20, nullptr, -1, nullptr, &info));
+                    CHECK(info.minPsnrY >= 30.0);
+                    if (threads == 1)
+                        hashOne = info.hash;
+                    CHECK(info.hash == hashOne);
+                }
+            }
+        }
+        { // Rate control (one pass and with a first pass) still lands near its target
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bitrateKbps = 1000;
+            c.fps = 30;
+            c.psyRd = 1.0;
+            size_t bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            double kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "rate control with psy: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+            FirstPass fp(c.width, c.height);
+            for (int t = 0; t < 60; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            bytes = 0;
+            CHECK(roundTrip(c, 60, &bytes));
+            kbps = bytes * 8.0 / 2.0 / 1000.0;
+            if (std::abs(kbps - 1000.0) >= 250.0)
+                std::fprintf(stderr, "first pass with psy: %.0f kbit/s instead of 1000\n", kbps);
+            CHECK(std::abs(kbps - 1000.0) < 250.0);
+        }
     }
     // level_idc (Table A-1) in the SPS: 720p30 3.1, 1080p60 4.2, 4K30 5.1; VUI colours decode
     {

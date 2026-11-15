@@ -9,7 +9,11 @@
 
 namespace schneidi::h264 {
 
+class CabacCounter;
+
 class CabacEncoder {
+    friend class CabacCounter;
+
 public:
     // Starts the arithmetic coder on a byte-aligned writer (after cabac_alignment_one_bit) and
     // initialises all contexts for the slice (9.3.1.1). cabacInitIdc < 0 = I slice.
@@ -161,6 +165,31 @@ private:
     bool firstBit_ = true;
     int outstanding_ = 0;
     uint8_t ctx_[kCabacContexts] = {}; // state << 1 | MPS
+};
+
+// Bit counter for the mode decision: a copy of an encoder's contexts that adapts like it and sums
+// the bins' costs (the encoder's counting mode without a test per bin and without its coder state).
+class CabacCounter {
+public:
+    explicit CabacCounter(const CabacEncoder& from)
+    {
+        for (int i = 0; i < kCabacContexts; ++i)
+            ctx_[i] = from.ctx_[i];
+    }
+    void decision(int ctx, int bin)
+    {
+        const uint8_t c = ctx_[ctx];
+        ctx_[ctx] = CabacEncoder::kFast.next[c][bin];
+        cost_ += CabacEncoder::kFast.cost[c][bin];
+    }
+    void bypass(int) { cost_ += 256; }
+    void terminate(int bin) { cost_ += bin ? 7 * 256 : 0; }
+    uint32_t binCost(int ctx, int bin) const { return CabacEncoder::kFast.cost[ctx_[ctx]][bin]; }
+    double countedBits() const { return cost_ / 256.0; }
+
+private:
+    uint64_t cost_ = 0;
+    uint8_t ctx_[kCabacContexts];
 };
 
 } // namespace schneidi::h264
