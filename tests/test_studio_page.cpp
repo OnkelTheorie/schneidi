@@ -8,9 +8,12 @@
 // - the pen: a drag over a clip's lane makes volume keyframes at the drawn level, one undo step per stroke;
 // - the meters take the channel count from the levels (6 channels = 5.1 bars; back to 2), never a fixed stereo pair;
 // - layout: at 1024 px wide, in German and Russian, normal and large font, nothing of the page is cut off (every label,
-//   button, box at least its minimum width and inside its parent) and the window does not grow; the tools column is
-//   there; at 1920 px with two tracks it fills the room between the strips and the master (no gap), cards side by side,
-//   every strip shown whole.
+//   button, box at least its minimum width and inside its parent) and the window does not grow; the
+//   lanes are the widest part, the master is pinned at the mixer column's right end, the tools drawer is closed (open:
+//   still nothing cut off, every tool's page); at 1920 px every strip shown; 12 tracks: the narrow strips scroll
+//   sideways, the master stays put; the track-height wheel sets the lane height (zoom/scroll untouched); a click on
+//   a strip's EQ / compressor picture opens its window, on its tag switches it on/off (one undo step).
+// - the tools drawer: closed by default, the bar's button and its ✕ open/close it, the chosen tool stays;
 // - tools (Block 2), each one undo step with the right effect on the project: "Stimme säubern" (voiceclean on the
 //   target clips + EQ preset on the track), ducking (keys down while the voice sounds; again with another amount;
 //   off), "Lautheit auf Ziel" (op mixer target_lufs through the user runner, limiter on, before -> after shown), the
@@ -55,6 +58,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
+#include <QDialog>
 #include <QContextMenuEvent>
 #include <QLineEdit>
 #include <QListWidget>
@@ -144,7 +148,7 @@ void testWindow(Engine& engine, const QString& audioFile)
     CHECK(studio->isChecked());
     CHECK_EQ(w.livePage(), QString("studio"));
     Viewer* viewer = w.findChild<Viewer*>();
-    CHECK(viewer && viewer->parentWidget() == page->top() && viewer->isVisible());
+    CHECK(viewer && viewer->parentWidget() == page->side() && viewer->isVisible());
 
     // The lanes start at the timeline's zoom; a model change leaves them alone
     StudioTracks* tracks = page->tracks();
@@ -581,7 +585,7 @@ void testWindow(Engine& engine, const QString& audioFile)
     CHECK(!w.liveShowPage("fairlight"));
     CHECK(w.liveShowPage("studio"));
     CHECK(w.currentPage() == Page::Studio);
-    CHECK(viewer->parentWidget() == page->top());
+    CHECK(viewer->parentWidget() == page->side());
 
     // Hidden like the others: away from it to the nearest shown page
     w.setPageHidden(Page::Studio, true);
@@ -651,12 +655,49 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
     if (!CHECK(page)) return;
     StudioTools* tools = page->tools();
     StudioTracks* tracks = page->tracks();
-    if (!CHECK(tools && tools->isVisible())) return;
+    // The tools drawer: closed by default, the bar's button opens it (and closes it again)
+    auto* toolsToggle = page->findChild<QToolButton*>("studio_tools_toggle");
+    if (!CHECK(tools && toolsToggle)) return;
+    CHECK(!page->toolsOpen() && !tools->isVisible() && !toolsToggle->isChecked());
+    toolsToggle->click();
+    settle();
+    CHECK(page->toolsOpen() && tools->isVisible() && toolsToggle->isChecked());
+    CHECK(tools->height() >= 120 && page->tracks()->height() > tools->height());
+    toolsToggle->click();
+    settle();
+    CHECK(!page->toolsOpen() && !tools->isVisible());
+    toolsToggle->click();
+    settle();
+    if (!CHECK(tools->isVisible())) return;
+    // The drawer's ✕ closes it too; the tool chosen in the list stays (one click away when it opens again)
+    if (auto* tab = tools->findChild<QToolButton*>("studio_tab_sounds"); CHECK(tab)) {
+        tab->click();
+        settle();
+        CHECK_EQ(tools->currentTool(), 4);
+        CHECK(tools->findChild<QWidget*>("studio_card_sounds")->isVisible());
+        // The sounds list never stretches the drawer (it scrolls inside)
+        auto* list = tools->findChild<QListWidget*>("studio_sounds");
+        CHECK(list && list->count() > 10);
+        CHECK(tools->height() < 400);
+    }
+    if (auto* x = tools->findChild<QToolButton*>("studio_tools_close"); CHECK(x)) x->click();
+    settle();
+    CHECK(!page->toolsOpen() && !toolsToggle->isChecked());
+    toolsToggle->click();
+    settle();
+    CHECK(tools->isVisible() && tools->currentTool() == 4);
+    tools->setCurrentTool(0);
     QUndoStack* undo = p->undoStack();
     const auto clip = [p](int id) { return TimelineOps::findClip(p->timeline(), id); };
+    // A tool's button, clicked as a user does: its tool chosen in the drawer's list first
     const auto click = [&](const char* name) {
         auto* b = tools->findChild<QToolButton*>(name);
         if (!CHECK(b)) return;
+        for (QWidget* p = b->parentWidget(); p && p != tools; p = p->parentWidget())
+            if (p->objectName().startsWith("studio_card_"))
+                if (auto* tab = tools->findChild<QToolButton*>("studio_tab_" + p->objectName().mid(12))) tab->click();
+        settle();
+        CHECK(b->isVisible());
         b->click();
         settle();
     };
@@ -1003,15 +1044,32 @@ void testLayout(Engine& engine, const QString& audioFile)
                 Check::report(w.width() == 1024, "window not wider", __FILE__, __LINE__,
                               QString("%1: %2 px").arg(where).arg(w.width()));
                 Check::report(page->width() <= 1024, "page fits", __FILE__, __LINE__, QString("%1: %2 px").arg(where).arg(page->width()));
+                if (qEnvironmentVariableIsSet("STUDIO_DEBUG")) {
+                    for (QSplitter* sp : {page->root(), page->side(), page->left()})
+                        for (int i = 0; i < sp->count(); ++i)
+                            std::printf("%s[%d] %s min %dx%d hint %dx%d size %dx%d\n", qPrintable(sp->objectName()), i,
+                                        sp->widget(i)->metaObject()->className(), sp->widget(i)->minimumSizeHint().width(),
+                                        sp->widget(i)->minimumSizeHint().height(), sp->widget(i)->sizeHint().width(),
+                                        sp->widget(i)->sizeHint().height(), sp->widget(i)->width(), sp->widget(i)->height());
+                    for (QWidget* c : {page->mixer()->loudness(), static_cast<QWidget*>(page->mixer())})
+                        std::printf("%s min %dx%d\n", qPrintable(c->objectName()), c->minimumSizeHint().width(), c->minimumSizeHint().height());
+                }
                 if (qEnvironmentVariableIsSet("STUDIO_DEBUG"))
                     for (QWidget* c : page->mixer()->findChildren<QWidget*>())
                         if (c->minimumSizeHint().width() > 100 || c->minimumWidth() > 100)
                             std::printf("%s %s min %d hint %d minW %d\n", c->metaObject()->className(), qPrintable(c->objectName()),
                                         c->minimumSizeHint().width(), c->sizeHint().width(), c->minimumWidth());
-                // The tools column is there, at least one card wide
+                // The tools drawer is closed (the lanes take the height); the lanes are the widest part
                 StudioTools* tools = page->tools();
-                Check::report(tools && tools->isVisible() && tools->width() >= 160, "tools column",
-                              __FILE__, __LINE__, QString("%1: %2 px").arg(where).arg(tools ? tools->width() : 0));
+                CHECK(tools && !tools->isVisible());
+                Check::report(page->tracks()->width() > page->mixer()->width(), "lanes wider than the mixer column",
+                              __FILE__, __LINE__, QString("%1: lanes %2, mixer %3").arg(where).arg(page->tracks()->width())
+                                                      .arg(page->mixer()->width()));
+                // The master pinned at the column's right end, the strips left of it
+                if (QWidget* master = page->mixer()->masterStrip(); CHECK(master))
+                    Check::report(master->isVisible() &&
+                                      std::abs(master->mapTo(page->mixer(), QPoint(master->width(), 0)).x() - page->mixer()->width()) <= 1,
+                                  "master at the right end", __FILE__, __LINE__, where);
                 const QString cut = cutOff(page);
                 Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, where + ": " + cut);
                 // The lanes and the faders keep a usable size
@@ -1026,12 +1084,29 @@ void testLayout(Engine& engine, const QString& audioFile)
                                                     .arg(r.bottom()).arg(page->mixer()->height()));
                     }
                 if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-%2-%3.png").arg(dumpDir, lang, large ? "large" : "normal"));
+                // With the tools drawer open: still nothing cut off, the lanes keep a usable height, every tool's page
+                page->setToolsOpen(true);
+                settle(3);
+                for (int t = 0; t < tools->toolCount(); ++t) {
+                    tools->setCurrentTool(t);
+                    settle(2);
+                    const QString open = cutOff(page);
+                    Check::report(open.isEmpty(), "nothing cut off with the tools open", __FILE__, __LINE__,
+                                  QString("%1 tool %2: %3").arg(where).arg(t).arg(open));
+                }
+                Check::report(page->tracks()->laneHeight() >= 40 && page->tracks()->height() >= 120, "lanes with the tools open",
+                              __FILE__, __LINE__, QString("%1: lanes %2 px, lane %3").arg(where).arg(page->tracks()->height())
+                                                      .arg(page->tracks()->laneHeight()));
+                if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-%2-%3-tools.png").arg(dumpDir, lang, large ? "large" : "normal"));
+                Check::report(w.width() == 1024, "window not wider with the tools", __FILE__, __LINE__, where);
+                page->setToolsOpen(false);
             }
         }
     I18n::install("de");
     QApplication::setFont(normal);
 
-    // 1920 px, two tracks: the tools fill the room between the strips and the master (the gap before 0.23 Block 2)
+    // 1920 px, two tracks: every strip shown (no scrolling), narrow ones of the same width, the master pinned right;
+    // the lanes take most of the width
     QSettings().remove("layout");
     {
         MainWindow w(&engine);
@@ -1045,26 +1120,113 @@ void testLayout(Engine& engine, const QString& audioFile)
         settle(5);
         StudioPage* page = w.studioPage();
         if (!CHECK(page)) return;
-        StudioTools* tools = page->tools();
-        auto* strips = page->mixer()->findChild<QScrollArea*>();
-        QWidget* master = page->findChild<QWidget*>("studio_fader_master");
-        if (CHECK(tools && strips && master)) {
-            const int stripsRight = strips->mapTo(page->mixer(), QPoint(strips->width(), 0)).x();
-            const int toolsLeft = tools->mapTo(page->mixer(), QPoint(0, 0)).x();
-            const int toolsRight = tools->mapTo(page->mixer(), QPoint(tools->width(), 0)).x();
-            const int masterLeft = master->parentWidget()->mapTo(page->mixer(), QPoint(0, 0)).x();
-            Check::report(std::abs(toolsLeft - stripsRight) <= 2 && std::abs(masterLeft - toolsRight) <= 2, "no gap",
-                          __FILE__, __LINE__, QString("strips end %1, tools %2-%3, master %4").arg(stripsRight)
-                                                  .arg(toolsLeft).arg(toolsRight).arg(masterLeft));
-            Check::report(tools->columns() >= 2, "cards side by side", __FILE__, __LINE__, QString::number(tools->columns()));
-            // Every strip whole (the scroll area once took its own small size hint: one strip, the tools the rest)
+        StudioMixer* mixer = page->mixer();
+        QScrollArea* strips = mixer->stripsArea();
+        CHECK(page->tracks()->width() > page->width() * 0.6);
+        if (CHECK(strips)) {
             Check::report(strips->horizontalScrollBar()->maximum() == 0, "all strips shown", __FILE__, __LINE__,
-                          QString("%1 px for %2 strips, scrolls %3 px").arg(strips->width()).arg(page->mixer()->stripCount())
+                          QString("%1 px for %2 strips, scrolls %3 px").arg(strips->width()).arg(mixer->stripCount())
                               .arg(strips->horizontalScrollBar()->maximum()));
-            const QString cut = cutOff(page);
-            Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, "1920: " + cut);
         }
+        CHECK_EQ(mixer->curvesShown(), mixer->stripCount());
+        const QString cut = cutOff(page);
+        Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, "1920: " + cut);
         if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-1920.png").arg(dumpDir));
+    }
+
+    // 12 tracks: the strips keep their narrow width and scroll sideways inside the column, the master stays pinned at
+    // its right end (also scrolled to the last strip); the lanes scroll, never lower than their minimum
+    QSettings().remove("layout");
+    {
+        MainWindow w(&engine);
+        w.disableAutosave();
+        w.resize(1600, 950);
+        w.show();
+        if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+        w.importFiles({audioFile}, true);
+        w.liveProject()->edit("tracks", [](Timeline& tl) {
+            while (tl.audio.size() < 12) tl.audio << Track{TrackKind::Audio};
+        });
+        settle();
+        w.showPage(Page::Studio);
+        settle(5);
+        StudioPage* page = w.studioPage();
+        if (!CHECK(page)) return;
+        StudioMixer* mixer = page->mixer();
+        CHECK_EQ(mixer->stripCount(), 12);
+        QScrollArea* strips = mixer->stripsArea();
+        QWidget* master = mixer->masterStrip();
+        if (CHECK(strips && master)) {
+            QScrollBar* bar = strips->horizontalScrollBar();
+            Check::report(bar->maximum() > 0, "strips scroll", __FILE__, __LINE__, QString::number(bar->maximum()));
+            int narrow = 0;
+            for (QWidget* s : strips->widget()->findChildren<QWidget*>("StudioStrip", Qt::FindDirectChildrenOnly))
+                narrow += s->width() == StudioMixer::kStripW ? 1 : 0;
+            CHECK_EQ(narrow, 12);
+            CHECK(master->width() < 2 * StudioMixer::kStripW);
+            const auto masterRight = [&] { return master->mapTo(mixer, QPoint(master->width(), 0)).x(); };
+            CHECK(std::abs(masterRight() - mixer->width()) <= 1);
+            const int masterX = master->mapTo(mixer, QPoint(0, 0)).x();
+            bar->setValue(bar->maximum());
+            settle();
+            CHECK_EQ(master->mapTo(mixer, QPoint(0, 0)).x(), masterX);
+            CHECK(master->isVisible() && masterRight() <= mixer->width() + 1);
+            // The scrolled strips end left of the master (none under it)
+            CHECK(strips->mapTo(mixer, QPoint(strips->width(), 0)).x() <= masterX + 1);
+            if (auto* fader = page->findChild<QWidget*>("studio_fader_A12"); CHECK(fader))
+                CHECK(fader->visibleRegion().boundingRect().width() > fader->width() / 2);
+        }
+        Check::report(page->tracks()->laneHeight() >= StudioTracks::kMinLaneH, "lanes tall enough", __FILE__, __LINE__,
+                      QString::number(page->tracks()->laneHeight()));
+        // The lane height is the user's: the track-height wheel (Shift+wheel) makes the lanes taller, only that
+        {
+            StudioTracks* tracks = page->tracks();
+            const int before = tracks->laneHeight();
+            const double zoom = tracks->view().pxPerFrame, left = tracks->view().leftFrame;
+            const QPointF at(StudioTracks::kHeaderW + 50, StudioTracks::kRulerH + 20);
+            QWheelEvent wheel(at, tracks->mapToGlobal(at), QPoint(), QPoint(0, 120 * 3), Qt::NoButton, Qt::ShiftModifier,
+                              Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(tracks, &wheel);
+            CHECK(tracks->laneHeight() > before + 20 && tracks->userLaneHeight() == tracks->laneHeight());
+            CHECK_EQ(tracks->view().pxPerFrame, zoom);
+            CHECK_EQ(tracks->view().leftFrame, left);
+            tracks->setLaneHeight(0);
+            CHECK_EQ(tracks->laneHeight(), before);
+        }
+        // A click on a strip's EQ picture opens the EQ window (the big curve), on its compressor picture the compressor
+        // window (with the big compressor curve); a click on the picture's tag switches it on or off, one undo step
+        Project* project = w.liveProject();
+        for (bool eq : {true, false}) {
+            auto* thumb = page->findChild<QWidget*>(eq ? "studio_eqthumb_A1" : "studio_dynthumb_A1");
+            if (!CHECK(thumb)) continue;
+            if (!thumb->isVisible()) mixer->openEditor(0, eq); // too little height for the pictures: the buttons
+            else {
+                mouse(thumb, QEvent::MouseButtonPress, QPoint(thumb->width() - 8, thumb->height() / 2), Qt::LeftButton);
+                mouse(thumb, QEvent::MouseButtonRelease, QPoint(thumb->width() - 8, thumb->height() / 2), Qt::NoButton);
+            }
+            settle();
+            QDialog* d = mixer->findChild<QDialog*>(eq ? "studio_eq_window" : "studio_dyn_window");
+            if (CHECK(d)) {
+                CHECK(d->isVisible());
+                if (!eq) CHECK(d->findChild<QWidget*>("dynamicsCurve") && d->findChild<QWidget*>("dynamicsCurve")->isVisible());
+                // Beside the mixer column, not over it
+                CHECK(d->frameGeometry().right() <= mixer->mapToGlobal(QPoint(0, 0)).x() || d->x() <= 0);
+                d->close();
+                settle();
+            }
+            const int idx = project->undoStack()->index();
+            const bool before = eq ? project->timeline().audio[0].eq.on : project->timeline().audio[0].dynamics.on;
+            mouse(thumb, QEvent::MouseButtonPress, QPoint(4, 4), Qt::LeftButton);
+            mouse(thumb, QEvent::MouseButtonRelease, QPoint(4, 4), Qt::NoButton);
+            settle();
+            CHECK_EQ(project->undoStack()->index(), idx + 1);
+            CHECK((eq ? project->timeline().audio[0].eq.on : project->timeline().audio[0].dynamics.on) != before);
+            CHECK(!mixer->findChild<QDialog*>(eq ? "studio_eq_window" : "studio_dyn_window"));
+            project->undoStack()->undo();
+        }
+        const QString cut = cutOff(page);
+        Check::report(cut.isEmpty(), "nothing cut off", __FILE__, __LINE__, "12 tracks: " + cut);
+        if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-12-tracks.png").arg(dumpDir));
     }
 }
 

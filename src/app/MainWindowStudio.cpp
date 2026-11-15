@@ -21,8 +21,11 @@ void MainWindow::ensureStudioPage()
     if (m_studioPage) return;
     m_studioPage = new StudioPage(m_editor, m_engine, m_mediaCache);
     m_pages->addWidget(m_studioPage);
-    watchSizes(m_studioPage->root(), "studioRoot");
-    watchSizes(m_studioPage->top(), "studioTop");
+    // New names since the layout of 0.23 (lanes | right column): the old sizes ("studioRoot", "studioTop") belonged
+    // to other splitters
+    watchSizes(m_studioPage->root(), "studioMain");
+    watchSizes(m_studioPage->side(), "studioSide");
+    watchSizes(m_studioPage->left(), "studioLeft");
     TimelineView* tv = m_timeline->view();
     StudioTracks* tracks = m_studioPage->tracks();
     // The lanes start where the timeline is (its zoom and scroll, once); from then on they are the user's own

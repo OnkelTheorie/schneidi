@@ -215,14 +215,22 @@ void StudioTracks::layoutLanes()
     const int tracks = std::max(1, laneCount());
     const int sb = m_hbar->sizeHint().height();
     const int room = std::max(0, height() - kRulerH - sb);
-    // Tall lanes that fill the room (a few tracks: big waveforms); many tracks scroll at the minimum height
-    m_laneH = std::clamp(room / int(tracks), kMinLaneH, 220);
+    // Tall lanes that fill the room (a few tracks: big waveforms); many tracks scroll at the minimum height. A height
+    // the user chose (the track-height wheel, Shift+wheel by default) stays until the next such wheel
+    m_laneH = m_userLaneH > 0 ? m_userLaneH : std::clamp(room / int(tracks), kMinLaneH, kMaxAutoLaneH);
     const int content = m_laneH * tracks;
     const bool scroll = content > room;
     m_vbar->setVisible(scroll);
     if (!scroll) m_scrollY = 0; // all lanes in view: nothing to scroll (not a move of the view)
     m_scrollY = std::clamp(m_scrollY, 0, std::max(0, content - room));
     syncScrollBars();
+}
+
+void StudioTracks::setLaneHeight(int px)
+{
+    m_userLaneH = px <= 0 ? 0 : std::clamp(px, kMinUserLaneH, kMaxUserLaneH);
+    layoutLanes();
+    update();
 }
 
 void StudioTracks::syncScrollBars()
@@ -1040,6 +1048,15 @@ void StudioTracks::wheelEvent(QWheelEvent* e)
     case WheelAction::ScrollVertical:
         m_scrollY = std::clamp(m_scrollY - int(std::lround(steps / 120.0 * m_laneH / 3)), 0, m_vbar->maximum());
         break;
+    case WheelAction::TrackHeight: {
+        // Lane height (the timeline's binding): from the height shown now, the lane under the mouse stays under it
+        const int track = trackAt(int(e->position().y()));
+        const int before = m_laneH;
+        setLaneHeight(m_laneH + int(std::lround(steps / 120.0 * 12)));
+        if (track >= 0 && before > 0)
+            m_scrollY = std::clamp(m_scrollY + track * (m_laneH - before), 0, std::max(0, m_vbar->maximum()));
+        break;
+    }
     default: return;
     }
     syncScrollBars();

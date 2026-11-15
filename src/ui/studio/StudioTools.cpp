@@ -19,11 +19,11 @@
 #include "ui/ElidedLabel.h"
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QDirIterator>
 #include <QFileSystemWatcher>
 #include <QFileInfo>
-#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
@@ -36,6 +36,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
+#include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -171,25 +172,25 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     setObjectName("studio_tools");
     setProperty("tourTarget", "studio_tools");
     setAttribute(Qt::WA_StyledBackground);
-    setStyleSheet(QString("QWidget#studio_tools { background: %1; border-right: 1px solid %2; }")
+    setStyleSheet(QString("QWidget#studio_tools { background: %1; border-top: 1px solid %2; }")
                       .arg(Theme::panel.name(), Theme::border.name()));
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
 
-    // Title row: the target track
+    // Title row: the target track, which clips the tools take, the close button
     auto* head = new QWidget;
     head->setObjectName("PanelTitle");
     head->setAttribute(Qt::WA_StyledBackground);
     head->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
     auto* headLay = new QHBoxLayout(head);
-    headLay->setContentsMargins(6, 2, 6, 2);
+    headLay->setContentsMargins(6, 2, 2, 2);
     headLay->setSpacing(6);
-    auto* title = new ElidedLabel;
-    title->setFullText(T("Werkzeuge"));
+    auto* title = new QLabel(T("Werkzeuge"));
     title->setObjectName("PanelTitle");
-    headLay->addWidget(title, 1);
+    headLay->addWidget(title);
+    headLay->addSpacing(6);
     auto* forLabel = new QLabel(T("Spur"));
     headLay->addWidget(forLabel);
     m_targetBox = new QComboBox;
@@ -199,29 +200,46 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     m_targetBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     m_targetBox->setMinimumContentsLength(6);
     headLay->addWidget(m_targetBox);
-    outer->addWidget(head);
-    m_targetInfo = new QLabel;
+    auto* info = new ElidedLabel;
+    m_targetInfo = info;
     m_targetInfo->setObjectName("studio_target_info");
-    m_targetInfo->setWordWrap(true);
-    m_targetInfo->setContentsMargins(8, 3, 8, 0);
     m_targetInfo->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
-    outer->addWidget(m_targetInfo);
+    headLay->addWidget(m_targetInfo, 1);
+    auto* close = new QToolButton;
+    close->setObjectName("studio_tools_close");
+    close->setText(QStringLiteral("✕"));
+    close->setAutoRaise(true);
+    close->setFocusPolicy(Qt::NoFocus);
+    close->setToolTip(T("Werkzeuge schließen"));
+    connect(close, &QToolButton::clicked, this, &StudioTools::closeRequested);
+    headLay->addWidget(close);
+    outer->addWidget(head);
 
-    // The cards scroll when the column is short (a small window, a large font)
+    // Below: the list of the tools on the left, the chosen one beside it (it scrolls when the drawer is short)
+    auto* body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(0);
+    auto* list = new QWidget;
+    list->setObjectName("studio_tool_list");
+    list->setAttribute(Qt::WA_StyledBackground);
+    list->setStyleSheet(QString("QWidget#studio_tool_list { background: %1; border-right: 1px solid %2; }")
+                            .arg(Theme::mix(Theme::panel, Theme::panelHeader, 0.4).name(), Theme::border.name()));
+    m_list = new QVBoxLayout(list);
+    m_list->setContentsMargins(0, 4, 0, 4);
+    m_list->setSpacing(1);
+    m_tabs = new QButtonGroup(this);
+    body->addWidget(list);
     auto* scroll = m_scroll = new QScrollArea;
     scroll->setObjectName("studio_tools_scroll");
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    auto* inner = new QWidget;
-    inner->setObjectName("studio_tools_inner");
-    m_grid = new QGridLayout(inner);
-    m_grid->setContentsMargins(6, 6, 6, 6);
-    m_grid->setHorizontalSpacing(6);
-    m_grid->setVerticalSpacing(6);
-    scroll->setWidget(inner);
+    m_stack = new QStackedWidget;
+    m_stack->setObjectName("studio_tools_inner");
+    scroll->setWidget(m_stack);
     scroll->viewport()->installEventFilter(this);
-    outer->addWidget(scroll, 1);
+    body->addWidget(scroll, 1);
+    outer->addLayout(body, 1);
 
     // ---- Stimme säubern ----
     {
@@ -238,7 +256,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         lay->addWidget(go, 0, Qt::AlignLeft);
         m_cleanLine = resultLine("studio_clean_result");
         lay->addWidget(m_cleanLine);
-        m_cards << card(T("Stimme säubern"), "studio_card_voice", body);
+        addTool(T("Stimme säubern"), "voice", body);
     }
 
     // ---- Musik unter Sprache absenken ----
@@ -300,7 +318,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         lay->addLayout(buttons);
         m_duckLine = resultLine("studio_duck_result");
         lay->addWidget(m_duckLine);
-        m_cards << card(T("Musik unter Sprache absenken"), "studio_card_duck", body);
+        addTool(T("Musik absenken"), "duck", body, T("Musik unter Sprache absenken"));
     }
 
     // ---- Lautheit auf Ziel ----
@@ -326,7 +344,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         lay->addWidget(go, 0, Qt::AlignLeft);
         m_loudLine = resultLine("studio_loudness_result");
         lay->addWidget(m_loudLine);
-        m_cards << card(T("Lautheit auf Ziel"), "studio_card_loudness", body);
+        addTool(T("Lautheit auf Ziel"), "loudness", body);
     }
 
     // ---- Aufnahme ----
@@ -387,7 +405,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         connect(m_recordTrack, &QComboBox::activated, this, [this](int i) {
             if (m_recorder && !m_recorder->recording()) m_recorder->setArmedTrack(m_recordTrack->itemData(i).toInt());
         });
-        m_cards << card(T("Aufnahme"), "studio_card_record", body);
+        addTool(T("Aufnahme"), "record", body);
     }
 
     // ---- Effektklänge ----
@@ -405,7 +423,9 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
         m_sounds->setObjectName("studio_sounds");
         m_sounds->setDragEnabled(true);
         m_sounds->setDragDropMode(QAbstractItemView::DragOnly);
-        m_sounds->setMinimumHeight(90);
+        // Never taller than the drawer gives it: the list scrolls, the panel does not grow with the sounds
+        m_sounds->setMinimumHeight(60);
+        m_sounds->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Ignored);
         m_sounds->setToolTip(T("Doppelklick = anhören, auf eine Spur ziehen = dort einfügen"));
         lay->addWidget(m_sounds, 1);
         auto* row = new QHBoxLayout;
@@ -432,9 +452,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
             if (const QByteArray d = current(); !d.isEmpty()) emit placeSoundRequested(d);
         });
         connect(m_soundSearch, &QLineEdit::textChanged, this, &StudioTools::filterSounds);
-        auto* c = card(T("Effektklänge"), "studio_card_sounds", body);
-        c->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-        m_cards << c;
+        addTool(T("Effektklänge"), "sounds", body);
         fillSounds();
         // Sound packs installed or removed, own sounds added: the list anew (the folders watched like the Effects
         // Library's, changes collected after a short pause)
@@ -464,40 +482,63 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     });
     connect(m_targetBox, &QComboBox::activated, this, [this](int i) { setTargetTrack(m_targetBox->itemData(i).toInt()); });
     m_target = std::max(0, m_editor->targetAudioTrack());
+    m_list->addStretch(1);
+    // The last tool chosen (one click away once the drawer is open)
+    setCurrentTool(QSettings().value("studio/tool", 0).toInt());
+    connect(m_tabs, &QButtonGroup::idClicked, this, [this](int id) {
+        setCurrentTool(id);
+        QSettings().setValue("studio/tool", id);
+    });
     syncTargets();
-    reflow();
 }
 
-QWidget* StudioTools::card(const QString& title, const QString& name, QWidget* body)
+void StudioTools::addTool(const QString& tab, const QString& id, QWidget* body, const QString& title)
 {
-    auto* c = new QWidget;
-    c->setObjectName(name);
-    c->setAttribute(Qt::WA_StyledBackground);
-    c->setStyleSheet(QString("QWidget#%1 { background: %2; border: 1px solid %3; }").arg(name, Theme::mix(Theme::panel, Theme::panelHeader, 0.4).name(), Theme::border.name()));
-    auto* lay = new QVBoxLayout(c);
-    lay->setContentsMargins(8, 6, 8, 8);
+    const int index = m_stack->count();
+    auto* b = new QToolButton;
+    b->setText(tab);
+    b->setObjectName("studio_tab_" + id);
+    b->setCheckable(true);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    if (!title.isEmpty()) b->setToolTip(title);
+    b->setStyleSheet(QString("QToolButton { background: transparent; color: %1; padding: 3px 12px 3px 10px; border: none;"
+                             " text-align: left; border-left: 3px solid transparent; }"
+                             "QToolButton:hover { background: %2; }"
+                             "QToolButton:checked { background: %3; color: %4; border-left: 3px solid %5; }")
+                         .arg(Theme::textDim.name(), Theme::control.name(), Theme::panel.name(), Theme::text.name(),
+                              Theme::primary.name()));
+    m_tabs->addButton(b, index);
+    m_list->addWidget(b);
+    auto* card = new QWidget;
+    card->setObjectName("studio_card_" + id);
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 6, 10, 8);
     lay->setSpacing(4);
     auto* t = new ElidedLabel;
-    t->setFullText(title);
+    t->setFullText(title.isEmpty() ? tab : title);
     QFont f = t->font();
     f.setBold(true);
     t->setFont(f);
     lay->addWidget(t);
-    lay->addWidget(body, 1);
-    c->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    return c;
+    // The effect sounds' list takes the height there is; the other tools sit at the top
+    const bool grows = body->findChild<QListWidget*>() != nullptr;
+    lay->addWidget(body, grows ? 1 : 0);
+    if (!grows) lay->addStretch(1);
+    m_stack->addWidget(card);
 }
 
-int StudioTools::cardWidth() const
-{
-    // About 30 characters of text: the hints wrap in two or three lines
-    return std::max(220, fontMetrics().averageCharWidth() * 34);
-}
+int StudioTools::toolCount() const { return m_stack->count(); }
 
-void StudioTools::resizeEvent(QResizeEvent* e)
+int StudioTools::currentTool() const { return m_stack->currentIndex(); }
+
+void StudioTools::setCurrentTool(int index)
 {
-    QWidget::resizeEvent(e);
-    reflow();
+    index = std::clamp(index, 0, m_stack->count() - 1);
+    m_stack->setCurrentIndex(index);
+    if (QAbstractButton* b = m_tabs->button(index)) b->setChecked(true);
+    fitInnerHeight();
 }
 
 bool StudioTools::eventFilter(QObject* watched, QEvent* e)
@@ -508,51 +549,15 @@ bool StudioTools::eventFilter(QObject* watched, QEvent* e)
 
 void StudioTools::fitInnerHeight()
 {
-    // QScrollArea sizes its widget by minimumSizeHint, which knows nothing of wrapped text: without this the hints
-    // were squeezed under the card titles in a narrow column
-    QWidget* inner = m_grid->parentWidget();
+    // QScrollArea sizes its widget by minimumSizeHint, which knows nothing of wrapped text (and a stack takes the
+    // largest of its pages): the chosen tool as tall as its text needs at this width, the area scrolls beyond
+    QWidget* card = m_stack->currentWidget();
     const int w = m_scroll->viewport()->width();
-    if (w <= 0) return;
-    m_grid->activate();
-    const int h = m_grid->hasHeightForWidth() ? m_grid->totalHeightForWidth(w) : m_grid->totalMinimumSize().height();
-    inner->setMinimumHeight(h);
-}
-
-void StudioTools::reflow()
-{
-    const int cols = std::clamp((width() - 12) / (cardWidth() + 6), 1, 3);
-    if (cols == m_columns) return;
-    m_columns = cols;
-    // Which card goes into which column (the sounds' list last, it takes what height is left); each column its own
-    // stack from the top, so a short card never leaves a hole next to a tall one
-    static const QVector<QVector<int>> kLayouts[] = {
-        {{0, 1, 2, 3, 4}},
-        {{0, 1, 2}, {3, 4}},
-        {{0, 1}, {2, 3}, {4}},
-    };
-    QWidget* inner = m_grid->parentWidget();
-    for (QWidget* c : m_cards) c->setParent(inner); // out of the old columns before they go
-    while (QLayoutItem* item = m_grid->takeAt(0)) {
-        delete item->widget();
-        delete item;
-    }
-    const QVector<QVector<int>>& layout = kLayouts[cols - 1];
-    for (int col = 0; col < 3; ++col) m_grid->setColumnStretch(col, col < layout.size() ? 1 : 0);
-    for (int col = 0; col < layout.size(); ++col) {
-        auto* column = new QWidget;
-        auto* lay = new QVBoxLayout(column);
-        lay->setContentsMargins(0, 0, 0, 0);
-        lay->setSpacing(6);
-        bool stretches = false;
-        for (int i : layout[col]) {
-            stretches |= i == 4;
-            lay->addWidget(m_cards[i], i == 4 ? 1 : 0);
-            m_cards[i]->show();
-        }
-        if (!stretches) lay->addStretch(1);
-        m_grid->addWidget(column, 0, col);
-    }
-    fitInnerHeight();
+    if (!card || w <= 0) return;
+    QLayout* l = card->layout();
+    l->activate();
+    const int h = l->hasHeightForWidth() ? l->totalHeightForWidth(w) : l->totalMinimumSize().height();
+    m_stack->setMinimumHeight(h);
 }
 
 void StudioTools::setTargetTrack(int track)
@@ -627,7 +632,7 @@ void StudioTools::syncTargets()
                : selectedOnTarget > 0 ? T("Für %1 gewählte Clips auf %2").arg(clips.size()).arg(track)
                                       : T("Für alle %1 Clips auf %2").arg(clips.size()).arg(track);
     }
-    m_targetInfo->setText(info);
+    static_cast<ElidedLabel*>(m_targetInfo)->setFullText(info);
     // Ducking can be taken off when a clip has volume keyframes
     bool keyed = false;
     for (int id : targetClips())

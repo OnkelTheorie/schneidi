@@ -11,7 +11,8 @@
 // Core rule (docs/architektur.md): zoom and scroll are the lanes' own (ViewState) and change only by user input - the
 // mouse wheel (the wheel settings of the timeline), the scrollbars, the Fit button. A model change never touches them;
 // the scroll range grows with the project and never shrinks under the view. The first showing takes the timeline's
-// zoom and scroll once (setView).
+// zoom and scroll once (setView). The lanes fill the height (a few tracks: tall lanes, many: they scroll); the
+// track-height wheel (Shift+wheel by default) gives them a height of their own.
 
 #include "ui/timeline/ViewState.h"
 
@@ -64,6 +65,9 @@ public:
     double xOf(double frame) const;
     double frameAt(double x) const;
     int laneHeight() const { return m_laneH; }
+    // The user's lane height (the track-height wheel); 0 = the lanes fill the room (the default)
+    void setLaneHeight(int px);
+    int userLaneHeight() const { return m_userLaneH; }
     // Where volume keyframe `index` of clip `clipId` is drawn (tests); null = not drawn (off view, curve too dense)
     QPointF keyPoint(int clipId, int index) const;
     // Where automation point `index` of audio track `track` is drawn (tests); null = not drawn
@@ -78,7 +82,9 @@ public:
 
     static constexpr int kHeaderW = 132;
     static constexpr int kRulerH = 24;
-    static constexpr int kMinLaneH = 64;
+    static constexpr int kMinLaneH = 72;      // filling the room: never lower (more tracks scroll)
+    static constexpr int kMaxAutoLaneH = 320; // filling the room: never taller
+    static constexpr int kMinUserLaneH = 40, kMaxUserLaneH = 480;
 
 signals:
     void seekRequested(int frame);
@@ -145,6 +151,7 @@ private:
     ViewState m_view;
     int m_scrollY = 0; // pixels through the lanes
     int m_laneH = 96;
+    int m_userLaneH = 0; // 0 = fill the room
     int m_playhead = 0;
     Tool m_tool = Tool::Select;
     int m_smoothing = 2;

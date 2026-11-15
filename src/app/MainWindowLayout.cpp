@@ -538,13 +538,20 @@ void MainWindow::showPage(Page page)
         if (m_compPage->viewNode() || m_compPage->matte()) updatePreview();
         break;
     case Page::Studio:
-        // Built on the first showing: the viewer small at the top left, the tracks beside it, the mixer below
+    {
+        // Built on the first showing: the lanes take the page, the viewer small at the top of the right column, the
+        // loudness and the mixer under it
         ensureStudioPage();
-        m_studioPage->top()->insertWidget(0, m_viewer);
-        m_studioPage->top()->setStretchFactor(1, 1);
-        applySizes(m_studioPage->top(), {420, 1180});
-        applySizes(m_studioPage->root(), {380, 560});
+        m_studioPage->side()->insertWidget(0, m_viewer);
+        m_studioPage->side()->setStretchFactor(1, 1);
+        const QSize room = m_pages->size();
+        const int side = m_studioPage->defaultSideWidth(room.width());
+        applySizes(m_studioPage->root(), {std::max(1, room.width() - side), side});
+        const int viewer = m_studioPage->defaultViewerHeight(side, room.height());
+        applySizes(m_studioPage->side(), {viewer, std::max(1, room.height() - viewer)});
+        applySizes(m_studioPage->left(), {std::max(1, room.height() - 220), 220});
         m_pages->setCurrentWidget(m_studioPage);
+    }
         break;
     }
     // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
