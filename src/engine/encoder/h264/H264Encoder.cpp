@@ -139,6 +139,11 @@ const double gPsyIntraRound = std::getenv("H264_PSYIQ") ? std::atof(std::getenv(
 thread_local bool tIntraFine = false;
 // B pictures: B_8x8 with direct 8x8 blocks (H264_B8X8=0 turns it off, for measurements).
 const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8")) != 0;
+// B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
+// the average of the two vectors as found), tried where the average is within this factor of the
+// better single list.
+const int gBiRefine = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : 2;
+const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::getenv("H264_BIREFINE_NEAR")) : 1.15;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -6383,6 +6388,54 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     auto mvBits = [&](const Cand& c, int p, int list) {
         return seBits(c.mv[p][list][0] - c.mvp[p][list][0]) + seBits(c.mv[p][list][1] - c.mvp[p][list][1]);
     };
+    // Both lists together: the two vectors were found each on its own; their average is refined by
+    // moving one vector at a time by a quarter sample (the other's prediction stays), as long as
+    // SATD + vector bits of the average get smaller. Returns the cost; mv0 / mv1 are updated.
+    auto refineBi = [&](const Part& P, int* mv0, int* mv1, const int* mvp0, const int* mvp1, uint8_t* a, uint8_t* b, double cost) {
+        const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4, w = P.w4 * 4, h = P.h4 * 4;
+        const size_t so = lumaOff + size_t(P.y4 * 4) * padW_ + P.x4 * 4;
+        uint8_t t[256], avg[256];
+        for (int round = 0; round < gBiRefine; ++round) {
+            bool moved = false;
+            for (int list = 0; list < 2; ++list) {
+                int* mv = list ? mv1 : mv0;
+                const int* mvp = list ? mvp1 : mvp0;
+                const int* other = list ? mv0 : mv1;
+                const int* otherP = list ? mvp0 : mvp1;
+                uint8_t* own = list ? b : a;
+                const uint8_t* fixed = list ? a : b;
+                const int wOwn = list ? biW1_ : biW0_, wFixed = list ? biW0_ : biW1_;
+                const double otherBits = lambdaSad * (seBits(other[0] - otherP[0]) + seBits(other[1] - otherP[1]));
+                int bestDx = 0, bestDy = 0;
+                for (const auto& [dx, dy] : {std::pair{-1, 0}, std::pair{1, 0}, std::pair{0, -1}, std::pair{0, 1}}) {
+                    const int vx = mv[0] + dx, vy = mv[1] + dy;
+                    mcLuma(list ? *refs1_[0] : *refs_[0], px + (vx >> 2), py + (vy >> 2), vx & 3, vy & 3, w, h, t);
+                    for (int y = 0; y < h; ++y)
+                        for (int x = 0; x < w; ++x)
+                            avg[y * 16 + x] = clip1((t[y * 16 + x] * wOwn + fixed[y * 16 + x] * wFixed + 32) >> 6);
+                    int satd = 0;
+                    for (int oy = 0; oy < h; oy += 4)
+                        for (int ox = 0; ox < w; ox += 8)
+                            satd += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, avg + oy * 16 + ox, 16);
+                    const double c = satd + lambdaSad * (seBits(vx - mvp[0]) + seBits(vy - mvp[1])) + otherBits;
+                    if (c < cost) {
+                        cost = c;
+                        bestDx = dx;
+                        bestDy = dy;
+                    }
+                }
+                if (bestDx || bestDy) {
+                    mv[0] += bestDx;
+                    mv[1] += bestDy;
+                    mcLuma(list ? *refs1_[0] : *refs_[0], px + (mv[0] >> 2), py + (mv[1] >> 2), mv[0] & 3, mv[1] & 3, w, h, own);
+                    moved = true;
+                }
+            }
+            if (!moved)
+                break;
+        }
+        return cost;
+    };
     // One layout (16x16, 16x8 or 8x16): per partition the search in both lists, then the cheapest
     // of list 0, list 1 and both by SATD + vector and type bits.
     auto tryShape = [&](int shape) {
@@ -6408,15 +6461,26 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4, w = P.w4 * 4, h = P.h4 * 4;
             mcLuma(*refs_[0], px + (c.mv[p][0][0] >> 2), py + (c.mv[p][0][1] >> 2), c.mv[p][0][0] & 3, c.mv[p][0][1] & 3, w, h, a);
             mcLuma(*refs1_[0], px + (c.mv[p][1][0] >> 2), py + (c.mv[p][1][1] >> 2), c.mv[p][1][0] & 3, c.mv[p][1][1] & 3, w, h, b);
+            uint8_t av[256];
             for (int y = 0; y < h; ++y)
                 for (int x = 0; x < w; ++x)
-                    a[y * 16 + x] = clip1((a[y * 16 + x] * biW0_ + b[y * 16 + x] * biW1_ + 32) >> 6);
+                    av[y * 16 + x] = clip1((a[y * 16 + x] * biW0_ + b[y * 16 + x] * biW1_ + 32) >> 6);
             int satdBi = 0;
             const size_t so = lumaOff + size_t(P.y4 * 4) * padW_ + P.x4 * 4;
             for (int oy = 0; oy < h; oy += 4)
                 for (int ox = 0; ox < w; ox += 8)
-                    satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, a + oy * 16 + ox, 16);
-            const double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
+                    satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, av + oy * 16 + ox, 16);
+            double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
+            if (gBiRefine > 0 && costBi < gBiRefineNear * std::min(cost[0], cost[1])) {
+                int m0[2] = {c.mv[p][0][0], c.mv[p][0][1]}, m1[2] = {c.mv[p][1][0], c.mv[p][1][1]};
+                costBi = refineBi(P, m0, m1, c.mvp[p][0], c.mvp[p][1], a, b, costBi);
+                if (costBi < cost[0] && costBi < cost[1]) {
+                    c.mv[p][0][0] = m0[0];
+                    c.mv[p][0][1] = m0[1];
+                    c.mv[p][1][0] = m1[0];
+                    c.mv[p][1][1] = m1[1];
+                }
+            }
             c.use[p] = costBi < cost[0] && costBi < cost[1] ? 3 : cost[0] <= cost[1] ? 1 : 2;
             total += c.use[p] == 3 ? costBi : cost[c.use[p] - 1];
             // Later partitions predict their vectors from this one.
