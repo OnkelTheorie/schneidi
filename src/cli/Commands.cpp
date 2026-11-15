@@ -1110,7 +1110,7 @@ const QVector<Command>& commands()
                            "the error names the ones that fit", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String,
-           "h264 (default), h265, av1, vp9 (WebM); h264_own (experimental own encoder: 8-bit 4:2:0, no B-frames, "
+           "h264 (default), h265, av1, vp9 (WebM); h264_own (experimental own encoder: 8-bit 4:2:0, "
            "slower than x264; quality 3 = high, two passes towards the cap only when needed); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "

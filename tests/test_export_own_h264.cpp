@@ -6,7 +6,8 @@
 // montage storms, only clips inside the range); clips shorter than the lookahead; a size that is no multiple of 16; a
 // shorter lookahead (low memory) reaches the encoder; the "web" cap: two passes land within 10 % of it on noise, a
 // still picture keeps the fixed QP far below it; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
-// writer itself; cancel during the first pass and while encoding leaves no file. Checked with ffprobe/ffmpeg.
+// writer itself; cancel during the first pass and while encoding leaves no file; B pictures: pts/dts in MP4 and MKV
+// (testBFrames). Checked with ffprobe/ffmpeg.
 
 #include "check.h"
 
@@ -14,6 +15,7 @@
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/Licenses.h"
 #include "engine/encoder/h264/H264Encoder.h"
 #include "engine/RenderQueue.h"
 
@@ -29,6 +31,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <algorithm>
 #include <clocale>
 #include <cmath>
 #include <tuple>
@@ -37,7 +40,7 @@ namespace {
 
 const ProjectFormat kFmt{640, 360, {25, 1}};
 constexpr int kFrames = 75; // 3 s
-QString g_media, g_near, g_noisy, g_still;
+QString g_media, g_near, g_noisy, g_still, g_zoom;
 
 // A piece of a source on the main track
 struct Piece {
@@ -205,6 +208,53 @@ double psnr(const QString& path, const QString& reference, int frames)
     return m.hasMatch() ? m.captured(1).toDouble() : 0;
 }
 
+// Packets of the video stream in file order (= decode order): pts, dts (stream time base) and the time base
+struct Packets {
+    QVector<qint64> pts, dts;
+    double timeBase = 0;
+    double videoStart = 0, audioStart = -1; // start_time of the streams (s); -1 = no audio
+};
+Packets packets(const QString& path)
+{
+    Packets r;
+    QProcess p;
+    p.start("ffprobe", {"-v", "error", "-show_entries", "packet=stream_index,codec_type,pts,dts:stream=index,codec_type,time_base,start_time",
+                        "-of", "json", path});
+    p.waitForFinished(60000);
+    const QJsonObject o = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
+    int video = -1;
+    for (const QJsonValue& v : o.value("streams").toArray()) {
+        const QJsonObject st = v.toObject();
+        if (st.value("codec_type").toString() == "video" && video < 0) {
+            video = st.value("index").toInt();
+            const QStringList tb = st.value("time_base").toString().split('/');
+            if (tb.size() == 2 && tb[1].toDouble() > 0) r.timeBase = tb[0].toDouble() / tb[1].toDouble();
+            r.videoStart = st.value("start_time").toString().toDouble();
+        } else if (st.value("codec_type").toString() == "audio" && r.audioStart < 0) {
+            r.audioStart = st.value("start_time").toString().toDouble();
+        }
+    }
+    for (const QJsonValue& v : o.value("packets").toArray()) {
+        const QJsonObject pk = v.toObject();
+        if (pk.value("stream_index").toInt() != video) continue;
+        r.pts << qint64(pk.value("pts").toDouble());
+        r.dts << qint64(pk.value("dts").toDouble());
+    }
+    return r;
+}
+
+// Picture types in display order ("IBBP...")
+QString pictureTypes(const QString& path)
+{
+    QProcess p;
+    p.start("ffprobe", {"-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pict_type", "-of", "csv=p=0", path});
+    p.waitForFinished(60000);
+    QString types;
+    for (const QByteArray& line : p.readAllStandardOutput().split('\n'))
+        if (!line.trimmed().isEmpty()) types += QChar(line.trimmed().at(0));
+    return types;
+}
+
 void testNotDefault()
 {
     CHECK(RenderSettings().format != QLatin1String("h264_own"));
@@ -212,6 +262,11 @@ void testNotDefault()
     CHECK_EQ(QString(renderFormat("h264_own").videoCodec), QString(ExportWriter::kOwnH264));
     CHECK(!renderFormat("h264_own").hardware); // no encoder choice: always the own one
     CHECK(HardwareEncoders::formatAvailable("h264_own"));
+    // The GPL-free build (no x264 built in or installed) writes H.264 with the own encoder instead of OpenH264
+    if (Licenses::builtWithoutGpl() && HardwareEncoders::externalProgram("libx264").isEmpty())
+        CHECK_EQ(HardwareEncoders::softwareCodec("h264"), QString(ExportWriter::kOwnH264));
+    else if (HardwareEncoders::builtIn("libx264"))
+        CHECK_EQ(HardwareEncoders::softwareCodec("h264"), QString("libx264"));
     for (const RenderPreset& p : RenderPresets::builtins())
         if (!CHECK(p.settings.format != QLatin1String("h264_own"))) std::printf("       preset %s\n", qPrintable(p.id));
     // An unknown format falls back to H.264 with x264/OpenH264, never to the own encoder
@@ -264,6 +319,79 @@ void testContainers(const QString& dir)
         CHECK_EQ(sps.value("matrix_coefficients", -1), 1);
         CHECK_EQ(sps.value("video_full_range_flag", -1), 0);
     }
+}
+
+// B pictures (the encoder's default, adaptive): access units come in coding order, the writer takes pts from the
+// encoder's display index and dts from the access unit count minus its reorder delay. In MP4 and MKV: dts strictly
+// rising (MP4; Matroska stores no dts, FFmpeg guesses them: never falling), every picture's pts once (one frame
+// apart in display order), pts never before dts, B pictures really there, the right length, clean decoding, sound and
+// picture start apart by the same amount as in the reference export (x264 where built in, else the own encoder
+// without B pictures). With "bframes=0": no B pictures, pts = dts. A slow zoom (mandelbrot): B pictures pay there
+// (on testsrc2 and still pictures the adaptive placement keeps P pictures).
+void testBFrames(const QString& dir)
+{
+    // Start of the picture minus start of the sound in the reference export per container
+    QMap<QString, double> referenceOffset;
+    for (const char* ext : {"mp4", "mkv"}) {
+        const QString path = dir + "/bref." + ext;
+        Timeline tl = timeline(g_media);
+        tl.video[0].clips[0].mediaPath = g_zoom; // (the sound stays g_media's sine)
+        ExportSettings s = settings(path);
+        if (HardwareEncoders::builtIn("libx264")) {
+            s.videoCodec = s.softwareCodec = "libx264";
+        } else {
+            s.codecOptions << "bframes=0";
+        }
+        if (!CHECK(render(tl, s))) continue;
+        const Packets pk = packets(path);
+        referenceOffset[ext] = pk.videoStart - pk.audioStart;
+        std::printf("  reference %s (%s): video starts %.4f s, audio %.4f s\n", ext, qPrintable(s.videoCodec), pk.videoStart,
+                    pk.audioStart);
+    }
+    for (const bool withB : {true, false})
+        for (const char* name : {"b.mp4", "b.mkv"}) {
+            const QString path = dir + "/" + (withB ? "" : "nob-") + name;
+            const bool mkv = QString(name).endsWith("mkv");
+            Timeline tl = timeline(g_media);
+            tl.video[0].clips[0].mediaPath = g_zoom;
+            ExportSettings s = settings(path);
+            if (!withB) s.codecOptions << "bframes=0";
+            if (!CHECK(render(tl, s))) continue;
+            const QString types = pictureTypes(path);
+            if (!CHECK_EQ(int(types.size()), kFrames)) std::printf("       %s: %s\n", qPrintable(path), qPrintable(types));
+            if (!CHECK_EQ(types.contains('B'), withB)) std::printf("       %s: %s\n", qPrintable(path), qPrintable(types));
+            const Packets pk = packets(path);
+            if (!CHECK_EQ(int(pk.pts.size()), kFrames) || !CHECK(pk.timeBase > 0)) continue;
+            const qint64 step = std::llround(1.0 / 25 / pk.timeBase); // one frame in the stream's time base
+            bool rising = true, shownAfterDecode = true, reordered = false;
+            for (int i = 0; i < pk.dts.size(); ++i) {
+                if (i > 0 && (mkv ? pk.dts[i] < pk.dts[i - 1] : pk.dts[i] <= pk.dts[i - 1])) rising = false;
+                if (pk.pts[i] < pk.dts[i]) shownAfterDecode = false;
+                if (pk.pts[i] != pk.dts[i] + (pk.pts[0] - pk.dts[0])) reordered = true;
+            }
+            if (!CHECK(rising)) qDebug() << path << "dts" << pk.dts;
+            CHECK(shownAfterDecode);
+            CHECK_EQ(reordered, withB);
+            QVector<qint64> sorted = pk.pts;
+            std::sort(sorted.begin(), sorted.end());
+            bool steps = true;
+            for (int i = 1; i < sorted.size(); ++i)
+                if (std::llabs(sorted[i] - sorted[i - 1] - step) > 1) steps = false; // (MKV: milliseconds, rounded)
+            if (!CHECK(steps)) qDebug() << path << "pts" << sorted;
+            const QJsonObject v = probe(path);
+            const double duration = v.value("format_duration").toString().toDouble();
+            if (!CHECK(std::abs(duration - kFrames / 25.0) < 0.1)) std::printf("       %s: %.3f s\n", qPrintable(path), duration);
+            const QString errors = decodeErrors(path);
+            if (!CHECK(errors.isEmpty())) std::printf("       %s\n", qPrintable(errors.left(400)));
+            // Sound against picture as in the reference export (MP4: edit list; MKV: every stream shifted alike)
+            const double offset = pk.videoStart - pk.audioStart;
+            if (!CHECK(std::abs(offset - referenceOffset.value(mkv ? "mkv" : "mp4", 1e9)) < 0.002))
+                std::printf("       %s: video starts %.4f s, audio %.4f s\n", qPrintable(path), pk.videoStart, pk.audioStart);
+            // The picture is the source's, decoded in display order (pictures out of order: far below 30 dB; the zoom's
+            // fine detail costs a few dB against the testsrc2 clips)
+            const double db = psnr(path, g_zoom, kFrames);
+            if (!CHECK(db > 35)) std::printf("       %s: PSNR %.2f dB\n", qPrintable(path), db);
+        }
 }
 
 // Which cuts force a key frame (Exporter::cutFrames)
@@ -502,7 +630,9 @@ void testReview()
     j.review = true;
     const ExportSettings s = RenderQueue::exportSettings(j, kFmt);
     CHECK(!ExportWriter::isOwnH264(s.videoCodec));
-    CHECK_EQ(s.videoCodec, HardwareEncoders::resolve(VideoEncoder::Software, "h264").codec);
+    // (the GPL-free build's software H.264 is the own encoder itself: OpenH264 for the review there)
+    const QString plain = HardwareEncoders::resolve(VideoEncoder::Software, "h264").codec;
+    CHECK_EQ(s.videoCodec, ExportWriter::isOwnH264(plain) ? QString("libopenh264") : plain);
     CHECK_EQ(s.preset, QString("ultrafast"));
     CHECK(!s.smartRender);
     j.review = false;
@@ -593,8 +723,13 @@ int main(int argc, char** argv)
                                "-color_primaries", "bt709", "-color_trc", "bt709", "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
     g_still = Check::makeMedia(tmp.filePath("still.mkv"), {"-f", "lavfi", "-i", "smptebars=size=640x360:rate=25:duration=3",
                                                            "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
-    if (!CHECK(!g_media.isEmpty() && !g_near.isEmpty() && !g_noisy.isEmpty() && !g_still.isEmpty())) return Check::result();
+    // A slow zoom: the adaptive B picture placement takes B pictures there (testBFrames)
+    g_zoom = Check::makeMedia(tmp.filePath("zoom.mkv"), {"-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=25", "-t", "3",
+                                                         "-c:v", "ffv1", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!g_media.isEmpty() && !g_near.isEmpty() && !g_noisy.isEmpty() && !g_still.isEmpty() && !g_zoom.isEmpty()))
+        return Check::result();
     testContainers(tmp.path());
+    testBFrames(tmp.path());
     testCutFrames();
     testNoKeyStorm(tmp.path());
     testShortAndOdd(tmp.path());

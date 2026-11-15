@@ -49,7 +49,7 @@ void testEncoders()
     }
     CHECK(!HardwareEncoders::formatAvailable("no-such-format"));
     const QString h264 = HardwareEncoders::softwareCodec("h264");
-    CHECK(h264 == "libx264" || h264 == "libopenh264");
+    CHECK(h264 == "libx264" || h264 == "libopenh264" || h264 == "h264_own"); // (h264_own: the GPL-free build)
     const QString h265 = HardwareEncoders::softwareCodec("h265");
     CHECK(h265 == "libx265" || h265 == "libkvazaar");
     CHECK_EQ(HardwareEncoders::codecName(VideoEncoder::Software, "h264"), h264);
@@ -61,7 +61,7 @@ void testEncoders()
     CHECK(small.contains(qMakePair(QString("b"), QString("3110k")))); // half the rate 6 steps up
     const auto kvazaar = HardwareEncoders::softwareOptions("libkvazaar", 22, QSize(1920, 1080), 30);
     CHECK(kvazaar.contains(qMakePair(QString("kvazaar-params"), QString("preset=fast,qp=24"))));
-    CHECK(HardwareEncoders::proxyVideoArguments().contains(h264));
+    CHECK(HardwareEncoders::proxyVideoArguments().contains(h264 == "h264_own" ? QString("libopenh264") : h264)); // (proxies: ffmpeg)
 }
 
 // Export through the render queue's settings (encoder chosen like the Deliver page, software): H.264 and H.265 with
