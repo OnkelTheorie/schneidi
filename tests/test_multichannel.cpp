@@ -959,6 +959,46 @@ void testApp(const QTemporaryDir& tmp, const QString& video)
     }
 }
 
+// Relink (media moved) to a file with fewer channels: routing to channels it lacks is dropped (else silence)
+void testRelinkRouting(const QTemporaryDir& tmp, const QString& stereo)
+{
+    // Relink: cam.wav was a 4-channel file routed to 3/4; the one found is stereo
+    {
+        ProjectData d;
+        d.format = kFmt;
+        MediaInfo m;
+        m.path = "/gone/away/cam.wav";
+        m.hasAudio = true;
+        m.length = 50;
+        m.audioStreams = {AudioStreamInfo{4, {}, true}};
+        d.media << m;
+        d.timeline.audio.resize(1);
+        d.timeline.audio[0].kind = TrackKind::Audio;
+        Clip c;
+        c.id = 1;
+        c.mediaPath = m.path;
+        c.out = 24;
+        c.sourceChannels = {2, 3};
+        d.timeline.audio[0].clips << c;
+        d.timeline.audio[0].clips << c;
+        d.timeline.audio[0].clips[1].id = 2;
+        d.timeline.audio[0].clips[1].start = 30;
+        d.timeline.audio[0].clips[1].sourceChannels = {1};
+        QDir().mkpath(tmp.filePath("found"));
+        CHECK(QFile::copy(stereo, tmp.filePath("found/cam.wav")));
+        ProjectData plain = d;
+        CHECK_EQ(ProjectFile::relink(&plain, tmp.filePath("found")), 1);
+        CHECK(plain.timeline.audio[0].clips[0].sourceChannels == QVector<int>({2, 3})); // without probing: as before
+        CHECK_EQ(ProjectFile::relink(&d, tmp.filePath("found"),
+                                     [](const QString& f) { return Engine::probe(kFmt, f); }), 1);
+        const Clip& a = d.timeline.audio[0].clips[0];
+        const Clip& b = d.timeline.audio[0].clips[1];
+        CHECK(a.mediaPath == tmp.filePath("found/cam.wav") && a.sourceChannels.isEmpty());
+        CHECK(b.sourceChannels == QVector<int>({1})); // channel 2 of the stereo file is there
+        CHECK(d.media.value(0).audioStreams.value(0).channels == 2);
+    }
+}
+
 // Read "as the source" (Reader::Options channels 0: waveforms, room tone, sound sync): six or eight channels that are
 // not 5.1/7.1 keep their own order - a 6.0 file's back centre (channel 4) stays channel 4, as the playback's routing
 // counts it, not remixed into a 5.1 back pair. hexagonal and 7.1(wide) the same way.
@@ -1255,6 +1295,7 @@ int main(int argc, char** argv)
         return Check::result();
     testRouting(quad);
     testSourceLayout(tmp);
+    testRelinkRouting(tmp, stereo);
     testSurroundMix(stereo, five, bass);
     testLoudness(tone1k);
     {

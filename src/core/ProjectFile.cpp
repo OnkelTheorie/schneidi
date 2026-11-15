@@ -1729,7 +1729,7 @@ QStringList unusedMedia(const ProjectData& data)
     return out;
 }
 
-int relink(ProjectData* data, const QString& searchDir)
+int relink(ProjectData* data, const QString& searchDir, const std::function<MediaInfo(const QString&)>& probe)
 {
     QHash<QString, QStringList> wanted; // file name -> old paths (camera names like C0001.MP4 repeat)
     for (const QString& p : missingMedia(*data)) wanted[fileNameAnyOs(p)] << p;
@@ -1779,6 +1779,30 @@ int relink(ProjectData* data, const QString& searchDir)
     }
 
     redirect(data, moved);
+    if (probe) {
+        // The files found may have other streams than the ones lost: the media list learns them, routing to channels
+        // a stream lacks now is dropped
+        QHash<QString, int> media; // new path -> its entry
+        for (int i = 0; i < data->media.size(); ++i) media.insert(data->media[i].path, i);
+        QSet<QString> fitted;
+        for (const QString& now : std::as_const(moved)) {
+            const auto it = media.constFind(now);
+            if (it == media.cend()) continue;
+            const MediaInfo fresh = probe(now);
+            if (!fresh.hasAudio) continue; // unreadable or no sound: nothing known to fit to
+            MediaInfo& m = data->media[*it];
+            m.hasAudio = true;
+            m.audioStreams = fresh.audioStreams;
+            fitted.insert(now);
+        }
+        const auto fit = [&](Timeline& tl) {
+            for (Track& t : tl.audio)
+                for (Clip& c : t.clips)
+                    if (fitted.contains(c.mediaPath)) fitSourceChannels(c, data->media[media.value(c.mediaPath)]);
+        };
+        fit(data->timeline);
+        for (Sequence& s : data->sequences) fit(s.timeline);
+    }
     return moved.size();
 }
 
