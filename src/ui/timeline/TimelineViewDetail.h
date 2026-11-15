@@ -171,6 +171,13 @@ inline int volumeLineY(const QRect& body, double db)
     return body.bottom() - int(std::lround(volumeToPos(db) * (body.height() - 1)));
 }
 
+// Track pan (-100 = left .. +100 = right) as a lane height: top = right, middle = centre, bottom = left
+inline int panLineY(const QRect& body, double pan)
+{
+    const double pos = (std::clamp(pan, -100.0, 100.0) + 100.0) / 200.0;
+    return body.bottom() - int(std::lround(pos * (body.height() - 1)));
+}
+
 // Clip volume at clip frame t (with keyframes)
 inline double volumeAt(const Clip& c, double t)
 {
