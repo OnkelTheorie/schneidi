@@ -112,6 +112,8 @@ struct StreamInfo {
     // Psy distance (hadamardMagsDistance) between the source's and the reconstruction's whole 8x8 luma blocks,
     // summed over all pictures, and the same against flat blocks (all of the source's texture lost)
     double psyDistance = 0, psyFlat = 0;
+    // Fine detail of the B pictures' reconstructions: the 4x4 Hadamard AC magnitudes of their 8x8 luma blocks, summed
+    double detailB = 0;
 };
 
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
@@ -197,6 +199,9 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
                     hadamardMags8x8U8(&r.y[size_t(y) * r.w + x], r.w, mr);
                     info->psyDistance += hadamardMagsDistance(ms, mr);
                     info->psyFlat += hadamardMagsDistance(ms, kFlat);
+                    if (info->types.back() == 'B')
+                        for (int i = 0; i < 64; ++i)
+                            info->detailB += mr[i];
                 }
         }
         recon[display] = std::move(r);
@@ -271,6 +276,7 @@ EncoderConfig config(int w, int h, IntraMode mode, int gop, int threads = 1)
     c.bframes = 0;
     c.aqStrength = 1.0;
     c.psyRd = 0.0;
+    c.bSharp = 0.0; // B pictures average both lists wherever that is cheapest (1.5 since 16.11.2026; a case below)
     return c;
 }
 
@@ -793,6 +799,36 @@ int main()
             if (adaptive >= plain + plain / 100)
                 std::fprintf(stderr, "adaptive B pictures: %zu bytes, without %zu\n", adaptive, plain);
             CHECK(adaptive < plain + plain / 100);
+        }
+        {
+            // bSharp: on a slowly zooming texture the two reference pictures of a B picture show it at different
+            // sub-sample positions and their average is softer than either. With the lost detail as a cost the B
+            // pictures copy from one picture more often: another stream, bit-exact, the same with any thread
+            // count, and the B pictures keep more fine detail. 0 = the stream as before.
+            gSynthKind = 2;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 1);
+            c.qp = 30;
+            c.bframes = 3;
+            c.bAdaptive = false;
+            StreamInfo off, on, strong, onThreads;
+            size_t bytesOff = 0, bytesOn = 0;
+            CHECK(roundTrip(c, 17, &bytesOff, -1, nullptr, &off));
+            c.bSharp = 1.0;
+            CHECK(roundTrip(c, 17, &bytesOn, -1, nullptr, &on));
+            CHECK(on.hash != off.hash);
+            CHECK(on.types == off.types);
+            c.threads = 3;
+            CHECK(roundTrip(c, 17, nullptr, -1, nullptr, &onThreads));
+            CHECK(onThreads.hash == on.hash);
+            c.bSharp = 4.0;
+            CHECK(roundTrip(c, 17, nullptr, -1, nullptr, &strong));
+            if (!(on.detailB > off.detailB && strong.detailB > on.detailB) || std::getenv("H264_TEST_PSY"))
+                std::fprintf(stderr, "bSharp: detail of the B pictures %.0f, with 1.0 %.0f, with 4.0 %.0f; %zu -> %zu bytes, PSNR-Y %.2f -> %.2f\n",
+                             off.detailB, on.detailB, strong.detailB, bytesOff, bytesOn, off.minPsnrY, on.minPsnrY);
+            CHECK(on.detailB > off.detailB);
+            CHECK(strong.detailB > on.detailB);
+            CHECK(on.minPsnrY >= off.minPsnrY - 1.0);
+            gSynthKind = 0;
         }
         {
             // A keyframe the caller asks for and the GOP end: the picture before a keyframe is a P picture

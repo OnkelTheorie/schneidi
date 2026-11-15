@@ -156,11 +156,25 @@ const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::
 constexpr int kMaxBCands = 4;
 const double gBRd = std::getenv("H264_BRD") ? std::atof(std::getenv("H264_BRD")) : 0.0;
 // B pictures keep their reference pictures' texture (EncoderConfig::bSharp, FrameCoder::encodeMbB).
-// H264_BSHARP overrides the weight (0 = off). In the search's SATD estimates (list 0, list 1 or
-// both per partition) the lost detail counts gBSharpEst times its SATD-like size (the magnitudes
-// summed, halved), H264_BSHARPEST overrides.
+// H264_BSHARP overrides the weight (0 = off).
+// - In the search's SATD estimates (list 0, list 1 or both per partition, direct or searched per
+//   8x8 block) the lost detail counts gBSharpEst times its SATD-like size (the magnitudes summed,
+//   halved). H264_BSHARPEST overrides.
+// - The lost detail counts in full where the average is no closer to the source than the better
+//   single prediction (SATD ratio 1) and not at all where its SATD is below gBSharpKeep of the
+//   single one's, linear between. Two pictures with noise of their own (camera footage, grain)
+//   lose "detail" in their average too, but there the average is the better picture - that is
+//   what B pictures gain. Measured (wall = sharpness step of the drifting wall of the A/B clip,
+//   x264 0.027; BD-rate PSNR-Y against x264 of camera footage / a slow zoom, without: -13.3 /
+//   -21.9 %): weight 1 without this 0.036, -6.0 / -15.5 %; weight 1.5 with 0.85: 0.038, -9.2 /
+//   -15.8 %. H264_BSHARPKEEP overrides (0 = always in full).
+// - Not in long runs (more than four B pictures, as placed on still or slowly zooming material):
+//   their B pictures do not pulse more than x264's (sharpness step 0.018 against 0.020) and the
+//   cost would take 6 points of their gain. H264_BSHARPLONG=1 applies it there too.
 const double gBSharpEnv = std::getenv("H264_BSHARP") ? std::atof(std::getenv("H264_BSHARP")) : -1.0;
 const double gBSharpEst = std::getenv("H264_BSHARPEST") ? std::atof(std::getenv("H264_BSHARPEST")) : 1.0;
+const double gBSharpKeep = std::getenv("H264_BSHARPKEEP") ? std::atof(std::getenv("H264_BSHARPKEEP")) : 0.85;
+const bool gBSharpLong = std::getenv("H264_BSHARPLONG") && std::atoi(std::getenv("H264_BSHARPLONG")) != 0;
 // B pictures: transform by estimate (see encodeMbB; EncoderConfig::modeEstimate). H264_BEST=0/1 overrides.
 const int gBEstEnv = std::getenv("H264_BEST") ? std::atoi(std::getenv("H264_BEST")) : -1;
 // The lookahead's vectors along the planned references (Encoder::takeLookaheadVectors) as start
@@ -3512,6 +3526,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.outSceneCut_ = cut;
     if (lookahead && bMode)
         ensureBSearches(); // for the pictures after this one (nothing below reads their results)
+    fc.bLongRun_ = type == 2 && frame.nearRun > kPyramidMaxRun;
     fc.biRefine_ = type != 2 ? 0 : gBiRefineEnv >= 0 ? gBiRefineEnv : frame.nearRun > kPyramidMaxRun ? kBiRefineLong : 0;
     fc.rcType_ = type;
     // Two-pass only: the one-pass model takes a P picture's cost over its real distance.
@@ -6872,10 +6887,19 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     // than the P pictures around them and the texture pulsed at the P pictures' rate. The detail
     // an average has lost against its two single predictions (sum of the 4x4 Hadamard AC
     // magnitudes of the 8x8 blocks, hadamardMags8x8U8) is a cost of every candidate that uses it:
-    // sharp * sqrt(lambda) per unit. Where the average is clearly the better prediction (noise in
-    // both pictures) it still wins; where it only saves the few bits of a vector, the macroblock
-    // copies from one picture.
-    const double sharp = gBSharpEnv >= 0 ? gBSharpEnv : cfg_.bSharp;
+    // sharp * sqrt(lambda) per unit. Where the average is clearly the better prediction it still
+    // wins; where it only saves the few bits of a vector, the macroblock copies from one picture.
+    const double sharp = bLongRun_ && !gBSharpLong ? 0.0 : gBSharpEnv >= 0 ? gBSharpEnv : cfg_.bSharp;
+    // Lost detail: single = mean detail of the two single predictions, both = of their average;
+    // satdSingle / satdBoth: SATD (or search cost) of the better single prediction and of the
+    // average - the loss counts by how little closer to the source the average is (gBSharpKeep).
+    auto lostOf = [](int single, int both, double satdSingle, double satdBoth) {
+        const int lost = std::max(0, single - both);
+        if (!(gBSharpKeep > 0) || lost == 0)
+            return lost;
+        const double ratio = satdBoth / std::max(1.0, satdSingle);
+        return int(lost * std::clamp((ratio - gBSharpKeep) / (1.0 - gBSharpKeep), 0.0, 1.0));
+    };
     auto detail = [](const uint8_t* p, int w, int h) { // p: stride 16
         int sum = 0;
         for (int y = 0; y < h; y += 8)
@@ -6890,7 +6914,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     int lostDirect = 0; // detail the direct prediction has lost, whole macroblock
     if (sharp > 0 && dUse == 3) {
         uint8_t t[256];
-        int e = 0;
+        int e = 0, satd[2] = {0, 0};
         const int px = mbx * 16, py = mby * 16;
         for (int list = 0; list < 2; ++list) {
             const RefPic& R = list ? *refs1_[0] : *refs_[0];
@@ -6898,14 +6922,19 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 const int* mv = d.mv[list][0];
                 mcLuma(R, px + (mv[0] >> 2), py + (mv[1] >> 2), mv[0] & 3, mv[1] & 3, 16, 16, t);
                 e += detail(t, 16, 16);
+                if (gBSharpKeep > 0)
+                    satd[list] = satd16(t);
             } else
                 for (int q = 0; q < 4; ++q) {
                     const int* mv = d.mv[list][q];
-                    mcLuma(R, px + (q & 1) * 8 + (mv[0] >> 2), py + (q >> 1) * 8 + (mv[1] >> 2), mv[0] & 3, mv[1] & 3, 8, 8, t);
+                    const int ox = (q & 1) * 8, oy = (q >> 1) * 8;
+                    mcLuma(R, px + ox + (mv[0] >> 2), py + oy + (mv[1] >> 2), mv[0] & 3, mv[1] & 3, 8, 8, t);
                     e += detail(t, 8, 8);
+                    if (gBSharpKeep > 0)
+                        satd[list] += satd8x8U8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, t, 16);
                 }
         }
-        lostDirect = std::max(0, e / 2 - detail(dlp, 16, 16));
+        lostDirect = lostOf(e / 2, detail(dlp, 16, 16), std::min(satd[0], satd[1]), gBSharpKeep > 0 ? satd16(dlp) : 0);
     }
     const double sharpDirect = sharp * lambdaSad * lostDirect;
     const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby) + sharpDirect;
@@ -7063,7 +7092,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 for (int ox = 0; ox < w; ox += 8)
                     satdBi += satd8x4U8(&srcY_[so + size_t(oy) * padW_ + ox], padW_, av + oy * 16 + ox, 16);
             double costBi = satdBi + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1));
-            const int lostBi = sharp > 0 ? std::max(0, (detail(a, w, h) + detail(b, w, h)) / 2 - detail(av, w, h)) : 0;
+            const int lostBi = sharp > 0 ? lostOf((detail(a, w, h) + detail(b, w, h)) / 2, detail(av, w, h), std::min(cost[0], cost[1]), costBi) : 0;
             costBi += sharp * gBSharpEst * 0.5 * lostBi;
             if (shape == 0) {
                 c.lostBi16 = lostBi;
@@ -7151,9 +7180,9 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             for (int y = 0; y < 8; ++y)
                 for (int x = 0; x < 8; ++x)
                     a[y * 16 + x] = clip1((a[y * 16 + x] * biW0_ + b[y * 16 + x] * biW1_ + 32) >> 6);
-            const int lostBi = sharp > 0 ? std::max(0, eSingle - detail(a, 8, 8)) : 0;
-            const double costBi = satd8x8U8(&srcY_[so], padW_, a, 16) + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1) + 5) +
-                                  sharp * gBSharpEst * 0.5 * lostBi;
+            double costBi = satd8x8U8(&srcY_[so], padW_, a, 16) + lambdaSad * (mvBits(c, p, 0) + mvBits(c, p, 1) + 5);
+            const int lostBi = sharp > 0 ? lostOf(eSingle, detail(a, 8, 8), std::min(cost[0], cost[1]), costBi) : 0;
+            costBi += sharp * gBSharpEst * 0.5 * lostBi;
             const double costDirect = satdDirect + lambdaSad + sharp * gBSharpEst * 0.5 * (lostDirect / 4);
             cost[0] += lambdaSad * 3;
             cost[1] += lambdaSad * 3;

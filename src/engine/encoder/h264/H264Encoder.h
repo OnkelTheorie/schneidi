@@ -125,13 +125,16 @@ struct EncoderConfig {
     // average of two pictures; on a slowly drifting textured wall they show the texture at
     // different sub-sample positions and the average is softer than either. Skipped, it costs
     // nothing, so the B pictures were softer than the P pictures around them and the texture
-    // pulsed at the P pictures' rate (seen in a blind test against x264, whose mode decision
-    // weighs lost texture). The detail such an average has lost against its two single
+    // pulsed at the P pictures' rate (seen in a blind test against x264, whose psy-RD weighs lost
+    // texture in B pictures). The detail such an average has lost against its two single
     // predictions (4x4 Hadamard AC magnitudes) counts bSharp * sqrt(lambda) per unit in the cost
-    // of every B candidate that uses it - skip, direct or searched; where that outweighs what the
-    // average saves, the macroblock copies from one picture. 0 = off (the stream is then the same
-    // as without this option).
-    double bSharp = 1.0;
+    // of every B candidate that uses it - skip, direct or searched - unless the average is clearly
+    // closer to the source (noise); where the loss outweighs what the average saves, the
+    // macroblock copies from one picture. Runs of up to four B pictures only. 0 = off (the stream
+    // is then the same as without this option). It costs BD-rate where B pictures gained by
+    // averaging: camera footage -13.3 -> -9.2 % PSNR-Y against x264 (sharpness step between
+    // pictures 0.075 -> 0.060, x264 0.056).
+    double bSharp = 1.5;
     // Mode decision of inter macroblocks in P pictures by estimate (CABAC with the 8x8 transform):
     // the candidates (16x16 or the best split, 4x4 or 8x8 transform) are ranked by the trellis
     // quantisation's own cost and only the best one per layout is reconstructed and counted in
