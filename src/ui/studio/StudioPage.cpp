@@ -213,6 +213,10 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_tools->hide();
     connect(m_toolsButton, &QToolButton::toggled, this, &StudioPage::setToolsOpen);
     connect(m_tools, &StudioTools::closeRequested, this, [this] { setToolsOpen(false); });
+    // Another tool, a result line: the drawer grows to show it whole if the lanes can give the room
+    connect(m_tools, &StudioTools::neededHeightChanged, this, [this] {
+        if (toolsOpen()) growTools();
+    });
 
     // The right column: the viewer comes on top (index 0) when the page shows, then the loudness and the mixer
     m_mixer = new StudioMixer(editor, engine);
@@ -252,13 +256,26 @@ void StudioPage::setToolsOpen(bool open)
     const int total = sizes.value(0) + sizes.value(1);
     if (total <= 0) return; // not laid out yet (the page's first showing sets the sizes)
     if (sizes.value(1) <= 0 || sizes.value(1) > total * 0.6) {
-        const int want = std::max(m_tools->sizeHint().height(), m_tools->minimumSizeHint().height()) + 40;
+        const int want = std::max(m_tools->neededHeight(), m_tools->minimumSizeHint().height());
         // Bounds of their own first: a low page (under ~355 px) would give lo > hi (std::clamp's precondition)
         const int hi = std::max(1, int(total * 0.45));
         const int lo = std::min({160, total / 2, hi});
         const int h = std::clamp(want, lo, hi);
         m_left->setSizes({std::max(1, total - h), h});
     }
+    growTools();
+}
+
+void StudioPage::growTools()
+{
+    // Never shorter than the chosen tool needs, as long as the lanes keep half the height (then the drawer
+    // scrolls); never shrunk here (a size the user dragged larger stays)
+    const QList<int> sizes = m_left->sizes();
+    const int total = sizes.value(0) + sizes.value(1);
+    if (total <= 0 || sizes.value(1) <= 0) return;
+    const int hi = std::max(sizes.value(1), total / 2);
+    const int h = std::min(m_tools->neededHeight(), hi);
+    if (h > sizes.value(1)) m_left->setSizes({std::max(1, total - h), h});
 }
 
 int StudioPage::defaultSideWidth(int pageWidth) const

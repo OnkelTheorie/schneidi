@@ -35,6 +35,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSlider>
 #include <QStackedWidget>
@@ -180,7 +181,7 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     outer->setSpacing(0);
 
     // Title row: the target track, which clips the tools take, the close button
-    auto* head = new QWidget;
+    auto* head = m_head = new QWidget;
     head->setObjectName("PanelTitle");
     head->setAttribute(Qt::WA_StyledBackground);
     head->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
@@ -233,7 +234,9 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
     scroll->setObjectName("studio_tools_scroll");
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Never cut at the right: the chosen tool as wide as the drawer (the others give way, setCurrentTool), and should
+    // even that not fit (a narrow drawer, a large font), the area scrolls sideways too
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_stack = new QStackedWidget;
     m_stack->setObjectName("studio_tools_inner");
     scroll->setWidget(m_stack);
@@ -534,6 +537,11 @@ int StudioTools::currentTool() const { return m_stack->currentIndex(); }
 void StudioTools::setCurrentTool(int index)
 {
     index = std::clamp(index, 0, m_stack->count() - 1);
+    // Only the chosen tool counts for the stack's size (a stack takes the largest of its pages): a wide page of
+    // another tool must not make this one wider than the drawer
+    for (int i = 0; i < m_stack->count(); ++i)
+        m_stack->widget(i)->setSizePolicy(i == index ? QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred)
+                                                     : QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored));
     m_stack->setCurrentIndex(index);
     if (QAbstractButton* b = m_tabs->button(index)) b->setChecked(true);
     fitInnerHeight();
@@ -556,6 +564,19 @@ void StudioTools::fitInnerHeight()
     l->activate();
     const int h = l->hasHeightForWidth() ? l->totalHeightForWidth(w) : l->totalMinimumSize().height();
     m_stack->setMinimumHeight(h);
+    // The drawer as tall as that if the page can give it (StudioPage): a result line that just appeared included
+    if (const int need = neededHeight(); need != m_lastNeeded) {
+        m_lastNeeded = need;
+        emit neededHeightChanged();
+    }
+}
+
+int StudioTools::neededHeight() const
+{
+    // The title row, then the taller of the tool list and the chosen tool (the area's frame and a sideways bar)
+    const int list = m_list->parentWidget()->minimumSizeHint().height();
+    const int bar = m_scroll->horizontalScrollBar()->isVisible() ? m_scroll->horizontalScrollBar()->height() : 0;
+    return m_head->sizeHint().height() + std::max(list, m_stack->minimumHeight() + bar);
 }
 
 void StudioTools::setTargetTrack(int track)
@@ -647,6 +668,11 @@ void StudioTools::say(QLabel* line, const QString& text, bool bad)
     line->setText(text);
     line->setStyleSheet(QString("color: %1;").arg((bad ? Theme::warning : Theme::textDim).name()));
     line->setVisible(!text.isEmpty());
+    // The tool grows by the line: its height anew (else the line lies under the area's bottom, out of reach), and in
+    // view if the drawer must scroll
+    fitInnerHeight();
+    if (line->isVisible() && line->isVisibleTo(m_stack->currentWidget()))
+        QTimer::singleShot(0, this, [this, line] { m_scroll->ensureWidgetVisible(line, 0, 4); });
 }
 
 int StudioTools::cleanVoice()
