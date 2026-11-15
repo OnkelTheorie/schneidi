@@ -48,14 +48,15 @@ constexpr int kThumbH = 28;      // the EQ and compressor pictures in a strip
 
 double meterPos(double db) { return std::clamp((db - kFloor) / -kFloor, 0.0, 1.0); }
 
+// A reading in the UI language with a real minus (as the tools drawer writes them: "Ziel −14 LUFS")
 QString number(double v, int decimals = 1)
 {
-    return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint());
+    return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint()).replace('-', QChar(0x2212));
 }
 
 QString signedDb(double db)
 {
-    if (db <= -99) return QStringLiteral("-∞");
+    if (db <= -99) return QString(QChar(0x2212)) + QStringLiteral("∞");
     return (db > 0.05 ? "+" : "") + number(db);
 }
 
@@ -415,7 +416,7 @@ protected:
         f.setPointSizeF(7);
         p.setFont(f);
         p.setPen(Theme::text);
-        const QString value = m_v <= m_lo && m_unit == "dB" ? QStringLiteral("-∞") : number(m_v, 0);
+        const QString value = m_v <= m_lo && m_unit == "dB" ? QString(QChar(0x2212)) + QStringLiteral("∞") : number(m_v, 0);
         p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, m_name);
         p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignRight, value + (m_unit.isEmpty() ? "" : " " + m_unit));
     }
