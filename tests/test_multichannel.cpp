@@ -927,6 +927,33 @@ void testApp(const QTemporaryDir& tmp, const QString& video)
     CHECK(!codec->isVisibleTo(deliver));
 }
 
+// Read "as the source" (Reader::Options channels 0: waveforms, room tone, sound sync): six or eight channels that are
+// not 5.1/7.1 keep their own order - a 6.0 file's back centre (channel 4) stays channel 4, as the playback's routing
+// counts it, not remixed into a 5.1 back pair. hexagonal and 7.1(wide) the same way.
+void testSourceLayout(const QTemporaryDir& tmp)
+{
+    struct Case { const char* layout; int channels; int tone; };
+    for (const Case& k : {Case{"6.0", 6, 3}, Case{"hexagonal", 6, 5}, Case{"7.1(wide)", 8, 6}}) {
+        QStringList exprs;
+        for (int c = 0; c < k.channels; ++c) exprs << (c == k.tone ? QStringLiteral("0.5*sin(2*PI*440*t)") : QStringLiteral("0"));
+        const QString file = Check::makeMedia(
+            tmp.filePath(QString("layout-%1.wav").arg(QString(k.layout).remove('(').remove(')'))),
+            {"-f", "lavfi", "-i", QString("aevalsrc=%1:s=48000:d=1:c=%2").arg(exprs.join('|'), k.layout), "-c:a", "pcm_s16le"});
+        if (!CHECK(!file.isEmpty())) continue;
+        const auto reader = Audio::Reader::open(file, 0, Audio::Reader::Options{48000, 0});
+        if (!CHECK(reader) || !CHECK_EQ(reader->channels(), k.channels)) continue;
+        std::vector<std::vector<float>> buf(size_t(k.channels), std::vector<float>(24000));
+        std::vector<float*> out;
+        for (auto& b : buf) out.push_back(b.data());
+        reader->read(0, 24000, out.data());
+        int loud = -1, count = 0;
+        for (int c = 0; c < k.channels; ++c)
+            if (rms(buf[size_t(c)]) > 0.05) loud = c, ++count;
+        Check::report(count == 1 && loud == k.tone, "source order kept", __FILE__, __LINE__,
+                      QString("%1: tone on %2 (%3 loud), want %4").arg(k.layout).arg(loud).arg(count).arg(k.tone));
+    }
+}
+
 // Waveform of a routed clip: only its channels
 void testWaveform(const QString& frontOnly)
 {
@@ -1195,6 +1222,7 @@ int main(int argc, char** argv)
     if (!CHECK(!quad.isEmpty() && !stereo.isEmpty() && !five.isEmpty() && !bass.isEmpty() && !tone1k.isEmpty()))
         return Check::result();
     testRouting(quad);
+    testSourceLayout(tmp);
     testSurroundMix(stereo, five, bass);
     testLoudness(tone1k);
     {
