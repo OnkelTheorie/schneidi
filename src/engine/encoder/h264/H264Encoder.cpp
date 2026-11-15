@@ -794,6 +794,7 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
+static const double kBProbeFlat = std::getenv("H264_BPROBE_FLAT") ? std::atof(std::getenv("H264_BPROBE_FLAT")) : 0.75;
 static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
 // B pictures from a gain of 6 % on (15 % until 15.11.2026: the B pictures did not pay on moving
@@ -976,6 +977,11 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
     if (trace)
         std::fprintf(stderr, "bprobe: P runs %.0f bits / ssd %.0f at QP %d, %.0f / %.0f at %d (floor %.0f bits)\n", r0, d0, kQp, r1, d1,
                      kQp + kQpStep, floorBits);
+    // Three QP steps coarser and still nearly the bits: there is next to no residual to save, the
+    // bits are vectors and headers (a pan over smooth content) and the comparison at equal
+    // distortion below has no slope to stand on. Treated like a still picture.
+    if (r1 > kBProbeFlat * r0 && r1 < r0)
+        return 1;
     if (r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0)
         return 2;
     const double slope = std::log(r1 / r0) / std::log(d1 / d0); // < 0
