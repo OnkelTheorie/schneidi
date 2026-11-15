@@ -774,7 +774,16 @@ void FrameCoder::loadSource(const Picture& pic)
 // H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
 static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
 // The probe's first question: runs of this many B pictures against none (3 = with the pyramid).
-static const int kBProbeShort = std::getenv("H264_BPROBE_SHORT") ? std::atoi(std::getenv("H264_BPROBE_SHORT")) : 2;
+static const int kBProbeShort = std::getenv("H264_BPROBE_SHORT") ? std::atoi(std::getenv("H264_BPROBE_SHORT")) : 3;
+// A new measurement before the interval is over when the pictures' activity (lookahead cost with
+// motion against intra) is this factor away from that of the last measurement's pictures, for two
+// pictures in a row and not sooner than the gap: a game clip goes from standing to running and back
+// within a second. 0 = only by the interval.
+static const double kBProbeChange = std::getenv("H264_BPROBE_CHANGE") ? std::atof(std::getenv("H264_BPROBE_CHANGE")) : 1.35;
+static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::getenv("H264_BPROBE_GAP")) : 30;
+// Nothing to measure (next to nothing is coded: a still picture, a desktop, the player standing):
+// runs of the short length (1, default) or no B pictures (0, as before 15.11.2026).
+static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
 static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
 static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.15;
 
@@ -823,25 +832,35 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
 {
     if (!kBProbe || bframes <= 0)
         return false;
-    if (startsAt(f, index)) {
+    const double activity = f.intraSum > 0 ? f.interSum / f.intraSum : 0.0;
+    auto far = [&](double a) { return a > sampleActivity_ * kBProbeChange || a < sampleActivity_ / kBProbeChange; };
+    const bool changed = kBProbeChange > 0 && start_ < 0 && sampleActivity_ > 0 && index - lastStart_ >= kBProbeGap && far(activity) &&
+                         far(lastActivity_);
+    lastActivity_ = activity;
+    if (startsAt(f, index) || changed) {
         pics_.clear();
         start_ = lastStart_ = index;
+        activitySum_ = 0;
     }
     if (start_ < 0)
         return false;
     pics_.push_back(la.halfPicture(f));
+    if (index > start_)
+        activitySum_ += activity;
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
     const int shortRun = std::min(bframes, kBProbeShort);
     const int count = int(pics_.size());
     if (count == shortRun + 2) {
         // First answer, from four pictures: do runs of two B pictures pay at all?
         double gain = 0;
-        measure(pics_, la.halfW(), la.halfH(), threads, &shortRun, 1, &gain);
-        run_ = gain < kBProbeGain ? shortRun : 0;
+        const int result = measure(pics_, la.halfW(), la.halfH(), threads, &shortRun, 1, &gain);
+        run_ = result == 0 ? (gain < kBProbeGain ? shortRun : 0) : result == 1 && kBProbeStill ? shortRun : 0;
+        const bool still = result != 0;
         resultStart_ = start_;
+        sampleActivity_ = activitySum_ / double(count - 1);
         if (trace)
             std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
-        if (run_ == 0 || bframes <= shortRun) {
+        if (run_ == 0 || bframes <= shortRun || still) {
             start_ = -1;
             pics_.clear();
         }
@@ -863,13 +882,13 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     return true;
 }
 
-void BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
-                     double* gains)
+int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
+                    double* gains)
 {
     std::fill(gains, gains + runCount, 0.0);
     const int count = int(pics.size());
     if (count < 3 || w < 16 || h < 16)
-        return;
+        return 2;
     const std::vector<uint8_t> grey(size_t(w / 2) * (h / 2), 128);
     // Bits and luma error of the pictures after the first one.
     auto code = [&](int qp, int bframes, double& bits, double& ssd) {
@@ -925,14 +944,24 @@ void BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h
         }
     };
     constexpr int kQp = 28, kQpStep = 3;
-    double r0, d0, r1, d1;
+    double r0, d0, r1 = 0, d1 = 0;
     code(kQp, 0, r0, d0);
+    const double floorBits = (0.002 * w * h + 256.0) * (count - 1);
+    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    if (r0 < floorBits) {
+        if (trace)
+            std::fprintf(stderr, "bprobe: P runs %.0f bits at QP %d, under the floor of %.0f\n", r0, kQp, floorBits);
+        return 1;
+    }
     code(kQp + kQpStep, 0, r1, d1);
-    // Next to nothing is coded (a still picture, a desktop: the slice headers alone are some 100
-    // bits) or the two P runs give no slope: no measurement, no B pictures. On such material they
-    // gain or lose a few percent (measured -4 .. +7 % on screen recordings).
-    if (r0 < (0.002 * w * h + 256.0) * (count - 1) || r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0)
-        return;
+    // The two P runs give no slope: no measurement, no B pictures. (Next to nothing coded - a still
+    // picture, a desktop: the slice headers alone are some 100 bits - was answered above; with the
+    // B pyramid runs of three gain 0 .. 3 % on screen recordings.)
+    if (trace)
+        std::fprintf(stderr, "bprobe: P runs %.0f bits / ssd %.0f at QP %d, %.0f / %.0f at %d (floor %.0f bits)\n", r0, d0, kQp, r1, d1,
+                     kQp + kQpStep, floorBits);
+    if (r1 >= r0 || d1 <= d0 * 1.02 || d0 <= 0)
+        return 2;
     const double slope = std::log(r1 / r0) / std::log(d1 / d0); // < 0
     for (int k = 0; k < runCount; ++k) {
         double rb, db;
@@ -940,6 +969,7 @@ void BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h
         if (db > 0)
             gains[k] = rb / (r0 * std::exp(slope * std::log(db / d0))) - 1.0; // against the P runs' bits at this error
     }
+    return 0;
 }
 
 FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)

@@ -185,14 +185,18 @@ public:
     // Bits of "I B.. P .." with runs of runs[k] B pictures against "I P.. P" at equal distortion,
     // counted over the pictures after the first (gains[k] = -0.5: half the bits; 0 = no
     // measurement). pics: w x h luma each, in display order.
-    static void measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
-                        double* gains);
+    // Returns 0 = measured, 1 = next to nothing is coded (a still picture), 2 = no usable measurement.
+    static int measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h, int threads, const int* runs, int runCount,
+                       double* gains);
 
 private:
     bool startsAt(const LookaheadFrame& f, int index) const;
     std::vector<std::vector<uint8_t>> pics_;
     int start_ = -1, lastStart_ = -1, resultStart_ = 0;
     int run_ = 0;
+    // Activity (lookahead cost with motion / intra) of the last picture, summed over the pictures
+    // being collected, and the mean of the last measurement's pictures.
+    double lastActivity_ = 0, activitySum_ = 0, sampleActivity_ = 0;
 };
 
 struct Picture {
