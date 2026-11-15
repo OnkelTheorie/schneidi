@@ -810,7 +810,7 @@ static double planEnv(const char* name, double def)
 static const int kPlanDead = int(planEnv("H264_BPLAN_DEAD", 128));
 // B pictures from a cost ratio (structure with B pictures / all P pictures) below kPlanOn on,
 // until it passes kPlanOff; long runs below kPlanLong.
-static const double kPlanOn = planEnv("H264_BPLAN_ON", 1.02), kPlanOff = planEnv("H264_BPLAN_OFF", 1.05);
+static const double kPlanOn = planEnv("H264_BPLAN_ON", 1.035), kPlanOff = planEnv("H264_BPLAN_OFF", 1.065);
 static const double kPlanLong = planEnv("H264_BPLAN_LONG", 0.85);
 static const double kPlanKeep = planEnv("H264_BPLAN_KEEP", 0.5);
 // Below this cost per block and picture there is nothing to weigh: B pictures.
@@ -929,8 +929,6 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
     const int mbW = la.halfW() / 8, mbH = la.halfH() / 8;
     auto dz = [&](int c) { return double(std::max(0, c - kPlanDead)); };
     double sumP = 0, sumB = 0, sumFar = 0, sumNear = 0; // sumNear: the run's pictures as P pictures
-    static constexpr int kStudy[6] = {0, 128, 256, 384, 512, 768};
-    double study[6] = {};
     size_t live = 0; // blocks above the dead zone as P pictures
     size_t n = 0; // blocks counted: every kPlanGrid-th in both directions
     const LookaheadFrame& pf = win_[size_t(p)];
@@ -956,8 +954,6 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
                 const int c0 = b.a == 1 ? f.interCost[m] : f.fwd[size_t(b.a)].cost[m];
                 const int cb = std::min({f.intraCost[m], c0, nx.back[size_t(b.c)].cost[m], nx.bi[size_t(bComboIndex(b.a, b.c, tableB))][m]});
                 sumB += dz(cb);
-                for (int t = 0; t < 6; ++t)
-                    study[t] += std::max(0, cb - kStudy[t]);
             }
         }
     const double perMb = sumP / (double(n) * p);
@@ -991,10 +987,6 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         gate_ = uint8_t(!on_ ? (free ? shortRun | kClear : 0) : clear ? (maxB | kClear) : shortRun);
     }
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
-    if (std::getenv("H264_BPLAN_STUDY"))
-        std::fprintf(stderr, "bstudy: %d P %.0f near %.0f far %.0f b %.0f %.0f %.0f %.0f %.0f %.0f\n", anchor_ + 1, sumP / double(n),
-                     sumNear / double(n), sumFar / double(n), study[0] / double(n), study[1] / double(n), study[2] / double(n),
-                     study[3] / double(n), study[4] / double(n), study[5] / double(n));
     if (trace)
         std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held: run %d\n",
                      anchor_ + 1, sumP / (double(n) * p), sumB / (double(n) * p), sumFar / double(n), sumP > 0 ? sumB / sumP : 0.0, ratio,

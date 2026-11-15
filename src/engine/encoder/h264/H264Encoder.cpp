@@ -1276,15 +1276,6 @@ void FirstPass::analyseBatch() const
                 std::fill(stats_->bGate.begin() + probe_.resultStart(), stats_->bGate.end(), probe_.gate());
         }
     }
-    if (const char* dump = std::getenv("H264_FP_DUMP")) { // per picture: intra and inter cost of every macroblock (int32)
-        if (FILE* fp = std::fopen(dump, stats_->intraSum.empty() ? "wb" : "ab")) {
-            for (const LookaheadFrame& f : job_) {
-                std::fwrite(f.intraCost.data(), 4, f.intraCost.size(), fp);
-                std::fwrite(f.interCost.data(), 4, f.interCost.size(), fp);
-            }
-            std::fclose(fp);
-        }
-    }
     for (const LookaheadFrame& f : job_)
         addCostHist(*stats_, f);
     for (LookaheadFrame& f : job_) {
@@ -1427,6 +1418,7 @@ static const double gTpDev = std::getenv("H264_TPDEV") ? std::atof(std::getenv("
 // goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
 // learns; the other also swings with every stretch the model misjudged, and near the clip's end with
 // little left to spread an error over.
+static const bool gTpSeedTree = !std::getenv("H264_TPSEEDTREE") || std::atoi(std::getenv("H264_TPSEEDTREE")) != 0;
 static const double gTpFollow = std::getenv("H264_TPFOLLOW") ? std::atof(std::getenv("H264_TPFOLLOW")) : 0.25;
 
 // Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
@@ -3324,6 +3316,16 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                         rcKSum_[1] = bitsP / std::max(1.0, tpNeed(1, probeQp));
                         tpClass_[1] = cls;
                     }
+                }
+                if (twoPass && !fc.treeOffset_.empty() && gTpSeedTree) {
+                    // The probe codes without the macroblock tree; the real pictures have its finer QPs
+                    // (one-pass: folded into each picture's cost instead).
+                    double mean = 0;
+                    for (float o : fc.treeOffset_)
+                        mean += o;
+                    const double more = std::exp2(-mean / double(fc.treeOffset_.size()) / 6.0);
+                    rcKSum_[0] *= more;
+                    rcKSum_[1] *= more;
                 }
                 const double predicted = steadyQp();
                 if (std::getenv("H264_RC_TRACE"))
