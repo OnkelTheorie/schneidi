@@ -58,6 +58,8 @@ public:
 
     // Streams decoded for waveforms so far (tests: two routings of one stream decode it once)
     int waveDecodes() const { return m_waveDecodes.load(); }
+    // Bytes of per-channel peaks read from disk for routed waveforms (tests: only the routed channels are read)
+    qint64 channelBytesRead() const { return m_channelBytesRead.load(); }
     // Disk cache file of the per-channel peaks of a stream (tests: an old or damaged file there is rebuilt)
     static QString channelPeaksFile(const QString& path, int stream, const FrameRate& rate);
 
@@ -110,14 +112,9 @@ private:
     std::deque<QString> m_stripJobs;
     QWaitCondition m_stripCond;
 
-    // Peaks of every channel of a stream (routed waveforms are combined from them), key path \0 stream
-    struct ChannelPeaks {
-        int frames = 0;
-        QVector<QVector<quint8>> base; // [channel][frame * kBucketsPerFrame + k]
-    };
-    QHash<QString, std::shared_ptr<const ChannelPeaks>> m_channelPeaks;
     std::atomic<int> m_waveDecodes{0};
-    // The routed waveform's thread part: per-channel peaks from memory, disk or a decode, then combined
+    std::atomic<qint64> m_channelBytesRead{0};
+    // The routed waveform's thread part: per-channel peaks from disk (only the routed channels) or a decode, then combined
     void routedWave(const QString& key, const QString& path, int stream, const QVector<int>& pick,
                     const ProjectFormat& format, int gen, int fileGen);
 

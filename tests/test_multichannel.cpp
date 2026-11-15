@@ -1050,6 +1050,13 @@ void testRoutedWaveforms(const QTemporaryDir& tmp)
         const int d = waveDiff(waitWave(cache, quad, 0, {1}), refPeaks(quad, 0, {1}));
         CHECK(d >= 0 && d <= 1);
         CHECK_EQ(cache.waveDecodes(), 0);
+        // Memory bound: only the routed channel is read from the four-channel file, nothing is kept per stream
+        const qint64 perChannel = qint64(3 * 25) * Waveform::kBucketsPerFrame;
+        CHECK_EQ(cache.channelBytesRead(), perChannel);
+        const int d2 = waveDiff(waitWave(cache, quad, 0, {3, 0}), refPeaks(quad, 0, {3, 0}));
+        CHECK(d2 >= 0 && d2 <= 1);
+        CHECK_EQ(cache.channelBytesRead(), 3 * perChannel);
+        CHECK_EQ(cache.waveDecodes(), 0);
     }
     // Old or damaged files where the per-channel peaks live are rebuilt, never misread
     const QString file = MediaCache::channelPeaksFile(quad, 0, kFmt.rate);
