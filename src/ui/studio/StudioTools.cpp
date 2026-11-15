@@ -626,8 +626,11 @@ void StudioTools::syncTargets()
         int selectedOnTarget = 0;
         for (int id : clips) selectedOnTarget += m_editor->selection()->contains(id) ? 1 : 0;
         const QString track = trackShortName({TrackKind::Audio, m_target});
+        const bool one = clips.size() == 1;
         info = clips.isEmpty()       ? T("%1 hat keine Clips").arg(track)
-               : selectedOnTarget > 0 ? T("Für %1 gewählte Clips auf %2").arg(clips.size()).arg(track)
+               : selectedOnTarget > 0 ? (one ? T("Für 1 gewählten Clip auf %1").arg(track)
+                                             : T("Für %1 gewählte Clips auf %2").arg(clips.size()).arg(track))
+               : one                  ? T("Für 1 Clip auf %1").arg(track)
                                       : T("Für alle %1 Clips auf %2").arg(clips.size()).arg(track);
     }
     static_cast<ElidedLabel*>(m_targetInfo)->setFullText(info);
@@ -654,10 +657,10 @@ int StudioTools::cleanVoice()
         say(m_cleanLine, T("Nichts zu säubern: wähl Tonclips aus oder leg sie auf die Spur %1")
                              .arg(trackShortName({TrackKind::Audio, m_target})),
             true);
+    else if (const QString track = trackShortName({TrackKind::Audio, m_target}); done.size() == 1)
+        say(m_cleanLine, T("Gesäubert: 1 Clip, EQ „Stimme“ auf %1 – Strg+Z nimmt es zurück").arg(track));
     else
-        say(m_cleanLine, T("Gesäubert: %1 Clips, EQ „Stimme“ auf %2 – Strg+Z nimmt es zurück")
-                             .arg(done.size())
-                             .arg(trackShortName({TrackKind::Audio, m_target})));
+        say(m_cleanLine, T("Gesäubert: %1 Clips, EQ „Stimme“ auf %2 – Strg+Z nimmt es zurück").arg(done.size()).arg(track));
     return int(done.size());
 }
 
@@ -721,17 +724,21 @@ int StudioTools::duck()
         return 0;
     }
     const int ducked = m_editor->duck(music, *ranges, params);
-    say(m_duckLine, T("%1 Clips um %2 dB abgesenkt, wenn auf %3 Ton ist")
-                        .arg(ducked)
-                        .arg(number(params.amountDb, 0))
-                        .arg(names.join(", ")));
+    if (ducked == 1)
+        say(m_duckLine, T("1 Clip um %1 dB abgesenkt, wenn auf %2 Ton ist").arg(number(params.amountDb, 0), names.join(", ")));
+    else
+        say(m_duckLine, T("%1 Clips um %2 dB abgesenkt, wenn auf %3 Ton ist")
+                            .arg(ducked)
+                            .arg(number(params.amountDb, 0))
+                            .arg(names.join(", ")));
     return ducked;
 }
 
 int StudioTools::unduck()
 {
     const int n = m_editor->unduck(targetClips());
-    say(m_duckLine, n ? T("Absenken aufgehoben (%1 Clips)").arg(n) : T("Nichts abgesenkt"), n == 0);
+    say(m_duckLine, n == 1 ? T("Absenken aufgehoben (1 Clip)") : n ? T("Absenken aufgehoben (%1 Clips)").arg(n) : T("Nichts abgesenkt"),
+        n == 0);
     return n;
 }
 
