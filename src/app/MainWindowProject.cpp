@@ -56,6 +56,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QScopedValueRollback>
 #include <QFileSystemWatcher>
 #include <QMouseEvent>
 #include <QButtonGroup>
@@ -193,6 +194,7 @@ void MainWindow::checkProjectFile()
     if (!ProjectFile::load(m_projectPath, &data, &error)) return; // half written by a foreign program: wait for the next change
     data.playhead = m_timeline->view()->playhead(); // stay where the person is
     data.views = savedViews(); // and see what they saw: a change from outside never moves the zoom (core rule)
+    const QScopedValueRollback same(m_reloadingSame, true); // the Studio lanes keep theirs too (restoreViews)
     applyLoaded(std::move(data), m_projectPath, false);
 }
 
@@ -591,8 +593,9 @@ void MainWindow::restoreViews(const ProjectData& data)
     if (!shown) // after the layout: the view's width is known then
         QTimer::singleShot(0, tv, [tv] { tv->zoomToFit(); });
     // The Studio page's lanes (their view is not in the file): another project, the whole of it in view - not the
-    // zoom of the project before (a tour's end gives the user's back, leaveTourMode)
-    if (m_studioPage) m_studioPage->tracks()->fitOnShow();
+    // zoom of the project before (a tour's end gives the user's back, leaveTourMode). The same project read again
+    // (an outside change of its file: checkProjectFile) keeps them, like the timeline's
+    if (m_studioPage && !m_reloadingSame) m_studioPage->tracks()->fitOnShow();
 }
 
 // Load a backup (like DaVinci "Project Backups"): opens as an untitled project so that it is never

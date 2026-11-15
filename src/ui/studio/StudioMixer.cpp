@@ -52,6 +52,7 @@ double meterPos(double db) { return std::clamp((db - kFloor) / -kFloor, 0.0, 1.0
 // A reading in the UI language with a real minus (as the tools drawer writes them: "Ziel −14 LUFS")
 QString number(double v, int decimals = 1)
 {
+    if (std::abs(v) < 0.5 * std::pow(10.0, -decimals)) v = 0; // never "−0,0" (a value that rounds to zero)
     return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint()).replace('-', QChar(0x2212));
 }
 

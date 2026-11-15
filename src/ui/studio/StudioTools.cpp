@@ -128,6 +128,29 @@ public:
     }
 };
 
+// Whether the window had the keys when a progress dialog came and the user stayed in schneidi meanwhile (switching to
+// another program makes the application inactive): only then does it take them back afterwards (StudioTools::keysBack)
+class KeysWatch {
+public:
+    explicit KeysWatch(QWidget* w) : m_had(w->window()->isActiveWindow())
+    {
+        m_watch = QObject::connect(qApp, &QGuiApplication::applicationStateChanged, [this](Qt::ApplicationState s) {
+            if (s != Qt::ApplicationActive) m_left = true;
+        });
+    }
+    ~KeysWatch() { stop(); }
+    KeysWatch(const KeysWatch&) = delete;
+    KeysWatch& operator=(const KeysWatch&) = delete;
+    // Before the dialog closes (its closing may leave no window active: that is what keysBack mends)
+    void stop() { QObject::disconnect(m_watch); }
+    bool giveBack() const { return m_had && !m_left; }
+
+private:
+    bool m_had;
+    bool m_left = false;
+    QMetaObject::Connection m_watch;
+};
+
 QToolButton* button(const QString& text, const QString& name, const QString& tip, bool primary = false)
 {
     auto* b = new QToolButton;
@@ -544,7 +567,7 @@ void StudioTools::setCurrentTool(int index)
                                                      : QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored));
     m_stack->setCurrentIndex(index);
     if (QAbstractButton* b = m_tabs->button(index)) b->setChecked(true);
-    fitInnerHeight();
+    fitInnerHeight(true);
 }
 
 bool StudioTools::eventFilter(QObject* watched, QEvent* e)
@@ -553,7 +576,7 @@ bool StudioTools::eventFilter(QObject* watched, QEvent* e)
     return QWidget::eventFilter(watched, e);
 }
 
-void StudioTools::fitInnerHeight()
+void StudioTools::fitInnerHeight(bool announce)
 {
     // QScrollArea sizes its widget by minimumSizeHint, which knows nothing of wrapped text (and a stack takes the
     // largest of its pages): the chosen tool as tall as its text needs at this width, the area scrolls beyond
@@ -564,11 +587,10 @@ void StudioTools::fitInnerHeight()
     l->activate();
     const int h = l->hasHeightForWidth() ? l->totalHeightForWidth(w) : l->totalMinimumSize().height();
     m_stack->setMinimumHeight(h);
-    // The drawer as tall as that if the page can give it (StudioPage): a result line that just appeared included
-    if (const int need = neededHeight(); need != m_lastNeeded) {
-        m_lastNeeded = need;
-        emit neededHeightChanged();
-    }
+    // The drawer as tall as that if the page can give it (StudioPage): another tool, a result line that just
+    // appeared. Never for a resize: a drawer the user dragged smaller rewraps (the bar takes width) and would be
+    // grown straight back - it scrolls instead
+    if (announce) emit neededHeightChanged();
 }
 
 int StudioTools::neededHeight() const
@@ -663,12 +685,13 @@ void StudioTools::syncTargets()
     m_duckByButton->setText(duckByText());
 }
 
-void StudioTools::keysBack()
+void StudioTools::keysBack(bool hadKeys)
 {
     // A closed modal dialog leaves no window active where no window manager hands the focus back (X11 without one,
-    // some setups): the next Ctrl+Z would go nowhere and the user presses it twice. The window takes the keys again.
-    // (asked always: Qt may still count the window active while the system has given the focus to none)
-    if (QWidget* top = window(); top && top->isVisible()) top->activateWindow();
+    // some setups): the next Ctrl+Z would go nowhere and the user presses it twice. The window takes the keys again -
+    // if it had them before and the user did not go to another program meanwhile (asked then even if Qt still counts
+    // the window active: the system may have given the focus to none)
+    if (QWidget* top = window(); hadKeys && top && top->isVisible()) top->activateWindow();
 }
 
 void StudioTools::say(QLabel* line, const QString& text, bool bad)
@@ -678,7 +701,7 @@ void StudioTools::say(QLabel* line, const QString& text, bool bad)
     line->setVisible(!text.isEmpty());
     // The tool grows by the line: its height anew (else the line lies under the area's bottom, out of reach), and in
     // view if the drawer must scroll
-    fitInnerHeight();
+    fitInnerHeight(true);
     if (line->isVisible() && line->isVisibleTo(m_stack->currentWidget()))
         QTimer::singleShot(0, this, [this, line] { m_scroll->ensureWidgetVisible(line, 0, 4); });
 }
@@ -735,6 +758,7 @@ int StudioTools::duck()
     Ducking::Params params = Ducking::defaults(project->format().rate.fps());
     params.amountDb = m_duckAmount->value();
     // Measure where the other tracks have sound (mixed like the export; originals, never proxies)
+    KeysWatch keys(this);
     QProgressDialog progress(T("Ton wird gemessen…"), T("Abbrechen"), 0, 1000, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(400);
@@ -745,8 +769,9 @@ int StudioTools::duck()
     };
     const auto ranges = AudioAnalysis::soundRanges(project->format(), project->renderTimeline(), under, params, step);
     const bool canceled = progress.wasCanceled();
+    keys.stop();
     progress.reset();
-    keysBack();
+    keysBack(keys.giveBack());
     if (canceled) return 0;
     QStringList names;
     for (int i : under) names << trackShortName({TrackKind::Audio, i});
@@ -787,6 +812,7 @@ bool StudioTools::loudnessToTarget()
     // Measuring the whole mix several times takes a while on a long edit (~50 s for 30 min): a dialog with progress and
     // cancel, like the ducking's. It shows at once: its event loop runs inside the command's open undo step, so the
     // window must not take input meanwhile (the AIs wait too, Cli::Live), nor may a recording start.
+    KeysWatch keys(this);
     QProgressDialog progress(T("Mix wird gemessen…"), T("Abbrechen"), 0, 1000, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
@@ -804,8 +830,9 @@ bool StudioTools::loudnessToTarget()
         });
         reply = m_run("edit", {{"project", "@app"}, {"ops", QJsonArray{op}}}, T("Lautheit auf Ziel"));
     }
+    keys.stop();
     progress.reset();
-    keysBack();
+    keysBack(keys.giveBack());
     m_record->setEnabled(recordable);
     syncRecorder();
     if (!reply.value("ok").toBool()) {

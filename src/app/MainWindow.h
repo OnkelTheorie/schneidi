@@ -749,10 +749,12 @@ private:
         std::shared_ptr<const Editor::Clipboards> clipboards; // the user's copied clips and grade
         QVector<SavedView> views; // the timelines' zoom and scroll, set again once the layout is back
         std::optional<QPointF> studioView; // the Studio lanes' zoom (x) and left frame (y), if the page was built
+        bool studioFitPending = false;     // the lanes were still to be fitted (a project opened while hidden)
         bool studioSized = false;          // its sizes were set (m_studioSized) and the viewer's height there
         QList<int> studioSideSizes;
     } m_tourSaved;
     bool m_tourSwap = false; // the user's project and the practice project trade places: no "another project" effects
+    bool m_reloadingSame = false; // checkProjectFile reads the open project's file again: not a new view (core rule)
     void closePopups(); // open context menus closed (before the project under them changes)
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;
