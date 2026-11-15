@@ -27,7 +27,8 @@ QSize FlowLayout::minimumSize() const
     for (const QLayoutItem* item : m_items)
         if (!item->isEmpty()) s = s.expandedTo(item->minimumSize().expandedTo(item->sizeHint()));
     const QMargins m = contentsMargins();
-    return s + QSize(m.left() + m.right(), m.top() + m.bottom());
+    s += QSize(m.left() + m.right(), m.top() + m.bottom());
+    return QSize(s.width(), std::max(s.height(), m_rowsHeight));
 }
 
 QSize FlowLayout::sizeHint() const
@@ -46,7 +47,11 @@ QSize FlowLayout::sizeHint() const
 void FlowLayout::setGeometry(const QRect& rect)
 {
     QLayout::setGeometry(rect);
-    arrange(rect, true);
+    const int h = arrange(rect, true);
+    if (h != m_rowsHeight) { // more or fewer rows at this width: the minimum height changes, the parents lay out anew
+        m_rowsHeight = h;
+        invalidate();
+    }
 }
 
 int FlowLayout::arrange(const QRect& rect, bool apply) const

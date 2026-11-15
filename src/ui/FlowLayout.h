@@ -2,7 +2,8 @@
 #pragma once
 // Items side by side, wrapping into another row when the width runs out (a tool bar that must fit any language and
 // font size without widening its window). Its minimum width is the widest item; the height follows the width
-// (heightForWidth). Items keep their size hint; put widgets that belong together into one widget (a group).
+// (heightForWidth), and its minimum height is the height of the rows at the width it has (a splitter or a low window
+// that ignores heightForWidth never cuts off a wrapped row). Items keep their size hint; put widgets that belong together into one widget (a group).
 
 #include <QLayout>
 #include <QVector>
@@ -27,4 +28,5 @@ private:
     int arrange(const QRect& rect, bool apply) const; // the height used
     QVector<QLayoutItem*> m_items;
     int m_h, m_v;
+    int m_rowsHeight = 0; // height of the rows at the last setGeometry width (0 = not laid out yet: one row)
 };

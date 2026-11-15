@@ -1099,6 +1099,20 @@ void testLayout(Engine& engine, const QString& audioFile)
                                                       .arg(page->tracks()->laneHeight()));
                 if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-%2-%3-tools.png").arg(dumpDir, lang, large ? "large" : "normal"));
                 Check::report(w.width() == 1024, "window not wider with the tools", __FILE__, __LINE__, where);
+                // The tool bar's rows (wrapped in a narrow column) whole, also with the tools drawer dragged as tall as
+                // the splitter lets it (the lanes at their least)
+                if (QWidget* bar = page->left()->widget(0)->findChild<QWidget*>("PanelTitle", Qt::FindDirectChildrenOnly);
+                    CHECK(bar)) {
+                    const QList<int> before = page->left()->sizes();
+                    page->left()->setSizes({1, before.value(0) + before.value(1)});
+                    settle(3);
+                    Check::report(bar->height() >= bar->heightForWidth(bar->width()) && page->tracks()->height() > 0,
+                                  "tool bar rows whole", __FILE__, __LINE__,
+                                  QString("%1: bar %2 < %3, lanes %4").arg(where).arg(bar->height())
+                                      .arg(bar->heightForWidth(bar->width())).arg(page->tracks()->height()));
+                    page->left()->setSizes(before);
+                    settle(2);
+                }
                 page->setToolsOpen(false);
             }
         }
