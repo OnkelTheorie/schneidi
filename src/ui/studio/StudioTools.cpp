@@ -137,13 +137,12 @@ QToolButton* button(const QString& text, const QString& name, const QString& tip
     b->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     b->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 3px 10px; border: none; }"
                              "QToolButton:hover { background: %3; }"
-                             "QToolButton:checked { background: %4; color: %5; }"
-                             "QToolButton:disabled { color: %6; }")
-                         .arg((primary ? Theme::primary : Theme::control).name(),
-                              (primary ? Theme::onPrimary : Theme::text).name(),
-                              (primary ? Theme::primary.lighter(115) : Theme::controlLight).name(),
-                              Theme::recording.name(), Theme::readableOn(Theme::recording).name(),
-                              Theme::textFaint.name()));
+                             "QToolButton:checked { background: %4; color: %5; }")
+                             .arg((primary ? Theme::primary : Theme::control).name(),
+                                  (primary ? Theme::onPrimary : Theme::text).name(),
+                                  (primary ? Theme::primary.lighter(115) : Theme::controlLight).name(),
+                                  Theme::recording.name(), Theme::readableOn(Theme::recording).name()) +
+                         Theme::disabledToolButtonStyle());
     return b;
 }
 

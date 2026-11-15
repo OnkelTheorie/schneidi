@@ -69,7 +69,8 @@ QToolButton* smallButton(const QString& text, const QColor& on, const QString& t
     b->setMinimumHeight(20); // the width from its text (an explicit minimum width would let the layout cut it)
     b->setStyleSheet(QString("QToolButton { background: %1; color: %2; font-weight: 600; padding: 0 3px; border: none; }"
                              "QToolButton:checked { background: %3; color: %4; }")
-                         .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()));
+                             .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()) +
+                         Theme::disabledToolButtonStyle());
     return b;
 }
 

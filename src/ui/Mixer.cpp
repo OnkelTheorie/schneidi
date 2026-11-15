@@ -460,7 +460,8 @@ public:
             b->setFixedSize(26, 18);
             b->setStyleSheet(QString("QToolButton { background: %3; color: %1; font-weight: 600; padding: 0; }"
                                      "QToolButton:checked { background: %2; color: %4; }")
-                                 .arg(Theme::text.name(), on.name(), Theme::control.name(), Theme::readableOn(on).name()));
+                                     .arg(Theme::text.name(), on.name(), Theme::control.name(), Theme::readableOn(on).name()) +
+                                 Theme::disabledToolButtonStyle());
             ms->addWidget(b);
             return b;
         };
@@ -814,8 +815,9 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
                            "Spur mit „R“ (Esc oder Leertaste beendet)"));
     m_record->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 6px; }"
                                     "QToolButton:checked { background: %3; color: %4; }")
-                                .arg(Theme::control.name(), Theme::text.name(), Theme::recording.name(),
-                                     Theme::readableOn(Theme::recording).name()));
+                                    .arg(Theme::control.name(), Theme::text.name(), Theme::recording.name(),
+                                         Theme::readableOn(Theme::recording).name()) +
+                                Theme::disabledToolButtonStyle());
     m_record->setEnabled(false); // until a recorder is set
     // Voice cleaning for the whole voice track in one click: the armed track, else the target audio track
     m_cleanVoice = new CompactButton; // a narrow mixer: the text ends in "…"

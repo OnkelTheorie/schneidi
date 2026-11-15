@@ -93,5 +93,8 @@ QColor readableOn(const QColor& background);             // black or white
 QColor selectionFrom(const QColor& primary);             // border of selected clips for the primary color
 QColor alpha(const QColor& c, int a);
 QString primaryButtonStyle(); // stylesheet for the big main button (e.g. "Rendern")
+// Rules for a QToolButton's own stylesheet (append them): disabled looks disabled, also when it is checked (the
+// checked colour would say "on" while a click does nothing)
+QString disabledToolButtonStyle();
 
 } // namespace Theme

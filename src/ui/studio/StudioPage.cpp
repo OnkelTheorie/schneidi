@@ -80,7 +80,8 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
         b->setToolTip(tip);
         b->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 8px; border: none; }"
                                  "QToolButton:checked { background: %3; color: %4; }")
-                             .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(), Theme::onPrimary.name()));
+                                 .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(), Theme::onPrimary.name()) +
+                         Theme::disabledToolButtonStyle());
         barLay->addWidget(b);
         return b;
     };
@@ -169,11 +170,19 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     const bool clipTarget = QSettings().value("studio/penTarget").toString() == QLatin1String("clip");
     (clipTarget ? penClip : penTrack)->setChecked(true);
     m_tracks->setPenTarget(clipTarget ? StudioTracks::PenTarget::Clip : StudioTracks::PenTarget::Track);
-    autoVolume->setEnabled(!clipTarget);
-    autoPan->setEnabled(!clipTarget);
-    connect(penClip, &QToolButton::toggled, this, [this, autoVolume, autoPan](bool on) {
-        autoVolume->setEnabled(!on); // clip keyframes are volume only
-        autoPan->setEnabled(!on);
+    // Level / pan pick a curve of the track's automation: with the pen on the clips (their keyframes are volume
+    // only) they are off, look it (the style's disabled rule) and their tooltip says why
+    const QString volumeTip = autoVolume->toolTip(), panTip = autoPan->toolTip();
+    const auto curvesFor = [autoVolume, autoPan, volumeTip, panTip](bool clip) {
+        const QString why = T("Nur im Modus „Spur“: „Clip“ zeichnet die Lautstärke-Keyframes der Clips");
+        autoVolume->setEnabled(!clip);
+        autoPan->setEnabled(!clip);
+        autoVolume->setToolTip(clip ? why : volumeTip);
+        autoPan->setToolTip(clip ? why : panTip);
+    };
+    curvesFor(clipTarget);
+    connect(penClip, &QToolButton::toggled, this, [this, curvesFor](bool on) {
+        curvesFor(on);
         if (!on) return;
         m_tracks->setPenTarget(StudioTracks::PenTarget::Clip);
         QSettings().setValue("studio/penTarget", "clip");
