@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollBar>
+#include <QUndoStack>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -884,6 +885,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return QWidget::mousePressEvent(e);
     const QPoint pos = e->position().toPoint();
+    m_added = {};
     if (pos.y() < kRulerH && pos.x() >= kHeaderW) { // ruler: scrub
         m_drag = Drag::Scrub;
         emit seekRequested(std::max(0, int(std::lround(frameAt(pos.x())))));
@@ -921,9 +923,14 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
     if (m_tool == Tool::Points && !tl.audio[track].locked && onLine(track, pos)) {
         m_keyMerge = QString("studio-key-%1").arg(++m_keyDrags);
         m_editor->project()->closeMerge();
+        const int before = m_editor->project()->undoStack()->index();
         if (const KeyHit hit = addPointAt(track, pos); hit.valid()) {
             m_drag = Drag::Key;
             m_key = hit;
+            if (m_editor->project()->undoStack()->index() == before + 1) { // a new point (a double click may follow)
+                m_added = hit;
+                m_addedBefore = before;
+            }
             return;
         }
     }
@@ -1015,8 +1022,15 @@ void StudioTracks::mouseDoubleClickEvent(QMouseEvent* e)
     if (!hit.valid()) return;
     m_drag = Drag::None;
     m_key = {};
-    m_editor->project()->closeMerge();
+    Project* project = m_editor->project();
+    project->closeMerge();
+    // The point the press before just set (nothing else since): setting it and putting it at 0 dB = one undo step
+    const bool justAdded = m_added.valid() && hit.clipId == m_added.clipId && hit.track == m_added.track
+                           && hit.index == m_added.index && project->undoStack()->index() == m_addedBefore + 1;
+    const QString addText = project->undoStack()->undoText();
     resetPoint(hit);
+    if (justAdded) project->combineSteps(m_addedBefore, addText);
+    m_added = {};
 }
 
 bool StudioTracks::onLine(int track, const QPoint& pos) const

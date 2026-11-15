@@ -172,6 +172,8 @@ private:
     Drag m_drag = Drag::None;
     KeyHit m_key;          // the keyframe being dragged
     QString m_keyMerge;    // its drag's undo merge key
+    KeyHit m_added;        // the point the last press set (a double click on it joins that undo step)
+    int m_addedBefore = -1; // the undo index before it was set
     int m_keyDrags = 0;
     const Voiceover::LiveTake* m_take = nullptr;
     int m_takeTrack = -1;

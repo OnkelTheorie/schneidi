@@ -1542,6 +1542,31 @@ void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& mu
             mixer->refreshLoudnessSettings();
         }
     }
+
+    // (9) A double click on the level line (Points): the press sets a point, the double click puts it at 0 dB - one
+    // undo step for both
+    {
+        page->findChild<QToolButton*>("studio_tool_points")->click();
+        page->findChild<QToolButton*>("studio_pen_track")->click();
+        p->edit("fader", [](Timeline& tl) { tl.audio[0].volumeDb = -6; });
+        settle();
+        const int at = undo->index();
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const QPoint on(int(tracks->xOf(100)), body.bottom() - int(std::lround(VolumeDraw::posOf(-6) * (body.height() - 1))));
+        mouse(tracks, QEvent::MouseButtonPress, on, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, on, Qt::NoButton);
+        QMouseEvent dbl(QEvent::MouseButtonDblClick, QPointF(on), tracks->mapToGlobal(QPointF(on)), Qt::LeftButton,
+                        Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tracks, &dbl);
+        mouse(tracks, QEvent::MouseButtonRelease, on, Qt::NoButton);
+        settle();
+        CHECK_EQ(int(p->timeline().audio[0].volumeAuto.size()), 1);
+        CHECK(std::abs(Automation::levelAt(p->timeline().audio[0], 100)) < 1e-6);
+        CHECK_EQ(undo->index(), at + 1);
+        undo->undo();
+        CHECK(p->timeline().audio[0].volumeAuto.isEmpty());
+        undo->undo();
+    }
 }
 
 } // namespace
