@@ -351,6 +351,7 @@ private:
         bool afterB; // a P picture after a run of B pictures
         bool lookahead;
         double cost;
+        int bin; // two-pass: a B picture's cost class (-1: none)
         int qp;
         double bits;
     };
@@ -451,7 +452,7 @@ private:
     int rcFramesSeen_ = 0;
     // First-pass rate control: the pictures' need (bits per k, see tpNeed) by class of picture and
     // QP of the clip's P pictures, summed over the pictures not coded yet / over all of them.
-    // Classes: 0 I, 1 B, then the P pictures by kind and cost class (see below).
+    // Classes: 0 I, 1 B (all in one), then the P pictures by kind and cost class (see below), then the B pictures by cost class.
     static constexpr int kTpQMin = -12, kTpQSteps = 2 * 76 + 1; // QP -12 .. 64 in half steps
     std::vector<double> tpRemTab_, tpAllTab_;                   // [class * kTpQSteps + step]
     std::vector<float> tpQOff_;                                 // per picture: its QP against the P QP (type, run, qcomp)
@@ -469,8 +470,8 @@ private:
     // picture several pictures after its reference needs more bits per cost than that (and with the
     // macroblock tree it carries the run's quality), and how much more depends on the material, so
     // where B pictures are placed in parts of a clip the two must not share one k.
-    double rcKBin_[2][kRcBins] = {}, rcCostBin_[2][kRcBins] = {};
-    static constexpr int kTpClasses = 2 + 2 * kRcBins;
+    double rcKBin_[3][kRcBins] = {}, rcCostBin_[3][kRcBins] = {}; // [2]: the B pictures (two-pass)
+    static constexpr int kTpClasses = 2 + 3 * kRcBins;
     double rcKSumPb_ = 0, rcCostSumPb_ = 0; // all P pictures after B runs coded so far
     std::vector<uint8_t> tpAfterB_;         // per picture of the plan: a P picture after a run of B pictures
     // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass

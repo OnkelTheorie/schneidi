@@ -1444,6 +1444,10 @@ static const bool gTpBin = !std::getenv("H264_TPBIN") || std::atoi(std::getenv("
 // Two-pass: P pictures after a run of B pictures are their own kind in the bit model; until one is
 // coded their k is this factor times the other P pictures'. 0 = one kind (as before 15.11.2026).
 static const double gTpAfterB = std::getenv("H264_TPAFTERB") ? std::atof(std::getenv("H264_TPAFTERB")) : 1.6;
+// Two-pass: B pictures in cost classes like the P pictures (H264_TPBINB=0: one k for all B pictures, as before
+// 16.11.2026). The B pictures of a moving stretch cost several times the bits per cost of those between
+// standing pictures; with one k the plan misjudged a clip that has both.
+static const bool gTpBinB = !std::getenv("H264_TPBINB") || std::atoi(std::getenv("H264_TPBINB")) != 0;
 // How far (in QP) the two-pass QP may leave the QP that fits the whole clip's budget with the model
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
@@ -1522,11 +1526,11 @@ double Encoder::tpBits(const std::vector<double>& tab, double qp, double kI, dou
         return row[k0] + (row[k0 + 1] - row[k0]) * t;
     };
     double bits = kI * at(0) + kB * at(1);
-    for (int kind = 0; kind < 2; ++kind)
+    for (int kind = 0; kind < 3; ++kind)
         for (int b = 0; b < kRcBins; ++b) {
             const double need = at(2 + kind * kRcBins + b);
             if (need > 0)
-                bits += (gTpBin ? kPOfBin(kind, b, kP) : kP) * need;
+                bits += (kind == 2 ? kPOfBin(kind, b, kB) : gTpBin ? kPOfBin(kind, b, kP) : kP) * need;
         }
     return bits;
 }
@@ -1558,7 +1562,7 @@ double Encoder::kPOfBin(int kind, int bin, double kP) const
     // P pictures after B runs: their own k once some are coded, a guess from the others before.
     if (kind == 1)
         kP = rcCostSumPb_ > 0 ? rcKSumPb_ / rcCostSumPb_ : kP * gTpAfterB;
-    if (!gTpBin)
+    if (kind == 2 ? !gTpBinB : !gTpBin)
         return kP;
     const double prior = 4.0 * (mbW_ * mbH_) * std::exp2(bin * 0.5); // about four pictures of this class
     double num = kP * prior, den = prior;
@@ -2270,6 +2274,9 @@ void Encoder::applyRc(int upTo)
                     const int b = rcBin(r.cost);
                     rcKBin_[pb][b] += r.bits * std::exp2(r.qp / 6.0);
                     rcCostBin_[pb][b] += r.cost;
+                } else if (r.type == 2 && r.bin >= 0) {
+                    rcKBin_[2][r.bin] += r.bits * std::exp2(r.qp / 6.0);
+                    rcCostBin_[2][r.bin] += r.cost;
                 }
             }
         } else if (r.type != 0) {
@@ -2302,7 +2309,7 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     lastDisplayIndex_ = fc.displayIndex_;
     lastType_ = "IPB"[fc.rcType_];
     if (cfg_.bitrateKbps > 0)
-        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcAfterB_, fc.rcLookahead_, fc.rcCost_, fc.outQp_, double(out.size()) * 8.0});
+        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcAfterB_, fc.rcLookahead_, fc.rcCost_, fc.rcBin_, fc.outQp_, double(out.size()) * 8.0});
     if (gTiming) {
         for (int i = 4; i < 8; ++i)
             gPhaseMs[i] += clock.ms[i];
@@ -3303,15 +3310,22 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     tpOff_[i] = float(std::clamp(cfg_.qcomp * 6.0 * (local - mean), -gQcMax, gQcMax));
                 }
             }
-            // Experiment (H264_STARTBOOST = QP, H264_STARTSEC = seconds, default off): a finer QP for the
-            // clip's first pictures, fading out; the plan pays for it over the rest.
+            // Experiment knobs for the clip's start: H264_STARTBOOST = QP finer, held for H264_STARTSEC seconds and
+            // faded out over H264_STARTFADE more; H264_STARTQC = 1: the complexity compression's coarser QP
+            // (positive offsets) fades in over the same time instead.
             static const double startBoost = std::getenv("H264_STARTBOOST") ? std::atof(std::getenv("H264_STARTBOOST")) : 0.0;
-            static const double startSec = std::getenv("H264_STARTSEC") ? std::atof(std::getenv("H264_STARTSEC")) : 1.5;
-            if (startBoost > 0 && st.size() > 0) {
+            static const double startSec = std::getenv("H264_STARTSEC") ? std::atof(std::getenv("H264_STARTSEC")) : 1.0;
+            static const double startFade = std::getenv("H264_STARTFADE") ? std::atof(std::getenv("H264_STARTFADE")) : 1.0;
+            static const bool startQc = std::getenv("H264_STARTQC") && std::atoi(std::getenv("H264_STARTQC")) != 0;
+            if ((startBoost > 0 || startQc) && st.size() > 0) {
                 tpOff_.resize(st.size(), 0.0f);
-                const double len = std::max(1.0, startSec * cfg_.fps);
-                for (size_t i = 0; i < st.size() && double(i) < len; ++i)
-                    tpOff_[i] -= float(startBoost * (1.0 - double(i) / len));
+                const double hold = startSec * cfg_.fps, fade = std::max(1.0, startFade * cfg_.fps);
+                for (size_t i = 0; i < st.size() && double(i) < hold + fade; ++i) {
+                    const double w = std::clamp(1.0 - (double(i) - hold) / fade, 0.0, 1.0); // 1 while held, 0 after the fade
+                    if (startQc && tpOff_[i] > 0)
+                        tpOff_[i] *= float(1.0 - w);
+                    tpOff_[i] -= float(startBoost * w);
+                }
             }
             // Each picture's class and its QP against the P QP: I pictures 3 below, B pictures by their
             // run's length (planQueue), all by the complexity compression.
@@ -3331,7 +3345,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 const int bQpRun = count <= kPyramidMaxRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
                 const size_t mid = usePyramid() && count >= 3 && count <= kPyramidMaxRun ? i + size_t(count / 2) : st.size();
                 for (size_t k = i; k < e; ++k) {
-                    tpClass_[k] = 1;
+                    tpClass_[k] = gTpBinB ? uint8_t(2 + 2 * kRcBins + rcBin(st.interSum[k])) : uint8_t(1);
                     tpQOff_[k] = float(k == mid ? (kBRefQpEnv >= 0 ? kBRefQpEnv : (bQpRun + 1) / 2) : bQpRun);
                 }
                 i = e;
@@ -3533,6 +3547,10 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.rcAfterB_ = type == 1 && bMode && frame.refDist > 1 && cfg_.firstPass && size_t(frame.index) < cfg_.firstPass->size();
     fc.rcLookahead_ = lookahead;
     fc.rcCost_ = costUsed;
+    // A B picture's cost class in the two-pass bit model: the one it was planned in.
+    fc.rcBin_ = type == 2 && cfg_.firstPass && size_t(frame.index) < tpClass_.size() && tpClass_[size_t(frame.index)] >= 2 + 2 * kRcBins
+                    ? tpClass_[size_t(frame.index)] - (2 + 2 * kRcBins)
+                    : -1;
 
     clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
     fc.planMacroblockQp();

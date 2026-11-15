@@ -161,6 +161,7 @@ public:
     int rcType_ = 0; // 0 I, 1 P, 2 B
     bool outSceneCut_ = false, rcLookahead_ = false, rcAfterB_ = false;
     double rcCost_ = 0;
+    int rcBin_ = -1;
     bool idr_ = false;
     int framesSinceIdr_ = 0, idrCount_ = 0;
     std::vector<int> sliceTop_;
