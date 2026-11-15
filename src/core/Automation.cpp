@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Automation.h"
 
-#include "core/VolumeDraw.h"
 
 #include <algorithm>
 #include <cmath>
@@ -203,21 +202,64 @@ void record(Touch& touch, int frame, double heard)
 {
     if (frame < 0 || !std::isfinite(heard)) return;
     if (!touch.heard.isEmpty()) {
-        if (frame < touch.heard.last().first) return; // a jump back: the recording keeps going forward only
-        if (frame == touch.heard.last().first) {
+        const auto [lastFrame, lastHeard] = touch.heard.last();
+        if (frame < lastFrame) return; // a jump back: the recording keeps going forward only
+        if (frame == lastFrame) {
             touch.heard.last().second = heard;
             return;
         }
+        // The fader / knob only reports changes: frames without a report heard the last value (held still), so the
+        // curve keeps it up to the frame before instead of ramping to the new value
+        if (frame - lastFrame > 1) touch.heard << qMakePair(frame - 1, lastHeard);
     } else {
         touch.start = frame;
     }
     touch.heard << qMakePair(frame, heard);
 }
 
+namespace {
+// Ramer-Douglas-Peucker over points at positions `xs` (rising): the indices to keep so the straight lines between them
+// stay within `tolerance` of every value
+QVector<int> thinAt(const QVector<int>& xs, const QVector<double>& vs, double tolerance)
+{
+    if (xs.size() <= 2) {
+        QVector<int> all;
+        for (int i = 0; i < xs.size(); ++i) all << i;
+        return all;
+    }
+    QVector<bool> keep(xs.size(), false);
+    keep.first() = keep.last() = true;
+    QVector<std::pair<int, int>> todo{{0, int(xs.size()) - 1}};
+    while (!todo.isEmpty()) {
+        const auto [a, b] = todo.takeLast();
+        if (b - a < 2) continue;
+        int worst = -1;
+        double worstErr = tolerance;
+        for (int i = a + 1; i < b; ++i) {
+            const double line = vs[a] + (vs[b] - vs[a]) * double(xs[i] - xs[a]) / (xs[b] - xs[a]);
+            const double err = std::abs(vs[i] - line);
+            if (err > worstErr) {
+                worstErr = err;
+                worst = i;
+            }
+        }
+        if (worst < 0) continue;
+        keep[worst] = true;
+        todo.append({a, worst});
+        todo.append({worst, b});
+    }
+    QVector<int> out;
+    for (int i = 0; i < keep.size(); ++i)
+        if (keep[i]) out << i;
+    return out;
+}
+} // namespace
+
 AutoCurve thinned(const Touch& touch, double fps)
 {
     if (touch.heard.isEmpty()) return {};
-    // One value per frame (frames skipped while playing get the straight line), on top of the fader / knob
+    // One value per frame (frames between two records get the straight line; record() fills held stretches), on top
+    // of the fader / knob
     const int first = touch.heard.first().first, last = touch.heard.last().first;
     QVector<double> v(last - first + 1);
     for (int i = 0; i < touch.heard.size(); ++i) {
@@ -228,19 +270,22 @@ AutoCurve thinned(const Touch& touch, double fps)
             for (int x = f + 1; x < g; ++x) v[x - first] = (h + (k - h) * double(x - f) / (g - f)) - touch.baseValue;
         }
     }
-    const double step = touch.target == AutoTarget::Pan ? kWriteStepPan : kWriteStepDb;
-    const QVector<int> keep = VolumeDraw::thin(v, step / 2);
-    // At most kWriteKeysPerSecond keys: a key closer than that to the one before goes (the last one stays)
+    // At most kWriteKeysPerSecond keys: candidates on a grid of `gap` frames from the first one, plus the last frame
+    // (it replaces the grid frame before it when that is closer than `gap`). Thinning on the grid keeps the corners
+    // of a hold (a value held, then a new one) within one grid step instead of dropping one of them.
     const int gap = std::max(1, int(std::ceil(fps / kWriteKeysPerSecond - 1e-9)));
-    AutoCurve out;
-    for (int i : keep) {
-        const AutoPoint p{first + i, std::round(v[i] * 100) / 100};
-        if (!out.isEmpty() && p.frame - out.last().frame < gap) {
-            if (i != keep.last()) continue;
-            if (out.size() > 1) out.removeLast(); // the last value wins over the one too close before it
-        }
-        out << p;
+    QVector<int> xs;
+    for (int i = 0; i < v.size(); i += gap) xs << i;
+    const int end = int(v.size()) - 1;
+    if (xs.last() != end) {
+        if (xs.size() > 1 && end - xs.last() < gap) xs.last() = end;
+        else xs << end;
     }
+    QVector<double> vs;
+    for (int i : xs) vs << v[i];
+    const double step = touch.target == AutoTarget::Pan ? kWriteStepPan : kWriteStepDb;
+    AutoCurve out;
+    for (int k : thinAt(xs, vs, step / 2)) out << AutoPoint{first + xs[k], std::round(vs[k] * 100) / 100};
     return normalized(out, touch.target);
 }
 

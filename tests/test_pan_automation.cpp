@@ -351,6 +351,37 @@ void testWriter()
     const AutoCurve live = Automation::touchingCurve(touch, 50.0);
     CHECK(near(Automation::valueAt(live, 300), -10, 0.15) && near(Automation::valueAt(live, 90), Automation::valueAt(t.volumeAuto, 90)));
 
+    // The fader / knob only reports changes: a value held still between sparse records holds in the curve (no ramp
+    // from the held value to the next one), at 25, 50 and 60 fps, for volume and pan
+    for (const double fps : {25.0, 50.0, 60.0}) {
+        for (const AutoTarget target : {AutoTarget::Volume, AutoTarget::Pan}) {
+            Track h{TrackKind::Audio};
+            h.volumeDb = 0;
+            Automation::Touch held = Automation::beginTouch(h, target);
+            const double a = target == AutoTarget::Pan ? -40 : -10, b = target == AutoTarget::Pan ? 60 : -11;
+            const double c = target == AutoTarget::Pan ? 10 : -40;
+            Automation::record(held, 100, a); // grabbed, held still for 150 frames
+            Automation::record(held, 250, b);
+            Automation::record(held, 251, b + (c - b) / 2); // a quick move
+            Automation::record(held, 252, c);
+            Automation::record(held, 400, c - 1); // held again, then a small step
+            const AutoCurve rel = Automation::releasedCurve(held, 410, fps);
+            const AutoCurve thin = Automation::thinned(held, fps);
+            const int gap = int(std::ceil(fps / Automation::kWriteKeysPerSecond - 1e-9));
+            const QString what = QString("%1 fps %2").arg(fps).arg(target == AutoTarget::Pan ? "pan" : "volume");
+            Check::report(near(Automation::valueAt(rel, 175), a, 0.01) && near(Automation::valueAt(rel, 250 - 2 * gap), a, 0.01),
+                          "held value holds until the next move", __FILE__, __LINE__,
+                          what + QString(": %1 at 175").arg(Automation::valueAt(rel, 175)));
+            Check::report(near(Automation::valueAt(rel, 252 + 2 * gap), c, 0.01) && near(Automation::valueAt(rel, 330), c, 0.01)
+                              && near(Automation::valueAt(rel, 400), c - 1, 0.01),
+                          "second hold and step", __FILE__, __LINE__, what + QString(": %1 at 330").arg(Automation::valueAt(rel, 330)));
+            bool spaced = true;
+            for (int i = 1; i < thin.size(); ++i) spaced &= thin[i].frame - thin[i - 1].frame >= gap;
+            Check::report(spaced && thin.size() <= 10, "held recording thins to few spaced keys", __FILE__, __LINE__,
+                          what + QString(": %1 keys").arg(thin.size()));
+        }
+    }
+
     // Through the writer (what the Studio mixer calls): two touches on two tracks in one pass = one undo step
     Project p;
     Selection sel;
