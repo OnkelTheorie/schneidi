@@ -1798,7 +1798,13 @@ int relink(ProjectData* data, const QString& searchDir, const std::function<Medi
         const auto fit = [&](Timeline& tl) {
             for (Track& t : tl.audio)
                 for (Clip& c : t.clips)
-                    if (fitted.contains(c.mediaPath)) fitSourceChannels(c, data->media[media.value(c.mediaPath)]);
+                    if (fitted.contains(c.mediaPath)) {
+                        const MediaInfo& m = data->media[media.value(c.mediaPath)];
+                        // A stream the file found does not have (a camera file's second stream, found as a file with
+                        // one): its first stream, else the clip would play silence
+                        if (c.audioStream >= m.audioStreamCount()) c.audioStream = 0;
+                        fitSourceChannels(c, m);
+                    }
         };
         fit(data->timeline);
         for (Sequence& s : data->sequences) fit(s.timeline);
