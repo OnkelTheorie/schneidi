@@ -33,6 +33,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QProgressDialog>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
@@ -495,18 +496,16 @@ StudioTools::StudioTools(Editor* editor, QWidget* parent) : QWidget(parent), m_e
 void StudioTools::addTool(const QString& tab, const QString& id, QWidget* body, const QString& title)
 {
     const int index = m_stack->count();
-    auto* b = new QToolButton;
-    b->setText(tab);
+    auto* b = new QPushButton(tab); // left-aligned text (a QToolButton centres it whatever the style says)
     b->setObjectName("studio_tab_" + id);
     b->setCheckable(true);
     b->setFocusPolicy(Qt::NoFocus);
-    b->setToolButtonStyle(Qt::ToolButtonTextOnly);
     b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     if (!title.isEmpty()) b->setToolTip(title);
-    b->setStyleSheet(QString("QToolButton { background: transparent; color: %1; padding: 3px 12px 3px 10px; border: none;"
+    b->setStyleSheet(QString("QPushButton { background: transparent; color: %1; padding: 3px 12px 3px 10px; border: none;"
                              " text-align: left; border-left: 3px solid transparent; }"
-                             "QToolButton:hover { background: %2; }"
-                             "QToolButton:checked { background: %3; color: %4; border-left: 3px solid %5; }")
+                             "QPushButton:hover { background: %2; }"
+                             "QPushButton:checked { background: %3; color: %4; border-left: 3px solid %5; }")
                          .arg(Theme::textDim.name(), Theme::control.name(), Theme::panel.name(), Theme::text.name(),
                               Theme::primary.name()));
     m_tabs->addButton(b, index);

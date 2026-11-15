@@ -247,10 +247,10 @@ void StudioPage::setToolsOpen(bool open)
 
 int StudioPage::defaultSideWidth(int pageWidth) const
 {
-    // A few strips beside the master (more tracks scroll), never less than a usable viewer, at most 42 % of the page
+    // A few strips beside the master (more tracks scroll), a fifth of the page at least (the viewer), at most 42 %
     const int tracks = std::clamp(int(m_editor->project()->timeline().audio.size()), 3, 5);
     const int strips = m_mixer->preferredWidth(tracks) + 2;
-    const int want = std::max(strips, int(pageWidth * 0.24));
+    const int want = std::max(strips, int(pageWidth * 0.2));
     return std::clamp(want, std::min(300, pageWidth / 2), std::max(300, int(pageWidth * 0.42)));
 }
 

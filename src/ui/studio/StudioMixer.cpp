@@ -785,7 +785,7 @@ public:
             auto* label = new QLabel(QString::fromLatin1(rows[i].shortName)); // EBU R128 names, as on every meter
             label->setToolTip(T(rows[i].tip));
             auto* v = new QLabel(QStringLiteral("–"));
-            v->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            v->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
             v->setToolTip(T(rows[i].tip));
             if (i == 0) {
                 QFont f = v->font();

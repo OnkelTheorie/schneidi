@@ -670,7 +670,7 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
     settle();
     if (!CHECK(tools->isVisible())) return;
     // The drawer's ✕ closes it too; the tool chosen in the list stays (one click away when it opens again)
-    if (auto* tab = tools->findChild<QToolButton*>("studio_tab_sounds"); CHECK(tab)) {
+    if (auto* tab = tools->findChild<QAbstractButton*>("studio_tab_sounds"); CHECK(tab)) {
         tab->click();
         settle();
         CHECK_EQ(tools->currentTool(), 4);
@@ -695,7 +695,7 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
         if (!CHECK(b)) return;
         for (QWidget* p = b->parentWidget(); p && p != tools; p = p->parentWidget())
             if (p->objectName().startsWith("studio_card_"))
-                if (auto* tab = tools->findChild<QToolButton*>("studio_tab_" + p->objectName().mid(12))) tab->click();
+                if (auto* tab = tools->findChild<QAbstractButton*>("studio_tab_" + p->objectName().mid(12))) tab->click();
         settle();
         CHECK(b->isVisible());
         b->click();
