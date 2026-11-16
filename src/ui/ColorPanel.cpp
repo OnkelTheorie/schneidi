@@ -550,7 +550,8 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     layoutWheels(4);
 
     m_body = new QWidget;
-    auto* outer = new QHBoxLayout(m_body);
+    auto* outer = new QBoxLayout(QBoxLayout::LeftToRight, m_body); // windows below the palettes on a narrow page
+    m_outer = outer;
     outer->setContentsMargins(8, 8, 8, 8);
     outer->setSpacing(10);
     auto* wheels = new QWidget;
@@ -568,6 +569,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     auto* line = new QFrame;
     line->setFrameShape(QFrame::VLine);
     line->setFixedWidth(1);
+    m_windowsLine = line;
     line->setStyleSheet(QString("background: %1; border: none;").arg(Theme::border.name()));
     outer->addSpacing(6);
     outer->addWidget(line);
@@ -635,10 +637,33 @@ void ColorPanel::resizeEvent(QResizeEvent* e)
 void ColorPanel::fitWidth()
 {
     if (!m_wheelGrid || !m_bodyScroll) return;
-    // The width four wheels in a row need (measured while they are in one row; fixed by the font)
+    // The widths the wheels need in one row and in two (measured in that layout; until then the other one halved)
     if (m_wheelColumns == 4) m_fourWide = m_wheelGrid->minimumSize().width();
-    const int room = width() - m_windowsBox->width() - 40; // margins, line, spacing
-    layoutWheels(room >= m_fourWide ? 4 : 2);
+    if (m_wheelColumns == 2) m_twoWide = m_wheelGrid->minimumSize().width();
+    const int four = m_fourWide, two = m_twoWide ? m_twoWide : four / 2 + 6;
+    // Every palette: the widest page decides (the stack is as wide as its widest page)
+    const auto others = [this] {
+        int w = 0;
+        for (int i = 1; i < m_palettes->count(); ++i) w = std::max(w, m_palettes->widget(i)->minimumSizeHint().width());
+        return w;
+    }();
+    const int all = width() - 40, beside = all - m_windowsBox->width() - 10; // margins, line, spacing
+    // Beside the windows if the wheels fit there (4 in a row, else 2 x 2), else the windows go below
+    int columns = 4;
+    bool below = false;
+    if (beside >= std::max(four, others)) columns = 4;
+    else if (beside >= std::max(two, others)) columns = 2;
+    else {
+        below = true;
+        columns = all >= four ? 4 : 2;
+    }
+    layoutWheels(columns);
+    const auto dir = below ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+    if (m_outer->direction() != dir) {
+        m_outer->setDirection(dir);
+        m_windowsLine->setVisible(!below);
+        m_outer->setAlignment(m_windowsBox, below ? Qt::AlignLeft : Qt::Alignment());
+    }
 }
 
 void ColorPanel::setPalette(int palette, bool remember)
@@ -749,7 +774,7 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
         l->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(colors[i].name()));
         const double min = ep ? ep->min : -1, max = ep ? ep->max : 1;
         auto* f = new ScrubField(min, max, ep ? ep->step : 0.01, ep ? ep->decimals : 2);
-        f->setFixedWidth(46);
+        f->setShrinkable(true); // narrow with a large font: four of them under a wheel
         f->setValue(w.neutral);
         const AnimParam p = w.p[i];
         f->onChange = [this, p, n = T(w.name)](double v) {
@@ -774,7 +799,7 @@ QWidget* ColorPanel::buildSlider(Slider& s, const QString& label, double min, do
     l->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
     l->setAlignment(Qt::AlignCenter);
     s.field = new ScrubField(min, max, step, decimals);
-    s.field->setFixedWidth(64);
+    s.field->setShrinkable(true);
     const AnimParam p = s.p;
     s.field->onChange = [this, p, label](double v) {
         setValues({{mapped(p), v}}, label, QString("color:%1").arg(int(mapped(p))));
@@ -1542,7 +1567,7 @@ QWidget* ColorPanel::buildQualifier()
             l->setStyleSheet(dim);
             l->setAlignment(Qt::AlignCenter);
             auto* f = new ScrubField(ep ? ep->min : 0, ep ? ep->max : 100, ep ? ep->step : 0.2, ep ? ep->decimals : 1);
-            f->setFixedWidth(56);
+            f->setShrinkable(true);
             f->onChange = [this, key](double v) {
                 m_editor->setGradeValues(targets(), {{GradeQualifier::param(key), v}}, m_playhead, T("Qualifier"),
                                          QString("qualifier:%1").arg(key));

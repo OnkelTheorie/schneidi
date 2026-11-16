@@ -165,8 +165,10 @@ private:
     // Wheels' layout
     class QGridLayout* m_wheelGrid = nullptr;
     QVector<QWidget*> m_wheelBoxes, m_wheelUnders;
-    int m_wheelColumns = 0, m_fourWide = 0;
+    int m_wheelColumns = 0, m_fourWide = 0, m_twoWide = 0;
     QWidget* m_windowsBox = nullptr;
+    class QBoxLayout* m_outer = nullptr;
+    QWidget* m_windowsLine = nullptr;
     // Palettes
     int m_palette = Wheels;
     QStackedWidget* m_palettes = nullptr;

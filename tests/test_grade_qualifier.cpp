@@ -28,6 +28,8 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QStackedWidget>
 #include <QDir>
 #include <QJsonArray>
 #include <QListWidget>
@@ -498,6 +500,47 @@ void testPanel()
     CHECK_EQ(panel.layer(), 0);
 }
 
+// The page fits its width (no sideways scrolling): wheels 2 x 2 on a narrow page, button rows wrap; also with a large
+// font (the user tests with one). Widths of a 1280 px window beside the scopes and of a narrow one
+void testFit()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.addGradeQualifier({p.timeline().video[0].clips[0].id});
+    const QFont normal = QApplication::font();
+    for (const double pt : {normal.pointSizeF(), normal.pointSizeF() * 1.5}) {
+        QFont f = normal;
+        f.setPointSizeF(pt);
+        QApplication::setFont(f);
+        ColorPanel panel(&ed);
+        panel.setPlayhead(10);
+        panel.show();
+        auto* scroll = panel.findChild<QScrollArea*>();
+        if (!CHECK(scroll)) break;
+        for (const int w : {1400, 900, 760}) {
+            panel.resize(w, 320);
+            for (int pal = 0; pal <= ColorPanel::StillsPalette; ++pal) {
+                panel.setPalette(pal, false);
+                QApplication::processEvents();
+                const int need = scroll->widget()->minimumSizeHint().width();
+                if (!CHECK(need <= scroll->viewport()->width())) {
+                    std::printf("  font %.1f pt, %d px, palette %d: needs %d px of %d\n", pt, w, pal, need,
+                                scroll->viewport()->width());
+                    if (auto* st = panel.findChild<QStackedWidget*>())
+                        for (int i = 0; i < st->count(); ++i)
+                            std::printf("    page %d min %d\n", i, st->widget(i)->minimumSizeHint().width());
+                    for (QWidget* c : scroll->widget()->findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+                        std::printf("    %s min %d\n", c->metaObject()->className(), c->minimumSizeHint().width());
+                }
+            }
+        }
+    }
+    QApplication::setFont(normal);
+}
+
 // Stills: a still keeps the grade it was taken with; its grade onto other clips (one undo step); stored in the project;
 // compare = the still in the viewer overlay left of a wipe line that can be dragged
 void testStills(const QString& dir)
@@ -823,6 +866,7 @@ int main(int argc, char** argv)
     testModel(tmp.path());
     testPanel();
     testStills(tmp.path());
+    testFit();
 
     Check::initEngine();
     const QString still = tmp.filePath("figure.png");
