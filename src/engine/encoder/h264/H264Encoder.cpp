@@ -175,6 +175,19 @@ const double gBSharpEnv = std::getenv("H264_BSHARP") ? std::atof(std::getenv("H2
 const double gBSharpEst = std::getenv("H264_BSHARPEST") ? std::atof(std::getenv("H264_BSHARPEST")) : 1.0;
 const double gBSharpKeep = std::getenv("H264_BSHARPKEEP") ? std::atof(std::getenv("H264_BSHARPKEEP")) : 0.85;
 const bool gBSharpLong = std::getenv("H264_BSHARPLONG") && std::atoi(std::getenv("H264_BSHARPLONG")) != 0;
+// Texture keepers (psy-RD, bSharp) by the source macroblock's texture (the AQ's energy, log2 of 256 x variance + 1):
+// none below gFlatLo, in full from gFlatHi. A flat or smoothly shaded macroblock has no texture to keep - there
+// both only cost: psy codes quantisation noise as "detail", bSharp refuses the average of two pictures, which on
+// a gradient is exactly the picture in between. H264_FLATLO / H264_FLATHI override; H264_FLATHI=0: off (the
+// stream before 16.11.2026).
+const double gFlatLo = std::getenv("H264_FLATLO") ? std::atof(std::getenv("H264_FLATLO")) : 6.0;
+const double gFlatHi = std::getenv("H264_FLATHI") ? std::atof(std::getenv("H264_FLATHI")) : 9.0;
+inline double textureShare(float energy)
+{
+    if (!(gFlatHi > 0))
+        return 1.0;
+    return std::clamp((double(energy) - gFlatLo) / std::max(1e-6, gFlatHi - gFlatLo), 0.0, 1.0);
+}
 // B pictures: transform by estimate (see encodeMbB; EncoderConfig::modeEstimate). H264_BEST=0/1 overrides.
 const int gBEstEnv = std::getenv("H264_BEST") ? std::atoi(std::getenv("H264_BEST")) : -1;
 // The lookahead's vectors along the planned references (Encoder::takeLookaheadVectors) as start
@@ -5541,7 +5554,10 @@ void FrameCoder::psyBegin(int mbx, int mby) const
             t[size_t(q)] = std::sqrt(0.85 * std::pow(2.0, (q - 12) / 3.0));
         return t;
     }();
-    tPsy.weight = cfg_.psyRd * 0.5 * kSqrtLambda[size_t(mbQp_[size_t(mby) * mbW_ + mbx])];
+    tPsy.weight = cfg_.psyRd * 0.5 * kSqrtLambda[size_t(mbQp_[size_t(mby) * mbW_ + mbx])] *
+                  textureShare(mbEnergy_[size_t(mby) * mbW_ + mbx]);
+    if (!(tPsy.weight > 0))
+        return;
     const uint8_t* src = &srcY_[size_t(mby * 16) * padW_ + mbx * 16];
     for (int b = 0; b < 4; ++b)
         hadamardMags8x8U8(src + size_t((b >> 1) * 8) * padW_ + (b & 1) * 8, padW_, tPsy.src[b]);
@@ -7176,7 +7192,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     // magnitudes of the 8x8 blocks, hadamardMags8x8U8) is a cost of every candidate that uses it:
     // sharp * sqrt(lambda) per unit. Where the average is clearly the better prediction it still
     // wins; where it only saves the few bits of a vector, the macroblock copies from one picture.
-    const double sharp = bLongRun_ && !gBSharpLong ? 0.0 : gBSharpEnv >= 0 ? gBSharpEnv : cfg_.bSharp;
+    const double sharp = (bLongRun_ && !gBSharpLong ? 0.0 : gBSharpEnv >= 0 ? gBSharpEnv : cfg_.bSharp) *
+                         textureShare(mbEnergy_[size_t(mby) * mbW_ + mbx]);
     // Lost detail: single = mean detail of the two single predictions, both = of their average;
     // satdSingle / satdBoth: SATD (or search cost) of the better single prediction and of the
     // average - the loss counts by how little closer to the source the average is (gBSharpKeep).
@@ -8551,6 +8568,7 @@ void FrameCoder::planMacroblockQp()
     const int n = mbW_ * mbH_;
     const bool tree = treeOffset_.size() == size_t(n);
     if (cfg_.aqStrength <= 0 || cfg_.mode == IntraMode::Pcm) {
+        std::fill(mbEnergy_.begin(), mbEnergy_.end(), 99.0f); // not measured: every macroblock counts as textured
         if (!tree) {
             std::fill(mbQp_.begin(), mbQp_.end(), int8_t(cfg_.qp));
             return;
