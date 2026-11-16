@@ -115,7 +115,8 @@ public:
     void simulateEmptyReadbacks();
 
     // A pooled RGBA8 render target (premultiplied), cleared to `clear` (straight RGBA 0..1) by its first pass
-    TexturePtr target(QSize size, const float clear[4] = nullptr);
+    // half: RGBA16F (a frame for a 10-bit output: more than 8 bits survive to readYuv); nullptr = not supported
+    TexturePtr target(QSize size, const float clear[4] = nullptr, bool half = false);
     // Upload RGBA (8 bit, rows tightly packed). Not copied: `rgba` must stay valid until finish() (Service::run returns
     // after it, so the caller's buffers of a job qualify)
     // mips: also build mip levels (drawn at 2:1 or smaller; for a picture uploaded once and drawn many times, e.g. a

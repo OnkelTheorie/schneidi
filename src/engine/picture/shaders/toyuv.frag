@@ -4,6 +4,9 @@
 // with several code values packed into one texel, so a readback returns the plane bytes directly:
 // target.w (mode) 0 = Y (texel x covers pixels 4x..4x+3), 1 = NV12 CbCr (2 pairs: pixels 4x..4x+3, rows 2y, 2y+1),
 // 2 = Cb plane of 4:2:0 (4 values: pixels 8x..8x+7, rows 2y, 2y+1), 3 = Cr plane of 4:2:0.
+// 10 bit (16-bit little-endian words, two bytes per value; lut.x = code value scale 1020 as OutputColor, lut.y = 64 for
+// P010's high bits else 1): 4 = Y (2 pixels per texel), 5 = P010 CbCr (one pair per texel: pixels 2x, 2x+1),
+// 6 = Cb plane of 4:2:0 (2 values: pixels 4x..4x+3), 7 = Cr plane.
 // yuv columns 0..2: Y, Cb, Cr = dot(column.rgb, rgb) + column.a (all in 0..1 code value / 255)
 layout(location = 0) in vec2 dpos;
 layout(location = 0) out vec4 fragColor;
@@ -34,6 +37,14 @@ vec3 avg2x2(int x, int y) { return (rgbAt(x, y) + rgbAt(x + 1, y) + rgbAt(x, y +
 
 float code(int k, vec3 c) { return clamp(dot(yuv[k].rgb, c) + yuv[k].a, 0.0, 1.0); }
 
+// A 10-bit code value as its 16-bit word's bytes (low, high), each / 255
+vec2 word(float v)
+{
+    float w = floor(v * lut.x + 0.5) * lut.y;
+    float hi = floor(w / 256.0);
+    return vec2(w - hi * 256.0, hi) / 255.0;
+}
+
 void main()
 {
     int mode = int(target.w + 0.5);
@@ -44,9 +55,17 @@ void main()
     } else if (mode == 1) {
         vec3 c0 = avg2x2(4 * t.x, 2 * t.y), c1 = avg2x2(4 * t.x + 2, 2 * t.y);
         o = vec4(code(1, c0), code(2, c0), code(1, c1), code(2, c1));
-    } else {
+    } else if (mode <= 3) {
         int which = mode == 2 ? 1 : 2;
         for (int k = 0; k < 4; ++k) o[k] = code(which, avg2x2(8 * t.x + 2 * k, 2 * t.y));
+    } else if (mode == 4) {
+        o = vec4(word(code(0, rgbAt(2 * t.x, t.y))), word(code(0, rgbAt(2 * t.x + 1, t.y))));
+    } else if (mode == 5) {
+        vec3 c = avg2x2(2 * t.x, 2 * t.y);
+        o = vec4(word(code(1, c)), word(code(2, c)));
+    } else {
+        int which = mode == 6 ? 1 : 2;
+        o = vec4(word(code(which, avg2x2(4 * t.x, 2 * t.y))), word(code(which, avg2x2(4 * t.x + 2, 2 * t.y))));
     }
     fragColor = o;
 }

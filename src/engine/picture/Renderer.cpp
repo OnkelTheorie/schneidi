@@ -1998,7 +1998,7 @@ struct Renderer::Impl {
     // plain FFmpeg transcode). false = render it normally.
     bool passThrough(int f, const Ctx& ctx, const OutputColor::Target& t)
     {
-        if (options.mode != Mode::Export || options.transparent || t.bits != 8
+        if (options.mode != Mode::Export || options.transparent || (t.bits != 8 && t.bits != 10)
             || (t.layout != OutputColor::Layout::Yuv420 && t.layout != OutputColor::Layout::Nv12))
             return false;
         const Timeline& tl = *ctx.root;
@@ -2041,7 +2041,19 @@ struct Renderer::Impl {
         const bool full = format == AV_PIX_FMT_YUVJ420P || info.fullRange;
         if (fr->width != ctx.W || fr->height != ctx.H || full != t.fullRange) return false;
         const int cw = (ctx.W + 1) / 2, ch = (ctx.H + 1) / 2;
-        if (t.layout == OutputColor::Layout::Yuv420 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
+        // 10 bit (H.265/AV1 10 bit) from a 10-bit source: its words as they are (yuv420p10le, P010), the one place the
+        // CPU keeps 10 bits; other frames of a 10-bit export come from the 8-bit canvas
+        const bool ten = t.bits == 10;
+        if (ten && t.layout == OutputColor::Layout::Yuv420 && !t.msb && format == AV_PIX_FMT_YUV420P10LE) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W * 2, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw * 2, ch);
+            av_image_copy_plane(t.planes[2], t.strides[2], fr->data[2], fr->linesize[2], cw * 2, ch);
+        } else if (ten && t.layout == OutputColor::Layout::Nv12 && t.msb && format == AV_PIX_FMT_P010LE) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W * 2, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw * 4, ch);
+        } else if (ten) {
+            return false;
+        } else if (t.layout == OutputColor::Layout::Yuv420 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
             av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W, ctx.H);
             av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw, ch);
             av_image_copy_plane(t.planes[2], t.strides[2], fr->data[2], fr->linesize[2], cw, ch);
@@ -3094,21 +3106,25 @@ struct Renderer::Impl {
         bool ok = false;
         GpuKeep keep;
         const OutputColor::Target* yuv =
-            hints.yuv && hints.yuv->bits == 8
+            hints.yuv && (hints.yuv->bits == 8 || hints.yuv->bits == 10)
                     && (hints.yuv->layout == OutputColor::Layout::Yuv420 || hints.yuv->layout == OutputColor::Layout::Nv12)
                 ? hints.yuv
                 : nullptr;
+        // A 10-bit output (H.265/AV1 10 bit): the frame in RGBA16F, so a 10-bit source keeps its precision up to the
+        // planes (layers drawn straight onto it; groups and transitions still pass an 8-bit target). Only through
+        // readYuv: when that fails, the CPU path makes the frame
+        const bool ten = yuv && yuv->bits == 10;
         if (!yuv) f.m_buffer = pool().take(size_t(ctx.W) * ctx.H * 4);
         uint8_t* rgba = f.m_buffer ? f.m_buffer->data.data() : nullptr;
         const bool ran = gpu.run([&](Gpu::Context& g) {
             const float black[4] = {0, 0, 0, 1};
-            Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
+            Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black, ten);
             if (!canvas) return;
             runOps(g, *canvas, ops, size, keep);
             if (keep.compRefused || keep.refused) return;
             if (yuv) yuvDone = g.readYuv(*canvas, *yuv);
             if (!yuvDone) {
-                if (!rgba) return; // the card could not write the planes after all: CPU path
+                if (!rgba || ten) return; // the card could not write the planes after all: CPU path
                 g.readRgba(*canvas, rgba);
             }
             keep.textures.push_back(std::move(canvas));

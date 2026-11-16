@@ -33,6 +33,7 @@ extern "C" {
 #include <ctime>
 #include <cstring>
 #include <random>
+#include <set>
 #include <vector>
 
 using namespace Picture;
@@ -586,6 +587,90 @@ int main(int argc, char** argv)
             if (!nv) {
                 const Diff dv = compare(cv.data(), gv.data(), cv.size(), 1);
                 CHECK(dv.max <= 1);
+            }
+        }
+    }
+
+    // 7b. 10-bit output (0.24: H.265/AV1 10 bit): planes of 16-bit words. (a) The same RGBA picture as in 7 written as
+    // yuv420p10le and P010, against OutputColor::fromRgba (10 bit = 8-bit code values times 4). (b) A smooth 10-bit grey
+    // ramp drawn onto an RGBA16F frame: the planes keep more than 256 steps (an 8-bit frame would round them away)
+    {
+        const int w = 320, h = 180;
+        const std::vector<uint8_t> src = testRgba(w, h, false, 5);
+        for (const bool nv : {false, true}) {
+            std::vector<uint16_t> cy(size_t(w) * h), cu(size_t(w / 2) * (h / 2) * (nv ? 2 : 1)), cv(size_t(w / 2) * (h / 2));
+            std::vector<uint16_t> gy(cy.size()), gu(cu.size()), gv(cv.size());
+            OutputColor::Target ct;
+            ct.layout = nv ? OutputColor::Layout::Nv12 : OutputColor::Layout::Yuv420;
+            ct.bits = 10;
+            ct.msb = nv;
+            OutputColor::Target gt = ct;
+            ct.planes[0] = reinterpret_cast<uint8_t*>(cy.data()), ct.planes[1] = reinterpret_cast<uint8_t*>(cu.data());
+            ct.planes[2] = reinterpret_cast<uint8_t*>(cv.data());
+            gt.planes[0] = reinterpret_cast<uint8_t*>(gy.data()), gt.planes[1] = reinterpret_cast<uint8_t*>(gu.data());
+            gt.planes[2] = reinterpret_cast<uint8_t*>(gv.data());
+            ct.strides[0] = gt.strides[0] = w * 2;
+            ct.strides[1] = gt.strides[1] = nv ? w * 2 : w;
+            ct.strides[2] = gt.strides[2] = w;
+            OutputColor::fromRgba(src.data(), w, h, w * 4, ct);
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, false);
+            Gpu::TexturePtr canvas = gpu->target(QSize(w, h), nullptr, true);
+            CHECK(canvas != nullptr);
+            if (canvas) {
+                gpu->draw(*canvas, {t.get(), {}, 1.0, nullptr, {}});
+                CHECK(gpu->readYuv(*canvas, gt));
+            }
+            gpu->finish();
+            const int shift = nv ? 6 : 0;
+            int my = 0, mc = 0;
+            for (size_t i = 0; i < cy.size(); ++i) my = std::max(my, std::abs((cy[i] >> shift) - (gy[i] >> shift)));
+            for (size_t i = 0; i < cu.size(); ++i) mc = std::max(mc, std::abs((cu[i] >> shift) - (gu[i] >> shift)));
+            if (!nv)
+                for (size_t i = 0; i < cv.size(); ++i) mc = std::max(mc, std::abs(cv[i] - gv[i]));
+            std::printf("  %-34s Y max %d | C max %d (10-bit steps)\n", nv ? "to p010" : "to yuv420p10", my, mc);
+            CHECK(my <= 4);
+            CHECK(mc <= 4);
+            if (nv) CHECK((gy[w * 10 + 10] & 63) == 0); // P010: the value in the top bits
+        }
+        // (b) ramp: 10-bit luma 64..940 across 1024 pixels, neutral chroma
+        const int rw = 1024, rh = 8;
+        auto pic = testYuv(rw, rh, AV_PIX_FMT_YUV420P10LE);
+        for (int y = 0; y < rh; ++y) {
+            auto* row = reinterpret_cast<uint16_t*>(pic->frame->data[0] + size_t(y) * pic->frame->linesize[0]);
+            for (int x = 0; x < rw; ++x) row[x] = uint16_t(64 + x * 876 / (rw - 1));
+        }
+        for (int p = 1; p < 3; ++p)
+            for (int y = 0; y < rh / 2; ++y) {
+                auto* row = reinterpret_cast<uint16_t*>(pic->frame->data[p] + size_t(y) * pic->frame->linesize[p]);
+                for (int x = 0; x < rw / 2; ++x) row[x] = 512;
+            }
+        const Video::Info info = infoFor(*pic, 709, false);
+        for (const bool half : {false, true}) {
+            std::vector<uint16_t> y(size_t(rw) * rh), u(size_t(rw / 2) * (rh / 2)), v(u.size());
+            OutputColor::Target ot;
+            ot.layout = OutputColor::Layout::Yuv420;
+            ot.bits = 10;
+            ot.planes[0] = reinterpret_cast<uint8_t*>(y.data()), ot.planes[1] = reinterpret_cast<uint8_t*>(u.data());
+            ot.planes[2] = reinterpret_cast<uint8_t*>(v.data());
+            ot.strides[0] = rw * 2, ot.strides[1] = ot.strides[2] = rw;
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->uploadYuv(pic->frame, info);
+            Gpu::TexturePtr canvas = gpu->target(QSize(rw, rh), nullptr, half);
+            if (canvas && t) {
+                gpu->draw(*canvas, {t.get(), {}, 1.0, nullptr, {}});
+                gpu->readYuv(*canvas, ot);
+            }
+            gpu->finish();
+            std::set<int> levels(y.begin() + rw * 4, y.begin() + rw * 5);
+            int off = 0;
+            for (int x = 0; x < rw; ++x) off = std::max(off, std::abs(int(y[size_t(rw) * 4 + x]) - (64 + x * 876 / (rw - 1))));
+            std::printf("  10-bit ramp on %-19s %zu levels, max %d off\n", half ? "RGBA16F frame" : "RGBA8 frame", levels.size(), off);
+            if (half) {
+                CHECK(levels.size() > 600);
+                CHECK(off <= 3);
+            } else {
+                CHECK(levels.size() <= 260); // the 8-bit frame rounds to 256 steps
             }
         }
     }

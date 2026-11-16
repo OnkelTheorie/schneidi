@@ -624,10 +624,11 @@ bool Context::lost() const
     return false;
 }
 
-TexturePtr Context::target(QSize size, const float clear[4])
+TexturePtr Context::target(QSize size, const float clear[4], bool half)
 {
     if (size.isEmpty() || std::max(size.width(), size.height()) > d->info.maxTextureSize) return {};
-    TexturePtr t = d->take({0, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size); });
+    if (half && !d->rhi->isTextureFormatSupported(QRhiTexture::RGBA16F)) return {};
+    TexturePtr t = d->take({0, size.width(), size.height(), half ? 1 : 0, 0}, [&] { return d->makeTarget(size, half); });
     if (!t) return {};
     t->pendingClear = true;
     t->clearColor = clear ? QColor::fromRgbF(clear[0] * clear[3], clear[1] * clear[3], clear[2] * clear[3], clear[3])
@@ -1031,9 +1032,10 @@ void Context::readRgba(const Texture& t, uint8_t* out)
 bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
 {
     using OutputColor::Layout;
-    if (!d->recording || t.kind != Texture::Target || t.half || out.bits != 8
+    if (!d->recording || t.kind != Texture::Target || (out.bits != 8 && out.bits != 10)
         || (out.layout != Layout::Yuv420 && out.layout != Layout::Nv12))
         return false;
+    const bool ten = out.bits == 10;
     const int w = t.size.width(), h = t.size.height();
     // RGB -> Y'CbCr code values / 255 (OutputColor's coefficients, floating point)
     double kr, kb;
@@ -1050,11 +1052,24 @@ bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
     struct Plane {
         int mode, texW, texH, bytes, rows;
     };
-    std::vector<Plane> planes{{0, (w + 3) / 4, h, w, h}};
-    if (nv) planes.push_back({1, (w + 3) / 4, (h + 1) / 2, ((w + 1) / 2) * 2, (h + 1) / 2});
-    else {
-        planes.push_back({2, (w + 7) / 8, (h + 1) / 2, (w + 1) / 2, (h + 1) / 2});
-        planes.push_back({3, (w + 7) / 8, (h + 1) / 2, (w + 1) / 2, (h + 1) / 2});
+    std::vector<Plane> planes;
+    const int cw = (w + 1) / 2, ch = (h + 1) / 2;
+    if (ten) { // 16-bit words: two bytes per value (toyuv.frag modes 4-7)
+        u.lut[0] = 1020;            // as OutputColor: 8-bit code values times 4
+        u.lut[1] = out.msb ? 64 : 1; // P010: the 10 bits at the top of the word
+        planes.push_back({4, (w + 1) / 2, h, w * 2, h});
+        if (nv) planes.push_back({5, cw, ch, cw * 4, ch});
+        else {
+            planes.push_back({6, (cw + 1) / 2, ch, cw * 2, ch});
+            planes.push_back({7, (cw + 1) / 2, ch, cw * 2, ch});
+        }
+    } else {
+        planes.push_back({0, (w + 3) / 4, h, w, h});
+        if (nv) planes.push_back({1, (w + 3) / 4, ch, cw * 2, ch});
+        else {
+            planes.push_back({2, (w + 7) / 8, ch, cw, ch});
+            planes.push_back({3, (w + 7) / 8, ch, cw, ch});
+        }
     }
     for (size_t i = 0; i < planes.size(); ++i) {
         const Plane p = planes[i];
@@ -1538,7 +1553,7 @@ bool Context::finish() { return true; }
 void Context::simulateDeviceLoss() {}
 void Context::simulateEmptyReadbacks() {}
 bool Context::lost() const { return false; }
-TexturePtr Context::target(QSize, const float*) { return {}; }
+TexturePtr Context::target(QSize, const float*, bool) { return {}; }
 TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
 TexturePtr Context::uploadYuv(const AVFrame*, const Video::Info&, bool) { return {}; }
 TexturePtr Context::uploadGray(const uint8_t*, int, int) { return {}; }
