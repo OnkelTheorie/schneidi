@@ -1596,6 +1596,8 @@ const QVector<Command>& commands()
           {"width", T::Integer, "longer edge of each image in pixels, on a sheet of each tile (default 640, MCP 480)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"still", T::Integer, "for a project: a Color page still (id from `info` stills); with 'at' beside the "
+                                "timeline at those times (still left, timeline right) to compare"},
           {"clip", T::Integer, "for a project: only this clip, as its compositing graph makes it (no transform, other "
                                "clips or fades); without times its first frame"},
           {"node", T::Integer, "with clip: the picture at this node of its graph (default: the output); a mask shows "

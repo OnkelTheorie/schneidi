@@ -28,6 +28,7 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QPushButton>
+#include <QDir>
 #include <QJsonArray>
 #include <QListWidget>
 #include <QPainter>
@@ -578,6 +579,26 @@ void testStills(const QString& dir)
         }
         CHECK(canvas.pixelColor(40, 40).red() > 150);
         CHECK(canvas.pixelColor(400, 40) == QColor(Qt::black));
+        // Side by side: the still whole in the left half, the live frame in the right one
+        auto* side = panel.findChild<QToolButton*>("color_still_side");
+        if (CHECK(side)) {
+            side->click();
+            CHECK(ov->sideBySide());
+            QImage live(320, 180, QImage::Format_RGB32);
+            live.fill(QColor(20, 200, 40));
+            panel.setFrame(live);
+            QImage both(640, 360, QImage::Format_RGB32);
+            both.fill(Qt::white);
+            {
+                QPainter painter(&both);
+                ov->paint(painter, frame);
+            }
+            CHECK(both.pixelColor(160, 180).red() > 150);  // still (orange) in the left half
+            CHECK(both.pixelColor(480, 180).green() > 150); // live (green) in the right half
+            CHECK(both.pixelColor(160, 20).red() < 40);    // letterboxed above it: the viewer's background
+            side->click();
+            CHECK(!ov->sideBySide());
+        }
         // Removing the still ends the compare; undo brings it back
         ed.removeGradeStill(sid);
         CHECK(p.stills().isEmpty());
@@ -664,6 +685,48 @@ void testCli(const QString& dir, const QString& still)
     ProjectFile::load(project, &d, nullptr);
     CHECK(GradeCurves::isIdentity(ColorGrade::at(d.timeline.video[0].clips[0], 0).curves.points[int(K::Y)], K::Y));
     CHECK(!GradeQualifier::exists(d.timeline.video[0].clips[0]));
+
+    // Stills: add (notes give the id), list in info, look at it with frames (alone and beside the timeline), apply,
+    // remove; the qualifier limited to a window
+    edit(op(R"({"op":"color","saturation":0})"));
+    const QJsonObject added = edit(op(R"({"op":"still","add":true,"at":5,"label":"gray"})"));
+    CHECK(QJsonDocument(added).toJson().contains("still 1 added"));
+    const QJsonObject info2 = run("info", {{"project", project}});
+    CHECK(info2["stills"].toArray().size() == 1 && info2["stills"].toArray()[0].toObject()["label"] == "gray");
+    const QString out = dir + "/stillframes";
+    QDir().mkpath(out);
+    const QJsonObject alone = run("frames", {{"source", project}, {"still", 1}, {"out", out}, {"width", 320}});
+    const QImage a = QImage(alone["frames"].toArray().first().toObject()["file"].toString());
+    CHECK(!a.isNull() && a.width() == 320);
+    if (!a.isNull()) CHECK(std::abs(a.pixelColor(160, 90).red() - a.pixelColor(160, 90).green()) < 12); // gray
+    edit(op(R"({"op":"color","reset":true})"));
+    const QJsonObject beside = run("frames", {{"source", project}, {"still", 1}, {"at", QJsonArray{5}}, {"out", out}, {"width", 640}});
+    const QImage b = QImage(beside["frames"].toArray().first().toObject()["file"].toString());
+    if (CHECK(!b.isNull() && b.width() > b.height() * 3)) { // two 16:9 pictures side by side
+        const QColor l = b.pixelColor(b.width() / 4, b.height() / 2), r = b.pixelColor(b.width() * 3 / 4, b.height() / 2);
+        CHECK(std::abs(l.red() - l.green()) < 12); // the still: gray figure
+        CHECK(r.red() > 200 && r.green() < 60);    // the timeline now: red figure
+    }
+    { const QString e = error("frames", {{"source", project}, {"still", 9}, {"out", out}}); if (!CHECK(e.contains("no still 9"))) std::printf("  %s\n", qPrintable(e)); }
+    edit(op(R"({"op":"still","apply":1})"));
+    ProjectFile::load(project, &d, nullptr);
+    CHECK_EQ(ColorGrade::at(d.timeline.video[0].clips[0], 0).saturation, 0.0);
+    CHECK(error("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "still"}, {"apply", 7}, {"clips", QJsonArray{id}}}}}})
+              .contains("no still 7"));
+    edit(op(R"({"op":"still","remove":1})"));
+    ProjectFile::load(project, &d, nullptr);
+    CHECK(d.stills.isEmpty());
+    // Qualifier in window 1
+    edit(op(R"({"op":"window","add":"rectangle"})"));
+    edit(op(R"({"op":"qualifier","color":"#ff0000","saturation":0,"window":1})"));
+    ProjectFile::load(project, &d, nullptr);
+    CHECK_EQ(GradeQualifier::windowOf(d.timeline.video[0].clips[0]), 1);
+    CHECK_EQ(ColorGrade::at(d.timeline.video[0].clips[0], 0).qualifier.window, 1);
+    CHECK(error("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "qualifier"}, {"window", 5}, {"clips", QJsonArray{id}}}}}})
+              .contains("no clip has window 5"));
+    edit(op(R"({"op":"qualifier","window":0})"));
+    ProjectFile::load(project, &d, nullptr);
+    CHECK_EQ(GradeQualifier::windowOf(d.timeline.video[0].clips[0]), 0);
 }
 
 // Through the picture engine: red figure on green, qualifier on red with saturation 0. Export: figure gray, green
@@ -717,6 +780,29 @@ void testRender(const QString& still)
     const QImage neutral = render(Picture::Mode::Preview);
     CHECK(qGray(neutral.pixel(figure)) > 240 && qGray(neutral.pixel(back)) < 15);
     CHECK_EQ(render(Picture::Mode::Export).pixelColor(back), b);
+    // Limited to a window over the left half of the figure: only that half gets gray; the mask is black outside it
+    {
+        Clip& q = tl.video[0].clips[0];
+        q.effects[0].params["q.saturation"] = 0.0;
+        GradeWindows::add(q, 1, GradeWindows::Shape::Rectangle);
+        EffectInstance& g = q.effects[0];
+        g.params["w1.x"] = 25.0;
+        g.params["w1.width"] = 50.0;
+        g.params["w1.height"] = 100.0;
+        g.params["w1.softness"] = 0.0;
+        g.params["q.window"] = 1.0;
+        CHECK_EQ(GradeQualifier::windowOf(q), 1);
+        mask->store(0);
+        const QImage half = render(Picture::Mode::Export);
+        const QColor leftFig = half.pixelColor(130, 90), rightFig = half.pixelColor(190, 90);
+        CHECK(std::abs(leftFig.red() - leftFig.green()) < 12); // inside the window: gray
+        CHECK(rightFig.red() > 200 && rightFig.green() < 60);  // outside: still red
+        mask->store(7);
+        const QImage m = render(Picture::Mode::Preview);
+        CHECK(qGray(m.pixel(130, 90)) > 240);
+        CHECK(qGray(m.pixel(190, 90)) < 15);
+        mask->store(0);
+    }
 }
 
 } // namespace

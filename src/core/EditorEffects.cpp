@@ -426,6 +426,20 @@ void Editor::setGradeQualifierInvert(const QVector<int>& ids, bool invert)
     });
 }
 
+void Editor::setGradeQualifierWindow(const QVector<int>& ids, int n)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+            c && GradeQualifier::exists(*c) && (n == 0 || GradeWindows::exists(*c, n)))
+            targets << id;
+    modifyClips(targets, n ? T("Qualifier im Fenster") : T("Qualifier im ganzen Bild"), [&](Clip& c) {
+        EffectInstance* e = EffectRegistry::instance(c, kGrade);
+        if (n) e->params[GradeQualifier::key("window")] = double(n);
+        else e->params.remove(GradeQualifier::key("window"));
+    });
+}
+
 void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points)
 {
     const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);

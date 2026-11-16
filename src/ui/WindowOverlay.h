@@ -25,6 +25,11 @@ public:
     // Still compare (Color page stills): the still over the part of the picture left of the wipe line, the live
     // picture right of it; the line can be dragged. Null image = off
     void setCompare(const QImage& still);
+    // Side by side instead of the wipe: the still in the left half, the live picture (setLiveFrame: the preview's
+    // frame) in the right half, both whole and fitted
+    void setSideBySide(bool on);
+    bool sideBySide() const { return m_sideBySide; }
+    void setLiveFrame(const QImage& frame);
     bool comparing() const { return !m_compare.isNull(); }
     double wipe() const { return m_wipe; } // 0..1 of the frame width
     void setWipe(double x);
@@ -61,6 +66,7 @@ private:
     QPointF m_pressClip;   // press position in clip picture pixels
     double m_startX = 0, m_startY = 0;
     // Still compare
-    QImage m_compare;
+    QImage m_compare, m_live;
+    bool m_sideBySide = false;
     double m_wipe = 0.5;
 };

@@ -19,6 +19,7 @@
 #include "engine/Tracker.h"
 #include "ui/CurveEditor.h"
 #include "ui/ElidedLabel.h"
+#include "ui/FlowLayout.h"
 #include "ui/ScrubField.h"
 #include "ui/WindowOverlay.h"
 
@@ -401,7 +402,9 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     auto* title = new QLabel(T("Farbkorrektur"));
     title->setObjectName("PanelTitle");
     m_title = title;
-    m_clipName = new QLabel;
+    m_clipName = new ElidedLabel; // a long name is cut ("…"), it never widens the page
+    m_clipName->setMinimumWidth(20);
+    m_clipName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     m_enabled = new QToolButton;
     m_enabled->setCheckable(true);
@@ -519,16 +522,19 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 
     // One grid: the wheels spread over the width (the first at the left edge, the last at the right one, even gaps
     // in the stretching columns between them), each wheel's sliders centered in its column below
+    // A narrow page (a small window, the scopes beside it, a large font) puts them in two rows of two (layoutWheels)
     auto* grid = new QGridLayout;
+    m_wheelGrid = grid;
     grid->setHorizontalSpacing(12);
     grid->setVerticalSpacing(10);
     for (int i = 0; i < m_wheels.size(); ++i) {
-        const int col = 2 * i;
-        if (i) grid->setColumnStretch(col - 1, 1);
         QWidget* wheel = buildWheel(m_wheels[i]);
         wheel->setProperty("tourTarget", QString("color_wheel_%1").arg(i)); // tours: 0 Lift .. 3 Offset
-        grid->addWidget(wheel, 0, col);
-        auto* under = new QHBoxLayout;
+        m_wheelBoxes << wheel;
+        auto* underBox = new QWidget;
+        m_wheelUnders << underBox;
+        auto* under = new QHBoxLayout(underBox);
+        under->setContentsMargins(0, 0, 0, 0);
         under->setSpacing(14);
         if (2 * i + 1 < m_sliders.size()) {
             for (const int k : {2 * i, 2 * i + 1}) {
@@ -540,8 +546,8 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
         } else {
             under->addWidget(lutBox);
         }
-        grid->addLayout(under, 1, col, Qt::AlignHCenter);
     }
+    layoutWheels(4);
 
     m_body = new QWidget;
     auto* outer = new QHBoxLayout(m_body);
@@ -565,7 +571,8 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     line->setStyleSheet(QString("background: %1; border: none;").arg(Theme::border.name()));
     outer->addSpacing(6);
     outer->addWidget(line);
-    outer->addWidget(buildWindows());
+    m_windowsBox = buildWindows();
+    outer->addWidget(m_windowsBox);
 
     // No clip: what to do, and the Color tour (like the empty graph on the Comp page)
     m_empty = new QWidget;
@@ -603,6 +610,35 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     connect(project, &Project::stillsChanged, this, &ColorPanel::refreshStills);
     refreshStills();
     setPalette(std::clamp(QSettings().value("color/palette", int(Wheels)).toInt(), 0, int(StillsPalette)));
+}
+
+void ColorPanel::layoutWheels(int columns)
+{
+    if (columns == m_wheelColumns || !m_wheelGrid) return;
+    m_wheelColumns = columns;
+    for (QWidget* w : m_wheelBoxes + m_wheelUnders) m_wheelGrid->removeWidget(w);
+    for (int c = 0; c < 8; ++c) m_wheelGrid->setColumnStretch(c, 0);
+    for (int i = 0; i < m_wheelBoxes.size(); ++i) {
+        const int col = 2 * (i % columns), row = 2 * (i / columns);
+        if (col) m_wheelGrid->setColumnStretch(col - 1, 1);
+        m_wheelGrid->addWidget(m_wheelBoxes[i], row, col);
+        m_wheelGrid->addWidget(m_wheelUnders[i], row + 1, col, Qt::AlignHCenter);
+    }
+}
+
+void ColorPanel::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    fitWidth();
+}
+
+void ColorPanel::fitWidth()
+{
+    if (!m_wheelGrid || !m_bodyScroll) return;
+    // The width four wheels in a row need (measured while they are in one row; fixed by the font)
+    if (m_wheelColumns == 4) m_fourWide = m_wheelGrid->minimumSize().width();
+    const int room = width() - m_windowsBox->width() - 40; // margins, line, spacing
+    layoutWheels(room >= m_fourWide ? 4 : 2);
 }
 
 void ColorPanel::setPalette(int palette, bool remember)
@@ -827,6 +863,7 @@ void ColorPanel::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
     m_overlay->setVisible(true);
+    fitWidth();
     refresh();
 }
 
@@ -857,7 +894,7 @@ void ColorPanel::refresh()
                        static_cast<QWidget*>(m_keyDiamond), static_cast<QWidget*>(m_keyNext)})
         w->setEnabled(c);
     if (!c) {
-        m_clipName->clear();
+        static_cast<ElidedLabel*>(m_clipName)->setFullText(QString());
         m_overlay->setTarget(0, 0, m_playhead);
         updateMask();
         return;
@@ -867,7 +904,7 @@ void ColorPanel::refresh()
     const int n = targets().size();
     {
         const QString cn = m_editor->project()->clipName(*c);
-        m_clipName->setText(n > 1 ? T("%1 (+%2 weitere)").arg(cn).arg(n - 1) : cn);
+        static_cast<ElidedLabel*>(m_clipName)->setFullText(n > 1 ? T("%1 (+%2 weitere)").arg(cn).arg(n - 1) : cn);
     }
     const bool has = EffectRegistry::has(*c, ColorGrade::EffectId);
     const EffectInstance* inst = EffectRegistry::instance(*c, ColorGrade::EffectId);
@@ -1284,8 +1321,9 @@ QWidget* ColorPanel::buildCurves()
     auto* lay = new QVBoxLayout(box);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(6);
-    auto* row = new QHBoxLayout;
-    row->setSpacing(3);
+    auto* rowBox = new QWidget; // wraps into two rows on a narrow page
+    auto* row = new FlowLayout(rowBox, 3, 3);
+    row->setContentsMargins(0, 0, 0, 0);
     using K = GradeCurves::Kind;
     const struct {
         K kind;
@@ -1320,14 +1358,12 @@ QWidget* ColorPanel::buildCurves()
         });
         m_curveButtons[int(k.kind)] = b;
         row->addWidget(b);
-        if (k.kind == K::B) row->addSpacing(10);
     }
-    row->addStretch(1);
     m_curveReset = smallButton("↺", T("Diese Kurve zurücksetzen"));
     connect(m_curveReset, &QToolButton::clicked, this,
             [this] { m_editor->setGradeCurve(targets(), m_curve->kind(), {}); });
     row->addWidget(m_curveReset);
-    lay->addLayout(row);
+    lay->addWidget(rowBox);
     m_curve = new CurveEditor;
     m_curve->setObjectName("color_curve");
     m_curveButtons[int(K::Y)]->setChecked(true);
@@ -1356,6 +1392,8 @@ QWidget* ColorPanel::buildCurves()
 
 void ColorPanel::setFrame(const QImage& frame)
 {
+    m_lastFrame = frame;
+    if (m_compareId && m_overlay->sideBySide()) m_overlay->setLiveFrame(frame);
     m_histFrame = frame;
     if (!m_histTimer.isActive()) m_histTimer.start();
 }
@@ -1421,8 +1459,9 @@ QWidget* ColorPanel::buildQualifier()
     auto* cl = new QVBoxLayout(m_qualControls);
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(6);
-    auto* top = new QHBoxLayout;
-    top->setSpacing(6);
+    auto* topBox = new QWidget;
+    auto* top = new FlowLayout(topBox, 6, 3);
+    top->setContentsMargins(0, 0, 0, 0);
     auto* pick = new QToolButton;
     pick->setText(T("Farbe aufnehmen …"));
     pick->setToolTip(T("Klick ins Bild des Clips: die Auswahl wird um diese Farbe gelegt"));
@@ -1461,10 +1500,15 @@ QWidget* ColorPanel::buildQualifier()
     top->addWidget(pick);
     top->addWidget(m_qualMask);
     top->addWidget(m_qualInvert);
-    top->addStretch(1);
+    m_qualWindow = new QComboBox;
+    m_qualWindow->setObjectName("color_qualifier_window");
+    m_qualWindow->setToolTip(T("Die Auswahl nur innerhalb eines Fensters (z. B. nur die Haut im Gesicht)"));
+    connect(m_qualWindow, &QComboBox::activated, this,
+            [this](int i) { m_editor->setGradeQualifierWindow(targets(), m_qualWindow->itemData(i).toInt()); });
+    top->addWidget(m_qualWindow);
     top->addWidget(correct);
     top->addWidget(remove);
-    cl->addLayout(top);
+    cl->addWidget(topBox);
 
     // Three ranges: a bar of what is selected, the numbers beside it
     auto* grid = new QGridLayout;
@@ -1529,6 +1573,14 @@ void ColorPanel::refreshQualifier(const Clip* c, int t)
     if (!has) return;
     const GradeQualifier::Range r = GradeQualifier::rangeAt(*c, t);
     m_qualInvert->setChecked(r.invert);
+    {
+        QSignalBlocker block(m_qualWindow);
+        m_qualWindow->clear();
+        m_qualWindow->addItem(T("Ganzes Bild"), 0);
+        for (int n : GradeWindows::list(*c)) m_qualWindow->addItem(T("Nur in Fenster %1").arg(n), n);
+        m_qualWindow->setCurrentIndex(std::max(0, m_qualWindow->findData(GradeQualifier::windowOf(*c))));
+        m_qualWindow->setEnabled(m_qualWindow->count() > 1);
+    }
     for (QualifierBar* b : m_qualBars) b->setRange(r);
     for (const QualField& f : m_qualFields)
         if (!f.field->hasFocus()) f.field->setValue(Keys::valueAt(*c, GradeQualifier::param(f.key), t));
@@ -1565,8 +1617,9 @@ QWidget* ColorPanel::buildStills()
     auto* lay = new QVBoxLayout(box);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(6);
-    auto* row = new QHBoxLayout;
-    row->setSpacing(6);
+    auto* rowBox = new QWidget; // wraps on a narrow page
+    auto* row = new FlowLayout(rowBox, 6, 3);
+    row->setContentsMargins(0, 0, 0, 0);
     auto* grab = new QToolButton;
     grab->setText(T("Standbild aufnehmen"));
     grab->setToolTip(T("Das Bild im Viewer mit der Korrektur des Clips als Standbild ablegen"));
@@ -1584,6 +1637,16 @@ QWidget* ColorPanel::buildStills()
     m_stillCompare->setFocusPolicy(Qt::NoFocus);
     connect(m_stillCompare, &QToolButton::clicked, this,
             [this](bool on) { setComparedStill(on ? selectedStill() : 0); });
+    m_stillSide = new QToolButton;
+    m_stillSide->setText(T("Nebeneinander"));
+    m_stillSide->setToolTip(T("Beim Vergleichen beide Bilder ganz nebeneinander statt der Wischlinie"));
+    m_stillSide->setCheckable(true);
+    m_stillSide->setObjectName("color_still_side");
+    m_stillSide->setFocusPolicy(Qt::NoFocus);
+    connect(m_stillSide, &QToolButton::toggled, this, [this](bool on) {
+        m_overlay->setSideBySide(on);
+        m_overlay->setLiveFrame(m_lastFrame);
+    });
     m_stillApply = new QToolButton;
     m_stillApply->setText(T("Korrektur übernehmen"));
     m_stillApply->setToolTip(T("Die Korrektur des Standbilds auf die gewählten Clips übertragen"));
@@ -1600,10 +1663,10 @@ QWidget* ColorPanel::buildStills()
     });
     row->addWidget(grab);
     row->addWidget(m_stillCompare);
+    row->addWidget(m_stillSide);
     row->addWidget(m_stillApply);
-    row->addStretch(1);
     row->addWidget(m_stillRemove);
-    lay->addLayout(row);
+    lay->addWidget(rowBox);
 
     m_stillList = new QListWidget;
     m_stillList->setObjectName("color_stills");

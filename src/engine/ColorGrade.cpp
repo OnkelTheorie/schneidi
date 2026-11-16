@@ -194,8 +194,9 @@ struct Stage {
         curve(K::HueHue, hueHue);
         curve(K::HueSat, hueSat);
         curve(K::LumSat, lumSat);
-        mask = p.qualifier.on && p.view == View::QualifierMask;
-        qualifier = p.qualifier.on && (mask || !p.qualifier.correction.isNeutral());
+        const bool on = p.qualifier.on && p.qualifier.window == 0; // in a window: applyQualifierWindow
+        mask = on && p.view == View::QualifierMask;
+        qualifier = on && (mask || !p.qualifier.correction.isNeutral());
         if (qualifier) {
             range = p.qualifier.range;
             secondary.emplace(p.qualifier.correction);
@@ -583,6 +584,7 @@ Params at(const Clip& c, double t)
         p.qualifier.on = true;
         p.qualifier.range = GradeQualifier::rangeAt(c, t);
         p.qualifier.correction = paramsAt(c, qualifierParams(), t);
+        p.qualifier.window = GradeQualifier::windowOf(c);
     }
     return p;
 }
@@ -1230,6 +1232,55 @@ void pixelate(std::vector<uint8_t>& buf, int w, int h, int block)
 }
 
 } // namespace
+
+void applyQualifierWindow(uint8_t* rgba, int width, int height, const Params& p, const GradeWindows::Geometry& g)
+{
+    if (!rgba || width <= 0 || height <= 0 || !p.qualifier.on) return;
+    Params q; // the qualifier alone, over the whole picture: the table maps a colour to its corrected one (or mask)
+    q.qualifier = p.qualifier;
+    q.qualifier.window = 0;
+    q.view = p.view;
+    const bool mask = p.view == View::QualifierMask;
+    if (!mask && q.isNeutral()) return;
+    const size_t n = size_t(width) * height * 4;
+    std::vector<uint8_t> done(rgba, rgba + n);
+    apply(done.data(), width, height, *bake(q, nullptr));
+    const GradeWindows::Mask m(g, width, height);
+    const QRect area = mask ? QRect(0, 0, width, height) : m.bounds();
+    if (mask) std::memset(rgba, 0, n); // outside the window: nothing selected (alpha restored below)
+    for (int y = area.top(); y <= area.bottom(); ++y)
+        for (int x = area.left(); x <= area.right(); ++x) {
+            const size_t i = (size_t(y) * width + x) * 4;
+            const float w = m.weight(x, y);
+            if (mask) {
+                for (int c = 0; c < 3; ++c) rgba[i + c] = uint8_t(std::lround(done[i + c] * w));
+                rgba[i + 3] = done[i + 3];
+                continue;
+            }
+            if (w <= 0) continue;
+            for (int c = 0; c < 3; ++c) rgba[i + c] = uint8_t(std::lround(rgba[i + c] + (done[i + c] - rgba[i + c]) * w));
+        }
+}
+
+void applyClip(uint8_t* rgba, int width, int height, const Clip& c, double t, const Params& p, const Lut* lut,
+               QSizeF frame, QSizeF fit)
+{
+    const bool mask = p.qualifier.on && p.view == View::QualifierMask;
+    if (p.qualifier.on && p.qualifier.window > 0) {
+        // The qualifier sits between the primary correction (with curves) and the LUT, limited to its window
+        Params primary = p;
+        primary.qualifier.on = false;
+        primary.view = View::Picture;
+        if (!primary.isNeutral()) apply(rgba, width, height, *bake(primary, nullptr), 1);
+        const Window w = onPicture(Window{GradeWindows::geometryAt(c, p.qualifier.window, t), {}, {}}, frame, fit);
+        applyQualifierWindow(rgba, width, height, p, w.geometry);
+        if (lut && !mask) apply(rgba, width, height, *bake(Params{}, lut), 1);
+    } else if (!p.isNeutral() || lut) {
+        apply(rgba, width, height, *bake(p, lut), 1);
+    }
+    if (mask) return; // the selection alone, without the windows on top
+    for (const Window& w : windowsAt(c, t)) applyWindow(rgba, width, height, onPicture(w, frame, fit));
+}
 
 Window onPicture(Window w, QSizeF frame, QSizeF fit)
 {
