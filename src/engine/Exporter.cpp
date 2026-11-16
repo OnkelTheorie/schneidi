@@ -45,6 +45,7 @@
 #include <optional>
 
 extern "C" {
+#include <libavutil/pixdesc.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 }
@@ -814,6 +815,17 @@ int Exporter::audioBitrateK() const
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
 
+namespace {
+
+// More than 8 bits per component (yuv420p10le: H.265/AV1 10 bit, ProRes, DNxHR HQX)
+bool tenBitFormat(const QString& pixFmt)
+{
+    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(av_get_pix_fmt(pixFmt.toUtf8().constData()));
+    return d && d->comp[0].depth > 8;
+}
+
+} // namespace
+
 bool Exporter::startWriter(const QString& codec, QString* error)
 {
     const ExportSettings& s = m_settings;
@@ -821,7 +833,8 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     ExportWriter::Settings w;
     w.path = m_path;
     w.videoCodec = s.videoCodec.isEmpty() ? QString() : codec;
-    w.pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec) : s.pixFmt;
+    w.tenBit = tenBitFormat(s.pixFmt);
+    w.pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec, w.tenBit) : s.pixFmt;
     w.videoOptions = encoderOptions(codec);
     w.audioCodec = s.audioCodec;
     if (!s.audioCodec.isEmpty()) {
@@ -999,7 +1012,8 @@ void Exporter::finishGif(bool ok, const QString& log)
 bool Exporter::writable(const ExportSettings& s, const QString& sampleFormat, QString* why) const
 {
     const QString pixFmt = s.videoCodec.isEmpty() ? QString()
-                           : HardwareEncoders::isHardwareCodec(s.videoCodec) ? HardwareEncoders::pixelFormat(s.videoCodec)
+                           : HardwareEncoders::isHardwareCodec(s.videoCodec)
+                               ? HardwareEncoders::pixelFormat(s.videoCodec, tenBitFormat(s.pixFmt))
                                                                              : s.pixFmt;
     return ExportWriter::supportsOwn(m_path, s.output == ExportSettings::Output::ImageSequence ? "image2" : QString(),
                                      s.videoCodec, pixFmt, s.audioCodec, sampleFormat, why);

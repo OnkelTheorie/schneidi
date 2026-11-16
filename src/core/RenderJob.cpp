@@ -25,6 +25,11 @@ const QVector<RenderFormatInfo>& renderFormats()
         {"h265", "H.265 (MP4)", "mp4", "libx265", "aac", "yuv420p", K::Video, {18, 22, 28}, true, true, ""},
         // SVT-AV1: CRF 0-63, preset 8 = about as fast as x264 "medium" at a clearly smaller file
         {"av1", "AV1 (MP4)", "mp4", "libsvtav1", "aac", "yuv420p", K::Video, {28, 35, 42}, false, false, "preset=8"},
+        // 10 bit (Main10): smooth gradients (sky, fades) without banding, from 10-bit sources more of their precision;
+        // H.265 also on the graphics card (NVENC/Quick Sync P010, VAAPI P010 upload)
+        {"h265-10", N_("H.265 10 Bit (MP4)"), "mp4", "libx265", "aac", "yuv420p10le", K::Video, {18, 22, 28}, true, true, ""},
+        {"av1-10", N_("AV1 10 Bit (MP4)"), "mp4", "libsvtav1", "aac", "yuv420p10le", K::Video, {28, 35, 42}, false, false,
+         "preset=8"},
         // VP9 constant quality needs bit rate 0; "good" + cpu-used 4 + row-mt: reasonable speed
         {"vp9", "VP9 (WebM)", "webm", "libvpx-vp9", "libopus", "yuv420p", K::Video, {24, 31, 37}, false, false,
          "vb=0 deadline=good cpu-used=4 row-mt=1"},

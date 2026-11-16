@@ -11,6 +11,7 @@
 #include "engine/OutputColor.h"
 #include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Compose.h"
+#include "engine/HdrTone.h"
 #include "engine/video/Convert.h"
 
 #include <QElapsedTimer>
@@ -292,6 +293,41 @@ int main(int argc, char** argv)
             CHECK(d.mean <= 1.0);
             CHECK(d.psnr >= 40);
         }
+    }
+
+    // 3b. HDR -> SDR (engine/HdrTone) on the card's layer shader against the CPU's tables: 10-bit planes, HLG and PQ,
+    // BT.2020. The test picture's saturated colours lie outside BT.709 too (pulled towards their luminance on both sides)
+    {
+        const int w = 256, h = 144;
+        for (const auto fmt : {AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_P010LE})
+            for (const HdrTone::Transfer tr : {HdrTone::Transfer::Hlg, HdrTone::Transfer::Pq}) {
+                auto pic = testYuv(w, h, fmt);
+                Video::Info info = infoFor(*pic, 2020, false);
+                info.tone = {tr, true};
+                std::vector<uint8_t> cpu(size_t(w) * h * 4), out(cpu.size());
+                if (!CHECK(Video::toRgba(*pic, info, cpu.data(), w, h, false))) continue;
+                gpu->begin();
+                Gpu::TexturePtr t = gpu->uploadYuv(pic->frame, info);
+                if (!CHECK(t != nullptr)) {
+                    gpu->finish();
+                    continue;
+                }
+                Gpu::TexturePtr canvas = gpu->target(QSize(w, h));
+                gpu->draw(*canvas, {t.get(), {}, 1.0, nullptr, {}});
+                gpu->readRgba(*canvas, out.data());
+                gpu->finish();
+                const Diff d = compare(cpu.data(), out.data(), cpu.size());
+                show(qPrintable(QString("HDR %1 %2").arg(HdrTone::name(tr)).arg(fmt == AV_PIX_FMT_P010LE ? "p010" : "yuv420p10")), d);
+                CHECK(d.mean <= 1.5);
+                CHECK(d.psnr >= 36);
+                // Far apart only at the edge of BT.709 (a channel pulled to about zero, where the SDR gamma is steep:
+                // a pure BT.2020 red gives green 0 on one side, ~40 on the other); mean and PSNR stay close
+                // Not the signal as it is: mapped (the untoned conversion differs clearly)
+                info.tone = {};
+                std::vector<uint8_t> plain(cpu.size());
+                Video::toRgba(*pic, info, plain.data(), w, h, false);
+                CHECK(compare(plain.data(), out.data(), cpu.size()).mean > 3);
+            }
     }
 
     // 4. Y'CbCr drawn smaller (mips) against the CPU path (toRgba at full size + Compose::draw)

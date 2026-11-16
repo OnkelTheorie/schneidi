@@ -324,6 +324,8 @@ QJsonObject probeOne(const QJsonObject& a)
         o["height"] = cf.height;
         o["fps"] = std::round(cf.rate.fps() * 1000) / 1000;
         if (cf.variable) o["variable_frame_rate"] = true;
+        if (cf.bitDepth > 8) o["bit_depth"] = cf.bitDepth;
+        if (!cf.hdr.isEmpty()) o["hdr"] = cf.hdr; // shown as SDR (op 'hdr' to_sdr:false keeps the signal)
     }
     if (m.info.hasAudio) {
         QJsonArray streams;

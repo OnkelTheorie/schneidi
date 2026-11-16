@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
+#include "engine/HdrTone.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -192,7 +193,9 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info, bool leni
             if (isVideo) continue;
         } else if (isVideo) {
             video = true; // also a cover picture: the picture stream when there is no other
-            moving = moving || !(st->disposition & AV_DISPOSITION_ATTACHED_PIC);
+            const bool cover = st->disposition & AV_DISPOSITION_ATTACHED_PIC;
+            if (!cover && !moving) info->hdr = QString::fromLatin1(HdrTone::name(HdrTone::ofColorTrc(p->color_trc)));
+            moving = moving || !cover;
             continue;
         } else if (p->ch_layout.nb_channels <= 0 || p->sample_rate <= 0) {
             if (!lenient) return false;
@@ -644,6 +647,34 @@ std::optional<SourceBitrate::Video> videoRate(const QString& path)
     if (cache.size() > 2000) cache.clear(); // a long session with very many files: start over
     cache.insert(path, e);
     return e.video;
+}
+
+bool hdrPicture(const QString& path)
+{
+    static std::mutex mutex;
+    static QHash<QString, bool> cache;
+    const QFileInfo fi(path);
+    if (!fi.exists()) return false;
+    const QString key = fi.absoluteFilePath() + '|' + QString::number(fi.size()) + '|'
+                        + QString::number(fi.lastModified().toMSecsSinceEpoch());
+    {
+        std::lock_guard lock(mutex);
+        if (auto it = cache.constFind(key); it != cache.cend()) return *it;
+    }
+    bool hdr = false;
+    AVFormatContext* fmt = nullptr;
+    if (OpenMedia::input(&fmt, fi.absoluteFilePath().toUtf8().constData()) >= 0) {
+        for (unsigned i = 0; i < fmt->nb_streams && !hdr; ++i) {
+            const AVStream* st = fmt->streams[i];
+            if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(st->disposition & AV_DISPOSITION_ATTACHED_PIC))
+                hdr = HdrTone::ofColorTrc(st->codecpar->color_trc) != HdrTone::Transfer::None;
+        }
+        avformat_close_input(&fmt);
+    }
+    std::lock_guard lock(mutex);
+    if (cache.size() > 4096) cache.clear();
+    cache.insert(key, hdr);
+    return hdr;
 }
 
 } // namespace MediaProbe

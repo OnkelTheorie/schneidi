@@ -624,6 +624,9 @@ struct Clip {
     // Width / height the picture is shown at instead of the file's (0 = the file's): a 4:3 game image stretched to
     // 16:9 by the recorder gets its true shape back with 4/3. Video and still clips only.
     double pictureAspect = 0;
+    // An HDR source (HLG/PQ) is shown and exported as SDR BT.709 (engine/HdrTone; nothing happens to SDR sources).
+    // false = the signal as it is (graded by hand, or a look made for it)
+    bool hdrToSdr = true;
     // A part of the picture kept readable above a reframed copy of the same clip (core/Reframe.h keepCopy): what it
     // keeps ("killfeed", "custom"); empty = an ordinary clip. Not reframed itself; reframing its clip again with
     // keep settings replaces it.
@@ -1031,6 +1034,9 @@ struct MediaInfo {
     // Shape new clips of this file show their picture at (Clip::pictureAspect; 0 = the file's): a recording of a 4:3
     // game stretched to 16:9, marked in the Media Pool or by its watch folder. Media Pool tiles show it too.
     double pictureAspect = 0;
+    // HDR transfer of the picture ("HLG", "PQ"; empty = SDR): its clips are mapped to SDR (Clip::hdrToSdr), the Media
+    // Pool and the Inspector say so. Filled by MediaProbe
+    QString hdr;
 };
 
 // After a clip got another file or audio stream: channel routing (Clip::sourceChannels) the clip's stream of m lacks

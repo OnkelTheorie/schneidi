@@ -207,6 +207,39 @@ int main(int argc, char** argv)
         same("curves + qualifier", oneTrack({c}), {0, 12}, 1.5, 30);
     }
 
+    // HDR -> SDR (0.24): a 10-bit HLG and PQ source, the card maps it in its layer shader, the CPU in Video::toRgba;
+    // with curves + qualifier the grade runs on the mapped picture both ways; hdrToSdr off = the signal as it is
+    for (const char* trc : {"arib-std-b67", "smpte2084"}) {
+        const QString hdr = Check::makeMedia(
+            tmp.filePath(QString("hdr-%1.mkv").arg(trc)),
+            {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=1", "-vf",
+             QString("setparams=color_trc=%1:color_primaries=bt2020:colorspace=bt2020nc,format=yuv420p10le").arg(trc),
+             "-c:v", "ffv1"});
+        if (!CHECK(!hdr.isEmpty())) continue;
+        const QByteArray name = QByteArray("HDR ") + (QByteArray(trc) == "smpte2084" ? "PQ" : "HLG");
+        // Lower PSNR than SDR: testsrc2's saturated BT.2020 edges lie outside BT.709, where the SDR gamma near black
+        // turns the last bits of difference between the shader and the CPU tables into a few code values (llvmpipe:
+        // mean 1.1-1.4, PSNR 26-29 dB against 34 dB for the same picture in SDR)
+        same(name.constData(), oneTrack({media(1, hdr, 0, 30)}), {0, 12}, 1.6, 25);
+        Clip graded = media(1, hdr, 0, 30);
+        grade(graded, false);
+        EffectInstance* e = EffectRegistry::instance(graded, "grade");
+        e->params["curveY"] = QString("0,0 0.3,0.22 0.7,0.8 1,1");
+        e->params["q.hue"] = 0.0;
+        e->params["q.hueWidth"] = 60.0;
+        e->params["q.saturation"] = 10.0;
+        same((name + " + grade/curves/qualifier").constData(), oneTrack({graded}), {0, 12}, 1.6, 25);
+        Clip off = media(1, hdr, 0, 30);
+        off.hdrToSdr = false;
+        same((name + " off").constData(), oneTrack({off}), {0}, 1.0, 30);
+        // Off really shows the signal: brighter mid-tones than mapped (HLG) / another picture (PQ)
+        Picture::Renderer on(oneTrack({media(1, hdr, 0, 30)}), options(Picture::Mode::Export, false)),
+            raw(oneTrack({off}), options(Picture::Mode::Export, false));
+        const Picture::Frame a = on.render(0), b = raw.render(0);
+        if (CHECK(!a.isNull() && !b.isNull()))
+            CHECK(compare(a.bits(), b.bits(), size_t(a.width()) * a.height() * 4).mean > 3);
+    }
+
     // A clip tilted in depth over a plain one: the card leaves it to the CPU (homography), the frame stays the same
     {
         Timeline tl;

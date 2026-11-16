@@ -15,6 +15,7 @@
 #include "core/TimelineOps.h"
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
+#include "engine/HdrTone.h"
 #include "engine/Lumas.h"
 #include "engine/MemoryRelease.h"
 #include "engine/OutputColor.h"
@@ -962,7 +963,7 @@ struct Renderer::Impl {
         }
         const double file = fileFrame(c, t, *s.video, ctx);
         if (file < 0) return {};
-        return videoFrame(*s.video, file, dw, dh, ctx, native, into);
+        return videoFrame(*s.video, file, dw, dh, ctx, native, into, c.hdrToSdr);
     }
 
     // Slow motion with in-between pictures (Clip::interpolate): where clip frame t falls between two stream frames,
@@ -996,6 +997,15 @@ struct Renderer::Impl {
         return *frac >= 1e-3 && *frac <= 1 - 1e-3 && *i0 >= 0 && (streamLength <= 0 || *i0 + 1 < streamLength);
     }
 
+    // The stream's description as a clip shows it: without HDR -> SDR when the clip has it off (Clip::hdrToSdr)
+    static Video::Info shownInfo(const Video::Info& info, bool tone)
+    {
+        if (tone || !info.tone.active()) return info;
+        Video::Info i = info;
+        i.tone = {};
+        return i;
+    }
+
     static bool inBetween(const Clip& c, int t, const QString& lane, const VideoSource& v, int dw, int dh, const Ctx& ctx,
                           QSize* native, uint8_t* into, Image* result)
     {
@@ -1013,8 +1023,9 @@ struct Renderer::Impl {
         const auto pb = v.reader->picture(i0 + 1, fetch, &exactB);
         if (!pb || !pb->frame || !exactB) return false;
         Image a(dw, dh), b(dw, dh);
-        if (!Video::toRgba(*pa, v.info, a.data(), dw, dh, ctx.preview) ||
-            !Video::toRgba(*pb, v.info, b.data(), dw, dh, ctx.preview))
+        const Video::Info info = shownInfo(v.info, c.hdrToSdr);
+        if (!Video::toRgba(*pa, info, a.data(), dw, dh, ctx.preview) ||
+            !Video::toRgba(*pb, info, b.data(), dw, dh, ctx.preview))
             return false;
         *native = QSize(pa->frame->width, pa->frame->height);
         Image out;
@@ -1099,22 +1110,24 @@ struct Renderer::Impl {
     }
 
     // Frame `file` (project rate) of a video at dw x dh (into: straight into that picture, see mediaPicture)
+    // tone: HDR -> SDR for an HDR source (Clip::hdrToSdr)
     static Image videoFrame(const VideoSource& v, double file, int dw, int dh, const Ctx& ctx, QSize* native,
-                            uint8_t* into = nullptr)
+                            uint8_t* into = nullptr, bool tone = true)
     {
         const auto pic = fetchPicture(v, file, ctx);
         if (!pic) return {};
         *native = QSize(pic->frame->width, pic->frame->height);
         if (dw <= 0 || dh <= 0) return {};
+        const Video::Info info = shownInfo(v.info, tone);
         if (into) { // straight into the caller's picture (a layer that covers the frame)
-            if (!Video::toRgba(*pic, v.info, into, dw, dh, ctx.preview)) return {};
+            if (!Video::toRgba(*pic, info, into, dw, dh, ctx.preview)) return {};
             Image done;
             done.w = dw;
             done.h = dh;
             return done; // size only: the pixels are in `into`
         }
         Image out(dw, dh);
-        if (!Video::toRgba(*pic, v.info, out.data(), dw, dh, ctx.preview)) return {};
+        if (!Video::toRgba(*pic, info, out.data(), dw, dh, ctx.preview)) return {};
         return out;
     }
 
@@ -2013,6 +2026,7 @@ struct Renderer::Impl {
         const Source s = source(c.mediaPath, lane);
         if (!s.video) return false;
         const Video::Info& info = s.video->info;
+        if (info.tone.active() && c.hdrToSdr) return false; // HDR mapped to SDR: not the planes as they are
         auto family = [](int cs) { return cs == 170 || cs == 470 || cs == 624 ? 601 : cs == 2021 ? 2020 : cs; };
         if (family(info.colorspace) != family(t.colorspace)) return false;
         int64_t i0 = 0;
@@ -2572,7 +2586,7 @@ struct Renderer::Impl {
             if (file < 0) return false;
             op.picture = fetchPicture(*s.video, file, ctx);
             if (!op.picture) return false;
-            op.info = s.video->info;
+            op.info = shownInfo(s.video->info, c.hdrToSdr);
             nw = op.picture->frame->width;
             nh = op.picture->frame->height;
             // Interlaced 8-bit planar 4:2:0: the chroma rows alternate between the two fields. The CPU converts it

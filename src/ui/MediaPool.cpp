@@ -1268,6 +1268,23 @@ void MediaPool::updateItem(const QString& path)
         p.drawText(badge, Qt::AlignCenter, "P");
         tip += "\n" + T("Proxy vorhanden");
     }
+    if (info && !info->hdr.isEmpty()) {
+        // HDR (phone video): a small "HDR" at the top right, left of the proxy mark; shown mapped to SDR
+        QFont f = p.font();
+        f.setPixelSize(m_viewMode == ViewMode::List ? 18 : 9);
+        f.setBold(true);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const double w = fm.horizontalAdvance("HDR") + 6, h = fm.height();
+        const double right = pm.width() - 4 - (proxies->hasProxy(path) && proxies->progressOf(path) < 0 ? 22 : 0);
+        const QRectF badge(right - w, 4, w, h);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x18, 0x18, 0x1b, 220));
+        p.drawRoundedRect(badge, 3, 3);
+        p.setPen(Theme::text);
+        p.drawText(badge, Qt::AlignCenter, "HDR");
+        tip += "\n" + T("HDR (%1), wird als SDR gezeigt").arg(info->hdr);
+    }
     if (info) {
         // Clip color as a stripe at the bottom (in list view the image is scaled down -> thicker stripe)
         if (const TrackColorInfo* c = trackColorInfo(info->clipColor)) {

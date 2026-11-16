@@ -966,6 +966,8 @@ struct ExportWriter::Impl {
             if (av_cmp_q(info.frameRate, rate) != 0) return "other frame rate";
             if (info.format != streamFormat(pixFmt)) return "other pixel format";
             if (info.fullRange || info.colorspace != colorspace) return "other color";
+            // HLG/PQ (even with a BT.709 matrix): mapped to SDR, never its packets as they are
+            if (info.tone.active()) return "HDR";
             if (info.rotation != 0) return "rotated";
             if (fields != AV_FIELD_PROGRESSIVE && fields != AV_FIELD_UNKNOWN) return "interlaced";
             return nullptr;
@@ -2026,7 +2028,7 @@ struct ExportWriter::Impl {
         }
         auto* fc = reinterpret_cast<AVHWFramesContext*>(hwFrames->data);
         fc->format = AV_PIX_FMT_VAAPI;
-        fc->sw_format = AV_PIX_FMT_NV12;
+        fc->sw_format = inputFmt; // NV12, or P010 for 10 bit
         fc->width = width;
         fc->height = height;
         fc->initial_pool_size = 20;
@@ -2080,7 +2082,7 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     d->o = std::move(own);
     if (!s.videoCodec.isEmpty()) {
         d->pixFmt = av_get_pix_fmt(s.pixFmt.toUtf8().constData());
-        d->inputFmt = d->pixFmt == AV_PIX_FMT_VAAPI ? AV_PIX_FMT_NV12 : d->pixFmt;
+        d->inputFmt = d->pixFmt != AV_PIX_FMT_VAAPI ? d->pixFmt : s.tenBit ? AV_PIX_FMT_P010LE : AV_PIX_FMT_NV12;
         d->target.colorspace = d->colorspace;
         d->direct = OutputColor::targetOf(d->inputFmt, d->target);
         d->target.colorspace = d->colorspace; // targetOf only sets the layout

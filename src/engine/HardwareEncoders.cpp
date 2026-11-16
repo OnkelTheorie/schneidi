@@ -175,7 +175,7 @@ QString codecName(VideoEncoder e, const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (!f.hardware) return softwareCodec(format);
-    const QString base = QLatin1String(f.id) == QLatin1String("h265") ? "hevc" : "h264";
+    const QString base = QLatin1String(f.id).startsWith(QLatin1String("h265")) ? "hevc" : "h264"; // also h265-10
     switch (e) {
     case VideoEncoder::Nvenc: return base + "_nvenc";
     case VideoEncoder::Vaapi: return base + "_vaapi";
@@ -399,12 +399,12 @@ QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, in
     return averageRate(kbit); // libx264, libx265, libvpx-vp9
 }
 
-QString pixelFormat(const QString& codec)
+QString pixelFormat(const QString& codec, bool tenBit)
 {
     switch (encoderOfCodec(codec)) {
-    case VideoEncoder::Vaapi: return "vaapi"; // the writer converts to NV12 and uploads to the device
-    case VideoEncoder::Qsv: return "nv12";
-    default: return "yuv420p";
+    case VideoEncoder::Vaapi: return "vaapi"; // the writer converts to NV12 (10 bit: P010) and uploads to the device
+    case VideoEncoder::Qsv: return tenBit ? "p010le" : "nv12";
+    default: return tenBit ? "p010le" : "yuv420p"; // NVENC: P010 selects Main10
     }
 }
 

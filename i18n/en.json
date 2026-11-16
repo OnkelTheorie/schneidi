@@ -3426,5 +3426,14 @@
  "… und %1 weitere": "… and %1 more",
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
- "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
+ "AV1 10 Bit (MP4)": "AV1 10-bit (MP4)",
+ "H.265 10 Bit (MP4)": "H.265 10-bit (MP4)",
+ "HDR": "HDR",
+ "HDR (%1) als SDR zeigen": "Show HDR (%1) as SDR",
+ "HDR (%1), wird als SDR gezeigt": "HDR (%1), shown as SDR",
+ "HDR als SDR zeigen": "Show HDR as SDR",
+ "HDR → SDR an": "HDR → SDR on",
+ "HDR → SDR aus": "HDR → SDR off",
+ "HDR-Videos (HLG/PQ, z. B. vom Handy) werden in Vorschau und Export in normales SDR (BT.709) umgerechnet, damit sie nicht blass aussehen. Aus: das Signal bleibt, wie es ist (für eine LUT oder Korrektur, die dafür gemacht ist). Normale Videos ändert das nicht.": "HDR videos (HLG/PQ, e.g. from a phone) are converted to regular SDR (BT.709) in preview and export so they do not look washed out. Off: the signal stays as it is (for a LUT or grade made for it). Regular videos are not affected."
 }

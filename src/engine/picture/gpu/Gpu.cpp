@@ -3,6 +3,7 @@
 #include "engine/picture/gpu/Gpu.h"
 
 #include "engine/ColorGrade.h"
+#include "engine/HdrTone.h"
 #include "engine/OutputColor.h"
 #include "engine/video/Reader.h"
 
@@ -91,8 +92,9 @@ struct Uniforms {
     float lut[4] = {};
     float crop[4] = {0, 0, -1, -1};
     float persp[4] = {0, 0, 1, 0}; // layer.frag: destination -> source w (g, h, i); affine = 0, 0, 1
+    float tone[4] = {};            // layer.frag: HDR -> SDR of Y'CbCr planes (transfer 0/1/2, BT.2020), engine/HdrTone
 };
-static_assert(sizeof(Uniforms) == 208);
+static_assert(sizeof(Uniforms) == 224);
 
 class Texture {
 public:
@@ -109,6 +111,7 @@ public:
     int bits = 8;
     float sampleScale = 1;
     float yuv[16] = {};
+    HdrTone::Tone tone; // Y'CbCr planes: their HDR signal mapped to SDR on the way (Video::Info::tone)
     int mipLevels = 1;
     bool half = false;                       // RGBA16F target (compositing, compTarget)
     std::tuple<int, int, int, int, int> key; // pool key
@@ -713,6 +716,7 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     t->mipLevels = levels;
     // 16-bit words hold `depth` bits: low bits (yuv420p10) or high bits (p010, shift > 0)
     const int shift = desc->comp[0].shift;
+    t->tone = info.tone;
     t->sampleScale = wide ? float(65535.0 / (double((1 << depth) - 1) * double(1 << shift))) : 1.0f;
     // Y'CbCr (normalized code values) -> RGB 0..1
     double kr, kb;
@@ -877,6 +881,10 @@ void Context::draw(Texture& dst, const Layer& layer)
     u.src[0] = float(sw), u.src[1] = float(sh), u.src[2] = float(s->log2cw), u.src[3] = float(s->log2ch);
     u.chroma[2] = s->sampleScale;
     std::memcpy(u.yuv, s->yuv, sizeof u.yuv);
+    if ((s->kind == Texture::Planar || s->kind == Texture::SemiPlanar) && s->tone.active()) {
+        u.tone[0] = float(int(s->tone.transfer));
+        u.tone[1] = s->tone.bt2020 ? 1.0f : 0.0f;
+    }
     QRhiTexture* l = nullptr;
     if (layer.grade && layer.grade->tex) {
         const int n = layer.grade->size;

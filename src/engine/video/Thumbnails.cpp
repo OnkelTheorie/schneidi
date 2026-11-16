@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Thumbnails.h"
+#include "engine/HdrTone.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Reader.h"
 
@@ -149,6 +150,9 @@ struct Source {
         uint8_t* dst[4] = {img.bits(), nullptr, nullptr, nullptr};
         int dstStride[4] = {int(img.bytesPerLine()), 0, 0, 0};
         sws_scale(sws, f->data, f->linesize, 0, f->height, dst, dstStride);
+        // HDR (phone video) as the preview shows it
+        HdrTone::toSdrRgba8(HdrTone::ofFrame(f->color_trc, f->color_primaries, f->colorspace), img.bits(), img.width(),
+                            img.height(), 1, true, int(img.bytesPerLine()));
         if (turns) img = img.transformed(QTransform().rotate(90.0 * turns)); // y down: clockwise
         if (!pad || img.size() == box) return img;
         QImage out(box, QImage::Format_RGB32);

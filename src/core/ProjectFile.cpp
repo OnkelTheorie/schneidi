@@ -824,6 +824,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     }
     if (c.renderCache) o["renderCache"] = true;
     if (c.pictureAspect > 0) o["pictureAspect"] = c.pictureAspect; // optional: a stretched recording shown at its shape
+    if (!c.hdrToSdr) o["hdrToSdr"] = false; // optional (older versions show HDR as it is anyway)
     if (!c.keepRegion.isEmpty()) o["keepRegion"] = c.keepRegion; // optional: a kept region above a reframed clip
     if (c.transform != ClipTransform{}) o["transform"] = transformToJson(c.transform); // any value or switch changed
     if (!c.effects.isEmpty()) {
@@ -908,6 +909,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.renderCache = o.value("renderCache").toBool();
     if (c.kind == ClipKind::Media) c.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
     if (c.kind == ClipKind::Media) c.keepRegion = o.value("keepRegion").toString();
+    c.hdrToSdr = o.value("hdrToSdr").toBool(true);
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();
@@ -969,6 +971,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         if (m.pictureAspect > 0) o["pictureAspect"] = m.pictureAspect; // optional: shape of its new clips
+        if (!m.hdr.isEmpty()) o["hdr"] = m.hdr;                         // optional: HDR transfer ("HLG", "PQ")
         if (!m.audioStreams.isEmpty()) {
             QJsonArray streams;
             for (const AudioStreamInfo& a : m.audioStreams) {
@@ -1236,6 +1239,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         for (const QJsonValue& f : o.value("flags").toArray())
             if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
         if (m.hasVideo) m.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
+        if (m.hasVideo && (o.value("hdr") == "HLG" || o.value("hdr") == "PQ")) m.hdr = o.value("hdr").toString();
         if (m.hasAudio) // missing in older files -> audioStreamCount() assumes 1 stream
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
