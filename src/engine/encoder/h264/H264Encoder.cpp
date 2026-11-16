@@ -6369,14 +6369,18 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     fullPelCost_[mbIndex] = -1.0f;
     // H264_EARLYSKIP=0: no early skip (measurements; skip then goes through the full decision).
     static const bool kEarlySkip = !std::getenv("H264_EARLYSKIP") || std::atoi(std::getenv("H264_EARLYSKIP")) != 0;
-    // Only where the skip is also close to the source: squared error (luma + chroma) up to kEarlySkipSsd
-    // lambda (16.11.2026). At a high QP a residual quantises to nothing although the prediction is well off
-    // - a fast pan over foliage or water, where the predicted vector is not the motion; such a macroblock
-    // now goes through the search and the full decision (which may still skip). Measured on park_joy, P
-    // pictures only at QP 36 (bits / PSNR-Y): without limit 14085 kbit/s 30.66 dB, 80 the same, 40 +0.07 dB,
-    // 20 +0.14 dB at the same bits, no early skip at all 13994 kbit/s +0.14 dB. H264_EARLYSKIPSSD
-    // overrides (0 = no limit, the stream before); H264_EARLYSKIPSSDB the same for B pictures' direct skip.
-    static const double kEarlySkipSsd = std::getenv("H264_EARLYSKIPSSD") ? std::atof(std::getenv("H264_EARLYSKIPSSD")) : 20.0;
+    // Experiment (16.11.2026, off): early skip only where the skip is also close to the source - squared
+    // error (luma + chroma) up to H264_EARLYSKIPSSD lambda (0 = no limit); H264_EARLYSKIPSSDB the same for
+    // the B pictures' direct skip. At a high QP a residual quantises to nothing although the prediction is
+    // well off (a fast pan over foliage or water, where the predicted vector is not the motion); such a
+    // macroblock then goes through the search and the full decision. Limit 20, measured: park_joy, P
+    // pictures only at QP 36, +0.14 dB PSNR-Y at the same bits (40: +0.07, 80: nothing; no early skip at
+    // all +0.14 dB and -0.6 % bits); two-pass BD-rate PSNR-Y / SSIM-Y / VMAF with both limits at 20: CS2
+    // -2.7 / -2.5 / -1.2 %, park_joy -0.7 / -1.5 / -1.0 %, a pan in a game -0.6 / -0.8 / -0.6 %, a calm game
+    // scene +0.3 / -0.2 / +1.4 %. Not the default: it costs +5 / +7 % instructions in P pictures alone (CS2 /
+    // the calm scene, two-pass) and +12 / +50 % with the B pictures' limit, and the chroma planes lose 0.1
+    // to 0.2 dB on the game clips while luma gains - to be tuned (limit by QP, chroma, speed) first.
+    static const double kEarlySkipSsd = std::getenv("H264_EARLYSKIPSSD") ? std::atof(std::getenv("H264_EARLYSKIPSSD")) : 0.0;
     if (kEarlySkip && (kEarlySkipSsd <= 0 || ssdSkip <= kEarlySkipSsd * lambda) && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
@@ -7218,7 +7222,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, skipState);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
     // type and vector of a copy from one picture would cost (about six bits).
-    static const double kEarlySkipSsdB = std::getenv("H264_EARLYSKIPSSDB") ? std::atof(std::getenv("H264_EARLYSKIPSSDB")) : 20.0;
+    static const double kEarlySkipSsdB = std::getenv("H264_EARLYSKIPSSDB") ? std::atof(std::getenv("H264_EARLYSKIPSSDB")) : 0.0;
     if (sharpDirect <= 6 * lambda && (kEarlySkipSsdB <= 0 || double(mbSsd(mbx, mby)) <= kEarlySkipSsdB * lambda) &&
         skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
