@@ -2933,8 +2933,6 @@ struct Renderer::Impl {
     // GPU thread: the baked grades as 3D LUTs, the last few (keyframed grades bake one per frame)
     struct LutCache {
         struct Entry {
-            bool graded = false;
-            HdrTone::Tone tone;
             ColorGrade::Params params;
             // The loaded LUT itself, not its path: a file read again (overwritten, or missing before) is a new
             // object. Held here, so its address cannot be reused by another LUT while the entry lives
@@ -2942,24 +2940,16 @@ struct Renderer::Impl {
             Gpu::LutPtr lut;
         };
         std::vector<Entry> entries;
-        // The op's grade, after HDR -> SDR when `tone` is active (its planes go to the card as they are)
-        Gpu::LutPtr get(Gpu::Context& g, const GpuOp& op, const HdrTone::Tone& tone)
+        Gpu::LutPtr get(Gpu::Context& g, const GpuOp& op)
         {
             for (size_t i = 0; i < entries.size(); ++i)
-                if (entries[i].graded == op.graded && entries[i].tone == tone
-                    && (!op.graded || (entries[i].params == op.grade && entries[i].source == op.gradeLut))) {
+                if (entries[i].params == op.grade && entries[i].source == op.gradeLut) {
                     std::rotate(entries.begin(), entries.begin() + i, entries.begin() + i + 1);
                     return entries.front().lut;
                 }
-            Gpu::LutPtr l;
-            if (tone.active()) {
-                const auto baked = op.graded ? ColorGrade::bake(op.grade, op.gradeLut.get()) : nullptr;
-                l = g.gradeLut(baked.get(), tone, Gpu::Context::kToneLutSize);
-            } else {
-                l = g.gradeLut(*ColorGrade::bake(op.grade, op.gradeLut.get()));
-            }
+            Gpu::LutPtr l = g.gradeLut(*ColorGrade::bake(op.grade, op.gradeLut.get()));
             if (!l) return {};
-            entries.insert(entries.begin(), {op.graded, tone, op.grade, op.gradeLut, l});
+            entries.insert(entries.begin(), {op.grade, op.gradeLut, l});
             if (entries.size() > 16) entries.pop_back();
             return l;
         }
@@ -2991,12 +2981,10 @@ struct Renderer::Impl {
             case GpuOp::Draw: {
                 Gpu::TexturePtr src;
                 const bool upload = (op.rgba && !op.rgba->empty()) || op.picture || op.still;
-                HdrTone::Tone tone; // HDR -> SDR on the card: only for planes uploaded as they are
                 if (op.rgba && !op.rgba->empty()) { // made on the CPU (also an interlaced picture, see gpuMediaOp)
                     src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied, op.mips);
                 } else if (op.picture) {
                     src = g.uploadYuv(op.picture->frame, op.info, op.mips);
-                    if (src) tone = op.info.tone;
                     if (!src) { // a format the planes upload does not take after all: converted here
                         const int w = op.picture->frame->width, h = op.picture->frame->height;
                         std::vector<uint8_t> rgba(size_t(w) * h * 4);
@@ -3050,7 +3038,7 @@ struct Renderer::Impl {
                     keep.refused = true;
                     return;
                 }
-                Gpu::LutPtr lut = op.graded || tone.active() ? luts.get(g, op, tone) : nullptr;
+                Gpu::LutPtr lut = op.graded ? luts.get(g, op) : nullptr;
                 g.draw(dst, {src.get(), op.m, op.opacity, lut.get(), op.crop});
                 keep.textures.push_back(std::move(src));
                 break;

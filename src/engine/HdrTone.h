@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // HDR -> SDR: pictures with an HDR transfer (HLG, PQ; mostly BT.2020 primaries, as phones record them) shown and
-// exported as BT.709 SDR. Our own calculation (no zscale/libplacebo: the bundled LGPL FFmpeg has neither), one pure
-// function used by both ways of the picture engine: the CPU applies it per pixel (Video::toRgba, 16-bit input), the
-// card samples it baked into the clip's 3D LUT (Gpu::Context::gradeLut). So preview = export.
+// exported as BT.709 SDR. Our own calculation (no zscale/libplacebo: the bundled LGPL FFmpeg has neither): the CPU
+// applies it per pixel (Video::toRgba, 16-bit input, tables), the card in its layer shader (shaders/layer.frag
+// hdrToSdr, the same steps in floating point; keep both alike). A 3D LUT was tried first: trilinear between 65 nodes
+// it missed saturated colours by up to 120 code values (the SDR gamma is steep near black).
 //
 // Steps: signal -> display light in nits (HLG: inverse OETF + OOTF for a 1000-nit display, PQ: EOTF) -> BT.2020 to
 // BT.709 primaries in linear light -> relative to HDR reference white (203 nits, BT.2408; HLG 75 % lands there) ->

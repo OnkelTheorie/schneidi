@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/StartupTrace.h"
 #include "engine/picture/gpu/Gpu.h"
-#include "engine/HdrTone.h"
 
 #include "engine/ColorGrade.h"
+#include "engine/HdrTone.h"
 #include "engine/OutputColor.h"
 #include "engine/video/Reader.h"
 
@@ -92,8 +92,9 @@ struct Uniforms {
     float lut[4] = {};
     float crop[4] = {0, 0, -1, -1};
     float persp[4] = {0, 0, 1, 0}; // layer.frag: destination -> source w (g, h, i); affine = 0, 0, 1
+    float tone[4] = {};            // layer.frag: HDR -> SDR of Y'CbCr planes (transfer 0/1/2, BT.2020), engine/HdrTone
 };
-static_assert(sizeof(Uniforms) == 208);
+static_assert(sizeof(Uniforms) == 224);
 
 class Texture {
 public:
@@ -110,6 +111,7 @@ public:
     int bits = 8;
     float sampleScale = 1;
     float yuv[16] = {};
+    HdrTone::Tone tone; // Y'CbCr planes: their HDR signal mapped to SDR on the way (Video::Info::tone)
     int mipLevels = 1;
     bool half = false;                       // RGBA16F target (compositing, compTarget)
     std::tuple<int, int, int, int, int> key; // pool key
@@ -714,6 +716,7 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     t->mipLevels = levels;
     // 16-bit words hold `depth` bits: low bits (yuv420p10) or high bits (p010, shift > 0)
     const int shift = desc->comp[0].shift;
+    t->tone = info.tone;
     t->sampleScale = wide ? float(65535.0 / (double((1 << depth) - 1) * double(1 << shift))) : 1.0f;
     // Y'CbCr (normalized code values) -> RGB 0..1
     double kr, kb;
@@ -753,29 +756,21 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     return t;
 }
 
-LutPtr Context::gradeLut(const ColorGrade::Baked* baked, const HdrTone::Tone& tone, int n)
+LutPtr Context::gradeLut(const ColorGrade::Baked& baked, int n)
 {
     n = std::clamp(n, 2, 256);
-    // The lattice as an RGBA picture (R fastest, then G, then B = slice), corrected by the CPU code itself: the HDR
-    // signal mapped to 8-bit SDR (as Video::toRgba), then graded
+    // The lattice as an RGBA picture (R fastest, then G, then B = slice), corrected by the CPU code itself
     std::vector<uint8_t> lattice(size_t(n) * n * n * 4);
     uint8_t* p = lattice.data();
     for (int b = 0; b < n; ++b)
         for (int g = 0; g < n; ++g)
             for (int r = 0; r < n; ++r, p += 4) {
-                if (tone.active()) {
-                    const float in[3] = {float(r) / float(n - 1), float(g) / float(n - 1), float(b) / float(n - 1)};
-                    float out[3];
-                    HdrTone::toSdr(tone, in, out);
-                    for (int i = 0; i < 3; ++i) p[i] = uint8_t(std::lround(std::clamp(out[i], 0.0f, 1.0f) * 255));
-                } else {
-                    p[0] = uint8_t(std::lround(r * 255.0 / (n - 1)));
-                    p[1] = uint8_t(std::lround(g * 255.0 / (n - 1)));
-                    p[2] = uint8_t(std::lround(b * 255.0 / (n - 1)));
-                }
+                p[0] = uint8_t(std::lround(r * 255.0 / (n - 1)));
+                p[1] = uint8_t(std::lround(g * 255.0 / (n - 1)));
+                p[2] = uint8_t(std::lround(b * 255.0 / (n - 1)));
                 p[3] = 255;
             }
-    if (baked) ColorGrade::apply(lattice.data(), n * n, n, *baked, 1);
+    ColorGrade::apply(lattice.data(), n * n, n, baked, 1);
     std::unique_ptr<Lut3d> made;
     {
         std::lock_guard<std::mutex> g(d->luts->lock);
@@ -886,6 +881,10 @@ void Context::draw(Texture& dst, const Layer& layer)
     u.src[0] = float(sw), u.src[1] = float(sh), u.src[2] = float(s->log2cw), u.src[3] = float(s->log2ch);
     u.chroma[2] = s->sampleScale;
     std::memcpy(u.yuv, s->yuv, sizeof u.yuv);
+    if ((s->kind == Texture::Planar || s->kind == Texture::SemiPlanar) && s->tone.active()) {
+        u.tone[0] = float(int(s->tone.transfer));
+        u.tone[1] = s->tone.bt2020 ? 1.0f : 0.0f;
+    }
     QRhiTexture* l = nullptr;
     if (layer.grade && layer.grade->tex) {
         const int n = layer.grade->size;
@@ -1543,7 +1542,7 @@ TexturePtr Context::target(QSize, const float*) { return {}; }
 TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
 TexturePtr Context::uploadYuv(const AVFrame*, const Video::Info&, bool) { return {}; }
 TexturePtr Context::uploadGray(const uint8_t*, int, int) { return {}; }
-LutPtr Context::gradeLut(const ColorGrade::Baked*, const HdrTone::Tone&, int) { return {}; }
+LutPtr Context::gradeLut(const ColorGrade::Baked&, int) { return {}; }
 void Context::draw(Texture&, const Layer&) {}
 TexturePtr Context::mix(const Texture&, const Texture&, double) { return {}; }
 TexturePtr Context::luma(const Texture&, const Texture&, const Texture&, double, double) { return {}; }

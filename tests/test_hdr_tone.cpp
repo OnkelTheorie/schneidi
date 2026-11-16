@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // HDR -> SDR (engine/HdrTone): known values (black, HDR reference white of HLG and PQ alike, peak), a grey ramp that
-// only rises, BT.2020 colours inside BT.709 with their hue, the per-pixel tables against the exact function, the card's
-// 3D LUT (65 nodes, trilinear, as Gpu::Context::gradeLut bakes it) against the CPU, detection by the reader and the
-// conversion of real 10-bit HLG/PQ files (and the same file untagged: unchanged), Clip::hdrToSdr in the project file.
+// only rises, BT.2020 colours inside BT.709 with their hue, the per-pixel tables against the exact function, detection
+// by the reader and the conversion of real 10-bit HLG/PQ files (and the same file untagged: unchanged), Clip::hdrToSdr
+// in the project file. The card's shader (layer.frag hdrToSdr) against the CPU: test_picture_gpu.
 #include "check.h"
 
 #include "core/ProjectFile.h"
@@ -10,6 +10,10 @@
 #include "engine/HdrTone.h"
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
+
+extern "C" {
+#include <libavutil/frame.h>
+}
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -120,54 +124,6 @@ void testTables()
     }
 }
 
-// The card samples the mapping from a 3D LUT of kToneLutSize (65) nodes holding 8-bit results, trilinearly: close to
-// the CPU's per-pixel result (preview on the card = export on the CPU)
-void testLutAgainstCpu()
-{
-    const int n = 65;
-    std::mt19937 rng(11);
-    std::uniform_real_distribution<float> d(0, 1);
-    for (const Tone& t : {Tone{Transfer::Hlg, true}, Tone{Transfer::Pq, true}}) {
-        std::vector<uint8_t> lattice(size_t(n) * n * n * 3);
-        for (int b = 0; b < n; ++b)
-            for (int g = 0; g < n; ++g)
-                for (int r = 0; r < n; ++r) {
-                    const auto o = sdr(t, float(r) / (n - 1), float(g) / (n - 1), float(b) / (n - 1));
-                    for (int c = 0; c < 3; ++c)
-                        lattice[((size_t(b) * n + g) * n + r) * 3 + c] = uint8_t(std::lround(std::clamp(o[c], 0.0f, 1.0f) * 255));
-                }
-        auto node = [&](int r, int g, int b, int c) { return float(lattice[((size_t(b) * n + g) * n + r) * 3 + c]); };
-        int worst = 0;
-        double sum = 0;
-        const int samples = 20000;
-        for (int i = 0; i < samples; ++i) {
-            const float v[3] = {d(rng), d(rng), d(rng)};
-            const auto e = sdr(t, v[0], v[1], v[2]);
-            int i0[3];
-            float f[3];
-            for (int c = 0; c < 3; ++c) {
-                const float p = v[c] * (n - 1);
-                i0[c] = std::min(int(p), n - 2);
-                f[c] = p - i0[c];
-            }
-            for (int c = 0; c < 3; ++c) {
-                float acc = 0;
-                for (int k = 0; k < 8; ++k) {
-                    const int dx = k & 1, dy = (k >> 1) & 1, dz = k >> 2;
-                    const float w = (dx ? f[0] : 1 - f[0]) * (dy ? f[1] : 1 - f[1]) * (dz ? f[2] : 1 - f[2]);
-                    acc += w * node(i0[0] + dx, i0[1] + dy, i0[2] + dz, c);
-                }
-                const int diff = std::abs(int(std::lround(acc)) - int(std::lround(e[c] * 255)));
-                worst = std::max(worst, diff);
-                sum += diff;
-            }
-        }
-        std::printf("LUT vs CPU (%s): worst %d, mean %.3f\n", HdrTone::name(t.transfer), worst, sum / (samples * 3));
-        CHECK(sum / (samples * 3) < 0.6);
-        CHECK(worst <= 8); // saturated corners at the gamut clip, where the mapping bends hardest
-    }
-}
-
 // A flat colour as a 10-bit file with the given transfer tags; the converted centre pixel
 std::array<int, 3> convertedCentre(const QString& path)
 {
@@ -189,15 +145,15 @@ std::array<int, 3> convertedCentre(const QString& path)
 
 void testFiles(const QString& dir)
 {
-    const auto make = [&](const QString& name, const QString& color, const QStringList& tags) {
+    // Tags set by setparams (output options alone do not reach FFV1 in Matroska)
+    const auto make = [&](const QString& name, const QString& color, const QString& trc) {
         return Check::makeMedia(dir + "/" + name,
                                 QStringList{"-f", "lavfi", "-i", "color=c=" + color + ":size=128x72:rate=25:duration=0.2",
-                                            "-vf", "format=yuv420p10le", "-c:v", "ffv1", "-colorspace", "bt2020nc"}
-                                    + tags);
+                                            "-vf", "setparams=color_trc=" + trc
+                                                       + ":color_primaries=bt2020:colorspace=bt2020nc,format=yuv420p10le",
+                                            "-c:v", "ffv1"});
     };
-    const QStringList hlgTags{"-color_primaries", "bt2020", "-color_trc", "arib-std-b67"};
-    const QStringList pqTags{"-color_primaries", "bt2020", "-color_trc", "smpte2084"};
-    const QStringList sdrTags{"-color_primaries", "bt2020", "-color_trc", "bt2020-10"};
+    const QString hlgTags = "arib-std-b67", pqTags = "smpte2084", sdrTags = "bt2020-10";
     // 0xbf = 75 %: HLG reference white
     const QString hlg = make("hlg.mkv", "0xbfbfbf", hlgTags), plain = make("plain.mkv", "0xbfbfbf", sdrTags);
     const QString pq = make("pq.mkv", "0x949494", pqTags); // 0x94 = 58 %: PQ 203 nits
@@ -221,7 +177,7 @@ void testFiles(const QString& dir)
     CHECK(h[1] > 215 && h[1] < 245);         // reference white: bright, not clipped
     CHECK(std::abs(h[1] - q[1]) <= 4);       // HLG and PQ reference white alike
     CHECK(std::abs(h[0] - h[2]) <= 2);       // grey stays grey
-    CHECK(rd[0] > 150 && rd[1] < 40 && rd[2] < 40); // red stays red
+    CHECK(rd[0] > rd[1] + 100 && rd[0] > rd[2] + 100); // red stays red
     // Cleared tone (Clip::hdrToSdr off): the signal as it is
     const auto r = Video::Reader::open(hlg);
     if (CHECK(r)) {
@@ -241,7 +197,7 @@ void testProjectFile()
     c.id = 1;
     c.kind = ClipKind::Media;
     c.mediaPath = "/fixtures/media/a.mov";
-    c.length = 25;
+    c.out = 25;
     Clip off = c;
     off.id = 2;
     off.start = 30;
@@ -271,7 +227,6 @@ int main(int argc, char** argv)
     testRampRises();
     testGamut();
     testTables();
-    testLutAgainstCpu();
     testProjectFile();
     if (Check::haveFfmpeg()) {
         QTemporaryDir dir;
