@@ -17,6 +17,7 @@
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/picture/Renderer.h"
+#include "app/Theme.h"
 #include "ui/ColorPanel.h"
 #include "ui/CurveEditor.h"
 #include "ui/WindowOverlay.h"
@@ -481,6 +482,7 @@ void testPanel()
     if (const QString shots = qEnvironmentVariable("GRADE_QUALIFIER_SHOTS"); !shots.isEmpty()) {
         ed.setGradeCurve({id}, K::Y, {{0, 0.05}, {0.3, 0.25}, {0.7, 0.8}, {1, 1}});
         ed.setGradeValues({id}, {{AnimParam::GradeGainY, 1.15}}, 10, "x");
+        panel.resize(1300, 330);
         for (int i = 0; i < 3; ++i) {
             panel.setPalette(i);
             QApplication::processEvents();
@@ -584,6 +586,12 @@ void testStills(const QString& dir)
         p.undoStack()->undo();
         CHECK_EQ(p.stills().size(), 1);
         if (list) CHECK_EQ(list->count(), 1);
+    }
+    if (const QString shots = qEnvironmentVariable("GRADE_QUALIFIER_SHOTS"); !shots.isEmpty()) {
+        for (int i = 0; i < 3; ++i) ed.addGradeStill(i % 2 ? id2 : id1, picture, QString("a.mp4 00:00:0%1:00").arg(i));
+        panel.resize(1300, 330);
+        QApplication::processEvents();
+        panel.grab().save(shots + "/palette-3.png");
     }
     // Apply from the panel onto the shown clip (clip 1 at the playhead)
     auto* apply = panel.findChild<QToolButton*>("color_still_apply");
@@ -718,6 +726,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("grade-qualifier");
+    if (qEnvironmentVariableIsSet("GRADE_QUALIFIER_SHOTS")) Theme::apply(app); // the pictures in the app's own look
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

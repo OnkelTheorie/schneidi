@@ -1616,8 +1616,12 @@ QWidget* ColorPanel::buildStills()
     m_stillList->setSpacing(4);
     m_stillList->setUniformItemSizes(true);
     m_stillList->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_stillList->setStyleSheet(QString("QListWidget { background: %1; border: 1px solid %2; color: %3; font-size: 8pt; }")
-                                   .arg(Theme::lane.name(), Theme::border.name(), Theme::textDim.name()));
+    m_stillList->setStyleSheet(
+        QString("QListWidget { background: %1; border: 1px solid %2; color: %3; font-size: 8pt; }"
+                "QListWidget::item { border: 1px solid transparent; padding: 2px; }"
+                "QListWidget::item:selected { background: %4; color: %5; border: 1px solid %6; }")
+            .arg(Theme::lane.name(), Theme::border.name(), Theme::textDim.name(), Theme::control.name(),
+                 Theme::text.name(), Theme::primary.name()));
     connect(m_stillList, &QListWidget::itemSelectionChanged, this, [this] {
         const int id = selectedStill();
         if (m_compareId && id && id != m_compareId) setComparedStill(id); // comparing follows the selection
