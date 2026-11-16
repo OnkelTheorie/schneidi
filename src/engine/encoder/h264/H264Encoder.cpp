@@ -617,6 +617,12 @@ Encoder::Encoder(const EncoderConfig& config)
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
     idrCount_ = cfg_.idrPicIdBase;
+    if (vbvOn()) {
+        // The first removal waits for initial_cpb_removal_delay (90 kHz) - the fill as the decoder sees it.
+        const double init = std::floor(90000.0 * std::clamp(cfg_.vbvInit, 0.05, 1.0) * vbvSize() / vbvRate());
+        vbvFill_ = vbvOutFill_ = init * vbvRate() / 90000.0;
+        vbvMinFill_ = vbvSize();
+    }
 }
 
 const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : coders_[0].get())->recY_; }
@@ -653,6 +659,14 @@ int levelIdcFor(const EncoderConfig& cfg)
             continue;
         if (cfg.bitrateKbps > 0 && cfg.bitrateKbps * 1.5 * 1000.0 > double(l.maxBr) * brFactor)
             continue;
+        if (cfg.vbvMaxrateKbps > 0 && cfg.vbvBufsizeKbits > 0) {
+            // NAL HRD (Table A-1, cpbBrNalFactor of Table A-2): MaxCPB per level, in the order of kLevels.
+            static constexpr int64_t kMaxCpb[] = {175,   500,   1000,  2000,   2000,   4000,   4000,   10000,  14000, 20000,
+                                                  25000, 62500, 62500, 135000, 240000, 240000, 240000, 480000, 800000};
+            const double nal = high ? 1500.0 : 1200.0;
+            if (cfg.vbvMaxrateKbps * 1000.0 > double(l.maxBr) * nal || cfg.vbvBufsizeKbits * 1000.0 > double(kMaxCpb[&l - kLevels]) * nal)
+                continue;
+        }
         return l.idc;
     }
     return 62;
@@ -733,8 +747,23 @@ std::vector<uint8_t> Encoder::headers() const
         bw.u(units, 32); // num_units_in_tick
         bw.u(scale, 32); // time_scale
         bw.flag(true);   // fixed_frame_rate_flag
-        bw.flag(false);  // nal_hrd_parameters_present_flag
+        bw.flag(vbvOn()); // nal_hrd_parameters_present_flag
+        if (vbvOn()) {
+            // hrd_parameters (E.1.2): one CPB, VBR, the model's rate and size (vbvRate/vbvSize).
+            bw.ue(0);    // cpb_cnt_minus1
+            bw.u(0, 4);  // bit_rate_scale: 64 bit/s
+            bw.u(0, 4);  // cpb_size_scale: 16 bits
+            bw.ue(uint32_t(vbvRate() / 64.0) - 1); // bit_rate_value_minus1
+            bw.ue(uint32_t(vbvSize() / 16.0) - 1); // cpb_size_value_minus1
+            bw.flag(false); // cbr_flag
+            bw.u(23, 5);    // initial_cpb_removal_delay_length_minus1 (24 bits)
+            bw.u(23, 5);    // cpb_removal_delay_length_minus1
+            bw.u(23, 5);    // dpb_output_delay_length_minus1
+            bw.u(0, 5);     // time_offset_length
+        }
         bw.flag(false);  // vcl_hrd_parameters_present_flag
+        if (vbvOn())
+            bw.flag(false); // low_delay_hrd_flag
         bw.flag(false);  // pic_struct_present_flag
         bw.flag(true);   // bitstream_restriction_flag: no reordering, so decoders output at once
         bw.flag(true);   // motion_vectors_over_pic_boundaries_flag
@@ -1483,7 +1512,59 @@ EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads)
         c.bitrateKbps = bitrateKbps[size_t(i)];
         c.firstPass = firstPass[size_t(i)];
     }
+    if (c.vbvMaxrateKbps > 0 && c.vbvBufsizeKbits > 0) {
+        // VBV across the seams: a chunk after the first assumes kChunkVbvFill at its start (where the buffer usually
+        // is: the plan keeps it half full at the end of the lookahead), and every chunk but the last ends with at
+        // least kChunkVbvEnd, so the real buffer at the seam is never lower than the next chunk assumes.
+        if (i > 0)
+            c.vbvInit = std::min(c.vbvInit, kChunkVbvFill);
+        if (size_t(i) + 1 < start.size())
+            c.vbvEndFill = kChunkVbvEnd;
+    }
     return c;
+}
+
+std::vector<uint8_t> vbvJoinChunk(const std::vector<uint8_t>& firstAu, int framesSinceBp)
+{
+    // The access unit starts with our SEI NAL unit (Encoder::vbvSei): buffering period, then picture timing whose
+    // first 24 bits are cpb_removal_delay - two ticks per picture since the buffering period before.
+    if (firstAu.size() < 6 || firstAu[0] != 0 || firstAu[1] != 0 || firstAu[2] != 0 || firstAu[3] != 1 || (firstAu[4] & 31) != 6)
+        return firstAu;
+    size_t end = 5;
+    for (int zeros = 0; end < firstAu.size(); ++end) { // up to the next start code
+        if (zeros >= 2 && firstAu[end] == 1)
+            break;
+        zeros = firstAu[end] == 0 ? zeros + 1 : 0;
+    }
+    if (end >= firstAu.size())
+        return firstAu;
+    size_t naluEnd = end - 2; // the start code's zeros
+    while (naluEnd > 5 && firstAu[naluEnd - 1] == 0)
+        --naluEnd;
+    std::vector<uint8_t> rbsp;
+    for (size_t i = 5, zeros = 0; i < naluEnd; ++i) {
+        if (zeros >= 2 && firstAu[i] == 3) {
+            zeros = 0;
+            continue;
+        }
+        rbsp.push_back(firstAu[i]);
+        zeros = firstAu[i] == 0 ? zeros + 1 : 0;
+    }
+    for (size_t k = 0; k + 1 < rbsp.size() && rbsp[k] != 0x80;) {
+        const int type = rbsp[k], size = rbsp[k + 1]; // (ours are short: one byte each)
+        if (type == 1 && size >= 3 && k + 2 + 3 <= rbsp.size()) {
+            const uint32_t d = uint32_t(2 * std::max(0, framesSinceBp)) & 0xFFFFFF;
+            rbsp[k + 2] = uint8_t(d >> 16);
+            rbsp[k + 3] = uint8_t(d >> 8);
+            rbsp[k + 4] = uint8_t(d);
+            std::vector<uint8_t> out;
+            appendNal(out, 0, 6, rbsp);
+            out.insert(out.end(), firstAu.begin() + ptrdiff_t(naluEnd), firstAu.end());
+            return out;
+        }
+        k += 2 + size_t(size);
+    }
+    return firstAu;
 }
 
 // Classes of P pictures for the first-pass rate control (H264_TPBIN=0: one k for all).
@@ -2549,8 +2630,26 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     lastWasSceneCut_ = fc.outSceneCut_;
     lastDisplayIndex_ = fc.displayIndex_;
     lastType_ = "IPB"[fc.rcType_];
+    if (vbvOn()) {
+        // SEI first (they count in the access unit's bits), then the buffer as the decoder has it.
+        std::vector<uint8_t> sei = vbvSei(fc, fc.idr_);
+        out.insert(out.begin(), sei.begin(), sei.end());
+        if (fc.frameNo_ == 0)
+            vbvHeaderBytes_ = headers().size();
+        const double bits = double(out.size() + (fc.frameNo_ == 0 ? vbvHeaderBytes_ : 0)) * 8.0;
+        vbvOutFill_ -= bits;
+        if (vbvOutFill_ < 0)
+            ++vbvUnderflows_;
+        vbvMinFill_ = std::min(vbvMinFill_, vbvOutFill_);
+        vbvOutFill_ = std::min(vbvOutFill_ + vbvTick(), vbvSize());
+        vbvDone_.push_back({fc.frameNo_, fc.vbvClass_, fc.vbvQp_ + fc.vbvShift_, fc.vbvCost_, bits});
+        if (std::getenv("H264_VBV_TRACE"))
+            std::fprintf(stderr, "vbv out: frame %d %c qp %.2f bits %.0f predicted %.0f fill %.1f %%\n", fc.frameNo_, "IPB"[fc.rcType_],
+                         fc.vbvQp_, bits, fc.vbvPred_, 100.0 * vbvOutFill_ / vbvSize());
+    }
     if (cfg_.bitrateKbps > 0)
-        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcAfterB_, fc.rcLookahead_, fc.rcCost_, fc.rcBin_, fc.outQp_, double(out.size()) * 8.0});
+        rcDone_.push_back({fc.frameNo_, fc.rcType_, fc.rcAfterB_, fc.rcLookahead_, fc.rcCost_, fc.rcBin_, fc.outQp_,
+                           double(out.size()) * 8.0});
     if (gTiming) {
         for (int i = 4; i < 8; ++i)
             gPhaseMs[i] += clock.ms[i];
@@ -3109,6 +3208,8 @@ int FrameCoder::waveRowBody(int r, bool block)
             if (waveErrors_.failed())
                 return -1;
             MbOut mb;
+            const int vbvAdd = vbvRowCap_ > 0 ? vbvRowAdjust(mbx, r) : 0;
+            const double vbvBits0 = vbvRowCap_ > 0 ? eng.countedBits() : 0.0;
             psyBegin(mbx, r);
             if (bSlice_)
                 encodeMbB(mb, mbx, r);
@@ -3118,6 +3219,11 @@ int FrameCoder::waveRowBody(int r, bool block)
                 commitQp(mbx, r, encodeMbIntra(mb, mbx, r));
             traceMb(mbx, r, mb.syn);
             cabacWriteMb(eng, cabWave_, mbx, r, mb.syn, w.rowPrevNz[size_t(r)]);
+            if (vbvRowCap_ > 0) {
+                const size_t k = size_t(r) * size_t(mbW_ + 1) + size_t(mbx);
+                vbvPrefB_[k + 1] = vbvPrefB_[k] + (eng.countedBits() - vbvBits0);
+                vbvPrefE_[k + 1] = vbvPrefE_[k] + vbvW_[size_t(r) * mbW_ + mbx] * std::exp2(-vbvAdd / 6.0);
+            }
             mbSyn_[size_t(r) * mbW_ + mbx].assignUsed(mb.syn);
             if (mbx == std::min(1, mbW_ - 1))
                 w.rowSnap[size_t(r)] = eng;
@@ -3358,6 +3464,269 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int frameNum, int idrCount, Phas
         });
     }
     return assemble(clock);
+}
+
+// ---- VBV (EncoderConfig::vbvMaxrateKbps / vbvBufsizeKbits) ----
+
+static const double gVbvSafe = std::getenv("H264_VBV_SAFE") ? std::atof(std::getenv("H264_VBV_SAFE")) : 2.0;
+static const double gVbvDecay = std::getenv("H264_VBV_DECAY") ? std::atof(std::getenv("H264_VBV_DECAY")) : 0.6;
+static const double gVbvTarget = std::getenv("H264_VBV_TARGET") ? std::atof(std::getenv("H264_VBV_TARGET")) : 0.5;
+static const bool gVbvTrace = std::getenv("H264_VBV_TRACE") != nullptr;
+// VBV inside the picture (FrameCoder::vbvRowAdjust); H264_VBV_ROWS=0: frame level only (measuring).
+static const bool gVbvRows = !std::getenv("H264_VBV_ROWS") || std::atoi(std::getenv("H264_VBV_ROWS")) != 0;
+static const double gVbvRowMargin = std::getenv("H264_VBV_ROWMARGIN") ? std::atof(std::getenv("H264_VBV_ROWMARGIN")) : 0.02;
+
+// The real sizes of the pictures up to upTo (coding order) go into the decision side's buffer and bit model.
+void Encoder::vbvLearn(int upTo)
+{
+    while (!vbvDone_.empty() && vbvDone_.front().frameNo <= upTo) {
+        const VbvRecord r = vbvDone_.front();
+        vbvDone_.pop_front();
+        while (!vbvPred_.empty() && vbvPred_.front().first <= r.frameNo)
+            vbvPred_.pop_front();
+        vbvFill_ = std::min(vbvFill_ - r.bits + vbvTick(), vbvSize());
+        if (r.cost > 0) {
+            vbvKNum_[r.type] = vbvKNum_[r.type] * gVbvDecay + r.bits * std::exp2(r.qp / 6.0);
+            vbvKDen_[r.type] = vbvKDen_[r.type] * gVbvDecay + r.cost;
+            vbvQNum_[r.type] = vbvQNum_[r.type] * gVbvDecay + r.qp;
+            vbvQDen_[r.type] = vbvQDen_[r.type] * gVbvDecay + 1.0;
+        }
+    }
+}
+
+double Encoder::vbvK(int type) const
+{
+    if (vbvKDen_[type] > 0)
+        return vbvKNum_[type] / vbvKDen_[type];
+    if (type == 3)
+        return vbvK(1);
+    // Not seen yet: from the other types (a B picture about half a P picture's bits per cost).
+    if (type == 2 && vbvKDen_[1] > 0)
+        return 0.5 * vbvKNum_[1] / vbvKDen_[1];
+    if (type == 0 && vbvKDen_[1] > 0)
+        return vbvKNum_[1] / vbvKDen_[1];
+    if (type != 0 && vbvKDen_[0] > 0)
+        return vbvKNum_[0] / vbvKDen_[0];
+    return 1.0;
+}
+
+// Bits of a picture of this class and cost at qp: k * cost * 2^(-qp/6) - but below the QPs k was learned at, bits
+// grow faster than that (noise and fine texture that a coarser QP quantised away come back: measured up to 4x for
+// 4 QP), so there they double every gVbvSteep QP. It decides only where the buffer gets tight, so erring high
+// costs little.
+static const double gVbvSteep = std::getenv("H264_VBV_STEEP") ? std::atof(std::getenv("H264_VBV_STEEP")) : 3.0;
+
+double Encoder::vbvPredict(int type, double cost, double qp) const
+{
+    const double k = vbvK(type) * cost;
+    const int c = vbvQDen_[type] > 0 ? type : type == 3 ? 1 : type;
+    if (vbvQDen_[c] <= 0)
+        return k * std::exp2(-qp / 6.0);
+    const double ref = vbvQNum_[c] / vbvQDen_[c];
+    return qp >= ref ? k * std::exp2(-qp / 6.0) : k * std::exp2(-ref / 6.0 + (ref - qp) / gVbvSteep);
+}
+
+// A P or B picture whose motion cost is near its intra cost (a cut, a flash the scene detection let through)
+// codes like an I picture: as many bits per cost as one, far more than a P picture's (measured 2.8x on a cut
+// inside a run of B pictures), so it goes by the I pictures' k and teaches them.
+static const double gVbvCut = std::getenv("H264_VBV_CUT") ? std::atof(std::getenv("H264_VBV_CUT")) : 0.6;
+
+int Encoder::vbvClass(const LookaheadFrame& f, int type) const
+{
+    if (type == 0)
+        return 0;
+    const bool afterB = type == 1 && useB() && f.refDist > 1;
+    const double motion = afterB && size_t(f.refDist) < f.fwd.size() && f.fwd[size_t(f.refDist)].valid() ? f.fwd[size_t(f.refDist)].sum : f.interSum;
+    if (gVbvCut > 0 && f.intraSum > 0 && motion >= gVbvCut * f.intraSum)
+        return 0;
+    return afterB ? 3 : type;
+}
+
+// The bit model's cost of a queued picture (lookahead cost, as the rate control's) and in *shift the macroblock
+// tree's finer QPs as one offset of the whole picture (its cost with the tree's weights is cost * 2^(-shift/6)):
+// the picture's bits are predicted at its QP + shift, where the curve below the learned QPs is steeper. With f
+// null (no lookahead) 1, so k is a picture's bits at QP 0 of its type.
+double Encoder::vbvCost(const LookaheadFrame* f, int type, double* shift) const
+{
+    *shift = 0;
+    if (!f)
+        return 1.0;
+    for (size_t j = 0; j < queue_.size(); ++j) {
+        const LookaheadFrame& g = queue_[j];
+        if (&g != f)
+            continue;
+        if (type == 2)
+            return std::max(1.0, queueCost(j));
+        const std::vector<int32_t>* inter =
+            type == 1 && useB() && g.refDist > 1 && size_t(g.refDist) < g.fwd.size() && g.fwd[size_t(g.refDist)].valid()
+                ? &g.fwd[size_t(g.refDist)].cost
+                : nullptr;
+        if (!inter)
+            inter = &g.interCost;
+        const size_t n = size_t(mbW_) * mbH_;
+        if (g.intraCost.size() != n)
+            return 1.0;
+        double raw = 0, tree = 0;
+        const double strength = treeStrength(g);
+        for (size_t m = 0; m < n; ++m) {
+            const double c = type == 0 ? g.intraCost[m] : std::min(g.intraCost[m], (*inter)[m]);
+            raw += c;
+            tree += cfg_.mbtree ? c * std::exp2(-std::max(-8.0f, Lookahead::qpOffset(g, int(m), strength)) / 6.0) : c;
+        }
+        if (raw < 1.0)
+            return 1.0;
+        *shift = -6.0 * std::log2(std::max(tree, 1e-9) / raw);
+        return raw;
+    }
+    return 1.0;
+}
+
+// The first picture as I and the next as P, coded once at the stream's first QP without the tree or AQ: the
+// bit model's start (the lookahead costs carry the tree's share).
+void Encoder::vbvProbe(const LookaheadFrame& frame, double qpI)
+{
+    EncoderConfig pc = cfg_;
+    pc.bitrateKbps = 0;
+    pc.crf = -1;
+    pc.vbvMaxrateKbps = 0;
+    pc.lookahead = 0;
+    pc.bframes = 0;
+    pc.weightedPred = false;
+    pc.mbtree = false;
+    pc.aqStrength = 0;
+    pc.firstPass.reset();
+    pc.qp = std::clamp(int(std::lround(qpI)) + 3, 13, 51); // the probe's I picture is coded 3 below
+    pc.gop = std::max(2, cfg_.gop);
+    pc.sceneCut = false;
+    pc.frameThreads = false;
+    Encoder probe(pc);
+    const bool costs = useLookahead() && !queue_.empty();
+    const double bitsI = double(probe.encode(pictureOf(frame, cfg_.width)).size()) * 8.0;
+    vbvKNum_[0] = bitsI * std::exp2((pc.qp - 3) / 6.0);
+    vbvQNum_[0] = vbvQNum_[1] = pc.qp - 3; // (P: the probe's I and P together)
+    vbvQDen_[0] = vbvQDen_[1] = 1.0;
+    vbvKDen_[0] = costs ? std::max(1.0, frame.intraSum) : 1.0;
+    if (costs && queue_.size() > 1 && &queue_[0] == &frame) {
+        const LookaheadFrame& second = queue_[1];
+        const int qpP = pc.qp;
+        const double bitsP = double(probe.encode(pictureOf(second, cfg_.width)).size()) * 8.0;
+        vbvKNum_[1] = bitsP * std::exp2(qpP / 6.0);
+        vbvKDen_[1] = std::max(1.0, second.interSum);
+    } else {
+        vbvKNum_[1] = 0.3 * vbvKNum_[0]; // without costs: a P picture about a third of the I picture
+        vbvKDen_[1] = vbvKDen_[0];
+    }
+}
+
+// How far the picture's QP must rise (0 = not at all) so that neither it nor the planned pictures after it
+// (the queue, in coding order, at the same QP plus their type's offset) run the buffer empty, and the
+// buffer is no lower than half full (or than it is now plus half of what comes in, whichever is less) at
+// the end of the lookahead. The picture itself (and those in flight) must fit gVbvSafe times its prediction: it is
+// coded with a frame-level QP only, nothing corrects it once it runs over (a correction per macroblock row would
+// depend on which rows of the wavefront are done, so the stream on the thread count). 2 against 1.3: on 0.5 s
+// buffers far fewer and smaller underflows for no measurable quality.
+double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, double shift, int bQp)
+{
+    const int cls = frame ? vbvClass(*frame, type) : type;
+    const double size = vbvSize(), tick = vbvTick();
+    double fill = vbvFill_, low = vbvFill_; // after the pictures in flight: as predicted, and with gVbvSafe times that
+    for (const auto& p : vbvPred_) {
+        fill = std::min(fill - p.second + tick, size);
+        low = std::min(low - gVbvSafe * p.second + tick, size);
+    }
+    vbvLow_ = low;
+    // The planned pictures in coding order (a run of B pictures after the reference picture that ends it).
+    struct Planned {
+        int type, cls;
+        double cost, shift;
+    };
+    std::vector<Planned> plan;
+    if (frame) {
+        std::vector<Planned> run;
+        for (size_t j = 0; j < queue_.size(); ++j) {
+            const LookaheadFrame& g = queue_[j];
+            if (g.coded || &g == frame)
+                continue;
+            const int t = g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1;
+            double sh = 0;
+            const double c = vbvCost(&g, t, &sh);
+            if (t == 2) {
+                run.push_back({t, vbvClass(g, t), c, sh});
+            } else {
+                plan.push_back({t, vbvClass(g, t), c, sh});
+                plan.insert(plan.end(), run.begin(), run.end());
+                run.clear();
+            }
+        }
+        plan.insert(plan.end(), run.begin(), run.end());
+    }
+    auto offset = [&](int t) { return t == 0 ? (cfg_.gop > 1 ? -3.0 : 0.0) : t == 2 ? double(bQp) : 0.0; }; // (3 = P too)
+    const double base = qp - offset(type); // the P QP the plan follows
+    auto fits = [&](double d) {
+        const double cur = vbvPredict(cls, cost, qp + shift + d);
+        if (low - gVbvSafe * cur < 0)
+            return false;
+        double f = std::min(fill - cur + tick, size), seconds = 0;
+        for (const Planned& p : plan) {
+            f -= vbvPredict(p.cls, p.cost, std::min(51.0, base + offset(p.type) + d) + p.shift);
+            if (f < 0)
+                return false;
+            f = std::min(f + tick, size);
+            seconds += tick / vbvRate();
+        }
+        // A chunk followed by another (vbvEndFill): once the queue holds the rest, it ends at least that full.
+        if (flushing_ && cfg_.vbvEndFill > 0 && f < cfg_.vbvEndFill * size)
+            return false;
+        return f >= std::min(fill + gVbvTarget * seconds * vbvRate(), gVbvTarget * size);
+    };
+    double d = 0;
+    while (qp + d < 51.0 && !fits(d))
+        d += 0.25;
+    if (gVbvTrace)
+        std::fprintf(stderr, "vbv: frame %d %c qp %.2f +%.2f fill %.1f %% predicted %.0f plan %zu class %d display %d intra %.0f inter %.0f dist %d\n",
+                     frameIndex_, "IPB"[type], qp, d, 100.0 * fill / size, vbvPredict(cls, cost, std::min(51.0, qp + d) + shift), plan.size(), cls,
+                     frame ? frame->index : -1, frame ? frame->intraSum : 0.0, frame ? frame->interSum : 0.0, frame ? frame->refDist : 0);
+    return std::min(d, std::max(0.0, 51.0 - qp));
+}
+
+// SEI of an access unit with VBV (D.1.2, D.1.3): a buffering period at every IDR picture (the buffer level as
+// the decoder has it before this picture's removal, in 90 kHz) and the picture timing (removal two ticks per
+// picture after the last buffering period, output at its display turn).
+std::vector<uint8_t> Encoder::vbvSei(const FrameCoder& fc, bool idr)
+{
+    auto message = [](BitWriter& sei, int type, BitWriter& payload) {
+        if (!payload.byteAligned()) {
+            payload.flag(true); // bit_equal_to_one
+            payload.alignZero();
+        }
+        sei.u(uint32_t(type), 8);
+        size_t n = payload.bytes().size();
+        for (; n >= 255; n -= 255)
+            sei.u(255, 8);
+        sei.u(uint32_t(n), 8);
+        sei.append(payload);
+    };
+    BitWriter sei;
+    if (idr) {
+        BitWriter bp;
+        bp.ue(0); // seq_parameter_set_id
+        const double fill = std::clamp(vbvOutFill_, 0.0, vbvSize());
+        const uint32_t delay = uint32_t(std::max(1.0, std::floor(90000.0 * fill / vbvRate())));
+        const uint32_t whole = uint32_t(std::floor(90000.0 * vbvSize() / vbvRate()));
+        bp.u(delay, 24);                                // initial_cpb_removal_delay
+        bp.u(whole > delay ? whole - delay : 0, 24);    // initial_cpb_removal_delay_offset
+        message(sei, 0, bp);
+    }
+    BitWriter pt;
+    pt.u(uint32_t(2 * (fc.frameNo_ - vbvBpFrame_)) & 0xFFFFFF, 24);                               // cpb_removal_delay
+    pt.u(uint32_t(std::max(0, 2 * (fc.displayIndex_ + reorderDelay() - fc.frameNo_))) & 0xFFFFFF, 24); // dpb_output_delay
+    message(sei, 1, pt);
+    if (idr)
+        vbvBpFrame_ = fc.frameNo_;
+    sei.rbspTrailing();
+    std::vector<uint8_t> out;
+    appendNal(out, 0, 6, sei.bytes());
+    return out;
 }
 
 FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
@@ -3779,6 +4148,29 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     } else if (type == 2) {
         cfg_.qp = std::clamp(baseQp + (bRef ? bRefQp : bQp), 0, 51); // nothing (little) depends on a B picture
     }
+    if (vbvOn()) {
+        // VBV: the QP the mode chose, raised where the buffer needs it (vbvRaise).
+        vbvLearn(frameIndex_ - inFlightAt(frameIndex_));
+        const double q = cfg_.qp + qpFrac;
+        if (frameIndex_ == 0)
+            vbvProbe(frame, q);
+        double shift = 0;
+        const double cost = vbvCost(lookahead ? &frame : nullptr, type, &shift);
+        const double d = vbvRaise(lookahead ? &frame : nullptr, type, q, cost, shift, bQp);
+        if (d > 0) {
+            const double nq = std::min(51.0, q + d);
+            cfg_.qp = int(std::lround(nq));
+            qpFrac = float(nq - cfg_.qp);
+            if (cfg_.bitrateKbps > 0 && lookahead && cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size())
+                costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1), cfg_.qp) * std::exp2(cfg_.qp / 6.0);
+        }
+        fc.vbvQp_ = cfg_.qp + qpFrac;
+        fc.vbvCost_ = cost;
+        fc.vbvClass_ = lookahead ? vbvClass(frame, type) : type;
+        fc.vbvShift_ = shift;
+        fc.vbvPred_ = vbvPredict(fc.vbvClass_, cost, fc.vbvQp_ + shift);
+        vbvPred_.push_back({frameIndex_, fc.vbvPred_});
+    }
     fc.cfg_.qp = cfg_.qp;
     fc.qpFrac_ = qpFrac;
     static const bool kQpTrace = std::getenv("H264_QP_TRACE") != nullptr;
@@ -3816,6 +4208,32 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
 
     clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
     fc.planMacroblockQp();
+    fc.vbvRowCap_ = 0;
+    if (vbvOn() && useCabac() && gVbvRows) {
+        // The picture's slice data may take what the buffer holds at worst before it (the pictures in flight at
+        // gVbvSafe times their prediction), less a margin for the SEI and headers and the counting CABAC's error.
+        fc.vbvRowCap_ = std::max(1.0, vbvLow_ - gVbvRowMargin * vbvSize() - 2000.0);
+        const size_t n = size_t(mbW_) * mbH_;
+        const bool costs = lookahead && frame.intraCost.size() == n;
+        const std::vector<int32_t>* inter = costs ? &frame.interCost : nullptr;
+        if (costs && type == 1 && bMode && frame.refDist > 1 && size_t(frame.refDist) < frame.fwd.size() && frame.fwd[size_t(frame.refDist)].valid())
+            inter = &frame.fwd[size_t(frame.refDist)].cost;
+        fc.vbvW_.resize(n);
+        fc.vbvPrefB_.assign(size_t(mbW_ + 1) * mbH_, 0.0);
+        fc.vbvPrefE_.assign(size_t(mbW_ + 1) * mbH_, 0.0);
+        fc.vbvPrefW_.assign(size_t(mbW_ + 1) * mbH_, 0.0);
+        fc.vbvWTotal_ = 0;
+        for (int r = 0; r < mbH_; ++r)
+            for (int x = 0; x < mbW_; ++x) {
+                const size_t m = size_t(r) * mbW_ + size_t(x);
+                const double c = costs ? 1.0 + (type == 0 ? frame.intraCost[m] : std::min(frame.intraCost[m], (*inter)[m])) : 1.0;
+                const double wgt = c * std::exp2(-(fc.mbQp_[m] - cfg_.qp) / 6.0);
+                fc.vbvW_[m] = wgt;
+                fc.vbvWTotal_ += wgt;
+                const size_t k = size_t(r) * size_t(mbW_ + 1) + size_t(x);
+                fc.vbvPrefW_[k + 1] = fc.vbvPrefW_[k] + wgt;
+            }
+    }
     clock.lap(3);
     // Sliding window (8.2.5.3): the newest picture goes first, the oldest drops out.
     std::shared_ptr<RefPic> pic;
@@ -7795,6 +8213,37 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
 }
 
 // After a macroblock is chosen: its QP is the planned one if it sent mb_qp_delta, else the predictor.
+// VBV inside the picture (vbvRowCap_): the QP rise for macroblock (mbx, r), applied to its mbQp_. Seen so far: this
+// row up to mbx and every row r - j above up to column mbx + 2j - what the wavefront has finished for certain
+// before this macroblock starts, on any number of threads. Projection: their bits, plus the planned share of the
+// rest scaled by what the seen part took against its plan (at the QPs it got) and by 2^(-rise/6).
+static const double gVbvRowStart = std::getenv("H264_VBV_ROWSTART") ? std::atof(std::getenv("H264_VBV_ROWSTART")) : 0.05;
+
+int FrameCoder::vbvRowAdjust(int mbx, int r)
+{
+    const size_t stride = size_t(mbW_ + 1);
+    double bits = vbvPrefB_[size_t(r) * stride + size_t(mbx)], eff = vbvPrefE_[size_t(r) * stride + size_t(mbx)],
+           plan = vbvPrefW_[size_t(r) * stride + size_t(mbx)];
+    for (int j = 1; j <= r; ++j) {
+        const size_t k = size_t(r - j) * stride + size_t(std::min(mbW_, mbx + 2 * j));
+        bits += vbvPrefB_[k];
+        eff += vbvPrefE_[k];
+        plan += vbvPrefW_[k];
+    }
+    if (plan < gVbvRowStart * vbvWTotal_ || eff <= 0)
+        return 0;
+    const size_t m = size_t(r) * mbW_ + size_t(mbx);
+    const double room = vbvRowCap_ - bits, need = bits / eff * std::max(0.0, vbvWTotal_ - plan);
+    int add = 0;
+    if (room <= 0)
+        add = 51;
+    else if (need > room)
+        add = int(std::ceil(6.0 * std::log2(need / room)));
+    add = std::clamp(add, 0, 51 - mbQp_[m]);
+    mbQp_[m] = int8_t(mbQp_[m] + add);
+    return add;
+}
+
 void FrameCoder::commitQp(int mbx, int mby, bool codedDelta)
 {
     const size_t m = size_t(mby) * mbW_ + mbx;

@@ -7,6 +7,7 @@
 #include "Lookahead.h"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <exception>
@@ -195,6 +196,18 @@ struct EncoderConfig {
     // coloured error (the ghost of a HUD element dragged along by a skip, a tint on smoke) is
     // cheap in squared error but plain to see: with more weight such macroblocks get their residual.
     int chromaRdWeight = 1;
+    // Video buffering verifier (HRD, Annex C): with both > 0 no access unit may make the decoder's coded
+    // picture buffer (vbvBufsizeKbits, filled at vbvMaxrateKbps) run empty - for players and services
+    // with a peak rate (streaming, YouTube's recommended maxrate/bufsize). Works with every rate mode
+    // (constant QP, crf, one-pass and two-pass bitrate): the mode's QP stays where the buffer allows it;
+    // where the planned pictures (lookahead) would drain the buffer, the QP rises as little as keeps
+    // it out of trouble. The stream then carries the limits (VUI nal_hrd_parameters, buffering period
+    // and picture timing SEI). 0 = off (the stream is then the same as without these options).
+    int vbvMaxrateKbps = 0;
+    int vbvBufsizeKbits = 0;
+    double vbvInit = 0.9; // buffer fullness at the first picture's removal (fraction of vbvBufsizeKbits)
+    // At least this full at the end (fraction; 0 = no demand): set by ChunkPlan::configFor for all chunks but the last.
+    double vbvEndFill = 0;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -217,6 +230,11 @@ struct ChunkPlan {
 };
 // minFrames: shortest chunk; 0 = 15 s of pictures (each seam costs about 8 %·s of BD-rate over the
 // clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
+// VBV in chunks (ChunkPlan::configFor sets each chunk's buffer at its start and end): the first access unit of a
+// chunk after the first, with its picture timing counted from the previous chunk's last buffering period -
+// framesSinceBp = Encoder::vbvFramesSinceBp() of the chunk before after its last access unit. Unchanged without VBV.
+std::vector<uint8_t> vbvJoinChunk(const std::vector<uint8_t>& firstAu, int framesSinceBp);
+inline constexpr double kChunkVbvFill = 0.5, kChunkVbvEnd = 0.55;
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 // Constant quality: the clip's mean complexity from the first pass (crfQp's measure), < 0 without pictures.
 double crfClipComplexity(const FirstPassStats& stats, const EncoderConfig& cfg);
@@ -351,6 +369,12 @@ public:
     int paddedWidth() const { return padW_; }
     int paddedHeight() const { return padH_; }
     int lastQp() const { return lastQp_; }
+    // VBV (EncoderConfig::vbvMaxrateKbps): access units that ran the buffer empty so far (should stay 0), and the
+    // lowest buffer level just after a removal, in bits (exact: from the access units' real sizes).
+    int vbvUnderflows() const { return vbvUnderflows_; }
+    double vbvMinFill() const { return vbvMinFill_; }
+    // Pictures since the last access unit with a buffering period, counting the next one (vbvJoinChunk).
+    int vbvFramesSinceBp() const { return frameIndex_ - vbvBpFrame_; }
 
 private:
     struct Pool;
@@ -524,6 +548,42 @@ private:
     double twoPassPlanQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter = nullptr) const;
     double treeStrength(const LookaheadFrame& f) const;
+
+    // VBV: a buffer model per picture in coding order, level = bits in the buffer just before the next removal.
+    // The decision side learns the real sizes as late as the rate control does (applyRc's lag, so the stream
+    // does not depend on the thread count) and predicts the pictures in flight; the output side (finishFrame)
+    // follows the real sizes for the HRD SEI and the underflow count.
+    bool vbvOn() const { return cfg_.vbvMaxrateKbps > 0 && cfg_.vbvBufsizeKbits > 0; }
+    // As signalled (hrd_parameters: the rate in steps of 64 bit/s rounded up, the size in steps of 16 bits
+    // rounded down), so the model is the decoder's.
+    double vbvRate() const { return std::ceil(cfg_.vbvMaxrateKbps * 1000.0 / 64.0) * 64.0; }
+    double vbvSize() const { return std::floor(cfg_.vbvBufsizeKbits * 1000.0 / 16.0) * 16.0; }
+    double vbvTick() const { return vbvRate() / (cfg_.fps > 0 ? cfg_.fps : 60.0); }
+    struct VbvRecord {
+        int frameNo;
+        int type;
+        double qp, cost, bits;
+    };
+    std::deque<VbvRecord> vbvDone_;           // finished, not learned yet
+    std::deque<std::pair<int, double>> vbvPred_; // decided, not learned yet: coding index, predicted bits
+    double vbvFill_ = 0;                      // decision side, after the learned pictures
+    // Bits * 2^(qp/6) / cost per class (I, P, B, P after a run of B pictures: its cost is over a longer distance), decaying.
+    double vbvKNum_[4] = {}, vbvKDen_[4] = {};
+    int vbvClass(const LookaheadFrame& f, int type) const;
+    double vbvOutFill_ = 0;                   // output side
+    int vbvBpFrame_ = 0;                      // coding index of the last access unit with a buffering period
+    int vbvUnderflows_ = 0;
+    double vbvMinFill_ = 0;
+    double vbvLow_ = 0; // the buffer before the picture being decided, the pictures in flight at gVbvSafe times their prediction
+    size_t vbvHeaderBytes_ = 0;               // SPS/PPS in front of the first access unit (they count in its bits)
+    void vbvLearn(int upTo);
+    double vbvK(int type) const;
+    double vbvQNum_[4] = {}, vbvQDen_[4] = {}; // the QP k was learned at, decaying mean
+    double vbvPredict(int type, double cost, double qp) const;
+    double vbvCost(const LookaheadFrame* f, int type, double* shift) const;
+    void vbvProbe(const LookaheadFrame& frame, double qpI);
+    double vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, double shift, int bQp);
+    std::vector<uint8_t> vbvSei(const FrameCoder& fc, bool idr);
 
 };
 

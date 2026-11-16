@@ -1,7 +1,7 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
+//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--vbv-maxrate kbps --vbv-bufsize kbit [--vbv-init 0.9]] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--mbtree-strength-b S] [--2pass] [--recon out.yuv]
 //                     [--bframes N (8)] [--b-qp offset (2)] [--b-qp-short offset] [--b-sharp weight (1.5)] [--no-b-adapt] [--no-b-pyramid] [--weightb] [--psy-rd S (1)] [--psy-qp full off (26 38)] [--qcomp S (0.3)]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
@@ -85,6 +85,8 @@ struct ChunkResult {
     std::vector<uint8_t> bytes;
     double psnrY = 0, psnrU = 0, psnrV = 0;
     int frames = 0;
+    size_t firstAu = 0; // bytes of the first access unit
+    int sinceBp = 0;    // VBV: Encoder::vbvFramesSinceBp() at the end (for vbvJoinChunk)
 };
 
 static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, int count, ChunkResult& res)
@@ -102,6 +104,8 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
     auto took = [&](const std::vector<uint8_t>& au) {
         if (au.empty())
             return;
+        if (res.bytes.empty())
+            res.firstAu = au.size();
         res.bytes.insert(res.bytes.end(), au.begin(), au.end());
         const std::vector<uint8_t>& src = pending.at(enc.lastDisplayIndex());
         const uint8_t* sy = src.data();
@@ -131,6 +135,7 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
             break;
         took(au);
     }
+    res.sinceBp = enc.vbvFramesSinceBp();
     std::fclose(in);
 }
 
@@ -143,7 +148,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--vbv-maxrate kbps --vbv-bufsize kbit [--vbv-init 0.9]] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
@@ -176,6 +181,12 @@ int main(int argc, char** argv)
             cfg.bitrateKbps = std::atoi(argv[++i]);
         else if (a == "--crf" && i + 1 < argc)
             cfg.crf = std::atof(argv[++i]);
+        else if (a == "--vbv-maxrate" && i + 1 < argc)
+            cfg.vbvMaxrateKbps = std::atoi(argv[++i]);
+        else if (a == "--vbv-bufsize" && i + 1 < argc)
+            cfg.vbvBufsizeKbits = std::atoi(argv[++i]);
+        else if (a == "--vbv-init" && i + 1 < argc)
+            cfg.vbvInit = std::atof(argv[++i]);
         else if (a == "--effort" && i + 1 < argc)
             cfg.effort = std::atoi(argv[++i]);
         else if (a == "--aq" && i + 1 < argc)
@@ -295,8 +306,17 @@ int main(int argc, char** argv)
         std::printf("chunks");
         for (int c = 0; c < count; ++c) {
             const ChunkResult& r = res[size_t(c)];
-            std::fwrite(r.bytes.data(), 1, r.bytes.size(), out);
-            totalBytes += r.bytes.size();
+            if (c > 0 && cfg.vbvMaxrateKbps > 0 && cfg.vbvBufsizeKbits > 0) {
+                // The seam: the first picture's removal counted from the chunk before's last buffering period.
+                const std::vector<uint8_t> first(r.bytes.begin(), r.bytes.begin() + ptrdiff_t(r.firstAu));
+                const std::vector<uint8_t> joined = vbvJoinChunk(first, res[size_t(c) - 1].sinceBp);
+                std::fwrite(joined.data(), 1, joined.size(), out);
+                std::fwrite(r.bytes.data() + r.firstAu, 1, r.bytes.size() - r.firstAu, out);
+                totalBytes += joined.size() + r.bytes.size() - r.firstAu;
+            } else {
+                std::fwrite(r.bytes.data(), 1, r.bytes.size(), out);
+                totalBytes += r.bytes.size();
+            }
             frames += r.frames;
             py += r.psnrY;
             pu += r.psnrU;
@@ -422,6 +442,8 @@ int main(int argc, char** argv)
                     typeBytes[0] / 1024.0 / std::max(1, typeCount[0]), typePsnr[0] / std::max(1, typeCount[0]), typeCount[1],
                     typeBytes[1] / 1024.0 / std::max(1, typeCount[1]), typePsnr[1] / std::max(1, typeCount[1]), typeCount[2],
                     typeBytes[2] / 1024.0 / typeCount[2], typePsnr[2] / typeCount[2]);
+    if (cfg.vbvMaxrateKbps > 0 && cfg.vbvBufsizeKbits > 0)
+        std::printf("vbv underflows %d min fill %.1f %%  ", enc.vbvUnderflows(), 100.0 * enc.vbvMinFill() / (cfg.vbvBufsizeKbits * 1000.0));
     std::printf("peak %ld MB  last qp %d  ", peakMb(), enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);
