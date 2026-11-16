@@ -828,7 +828,7 @@ static const double kBProbeChange = std::getenv("H264_BPROBE_CHANGE") ? std::ato
 static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::getenv("H264_BPROBE_GAP")) : 30;
 // Nothing to measure (next to nothing is coded: a still picture, a desktop, the player standing):
 // runs of the short length (1, default) or no B pictures (0, as before 15.11.2026).
-// Adaptive placement: the first pictures after the clip's first one are P pictures. The rate
+// Adaptive placement in one pass: the first pictures after the clip's first one are P pictures. The rate
 // control's model starts from a probe that misses by up to 2x and settles on the first P pictures;
 // with B pictures from the start the plain P pictures of the rest of the clip keep that seed for as
 // long as the B pictures last (measured on a game clip: QP 34 instead of 37.5 for 70 pictures, then
@@ -837,11 +837,11 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
 // With a first pass the plan knows every picture's cost before the first one is coded, so nothing has
-// to settle: no P pictures first (16.11.2026). They cost a clip its first run of B pictures for
-// nothing - two-pass against twelve, PSNR-Y / SSIM-Y / VMAF at the same rate: crowd_run (150 pictures,
-// 10 Mbit/s) +0.04 dB / +0.002 / +0.2, park_joy +0.04 / +0.002 / 0, a calm game scene (480 pictures)
-// +0.05 / +0.001 / +0.2 at 1.5 Mbit/s and +0.01 / 0 / +0.1 at 4.5, a pan in a game the same within
-// 0.02 dB - and every chunk of a long clip paid them again. H264_BWARMUP2P sets the count (measuring).
+// to settle: no P pictures first (16.11.2026). They cost a clip its first runs of B pictures for
+// nothing, and every chunk of a long clip paid them again. Two-pass against twelve, PSNR-Y / SSIM-Y /
+// VMAF at the same rate: crowd_run (150 pictures, 10 Mbit/s) +0.04 dB / +0.002 / +0.2, park_joy +0.04 /
+// +0.002 / 0, a calm game scene (480 pictures) +0.05 / +0.001 / +0.2 at 1.5 Mbit/s and +0.01 / 0 / +0.1
+// at 4.5, a pan in a game the same within 0.02 dB. H264_BWARMUP2P sets the count (measuring).
 static const int kBWarmupPlanned = std::getenv("H264_BWARMUP2P") ? std::atoi(std::getenv("H264_BWARMUP2P")) : 0;
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
