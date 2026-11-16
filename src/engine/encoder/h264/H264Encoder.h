@@ -75,6 +75,9 @@ struct EncoderConfig {
     // lookahead > 0 and gop > 1 for that; without them one QP); the macroblock tree and the adaptive
     // quantisation work as in the other modes. qp is not used.
     double crf = -1.0;
+    // Constant quality: the clip's mean complexity (crfClipComplexity), set by ChunkPlan::configFor so every
+    // chunk measures against the whole clip; < 0 = the mean of the pictures seen so far.
+    double crfClipComplexity = -1.0;
     double aqStrength = 1.5; // adaptive quantisation (finer QP on flat areas); 0 = off. 1.0 until 14.11.2026
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
@@ -202,12 +205,15 @@ struct ChunkPlan {
     std::vector<int> start;                                       // first picture of each chunk
     std::vector<int> bitrateKbps;                                 // per chunk (bitrate mode)
     std::vector<std::shared_ptr<const FirstPassStats>> firstPass; // per chunk (bitrate mode)
+    double crfComplexity = -1.0;                                  // constant quality: the clip's (crfClipComplexity)
     // Configuration of chunk i: cfg with its bitrate, first pass, idr_pic_id base and threads.
     EncoderConfig configFor(const EncoderConfig& cfg, int i, int threads) const;
 };
 // minFrames: shortest chunk; 0 = 15 s of pictures (each seam costs about 8 %·s of BD-rate over the
 // clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
+// Constant quality: the clip's mean complexity from the first pass (crfQp's measure), < 0 without pictures.
+double crfClipComplexity(const FirstPassStats& stats, const EncoderConfig& cfg);
 
 // Where B pictures pay, measured instead of estimated: every kInterval pictures and after each
 // scene change or keyframe the caller asks for, the next few half-size pictures (the lookahead's)
@@ -374,6 +380,8 @@ private:
     // Constant quality (EncoderConfig::crf).
     bool crfOn() const { return cfg_.crf >= 0 && cfg_.bitrateKbps <= 0; }
     std::vector<float> crfCost_; // per picture (display index): its lookahead cost against the picture before
+    std::vector<double> crfSum_; // prefix sums of crfCost_ over the pictures that do not repeat the one before
+    std::vector<int> crfCount_;  // and their count
     void noteCost(const LookaheadFrame& f);
     double crfQp(const LookaheadFrame& frame, double* complexity = nullptr) const;
     bool useLookahead() const

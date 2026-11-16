@@ -1357,6 +1357,27 @@ std::vector<uint8_t> keyPlan(const FirstPassStats& st, const EncoderConfig& cfg,
 
 } // namespace
 
+// Constant quality: log2 of the mean first-pass cost per macroblock (+ 1) over the pictures that do not repeat the
+// one before - the same measure crfQp takes around a picture.
+// A picture whose lookahead cost per macroblock is below this repeats the picture before (an exact copy costs 2).
+static const double gCrfRepeat = std::getenv("H264_CRFREPEAT") ? std::atof(std::getenv("H264_CRFREPEAT")) : 4.0;
+double crfClipComplexity(const FirstPassStats& st, const EncoderConfig& cfg)
+{
+    const double mbs = double((cfg.width + 15) / 16) * ((cfg.height + 15) / 16);
+    double sum = 0, all = 0;
+    size_t count = 0;
+    for (size_t i = 0; i < st.size(); ++i) {
+        all += st.interSum[i];
+        if (st.interSum[i] >= gCrfRepeat * mbs) {
+            sum += st.interSum[i];
+            ++count;
+        }
+    }
+    if (st.size() == 0)
+        return -1;
+    return std::log2((count ? sum / double(count) : all / double(st.size())) / mbs + 1.0);
+}
+
 ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chunks, int minFrames)
 {
     ChunkPlan plan;
@@ -1385,8 +1406,11 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
         if (best - plan.start.back() >= minFrames / 2 && n - best >= minFrames / 2)
             plan.start.push_back(best);
     }
-    if (cfg.bitrateKbps <= 0)
+    if (cfg.bitrateKbps <= 0) {
+        if (cfg.crf >= 0) // constant quality: the clip's mean complexity, as each chunk's reference (crfQp)
+            plan.crfComplexity = crfClipComplexity(st, cfg);
         return plan;
+    }
     // Bits each chunk needs at one QP: I pictures cost about 2.5x their lookahead cost compared
     // with P pictures (measured k ratio) and sit 3 QP lower (x sqrt 2).
     constexpr double kIntraWeight = 2.5 * 1.41421356;
@@ -1434,6 +1458,8 @@ EncoderConfig ChunkPlan::configFor(const EncoderConfig& cfg, int i, int threads)
     c.idrPicIdBase = (i * 4096) & 0xFFFF; // far from the ids of the chunk before
     if (i > 0)
         c.startBoostQp = 0; // only the clip starts
+    if (crfComplexity >= 0)
+        c.crfClipComplexity = crfComplexity;
     if (size_t(i) < bitrateKbps.size()) {
         c.bitrateKbps = bitrateKbps[size_t(i)];
         c.firstPass = firstPass[size_t(i)];
@@ -1723,9 +1749,8 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // x264's --crf with the same value (medium preset) on game and camera footage; see the notes of 16.11.2026.
 static const double gCrfBase = std::getenv("H264_CRFBASE") ? std::atof(std::getenv("H264_CRFBASE")) : 6.0;
 static const double gCrfFps = std::getenv("H264_CRFFPS") ? std::atof(std::getenv("H264_CRFFPS")) : 2.4;
-// A picture whose lookahead cost per macroblock is below this repeats the picture before (an exact copy costs 2).
-static const double gCrfRepeat = std::getenv("H264_CRFREPEAT") ? std::atof(std::getenv("H264_CRFREPEAT")) : 4.0;
-static const double gCrfRef = std::getenv("H264_CRFREF") ? std::atof(std::getenv("H264_CRFREF")) : 7.0;
+// H264_CRFREF: a fixed reference complexity instead of the clip's mean (the scale before 16.11.2026 used 7; measuring only).
+static const double gCrfRef = std::getenv("H264_CRFREF") ? std::atof(std::getenv("H264_CRFREF")) : -1.0;
 
 // The lookahead cost of each picture as it joins the queue (constant quality: the complexity around a picture).
 void Encoder::noteCost(const LookaheadFrame& f)
@@ -1735,6 +1760,17 @@ void Encoder::noteCost(const LookaheadFrame& f)
     if (crfCost_.size() <= size_t(f.index))
         crfCost_.resize(size_t(f.index) + 1, 0.0f);
     crfCost_[size_t(f.index)] = float(f.interSum);
+    // Running sums over the pictures that do not repeat the one before (crfQp: the clip's mean so far).
+    if (crfSum_.size() < crfCost_.size() + 1) {
+        crfSum_.resize(crfCost_.size() + 1, 0.0);
+        crfCount_.resize(crfCost_.size() + 1, 0);
+    }
+    const double mbs = double(mbW_) * mbH_;
+    for (size_t j = size_t(f.index); j < crfCost_.size(); ++j) {
+        const bool counts = crfCost_[j] >= gCrfRepeat * mbs;
+        crfSum_[j + 1] = crfSum_[j] + (counts ? crfCost_[j] : 0.0);
+        crfCount_[j + 1] = crfCount_[j] + (counts ? 1 : 0);
+    }
     if (std::getenv("H264_RC_TRACE"))
         std::fprintf(stderr, "crfcost: picture %d cost per macroblock %.2f\n", f.index, f.interSum / (double(mbW_) * mbH_));
 }
@@ -1769,7 +1805,16 @@ double Encoder::crfQp(const LookaheadFrame& frame, double* complexity) const
         const double local = std::log2((count ? sum / double(count) : all / double(b - a)) / mbs + 1.0);
         if (complexity)
             *complexity = local;
-        qp += std::clamp(cfg_.qcomp * 6.0 * (local - gCrfRef), -gQcMax, gQcMax);
+        // Against the clip's mean (like the two-pass complexity compression): the term moves bits between
+        // stretches of the clip and leaves its level to the crf value. Chunks get the whole clip's mean from
+        // the first pass (planChunks), so neighbouring chunks agree at their seam; a single encoder takes the
+        // mean of the pictures it has seen so far (and those in the queue) - the clip's start counts 0.
+        double ref = gCrfRef;
+        if (ref < 0)
+            ref = cfg_.crfClipComplexity >= 0 ? cfg_.crfClipComplexity
+                  : crfCount_[b] > 0           ? std::log2(crfSum_[b] / double(crfCount_[b]) / mbs + 1.0)
+                                               : local;
+        qp += std::clamp(cfg_.qcomp * 6.0 * (local - ref), -gQcMax, gQcMax);
     }
     return qp;
 }
@@ -3689,7 +3734,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         cfg_.qp = int(std::lround(q));
         qpFrac = float(q - cfg_.qp);
         if (std::getenv("H264_RC_TRACE"))
-            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f\n", frame.index, complexity, p);
+            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f intra %.1f inter %.1f\n", frame.index, complexity, p,
+                         frame.intraSum / (double(mbW_) * mbH_), frame.interSum / (double(mbW_) * mbH_));
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
