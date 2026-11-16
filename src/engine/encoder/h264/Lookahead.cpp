@@ -819,6 +819,14 @@ static const double kPlanStill = planEnv("H264_BPLAN_STILL", 12);
 // their transforms by estimate; H264_BPLAN_PATCHAREA=0.2 is the guard as it was).
 static const double kPlanPatchArea = planEnv("H264_BPLAN_PATCHAREA", 0), kPlanPatchCost = planEnv("H264_BPLAN_PATCHCOST", 400);
 static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
+// A fade (the mean brightness moves the same way from picture to picture, by at least kPlanFade
+// code values over the window): the costs here know no weighted prediction, so the run's P picture
+// looks several times as expensive as the coder's (a film's fade-in: 3 - 4 times a step, the
+// structure with B pictures 1.2 - 1.7 times the P pictures', while runs of three coded the passage
+// 1.2 dB better with a quarter fewer bits). B pictures between two references follow a fade by
+// themselves: placed when they cost less than kPlanFadeB of the same pictures as P pictures.
+// H264_BPLAN_FADE=0: off.
+static const double kPlanFade = planEnv("H264_BPLAN_FADE", 1.5), kPlanFadeB = planEnv("H264_BPLAN_FADEB", 0.8);
 // "Moving" (BPlanner::kMoving) - what tells real content changes from grain on a still picture, the
 // one case where long runs of cheap B pictures without a reference among them are right:
 // - the run's P picture, predicted over the whole run, costs at least kPlanMove times a picture
@@ -999,7 +1007,24 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         // placed whatever the P picture after them seems to cost. The half picture's search sees
         // a picture several steps from its reference as far too expensive there, and it cannot
         // cost more than the steps together.
-        const bool free = !patchy && sumB - sumFar < kPlanFree * sumNear;
+        bool free = !patchy && sumB - sumFar < kPlanFree * sumNear;
+        if (!on_ && !free && !patchy && kPlanFade > 0 && sumB - sumFar < kPlanFadeB * sumNear) {
+            auto mean = [](const LookaheadFrame& f) {
+                uint64_t sum = 0;
+                for (uint8_t v : f.half)
+                    sum += v;
+                return f.half.empty() ? 0.0 : double(sum) / double(f.half.size());
+            };
+            double first = mean(win_[0]), last = first;
+            bool up = true, down = true;
+            for (int k = 1; k <= p; ++k) {
+                const double m = mean(win_[size_t(k)]);
+                up = up && m > last;
+                down = down && m < last;
+                last = m;
+            }
+            free = (up || down) && std::abs(last - first) >= kPlanFade;
+        }
         gate_ = uint8_t(!on_ ? (free ? shortRun | kClear : 0) : clear ? (maxB | kClear) : shortRun);
         if (kPlanMove > 0 && accStep_ > 0 && (accFar_ >= kPlanMove * accStep_ || accLive_ < kPlanGrain * accCount_))
             gate_ |= kMoving;
