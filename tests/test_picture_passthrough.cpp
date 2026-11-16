@@ -9,6 +9,11 @@
 
 #include "engine/OutputColor.h"
 #include "engine/picture/Renderer.h"
+#include "engine/video/Reader.h"
+
+extern "C" {
+#include <libavutil/frame.h>
+}
 
 #include <QApplication>
 #include <QImage>
@@ -205,6 +210,21 @@ int main(int argc, char** argv)
                     int odd = 0; // values that are no 8-bit code times 4: only a 10-bit source has them
                     for (uint16_t w : y) odd += (w & 3) != 0;
                     CHECK(odd > 1000);
+                    // Bit-exact: the decoded picture's words
+                    const auto reader = Video::Reader::open(v10);
+                    const auto pic = reader ? reader->picture(5) : nullptr;
+                    if (CHECK(pic && pic->frame)) {
+                        int differ = 0;
+                        for (int p = 0; p < 3; ++p) {
+                            const int pw = p ? 320 : 640, ph = p ? 180 : 360;
+                            const uint16_t* mine = p == 0 ? y.data() : p == 1 ? u.data() : v.data();
+                            for (int row = 0; row < ph; ++row) {
+                                const auto* dec = reinterpret_cast<const uint16_t*>(pic->frame->data[p] + size_t(row) * pic->frame->linesize[p]);
+                                for (int x = 0; x < pw; ++x) differ += dec[x] != mine[size_t(row) * pw + x];
+                            }
+                        }
+                        CHECK_EQ(differ, 0);
+                    }
                 }
             }
         }

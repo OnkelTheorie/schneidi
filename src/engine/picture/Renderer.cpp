@@ -3110,9 +3110,9 @@ struct Renderer::Impl {
                     && (hints.yuv->layout == OutputColor::Layout::Yuv420 || hints.yuv->layout == OutputColor::Layout::Nv12)
                 ? hints.yuv
                 : nullptr;
-        // A 10-bit output (H.265/AV1 10 bit): the frame in RGBA16F, so a 10-bit source keeps its precision up to the
-        // planes (layers drawn straight onto it; groups and transitions still pass an 8-bit target). Only through
-        // readYuv: when that fails, the CPU path makes the frame
+        // A 10-bit output (H.265/AV1 10 bit): the frame in RGBA16F where the card can (else RGBA8: the planes are then
+        // 8-bit precise), so a 10-bit source keeps its precision up to the planes (layers drawn straight onto it;
+        // groups and transitions still pass an 8-bit target). Only through readYuv: when that fails, the CPU path
         const bool ten = yuv && yuv->bits == 10;
         if (!yuv) f.m_buffer = pool().take(size_t(ctx.W) * ctx.H * 4);
         uint8_t* rgba = f.m_buffer ? f.m_buffer->data.data() : nullptr;

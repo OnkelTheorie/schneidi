@@ -454,7 +454,10 @@ int main(int argc, char** argv)
             CHECK(d.mean <= 1.0 && d.psnr >= 40);
         }
         // 10 bit (0.24, H.265/AV1 10 bit): the card writes 16-bit words from an RGBA16F frame; P010 too
-        for (const bool msb : {false, true}) {
+        // msb: P010; the third round after the card refused RGBA16F (an RGBA8 frame, still written by the card)
+        for (const int round : {0, 1, 2}) {
+            const bool msb = round == 1;
+            if (round == 2) Picture::Gpu::Service::instance()->refuseHalfTargets();
             std::vector<uint16_t> ref(size_t(W) * H * 3 / 2), got(ref.size(), 7);
             auto targetOf = [&](std::vector<uint16_t>& v) {
                 OutputColor::Target t;
@@ -479,10 +482,20 @@ int main(int argc, char** argv)
             hints.yuv = &t;
             const Picture::Frame b = gpu.render(11, hints);
             CHECK(!b.isNull() && b.yuvWritten());
+            CHECK(b.gpu());
             double sum = 0;
-            for (size_t i = 0; i < ref.size(); ++i) sum += std::abs(int(ref[i] >> (msb ? 6 : 0)) - int(got[i] >> (msb ? 6 : 0)));
-            std::printf("  yuv readback 10 bit %-7s mean %.3f (10-bit steps)\n", msb ? "P010" : "4:2:0", sum / ref.size());
+            int worst = 0, low = 0;
+            for (size_t i = 0; i < ref.size(); ++i) {
+                const int diff = std::abs(int(ref[i] >> (msb ? 6 : 0)) - int(got[i] >> (msb ? 6 : 0)));
+                sum += diff;
+                worst = std::max(worst, diff);
+                if (msb && (got[i] & 63)) ++low;
+            }
+            std::printf("  yuv readback 10 bit %-12s mean %.3f max %d (10-bit steps)\n",
+                        round == 2 ? "16F refused" : msb ? "P010" : "4:2:0", sum / ref.size(), worst);
             CHECK(sum / ref.size() <= 4.0);
+            CHECK(worst <= 400); // like the 8-bit readback above (max 90 of 255): the card's sampling at hard edges
+            CHECK_EQ(low, 0);
         }
         // A layout the card does not write (4:4:4): RGBA as usual
         OutputColor::Target t444;

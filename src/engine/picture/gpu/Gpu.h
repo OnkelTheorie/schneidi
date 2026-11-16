@@ -113,9 +113,12 @@ public:
     // Tests: the current frame's readbacks come back empty while the frame reports success (Qt's D3D11 backend after
     // a device removal)
     void simulateEmptyReadbacks();
+    // Tests: RGBA16F targets cannot be made (as GLES 3.0 without half-float colour buffers, low memory)
+    void refuseHalfTargets();
 
     // A pooled RGBA8 render target (premultiplied), cleared to `clear` (straight RGBA 0..1) by its first pass
-    // half: RGBA16F (a frame for a 10-bit output: more than 8 bits survive to readYuv); nullptr = not supported
+    // half: RGBA16F if the card can (a frame for a 10-bit output: more than 8 bits survive to readYuv), else RGBA8
+    // (once refused, the context does not try again); Texture::half says which it got
     TexturePtr target(QSize size, const float clear[4] = nullptr, bool half = false);
     // Upload RGBA (8 bit, rows tightly packed). Not copied: `rgba` must stay valid until finish() (Service::run returns
     // after it, so the caller's buffers of a job qualify)
@@ -227,6 +230,8 @@ public:
     // back empty (Context::simulateEmptyReadbacks)
     void simulateDeviceLoss();
     void simulateEmptyReadbacks();
+    // Tests: the context refuses RGBA16F targets (Context::refuseHalfTargets)
+    void refuseHalfTargets();
     // false: the engine went off (the device was lost and no new context could be made): run() refuses at once
     bool available() const;
     // The caller is the GPU thread itself (inside a job): run() would wait for itself
