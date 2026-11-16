@@ -46,11 +46,15 @@ public:
     // Outline of the chosen window for the viewer (draws only while the panel is shown)
     ViewerOverlay* overlay() const;
     int layer() const { return m_layer; } // 0 = whole picture, 1..GradeWindows::kMax = window, GradeQualifier::kLayer
-    enum Palette { Wheels, CurvesPalette, QualifierPalette };
-    void setPalette(int palette);
+    enum Palette { Wheels, CurvesPalette, QualifierPalette, StillsPalette };
+    void setPalette(int palette, bool remember = true); // remember = the next start shows it again
     int palette() const { return m_palette; }
     // A colour picked for the qualifier (MainWindow's pipette): its range is set around it
     void applyQualifierColor(const QColor& color);
+    // A grabbed frame (MainWindow's answer to stillGrabRequested): a still with the shown clip's grade
+    void addStill(const QImage& picture, const QString& timecode);
+    int comparedStill() const { return m_compareId; } // 0 = no compare
+    void setComparedStill(int stillId);               // 0 = off
     void setLayer(int layer);
     void nextLayer(); // whole picture -> window 1 -> … -> whole picture
     // New window (shape "rectangle"/"ellipse") on the shown clip and the other targets, then it is the chosen layer
@@ -66,6 +70,8 @@ public:
 
 public slots:
     void setPlayhead(int frame);
+    // The preview's frame (after the grade): the curves' histogram, while the curves show (at most every 150 ms)
+    void setFrame(const QImage& frame);
 
 signals:
     void seekRequested(int frame); // keyframe arrows
@@ -73,6 +79,7 @@ signals:
     void tourRequested(); // the button shown without a clip: the Color tour
     void qualifierPickRequested(int clipId); // the qualifier's pipette: pick on the clip's picture before it
     void qualifierMaskChanged(int clipId);   // "show mask" for this clip (0 = off), for Engine::setQualifierMask
+    void stillGrabRequested();               // "grab still": the frame shown in the viewer, back via addStill
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -105,6 +112,9 @@ private:
     void refreshCurves(const Clip* c);
     void refreshQualifier(const Clip* c, int t);
     void updateMask(); // tells the viewer which clip shows its qualifier mask
+    QWidget* buildStills();
+    void refreshStills();
+    int selectedStill() const;
     QWidget* buildSlider(Slider& s, const QString& label, double min, double max, double step, int decimals);
     QToolButton* smallButton(const QString& text, const QString& tip);
     QVector<int> targets() const;
@@ -158,6 +168,8 @@ private:
     QVector<QToolButton*> m_curveButtons; // by GradeCurves::Kind
     QToolButton* m_curveReset = nullptr;
     QLabel* m_curveNote = nullptr;
+    QImage m_histFrame;
+    QTimer m_histTimer;
     // Qualifier
     QWidget* m_qualEmpty = nullptr;
     QWidget* m_qualControls = nullptr;
@@ -171,6 +183,12 @@ private:
     QualifierBar* m_qualBars[3] = {};
     bool m_showMask = false;
     int m_maskSent = 0;
+    // Stills
+    class QListWidget* m_stillList = nullptr;
+    QToolButton* m_stillCompare = nullptr;
+    QToolButton* m_stillApply = nullptr;
+    QToolButton* m_stillRemove = nullptr;
+    int m_compareId = 0;
 
     // Tracking
     QToolButton* m_trackBack = nullptr;

@@ -8,6 +8,7 @@
 #include "core/GradeCurves.h"
 
 #include <QColor>
+#include <QImage>
 #include <QPointF>
 #include <QVector>
 #include <QWidget>
@@ -23,6 +24,12 @@ public:
     void setPoints(const QVector<QPointF>& points);
     QVector<QPointF> points() const { return m_points; }
     bool dragging() const { return m_drag >= 0; }
+    // Histograms of the shown picture behind the curve: [0] luma, [1..3] R/G/B, [4] hue (weighted by chroma), each
+    // kBins values 0..1 (empty = none). Tone curves show their channel (Y: luma), hue curves the hue, lum/sat the luma
+    static constexpr int kBins = 64;
+    void setHistograms(const QVector<QVector<float>>& h);
+    // The five histograms of an RGBA/RGB32 picture (a few tens of thousands of pixels sampled)
+    static QVector<QVector<float>> histograms(const QImage& picture);
 
     QSize sizeHint() const override { return {300, 190}; }
     QSize minimumSizeHint() const override { return {160, 110}; }
@@ -50,6 +57,7 @@ private:
 
     GradeCurves::Kind m_kind = GradeCurves::Kind::Y;
     QVector<QPointF> m_points;
+    QVector<QVector<float>> m_hist;
     int m_drag = -1;       // index of the dragged point
     QPointF m_last;        // mouse position of the last move (relative dragging, Shift = fine)
     QPointF m_dragValue;   // the dragged point's value before clamping to its neighbours

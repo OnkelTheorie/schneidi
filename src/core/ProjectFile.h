@@ -4,6 +4,7 @@
 // (tracks, clips, effects, markers) - the media themselves are never modified (like DaVinci).
 
 #include "core/BrandKit.h"
+#include "core/GradeStills.h"
 #include "core/ProjectFormat.h"
 #include "core/RenderJob.h"
 #include "core/StreamPresets.h"
@@ -60,6 +61,7 @@ struct ProjectData {
     // A content template's own description (core/TemplateLibrary.h, optional; "templateInfo" in the file)
     std::optional<TemplateInfo> templateInfo;
     QVector<SavedView> views; // per timeline (optional; UI state, not part of the edit)
+    QVector<GradeStill> stills; // Color page stills (optional, 0.24)
 };
 
 namespace ProjectFile {

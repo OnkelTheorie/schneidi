@@ -164,6 +164,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/GradeCurves.h        src/core/GradeCurves.cpp
     src/core/GradeQualifier.h     src/core/GradeQualifier.cpp
+    src/core/GradeStills.h        src/core/GradeStills.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
     src/core/CompTrack.h          src/core/CompTrack.cpp
     src/core/CompRecipes.h        src/core/CompRecipes.cpp

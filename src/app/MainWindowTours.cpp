@@ -101,6 +101,12 @@ void MainWindow::setupTours(QMenu* help)
         ensureCompPage();
         if (auto* b = m_compPage->findChild<QToolButton*>("comp_view_nodes")) b->setChecked(true);
     };
+    // The Color page's palettes (wheels, curves, qualifier, stills): shown for their steps, the setting stays as it was
+    for (int i = 0; i <= ColorPanel::StillsPalette; ++i)
+        host.actions[QString("color_palette_%1").arg(i)] = [this, i] {
+            ensureColorPage();
+            m_colorPanel->setPalette(i, false);
+        };
     // The Studio page's tools drawer (closed by default: the tour's tools step opens it)
     host.actions["studio_tools"] = [this] {
         ensureStudioPage();

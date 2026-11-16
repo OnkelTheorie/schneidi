@@ -7,6 +7,7 @@
 #include "core/EffectRegistry.h"
 #include "core/GradeCurves.h"
 #include "core/GradeQualifier.h"
+#include "core/GradeStills.h"
 #include "core/GradeWindows.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -33,6 +34,8 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
+#include <QSignalBlocker>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QMessageBox>
@@ -250,15 +253,22 @@ private:
 };
 
 // One range of the qualifier as a bar: what it measures (hue spectrum, saturation from gray to colour, brightness from
-// black to white), darkened where the selection does not reach
+// black to white), darkened where the selection does not reach. Dragging changes the range: an edge (the white ticks)
+// moves that edge, the hue bar's middle moves the whole hue range around the circle.
 class QualifierBar : public QWidget {
 public:
     enum Kind { Hue, Sat, Lum };
+    std::function<void(const QString& key, double value)> onChange;
+    std::function<void()> onFinish;
+
     explicit QualifierBar(Kind kind, QWidget* parent = nullptr) : QWidget(parent), m_kind(kind)
     {
         setMinimumWidth(90);
-        setFixedHeight(14);
+        setFixedHeight(16);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setCursor(Qt::SizeHorCursor);
+        setToolTip(kind == Hue ? T("Ränder ziehen = Breite, Mitte ziehen = Farbton verschieben")
+                               : T("Ränder ziehen = Bereich ändern"));
     }
     void setRange(const GradeQualifier::Range& r)
     {
@@ -266,12 +276,27 @@ public:
         m_range = r;
         update();
     }
+    double scale() const { return m_kind == Hue ? 360.0 : 100.0; }
+    QRect bar() const { return rect().adjusted(0, 2, 0, -2); }
+    double toValue(double x) const { return (x - bar().left()) / std::max(1, bar().width() - 1) * scale(); }
+    double toX(double v) const { return bar().left() + v / scale() * (bar().width() - 1); }
+    // The edges as values (hue: the ends of the fully selected width, wrapped)
+    QVector<double> edges() const
+    {
+        if (m_kind == Hue) {
+            if (m_range.hueWidth >= 360) return {};
+            const auto wrap = [](double h) { return std::fmod(std::fmod(h, 360.0) + 360.0, 360.0); };
+            return {wrap(m_range.hue - m_range.hueWidth / 2), wrap(m_range.hue + m_range.hueWidth / 2)};
+        }
+        return m_kind == Sat ? QVector<double>{m_range.satLow, m_range.satHigh}
+                             : QVector<double>{m_range.lumLow, m_range.lumHigh};
+    }
 
 protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        const QRect r = rect().adjusted(0, 1, 0, -1);
+        const QRect r = bar();
         QLinearGradient g(r.topLeft(), r.topRight());
         if (m_kind == Hue) {
             for (int i = 0; i <= 6; ++i) g.setColorAt(i / 6.0, QColor::fromHsvF(std::fmod(i / 6.0, 1.0), 0.8, 0.9));
@@ -283,23 +308,80 @@ protected:
             g.setColorAt(1, Qt::white);
         }
         p.fillRect(r, g);
-        // Not selected: dark (inverted: the other way round)
+        // Not selected: dark
         for (int x = r.left(); x <= r.right(); ++x) {
-            const double v = double(x - r.left()) / std::max(1, r.width() - 1);
-            float w = m_kind == Hue   ? GradeQualifier::hueWeight(m_range, v * 360)
-                      : m_kind == Sat ? GradeQualifier::band(v * 100, m_range.satLow, m_range.satHigh, m_range.satSoft)
-                                      : GradeQualifier::band(v * 100, m_range.lumLow, m_range.lumHigh, m_range.lumSoft);
+            const double v = toValue(x);
+            const float w = m_kind == Hue   ? GradeQualifier::hueWeight(m_range, v)
+                            : m_kind == Sat ? GradeQualifier::band(v, m_range.satLow, m_range.satHigh, m_range.satSoft)
+                                            : GradeQualifier::band(v, m_range.lumLow, m_range.lumHigh, m_range.lumSoft);
             p.setPen(QColor(0, 0, 0, int((1 - w) * 200)));
             p.drawLine(x, r.top(), x, r.bottom());
         }
         p.setPen(Theme::border);
         p.setBrush(Qt::NoBrush);
         p.drawRect(r.adjusted(0, 0, -1, -1));
+        // Edge ticks
+        for (double e : edges()) {
+            const double x = toX(e);
+            p.setPen(QPen(QColor(0, 0, 0, 160), 3));
+            p.drawLine(QPointF(x, 0), QPointF(x, height()));
+            p.setPen(QPen(QColor(255, 255, 255, 230), 1.2));
+            p.drawLine(QPointF(x, 0), QPointF(x, height()));
+        }
+    }
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton) return;
+        const QVector<double> ed = edges();
+        m_edge = -1;
+        double best = 7;
+        for (int i = 0; i < ed.size(); ++i)
+            if (const double d = std::abs(toX(ed[i]) - e->position().x()); d <= best) {
+                best = d;
+                m_edge = i;
+            }
+        if (m_edge < 0 && m_kind != Hue) { // a range: the nearer edge jumps here
+            const double v = toValue(e->position().x());
+            m_edge = ed.size() == 2 && std::abs(v - ed[0]) <= std::abs(v - ed[1]) ? 0 : 1;
+        }
+        m_pressValue = toValue(e->position().x());
+        m_startHue = m_range.hue;
+        m_dragging = true;
+        mouseMoveEvent(e);
+    }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (!m_dragging || !onChange) return;
+        const double v = std::clamp(toValue(e->position().x()), 0.0, scale());
+        if (m_kind == Hue) {
+            if (m_edge < 0) { // move the range around the circle
+                const double h = std::fmod(std::fmod(m_startHue + v - m_pressValue, 360.0) + 360.0, 360.0);
+                onChange("hue", h);
+            } else { // width: twice the distance from the middle
+                double d = std::fmod(std::abs(v - m_range.hue), 360.0);
+                if (d > 180) d = 360 - d;
+                onChange("hueWidth", std::clamp(2 * d, 0.0, 359.0));
+            }
+            return;
+        }
+        const bool sat = m_kind == Sat;
+        const double lo = sat ? m_range.satLow : m_range.lumLow, hi = sat ? m_range.satHigh : m_range.lumHigh;
+        if (m_edge == 0) onChange(sat ? "satLow" : "lumLow", std::min(v, hi));
+        else onChange(sat ? "satHigh" : "lumHigh", std::max(v, lo));
+    }
+    void mouseReleaseEvent(QMouseEvent*) override
+    {
+        if (!m_dragging) return;
+        m_dragging = false;
+        if (onFinish) onFinish();
     }
 
 private:
     Kind m_kind;
     GradeQualifier::Range m_range;
+    bool m_dragging = false;
+    int m_edge = -1; // dragged edge (0 low, 1 high), -1 = the hue range as a whole
+    double m_pressValue = 0, m_startHue = 0;
 };
 
 ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
@@ -370,8 +452,9 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
         {T("Räder"), T("Farbräder, Master-Räder und Regler")},
         {T("Kurven"), T("Tonkurven (Master, R, G, B) und Farbton-/Sättigungskurven")},
         {T("Qualifier"), T("Farben auswählen (z. B. Haut, Himmel) und nur sie korrigieren")},
+        {T("Standbilder"), T("Standbilder mit ihrer Korrektur: vergleichen und auf andere Clips übertragen")},
     };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         auto* b = new QToolButton;
         b->setText(paletteNames[i].first);
         b->setToolTip(paletteNames[i].second);
@@ -473,6 +556,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_palettes->addWidget(wheels);
     m_palettes->addWidget(buildCurves());
     m_palettes->addWidget(buildQualifier());
+    m_palettes->addWidget(buildStills());
     outer->addWidget(m_palettes, 1);
     // The windows as a section of their own beside the wheels
     auto* line = new QFrame;
@@ -516,15 +600,18 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     Project* project = m_editor->project();
     connect(project, &Project::timelineChanged, this, &ColorPanel::refresh);
     connect(m_editor->selection(), &Selection::changed, this, &ColorPanel::refresh);
-    setPalette(std::clamp(QSettings().value("color/palette", int(Wheels)).toInt(), 0, int(QualifierPalette)));
+    connect(project, &Project::stillsChanged, this, &ColorPanel::refreshStills);
+    refreshStills();
+    setPalette(std::clamp(QSettings().value("color/palette", int(Wheels)).toInt(), 0, int(StillsPalette)));
 }
 
-void ColorPanel::setPalette(int palette)
+void ColorPanel::setPalette(int palette, bool remember)
 {
-    m_palette = std::clamp(palette, 0, int(QualifierPalette));
+    m_palette = std::clamp(palette, 0, int(StillsPalette));
     QSettings settings; // only a change is written (a tour must leave the settings as they were)
-    if (settings.value("color/palette", int(Wheels)).toInt() != m_palette) settings.setValue("color/palette", m_palette);
+    if (remember && settings.value("color/palette", int(Wheels)).toInt() != m_palette) settings.setValue("color/palette", m_palette);
     m_palettes->setCurrentIndex(m_palette);
+    if (m_palette == CurvesPalette && !m_histFrame.isNull()) m_histTimer.start(); // the frame shown meanwhile
     for (int i = 0; i < m_paletteButtons.size(); ++i) m_paletteButtons[i]->setChecked(i == m_palette);
     refresh();
 }
@@ -763,6 +850,7 @@ bool ColorPanel::eventFilter(QObject* obj, QEvent* e)
 void ColorPanel::refresh()
 {
     const Clip* c = current();
+    refreshStills();
     m_bodyScroll->setVisible(c);
     m_empty->setVisible(!c);
     for (QWidget* w : {static_cast<QWidget*>(m_enabled), static_cast<QWidget*>(m_keyPrev),
@@ -1252,11 +1340,24 @@ QWidget* ColorPanel::buildCurves()
         refresh();
     });
     lay->addWidget(m_curve, 1);
+    m_histTimer.setSingleShot(true);
+    m_histTimer.setInterval(150);
+    connect(&m_histTimer, &QTimer::timeout, this, [this] {
+        if (m_palette != CurvesPalette || !isVisible() || m_histFrame.isNull()) return;
+        m_curve->setHistograms(CurveEditor::histograms(m_histFrame));
+        m_histFrame = QImage();
+    });
     m_curveNote = new QLabel(T("Kurven wirken auf das ganze Bild, nicht nur in der gewählten Ebene."));
     m_curveNote->setWordWrap(true);
     m_curveNote->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
     lay->addWidget(m_curveNote);
     return box;
+}
+
+void ColorPanel::setFrame(const QImage& frame)
+{
+    m_histFrame = frame;
+    if (!m_histTimer.isActive()) m_histTimer.start();
 }
 
 void ColorPanel::refreshCurves(const Clip* c)
@@ -1301,10 +1402,8 @@ QWidget* ColorPanel::buildQualifier()
         pick->setObjectName("color_qualifier_pick");
         pick->setFocusPolicy(Qt::NoFocus);
         connect(pick, &QPushButton::clicked, this, [this] {
-            const Clip* c = current();
-            if (!c) return;
-            if (!GradeQualifier::exists(*c)) m_editor->addGradeQualifier(targets());
-            emit qualifierPickRequested(c->id);
+            // The qualifier comes with the picked colour (applyQualifierColor): a cancelled pick leaves nothing
+            if (const Clip* c = current()) emit qualifierPickRequested(c->id);
         });
         auto* add = new QPushButton(T("Hauttöne"));
         add->setToolTip(T("Qualifier mit einer Auswahl typischer Hauttöne anlegen"));
@@ -1343,13 +1442,7 @@ QWidget* ColorPanel::buildQualifier()
     });
     m_qualInvert = new QCheckBox(T("Invertieren"));
     m_qualInvert->setToolTip(T("Wirkt auf alles außer der Auswahl"));
-    connect(m_qualInvert, &QCheckBox::clicked, this, [this](bool on) {
-        const Clip* c = current();
-        if (!c) return;
-        GradeQualifier::Range r = GradeQualifier::rangeAt(*c, localFrame(*c));
-        r.invert = on;
-        m_editor->setGradeQualifierRange(targets(), r, m_playhead);
-    });
+    connect(m_qualInvert, &QCheckBox::clicked, this, [this](bool on) { m_editor->setGradeQualifierInvert(targets(), on); });
     auto* correct = new QToolButton;
     correct->setText(T("Auswahl korrigieren ▶"));
     correct->setToolTip(T("Zu den Rädern: sie wirken dann nur in der Auswahl (Ebene „Q“)"));
@@ -1386,6 +1479,16 @@ QWidget* ColorPanel::buildQualifier()
         name->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
         grid->addWidget(name, 2 * r + 1, 0);
         m_qualBars[r] = new QualifierBar(QualifierBar::Kind(r));
+        m_qualBars[r]->setObjectName(QString("color_qualifier_bar_%1").arg(r));
+        m_qualBars[r]->onChange = [this, bar = m_qualBars[r]](const QString& key, double v) {
+            // The bar shows the new range at once (the model answers through refresh as well)
+            const Clip* c = current();
+            if (!c) return;
+            m_editor->setGradeValues(targets(), {{GradeQualifier::param(key), v}}, m_playhead, T("Qualifier"),
+                                     QString("qualifier:bar:%1").arg(key));
+            if (const Clip* now = current()) bar->setRange(GradeQualifier::rangeAt(*now, localFrame(*now)));
+        };
+        m_qualBars[r]->onFinish = [this] { finish(); };
         grid->addWidget(m_qualBars[r], 2 * r + 1, 1);
         for (int k = 0; k < 3; ++k) {
             const QString key = GradeQualifier::rangeKeys()[3 * r + k];
@@ -1451,4 +1554,142 @@ void ColorPanel::applyQualifierColor(const QColor& color)
     r.invert = GradeQualifier::rangeAt(*c, localFrame(*c)).invert;
     m_editor->setGradeQualifierRange(targets(), r, m_playhead);
     setPalette(QualifierPalette);
+}
+
+// ---- Stills ----
+
+QWidget* ColorPanel::buildStills()
+{
+    auto* box = new QWidget;
+    box->setProperty("tourTarget", "color_stills");
+    auto* lay = new QVBoxLayout(box);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(6);
+    auto* row = new QHBoxLayout;
+    row->setSpacing(6);
+    auto* grab = new QToolButton;
+    grab->setText(T("Standbild aufnehmen"));
+    grab->setToolTip(T("Das Bild im Viewer mit der Korrektur des Clips als Standbild ablegen"));
+    grab->setObjectName("color_still_grab");
+    grab->setFocusPolicy(Qt::NoFocus);
+    connect(grab, &QToolButton::clicked, this, [this] {
+        if (current()) emit stillGrabRequested();
+    });
+    m_stillCompare = new QToolButton;
+    m_stillCompare->setText(T("Vergleichen"));
+    m_stillCompare->setToolTip(T("Standbild links im Viewer, das aktuelle Bild rechts; die Linie lässt sich ziehen "
+                                 "(Doppelklick auf ein Standbild = vergleichen)"));
+    m_stillCompare->setCheckable(true);
+    m_stillCompare->setObjectName("color_still_compare");
+    m_stillCompare->setFocusPolicy(Qt::NoFocus);
+    connect(m_stillCompare, &QToolButton::clicked, this,
+            [this](bool on) { setComparedStill(on ? selectedStill() : 0); });
+    m_stillApply = new QToolButton;
+    m_stillApply->setText(T("Korrektur übernehmen"));
+    m_stillApply->setToolTip(T("Die Korrektur des Standbilds auf die gewählten Clips übertragen"));
+    m_stillApply->setObjectName("color_still_apply");
+    m_stillApply->setFocusPolicy(Qt::NoFocus);
+    connect(m_stillApply, &QToolButton::clicked, this, [this] {
+        if (const int id = selectedStill()) m_editor->applyGradeStill(id, targets());
+    });
+    m_stillRemove = new QToolButton;
+    m_stillRemove->setText(T("Löschen"));
+    m_stillRemove->setFocusPolicy(Qt::NoFocus);
+    connect(m_stillRemove, &QToolButton::clicked, this, [this] {
+        if (const int id = selectedStill()) m_editor->removeGradeStill(id);
+    });
+    row->addWidget(grab);
+    row->addWidget(m_stillCompare);
+    row->addWidget(m_stillApply);
+    row->addStretch(1);
+    row->addWidget(m_stillRemove);
+    lay->addLayout(row);
+
+    m_stillList = new QListWidget;
+    m_stillList->setObjectName("color_stills");
+    m_stillList->setViewMode(QListView::IconMode);
+    m_stillList->setFlow(QListView::LeftToRight);
+    m_stillList->setWrapping(true);
+    m_stillList->setResizeMode(QListView::Adjust);
+    m_stillList->setMovement(QListView::Static);
+    m_stillList->setIconSize(QSize(128, 72));
+    m_stillList->setSpacing(4);
+    m_stillList->setUniformItemSizes(true);
+    m_stillList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_stillList->setStyleSheet(QString("QListWidget { background: %1; border: 1px solid %2; color: %3; font-size: 8pt; }")
+                                   .arg(Theme::lane.name(), Theme::border.name(), Theme::textDim.name()));
+    connect(m_stillList, &QListWidget::itemSelectionChanged, this, [this] {
+        const int id = selectedStill();
+        if (m_compareId && id && id != m_compareId) setComparedStill(id); // comparing follows the selection
+        refreshStills();
+    });
+    connect(m_stillList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+        const int id = item->data(Qt::UserRole).toInt();
+        setComparedStill(m_compareId == id ? 0 : id);
+    });
+    lay->addWidget(m_stillList, 1);
+    auto* hint = new QLabel(T("Standbilder werden im Projekt gespeichert. Vergleichen hilft, Clips aneinander "
+                              "anzugleichen."));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
+    lay->addWidget(hint);
+    return box;
+}
+
+int ColorPanel::selectedStill() const
+{
+    const QList<QListWidgetItem*> sel = m_stillList->selectedItems();
+    return sel.isEmpty() ? 0 : sel.first()->data(Qt::UserRole).toInt();
+}
+
+void ColorPanel::refreshStills()
+{
+    const QVector<GradeStill>& stills = m_editor->project()->stills();
+    // Rebuilt only when the list changed (ids and labels), so the selection and scroll stay
+    QStringList want, have;
+    for (const GradeStill& s : stills) want << QString::number(s.id) + s.label;
+    for (int i = 0; i < m_stillList->count(); ++i)
+        have << m_stillList->item(i)->data(Qt::UserRole).toString() + m_stillList->item(i)->text();
+    if (want != have) {
+        const int keep = selectedStill();
+        QSignalBlocker block(m_stillList);
+        m_stillList->clear();
+        for (const GradeStill& s : stills) {
+            auto* item = new QListWidgetItem(QIcon(QPixmap::fromImage(GradeStills::picture(s))), s.label);
+            item->setData(Qt::UserRole, s.id);
+            item->setToolTip(s.label);
+            m_stillList->addItem(item);
+            if (s.id == keep) item->setSelected(true);
+        }
+        if (!keep && m_stillList->count()) m_stillList->item(m_stillList->count() - 1)->setSelected(true);
+    }
+    if (m_compareId && std::none_of(stills.begin(), stills.end(), [&](const GradeStill& s) { return s.id == m_compareId; }))
+        setComparedStill(0); // deleted (or undone)
+    const bool any = selectedStill() != 0;
+    m_stillCompare->setEnabled(any);
+    m_stillCompare->setChecked(m_compareId != 0);
+    m_stillApply->setEnabled(any && current());
+    m_stillRemove->setEnabled(any);
+}
+
+void ColorPanel::setComparedStill(int stillId)
+{
+    const QVector<GradeStill>& stills = m_editor->project()->stills();
+    const auto it = std::find_if(stills.begin(), stills.end(), [&](const GradeStill& s) { return s.id == stillId; });
+    m_compareId = it == stills.end() ? 0 : stillId;
+    m_overlay->setCompare(m_compareId ? GradeStills::picture(*it) : QImage());
+    if (m_stillCompare) m_stillCompare->setChecked(m_compareId != 0);
+}
+
+void ColorPanel::addStill(const QImage& picture, const QString& timecode)
+{
+    const Clip* c = current();
+    if (!c || picture.isNull()) return;
+    const QString label = m_editor->project()->clipName(*c) + "  " + timecode;
+    if (const int id = m_editor->addGradeStill(c->id, picture, label)) {
+        refreshStills();
+        for (int i = 0; i < m_stillList->count(); ++i)
+            m_stillList->item(i)->setSelected(m_stillList->item(i)->data(Qt::UserRole).toInt() == id);
+    }
+    setPalette(StillsPalette);
 }

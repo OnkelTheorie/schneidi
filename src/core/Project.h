@@ -200,6 +200,10 @@ public:
     void setBrand(const std::optional<BrandKit>& brand);
     void applyBrand(const std::optional<BrandKit>& brand); // only for undo
     BrandKit effectiveBrand() const { return Brand::effective(m_brand); }
+    // Color page stills (core/GradeStills): replaced as a whole, one undo step (unchanged = none)
+    const QVector<GradeStill>& stills() const { return m_stills; }
+    void setStills(const QVector<GradeStill>& stills, const QString& text);
+    void applyStills(const QVector<GradeStill>& stills); // only for undo
     // A content template's description (core/TemplateLibrary.h); kept from load() to data(), so opening and saving a
     // template keeps its name/description. No undo, no change signal (set by load / TemplateLibrary::save)
     const std::optional<TemplateInfo>& templateInfo() const { return m_templateInfo; }
@@ -250,6 +254,7 @@ signals:
     void renderQueueChanged();
     void importPresetsChanged(); // own import presets set/removed, or another project loaded
     void brandChanged();         // own brand kit set/removed, or another project loaded
+    void stillsChanged();        // Color page stills changed, or another project loaded
     void watchFoldersChanged(); // the list of watch folders (also after load())
     void undoStackChanged(); // undoStack() is another one now (setHistoryAside)
     void loaded(); // another project (or a new empty one) replaced everything, after the other signals of load()
@@ -273,6 +278,7 @@ private:
     bool m_fixedFrameRate = false;
     std::optional<StreamPresets> m_importPresets;
     std::optional<BrandKit> m_brand;
+    QVector<GradeStill> m_stills;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo

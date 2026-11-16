@@ -45,9 +45,9 @@ inline double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 struct Curve {
     double mul[3], add[3], lift[3], gain[3], expo[3];
     double contrast, pivot;
-    // Tone curves as tables over 0..1 (kToneSteps + 1 samples, linear between): [c] = Y then channel c; empty = none
-    std::vector<float> tone[3];
-    static constexpr int kToneSteps = 4096;
+    // Tone curves (master Y, then the channel's own), prepared once: the bakes read 256 values per channel, so the
+    // curve is evaluated where it is read, not sampled into a table first
+    std::optional<GradeCurves::Shape> master, channel[3];
 
     explicit Curve(const Correction& p, const Curves* curves = nullptr)
     {
@@ -69,20 +69,10 @@ struct Curve {
         pivot = p.pivot;
         if (!curves) return;
         using K = GradeCurves::Kind;
-        const QVector<QPointF>& y = curves->points[int(K::Y)];
-        const bool master = !GradeCurves::isIdentity(y, K::Y);
+        if (GradeCurves::Shape y(curves->points[int(K::Y)], K::Y); !y.identity()) master = std::move(y);
         for (int c = 0; c < 3; ++c) {
             const K own = K(int(K::R) + c);
-            const QVector<QPointF>& pts = curves->points[int(own)];
-            const bool channel = !GradeCurves::isIdentity(pts, own);
-            if (!master && !channel) continue;
-            tone[c].resize(kToneSteps + 1);
-            for (int i = 0; i <= kToneSteps; ++i) {
-                double x = double(i) / kToneSteps;
-                if (master) x = GradeCurves::eval(y, K::Y, x);
-                if (channel) x = GradeCurves::eval(pts, own, x);
-                tone[c][size_t(i)] = float(x);
-            }
+            if (GradeCurves::Shape s(curves->points[int(own)], own); !s.identity()) channel[c] = std::move(s);
         }
     }
     double operator()(int c, double x) const
@@ -92,11 +82,9 @@ struct Curve {
         x = x + lift[c] * (1.0 - x);            // Lift: shift black, white stays
         x = clamp01(x * gain[c]);               // Gain: shift white, black stays
         if (expo[c] != 1.0) x = std::pow(x, expo[c]); // Gamma: midtones, 0 and 1 stay
-        if (tone[c].empty()) return x;
-        const double v = x * kToneSteps;
-        const int i = std::min(int(v), kToneSteps - 1);
-        const double f = v - i;
-        return tone[c][size_t(i)] * (1 - f) + tone[c][size_t(i) + 1] * f;
+        if (master) x = (*master)(x);
+        if (channel[c]) x = (*channel[c])(x);
+        return x;
     }
 };
 
@@ -172,6 +160,9 @@ bool usable(const Lut* lut)
 // Saturation, hue curves, qualifier and LUT. Without hue curves and qualifier this is what bake() does in fixed point;
 // with them it is computed into a 3D table (kLattice nodes per axis) over the tone curves' output.
 
+// 33 nodes: cheap to bake per keyframed frame (~36k evaluations). A user LUT in the same table is resampled to this
+// grid (a fine 65 LUT gets coarser; only with hue curves or a qualifier), and the GPU samples this table again at its
+// own 52 grid (gradeLut): both differ by a few code values at most, at sharp qualifier edges up to ~8.
 constexpr int kLattice = 33;
 constexpr int kHueSteps = 1024;
 
@@ -230,16 +221,38 @@ struct Stage {
             GradeQualifier::measure(v[0], v[1], v[2], &h, &s, &l);
             const float hue = float(h / 360.0);
             if (!hueHue.empty()) {
-                // Turn the colour around the gray axis in the Cb/Cr plane (Rec. 709): brightness stays
-                const float turn = (lut1(hueHue, hue) - 0.5f) * float(2 * M_PI);
+                // A new hue at the same saturation (HSV), then the old brightness (Rec. 709 luma) back: (y - 0.5) * 360
+                // degrees exactly, red to green is 120 degrees
+                const float turn = (lut1(hueHue, hue) - 0.5f) * 360.0f;
                 const float y = luma(v);
-                const float cb = (v[2] - y) / 1.8556f, cr = (v[0] - y) / 1.5748f;
-                const float cs = std::cos(turn), sn = std::sin(turn);
-                const float u = cb * cs - cr * sn, w = cb * sn + cr * cs;
-                v[0] = y + 1.5748f * w;
-                v[2] = y + 1.8556f * u;
-                v[1] = (y - 0.2126f * v[0] - 0.0722f * v[2]) / 0.7152f;
-                for (int c = 0; c < 3; ++c) v[c] = std::clamp(v[c], 0.0f, 1.0f);
+                const float mx = std::max({v[0], v[1], v[2]}), mn = std::min({v[0], v[1], v[2]});
+                if (mx - mn > 1e-6f && turn != 0.0f) {
+                    const float hh = std::fmod(float(h) + turn + 720.0f, 360.0f) / 60.0f;
+                    const float c = mx - mn;
+                    const float xx = c * (1 - std::abs(std::fmod(hh, 2.0f) - 1));
+                    float r = 0, g = 0, b = 0;
+                    switch (int(hh) % 6) {
+                    case 0: r = c, g = xx; break;
+                    case 1: r = xx, g = c; break;
+                    case 2: g = c, b = xx; break;
+                    case 3: g = xx, b = c; break;
+                    case 4: r = xx, b = c; break;
+                    default: r = c, b = xx; break;
+                    }
+                    v[0] = r + mn;
+                    v[1] = g + mn;
+                    v[2] = b + mn;
+                    // The old luma with the new colour's difference from gray; where that leaves 0..1 the colour gets
+                    // less saturated (not clipped per channel, which would change the brightness again)
+                    const float y2 = luma(v);
+                    float d[3], k = 1;
+                    for (int i = 0; i < 3; ++i) {
+                        d[i] = v[i] - y2;
+                        if (y + d[i] > 1) k = std::min(k, (1 - y) / d[i]);
+                        else if (y + d[i] < 0) k = std::min(k, -y / d[i]);
+                    }
+                    for (int i = 0; i < 3; ++i) v[i] = std::clamp(y + d[i] * std::max(0.0f, k), 0.0f, 1.0f);
+                }
             }
             float f = 1;
             if (!hueSat.empty()) f *= 2 * lut1(hueSat, hue);
@@ -613,7 +626,11 @@ bool active(const Clip& c)
     if (!lutPath(c).isEmpty()) return true;
     if (std::any_of(kParams.begin(), kParams.end(), [&](AnimParam p) { return Keys::animated(c, p); })) return true;
     if (!at(c, 0).isNeutral()) return true;
-    if (GradeQualifier::exists(c)) return true; // its mask can be shown even with a neutral correction
+    if (GradeQualifier::exists(c)) { // its correction (the Renderer shows its mask even when neutral)
+        const QVector<AnimParam>& list = qualifierParams();
+        if (std::any_of(list.begin(), list.end(), [&](AnimParam p) { return Keys::animated(c, p); })) return true;
+        if (!at(c, 0).qualifier.correction.isNeutral()) return true;
+    }
     if (!at(c, 0).curves.isIdentity()) return true;
     for (int n : GradeWindows::list(c)) {
         const QVector<AnimParam>& list = windowParams(n);

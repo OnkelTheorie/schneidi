@@ -224,6 +224,9 @@ void opQualifier(Session& s, const QJsonObject& op)
             s.notes << "qualifier added (default range: skin tones; pick one with color)";
         ed.addGradeQualifier(ids);
     }
+    for (const auto& [lo, hi] : {std::pair{"sat_low", "sat_high"}, std::pair{"lum_low", "lum_high"}})
+        if (op.contains(lo) && op.contains(hi) && op.value(lo).toDouble() > op.value(hi).toDouble())
+            fail("BAD_ARGUMENT", QString("%1 is above %2").arg(lo, hi));
     QVector<QPair<AnimParam, double>> values;
     if (op.contains("color")) { // a range around a colour, then single values on top
         const GradeQualifier::Range r = GradeQualifier::around(colorOf(op.value("color"), "color"));
@@ -242,13 +245,7 @@ void opQualifier(Session& s, const QJsonObject& op)
     if (!values.isEmpty())
         for (int id : ids)
             ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Qualifier");
-    if (op.contains("invert"))
-        for (int id : ids) {
-            const Clip& c = *clip(id);
-            GradeQualifier::Range r = GradeQualifier::rangeAt(c, localFrame(c, op.contains("at") ? timeOf(s, op, "at") : c.start));
-            r.invert = op.value("invert").toBool();
-            ed.setGradeQualifierRange({id}, r, op.contains("at") ? timeOf(s, op, "at") : c.start);
-        }
+    if (op.contains("invert")) ed.setGradeQualifierInvert(ids, op.value("invert").toBool());
     if (op.contains("keyframe"))
         for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool(), GradeQualifier::kLayer);
 }
@@ -1062,7 +1059,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "channel), smooth through the points and flat beyond the first and last; e.g. y [[0,0],[0.25,0.2],"
                  "[0.75,0.82],[1,1]] = an S curve (more contrast). The others work on the hue (x 0 = red, 1/3 green, "
                  "2/3 blue, wrapping) or the brightness (lum_sat): y 0.5 = unchanged; hue_sat/lum_sat y * 2 = "
-                 "saturation factor (0 = gray), hue_hue (y - 0.5) * 360 = hue turn in degrees. Curves are not "
+                 "saturation factor (0 = gray), hue_hue (y - 0.5) * 360 = hue turn in degrees (HSV hue, brightness kept). Curves are not "
                  "animatable.",
                  opColor, kClipKeys}
         << OpDef{"qualifier", "{op:'qualifier', clips, add?, remove?, color?, hue?, hue_width?, hue_soft?, sat_low?, "

@@ -142,6 +142,19 @@ private:
     MediaChange m_change;
 };
 
+// The Color page stills replaced (Project::setStills)
+class StillsCommand : public QUndoCommand {
+public:
+    StillsCommand(Project* p, const QString& text, QVector<GradeStill> before, QVector<GradeStill> after)
+        : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)) {}
+    void undo() override { m_project->applyStills(m_before); }
+    void redo() override { m_project->applyStills(m_after); }
+
+private:
+    Project* m_project;
+    QVector<GradeStill> m_before, m_after;
+};
+
 // Several steps as one (Project::combineSteps): the whole state the history covers, before and after, and what those
 // steps did to the media list (only that: imports outside the history stay)
 class CombinedCommand : public QUndoCommand {
@@ -152,6 +165,7 @@ public:
         int current = 0;
         PoolState pool;
         std::optional<BrandKit> brand; // the project's own kit (Project::setBrand is a step of the history too)
+        QVector<GradeStill> stills;    // likewise the Color page stills
     };
     CombinedCommand(Project* p, const QString& text, State before, State after, MediaChange media)
         : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)),
@@ -169,7 +183,7 @@ public:
 
     static State capture(const Project& p)
     {
-        return {p.format(), p.sequences(), p.currentSequence(), p.poolState(), p.brand()};
+        return {p.format(), p.sequences(), p.currentSequence(), p.poolState(), p.brand(), p.stills()};
     }
 
 private:
@@ -179,6 +193,7 @@ private:
         m_project->applySequences(s.sequences, s.current);
         m_project->applyPool(s.pool);
         if (s.brand != m_project->brand()) m_project->applyBrand(s.brand);
+        if (s.stills != m_project->stills()) m_project->applyStills(s.stills);
     }
 
     Project* m_project;
@@ -288,6 +303,7 @@ ProjectData Project::data() const
     d.fixedFrameRate = m_fixedFrameRate;
     d.importPresets = m_importPresets;
     d.brand = m_brand;
+    d.stills = m_stills;
     d.templateInfo = m_templateInfo;
     d.watchFolders = m_watchFolders;
     d.watchLog = m_watchLog;
@@ -380,6 +396,7 @@ void Project::load(const ProjectData& d)
     m_fixedFrameRate = d.fixedFrameRate;
     m_importPresets = d.importPresets;
     m_brand = d.brand;
+    m_stills = d.stills;
     m_templateInfo = d.templateInfo;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
@@ -407,6 +424,7 @@ void Project::load(const ProjectData& d)
     emit renderQueueChanged();
     emit importPresetsChanged();
     emit brandChanged();
+    emit stillsChanged();
     emit watchFoldersChanged();
     emit loaded();
 }
@@ -1056,6 +1074,18 @@ void Project::setBrand(const std::optional<BrandKit>& brand)
     const std::optional<BrandKit> b = brand ? std::optional<BrandKit>(brand->clamped()) : std::nullopt;
     if (b == m_brand) return;
     m_undo->push(new BrandCommand(this, b ? T("Branding des Projekts") : T("Globales Branding verwenden"), m_brand, b));
+}
+
+void Project::setStills(const QVector<GradeStill>& stills, const QString& text)
+{
+    if (stills == m_stills) return;
+    m_undo->push(new StillsCommand(this, text, m_stills, stills));
+}
+
+void Project::applyStills(const QVector<GradeStill>& stills)
+{
+    m_stills = stills;
+    emit stillsChanged();
 }
 
 void Project::applyBrand(const std::optional<BrandKit>& brand)

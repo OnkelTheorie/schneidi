@@ -113,6 +113,9 @@ Range rangeAt(const Clip& c, double t)
     r.lumLow = v("lumLow");
     r.lumHigh = v("lumHigh");
     r.lumSoft = std::max(0.0, v("lumSoft"));
+    // A low end above the high one (a hand-edited file, keyframes crossing): the range between them
+    if (r.satLow > r.satHigh) std::swap(r.satLow, r.satHigh);
+    if (r.lumLow > r.lumHigh) std::swap(r.lumLow, r.lumHigh);
     r.invert = EffectRegistry::value(c, kGrade, key("invert")).toBool();
     return r;
 }

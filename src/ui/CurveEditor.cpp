@@ -34,6 +34,48 @@ void CurveEditor::setKind(GradeCurves::Kind kind)
     update();
 }
 
+void CurveEditor::setHistograms(const QVector<QVector<float>>& h)
+{
+    m_hist = h;
+    update();
+}
+
+QVector<QVector<float>> CurveEditor::histograms(const QImage& picture)
+{
+    QVector<QVector<float>> out(5, QVector<float>(kBins, 0.0f));
+    if (picture.isNull()) return {};
+    const QImage img = picture.format() == QImage::Format_RGB32 || picture.format() == QImage::Format_ARGB32
+                           ? picture
+                           : picture.convertToFormat(QImage::Format_RGB32);
+    const int step = std::max(1, int(std::sqrt(double(img.width()) * img.height() / 40000.0)));
+    for (int y = 0; y < img.height(); y += step) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); x += step) {
+            const int r = qRed(line[x]), g = qGreen(line[x]), b = qBlue(line[x]);
+            const auto bin = [](double v) { return std::clamp(int(v * kBins / 256.0), 0, kBins - 1); };
+            out[0][bin(0.2126 * r + 0.7152 * g + 0.0722 * b)] += 1;
+            out[1][bin(r)] += 1;
+            out[2][bin(g)] += 1;
+            out[3][bin(b)] += 1;
+            const int mx = std::max({r, g, b}), mn = std::min({r, g, b});
+            if (mx - mn > 8) {
+                const QColor c(r, g, b);
+                out[4][std::clamp(int(c.hsvHueF() * kBins), 0, kBins - 1)] += float(mx - mn) / 255.0f;
+            }
+        }
+    }
+    for (QVector<float>& h : out) { // the tallest bin = 1; a single huge bin (black bars) clipped to 4x the mean
+        float sum = 0;
+        for (float v : h) sum += v;
+        const float cap = sum / kBins * 4;
+        float mx = 0;
+        for (float& v : h) mx = std::max(mx, v = std::min(v, cap));
+        if (mx > 0)
+            for (float& v : h) v /= mx;
+    }
+    return out;
+}
+
 void CurveEditor::setPoints(const QVector<QPointF>& points)
 {
     if (m_drag >= 0) return;
@@ -114,6 +156,29 @@ void CurveEditor::paintEvent(QPaintEvent*)
         }
         p.fillRect(strip, g);
     }
+    // Histogram of the shown picture behind everything
+    {
+        using K = GradeCurves::Kind;
+        const int which = m_kind == K::R ? 1 : m_kind == K::G ? 2 : m_kind == K::B ? 3
+                          : GradeCurves::periodic(m_kind) ? 4 : 0;
+        if (which < m_hist.size() && m_hist[which].size() == kBins) {
+            QPainterPath area;
+            area.moveTo(r.bottomLeft());
+            for (int i = 0; i < kBins; ++i) {
+                const double x0 = r.left() + r.width() * i / kBins, x1 = r.left() + r.width() * (i + 1) / kBins;
+                const double y = r.bottom() - m_hist[which][i] * r.height() * 0.9;
+                area.lineTo(x0, y);
+                area.lineTo(x1, y);
+            }
+            area.lineTo(r.bottomRight());
+            area.closeSubpath();
+            QColor fill = which >= 1 && which <= 3 ? curveColor() : Theme::text;
+            fill.setAlpha(38);
+            p.setPen(Qt::NoPen);
+            p.setBrush(fill);
+            p.drawPath(area);
+        }
+    }
     // The untouched line
     p.setPen(QPen(Theme::alpha(Theme::text, 50), 1, Qt::DashLine));
     if (GradeCurves::tone(m_kind)) p.drawLine(toWidget({0, 0}), toWidget({1, 1}));
@@ -121,9 +186,10 @@ void CurveEditor::paintEvent(QPaintEvent*)
     // The curve
     QPainterPath path;
     const int steps = std::max(32, int(r.width() / 2));
+    const GradeCurves::Shape shape(m_points, m_kind);
     for (int i = 0; i <= steps; ++i) {
         const double x = double(i) / steps;
-        const QPointF q = toWidget({x, GradeCurves::eval(m_points, m_kind, x)});
+        const QPointF q = toWidget({x, shape(x)});
         if (i == 0) path.moveTo(q);
         else path.lineTo(q);
     }
