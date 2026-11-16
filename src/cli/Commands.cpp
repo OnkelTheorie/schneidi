@@ -13,6 +13,7 @@
 #include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -626,10 +627,14 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
             QJsonObject eo{{"effect", e.effectId}};
             QJsonObject params;
             QMap<int, QJsonObject> windows; // grade: its windows apart ("w1.x" -> windows[1].x)
+            QJsonObject qualifier;          // and its qualifier ("q.hue" -> qualifier.hue)
+            const bool grade = e.effectId == QLatin1String("grade");
             for (auto it = e.params.begin(); it != e.params.end(); ++it) {
                 QString key;
-                if (const int n = e.effectId == QLatin1String("grade") ? GradeWindows::windowOf(it.key(), &key) : 0)
+                if (const int n = grade ? GradeWindows::windowOf(it.key(), &key) : 0)
                     windows[n][key] = json(it.value());
+                else if (grade && GradeQualifier::isKey(it.key()))
+                    qualifier[it.key().mid(2)] = json(it.value());
                 else
                     params[EffectRegistry::shownKey(e.effectId, it.key())] = json(it.value()); // readable alias
             }
@@ -643,6 +648,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
                 }
                 eo["windows"] = list;
             }
+            if (!qualifier.isEmpty()) eo["qualifier"] = qualifier;
             if (e.effectId == QLatin1String(::Comp::kEffectId)) { // the graph short: nodes, links, out, cost
                 eo.remove("params");
                 eo["graph"] = compJson(e, f, &c);

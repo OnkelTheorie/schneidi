@@ -8,6 +8,7 @@
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Equalizer.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/Presets.h"
 #include "core/I18n.h"
@@ -275,8 +276,10 @@ void Editor::setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimPar
         for (const auto& [p, v] : values) {
             // Values of a window only where the clip has that window
             QString effectId, key;
-            if (Keys::effectParamOf(p, &effectId, &key))
+            if (Keys::effectParamOf(p, &effectId, &key)) {
                 if (const int n = GradeWindows::windowOf(key); n > 0 && !GradeWindows::exists(c, n)) continue;
+                if (GradeQualifier::isKey(key) && !GradeQualifier::exists(c)) continue; // likewise the qualifier's
+            }
             Keys::setValue(c, p, localFrame(c, frame), v);
         }
     }, mergeKey);
@@ -295,8 +298,10 @@ void Editor::resetGrade(const QVector<int>& ids, const QVector<AnimParam>& param
         }
         for (AnimParam p : params) {
             QString effectId, key;
-            if (Keys::effectParamOf(p, &effectId, &key)) // a window's value only where the clip has that window
+            if (Keys::effectParamOf(p, &effectId, &key)) { // a window's value only where the clip has that window
                 if (const int n = GradeWindows::windowOf(key); n > 0 && !GradeWindows::exists(c, n)) continue;
+                if (GradeQualifier::isKey(key) && !GradeQualifier::exists(c)) continue;
+            }
             Keys::setValue(c, p, localFrame(c, frame), gradeDefault(p));
         }
     });
@@ -326,12 +331,18 @@ void Editor::setGradeKeyframe(const QVector<int>& ids, int frame, bool on, int w
         params.clear();
         for (const QString& k : GradeWindows::correctionKeys() + GradeWindows::geometryKeys())
             params << GradeWindows::param(window, k);
+    } else if (window == GradeQualifier::kLayer) {
+        params.clear();
+        for (const QString& k : GradeWindows::correctionKeys() + GradeQualifier::rangeKeys())
+            params << GradeQualifier::param(k);
     }
     modifyClips(videoOnly(m_project->timeline(), ids), on ? T("Keyframe setzen") : T("Keyframe entfernen"),
                 [&](Clip& c) {
                     EffectRegistry::add(c, kGrade);
                     const int t = localFrame(c, frame);
-                    if (window > 0 && !GradeWindows::exists(c, window)) return;
+                    if (window == GradeQualifier::kLayer ? !GradeQualifier::exists(c)
+                                                         : window > 0 && !GradeWindows::exists(c, window))
+                        return;
                     for (AnimParam p : params) {
                         if (on) Keys::setKey(c, p, t, Keys::valueAt(c, p, t));
                         else Keys::removeKey(c, p, t);
@@ -356,6 +367,52 @@ void Editor::removeGradeWindow(const QVector<int>& ids, int n)
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeWindows::exists(*c, n))
             targets << id;
     modifyClips(targets, T("Fenster löschen"), [&](Clip& c) { GradeWindows::remove(c, n); });
+}
+
+void Editor::setGradeCurve(const QVector<int>& ids, GradeCurves::Kind kind, const QVector<QPointF>& points,
+                           const QString& mergeKey)
+{
+    const QString text = GradeCurves::format(points);
+    const QString key = GradeCurves::key(kind);
+    modifyClips(videoOnly(m_project->timeline(), ids), T("Kurve"), [&](Clip& c) {
+        EffectRegistry::add(c, kGrade);
+        EffectInstance* e = EffectRegistry::instance(c, kGrade);
+        if (GradeCurves::isIdentity(GradeCurves::parse(text), kind)) e->params.remove(key); // straight: as never set
+        else e->params[key] = text;
+    }, mergeKey);
+}
+
+void Editor::addGradeQualifier(const QVector<int>& ids)
+{
+    modifyClips(videoOnly(m_project->timeline(), ids), T("Qualifier hinzufügen"), [&](Clip& c) {
+        EffectRegistry::add(c, kGrade);
+        GradeQualifier::add(c);
+    });
+}
+
+void Editor::removeGradeQualifier(const QVector<int>& ids)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeQualifier::exists(*c))
+            targets << id;
+    modifyClips(targets, T("Qualifier löschen"), [&](Clip& c) { GradeQualifier::remove(c); });
+}
+
+void Editor::setGradeQualifierRange(const QVector<int>& ids, const GradeQualifier::Range& range, int frame,
+                                    const QString& mergeKey)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeQualifier::exists(*c))
+            targets << id;
+    const double values[] = {range.hue,    range.hueWidth, range.hueSoft, range.satLow, range.satHigh,
+                             range.satSoft, range.lumLow,  range.lumHigh, range.lumSoft};
+    modifyClips(targets, T("Qualifier"), [&](Clip& c) {
+        const QStringList& keys = GradeQualifier::rangeKeys();
+        for (int i = 0; i < keys.size(); ++i) Keys::setValue(c, GradeQualifier::param(keys[i]), localFrame(c, frame), values[i]);
+        EffectRegistry::instance(c, kGrade)->params[GradeQualifier::key("invert")] = range.invert;
+    }, mergeKey);
 }
 
 void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points)

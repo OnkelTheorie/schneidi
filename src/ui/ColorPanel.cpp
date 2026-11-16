@@ -5,6 +5,8 @@
 #include "core/Editor.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/GradeCurves.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -14,6 +16,7 @@
 #include "core/Timecode.h"
 #include "engine/ColorGrade.h"
 #include "engine/Tracker.h"
+#include "ui/CurveEditor.h"
 #include "ui/ElidedLabel.h"
 #include "ui/ScrubField.h"
 #include "ui/WindowOverlay.h"
@@ -21,7 +24,9 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QButtonGroup>
 #include <QConicalGradient>
+#include <QLinearGradient>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
@@ -35,6 +40,7 @@
 #include <QPainter>
 #include <QRadialGradient>
 #include <QSettings>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QThread>
 #include <QToolButton>
@@ -169,6 +175,133 @@ private:
     bool m_dragging = false;
 };
 
+// Master wheel under a color wheel (like a thumb wheel): drag sideways = the wheel's Y (master) up or down, relative
+// to the mouse movement (Shift = fine), double-click = back to neutral. The ridges move with the drag.
+class MasterWheel : public QWidget {
+public:
+    std::function<void(double dx)> onDrag; // pixels moved (Shift already applied)
+    std::function<void()> onFinish;
+    std::function<void()> onReset;
+
+    explicit MasterWheel(QWidget* parent = nullptr) : QWidget(parent)
+    {
+        setFixedSize(104, 14);
+        setCursor(Qt::SizeHorCursor);
+        setToolTip(T("Master: zur Seite ziehen = heller/dunkler (Shift = fein), Doppelklick = zurücksetzen"));
+    }
+    void setActive(bool moved)
+    {
+        if (moved == m_moved) return;
+        m_moved = moved;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        QLinearGradient shade(r.topLeft(), r.topRight()); // a drum seen from the front: darker at the sides
+        shade.setColorAt(0, Theme::well);
+        shade.setColorAt(0.5, Theme::controlLight);
+        shade.setColorAt(1, Theme::well);
+        p.setPen(QPen(m_moved ? Theme::primary : Theme::border, 1));
+        p.setBrush(shade);
+        p.drawRoundedRect(r, 3, 3);
+        // Ridges: evenly spaced on the drum, squeezed towards its edges
+        p.setPen(QPen(Theme::alpha(Theme::text, 70), 1));
+        constexpr double kSpacing = 0.22; // radians between ridges
+        const double phase = std::fmod(m_phase / (r.width() / 2), kSpacing);
+        for (double a = -M_PI / 2 + phase; a < M_PI / 2; a += kSpacing) {
+            const double x = r.center().x() + std::sin(a) * (r.width() / 2 - 3);
+            p.drawLine(QPointF(x, r.top() + 3), QPointF(x, r.bottom() - 3));
+        }
+    }
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton) return;
+        m_last = e->position().x();
+        m_dragging = true;
+    }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (!m_dragging) return;
+        const double dx = e->position().x() - m_last;
+        m_last = e->position().x();
+        m_phase += dx;
+        update();
+        if (onDrag) onDrag(dx * (e->modifiers() & Qt::ShiftModifier ? 0.15 : 1.0));
+    }
+    void mouseReleaseEvent(QMouseEvent*) override
+    {
+        if (!m_dragging) return;
+        m_dragging = false;
+        if (onFinish) onFinish();
+    }
+    void mouseDoubleClickEvent(QMouseEvent* e) override
+    {
+        if (e->button() == Qt::LeftButton && onReset) onReset();
+    }
+
+private:
+    double m_last = 0, m_phase = 0;
+    bool m_dragging = false, m_moved = false;
+};
+
+// One range of the qualifier as a bar: what it measures (hue spectrum, saturation from gray to colour, brightness from
+// black to white), darkened where the selection does not reach
+class QualifierBar : public QWidget {
+public:
+    enum Kind { Hue, Sat, Lum };
+    explicit QualifierBar(Kind kind, QWidget* parent = nullptr) : QWidget(parent), m_kind(kind)
+    {
+        setMinimumWidth(90);
+        setFixedHeight(14);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+    void setRange(const GradeQualifier::Range& r)
+    {
+        if (r == m_range) return;
+        m_range = r;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        const QRect r = rect().adjusted(0, 1, 0, -1);
+        QLinearGradient g(r.topLeft(), r.topRight());
+        if (m_kind == Hue) {
+            for (int i = 0; i <= 6; ++i) g.setColorAt(i / 6.0, QColor::fromHsvF(std::fmod(i / 6.0, 1.0), 0.8, 0.9));
+        } else if (m_kind == Sat) {
+            g.setColorAt(0, QColor(128, 128, 128));
+            g.setColorAt(1, QColor::fromHsvF(std::fmod(m_range.hue / 360.0 + 1, 1.0), 1.0, 0.9));
+        } else {
+            g.setColorAt(0, Qt::black);
+            g.setColorAt(1, Qt::white);
+        }
+        p.fillRect(r, g);
+        // Not selected: dark (inverted: the other way round)
+        for (int x = r.left(); x <= r.right(); ++x) {
+            const double v = double(x - r.left()) / std::max(1, r.width() - 1);
+            float w = m_kind == Hue   ? GradeQualifier::hueWeight(m_range, v * 360)
+                      : m_kind == Sat ? GradeQualifier::band(v * 100, m_range.satLow, m_range.satHigh, m_range.satSoft)
+                                      : GradeQualifier::band(v * 100, m_range.lumLow, m_range.lumHigh, m_range.lumSoft);
+            p.setPen(QColor(0, 0, 0, int((1 - w) * 200)));
+            p.drawLine(x, r.top(), x, r.bottom());
+        }
+        p.setPen(Theme::border);
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(r.adjusted(0, 0, -1, -1));
+    }
+
+private:
+    Kind m_kind;
+    GradeQualifier::Range m_range;
+};
+
 ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
 {
     setObjectName("Panel");
@@ -183,7 +316,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_overlay = new WindowOverlay(m_editor, [this] { return targets(); }, this);
 
     // Header row: title, clip name, on/off, keyframes, reset all
-    auto* title = new QLabel(T("Grundkorrektur – Farbräder"));
+    auto* title = new QLabel(T("Farbkorrektur"));
     title->setObjectName("PanelTitle");
     m_title = title;
     m_clipName = new QLabel;
@@ -221,16 +354,43 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     });
     auto* resetAll = smallButton("↺", T("Farbkorrektur zurücksetzen (alles, auch LUT, Fenster und Keyframes)"));
     connect(resetAll, &QToolButton::clicked, this, [this] {
-        if (m_layer > 0) // window: only its correction, the shape stays
+        if (m_layer == GradeQualifier::kLayer) // qualifier: only its correction, the range stays
+            m_editor->resetGrade(targets(), ColorGrade::qualifierParams(), m_playhead, T("Qualifier-Korrektur zurücksetzen"));
+        else if (m_layer > 0) // window: only its correction, the shape stays
             m_editor->resetGrade(targets(), ColorGrade::windowParams(m_layer), m_playhead, T("Fenster-Korrektur zurücksetzen"));
         else
             m_editor->resetGrade(targets(), {}, m_playhead, T("Farbkorrektur zurücksetzen"));
     });
 
+    // Palettes: wheels, curves, qualifier (like the palette buttons of other graders, as tabs in the header)
+    auto* paletteGroup = new QButtonGroup(this);
+    auto* palettes = new QHBoxLayout;
+    palettes->setSpacing(2);
+    const QPair<QString, QString> paletteNames[] = {
+        {T("Räder"), T("Farbräder, Master-Räder und Regler")},
+        {T("Kurven"), T("Tonkurven (Master, R, G, B) und Farbton-/Sättigungskurven")},
+        {T("Qualifier"), T("Farben auswählen (z. B. Haut, Himmel) und nur sie korrigieren")},
+    };
+    for (int i = 0; i < 3; ++i) {
+        auto* b = new QToolButton;
+        b->setText(paletteNames[i].first);
+        b->setToolTip(paletteNames[i].second);
+        b->setCheckable(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setObjectName(QString("color_palette_%1").arg(i));
+        paletteGroup->addButton(b, i);
+        connect(b, &QToolButton::clicked, this, [this, i] { setPalette(i); });
+        m_paletteButtons << b;
+        palettes->addWidget(b);
+    }
+
     auto* head = new QHBoxLayout;
     head->setContentsMargins(0, 0, 8, 0);
     head->setSpacing(6);
     head->addWidget(title);
+    head->addSpacing(8);
+    head->addLayout(palettes);
+    head->addSpacing(8);
     head->addWidget(m_clipName, 1);
     head->addWidget(m_enabled);
     head->addSpacing(6);
@@ -304,10 +464,16 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     auto* outer = new QHBoxLayout(m_body);
     outer->setContentsMargins(8, 8, 8, 8);
     outer->setSpacing(10);
-    auto* bl = new QVBoxLayout;
+    auto* wheels = new QWidget;
+    auto* bl = new QVBoxLayout(wheels);
+    bl->setContentsMargins(0, 0, 0, 0);
     bl->addLayout(grid);
     bl->addStretch(1);
-    outer->addLayout(bl, 1);
+    m_palettes = new QStackedWidget;
+    m_palettes->addWidget(wheels);
+    m_palettes->addWidget(buildCurves());
+    m_palettes->addWidget(buildQualifier());
+    outer->addWidget(m_palettes, 1);
     // The windows as a section of their own beside the wheels
     auto* line = new QFrame;
     line->setFrameShape(QFrame::VLine);
@@ -350,6 +516,16 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     Project* project = m_editor->project();
     connect(project, &Project::timelineChanged, this, &ColorPanel::refresh);
     connect(m_editor->selection(), &Selection::changed, this, &ColorPanel::refresh);
+    setPalette(std::clamp(QSettings().value("color/palette", int(Wheels)).toInt(), 0, int(QualifierPalette)));
+}
+
+void ColorPanel::setPalette(int palette)
+{
+    m_palette = std::clamp(palette, 0, int(QualifierPalette));
+    QSettings settings; // only a change is written (a tour must leave the settings as they were)
+    if (settings.value("color/palette", int(Wheels)).toInt() != m_palette) settings.setValue("color/palette", m_palette);
+    m_palettes->setCurrentIndex(m_palette);
+    for (int i = 0; i < m_paletteButtons.size(); ++i) m_paletteButtons[i]->setChecked(i == m_palette);
     refresh();
 }
 
@@ -414,6 +590,27 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
                   T(w.name), QString("color:wheel:%1:%2").arg(w.name).arg(m_layer));
     };
     w.wheel->onFinish = [this] { finish(); };
+
+    // Master wheel: Y of this wheel (brightness of its range), one step of the field per pixel
+    w.master = new MasterWheel;
+    lay->addWidget(w.master, 0, Qt::AlignHCenter);
+    w.master->onDrag = [this, index](double dx) {
+        const Wheel& w = m_wheels[index];
+        const Clip* c = current();
+        if (!c) return;
+        const EffectParam* ep = nullptr;
+        EffectRegistry::paramFor(w.p[0], nullptr, &ep);
+        const AnimParam p = mapped(w.p[0]);
+        const double step = ep ? ep->step : 0.002;
+        double v = Keys::valueAt(*c, p, localFrame(*c)) + dx * step;
+        if (ep) v = std::clamp(v, ep->min, ep->max);
+        setValues({{p, v}}, T(w.name), QString("color:master:%1:%2").arg(w.name).arg(m_layer));
+    };
+    w.master->onFinish = [this] { finish(); };
+    w.master->onReset = [this, index] {
+        const Wheel& w = m_wheels[index];
+        m_editor->resetGrade(targets(), {mapped(w.p[0])}, m_playhead, T("%1 zurücksetzen").arg(T(w.name)));
+    };
 
     // Number fields Y R G B (Y = master, like the wheel under the DaVinci color wheels)
     auto* grid = new QGridLayout;
@@ -550,6 +747,7 @@ void ColorPanel::hideEvent(QHideEvent* e)
 {
     QWidget::hideEvent(e);
     m_overlay->setVisible(false);
+    updateMask(); // the mask only while the Color page shows
 }
 
 bool ColorPanel::eventFilter(QObject* obj, QEvent* e)
@@ -573,9 +771,11 @@ void ColorPanel::refresh()
     if (!c) {
         m_clipName->clear();
         m_overlay->setTarget(0, 0, m_playhead);
+        updateMask();
         return;
     }
-    if (m_layer > 0 && !GradeWindows::exists(*c, m_layer)) m_layer = 0; // window deleted (or other clip)
+    if (m_layer == GradeQualifier::kLayer ? !GradeQualifier::exists(*c) : m_layer > 0 && !GradeWindows::exists(*c, m_layer))
+        m_layer = 0; // window or qualifier deleted (or other clip)
     const int n = targets().size();
     {
         const QString cn = m_editor->project()->clipName(*c);
@@ -597,6 +797,7 @@ void ColorPanel::refresh()
         double u, v;
         rgbToUv(d, &u, &v);
         w.wheel->setPoint(std::clamp(u / w.range, -1.0, 1.0), std::clamp(v / w.range, -1.0, 1.0));
+        w.master->setActive(std::abs(value(w.p[0]) - w.neutral) > 1e-9);
     }
     for (Slider& s : m_sliders)
         if (!s.field->hasFocus()) s.field->setValue(value(s.p));
@@ -624,6 +825,9 @@ void ColorPanel::refresh()
     m_keyPrev->setEnabled(before);
     m_keyNext->setEnabled(after);
     refreshWindows(c, t);
+    refreshCurves(c);
+    refreshQualifier(c, t);
+    updateMask();
 }
 
 // ---- Windows ----
@@ -633,7 +837,11 @@ ViewerOverlay* ColorPanel::overlay() const { return m_overlay; }
 void ColorPanel::setLayer(int layer)
 {
     const Clip* c = current();
-    if (layer < 0 || layer > GradeWindows::kMax || (layer > 0 && (!c || !GradeWindows::exists(*c, layer)))) layer = 0;
+    if (layer == GradeQualifier::kLayer) {
+        if (!c || !GradeQualifier::exists(*c)) layer = 0;
+    } else if (layer < 0 || layer > GradeWindows::kMax || (layer > 0 && (!c || !GradeWindows::exists(*c, layer)))) {
+        layer = 0;
+    }
     m_layer = layer;
     refresh();
 }
@@ -643,12 +851,18 @@ AnimParam ColorPanel::mapped(AnimParam p) const
     if (m_layer <= 0) return p;
     const QVector<AnimParam>& base = ColorGrade::animParams();
     const int i = int(base.indexOf(p));
-    return i >= 0 ? ColorGrade::windowParams(m_layer)[i] : p;
+    if (i < 0) return p;
+    return m_layer == GradeQualifier::kLayer ? ColorGrade::qualifierParams()[i] : ColorGrade::windowParams(m_layer)[i];
 }
 
 QVector<AnimParam> ColorPanel::layerParams() const
 {
     if (m_layer <= 0) return ColorGrade::animParams();
+    if (m_layer == GradeQualifier::kLayer) {
+        QVector<AnimParam> list = ColorGrade::qualifierParams();
+        for (const QString& k : GradeQualifier::rangeKeys()) list << GradeQualifier::param(k);
+        return list;
+    }
     QVector<AnimParam> list = ColorGrade::windowParams(m_layer);
     for (const QString& k : GradeWindows::geometryKeys()) list << GradeWindows::param(m_layer, k);
     return list;
@@ -690,6 +904,17 @@ QWidget* ColorPanel::buildWindows()
         b->setFocusPolicy(Qt::NoFocus);
         b->setMinimumWidth(i == 0 ? 44 : 26);
         connect(b, &QToolButton::clicked, this, [this, i] { setLayer(i); });
+        m_layerButtons << b;
+        layers->addWidget(b);
+    }
+    { // the qualifier's layer (index GradeQualifier::kLayer), shown while the clip has one
+        auto* b = new QToolButton;
+        b->setText(T("Q"));
+        b->setToolTip(T("Räder und Regler wirken in der Auswahl des Qualifiers"));
+        b->setCheckable(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setMinimumWidth(26);
+        connect(b, &QToolButton::clicked, this, [this] { setLayer(GradeQualifier::kLayer); });
         m_layerButtons << b;
         layers->addWidget(b);
     }
@@ -832,7 +1057,8 @@ void ColorPanel::nextLayer()
 {
     const Clip* c = current();
     if (!c) return;
-    const QVector<int> list = GradeWindows::list(*c);
+    QVector<int> list = GradeWindows::list(*c);
+    if (GradeQualifier::exists(*c)) list << GradeQualifier::kLayer;
     const auto next = std::upper_bound(list.begin(), list.end(), m_layer);
     setLayer(next == list.end() ? 0 : *next);
 }
@@ -857,16 +1083,20 @@ void ColorPanel::refreshWindows(const Clip* c, int t)
 {
     const QVector<int> existing = GradeWindows::list(*c);
     for (int i = 0; i < m_layerButtons.size(); ++i) {
-        m_layerButtons[i]->setVisible(i == 0 || existing.contains(i));
+        m_layerButtons[i]->setVisible(i == 0 || existing.contains(i)
+                                      || (i == GradeQualifier::kLayer && GradeQualifier::exists(*c)));
         m_layerButtons[i]->setChecked(i == m_layer);
     }
     m_addRect->setEnabled(GradeWindows::freeNumber(*c) != 0);
     m_addEllipse->setEnabled(GradeWindows::freeNumber(*c) != 0);
-    m_title->setText(m_layer > 0 ? T("Grundkorrektur – Fenster %1").arg(m_layer) : T("Grundkorrektur – Farbräder"));
-    m_windowControls->setVisible(m_layer > 0);
-    if (QLabel* hint = findChild<QLabel*>("WindowHint")) hint->setVisible(m_layer == 0);
-    m_overlay->setTarget(c->id, m_layer, m_playhead);
-    if (m_layer <= 0) return;
+    const bool window = m_layer > 0 && m_layer <= GradeWindows::kMax;
+    m_title->setText(m_layer == GradeQualifier::kLayer ? T("Farbkorrektur – Qualifier")
+                     : window                          ? T("Farbkorrektur – Fenster %1").arg(m_layer)
+                                                       : T("Farbkorrektur"));
+    m_windowControls->setVisible(window);
+    if (QLabel* hint = findChild<QLabel*>("WindowHint")) hint->setVisible(!window);
+    m_overlay->setTarget(c->id, window ? m_layer : 0, m_playhead);
+    if (!window) return;
 
     const GradeWindows::Geometry g = GradeWindows::geometryAt(*c, m_layer, t);
     const GradeWindows::FillInfo fill = GradeWindows::fillAt(*c, m_layer, t);
@@ -955,4 +1185,270 @@ void ColorPanel::discardTracking()
     if (!tracking()) return;
     stopTracking();
     ++m_trackGeneration;
+}
+
+// ---- Curves ----
+
+QWidget* ColorPanel::buildCurves()
+{
+    auto* box = new QWidget;
+    box->setProperty("tourTarget", "color_curves");
+    auto* lay = new QVBoxLayout(box);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(6);
+    auto* row = new QHBoxLayout;
+    row->setSpacing(3);
+    using K = GradeCurves::Kind;
+    const struct {
+        K kind;
+        QString text, tip;
+        QColor color;
+    } kinds[] = {
+        {K::Y, T("Y"), T("Master-Kurve: Helligkeit aller Kanäle"), Theme::text},
+        {K::R, T("R"), T("Rot-Kurve"), QColor(0xe8, 0x5a, 0x5a)},
+        {K::G, T("G"), T("Grün-Kurve"), QColor(0x5a, 0xc8, 0x6a)},
+        {K::B, T("B"), T("Blau-Kurve"), QColor(0x5a, 0x8a, 0xe8)},
+        {K::HueHue, T("Farbton/Farbton"), T("Dreht einzelne Farbtöne zu anderen (z. B. Grün zu Gelb)"), Theme::text},
+        {K::HueSat, T("Farbton/Sättigung"), T("Sättigung je Farbton (z. B. nur Blau kräftiger)"), Theme::text},
+        {K::LumSat, T("Helligkeit/Sättigung"), T("Sättigung je Helligkeit (z. B. Schatten entsättigen)"), Theme::text},
+    };
+    auto* group = new QButtonGroup(this);
+    m_curveButtons.resize(GradeCurves::kCount);
+    for (const auto& k : kinds) {
+        auto* b = new QToolButton;
+        b->setText(k.text);
+        b->setToolTip(k.tip);
+        b->setCheckable(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        if (GradeCurves::tone(k.kind)) {
+            b->setMinimumWidth(26);
+            b->setStyleSheet(QString("QToolButton { color: %1; }").arg(k.color.name()));
+        }
+        group->addButton(b);
+        const K kind = k.kind;
+        connect(b, &QToolButton::clicked, this, [this, kind] {
+            m_curve->setKind(kind);
+            refresh();
+        });
+        m_curveButtons[int(k.kind)] = b;
+        row->addWidget(b);
+        if (k.kind == K::B) row->addSpacing(10);
+    }
+    row->addStretch(1);
+    m_curveReset = smallButton("↺", T("Diese Kurve zurücksetzen"));
+    connect(m_curveReset, &QToolButton::clicked, this,
+            [this] { m_editor->setGradeCurve(targets(), m_curve->kind(), {}); });
+    row->addWidget(m_curveReset);
+    lay->addLayout(row);
+    m_curve = new CurveEditor;
+    m_curve->setObjectName("color_curve");
+    m_curveButtons[int(K::Y)]->setChecked(true);
+    connect(m_curve, &CurveEditor::changed, this, [this](const QVector<QPointF>& points) {
+        m_editor->setGradeCurve(targets(), m_curve->kind(), points,
+                                QString("color:curve:%1").arg(GradeCurves::key(m_curve->kind())));
+    });
+    connect(m_curve, &CurveEditor::finished, this, [this] {
+        finish();
+        refresh();
+    });
+    lay->addWidget(m_curve, 1);
+    m_curveNote = new QLabel(T("Kurven wirken auf das ganze Bild, nicht nur in der gewählten Ebene."));
+    m_curveNote->setWordWrap(true);
+    m_curveNote->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
+    lay->addWidget(m_curveNote);
+    return box;
+}
+
+void ColorPanel::refreshCurves(const Clip* c)
+{
+    const ColorGrade::Params p = ColorGrade::at(*c, localFrame(*c));
+    for (int k = 0; k < GradeCurves::kCount; ++k) {
+        // A bent curve: its button marked (the wheels page shows the same with its moved points)
+        const bool bent = !GradeCurves::isIdentity(p.curves.points[k], GradeCurves::Kind(k));
+        QFont f = m_curveButtons[k]->font();
+        f.setUnderline(bent);
+        m_curveButtons[k]->setFont(f);
+    }
+    const QVector<QPointF>& pts = p.curves.points[int(m_curve->kind())];
+    m_curve->setPoints(pts);
+    m_curveReset->setEnabled(!pts.isEmpty());
+    m_curveNote->setVisible(m_layer != 0);
+}
+
+// ---- Qualifier ----
+
+QWidget* ColorPanel::buildQualifier()
+{
+    auto* box = new QWidget;
+    box->setProperty("tourTarget", "color_qualifier");
+    auto* lay = new QVBoxLayout(box);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(6);
+    const QString dim = QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name());
+
+    // Without a qualifier: what it does, and the buttons to start one
+    m_qualEmpty = new QWidget;
+    {
+        auto* el = new QVBoxLayout(m_qualEmpty);
+        el->setContentsMargins(0, 0, 0, 0);
+        auto* text = new QLabel(T("Ein Qualifier wählt Farben aus – etwa Haut oder Himmel – und die Räder wirken dann "
+                                  "nur auf diese Farben."));
+        text->setWordWrap(true);
+        text->setStyleSheet(dim);
+        el->addWidget(text);
+        auto* buttons = new QHBoxLayout;
+        auto* pick = new QPushButton(T("Farbe im Bild aufnehmen …"));
+        pick->setObjectName("color_qualifier_pick");
+        pick->setFocusPolicy(Qt::NoFocus);
+        connect(pick, &QPushButton::clicked, this, [this] {
+            const Clip* c = current();
+            if (!c) return;
+            if (!GradeQualifier::exists(*c)) m_editor->addGradeQualifier(targets());
+            emit qualifierPickRequested(c->id);
+        });
+        auto* add = new QPushButton(T("Hauttöne"));
+        add->setToolTip(T("Qualifier mit einer Auswahl typischer Hauttöne anlegen"));
+        add->setFocusPolicy(Qt::NoFocus);
+        connect(add, &QPushButton::clicked, this, [this] { m_editor->addGradeQualifier(targets()); });
+        buttons->addWidget(pick);
+        buttons->addWidget(add);
+        buttons->addStretch(1);
+        el->addLayout(buttons);
+        el->addStretch(1);
+    }
+    lay->addWidget(m_qualEmpty);
+
+    m_qualControls = new QWidget;
+    auto* cl = new QVBoxLayout(m_qualControls);
+    cl->setContentsMargins(0, 0, 0, 0);
+    cl->setSpacing(6);
+    auto* top = new QHBoxLayout;
+    top->setSpacing(6);
+    auto* pick = new QToolButton;
+    pick->setText(T("Farbe aufnehmen …"));
+    pick->setToolTip(T("Klick ins Bild des Clips: die Auswahl wird um diese Farbe gelegt"));
+    pick->setFocusPolicy(Qt::NoFocus);
+    connect(pick, &QToolButton::clicked, this, [this] {
+        if (const Clip* c = current()) emit qualifierPickRequested(c->id);
+    });
+    m_qualMask = new QToolButton;
+    m_qualMask->setText(T("Maske zeigen"));
+    m_qualMask->setToolTip(T("Vorschau zeigt die Auswahl: weiß = ausgewählt, schwarz = nicht"));
+    m_qualMask->setCheckable(true);
+    m_qualMask->setFocusPolicy(Qt::NoFocus);
+    m_qualMask->setObjectName("color_qualifier_mask");
+    connect(m_qualMask, &QToolButton::toggled, this, [this](bool on) {
+        m_showMask = on;
+        updateMask();
+    });
+    m_qualInvert = new QCheckBox(T("Invertieren"));
+    m_qualInvert->setToolTip(T("Wirkt auf alles außer der Auswahl"));
+    connect(m_qualInvert, &QCheckBox::clicked, this, [this](bool on) {
+        const Clip* c = current();
+        if (!c) return;
+        GradeQualifier::Range r = GradeQualifier::rangeAt(*c, localFrame(*c));
+        r.invert = on;
+        m_editor->setGradeQualifierRange(targets(), r, m_playhead);
+    });
+    auto* correct = new QToolButton;
+    correct->setText(T("Auswahl korrigieren ▶"));
+    correct->setToolTip(T("Zu den Rädern: sie wirken dann nur in der Auswahl (Ebene „Q“)"));
+    correct->setFocusPolicy(Qt::NoFocus);
+    connect(correct, &QToolButton::clicked, this, [this] {
+        m_layer = GradeQualifier::kLayer;
+        setPalette(Wheels);
+    });
+    auto* remove = new QToolButton;
+    remove->setText(T("Qualifier löschen"));
+    remove->setFocusPolicy(Qt::NoFocus);
+    connect(remove, &QToolButton::clicked, this, [this] {
+        if (m_layer == GradeQualifier::kLayer) m_layer = 0;
+        m_editor->removeGradeQualifier(targets());
+    });
+    top->addWidget(pick);
+    top->addWidget(m_qualMask);
+    top->addWidget(m_qualInvert);
+    top->addStretch(1);
+    top->addWidget(correct);
+    top->addWidget(remove);
+    cl->addLayout(top);
+
+    // Three ranges: a bar of what is selected, the numbers beside it
+    auto* grid = new QGridLayout;
+    grid->setHorizontalSpacing(8);
+    grid->setVerticalSpacing(2);
+    const QString rows[3] = {T("Farbton"), T("Sättigung"), T("Helligkeit")};
+    const QString heads[3][3] = {{T("Mitte"), T("Breite"), T("Weich")},
+                                 {T("Von"), T("Bis"), T("Weich")},
+                                 {T("Von"), T("Bis"), T("Weich")}};
+    for (int r = 0; r < 3; ++r) {
+        auto* name = new QLabel(rows[r]);
+        name->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
+        grid->addWidget(name, 2 * r + 1, 0);
+        m_qualBars[r] = new QualifierBar(QualifierBar::Kind(r));
+        grid->addWidget(m_qualBars[r], 2 * r + 1, 1);
+        for (int k = 0; k < 3; ++k) {
+            const QString key = GradeQualifier::rangeKeys()[3 * r + k];
+            const EffectParam* ep = nullptr;
+            EffectRegistry::paramFor(GradeQualifier::param(key), nullptr, &ep);
+            auto* l = new QLabel(heads[r][k]);
+            l->setStyleSheet(dim);
+            l->setAlignment(Qt::AlignCenter);
+            auto* f = new ScrubField(ep ? ep->min : 0, ep ? ep->max : 100, ep ? ep->step : 0.2, ep ? ep->decimals : 1);
+            f->setFixedWidth(56);
+            f->onChange = [this, key](double v) {
+                m_editor->setGradeValues(targets(), {{GradeQualifier::param(key), v}}, m_playhead, T("Qualifier"),
+                                         QString("qualifier:%1").arg(key));
+            };
+            f->onFinish = [this] { finish(); };
+            m_qualFields << QualField{key, f};
+            grid->addWidget(l, 2 * r, 2 + k);
+            grid->addWidget(f, 2 * r + 1, 2 + k);
+        }
+    }
+    grid->setColumnStretch(1, 1);
+    cl->addLayout(grid);
+    auto* hint = new QLabel(T("Die Auswahl richtet sich nach den Farben nach Rädern und Kurven. Weich = sanfter Rand "
+                              "der Auswahl."));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(dim);
+    cl->addWidget(hint);
+    cl->addStretch(1);
+    lay->addWidget(m_qualControls, 1);
+    return box;
+}
+
+void ColorPanel::refreshQualifier(const Clip* c, int t)
+{
+    const bool has = GradeQualifier::exists(*c);
+    m_qualEmpty->setVisible(!has);
+    m_qualControls->setVisible(has);
+    if (!has) return;
+    const GradeQualifier::Range r = GradeQualifier::rangeAt(*c, t);
+    m_qualInvert->setChecked(r.invert);
+    for (QualifierBar* b : m_qualBars) b->setRange(r);
+    for (const QualField& f : m_qualFields)
+        if (!f.field->hasFocus()) f.field->setValue(Keys::valueAt(*c, GradeQualifier::param(f.key), t));
+}
+
+void ColorPanel::updateMask()
+{
+    const Clip* c = isVisible() && m_showMask ? current() : nullptr;
+    const int id = c && GradeQualifier::exists(*c) ? c->id : 0;
+    if (id == m_maskSent) return;
+    m_maskSent = id;
+    emit qualifierMaskChanged(id);
+}
+
+void ColorPanel::applyQualifierColor(const QColor& color)
+{
+    const Clip* c = current();
+    if (!c || !color.isValid()) return;
+    if (!GradeQualifier::exists(*c)) m_editor->addGradeQualifier(targets());
+    c = current();
+    if (!c) return;
+    GradeQualifier::Range r = GradeQualifier::around(color);
+    r.invert = GradeQualifier::rangeAt(*c, localFrame(*c)).invert;
+    m_editor->setGradeQualifierRange(targets(), r, m_playhead);
+    setPalette(QualifierPalette);
 }
