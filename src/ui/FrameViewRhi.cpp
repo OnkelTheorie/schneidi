@@ -2,6 +2,7 @@
 #include "ui/FrameViewRhi.h"
 
 #include "core/StartupTrace.h"
+#include "engine/GpuAdapter.h"
 
 #include <QFile>
 #include <QGuiApplication>
@@ -189,7 +190,11 @@ FrameView::Probe probeApi(bool vulkan, WarmUp* into = nullptr)
 #endif
 #if defined(Q_OS_WIN)
     QRhiD3D11InitParams params;
-    rhi.reset(QRhi::create(QRhi::D3D11, &params));
+    QRhiD3D11NativeHandles adapter; // the card GpuAdapter chose (QT_D3D_ADAPTER_INDEX makes the widget use it too)
+    const std::int64_t luid = GpuAdapter::chosenLuid();
+    adapter.adapterLuidLow = quint32(std::uint64_t(luid) & 0xffffffffu);
+    adapter.adapterLuidHigh = qint32(std::uint64_t(luid) >> 32);
+    rhi.reset(QRhi::create(QRhi::D3D11, &params, {}, luid ? &adapter : nullptr));
 #elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     QRhiMetalInitParams params;
     rhi.reset(QRhi::create(QRhi::Metal, &params));

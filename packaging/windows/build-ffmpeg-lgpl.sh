@@ -7,15 +7,17 @@
 # GPL_ENCODERS=0: GPL-free (LGPL-2.1+), prefix build-ffmpeg-lgpl/prefix.
 # The libraries come from MSYS2 (pacman -Qi … | grep Licenses):
 #   openh264 BSD-2, kvazaar BSD-3 (+ crypto++ BSL/public domain), svt-av1 BSD-3-Clear, libvpx BSD-3, dav1d BSD-2,
-#   opus BSD-3, lame LGPL (+ mpg123 LGPL-2.1), libvpl MIT, ffnvcodec-headers MIT; only with GPL_ENCODERS=1:
+#   opus BSD-3, lame LGPL (+ mpg123 LGPL-2.1), libvpl MIT; only with GPL_ENCODERS=1:
 #   x264 GPL-2+, x265 GPL-2+; nasm/make/diffutils only build it.
+# The NVENC headers (nv-codec-headers, MIT) are NOT MSYS2's mingw-w64-ucrt-x86_64-ffnvcodec-headers (13.x: NVENC only on
+# drivers 570+): the Linux script always installs its pinned older version into the prefix.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "${MSYSTEM:-}" = "UCRT64" ] || { echo "!! Please run in the MSYS2 environment UCRT64" >&2; exit 1; }
 
 PACKAGES=(nasm make diffutils)
-LIBS=(openh264 kvazaar svt-av1 libvpx dav1d opus lame libvpl ffnvcodec-headers)
+LIBS=(openh264 kvazaar svt-av1 libvpx dav1d opus lame libvpl)
 [ "${GPL_ENCODERS:-1}" = 1 ] && LIBS+=(libx264 x265) # (MSYS2 names the x264 package libx264)
 for p in "${LIBS[@]}"; do
     PACKAGES+=("mingw-w64-ucrt-x86_64-$p")

@@ -3443,5 +3443,9 @@
  "Nur in Fenster": "Only in window",
  "Nur in Fenster %1": "Only in window %1",
  "Qualifier im Fenster": "Qualifier in window",
- "Qualifier im ganzen Bild": "Qualifier on the whole picture"
+ "Qualifier im ganzen Bild": "Qualifier on the whole picture",
+ "%1 Mit Software gerendert.": "%1 Rendered with software.",
+ "NVIDIA-Treiber zu alt für NVENC (gefunden: API %1, nötig: API %2, Treiber %3 oder neuer) – bitte aktualisieren.": "NVIDIA driver too old for NVENC (found: API %1, needed: API %2, driver %3 or newer) – please update it.",
+ "NVIDIA-Treiber zu alt für NVENC (gefunden: API %1, nötig: API %2) – bitte aktualisieren.": "NVIDIA driver too old for NVENC (found: API %1, needed: API %2) – please update it.",
+ "NVIDIA-Treiber zu alt für NVENC (nötig: Treiber %1 oder neuer) – bitte aktualisieren.": "NVIDIA driver too old for NVENC (needed: driver %1 or newer) – please update it."
 }

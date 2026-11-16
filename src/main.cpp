@@ -2,6 +2,7 @@
 #include "buildinfo.h"
 #include "app/CrashReport.h"
 #include "app/DisplayLoss.h"
+#include "engine/GpuAdapter.h"
 #include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/Log.h"
@@ -480,6 +481,7 @@ int main(int argc, char* argv[])
     if (!screenshot.isEmpty()) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
+    GpuAdapter::applyToQt(); // Windows: the viewer's D3D11 on the same (high performance) card as the picture engine
     // Names before the application object: I18n::prepareEnvironment reads the language setting
     AppPaths::setProgramNames();
     I18n::prepareEnvironment(langOverride);

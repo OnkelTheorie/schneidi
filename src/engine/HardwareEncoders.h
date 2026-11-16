@@ -100,9 +100,16 @@ struct Choice {
 };
 Choice resolve(VideoEncoder wanted, const QString& format);
 
+// User hint for a failed hardware encoder test from FFmpeg's output, empty when there is nothing the user can do.
+// Today: NVENC refused because the NVIDIA driver is older than FFmpeg's NVENC API ("Required: 13.0 Found: 12.2",
+// "minimum required Nvidia driver for nvenc is 570.0") -> "NVIDIA driver too old for NVENC … please update".
+QString driverHint(const QString& ffmpegOutput);
+// Why the probe found an encoder not working (driverHint() of its failed test), empty when unknown or it works
+QString unavailableReason(VideoEncoder e);
+
 // For tests: forget all results (the next available() probes again)
 void resetForTests();
 // For tests: the probe is done and exactly these hardware codecs work (h264_nvenc …)
-void fakeProbeForTests(const QStringList& working);
+void fakeProbeForTests(const QStringList& working, const QString& nvencReason = {});
 
 } // namespace HardwareEncoders

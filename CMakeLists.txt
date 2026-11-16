@@ -329,6 +329,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
     src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
     src/engine/picture/gpu/Gpu.h  src/engine/picture/gpu/Gpu.cpp
+    src/engine/GpuAdapter.h       src/engine/GpuAdapter.cpp
     src/engine/picture/gpu/CompGpu.h src/engine/picture/gpu/CompGpu.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
@@ -615,6 +616,7 @@ endif()
 if(WIN32)
     target_link_libraries(schneidi_lib PUBLIC advapi32) # Credential Manager: the AI chat's key (app/AiKeys.cpp)
     target_link_libraries(schneidi_lib PUBLIC ole32) # COM on the voice-over's input thread (app/VoiceoverRecorder.cpp)
+    target_link_libraries(schneidi_lib PUBLIC dxgi) # choosing the graphics card (engine/GpuAdapter.cpp)
 endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")
