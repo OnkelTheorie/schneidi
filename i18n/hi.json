@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "आपके संदेश %1 (%2) को जाते हैं।",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "आपकी चिह्नित एंट्री: किसी एंट्री पर राइट-क्लिक › पसंदीदा में जोड़ें (या F कुंजी)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "कुंजी (API कुंजी) आपको प्रोवाइडर की वेबसाइट पर मिलती है। या एनवायरनमेंट वेरिएबल %1 सेट करें।",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "ग्राफ़ को कॉम्प पेज पर एडिट करें",
  "Den Hintergrund statt der Person behalten": "व्यक्ति की जगह बैकग्राउंड रखें",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "साउंड को प्लेहेड पर डालें (अलग ट्रैक)",

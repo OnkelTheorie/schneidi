@@ -19,6 +19,8 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
 #include "ui/ColorPanel.h"
+
+#include <QSettings>
 #include "core/GradeWindows.h"
 #include "ui/ScopesPanel.h"
 #include "ui/MediaPool.h"
@@ -433,6 +435,9 @@ void MainWindow::setupTours(QMenu* help)
     connect(m_tours, &TourManager::runningChanged, this, [this](bool on) {
         if (m_compPage) m_compPage->setTourRunning(on);
         if (m_colorPanel) m_colorPanel->setTourButtonAllowed(!on);
+        // The palette the user had (the tour's steps switch them without remembering)
+        if (m_colorPanel && !on)
+            m_colorPanel->setPalette(QSettings().value("color/palette", int(ColorPanel::Wheels)).toInt(), false);
     });
     // A page or a panel the user opens may be what a step waits for
     connect(m_effectsToggle, &QToolButton::toggled, m_tours, &TourManager::poke, Qt::QueuedConnection);

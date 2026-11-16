@@ -181,7 +181,13 @@ struct Snapshot {
     QJsonObject app;
     QStringList trustedCode; // sha1 (CodeTrust::hashOf of one) of the project's custom code the app trusts
 };
-Snapshot snapshot(Connection* c);
+// The Color page stills' pictures come only when asked for (`frames` still:): they are most of a project's bytes
+Snapshot snapshot(Connection* c, bool stillPictures = false);
+// Snapshots taken while one lives include the stills' pictures (a `frames` with still:)
+struct StillPictures {
+    StillPictures();
+    ~StillPictures();
+};
 // Runs a command inside the app; throws its Error
 QJsonObject run(Connection* c, const QString& command, const QJsonObject& args);
 // Name shown in the app ("schneidi-cli" or "schneidi-cli mcp"); set by main()

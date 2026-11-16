@@ -15,10 +15,18 @@ GradeStill make(int id, const QString& label, const QImage& picture, const Clip&
     GradeStill s;
     s.id = id;
     s.label = label;
-    QImage small = picture.width() > kMaxWidth ? picture.scaledToWidth(kMaxWidth, Qt::SmoothTransformation) : picture;
-    QBuffer buf(&s.image);
-    buf.open(QIODevice::WriteOnly);
-    small.convertToFormat(QImage::Format_RGB32).save(&buf, "JPG", 88);
+    const QImage small = (std::max(picture.width(), picture.height()) > kMaxEdge
+                              ? picture.scaled(kMaxEdge, kMaxEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                              : picture)
+                             .convertToFormat(QImage::Format_RGB32);
+    const auto encode = [&](const char* format, int quality) {
+        s.image.clear();
+        QBuffer buf(&s.image);
+        buf.open(QIODevice::WriteOnly);
+        if (!small.save(&buf, format, quality)) s.image.clear();
+        return !s.image.isEmpty();
+    };
+    if (!small.isNull() && !encode("JPG", kQuality)) encode("PNG", -1); // no JPEG plugin: PNG (larger, still works)
     // The clip with only its grade: placement kept (keyframes are relative to it), nothing else
     Clip c;
     c.id = source.id;
@@ -41,7 +49,7 @@ GradeStill make(int id, const QString& label, const QImage& picture, const Clip&
 QImage picture(const GradeStill& s)
 {
     QImage img;
-    img.loadFromData(s.image, "JPG");
+    img.loadFromData(s.image); // JPEG or PNG
     return img;
 }
 

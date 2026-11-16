@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "Твої повідомлення йдуть до %1 (%2).",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "Твої позначені записи: правий клік на записі › Додати до вибраного (або клавіша F)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "Ключ (API-ключ) можна отримати на сайті провайдера. Або задай змінну середовища %1.",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "Редагувати граф на сторінці Композ",
  "Den Hintergrund statt der Person behalten": "Залишити тло замість людини",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "Вставити звук на курсорі відтворення (окрема доріжка)",

@@ -341,18 +341,25 @@ protected:
                 best = d;
                 m_edge = i;
             }
-        if (m_edge < 0 && m_kind != Hue) { // a range: the nearer edge jumps here
+        // Both ends on one spot: which one moves is decided by the first move (left = low end, right = high end)
+        if (ed.size() == 2 && m_edge >= 0 && std::abs(toX(ed[0]) - toX(ed[1])) < 3) m_edge = -2;
+        if (m_edge == -1 && m_kind != Hue) { // a range: the nearer edge jumps here
             const double v = toValue(e->position().x());
             m_edge = ed.size() == 2 && std::abs(v - ed[0]) <= std::abs(v - ed[1]) ? 0 : 1;
         }
         m_pressValue = toValue(e->position().x());
+        m_pressX = e->position().x();
         m_startHue = m_range.hue;
         m_dragging = true;
-        mouseMoveEvent(e);
+        if (m_edge != -2) mouseMoveEvent(e);
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_dragging || !onChange) return;
+        if (m_edge == -2) {
+            if (std::abs(e->position().x() - m_pressX) < 1) return;
+            m_edge = e->position().x() < m_pressX ? 0 : 1;
+        }
         const double v = std::clamp(toValue(e->position().x()), 0.0, scale());
         if (m_kind == Hue) {
             if (m_edge < 0) { // move the range around the circle
@@ -381,8 +388,8 @@ private:
     Kind m_kind;
     GradeQualifier::Range m_range;
     bool m_dragging = false;
-    int m_edge = -1; // dragged edge (0 low, 1 high), -1 = the hue range as a whole
-    double m_pressValue = 0, m_startHue = 0;
+    int m_edge = -1; // dragged edge (0 low, 1 high), -1 = the hue range as a whole, -2 = by the first move
+    double m_pressValue = 0, m_startHue = 0, m_pressX = 0;
 };
 
 ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
@@ -610,6 +617,12 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     connect(project, &Project::timelineChanged, this, &ColorPanel::refresh);
     connect(m_editor->selection(), &Selection::changed, this, &ColorPanel::refresh);
     connect(project, &Project::stillsChanged, this, &ColorPanel::refreshStills);
+    connect(project, &Project::loaded, this, [this] { // another project: its stills have their own ids
+        m_stillIcons.clear();
+        setComparedStill(0);
+        m_stillList->clear();
+        refreshStills();
+    });
     refreshStills();
     setPalette(std::clamp(QSettings().value("color/palette", int(Wheels)).toInt(), 0, int(StillsPalette)));
 }
@@ -1600,10 +1613,16 @@ void ColorPanel::refreshQualifier(const Clip* c, int t)
     m_qualInvert->setChecked(r.invert);
     {
         QSignalBlocker block(m_qualWindow);
-        m_qualWindow->clear();
-        m_qualWindow->addItem(T("Ganzes Bild"), 0);
-        for (int n : GradeWindows::list(*c)) m_qualWindow->addItem(T("Nur in Fenster %1").arg(n), n);
-        m_qualWindow->setCurrentIndex(std::max(0, m_qualWindow->findData(GradeQualifier::windowOf(*c))));
+        const QVector<int> windows = GradeWindows::list(*c);
+        QVector<int> shown; // rebuilt only when the windows changed (refresh runs on every playhead frame)
+        for (int i = 1; i < m_qualWindow->count(); ++i) shown << m_qualWindow->itemData(i).toInt();
+        if (shown != windows || m_qualWindow->count() == 0) {
+            m_qualWindow->clear();
+            m_qualWindow->addItem(T("Ganzes Bild"), 0);
+            for (int n : windows) m_qualWindow->addItem(T("Nur in Fenster %1").arg(n), n);
+        }
+        const int want = std::max(0, m_qualWindow->findData(GradeQualifier::windowOf(*c)));
+        if (m_qualWindow->currentIndex() != want) m_qualWindow->setCurrentIndex(want);
         m_qualWindow->setEnabled(m_qualWindow->count() > 1);
     }
     for (QualifierBar* b : m_qualBars) b->setRange(r);
@@ -1646,6 +1665,7 @@ QWidget* ColorPanel::buildStills()
     auto* row = new FlowLayout(rowBox, 6, 3);
     row->setContentsMargins(0, 0, 0, 0);
     auto* grab = new QToolButton;
+    m_stillGrab = grab;
     grab->setText(T("Standbild aufnehmen"));
     grab->setToolTip(T("Das Bild im Viewer mit der Korrektur des Clips als Standbild ablegen"));
     grab->setObjectName("color_still_grab");
@@ -1742,12 +1762,15 @@ void ColorPanel::refreshStills()
     for (const GradeStill& s : stills) want << QString::number(s.id) + s.label;
     for (int i = 0; i < m_stillList->count(); ++i)
         have << m_stillList->item(i)->data(Qt::UserRole).toString() + m_stillList->item(i)->text();
-    if (want != have) {
+    // The pictures are decoded only for the stills palette (a project with many stills opens without that work)
+    if (want != have && m_palette == StillsPalette) {
         const int keep = selectedStill();
         QSignalBlocker block(m_stillList);
         m_stillList->clear();
         for (const GradeStill& s : stills) {
-            auto* item = new QListWidgetItem(QIcon(QPixmap::fromImage(GradeStills::picture(s))), s.label);
+            auto icon = m_stillIcons.find(s.id);
+            if (icon == m_stillIcons.end()) icon = m_stillIcons.insert(s.id, QIcon(QPixmap::fromImage(GradeStills::picture(s))));
+            auto* item = new QListWidgetItem(*icon, s.label);
             item->setData(Qt::UserRole, s.id);
             item->setToolTip(s.label);
             m_stillList->addItem(item);
@@ -1762,22 +1785,30 @@ void ColorPanel::refreshStills()
     m_stillCompare->setChecked(m_compareId != 0);
     m_stillApply->setEnabled(any && current());
     m_stillRemove->setEnabled(any);
+    // The picture comes from the playhead, the grade from the shown clip: only when that clip is under the playhead
+    const Clip* c = current();
+    const bool under = c && m_playhead >= c->start && m_playhead < c->end();
+    m_stillGrab->setEnabled(under);
+    m_stillGrab->setToolTip(under ? T("Das Bild im Viewer mit der Korrektur des Clips als Standbild ablegen")
+                                  : T("Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen"));
 }
 
 void ColorPanel::setComparedStill(int stillId)
 {
     const QVector<GradeStill>& stills = m_editor->project()->stills();
     const auto it = std::find_if(stills.begin(), stills.end(), [&](const GradeStill& s) { return s.id == stillId; });
-    m_compareId = it == stills.end() ? 0 : stillId;
-    m_overlay->setCompare(m_compareId ? GradeStills::picture(*it) : QImage());
+    const QImage picture = it == stills.end() ? QImage() : GradeStills::picture(*it);
+    m_compareId = picture.isNull() ? 0 : stillId; // a still whose picture cannot be read compares with nothing
+    m_overlay->setCompare(picture);
     if (m_stillCompare) m_stillCompare->setChecked(m_compareId != 0);
 }
 
 void ColorPanel::addStill(const QImage& picture, const QString& timecode)
 {
     const Clip* c = current();
-    if (!c || picture.isNull()) return;
+    if (!c || picture.isNull() || m_playhead < c->start || m_playhead >= c->end()) return; // grade and picture of one clip
     const QString label = m_editor->project()->clipName(*c) + "  " + timecode;
+    setPalette(StillsPalette);
     if (const int id = m_editor->addGradeStill(c->id, picture, label)) {
         refreshStills();
         for (int i = 0; i < m_stillList->count(); ++i)

@@ -2,6 +2,8 @@
 #pragma once
 #include "core/Types.h"
 
+#include <QHash>
+#include <QIcon>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -199,6 +201,8 @@ private:
     class QListWidget* m_stillList = nullptr;
     QToolButton* m_stillCompare = nullptr;
     QToolButton* m_stillApply = nullptr;
+    QToolButton* m_stillGrab = nullptr;
+    QHash<int, QIcon> m_stillIcons; // decoded once per still, only when the stills show (ids are per project)
     QToolButton* m_stillRemove = nullptr;
     int m_compareId = 0;
 

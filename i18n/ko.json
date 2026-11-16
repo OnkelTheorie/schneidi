@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "메시지는 %1 (%2)(으)로 가요.",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "표시한 항목: 항목 우클릭 › 즐겨찾기에 추가 (또는 F 키)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "키(API 키)는 제공업체 웹사이트에서 받을 수 있어요. 또는 환경 변수 %1을(를) 설정하세요.",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "컴프 페이지에서 그래프 편집",
  "Den Hintergrund statt der Person behalten": "사람 대신 배경 유지",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "플레이헤드 위치에 사운드 삽입 (별도 트랙)",

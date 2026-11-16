@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "Suas mensagens vão para %1 (%2).",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "Suas entradas marcadas: clique direito em uma entrada › Adicionar aos favoritos (ou tecla F)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "Você obtém a chave (chave de API) no site do provedor. Ou defina a variável de ambiente %1.",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "Editar o grafo na página Comp",
  "Den Hintergrund statt der Person behalten": "Manter o fundo em vez da pessoa",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "Inserir o som no cursor de reprodução (trilha própria)",

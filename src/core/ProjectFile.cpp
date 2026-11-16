@@ -1484,7 +1484,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         st.label = o.value("label").toString();
         st.image = QByteArray::fromBase64(o.value("image").toString().toLatin1());
         if (o.value("grade").isObject()) st.grade = clipFromJson(o.value("grade").toObject(), {}, projectDir);
-        if (st.id > 0 && !st.image.isEmpty()) d.stills << st;
+        if (st.id > 0) d.stills << st; // without a picture too (a live snapshot leaves them out)
     }
     for (const QJsonValue& v : root.value("watchFolders").toArray()) {
         const QJsonObject o = v.toObject();

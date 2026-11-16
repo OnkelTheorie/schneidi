@@ -16,6 +16,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/GradedThumbs.h"
 #include "engine/picture/Renderer.h"
 #include "app/Theme.h"
 #include "ui/ColorPanel.h"
@@ -412,6 +413,40 @@ void testModel(const QString& dir)
     CHECK(GradeQualifier::exists(*clip(id1)));
 }
 
+void testReviewModel()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    const int id = p.timeline().video[0].clips[0].id;
+    const auto clip = [&] { return TimelineOps::findClip(p.timeline(), id); };
+    ed.addGradeWindow({id}, 1, "ellipse");
+    ed.addGradeQualifier({id});
+    ed.setGradeValues({id}, {{GradeQualifier::param("saturation"), 10.0}}, 0, "q");
+    ed.setGradeQualifierWindow({id}, 1);
+    CHECK_EQ(GradeQualifier::windowOf(*clip()), 1);
+    // Thumbnails know the qualifier's window (a change of it is a change of the picture)
+    const GradedThumbs::Spec inWindow = GradedThumbs::specAt(*clip(), 0);
+    CHECK(inWindow.qualifierWindow.has_value());
+    ed.setGradeValues({id}, {{GradeWindows::param(1, "x"), 30.0}}, 0, "move");
+    CHECK(GradedThumbs::specAt(*clip(), 0).hash != inWindow.hash);
+    // Deleting the window frees the qualifier: a later window 1 does not limit it
+    ed.removeGradeWindow({id}, 1);
+    CHECK(!EffectRegistry::instance(*clip(), "grade")->params.contains("q.window"));
+    ed.addGradeWindow({id}, 1, "rectangle");
+    CHECK_EQ(GradeQualifier::windowOf(*clip()), 0);
+    p.undoStack()->undo();
+    p.undoStack()->undo();
+    CHECK_EQ(GradeQualifier::windowOf(*clip()), 1); // one step: window and limit back together
+    // Histogram read in place: the same for RGBA8888 and RGB32
+    QImage rgb(321, 177, QImage::Format_RGB32);
+    for (int y = 0; y < rgb.height(); ++y)
+        for (int x = 0; x < rgb.width(); ++x) rgb.setPixel(x, y, qRgb(x % 256, (y * 3) % 256, (x + y) % 256));
+    CHECK(CurveEditor::histograms(rgb) == CurveEditor::histograms(rgb.convertToFormat(QImage::Format_RGBA8888)));
+}
+
 void testPanel()
 {
     Project p;
@@ -564,7 +599,7 @@ void testStills(const QString& dir)
     CHECK_EQ(p.undoStack()->count(), undoBefore + 1);
     if (!CHECK_EQ(p.stills().size(), 1)) return;
     const GradeStill& st = p.stills().first();
-    CHECK_EQ(GradeStills::picture(st).width(), GradeStills::kMaxWidth); // made small
+    CHECK_EQ(GradeStills::picture(st).width(), GradeStills::kMaxEdge); // made small: the longest edge
     CHECK(st.image.size() < 60000);
     CHECK_EQ(st.grade.effects.size(), 1);
     // Later changes of the clip do not change the still
@@ -656,6 +691,73 @@ void testStills(const QString& dir)
         panel.resize(1300, 330);
         QApplication::processEvents();
         panel.grab().save(shots + "/palette-3.png");
+    }
+    // Release review 0.24: a portrait picture is limited by its longest edge; at most kMaxCount stills
+    {
+        QImage tall(1080, 1920, QImage::Format_RGB32);
+        tall.fill(QColor(30, 90, 160));
+        const GradeStill t = GradeStills::make(99, "tall", tall, *clip(id1));
+        const QImage pic = GradeStills::picture(t);
+        CHECK(pic.height() == GradeStills::kMaxEdge && pic.width() == 270);
+        const int count = int(p.stills().size());
+        for (int i = 0; i < GradeStills::kMaxCount + 2; ++i) ed.addGradeStill(id1, picture, "x");
+        CHECK_EQ(int(p.stills().size()), GradeStills::kMaxCount);
+        for (int i = 0; i < GradeStills::kMaxCount + 2; ++i) p.undoStack()->undo();
+        CHECK_EQ(int(p.stills().size()), count);
+    }
+    // A still whose picture cannot be read: no compare with an empty picture
+    {
+        QVector<GradeStill> broken = p.stills();
+        GradeStill bad = broken.first();
+        bad.id = 50;
+        bad.image = "not a picture";
+        broken << bad;
+        p.setStills(broken, "broken");
+        panel.setComparedStill(50);
+        CHECK_EQ(panel.comparedStill(), 0);
+        CHECK(!ov->comparing());
+        p.undoStack()->undo();
+    }
+    // The wipe fits a still of another shape (bars, not stretched)
+    {
+        QImage tall(360, 640, QImage::Format_RGB32);
+        tall.fill(QColor(250, 250, 0));
+        const int tallId = ed.addGradeStill(id1, tall, "tall");
+        panel.setComparedStill(tallId);
+        ov->setSideBySide(false);
+        ov->setWipe(1.0);
+        const QRectF frame(0, 0, 640, 360);
+        QImage canvas(640, 360, QImage::Format_RGB32);
+        canvas.fill(Qt::white);
+        {
+            QPainter painter(&canvas);
+            ov->paint(painter, frame);
+        }
+        CHECK(canvas.pixelColor(320, 180).red() > 200 && canvas.pixelColor(320, 180).blue() < 60); // the still, centred
+        CHECK(canvas.pixelColor(20, 180) == Theme::viewerBg); // bars beside it, not the still stretched
+        panel.setComparedStill(0);
+        p.undoStack()->undo();
+    }
+    // Grab only when the shown clip is under the playhead (picture and grade of one clip)
+    {
+        auto* grab = panel.findChild<QToolButton*>("color_still_grab");
+        if (CHECK(grab)) {
+            panel.setPlayhead(10);
+            CHECK(grab->isEnabled());
+            const int before = int(p.stills().size());
+            panel.setPlayhead(5000); // past every clip: the earliest target is not under it
+            panel.addStill(picture, "x");
+            CHECK_EQ(int(p.stills().size()), before);
+            panel.setPlayhead(10);
+        }
+    }
+    // Another project: the compare ends
+    {
+        panel.setComparedStill(p.stills().first().id);
+        CHECK(panel.comparedStill() != 0);
+        ProjectData other = p.data();
+        p.load(other);
+        CHECK_EQ(panel.comparedStill(), 0);
     }
     // Apply from the panel onto the shown clip (clip 1 at the playhead)
     auto* apply = panel.findChild<QToolButton*>("color_still_apply");
@@ -751,6 +853,7 @@ void testCli(const QString& dir, const QString& still)
         CHECK(r.red() > 200 && r.green() < 60);    // the timeline now: red figure
     }
     { const QString e = error("frames", {{"source", project}, {"still", 9}, {"out", out}}); if (!CHECK(e.contains("no still 9"))) std::printf("  %s\n", qPrintable(e)); }
+    CHECK(error("frames", {{"source", still}, {"still", 1}, {"at", QJsonArray{0}}, {"out", out}}).contains("still are for a project"));
     edit(op(R"({"op":"still","apply":1})"));
     ProjectFile::load(project, &d, nullptr);
     CHECK_EQ(ColorGrade::at(d.timeline.video[0].clips[0], 0).saturation, 0.0);
@@ -767,6 +870,8 @@ void testCli(const QString& dir, const QString& still)
     CHECK_EQ(ColorGrade::at(d.timeline.video[0].clips[0], 0).qualifier.window, 1);
     CHECK(error("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "qualifier"}, {"window", 5}, {"clips", QJsonArray{id}}}}}})
               .contains("no clip has window 5"));
+    CHECK(error("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "qualifier"}, {"window", 1.5}, {"clips", QJsonArray{id}}}}}})
+              .contains("window is 0"));
     edit(op(R"({"op":"qualifier","window":0})"));
     ProjectFile::load(project, &d, nullptr);
     CHECK_EQ(GradeQualifier::windowOf(d.timeline.video[0].clips[0]), 0);
@@ -864,6 +969,7 @@ int main(int argc, char** argv)
     testQualifierMath();
     testPixels();
     testModel(tmp.path());
+    testReviewModel();
     testPanel();
     testStills(tmp.path());
     testFit();

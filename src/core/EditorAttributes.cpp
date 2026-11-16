@@ -243,7 +243,9 @@ int Editor::addGradeStill(int clipId, const QImage& picture, const QString& labe
     if (!c || ref.kind != TrackKind::Video || picture.isNull()) return 0;
     QVector<GradeStill> stills = m_project->stills();
     const int id = GradeStills::nextId(stills);
-    stills << GradeStills::make(id, label, picture, *c);
+    const GradeStill made = GradeStills::make(id, label, picture, *c);
+    if (made.image.isEmpty()) return 0;
+    stills << made;
     while (stills.size() > GradeStills::kMaxCount) stills.removeFirst();
     m_project->setStills(stills, T("Standbild aufnehmen"));
     return id;

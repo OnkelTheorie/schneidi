@@ -366,7 +366,13 @@ void Editor::removeGradeWindow(const QVector<int>& ids, int n)
     for (int id : videoOnly(m_project->timeline(), ids))
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeWindows::exists(*c, n))
             targets << id;
-    modifyClips(targets, T("Fenster löschen"), [&](Clip& c) { GradeWindows::remove(c, n); });
+    modifyClips(targets, T("Fenster löschen"), [&](Clip& c) {
+        GradeWindows::remove(c, n);
+        // A qualifier limited to it: the whole picture again (a later window with the same number must not limit it)
+        if (EffectInstance* e = EffectRegistry::instance(c, kGrade);
+            e && int(e->params.value(GradeQualifier::key("window")).toDouble()) == n)
+            e->params.remove(GradeQualifier::key("window"));
+    });
 }
 
 void Editor::setGradeCurve(const QVector<int>& ids, GradeCurves::Kind kind, const QVector<QPointF>& points,
