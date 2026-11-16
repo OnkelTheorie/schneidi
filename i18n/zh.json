@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "你的消息会发送到 %1(%2)。",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "你标记的项目:右键点击项目 › 添加到收藏(或按 F 键)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "密钥(API 密钥)可在服务商的网站上获得。或者设置环境变量 %1。",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "在合成页面编辑此图",
  "Den Hintergrund statt der Person behalten": "保留背景而不是人物",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "在播放头处插入声音(单独轨道)",

@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "Tes messages partent vers %1 (%2).",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "Tes entrées marquées : clic droit sur une entrée › Ajouter aux favoris (ou touche F)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "Tu obtiens la clé (clé d’API) sur le site du fournisseur. Ou définis la variable d’environnement %1.",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "Modifier le graphe sur la page Comp",
  "Den Hintergrund statt der Person behalten": "Garder l’arrière-plan au lieu de la personne",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "Insérer le son à la tête de lecture (piste dédiée)",

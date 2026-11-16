@@ -181,7 +181,11 @@ void WindowOverlay::paint(QPainter& p, const QRectF& frame)
         p.save();
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         p.setClipRect(QRectF(frame.topLeft(), QPointF(x, frame.bottom())));
-        p.drawImage(frame, m_compare);
+        // Fitted in its own shape (a still of another aspect ratio is not stretched), bars around it
+        const QSizeF fitted = QSizeF(m_compare.size()).scaled(frame.size(), Qt::KeepAspectRatio);
+        const QRectF target(frame.center() - QPointF(fitted.width() / 2, fitted.height() / 2), fitted);
+        if (target != frame) p.fillRect(frame, Theme::viewerBg);
+        p.drawImage(target, m_compare);
         p.setClipping(false);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(QColor(0, 0, 0, 140), 3));

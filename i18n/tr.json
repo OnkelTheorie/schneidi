@@ -708,6 +708,7 @@
  "Deine Nachrichten gehen an %1 (%2).": "Mesajların %1 sağlayıcısına gidiyor (%2).",
  "Deine markierten Einträge: Rechtsklick auf einen Eintrag › Zu Favoriten hinzufügen (oder Taste F)": "İşaretlediğin öğeler: bir öğeye sağ tık › Favorilere ekle (veya F tuşu)",
  "Den API-Schlüssel bekommst du auf der Website des Anbieters. Oder setze die Umgebungsvariable %1.": "Anahtarı (API anahtarı) sağlayıcının web sitesinden alırsın. Ya da %1 ortam değişkenini ayarla.",
+ "Den Abspielkopf auf den Clip stellen, um ein Standbild aufzunehmen": "",
  "Den Graphen auf der Seite Compositing bearbeiten": "Grafiği Comp sayfasında düzenle",
  "Den Hintergrund statt der Person behalten": "Kişi yerine arka planı koru",
  "Den Klang am Abspielkopf einfügen (eigene Spur)": "Sesi oynatma kafasına ekle (ayrı iz)",

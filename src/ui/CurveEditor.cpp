@@ -44,14 +44,30 @@ QVector<QVector<float>> CurveEditor::histograms(const QImage& picture)
 {
     QVector<QVector<float>> out(5, QVector<float>(kBins, 0.0f));
     if (picture.isNull()) return {};
-    const QImage img = picture.format() == QImage::Format_RGB32 || picture.format() == QImage::Format_ARGB32
-                           ? picture
-                           : picture.convertToFormat(QImage::Format_RGB32);
+    // Read in place with a stride (the preview's RGBA8888 or RGB32; only another format is converted, and only the
+    // sampled rows would matter): a frame every 150 ms must not cost a full conversion on the UI thread
+    const QImage::Format fmt = picture.format();
+    const bool bytes = fmt == QImage::Format_RGBA8888 || fmt == QImage::Format_RGBX8888
+                       || fmt == QImage::Format_RGBA8888_Premultiplied;
+    const bool words = fmt == QImage::Format_RGB32 || fmt == QImage::Format_ARGB32
+                       || fmt == QImage::Format_ARGB32_Premultiplied;
+    const QImage img = bytes || words ? picture : picture.convertToFormat(QImage::Format_RGB32);
+    const bool rgbaBytes = bytes;
     const int step = std::max(1, int(std::sqrt(double(img.width()) * img.height() / 40000.0)));
     for (int y = 0; y < img.height(); y += step) {
-        const QRgb* line = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        const uchar* line = img.constScanLine(y);
         for (int x = 0; x < img.width(); x += step) {
-            const int r = qRed(line[x]), g = qGreen(line[x]), b = qBlue(line[x]);
+            int r, g, b;
+            if (rgbaBytes) {
+                r = line[4 * x];
+                g = line[4 * x + 1];
+                b = line[4 * x + 2];
+            } else {
+                const QRgb px = reinterpret_cast<const QRgb*>(line)[x];
+                r = qRed(px);
+                g = qGreen(px);
+                b = qBlue(px);
+            }
             const auto bin = [](double v) { return std::clamp(int(v * kBins / 256.0), 0, kBins - 1); };
             out[0][bin(0.2126 * r + 0.7152 * g + 0.0722 * b)] += 1;
             out[1][bin(r)] += 1;
