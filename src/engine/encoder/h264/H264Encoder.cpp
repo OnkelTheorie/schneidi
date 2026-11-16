@@ -836,13 +836,12 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // or chose long runs: such material keeps its B pictures throughout, and twelve P pictures cost it
 // a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
-// With a first pass the plan knows every picture's cost before the first one is coded, so nothing has
-// to settle: no P pictures first (16.11.2026). They cost a clip its first runs of B pictures for
-// nothing, and every chunk of a long clip paid them again. Two-pass against twelve, PSNR-Y / SSIM-Y /
-// VMAF at the same rate: crowd_run (150 pictures, 10 Mbit/s) +0.04 dB / +0.002 / +0.2, park_joy +0.04 /
-// +0.002 / 0, a calm game scene (480 pictures) +0.05 / +0.001 / +0.2 at 1.5 Mbit/s and +0.01 / 0 / +0.1
-// at 4.5, a pan in a game the same within 0.02 dB. H264_BWARMUP2P sets the count (measuring).
-static const int kBWarmupPlanned = std::getenv("H264_BWARMUP2P") ? std::atoi(std::getenv("H264_BWARMUP2P")) : 0;
+// With a first pass (two-pass plan) the same count: tried without them on 16.11.2026 - detailed camera
+// footage and calm game scenes gain a little (crowd_run, 150 pictures at 10 Mbit/s: +0.04 dB PSNR-Y,
+// +0.002 SSIM-Y, +0.2 VMAF; a calm game scene +0.05 dB at 1.5 Mbit/s), but game action loses much more
+// (CS2, 600 pictures at 3 Mbit/s: -0.27 dB, VMAF -2.2 at 1.4 % more bits). H264_BWARMUP2P sets the
+// count of the two-pass plan alone (measuring).
+static const int kBWarmupPlanned = std::getenv("H264_BWARMUP2P") ? std::atoi(std::getenv("H264_BWARMUP2P")) : kBWarmup;
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
@@ -6343,7 +6342,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
-    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    const double ssdSkip = double(mbSsd(mbx, mby));
+    const double costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
     tDecision[0] = 0;
     MbState skipState;
     saveMb(mbx, mby, skipState);
@@ -6369,7 +6369,15 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     fullPelCost_[mbIndex] = -1.0f;
     // H264_EARLYSKIP=0: no early skip (measurements; skip then goes through the full decision).
     static const bool kEarlySkip = !std::getenv("H264_EARLYSKIP") || std::atoi(std::getenv("H264_EARLYSKIP")) != 0;
-    if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
+    // Only where the skip is also close to the source: squared error (luma + chroma) up to kEarlySkipSsd
+    // lambda (16.11.2026). At a high QP a residual quantises to nothing although the prediction is well off
+    // - a fast pan over foliage or water, where the predicted vector is not the motion; such a macroblock
+    // now goes through the search and the full decision (which may still skip). Measured on park_joy, P
+    // pictures only at QP 36 (bits / PSNR-Y): without limit 14085 kbit/s 30.66 dB, 80 the same, 40 +0.07 dB,
+    // 20 +0.14 dB at the same bits, no early skip at all 13994 kbit/s +0.14 dB. H264_EARLYSKIPSSD
+    // overrides (0 = no limit, the stream before); H264_EARLYSKIPSSDB the same for B pictures' direct skip.
+    static const double kEarlySkipSsd = std::getenv("H264_EARLYSKIPSSD") ? std::atof(std::getenv("H264_EARLYSKIPSSD")) : 20.0;
+    if (kEarlySkip && (kEarlySkipSsd <= 0 || ssdSkip <= kEarlySkipSsd * lambda) && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
         return false;
@@ -7210,7 +7218,9 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, skipState);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
     // type and vector of a copy from one picture would cost (about six bits).
-    if (sharpDirect <= 6 * lambda && skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
+    static const double kEarlySkipSsdB = std::getenv("H264_EARLYSKIPSSDB") ? std::atof(std::getenv("H264_EARLYSKIPSSDB")) : 20.0;
+    if (sharpDirect <= 6 * lambda && (kEarlySkipSsdB <= 0 || double(mbSsd(mbx, mby)) <= kEarlySkipSsdB * lambda) &&
+        skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
         if (gStats)
