@@ -1341,6 +1341,56 @@ int main()
             gSynthKind = 0;
         }
         {
+            // Long runs on moving material (the planner's "moving": costs growing with the distance to the
+            // reference): coded like short runs, with a reference B picture in the middle of up to eight -
+            // decodes bit-exactly, one pass and from a first pass with the same plan, any thread count the same.
+            gSynthKind = 2;
+            std::string typesOne;
+            size_t bytesOne = 0;
+            for (int threads : {1, 3}) {
+                EncoderConfig c = config(320, 192, IntraMode::Auto, 30, threads);
+                c.bframes = 8;
+                StreamInfo info;
+                size_t bytes = 0;
+                CHECK(roundTrip(c, 40, &bytes, -1, nullptr, &info));
+                CHECK(std::count(info.types.begin(), info.types.end(), 'B') >= 20);
+                if (threads == 1) {
+                    typesOne = info.types;
+                    bytesOne = bytes;
+                }
+                CHECK(info.types == typesOne && bytes == bytesOne);
+            }
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bframes = 8;
+            FirstPass fp(c.width, c.height, 2, c.bframes);
+            for (int t = 0; t < 40; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            c.bitrateKbps = 300;
+            c.fps = 30;
+            StreamInfo info2;
+            CHECK(roundTrip(c, 40, nullptr, -1, nullptr, &info2));
+            if (info2.types != typesOne)
+                std::fprintf(stderr, "long runs, first pass: types %s instead of %s\n", info2.types.c_str(), typesOne.c_str());
+            CHECK(info2.types == typesOne);
+            gSynthKind = 0;
+        }
+        {
+            // A fade in: the planner's costs know no weighted prediction (the run's P picture looks several times
+            // too expensive) - B pictures are placed all the same, and the stream decodes.
+            gFadeFrames = 24;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+            c.bframes = 3;
+            StreamInfo info;
+            CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &info));
+            if (std::count(info.types.begin(), info.types.end(), 'B') < 6)
+                std::fprintf(stderr, "fade: types %s\n", info.types.c_str());
+            CHECK(std::count(info.types.begin(), info.types.end(), 'B') >= 6);
+            gFadeFrames = 0;
+        }
+        {
             // Duplicated pictures (a game at 12 pictures per second recorded at 60): every picture is shown five
             // times, B pictures come in runs of three. The first pass sees each picture against the one before - a
             // P picture that repeats the B picture before it looks free and carries the change, the B picture on
