@@ -1,7 +1,7 @@
 // h264-proto: test driver for schneidi's own H.264 encoder.
 //   h264-proto selftest
 //   h264-proto encode <in.yuv> <width> <height> <out.h264> [--qp N] [--mode pcm|i16|i4|auto]
-//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
+//                     [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--vbv-maxrate kbps --vbv-bufsize kbit [--vbv-init 0.9]] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock]
 //                     [--lookahead N] [--no-mbtree] [--mbtree-strength S] [--mbtree-strength-b S] [--2pass] [--recon out.yuv]
 //                     [--bframes N (8)] [--b-qp offset (2)] [--b-qp-short offset] [--b-sharp weight (1.5)] [--no-b-adapt] [--no-b-pyramid] [--weightb] [--psy-rd S (1)] [--psy-qp full off (26 38)] [--qcomp S (0.3)]
 // --bframes N: up to N B pictures in a row (CABAC only). Access units are written in coding order,
@@ -143,7 +143,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || std::strcmp(argv[1], "encode") != 0) {
         std::fprintf(stderr, "usage: h264-proto selftest | encode <in.yuv> <w> <h> <out.h264> [--qp N] "
-                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
+                             "[--mode pcm|i16|i4|auto] [--frames N] [--gop N (120)] [--threads N] [--bitrate kbps] [--crf N] [--vbv-maxrate kbps --vbv-bufsize kbit [--vbv-init 0.9]] [--effort 0|1] [--aq strength] [--refs N] [--cavlc] [--no-t8] [--no-deblock] [--recon out.yuv]\n");
         return 2;
     }
     EncoderConfig cfg;
@@ -176,6 +176,12 @@ int main(int argc, char** argv)
             cfg.bitrateKbps = std::atoi(argv[++i]);
         else if (a == "--crf" && i + 1 < argc)
             cfg.crf = std::atof(argv[++i]);
+        else if (a == "--vbv-maxrate" && i + 1 < argc)
+            cfg.vbvMaxrateKbps = std::atoi(argv[++i]);
+        else if (a == "--vbv-bufsize" && i + 1 < argc)
+            cfg.vbvBufsizeKbits = std::atoi(argv[++i]);
+        else if (a == "--vbv-init" && i + 1 < argc)
+            cfg.vbvInit = std::atof(argv[++i]);
         else if (a == "--effort" && i + 1 < argc)
             cfg.effort = std::atoi(argv[++i]);
         else if (a == "--aq" && i + 1 < argc)
@@ -422,6 +428,8 @@ int main(int argc, char** argv)
                     typeBytes[0] / 1024.0 / std::max(1, typeCount[0]), typePsnr[0] / std::max(1, typeCount[0]), typeCount[1],
                     typeBytes[1] / 1024.0 / std::max(1, typeCount[1]), typePsnr[1] / std::max(1, typeCount[1]), typeCount[2],
                     typeBytes[2] / 1024.0 / typeCount[2], typePsnr[2] / typeCount[2]);
+    if (cfg.vbvMaxrateKbps > 0 && cfg.vbvBufsizeKbits > 0)
+        std::printf("vbv underflows %d min fill %.1f %%  ", enc.vbvUnderflows(), 100.0 * enc.vbvMinFill() / (cfg.vbvBufsizeKbits * 1000.0));
     std::printf("peak %ld MB  last qp %d  ", peakMb(), enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);
