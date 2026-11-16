@@ -209,6 +209,54 @@ void testDriverHintChoice()
     available("h264"); // probe for real again: the next tests expect a finished probe
 }
 
+// 8 and 10 bit are tested and cached separately: a card without Main10 keeps its 8-bit H.265 encoder (N2), and the
+// GPL-free build offers H.265 10 bit only with a Main10 card (kvazaar has no 10 bit, N3)
+void testTenBit()
+{
+    using namespace HardwareEncoders;
+    CHECK(tenBitFormat("h265-10") && tenBitFormat("av1-10") && !tenBitFormat("h265") && !tenBitFormat("h264"));
+    CHECK(testArguments("hevc_nvenc", QSize(640, 360), 22, true).contains("p010le"));
+    CHECK(!testArguments("hevc_nvenc", QSize(640, 360), 22).contains("p010le"));
+    CHECK(testArguments("hevc_vaapi", QSize(640, 360), 22, true).contains("format=p010,hwupload"));
+    // An 8-bit-only card (Maxwell, Intel before Kaby Lake, AMD Polaris): H.265 yes, H.265 10 bit no
+    fakeProbeForTests({"hevc_nvenc", "h264_nvenc"});
+    CHECK(available("h265").contains(VideoEncoder::Nvenc));
+    CHECK(!available("h265-10").contains(VideoEncoder::Nvenc));
+    Choice c = resolve(VideoEncoder::Nvenc, "h265-10");
+    CHECK(c.codec != "hevc_nvenc" && !c.note.isEmpty());
+    // A Main10 card offers both
+    fakeProbeForTests({"hevc_nvenc", "hevc_nvenc:10", "hevc_qsv:10"});
+    CHECK(available("h265-10") == (QVector<VideoEncoder>{VideoEncoder::Nvenc, VideoEncoder::Qsv}));
+    CHECK(!available("h265").contains(VideoEncoder::Qsv));
+    // A failed 10-bit export (at the probe size) blocks only the 10-bit use for the session
+    remember("hevc_nvenc", QSize(640, 360), false, true);
+    CHECK(cachedResult("hevc_nvenc", QSize(640, 360), true) < 0);
+    CHECK(cachedResult("hevc_nvenc", QSize(640, 360)) > 0);
+    CHECK(available("h265").contains(VideoEncoder::Nvenc) && !available("h265-10").contains(VideoEncoder::Nvenc));
+    remember("hevc_nvenc", QSize(1920, 1080), false, true);
+    CHECK(cachedResult("hevc_nvenc", QSize(1920, 1080)) == 0);
+
+    // GPL-free build (libx265 hidden): kvazaar replaces H.265 8 bit only
+    if (builtIn("libkvazaar") && HardwareEncoders::externalProgram("libx265").isEmpty()) {
+        qputenv("SCHNEIDI_IGNORE_BUILTIN", "libx265");
+        CHECK_EQ(softwareCodec("h265"), QString("libkvazaar"));
+        CHECK(softwareCodec("h265-10").isEmpty());
+        fakeProbeForTests({});
+        CHECK(formatAvailable("h265") && !formatAvailable("h265-10"));
+        fakeProbeForTests({"hevc_nvenc"}); // 8-bit card: still no 10 bit
+        CHECK(!formatAvailable("h265-10"));
+        fakeProbeForTests({"hevc_nvenc", "hevc_nvenc:10"}); // Main10 card: 10 bit through it, no software fallback
+        CHECK(formatAvailable("h265-10"));
+        c = resolve(VideoEncoder::Auto, "h265-10");
+        CHECK(c.codec == "hevc_nvenc" && c.fallback.isEmpty());
+        qunsetenv("SCHNEIDI_IGNORE_BUILTIN");
+    } else {
+        std::printf("übersprungen: GPL-freier Teil (kein libkvazaar in diesem FFmpeg)\n");
+    }
+    resetForTests();
+    available("h264"); // probe for real again: the next tests expect a finished probe
+}
+
 void testChoice()
 {
     using namespace HardwareEncoders;
@@ -417,6 +465,7 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     testChoice();
     testDriverHintChoice();
+    testTenBit();
     testPanel();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

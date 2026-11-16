@@ -51,6 +51,14 @@ extern "C" {
 }
 
 namespace {
+
+// More than 8 bits per component (yuv420p10le: H.265/AV1 10 bit, ProRes, DNxHR HQX)
+bool tenBitFormat(const QString& pixFmt)
+{
+    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(av_get_pix_fmt(pixFmt.toUtf8().constData()));
+    return d && d->comp[0].depth > 8;
+}
+
 std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 
 // Memory model of automaticThreads (see there). Measured on a 1080x1920 short (x264 medium, peak RSS for 1, 2, 4,
@@ -814,17 +822,6 @@ int Exporter::audioBitrateK() const
     if (c == "ac3") return RenderSettings::ac3BitrateK(m_settings.audioChannels);
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
-
-namespace {
-
-// More than 8 bits per component (yuv420p10le: H.265/AV1 10 bit, ProRes, DNxHR HQX)
-bool tenBitFormat(const QString& pixFmt)
-{
-    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(av_get_pix_fmt(pixFmt.toUtf8().constData()));
-    return d && d->comp[0].depth > 8;
-}
-
-} // namespace
 
 bool Exporter::startWriter(const QString& codec, QString* error)
 {

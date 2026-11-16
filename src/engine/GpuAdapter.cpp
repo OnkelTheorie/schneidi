@@ -2,6 +2,7 @@
 #include "engine/GpuAdapter.h"
 
 #include <QtGlobal>
+#include <iterator>
 #include <mutex>
 
 #ifdef Q_OS_WIN
@@ -62,8 +63,27 @@ std::int64_t luidOf(const LUID& l)
 
 struct Found {
     QVector<Adapter> adapters;
-    QVector<int> highPerformance;
+    QVector<int> highPerformance; // in the order of the preference below
+    bool powerSaving = false;     // the user set "power saving" for this program in Windows' graphics settings
 };
+
+// Windows' per-program graphics setting (Settings > System > Display > Graphics): registry key
+// HKCU/Software/Microsoft/DirectX/UserGpuPreferences, value = the program's full path, data "GpuPreference=1;"
+// (1 power saving, 2 high performance, 0 or missing: Windows decides). Only an explicit "power saving" changes
+// schneidi's choice.
+bool userWantsPowerSaving()
+{
+    wchar_t exe[MAX_PATH * 2] = {};
+    const DWORD n = GetModuleFileNameW(nullptr, exe, DWORD(std::size(exe)));
+    if (n == 0 || n >= std::size(exe)) return false;
+    wchar_t data[256] = {};
+    DWORD size = sizeof(data);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\DirectX\\UserGpuPreferences", exe, RRF_RT_REG_SZ, nullptr,
+                     data, &size)
+        != ERROR_SUCCESS)
+        return false;
+    return QString::fromWCharArray(data).remove(' ').contains(QLatin1String("GpuPreference=1;"));
+}
 
 Found enumerate()
 {
@@ -84,14 +104,23 @@ Found enumerate()
             a.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) || d.VendorId == 0x1414;
             a.luid = luidOf(d.AdapterLuid);
             f.adapters << a;
+        } else {
+            // Keep the list's positions equal to DXGI's indices (they go to QT_D3D_ADAPTER_INDEX and FFmpeg)
+            Adapter unknown;
+            unknown.name = QStringLiteral("(unknown adapter)");
+            unknown.software = true; // never chosen automatically
+            f.adapters << unknown;
         }
         adapter->Release();
     }
+    f.powerSaving = userWantsPowerSaving();
     IDXGIFactory6* factory6 = nullptr;
     if (SUCCEEDED(factory->QueryInterface(__uuidof(IDXGIFactory6), reinterpret_cast<void**>(&factory6))) && factory6) {
         for (UINT i = 0;; ++i) {
             IDXGIAdapter1* adapter = nullptr;
-            if (FAILED(factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, __uuidof(IDXGIAdapter1),
+            if (FAILED(factory6->EnumAdapterByGpuPreference(i, f.powerSaving ? DXGI_GPU_PREFERENCE_MINIMUM_POWER
+                                                                                  : DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                                                            __uuidof(IDXGIAdapter1),
                                                             reinterpret_cast<void**>(&adapter)))
                 || !adapter)
                 break;
@@ -121,9 +150,8 @@ State& state()
         s.adapters = f.adapters;
         s.choice = choose(f.adapters, f.highPerformance, qEnvironmentVariable("SCHNEIDI_GPU_ADAPTER"),
                           qEnvironmentVariable("QT_D3D_ADAPTER_INDEX"));
-        if (s.choice.index >= 0)
-            qInfo("GPU adapter: %d %s (%s, %d adapters)", s.choice.index, qPrintable(s.adapters[s.choice.index].name),
-                  qPrintable(s.choice.reason), int(s.adapters.size()));
+        if (f.powerSaving && s.choice.reason == QLatin1String("high performance"))
+            s.choice.reason = QStringLiteral("power saving, Windows graphics setting");
     });
     return s;
 }
@@ -144,6 +172,14 @@ std::int64_t chosenLuid()
 {
     const State& s = state();
     return s.choice.index >= 0 ? s.adapters[s.choice.index].luid : 0;
+}
+
+void logChoice()
+{
+    const State& s = state();
+    if (s.choice.index >= 0)
+        qInfo("GPU adapter: %d %s (%s, %d adapters)", s.choice.index, qPrintable(s.adapters[s.choice.index].name),
+              qPrintable(s.choice.reason), int(s.adapters.size()));
 }
 
 void applyToQt()
@@ -169,6 +205,8 @@ std::int64_t chosenLuid()
 {
     return 0;
 }
+
+void logChoice() {}
 
 void applyToQt() {}
 

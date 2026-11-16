@@ -51,6 +51,13 @@ void testAutomatic()
     // Only software adapters, or none: leave it to Qt/FFmpeg
     CHECK_EQ(choose({basicRender()}, {0}, {}, {}).index, -1);
     CHECK_EQ(choose({}, {}, {}, {}).index, -1);
+    // An adapter whose description could not be read stays in the list as a software placeholder: the indices stay
+    // DXGI's (they go to QT_D3D_ADAPTER_INDEX and FFmpeg), and it is never chosen
+    Adapter unknown;
+    unknown.name = "(unknown adapter)";
+    unknown.software = true;
+    CHECK_EQ(choose({unknown, hw("NVIDIA GeForce RTX 3060", 0x10de, 12 * GB)}, {1}, {}, {}).index, 1);
+    CHECK_EQ(choose({unknown, hw("NVIDIA GeForce RTX 3060", 0x10de, 12 * GB)}, {}, {}, {}).index, 1);
     // An out-of-range preference index (adapter vanished between the two enumerations) is ignored
     CHECK_EQ(choose(laptop, {7, 1}, {}, {}).index, 1);
 }
