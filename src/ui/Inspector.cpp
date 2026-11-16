@@ -354,7 +354,11 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         if (!c) return;
         const QSignalBlocker b(hdrBox);
         hdrBox->setChecked(c->hdrToSdr);
-        hdrBox->setEnabled(c->kind == ClipKind::Media);
+        // The file's HDR transfer in the text; an SDR file (or one not known as HDR) has nothing to map
+        const MediaInfo* m = c->mediaPath.isEmpty() ? nullptr : m_editor->project()->mediaInfo(c->mediaPath);
+        const QString hdr = m ? m->hdr : QString();
+        hdrBox->setText(hdr.isEmpty() ? T("HDR als SDR zeigen") : T("HDR (%1) als SDR zeigen").arg(hdr));
+        hdrBox->setEnabled(c->kind == ClipKind::Media && (!m || !hdr.isEmpty() || !c->hdrToSdr));
     };
     // Cut the picture to a circle, star … (effect "clip_shape", its values then in the Effects tab): found here, where
     // one looks for the picture's outline, not only in the Effects Library

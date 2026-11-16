@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RenderCache.h"
+#include "engine/MediaProbe.h"
 #include "core/AppPaths.h"
 #include "engine/picture/Renderer.h"
 
@@ -48,6 +49,8 @@ constexpr const char* kStabilizeVersion = "stab2";
 // Since 0.15.1 retimed clips show their frames by the sound's time (RetimeMap::pictureFrame; before rounded like MLT):
 // only cache files of retimed clips are stale
 constexpr const char* kRetimeVersion = "time2";
+// Since 0.24 HDR sources are mapped to SDR (engine/HdrTone): only cache files of HDR clips are stale
+constexpr const char* kToneVersion = "tone1";
 
 QString modeId(RenderCache::Mode m)
 {
@@ -184,6 +187,11 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
     const QByteArray key = EffectRegistry::has(c, "chromakey") ? QByteArray(kKeyVersion) : QByteArray();
     const QByteArray stab = EffectRegistry::has(c, Stabilizer::EffectId) ? QByteArray(kStabilizeVersion) : QByteArray();
     const QByteArray retime = c.isRetimed() ? QByteArray(kRetimeVersion) : QByteArray();
+    // HDR sources are mapped to SDR since 0.24 (Clip::hdrToSdr, written only when off): their renders from before show
+    // the signal unmapped. SDR clips keep their key
+    const QByteArray tone = c.hdrToSdr && !c.mediaPath.isEmpty() && MediaProbe::hdrPicture(c.mediaPath)
+                                ? QByteArray(kToneVersion)
+                                : QByteArray();
     // Files the effects read (a LUT): edited or replaced under the same name, the cached render is stale. The clip
     // JSON has only their paths. Nothing added without such files: other keys stay as they were
     QString files;
@@ -210,7 +218,7 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
                 if (!path.isEmpty()) addFile(path);
             }
     }
-    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + trust + files.toUtf8() + clip, QCryptographicHash::Sha1)
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + tone + trust + files.toUtf8() + clip, QCryptographicHash::Sha1)
         .toHex();
 }
 

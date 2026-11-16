@@ -1729,9 +1729,12 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     in.colorTrc = d.dec->color_trc;
     in.colorPrimaries = mltPrimaries(d.dec->color_primaries);
     in.tone.transfer = HdrTone::ofColorTrc(in.colorTrc);
-    // Primaries not stated: BT.2020 when the matrix is (HDR is BT.2020 in practice)
+    // HLG/PQ is BT.2020 in practice: primaries not stated count as BT.2020 unless the matrix says BT.709 (stated), and
+    // a matrix not stated is BT.2020 too (not guessed by the picture size)
+    const bool unstatedMatrix = d.dec->colorspace == AVCOL_SPC_UNSPECIFIED || d.dec->colorspace == AVCOL_SPC_RESERVED;
+    if (in.tone.active() && unstatedMatrix) in.colorspace = 2020;
     in.tone.bt2020 = d.dec->color_primaries == AVCOL_PRI_BT2020
-                     || (d.dec->color_primaries == AVCOL_PRI_UNSPECIFIED && in.colorspace >= 2020);
+                     || (d.dec->color_primaries == AVCOL_PRI_UNSPECIFIED && d.dec->colorspace != AVCOL_SPC_BT709);
     // yuvj formats are full range without the tag too (MJPEG in AVI/MOV: only the decoder's format tells)
     const auto decFormat = AVPixelFormat(par->format);
     in.fullRange = d.dec->color_range == AVCOL_RANGE_JPEG || decFormat == AV_PIX_FMT_YUVJ420P

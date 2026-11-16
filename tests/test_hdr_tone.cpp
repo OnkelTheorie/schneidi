@@ -5,9 +5,13 @@
 // in the project file. The card's shader (layer.frag hdrToSdr) against the CPU: test_picture_gpu.
 #include "check.h"
 
+#include "core/Editor.h"
+#include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/Selection.h"
 #include "core/Types.h"
 #include "engine/HdrTone.h"
+#include "engine/picture/Renderer.h"
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
 
@@ -15,8 +19,9 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
-#include <QCoreApplication>
+#include <QApplication>
 #include <QTemporaryDir>
+#include <QUndoStack>
 
 #include <algorithm>
 #include <array>
@@ -126,6 +131,8 @@ void testTables()
     }
 }
 
+void testRenderer(const QString& hlg);
+
 // A flat colour as a 10-bit file with the given transfer tags; the converted centre pixel
 std::array<int, 3> convertedCentre(const QString& path)
 {
@@ -161,6 +168,7 @@ void testFiles(const QString& dir)
     const QString pq = make("pq.mkv", "0x949494", pqTags); // 0x94 = 58 %: PQ 203 nits
     const QString red = make("hlg-red.mkv", "0xc00000", hlgTags);
     if (!CHECK(!hlg.isEmpty() && !plain.isEmpty() && !pq.isEmpty() && !red.isEmpty())) return;
+    testRenderer(hlg);
     {
         const auto r = Video::Reader::open(hlg);
         if (CHECK(r)) {
@@ -219,19 +227,77 @@ void testProjectFile()
     }
 }
 
+// Editor::setHdrToSdr: one undo step, only video clips, nothing when unchanged
+void testEditorUndo()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.edit("setup", [](Timeline& tl) {
+        tl.video.resize(1);
+        tl.audio.resize(1);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = "/fixtures/media/a.mov";
+        v.out = 24;
+        tl.video[0].clips << v;
+        Clip a = v;
+        a.id = 2;
+        tl.audio[0].clips << a;
+    });
+    const int before = p.undoStack()->index();
+    CHECK_EQ(ed.setHdrToSdr({1, 2}, false), 1); // the audio clip has no picture
+    CHECK_EQ(p.undoStack()->index(), before + 1);
+    CHECK(!p.timeline().video[0].clips[0].hdrToSdr);
+    CHECK(p.timeline().audio[0].clips[0].hdrToSdr);
+    CHECK_EQ(ed.setHdrToSdr({1}, false), 0); // already
+    CHECK_EQ(p.undoStack()->index(), before + 1);
+    p.undoStack()->undo();
+    CHECK(p.timeline().video[0].clips[0].hdrToSdr);
+}
+
+// The picture engine (CPU) with a clip's HDR -> SDR on and off: on = the mapped grey, off = the signal as it is
+void testRenderer(const QString& hlg)
+{
+    const auto centre = [&](bool on) {
+        Timeline tl;
+        tl.video.resize(1);
+        Clip c;
+        c.id = 1;
+        c.mediaPath = hlg;
+        c.out = 4;
+        c.hdrToSdr = on;
+        tl.video[0].clips << c;
+        Picture::Options o;
+        o.format = ProjectFormat{128, 72, {25, 1}};
+        Picture::Renderer r(tl, o);
+        const Picture::Frame f = r.render(1);
+        if (!CHECK(!f.isNull())) return -1;
+        return int(f.bits()[(size_t(36) * f.width() + 64) * 4 + 1]);
+    };
+    const int on = centre(true), off = centre(false);
+    std::printf("renderer HLG 75%%: on %d, off %d\n", on, off);
+    CHECK(on > 195 && on < 215);
+    CHECK(std::abs(off - 191) <= 2);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
-    QCoreApplication app(argc, argv);
+    Check::initEnv();
+    QApplication app(argc, argv);
+    Check::initApp("hdr_tone");
     testDetection();
     testKnownValues();
     testRampRises();
     testGamut();
     testTables();
     testProjectFile();
+    testEditorUndo();
     if (Check::haveFfmpeg()) {
         QTemporaryDir dir;
+        Check::initEngine();
         testFiles(dir.path());
     }
     return Check::result();

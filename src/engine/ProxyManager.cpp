@@ -8,11 +8,13 @@
 #include "engine/Background.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MediaProbe.h"
+#include "engine/OpenMedia.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/video/Reader.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 #include <libavutil/pixdesc.h>
 }
 
@@ -408,13 +410,15 @@ QString ProxyManager::proxyPath(const QString& original, int maxSize)
 {
     // Key as with the waveform cache: changed originals automatically get a new proxy. The trailing version is
     // raised when proxies made before are wrong: 2 = frame 0 at the first video key frame (older proxies of files
-    // whose picture starts after the sound were one frame early)
+    // whose picture starts after the sound were one frame early). HDR sources (HLG/PQ) have their own, v2-hdr1: their
+    // proxies before 0.24 were tagged BT.709 (the preview showed the signal unmapped); SDR proxies stay valid.
     const QFileInfo fi(original);
-    const QString id = QString("%1|%2|%3|%4|v2")
+    const QString id = QString("%1|%2|%3|%4|v2%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
-                           .arg(maxSize);
+                           .arg(maxSize)
+                           .arg(MediaProbe::hdrPicture(original) ? QStringLiteral("-hdr1") : QString());
     const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
     return cacheDir() + "/" + hash + ".mp4";
 }

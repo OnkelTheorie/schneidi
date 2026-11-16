@@ -736,8 +736,8 @@ void DeliverPanel::updateEncoders()
     if (better)
         m_betterText->setText(T("Ohne Grafikkarten-Encoder kodiert %1 mit %2: bei gleicher Qualität etwa doppelt so "
                                 "große Dateien.")
-                                  .arg(QLatin1String(f.id) == QLatin1String("h265") ? "H.265" : "H.264",
-                                       QLatin1String(f.id) == QLatin1String("h265") ? "kvazaar" : "OpenH264"));
+                                  .arg(QLatin1String(f.id).startsWith(QLatin1String("h265")) ? "H.265" : "H.264",
+                                       QLatin1String(f.id).startsWith(QLatin1String("h265")) ? "kvazaar" : "OpenH264"));
     m_betterRow->setVisible(better);
     m_encoder->setEnabled(f.hardware);
     m_encoder->setToolTip(!f.hardware ? T("Bei diesem Format fest")

@@ -1034,6 +1034,9 @@ struct MediaInfo {
     // Shape new clips of this file show their picture at (Clip::pictureAspect; 0 = the file's): a recording of a 4:3
     // game stretched to 16:9, marked in the Media Pool or by its watch folder. Media Pool tiles show it too.
     double pictureAspect = 0;
+    // HDR transfer of the picture ("HLG", "PQ"; empty = SDR): its clips are mapped to SDR (Clip::hdrToSdr), the Media
+    // Pool and the Inspector say so. Filled by MediaProbe
+    QString hdr;
 };
 
 // After a clip got another file or audio stream: channel routing (Clip::sourceChannels) the clip's stream of m lacks

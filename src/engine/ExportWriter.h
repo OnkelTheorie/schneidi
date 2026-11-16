@@ -57,6 +57,7 @@ public:
         // Muxer by name (image sequences: "image2"); empty = from the file name
         QString muxer;
         QString hwDevice; // VAAPI encoder: the render device (/dev/dri/renderD128)
+        bool tenBit = false; // VAAPI encoder: 10-bit pictures (P010 uploaded, Main10)
         // Text streams (times from the file start): MP4/MOV mov_text, MKV SubRip, WebM WebVTT; other containers
         // get none
         QVector<Subtitles::TextTrack> subtitles;

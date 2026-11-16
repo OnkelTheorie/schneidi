@@ -63,7 +63,8 @@ QVector<QPair<QString, QString>> bitrateOptions(const QString& codec, int kbit);
 // SVT-AV1 its VBR, OpenH264/kvazaar their bit rate modes
 QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, int kbit);
 // Pixel format given to the writer ("vaapi" = upload to the VAAPI device)
-QString pixelFormat(const QString& codec);
+// tenBit: 10-bit picture (format "h265-10"): P010 (Main10)
+QString pixelFormat(const QString& codec, bool tenBit = false);
 // ffmpeg arguments for a test encode of a few frames of this size (black picture, output discarded)
 QStringList testArguments(const QString& codec, QSize size, int crf);
 

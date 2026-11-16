@@ -58,4 +58,8 @@ struct AudioLayout {
 };
 QVector<AudioLayout> audioLayouts(const QString& path);
 
+// Does the file's picture state an HDR transfer (HLG/PQ, engine/HdrTone)? From the container header only (no stream
+// analysis, cheap), cached per path + size + time of change; any thread. For cache keys (proxies, render cache)
+bool hdrPicture(const QString& path);
+
 } // namespace MediaProbe

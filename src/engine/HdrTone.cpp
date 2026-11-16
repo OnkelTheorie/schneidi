@@ -65,20 +65,22 @@ double curve(double y)
 }
 
 // Relative display light (1 = reference white, source primaries) -> tone mapped linear BT.709 0..1
-void mapLinear(const Tone& tone, double rgb[3])
+// T = double (the exact function) or float (the per-pixel way: enough for 8-bit results, twice as fast)
+template <typename T>
+void mapLinear(const Tone& tone, T rgb[3])
 {
     if (tone.bt2020) {
-        const double r = rgb[0], g = rgb[1], b = rgb[2];
-        for (int i = 0; i < 3; ++i) rgb[i] = kToRec709[i][0] * r + kToRec709[i][1] * g + kToRec709[i][2] * b;
+        const T r = rgb[0], g = rgb[1], b = rgb[2];
+        for (int i = 0; i < 3; ++i) rgb[i] = T(kToRec709[i][0]) * r + T(kToRec709[i][1]) * g + T(kToRec709[i][2]) * b;
     }
-    for (int i = 0; i < 3; ++i) rgb[i] *= kGain;
-    const double y = k709[0] * rgb[0] + k709[1] * rgb[1] + k709[2] * rgb[2];
+    for (int i = 0; i < 3; ++i) rgb[i] *= T(kGain);
+    const T y = T(k709[0]) * rgb[0] + T(k709[1]) * rgb[1] + T(k709[2]) * rgb[2];
     if (y <= 0) {
         rgb[0] = rgb[1] = rgb[2] = 0;
         return;
     }
-    const double mapped = curve(y);
-    const double k = mapped / y;
+    const T mapped = T(curve(y));
+    const T k = mapped / y;
     for (int i = 0; i < 3; ++i) rgb[i] *= k;
     if (mapped >= 1) {
         rgb[0] = rgb[1] = rgb[2] = 1;
@@ -86,17 +88,17 @@ void mapLinear(const Tone& tone, double rgb[3])
     }
     // Out of the BT.709 gamut (saturated BT.2020 colours below zero, bright colours above one): towards the
     // luminance, which stays
-    const double lo = std::min({rgb[0], rgb[1], rgb[2]});
+    const T lo = std::min({rgb[0], rgb[1], rgb[2]});
     if (lo < 0) {
-        const double t = mapped / (mapped - lo);
+        const T t = mapped / (mapped - lo);
         for (int i = 0; i < 3; ++i) rgb[i] = mapped + (rgb[i] - mapped) * t;
     }
-    const double hi = std::max({rgb[0], rgb[1], rgb[2]});
+    const T hi = std::max({rgb[0], rgb[1], rgb[2]});
     if (hi > 1) {
-        const double t = (1 - mapped) / (hi - mapped);
+        const T t = (1 - mapped) / (hi - mapped);
         for (int i = 0; i < 3; ++i) rgb[i] = mapped + (rgb[i] - mapped) * t;
     }
-    for (int i = 0; i < 3; ++i) rgb[i] = std::clamp(rgb[i], 0.0, 1.0);
+    for (int i = 0; i < 3; ++i) rgb[i] = std::clamp(rgb[i], T(0), T(1));
 }
 
 // Signal -> relative display light, the exact way
@@ -123,12 +125,12 @@ struct Tables {
     std::array<float, kRootSteps + 1> encode{};  // sqrt(linear) -> code value 0..1 (BT.1886 inverse)
 };
 
-float lookupRoot(const std::array<float, kRootSteps + 1>& t, double x)
+float lookupRoot(const std::array<float, kRootSteps + 1>& t, float x)
 {
-    const double u = std::sqrt(std::clamp(x, 0.0, 1.0)) * kRootSteps;
+    const float u = std::sqrt(std::clamp(x, 0.0f, 1.0f)) * kRootSteps;
     const int i = std::min(int(u), kRootSteps - 1);
-    const double f = u - i;
-    return float(t[i] + (t[i + 1] - t[i]) * f);
+    const float f = u - float(i);
+    return t[i] + (t[i + 1] - t[i]) * f;
 }
 
 const Tables& tables(Transfer t)
@@ -156,15 +158,15 @@ const Tables& tables(Transfer t)
 // One pixel through the tables: signal as 16-bit codes -> 8-bit SDR
 inline void pixel(const Tone& tone, const Tables& tb, const uint16_t s[3], uint8_t o[3])
 {
-    double rgb[3] = {tb.decode16[s[0]], tb.decode16[s[1]], tb.decode16[s[2]]};
+    float rgb[3] = {tb.decode16[s[0]], tb.decode16[s[1]], tb.decode16[s[2]]};
     if (tone.transfer == Transfer::Hlg) {
         const double* w = tone.bt2020 ? k2020 : k709;
-        const double ys = w[0] * rgb[0] + w[1] * rgb[1] + w[2] * rgb[2];
-        const double k = lookupRoot(tb.hlgOotf, ys);
-        for (double& c : rgb) c *= k;
+        const float ys = float(w[0]) * rgb[0] + float(w[1]) * rgb[1] + float(w[2]) * rgb[2];
+        const float k = lookupRoot(tb.hlgOotf, ys);
+        for (float& c : rgb) c *= k;
     }
     mapLinear(tone, rgb);
-    for (int i = 0; i < 3; ++i) o[i] = uint8_t(std::lround(lookupRoot(tb.encode, rgb[i]) * 255));
+    for (int i = 0; i < 3; ++i) o[i] = uint8_t(lookupRoot(tb.encode, rgb[i]) * 255 + 0.5f);
 }
 
 int threadRows(int width, int height, int threads)
@@ -243,8 +245,8 @@ void toSdrRgba8(const Tone& tone, uint8_t* rgba, int width, int height, int thre
 
 Tone ofFrame(int colorTrc, int colorPrimaries, int colorSpace)
 {
-    // AVCOL_PRI_BT2020 = 9, AVCOL_PRI_UNSPECIFIED = 2, AVCOL_SPC_BT2020_NCL/CL = 9/10
-    return {ofColorTrc(colorTrc), colorPrimaries == 9 || (colorPrimaries == 2 && (colorSpace == 9 || colorSpace == 10))};
+    // AVCOL_PRI_BT2020 = 9, AVCOL_PRI_UNSPECIFIED = 2, AVCOL_SPC_BT709 = 1: unstated primaries are BT.2020 unless BT.709 is
+    return {ofColorTrc(colorTrc), colorPrimaries == 9 || (colorPrimaries == 2 && colorSpace != 1)};
 }
 
 } // namespace HdrTone
