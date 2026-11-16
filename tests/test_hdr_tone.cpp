@@ -56,9 +56,11 @@ void testKnownValues()
         const auto peak = sdr(t, 1, 1, 1);
         CHECK(peak[0] > 0.995f && peak[1] > 0.995f);
     }
-    // HDR reference white (BT.2408): HLG 75 %, PQ 203 nits (code 0.5806) - the same SDR grey, bright but below white
+    // HDR reference white (BT.2408): HLG 75 %, PQ 203 nits (code 0.5806) - the same SDR grey, ~80 % (room above it)
     const auto wh = sdr(hlg, 0.75f, 0.75f, 0.75f), wp = sdr(pq, 0.5806f, 0.5806f, 0.5806f);
-    CHECK(wh[1] > 0.85f && wh[1] < 0.96f);
+    CHECK(wh[1] > 0.76f && wh[1] < 0.84f);
+    // HLG shadows and mid-tones about as the signal shown as it is (HLG is made to look right so on SDR)
+    for (float v : {0.1f, 0.2f, 0.38f, 0.5f}) CHECK(std::abs(sdr(hlg, v, v, v)[1] - v) < 0.05f); // a little darker
     CHECK(std::abs(wh[1] - wp[1]) < 0.01f);
     // Grey stays grey
     CHECK(std::abs(wh[0] - wh[1]) < 1e-4f && std::abs(wh[2] - wh[1]) < 1e-4f);
@@ -174,7 +176,7 @@ void testFiles(const QString& dir)
     std::printf("HLG 75%%: %d %d %d, untagged: %d %d %d, PQ 203: %d %d %d, HLG red: %d %d %d\n", h[0], h[1], h[2], s[0],
                 s[1], s[2], q[0], q[1], q[2], rd[0], rd[1], rd[2]);
     CHECK(std::abs(s[1] - 191) <= 2);        // SDR: the signal as it is
-    CHECK(h[1] > 215 && h[1] < 245);         // reference white: bright, not clipped
+    CHECK(h[1] > 195 && h[1] < 215);         // reference white: ~80 %, room above it
     CHECK(std::abs(h[1] - q[1]) <= 4);       // HLG and PQ reference white alike
     CHECK(std::abs(h[0] - h[2]) <= 2);       // grey stays grey
     CHECK(rd[0] > rd[1] + 100 && rd[0] > rd[2] + 100); // red stays red

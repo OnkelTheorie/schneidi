@@ -33,10 +33,13 @@ constexpr double kToRec709[3][3] = {{1.660491, -0.587641, -0.072850},
                                     {-0.124550, 1.132900, -0.008349},
                                     {-0.018151, -0.100579, 1.118730}};
 
-// Tone curve: linear up to the knee (relative to reference white), above it a rational shoulder that meets the
-// line with the same slope and reaches SDR white at the peak
-constexpr double kKnee = 0.6;
-constexpr double kPeakRel = kPeak / kReferenceWhite;
+// Tone curve: light scaled by kGain (reference white -> SDR linear 0.57, code ~80 % as an HLG picture shown as it is:
+// shadows and mid-tones then match it, the top keeps room for the sky), linear up to the knee, above it a rational
+// shoulder that meets the line with the same slope and reaches SDR white at the peak. (Reference white at ~92 % with
+// a knee at 0.6 looked washed out: bright, a blue sky pressed to white.)
+constexpr double kGain = 0.6;
+constexpr double kKnee = 0.45;
+constexpr double kPeakRel = kPeak / kReferenceWhite * kGain;
 constexpr double kSlope = (kPeakRel - kKnee) / (1 - kKnee); // shoulder's slope at its start in its own unit
 constexpr double kDisplayGamma = 2.4;                        // BT.1886
 
@@ -68,6 +71,7 @@ void mapLinear(const Tone& tone, double rgb[3])
         const double r = rgb[0], g = rgb[1], b = rgb[2];
         for (int i = 0; i < 3; ++i) rgb[i] = kToRec709[i][0] * r + kToRec709[i][1] * g + kToRec709[i][2] * b;
     }
+    for (int i = 0; i < 3; ++i) rgb[i] *= kGain;
     const double y = k709[0] * rgb[0] + k709[1] * rgb[1] + k709[2] * rgb[2];
     if (y <= 0) {
         rgb[0] = rgb[1] = rgb[2] = 0;

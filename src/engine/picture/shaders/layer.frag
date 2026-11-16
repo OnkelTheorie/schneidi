@@ -101,9 +101,10 @@ vec3 hdrToSdr(vec3 c)
     if (wide)
         lin = vec3(dot(vec3(1.660491, -0.587641, -0.072850), lin), dot(vec3(-0.124550, 1.132900, -0.008349), lin),
                    dot(vec3(-0.018151, -0.100579, 1.118730), lin));
+    lin *= 0.6; // HdrTone kGain
     float y = dot(vec3(0.2126, 0.7152, 0.0722), lin);
     if (y <= 0.0) return vec3(0.0);
-    const float knee = 0.6, peak = 1000.0 / 203.0, slope = (peak - knee) / (1.0 - knee);
+    const float knee = 0.45, peak = 1000.0 / 203.0 * 0.6, slope = (peak - knee) / (1.0 - knee);
     float x = (y - knee) / (peak - knee);
     float m = y <= knee ? y : knee + (1.0 - knee) * (x * slope / (1.0 + (slope - 1.0) * x));
     if (m >= 1.0) return vec3(1.0);
