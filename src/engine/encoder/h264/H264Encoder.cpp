@@ -3390,7 +3390,7 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int frameNum, int idrCount, Phas
 
 // ---- VBV (EncoderConfig::vbvMaxrateKbps / vbvBufsizeKbits) ----
 
-static const double gVbvSafe = std::getenv("H264_VBV_SAFE") ? std::atof(std::getenv("H264_VBV_SAFE")) : 1.3;
+static const double gVbvSafe = std::getenv("H264_VBV_SAFE") ? std::atof(std::getenv("H264_VBV_SAFE")) : 2.0;
 static const double gVbvDecay = std::getenv("H264_VBV_DECAY") ? std::atof(std::getenv("H264_VBV_DECAY")) : 0.6;
 static const double gVbvTarget = std::getenv("H264_VBV_TARGET") ? std::atof(std::getenv("H264_VBV_TARGET")) : 0.5;
 static const bool gVbvTrace = std::getenv("H264_VBV_TRACE") != nullptr;
@@ -3540,8 +3540,10 @@ void Encoder::vbvProbe(const LookaheadFrame& frame, double qpI)
 // How far the picture's QP must rise (0 = not at all) so that neither it nor the planned pictures after it
 // (the queue, in coding order, at the same QP plus their type's offset) run the buffer empty, and the
 // buffer is no lower than half full (or than it is now plus half of what comes in, whichever is less) at
-// the end of the lookahead. The picture itself must fit gVbvSafe times its prediction: it is coded with
-// frame-level QP only, nothing can correct it once it runs over.
+// the end of the lookahead. The picture itself (and those in flight) must fit gVbvSafe times its prediction: it is
+// coded with a frame-level QP only, nothing corrects it once it runs over (a correction per macroblock row would
+// depend on which rows of the wavefront are done, so the stream on the thread count). 2 against 1.3: on 0.5 s
+// buffers far fewer and smaller underflows for no measurable quality.
 double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, double shift, int bQp)
 {
     const int cls = frame ? vbvClass(*frame, type) : type;
