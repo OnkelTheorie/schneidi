@@ -51,6 +51,14 @@ extern "C" {
 }
 
 namespace {
+
+// More than 8 bits per component (yuv420p10le: H.265/AV1 10 bit, ProRes, DNxHR HQX)
+bool tenBitFormat(const QString& pixFmt)
+{
+    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(av_get_pix_fmt(pixFmt.toUtf8().constData()));
+    return d && d->comp[0].depth > 8;
+}
+
 std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 
 // Memory model of automaticThreads (see there). Measured on a 1080x1920 short (x264 medium, peak RSS for 1, 2, 4,
@@ -664,7 +672,7 @@ bool Exporter::launch(QString* error)
     const ExportSettings& s = m_settings;
     // The writer opens the encoder itself and reports when it cannot (fallback in pollWriter). A hardware encoder that
     // already failed in this session (could not be opened): software right away
-    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize()) < 0) {
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize(), tenBitFormat(s.pixFmt)) < 0) {
         if (!fallBackToSoftware(error)) return false;
         ++g_running;
         m_timer.start();
@@ -815,17 +823,6 @@ int Exporter::audioBitrateK() const
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
 
-namespace {
-
-// More than 8 bits per component (yuv420p10le: H.265/AV1 10 bit, ProRes, DNxHR HQX)
-bool tenBitFormat(const QString& pixFmt)
-{
-    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(av_get_pix_fmt(pixFmt.toUtf8().constData()));
-    return d && d->comp[0].depth > 8;
-}
-
-} // namespace
-
 bool Exporter::startWriter(const QString& codec, QString* error)
 {
     const ExportSettings& s = m_settings;
@@ -879,7 +876,8 @@ bool Exporter::startWriter(const QString& codec, QString* error)
         // the same fallback to software both times
         if (!fallbackCodec(codec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
-            if (HardwareEncoders::isHardwareCodec(codec)) HardwareEncoders::remember(codec, outputSize(), false); // not again
+            if (HardwareEncoders::isHardwareCodec(codec)) // not again (at this bit depth: 8-bit may still work)
+                HardwareEncoders::remember(codec, outputSize(), false, tenBitFormat(m_settings.pixFmt));
             QFile::remove(m_path);
             return fallBackToSoftware(error);
         }
@@ -913,7 +911,7 @@ void Exporter::pollWriter()
         if (!fallbackCodec(m_usedCodec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
             if (HardwareEncoders::isHardwareCodec(m_usedCodec))
-                HardwareEncoders::remember(m_usedCodec, outputSize(), false); // not again this session
+                HardwareEncoders::remember(m_usedCodec, outputSize(), false, tenBitFormat(m_settings.pixFmt)); // not again this session
             QFile::remove(m_path);
             QString error;
             if (fallBackToSoftware(&error)) return;

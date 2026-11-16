@@ -138,6 +138,7 @@ int main(int argc, char* argv[])
     // No window, no sound: titles still need Qt's painting (fonts), hence a GUI application on the offscreen platform
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
     GpuAdapter::applyToQt(); // Windows: the high performance card for the picture engine and the decoder
+    GpuAdapter::logChoice();
     QGuiApplication app(argc, argv);
     AppPaths::setProgramNames(); // same backups, effects and settings as the app
     QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));

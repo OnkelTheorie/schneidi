@@ -29,6 +29,8 @@ struct Choice {
 // that interface is missing (Windows before 10 1803). override: SCHNEIDI_GPU_ADAPTER (index or part of the name, any
 // case), qtIndex: QT_D3D_ADAPTER_INDEX (index); both empty when not set. Order: override, qtIndex, the first hardware
 // adapter of highPerformance, else the hardware adapter with the most video memory (first one on a tie).
+// High performance overrides Windows' per-program graphics setting "Let Windows decide", but not an explicit "power
+// saving" for schneidi: then highPerformance holds the minimum-power order (the Windows part reads the setting).
 Choice choose(const QVector<Adapter>& adapters, const QVector<int>& highPerformance, const QString& override,
               const QString& qtIndex);
 
@@ -36,6 +38,12 @@ Choice choose(const QVector<Adapter>& adapters, const QVector<int>& highPerforma
 QVector<Adapter> adapters();
 const Choice& chosen();
 std::int64_t chosenLuid();
+// "GPU adapter: <index> <name> (<reason>, <n> adapters)" to the log (call after the log is installed). No-op outside
+// Windows or when nothing was chosen.
+void logChoice();
+// "GPU adapter: <index> <name> (<reason>, <n> adapters)" to the log (call after the log is installed). No-op outside
+// Windows or when nothing was chosen.
+void logChoice();
 // Before the application object: makes Qt's own D3D11 windows (the viewer widget's backing store) use the chosen
 // adapter too, through QT_D3D_ADAPTER_INDEX (only when that is not set already). No-op outside Windows.
 void applyToQt();

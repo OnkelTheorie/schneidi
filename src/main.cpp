@@ -506,6 +506,7 @@ int main(int argc, char* argv[])
         if (Cli::Live::handOver(LaunchArgs::files(args))) return 0;
     }
     Log::install();
+    GpuAdapter::logChoice(); // (chosen before the application object, logged now that the log file is there)
     DisplayLoss::install(); // after the log: the display gone ends the program at once, logged (app/DisplayLoss.h)
     Extensions::cleanUp(); // old versions a running program held at its update
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
