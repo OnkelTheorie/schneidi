@@ -6381,10 +6381,16 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // the calm scene, two-pass) and +12 / +50 % with the B pictures' limit, and the chroma planes lose 0.1
     // to 0.2 dB on the game clips while luma gains - to be tuned (limit by QP, chroma, speed) first.
     static const double kEarlySkipSsd = std::getenv("H264_EARLYSKIPSSD") ? std::atof(std::getenv("H264_EARLYSKIPSSD")) : 0.0;
-    if (kEarlySkip && (kEarlySkipSsd <= 0 || ssdSkip <= kEarlySkipSsd * lambda) && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
-        result.syn.kind = MbSyntax::Kind::Skip;
-        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-        return false;
+    static const double kEarlySkipFloor = std::getenv("H264_EARLYSKIPFLOOR") ? std::atof(std::getenv("H264_EARLYSKIPFLOOR")) : 0.0;
+    static const bool kEarlySkipLight = !std::getenv("H264_EARLYSKIPLIGHT") || std::atoi(std::getenv("H264_EARLYSKIPLIGHT")) != 0;
+    bool offSkip = false; // the skip's residual quantises to nothing, but the skip is far from the source
+    if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
+        if (kEarlySkipSsd <= 0 || ssdSkip <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
+            result.syn.kind = MbSyntax::Kind::Skip;
+            mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+            return false;
+        }
+        offSkip = kEarlySkipLight;
     }
 
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
@@ -6566,7 +6572,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         skipSplits = !(qMax >= quadLim && qMax >= kSplitConc * qSum);
     }
-    if (wholeZero && kZeroNoSplit)
+    if ((wholeZero && kZeroNoSplit) || offSkip)
         skipSplits = true;
     if (cfg_.effort > 0 && !skipSplits) {
         // Experiment (H264_EXP & 256): the split layouts compare at full-pel (SATD); only the best
@@ -6941,7 +6947,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     MbOut intraBits;
     double costIntra = 1e300;
     bool intraDelta = false;
-    {
+    if (!offSkip) {
         const int intraEstimate = intraEstimate16();
         // recY_ of this macroblock holds the inter reconstruction here, but Intra 16x16
         // prediction only reads the neighbours above and to the left.
@@ -7222,8 +7228,9 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, skipState);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
     // type and vector of a copy from one picture would cost (about six bits).
+    static const double kEarlySkipFloorB = std::getenv("H264_EARLYSKIPFLOOR") ? std::atof(std::getenv("H264_EARLYSKIPFLOOR")) : 0.0;
     static const double kEarlySkipSsdB = std::getenv("H264_EARLYSKIPSSDB") ? std::atof(std::getenv("H264_EARLYSKIPSSDB")) : 0.0;
-    if (sharpDirect <= 6 * lambda && (kEarlySkipSsdB <= 0 || double(mbSsd(mbx, mby)) <= kEarlySkipSsdB * lambda) &&
+    if (sharpDirect <= 6 * lambda && (kEarlySkipSsdB <= 0 || double(mbSsd(mbx, mby)) <= std::max(kEarlySkipSsdB * lambda, kEarlySkipFloorB)) &&
         skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
