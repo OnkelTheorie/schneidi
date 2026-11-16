@@ -3407,6 +3407,8 @@ void Encoder::vbvLearn(int upTo)
         if (r.cost > 0) {
             vbvKNum_[r.type] = vbvKNum_[r.type] * gVbvDecay + r.bits * std::exp2(r.qp / 6.0);
             vbvKDen_[r.type] = vbvKDen_[r.type] * gVbvDecay + r.cost;
+            vbvQNum_[r.type] = vbvQNum_[r.type] * gVbvDecay + r.qp;
+            vbvQDen_[r.type] = vbvQDen_[r.type] * gVbvDecay + 1.0;
         }
     }
 }
@@ -3425,6 +3427,22 @@ double Encoder::vbvK(int type) const
     if (type != 0 && vbvKDen_[0] > 0)
         return vbvKNum_[0] / vbvKDen_[0];
     return 1.0;
+}
+
+// Bits of a picture of this class and cost at qp: k * cost * 2^(-qp/6) - but below the QPs k was learned at, bits
+// grow faster than that (noise and fine texture that a coarser QP quantised away come back: measured up to 4x for
+// 4 QP), so there they double every gVbvSteep QP. It decides only where the buffer gets tight, so erring high
+// costs little.
+static const double gVbvSteep = std::getenv("H264_VBV_STEEP") ? std::atof(std::getenv("H264_VBV_STEEP")) : 3.0;
+
+double Encoder::vbvPredict(int type, double cost, double qp) const
+{
+    const double k = vbvK(type) * cost;
+    const int c = vbvQDen_[type] > 0 ? type : type == 3 ? 1 : type;
+    if (vbvQDen_[c] <= 0)
+        return k * std::exp2(-qp / 6.0);
+    const double ref = vbvQNum_[c] / vbvQDen_[c];
+    return qp >= ref ? k * std::exp2(-qp / 6.0) : k * std::exp2(-ref / 6.0 + (ref - qp) / gVbvSteep);
 }
 
 // The bit model's cost of a queued picture (the rate control's: the macroblock tree's finer QPs included); with
@@ -3470,6 +3488,8 @@ void Encoder::vbvProbe(const LookaheadFrame& frame, double qpI)
     const bool costs = useLookahead() && !queue_.empty();
     const double bitsI = double(probe.encode(pictureOf(frame, cfg_.width)).size()) * 8.0;
     vbvKNum_[0] = bitsI * std::exp2((pc.qp - 3) / 6.0);
+    vbvQNum_[0] = vbvQNum_[1] = pc.qp - 3; // (P: the probe's I and P together)
+    vbvQDen_[0] = vbvQDen_[1] = 1.0;
     vbvKDen_[0] = costs ? std::max(1.0, frame.intraSum) : 1.0;
     if (costs && queue_.size() > 1 && &queue_[0] == &frame) {
         const LookaheadFrame& second = queue_[1];

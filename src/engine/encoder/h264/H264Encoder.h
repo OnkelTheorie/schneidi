@@ -563,7 +563,8 @@ private:
     size_t vbvHeaderBytes_ = 0;               // SPS/PPS in front of the first access unit (they count in its bits)
     void vbvLearn(int upTo);
     double vbvK(int type) const;
-    double vbvPredict(int type, double cost, double qp) const { return vbvK(type) * cost * std::exp2(-qp / 6.0); }
+    double vbvQNum_[4] = {}, vbvQDen_[4] = {}; // the QP k was learned at, decaying mean
+    double vbvPredict(int type, double cost, double qp) const;
     double vbvCost(const LookaheadFrame* f, int type) const;
     void vbvProbe(const LookaheadFrame& frame, double qpI);
     double vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, int bQp);

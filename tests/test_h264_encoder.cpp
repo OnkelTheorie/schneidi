@@ -613,9 +613,130 @@ bool vectorKernelsMatchReference()
 
 } // namespace
 
+void testVbv()
+{
+    // VBV (vbvMaxrateKbps / vbvBufsizeKbits): a clip whose unconstrained stream runs a half-second buffer empty
+    // again and again (crf 12, twice the peak rate, a keyframe in the middle) must never do so with VBV - with
+    // constant quality, one-pass and two-pass bitrate, B pictures, frame threading and CAVLC - and still decode
+    // bit-exact with the HRD SEI; the stream does not depend on the thread count; VBV off (either value 0) is the
+    // stream without it; every access unit starts with picture timing SEI, IDR pictures with a buffering period.
+    {
+        gCabac = true;
+        EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 2);
+        c.fps = 30;
+        c.crf = 12;
+        StreamInfo free;
+        size_t freeBytes = 0;
+        CHECK(roundTrip(c, 90, &freeBytes, 40, nullptr, &free));
+        const double freeKbps = double(freeBytes) * 8.0 / 3.0 / 1000.0;
+        const int maxrate = std::max(64, int(freeKbps / 2.0) / 64 * 64), bufsize = maxrate / 2;
+        CHECK(cpbUnderflows(free.sizes, 30, maxrate, bufsize, 0.9) > 0); // the case is hard
+        {
+            EncoderConfig off = c;
+            off.vbvMaxrateKbps = maxrate; // without a buffer size: off
+            StreamInfo info;
+            CHECK(roundTrip(off, 90, nullptr, 40, nullptr, &info));
+            CHECK(info.hash == free.hash);
+        }
+        auto check = [&](EncoderConfig v, const char* what, int frames = 90) {
+            v.vbvMaxrateKbps = maxrate;
+            v.vbvBufsizeKbits = bufsize;
+            StreamInfo info;
+            size_t bytes = 0;
+            CHECK(roundTrip(v, frames, &bytes, 40, nullptr, &info));
+            double low = 0;
+            const int under = cpbUnderflows(info.sizes, v.fps, maxrate, bufsize, v.vbvInit, &low);
+            if (under > 0)
+                std::fprintf(stderr, "vbv %s: %d underflows, lowest level %.0f of %d kbit, %.0f kbit/s (max %d, unconstrained %.0f), QP up to %d\n",
+                             what, under, low / 1000.0, bufsize, bytes * 8.0 / (frames / v.fps) / 1000.0, maxrate, freeKbps,
+                             *std::max_element(info.qps.begin(), info.qps.end()));
+            CHECK(under == 0);
+            return info.hash;
+        };
+        const uint64_t crfHash = check(c, "crf");
+        {
+            EncoderConfig t = c;
+            t.threads = 1;
+            CHECK(check(t, "crf, one thread") == crfHash);
+            t.threads = 4;
+            CHECK(check(t, "crf, four threads") == crfHash);
+        }
+        {
+            EncoderConfig b = c;
+            b.bframes = 3;
+            b.bAdaptive = false;
+            check(b, "crf, B pictures");
+        }
+        {
+            EncoderConfig r = c;
+            r.crf = -1;
+            r.bitrateKbps = int(freeKbps); // the target above the peak rate: VBV decides
+            check(r, "one-pass bitrate");
+            FirstPass fp(r.width, r.height);
+            for (int t = 0; t < 90; ++t) {
+                const Yuv src = synthFrame(r.width, r.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2}, t == 40);
+            }
+            r.firstPass = fp.stats();
+            check(r, "two-pass bitrate");
+        }
+        {
+            EncoderConfig q = c; // constant QP, no lookahead
+            q.crf = -1;
+            q.qp = 14;
+            q.lookahead = 0;
+            q.mbtree = false;
+            check(q, "constant QP without lookahead");
+        }
+        gCabac = false;
+        check(config(320, 192, IntraMode::Auto, 60, 2), "CAVLC, constant QP"); // (qp 28: just a smoke test)
+        {
+            EncoderConfig cv = c;
+            cv.cabac = false;
+            check(cv, "CAVLC, crf");
+        }
+        gCabac = true;
+        // The SEI
+        {
+            EncoderConfig v = c;
+            v.vbvMaxrateKbps = maxrate;
+            v.vbvBufsizeKbits = bufsize;
+            Encoder enc(v);
+            CHECK(enc.headers().size() > Encoder(c).headers().size()); // hrd_parameters in the VUI
+            std::vector<std::vector<uint8_t>> aus;
+            for (int t = 0; t < 12; ++t) {
+                const Yuv src = synthFrame(v.width, v.height, t);
+                auto au = enc.encode(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2}, t == 6);
+                if (!au.empty())
+                    aus.push_back(std::move(au));
+            }
+            for (auto au = enc.flush(); !au.empty(); au = enc.flush())
+                aus.push_back(std::move(au));
+            CHECK(aus.size() == 12);
+            int periods = 0;
+            for (const auto& au : aus) {
+                CHECK(au.size() > 6 && au[4] == 6); // SEI first
+                if (au.size() > 6 && au[5] == 0) {   // buffering period, then picture timing
+                    ++periods;
+                    const size_t next = 7 + au[6];
+                    CHECK(next < au.size() && au[next] == 1);
+                } else {
+                    CHECK(au.size() > 6 && au[5] == 1);
+                }
+            }
+            CHECK(periods == 2); // the first picture and the keyframe at 6
+            CHECK(enc.vbvUnderflows() == 0);
+        }
+    }
+}
+
 int main()
 {
     Check::initEnv();
+    if (std::getenv("H264_TEST_VBV")) { // only the VBV cases (debugging)
+        testVbv();
+        return Check::result();
+    }
     CHECK(selfTestTables());
     CHECK(kernelsMatchReference());
     CHECK(vectorKernelsMatchReference());
@@ -1490,118 +1611,6 @@ int main()
         CHECK(firstPassThrew);
         CHECK(roundTrip(config(176, 144, IntraMode::Auto, 8, 4), 8));
     }
-    // VBV (vbvMaxrateKbps / vbvBufsizeKbits): a clip whose unconstrained stream runs a half-second buffer empty
-    // again and again (crf 12, twice the peak rate, a keyframe in the middle) must never do so with VBV - with
-    // constant quality, one-pass and two-pass bitrate, B pictures, frame threading and CAVLC - and still decode
-    // bit-exact with the HRD SEI; the stream does not depend on the thread count; VBV off (either value 0) is the
-    // stream without it; every access unit starts with picture timing SEI, IDR pictures with a buffering period.
-    {
-        gCabac = true;
-        EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 2);
-        c.fps = 30;
-        c.crf = 12;
-        StreamInfo free;
-        size_t freeBytes = 0;
-        CHECK(roundTrip(c, 90, &freeBytes, 40, nullptr, &free));
-        const double freeKbps = double(freeBytes) * 8.0 / 3.0 / 1000.0;
-        const int maxrate = std::max(64, int(freeKbps / 2.0) / 64 * 64), bufsize = maxrate / 2;
-        CHECK(cpbUnderflows(free.sizes, 30, maxrate, bufsize, 0.9) > 0); // the case is hard
-        {
-            EncoderConfig off = c;
-            off.vbvMaxrateKbps = maxrate; // without a buffer size: off
-            StreamInfo info;
-            CHECK(roundTrip(off, 90, nullptr, 40, nullptr, &info));
-            CHECK(info.hash == free.hash);
-        }
-        auto check = [&](EncoderConfig v, const char* what, int frames = 90) {
-            v.vbvMaxrateKbps = maxrate;
-            v.vbvBufsizeKbits = bufsize;
-            StreamInfo info;
-            size_t bytes = 0;
-            CHECK(roundTrip(v, frames, &bytes, 40, nullptr, &info));
-            double low = 0;
-            const int under = cpbUnderflows(info.sizes, v.fps, maxrate, bufsize, v.vbvInit, &low);
-            if (under > 0)
-                std::fprintf(stderr, "vbv %s: %d underflows, lowest level %.0f of %d kbit, %.0f kbit/s (max %d, unconstrained %.0f), QP up to %d\n",
-                             what, under, low / 1000.0, bufsize, bytes * 8.0 / (frames / v.fps) / 1000.0, maxrate, freeKbps,
-                             *std::max_element(info.qps.begin(), info.qps.end()));
-            CHECK(under == 0);
-            return info.hash;
-        };
-        const uint64_t crfHash = check(c, "crf");
-        {
-            EncoderConfig t = c;
-            t.threads = 1;
-            CHECK(check(t, "crf, one thread") == crfHash);
-            t.threads = 4;
-            CHECK(check(t, "crf, four threads") == crfHash);
-        }
-        {
-            EncoderConfig b = c;
-            b.bframes = 3;
-            b.bAdaptive = false;
-            check(b, "crf, B pictures");
-        }
-        {
-            EncoderConfig r = c;
-            r.crf = -1;
-            r.bitrateKbps = int(freeKbps); // the target above the peak rate: VBV decides
-            check(r, "one-pass bitrate");
-            FirstPass fp(r.width, r.height);
-            for (int t = 0; t < 90; ++t) {
-                const Yuv src = synthFrame(r.width, r.height, t);
-                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2}, t == 40);
-            }
-            r.firstPass = fp.stats();
-            check(r, "two-pass bitrate");
-        }
-        {
-            EncoderConfig q = c; // constant QP, no lookahead
-            q.crf = -1;
-            q.qp = 14;
-            q.lookahead = 0;
-            q.mbtree = false;
-            check(q, "constant QP without lookahead");
-        }
-        gCabac = false;
-        check(config(320, 192, IntraMode::Auto, 60, 2), "CAVLC, constant QP"); // (qp 28: just a smoke test)
-        {
-            EncoderConfig cv = c;
-            cv.cabac = false;
-            check(cv, "CAVLC, crf");
-        }
-        gCabac = true;
-        // The SEI
-        {
-            EncoderConfig v = c;
-            v.vbvMaxrateKbps = maxrate;
-            v.vbvBufsizeKbits = bufsize;
-            Encoder enc(v);
-            CHECK(enc.headers().size() > Encoder(c).headers().size()); // hrd_parameters in the VUI
-            std::vector<std::vector<uint8_t>> aus;
-            for (int t = 0; t < 12; ++t) {
-                const Yuv src = synthFrame(v.width, v.height, t);
-                auto au = enc.encode(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2}, t == 6);
-                if (!au.empty())
-                    aus.push_back(std::move(au));
-            }
-            for (auto au = enc.flush(); !au.empty(); au = enc.flush())
-                aus.push_back(std::move(au));
-            CHECK(aus.size() == 12);
-            int periods = 0;
-            for (const auto& au : aus) {
-                CHECK(au.size() > 6 && au[4] == 6); // SEI first
-                if (au.size() > 6 && au[5] == 0) {   // buffering period, then picture timing
-                    ++periods;
-                    const size_t next = 7 + au[6];
-                    CHECK(next < au.size() && au[next] == 1);
-                } else {
-                    CHECK(au.size() > 6 && au[5] == 1);
-                }
-            }
-            CHECK(periods == 2); // the first picture and the keyframe at 6
-            CHECK(enc.vbvUnderflows() == 0);
-        }
-    }
+    testVbv();
     return Check::result();
 }
