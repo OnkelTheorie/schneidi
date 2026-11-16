@@ -7,6 +7,8 @@
 #include "core/Accents.h"
 #include "core/EffectRegistry.h"
 #include "core/GameHud.h"
+#include "core/GradeCurves.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/NameBlur.h"
 #include "core/Keyframes.h"
@@ -181,7 +183,74 @@ void opColor(Session& s, const QJsonObject& op)
         // A keyframe of every grade value at `at` (on) or none there (off), like a keyframe on a DaVinci node
         for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool());
     }
+    if (op.contains("curves")) {
+        const QJsonValue v = op.value("curves");
+        if (!v.isObject())
+            fail("BAD_ARGUMENT", "curves is an object like {y: [[0,0],[0.5,0.6],[1,1]], hue_sat: [[0.1,0.5],[0.6,0.8]]}");
+        const QJsonObject curves = v.toObject();
+        for (auto it = curves.begin(); it != curves.end(); ++it) {
+            GradeCurves::Kind kind;
+            if (!GradeCurves::fromCliName(it.key(), &kind))
+                fail("BAD_ARGUMENT", "unknown curve '" + it.key() + "' (y, r, g, b, hue_hue, hue_sat, lum_sat)");
+            QVector<QPointF> points;
+            if (!it.value().isNull() && !it.value().isArray())
+                fail("BAD_ARGUMENT", "curve " + it.key() + " is a list of [x, y] points (0..1), [] = straight");
+            for (const QJsonValue& p : it.value().toArray()) {
+                const QJsonArray xy = p.toArray();
+                if (xy.size() != 2 || !xy[0].isDouble() || !xy[1].isDouble())
+                    fail("BAD_ARGUMENT", "curve " + it.key() + ": every point is [x, y] with numbers 0..1");
+                points << QPointF(xy[0].toDouble(), xy[1].toDouble());
+            }
+            ed.setGradeCurve(ids, kind, points);
+        }
+    }
     if (op.contains("enabled")) ed.setGradeEnabled(ids, op.value("enabled").toBool());
+}
+
+// ---------- qualifier (selection by colour) ----------
+
+void opQualifier(Session& s, const QJsonObject& op)
+{
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "qualifiers");
+    Editor& ed = s.editor;
+    const auto clip = [&](int id) { return TimelineOps::findClip(s.project.timeline(), id); };
+    if (op.value("remove").toBool()) {
+        ed.removeGradeQualifier(ids);
+        return;
+    }
+    const bool any = std::any_of(ids.begin(), ids.end(), [&](int id) { return GradeQualifier::exists(*clip(id)); });
+    if (op.value("add").toBool() || op.contains("color") || !any) {
+        if (!op.value("add").toBool() && !op.contains("color") && !any)
+            s.notes << "qualifier added (default range: skin tones; pick one with color)";
+        ed.addGradeQualifier(ids);
+    }
+    QVector<QPair<AnimParam, double>> values;
+    if (op.contains("color")) { // a range around a colour, then single values on top
+        const GradeQualifier::Range r = GradeQualifier::around(colorOf(op.value("color"), "color"));
+        const double v[] = {r.hue, r.hueWidth, r.hueSoft, r.satLow, r.satHigh, r.satSoft, r.lumLow, r.lumHigh, r.lumSoft};
+        for (int i = 0; i < GradeQualifier::rangeKeys().size(); ++i)
+            values.append({GradeQualifier::param(GradeQualifier::rangeKeys()[i]), v[i]});
+    }
+    static const char* names[] = {"hue", "hue_width", "hue_soft", "sat_low", "sat_high", "sat_soft", "lum_low",
+                                  "lum_high", "lum_soft"};
+    for (int i = 0; i < 9; ++i)
+        if (op.contains(names[i])) {
+            const AnimParam p = GradeQualifier::param(GradeQualifier::rangeKeys()[i]);
+            values.append({p, paramValue(p, op.value(names[i]), names[i])});
+        }
+    values += gradeValues(op, ColorGrade::qualifierParams());
+    if (!values.isEmpty())
+        for (int id : ids)
+            ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Qualifier");
+    if (op.contains("invert"))
+        for (int id : ids) {
+            const Clip& c = *clip(id);
+            GradeQualifier::Range r = GradeQualifier::rangeAt(c, localFrame(c, op.contains("at") ? timeOf(s, op, "at") : c.start));
+            r.invert = op.value("invert").toBool();
+            ed.setGradeQualifierRange({id}, r, op.contains("at") ? timeOf(s, op, "at") : c.start);
+        }
+    if (op.contains("keyframe"))
+        for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool(), GradeQualifier::kLayer);
 }
 
 // ---------- windows (shape masks of the grade) ----------
@@ -993,7 +1062,7 @@ void prepareReframe(const QJsonObject& editArgs, Context& ctx)
 void addLookOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"color", "{op:'color', clips, lift?, gamma?, gain?, offset?, contrast?, pivot?, saturation?, "
-                          "temperature?, tint?, exposure?, lut?, enabled?, reset?, at?, keyframe?}",
+                          "temperature?, tint?, exposure?, lut?, curves?, enabled?, reset?, at?, keyframe?}",
                  "Color page grade (primary wheels, LUT)",
                  "Wheels lift/gamma/gain/offset: a number (master) or {y, r, g, b}. Neutral: lift 0, gamma 0, gain 1, "
                  "offset 25 (ranges: lift/gamma -1..1, gain 0..4, offset 0..100). contrast 0..2 (1), pivot 0..1 "
@@ -1001,8 +1070,31 @@ void addLookOps(QVector<OpDef>& ops)
                  "magenta), exposure -4..4 stops (0). lut: name from `effects` or a .cube/.3dl/.csp/Hald image file, \"\" removes it. "
                  "reset:true removes the whole grade, reset:[\"liftY\", …] sets single values back. Values that "
                  "have keyframes get one at `at` (default: clip start); keyframe:true/false with `at` sets/removes a "
-                 "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}.",
+                 "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}. "
+                 "curves: {y, r, g, b, hue_hue, hue_sat, lum_sat}, each a list of [x, y] points in 0..1 ([] = "
+                 "straight). y/r/g/b map input to output brightness (after the wheels; master y first, then the "
+                 "channel), smooth through the points and flat beyond the first and last; e.g. y [[0,0],[0.25,0.2],"
+                 "[0.75,0.82],[1,1]] = an S curve (more contrast). The others work on the hue (x 0 = red, 1/3 green, "
+                 "2/3 blue, wrapping) or the brightness (lum_sat): y 0.5 = unchanged; hue_sat/lum_sat y * 2 = "
+                 "saturation factor (0 = gray), hue_hue (y - 0.5) * 360 = hue turn in degrees. Curves are not "
+                 "animatable.",
                  opColor, kClipKeys}
+        << OpDef{"qualifier", "{op:'qualifier', clips, add?, remove?, color?, hue?, hue_width?, hue_soft?, sat_low?, "
+                              "sat_high?, sat_soft?, lum_low?, lum_high?, lum_soft?, invert?, lift?, gamma?, gain?, "
+                              "offset?, contrast?, pivot?, saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
+                 "Color page qualifier: grade only the picked colours (skin, sky)",
+                 "One per clip, part of its grade. It selects by colour: hue in degrees (0 red, 120 green, 240 blue) "
+                 "within hue_width degrees around it (360 = every hue), fading over hue_soft degrees beyond; "
+                 "saturation (chroma = max - min of R, G, B, in %) from sat_low to sat_high, brightness (luma %) "
+                 "from lum_low to lum_high, each fading over its *_soft. The selection is taken after the wheels and "
+                 "curves of the clip. color:\"#rrggbb\" sets a range around that colour (then single values on top). "
+                 "Inside the selection its own correction applies (lift … exposure like op 'color', neutral by "
+                 "default): e.g. {op:'qualifier', clips:[3], color:'#c8906c', saturation:40} = calmer skin. "
+                 "invert:true = everything except the selection. The first qualifier op on a clip adds it (default "
+                 "range: skin tones); remove:true deletes it. Values that have keyframes get one at `at`; "
+                 "keyframe:true/false sets/removes a keyframe of every qualifier value there; single values animate "
+                 "with {op:'keyframe', param:'grade.q.hue'}. Look at the result with `frames`.",
+                 opQualifier, kClipKeys}
         << OpDef{"window", "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
                            "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?, pivot?, "
                            "saturation?, temperature?, tint?, exposure?, at?, keyframe?}",

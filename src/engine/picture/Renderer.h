@@ -121,6 +121,9 @@ struct Options {
     int parallelFrames = 1;            // frames rendered at once: decoders keep that many pictures around a request
     // Preview "Before/After": true = colour correction bypassed (read at every render)
     std::shared_ptr<const std::atomic<bool>> gradeBypass;
+    // Preview: the clip (id) whose grade shows its qualifier's selection instead of the picture (Color page "show
+    // mask"; read at every render); 0 or below = none
+    std::shared_ptr<const std::atomic<int>> qualifierMask;
     // Composite on the graphics card when Gpu::Service::instance() has a hardware device (CPU path otherwise)
     bool gpu = true;
     // Drawn onto every finished frame (RGBA, straight alpha, output size) after everything else, e.g. the marks of a

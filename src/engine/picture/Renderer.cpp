@@ -508,6 +508,7 @@ struct Renderer::Impl {
         double fps = 25;
         bool preview = false;
         bool bypassGrade = false;
+        int maskClip = 0; // clip whose grade shows its qualifier's selection (preview), 0 = none
         // The video being made (progress bars fill over it): the timeline being rendered (TimelineOps::endFrame), in
         // an export of a range only that range
         int begin = 0, end = 0;
@@ -750,12 +751,15 @@ struct Renderer::Impl {
                 img = std::move(warped);
         }
         if (ColorGrade::active(c) && !ctx.bypassGrade) {
-            const ColorGrade::Params p = ColorGrade::at(c, t);
+            ColorGrade::Params p = ColorGrade::at(c, t);
+            const bool mask = c.id == ctx.maskClip && p.qualifier.on;
+            if (mask) p.view = ColorGrade::View::QualifierMask;
             const QString lp = ColorGrade::lutPath(c);
             const auto l = lp.isEmpty() ? nullptr : lut(lp);
             if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
-            for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t))
-                ColorGrade::applyWindow(img.data(), img.w, img.h, ColorGrade::onPicture(w, QSizeF(ctx.PW, ctx.PH), fit));
+            if (!mask) // the selection alone, without the windows on top
+                for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t))
+                    ColorGrade::applyWindow(img.data(), img.w, img.h, ColorGrade::onPicture(w, QSizeF(ctx.PW, ctx.PH), fit));
         }
         if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
             if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
@@ -2085,7 +2089,7 @@ struct Renderer::Impl {
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
         // original with its effects; not while Before/After shows a graded clip without its grade
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
-            && !(ctx.bypassGrade && ColorGrade::active(*c))) {
+            && !(ctx.bypassGrade && ColorGrade::active(*c)) && c->id != ctx.maskClip) {
             if (const QString file = options.renderCache(*c); !file.isEmpty()) {
                 const Source s = source(file, lane + QStringLiteral("c"));
                 if (s.video) {
@@ -2632,7 +2636,8 @@ struct Renderer::Impl {
         // Shrunk 2:1 or more: mip levels (as Compose::draw's 2x2 steps)
         op.mips = std::hypot(op.m.a, op.m.d) <= 0.5 && std::hypot(op.m.b, op.m.e) <= 0.5;
         if (ColorGrade::active(c) && !ctx.bypassGrade) {
-            const ColorGrade::Params p = ColorGrade::at(c, t);
+            ColorGrade::Params p = ColorGrade::at(c, t);
+            if (c.id == ctx.maskClip && p.qualifier.on) p.view = ColorGrade::View::QualifierMask;
             const QString lp = ColorGrade::lutPath(c);
             auto l = lp.isEmpty() ? nullptr : lut(lp);
             if (!p.isNeutral() || l) {
@@ -2864,7 +2869,7 @@ struct Renderer::Impl {
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
-            && !(ctx.bypassGrade && ColorGrade::active(*c))) {
+            && !(ctx.bypassGrade && ColorGrade::active(*c)) && c->id != ctx.maskClip) {
             if (const QString file = options.renderCache(*c); !file.isEmpty()) {
                 const Source s = source(file, lane + QStringLiteral("c"));
                 if (s.video) {
@@ -3208,6 +3213,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     }
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
+    ctx.maskClip = ctx.preview && d->options.qualifierMask ? d->options.qualifierMask->load() : 0;
 
     // Export renders forward: decoders (and their cached pictures) of clips the export has passed go. A source asked
     // for again later (the same file further on) is opened again.

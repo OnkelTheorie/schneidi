@@ -66,6 +66,8 @@ target_link_libraries(test_pool_remove PRIVATE schneidi_cli_lib)
 schneidi_test(test_color)
 schneidi_test(test_color_bake)
 schneidi_test(test_grade_windows)
+schneidi_test(test_grade_qualifier) # Color page 2 (0.24): curves, qualifier, mask, CLI ops color curves/qualifier, panel
+target_link_libraries(test_grade_qualifier PRIVATE schneidi_cli_lib)
 schneidi_test(test_comp_graph) # compositing graph model (0.19): storage form, validation, order, media paths, node registry
 schneidi_test(test_workspace)
 schneidi_test(test_luts)

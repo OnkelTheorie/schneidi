@@ -2,6 +2,7 @@
 #include "engine/ColorGrade.h"
 
 #include "core/EffectFolders.h"
+#include "core/GradeCurves.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -38,12 +40,16 @@ const QVector<AnimParam> kParams = {
 
 inline double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 
-// Tone curve of a channel (c = 0..2 for R/G/B), x = 0..1 (gamma-encoded like the image)
+// Tone curve of a channel (c = 0..2 for R/G/B), x = 0..1 (gamma-encoded like the image): the primary correction,
+// then the Color page's tone curves (master Y, then the channel's own)
 struct Curve {
     double mul[3], add[3], lift[3], gain[3], expo[3];
     double contrast, pivot;
+    // Tone curves as tables over 0..1 (kToneSteps + 1 samples, linear between): [c] = Y then channel c; empty = none
+    std::vector<float> tone[3];
+    static constexpr int kToneSteps = 4096;
 
-    explicit Curve(const Params& p)
+    explicit Curve(const Correction& p, const Curves* curves = nullptr)
     {
         // White balance (temperature/tint) as channel gain, normalized to equal brightness (Rec. 709)
         const double k = p.temperature / 4000.0 * 0.3, n = p.tint / 100.0 * 0.25;
@@ -61,6 +67,23 @@ struct Curve {
         }
         contrast = std::max(0.0, p.contrast);
         pivot = p.pivot;
+        if (!curves) return;
+        using K = GradeCurves::Kind;
+        const QVector<QPointF>& y = curves->points[int(K::Y)];
+        const bool master = !GradeCurves::isIdentity(y, K::Y);
+        for (int c = 0; c < 3; ++c) {
+            const K own = K(int(K::R) + c);
+            const QVector<QPointF>& pts = curves->points[int(own)];
+            const bool channel = !GradeCurves::isIdentity(pts, own);
+            if (!master && !channel) continue;
+            tone[c].resize(kToneSteps + 1);
+            for (int i = 0; i <= kToneSteps; ++i) {
+                double x = double(i) / kToneSteps;
+                if (master) x = GradeCurves::eval(y, K::Y, x);
+                if (channel) x = GradeCurves::eval(pts, own, x);
+                tone[c][size_t(i)] = float(x);
+            }
+        }
     }
     double operator()(int c, double x) const
     {
@@ -68,7 +91,12 @@ struct Curve {
         x = (x - pivot) * contrast + pivot;     // Contrast around the pivot
         x = x + lift[c] * (1.0 - x);            // Lift: shift black, white stays
         x = clamp01(x * gain[c]);               // Gain: shift white, black stays
-        return expo[c] == 1.0 ? x : std::pow(x, expo[c]); // Gamma: midtones, 0 and 1 stay
+        if (expo[c] != 1.0) x = std::pow(x, expo[c]); // Gamma: midtones, 0 and 1 stay
+        if (tone[c].empty()) return x;
+        const double v = x * kToneSteps;
+        const int i = std::min(int(v), kToneSteps - 1);
+        const double f = v - i;
+        return tone[c][size_t(i)] * (1 - f) + tone[c][size_t(i) + 1] * f;
     }
 };
 
@@ -140,6 +168,104 @@ bool usable(const Lut* lut)
     return lut->data.size() == (lut->is3d ? n * n * n : n) * 3;
 }
 
+// ---- What mixes the channels after the tone curves ----
+// Saturation, hue curves, qualifier and LUT. Without hue curves and qualifier this is what bake() does in fixed point;
+// with them it is computed into a 3D table (kLattice nodes per axis) over the tone curves' output.
+
+constexpr int kLattice = 33;
+constexpr int kHueSteps = 1024;
+
+inline float lut1(const std::vector<float>& t, float x) // table over 0..1 (kHueSteps + 1 samples), periodic or not
+{
+    const float v = std::clamp(x, 0.0f, 1.0f) * kHueSteps;
+    const int i = std::min(int(v), kHueSteps - 1);
+    const float f = v - float(i);
+    return t[size_t(i)] * (1 - f) + t[size_t(i) + 1] * f;
+}
+
+struct Stage {
+    float sat = 1;
+    std::vector<float> hueHue, hueSat, lumSat; // empty = none
+    bool qualifier = false, mask = false;
+    GradeQualifier::Range range;
+    std::optional<Curve> secondary;
+    float secondarySat = 1;
+    const Lut* lut = nullptr;
+
+    Stage(const Params& p, const Lut* l) : lut(l)
+    {
+        sat = float(std::max(0.0, p.saturation / 50.0));
+        using K = GradeCurves::Kind;
+        auto curve = [&](K k, std::vector<float>& out) {
+            const QVector<QPointF>& pts = p.curves.points[int(k)];
+            if (!GradeCurves::isIdentity(pts, k)) out = GradeCurves::table(pts, k, kHueSteps);
+        };
+        curve(K::HueHue, hueHue);
+        curve(K::HueSat, hueSat);
+        curve(K::LumSat, lumSat);
+        mask = p.qualifier.on && p.view == View::QualifierMask;
+        qualifier = p.qualifier.on && (mask || !p.qualifier.correction.isNeutral());
+        if (qualifier) {
+            range = p.qualifier.range;
+            secondary.emplace(p.qualifier.correction);
+            secondarySat = float(std::max(0.0, p.qualifier.correction.saturation / 50.0));
+        }
+    }
+    // Needs the 3D table (more than the fixed-point saturation and LUT of bake())
+    bool mixes() const { return qualifier || !hueHue.empty() || !hueSat.empty() || !lumSat.empty(); }
+
+    static float luma(const float v[3]) { return 0.2126f * v[0] + 0.7152f * v[1] + 0.0722f * v[2]; }
+    static void saturate(float v[3], float f)
+    {
+        if (f == 1.0f) return;
+        const float y = luma(v);
+        for (int c = 0; c < 3; ++c) v[c] = std::clamp(y + (v[c] - y) * f, 0.0f, 1.0f);
+    }
+    // v: the tone curves' output (0..1), in place
+    void operator()(float v[3]) const
+    {
+        saturate(v, sat);
+        if (!hueHue.empty() || !hueSat.empty() || !lumSat.empty()) {
+            double h, s, l;
+            GradeQualifier::measure(v[0], v[1], v[2], &h, &s, &l);
+            const float hue = float(h / 360.0);
+            if (!hueHue.empty()) {
+                // Turn the colour around the gray axis in the Cb/Cr plane (Rec. 709): brightness stays
+                const float turn = (lut1(hueHue, hue) - 0.5f) * float(2 * M_PI);
+                const float y = luma(v);
+                const float cb = (v[2] - y) / 1.8556f, cr = (v[0] - y) / 1.5748f;
+                const float cs = std::cos(turn), sn = std::sin(turn);
+                const float u = cb * cs - cr * sn, w = cb * sn + cr * cs;
+                v[0] = y + 1.5748f * w;
+                v[2] = y + 1.8556f * u;
+                v[1] = (y - 0.2126f * v[0] - 0.0722f * v[2]) / 0.7152f;
+                for (int c = 0; c < 3; ++c) v[c] = std::clamp(v[c], 0.0f, 1.0f);
+            }
+            float f = 1;
+            if (!hueSat.empty()) f *= 2 * lut1(hueSat, hue);
+            if (!lumSat.empty()) f *= 2 * lut1(lumSat, float(l / 100.0));
+            saturate(v, f);
+        }
+        if (qualifier) {
+            const float k = range.weight(v[0], v[1], v[2]);
+            if (mask) {
+                v[0] = v[1] = v[2] = k;
+                return; // the selection itself, without the LUT
+            }
+            if (k > 0) {
+                float s[3];
+                for (int c = 0; c < 3; ++c) s[c] = float((*secondary)(c, v[c]));
+                saturate(s, secondarySat);
+                for (int c = 0; c < 3; ++c) v[c] += (s[c] - v[c]) * k;
+            }
+        }
+        if (lut) {
+            if (lut->is3d) sample3d(*lut, v);
+            else sample1d(*lut, v);
+        }
+    }
+};
+
 // ---- Baked correction ----
 // A pixel goes through: curve per channel (exact table per input byte) -> saturation (mixes the channels, fixed
 // point) -> LUT. A 1D LUT is per channel again; a 3D LUT keeps its own grid: its nodes in fixed point, three
@@ -191,6 +317,7 @@ struct Baked {
     std::shared_ptr<const LutTables> lut;
     Params params;                   // PerPixel
     const Lut* raw = nullptr;        // PerPixel
+    std::shared_ptr<const Lut> own;  // Cube of the 3D table made for hue curves/qualifier (the tables point into it)
 };
 
 namespace {
@@ -365,21 +492,52 @@ void applyRows(uint8_t* rgba, size_t count, const Baked& b)
 
 } // namespace
 
-bool Params::isNeutral() const
+bool Correction::isNeutral() const
 {
     for (int i = 0; i < 4; ++i)
         if (lift[i] != 0 || gamma[i] != 0 || gain[i] != 1 || offset[i] != 25) return false;
     return contrast == 1 && saturation == 50 && temperature == 0 && tint == 0 && exposure == 0;
 }
 
+bool Curves::isIdentity() const
+{
+    for (int k = 0; k < GradeCurves::kCount; ++k)
+        if (!GradeCurves::isIdentity(points[k], GradeCurves::Kind(k))) return false;
+    return true;
+}
+
+bool Curves::hasHueCurves() const
+{
+    using K = GradeCurves::Kind;
+    for (K k : {K::HueHue, K::HueSat, K::LumSat})
+        if (!GradeCurves::isIdentity(points[int(k)], k)) return true;
+    return false;
+}
+
+bool Params::isNeutral() const
+{
+    if (!Correction::isNeutral() || !curves.isIdentity()) return false;
+    return !qualifier.on || (view == View::Picture && qualifier.correction.isNeutral());
+}
+
 const QVector<AnimParam>& animParams() { return kParams; }
+
+const QVector<AnimParam>& qualifierParams()
+{
+    static const QVector<AnimParam> list = [] {
+        QVector<AnimParam> l;
+        for (const QString& k : GradeWindows::correctionKeys()) l << GradeQualifier::param(k);
+        return l;
+    }();
+    return list;
+}
 
 namespace {
 
 // Values of the parameters `list` (order like kParams) at clip frame t
 Params paramsAt(const Clip& c, const QVector<AnimParam>& list, double t)
 {
-    Params p;
+    Params p; // only its Correction part is set
     if (!EffectRegistry::has(c, EffectId)) return p;
     auto v = [&](int i) { return Keys::valueAt(c, list[i], t); };
     for (int i = 0; i < 4; ++i) {
@@ -399,7 +557,22 @@ Params paramsAt(const Clip& c, const QVector<AnimParam>& list, double t)
 
 } // namespace
 
-Params at(const Clip& c, double t) { return paramsAt(c, kParams, t); }
+Params at(const Clip& c, double t)
+{
+    Params p = paramsAt(c, kParams, t);
+    const EffectInstance* e = EffectRegistry::instance(c, EffectId);
+    if (!e) return p;
+    for (int k = 0; k < GradeCurves::kCount; ++k) {
+        const auto it = e->params.constFind(QLatin1String(GradeCurves::key(GradeCurves::Kind(k))));
+        if (it != e->params.cend()) p.curves.points[k] = GradeCurves::parse(it->toString());
+    }
+    if (GradeQualifier::exists(c)) {
+        p.qualifier.on = true;
+        p.qualifier.range = GradeQualifier::rangeAt(c, t);
+        p.qualifier.correction = paramsAt(c, qualifierParams(), t);
+    }
+    return p;
+}
 
 const QVector<AnimParam>& windowParams(int n)
 {
@@ -440,6 +613,8 @@ bool active(const Clip& c)
     if (!lutPath(c).isEmpty()) return true;
     if (std::any_of(kParams.begin(), kParams.end(), [&](AnimParam p) { return Keys::animated(c, p); })) return true;
     if (!at(c, 0).isNeutral()) return true;
+    if (GradeQualifier::exists(c)) return true; // its mask can be shown even with a neutral correction
+    if (!at(c, 0).curves.isIdentity()) return true;
     for (int n : GradeWindows::list(c)) {
         const QVector<AnimParam>& list = windowParams(n);
         if (std::any_of(list.begin(), list.end(), [&](AnimParam p) { return Keys::animated(c, p); })) return true;
@@ -775,11 +950,74 @@ void revalidateLuts()
 
 void prepare(Lut& lut) { lut.tables = makeTables(lut); }
 
+namespace {
+
+// Hue curves or a qualifier: the stage after the tone curves as a 3D table over their output (Cube), kept for the
+// last few corrections (a still or a paused frame bakes the same one again and again; keyframes make new ones)
+std::shared_ptr<const Baked> bakeMixed(const Params& p, const Lut* lut, const Stage& stage)
+{
+    struct Entry {
+        Params params;
+        const Lut* lut;
+        std::shared_ptr<const LutTables> tables; // holds the LUT's tables: the address cannot name another LUT
+        std::shared_ptr<const Baked> baked;
+    };
+    static std::mutex mutex;
+    static std::vector<Entry> cache; // most recent first
+    constexpr size_t kKept = 8;
+    const bool cacheable = !lut || lut->tables;
+    if (cacheable) {
+        std::lock_guard lock(mutex);
+        for (size_t i = 0; i < cache.size(); ++i)
+            if (cache[i].lut == lut && (!lut || cache[i].tables == lut->tables) && cache[i].params == p) {
+                std::rotate(cache.begin(), cache.begin() + qsizetype(i), cache.begin() + qsizetype(i) + 1);
+                return cache.front().baked;
+            }
+    }
+    auto table = std::make_shared<Lut>();
+    const int n = kLattice;
+    table->size = n;
+    table->is3d = true;
+    table->data.resize(qsizetype(n) * n * n * 3);
+    float* data = table->data.data();
+    const int threads = std::clamp(int(std::thread::hardware_concurrency()) / 2, 1, 4);
+    parallelRows(n * n, n, threads, [&](int from, int to) {
+        for (int b = from; b < to; ++b)
+            for (int g = 0; g < n; ++g)
+                for (int r = 0; r < n; ++r) {
+                    float v[3] = {float(r) / (n - 1), float(g) / (n - 1), float(b) / (n - 1)};
+                    stage(v);
+                    float* out = data + (size_t(b) * n * n + size_t(g) * n + size_t(r)) * 3;
+                    out[0] = v[0];
+                    out[1] = v[1];
+                    out[2] = v[2];
+                }
+    });
+    prepare(*table);
+    auto baked = std::make_shared<Baked>();
+    baked->kind = Baked::Cube;
+    baked->lut = table->tables;
+    const Curve curve(p, &p.curves);
+    for (int c = 0; c < 3; ++c)
+        for (int i = 0; i < 256; ++i) baked->coord[c][i] = cubeCoord(*table, c, float(curve(c, i / 255.0)));
+    baked->own = std::move(table);
+    if (cacheable) {
+        std::lock_guard lock(mutex);
+        cache.insert(cache.begin(), {p, lut, lut ? lut->tables : nullptr, baked});
+        if (cache.size() > kKept) cache.pop_back();
+    }
+    return baked;
+}
+
+} // namespace
+
 std::shared_ptr<const Baked> bake(const Params& p, const Lut* lut)
 {
-    auto b = std::make_shared<Baked>();
     if (!usable(lut)) lut = nullptr;
-    const Curve curve(p);
+    if (p.qualifier.on || p.curves.hasHueCurves())
+        if (const Stage stage(p, lut); stage.mixes()) return bakeMixed(p, lut, stage);
+    auto b = std::make_shared<Baked>();
+    const Curve curve(p, &p.curves);
     const double s = std::max(0.0, p.saturation / 50.0);
     const float sf = float(s);
     if (!lut && s == 1.0) {
@@ -846,8 +1084,21 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
 void applyReference(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut)
 {
     if (!rgba || width <= 0 || height <= 0) return;
-    const Curve curve(p);
+    const Curve curve(p, &p.curves);
     const size_t n = size_t(width) * size_t(height);
+    if (p.qualifier.on || p.curves.hasHueCurves()) {
+        if (const Stage stage(p, usable(lut) ? lut : nullptr); stage.mixes()) { // exact, per pixel
+            float table[3][256];
+            for (int c = 0; c < 3; ++c)
+                for (int i = 0; i < 256; ++i) table[c][i] = float(curve(c, i / 255.0));
+            for (size_t i = 0; i < n; ++i, rgba += 4) {
+                float v[3] = {table[0][rgba[0]], table[1][rgba[1]], table[2][rgba[2]]};
+                stage(v);
+                for (int c = 0; c < 3; ++c) rgba[c] = toByte(v[c]);
+            }
+            return;
+        }
+    }
     const double s = std::max(0.0, p.saturation / 50.0);
     if (!lut && s == 1.0) { // fast: channel curves only
         uint8_t table[3][256];

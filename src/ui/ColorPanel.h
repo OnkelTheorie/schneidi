@@ -17,11 +17,16 @@ class QThread;
 class QToolButton;
 class ScrubField;
 class ColorWheel;
+class CurveEditor;
+class MasterWheel;
+class QualifierBar;
+class QStackedWidget;
 class ViewerOverlay;
 class WindowOverlay;
 
-// Color page at the bottom (like DaVinci "Primaries – Color Wheels", slimmed down): Lift/Gamma/Gain/Offset wheels with
-// Master (Y) and R/G/B, below them Contrast, Pivot, Saturation, Temperature, Tint, Exposure, plus LUT (.cube).
+// Color page at the bottom, three palettes (header buttons): the wheels (Lift/Gamma/Gain/Offset with a master wheel
+// for Y and the R/G/B balance, below them Contrast, Pivot, Saturation, Temperature, Tint, Exposure, plus LUT), the
+// curves (core/GradeCurves) and the qualifier (core/GradeQualifier: pick colours, show the selection as a mask).
 // Acts on the selected video clips, without a selection on the topmost video clip at the playhead (like DaVinci:
 // the clip under the playhead). Keyframes for the whole correction (◀ ◆ ▶), dragging = one undo step.
 // Windows (shape masks, core/GradeWindows) at the right: the wheels and sliders act on the chosen layer – the
@@ -40,7 +45,12 @@ public:
 
     // Outline of the chosen window for the viewer (draws only while the panel is shown)
     ViewerOverlay* overlay() const;
-    int layer() const { return m_layer; } // 0 = whole picture, 1..4 = window
+    int layer() const { return m_layer; } // 0 = whole picture, 1..GradeWindows::kMax = window, GradeQualifier::kLayer
+    enum Palette { Wheels, CurvesPalette, QualifierPalette };
+    void setPalette(int palette);
+    int palette() const { return m_palette; }
+    // A colour picked for the qualifier (MainWindow's pipette): its range is set around it
+    void applyQualifierColor(const QColor& color);
     void setLayer(int layer);
     void nextLayer(); // whole picture -> window 1 -> … -> whole picture
     // New window (shape "rectangle"/"ellipse") on the shown clip and the other targets, then it is the chosen layer
@@ -61,6 +71,8 @@ signals:
     void seekRequested(int frame); // keyframe arrows
     void trackingFinished();
     void tourRequested(); // the button shown without a clip: the Color tour
+    void qualifierPickRequested(int clipId); // the qualifier's pipette: pick on the clip's picture before it
+    void qualifierMaskChanged(int clipId);   // "show mask" for this clip (0 = off), for Engine::setQualifierMask
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -74,6 +86,7 @@ private:
         double neutral; // default value of each channel
         double range;   // channel change at the wheel edge
         ColorWheel* wheel = nullptr;
+        MasterWheel* master = nullptr;
         ScrubField* field[4] = {};
     };
     struct Slider {
@@ -87,6 +100,11 @@ private:
     AnimParam mapped(AnimParam p) const;
     QVector<AnimParam> layerParams() const; // everything the keyframe button keys on the chosen layer
     void refreshWindows(const Clip* c, int t);
+    QWidget* buildCurves();
+    QWidget* buildQualifier();
+    void refreshCurves(const Clip* c);
+    void refreshQualifier(const Clip* c, int t);
+    void updateMask(); // tells the viewer which clip shows its qualifier mask
     QWidget* buildSlider(Slider& s, const QString& label, double min, double max, double step, int decimals);
     QToolButton* smallButton(const QString& text, const QString& tip);
     QVector<int> targets() const;
@@ -130,6 +148,29 @@ private:
         ScrubField* field = nullptr;
     };
     QVector<WindowField> m_windowFields;
+
+    // Palettes
+    int m_palette = Wheels;
+    QStackedWidget* m_palettes = nullptr;
+    QVector<QToolButton*> m_paletteButtons;
+    // Curves
+    CurveEditor* m_curve = nullptr;
+    QVector<QToolButton*> m_curveButtons; // by GradeCurves::Kind
+    QToolButton* m_curveReset = nullptr;
+    QLabel* m_curveNote = nullptr;
+    // Qualifier
+    QWidget* m_qualEmpty = nullptr;
+    QWidget* m_qualControls = nullptr;
+    QCheckBox* m_qualInvert = nullptr;
+    QToolButton* m_qualMask = nullptr;
+    struct QualField {
+        QString key;
+        ScrubField* field = nullptr;
+    };
+    QVector<QualField> m_qualFields;
+    QualifierBar* m_qualBars[3] = {};
+    bool m_showMask = false;
+    int m_maskSent = 0;
 
     // Tracking
     QToolButton* m_trackBack = nullptr;

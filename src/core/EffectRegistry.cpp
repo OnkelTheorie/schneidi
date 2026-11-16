@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/EffectRegistry.h"
 
+#include "core/GradeCurves.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -14,11 +16,28 @@ namespace EffectRegistry {
 
 namespace {
 
-// The grade gets the parameters of its windows (Color page, core/GradeWindows)
+// The grade gets the parameters of its curves (text, sparse: core/GradeCurves), its windows (core/GradeWindows) and its
+// qualifier (core/GradeQualifier)
 QVector<EffectDescriptor> withWindows(QVector<EffectDescriptor> effects)
 {
     for (EffectDescriptor& d : effects)
-        if (d.id == QLatin1String("grade")) d.params += GradeWindows::params(d.params);
+        if (d.id == QLatin1String("grade")) {
+            const QVector<EffectParam> own = d.params;
+            static const char* labels[GradeCurves::kCount] = {N_("Kurve Y"), N_("Kurve R"), N_("Kurve G"), N_("Kurve B"),
+                                                             N_("Farbton gegen Farbton"), N_("Farbton gegen Sättigung"),
+                                                             N_("Helligkeit gegen Sättigung")};
+            for (int k = 0; k < GradeCurves::kCount; ++k) {
+                EffectParam p;
+                p.key = GradeCurves::key(GradeCurves::Kind(k));
+                p.label = T(labels[k]);
+                p.type = EffectParam::Text;
+                p.defaultValue = QString();
+                p.sparse = true;
+                d.params << p;
+            }
+            d.params += GradeWindows::params(own);
+            d.params += GradeQualifier::params(own);
+        }
     return effects;
 }
 

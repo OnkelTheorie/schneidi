@@ -162,6 +162,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/SystemMemory.h       src/core/SystemMemory.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
+    src/core/GradeCurves.h        src/core/GradeCurves.cpp
+    src/core/GradeQualifier.h     src/core/GradeQualifier.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
     src/core/CompTrack.h          src/core/CompTrack.cpp
     src/core/CompRecipes.h        src/core/CompRecipes.cpp
@@ -471,6 +473,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/InspectorTransition.cpp
     src/ui/InspectorSubtitles.cpp
     src/ui/ColorPanel.h           src/ui/ColorPanel.cpp
+    src/ui/CurveEditor.h          src/ui/CurveEditor.cpp
     src/ui/Scopes.h               src/ui/Scopes.cpp
     src/ui/ScopesPanel.h          src/ui/ScopesPanel.cpp
     src/ui/Mixer.h                src/ui/Mixer.cpp

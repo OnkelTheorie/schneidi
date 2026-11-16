@@ -330,7 +330,8 @@ private:
     void projectSettingsDialog();
     void grabStill();
     // Green Screen pipette (Inspector): the viewer shows the clip alone without its key until a click picks the color
-    void startKeyPick(int clipId);
+    // qualifier = the Color page's qualifier pipette (the picture before the qualifier, LUT and windows)
+    void startKeyPick(int clipId, bool qualifier = false);
     void stopKeyPick();
     void updateRenderCacheBar(); // render cache bar above the timeline
     void updateRenderCacheJob(bool allDone); // its job at the bottom right (ui/BackgroundJobs)
