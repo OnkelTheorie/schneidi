@@ -79,7 +79,9 @@ struct EncoderConfig {
     // Constant quality: the clip's mean complexity (crfClipComplexity), set by ChunkPlan::configFor so every
     // chunk measures against the whole clip; < 0 = the mean of the pictures seen so far.
     double crfClipComplexity = -1.0;
-    double aqStrength = 1.5; // adaptive quantisation (finer QP on flat areas); 0 = off. 1.0 until 14.11.2026
+    // Adaptive quantisation (finer QP on flat areas); 0 = off. 1.0 until 14.11.2026. Macroblocks below a
+    // texture energy of 3 (log2 of 256 x variance + 1) count as equally flat (since 16.11.2026).
+    double aqStrength = 1.5;
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
     bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
@@ -159,6 +161,9 @@ struct EncoderConfig {
     // coefficients to a candidate's cost, so one that keeps the texture or grain of the source
     // beats one that is closer in squared error but smoother; the winner is also tried with a
     // quantisation that keeps more of the small coefficients. PSNR and SSIM drop by design.
+    // Like bSharp it follows the source macroblock's texture (measured by the adaptive quantisation, so only
+    // with aqStrength > 0): none below an energy of 6, in full from 9 - a flat or smoothly shaded macroblock
+    // has no texture to keep (a smooth gradient at 0.5 Mbit/s: +3 dB PSNR-Y without the two there).
     double psyRd = 1.0; // 0.0 until 14.11.2026
     // The psy strength by the picture's QP: psyRd up to psyQpFull, falling linearly to 0 at psyQpOff
     // (psyQpOff <= psyQpFull = the same strength at every QP).
