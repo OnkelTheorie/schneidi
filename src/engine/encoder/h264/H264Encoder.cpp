@@ -3445,6 +3445,22 @@ double Encoder::vbvPredict(int type, double cost, double qp) const
     return qp >= ref ? k * std::exp2(-qp / 6.0) : k * std::exp2(-ref / 6.0 + (ref - qp) / gVbvSteep);
 }
 
+// A P or B picture whose motion cost is near its intra cost (a cut, a flash the scene detection let through)
+// codes like an I picture: as many bits per cost as one, far more than a P picture's (measured 2.8x on a cut
+// inside a run of B pictures), so it goes by the I pictures' k and teaches them.
+static const double gVbvCut = std::getenv("H264_VBV_CUT") ? std::atof(std::getenv("H264_VBV_CUT")) : 0.6;
+
+int Encoder::vbvClass(const LookaheadFrame& f, int type) const
+{
+    if (type == 0)
+        return 0;
+    const bool afterB = type == 1 && useB() && f.refDist > 1;
+    const double motion = afterB && size_t(f.refDist) < f.fwd.size() && f.fwd[size_t(f.refDist)].valid() ? f.fwd[size_t(f.refDist)].sum : f.interSum;
+    if (gVbvCut > 0 && f.intraSum > 0 && motion >= gVbvCut * f.intraSum)
+        return 0;
+    return afterB ? 3 : type;
+}
+
 // The bit model's cost of a queued picture (the rate control's: the macroblock tree's finer QPs included); with
 // f null (no lookahead) 1, so k is a picture's bits at QP 0 of its type.
 double Encoder::vbvCost(const LookaheadFrame* f, int type) const
@@ -3518,25 +3534,23 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
         low = std::min(low - gVbvSafe * p.second + tick, size);
     }
     // The planned pictures in coding order (a run of B pictures after the reference picture that ends it).
-    std::vector<std::pair<int, double>> plan; // (class, cost)
+    struct Planned {
+        int type, cls;
+        double cost;
+    };
+    std::vector<Planned> plan;
     if (frame) {
-        std::vector<std::pair<int, double>> run;
+        std::vector<Planned> run;
         for (size_t j = 0; j < queue_.size(); ++j) {
             const LookaheadFrame& g = queue_[j];
             if (g.coded || &g == frame)
                 continue;
             const int t = g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1;
             const double c = vbvCost(&g, t);
-            if (t == 1 && vbvClass(g, t) == 3) {
-                plan.push_back({3, c});
-                plan.insert(plan.end(), run.begin(), run.end());
-                run.clear();
-                continue;
-            }
             if (t == 2) {
-                run.push_back({t, c});
+                run.push_back({t, vbvClass(g, t), c});
             } else {
-                plan.push_back({t, c});
+                plan.push_back({t, vbvClass(g, t), c});
                 plan.insert(plan.end(), run.begin(), run.end());
                 run.clear();
             }
@@ -3550,8 +3564,8 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
         if (low - gVbvSafe * cur < 0)
             return false;
         double f = std::min(fill - cur + tick, size), seconds = 0;
-        for (const auto& [t, c] : plan) {
-            f -= vbvPredict(t, c, std::min(51.0, base + offset(t) + d));
+        for (const Planned& p : plan) {
+            f -= vbvPredict(p.cls, p.cost, std::min(51.0, base + offset(p.type) + d));
             if (f < 0)
                 return false;
             f = std::min(f + tick, size);

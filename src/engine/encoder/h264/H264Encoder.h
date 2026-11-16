@@ -555,7 +555,7 @@ private:
     double vbvFill_ = 0;                      // decision side, after the learned pictures
     // Bits * 2^(qp/6) / cost per class (I, P, B, P after a run of B pictures: its cost is over a longer distance), decaying.
     double vbvKNum_[4] = {}, vbvKDen_[4] = {};
-    int vbvClass(const LookaheadFrame& f, int type) const { return type == 1 && useB() && f.refDist > 1 ? 3 : type; }
+    int vbvClass(const LookaheadFrame& f, int type) const;
     double vbvOutFill_ = 0;                   // output side
     int vbvBpFrame_ = 0;                      // coding index of the last access unit with a buffering period
     int vbvUnderflows_ = 0;
