@@ -522,7 +522,8 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 void ColorPanel::setPalette(int palette)
 {
     m_palette = std::clamp(palette, 0, int(QualifierPalette));
-    QSettings().setValue("color/palette", m_palette);
+    QSettings settings; // only a change is written (a tour must leave the settings as they were)
+    if (settings.value("color/palette", int(Wheels)).toInt() != m_palette) settings.setValue("color/palette", m_palette);
     m_palettes->setCurrentIndex(m_palette);
     for (int i = 0; i < m_paletteButtons.size(); ++i) m_paletteButtons[i]->setChecked(i == m_palette);
     refresh();

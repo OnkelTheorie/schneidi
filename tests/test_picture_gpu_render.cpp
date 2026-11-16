@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The picture engine's GPU path (Picture::Renderer with Options::gpu) against its CPU path, whole frames of timelines:
-// plain clips, transforms/crop/opacity, colour grade (with LUT), cross dissolve, luma and plain wipes, dip to colour,
+// plain clips, transforms/crop/opacity, colour grade (with LUT, curves and qualifier), cross dissolve, luma and plain wipes, dip to colour,
 // stills, and what the card leaves to the CPU per layer (titles, blur, blur fill, wipe border, subtitles). Tolerance
 // instead of bit equality. Also the encoder planes written by the card (RenderHints::yuv) against
 // OutputColor::fromRgba of the CPU frame. Skips (77) without a hardware GPU device (headless, software rasterizer).
@@ -183,6 +183,28 @@ int main(int argc, char** argv)
         tl.video[2].clips << top;
         same("3 tracks transform+grade", tl, {0, 29}, 1.5, 30);
         same("3 tracks preview", tl, {10}, 2.0, 30, Picture::Mode::Preview, QSize(960, 540));
+    }
+
+    // Color page 2 (0.24): tone and hue curves and a qualifier bake into the grade's 3D table, the card samples it
+    {
+        Clip c = media(1, g_a, 0, 30);
+        grade(c, false);
+        EffectInstance* e = EffectRegistry::instance(c, "grade");
+        e->params["curveY"] = QString("0,0 0.3,0.22 0.7,0.8 1,1");
+        e->params["hueSat"] = QString("0.5,0.5 0.66,0.9 0.83,0.5");
+        e->params["q.hue"] = 0.0;
+        e->params["q.hueWidth"] = 60.0;
+        e->params["q.hueSoft"] = 20.0;
+        e->params["q.satLow"] = 20.0;
+        e->params["q.satHigh"] = 100.0;
+        e->params["q.satSoft"] = 10.0;
+        e->params["q.lumLow"] = 0.0;
+        e->params["q.lumHigh"] = 100.0;
+        e->params["q.lumSoft"] = 10.0;
+        e->params["q.invert"] = false;
+        e->params["q.saturation"] = 10.0;
+        e->params["q.gainY"] = 1.2;
+        same("curves + qualifier", oneTrack({c}), {0, 12}, 1.5, 30);
     }
 
     // A clip tilted in depth over a plain one: the card leaves it to the CPU (homography), the frame stays the same
