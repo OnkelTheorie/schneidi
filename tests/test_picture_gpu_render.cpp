@@ -453,11 +453,43 @@ int main(int argc, char** argv)
                         layout == OutputColor::Layout::Nv12 ? "NV12" : "4:2:0", d.mean, d.max, d.psnr);
             CHECK(d.mean <= 1.0 && d.psnr >= 40);
         }
-        // A layout the card does not write: RGBA as usual
-        OutputColor::Target t10;
-        t10.bits = 10;
+        // 10 bit (0.24, H.265/AV1 10 bit): the card writes 16-bit words from an RGBA16F frame; P010 too
+        for (const bool msb : {false, true}) {
+            std::vector<uint16_t> ref(size_t(W) * H * 3 / 2), got(ref.size(), 7);
+            auto targetOf = [&](std::vector<uint16_t>& v) {
+                OutputColor::Target t;
+                t.layout = msb ? OutputColor::Layout::Nv12 : OutputColor::Layout::Yuv420;
+                t.bits = 10;
+                t.msb = msb;
+                t.colorspace = 709;
+                auto* b = reinterpret_cast<uint8_t*>(v.data());
+                t.planes[0] = b;
+                t.strides[0] = W * 2;
+                t.planes[1] = b + size_t(W) * H * 2;
+                t.strides[1] = msb ? W * 2 : W;
+                t.planes[2] = t.planes[1] + size_t(W / 2) * (H / 2) * 2;
+                t.strides[2] = W;
+                return t;
+            };
+            const Picture::Frame a = cpu.render(11);
+            if (!CHECK(!a.isNull())) continue;
+            OutputColor::fromRgba(a.bits(), W, H, a.stride(), targetOf(ref));
+            const OutputColor::Target t = targetOf(got);
+            Picture::RenderHints hints;
+            hints.yuv = &t;
+            const Picture::Frame b = gpu.render(11, hints);
+            CHECK(!b.isNull() && b.yuvWritten());
+            double sum = 0;
+            for (size_t i = 0; i < ref.size(); ++i) sum += std::abs(int(ref[i] >> (msb ? 6 : 0)) - int(got[i] >> (msb ? 6 : 0)));
+            std::printf("  yuv readback 10 bit %-7s mean %.3f (10-bit steps)\n", msb ? "P010" : "4:2:0", sum / ref.size());
+            CHECK(sum / ref.size() <= 4.0);
+        }
+        // A layout the card does not write (4:4:4): RGBA as usual
+        OutputColor::Target t444;
+        t444.layout = OutputColor::Layout::Yuv444;
+        t444.bits = 10;
         Picture::RenderHints hints;
-        hints.yuv = &t10;
+        hints.yuv = &t444;
         const Picture::Frame c = gpu.render(12, hints);
         CHECK(!c.isNull() && !c.yuvWritten() && c.bits());
         CHECK(gpu.stats().framesGpu >= 3);
