@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Hardware.h"
 #include "engine/CpuPath.h"
+#include "engine/GpuAdapter.h"
 
 #include <QSettings>
 #include <QThreadPool>
@@ -92,8 +93,12 @@ AVBufferRef* open(AVHWDeviceType type)
     o.opening = true;
     lock.unlock();
     AVBufferRef* ctx = nullptr;
-    // VAAPI: libva's default is the first render node; CUDA: device 0; D3D11VA: default adapter
-    const bool ok = av_hwdevice_ctx_create(&ctx, type, nullptr, nullptr, 0) >= 0;
+    // VAAPI: libva's default is the first render node; CUDA: device 0; D3D11VA: the adapter GpuAdapter chose (the
+    // picture engine's card: decoded frames need no trip between two cards), else adapter 0
+    QByteArray device;
+    if (type == AV_HWDEVICE_TYPE_D3D11VA && GpuAdapter::chosen().index >= 0)
+        device = QByteArray::number(GpuAdapter::chosen().index);
+    const bool ok = av_hwdevice_ctx_create(&ctx, type, device.isEmpty() ? nullptr : device.constData(), nullptr, 0) >= 0;
     qInfo("Video decoding: %s %s", av_hwdevice_get_type_name(type), ok ? "ready" : "not available");
     lock.lock();
     o.context = ok ? ctx : nullptr;

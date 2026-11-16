@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QThreadPool>
 #include <algorithm>
 #include <cmath>
@@ -35,6 +36,7 @@ struct State {
     ProbeState probe = ProbeState::Idle;
     QHash<QString, int> results; // "codec WxH" -> 1 works, -1 fails
     QString vaapiDevice;         // render device chosen by the probe (empty = first one found)
+    QHash<QString, QString> reasons; // codec -> driverHint() of its failed probe test
 };
 
 State& state()
@@ -82,8 +84,8 @@ QStringList argumentsFor(const QString& codec, QSize size, int crf, const QStrin
     return args;
 }
 
-// Runs test encodes in parallel (blocking), returns which worked
-QVector<bool> runTests(const QVector<QStringList>& argLists)
+// Runs test encodes in parallel (blocking), returns which worked; outputs: FFmpeg's output of each test
+QVector<bool> runTests(const QVector<QStringList>& argLists, QStringList* outputs = nullptr)
 {
     const QString ffmpeg = Bundle::tool("ffmpeg");
     std::vector<std::unique_ptr<QProcess>> procs;
@@ -102,8 +104,9 @@ QVector<bool> runTests(const QVector<QStringList>& argLists)
             p->waitForFinished(2000);
             works = false;
         }
-        if (!works && Bundle::verboseLogging())
-            qInfo("Hardware encoder test failed: %s", p->readAll().trimmed().constData());
+        const QByteArray output = p->readAll().trimmed();
+        if (!works && Bundle::verboseLogging()) qInfo("Hardware encoder test failed: %s", output.constData());
+        if (outputs) *outputs << QString::fromUtf8(output);
         ok << works;
     }
     return ok;
@@ -121,9 +124,18 @@ void runProbe()
         for (const char* format : {"h264", "h265"}) codecs << codecName(e, format);
     QVector<QStringList> args;
     for (const QString& c : codecs) args << argumentsFor(c, kProbeSize, 22, {});
-    const QVector<bool> ok = runTests(args);
+    QStringList outputs;
+    const QVector<bool> ok = runTests(args, &outputs);
     QHash<QString, int> results;
-    for (int i = 0; i < codecs.size(); ++i) results[cacheKey(codecs[i], kProbeSize)] = ok[i] ? 1 : -1;
+    QHash<QString, QString> reasons;
+    for (int i = 0; i < codecs.size(); ++i) {
+        results[cacheKey(codecs[i], kProbeSize)] = ok[i] ? 1 : -1;
+        if (!ok[i])
+            if (const QString hint = driverHint(outputs.value(i)); !hint.isEmpty()) {
+                reasons[codecs[i]] = hint;
+                qWarning("%s: %s", qPrintable(codecs[i]), qPrintable(outputs.value(i).simplified()));
+            }
+    }
 
     // VAAPI: the first render device where H.264 or H.265 works (with several cards e.g. NVIDIA on renderD128 and
     // the Intel/AMD chip on renderD129)
@@ -149,6 +161,7 @@ void runProbe()
         std::lock_guard lock(st.mutex);
         for (auto it = results.cbegin(); it != results.cend(); ++it) st.results.insert(it.key(), it.value());
         if (!chosen.isEmpty()) st.vaapiDevice = chosen;
+        st.reasons = reasons;
         st.probe = ProbeState::Done;
     }
     st.done.notify_all();
@@ -501,6 +514,9 @@ static Choice resolveHardware(VideoEncoder wanted, const QString& format)
             c.codec = codecName(list.first(), format);
         } else {
             c.codec = software;
+            // An NVIDIA card whose driver is too old for NVENC: say so (a driver update makes exports much faster)
+            if (const QString reason = unavailableReason(VideoEncoder::Nvenc); !reason.isEmpty())
+                c.note = T("%1 Mit Software gerendert.").arg(reason);
         }
         return c;
     }
@@ -509,9 +525,42 @@ static Choice resolveHardware(VideoEncoder wanted, const QString& format)
         c.codec = codecName(wanted, format);
     } else {
         c.codec = software;
-        c.note = T("%1 ist auf diesem Rechner nicht verfügbar, mit Software gerendert.").arg(videoEncoderLabel(wanted));
+        const QString reason = unavailableReason(wanted);
+        c.note = reason.isEmpty()
+                     ? T("%1 ist auf diesem Rechner nicht verfügbar, mit Software gerendert.").arg(videoEncoderLabel(wanted))
+                     : T("%1 Mit Software gerendert.").arg(reason);
     }
     return c;
+}
+
+QString driverHint(const QString& ffmpegOutput)
+{
+    // FFmpeg's nvenc.c: "Driver does not support the required nvenc API version. Required: 13.0 Found: 12.2" and
+    // "The minimum required Nvidia driver for nvenc is 570.0 or newer"
+    static const QRegularExpression api(QStringLiteral("nvenc API version\\.?\\s*Required:\\s*(\\d+\\.\\d+)\\s*Found:\\s*(\\d+\\.\\d+)"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression driver(QStringLiteral("minimum required Nvidia driver for nvenc is\\s*([0-9][0-9.]*[0-9])"),
+                                           QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch a = api.match(ffmpegOutput), d = driver.match(ffmpegOutput);
+    if (!a.hasMatch() && !d.hasMatch()) return {};
+    if (a.hasMatch() && d.hasMatch())
+        return T("NVIDIA-Treiber zu alt für NVENC (gefunden: API %1, nötig: API %2, Treiber %3 oder neuer) – bitte "
+                 "aktualisieren.")
+            .arg(a.captured(2), a.captured(1), d.captured(1));
+    if (a.hasMatch())
+        return T("NVIDIA-Treiber zu alt für NVENC (gefunden: API %1, nötig: API %2) – bitte aktualisieren.")
+            .arg(a.captured(2), a.captured(1));
+    return T("NVIDIA-Treiber zu alt für NVENC (nötig: Treiber %1 oder neuer) – bitte aktualisieren.").arg(d.captured(1));
+}
+
+QString unavailableReason(VideoEncoder e)
+{
+    if (e != VideoEncoder::Nvenc && e != VideoEncoder::Qsv && e != VideoEncoder::Vaapi) return {};
+    State& st = state();
+    std::lock_guard lock(st.mutex);
+    for (const char* format : {"h264", "h265"})
+        if (const QString r = st.reasons.value(codecName(e, format)); !r.isEmpty()) return r;
+    return {};
 }
 
 void resetForTests()
@@ -522,13 +571,16 @@ void resetForTests()
     st.probe = ProbeState::Idle;
     st.results.clear();
     st.vaapiDevice.clear();
+    st.reasons.clear();
 }
 
-void fakeProbeForTests(const QStringList& working)
+void fakeProbeForTests(const QStringList& working, const QString& nvencReason)
 {
     resetForTests();
     State& st = state();
     std::lock_guard lock(st.mutex);
+    if (!nvencReason.isEmpty())
+        for (const char* format : {"h264", "h265"}) st.reasons[codecName(VideoEncoder::Nvenc, format)] = nvencReason;
     for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv, VideoEncoder::Vaapi})
         for (const char* format : {"h264", "h265"}) {
             const QString codec = codecName(e, format);

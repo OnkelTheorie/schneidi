@@ -106,6 +106,7 @@ private:
     // H.264/H.265 would use the free encoder (no graphics card, no x264/x265): hint with a button to the extension
     QWidget* m_betterRow = nullptr;
     QLabel* m_betterText = nullptr;
+    QLabel* m_driverHint = nullptr; // NVIDIA driver too old for NVENC (from the probe)
     VideoEncoder m_wantedEncoder = VideoEncoder::Auto; // from the preset/last choice (kept across format changes)
     int m_maxFps = 0; // from the preset (Shorts/Reels/TikTok: up to 60 fps) while the frame rate follows the timeline
     QComboBox* m_audioBitrate;

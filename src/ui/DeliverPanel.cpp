@@ -294,6 +294,11 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     betterLayout->addWidget(betterBtn, 0, Qt::AlignTop);
     m_betterRow->hide();
     form->addRow(QString(), m_betterRow);
+    m_driverHint = new QLabel;
+    m_driverHint->setWordWrap(true);
+    m_driverHint->setObjectName("hint");
+    m_driverHint->hide();
+    form->addRow(QString(), m_driverHint);
     form->addRow(T("Audio-Codec"), m_audioFormat);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
     m_form = form;
@@ -739,6 +744,12 @@ void DeliverPanel::updateEncoders()
                                   .arg(QLatin1String(f.id).startsWith(QLatin1String("h265")) ? "H.265" : "H.264",
                                        QLatin1String(f.id).startsWith(QLatin1String("h265")) ? "kvazaar" : "OpenH264"));
     m_betterRow->setVisible(better);
+    // An NVIDIA card whose driver is too old for NVENC: say why it is missing and what helps
+    const QString driver = f.hardware && probed && !hardware.contains(VideoEncoder::Nvenc)
+                               ? HardwareEncoders::unavailableReason(VideoEncoder::Nvenc)
+                               : QString();
+    if (m_driverHint->text() != driver) m_driverHint->setText(driver);
+    m_driverHint->setVisible(!driver.isEmpty());
     m_encoder->setEnabled(f.hardware);
     m_encoder->setToolTip(!f.hardware ? T("Bei diesem Format fest")
                           : !probed     ? T("Grafikkarte wird noch geprüft …")

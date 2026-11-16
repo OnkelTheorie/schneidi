@@ -3,6 +3,7 @@
 #include "engine/picture/gpu/Gpu.h"
 
 #include "engine/ColorGrade.h"
+#include "engine/GpuAdapter.h"
 #include "engine/HdrTone.h"
 #include "engine/OutputColor.h"
 #include "engine/video/Reader.h"
@@ -161,7 +162,12 @@ QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api, QOffs
 #if defined(Q_OS_WIN)
     api = QStringLiteral("Direct3D 11");
     QRhiD3D11InitParams params;
-    return QRhi::create(QRhi::D3D11, &params);
+    // The card GpuAdapter chose (high performance, the same one the D3D11VA decoder uses), not simply adapter 0
+    QRhiD3D11NativeHandles adapter;
+    const std::int64_t luid = GpuAdapter::chosenLuid();
+    adapter.adapterLuidLow = quint32(std::uint64_t(luid) & 0xffffffffu);
+    adapter.adapterLuidHigh = qint32(std::uint64_t(luid) >> 32);
+    return QRhi::create(QRhi::D3D11, &params, {}, luid ? &adapter : nullptr);
 #elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     api = QStringLiteral("Metal");
     QRhiMetalInitParams params;

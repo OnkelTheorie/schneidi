@@ -17,6 +17,7 @@
 #include <QComboBox>
 #include <QEventLoop>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QTemporaryDir>
@@ -152,6 +153,62 @@ void testJson()
     CHECK(!wav.hasEncoderChoice());
 }
 
+// FFmpeg's NVENC refusal (driver older than the NVENC API FFmpeg was built with) -> a clear hint, nothing else
+void testDriverHint()
+{
+    using namespace HardwareEncoders;
+    // As FFmpeg 7.1 with nv-codec-headers 13 printed it in the Windows VM with driver 560.94 (16.11.)
+    const QString old = "[h264_nvenc @ 000001] Driver does not support the required nvenc API version. Required: 13.0 "
+                        "Found: 12.2\r\n[h264_nvenc @ 000001] The minimum required Nvidia driver for nvenc is 570.0 or "
+                        "newer\r\n[vost#0:0/h264_nvenc @ 000002] Error while opening encoder - maybe incorrect parameters";
+    QString h = driverHint(old);
+    CHECK(h.contains("NVENC") && h.contains("12.2") && h.contains("13.0") && h.contains("570.0"));
+    // Only one of the two lines (other FFmpeg versions / log levels)
+    h = driverHint("Driver does not support the required nvenc API version. Required: 12.0 Found: 11.1");
+    CHECK(h.contains("11.1") && h.contains("12.0") && !h.contains("%"));
+    h = driverHint("The minimum required Nvidia driver for nvenc is 522.25 or newer");
+    CHECK(h.contains("522.25") && !h.contains("%"));
+    // Other failures: no NVIDIA driver at all, a card without NVENC, Quick Sync on an AMD machine, empty output
+    CHECK(driverHint("Cannot load nvEncodeAPI64.dll\nThe minimum required Nvidia driver for nvenc is").isEmpty());
+    CHECK(driverHint("Cannot load libnvidia-encode.so.1").isEmpty());
+    CHECK(driverHint("OpenEncodeSessionEx failed: no encode device (1): (no details)").isEmpty());
+    CHECK(driverHint("Error creating a MFX session: -9.").isEmpty());
+    CHECK(driverHint({}).isEmpty());
+}
+
+// The probe's reason reaches the render note (export dialog, CLI/MCP "encoder_note") and the dialog's hint
+void testDriverHintChoice()
+{
+    using namespace HardwareEncoders;
+    const QString reason = driverHint("Required: 13.0 Found: 12.2 nvenc API version. Required: 13.0 Found: 12.2");
+    CHECK(!reason.isEmpty());
+    fakeProbeForTests({}, reason);
+    CHECK_EQ(unavailableReason(VideoEncoder::Nvenc), reason);
+    CHECK(unavailableReason(VideoEncoder::Qsv).isEmpty() && unavailableReason(VideoEncoder::Software).isEmpty());
+    Choice c = resolve(VideoEncoder::Nvenc, "h264");
+    CHECK(c.codec == renderFormat("h264").videoCodec && c.note.contains(reason));
+    c = resolve(VideoEncoder::Auto, "h265");
+    CHECK(c.codec == renderFormat("h265").videoCodec && c.note.contains(reason));
+    c = resolve(VideoEncoder::Qsv, "h264"); // another encoder: the old note
+    CHECK(!c.note.isEmpty() && !c.note.contains(reason));
+    // Another hardware encoder works: Auto takes it without a note
+    fakeProbeForTests({"h264_qsv"}, reason);
+    c = resolve(VideoEncoder::Auto, "h264");
+    CHECK(c.codec == "h264_qsv" && c.note.isEmpty());
+    // The export dialog shows the hint under the encoder
+    fakeProbeForTests({}, reason);
+    {
+        Project project;
+        DeliverPanel panel(&project);
+        bool shown = false;
+        for (QLabel* l : panel.findChildren<QLabel*>())
+            if (l->text() == reason) shown = !l->isHidden();
+        CHECK(shown);
+    }
+    resetForTests();
+    available("h264"); // probe for real again: the next tests expect a finished probe
+}
+
 void testChoice()
 {
     using namespace HardwareEncoders;
@@ -177,7 +234,8 @@ void testChoice()
     for (const char* format : {"h264", "h265"}) {
         const QVector<VideoEncoder> list = available(format);
         c = resolve(VideoEncoder::Auto, format);
-        CHECK(c.note.isEmpty());
+        // (a note only when no hardware encoder works and the NVIDIA driver is too old for NVENC)
+        CHECK_EQ(c.note.isEmpty(), !list.isEmpty() || unavailableReason(VideoEncoder::Nvenc).isEmpty());
         if (list.isEmpty()) {
             CHECK(c.codec == renderFormat(format).videoCodec && c.fallback.isEmpty());
         } else {
@@ -352,11 +410,13 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("hw_encoders");
     testJson();
+    testDriverHint();
     if (!Check::haveFfmpeg() || QStandardPaths::findExecutable("ffprobe").isEmpty())
         return Check::skip("ffmpeg/ffprobe nicht gefunden");
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testChoice();
+    testDriverHintChoice();
     testPanel();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
