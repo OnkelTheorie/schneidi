@@ -3577,8 +3577,9 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
     while (qp + d < 51.0 && !fits(d))
         d += 0.25;
     if (gVbvTrace)
-        std::fprintf(stderr, "vbv: frame %d %c qp %.2f +%.2f fill %.1f %% predicted %.0f plan %zu\n", frameIndex_, "IPB"[type], qp, d,
-                     100.0 * fill / size, vbvPredict(cls, cost, std::min(51.0, qp + d)), plan.size());
+        std::fprintf(stderr, "vbv: frame %d %c qp %.2f +%.2f fill %.1f %% predicted %.0f plan %zu class %d display %d intra %.0f inter %.0f dist %d\n",
+                     frameIndex_, "IPB"[type], qp, d, 100.0 * fill / size, vbvPredict(cls, cost, std::min(51.0, qp + d)), plan.size(), cls,
+                     frame ? frame->index : -1, frame ? frame->intraSum : 0.0, frame ? frame->interSum : 0.0, frame ? frame->refDist : 0);
     return std::min(d, std::max(0.0, 51.0 - qp));
 }
 
