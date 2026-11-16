@@ -58,6 +58,23 @@ struct Hasher {
             num(p.offset[i]);
         }
         for (double v : {p.contrast, p.pivot, p.saturation, p.temperature, p.tint, p.exposure}) num(v);
+        for (const QVector<QPointF>& curve : p.curves.points) {
+            num(int(curve.size()));
+            for (const QPointF& q : curve) {
+                num(q.x());
+                num(q.y());
+            }
+        }
+        num(int(p.qualifier.on));
+        if (p.qualifier.on) {
+            const GradeQualifier::Range& r = p.qualifier.range;
+            for (double v : {r.hue, r.hueWidth, r.hueSoft, r.satLow, r.satHigh, r.satSoft, r.lumLow, r.lumHigh, r.lumSoft})
+                num(v);
+            num(int(r.invert));
+            ColorGrade::Params q;
+            static_cast<ColorGrade::Correction&>(q) = p.qualifier.correction;
+            params(q);
+        }
     }
 };
 

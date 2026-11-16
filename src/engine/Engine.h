@@ -192,6 +192,9 @@ public:
     // Before/After (Color page, like DaVinci "Bypass Color Grades"): preview without color correction; export untouched
     void setColorBypass(bool on);
     bool colorBypass() const { return m_gradeBypass->load(); }
+    // Color page "show mask": the preview shows the qualifier's selection of clip `clipId` (0 = none)
+    void setQualifierMask(int clipId);
+    int qualifierMask() const { return m_qualifierMask->load(); }
     LoudnessReading loudness() const;
     void resetLoudness(); // restart Integrated/LRA (like the reset button in DaVinci)
 
@@ -282,6 +285,7 @@ private:
     std::unique_ptr<SharedLoudness> m_loudness; // fed by the master level meter in the audio thread
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);
+    std::shared_ptr<std::atomic<int>> m_qualifierMask = std::make_shared<std::atomic<int>>(0);
     Timeline m_gridContent;
     QVector<MulticamAngle> m_gridAngles;
     int m_gridColumns = 0, m_gridPage = 0;
