@@ -649,32 +649,71 @@ std::optional<SourceBitrate::Video> videoRate(const QString& path)
     return e.video;
 }
 
-bool hdrPicture(const QString& path)
+namespace {
+
+std::mutex g_hdrMutex;
+QHash<QString, HdrTone::Transfer> g_hdrCache; // by path + size + time of change
+
+QString hdrKey(const QFileInfo& fi)
 {
-    static std::mutex mutex;
-    static QHash<QString, bool> cache;
-    const QFileInfo fi(path);
-    if (!fi.exists()) return false;
-    const QString key = fi.absoluteFilePath() + '|' + QString::number(fi.size()) + '|'
-                        + QString::number(fi.lastModified().toMSecsSinceEpoch());
-    {
-        std::lock_guard lock(mutex);
-        if (auto it = cache.constFind(key); it != cache.cend()) return *it;
+    return fi.absoluteFilePath() + '|' + QString::number(fi.size()) + '|'
+           + QString::number(fi.lastModified().toMSecsSinceEpoch());
+}
+
+HdrTone::Transfer videoTransfer(const AVFormatContext* fmt, bool* unstated)
+{
+    *unstated = false;
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        const AVStream* st = fmt->streams[i];
+        if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO || (st->disposition & AV_DISPOSITION_ATTACHED_PIC)) continue;
+        const HdrTone::Transfer t = HdrTone::ofColorTrc(st->codecpar->color_trc);
+        if (t != HdrTone::Transfer::None) return t;
+        // Stated only in the bitstream (MP4/MOV without colr box, MPEG-TS): the codecs phones and cameras use for HDR
+        const AVCodecID c = st->codecpar->codec_id;
+        if (st->codecpar->color_trc == AVCOL_TRC_UNSPECIFIED
+            && (c == AV_CODEC_ID_HEVC || c == AV_CODEC_ID_H264 || c == AV_CODEC_ID_AV1 || c == AV_CODEC_ID_VP9))
+            *unstated = true;
     }
-    bool hdr = false;
+    return HdrTone::Transfer::None;
+}
+
+} // namespace
+
+HdrTone::Transfer hdrTransfer(const QString& path)
+{
+    const QFileInfo fi(path);
+    if (!fi.exists()) return HdrTone::Transfer::None;
+    const QString key = hdrKey(fi);
+    {
+        std::lock_guard lock(g_hdrMutex);
+        if (auto it = g_hdrCache.constFind(key); it != g_hdrCache.cend()) return *it;
+    }
+    HdrTone::Transfer t = HdrTone::Transfer::None;
     AVFormatContext* fmt = nullptr;
-    if (OpenMedia::input(&fmt, fi.absoluteFilePath().toUtf8().constData()) >= 0) {
-        for (unsigned i = 0; i < fmt->nb_streams && !hdr; ++i) {
-            const AVStream* st = fmt->streams[i];
-            if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(st->disposition & AV_DISPOSITION_ATTACHED_PIC))
-                hdr = HdrTone::ofColorTrc(st->codecpar->color_trc) != HdrTone::Transfer::None;
-        }
+    // A small stream analysis at most (the header usually states it)
+    AVDictionary* options = nullptr;
+    av_dict_set(&options, "probesize", "2000000", 0);
+    av_dict_set(&options, "analyzeduration", "1000000", 0);
+    if (OpenMedia::input(&fmt, fi.absoluteFilePath().toUtf8().constData(), options) >= 0) {
+        bool unstated = false;
+        t = videoTransfer(fmt, &unstated);
+        if (unstated && avformat_find_stream_info(fmt, nullptr) >= 0) t = videoTransfer(fmt, &unstated);
         avformat_close_input(&fmt);
     }
-    std::lock_guard lock(mutex);
-    if (cache.size() > 4096) cache.clear();
-    cache.insert(key, hdr);
-    return hdr;
+    av_dict_free(&options);
+    std::lock_guard lock(g_hdrMutex);
+    if (g_hdrCache.size() > 4096) g_hdrCache.clear();
+    g_hdrCache.insert(key, t);
+    return t;
+}
+
+std::optional<HdrTone::Transfer> hdrTransferCached(const QString& path)
+{
+    const QFileInfo fi(path);
+    if (!fi.exists()) return HdrTone::Transfer::None;
+    std::lock_guard lock(g_hdrMutex);
+    if (auto it = g_hdrCache.constFind(hdrKey(fi)); it != g_hdrCache.cend()) return *it;
+    return std::nullopt;
 }
 
 } // namespace MediaProbe

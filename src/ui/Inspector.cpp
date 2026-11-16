@@ -353,12 +353,15 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         const Clip* c = primary(TrackKind::Video);
         if (!c) return;
         const QSignalBlocker b(hdrBox);
-        hdrBox->setChecked(c->hdrToSdr);
-        // The file's HDR transfer in the text; an SDR file (or one not known as HDR) has nothing to map
+        // The file's HDR transfer in the text. An SDR file (or one not known as HDR yet: engine/HdrScan looks in the
+        // background) has nothing to map: the box is off and unchecked then - never checked and greyed out - unless
+        // the clip has it off (that stays switchable back)
         const MediaInfo* m = c->mediaPath.isEmpty() ? nullptr : m_editor->project()->mediaInfo(c->mediaPath);
         const QString hdr = m ? m->hdr : QString();
+        const bool usable = c->kind == ClipKind::Media && (!hdr.isEmpty() || !c->hdrToSdr);
         hdrBox->setText(hdr.isEmpty() ? T("HDR als SDR zeigen") : T("HDR (%1) als SDR zeigen").arg(hdr));
-        hdrBox->setEnabled(c->kind == ClipKind::Media && (!m || !hdr.isEmpty() || !c->hdrToSdr));
+        hdrBox->setEnabled(usable);
+        hdrBox->setChecked(usable && c->hdrToSdr);
     };
     // Cut the picture to a circle, star … (effect "clip_shape", its values then in the Effects tab): found here, where
     // one looks for the picture's outline, not only in the Effects Library
@@ -611,6 +614,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         refresh();
     });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
+    connect(editor->project(), &Project::mediaChanged, this, &Inspector::refresh); // e.g. an HDR file found (HdrScan)
     // Another project (new/opened): its clip ids are not the old one's, a remembered shape height would go to a
     // stranger
     connect(editor->project(), &Project::loaded, this, [this] { m_heightBeforeLine.clear(); });

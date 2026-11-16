@@ -238,9 +238,11 @@ ProxyJob prepareJob(const QString& original, const QString& part, int maxSize)
     // one frame off in the preview. Move the picture so the counted start lands on 0.
     if (const std::optional<double> zero = Video::zeroOffset(original); zero && std::abs(*zero) > 1e-4)
         scale.prepend(QString("setpts=PTS-(%1)/TB,").arg(QString::number(*zero, 'f', 6)));
-    const char* primaries = info.colorspace == 601 ? "smpte170m"
-                            : info.colorspace == 2020 || (info.tone.active() && info.tone.bt2020) ? "bt2020"
-                                                                                                  : "bt709";
+    // HDR: the primaries the tone mapping assumes (Reader: BT.2020 unless stated otherwise), not the matrix's
+    const char* primaries = info.tone.active() ? (info.tone.bt2020 ? "bt2020" : "bt709")
+                            : info.colorspace == 601  ? "smpte170m"
+                            : info.colorspace == 2020 ? "bt2020"
+                                                      : "bt709";
     const char* trc = info.tone.transfer == HdrTone::Transfer::Hlg  ? "arib-std-b67"
                       : info.tone.transfer == HdrTone::Transfer::Pq ? "smpte2084"
                       : info.colorspace == 601                       ? "smpte170m"
@@ -411,14 +413,19 @@ QString ProxyManager::proxyPath(const QString& original, int maxSize)
     // Key as with the waveform cache: changed originals automatically get a new proxy. The trailing version is
     // raised when proxies made before are wrong: 2 = frame 0 at the first video key frame (older proxies of files
     // whose picture starts after the sound were one frame early). HDR sources (HLG/PQ) have their own, v2-hdr1: their
-    // proxies before 0.24 were tagged BT.709 (the preview showed the signal unmapped); SDR proxies stay valid.
+    // proxies before 0.24 were tagged BT.709 (the preview showed the signal unmapped); SDR proxies stay valid. Only the
+    // cached answer here (no file opened on the GUI thread): engine/HdrScan finds it in the background and then says
+    // hdrFound(), the proxy is looked up again.
     const QFileInfo fi(original);
     const QString id = QString("%1|%2|%3|%4|v2%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
                            .arg(maxSize)
-                           .arg(MediaProbe::hdrPicture(original) ? QStringLiteral("-hdr1") : QString());
+                           .arg(MediaProbe::hdrTransferCached(original).value_or(HdrTone::Transfer::None)
+                                        != HdrTone::Transfer::None
+                                    ? QStringLiteral("-hdr1")
+                                    : QString());
     const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
     return cacheDir() + "/" + hash + ".mp4";
 }

@@ -1033,6 +1033,18 @@ bool Project::refreshMedia(const MediaInfo& probed)
     return false;
 }
 
+bool Project::setMediaHdr(const QString& path, const QString& hdr)
+{
+    for (MediaInfo& m : m_media)
+        if (m.path == path) {
+            if (m.hdr == hdr || !m.hasVideo || m.isImage) return false;
+            m.hdr = hdr;
+            emit mediaChanged();
+            return true;
+        }
+    return false;
+}
+
 int Project::clipsPastEnd(const QString& path) const
 {
     const MediaInfo* m = mediaInfo(path);
