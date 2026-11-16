@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: looking at the picture of the material (scenes, region events, frames, scopes)
 #include "cli/AnalysisDetail.h"
+#include "cli/Live.h"
 
 #include "core/ContactSheet.h"
 #include "core/TimelineOps.h"
@@ -46,6 +47,8 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     std::optional<Timeline> clipOnly;
     int clipFrom = 0, clipTo = 0;
     if (isProjectFile(src)) {
+        std::optional<Live::StillPictures> pictures; // the app's snapshot with the stills' pictures
+        if (a.contains("still")) pictures.emplace();
         session = std::make_unique<Session>(src);
         session->selectTimeline(a["timeline"]);
         f = session->format();
@@ -53,8 +56,8 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         if (a.contains("clip")) clipOnly = compNodeTimeline(*session, a, &clipFrom, &clipTo);
         else if (a.contains("node") || a.contains("view"))
             fail("BAD_ARGUMENT", "node/view show a clip's compositing graph: give clip (its id) too");
-    } else if (a.contains("clip") || a.contains("node") || a.contains("view")) {
-        fail("BAD_ARGUMENT", "clip/node/view are for a project (source = the .schneidi file or \"@app\")");
+    } else if (a.contains("clip") || a.contains("node") || a.contains("view") || a.contains("still")) {
+        fail("BAD_ARGUMENT", "clip/node/view/still are for a project (source = the .schneidi file or \"@app\")");
     } else {
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];

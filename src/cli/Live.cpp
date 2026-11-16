@@ -576,7 +576,10 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     if (type == "snapshot") {
         Project* p = m_host->liveProject();
         const QString path = m_host->liveProjectPath();
-        const ProjectData data = p->data();
+        ProjectData data = p->data();
+        // The stills' pictures only when the client needs them (they are most of the bytes): id, label, grade stay
+        if (!msg.value("stills").toBool())
+            for (GradeStill& st : data.stills) st.image.clear();
         // The custom code the user trusts here (core/CodeTrust.h; sha1 each): the client's renders draw it too
         QJsonArray trusted;
         for (const QString& code : CodeTrust::codes(data))
@@ -1043,9 +1046,16 @@ QString projectPath(Connection* c)
     return c->project;
 }
 
-Snapshot snapshot(Connection* c)
+namespace {
+thread_local int t_stillPictures = 0;
+}
+StillPictures::StillPictures() { ++t_stillPictures; }
+StillPictures::~StillPictures() { --t_stillPictures; }
+
+Snapshot snapshot(Connection* c, bool stillPictures)
 {
-    const QJsonObject r = c->request({{"type", "snapshot"}}, 60000);
+    const QJsonObject r =
+        c->request({{"type", "snapshot"}, {"stills", stillPictures || t_stillPictures > 0}}, 60000);
     if (!r.value("ok").toBool()) detail::fail(r["error"]["code"].toString(), r["error"]["message"].toString());
     Snapshot snap{r.value("project").toString(), r.value("data").toString().toUtf8(), r.value("app").toObject(), {}};
     for (const QJsonValue& v : r.value("trusted_code").toArray()) snap.trustedCode << v.toString();

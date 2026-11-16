@@ -239,7 +239,7 @@ void opStill(Session& s, const QJsonObject& op)
     const ProjectFormat f = s.format();
     const int at = op.contains("at") ? std::clamp(timeOf(s, op, "at"), c->start, c->end() - 1) : c->start;
     // The frame as the viewer shows it (the whole timeline at that time), in the still's size
-    const QImage picture = Snapshot::Source::timeline(f, s.project.renderTimeline())->frame(at, GradeStills::kMaxWidth);
+    const QImage picture = Snapshot::Source::timeline(f, s.project.renderTimeline())->frame(at, GradeStills::kMaxEdge);
     if (picture.isNull()) fail("DECODE_FAILED", QString("could not render frame %1").arg(at));
     const QString label = op.contains("label") ? op.value("label").toString()
                                                : s.project.clipName(*c) + "  " + tc(at, f);
@@ -287,8 +287,10 @@ void opQualifier(Session& s, const QJsonObject& op)
             ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Qualifier");
     if (op.contains("invert")) ed.setGradeQualifierInvert(ids, op.value("invert").toBool());
     if (op.contains("window")) {
-        const int n = op.value("window").toInt();
-        if (n < 0 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", QString("window is 0 (whole picture) or 1..%1").arg(GradeWindows::kMax));
+        const double v = op.value("window").toDouble(-1);
+        const int n = int(v);
+        if (!op.value("window").isDouble() || v != n || n < 0 || n > GradeWindows::kMax)
+            fail("BAD_ARGUMENT", QString("window is 0 (whole picture) or a window number 1..%1").arg(GradeWindows::kMax));
         if (n && std::none_of(ids.begin(), ids.end(), [&](int id) { return GradeWindows::exists(*clip(id), n); }))
             fail("NOT_FOUND", QString("no clip has window %1 (add one with op 'window')").arg(n));
         ed.setGradeQualifierWindow(ids, n);
@@ -1129,7 +1131,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "viewer shows it, together with that clip's whole grade (wheels, curves, qualifier, windows, LUT, "
                  "keyframes); the notes give its id. apply:<id> puts the still's grade onto `clips` (replacing "
                  "theirs) - to match shots: grade one, keep a still, apply it to the others. remove:<id> deletes "
-                 "it. Stills are listed in `info` (stills) and stored in the project (at most 64). Look at one with "
+                 "it. Stills are listed in `info` (stills) and stored in the project (at most 32). Look at one with "
                  "{frames, source:<project>, still:<id>}, next to the timeline at a time with at:[…].",
                  opStill, kClipKeys}
         << OpDef{"qualifier", "{op:'qualifier', clips, add?, remove?, color?, hue?, hue_width?, hue_soft?, sat_low?, "

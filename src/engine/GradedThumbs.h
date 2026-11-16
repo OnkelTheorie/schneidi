@@ -15,6 +15,8 @@
 #include "core/Types.h"
 #include "engine/ColorGrade.h"
 
+#include <optional>
+
 #include <QCache>
 #include <QElapsedTimer>
 #include <QHash>
@@ -41,6 +43,8 @@ public:
         ColorGrade::Params params;
         QString lut; // LUT file, empty = none
         QVector<ColorGrade::Window> windows;
+        // A qualifier limited to a shape window (params.qualifier.window > 0): that window's shape, in % of the frame
+        std::optional<ColorGrade::Window> qualifierWindow;
         // Where the picture is in a thumbnail with bars (another shape than the frame): the clip's media (its shape
         // from MediaAspect, looked up in apply()) and the frame's width/height when the thumbnail is not the frame
         // itself (0: it is). The grade and the windows work on the picture only, as in the viewer.

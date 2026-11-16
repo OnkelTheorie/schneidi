@@ -564,7 +564,7 @@ void testStills(const QString& dir)
     CHECK_EQ(p.undoStack()->count(), undoBefore + 1);
     if (!CHECK_EQ(p.stills().size(), 1)) return;
     const GradeStill& st = p.stills().first();
-    CHECK_EQ(GradeStills::picture(st).width(), GradeStills::kMaxWidth); // made small
+    CHECK_EQ(GradeStills::picture(st).width(), GradeStills::kMaxEdge); // made small: the longest edge
     CHECK(st.image.size() < 60000);
     CHECK_EQ(st.grade.effects.size(), 1);
     // Later changes of the clip do not change the still
