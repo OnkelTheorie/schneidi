@@ -393,6 +393,16 @@ void testPanel()
         maskButton->click();
         CHECK_EQ(mask.last().value(0).toInt(), 0);
     }
+    // GRADE_QUALIFIER_SHOTS=<dir>: pictures of the three palettes (a look at the layout)
+    if (const QString shots = qEnvironmentVariable("GRADE_QUALIFIER_SHOTS"); !shots.isEmpty()) {
+        ed.setGradeCurve({id}, K::Y, {{0, 0.05}, {0.3, 0.25}, {0.7, 0.8}, {1, 1}});
+        ed.setGradeValues({id}, {{AnimParam::GradeGainY, 1.15}}, 10, "x");
+        for (int i = 0; i < 3; ++i) {
+            panel.setPalette(i);
+            QApplication::processEvents();
+            panel.grab().save(QString("%1/palette-%2.png").arg(shots).arg(i));
+        }
+    }
     panel.setLayer(GradeQualifier::kLayer);
     CHECK_EQ(panel.layer(), GradeQualifier::kLayer);
     ed.removeGradeQualifier({id});
