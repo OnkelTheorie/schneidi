@@ -454,6 +454,7 @@ private:
     void joinBSearches();
     bool flushing_ = false; // no more pictures come in: the whole queue's types are settled
     int gateAt(int index) const;
+    bool movingAt(int index) const;
     std::vector<uint8_t> statType_;
     std::vector<double> statCost_;
     double queueCost(size_t j) const; // lookahead cost of queued picture j as planned (no tree)

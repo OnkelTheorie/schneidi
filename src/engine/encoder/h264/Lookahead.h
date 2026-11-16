@@ -136,7 +136,10 @@ public:
     bool add(const Lookahead& la, const LookaheadFrame& f, int index, int maxB, int threads);
     int resultStart() const { return resultStart_; }
     // Longest run of B pictures that pays (0 = none), with kClear where they are a clear gain.
-    static constexpr int kClear = 0x80;
+    // kMoving: real content changes, not grain on a still picture (the costs grow with the distance
+    // to the reference, or only part of the picture has any) - long runs there are coded like short
+    // ones, with the reference B picture in their middle.
+    static constexpr int kClear = 0x80, kMoving = 0x40, kRunMask = 0x3f;
     uint8_t gate() const { return gate_; }
 
 private:
@@ -146,6 +149,8 @@ private:
     int resultStart_ = 0;
     uint8_t gate_ = 0;
     double accP_ = 0, accB_ = 0; // the last windows' costs as P pictures / with B pictures, fading
+    double accStep_ = 0, accFar_ = 0; // the same of one picture a step / the run's length from its reference
+    double accLive_ = 0, accCount_ = 0; // blocks with anything to code as P pictures / all blocks counted
     bool on_ = false;
 };
 

@@ -819,6 +819,16 @@ static const double kPlanStill = planEnv("H264_BPLAN_STILL", 12);
 // their transforms by estimate; H264_BPLAN_PATCHAREA=0.2 is the guard as it was).
 static const double kPlanPatchArea = planEnv("H264_BPLAN_PATCHAREA", 0), kPlanPatchCost = planEnv("H264_BPLAN_PATCHCOST", 400);
 static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
+// "Moving" (BPlanner::kMoving) - what tells real content changes from grain on a still picture, the
+// one case where long runs of cheap B pictures without a reference among them are right:
+// - the run's P picture, predicted over the whole run, costs at least kPlanMove times a picture
+//   predicted from the one before it. Grain costs the same over any distance (measured 0.9 - 1.05),
+//   motion the search follows less and less well grows (an animated film 1.4 - 1.7, a zoom 1.35);
+// - or less than kPlanGrain of the blocks have anything to code as P pictures: grain is
+//   everywhere (0.78 - 0.80 on grainy camera footage with dark parts), a film's quiet scene with
+//   a moving figure 0.61, a cartoon 0.07.
+// H264_BPLAN_MOVE=0: never (long runs as before 16.11.2026).
+static const double kPlanMove = planEnv("H264_BPLAN_MOVE", 1.2), kPlanGrain = planEnv("H264_BPLAN_GRAIN", 0.7);
 // The planner searches every kPlanGrid-th block in both directions: its sums need no more, and
 // the searches are its whole cost.
 static const int kPlanGrid = std::max(1, int(planEnv("H264_BPLAN_GRID", 2)));
@@ -850,7 +860,7 @@ bool BPlanner::add(const Lookahead& la, const LookaheadFrame& f, int index, int 
     // A cut: no picture predicts across it, the window starts again there.
     if (win_.empty() || f.sceneChange || f.forceKeyframe) {
         if (!win_.empty())
-            accP_ = accB_ = 0;
+            accP_ = accB_ = accStep_ = accFar_ = accLive_ = accCount_ = 0;
         win_.clear();
         win_.push_back(planCopy(f));
         anchor_ = index;
@@ -964,6 +974,10 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         // The last windows count too (half as much each step back): single windows scatter.
         accP_ = kPlanKeep * accP_ + sumP;
         accB_ = kPlanKeep * accB_ + sumB;
+        accStep_ = kPlanKeep * accStep_ + sumP / p;
+        accFar_ = kPlanKeep * accFar_ + sumFar;
+        accLive_ = kPlanKeep * accLive_ + double(live);
+        accCount_ = kPlanKeep * accCount_ + double(n) * p;
     }
     const double ratio = accP_ > 0 ? accB_ / accP_ : 1.0;
     const int shortRun = std::min(maxB, 3);
@@ -987,12 +1001,14 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         // cost more than the steps together.
         const bool free = !patchy && sumB - sumFar < kPlanFree * sumNear;
         gate_ = uint8_t(!on_ ? (free ? shortRun | kClear : 0) : clear ? (maxB | kClear) : shortRun);
+        if (kPlanMove > 0 && accStep_ > 0 && (accFar_ >= kPlanMove * accStep_ || accLive_ < kPlanGrain * accCount_))
+            gate_ |= kMoving;
     }
     static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
     if (trace)
-        std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held: run %d\n",
+        std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held, far %.2f, live %.2f: run %d%s\n",
                      anchor_ + 1, sumP / (double(n) * p), sumB / (double(n) * p), sumFar / double(n), sumP > 0 ? sumB / sumP : 0.0, ratio,
-                     gate_ & (kClear - 1));
+                     accStep_ > 0 ? accFar_ / accStep_ : 0.0, accCount_ > 0 ? accLive_ / accCount_ : 0.0, gate_ & kRunMask, gate_ & kMoving ? " moving" : "");
 }
 
 float Lookahead::qpOffset(const LookaheadFrame& f, int mb, double strength)

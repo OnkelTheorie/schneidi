@@ -887,6 +887,7 @@ static const int kBWarmupPlanned = std::getenv("H264_BWARMUP2P") ? std::atoi(std
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
+static const int kShortRun = std::getenv("H264_SHORTRUN") ? std::atoi(std::getenv("H264_SHORTRUN")) : 4;
 static const double kBProbeFlat = std::getenv("H264_BPROBE_FLAT") ? std::atof(std::getenv("H264_BPROBE_FLAT")) : 0.75;
 static const bool kBProbeOneWay = std::getenv("H264_BPROBE_ONEWAY") && std::atoi(std::getenv("H264_BPROBE_ONEWAY")) != 0;
 static const bool kBProbeLongClear = !std::getenv("H264_BPROBE_LONGCLEAR") || std::atoi(std::getenv("H264_BPROBE_LONGCLEAR")) != 0;
@@ -2205,8 +2206,22 @@ int Encoder::gateAt(int index) const
         return cfg_.bframes;
     for (size_t i = gate_.size(); i-- > 0;)
         if (gate_[i].first <= index)
-            return index <= kBWarmup && !(gate_[i].second & BProbe::kClear) ? 0 : gate_[i].second & (BProbe::kClear - 1);
+            return index <= kBWarmup && !(gate_[i].second & BProbe::kClear) ? 0 : gate_[i].second & BPlanner::kRunMask;
     return 0;
+}
+
+// Whether the planner found real motion at a picture (BPlanner::kMoving): the first pass's answer
+// where there is one, the queue's own otherwise.
+bool Encoder::movingAt(int index) const
+{
+    if (!kBGate || !kBPlan || index < 0)
+        return false;
+    if (cfg_.firstPass)
+        return size_t(index) < cfg_.firstPass->bGate.size() && (cfg_.firstPass->bGate[size_t(index)] & BPlanner::kMoving);
+    for (size_t i = gate_.size(); i-- > 0;)
+        if (gate_[i].first <= index)
+            return gate_[i].second & BPlanner::kMoving;
+    return false;
 }
 
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
@@ -2314,7 +2329,7 @@ void Encoder::planFromStats()
                 return cfg_.bframes;
             if (int(k) <= kBWarmupPlanned && !(st.bGate[k] & BProbe::kClear))
                 return 0;
-            return std::min<int>(cfg_.bframes, st.bGate[k] & (BProbe::kClear - 1));
+            return std::min<int>(cfg_.bframes, st.bGate[k] & BPlanner::kRunMask);
         };
         std::vector<uint8_t> types(size_t(len) + 1, 1);
         for (int t = 1, run = 0; t < len; ++t)
@@ -2422,10 +2437,16 @@ void Encoder::planQueue()
             // Runs of up to kPyramidMaxRun only: longer ones are chosen where B pictures cost next to
             // nothing (a slow zoom: mostly skipped), and there a reference B picture with its
             // residual is a loss (two-pass, 2 Mbit/s: -0.14 dB with runs of 8, 5 and 3 alike).
-            const int mid = last != none && count >= 3 && count <= kPyramidMaxRun ? first + count / 2 : none;
+            // ... unless the planner found real motion there (BPlanner::kMoving): pictures far from
+            // their references predict badly then, and such a run is coded like a short one - with
+            // the reference B picture and the short runs' QP and tree (an animated film at 2 Mbit/s:
+            // +0.8 dB; grain on a still picture, where the costs do not grow with the distance: -0.5 dB).
+            // The run's first picture decides (the pictures before the queue were planned with it).
+            const bool moving = count > kShortRun && movingAt(queue_[0].index + first);
+            const int mid = last != none && count >= 3 && (count <= kPyramidMaxRun || moving) ? first + count / 2 : none;
             for (int k = j; k < s; ++k) {
                 LookaheadFrame& b = queue_[size_t(k)];
-                b.nearRun = last != none ? count : 99; // its own run's length
+                b.nearRun = last == none ? 99 : moving ? kShortRun : count; // its own run's length (as it is treated)
                 b.bRef = k == mid;
                 if (last != none)
                     b.refDist = mid != none && k > mid ? k - mid : k - last;
@@ -2461,7 +2482,10 @@ void Encoder::planQueue()
             size_t e = j + 1;
             while (e < queue_.size() && queue_[e].type == 2)
                 ++e;
-            f.nearRun = std::max(f.refDist - 1, int(e - j) - 1);
+            // (The runs' lengths as they are treated: a long run on motion counts as a short one.)
+            const int before = j > 0 && queue_[j - 1].type == 2 ? std::min(queue_[j - 1].nearRun, f.refDist - 1) : f.refDist - 1;
+            const int after = e > j + 1 ? std::min(queue_[j + 1].nearRun, int(e - j) - 1) : 0;
+            f.nearRun = std::max(before, after);
         }
     }
 }
@@ -2683,7 +2707,7 @@ double Encoder::treeStrength(const LookaheadFrame& f) const
     // the P pictures carry the B pictures as they carry each other without them (game footage,
     // two-pass, runs of 3: 10 % fewer bits than with the reduced strength).
     static const bool kShortFull = !std::getenv("H264_BTREE_SHORT") || std::atoi(std::getenv("H264_BTREE_SHORT")) != 0;
-    return useB() && f.nearB && !(kShortFull && f.nearRun <= kPyramidMaxRun) ? cfg_.mbtreeStrengthB : cfg_.mbtreeStrength;
+    return useB() && f.nearB && !(kShortFull && f.nearRun <= kShortRun) ? cfg_.mbtreeStrengthB : cfg_.mbtreeStrength;
 }
 
 double Encoder::frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter) const
@@ -3760,7 +3784,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     // B pictures of short runs (up to kPyramidMaxRun, as placed on moving material): bQpOffsetShort.
     // Their P pictures have the tree's full strength, and with the long runs' offset on top the B
     // pictures fall up to 2 dB below them (a flicker at a quarter of the frame rate).
-    const int bQp = type == 2 && frame.nearRun <= kPyramidMaxRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
+    const int bQp = type == 2 && frame.nearRun <= kShortRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
     const int bRefQp = kBRefQpEnv >= 0 ? kBRefQpEnv : (bQp + 1) / 2;
     // frame_num: reference pictures since the IDR picture (without B pictures: all pictures).
     const int frameNum = bMode ? (idr ? 0 : refCount_) : framesSinceIdr_;
@@ -3940,8 +3964,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 while (e < st.size() && tpType_[e] == 2)
                     ++e;
                 const int count = int(e - i);
-                const int bQpRun = count <= kPyramidMaxRun ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
-                const size_t mid = usePyramid() && count >= 3 && count <= kPyramidMaxRun ? i + size_t(count / 2) : st.size();
+                const bool moving = usePyramid() && count > kShortRun && movingAt(int(i)); // as planQueue
+                const int bQpRun = count <= kShortRun || moving ? std::min(cfg_.bQpOffset, cfg_.bQpOffsetShort) : cfg_.bQpOffset;
+                const size_t mid = usePyramid() && count >= 3 && (count <= kPyramidMaxRun || moving) ? i + size_t(count / 2) : st.size();
                 if (gTpRun && i > 0 && e < st.size()) {
                     for (size_t k = i; k < e; ++k) {
                         tpRef0_[k] = int32_t(mid < st.size() && k > mid ? mid : i - 1);
@@ -4194,8 +4219,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     fc.outSceneCut_ = cut;
     if (lookahead && bMode)
         ensureBSearches(); // for the pictures after this one (nothing below reads their results)
-    fc.bLongRun_ = type == 2 && frame.nearRun > kPyramidMaxRun;
-    fc.biRefine_ = type != 2 ? 0 : gBiRefineEnv >= 0 ? gBiRefineEnv : frame.nearRun > kPyramidMaxRun ? kBiRefineLong : 0;
+    fc.bLongRun_ = type == 2 && frame.nearRun > kShortRun;
+    fc.biRefine_ = type != 2 ? 0 : gBiRefineEnv >= 0 ? gBiRefineEnv : frame.nearRun > kShortRun ? kBiRefineLong : 0;
     fc.rcType_ = type;
     // Two-pass only: the one-pass model takes a P picture's cost over its real distance.
     fc.rcAfterB_ = type == 1 && bMode && frame.refDist > 1 && cfg_.firstPass && size_t(frame.index) < cfg_.firstPass->size();
