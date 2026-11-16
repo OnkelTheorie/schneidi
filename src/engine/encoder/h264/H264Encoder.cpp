@@ -836,6 +836,13 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // or chose long runs: such material keeps its B pictures throughout, and twelve P pictures cost it
 // a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
 static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
+// With a first pass the plan knows every picture's cost before the first one is coded, so nothing has
+// to settle: no P pictures first (16.11.2026). They cost a clip its first run of B pictures for
+// nothing - two-pass against twelve, PSNR-Y / SSIM-Y / VMAF at the same rate: crowd_run (150 pictures,
+// 10 Mbit/s) +0.04 dB / +0.002 / +0.2, park_joy +0.04 / +0.002 / 0, a calm game scene (480 pictures)
+// +0.05 / +0.001 / +0.2 at 1.5 Mbit/s and +0.01 / 0 / +0.1 at 4.5, a pan in a game the same within
+// 0.02 dB - and every chunk of a long clip paid them again. H264_BWARMUP2P sets the count (measuring).
+static const int kBWarmupPlanned = std::getenv("H264_BWARMUP2P") ? std::atoi(std::getenv("H264_BWARMUP2P")) : 0;
 static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
 static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
 static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
@@ -2212,7 +2219,7 @@ void Encoder::planFromStats()
         auto gate = [&](size_t k) {
             if (!adapt || !kBGate || k >= st.bGate.size())
                 return cfg_.bframes;
-            if (int(k) <= kBWarmup && !(st.bGate[k] & BProbe::kClear))
+            if (int(k) <= kBWarmupPlanned && !(st.bGate[k] & BProbe::kClear))
                 return 0;
             return std::min<int>(cfg_.bframes, st.bGate[k] & (BProbe::kClear - 1));
         };
