@@ -163,6 +163,15 @@ public:
     double rcCost_ = 0;
     double vbvQp_ = 0, vbvCost_ = 0, vbvPred_ = 0, vbvShift_ = 0; // VBV: the picture's QP (with its fraction), its cost and predicted bits
     int vbvClass_ = 0;
+    // VBV inside the picture (CABAC wavefront): the bits its slice data may take (0 = no limit). Before each
+    // macroblock its QP rises as far as the projection of the whole picture needs to stay below it; the projection
+    // uses only macroblocks the wavefront guarantees to be done at that point (row r - j up to column x + 2j), so
+    // the stream does not depend on the thread count. vbvW_: each macroblock's share of the picture's bits as
+    // planned (lookahead cost at its planned QP); prefix sums per row (mbW + 1 each): bits coded (counting CABAC),
+    // planned share at the QP actually used, planned share.
+    double vbvRowCap_ = 0, vbvWTotal_ = 0;
+    std::vector<double> vbvW_, vbvPrefB_, vbvPrefE_, vbvPrefW_;
+    int vbvRowAdjust(int mbx, int r);
     int rcBin_ = -1;
     bool idr_ = false;
     int framesSinceIdr_ = 0, idrCount_ = 0;

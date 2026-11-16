@@ -201,6 +201,8 @@ struct EncoderConfig {
     int vbvMaxrateKbps = 0;
     int vbvBufsizeKbits = 0;
     double vbvInit = 0.9; // buffer fullness at the first picture's removal (fraction of vbvBufsizeKbits)
+    // At least this full at the end (fraction; 0 = no demand): set by ChunkPlan::configFor for all chunks but the last.
+    double vbvEndFill = 0;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -223,6 +225,11 @@ struct ChunkPlan {
 };
 // minFrames: shortest chunk; 0 = 15 s of pictures (each seam costs about 8 %·s of BD-rate over the
 // clip, measured: 15 s chunks stay near 0.5 %). Short clips get one chunk.
+// VBV in chunks (ChunkPlan::configFor sets each chunk's buffer at its start and end): the first access unit of a
+// chunk after the first, with its picture timing counted from the previous chunk's last buffering period -
+// framesSinceBp = Encoder::vbvFramesSinceBp() of the chunk before after its last access unit. Unchanged without VBV.
+std::vector<uint8_t> vbvJoinChunk(const std::vector<uint8_t>& firstAu, int framesSinceBp);
+inline constexpr double kChunkVbvFill = 0.5, kChunkVbvEnd = 0.55;
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 // Constant quality: the clip's mean complexity from the first pass (crfQp's measure), < 0 without pictures.
 double crfClipComplexity(const FirstPassStats& stats, const EncoderConfig& cfg);
@@ -361,6 +368,8 @@ public:
     // lowest buffer level just after a removal, in bits (exact: from the access units' real sizes).
     int vbvUnderflows() const { return vbvUnderflows_; }
     double vbvMinFill() const { return vbvMinFill_; }
+    // Pictures since the last access unit with a buffering period, counting the next one (vbvJoinChunk).
+    int vbvFramesSinceBp() const { return frameIndex_ - vbvBpFrame_; }
 
 private:
     struct Pool;
@@ -560,6 +569,7 @@ private:
     int vbvBpFrame_ = 0;                      // coding index of the last access unit with a buffering period
     int vbvUnderflows_ = 0;
     double vbvMinFill_ = 0;
+    double vbvLow_ = 0; // the buffer before the picture being decided, the pictures in flight at gVbvSafe times their prediction
     size_t vbvHeaderBytes_ = 0;               // SPS/PPS in front of the first access unit (they count in its bits)
     void vbvLearn(int upTo);
     double vbvK(int type) const;

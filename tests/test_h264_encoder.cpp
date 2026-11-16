@@ -688,6 +688,44 @@ void testVbv()
             q.mbtree = false;
             check(q, "constant QP without lookahead");
         }
+        {
+            // Chunks: every chunk but the last ends at least kChunkVbvEnd full, the next assumes kChunkVbvFill, so the
+            // concatenated stream keeps the buffer too; the seam's picture timing is joined (vbvJoinChunk)
+            EncoderConfig v = c;
+            v.vbvMaxrateKbps = maxrate;
+            v.vbvBufsizeKbits = bufsize;
+            FirstPass fp(v.width, v.height);
+            for (int t = 0; t < 90; ++t) {
+                const Yuv src = synthFrame(v.width, v.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2}, t == 40);
+            }
+            const ChunkPlan plan = planChunks(*fp.stats(), v, 2, 30);
+            CHECK(plan.start.size() == 2);
+            CHECK(plan.configFor(v, 0, 1).vbvEndFill == kChunkVbvEnd && plan.configFor(v, 1, 1).vbvEndFill == 0);
+            CHECK(plan.configFor(v, 1, 1).vbvInit == kChunkVbvFill && plan.configFor(v, 0, 1).vbvInit == v.vbvInit);
+            StreamInfo info;
+            CHECK(roundTrip(v, 90, nullptr, 40, &plan, &info));
+            double low = 0;
+            const int under = cpbUnderflows(info.sizes, v.fps, maxrate, bufsize, v.vbvInit, &low);
+            if (under > 0)
+                std::fprintf(stderr, "vbv chunks: %d underflows, lowest level %.0f of %d kbit\n", under, low / 1000.0, bufsize);
+            CHECK(under == 0);
+            // vbvJoinChunk rewrites the first picture timing's cpb_removal_delay only
+            Encoder enc(v);
+            std::vector<uint8_t> au;
+            for (int t = 0; au.empty() && t < 60; ++t) {
+                const Yuv src = synthFrame(v.width, v.height, t);
+                au = enc.encode(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            const std::vector<uint8_t> joined = vbvJoinChunk(au, 37);
+            CHECK(joined.size() > 19 && joined[5] == 0 && joined[14] == 1 && joined[16] == 0 && joined[17] == 0 && joined[18] == 74);
+            const uint8_t startCode[4] = {0, 0, 0, 1};
+            const auto sliceA = std::search(au.begin() + 4, au.end(), startCode, startCode + 4);
+            const auto sliceJ = std::search(joined.begin() + 4, joined.end(), startCode, startCode + 4);
+            CHECK(sliceA != au.end() && au.end() - sliceA == joined.end() - sliceJ && std::equal(sliceA, au.end(), sliceJ));
+            for (au = enc.flush(); !au.empty(); au = enc.flush()) {
+            }
+        }
         gCabac = false;
         check(config(320, 192, IntraMode::Auto, 60, 2), "CAVLC, constant QP"); // (qp 28: just a smoke test)
         {

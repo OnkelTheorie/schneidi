@@ -85,6 +85,8 @@ struct ChunkResult {
     std::vector<uint8_t> bytes;
     double psnrY = 0, psnrU = 0, psnrV = 0;
     int frames = 0;
+    size_t firstAu = 0; // bytes of the first access unit
+    int sinceBp = 0;    // VBV: Encoder::vbvFramesSinceBp() at the end (for vbvJoinChunk)
 };
 
 static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, int count, ChunkResult& res)
@@ -102,6 +104,8 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
     auto took = [&](const std::vector<uint8_t>& au) {
         if (au.empty())
             return;
+        if (res.bytes.empty())
+            res.firstAu = au.size();
         res.bytes.insert(res.bytes.end(), au.begin(), au.end());
         const std::vector<uint8_t>& src = pending.at(enc.lastDisplayIndex());
         const uint8_t* sy = src.data();
@@ -131,6 +135,7 @@ static void encodeChunk(const EncoderConfig& cfg, const char* path, int start, i
             break;
         took(au);
     }
+    res.sinceBp = enc.vbvFramesSinceBp();
     std::fclose(in);
 }
 
@@ -301,8 +306,17 @@ int main(int argc, char** argv)
         std::printf("chunks");
         for (int c = 0; c < count; ++c) {
             const ChunkResult& r = res[size_t(c)];
-            std::fwrite(r.bytes.data(), 1, r.bytes.size(), out);
-            totalBytes += r.bytes.size();
+            if (c > 0 && cfg.vbvMaxrateKbps > 0 && cfg.vbvBufsizeKbits > 0) {
+                // The seam: the first picture's removal counted from the chunk before's last buffering period.
+                const std::vector<uint8_t> first(r.bytes.begin(), r.bytes.begin() + ptrdiff_t(r.firstAu));
+                const std::vector<uint8_t> joined = vbvJoinChunk(first, res[size_t(c) - 1].sinceBp);
+                std::fwrite(joined.data(), 1, joined.size(), out);
+                std::fwrite(r.bytes.data() + r.firstAu, 1, r.bytes.size() - r.firstAu, out);
+                totalBytes += joined.size() + r.bytes.size() - r.firstAu;
+            } else {
+                std::fwrite(r.bytes.data(), 1, r.bytes.size(), out);
+                totalBytes += r.bytes.size();
+            }
             frames += r.frames;
             py += r.psnrY;
             pu += r.psnrU;
