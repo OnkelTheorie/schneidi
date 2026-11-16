@@ -8625,10 +8625,14 @@ void FrameCoder::planMacroblockQp()
                 std::sort(v, v + 4);
                 variance = gAqEdge == 1 ? (v[0] + v[1] + v[2] + v[3]) / 4 : (v[0] + v[1]) / 2;
             }
-            // Below kAqFloor all macroblocks count as equally flat for the offsets: a variance of 0.02 against
-            // 0.2 (a band edge of a smooth gradient running through the macroblock or not) is no difference
-            // in what shows, but 3 energy steps = 2 QP of bits moved between them. H264_AQFLOOR (0 = off).
-            static const double kAqFloor = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 6.0;
+            // Below kAqFloor all macroblocks count as equally flat for the offsets: a variance of 0.004 against
+            // 0.03 (a band edge of a smooth gradient running through the macroblock or not) is no difference
+            // in what shows, but 3 energy steps = 2 QP of bits moved between them. Measured two-pass, a smooth
+            // gradient at 0.5 Mbit/s / a cartoon at 2 Mbit/s (PSNR-Y, the gradient's bits): off 62.24 dB at 595
+            // kbit/s / 38.71 dB; 2: 62.44 at 560 / -0.01 dB; 3: 62.65 at 560 / -0.01; 4: 62.86 at 548 / -0.04;
+            // 6: 63.07 at 540 / -0.30 (the cartoon's flat areas lose what its busy ones gain).
+            // H264_AQFLOOR overrides (0 = off, the stream before 16.11.2026).
+            static const double kAqFloor = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 3.0;
             const double e = std::log2(variance + 1.0);
             mbEnergy_[size_t(mby) * mbW_ + mbx] = float(e);
             mean += std::max(e, kAqFloor);
@@ -8652,7 +8656,7 @@ void FrameCoder::planMacroblockQp()
         std::fprintf(stderr, "aq: frame %d qp %d mean %.2f tree %.2f\n", displayIndex_, cfg_.qp, mean, tm / n);
     }
     for (int m = 0; m < n; ++m) {
-        static const double kAqFloor2 = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 6.0;
+        static const double kAqFloor2 = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 3.0;
         double offset = std::clamp(cfg_.aqStrength * (std::max(double(mbEnergy_[size_t(m)]), kAqFloor2) - mean) * 0.5, -8.0, 8.0);
         if (tree)
             offset += treeOffset_[size_t(m)];
