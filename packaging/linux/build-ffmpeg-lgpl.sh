@@ -61,14 +61,17 @@ fetch() { # file url sha256
     else echo ">> sha256 of $1 (pin it in this script): $(sha256sum "$file" | cut -d' ' -f1)"; fi
 }
 
-# --- NVENC headers: always the pinned version, installed into the prefix (its pkgconfig comes first below) ---
-fetch "nv-codec-headers-$NVHEADERS_VERSION.tar.gz" \
-    "https://github.com/FFmpeg/nv-codec-headers/releases/download/n$NVHEADERS_VERSION/nv-codec-headers-$NVHEADERS_VERSION.tar.gz" \
-    "$NVHEADERS_SHA256"
-rm -rf "$WORK/nv-codec-headers"
-mkdir -p "$WORK/nv-codec-headers"
-tar -xzf "$WORK/download/nv-codec-headers-$NVHEADERS_VERSION.tar.gz" -C "$WORK/nv-codec-headers" --strip-components=1
-make -C "$WORK/nv-codec-headers" PREFIX="$PREFIX" install >/dev/null
+# --- NVENC headers: always the pinned version, installed into the prefix (its pkgconfig comes first below). Already
+# there in exactly this version (the Flatpak's own module, built offline): taken as it is. ---
+if [ "$(pkg-config --modversion ffnvcodec 2>/dev/null || true)" != "$NVHEADERS_VERSION" ]; then
+    fetch "nv-codec-headers-$NVHEADERS_VERSION.tar.gz" \
+        "https://github.com/FFmpeg/nv-codec-headers/releases/download/n$NVHEADERS_VERSION/nv-codec-headers-$NVHEADERS_VERSION.tar.gz" \
+        "$NVHEADERS_SHA256"
+    rm -rf "$WORK/nv-codec-headers"
+    mkdir -p "$WORK/nv-codec-headers"
+    tar -xzf "$WORK/download/nv-codec-headers-$NVHEADERS_VERSION.tar.gz" -C "$WORK/nv-codec-headers" --strip-components=1
+    make -C "$WORK/nv-codec-headers" PREFIX="$PREFIX" install >/dev/null
+fi
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 found="$(pkg-config --modversion ffnvcodec 2>/dev/null || true)"
 [ "$found" = "$NVHEADERS_VERSION" ] || { echo "!! pkg-config finds ffnvcodec $found, not the pinned $NVHEADERS_VERSION" >&2; exit 1; }
