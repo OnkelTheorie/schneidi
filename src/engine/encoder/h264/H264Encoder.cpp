@@ -2571,7 +2571,7 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
             ++vbvUnderflows_;
         vbvMinFill_ = std::min(vbvMinFill_, vbvOutFill_);
         vbvOutFill_ = std::min(vbvOutFill_ + vbvTick(), vbvSize());
-        vbvDone_.push_back({fc.frameNo_, fc.vbvClass_, fc.vbvQp_, fc.vbvCost_, bits});
+        vbvDone_.push_back({fc.frameNo_, fc.vbvClass_, fc.vbvQp_ + fc.vbvShift_, fc.vbvCost_, bits});
         if (std::getenv("H264_VBV_TRACE"))
             std::fprintf(stderr, "vbv out: frame %d %c qp %.2f bits %.0f predicted %.0f fill %.1f %%\n", fc.frameNo_, "IPB"[fc.rcType_],
                          fc.vbvQp_, bits, fc.vbvPred_, 100.0 * vbvOutFill_ / vbvSize());
@@ -3461,10 +3461,13 @@ int Encoder::vbvClass(const LookaheadFrame& f, int type) const
     return afterB ? 3 : type;
 }
 
-// The bit model's cost of a queued picture (the rate control's: the macroblock tree's finer QPs included); with
-// f null (no lookahead) 1, so k is a picture's bits at QP 0 of its type.
-double Encoder::vbvCost(const LookaheadFrame* f, int type) const
+// The bit model's cost of a queued picture (lookahead cost, as the rate control's) and in *shift the macroblock
+// tree's finer QPs as one offset of the whole picture (its cost with the tree's weights is cost * 2^(-shift/6)):
+// the picture's bits are predicted at its QP + shift, where the curve below the learned QPs is steeper. With f
+// null (no lookahead) 1, so k is a picture's bits at QP 0 of its type.
+double Encoder::vbvCost(const LookaheadFrame* f, int type, double* shift) const
 {
+    *shift = 0;
     if (!f)
         return 1.0;
     for (size_t j = 0; j < queue_.size(); ++j) {
@@ -3477,7 +3480,22 @@ double Encoder::vbvCost(const LookaheadFrame* f, int type) const
             type == 1 && useB() && g.refDist > 1 && size_t(g.refDist) < g.fwd.size() && g.fwd[size_t(g.refDist)].valid()
                 ? &g.fwd[size_t(g.refDist)].cost
                 : nullptr;
-        return std::max(1.0, frameCost(g, type == 0, inter));
+        if (!inter)
+            inter = &g.interCost;
+        const size_t n = size_t(mbW_) * mbH_;
+        if (g.intraCost.size() != n)
+            return 1.0;
+        double raw = 0, tree = 0;
+        const double strength = treeStrength(g);
+        for (size_t m = 0; m < n; ++m) {
+            const double c = type == 0 ? g.intraCost[m] : std::min(g.intraCost[m], (*inter)[m]);
+            raw += c;
+            tree += cfg_.mbtree ? c * std::exp2(-std::max(-8.0f, Lookahead::qpOffset(g, int(m), strength)) / 6.0) : c;
+        }
+        if (raw < 1.0)
+            return 1.0;
+        *shift = -6.0 * std::log2(std::max(tree, 1e-9) / raw);
+        return raw;
     }
     return 1.0;
 }
@@ -3524,7 +3542,7 @@ void Encoder::vbvProbe(const LookaheadFrame& frame, double qpI)
 // buffer is no lower than half full (or than it is now plus half of what comes in, whichever is less) at
 // the end of the lookahead. The picture itself must fit gVbvSafe times its prediction: it is coded with
 // frame-level QP only, nothing can correct it once it runs over.
-double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, int bQp)
+double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, double shift, int bQp)
 {
     const int cls = frame ? vbvClass(*frame, type) : type;
     const double size = vbvSize(), tick = vbvTick();
@@ -3536,7 +3554,7 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
     // The planned pictures in coding order (a run of B pictures after the reference picture that ends it).
     struct Planned {
         int type, cls;
-        double cost;
+        double cost, shift;
     };
     std::vector<Planned> plan;
     if (frame) {
@@ -3546,11 +3564,12 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
             if (g.coded || &g == frame)
                 continue;
             const int t = g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1;
-            const double c = vbvCost(&g, t);
+            double sh = 0;
+            const double c = vbvCost(&g, t, &sh);
             if (t == 2) {
-                run.push_back({t, vbvClass(g, t), c});
+                run.push_back({t, vbvClass(g, t), c, sh});
             } else {
-                plan.push_back({t, vbvClass(g, t), c});
+                plan.push_back({t, vbvClass(g, t), c, sh});
                 plan.insert(plan.end(), run.begin(), run.end());
                 run.clear();
             }
@@ -3560,12 +3579,12 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
     auto offset = [&](int t) { return t == 0 ? (cfg_.gop > 1 ? -3.0 : 0.0) : t == 2 ? double(bQp) : 0.0; }; // (3 = P too)
     const double base = qp - offset(type); // the P QP the plan follows
     auto fits = [&](double d) {
-        const double cur = vbvPredict(cls, cost, qp + d);
+        const double cur = vbvPredict(cls, cost, qp + shift + d);
         if (low - gVbvSafe * cur < 0)
             return false;
         double f = std::min(fill - cur + tick, size), seconds = 0;
         for (const Planned& p : plan) {
-            f -= vbvPredict(p.cls, p.cost, std::min(51.0, base + offset(p.type) + d));
+            f -= vbvPredict(p.cls, p.cost, std::min(51.0, base + offset(p.type) + d) + p.shift);
             if (f < 0)
                 return false;
             f = std::min(f + tick, size);
@@ -3578,7 +3597,7 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
         d += 0.25;
     if (gVbvTrace)
         std::fprintf(stderr, "vbv: frame %d %c qp %.2f +%.2f fill %.1f %% predicted %.0f plan %zu class %d display %d intra %.0f inter %.0f dist %d\n",
-                     frameIndex_, "IPB"[type], qp, d, 100.0 * fill / size, vbvPredict(cls, cost, std::min(51.0, qp + d)), plan.size(), cls,
+                     frameIndex_, "IPB"[type], qp, d, 100.0 * fill / size, vbvPredict(cls, cost, std::min(51.0, qp + d) + shift), plan.size(), cls,
                      frame ? frame->index : -1, frame ? frame->intraSum : 0.0, frame ? frame->interSum : 0.0, frame ? frame->refDist : 0);
     return std::min(d, std::max(0.0, 51.0 - qp));
 }
@@ -4048,8 +4067,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         const double q = cfg_.qp + qpFrac;
         if (frameIndex_ == 0)
             vbvProbe(frame, q);
-        const double cost = vbvCost(lookahead ? &frame : nullptr, type);
-        const double d = vbvRaise(lookahead ? &frame : nullptr, type, q, cost, bQp);
+        double shift = 0;
+        const double cost = vbvCost(lookahead ? &frame : nullptr, type, &shift);
+        const double d = vbvRaise(lookahead ? &frame : nullptr, type, q, cost, shift, bQp);
         if (d > 0) {
             const double nq = std::min(51.0, q + d);
             cfg_.qp = int(std::lround(nq));
@@ -4060,7 +4080,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         fc.vbvQp_ = cfg_.qp + qpFrac;
         fc.vbvCost_ = cost;
         fc.vbvClass_ = lookahead ? vbvClass(frame, type) : type;
-        fc.vbvPred_ = vbvPredict(fc.vbvClass_, cost, fc.vbvQp_);
+        fc.vbvShift_ = shift;
+        fc.vbvPred_ = vbvPredict(fc.vbvClass_, cost, fc.vbvQp_ + shift);
         vbvPred_.push_back({frameIndex_, fc.vbvPred_});
     }
     fc.cfg_.qp = cfg_.qp;

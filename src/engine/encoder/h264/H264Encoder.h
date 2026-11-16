@@ -565,9 +565,9 @@ private:
     double vbvK(int type) const;
     double vbvQNum_[4] = {}, vbvQDen_[4] = {}; // the QP k was learned at, decaying mean
     double vbvPredict(int type, double cost, double qp) const;
-    double vbvCost(const LookaheadFrame* f, int type) const;
+    double vbvCost(const LookaheadFrame* f, int type, double* shift) const;
     void vbvProbe(const LookaheadFrame& frame, double qpI);
-    double vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, int bQp);
+    double vbvRaise(const LookaheadFrame* frame, int type, double qp, double cost, double shift, int bQp);
     std::vector<uint8_t> vbvSei(const FrameCoder& fc, bool idr);
 
 };

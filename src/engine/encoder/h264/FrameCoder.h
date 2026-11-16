@@ -161,7 +161,7 @@ public:
     int rcType_ = 0; // 0 I, 1 P, 2 B
     bool outSceneCut_ = false, rcLookahead_ = false, rcAfterB_ = false;
     double rcCost_ = 0;
-    double vbvQp_ = 0, vbvCost_ = 0, vbvPred_ = 0; // VBV: the picture's QP (with its fraction), its cost and predicted bits
+    double vbvQp_ = 0, vbvCost_ = 0, vbvPred_ = 0, vbvShift_ = 0; // VBV: the picture's QP (with its fraction), its cost and predicted bits
     int vbvClass_ = 0;
     int rcBin_ = -1;
     bool idr_ = false;
