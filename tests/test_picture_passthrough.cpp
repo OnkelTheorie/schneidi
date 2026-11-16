@@ -9,6 +9,11 @@
 
 #include "engine/OutputColor.h"
 #include "engine/picture/Renderer.h"
+#include "engine/video/Reader.h"
+
+extern "C" {
+#include <libavutil/frame.h>
+}
 
 #include <QApplication>
 #include <QImage>
@@ -175,5 +180,55 @@ int main(int argc, char** argv)
         if (!CHECK(std::abs(px.red() - 200) <= 2 && std::abs(px.green() - 40) <= 2))
             std::printf("       full-frame still: %d,%d,%d\n", px.red(), px.green(), px.blue());
     }
+    // 10-bit output (H.265/AV1 10 bit) of a 10-bit source: its 16-bit words as they are (yuv420p10le; P010 from P010),
+    // with every one of the source's values; an 8-bit source or an HDR source mapped to SDR is rendered instead
+    {
+        QTemporaryDir dir10;
+        const QString v10 = Check::makeMedia(dir10.filePath("v10.mkv"), {"-f", "lavfi", "-i", "color=c=gray:size=640x360:rate=25:duration=1",
+                                                                         // a ramp of 10-bit values (not 8-bit ones times 4)
+                                                                         "-vf", "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,"
+                                                                                "format=yuv420p10le,geq=lum='64+X*876/W':cb=512:cr=512",
+                                                                         "-c:v", "ffv1"});
+        if (CHECK(!v10.isEmpty())) {
+            for (const bool tenSource : {true, false}) {
+                std::vector<uint16_t> y(size_t(640) * 360), u(size_t(320) * 180), v(u.size());
+                OutputColor::Target t;
+                t.bits = 10;
+                t.planes[0] = reinterpret_cast<uint8_t*>(y.data()), t.planes[1] = reinterpret_cast<uint8_t*>(u.data());
+                t.planes[2] = reinterpret_cast<uint8_t*>(v.data());
+                t.strides[0] = 1280, t.strides[1] = t.strides[2] = 640;
+                Picture::Options o;
+                o.format = kFmt;
+                o.gpu = false;
+                Picture::Renderer r(one([](Clip&) {}, tenSource ? v10 : g_video), o);
+                Picture::RenderHints h;
+                h.yuv = &t;
+                const Picture::Frame f = r.render(5, h);
+                CHECK(!f.isNull());
+                CHECK_EQ(f.yuvWritten(), tenSource);
+                if (tenSource) {
+                    int odd = 0; // values that are no 8-bit code times 4: only a 10-bit source has them
+                    for (uint16_t w : y) odd += (w & 3) != 0;
+                    CHECK(odd > 1000);
+                    // Bit-exact: the decoded picture's words
+                    const auto reader = Video::Reader::open(v10);
+                    const auto pic = reader ? reader->picture(5) : nullptr;
+                    if (CHECK(pic && pic->frame)) {
+                        int differ = 0;
+                        for (int p = 0; p < 3; ++p) {
+                            const int pw = p ? 320 : 640, ph = p ? 180 : 360;
+                            const uint16_t* mine = p == 0 ? y.data() : p == 1 ? u.data() : v.data();
+                            for (int row = 0; row < ph; ++row) {
+                                const auto* dec = reinterpret_cast<const uint16_t*>(pic->frame->data[p] + size_t(row) * pic->frame->linesize[p]);
+                                for (int x = 0; x < pw; ++x) differ += dec[x] != mine[size_t(row) * pw + x];
+                            }
+                        }
+                        CHECK_EQ(differ, 0);
+                    }
+                }
+            }
+        }
+    }
+
     return Check::result();
 }

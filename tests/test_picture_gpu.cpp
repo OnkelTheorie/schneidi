@@ -33,6 +33,7 @@ extern "C" {
 #include <ctime>
 #include <cstring>
 #include <random>
+#include <set>
 #include <vector>
 
 using namespace Picture;
@@ -586,6 +587,117 @@ int main(int argc, char** argv)
             if (!nv) {
                 const Diff dv = compare(cv.data(), gv.data(), cv.size(), 1);
                 CHECK(dv.max <= 1);
+            }
+        }
+    }
+
+    // 7b. 10-bit output (0.24: H.265/AV1 10 bit): planes of 16-bit words. (a) An RGBA picture written as yuv420p10le
+    // and P010 against OutputColor::fromRgba (10 bit = 8-bit code values times 4): at most one step apart, P010 in the
+    // top bits; also an odd size (the reference: the picture with its last column/row repeated, as the card clamps)
+    // and padded strides (the padding stays untouched). (b) A smooth 10-bit grey ramp drawn onto an RGBA16F frame: the
+    // planes keep more than 256 steps (an 8-bit frame rounds them away), also after the card refused 16F (RGBA8 then)
+    {
+        for (const bool odd : {false, true})
+            for (const bool nv : {false, true}) {
+                const int w = odd ? 319 : 320, h = odd ? 179 : 180;
+                const int ew = (w + 1) & ~1, eh = (h + 1) & ~1; // even size of the reference
+                const std::vector<uint8_t> src = testRgba(w, h, false, 5);
+                std::vector<uint8_t> even(size_t(ew) * eh * 4);
+                for (int y = 0; y < eh; ++y)
+                    for (int x = 0; x < ew; ++x)
+                        std::memcpy(&even[(size_t(y) * ew + x) * 4], &src[(size_t(std::min(y, h - 1)) * w + std::min(x, w - 1)) * 4], 4);
+                const int cw = ew / 2, ch = eh / 2;
+                const int pad = 24; // words of padding per row
+                const int ys = ew + pad, cs = (nv ? ew : cw) + pad;
+                constexpr uint16_t kSentinel = 0xbeef;
+                std::vector<uint16_t> cy(size_t(ys) * eh), cu(size_t(cs) * ch), cv(size_t(cs) * ch);
+                std::vector<uint16_t> gy(cy.size(), kSentinel), gu(cu.size(), kSentinel), gv(cv.size(), kSentinel);
+                OutputColor::Target ct;
+                ct.layout = nv ? OutputColor::Layout::Nv12 : OutputColor::Layout::Yuv420;
+                ct.bits = 10;
+                ct.msb = nv;
+                OutputColor::Target gt = ct;
+                ct.planes[0] = reinterpret_cast<uint8_t*>(cy.data()), ct.planes[1] = reinterpret_cast<uint8_t*>(cu.data());
+                ct.planes[2] = reinterpret_cast<uint8_t*>(cv.data());
+                gt.planes[0] = reinterpret_cast<uint8_t*>(gy.data()), gt.planes[1] = reinterpret_cast<uint8_t*>(gu.data());
+                gt.planes[2] = reinterpret_cast<uint8_t*>(gv.data());
+                ct.strides[0] = gt.strides[0] = ys * 2;
+                ct.strides[1] = gt.strides[1] = ct.strides[2] = gt.strides[2] = cs * 2;
+                OutputColor::fromRgba(even.data(), ew, eh, ew * 4, ct);
+                gpu->begin();
+                Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, false);
+                Gpu::TexturePtr canvas = gpu->target(QSize(w, h), nullptr, true);
+                CHECK(canvas != nullptr);
+                if (canvas) {
+                    gpu->draw(*canvas, {t.get(), {}, 1.0, nullptr, {}});
+                    CHECK(gpu->readYuv(*canvas, gt));
+                }
+                gpu->finish();
+                const int shift = nv ? 6 : 0;
+                int my = 0, mc = 0, lowBits = 0, padTouched = 0;
+                auto cmp = [&](const std::vector<uint16_t>& c, const std::vector<uint16_t>& g, int stride, int words, int rows, int& worst) {
+                    for (int y = 0; y < rows; ++y) {
+                        for (int x = 0; x < words; ++x) {
+                            const uint16_t gw = g[size_t(y) * stride + x];
+                            worst = std::max(worst, std::abs((c[size_t(y) * stride + x] >> shift) - (gw >> shift)));
+                            if (nv && (gw & 63)) ++lowBits;
+                        }
+                        for (int x = words; x < stride; ++x) padTouched += g[size_t(y) * stride + x] != kSentinel;
+                    }
+                };
+                cmp(cy, gy, ys, w, h, my);
+                cmp(cu, gu, cs, nv ? 2 * ((w + 1) / 2) : (w + 1) / 2, (h + 1) / 2, mc);
+                if (!nv) cmp(cv, gv, cs, (w + 1) / 2, (h + 1) / 2, mc);
+                std::printf("  %-34s Y max %d | C max %d (10-bit steps)\n",
+                            qPrintable(QString("to %1 %2x%3").arg(nv ? "p010" : "yuv420p10").arg(w).arg(h)), my, mc);
+                CHECK(my <= 1);
+                CHECK(mc <= 1);
+                CHECK_EQ(lowBits, 0);    // P010: the value in the top bits only
+                CHECK_EQ(padTouched, 0); // nothing written past the picture
+            }
+        // (b) ramp: 10-bit luma 64..940 across 1024 pixels, neutral chroma
+        const int rw = 1024, rh = 8;
+        auto pic = testYuv(rw, rh, AV_PIX_FMT_YUV420P10LE);
+        for (int y = 0; y < rh; ++y) {
+            auto* row = reinterpret_cast<uint16_t*>(pic->frame->data[0] + size_t(y) * pic->frame->linesize[0]);
+            for (int x = 0; x < rw; ++x) row[x] = uint16_t(64 + x * 876 / (rw - 1));
+        }
+        for (int p = 1; p < 3; ++p)
+            for (int y = 0; y < rh / 2; ++y) {
+                auto* row = reinterpret_cast<uint16_t*>(pic->frame->data[p] + size_t(y) * pic->frame->linesize[p]);
+                for (int x = 0; x < rw / 2; ++x) row[x] = 512;
+            }
+        const Video::Info info = infoFor(*pic, 709, false);
+        for (const int kind : {0, 1, 2}) { // RGBA8 frame, RGBA16F frame, 16F asked for after the card refused it
+            const bool half = kind > 0;
+            if (kind == 2) gpu->refuseHalfTargets();
+            std::vector<uint16_t> y(size_t(rw) * rh), u(size_t(rw / 2) * (rh / 2)), v(u.size());
+            OutputColor::Target ot;
+            ot.layout = OutputColor::Layout::Yuv420;
+            ot.bits = 10;
+            ot.planes[0] = reinterpret_cast<uint8_t*>(y.data()), ot.planes[1] = reinterpret_cast<uint8_t*>(u.data());
+            ot.planes[2] = reinterpret_cast<uint8_t*>(v.data());
+            ot.strides[0] = rw * 2, ot.strides[1] = ot.strides[2] = rw;
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->uploadYuv(pic->frame, info);
+            Gpu::TexturePtr canvas = gpu->target(QSize(rw, rh), nullptr, half);
+            if (canvas && t) {
+                gpu->draw(*canvas, {t.get(), {}, 1.0, nullptr, {}});
+                gpu->readYuv(*canvas, ot);
+            }
+            gpu->finish();
+            std::set<int> levels(y.begin() + rw * 4, y.begin() + rw * 5);
+            int off = 0;
+            for (int x = 0; x < rw; ++x) off = std::max(off, std::abs(int(y[size_t(rw) * 4 + x]) - (64 + x * 876 / (rw - 1))));
+            std::printf("  10-bit ramp on %-19s %zu levels, max %d off\n",
+                        kind == 2 ? "16F refused" : half ? "RGBA16F frame" : "RGBA8 frame", levels.size(), off);
+            CHECK(canvas != nullptr); // refused: an RGBA8 frame instead, still written by readYuv
+            if (kind == 1) {
+                CHECK(levels.size() > 600);
+                CHECK(off <= 3);
+            } else {
+                CHECK(levels.size() > 200 && levels.size() <= 260); // the 8-bit frame rounds to 256 steps
+                CHECK(off <= 3);
             }
         }
     }
