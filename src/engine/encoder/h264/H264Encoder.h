@@ -382,6 +382,8 @@ private:
     std::vector<float> crfCost_; // per picture (display index): its lookahead cost against the picture before
     std::vector<double> crfSum_; // prefix sums of crfCost_ over the pictures that do not repeat the one before
     std::vector<int> crfCount_;  // and their count
+    double crfTree_ = 0;         // mean macroblock-tree offset of the last reference picture
+    double crfTreeX_ = 0;
     void noteCost(const LookaheadFrame& f);
     double crfQp(const LookaheadFrame& frame, double* complexity = nullptr) const;
     bool useLookahead() const

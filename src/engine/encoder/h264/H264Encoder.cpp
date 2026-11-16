@@ -3729,13 +3729,26 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // Constant quality: no budget and no model, the QP follows the content (crfQp); the fraction of a QP
         // goes into the macroblocks' offsets, so neighbouring pictures do not step by a whole QP.
         double complexity = 0;
-        const double p = crfQp(frame, &complexity);
+        double p = crfQp(frame, &complexity);
+        static const double kCrfTree = std::getenv("H264_CRFTREE") ? std::atof(std::getenv("H264_CRFTREE")) : 0.0;
+        static const double kCrfTreeX = std::getenv("H264_CRFTREEX") ? std::atof(std::getenv("H264_CRFTREEX")) : 0.0;
+        static const double kCrfTreeXS = std::getenv("H264_CRFTREEXS") ? std::atof(std::getenv("H264_CRFTREEXS")) : 2.0;
+        if (!fc.treeOffset_.empty()) {
+            double t = 0, x = 0;
+            for (size_t m = 0; m < fc.treeOffset_.size(); ++m) {
+                t += fc.treeOffset_[m];
+                x += Lookahead::qpOffset(frame, int(m), kCrfTreeXS);
+            }
+            crfTree_ = t / double(fc.treeOffset_.size());
+            crfTreeX_ = x / double(fc.treeOffset_.size());
+        }
+        p += kCrfTree * crfTree_ + kCrfTreeX * (crfTreeX_ - crfTree_);
         const double q = std::clamp(idr ? (cfg_.gop > 1 ? p - 3 : p) : type == 2 ? p + (bRef ? bRefQp : bQp) : p, 10.0, 51.0);
         cfg_.qp = int(std::lround(q));
         qpFrac = float(q - cfg_.qp);
         if (std::getenv("H264_RC_TRACE"))
-            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f intra %.1f inter %.1f\n", frame.index, complexity, p,
-                         frame.intraSum / (double(mbW_) * mbH_), frame.interSum / (double(mbW_) * mbH_));
+            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f intra %.1f inter %.1f tree %.2f treex %.2f\n", frame.index, complexity, p,
+                         frame.intraSum / (double(mbW_) * mbH_), frame.interSum / (double(mbW_) * mbH_), crfTree_, crfTreeX_);
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
@@ -8564,6 +8577,10 @@ void FrameCoder::planMacroblockQp()
             mean += e;
         }
     mean /= n;
+    static const double kCrfAqB = std::getenv("H264_CRFAQB") ? std::atof(std::getenv("H264_CRFAQB")) : 0.0;
+    static const double kCrfAqRef = std::getenv("H264_CRFAQREF") ? std::atof(std::getenv("H264_CRFAQREF")) : 13.0;
+    if (cfg_.crf >= 0 && cfg_.bitrateKbps <= 0)
+        mean += kCrfAqB * (kCrfAqRef - mean);
     static const bool aqTrace = std::getenv("H264_AQ_TRACE") != nullptr;
     if (aqTrace) {
         double tm = 0;
