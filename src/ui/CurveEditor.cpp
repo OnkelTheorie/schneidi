@@ -171,9 +171,16 @@ void CurveEditor::mousePressEvent(QMouseEvent* e)
             if (std::abs(pts[k].x() - x) < GradeCurves::kMinGap) found = k;
         m_points = pts;
         i = found;
+        if (i < 0) return;
+        // Dragging from here on (the model's answer to `changed` must not replace the points: a point added on the
+        // straight line leaves it straight, which the model stores as no curve at all)
+        m_drag = i;
+        m_last = e->position();
+        m_dragValue = m_points[i];
+        update();
         emit changed(m_points);
+        return;
     }
-    if (i < 0) return;
     m_drag = i;
     m_last = e->position();
     m_dragValue = m_points[i];
