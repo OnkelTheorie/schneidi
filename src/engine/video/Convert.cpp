@@ -94,7 +94,8 @@ int sourceRange(AVPixelFormat f, bool tagged)
 }
 
 // Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same); slot =
-// another context for a second pass in the same thread
+// another context for a second pass in the same thread (2: the scaling pass of HDR pictures, so the bands' contexts
+// in slots 0/1 never replace it)
 SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, int flags, int dw = 0, int dh = 0,
                           int slot = 0)
 {
@@ -102,7 +103,7 @@ SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, in
         SwsContext* ctx = nullptr;
         ~Holder() { sws_freeContext(ctx); }
     };
-    thread_local Holder holders[2];
+    thread_local Holder holders[3];
     Holder& holder = holders[slot];
     holder.ctx = sws_getCachedContext(holder.ctx, w, h, src, dw ? dw : w, dh ? dh : h, dst, flags, nullptr, nullptr, nullptr);
     return holder.ctx;
@@ -240,7 +241,8 @@ bool convertHdr(const Picture& pic, const Info& info, uint8_t* out, int dw, int 
     const bool rgbSource = desc->flags & AV_PIX_FMT_FLAG_RGB;
     const uint8_t* const* inData = frame->data;
     const int* inStride = frame->linesize;
-    std::vector<uint8_t> scaled; // the planes at the destination size
+    // The planes at the destination size; kept per thread (preview size, ~2 bytes per pixel and plane), reused
+    thread_local std::vector<uint8_t> scaled;
     uint8_t* midData[4] = {};
     int midStride[4] = {};
     if (dw != w || dh != h) {
@@ -248,7 +250,7 @@ bool convertHdr(const Picture& pic, const Info& info, uint8_t* out, int dw, int 
         if (size <= 0) return false;
         scaled.resize(size_t(size));
         av_image_fill_arrays(midData, midStride, scaled.data(), src, dw, dh, 32);
-        SwsContext* scale = cachedContext(w, h, src, src, fast ? SWS_BILINEAR : kScaleFlags, dw, dh, 1);
+        SwsContext* scale = cachedContext(w, h, src, src, fast ? SWS_BILINEAR : kScaleFlags, dw, dh, 2);
         if (!scale) return false;
         sws_scale(scale, frame->data, frame->linesize, 0, h, midData, midStride);
         inData = midData;
@@ -262,7 +264,7 @@ bool convertHdr(const Picture& pic, const Info& info, uint8_t* out, int dw, int 
     const int step = ((dh + bands - 1) / bands + (1 << sub) - 1) & ~((1 << sub) - 1);
     std::atomic<bool> ok{true};
     Compose::forRows(bands, 1, [&](int first, int last) {
-        std::vector<uint16_t> wide;
+        thread_local std::vector<uint16_t> wide; // one band of 16-bit RGB (an eighth of the picture at most), reused
         for (int b = first; b < last; ++b) {
             const int y0 = b * step, y1 = std::min(dh, y0 + step);
             if (y0 >= y1) continue;

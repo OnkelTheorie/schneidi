@@ -268,6 +268,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/SmartRender.h      src/engine/SmartRender.cpp
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
     src/engine/HdrTone.h          src/engine/HdrTone.cpp
+    src/engine/HdrScan.h          src/engine/HdrScan.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
     src/engine/Inference.h        src/engine/Inference.cpp

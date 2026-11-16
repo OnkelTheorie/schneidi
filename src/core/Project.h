@@ -140,6 +140,9 @@ public:
     // transcripts, picture shape) stays. Not in the undo history and no change of the project (as replaceMedia).
     // false = not in the pool, unreadable (an empty probe: the file being written) or nothing different.
     bool refreshMedia(const MediaInfo& probed);
+    // The HDR transfer found for a pool file (MediaInfo::hdr: "HLG", "PQ", empty = SDR; engine/HdrScan). Not in the
+    // undo history and no change of the project. false = not in the pool or the same already
+    bool setMediaHdr(const QString& path, const QString& hdr);
     // Clips in any timeline whose used range of `path` reaches past its end (the file got shorter)
     int clipsPastEnd(const QString& path) const;
     // After a frame rate change (from `oldRate` to the current one): media lengths, source in/out and source markers

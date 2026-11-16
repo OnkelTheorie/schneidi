@@ -10,7 +10,10 @@
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/Types.h"
+#include "engine/HdrScan.h"
 #include "engine/HdrTone.h"
+#include "engine/MediaProbe.h"
+#include "ui/Inspector.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
@@ -20,6 +23,10 @@ extern "C" {
 }
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QTimer>
 #include <QTemporaryDir>
 #include <QUndoStack>
 
@@ -132,6 +139,7 @@ void testTables()
 }
 
 void testRenderer(const QString& hlg);
+void testScan(const QString& dir, const QString& hlg, const QString& plain);
 
 // A flat colour as a 10-bit file with the given transfer tags; the converted centre pixel
 std::array<int, 3> convertedCentre(const QString& path)
@@ -169,6 +177,7 @@ void testFiles(const QString& dir)
     const QString red = make("hlg-red.mkv", "0xc00000", hlgTags);
     if (!CHECK(!hlg.isEmpty() && !plain.isEmpty() && !pq.isEmpty() && !red.isEmpty())) return;
     testRenderer(hlg);
+    testScan(dir, hlg, plain);
     {
         const auto r = Video::Reader::open(hlg);
         if (CHECK(r)) {
@@ -279,6 +288,70 @@ void testRenderer(const QString& hlg)
     std::printf("renderer HLG 75%%: on %d, off %d\n", on, off);
     CHECK(on > 195 && on < 215);
     CHECK(std::abs(off - 191) <= 2);
+}
+
+// MediaProbe::hdrTransfer: header, or a small stream analysis for a transfer only in the bitstream (H.265 in MPEG-TS);
+// hdrTransferCached opens nothing (unknown before). HdrScan: a project whose media say nothing (from before 0.24) gets
+// MediaInfo::hdr in the background, without an undo step; the Inspector's box never shows checked and greyed out
+void testScan(const QString& dir, const QString& hlg, const QString& plain)
+{
+    const QString ts = Check::makeMedia(dir + "/bitstream.ts",
+                                        {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=0.4", "-pix_fmt",
+                                         "yuv420p10le", "-c:v", "libx265", "-x265-params",
+                                         "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:log-level=error"});
+    if (!ts.isEmpty()) {
+        CHECK(!MediaProbe::hdrTransferCached(ts).has_value());
+        CHECK(MediaProbe::hdrTransfer(ts) == Transfer::Hlg);
+        CHECK(MediaProbe::hdrTransferCached(ts) == Transfer::Hlg);
+    }
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    for (const QString& f : {hlg, plain}) p.addMedia({f, QFileInfo(f).fileName(), 5, true, false, false});
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = p.newClipId();
+        v.mediaPath = hlg;
+        v.out = 4;
+        tl.video[0].clips << v;
+        Clip w = v;
+        w.id = p.newClipId();
+        w.mediaPath = plain;
+        w.start = 5;
+        tl.video[0].clips << w;
+    });
+    const int undo = p.undoStack()->index();
+    CHECK(p.mediaInfo(hlg)->hdr.isEmpty()); // as an old project knows it
+    // The Inspector before the scan: neither box checked and greyed out
+    Inspector insp(&ed);
+    insp.resize(380, 1250);
+    insp.show();
+    auto box = [&](int clip) -> QCheckBox* {
+        sel.set({clip});
+        QCoreApplication::processEvents();
+        return insp.findChild<QCheckBox*>("HdrToSdr");
+    };
+    const int hlgClip = p.timeline().video[0].clips[0].id, plainClip = p.timeline().video[0].clips[1].id;
+    for (int id : {hlgClip, plainClip})
+        if (QCheckBox* b = box(id); CHECK(b)) CHECK(b->isEnabled() || !b->isChecked());
+    HdrScan scan(&p, nullptr);
+    QEventLoop loop;
+    QObject::connect(&scan, &HdrScan::finished, &loop, &QEventLoop::quit);
+    QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+    scan.scan();
+    if (scan.busy()) loop.exec();
+    CHECK_EQ(p.mediaInfo(hlg)->hdr, QString("HLG"));
+    CHECK(p.mediaInfo(plain)->hdr.isEmpty());
+    CHECK_EQ(p.undoStack()->index(), undo); // not an edit
+    CHECK(!p.setMediaHdr(hlg, "HLG"));      // the same: nothing
+    if (QCheckBox* b = box(hlgClip); CHECK(b)) {
+        CHECK(b->isEnabled() && b->isChecked());
+        CHECK(b->text().contains("HLG"));
+    }
+    if (QCheckBox* b = box(plainClip); CHECK(b)) CHECK(!b->isEnabled() && !b->isChecked());
+    // Off on an SDR clip (set by the CLI): stays switchable back
+    ed.setHdrToSdr({plainClip}, false);
+    if (QCheckBox* b = box(plainClip); CHECK(b)) CHECK(b->isEnabled() && !b->isChecked());
 }
 
 } // namespace

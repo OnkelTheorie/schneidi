@@ -189,7 +189,10 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
     const QByteArray retime = c.isRetimed() ? QByteArray(kRetimeVersion) : QByteArray();
     // HDR sources are mapped to SDR since 0.24 (Clip::hdrToSdr, written only when off): their renders from before show
     // the signal unmapped. SDR clips keep their key
-    const QByteArray tone = c.hdrToSdr && !c.mediaPath.isEmpty() && MediaProbe::hdrPicture(c.mediaPath)
+    // (the cached answer only: engine/HdrScan finds it in the background)
+    const QByteArray tone = c.hdrToSdr && !c.mediaPath.isEmpty()
+                                    && MediaProbe::hdrTransferCached(c.mediaPath).value_or(HdrTone::Transfer::None)
+                                           != HdrTone::Transfer::None
                                 ? QByteArray(kToneVersion)
                                 : QByteArray();
     // Files the effects read (a LUT): edited or replaced under the same name, the cached render is stale. The clip

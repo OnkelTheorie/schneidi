@@ -41,6 +41,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/HdrScan.h"
 #include "engine/video/Hardware.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
@@ -242,6 +243,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview
     ProxyManager* proxies = m_engine->proxies();
+    // HDR files found in the background (projects from before 0.24, transfer only in the bitstream): Media Pool mark,
+    // Inspector, their proxies' names
+    (new HdrScan(m_project, proxies, this))->scan();
     auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->renderTimeline()); };
     connect(proxies, &ProxyManager::proxyChanged, this, [this, proxiesChanged](const QString& path) {
         // also clips in compound clips (nested sequences)
