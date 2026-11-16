@@ -48,6 +48,7 @@ struct Curves {
 // Qualifier (core/GradeQualifier): its range and the correction inside it
 struct Qualifier {
     bool on = false;
+    int window = 0; // limited to this shape window (applyQualifierWindow, not in bake), 0 = the whole picture
     GradeQualifier::Range range;
     Correction correction;
     bool operator==(const Qualifier&) const = default;
@@ -133,6 +134,15 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
 // The same without baking (the previous per-pixel code, floating point with a LUT): the reference for tests and
 // benches. The baked result differs from it by at most about 1 code value, and only with a LUT.
 void applyReference(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut);
+// A qualifier limited to a shape window (p.qualifier.window > 0; bake() leaves it out): its correction (or with
+// View::QualifierMask its selection) inside the window's mask `g` (geometry on this picture, see onPicture), on the
+// picture after the primary correction and before the LUT
+void applyQualifierWindow(uint8_t* rgba, int width, int height, const Params& p, const GradeWindows::Geometry& g);
+// The whole grade of a clip (primary, curves, qualifier - in its window or not -, LUT, windows) on its picture.
+// frame/fit as for onPicture. The Renderer's CPU path and the stills of the Color page use it.
+void applyClip(uint8_t* rgba, int width, int height, const Clip& c, double t, const Params& p, const Lut* lut,
+               QSizeF frame, QSizeF fit);
+
 // Apply a window on top: inside its mask the picture gets the window's correction and fill (blur/pixelate/color),
 // mixed by the soft edge. Only the window's area is computed.
 void applyWindow(uint8_t* rgba, int width, int height, const Window& w);

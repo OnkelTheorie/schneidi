@@ -9,6 +9,9 @@
 #include "core/GameHud.h"
 #include "core/GradeCurves.h"
 #include "core/GradeQualifier.h"
+#include "core/GradeStills.h"
+#include "core/Project.h"
+#include "engine/Snapshot.h"
 #include "core/GradeWindows.h"
 #include "core/NameBlur.h"
 #include "core/Keyframes.h"
@@ -207,6 +210,43 @@ void opColor(Session& s, const QJsonObject& op)
     if (op.contains("enabled")) ed.setGradeEnabled(ids, op.value("enabled").toBool());
 }
 
+// ---------- stills (Color page) ----------
+
+void opStill(Session& s, const QJsonObject& op)
+{
+    Editor& ed = s.editor;
+    const auto exists = [&](int id) {
+        const QVector<GradeStill>& list = s.project.stills();
+        return std::any_of(list.begin(), list.end(), [id](const GradeStill& st) { return st.id == id; });
+    };
+    if (op.contains("remove")) {
+        const int id = op.value("remove").toInt();
+        if (!exists(id)) fail("NOT_FOUND", QString("no still %1 (see `info` stills)").arg(id));
+        ed.removeGradeStill(id);
+        return;
+    }
+    if (op.contains("apply")) {
+        const int id = op.value("apply").toInt();
+        if (!exists(id)) fail("NOT_FOUND", QString("no still %1 (see `info` stills)").arg(id));
+        const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "the still's grade");
+        if (!ed.applyGradeStill(id, ids)) fail("FAILED", "no video clip to apply the grade to");
+        return;
+    }
+    if (!op.value("add").toBool()) fail("BAD_ARGUMENT", "give add:true (with clips, at?), apply:<still id> (with clips) or remove:<still id>");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a still");
+    const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.value(0));
+    if (!c) fail("NOT_FOUND", "no video clip for the still");
+    const ProjectFormat f = s.format();
+    const int at = op.contains("at") ? std::clamp(timeOf(s, op, "at"), c->start, c->end() - 1) : c->start;
+    // The frame as the viewer shows it (the whole timeline at that time), in the still's size
+    const QImage picture = Snapshot::Source::timeline(f, s.project.renderTimeline())->frame(at, GradeStills::kMaxWidth);
+    if (picture.isNull()) fail("DECODE_FAILED", QString("could not render frame %1").arg(at));
+    const QString label = op.contains("label") ? op.value("label").toString()
+                                               : s.project.clipName(*c) + "  " + tc(at, f);
+    const int id = ed.addGradeStill(c->id, picture, label);
+    s.notes << QString("still %1 added (grade of clip %2 at %3)").arg(id).arg(c->id).arg(tc(at, f));
+}
+
 // ---------- qualifier (selection by colour) ----------
 
 void opQualifier(Session& s, const QJsonObject& op)
@@ -246,6 +286,13 @@ void opQualifier(Session& s, const QJsonObject& op)
         for (int id : ids)
             ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Qualifier");
     if (op.contains("invert")) ed.setGradeQualifierInvert(ids, op.value("invert").toBool());
+    if (op.contains("window")) {
+        const int n = op.value("window").toInt();
+        if (n < 0 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", QString("window is 0 (whole picture) or 1..%1").arg(GradeWindows::kMax));
+        if (n && std::none_of(ids.begin(), ids.end(), [&](int id) { return GradeWindows::exists(*clip(id), n); }))
+            fail("NOT_FOUND", QString("no clip has window %1 (add one with op 'window')").arg(n));
+        ed.setGradeQualifierWindow(ids, n);
+    }
     if (op.contains("keyframe"))
         for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool(), GradeQualifier::kLayer);
 }
@@ -1076,8 +1123,17 @@ void addLookOps(QVector<OpDef>& ops)
                  "saturation factor (0 = gray), hue_hue (y - 0.5) * 360 = hue turn in degrees (HSV hue, brightness kept). Curves are not "
                  "animatable.",
                  opColor, kClipKeys}
+        << OpDef{"still", "{op:'still', clips?, add?, at?, label?, apply?, remove?}",
+                 "Color page stills: keep a graded frame with its grade, apply that grade to other clips",
+                 "add:true keeps the frame at `at` (timeline frame inside the first clip, default its start) as the "
+                 "viewer shows it, together with that clip's whole grade (wheels, curves, qualifier, windows, LUT, "
+                 "keyframes); the notes give its id. apply:<id> puts the still's grade onto `clips` (replacing "
+                 "theirs) - to match shots: grade one, keep a still, apply it to the others. remove:<id> deletes "
+                 "it. Stills are listed in `info` (stills) and stored in the project (at most 64). Look at one with "
+                 "{frames, source:<project>, still:<id>}, next to the timeline at a time with at:[…].",
+                 opStill, kClipKeys}
         << OpDef{"qualifier", "{op:'qualifier', clips, add?, remove?, color?, hue?, hue_width?, hue_soft?, sat_low?, "
-                              "sat_high?, sat_soft?, lum_low?, lum_high?, lum_soft?, invert?, lift?, gamma?, gain?, "
+                              "sat_high?, sat_soft?, lum_low?, lum_high?, lum_soft?, invert?, window?, lift?, gamma?, gain?, "
                               "offset?, contrast?, pivot?, saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
                  "Color page qualifier: grade only the picked colours (skin, sky)",
                  "One per clip, part of its grade. It selects by colour: hue in degrees (0 red, 120 green, 240 blue) "
@@ -1087,7 +1143,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "curves of the clip. color:\"#rrggbb\" sets a range around that colour (then single values on top). "
                  "Inside the selection its own correction applies (lift … exposure like op 'color', neutral by "
                  "default): e.g. {op:'qualifier', clips:[3], color:'#c8906c', saturation:40} = calmer skin. "
-                 "invert:true = everything except the selection. The first qualifier op on a clip adds it (default "
+                 "invert:true = everything except the selection. window:n limits it to shape window n of the clip (op "
+                 "'window'; its soft edge too; 0 = the whole picture again), e.g. only the face's skin. The first qualifier op on a clip adds it (default "
                  "range: skin tones); remove:true deletes it. Values that have keyframes get one at `at`; "
                  "keyframe:true/false sets/removes a keyframe of every qualifier value there; single values animate "
                  "with {op:'keyframe', param:'grade.q.hue'}. Look at the result with `frames`.",

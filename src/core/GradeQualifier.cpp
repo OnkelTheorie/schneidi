@@ -62,6 +62,17 @@ QVector<EffectParam> params(const QVector<EffectParam>& grade)
     number("lumSoft", T("Helligkeit-Weichheit"), def.lumSoft, 0, 100);
     {
         EffectParam p;
+        p.key = "window";
+        p.label = T("Nur in Fenster");
+        p.defaultValue = 0.0;
+        p.min = 0;
+        p.max = GradeWindows::kMax;
+        p.step = 1;
+        p.decimals = 0;
+        add(p, false);
+    }
+    {
+        EffectParam p;
         p.key = "invert";
         p.label = T("Invertieren");
         p.type = EffectParam::Bool;
@@ -77,6 +88,12 @@ bool exists(const Clip& c)
 {
     const EffectInstance* e = EffectRegistry::instance(c, kGrade);
     return e && e->params.contains(key("hue"));
+}
+
+int windowOf(const Clip& c)
+{
+    const int n = int(EffectRegistry::value(c, kGrade, key("window")).toDouble());
+    return exists(c) && n >= 1 && n <= GradeWindows::kMax && GradeWindows::exists(c, n) ? n : 0;
 }
 
 void add(Clip& c)

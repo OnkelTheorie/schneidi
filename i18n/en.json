@@ -3435,5 +3435,13 @@
  "HDR als SDR zeigen": "Show HDR as SDR",
  "HDR → SDR an": "HDR → SDR on",
  "HDR → SDR aus": "HDR → SDR off",
- "HDR-Videos (HLG/PQ, z. B. vom Handy) werden in Vorschau und Export in normales SDR (BT.709) umgerechnet, damit sie nicht blass aussehen. Aus: das Signal bleibt, wie es ist (für eine LUT oder Korrektur, die dafür gemacht ist). Normale Videos ändert das nicht.": "HDR videos (HLG/PQ, e.g. from a phone) are converted to regular SDR (BT.709) in preview and export so they do not look washed out. Off: the signal stays as it is (for a LUT or grade made for it). Regular videos are not affected."
+ "HDR-Videos (HLG/PQ, z. B. vom Handy) werden in Vorschau und Export in normales SDR (BT.709) umgerechnet, damit sie nicht blass aussehen. Aus: das Signal bleibt, wie es ist (für eine LUT oder Korrektur, die dafür gemacht ist). Normale Videos ändert das nicht.": "HDR videos (HLG/PQ, e.g. from a phone) are converted to regular SDR (BT.709) in preview and export so they do not look washed out. Off: the signal stays as it is (for a LUT or grade made for it). Regular videos are not affected.",
+ "Beim Vergleichen beide Bilder ganz nebeneinander statt der Wischlinie": "When comparing, both pictures whole side by side instead of the wipe line",
+ "Die Auswahl nur innerhalb eines Fensters (z. B. nur die Haut im Gesicht)": "The selection only inside a window (e.g. only the skin of the face)",
+ "Ganzes Bild": "Whole picture",
+ "Nebeneinander": "Side by side",
+ "Nur in Fenster": "Only in window",
+ "Nur in Fenster %1": "Only in window %1",
+ "Qualifier im Fenster": "Qualifier in window",
+ "Qualifier im ganzen Bild": "Qualifier on the whole picture"
 }

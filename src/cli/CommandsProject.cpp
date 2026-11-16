@@ -329,6 +329,13 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
     QJsonObject o = projectJson(s.project, s.path);
     if (s.live) o["app"] = s.app; // open in the app: what the user sees there
     if (!s.notes.isEmpty()) o["notes"] = s.notes; // the file did not open as written
+    // Color page stills: id, label and the clip their grade came from (`frames` still:id shows one)
+    if (!s.project.stills().isEmpty()) {
+        QJsonArray stills;
+        for (const GradeStill& st : s.project.stills())
+            stills << QJsonObject{{"id", st.id}, {"label", st.label}, {"from_clip", st.grade.id}};
+        o["stills"] = stills;
+    }
     // Watch folders: how many, and the revision of the newest file they brought in (`watch` since)
     if (!s.project.watchFolders().isEmpty() || s.project.watchRevision() > 0)
         o["watch"] = QJsonObject{{"folders", int(s.project.watchFolders().size())}, {"revision", s.project.watchRevision()}};

@@ -49,6 +49,19 @@ void WindowOverlay::setCompare(const QImage& still)
     emit changed();
 }
 
+void WindowOverlay::setSideBySide(bool on)
+{
+    if (on == m_sideBySide) return;
+    m_sideBySide = on;
+    emit changed();
+}
+
+void WindowOverlay::setLiveFrame(const QImage& frame)
+{
+    m_live = frame;
+    if (m_sideBySide && !m_compare.isNull()) emit changed();
+}
+
 void WindowOverlay::setWipe(double x)
 {
     x = std::clamp(x, 0.0, 1.0);
@@ -146,6 +159,23 @@ QPointF WindowOverlay::handlePos(int handle, const QRectF& frame) const
 
 void WindowOverlay::paint(QPainter& p, const QRectF& frame)
 {
+    if (m_visible && !m_compare.isNull() && m_sideBySide) { // both pictures whole, each in its half
+        const auto fitted = [](const QImage& img, const QRectF& box) {
+            const QSizeF s = QSizeF(img.size()).scaled(box.size(), Qt::KeepAspectRatio);
+            return QRectF(box.center() - QPointF(s.width() / 2, s.height() / 2), s);
+        };
+        p.save();
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.fillRect(frame, Theme::viewerBg);
+        const QRectF left(frame.left(), frame.top(), frame.width() / 2, frame.height());
+        const QRectF right(frame.center().x(), frame.top(), frame.width() / 2, frame.height());
+        p.drawImage(fitted(m_compare, left), m_compare);
+        if (!m_live.isNull()) p.drawImage(fitted(m_live, right), m_live);
+        p.setPen(QPen(Theme::border, 2));
+        p.drawLine(QPointF(frame.center().x(), frame.top()), QPointF(frame.center().x(), frame.bottom()));
+        p.restore();
+        return; // no window outline over the halves (it would not sit on the picture)
+    }
     if (m_visible && !m_compare.isNull()) { // the still left of the wipe line, the line with its grip
         const double x = frame.left() + m_wipe * frame.width();
         p.save();
@@ -220,6 +250,7 @@ void WindowOverlay::paint(QPainter& p, const QRectF& frame)
 int WindowOverlay::partAt(const QPointF& pos, const QRectF& frame) const
 {
     // The wipe line before the window: grabbed anywhere along it
+    if (m_visible && !m_compare.isNull() && m_sideBySide) return None; // nothing to drag on the halves
     if (m_visible && !m_compare.isNull() && std::abs(pos.x() - wipeHandle(frame).x()) <= kHit && pos.y() >= frame.top()
         && pos.y() <= frame.bottom())
         return Wipe;

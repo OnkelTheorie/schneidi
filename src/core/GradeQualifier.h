@@ -35,6 +35,9 @@ const QStringList& rangeKeys();
 QVector<EffectParam> params(const QVector<EffectParam>& grade);
 
 bool exists(const Clip& c);
+// The shape window the qualifier is limited to (its key times the window's mask), 0 = the whole picture; a window
+// that no longer exists counts as 0
+int windowOf(const Clip& c);
 // New qualifier with the default range (skin tones), written explicitly; the grade must exist. Existing: nothing
 void add(Clip& c);
 void remove(Clip& c); // its values and keyframes

@@ -84,6 +84,7 @@ signals:
 protected:
     void showEvent(QShowEvent* e) override;
     void hideEvent(QHideEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 private:
@@ -112,6 +113,8 @@ private:
     void refreshCurves(const Clip* c);
     void refreshQualifier(const Clip* c, int t);
     void updateMask(); // tells the viewer which clip shows its qualifier mask
+    void layoutWheels(int columns); // 4 in a row or 2 x 2
+    void fitWidth();                // the wheels' layout for the width the page has
     QWidget* buildStills();
     void refreshStills();
     int selectedStill() const;
@@ -159,6 +162,13 @@ private:
     };
     QVector<WindowField> m_windowFields;
 
+    // Wheels' layout
+    class QGridLayout* m_wheelGrid = nullptr;
+    QVector<QWidget*> m_wheelBoxes, m_wheelUnders;
+    int m_wheelColumns = 0, m_fourWide = 0, m_twoWide = 0;
+    QWidget* m_windowsBox = nullptr;
+    class QBoxLayout* m_outer = nullptr;
+    QWidget* m_windowsLine = nullptr;
     // Palettes
     int m_palette = Wheels;
     QStackedWidget* m_palettes = nullptr;
@@ -168,12 +178,14 @@ private:
     QVector<QToolButton*> m_curveButtons; // by GradeCurves::Kind
     QToolButton* m_curveReset = nullptr;
     QLabel* m_curveNote = nullptr;
-    QImage m_histFrame;
+    QImage m_histFrame, m_lastFrame;
+    QToolButton* m_stillSide = nullptr;
     QTimer m_histTimer;
     // Qualifier
     QWidget* m_qualEmpty = nullptr;
     QWidget* m_qualControls = nullptr;
     QCheckBox* m_qualInvert = nullptr;
+    QComboBox* m_qualWindow = nullptr;
     QToolButton* m_qualMask = nullptr;
     struct QualField {
         QString key;

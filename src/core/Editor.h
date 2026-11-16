@@ -490,6 +490,8 @@ public:
                                 const QString& mergeKey = {});
     // Only "invert" (each clip keeps its own range)
     void setGradeQualifierInvert(const QVector<int>& ids, bool invert);
+    // Limit the qualifier to shape window n (0 = the whole picture); clips without that window keep theirs
+    void setGradeQualifierWindow(const QVector<int>& ids, int n);
     // Tracking result: window n of the clip follows the points (keyframes for x/y on every point; keyframes there and
     // between `from` and the last point are replaced, `from` keeps its position as a keyframe). One undo step.
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);

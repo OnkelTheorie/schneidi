@@ -752,14 +752,10 @@ struct Renderer::Impl {
         }
         if ((ColorGrade::active(c) || (c.id == ctx.maskClip && GradeQualifier::exists(c))) && !ctx.bypassGrade) {
             ColorGrade::Params p = ColorGrade::at(c, t);
-            const bool mask = c.id == ctx.maskClip && p.qualifier.on;
-            if (mask) p.view = ColorGrade::View::QualifierMask;
+            if (c.id == ctx.maskClip && p.qualifier.on) p.view = ColorGrade::View::QualifierMask;
             const QString lp = ColorGrade::lutPath(c);
             const auto l = lp.isEmpty() ? nullptr : lut(lp);
-            if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
-            if (!mask) // the selection alone, without the windows on top
-                for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t))
-                    ColorGrade::applyWindow(img.data(), img.w, img.h, ColorGrade::onPicture(w, QSizeF(ctx.PW, ctx.PH), fit));
+            ColorGrade::applyClip(img.data(), img.w, img.h, c, t, p, l.get(), QSizeF(ctx.PW, ctx.PH), fit);
         }
         if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
             if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
@@ -2554,6 +2550,8 @@ struct Renderer::Impl {
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId) && e.effectId != QLatin1String("stabilize"))
                 return false;
         if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
+        // A qualifier limited to a window: the CPU path (mask in pixels)
+        if (!ctx.bypassGrade && GradeQualifier::windowOf(c) > 0) return false;
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
         // Tilted in depth: the card draws affine placements only; the CPU draws it through its homography
         if (tiltedEver(c)) return false;
