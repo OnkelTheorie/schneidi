@@ -627,10 +627,20 @@ void MainWindow::connectColorPage()
     });
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
+    connect(m_engine, &Engine::frameReady, m_colorPanel, &ColorPanel::setFrame);
     m_colorPanel->setTourButtonAllowed(!m_tourSaved.active);
     if (m_tours) connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
     connect(m_colorPanel, &ColorPanel::qualifierMaskChanged, m_engine, &Engine::setQualifierMask);
     connect(m_colorPanel, &ColorPanel::qualifierPickRequested, this, [this](int id) { startKeyPick(id, true); });
+    connect(m_colorPanel, &ColorPanel::stillGrabRequested, this, [this] {
+        m_engine->pause();
+        const QImage img = m_engine->grabStill(m_project->renderTimeline());
+        if (img.isNull()) {
+            statusBar()->showMessage(T("Das Bild konnte nicht erzeugt werden."), 4000);
+            return;
+        }
+        m_colorPanel->addStill(img, Timecode::format(m_engine->position(), m_project->fps()));
+    });
 }
 
 void MainWindow::warmUpVideoDecoding()

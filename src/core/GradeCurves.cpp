@@ -40,6 +40,38 @@ std::vector<double> tangents(const std::vector<double>& xs, const std::vector<do
     return m;
 }
 
+// Fritsch-Carlson on a closed curve (hue): slopes and tangents wrap around, so the segment across red has the same
+// tangents on both of its ends (no seam at hue 0 = 1). xs strictly increasing within one turn, at least 2 points
+std::vector<double> cyclicTangents(const std::vector<double>& xs, const std::vector<double>& ys)
+{
+    const size_t n = xs.size();
+    std::vector<double> d(n), m(n);
+    for (size_t i = 0; i < n; ++i) {
+        const size_t j = (i + 1) % n;
+        const double dx = j ? xs[j] - xs[i] : xs[0] + 1 - xs[i];
+        d[i] = (ys[j] - ys[i]) / dx;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const double a = d[(i + n - 1) % n], b = d[i];
+        m[i] = a * b <= 0 ? 0.0 : (a + b) / 2;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const size_t j = (i + 1) % n;
+        if (d[i] == 0) {
+            m[i] = m[j] = 0;
+            continue;
+        }
+        const double a = m[i] / d[i], b = m[j] / d[i];
+        const double s = a * a + b * b;
+        if (s > 9) {
+            const double t = 3 / std::sqrt(s);
+            m[i] = t * a * d[i];
+            m[j] = t * b * d[i];
+        }
+    }
+    return m;
+}
+
 double hermite(const std::vector<double>& xs, const std::vector<double>& ys, const std::vector<double>& m, double x)
 {
     const size_t i = size_t(std::upper_bound(xs.begin(), xs.end(), x) - xs.begin());
@@ -71,21 +103,30 @@ struct Spline {
                 value = pts[0].y();
                 return;
             }
-            const QPointF last = pts.last();
-            const QPointF first = pts.first();
-            xs.push_back(last.x() - 1);
-            ys.push_back(last.y());
+            // One closed curve: its own tangents, the neighbours of the wrap copied from them
+            std::vector<double> px, py;
             for (const QPointF& p : pts) {
-                xs.push_back(p.x());
-                ys.push_back(p.y());
+                px.push_back(p.x());
+                py.push_back(p.y());
             }
-            xs.push_back(first.x() + 1);
-            ys.push_back(first.y());
-        } else {
-            for (const QPointF& p : points) {
-                xs.push_back(p.x());
-                ys.push_back(p.y());
+            const std::vector<double> pm = cyclicTangents(px, py);
+            const size_t n = px.size();
+            xs.push_back(px[n - 1] - 1);
+            ys.push_back(py[n - 1]);
+            m.push_back(pm[n - 1]);
+            for (size_t i = 0; i < n; ++i) {
+                xs.push_back(px[i]);
+                ys.push_back(py[i]);
+                m.push_back(pm[i]);
             }
+            xs.push_back(px[0] + 1);
+            ys.push_back(py[0]);
+            m.push_back(pm[0]);
+            return;
+        }
+        for (const QPointF& p : points) {
+            xs.push_back(p.x());
+            ys.push_back(p.y());
         }
         m = tangents(xs, ys);
     }
@@ -189,10 +230,21 @@ bool isIdentity(const Points& points, Kind k)
     return std::all_of(points.begin(), points.end(), [](const QPointF& p) { return std::abs(p.y() - 0.5) < 1e-6; });
 }
 
-double eval(const Points& points, Kind k, double x)
+double eval(const Points& points, Kind k, double x) { return Shape(points, k)(x); }
+
+struct Shape::Impl : Spline {
+    using Spline::Spline;
+};
+
+Shape::Shape(const Points& points, Kind k) : m_kind(k), m_identity(isIdentity(points, k))
 {
-    if (isIdentity(points, k)) return neutral(k, x);
-    return std::clamp(Spline(points, k)(k, x), 0.0, 1.0);
+    if (!m_identity) m_impl = std::make_shared<const Impl>(points, k);
+}
+
+double Shape::operator()(double x) const
+{
+    if (m_identity) return neutral(m_kind, x);
+    return std::clamp((*m_impl)(m_kind, x), 0.0, 1.0);
 }
 
 std::vector<float> table(const Points& points, Kind k, int n)
@@ -203,8 +255,8 @@ std::vector<float> table(const Points& points, Kind k, int n)
         for (int i = 0; i <= n; ++i) out[size_t(i)] = float(neutral(k, double(i) / n));
         return out;
     }
-    const Spline s(points, k);
-    for (int i = 0; i <= n; ++i) out[size_t(i)] = float(std::clamp(s(k, double(i) / n), 0.0, 1.0));
+    const Shape s(points, k);
+    for (int i = 0; i <= n; ++i) out[size_t(i)] = float(s(double(i) / n));
     return out;
 }
 

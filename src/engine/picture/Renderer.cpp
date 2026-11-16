@@ -749,7 +749,7 @@ struct Renderer::Impl {
                                               img.h, nullptr, fit.width() / ctx.PW, fit.height() / ctx.PH))
                 img = std::move(warped);
         }
-        if (ColorGrade::active(c) && !ctx.bypassGrade) {
+        if ((ColorGrade::active(c) || (c.id == ctx.maskClip && GradeQualifier::exists(c))) && !ctx.bypassGrade) {
             ColorGrade::Params p = ColorGrade::at(c, t);
             const bool mask = c.id == ctx.maskClip && p.qualifier.on;
             if (mask) p.view = ColorGrade::View::QualifierMask;
@@ -2621,7 +2621,7 @@ struct Renderer::Impl {
         op.opacity = opacity * k;
         // Shrunk 2:1 or more: mip levels (as Compose::draw's 2x2 steps)
         op.mips = std::hypot(op.m.a, op.m.d) <= 0.5 && std::hypot(op.m.b, op.m.e) <= 0.5;
-        if (ColorGrade::active(c) && !ctx.bypassGrade) {
+        if ((ColorGrade::active(c) || (c.id == ctx.maskClip && GradeQualifier::exists(c))) && !ctx.bypassGrade) {
             ColorGrade::Params p = ColorGrade::at(c, t);
             if (c.id == ctx.maskClip && p.qualifier.on) p.view = ColorGrade::View::QualifierMask;
             const QString lp = ColorGrade::lutPath(c);

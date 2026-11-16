@@ -42,6 +42,26 @@ void WindowOverlay::setTarget(int clipId, int window, int playhead)
     emit changed();
 }
 
+void WindowOverlay::setCompare(const QImage& still)
+{
+    if (still.isNull() && m_compare.isNull()) return;
+    m_compare = still;
+    emit changed();
+}
+
+void WindowOverlay::setWipe(double x)
+{
+    x = std::clamp(x, 0.0, 1.0);
+    if (x == m_wipe) return;
+    m_wipe = x;
+    emit changed();
+}
+
+QPointF WindowOverlay::wipeHandle(const QRectF& frame) const
+{
+    return {frame.left() + m_wipe * frame.width(), frame.center().y()};
+}
+
 void WindowOverlay::setVisible(bool on)
 {
     if (on == m_visible) return;
@@ -126,6 +146,23 @@ QPointF WindowOverlay::handlePos(int handle, const QRectF& frame) const
 
 void WindowOverlay::paint(QPainter& p, const QRectF& frame)
 {
+    if (m_visible && !m_compare.isNull()) { // the still left of the wipe line, the line with its grip
+        const double x = frame.left() + m_wipe * frame.width();
+        p.save();
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.setClipRect(QRectF(frame.topLeft(), QPointF(x, frame.bottom())));
+        p.drawImage(frame, m_compare);
+        p.setClipping(false);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(QColor(0, 0, 0, 140), 3));
+        p.drawLine(QPointF(x, frame.top()), QPointF(x, frame.bottom()));
+        p.setPen(QPen(QColor(255, 255, 255, 230), 1.4));
+        p.drawLine(QPointF(x, frame.top()), QPointF(x, frame.bottom()));
+        p.setBrush(Theme::primary);
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1));
+        p.drawEllipse(wipeHandle(frame), kHandle + 1, kHandle + 1);
+        p.restore();
+    }
     QTransform ct, lt;
     QSizeF pic;
     const Clip* c = clip();
@@ -182,6 +219,10 @@ void WindowOverlay::paint(QPainter& p, const QRectF& frame)
 
 int WindowOverlay::partAt(const QPointF& pos, const QRectF& frame) const
 {
+    // The wipe line before the window: grabbed anywhere along it
+    if (m_visible && !m_compare.isNull() && std::abs(pos.x() - wipeHandle(frame).x()) <= kHit && pos.y() >= frame.top()
+        && pos.y() <= frame.bottom())
+        return Wipe;
     QTransform ct, lt;
     QSizeF pic;
     const Clip* c = clip();
@@ -209,6 +250,7 @@ Qt::CursorShape WindowOverlay::cursorAt(const QPointF& pos, const QRectF& frame)
     if (part == None) return Qt::ArrowCursor;
     if (part == Inside) return Qt::SizeAllCursor;
     if (part == kRotate) return Qt::PointingHandCursor;
+    if (part == Wipe) return Qt::SplitHCursor;
     return Qt::CrossCursor;
 }
 
@@ -229,6 +271,10 @@ bool WindowOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
     if (e->button() != Qt::LeftButton) return false;
     const int part = partAt(e->position(), frame);
     if (part == None) return false;
+    if (part == Wipe) {
+        m_part = Wipe;
+        return true;
+    }
     QTransform ct;
     if (!transforms(frame, &ct, nullptr, nullptr)) return false;
     const Clip* c = clip();
@@ -244,6 +290,10 @@ bool WindowOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
 bool WindowOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
 {
     if (m_part == None) return false;
+    if (m_part == Wipe) {
+        setWipe((e->position().x() - frame.left()) / std::max(1.0, frame.width()));
+        return true;
+    }
     QTransform ct, lt;
     QSizeF pic;
     if (!transforms(frame, &ct, &lt, &pic)) return true;
@@ -274,7 +324,8 @@ bool WindowOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
 bool WindowOverlay::mouseRelease(QMouseEvent* e, const QRectF&)
 {
     if (m_part == None || e->button() != Qt::LeftButton) return false;
+    const bool wipe = m_part == Wipe;
     m_part = None;
-    m_editor->project()->closeMerge();
+    if (!wipe) m_editor->project()->closeMerge();
     return true;
 }

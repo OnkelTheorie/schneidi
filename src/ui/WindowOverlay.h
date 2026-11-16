@@ -7,6 +7,7 @@
 
 #include "ui/ViewerOverlay.h"
 
+#include <QImage>
 #include <QPointF>
 #include <QTransform>
 #include <QVector>
@@ -20,6 +21,14 @@ class WindowOverlay : public ViewerOverlay {
 public:
     // targets: clips the Color page acts on (the first one is the shown clip)
     WindowOverlay(Editor* editor, std::function<QVector<int>()> targets, QObject* parent = nullptr);
+
+    // Still compare (Color page stills): the still over the part of the picture left of the wipe line, the live
+    // picture right of it; the line can be dragged. Null image = off
+    void setCompare(const QImage& still);
+    bool comparing() const { return !m_compare.isNull(); }
+    double wipe() const { return m_wipe; } // 0..1 of the frame width
+    void setWipe(double x);
+    QPointF wipeHandle(const QRectF& frame) const; // for tests: where the wipe line can be grabbed
 
     // Shown clip, window number (0 = none: nothing drawn) and playhead (timeline frame)
     void setTarget(int clipId, int window, int playhead);
@@ -36,7 +45,7 @@ public:
     QPointF handlePos(int handle, const QRectF& frame) const;
 
 private:
-    enum Part { None = -1, Inside = 100 };
+    enum Part { None = -1, Inside = 100, Wipe = 200 };
     const Clip* clip() const;
     // Clip picture pixels -> widget; window-local pixels (center origin, unrotated) -> clip picture pixels
     bool transforms(const QRectF& frame, QTransform* clipToWidget, QTransform* localToClip, QSizeF* picture) const;
@@ -51,4 +60,7 @@ private:
     int m_part = None;
     QPointF m_pressClip;   // press position in clip picture pixels
     double m_startX = 0, m_startY = 0;
+    // Still compare
+    QImage m_compare;
+    double m_wipe = 0.5;
 };

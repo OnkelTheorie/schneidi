@@ -1123,6 +1123,16 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     if (data.importPresets) root["importPresets"] = data.importPresets->toJson(); // optional
     // The project's own brand kit (optional, 0.18; older versions ignore it): files also relative to the project
     if (data.brand) root["brand"] = Brand::toJson(*data.brand, &projectDir);
+    // Color page stills (optional, 0.24; older versions ignore them): picture as JPEG in base64, grade as a clip
+    if (!data.stills.isEmpty()) {
+        QJsonArray stills;
+        for (const GradeStill& st : data.stills)
+            stills << QJsonObject{{"id", st.id},
+                                  {"label", st.label},
+                                  {"image", QString::fromLatin1(st.image.toBase64())},
+                                  {"grade", clipToJson(st.grade, -1, projectDir)}};
+        root["stills"] = stills;
+    }
     // Watch folders (optional, absent in old files; older versions ignore them): folder also relative to the project
     // like media, so a project moved together with its recording folder keeps watching it
     if (!data.watchFolders.isEmpty()) {
@@ -1463,6 +1473,15 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     if (root.value("importPresets").isObject())
         d.importPresets = StreamPresets::fromJson(root.value("importPresets").toObject());
     if (root.value("brand").isObject()) d.brand = Brand::fromJson(root.value("brand").toObject(), &projectDir);
+    for (const QJsonValue& v : root.value("stills").toArray()) {
+        const QJsonObject o = v.toObject();
+        GradeStill st;
+        st.id = o.value("id").toInt();
+        st.label = o.value("label").toString();
+        st.image = QByteArray::fromBase64(o.value("image").toString().toLatin1());
+        if (o.value("grade").isObject()) st.grade = clipFromJson(o.value("grade").toObject(), {}, projectDir);
+        if (st.id > 0 && !st.image.isEmpty()) d.stills << st;
+    }
     for (const QJsonValue& v : root.value("watchFolders").toArray()) {
         const QJsonObject o = v.toObject();
         WatchFolder w;

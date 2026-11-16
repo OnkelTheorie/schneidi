@@ -10,6 +10,7 @@
 #include <QPointF>
 #include <QString>
 #include <QVector>
+#include <memory>
 #include <vector>
 
 namespace GradeCurves {
@@ -39,8 +40,21 @@ inline constexpr double kMinGap = 0.004;
 
 // The curve does nothing (no points, or every point on the neutral line)
 bool isIdentity(const Points& points, Kind k);
-// Curve value at x (0..1); identity: neutral(k, x)
+// Curve value at x (0..1); identity: neutral(k, x). Prepares the curve each call: for many values use Shape
 double eval(const Points& points, Kind k, double x);
+// A curve prepared once for many values
+class Shape {
+public:
+    Shape(const Points& points, Kind k);
+    double operator()(double x) const;
+    bool identity() const { return m_identity; }
+
+private:
+    struct Impl;
+    Kind m_kind;
+    bool m_identity;
+    std::shared_ptr<const Impl> m_impl;
+};
 // n + 1 samples over 0..1 (eval at i / n), for the pixel loops
 std::vector<float> table(const Points& points, Kind k, int n);
 

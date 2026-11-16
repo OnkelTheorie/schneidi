@@ -415,6 +415,17 @@ void Editor::setGradeQualifierRange(const QVector<int>& ids, const GradeQualifie
     }, mergeKey);
 }
 
+void Editor::setGradeQualifierInvert(const QVector<int>& ids, bool invert)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeQualifier::exists(*c))
+            targets << id;
+    modifyClips(targets, invert ? T("Qualifier invertieren") : T("Qualifier nicht invertieren"), [&](Clip& c) {
+        EffectRegistry::instance(c, kGrade)->params[GradeQualifier::key("invert")] = invert;
+    });
+}
+
 void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points)
 {
     const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);

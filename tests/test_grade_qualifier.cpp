@@ -17,13 +17,20 @@
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/picture/Renderer.h"
+#include "app/Theme.h"
 #include "ui/ColorPanel.h"
 #include "ui/CurveEditor.h"
+#include "ui/WindowOverlay.h"
+#include "core/GradeStills.h"
 
 #include "render_check.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QPushButton>
 #include <QJsonArray>
+#include <QListWidget>
+#include <QPainter>
 #include <QJsonDocument>
 #include <QMouseEvent>
 #include <QSignalSpy>
@@ -81,6 +88,21 @@ void testCurves()
     // 0 and 1 at once (the same hue) do not break it
     CHECK(std::isfinite(GradeCurves::eval({{0, 0.7}, {0.5, 0.5}, {1, 0.7}}, K::HueHue, 0.99)));
     CHECK_EQ(GradeCurves::table(s, K::Y, 4).size(), size_t(5));
+    // No seam at red: the segment across the wrap has the same tangents on both ends (review 0.24: 0.470 vs 0.282)
+    const GradeCurves::Points w{{0.05, 0.9}, {0.2, 0.5}, {0.8, 0.5}, {0.97, 0.1}};
+    for (K k : {K::HueHue, K::HueSat}) {
+        CHECK(std::abs(GradeCurves::eval(w, k, 0.0) - GradeCurves::eval(w, k, 1 - 1e-7)) < 1e-4);
+        // and smooth: the slope just before 1 equals the slope just after 0
+        const double e = 1e-6;
+        const double before = (GradeCurves::eval(w, k, 1 - e) - GradeCurves::eval(w, k, 1 - 2 * e)) / e;
+        const double after = (GradeCurves::eval(w, k, 2 * e) - GradeCurves::eval(w, k, e)) / e;
+        CHECK(std::abs(before - after) < 0.02 * std::max(1.0, std::abs(before)));
+    }
+    CHECK(std::abs(GradeCurves::eval(w, K::HueSat, 0.05) - 0.9) < 1e-9); // still through its points
+    // A prepared shape gives the same values as eval
+    const GradeCurves::Shape shape(s, K::Y);
+    CHECK(!shape.identity() && std::abs(shape(0.4) - GradeCurves::eval(s, K::Y, 0.4)) < 1e-12);
+    CHECK(GradeCurves::Shape({}, K::HueSat).identity());
 }
 
 void testQualifierMath()
@@ -183,6 +205,32 @@ void testPixels()
     CP hh;
     hh.curves.points[int(K::HueHue)] = {{0.2, 0.5}, {0.333, 0.6}, {0.45, 0.5}};
     compareBaked("hue vs hue", hh, nullptr, 8, 0.8);
+    // Hue vs hue turns by (y - 0.5) * 360 degrees of HSV hue, brightness kept: red + 120 degrees = green
+    {
+        CP turn;
+        turn.curves.points[int(K::HueHue)] = {{0.0, 0.5 + 1.0 / 3}, {0.5, 0.5 + 1.0 / 3}};
+        float v[3] = {0.8f, 0.2f, 0.2f};
+        uint8_t px[4] = {204, 51, 51, 255};
+        ColorGrade::applyReference(px, 1, 1, turn, nullptr);
+        double h, sat, l, h0, s0, l0;
+        GradeQualifier::measure(px[0] / 255.f, px[1] / 255.f, px[2] / 255.f, &h, &sat, &l);
+        GradeQualifier::measure(v[0], v[1], v[2], &h0, &s0, &l0);
+        CHECK(std::abs(h - 120) < 3);
+        CHECK(std::abs(l - l0) < 1.0);
+    }
+    // Tone curves are cheap to bake (the review found 5-10 ms per bake: a 4097-entry table per channel)
+    {
+        CP tone;
+        tone.curves.points[int(K::Y)] = {{0, 0}, {0.3, 0.2}, {0.7, 0.85}, {1, 1}};
+        tone.curves.points[int(K::R)] = {{0, 0.05}, {1, 0.95}};
+        tone.curves.points[int(K::B)] = {{0, 0}, {0.5, 0.45}, {1, 1}};
+        QElapsedTimer timer;
+        timer.start();
+        for (int i = 0; i < 50; ++i) ColorGrade::bake(tone, nullptr);
+        const double ms = timer.nsecsElapsed() / 1e6 / 50;
+        std::printf("  bake with tone curves: %.3f ms\n", ms);
+        CHECK(ms < 2.0);
+    }
     CP ls;
     ls.curves.points[int(K::LumSat)] = {{0, 0}, {0.5, 0.5}, {1, 0.5}};
     compareBaked("lum vs saturation", ls, nullptr, 6, 0.6);
@@ -258,7 +306,7 @@ void testModel(const QString& dir)
     CHECK(!ColorGrade::active(c));
     GradeQualifier::add(c);
     CHECK(GradeQualifier::exists(c));
-    CHECK(ColorGrade::active(c)); // its mask can be shown
+    CHECK(!ColorGrade::active(c)); // a neutral qualifier changes nothing (the Renderer still shows its mask)
     CHECK(ColorGrade::at(c, 0).qualifier.on);
     CHECK(ColorGrade::at(c, 0).isNeutral());
     Keys::setValue(c, GradeQualifier::param("saturation"), 0, 20.0);
@@ -304,6 +352,35 @@ void testModel(const QString& dir)
     r.invert = true;
     ed.setGradeQualifierRange({id1}, r, 0);
     CHECK(GradeQualifier::rangeAt(*clip(id1), 0) == r);
+    // Invert on several clips keeps each clip's own range and adds no keyframes (review 0.24)
+    {
+        ed.addGradeQualifier({id2});
+        const GradeQualifier::Range r2 = GradeQualifier::rangeAt(*clip(id2), 0);
+        ed.setGradeQualifierInvert({id1, id2}, false);
+        GradeQualifier::Range want1 = r, want2 = r2;
+        want1.invert = false;
+        CHECK(GradeQualifier::rangeAt(*clip(id1), 0) == want1);
+        CHECK(GradeQualifier::rangeAt(*clip(id2), 0) == want2);
+        CHECK(!Keys::animated(*clip(id1), GradeQualifier::param("hue")));
+        ed.setGradeQualifierInvert({id1}, true);
+        undo.undo(); // invert
+        undo.undo(); // invert
+        undo.undo(); // add on clip 2
+        CHECK(!GradeQualifier::exists(*clip(id2)));
+        CHECK(GradeQualifier::rangeAt(*clip(id1), 0) == r);
+    }
+    // Low end above the high one: read as the range between them
+    {
+        Clip x = videoClip(9);
+        EffectRegistry::add(x, "grade");
+        GradeQualifier::add(x);
+        EffectRegistry::instance(x, "grade")->params["q.satLow"] = 70.0;
+        EffectRegistry::instance(x, "grade")->params["q.satHigh"] = 20.0;
+        const GradeQualifier::Range q = GradeQualifier::rangeAt(x, 0);
+        CHECK(q.satLow == 20.0 && q.satHigh == 70.0);
+        // A neutral qualifier changes nothing: the grade is not active for it (the mask still shows, testRender)
+        CHECK(!ColorGrade::active(x));
+    }
     // Keyframe of the qualifier layer: its values, not the grade's
     ed.setGradeKeyframe({id1}, 20, true, GradeQualifier::kLayer);
     CHECK(Keys::keyAt(*clip(id1), GradeQualifier::param("hue"), 20));
@@ -376,8 +453,16 @@ void testPanel()
         CHECK(ColorGrade::at(*clip(), 10).curves.isIdentity());
     }
 
-    // Qualifier: picked colour, its layer, the mask follows the switch and the page
+    // Qualifier: the pick button asks for a pick but adds nothing yet (a cancelled pick leaves no qualifier)
     panel.setPalette(ColorPanel::QualifierPalette);
+    {
+        QSignalSpy pick(&panel, &ColorPanel::qualifierPickRequested);
+        auto* button = panel.findChild<QPushButton*>("color_qualifier_pick");
+        if (CHECK(button)) button->click();
+        CHECK_EQ(pick.size(), 1);
+        CHECK(!GradeQualifier::exists(*clip()));
+    }
+    // Picked colour, its layer, the mask follows the switch and the page
     panel.applyQualifierColor(QColor(200, 140, 110));
     CHECK(GradeQualifier::exists(*clip()));
     CHECK_EQ(panel.palette(), int(ColorPanel::QualifierPalette));
@@ -397,6 +482,7 @@ void testPanel()
     if (const QString shots = qEnvironmentVariable("GRADE_QUALIFIER_SHOTS"); !shots.isEmpty()) {
         ed.setGradeCurve({id}, K::Y, {{0, 0.05}, {0.3, 0.25}, {0.7, 0.8}, {1, 1}});
         ed.setGradeValues({id}, {{AnimParam::GradeGainY, 1.15}}, 10, "x");
+        panel.resize(1300, 330);
         for (int i = 0; i < 3; ++i) {
             panel.setPalette(i);
             QApplication::processEvents();
@@ -409,6 +495,110 @@ void testPanel()
     CHECK_EQ(panel.layer(), 0);
     panel.setLayer(GradeQualifier::kLayer); // gone: whole picture
     CHECK_EQ(panel.layer(), 0);
+}
+
+// Stills: a still keeps the grade it was taken with; its grade onto other clips (one undo step); stored in the project;
+// compare = the still in the viewer overlay left of a wipe line that can be dragged
+void testStills(const QString& dir)
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.addMediaAt({"/x/a.mp4"}, 100, 0);
+    const int id1 = p.timeline().video[0].clips[0].id, id2 = p.timeline().video[0].clips[1].id;
+    const auto clip = [&](int id) { return TimelineOps::findClip(p.timeline(), id); };
+    ed.setGradeValues({id1}, {{AnimParam::GradeSaturation, 20.0}}, 0, "x");
+    ed.setGradeCurve({id1}, K::Y, {{0, 0.1}, {1, 0.9}});
+    ed.addGradeQualifier({id1});
+    QImage picture(1280, 720, QImage::Format_RGB32);
+    picture.fill(QColor(200, 120, 90));
+    const int undoBefore = p.undoStack()->count();
+    const int sid = ed.addGradeStill(id1, picture, "a.mp4 00:00:00:00");
+    CHECK(sid > 0);
+    CHECK_EQ(p.undoStack()->count(), undoBefore + 1);
+    if (!CHECK_EQ(p.stills().size(), 1)) return;
+    const GradeStill& st = p.stills().first();
+    CHECK_EQ(GradeStills::picture(st).width(), GradeStills::kMaxWidth); // made small
+    CHECK(st.image.size() < 60000);
+    CHECK_EQ(st.grade.effects.size(), 1);
+    // Later changes of the clip do not change the still
+    ed.setGradeValues({id1}, {{AnimParam::GradeSaturation, 80.0}}, 0, "x");
+    CHECK_EQ(ColorGrade::at(p.stills().first().grade, 0).saturation, 20.0);
+    // Its grade onto clip 2: one step, curves and qualifier along
+    const int before = p.undoStack()->count();
+    CHECK(ed.applyGradeStill(sid, {id2}));
+    CHECK_EQ(p.undoStack()->count(), before + 1);
+    CHECK_EQ(ColorGrade::at(*clip(id2), 0).saturation, 20.0);
+    CHECK(GradeQualifier::exists(*clip(id2)));
+    CHECK(!ColorGrade::at(*clip(id2), 0).curves.isIdentity());
+    CHECK(!ed.applyGradeStill(sid + 99, {id2}));
+    // Project file
+    const QString path = dir + "/stills.schneidi";
+    QString error;
+    CHECK(ProjectFile::save(p.data(), path, &error));
+    ProjectData d;
+    CHECK(ProjectFile::load(path, &d, &error));
+    if (CHECK_EQ(d.stills.size(), 1)) {
+        CHECK(d.stills.first() == p.stills().first());
+        CHECK(!GradeStills::picture(d.stills.first()).isNull());
+    }
+    // Panel: the list, compare with a wipe line in the viewer overlay
+    ColorPanel panel(&ed);
+    panel.resize(1000, 320);
+    panel.setPlayhead(10);
+    panel.show();
+    panel.setPalette(ColorPanel::StillsPalette);
+    auto* list = panel.findChild<QListWidget*>("color_stills");
+    if (CHECK(list)) CHECK_EQ(list->count(), 1);
+    auto* compare = panel.findChild<QToolButton*>("color_still_compare");
+    auto* ov = qobject_cast<WindowOverlay*>(panel.overlay());
+    if (CHECK(compare && ov)) {
+        compare->click();
+        CHECK_EQ(panel.comparedStill(), sid);
+        CHECK(ov->comparing());
+        const QRectF frame(0, 0, 640, 360);
+        // Drag the wipe line to a quarter
+        const QPointF h = ov->wipeHandle(frame);
+        QMouseEvent press(QEvent::MouseButtonPress, h, h, Qt::LeftButton, Qt::LeftButton, {});
+        CHECK(ov->mousePress(&press, frame));
+        const QPointF to(160, 180);
+        QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, {});
+        ov->mouseMove(&move, frame);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, {});
+        ov->mouseRelease(&release, frame);
+        CHECK(std::abs(ov->wipe() - 0.25) < 1e-6);
+        // Paints the still left of the line
+        QImage canvas(640, 360, QImage::Format_RGB32);
+        canvas.fill(Qt::black);
+        {
+            QPainter painter(&canvas);
+            ov->paint(painter, frame);
+        }
+        CHECK(canvas.pixelColor(40, 40).red() > 150);
+        CHECK(canvas.pixelColor(400, 40) == QColor(Qt::black));
+        // Removing the still ends the compare; undo brings it back
+        ed.removeGradeStill(sid);
+        CHECK(p.stills().isEmpty());
+        CHECK_EQ(panel.comparedStill(), 0);
+        CHECK(!ov->comparing());
+        p.undoStack()->undo();
+        CHECK_EQ(p.stills().size(), 1);
+        if (list) CHECK_EQ(list->count(), 1);
+    }
+    if (const QString shots = qEnvironmentVariable("GRADE_QUALIFIER_SHOTS"); !shots.isEmpty()) {
+        for (int i = 0; i < 3; ++i) ed.addGradeStill(i % 2 ? id2 : id1, picture, QString("a.mp4 00:00:0%1:00").arg(i));
+        panel.resize(1300, 330);
+        QApplication::processEvents();
+        panel.grab().save(shots + "/palette-3.png");
+    }
+    // Apply from the panel onto the shown clip (clip 1 at the playhead)
+    auto* apply = panel.findChild<QToolButton*>("color_still_apply");
+    if (CHECK(apply)) {
+        apply->click();
+        CHECK_EQ(ColorGrade::at(*clip(id1), 0).saturation, 20.0);
+    }
 }
 
 // CLI: color curves, qualifier op, info
@@ -460,7 +650,10 @@ void testCli(const QString& dir, const QString& still)
     const QJsonObject info = run("info", {{"project", project}});
     CHECK(QJsonDocument(info).toJson().contains("\"qualifier\""));
     // Errors
-    QJsonObject bad = op(R"({"op":"color","curves":{"x":[[0,0]]}})");
+    QJsonObject bad = op(R"({"op":"qualifier","sat_low":60,"sat_high":20})");
+    bad["clips"] = QJsonArray{id};
+    CHECK(error("edit", {{"project", project}, {"ops", QJsonArray{bad}}}).contains("sat_low is above sat_high"));
+    bad = op(R"({"op":"color","curves":{"x":[[0,0]]}})");
     bad["clips"] = QJsonArray{id};
     CHECK(error("edit", {{"project", project}, {"ops", QJsonArray{bad}}}).contains("unknown curve"));
     bad = op(R"({"op":"color","curves":{"y":[[0]]}})");
@@ -517,6 +710,13 @@ void testRender(const QString& still)
     mask->store(0);
     const QImage plain = render(Picture::Mode::Preview);
     CHECK(std::abs(plain.pixelColor(figure).red() - plain.pixelColor(figure).green()) < 12);
+    // A neutral qualifier: the grade is not active, the mask still shows in the preview
+    tl.video[0].clips[0].effects[0].params["q.saturation"] = 50.0;
+    CHECK(!ColorGrade::active(tl.video[0].clips[0]));
+    mask->store(7);
+    const QImage neutral = render(Picture::Mode::Preview);
+    CHECK(qGray(neutral.pixel(figure)) > 240 && qGray(neutral.pixel(back)) < 15);
+    CHECK_EQ(render(Picture::Mode::Export).pixelColor(back), b);
 }
 
 } // namespace
@@ -526,6 +726,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("grade-qualifier");
+    if (qEnvironmentVariableIsSet("GRADE_QUALIFIER_SHOTS")) Theme::apply(app); // the pictures in the app's own look
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
@@ -535,6 +736,7 @@ int main(int argc, char** argv)
     testPixels();
     testModel(tmp.path());
     testPanel();
+    testStills(tmp.path());
 
     Check::initEngine();
     const QString still = tmp.filePath("figure.png");

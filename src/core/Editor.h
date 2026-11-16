@@ -488,6 +488,8 @@ public:
     void removeGradeQualifier(const QVector<int>& ids);
     void setGradeQualifierRange(const QVector<int>& ids, const GradeQualifier::Range& range, int frame,
                                 const QString& mergeKey = {});
+    // Only "invert" (each clip keeps its own range)
+    void setGradeQualifierInvert(const QVector<int>& ids, bool invert);
     // Tracking result: window n of the clip follows the points (keyframes for x/y on every point; keyframes there and
     // between `from` and the last point are replaced, `from` keeps its position as a keyframe). One undo step.
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
@@ -578,6 +580,11 @@ public:
     // before). Copies the Color page grade (wheels, LUT, its keyframes) and leaves other effects alone; a source
     // without a grade resets the targets. Each paste is one undo step. EditorAttributes.cpp
     bool copyGrade(int clipId);           // false = no video clip
+    // Color page stills (core/GradeStills, kept in the project): a still of `picture` with the grade of clip `clipId`
+    // (0 = no still: not a video clip), the grade of still `stillId` onto clips (one undo step), a still removed
+    int addGradeStill(int clipId, const QImage& picture, const QString& label);
+    bool applyGradeStill(int stillId, const QVector<int>& ids);
+    void removeGradeStill(int stillId);
     bool hasCopiedGrade() const { return m_gradeClipboard.has_value(); }
     void pasteGrade(const QVector<int>& ids);
     // Both clipboards as they are, and put back (a tour keeps the user's aside while its practice project is open)
