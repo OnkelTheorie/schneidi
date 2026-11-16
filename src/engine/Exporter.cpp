@@ -664,7 +664,7 @@ bool Exporter::launch(QString* error)
     const ExportSettings& s = m_settings;
     // The writer opens the encoder itself and reports when it cannot (fallback in pollWriter). A hardware encoder that
     // already failed in this session (could not be opened): software right away
-    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize()) < 0) {
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize(), tenBitFormat(s.pixFmt)) < 0) {
         if (!fallBackToSoftware(error)) return false;
         ++g_running;
         m_timer.start();
@@ -879,7 +879,8 @@ bool Exporter::startWriter(const QString& codec, QString* error)
         // the same fallback to software both times
         if (!fallbackCodec(codec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
-            if (HardwareEncoders::isHardwareCodec(codec)) HardwareEncoders::remember(codec, outputSize(), false); // not again
+            if (HardwareEncoders::isHardwareCodec(codec)) // not again (at this bit depth: 8-bit may still work)
+                HardwareEncoders::remember(codec, outputSize(), false, tenBitFormat(m_settings.pixFmt));
             QFile::remove(m_path);
             return fallBackToSoftware(error);
         }
@@ -913,7 +914,7 @@ void Exporter::pollWriter()
         if (!fallbackCodec(m_usedCodec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
             if (HardwareEncoders::isHardwareCodec(m_usedCodec))
-                HardwareEncoders::remember(m_usedCodec, outputSize(), false); // not again this session
+                HardwareEncoders::remember(m_usedCodec, outputSize(), false, tenBitFormat(m_settings.pixFmt)); // not again this session
             QFile::remove(m_path);
             QString error;
             if (fallBackToSoftware(&error)) return;

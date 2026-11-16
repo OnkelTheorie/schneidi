@@ -22,6 +22,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
 }
 
 namespace HardwareEncoders {
@@ -45,9 +46,23 @@ State& state()
     return s;
 }
 
-QString cacheKey(const QString& codec, QSize size)
+QString cacheKey(const QString& codec, QSize size, bool tenBit = false)
 {
-    return QString("%1 %2x%3").arg(codec).arg(size.width()).arg(size.height());
+    return QString("%1 %2x%3%4").arg(codec).arg(size.width()).arg(size.height()).arg(tenBit ? " 10" : "");
+}
+
+// The encoder takes this pixel format (FFmpeg's list; no list = anything)
+bool encoderTakes(const QString& codec, const char* pixFmt)
+{
+    const AVCodec* c = avcodec_find_encoder_by_name(codec.toUtf8().constData());
+    if (!c) return false;
+    const AVPixelFormat want = av_get_pix_fmt(pixFmt);
+    if (want == AV_PIX_FMT_NONE) return true;
+    const void* list = nullptr;
+    int n = 0;
+    if (avcodec_get_supported_config(nullptr, c, AV_CODEC_CONFIG_PIX_FORMAT, 0, &list, &n) < 0 || !list) return true;
+    const auto* formats = static_cast<const AVPixelFormat*>(list);
+    return std::find(formats, formats + n, want) != formats + n;
 }
 
 const QSize kProbeSize(640, 360);
@@ -68,7 +83,7 @@ QStringList vaapiDevices()
 #endif
 }
 
-QStringList argumentsFor(const QString& codec, QSize size, int crf, const QString& device)
+QStringList argumentsFor(const QString& codec, QSize size, int crf, const QString& device, bool tenBit = false)
 {
     QStringList args{"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error"};
     const bool vaapi = codec.endsWith("_vaapi");
@@ -76,8 +91,8 @@ QStringList argumentsFor(const QString& codec, QSize size, int crf, const QStrin
     args << "-f" << "lavfi" << "-i"
          << QString("color=black:s=%1x%2:r=25").arg(std::max(16, size.width())).arg(std::max(16, size.height()))
          << "-frames:v" << "3";
-    if (vaapi) args << "-vf" << "format=nv12,hwupload";
-    else args << "-pix_fmt" << pixelFormat(codec);
+    if (vaapi) args << "-vf" << (tenBit ? "format=p010,hwupload" : "format=nv12,hwupload");
+    else args << "-pix_fmt" << pixelFormat(codec, tenBit);
     args << "-c:v" << codec;
     for (const auto& [key, value] : codecOptions(codec, crf)) args << QString("-%1:v").arg(key) << value;
     args << "-f" << "null" << "-";
@@ -124,10 +139,14 @@ void runProbe()
         for (const char* format : {"h264", "h265"}) codecs << codecName(e, format);
     QVector<QStringList> args;
     for (const QString& c : codecs) args << argumentsFor(c, kProbeSize, 22, {});
+    // H.265 10 bit (Main10) separately: older cards encode 8-bit H.265 but not 10 bit
+    const QVector<QString> tenBit{codecName(VideoEncoder::Nvenc, "h265-10"), codecName(VideoEncoder::Qsv, "h265-10")};
+    for (const QString& c : tenBit) args << argumentsFor(c, kProbeSize, 22, {}, true);
     QStringList outputs;
     const QVector<bool> ok = runTests(args, &outputs);
     QHash<QString, int> results;
     QHash<QString, QString> reasons;
+    for (int i = 0; i < tenBit.size(); ++i) results[cacheKey(tenBit[i], kProbeSize, true)] = ok[codecs.size() + i] ? 1 : -1;
     for (int i = 0; i < codecs.size(); ++i) {
         results[cacheKey(codecs[i], kProbeSize)] = ok[i] ? 1 : -1;
         if (!ok[i])
@@ -141,12 +160,14 @@ void runProbe()
     // the Intel/AMD chip on renderD129)
     QString chosen;
     const QString h264 = codecName(VideoEncoder::Vaapi, "h264"), hevc = codecName(VideoEncoder::Vaapi, "h265");
-    results[cacheKey(h264, kProbeSize)] = results[cacheKey(hevc, kProbeSize)] = -1;
+    results[cacheKey(h264, kProbeSize)] = results[cacheKey(hevc, kProbeSize)] = results[cacheKey(hevc, kProbeSize, true)] = -1;
     for (const QString& device : vaapiDevices()) {
-        const QVector<bool> v = runTests({argumentsFor(h264, kProbeSize, 22, device), argumentsFor(hevc, kProbeSize, 22, device)});
+        const QVector<bool> v = runTests({argumentsFor(h264, kProbeSize, 22, device), argumentsFor(hevc, kProbeSize, 22, device),
+                                          argumentsFor(hevc, kProbeSize, 22, device, true)});
         if (v[0] || v[1]) {
             results[cacheKey(h264, kProbeSize)] = v[0] ? 1 : -1;
             results[cacheKey(hevc, kProbeSize)] = v[1] ? 1 : -1;
+            results[cacheKey(hevc, kProbeSize, true)] = v[2] ? 1 : -1;
             chosen = device;
             break;
         }
@@ -154,7 +175,7 @@ void runProbe()
 
     QStringList working;
     for (auto it = results.cbegin(); it != results.cend(); ++it)
-        if (it.value() > 0) working << it.key().section(' ', 0, 0);
+        if (it.value() > 0) working << it.key().section(' ', 0, 0) + (it.key().endsWith(" 10") ? " (10 bit)" : "");
     qInfo("Hardware encoders: %s", working.isEmpty() ? "none" : qPrintable(working.join(", ")));
 
     {
@@ -261,6 +282,14 @@ QString freeReplacement(const QString& codec)
     return {};
 }
 
+// The free replacement for a format, only if it takes the format's pixel format (kvazaar: 8 bit only, so no H.265
+// 10 bit in the GPL-free build without a Main10 graphics card)
+static QString freeReplacementFor(const RenderFormatInfo& f)
+{
+    const QString r = freeReplacement(f.videoCodec);
+    return r.isEmpty() || encoderTakes(r, f.pixFmt) ? r : QString();
+}
+
 bool isFreeReplacement(const QString& codec)
 {
     return codec == "libopenh264" || codec == "libkvazaar";
@@ -294,7 +323,7 @@ QString softwareCodec(const QString& format)
     if (!*f.videoCodec) return {};
     if (ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty())
         return f.videoCodec;
-    return freeReplacement(f.videoCodec);
+    return freeReplacementFor(f);
 }
 
 bool formatAvailable(const QString& format)
@@ -303,7 +332,7 @@ bool formatAvailable(const QString& format)
     if (QLatin1String(f.id) != format) return false;
     if (*f.audioCodec && !builtIn(renderFormat(format).audioCodec)) return false;
     // (the extension last: asking its program takes a moment, and the panel's format list asks at start)
-    if (!*f.videoCodec || ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
+    if (!*f.videoCodec || ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !freeReplacementFor(f).isEmpty()
         || !externalProgram(f.videoCodec).isEmpty())
         return true;
     return f.hardware && probed() && !available(format).isEmpty();
@@ -421,32 +450,38 @@ QString pixelFormat(const QString& codec, bool tenBit)
     }
 }
 
-QStringList testArguments(const QString& codec, QSize size, int crf)
+QStringList testArguments(const QString& codec, QSize size, int crf, bool tenBit)
 {
-    return argumentsFor(codec, size, crf, vaapiDevice());
+    return argumentsFor(codec, size, crf, vaapiDevice(), tenBit);
 }
 
-int cachedResult(const QString& codec, QSize size)
+int cachedResult(const QString& codec, QSize size, bool tenBit)
 {
     State& st = state();
     std::lock_guard lock(st.mutex);
-    return st.results.value(cacheKey(codec, size), 0);
+    return st.results.value(cacheKey(codec, size, tenBit), 0);
 }
 
-void remember(const QString& codec, QSize size, bool works)
+void remember(const QString& codec, QSize size, bool works, bool tenBit)
 {
     State& st = state();
     std::lock_guard lock(st.mutex);
-    st.results[cacheKey(codec, size)] = works ? 1 : -1;
+    st.results[cacheKey(codec, size, tenBit)] = works ? 1 : -1;
 }
 
-bool test(const QString& codec, QSize size, int crf)
+bool test(const QString& codec, QSize size, int crf, bool tenBit)
 {
-    if (const int r = cachedResult(codec, size)) return r > 0;
+    if (const int r = cachedResult(codec, size, tenBit)) return r > 0;
     if (codec.endsWith("_vaapi") && vaapiDevice().isEmpty()) return false;
-    const bool works = runTests({testArguments(codec, size, crf)}).value(0);
-    remember(codec, size, works);
+    const bool works = runTests({testArguments(codec, size, crf, tenBit)}).value(0);
+    remember(codec, size, works, tenBit);
     return works;
+}
+
+bool tenBitFormat(const QString& format)
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    return QLatin1String(f.id) == format && QByteArray(f.pixFmt).contains("10");
 }
 
 QVector<VideoEncoder> available(const QString& format)
@@ -454,8 +489,9 @@ QVector<VideoEncoder> available(const QString& format)
     if (!renderFormat(format).hardware) return {};
     ensureProbed();
     QVector<VideoEncoder> list;
+    const bool tenBit = tenBitFormat(format); // Main10 has a probe result of its own
     for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv, VideoEncoder::Vaapi})
-        if (cachedResult(codecName(e, format), kProbeSize) > 0) list << e;
+        if (cachedResult(codecName(e, format), kProbeSize, tenBit) > 0) list << e;
     return list;
 }
 
@@ -585,6 +621,8 @@ void fakeProbeForTests(const QStringList& working, const QString& nvencReason)
         for (const char* format : {"h264", "h265"}) {
             const QString codec = codecName(e, format);
             st.results[cacheKey(codec, kProbeSize)] = working.contains(codec) ? 1 : -1;
+            if (QLatin1String(format) == QLatin1String("h265"))
+                st.results[cacheKey(codec, kProbeSize, true)] = working.contains(codec + ":10") ? 1 : -1;
         }
     st.probe = ProbeState::Done;
 }

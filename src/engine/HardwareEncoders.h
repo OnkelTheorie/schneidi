@@ -65,14 +65,18 @@ QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, in
 // Pixel format given to the writer ("vaapi" = upload to the VAAPI device)
 // tenBit: 10-bit picture (format "h265-10"): P010 (Main10)
 QString pixelFormat(const QString& codec, bool tenBit = false);
-// ffmpeg arguments for a test encode of a few frames of this size (black picture, output discarded)
-QStringList testArguments(const QString& codec, QSize size, int crf);
+// ffmpeg arguments for a test encode of a few frames of this size (black picture, output discarded); tenBit: P010
+// (Main10: cards without it, e.g. NVIDIA Maxwell, Intel before Kaby Lake, AMD Polaris, fail only this test)
+QStringList testArguments(const QString& codec, QSize size, int crf, bool tenBit = false);
 
-// Session cache of test results per codec and size (thread-safe); 0 = unknown, 1 = works, -1 = fails
-int cachedResult(const QString& codec, QSize size);
-void remember(const QString& codec, QSize size, bool works);
+// Session cache of test results per codec, size and bit depth (thread-safe); 0 = unknown, 1 = works, -1 = fails.
+// 8 and 10 bit are separate: a card without Main10 keeps its 8-bit H.265 encoder.
+int cachedResult(const QString& codec, QSize size, bool tenBit = false);
+void remember(const QString& codec, QSize size, bool works, bool tenBit = false);
 // Test encode (blocking, a fraction of a second; uses the cache)
-bool test(const QString& codec, QSize size, int crf = 22);
+bool test(const QString& codec, QSize size, int crf = 22, bool tenBit = false);
+// The format has a 10-bit picture (h265-10, av1-10)
+bool tenBitFormat(const QString& format);
 
 // Which hardware encoders work for a format, in order of preference (NVENC, Quick Sync, VAAPI).
 // Blocks until the probe has run (starts it in this thread if it has not started yet).
@@ -110,6 +114,7 @@ QString unavailableReason(VideoEncoder e);
 // For tests: forget all results (the next available() probes again)
 void resetForTests();
 // For tests: the probe is done and exactly these hardware codecs work (h264_nvenc …)
+// ("hevc_nvenc:10" = its 10-bit test works)
 void fakeProbeForTests(const QStringList& working, const QString& nvencReason = {});
 
 } // namespace HardwareEncoders
