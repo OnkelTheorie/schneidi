@@ -8625,9 +8625,13 @@ void FrameCoder::planMacroblockQp()
                 std::sort(v, v + 4);
                 variance = gAqEdge == 1 ? (v[0] + v[1] + v[2] + v[3]) / 4 : (v[0] + v[1]) / 2;
             }
+            // Below kAqFloor all macroblocks count as equally flat for the offsets: a variance of 0.02 against
+            // 0.2 (a band edge of a smooth gradient running through the macroblock or not) is no difference
+            // in what shows, but 3 energy steps = 2 QP of bits moved between them. H264_AQFLOOR (0 = off).
+            static const double kAqFloor = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 6.0;
             const double e = std::log2(variance + 1.0);
             mbEnergy_[size_t(mby) * mbW_ + mbx] = float(e);
-            mean += e;
+            mean += std::max(e, kAqFloor);
         }
     mean /= n;
     // Constant quality: the offsets centre on a fixed energy instead of the picture's mean, so a picture's level
@@ -8648,7 +8652,8 @@ void FrameCoder::planMacroblockQp()
         std::fprintf(stderr, "aq: frame %d qp %d mean %.2f tree %.2f\n", displayIndex_, cfg_.qp, mean, tm / n);
     }
     for (int m = 0; m < n; ++m) {
-        double offset = std::clamp(cfg_.aqStrength * (mbEnergy_[size_t(m)] - mean) * 0.5, -8.0, 8.0);
+        static const double kAqFloor2 = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 6.0;
+        double offset = std::clamp(cfg_.aqStrength * (std::max(double(mbEnergy_[size_t(m)]), kAqFloor2) - mean) * 0.5, -8.0, 8.0);
         if (tree)
             offset += treeOffset_[size_t(m)];
         mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + offset)), 0, 51));
