@@ -1744,10 +1744,13 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 }
 
 // Constant quality (EncoderConfig::crf): the scale's zero point against the P pictures' QP at 30 pictures per
-// second and at the reference complexity, what a doubling of the frame rate adds, and the reference complexity
-// (log2 of the lookahead cost per macroblock + 1). Fitted so that a crf value gives about the file size of
-// x264's --crf with the same value (medium preset) on game and camera footage; see the notes of 16.11.2026.
-static const double gCrfBase = std::getenv("H264_CRFBASE") ? std::atof(std::getenv("H264_CRFBASE")) : 6.0;
+// second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
+// AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
+// (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
+static const double gCrfBase = std::getenv("H264_CRFBASE") ? std::atof(std::getenv("H264_CRFBASE")) : 5.6;
+// QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
+// with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
+static const double gCrfSlope = std::getenv("H264_CRFSLOPE") ? std::atof(std::getenv("H264_CRFSLOPE")) : 0.87;
 static const double gCrfFps = std::getenv("H264_CRFFPS") ? std::atof(std::getenv("H264_CRFFPS")) : 2.4;
 // H264_CRFREF: a fixed reference complexity instead of the clip's mean (the scale before 16.11.2026 used 7; measuring only).
 static const double gCrfRef = std::getenv("H264_CRFREF") ? std::atof(std::getenv("H264_CRFREF")) : -1.0;
@@ -1781,7 +1784,7 @@ void Encoder::noteCost(const LookaheadFrame& f)
 // up to gQcBlur seconds before and as far after it as the queue reaches.
 double Encoder::crfQp(const LookaheadFrame& frame, double* complexity) const
 {
-    double qp = cfg_.crf + gCrfBase + gCrfFps * std::log2(std::clamp(cfg_.fps, 1.0, 1000.0) / 30.0);
+    double qp = 23.0 + gCrfSlope * (cfg_.crf - 23.0) + gCrfBase + gCrfFps * std::log2(std::clamp(cfg_.fps, 1.0, 1000.0) / 30.0);
     if (complexity)
         *complexity = 0;
     if (cfg_.qcomp > 0 && !crfCost_.empty()) {
@@ -3730,25 +3733,28 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // goes into the macroblocks' offsets, so neighbouring pictures do not step by a whole QP.
         double complexity = 0;
         double p = crfQp(frame, &complexity);
-        static const double kCrfTree = std::getenv("H264_CRFTREE") ? std::atof(std::getenv("H264_CRFTREE")) : 0.0;
-        static const double kCrfTreeX = std::getenv("H264_CRFTREEX") ? std::atof(std::getenv("H264_CRFTREEX")) : 0.0;
-        static const double kCrfTreeXS = std::getenv("H264_CRFTREEXS") ? std::atof(std::getenv("H264_CRFTREEXS")) : 2.0;
+        // The macroblock tree's level: next to long runs of B pictures the tree runs at a reduced strength
+        // (treeStrength), which keeps its split between the reference and the B pictures but leaves the
+        // whole picture coarser than the full strength would - still and calm footage (where those runs
+        // are) came out 3 QP coarser against x264 than moving footage. So the picture's QP moves by the
+        // mean offset of the full strength (unclamped) against the one applied; the split stays as it is.
+        // B pictures (no tree of their own) take their reference's. H264_CRFTREEX: weight (measuring).
+        static const double kCrfTreeX = std::getenv("H264_CRFTREEX") ? std::atof(std::getenv("H264_CRFTREEX")) : 1.0;
         if (!fc.treeOffset_.empty()) {
             double t = 0, x = 0;
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m) {
                 t += fc.treeOffset_[m];
-                x += Lookahead::qpOffset(frame, int(m), kCrfTreeXS);
+                x += Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength);
             }
-            crfTree_ = t / double(fc.treeOffset_.size());
-            crfTreeX_ = x / double(fc.treeOffset_.size());
+            crfTreeShift_ = (x - t) / double(fc.treeOffset_.size());
         }
-        p += kCrfTree * crfTree_ + kCrfTreeX * (crfTreeX_ - crfTree_);
+        p += kCrfTreeX * crfTreeShift_;
         const double q = std::clamp(idr ? (cfg_.gop > 1 ? p - 3 : p) : type == 2 ? p + (bRef ? bRefQp : bQp) : p, 10.0, 51.0);
         cfg_.qp = int(std::lround(q));
         qpFrac = float(q - cfg_.qp);
         if (std::getenv("H264_RC_TRACE"))
-            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f intra %.1f inter %.1f tree %.2f treex %.2f\n", frame.index, complexity, p,
-                         frame.intraSum / (double(mbW_) * mbH_), frame.interSum / (double(mbW_) * mbH_), crfTree_, crfTreeX_);
+            std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f intra %.1f inter %.1f tree shift %.2f\n", frame.index, complexity, p,
+                         frame.intraSum / (double(mbW_) * mbH_), frame.interSum / (double(mbW_) * mbH_), crfTreeShift_);
     } else if (idr && cfg_.gop > 1) {
         cfg_.qp = std::clamp(baseQp - 3, 0, 51); // keyframes are references for the whole GOP
     } else if (type == 2) {
@@ -8577,7 +8583,12 @@ void FrameCoder::planMacroblockQp()
             mean += e;
         }
     mean /= n;
-    static const double kCrfAqB = std::getenv("H264_CRFAQB") ? std::atof(std::getenv("H264_CRFAQB")) : 0.0;
+    // Constant quality: the offsets centre on a fixed energy instead of the picture's mean, so a picture's level
+    // follows its texture as well. Centred on the mean, a cartoon (mostly flat, mean energy ~2) had its few
+    // busy macroblocks - where its bits go - pushed up to 8 QP coarser and the cartoon came out
+    // ~6 QP coarser against x264 than game footage; calm grain (~15) and game footage (~13) hardly move. H264_CRFAQB: weight (0 = the mean as in the other
+    // modes), H264_CRFAQREF: the energy (measuring).
+    static const double kCrfAqB = std::getenv("H264_CRFAQB") ? std::atof(std::getenv("H264_CRFAQB")) : 1.0;
     static const double kCrfAqRef = std::getenv("H264_CRFAQREF") ? std::atof(std::getenv("H264_CRFAQREF")) : 13.0;
     if (cfg_.crf >= 0 && cfg_.bitrateKbps <= 0)
         mean += kCrfAqB * (kCrfAqRef - mean);

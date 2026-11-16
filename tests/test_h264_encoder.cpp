@@ -796,10 +796,10 @@ int main()
             CHECK(roundTrip(c, 45, &size[k], -1, nullptr, &info));
             worstPsnr[k] = info.minPsnrY;
         }
-        if (!(size[0] > size[1] && size[1] > size[2]) || !(double(size[0]) < 6.0 * double(size[2])))
+        if (!(size[0] > size[1] && size[1] > size[2]) || !(double(size[0]) < 8.0 * double(size[2])))
             std::fprintf(stderr, "crf 18/23/28: %zu %zu %zu bytes\n", size[0], size[1], size[2]);
         CHECK(size[0] > size[1] && size[1] > size[2]);
-        CHECK(double(size[0]) < 6.0 * double(size[2])); // ten steps: about a third, never a sixth
+        CHECK(double(size[0]) < 8.0 * double(size[2])); // ten steps: x264 5.8x on game footage, never an eighth
         if (!(worstPsnr[0] > worstPsnr[2]))
             std::fprintf(stderr, "crf 18/23/28: worst picture %.2f %.2f %.2f dB\n", worstPsnr[0], worstPsnr[1], worstPsnr[2]);
         CHECK(worstPsnr[0] > worstPsnr[2]); // (the clip's noise caps the quality of the two finer ones)
@@ -823,6 +823,17 @@ int main()
             if (threads == 1)
                 hashOne = info.hash;
             CHECK(gCabac ? info.hash == hashOne : bytes > 0); // (CAVLC: one slice per thread)
+        }
+        // qcomp moves bits between the clip's stretches against the clip's own mean and leaves its level
+        // to the value: about the same size without it
+        {
+            EncoderConfig q = c;
+            q.qcomp = 0;
+            size_t flat = 0;
+            CHECK(roundTrip(q, 45, &flat));
+            if (!(double(flat) < 1.3 * double(size[1]) && double(size[1]) < 1.3 * double(flat)))
+                std::fprintf(stderr, "crf 23: %zu bytes with qcomp, %zu without\n", size[1], flat);
+            CHECK(double(flat) < 1.3 * double(size[1]) && double(size[1]) < 1.3 * double(flat));
         }
         // A still clip (only the noise changes)
         gSynthKind = 1;
@@ -872,7 +883,14 @@ int main()
             }
             const ChunkPlan plan = planChunks(*fp.stats(), d, 2, 20);
             CHECK(plan.start.size() == 2);
+            // every chunk measures its complexity against the whole clip's mean (no QP step at the seam)
+            CHECK(plan.crfComplexity > 0);
+            CHECK(plan.crfComplexity == crfClipComplexity(*fp.stats(), d));
+            CHECK(plan.configFor(d, 1, 1).crfClipComplexity == plan.crfComplexity);
             CHECK(roundTrip(d, 70, nullptr, -1, &plan));
+            EncoderConfig rated = d;
+            rated.bitrateKbps = 500;
+            CHECK(planChunks(*fp.stats(), rated, 2, 20).crfComplexity < 0);
         }
     }
     // B pictures (CABAC only): coding order, display order and timestamps, every picture bit-exact

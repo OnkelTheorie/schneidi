@@ -69,11 +69,12 @@ struct EncoderConfig {
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
     // Constant quality (>= 0; < 0 = off; ignored with bitrateKbps > 0): one pass, no size target - the file is as
-    // large as the content needs. The scale is x264's: a value gives about the file size of x264 --crf with the
-    // same value (18 = very good, 23 = good, 28 = small; +6 halves the size roughly). Each picture's QP comes
-    // from the value, the frame rate and qcomp times the complexity around the picture (lookahead costs, so
-    // lookahead > 0 and gop > 1 for that; without them one QP); the macroblock tree and the adaptive
-    // quantisation work as in the other modes. qp is not used.
+    // large as the content needs. The scale is x264's: a value gives about the file size and PSNR of x264 --crf
+    // with the same value (18 = very good, 23 = good, 28 = small; +6 halves the size roughly). Each picture's QP
+    // comes from the value, the frame rate, qcomp times the complexity around the picture against the clip's
+    // mean (lookahead costs, so lookahead > 0 and gop > 1 for that; without them one QP) and the macroblock
+    // tree's level; the adaptive quantisation centres on a fixed texture energy instead of the picture's mean.
+    // qp is not used.
     double crf = -1.0;
     // Constant quality: the clip's mean complexity (crfClipComplexity), set by ChunkPlan::configFor so every
     // chunk measures against the whole clip; < 0 = the mean of the pictures seen so far.
@@ -382,8 +383,7 @@ private:
     std::vector<float> crfCost_; // per picture (display index): its lookahead cost against the picture before
     std::vector<double> crfSum_; // prefix sums of crfCost_ over the pictures that do not repeat the one before
     std::vector<int> crfCount_;  // and their count
-    double crfTree_ = 0;         // mean macroblock-tree offset of the last reference picture
-    double crfTreeX_ = 0;
+    double crfTreeShift_ = 0;    // the last reference picture's tree at full strength against the applied (mean)
     void noteCost(const LookaheadFrame& f);
     double crfQp(const LookaheadFrame& frame, double* complexity = nullptr) const;
     bool useLookahead() const
