@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Convert.h"
 #include "engine/video/Compose.h"
+#include "engine/HdrTone.h"
 
 extern "C" {
 #include <libavutil/imgutils.h>
@@ -225,6 +226,30 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
     }
 }
 
+// HDR (Info::tone): converted to 16-bit RGB at the destination size (the 10-bit signal kept), then mapped to 8-bit
+// SDR by engine/HdrTone. Interlaced pictures are converted as progressive (10-bit formats are anyway, see convert)
+bool convertHdr(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast)
+{
+    const AVFrame* frame = pic.frame;
+    const int w = frame->width, h = frame->height;
+    const AVPixelFormat src = withRange(AVPixelFormat(frame->format), info.fullRange);
+    const int flags = dw == w && dh == h ? swsFlags(w, h, src, w, h, AV_PIX_FMT_RGBA64)
+                      : fast             ? SWS_BILINEAR
+                                         : kScaleFlags;
+    SwsContext* ctx = cachedContext(w, h, src, AV_PIX_FMT_RGBA64, flags, dw, dh);
+    if (!ctx) return false;
+    const AVPixFmtDescriptor* srcDesc = av_pix_fmt_desc_get(src);
+    const bool rgbSource = srcDesc && (srcDesc->flags & AV_PIX_FMT_FLAG_RGB);
+    lumaTransfer(ctx, rgbSource ? 601 : info.colorspace, 601, sourceRange(src, info.fullRange));
+    thread_local std::vector<uint16_t> wide;
+    wide.resize(size_t(dw) * dh * 4);
+    uint8_t* o[4] = {reinterpret_cast<uint8_t*>(wide.data())};
+    const int oStride[4] = {dw * 8};
+    sws_scale(ctx, frame->data, frame->linesize, 0, h, o, oStride);
+    HdrTone::toSdrRgba64(info.tone, wide.data(), dw * 8, out, dw * 4, dw, dh);
+    return true;
+}
+
 } // namespace
 
 int swsColorspace(int colorspace)
@@ -245,6 +270,7 @@ int swsColorspace(int colorspace)
 bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast)
 {
     if (!pic.frame || dw <= 0 || dh <= 0) return false;
+    if (info.tone.active()) return convertHdr(pic, info, out, dw, dh, fast);
     const int w = pic.frame->width, h = pic.frame->height;
     if (dw == w && dh == h) {
         // Planar YUV, progressive, exact conversion: in horizontal bands over threads (point sampling at the same

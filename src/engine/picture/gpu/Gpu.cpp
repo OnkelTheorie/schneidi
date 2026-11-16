@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/StartupTrace.h"
 #include "engine/picture/gpu/Gpu.h"
+#include "engine/HdrTone.h"
 
 #include "engine/ColorGrade.h"
 #include "engine/OutputColor.h"
@@ -752,21 +753,29 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     return t;
 }
 
-LutPtr Context::gradeLut(const ColorGrade::Baked& baked, int n)
+LutPtr Context::gradeLut(const ColorGrade::Baked* baked, const HdrTone::Tone& tone, int n)
 {
     n = std::clamp(n, 2, 256);
-    // The lattice as an RGBA picture (R fastest, then G, then B = slice), corrected by the CPU code itself
+    // The lattice as an RGBA picture (R fastest, then G, then B = slice), corrected by the CPU code itself: the HDR
+    // signal mapped to 8-bit SDR (as Video::toRgba), then graded
     std::vector<uint8_t> lattice(size_t(n) * n * n * 4);
     uint8_t* p = lattice.data();
     for (int b = 0; b < n; ++b)
         for (int g = 0; g < n; ++g)
             for (int r = 0; r < n; ++r, p += 4) {
-                p[0] = uint8_t(std::lround(r * 255.0 / (n - 1)));
-                p[1] = uint8_t(std::lround(g * 255.0 / (n - 1)));
-                p[2] = uint8_t(std::lround(b * 255.0 / (n - 1)));
+                if (tone.active()) {
+                    const float in[3] = {float(r) / float(n - 1), float(g) / float(n - 1), float(b) / float(n - 1)};
+                    float out[3];
+                    HdrTone::toSdr(tone, in, out);
+                    for (int i = 0; i < 3; ++i) p[i] = uint8_t(std::lround(std::clamp(out[i], 0.0f, 1.0f) * 255));
+                } else {
+                    p[0] = uint8_t(std::lround(r * 255.0 / (n - 1)));
+                    p[1] = uint8_t(std::lround(g * 255.0 / (n - 1)));
+                    p[2] = uint8_t(std::lround(b * 255.0 / (n - 1)));
+                }
                 p[3] = 255;
             }
-    ColorGrade::apply(lattice.data(), n * n, n, baked, 1);
+    if (baked) ColorGrade::apply(lattice.data(), n * n, n, *baked, 1);
     std::unique_ptr<Lut3d> made;
     {
         std::lock_guard<std::mutex> g(d->luts->lock);
@@ -1534,7 +1543,7 @@ TexturePtr Context::target(QSize, const float*) { return {}; }
 TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
 TexturePtr Context::uploadYuv(const AVFrame*, const Video::Info&, bool) { return {}; }
 TexturePtr Context::uploadGray(const uint8_t*, int, int) { return {}; }
-LutPtr Context::gradeLut(const ColorGrade::Baked&, int) { return {}; }
+LutPtr Context::gradeLut(const ColorGrade::Baked*, const HdrTone::Tone&, int) { return {}; }
 void Context::draw(Texture&, const Layer&) {}
 TexturePtr Context::mix(const Texture&, const Texture&, double) { return {}; }
 TexturePtr Context::luma(const Texture&, const Texture&, const Texture&, double, double) { return {}; }

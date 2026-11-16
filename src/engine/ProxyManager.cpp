@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ProxyManager.h"
+#include "engine/HdrTone.h"
 #include "core/AppPaths.h"
 #include "engine/Bundle.h"
 
@@ -50,6 +51,7 @@ struct SourceInfo {
     bool hasVideo = false;
     int rateNum = 0, rateDen = 0;
     int colorspace = 709; // 601/709/240/2020/2021
+    HdrTone::Tone tone;   // HDR transfer: the proxy keeps the signal and says so (the preview maps it like the original's)
     bool fullRange = false;
     bool alpha = false; // transparent pixels (VP8/VP9 with alpha, ProRes 4444, PNG/QuickTime RLE in MOV)
     QString decoder;    // the reader's (libvpx-vp9 for VP9 with alpha)
@@ -110,6 +112,7 @@ SourceInfo probeSource(const QString& path)
     s.height = in.height;
     s.colorspace = in.colorspace; // a guess by picture size already when the file states none
     s.fullRange = in.fullRange;
+    s.tone = in.tone;
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(in.format);
     // Alpha only when the first picture shows it (an alpha format alone says little, see seeThrough)
     if (desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA)) {
@@ -233,8 +236,13 @@ ProxyJob prepareJob(const QString& original, const QString& part, int maxSize)
     // one frame off in the preview. Move the picture so the counted start lands on 0.
     if (const std::optional<double> zero = Video::zeroOffset(original); zero && std::abs(*zero) > 1e-4)
         scale.prepend(QString("setpts=PTS-(%1)/TB,").arg(QString::number(*zero, 'f', 6)));
-    const char* primaries = info.colorspace == 601 ? "smpte170m" : info.colorspace == 2020 ? "bt2020" : "bt709";
-    const char* trc = info.colorspace == 601 ? "smpte170m" : "bt709";
+    const char* primaries = info.colorspace == 601 ? "smpte170m"
+                            : info.colorspace == 2020 || (info.tone.active() && info.tone.bt2020) ? "bt2020"
+                                                                                                  : "bt709";
+    const char* trc = info.tone.transfer == HdrTone::Transfer::Hlg  ? "arib-std-b67"
+                      : info.tone.transfer == HdrTone::Transfer::Pq ? "smpte2084"
+                      : info.colorspace == 601                       ? "smpte170m"
+                                                                     : "bt709";
     // A source with alpha keeps it: H.264 has none (the proxy played opaque, covering the tracks below). VP9 with
     // alpha in WebM, which the reader decodes with libvpx - written under the usual <hash>.mp4 name (cleanup, lookup;
     // the reader goes by the content, not the name).

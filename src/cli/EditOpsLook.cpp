@@ -445,6 +445,20 @@ void opPictureAspect(Session& s, const QJsonObject& op)
                            : QString("%1 clip(s) show their file's own shape again").arg(n));
 }
 
+void opHdr(Session& s, const QJsonObject& op)
+{
+    QVector<int> targets = videoClipsOf(s, op, "HDR");
+    if (!op.contains("clips") && !op.contains("clip") && !op.contains("track")) // none named: every video clip
+        for (const Track& t : s.project.timeline().video)
+            for (const Clip& c : t.clips) targets << c.id;
+    if (targets.isEmpty()) fail("NOT_FOUND", "no video clip");
+    if (!op.value("to_sdr").isBool()) fail("BAD_ARGUMENT", "to_sdr must be true or false");
+    const bool on = op.value("to_sdr").toBool();
+    const int n = s.editor.setHdrToSdr(targets, on);
+    s.notes << (on ? QString("%1 clip(s) map HDR to SDR again").arg(n)
+                   : QString("%1 clip(s) keep their HDR signal as it is").arg(n));
+}
+
 // ---------- transform ----------
 
 void opTransform(Session& s, const QJsonObject& op)
@@ -1117,6 +1131,13 @@ void addLookOps(QVector<OpDef>& ops)
                  "new_timeline aspect:'4:3'). Crop values keep their share of the picture. There is no reliable "
                  "automatic detection: set it when the footage looks stretched (`frames`).",
                  opPictureAspect, kClipKeys}
+        << OpDef{"hdr", "{op:'hdr', clips?, track?, to_sdr}",
+                 "HDR footage (phones: HLG, PQ) shown as SDR or as it is",
+                 "to_sdr: true (default of every clip) maps an HDR source (`probe` says hdr:'HLG'/'PQ') to SDR BT.709 "
+                 "in preview and export: tone mapped, BT.2020 colours into BT.709, so phone videos do not look pale. "
+                 "false keeps the signal as it is (a LUT or grade made for the HDR signal). SDR files are never "
+                 "changed. `info` shows hdr_to_sdr:false on clips that keep it.",
+                 opHdr, kClipKeys}
         << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?, move_to?} or {op:'keyframe', "
                              "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
                              "param, clear:true}",

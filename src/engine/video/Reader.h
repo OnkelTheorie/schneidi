@@ -16,6 +16,8 @@
 //
 // Thread-safe: any number of threads may ask at once (MLT's render workers). No GUI dependency.
 
+#include "engine/HdrTone.h"
+
 #include <QString>
 
 extern "C" {
@@ -47,6 +49,9 @@ struct Info {
     int colorTrc = 0;             // AVColorTransferCharacteristic
     int colorPrimaries = 709;     // MLT numbers: 709, 601525, 601625, 2020
     bool fullRange = false;
+    // HDR transfer (HLG/PQ) of the stream: Video::toRgba and the card's LUT map it to SDR BT.709 (engine/HdrTone).
+    // The renderer clears it for a clip whose HDR -> SDR is off
+    HdrTone::Tone tone;
     bool hasBFrames = false;
     int64_t duration = 0;         // container duration in AV_TIME_BASE units, < 0 if unknown
     QString codec;                // decoder name

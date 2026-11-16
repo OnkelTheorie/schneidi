@@ -338,6 +338,24 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         shapeBox->setCurrentIndex(i);
         shapeBox->setEnabled(c->kind == ClipKind::Media);
     };
+    // HDR -> SDR (Clip::hdrToSdr): on by default; off keeps an HDR source's signal as it is. SDR files never change
+    auto* hdrBox = new QCheckBox(T("HDR als SDR zeigen"));
+    hdrBox->setObjectName("HdrToSdr");
+    hdrBox->setFocusPolicy(Qt::NoFocus);
+    hdrBox->setToolTip(T("HDR-Videos (HLG/PQ, z. B. vom Handy) werden in Vorschau und Export in normales SDR (BT.709) "
+                         "umgerechnet, damit sie nicht blass aussehen. Aus: das Signal bleibt, wie es ist (für eine LUT "
+                         "oder Korrektur, die dafür gemacht ist). Normale Videos ändert das nicht."));
+    connect(hdrBox, &QCheckBox::clicked, this, [this](bool on) { m_editor->setHdrToSdr(selectedIds(TrackKind::Video), on); });
+    crop.grid->addWidget(rowLabel(T("HDR")), crop.rows, 0);
+    crop.grid->addWidget(hdrBox, crop.rows, 1);
+    ++crop.rows;
+    m_refreshers << [this, hdrBox] {
+        const Clip* c = primary(TrackKind::Video);
+        if (!c) return;
+        const QSignalBlocker b(hdrBox);
+        hdrBox->setChecked(c->hdrToSdr);
+        hdrBox->setEnabled(c->kind == ClipKind::Media);
+    };
     // Cut the picture to a circle, star … (effect "clip_shape", its values then in the Effects tab): found here, where
     // one looks for the picture's outline, not only in the Effects Library
     auto* shapeCut = new QPushButton(T("Form…"));

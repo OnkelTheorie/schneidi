@@ -241,3 +241,20 @@ int Editor::setPictureAspect(const QVector<int>& ids, double aspect, std::option
     });
     return int(changed.size());
 }
+
+int Editor::setHdrToSdr(const QVector<int>& ids, bool on)
+{
+    QVector<int> changed;
+    for (int id : ids) {
+        TrackRef where;
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id, &where);
+            c && c->kind == ClipKind::Media && c->hdrToSdr != on && where.kind == TrackKind::Video)
+            changed << id;
+    }
+    if (changed.isEmpty()) return 0;
+    m_project->edit(on ? T("HDR → SDR an") : T("HDR → SDR aus"), [&](Timeline& tl) {
+        for (int id : changed)
+            if (Clip* c = TimelineOps::findClip(tl, id)) c->hdrToSdr = on;
+    });
+    return int(changed.size());
+}

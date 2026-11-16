@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ScrubFrames.h"
+#include "engine/HdrTone.h"
 
 #include "engine/Background.h"
 #include "engine/video/Reader.h"
@@ -46,6 +47,8 @@ QImage toImage(const Video::Picture& pic, const Video::Info& info, const QSize& 
     int dstStride[4] = {int(img.bytesPerLine()), 0, 0, 0};
     sws_scale(ctx, f->data, f->linesize, 0, f->height, dst, dstStride);
     sws_freeContext(ctx);
+    // HDR as the preview shows it (8 bits are enough for a scrub picture)
+    HdrTone::toSdrRgba8(info.tone, img.bits(), w, h, 1, true, int(img.bytesPerLine()));
     return img;
 }
 

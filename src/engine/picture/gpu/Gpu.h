@@ -35,6 +35,7 @@
 // Recording: begin() starts one offscreen frame, the operations record passes, finish() submits and waits; readbacks
 //   asked for in between are filled by finish(). Keep everything of one output frame inside one begin/finish.
 
+#include "engine/HdrTone.h"
 #include "engine/video/Compose.h"
 
 #include <QRectF>
@@ -129,7 +130,11 @@ public:
     TexturePtr uploadGray(const uint8_t* gray, int w, int h);
     // The grade of ColorGrade::bake as a 3D LUT of size^3 nodes (trilinear on the card); 52 = nodes on whole code values
     // (51 steps of 5), so the lattice is the CPU result exactly
-    LutPtr gradeLut(const ColorGrade::Baked& baked, int size = 52);
+    LutPtr gradeLut(const ColorGrade::Baked& baked, int size = 52) { return gradeLut(&baked, {}, size); }
+    // The same with HDR -> SDR (engine/HdrTone) before the grade (baked may be null: the tone mapping alone), as the
+    // CPU does it (Video::toRgba maps to 8-bit SDR, the grade runs on that). An HDR source takes kToneLutSize nodes
+    LutPtr gradeLut(const ColorGrade::Baked* baked, const HdrTone::Tone& tone, int size = 52);
+    static constexpr int kToneLutSize = 65;
 
     struct Layer {
         const Texture* source = nullptr;

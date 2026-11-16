@@ -130,6 +130,7 @@ schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the ow
 schneidi_test(test_occlusion)
 schneidi_test(test_picture_passthrough) # export: a plain full-size video hands its decoded planes to the encoder; full-frame stills at the bottom
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
+schneidi_test(test_hdr_tone) # HDR -> SDR (HLG/PQ): known values, tables and the card's LUT against the exact function, real 10-bit files, Clip::hdrToSdr
 schneidi_test(test_video_reader) # own decoder: jumps/threads/hardware = pictures in order, hibernation, rotation, file properties
 schneidi_test(test_picture_regression) # picture engine against independent references: timing, layers, transitions, outline, downscale, threads
 schneidi_test(test_crop)

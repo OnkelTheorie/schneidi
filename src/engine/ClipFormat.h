@@ -13,5 +13,7 @@ struct ClipFormat {
     double averageFps = 0; // average frame rate (0 = unknown)
     bool variable = false; // variable frame rate (phone)
     FrameRate suggested;  // nearest standard frame rate for the project
+    QString hdr;          // HDR transfer of the picture: "HLG", "PQ"; empty = SDR (engine/HdrTone)
+    int bitDepth = 8;     // bits per component of the decoded picture
 };
 ClipFormat detectClipFormat(const QString& path);

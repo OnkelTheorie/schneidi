@@ -264,6 +264,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/encoder/h264/Lookahead.h   src/engine/encoder/h264/Lookahead.cpp
     src/engine/SmartRender.h      src/engine/SmartRender.cpp
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
+    src/engine/HdrTone.h          src/engine/HdrTone.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
     src/engine/Inference.h        src/engine/Inference.cpp
@@ -498,7 +499,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp src/engine/BlurFill.cpp
                                 src/engine/video/Compose.cpp src/engine/picture/ShapePaint.cpp
-                                src/engine/VideoEffects.cpp src/engine/ColorGrade.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
+                                src/engine/VideoEffects.cpp src/engine/ColorGrade.cpp src/engine/HdrTone.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 
 # One dictionary per UI language: a new i18n/<code>.json is picked up by the build and the language menu by itself

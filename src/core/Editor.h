@@ -714,6 +714,9 @@ public:
     // picture. With `fill` the area around the picture too (FitFill::Blur: a 4:3 picture in a 16:9 frame gets blurred
     // sides instead of black ones). One undo step; returns the number of clips changed.
     int setPictureAspect(const QVector<int>& ids, double aspect, std::optional<FitFill> fill = std::nullopt);
+    // HDR -> SDR of the clips (Clip::hdrToSdr; video clips of the open timeline, linked ones not added). One undo
+    // step; returns the number of clips changed
+    int setHdrToSdr(const QVector<int>& ids, bool on);
 
     // ---- Story sections and notes of the open timeline (Timeline::sections / notes, core/Story.h). EditorStory.cpp
     // Each call is one undo step. addSection: empty = done, else why not (overlap, empty range)

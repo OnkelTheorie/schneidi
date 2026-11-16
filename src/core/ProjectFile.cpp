@@ -824,6 +824,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     }
     if (c.renderCache) o["renderCache"] = true;
     if (c.pictureAspect > 0) o["pictureAspect"] = c.pictureAspect; // optional: a stretched recording shown at its shape
+    if (!c.hdrToSdr) o["hdrToSdr"] = false; // optional (older versions show HDR as it is anyway)
     if (!c.keepRegion.isEmpty()) o["keepRegion"] = c.keepRegion; // optional: a kept region above a reframed clip
     if (c.transform != ClipTransform{}) o["transform"] = transformToJson(c.transform); // any value or switch changed
     if (!c.effects.isEmpty()) {
@@ -908,6 +909,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.renderCache = o.value("renderCache").toBool();
     if (c.kind == ClipKind::Media) c.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
     if (c.kind == ClipKind::Media) c.keepRegion = o.value("keepRegion").toString();
+    c.hdrToSdr = o.value("hdrToSdr").toBool(true);
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();
