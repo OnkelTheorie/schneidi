@@ -134,7 +134,11 @@ void RenderCache::setFormat(const ProjectFormat& format)
 
 bool RenderCache::isExpensive(const Clip& c)
 {
-    const bool fx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) { return e.enabled; });
+    // The colour grade (curves, qualifier, windows included) runs live in the picture engine (GPU shader / CPU LUT):
+    // caching it only re-rendered the whole clip after every grading touch
+    const bool fx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
+        return e.enabled && e.effectId != QLatin1String("grade");
+    });
     return fx || (!c.freeze && (c.speed != 1.0 || c.reverse || !c.ramp.isEmpty()));
 }
 
