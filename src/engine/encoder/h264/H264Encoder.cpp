@@ -9367,7 +9367,44 @@ bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const u
     int lim[8];
     limits(qp, lim);
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    // A coefficient is at most the block's sum of absolute differences times the product of the two basis rows'
+    // largest entries (1, 2 or 4 by position class), so a block whose SAD is small enough is below every limit
+    // without being transformed (the common case where a picture stands still).
+    const int sadLimit = std::min({lim[0], lim[1] / 2, lim[5] / 4});
+    int sad4[16];
+    {
+        const uint8_t* sp = &srcY_[lumaOff];
+#ifdef SCHNEIDI_H264_SSE2
+        const __m128i zero = _mm_setzero_si128(), ones = _mm_set1_epi16(1);
+        for (int band = 0; band < 4; ++band) {
+            __m128i lo = zero, hi = zero; // column sums of the band's four rows
+            for (int y = band * 4; y < band * 4 + 4; ++y) {
+                const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(sp + size_t(y) * padW_));
+                const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(lp + y * 16));
+                const __m128i d = _mm_or_si128(_mm_subs_epu8(a, b), _mm_subs_epu8(b, a));
+                lo = _mm_add_epi16(lo, _mm_unpacklo_epi8(d, zero));
+                hi = _mm_add_epi16(hi, _mm_unpackhi_epi8(d, zero));
+            }
+            alignas(16) int pairs[8]; // sums of two columns each
+            _mm_store_si128(reinterpret_cast<__m128i*>(pairs), _mm_madd_epi16(lo, ones));
+            _mm_store_si128(reinterpret_cast<__m128i*>(pairs + 4), _mm_madd_epi16(hi, ones));
+            for (int i = 0; i < 4; ++i)
+                sad4[band * 4 + i] = pairs[2 * i] + pairs[2 * i + 1];
+        }
+#else
+        for (int b = 0; b < 16; ++b) {
+            const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
+            int sum = 0;
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    sum += std::abs(int(sp[size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]));
+            sad4[b] = sum;
+        }
+#endif
+    }
     for (int b = 0; b < 16; ++b) {
+        if (sad4[b] <= sadLimit)
+            continue;
         const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
         int coef[16];
         forward4x4Diff(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, lp + oy * 16 + ox, 16, coef);
