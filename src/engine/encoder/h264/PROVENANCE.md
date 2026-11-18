@@ -36,6 +36,18 @@ published literature. No code, tables or thresholds were copied from another enc
     quadrants); scene-change detection that stops once its threshold comparison is decided; the
     first pass analysing consecutive pictures side by side.
 
+  - Speed round of 18.11.2026, our own and measured the same way: the arithmetic coder puts out whole bytes
+    instead of single bits - the settled bits leave from the top of a wider low register, the last byte is held
+    back together with a count of the 0xff bytes after it until a carry can no longer reach them. This is the
+    usual way to write a binary arithmetic coder's output (the carry handling goes back to the "bit stuffing /
+    outstanding bits" discussion in the arithmetic coding literature and is the scheme of the HEVC reference
+    software's bin encoder, BSD licence, and of Sze, Budagavi, Sullivan (eds.), "High Efficiency Video Coding",
+    2014, ch. 8); written here from that description, the bits are those of 9.3.4.2's PutBit. B macroblocks:
+    no split search where a trellis plan of the direct or the 16x16 prediction is empty, B_8x8 only after a
+    two-part layout looked better, no plan for candidates whose estimate is clearly worse. Lookahead: a start
+    point that already matches ends the search. The skip test's bound "coefficient <= SAD x largest basis
+    products" is elementary. The psy candidate is not coded again where its plan equals the chosen one.
+
 - Two-pass rate control (14.11.): the bit model's k learned per class of picture cost, a limit
   on how far a picture's QP may leave the whole-clip plan, and complexity compression (a
   picture's quantiser scale following a power of its smoothed complexity, the "qcomp" idea
