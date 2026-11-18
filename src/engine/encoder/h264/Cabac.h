@@ -4,6 +4,7 @@
 #include "BitWriter.h"
 #include "CabacTables.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 
@@ -22,8 +23,9 @@ public:
         out_ = out;
         low_ = 0;
         range_ = 510;
-        firstBit_ = true;
-        outstanding_ = 0;
+        free_ = 23;
+        heldByte_ = 0xff;
+        held_ = 0;
         const int qp = sliceQp < 0 ? 0 : sliceQp > 51 ? 51 : sliceQp;
         for (int i = 0; i < kCabacContexts; ++i) {
             const int8_t* mn = cabacInitIdc < 0 ? kCabacInitI[i] : kCabacInitP[cabacInitIdc][i];
@@ -55,10 +57,19 @@ public:
         const uint32_t lps = kRangeTabLps[c >> 1][(range_ >> 6) & 3];
         range_ -= lps;
         if (bin != (c & 1)) {
-            low_ += range_;
-            range_ = lps;
+            const int shift = std::countl_zero(lps) - 23; // renormalisation: until the range is 256 or more
+            low_ = (low_ + range_) << shift;
+            range_ = lps << shift;
+            free_ -= shift;
+        } else {
+            if (range_ >= 256)
+                return;
+            low_ <<= 1; // the range after a most probable symbol is never below 128
+            range_ <<= 1;
+            --free_;
         }
-        renorm();
+        if (free_ < 12)
+            flushByte();
     }
 
     // EncodeBypass (9.3.4.4).
@@ -71,18 +82,11 @@ public:
         low_ <<= 1;
         if (bin)
             low_ += range_;
-        if (low_ >= 1024) {
-            putBit(1);
-            low_ -= 1024;
-        } else if (low_ < 512) {
-            putBit(0);
-        } else {
-            low_ -= 512;
-            ++outstanding_;
-        }
+        if (--free_ < 12)
+            flushByte();
     }
 
-    // EncodeTerminate (9.3.4.5); bin 1 also flushes (the last bit written is the rbsp_stop_one_bit).
+    // EncodeTerminate (9.3.4.5); bin 1 also flushes and writes the rbsp_stop_one_bit.
     void terminate(int bin)
     {
         if (counting_) {
@@ -91,13 +95,18 @@ public:
         }
         range_ -= 2;
         if (bin) {
-            low_ += range_;
-            range_ = 2;
-            renorm();
-            putBit((low_ >> 9) & 1);
-            out_->u(((low_ >> 7) & 3) | 1, 2);
-        } else {
-            renorm();
+            low_ = (low_ + range_) << 7;
+            range_ = 2 << 7;
+            free_ -= 7;
+            if (free_ < 12)
+                flushByte();
+            finish();
+            out_->u(1, 1);
+        } else if (range_ < 256) {
+            low_ <<= 1;
+            range_ <<= 1;
+            if (--free_ < 12)
+                flushByte();
         }
     }
 
@@ -130,40 +139,54 @@ private:
     };
     static inline const FastTables kFast{};
 
-    void renorm()
+    // The interval's lower end is kept with its settled bits above the nine working bits of the specification's
+    // codILow (free_ = bits of the 32 still unused). Whole bytes leave from the top; a byte may still change by a
+    // carry from below, so the last byte stays back, with a count of the 0xff bytes after it (they turn to 0x00
+    // when the carry comes). The bits are the ones PutBit of 9.3.4.2 would write one at a time.
+    void flushByte()
     {
-        while (range_ < 256) {
-            if (low_ < 256) {
-                putBit(0);
-            } else if (low_ >= 512) {
-                low_ -= 512;
-                putBit(1);
-            } else {
-                low_ -= 256;
-                ++outstanding_;
-            }
-            range_ <<= 1;
-            low_ <<= 1;
+        const uint32_t lead = low_ >> (24 - free_);
+        free_ += 8;
+        low_ &= 0xffffffffu >> free_;
+        if (lead == 0xff) {
+            ++held_;
+        } else if (held_ > 0) {
+            const uint32_t carry = lead >> 8;
+            out_->byte(uint8_t(heldByte_ + carry));
+            heldByte_ = lead & 0xff;
+            const uint8_t fill = uint8_t(0xff + carry);
+            for (; held_ > 1; --held_)
+                out_->byte(fill);
+        } else {
+            held_ = 1;
+            heldByte_ = lead;
         }
     }
-    void putBit(int b)
+    // The end of the slice data: the bytes held back and the rest of the settled bits (down to bit 8 of codILow;
+    // the bit after it is the rbsp_stop_one_bit).
+    void finish()
     {
-        if (firstBit_)
-            firstBit_ = false;
-        else
-            out_->u(uint32_t(b), 1);
-        while (outstanding_ > 0) {
-            out_->u(uint32_t(1 - b), 1);
-            --outstanding_;
+        if (low_ >> (32 - free_)) {
+            out_->byte(uint8_t(heldByte_ + 1));
+            for (; held_ > 1; --held_)
+                out_->byte(0x00);
+            low_ -= uint32_t(1) << (32 - free_);
+        } else {
+            if (held_ > 0)
+                out_->byte(uint8_t(heldByte_));
+            for (; held_ > 1; --held_)
+                out_->byte(0xff);
         }
+        out_->u(low_ >> 8, 24 - free_);
     }
 
     bool counting_ = false;
     uint64_t cost_ = 0;
     BitWriter* out_ = nullptr;
     uint32_t low_ = 0, range_ = 510;
-    bool firstBit_ = true;
-    int outstanding_ = 0;
+    int free_ = 23;                // unused bits of low_ (the first bit PutBit would write is dropped: 9.3.4.2)
+    uint32_t heldByte_ = 0xff;     // the last whole byte, not written yet
+    int held_ = 0;                 // that byte and the 0xff bytes after it
     uint8_t ctx_[kCabacContexts] = {}; // state << 1 | MPS
 };
 
