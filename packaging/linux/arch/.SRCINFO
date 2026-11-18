@@ -1,6 +1,6 @@
 pkgbase = schneidi
 	pkgdesc = Fast, light video editor that an AI assistant can edit with
-	pkgver = 0.23.0
+	pkgver = 0.24.0
 	pkgrel = 1
 	url = https://github.com/OnkelTheorie/schneidi
 	arch = x86_64
@@ -23,9 +23,9 @@ pkgbase = schneidi
 	optdepends = intel-media-driver: hardware video decoding on Intel (VA-API)
 	noextract = rnnoise_data-0b50c45.tar.gz
 	options = !debug
-	source = schneidi-0.23.0.tar.gz::https://github.com/OnkelTheorie/schneidi/archive/refs/tags/v0.23.0.tar.gz
+	source = schneidi-0.24.0.tar.gz::https://github.com/OnkelTheorie/schneidi/archive/refs/tags/v0.24.0.tar.gz
 	source = https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz
-	sha256sums = e1d7b98fa2b4164d6a9718871e55eb599e9767aaa744f0d9781ea3cf7b328f21
+	sha256sums = 9de40c8b9f0cd35d556cd5b20c87d4a426d43bcd74274a24fa56ba42104e0d55
 	sha256sums = 4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43
 
 pkgname = schneidi
