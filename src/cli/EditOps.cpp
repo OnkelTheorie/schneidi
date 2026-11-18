@@ -388,17 +388,37 @@ void onlyStreams(Session& s, const QJsonObject& op, const MediaInfo& m, const Pl
 void noteMovedSound(Session& s, const QJsonObject& op, const MediaInfo& m, const Placing& before)
 {
     const Timeline& tl = s.project.timeline();
-    if (op.contains("track") || m.audioStreamCount() != 1 || tl.audio.isEmpty() || !tl.audio[0].muted) return;
-    for (int i = 1; i < tl.audio.size(); ++i)
-        for (const Clip& c : tl.audio[i].clips)
-            if (before.isNew(c) && c.mediaPath == m.path) {
-                const QString name = tl.audio[0].name.trimmed();
-                s.notes << QString("%1 has a single audio stream: its sound went onto %2, not onto the muted %3 (it "
-                                   "would be silent there); track:'A1' places it there anyway")
-                               .arg(QFileInfo(m.path).fileName(), trackName({TrackKind::Audio, i}),
-                                    "A1" + (name.isEmpty() ? QString() : " '" + name + "'"));
-                return;
-            }
+    // The same condition as the redirect (one placed stream after the import presets)
+    if (op.contains("track") || s.editor.streamPresets().placements(m).size() != 1 || tl.audio.isEmpty()
+        || !tl.audio[0].muted)
+        return;
+    QStringList where;    // "A2 (0:00-0:04)" per new sound clip not on A1
+    QStringList tracks;
+    int total = 0;
+    for (int i = 0; i < tl.audio.size(); ++i)
+        for (const Clip& c : tl.audio[i].clips) {
+            if (!before.isNew(c) || c.mediaPath != m.path) continue;
+            ++total;
+            if (i == 0) continue;
+            where << QString("%1 %2-%3").arg(trackName({TrackKind::Audio, i}), tc(c.start, s.format()), tc(c.end(), s.format()));
+            if (!tracks.contains(trackName({TrackKind::Audio, i}))) tracks << trackName({TrackKind::Audio, i});
+        }
+    if (where.isEmpty()) return;
+    const QString name = tl.audio[0].name.trimmed();
+    const QString a1 = "A1" + (name.isEmpty() ? QString() : " '" + name + "'");
+    // One clip: where it went; several (a keep with ranges): which ones, the others stayed on A1 (over material)
+    s.notes << (total == 1 || where.size() == total
+                    ? QString("%1 has a single audio stream: its sound went onto %2, not onto the muted %3 (it would "
+                              "be silent there)%4; track:'A1' places it there anyway")
+                          .arg(QFileInfo(m.path).fileName(), tracks.join(", "), a1,
+                               total > 1 ? " - every range" : QString())
+                    : QString("%1 has a single audio stream: the sound of %2 of %3 ranges went onto an unmuted track "
+                              "instead of the muted %4 (%5); the others lie on %4 (placed over material); "
+                              "track:'A1' places all there")
+                          .arg(QFileInfo(m.path).fileName())
+                          .arg(where.size())
+                          .arg(total)
+                          .arg(a1, where.join(", ")));
 }
 
 // interpolate on the video clips of `m` an op just placed in [from, to) (slowest = its slowest speed)
