@@ -8,9 +8,12 @@
 #include "H264Encoder.h"
 #include "ThreadErrors.h"
 
+#include <cstring>
 #include <array>
 #include <atomic>
 #include <climits>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #include <memory>
 #include <vector>
@@ -26,6 +29,77 @@ struct RefPic {
     std::vector<uint8_t> y, u, v;
     std::vector<uint8_t> F, B, V, J;
     std::atomic<int> rowsReady{0}; // macroblock rows that are final (planes and margin included)
+    // With B pictures: the picture's list 0 motion per 4x4 block (ref -1 = intra), final for the
+    // rows in rowsReady. Direct prediction reads the co-located block, the search its start points.
+    std::vector<int16_t> mvx, mvy;
+    std::vector<int8_t> ref;
+    int gopPos = 0; // display distance from the IDR picture
+    int refGopPos = 0; // gopPos of the picture its vectors point to (list 0)
+    int frameNum = 0;  // reference pictures since the IDR picture before this one (frame_num, not wrapped)
+    // Means of the source picture's 16x16 luma blocks and 8x8 chroma blocks (weighted prediction:
+    // a later picture compares its own with them to find a fade).
+    std::vector<float> dcY, dcU, dcV;
+};
+
+// Explicit weighted prediction of a P picture against one reference picture (pred_weight_table):
+// sample = clip(((sample * weight + round) >> log2 denominator) + offset).
+struct WeightParams {
+    bool luma = false, chroma = false;
+    int lumaWeight = 0, lumaOffset = 0;
+    int chromaWeight[2] = {0, 0}, chromaOffset[2] = {0, 0};
+};
+
+// Partitions of an inter macroblock in a B slice by its mb_type (table 7-14; 0 = B_Direct_16x16
+// has none, 22 = B_8x8 takes them from the sub types): shape 0 16x16, 1 16x8, 2 8x16, 3 8x8, and per
+// partition which lists predict it (1 list 0, 2 list 1, 3 both; 0 = direct).
+struct BParts {
+    int shape = 0, count = 0;
+    int use[4] = {};
+};
+inline BParts bPartsOf(int bType, const uint8_t* sub)
+{
+    BParts b;
+    if (bType == 0)
+        return b;
+    if (bType <= 3) {
+        b.count = 1;
+        b.use[0] = bType;
+    } else if (bType < 22) {
+        static constexpr uint8_t kPairs[9][2] = {{1, 1}, {2, 2}, {1, 2}, {2, 1}, {1, 3}, {2, 3}, {3, 1}, {3, 2}, {3, 3}};
+        b.shape = 1 + (bType - 4) % 2;
+        b.count = 2;
+        b.use[0] = kPairs[(bType - 4) / 2][0];
+        b.use[1] = kPairs[(bType - 4) / 2][1];
+    } else {
+        b.shape = 3;
+        b.count = 4;
+        for (int i = 0; i < 4; ++i)
+            b.use[i] = sub[i];
+    }
+    return b;
+}
+
+// Wakes the worker pool of the frame threading: every change that may let a parked row go on bumps
+// the epoch; a worker that found nothing to do sleeps only while the epoch stays what it was
+// before it looked.
+struct WaveSignal {
+    std::atomic<uint32_t> epoch{0};
+    std::atomic<int> sleepers{0};
+    std::mutex m;
+    std::condition_variable cv;
+    void wake(bool all = false)
+    {
+        epoch.fetch_add(1, std::memory_order_seq_cst);
+        if (sleepers.load(std::memory_order_seq_cst) > 0) {
+            {
+                std::lock_guard<std::mutex> l(m); // the sleeper is past its check and waiting
+            }
+            if (all)
+                cv.notify_all();
+            else
+                cv.notify_one();
+        }
+    }
 };
 
 class FrameCoder {
@@ -38,15 +112,19 @@ public:
 
     // Pieces of code(), also used to keep two pictures in flight (CABAC only): reset, waveBegin,
     // then waveRow for every row claimRow hands out (any thread, in order), waveEnd, assemble.
-    void reset(bool idr, int framesSinceIdr, int idrCount);
+    void reset(bool idr, int frameNum, int idrCount);
     void waveBegin(int threads, RefPic* out, bool writerThread);
     int claimRow()
     {
         const int r = wave_.nextRow.fetch_add(1, std::memory_order_acq_rel);
         return r < wave_.rows ? r : -1;
     }
-    bool rowsLeft() const { return wave_.nextRow.load(std::memory_order_acquire) < wave_.rows; }
     void waveRow(int r); // never throws: a failure stops the picture (rethrowWaveError)
+    // The worker pool's way (frame threading): rows are not waited in but parked. claimRunnableRow
+    // hands out a row that can go on by a batch of macroblocks (-1 = none right now), waveRowRun
+    // takes it as far as it goes without waiting and gives it back.
+    int claimRunnableRow();
+    void waveRowRun(int r); // never throws
     void waveEnd();
     void rethrowWaveError(); // after waveEnd: the first exception of a row or the writer
     std::vector<uint8_t> assemble(PhaseClock& clock);
@@ -62,6 +140,16 @@ public:
         std::atomic<int> rowsDone{0};
         std::atomic<long> waitUs{0}, refWaitUs{0}; // waiting for the row above / the reference (H264_TIMING)
         std::thread writer;
+        // Where each row stands (a row is advanced by one thread at a time: rowBusy).
+        std::unique_ptr<std::atomic<int>[]> rowMb, rowDb; // next macroblock to decide / to filter in the row above
+        std::unique_ptr<std::atomic<uint8_t>[]> rowPhase, rowBusy;
+        std::atomic<int> firstOpen{0}; // no row above this one is unfinished
+        int batch = 0;                 // a parked row goes on once it can do this many macroblocks more than one
+        WaveSignal* signal = nullptr;  // the pool's, while the picture is in it
+        // Pool workers inside waveRowRun of this picture (claimed under the pool's lock). The pool
+        // lets go of a picture only once this is zero: a worker past its row's last macroblock
+        // still reads this state (rowBusy, wakeRow, signal).
+        std::atomic<int> running{0};
         RefPic* out = nullptr; // reference picture filled band by band, or nullptr
         int yCopied = 0, cCopied = 0, fBuilt = 0, hBuilt = 0;
     };
@@ -69,9 +157,22 @@ public:
     // Picture results kept until the encoder hands the picture out.
     std::vector<uint8_t> done_;
     std::shared_ptr<RefPic> outPic_; // the reference picture being filled, kept alive while coding
-    int frameNo_ = 0, outQp_ = 0;
-    bool outSceneCut_ = false, rcIdr_ = false, rcLookahead_ = false;
+    int frameNo_ = 0, outQp_ = 0, displayIndex_ = 0;
+    int rcType_ = 0; // 0 I, 1 P, 2 B
+    bool outSceneCut_ = false, rcLookahead_ = false, rcAfterB_ = false;
     double rcCost_ = 0;
+    double vbvQp_ = 0, vbvCost_ = 0, vbvPred_ = 0, vbvShift_ = 0; // VBV: the picture's QP (with its fraction), its cost and predicted bits
+    int vbvClass_ = 0;
+    // VBV inside the picture (CABAC wavefront): the bits its slice data may take (0 = no limit). Before each
+    // macroblock its QP rises as far as the projection of the whole picture needs to stay below it; the projection
+    // uses only macroblocks the wavefront guarantees to be done at that point (row r - j up to column x + 2j), so
+    // the stream does not depend on the thread count. vbvW_: each macroblock's share of the picture's bits as
+    // planned (lookahead cost at its planned QP); prefix sums per row (mbW + 1 each): bits coded (counting CABAC),
+    // planned share at the QP actually used, planned share.
+    double vbvRowCap_ = 0, vbvWTotal_ = 0;
+    std::vector<double> vbvW_, vbvPrefB_, vbvPrefE_, vbvPrefW_;
+    int vbvRowAdjust(int mbx, int r);
+    int rcBin_ = -1;
     bool idr_ = false;
     int framesSinceIdr_ = 0, idrCount_ = 0;
     std::vector<int> sliceTop_;
@@ -80,7 +181,11 @@ public:
     void encodeSlice(int s);
     void waveWrite();
     void waveWriteGuarded();
-    bool waveRowBody(int r);
+    int waveRowBody(int r, bool block); // 1 done, 0 parked (only without block), -1 the picture failed
+    bool rowRunnable(int r) const;
+    bool refRowsReady(int r) const;
+    void wakeRow(int r);
+    void abandonRow(int r);
     void waveFail();
     ThreadErrors waveErrors_;
     void publishBand(int k);
@@ -92,6 +197,10 @@ public:
         int i4Mode[16] = {}, i4Pred[16] = {};
         int interType = 0; // 0 16x16, 1 16x8, 2 8x16, 3 8x8
         int ref[4] = {}, mvd[4][2] = {};
+        // B slices (Kind::Inter): mb_type of table 7-14 (0 = B_Direct_16x16 .. 22 = B_8x8), the
+        // list 1 vector differences and for B_8x8 the sub types (0 direct, 1 L0, 2 L1, 3 Bi).
+        uint8_t bType = 0, bSub[4] = {};
+        int mvd1[4][2] = {};
         int cbpLuma = 0, cbpChroma = 0;
         bool hasQpDelta = false;
         int qpDelta = 0;
@@ -101,6 +210,44 @@ public:
         int luma8[4][64] = {};       // per 8x8 block, scan order
         int chromaDc[2][4] = {};
         int chromaAc[2][4][15] = {};
+
+        // Copies what the entropy coder reads of s: the header fields and only the level arrays
+        // its type and coded_block_pattern select (the others keep whatever they held).
+        void assignUsed(const MbSyntax& s)
+        {
+            kind = s.kind;
+            if (kind == Kind::Skip)
+                return; // a skipped macroblock is its kind alone
+            i16Mode = s.i16Mode;
+            chromaMode = s.chromaMode;
+            std::memcpy(i4Mode, s.i4Mode, sizeof i4Mode);
+            std::memcpy(i4Pred, s.i4Pred, sizeof i4Pred);
+            interType = s.interType;
+            std::memcpy(ref, s.ref, sizeof ref);
+            std::memcpy(mvd, s.mvd, sizeof mvd);
+            bType = s.bType;
+            std::memcpy(bSub, s.bSub, sizeof bSub);
+            std::memcpy(mvd1, s.mvd1, sizeof mvd1);
+            cbpLuma = s.cbpLuma;
+            cbpChroma = s.cbpChroma;
+            hasQpDelta = s.hasQpDelta;
+            qpDelta = s.qpDelta;
+            t8 = s.t8;
+            if (kind == Kind::I16)
+                std::memcpy(lumaDc, s.lumaDc, sizeof lumaDc);
+            for (int b8 = 0; b8 < 4; ++b8) {
+                if (!((cbpLuma >> b8) & 1))
+                    continue;
+                if (t8)
+                    std::memcpy(luma8[b8], s.luma8[b8], sizeof luma8[b8]);
+                else
+                    std::memcpy(luma[b8 * 4], s.luma[b8 * 4], 4 * sizeof luma[0]);
+            }
+            if (cbpChroma)
+                std::memcpy(chromaDc, s.chromaDc, sizeof chromaDc);
+            if (cbpChroma == 2)
+                std::memcpy(chromaAc, s.chromaAc, sizeof chromaAc);
+        }
     };
     struct MbOut {
         BitWriter bw; // CAVLC (also the bit estimate for decisions)
@@ -117,10 +264,47 @@ public:
     void writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch);
     // Return whether the macroblock sent mb_qp_delta.
     bool encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch);
-    bool encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch);
-    bool encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch);
+    // satdOut: the sum of the chosen modes' SATD + lambda * mode bits. Both give up (satdOut -1, the
+    // macroblock state half written) once that sum exceeds bound.
+    bool encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int* satdOut = nullptr, int bound = INT_MAX);
+    bool encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int bound = INT_MAX, int* satdOut = nullptr);
     // Returns false for a skipped macroblock.
     bool encodeMbP(MbOut& result, int mbx, int mby);
+    bool encodeMbB(MbOut& result, int mbx, int mby);
+    // Spatial direct prediction (8.4.1.2.2) of a macroblock in a B slice: per list the reference
+    // (-1 = unused) and a vector per 8x8 quadrant.
+    struct DirectPred {
+        int ref[2];
+        int mv[2][4][2];
+    };
+    void directPredict(int mbx, int mby, DirectPred& d) const;
+    // Prediction of one block of a B macroblock from list 0, list 1 or their average.
+    void predictBi(int mbx, int mby, int x4, int y4, int w4, int h4, int use, const int* mv0, const int* mv1, uint8_t* luma,
+                   uint8_t (*chroma)[64]) const;
+    // Motion search of one partition in reference R around the predictor (pX, pY): full-pel
+    // diamond on SAD from the best start point, then half/quarter-pel on SATD. Returns the cost
+    // (SATD + lambdaSad * vector bits).
+    double motionSearch(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY, double lambdaSad,
+                        const std::pair<int, int>* starts, int startCount, int subpel, int& outX, int& outY,
+                        double predCost = -1, double* fullPelCost = nullptr) const;
+    double refineQuarter(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int pX, int pY, double lambdaSad,
+                         int& vx, int& vy) const;
+    // The residual of an inter macroblock against its prediction: luma levels and reconstruction
+    // (codeInterLuma), then after the caller wrote the macroblock header the coded block pattern,
+    // mb_qp_delta and coefficients (writeInterResidual; returns whether mb_qp_delta was sent).
+    struct InterResidual {
+        int levels[16][16];
+        int levels8[4][64];
+        int cbpLuma;
+        double energy8[4]; // 8x8 plan with estimate: squared error of each quadrant left empty
+    };
+    void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
+                       InterResidual& ir, double fineLambda = -1.0);
+    // emptyOf8 (4x4 plan): the 8x8 plan of the same prediction; its empty quadrants stay empty.
+    void planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, InterResidual& ir,
+                       double* est, double fineLambda = -1.0, const InterResidual* emptyOf8 = nullptr);
+    void reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, bool t8, MbOut& io, const InterResidual& ir);
+    bool writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
     bool skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const uint8_t (*cp)[64], int qp) const;
     struct MvNb {
@@ -128,12 +312,19 @@ public:
         int ref = -1;
         int mvx = 0, mvy = 0;
     };
-    MvNb mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded) const;
+    MvNb mvNeighbour(int mbx, int mby, int x4, int y4, const bool* decoded, int list = 0) const;
     void predictMvPart(int mbx, int mby, int x4, int y4, int w4, int shape, int refIdx, const bool* decoded, int& mvx,
-                       int& mvy) const;
+                       int& mvy, int list = 0) const;
     void motionCompensate(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
                           uint8_t* luma, uint8_t (*chroma)[64]) const;
     int64_t mbSsd(int mbx, int mby) const;
+    void traceMb(int mbx, int mby, const MbSyntax& syn) const;
+    // Psycho-visual RD (cfg_.psyRd). psyBegin, before a macroblock is decided: the Hadamard
+    // coefficient magnitudes of its source luma, kept for the thread. psyCost: the weighted distance
+    // between those and the magnitudes of the luma reconstruction as it stands in recY_, to add to
+    // SSD + lambda * bits (0.0 when off).
+    void psyBegin(int mbx, int mby) const;
+    double psyCost(int mbx, int mby) const;
     void buildRefPlanes(RefPic& R);
     void refFullRows(RefPic& R, int y0, int y1) const;
     void refHalfRows(RefPic& R, int y0, int y1) const;
@@ -146,10 +337,17 @@ public:
         std::vector<uint8_t> kind, cbp, chromaMode, cbfDc, t8; // per macroblock
         std::vector<uint8_t> cbfLuma;                           // per 4x4 luma block
         std::vector<std::array<uint8_t, 2>> mvd;                // |mvd| per 4x4 block, x and y
+        std::vector<std::array<uint8_t, 2>> mvd1;               // the same for list 1 (B slices)
+        std::vector<uint8_t> direct;                            // per macroblock: B_Direct_16x16
         std::vector<uint8_t> cbfChroma[2];                      // per 4x4 chroma block
         void resize(int mbW, int mbH);
     };
-    void cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
+    // Bits of an inter macroblock's luma coded_block_pattern bins and transform_size_8x8_flag in the
+    // contexts' current states (for estimates).
+    double cabacLumaSideBits(const CabacEncoder& ce, int mbx, int mby, int cbpLuma, bool t8) const;
+    // E = CabacEncoder (writing, or its counting mode) or CabacCounter (bit estimate).
+    template <class E>
+    void cabacWriteMb(E& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero);
     bool useCabac() const { return cfg_.cabac && cfg_.mode != IntraMode::Pcm; }
     bool useT8() const { return useCabac() && cfg_.transform8x8; }
     int residual(BitWriter& bw, const int* coeffs, int count, int nC) const;
@@ -160,6 +358,22 @@ public:
     CabacState cabWave_, cabWrite_;
     int boundaryStrength(int pbx, int pby, int qbx, int qby, bool mbEdge) const;
     void mcLuma(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
+    void mcLumaPlain(const RefPic& R, int x0, int y0, int fx, int fy, int w, int h, uint8_t* out) const;
+    void motionCompensatePlain(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy,
+                               uint8_t* luma, uint8_t (*chroma)[64]) const;
+    // Weighted prediction: the block means of the loaded source; the weights of this P picture
+    // against its references (after refs_ is set); the weights that apply to predictions from R.
+    void computeBlockMeans();
+    void planWeights();
+    const WeightParams* weightsOf(const RefPic& R) const
+    {
+        if (!wpAny_)
+            return nullptr;
+        for (size_t i = 0; i < refs_.size(); ++i)
+            if (refs_[i].get() == &R)
+                return &wp_[i];
+        return nullptr;
+    }
     int sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const;
     struct MbState;
     void saveMb(int mbx, int mby, MbState& s) const;
@@ -179,12 +393,40 @@ public:
     std::vector<uint8_t> nzChroma_[2]; // TotalCoeff per 4x4 chroma AC block
     std::vector<int16_t> mvX_, mvY_;        // per 4x4 block, quarter-pel units
     std::vector<int8_t> refIdx_;            // per 4x4 block: 0 inter, -1 intra
+    std::vector<float> fullPelCost_;        // per macroblock: full-pel cost of its 16x16 search, -1 = none (P pictures)
+    // List 1 of a B picture (there refIdx_ is list 0: -1 = intra or list 1 only).
+    std::vector<int16_t> mvX1_, mvY1_;
+    std::vector<int8_t> refIdx1_;
     const FrameCoder* prev_ = nullptr; // the previous picture (its vectors are search start points)
     // Reference luma with a margin: full-pel, horizontal half, vertical half, centre half (8.4.2.2.1).
     static constexpr int kMargin = 96;
     int extW_ = 0, extH_ = 0;
     std::vector<std::shared_ptr<const RefPic>> refs_; // reference list, newest first
+    std::vector<std::shared_ptr<const RefPic>> refs1_; // B picture: list 1 (the next reference picture in display order)
     int activeRefs_ = 0;
+    bool bSlice_ = false;  // B picture (pSlice_ is set too: an inter slice)
+    bool refPic_ = true;   // the picture is a reference (nal_ref_idc)
+    // After a reference B picture (B pyramid): the P picture's list 0 is put back in the order of
+    // refs_ (ref_pic_list_modification: abs_diff_pic_num_minus1 per entry) and the B picture is
+    // marked unused (memory_management_control_operation 1: difference_of_pic_nums_minus1, -1 = none).
+    int biRefine_ = 0; // B picture: rounds of the joint refinement of the two vectors of a block predicted from both lists
+    bool bLongRun_ = false; // B picture in a run of more than four (still or slowly zooming material): no bSharp
+    // The lookahead's vectors of this picture into its references (per macroblock, quarter-pel of
+    // the full picture; empty = none): extra start points of the motion search. [list][x, y]
+    std::vector<int16_t> laMv_[2][2];
+    std::vector<int> listMod_;
+    int mmcoDiff_ = -1;
+    void publishMotion(RefPic& R, int row0, int row1) const;
+    bool pocLsb_ = false;  // pic_order_cnt_type 0: the slice header carries pic_order_cnt_lsb
+    int gopPos_ = 0;       // display distance from the IDR picture
+    // P picture with explicit weighted prediction: per reference of refs_ (wpAny_ = at least one
+    // reference is weighted; such a picture uses the second picture parameter set).
+    bool wpAny_ = false;
+    int wpLumaLog_ = 0, wpChromaLog_ = 0;
+    std::vector<WeightParams> wp_;
+    std::vector<float> dcY_, dcU_, dcV_; // this picture's block means (see RefPic)
+    int biW0_ = 32, biW1_ = 32; // B picture: weights of the list 0 / list 1 prediction when both are used (of 64)
+    void setBiWeights();
     std::vector<int> sliceTopOfRow_;        // first macroblock row of the slice of each row
     std::vector<int> rowKey_;               // per row: index of its live CABAC / QP predictor state (slice top, or the row itself in the wavefront)
     std::vector<MbSyntax> mbSyn_;           // wavefront: chosen syntax of every macroblock, written in raster order afterwards
@@ -196,6 +438,7 @@ public:
     bool deblockedInline_ = false; // the wavefront filtered the picture already
     bool detectSceneCut(std::vector<uint8_t>& prevThumb);
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
+    float qpFrac_ = 0;              // the picture's QP is cfg_.qp + qpFrac_ (constant quality), spread by planMacroblockQp
 };
 
 } // namespace schneidi::h264

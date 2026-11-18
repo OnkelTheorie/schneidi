@@ -260,7 +260,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/VideoEffects.h     src/engine/VideoEffects.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/ExportWriter.h     src/engine/ExportWriter.cpp
-    # Own H.264 encoder (experimental export option "h264_own"; prototype tool h264-proto below)
+    # Own H.264 encoder (s264, the experimental export option "s264"; prototype tool h264-proto below)
     src/engine/encoder/h264/H264Encoder.h src/engine/encoder/h264/H264Encoder.cpp
     src/engine/encoder/h264/Cavlc.h       src/engine/encoder/h264/Cavlc.cpp
     src/engine/encoder/h264/H264Cabac.cpp
@@ -735,7 +735,7 @@ if(SCHNEIDI_FUZZ)
     add_subdirectory(tests/fuzz)
 endif()
 
-# Own H.264 encoder (in the app as the experimental export format "h264_own"): the prototype tool, build with `cmake --build build --target h264-proto`
+# Own H.264 encoder (s264, in the app as the experimental export format "s264"): the prototype tool, build with `cmake --build build --target h264-proto`
 add_executable(h264-proto EXCLUDE_FROM_ALL
     tools/h264proto/main.cpp
     src/engine/encoder/h264/Cavlc.cpp
@@ -750,6 +750,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(h264-proto PRIVATE Threads::Threads)
+# The encoder's floating-point cost decisions must not be contracted into fused multiply-adds (AArch64, x86 with
+# -march=haswell or later): the stream would differ between platforms. Simd.h says so by pragma too.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_property(SOURCE src/engine/encoder/h264/H264Encoder.cpp src/engine/encoder/h264/Lookahead.cpp
+                        src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Cavlc.cpp
+                 APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 if(MINGW)
     # The encoder's AVX2 kernels keep __m256i on the stack; MinGW GCC does not align the stack to 32 bytes (GCC PR
     # 54412), so aligned spills could crash: the assembler turns aligned vector moves into unaligned ones. Applies to

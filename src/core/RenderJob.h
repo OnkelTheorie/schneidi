@@ -43,6 +43,7 @@ QString videoEncoderId(VideoEncoder e); // "auto", "software", "nvenc", "vaapi",
 VideoEncoder videoEncoderFromId(const QString& id, VideoEncoder fallback, bool* ok = nullptr);
 QString videoEncoderLabel(VideoEncoder e); // display name (translated)
 const RenderFormatInfo& renderFormat(const QString& id); // unknown -> H.264
+QString canonicalFormatId(const QString& id); // old ids of renamed formats -> today's ("h264_own" -> "s264")
 
 struct RenderSettings {
     QString format = "h264";

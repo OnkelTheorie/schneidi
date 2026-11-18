@@ -1,12 +1,15 @@
 // schneidi's own H.264 encoder: CABAC macroblock layer (ITU-T H.264 clauses 9.3.2 and 9.3.3.1).
 // Serialises the syntax elements the macroblock coders chose; context selection follows the
 // neighbour rules of 9.3.3.1.1 (availability stops at slice edges like everywhere else).
+#include "Simd.h" // first: no floating-point contraction (see there)
 #include "Cabac.h"
 #include "FrameCoder.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
+
 
 namespace schneidi::h264 {
 namespace {
@@ -20,7 +23,8 @@ constexpr int kSigOffset[5] = {0, 15, 29, 44, 47};
 constexpr int kAbsOffset[5] = {0, 10, 20, 30, 39};
 
 // k-th order Exp-Golomb suffix in bypass bins (9.3.2.3).
-void expGolombBypass(CabacEncoder& ce, unsigned v, int k)
+template <class E>
+void expGolombBypass(E& ce, unsigned v, int k)
 {
     for (;;) {
         if (v >= (1u << k)) {
@@ -37,7 +41,8 @@ void expGolombBypass(CabacEncoder& ce, unsigned v, int k)
 }
 
 // residual_block_cabac (7.3.5.3.3) for one coefficient list; returns coded_block_flag.
-int residualBlock(CabacEncoder& ce, int cat, const int* list, int count, int cbfInc)
+template <class E>
+int residualBlock(E& ce, int cat, const int* list, int count, int cbfInc)
 {
     int last = -1;
     for (int i = 0; i < count; ++i)
@@ -92,7 +97,8 @@ constexpr uint8_t kLast8[63] = {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
                                 6, 6, 7, 7, 7, 7, 8, 8, 8};
 
 // residual_block_cabac for an 8x8 block (ctxBlockCat 5): no coded_block_flag (inferred 1).
-void residualBlock8x8(CabacEncoder& ce, const int* list)
+template <class E>
+void residualBlock8x8(E& ce, const int* list)
 {
     int last = -1;
     for (int i = 0; i < 64; ++i)
@@ -142,11 +148,41 @@ void FrameCoder::CabacState::resize(int mbW, int mbH)
     t8.assign(mbs, 0);
     cbfLuma.assign(mbs * 16, 0);
     mvd.assign(mbs * 16, {0, 0});
+    mvd1.assign(mbs * 16, {0, 0});
+    direct.assign(mbs, 0);
     cbfChroma[0].assign(mbs * 4, 0);
     cbfChroma[1].assign(mbs * 4, 0);
 }
 
-void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
+double FrameCoder::cabacLumaSideBits(const CabacEncoder& ce, int mbx, int mby, int cbpLuma, bool t8) const
+{
+    const CabacState& st = cabWave_;
+    const size_t m = size_t(mby) * mbW_ + mbx;
+    const bool hasL = mbx > 0, hasT = topMbAvailable(mby);
+    const size_t mL = m - 1, mT = m - size_t(mbW_);
+    uint32_t cost = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
+        const int x8 = b8 & 1, y8 = b8 >> 1;
+        auto cond = [&](bool inside, int b8Inside, bool avail, size_t n, int b8N) {
+            if (inside)
+                return ((cbpLuma >> b8Inside) & 1) == 0 ? 1 : 0;
+            if (!avail)
+                return 0;
+            if (st.kind[n] == kKindSkip)
+                return 1;
+            return ((st.cbp[n] >> b8N) & 1) == 0 ? 1 : 0;
+        };
+        const int a = cond(x8 == 1, b8 - 1, hasL, mL, b8 + 1);
+        const int b = cond(y8 == 1, b8 - 2, hasT, mT, b8 + 2);
+        cost += ce.binCost(73 + a + 2 * b, (cbpLuma >> b8) & 1);
+    }
+    if (cbpLuma && useT8())
+        cost += ce.binCost(399 + (hasL && st.t8[mL]) + (hasT && st.t8[mT]), t8);
+    return cost / 256.0;
+}
+
+template <class E>
+void FrameCoder::cabacWriteMb(E& ce, CabacState& st, int mbx, int mby, const MbSyntax& s, bool& prevQpNonZero)
 {
     using K = MbSyntax::Kind;
     const size_t m = size_t(mby) * mbW_ + mbx;
@@ -164,11 +200,20 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
         return long(ny) * mbW_ + nx;
     };
 
-    // mb_skip_flag (P slices)
+    // mb_skip_flag (P and B slices)
     if (pSlice_) {
         const int inc = (hasL && st.kind[mL] != kKindSkip) + (hasT && st.kind[mT] != kKindSkip);
-        ce.decision(11 + inc, s.kind == K::Skip);
+        ce.decision((bSlice_ ? 24 : 11) + inc, s.kind == K::Skip);
     }
+    // B slices, mb_type bin 0: neighbours that are neither B_Skip nor B_Direct_16x16.
+    const int incB = bSlice_ ? (hasL && st.kind[mL] != kKindSkip && !st.direct[mL]) + (hasT && st.kind[mT] != kKindSkip && !st.direct[mT]) : 0;
+    st.direct[m] = bSlice_ && s.kind == K::Inter && s.bType == 0;
+    if (bSlice_)
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) {
+                const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
+                st.mvd1[o][0] = st.mvd1[o][1] = 0;
+            }
     if (s.kind == K::Skip) {
         st.kind[m] = kKindSkip;
         st.cbp[m] = 0;
@@ -192,7 +237,16 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
     // mb_type (9.3.2.5, tables 9-36/9-37)
     if (intra) {
         int base = 3;
-        if (pSlice_) {
+        if (bSlice_) {
+            // prefix of an intra macroblock in a B slice: 1 1 1 1 0 1
+            ce.decision(27 + incB, 1);
+            ce.decision(30, 1);
+            ce.decision(31, 1);
+            ce.decision(32, 1);
+            ce.decision(32, 0);
+            ce.decision(32, 1);
+            base = 32;
+        } else if (pSlice_) {
             ce.decision(14, 1); // prefix: intra macroblock in a P slice
             base = 17;
         }
@@ -204,8 +258,8 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
         } else {
             ce.decision(base + inc0, 1);
             ce.terminate(0); // not I_PCM
-            const int ctxLuma = pSlice_ ? 18 : 6, ctxChroma = pSlice_ ? 19 : 7;
-            const int ctxChroma2 = pSlice_ ? 19 : 8, ctxMode0 = pSlice_ ? 20 : 9, ctxMode1 = pSlice_ ? 20 : 10;
+            const int ctxLuma = pSlice_ ? base + 1 : 6, ctxChroma = pSlice_ ? base + 2 : 7;
+            const int ctxChroma2 = pSlice_ ? base + 2 : 8, ctxMode0 = pSlice_ ? base + 3 : 9, ctxMode1 = pSlice_ ? base + 3 : 10;
             ce.decision(ctxLuma, s.cbpLuma != 0);
             ce.decision(ctxChroma, s.cbpChroma != 0);
             if (s.cbpChroma)
@@ -213,6 +267,38 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
             ce.decision(ctxMode0, (s.i16Mode >> 1) & 1);
             ce.decision(ctxMode1, s.i16Mode & 1);
         }
+    } else if (bSlice_) {
+        // mb_type in B slices (9.3.2.5, table 9-37): 0 | 1 0 x | 1 1 + four or five bins.
+        const int t = s.bType;
+        ce.decision(27 + incB, t != 0);
+        if (t == 1 || t == 2) {
+            ce.decision(30, 0);
+            ce.decision(32, t - 1);
+        } else if (t != 0) {
+            ce.decision(30, 1);
+            const int five = t >= 12 && t <= 21 ? t + 4 : -1;                           // 1xxxx: 16..25
+            const int four = five >= 0 ? five >> 1 : t <= 10 ? t - 3 : t == 11 ? 14 : 15; // 22 (B_8x8) = 15
+            ce.decision(31, (four >> 3) & 1);
+            ce.decision(32, (four >> 2) & 1);
+            ce.decision(32, (four >> 1) & 1);
+            ce.decision(32, four & 1);
+            if (five >= 0)
+                ce.decision(32, five & 1);
+        }
+        if (t == 22)
+            for (int p = 0; p < 4; ++p) { // sub_mb_type: direct, L0, L1 or Bi 8x8
+                const int sub = s.bSub[p];
+                ce.decision(36, sub != 0);
+                if (sub == 1 || sub == 2) {
+                    ce.decision(37, 0);
+                    ce.decision(39, sub - 1);
+                } else if (sub == 3) {
+                    ce.decision(37, 1);
+                    ce.decision(38, 0);
+                    ce.decision(39, 0);
+                    ce.decision(39, 0);
+                }
+            }
     } else {
         static constexpr int kBins[4][3] = {{0, 0, 0}, {0, 1, 1}, {0, 1, 0}, {0, 0, 1}};
         const int* b = kBins[s.interType];
@@ -267,7 +353,43 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
             const size_t o = size_t(mby * 4 + y) * lw + mbx * 4 + x;
             st.mvd[o][0] = st.mvd[o][1] = 0;
         }
-    if (!intra) {
+    if (!intra && bSlice_) {
+        // One reference per list: no ref_idx. mvd_l0 of every partition that uses list 0, then mvd_l1.
+        const BParts bp = bPartsOf(s.bType, s.bSub);
+        for (int list = 0; list < 2; ++list) {
+            std::vector<std::array<uint8_t, 2>>& mvds = list ? st.mvd1 : st.mvd;
+            for (int p = 0; p < bp.count; ++p) {
+                if (!(bp.use[p] & (1 << list)))
+                    continue;
+                const Part& P = kParts[bp.shape][p];
+                const int bx = mbx * 4 + P.x4, by = mby * 4 + P.y4;
+                for (int c = 0; c < 2; ++c) {
+                    // Neighbours that are unavailable, skipped, intra, direct or without this list count 0.
+                    int sum = 0;
+                    if (mbOf4(bx - 1, by) >= 0)
+                        sum += mvds[size_t(by) * lw + size_t(bx - 1)][c];
+                    if (mbOf4(bx, by - 1) >= 0)
+                        sum += mvds[size_t(by - 1) * lw + size_t(bx)][c];
+                    const int inc = sum < 3 ? 0 : sum > 32 ? 2 : 1;
+                    const int base = c ? 47 : 40;
+                    const int v = list ? s.mvd1[p][c] : s.mvd[p][c], av = std::abs(v);
+                    const int prefix = std::min(av, 9); // UEG3, uCoff 9
+                    for (int i = 0; i < prefix; ++i)
+                        ce.decision(base + (i == 0 ? inc : std::min(i + 2, 6)), 1);
+                    if (av < 9)
+                        ce.decision(base + (prefix == 0 ? inc : std::min(prefix + 2, 6)), 0);
+                    else
+                        expGolombBypass(ce, unsigned(av - 9), 3);
+                    if (av)
+                        ce.bypass(v < 0);
+                    const uint8_t stored = uint8_t(std::min(av, 255));
+                    for (int y = P.y4; y < P.y4 + P.h4; ++y)
+                        for (int x = P.x4; x < P.x4 + P.w4; ++x)
+                            mvds[size_t(mby * 4 + y) * lw + mbx * 4 + x][c] = stored;
+                }
+            }
+        }
+    } else if (!intra) {
         const int count = kPartCount[s.interType];
         // Neighbour 4x4 block info for ref_idx / mvd contexts: inter macroblocks only.
         auto interNeighbour = [&](int bx, int by, size_t& o) {
@@ -448,7 +570,10 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
 }
 
 
-// Trellis quantisation with CABAC costs (in the spirit of x264's trellis): dynamic programming
+template void FrameCoder::cabacWriteMb<CabacEncoder>(CabacEncoder&, FrameCoder::CabacState&, int, int, const FrameCoder::MbSyntax&, bool&);
+template void FrameCoder::cabacWriteMb<CabacCounter>(CabacCounter&, FrameCoder::CabacState&, int, int, const FrameCoder::MbSyntax&, bool&);
+
+// Trellis quantisation with CABAC costs (rate-distortion optimised quantisation): dynamic programming
 // over the coefficients in reverse scan order. Nodes are the 8 states of the coeff_abs_level
 // contexts (4 for "no level > 1 yet" by count of ones, 4 by count of levels > 1) plus "nothing
 // coded yet"; each coefficient may become 0, floor(|x|) or floor(|x|) + 1. Distortion is the
@@ -458,19 +583,173 @@ void FrameCoder::cabacWriteMb(CabacEncoder& ce, CabacState& st, int mbx, int mby
 // -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
 static const bool gTrellisTwo = std::getenv("H264_TRELLIS3") == nullptr;
 
-void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
-                  int cbfInc, int* out)
+// Squared pixel errors of a block at level 0, in one pass from the end (count a multiple of 4):
+// end = one past the last coefficient of half a level or more, tail = sum of the squares from end
+// on, energy = tail + the sum of the squares before end. Each sum runs in four lanes (k mod 4, k
+// descending), combined as (l0 + l1) + (l2 + l3): SSE2 and plain C++ add in the same order.
+static void trellisScan(const double* x, const double* scale, int count, int& end, double& tail, double& energy)
 {
+    end = 0;
+    bool found = false;
+#ifdef SCHNEIDI_H264_SSE2
+    const __m128d half = _mm_set1_pd(0.5);
+    const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
+    __m128d tl[2] = {_mm_setzero_pd(), _mm_setzero_pd()}, hd[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
+    for (int g = count - 4; g >= 0; g -= 4) {
+        for (int h = 1; h >= 0; --h) {
+            const int k = g + 2 * h;
+            const __m128d v = _mm_loadu_pd(x + k);
+            const __m128d e = _mm_mul_pd(v, _mm_loadu_pd(scale + k));
+            const __m128d sq = _mm_mul_pd(e, e);
+            if (found) {
+                hd[h] = _mm_add_pd(hd[h], sq);
+                continue;
+            }
+            const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(v, absMask), half));
+            if (!m) {
+                tl[h] = _mm_add_pd(tl[h], sq);
+                continue;
+            }
+            found = true;
+            end = k + ((m & 2) ? 2 : 1);
+            // Lane k + 1 is at or after end; lane k only when k + 1 is the last one.
+            const __m128d before = (m & 2) ? _mm_castsi128_pd(_mm_set1_epi64x(-1))
+                                           : _mm_castsi128_pd(_mm_set_epi64x(0, -1)); // lanes < end
+            hd[h] = _mm_add_pd(hd[h], _mm_and_pd(before, sq));
+            tl[h] = _mm_add_pd(tl[h], _mm_andnot_pd(before, sq));
+        }
+    }
+    auto lanes = [](const __m128d* v) {
+        alignas(16) double l[4];
+        _mm_store_pd(l, v[0]);
+        _mm_store_pd(l + 2, v[1]);
+        return (l[0] + l[1]) + (l[2] + l[3]);
+    };
+    tail = lanes(tl);
+    energy = tail + lanes(hd);
+#elif defined(SCHNEIDI_H264_NEON)
+    // The SSE2 steps (multiplies and adds kept apart: no fused multiply-add).
+    const float64x2_t half = vdupq_n_f64(0.5);
+    float64x2_t tl[2] = {vdupq_n_f64(0.0), vdupq_n_f64(0.0)}, hd[2] = {vdupq_n_f64(0.0), vdupq_n_f64(0.0)};
+    for (int g = count - 4; g >= 0; g -= 4) {
+        for (int h = 1; h >= 0; --h) {
+            const int k = g + 2 * h;
+            const float64x2_t v = vld1q_f64(x + k);
+            const float64x2_t e = vmulq_f64(v, vld1q_f64(scale + k));
+            const float64x2_t sq = vmulq_f64(e, e);
+            if (found) {
+                hd[h] = vaddq_f64(hd[h], sq);
+                continue;
+            }
+            const uint64x2_t ge = vcgeq_f64(vabsq_f64(v), half);
+            const bool g0 = vgetq_lane_u64(ge, 0) != 0, g1 = vgetq_lane_u64(ge, 1) != 0;
+            if (!g0 && !g1) {
+                tl[h] = vaddq_f64(tl[h], sq);
+                continue;
+            }
+            found = true;
+            end = k + (g1 ? 2 : 1);
+            // Lane k + 1 is at or after end; lane k only when k + 1 is the last one.
+            const uint64x2_t before = g1 ? vdupq_n_u64(~0ull) : vcombine_u64(vcreate_u64(~0ull), vcreate_u64(0));
+            const float64x2_t zero = vdupq_n_f64(0.0);
+            hd[h] = vaddq_f64(hd[h], vbslq_f64(before, sq, zero));
+            tl[h] = vaddq_f64(tl[h], vbslq_f64(before, zero, sq));
+        }
+    }
+    auto lanes = [](const float64x2_t* v) {
+        return (vgetq_lane_f64(v[0], 0) + vgetq_lane_f64(v[0], 1)) + (vgetq_lane_f64(v[1], 0) + vgetq_lane_f64(v[1], 1));
+    };
+    tail = lanes(tl);
+    energy = tail + lanes(hd);
+#else
+    double tl[4] = {0, 0, 0, 0}, hd[4] = {0, 0, 0, 0};
+    for (int k = count - 1; k >= 0; --k) {
+        const double e = x[k] * scale[k];
+        const double sq = e * e;
+        if (!found && std::abs(x[k]) >= 0.5) {
+            found = true;
+            end = k + 1;
+        }
+        // Lanes adding +0.0 in the SIMD version change nothing, so skipping them is the same.
+        (found ? hd : tl)[k & 3] += sq;
+    }
+    tail = (tl[0] + tl[1]) + (tl[2] + tl[3]);
+    energy = tail + ((hd[0] + hd[1]) + (hd[2] + hd[3]));
+#endif
+}
+
+// With energy: returns the path's cost (squared pixel error of all coefficients + lambda * bits of
+// the block, coded_block_flag included for 4x4 blocks) and sets *energy to the squared error of the
+// all-zero block; the mode decision compares transforms and layouts with these (no reconstruction).
+// lambdaHigh >= 0: the bits of the coefficients from scan position highFrom on weigh lambdaHigh
+// instead of lambda (the psy mode decision's finer quantisation of the texture frequencies).
+// zeroCost (optional): the cost of the all-zero block on the same scale as the return value
+// (squared error of every coefficient + lambda * the bits of coding nothing), so zeroCost minus
+// the return value is what coding the chosen levels gains over dropping them (the trellis itself
+// never drops a level of 1 or more, the caller may still drop the whole block).
+double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
+                    int cbfInc, int* out, double* energy, uint64_t* nonZero, double lambdaHigh, int highFrom,
+                    double* zeroCost)
+{
+    if (nonZero)
+        *nonZero = 0;
     constexpr int kEmpty = 8;
     // Coefficients after the last one that reaches half a level can only become 0: they leave
     // every path in the "nothing coded yet" node at no cost, so the search starts at that one.
     int end = count;
-    while (end > 0 && std::abs(x[end - 1]) < 0.5)
-        --end;
-    std::fill(out + end, out + count, 0);
-    if (end == 0)
-        return;
+    double tail = 0; // squared error of the coefficients after `end` (always zero)
+    if (energy) {
+        trellisScan(x, scale, count, end, tail, *energy);
+    } else {
+#ifdef SCHNEIDI_H264_SSE2
+        const __m128d half = _mm_set1_pd(0.5);
+        const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
+        while (end >= 2) {
+            const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(_mm_loadu_pd(x + end - 2), absMask), half));
+            if (m) {
+                end -= (m & 2) ? 0 : 1;
+                break;
+            }
+            end -= 2;
+        }
+#elif defined(SCHNEIDI_H264_NEON)
+        const float64x2_t half = vdupq_n_f64(0.5);
+        while (end >= 2) {
+            const uint64x2_t ge = vcgeq_f64(vabsq_f64(vld1q_f64(x + end - 2)), half);
+            if (vgetq_lane_u64(ge, 1)) {
+                break;
+            }
+            if (vgetq_lane_u64(ge, 0)) {
+                end -= 1;
+                break;
+            }
+            end -= 2;
+        }
+#endif
+        while (end > 0 && std::abs(x[end - 1]) < 0.5)
+            --end;
+    }
+    std::fill(out, out + count, 0);
     const bool cat5 = cat == 5;
+    const double l256 = lambda / 256.0;
+    const double h256 = lambdaHigh >= 0 ? lambdaHigh / 256.0 : l256;
+    if (lambdaHigh < 0)
+        highFrom = count; // no position weighs differently
+    auto emptyCost = [&] {
+        double e = 0;
+        if (energy) {
+            e = *energy;
+        } else {
+            for (int k = 0; k < count; ++k)
+                e += (x[k] * scale[k]) * (x[k] * scale[k]);
+        }
+        return e + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
+    };
+    if (end == 0) {
+        if (zeroCost)
+            *zeroCost = emptyCost();
+        return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
+    }
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
     auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
     auto lastCtx = [&](int k) { return cat5 ? 417 + kLast8[k] : 166 + kSigOffset[cat] + k; };
@@ -505,9 +784,40 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
     int16_t mags[64][9];
     std::fill(cost, cost + 9, 1e300);
     cost[kEmpty] = 0;
-    const double l256 = lambda / 256.0;
+    uint64_t pass = 0; // positions below half a level: every path keeps its node there (level 0)
+    unsigned live = 1u << kEmpty; // nodes some path has reached (the others stay at 1e300)
+    // Level bits of the magnitudes 1 and 2 by node, computed on first use.
+    uint32_t lbCache[16];
+    uint32_t lbValid = 0;
+    auto levelBitsCached = [&](int state, int a) {
+        if (a >= 2)
+            return levelBits(state, a);
+        const int i = a * 8 + state;
+        if (!((lbValid >> i) & 1)) {
+            lbCache[i] = levelBits(state, a);
+            lbValid |= 1u << i;
+        }
+        return lbCache[i];
+    };
     for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
+        const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
+        if (ax < 0.5) {
+            // Only level 0: the same sums as the general case below, without the node bookkeeping.
+            const double err = ax * scale[k];
+            const double errSq0 = err * err;
+            if (live & 0xFF) {
+                const double sig = lk * ce.binCost(sigCtx(k), 0);
+                for (unsigned m = live & 0xFF; m; m &= m - 1) {
+                    const int n = std::countr_zero(m);
+                    cost[n] = cost[n] + errSq0 + sig;
+                }
+            }
+            if (live & (1u << kEmpty))
+                cost[kEmpty] += errSq0;
+            pass |= uint64_t(1) << k;
+            continue;
+        }
         int cand[3] = {0, 0, 0}, nc = 1;
         if (ax >= 0.5) {
             const int fl = int(ax);
@@ -529,9 +839,9 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
             const double err = (ax - cand[ci]) * scale[k];
             errSq[ci] = err * err;
         }
-        for (int n = 0; n < 9; ++n) {
-            if (cost[n] >= 1e299)
-                continue;
+        unsigned reached = 0;
+        for (unsigned m = live; m; m &= m - 1) {
+            const int n = std::countr_zero(m); // ascending, as before: ties keep the first node
             const bool empty = n == kEmpty;
             for (int ci = 0; ci < nc; ++ci) {
                 const int mag = cand[ci];
@@ -539,25 +849,29 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
                 int to;
                 if (mag == 0) {
                     if (!empty)
-                        cst += l256 * sig0;
+                        cst += lk * sig0;
                     to = n;
                 } else {
-                    uint32_t bits = levelBits(empty ? 0 : n, mag - 1);
+                    uint32_t bits = levelBitsCached(empty ? 0 : n, mag - 1);
                     bits += sig1Last[empty ? 1 : 0];
-                    cst += l256 * bits;
+                    cst += lk * bits;
                     to = next(empty ? 0 : n, mag);
                 }
                 if (cst < fresh[to]) {
                     fresh[to] = cst;
                     from[k][to] = uint8_t(n);
                     mags[k][to] = int16_t(mag);
+                    reached |= 1u << to;
                 }
             }
         }
         std::copy(fresh, fresh + 9, cost);
+        live = reached;
     }
     int best = kEmpty;
     double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
+    if (zeroCost)
+        *zeroCost = emptyCost();
     for (int n = 0; n < 8; ++n) {
         const double c = cost[n] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 1));
         if (c < bestCost) {
@@ -565,11 +879,19 @@ void cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double
             best = n;
         }
     }
-    for (int k = 0, n = best; k < end; ++k) {
+    // Positions below half a level stay 0 (out is cleared above) and keep the node.
+    uint64_t coded = ~pass & (end >= 64 ? ~uint64_t(0) : (uint64_t(1) << end) - 1);
+    uint64_t nz = 0;
+    for (int n = best; coded; coded &= coded - 1) {
+        const int k = std::countr_zero(coded);
         const int mag = mags[k][n];
         out[k] = x[k] < 0 ? -mag : mag;
+        nz |= uint64_t(mag != 0) << k;
         n = from[k][n];
     }
+    if (nonZero)
+        *nonZero = nz;
+    return bestCost + tail;
 }
 
 } // namespace schneidi::h264

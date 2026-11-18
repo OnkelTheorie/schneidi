@@ -68,12 +68,16 @@ public:
         QVector<int> keyframes;
     };
     // schneidi's own H.264 encoder (engine/encoder/h264, experimental): not an FFmpeg encoder, written by the writer
-    // itself (Annex B packets into the muxer, parameter sets as the stream's extradata). 8-bit 4:2:0 only, no
-    // B-frames. Options: "qp" (fixed quantizer), "bitrate" (kbit/s cap: a first pass analyses every picture and
-    // predicts the size at "qp"; below the cap the QP stays, else the second pass aims at the cap), "lookahead"
-    // (pictures, low memory)
-    static constexpr const char* kOwnH264 = "h264_own";
-    static bool isOwnH264(const QString& codec) { return codec == QLatin1String(kOwnH264); }
+    // itself (Annex B packets into the muxer, parameter sets as the stream's extradata). 8-bit 4:2:0 only, with
+    // B-frames (adaptive runs, the encoder's default count). Options: "qp" (fixed quantizer), "bitrate" (kbit/s cap: a
+    // first pass analyses every picture and predicts the size at "qp"; below the cap the QP stays, else the second pass
+    // aims at the cap), "lookahead" (pictures, low memory), "bframes" (most B pictures in a run, 0 = none)
+    static constexpr const char* kOwnH264 = "s264";
+    // ("h264_own": its name up to 0.23, still in saved render settings)
+    static bool isOwnH264(const QString& codec)
+    {
+        return codec == QLatin1String(kOwnH264) || codec == QLatin1String("h264_own");
+    }
     // The own encoder's fixed QP for an x264-like CRF (the export's quality levels)
     static int ownH264Qp(int crf);
     // Why the own encoder cannot write pictures of this size at this frame rate (empty = it can): smaller than

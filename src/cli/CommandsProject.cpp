@@ -831,9 +831,11 @@ void checkExtension(const QString& out, const QString& formatId)
     const bool sound = f.kind == RenderKind::Audio; // a sound format into .mp4/.mov: an odd file, refused
     if (fits.contains(ext) || ExportWriter::containerSurelyTakes(out, f.videoCodec, f.audioCodec, sound)) return;
     if (f.kind == RenderKind::Video && ExportWriter::containerTakes(out, {}, f.videoCodec, f.audioCodec)) return;
-    QStringList formats; // formats that write this extension themselves
+    QStringList formats; // formats that write this extension themselves (not the experimental s264: no nudge to it)
     for (const RenderFormatInfo& i : renderFormats())
-        if (ext == QLatin1String(i.extension) && HardwareEncoders::formatAvailable(i.id)) formats << i.id;
+        if (ext == QLatin1String(i.extension) && !ExportWriter::isOwnH264(i.videoCodec)
+            && HardwareEncoders::formatAvailable(i.id))
+            formats << i.id;
     QString message = QString("'.%1' does not fit format %2: use .%3").arg(ext, formatId, fits.join(", ."));
     if (!formats.isEmpty()) message += QString(" - or format %1 for .%2").arg(formats.join(" / "), ext);
     fail("BAD_ARGUMENT", message);
@@ -865,7 +867,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings = p->settings;
         job.preset = p->name;
     }
-    const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
+    const QString formatId = canonicalFormatId(a.contains("format") ? a["format"].toString() : job.settings.format);
     const auto& formats = renderFormats();
     const bool srtOnly = formatId == "srt" || formatId == "vtt"; // only the subtitle files (SRT or WebVTT)
     if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; })) {
@@ -875,8 +877,8 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     if (!srtOnly && !HardwareEncoders::formatAvailable(formatId)) {
         QStringList ids;
-        for (const RenderFormatInfo& i : formats)
-            if (HardwareEncoders::formatAvailable(i.id)) ids << i.id;
+        for (const RenderFormatInfo& i : formats) // (not the experimental s264 as a suggestion)
+            if (!ExportWriter::isOwnH264(i.videoCodec) && HardwareEncoders::formatAvailable(i.id)) ids << i.id;
         fail("BAD_ARGUMENT", "format " + formatId + " has no encoder in this build of FFmpeg (available: " + ids.join(", ")
                                   + ", srt)");
     }
@@ -944,7 +946,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         const QString c = a["audio_codec"].toString().trimmed().toLower().remove('-'); // "ac3", "AC-3"
         if (c == "ac3") {
             if (!job.settings.audioFormatChoices().contains("ac3"))
-                fail("BAD_ARGUMENT", "audio_codec ac3 needs an MP4 video format (h264, h265, av1, h264_own)");
+                fail("BAD_ARGUMENT", "audio_codec ac3 needs an MP4 video format (h264, h265, av1, s264)");
             if (!HardwareEncoders::builtIn("ac3")) fail("BAD_ARGUMENT", "this build of FFmpeg has no AC-3 encoder");
             job.settings.audioFormat = "ac3";
         } else if (c.isEmpty() || c == "default" || c == "aac") {

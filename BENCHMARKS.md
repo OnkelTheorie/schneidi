@@ -307,3 +307,47 @@ Playback of 12 gaming clips at 1080p60 (140 Mbit/s) with a grade on every clip, 
 Decoding and export, 0.11 against the previous media-library engine (same PC, 1080p60 at 138 Mbit/s). Decoding alone:
 previous engine 274 frames/s, own decoder 333 in software and 253 on the graphics card (the latter with 1.5 instead of 25 ms
 CPU per frame). NVENC export of 10 s: 190 frames/s using 6.1 cores before, 209 frames/s using 0.9 cores now.
+
+## s264 against x264 medium (PC, 2026-11-18)
+
+s264 is schneidi's own H.264 encoder, in 0.24 an **experimental** export format (`format s264`, never the default). This
+is a first, small comparison, not a verdict: one run per point, two bit rates per clip, and the PC was shared with other
+jobs (load average 11-19 on 12 threads during the run), so the **speed numbers are indicative only** - the same s264
+encode ran at 35 and at 12 frames/s on similar material minutes apart. The VMAF numbers do not depend on the load.
+
+- **Setup.** Both encoders get the same raw yuv420p 1080p frames. s264: `h264-proto` built from `s264-release` (37a39fb8),
+  two-pass at the target bit rate, GOP 120, 8 threads. x264: FFmpeg 7.1.5's libx264, `-preset medium`, two-pass at the same
+  `-b:v`, GOP 120, 8 threads (default tune: psy and B-frames on, what users get). Both under `taskset -c 1-5,7-11 nice 19`.
+  fps = frames / wall time of both passes. VMAF `vmaf_v0.6.1` (libvmaf 3.2 via PyAV), mean over all frames.
+- **Material.** CS2: a 1080p60 game recording (clipi, 2026-11-12), 600 frames. Phone: Galaxy S21 Ultra 4K30 sample
+  (hand-held, much fine detail) scaled to 1080p30, 300 frames. Animation: synthetic, FFmpeg `mandelbrot` with a moving
+  `testsrc2` overlay (hard edges, flat colours, fractal detail), 1080p30, 300 frames.
+
+| Clip | Target | Encoder | Real kbit/s | File (bytes) | fps | Load | VMAF | VMAF min |
+|---|---|---|---|---|---|---|---|---|
+| CS2 | 6 Mbit/s | s264 | 6019 | 7,523,918 | 26.7 | 15.4 | 81.69 | 66.1 |
+| CS2 | 6 Mbit/s | x264 medium | 6267 | 7,833,820 | 40.0 | 13.8 | 84.32 | 73.5 |
+| CS2 | 12 Mbit/s | s264 | 12036 | 15,045,482 | 37.0 | 12.2 | 91.26 | 84.8 |
+| CS2 | 12 Mbit/s | x264 medium | 12360 | 15,450,942 | 32.4 | 11.5 | 92.51 | 86.0 |
+| Phone | 4 Mbit/s | s264 | 4007 | 5,009,787 | 12.2 | 13.9 | 48.80 | 42.4 |
+| Phone | 4 Mbit/s | x264 medium | 3998 | 4,998,550 | 9.6 | 15.5 | 49.04 | 38.7 |
+| Phone | 8 Mbit/s | s264 | 8032 | 10,040,187 | 18.8 | 16.8 | 64.62 | 56.8 |
+| Phone | 8 Mbit/s | x264 medium | 7896 | 9,870,194 | 21.0 | 17.1 | 64.40 | 51.9 |
+| Animation | 2 Mbit/s | s264 | 1997 | 2,496,750 | 35.1 | 16.6 | 74.30 | 66.3 |
+| Animation | 2 Mbit/s | x264 medium | 1996 | 2,495,150 | 22.4 | 16.6 | 74.96 | 68.0 |
+| Animation | 4 Mbit/s | s264 | 3996 | 4,995,141 | 12.2 | 18.1 | 83.17 | 76.2 |
+| Animation | 4 Mbit/s | x264 medium | 4042 | 5,053,616 | 23.2 | 18.5 | 83.60 | 77.5 |
+
+What it says, honestly:
+- **Where s264 loses:** the CS2 recording - 2.6 VMAF behind at 6 Mbit/s and 1.2 at 12 Mbit/s (x264 also spent 3-4 % more
+  bits there; it overshoots, s264 hits the target within 0.3 %). Its worst frames are clearly worse (min 66 vs 74 at
+  6 Mbit/s). On the animation it is slightly behind (0.4-0.7 VMAF).
+- **About even:** the phone clip (-0.2 / +0.2 VMAF), with better worst frames than x264.
+- **Speed:** not decidable from this run; under this load the two were within the run-to-run noise of each other. Earlier
+  quiet measurements had s264 a little faster than x264 medium on 1080p60 two-pass; until a clean rerun, treat it as
+  "about as fast, sometimes slower".
+- Not covered here: 10-bit, 4:2:2/4:4:4 and alpha (s264 writes 8-bit 4:2:0 only and refuses the rest), single-pass
+  constant-quality export (the app's default quality levels), long clips, other machines.
+
+Reproduce: the script `run.sh` (raw frames in `data/<clip>.yuv`, `h264-proto` from `cmake --build build --target
+h264-proto`, VMAF through PyAV's libvmaf) is kept outside the repository with the material.

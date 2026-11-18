@@ -58,7 +58,7 @@ bool ownLevelFits(const schneidi::h264::EncoderConfig& c)
 QString ownLevelProblem(const schneidi::h264::EncoderConfig& c)
 {
     if (ownLevelFits(c)) return {};
-    return QStringLiteral("the own H.264 encoder cannot write %1x%2 at %3 fps%4: above the highest H.264 level (6.2: "
+    return QStringLiteral("s264 cannot write %1x%2 at %3 fps%4: above the highest H.264 level (6.2: "
                           "up to 8K at 120 fps); use H.264 or H.265")
         .arg(c.width)
         .arg(c.height)
@@ -316,7 +316,7 @@ bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const 
         if (pf == AV_PIX_FMT_NONE) return no("unknown pixel format " + pixFmt);
         // The own encoder takes 8-bit 4:2:0 only: no 10 bit (HDR), no 4:2:2/4:4:4, no alpha, no full range
         if (isOwnH264(videoCodec) && pf != AV_PIX_FMT_YUV420P)
-            return no("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not " + pixFmt);
+            return no("s264 writes only 8-bit 4:2:0 (yuv420p), not " + pixFmt);
         // Converted by OutputColor, uploaded (VAAPI) or by swscale from RGBA
         OutputColor::Target t;
         if (pf != AV_PIX_FMT_VAAPI && !OutputColor::targetOf(pf, t) && !sws_isSupportedOutput(pf))
@@ -401,6 +401,12 @@ struct ExportWriter::Impl {
     // Own H.264 encoder (Settings::videoCodec kOwnH264)
     bool own = false;
     int ownQp = 23, ownBitrateK = 0, ownLookahead = -1; // lookahead -1 = the encoder's default
+    // Memory for the first pass's kept per-macroblock analysis (option "analysis_mb"; pictures beyond it are analysed
+    // again by the encoder). The Exporter scales it to the free RAM, 0 in low-memory renders
+    int ownAnalysisMb = 256;
+    // B pictures per run (option "bframes"; the encoder's default). With B pictures the access units come out in coding
+    // order: writeOwn takes pts from the encoder's display index, dts from the access unit count (see there)
+    int ownBframes = schneidi::h264::EncoderConfig{}.bframes;
     // Bit rate cap ("bitrate" with "qp"): the fixed QP when the first pass predicts the clip below the cap with it
     // (ownFirstPass, before the first picture is handed over), else two passes towards the cap
     bool ownFixedQp = false;
@@ -754,7 +760,8 @@ struct ExportWriter::Impl {
         std::vector<OwnProbe> probes;
         FramePtr waiting;
         try {
-            schneidi::h264::FirstPass pass(width, height, ownThreads()); // (batches side by side, same numbers)
+            // (batches side by side, same numbers; with B pictures also the probe the adaptive placement plans with)
+            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20);
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
@@ -780,11 +787,12 @@ struct ExportWriter::Impl {
             // Margin for what the probe does not see (macroblock tree, the model's error): on 720p30 noise the
             // prediction was 21 % under the real size at that QP
             ownFixedQp = bits > 0 && bits < kOwnFixedShare * cap;
+            if (ownFixedQp) ownStats.reset(); // (only the two passes towards the cap use it: not kept for the export)
             qInfo("Export: own H.264, QP %d predicts %.0f kbit/s for the cap %d kbit/s: %s", ownQp,
                   bits / 1000.0 * std::max(1.0, fps) / std::max(1, s.length), ownBitrateK,
                   ownFixedQp ? "fixed QP" : "two passes towards the cap");
         } catch (const std::exception& e) {
-            fail(QStringLiteral("own H.264 encoder, first pass: %1").arg(e.what()), true);
+            fail(QStringLiteral("s264, first pass: %1").arg(e.what()), true);
             return false;
         }
         return !stop;
@@ -807,6 +815,7 @@ struct ExportWriter::Impl {
         c.threads = ownThreads();
         c.fps = fps;
         c.lookahead = 0; // (no macroblock tree either)
+        c.bframes = 0;   // a key picture and a P picture: the model counts I and P costs (B pictures only save bits)
         c.sceneCut = false;
         c.frameThreads = false;
         schneidi::h264::Encoder probe(c);
@@ -1199,7 +1208,7 @@ struct ExportWriter::Impl {
         if (!s.videoCodec.isEmpty()) {
             // The own encoder takes 8-bit 4:2:0 only (supportsOwn refuses the rest before, this is the last guard)
             if (isOwnH264(s.videoCodec) && pixFmt != AV_PIX_FMT_YUV420P) {
-                fail(QStringLiteral("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not %1").arg(s.pixFmt));
+                fail(QStringLiteral("s264 writes only 8-bit 4:2:0 (yuv420p), not %1").arg(s.pixFmt));
                 return false;
             }
             // ... and not tiny pictures or ones above the highest level (before the first pass, not after it)
@@ -1264,6 +1273,7 @@ struct ExportWriter::Impl {
         c.gop = kOwnGop;
         c.threads = ownThreads();
         c.fps = fps;
+        c.bframes = ownBframes;
         if (ownBitrateK > 0 && !ownFixedQp) {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
@@ -1288,7 +1298,7 @@ struct ExportWriter::Impl {
             ownEnc = std::make_unique<schneidi::h264::Encoder>(c);
             header = ownEnc->headers();
         } catch (const std::exception& e) {
-            fail(QStringLiteral("own H.264 encoder cannot be opened: %1").arg(e.what()), true);
+            fail(QStringLiteral("s264 cannot be opened: %1").arg(e.what()), true);
             return false;
         }
         AVCodecParameters* par = vst->codecpar;
@@ -1304,7 +1314,9 @@ struct ExportWriter::Impl {
         par->color_range = c.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
         par->field_order = AV_FIELD_PROGRESSIVE;
         par->sample_aspect_ratio = aspect;
-        par->video_delay = 0; // no B-frames: decode order = picture order
+        // Pictures shown after a later-decoded one (the dts shift writeOwn uses: B pictures 1, B pyramid 2; 0 =
+        // decode order = picture order). MP4/MOV get their ctts and edit list from pts != dts, Matroska its BlockGroups
+        par->video_delay = ownEnc->reorderDelay();
         // Level as the encoder writes it into the SPS; the profile from the SPS (after its start code and NAL header)
         par->level = schneidi::h264::levelIdcFor(c);
         for (size_t i = 0; i + 4 < header.size(); ++i)
@@ -1323,7 +1335,13 @@ struct ExportWriter::Impl {
         return writeHeader();
     }
 
-    // Own encoder: one access unit (Annex B, one picture) into the muxer. No B-frames: pts = dts = its number
+    // Own encoder: one access unit (Annex B, one picture) into the muxer, in coding order. pts = the picture's place in
+    // display order (lastDisplayIndex), dts = the access unit's number minus the encoder's reorder delay (B pictures:
+    // the reference picture after a run is decoded one frame time before the first B picture of the run is shown, with
+    // the B pyramid two, as the middle B reference comes before its outer B pictures; without B pictures pts = dts =
+    // the number). The first dts is -reorderDelay() with B pictures: MP4 writes negative composition offsets
+    // (+negative_cts_offsets, writeHeader), MOV an edit list, Matroska shifts every stream by the same amount
+    // (avoid_negative_ts), so sound and picture stay together.
     bool writeOwn(const std::vector<uint8_t>& au)
     {
         if (av_new_packet(packet, int(au.size())) < 0) {
@@ -1331,7 +1349,12 @@ struct ExportWriter::Impl {
             return false;
         }
         std::memcpy(packet->data, au.data(), au.size());
-        packet->pts = packet->dts = ownPackets++;
+        packet->pts = ownEnc->lastDisplayIndex();
+        packet->dts = ownPackets++ - ownEnc->reorderDelay();
+        if (packet->pts < packet->dts) {
+            fail(QStringLiteral("s264: picture %1 shown before it is decoded").arg(packet->pts));
+            return false;
+        }
         packet->duration = 1;
         if (hasIdr(packet, AV_CODEC_ID_H264)) packet->flags |= AV_PKT_FLAG_KEY;
         av_packet_rescale_ts(packet, av_inv_q(rate), vst->time_base);
@@ -1351,7 +1374,7 @@ struct ExportWriter::Impl {
         try {
             au = ownEnc->encode(ownPicture(f), ownKeyAt(f->pts));
         } catch (const std::exception& e) {
-            fail(QStringLiteral("own H.264 encoder: %1").arg(e.what()), true);
+            fail(QStringLiteral("s264: %1").arg(e.what()), true);
             return false;
         }
         return au.empty() || writeOwn(au);
@@ -1365,7 +1388,7 @@ struct ExportWriter::Impl {
             try {
                 au = ownEnc->flush();
             } catch (const std::exception& e) {
-                fail(QStringLiteral("own H.264 encoder: %1").arg(e.what()), true);
+                fail(QStringLiteral("s264: %1").arg(e.what()), true);
                 return false;
             }
             if (au.empty()) return true;
@@ -2103,6 +2126,8 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
             if (key == "qp") d->ownQp = std::clamp(value.toInt(), 10, 51);
             if (key == "bitrate") d->ownBitrateK = std::max(0, value.toInt());
             if (key == "lookahead") d->ownLookahead = std::clamp(value.toInt(), 0, 250);
+            if (key == "bframes") d->ownBframes = std::clamp(value.toInt(), 0, 8);
+            if (key == "analysis_mb") d->ownAnalysisMb = std::clamp(value.toInt(), 0, 1024);
         }
         d->ownKey.assign(size_t(std::max(0, s.length)), 0);
         for (int k : s.keyframes)
@@ -2171,7 +2196,7 @@ QString ExportWriter::error() const
 QString ExportWriter::ownSizeProblem(QSize size, double fps)
 {
     if (size.width() < kOwnMinSide || size.height() < kOwnMinSide)
-        return QStringLiteral("the own H.264 encoder needs at least %1x%1 pixels, not %2x%3")
+        return QStringLiteral("s264 needs at least %1x%1 pixels, not %2x%3")
             .arg(kOwnMinSide)
             .arg(size.width())
             .arg(size.height());

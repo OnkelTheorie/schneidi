@@ -120,7 +120,7 @@ schneidi_test(test_audio_streams)
 schneidi_test(test_export_threads)
 schneidi_test(test_export_formats)
 schneidi_test(test_export_writer)
-# Own H.264 encoder as the export format h264_own: containers, colour tags, level, key frames, bit rate mode, cancel
+# Own H.264 encoder s264 as the export format s264 (old id h264_own): containers, colour tags, level, key frames, bit rate mode, cancel
 schneidi_test(test_export_own_h264)
 schneidi_test(test_export_timing)
 # Export quality "Like source": target bit rate (weighting, scaling, fallback), probe, export within 25 %, CLI

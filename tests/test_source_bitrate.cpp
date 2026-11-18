@@ -174,7 +174,7 @@ void testSettings()
     RenderSettings high;
     CHECK(!high.toJson().contains("qualitySource"));
     // Every format with a quality choice offers it; fixed-quality formats and audio do not
-    for (const char* f : {"h264", "h265", "av1", "vp9", "h264_own"}) {
+    for (const char* f : {"h264", "h265", "av1", "vp9", "s264"}) {
         s.format = f;
         if (!CHECK(s.sourceQuality())) std::printf("       %s\n", f);
     }

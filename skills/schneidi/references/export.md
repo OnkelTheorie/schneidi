@@ -11,6 +11,8 @@ the preset. `help` `render` lists the current set with the user's own presets.
 - Keep the recordings' quality (archive, re-upload, a master): `quality` `source` - the bit rate of the clips used,
   so the file is about as big as the source; the answer's `video_bitrate_k` says the rate aimed at.
 - Smaller at the same quality: H.265 (Apple and modern players), AV1 (smallest, slower).
+- `format` `s264`: schneidi's own H.264 encoder, experimental (slower than x264, 8-bit 4:2:0 only) - only when the
+  user asks for it, never as a default.
 - More editing elsewhere: ProRes or DNxHR (big files).
 - `encoder` `auto` uses the graphics card when it works and falls back to software - leave it unless asked.
 - `height` scales (e.g. 720), `fps` changes the frame rate, `from`/`to` renders a part, `size` forces a size
