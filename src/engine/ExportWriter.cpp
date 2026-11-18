@@ -401,6 +401,9 @@ struct ExportWriter::Impl {
     // Own H.264 encoder (Settings::videoCodec kOwnH264)
     bool own = false;
     int ownQp = 23, ownBitrateK = 0, ownLookahead = -1; // lookahead -1 = the encoder's default
+    // Memory for the first pass's kept per-macroblock analysis (option "analysis_mb"; pictures beyond it are analysed
+    // again by the encoder). The Exporter scales it to the free RAM, 0 in low-memory renders
+    int ownAnalysisMb = 256;
     // B pictures per run (option "bframes"; the encoder's default). With B pictures the access units come out in coding
     // order: writeOwn takes pts from the encoder's display index, dts from the access unit count (see there)
     int ownBframes = schneidi::h264::EncoderConfig{}.bframes;
@@ -758,7 +761,7 @@ struct ExportWriter::Impl {
         FramePtr waiting;
         try {
             // (batches side by side, same numbers; with B pictures also the probe the adaptive placement plans with)
-            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes);
+            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20);
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
@@ -784,6 +787,7 @@ struct ExportWriter::Impl {
             // Margin for what the probe does not see (macroblock tree, the model's error): on 720p30 noise the
             // prediction was 21 % under the real size at that QP
             ownFixedQp = bits > 0 && bits < kOwnFixedShare * cap;
+            if (ownFixedQp) ownStats.reset(); // (only the two passes towards the cap use it: not kept for the export)
             qInfo("Export: own H.264, QP %d predicts %.0f kbit/s for the cap %d kbit/s: %s", ownQp,
                   bits / 1000.0 * std::max(1.0, fps) / std::max(1, s.length), ownBitrateK,
                   ownFixedQp ? "fixed QP" : "two passes towards the cap");
@@ -1335,8 +1339,9 @@ struct ExportWriter::Impl {
     // display order (lastDisplayIndex), dts = the access unit's number minus the encoder's reorder delay (B pictures:
     // the reference picture after a run is decoded one frame time before the first B picture of the run is shown, with
     // the B pyramid two, as the middle B reference comes before its outer B pictures; without B pictures pts = dts =
-    // the number). The first dts is -reorderDelay() with B pictures: MP4/MOV write an edit list,
-    // Matroska shifts every stream by the same amount (avoid_negative_ts), so sound and picture stay together.
+    // the number). The first dts is -reorderDelay() with B pictures: MP4 writes negative composition offsets
+    // (+negative_cts_offsets, writeHeader), MOV an edit list, Matroska shifts every stream by the same amount
+    // (avoid_negative_ts), so sound and picture stay together.
     bool writeOwn(const std::vector<uint8_t>& au)
     {
         if (av_new_packet(packet, int(au.size())) < 0) {
@@ -2122,6 +2127,7 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
             if (key == "bitrate") d->ownBitrateK = std::max(0, value.toInt());
             if (key == "lookahead") d->ownLookahead = std::clamp(value.toInt(), 0, 250);
             if (key == "bframes") d->ownBframes = std::clamp(value.toInt(), 0, 8);
+            if (key == "analysis_mb") d->ownAnalysisMb = std::clamp(value.toInt(), 0, 1024);
         }
         d->ownKey.assign(size_t(std::max(0, s.length)), 0);
         for (int k : s.keyframes)

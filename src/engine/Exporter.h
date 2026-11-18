@@ -268,6 +268,7 @@ private:
     int m_threads = 0, m_frames = 1;
     bool m_threadsLowMemory = false;
     bool m_shortLookahead = false; // lowMemoryOptions (shortLookahead or lowMemoryLookahead)
+    qint64 m_availableBytes = 0; // free RAM when the export started (0 = unknown): s264's first pass budget
     int m_targetBitrateK = 0;      // quality "like source" (ExportSettings::sourceQuality), 0 = crf
     QString m_usedCodec, m_note;
     QVector<Picture::SkippedEffect> m_skipped;

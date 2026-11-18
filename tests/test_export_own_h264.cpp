@@ -508,18 +508,34 @@ void testShortAndOdd(const QString& dir)
     if (!CHECK(errors.isEmpty())) std::printf("       %s\n", qPrintable(errors.left(400)));
 }
 
-// Low memory: the shorter lookahead (Exporter::lowMemoryOptions) reaches the encoder - the macroblock tree then
-// sees fewer pictures ahead and the stream differs
+// Low memory: the shorter lookahead (Exporter::lowMemoryOptions, with at most 3 B pictures so the encoder keeps it
+// at 10, and no kept first-pass analysis) reaches the encoder - the macroblock tree then sees fewer pictures ahead
+// and the stream differs; two passes towards a cap without the kept analysis still work
 void testLookahead(const QString& dir)
 {
     const auto o = Exporter::lowMemoryOptions(ExportWriter::kOwnH264);
-    CHECK(o.size() == 1 && o.value(0).first == "lookahead" && o.value(0).second == "10");
+    CHECK(o.contains({QByteArray("lookahead"), QByteArray("10")}));
+    CHECK(o.contains({QByteArray("bframes"), QByteArray("3")}));
+    CHECK(o.contains({QByteArray("analysis_mb"), QByteArray("0")}));
+    {
+        const QString path = dir + "/lowmem-cap.mp4";
+        ExportSettings s = settings(path, RenderSettings::kQualityWeb);
+        s.maxBitrateK = 1500;
+        s.audioCodec.clear();
+        for (const auto& [key, value] : o) s.codecOptions << QString::fromUtf8(key + "=" + value);
+        if (CHECK(render(timeline(g_noisy), s))) {
+            CHECK_EQ(probe(path).value("nb_read_frames").toString().toInt(), kFrames);
+            const QString errors = decodeErrors(path);
+            if (!CHECK(errors.isEmpty())) std::printf("       %s\n", qPrintable(errors.left(400)));
+        }
+    }
     QByteArray streams[2];
     for (int i = 0; i < 2; ++i) {
         const QString path = dir + QString("/lookahead%1.mkv").arg(i);
         ExportSettings s = settings(path);
         s.audioCodec.clear();
-        if (i) s.codecOptions << "lookahead=10";
+        if (i)
+            for (const auto& [key, value] : o) s.codecOptions << QString::fromUtf8(key + "=" + value);
         if (!CHECK(render(timeline(g_media), s))) return;
         CHECK_EQ(probe(path).value("nb_read_frames").toString().toInt(), kFrames);
         QProcess p;

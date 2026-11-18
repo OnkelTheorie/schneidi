@@ -499,6 +499,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     const int threads = s.threads > 0 ? s.threads : automatic.threads;
     m_threadsLowMemory = s.threads <= 0 && automatic.lowMemory;
+    m_availableBytes = available;
     m_shortLookahead = (s.threads <= 0 && lowMemoryLookahead(availableThreads(), automatic))
                        || shortLookahead(out.size(), available);
     m_settings = s;
@@ -756,8 +757,13 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::lowMemoryOptions(const QString&
     // lookahead 10 too (20-25 at its presets)
     if (codec == "libx264") return {{QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")}};
     if (codec == "libx265") return {{QByteArrayLiteral("x265-params"), QByteArrayLiteral("rc-lookahead=10")}};
-    // The own H.264 encoder keeps whole pictures in its lookahead (40 by default): 10 as well
-    if (ExportWriter::isOwnH264(codec)) return {{QByteArrayLiteral("lookahead"), QByteArrayLiteral("10")}};
+    // s264 keeps whole pictures in its lookahead (40 by default): 10 as well. It raises the lookahead to 2 * bframes + 4,
+    // so at most 3 B pictures per run (the default 8 would make it 20 again); its first pass keeps no per-macroblock
+    // analysis (the encoder analyses those pictures again instead)
+    if (ExportWriter::isOwnH264(codec))
+        return {{QByteArrayLiteral("lookahead"), QByteArrayLiteral("10")},
+                {QByteArrayLiteral("bframes"), QByteArrayLiteral("3")},
+                {QByteArrayLiteral("analysis_mb"), QByteArrayLiteral("0")}};
     return {};
 }
 
@@ -772,6 +778,10 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
         // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter).
         // "Like source": the source's rate as that cap - two passes towards it, or "High" when that stays below it
         o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
+        // Memory for the first pass's kept analysis (two passes towards a cap): an eighth of the free RAM, at most
+        // 1 GB (1080p: ~100 KB per picture); lowMemoryOptions below sets 0
+        if (m_availableBytes > 0)
+            o.append({"analysis_mb", QByteArray::number(std::clamp<qint64>(m_availableBytes / 8 / (1024 * 1024), 0, 1024))});
         if (target > 0) o.append({"bitrate", QByteArray::number(target)});
         else if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
         if (m_shortLookahead) o += lowMemoryOptions(codec); // (8K, low memory)
