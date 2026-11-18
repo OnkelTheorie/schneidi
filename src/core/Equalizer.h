@@ -18,6 +18,10 @@ public:
     static double responseDb(const TrackEq& eq, double hz, int rate);
     // Values in their ranges (project file, dialogs, CLI); the band kinds stay as they belong
     static TrackEq clamped(TrackEq eq);
+    // Preset "Stimme" (Studio page "Stimme säubern", op mixer eq:'voice', op clean_voice eq:true): high pass 80 Hz,
+    // -2.5 dB at 300 Hz (boxiness), +1.5 dB at 3.5 kHz (presence), +1.5 dB air shelf at 10 kHz. Mild on purpose: the
+    // voice cleaning's own "shape" already adds a high pass and presence, the EQ only finishes it.
+    static TrackEq voicePreset();
 
     void setEq(const TrackEq& eq);
     const TrackEq& eq() const { return m_eq; }

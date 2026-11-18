@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QFileInfo>
 #include <QMap>
+#include <QPointF>
 #include <QSize>
 #include <QString>
 #include <QStringList>
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <memory>
 
 enum class TrackKind { Video, Audio };
@@ -116,13 +118,81 @@ inline const MotionEaseInfo& motionEaseInfo(MotionEase e)
 }
 
 // What a title clip draws: its text, a number counting from one value to another over the clip (animated counter,
-// "0 -> 1000 kills") or a progress bar along an edge of the picture (how much of the video is left, typical for shorts)
-enum class TitleKind { Text, Counter, Progress };
+// "0 -> 1000 kills"), a progress bar along an edge of the picture (how much of the video is left, typical for shorts)
+// a shape (0.22: circle, rectangle, arrow, star … with fill, stroke and shadow; core/Shapes.h) or a drawing (0.22:
+// strokes painted in the viewer; core/Drawing.h)
+enum class TitleKind { Text, Counter, Progress, Shape, Drawing };
 struct TitleKindInfo { TitleKind kind; const char* id; const char* name; };
 inline constexpr TitleKindInfo kTitleKinds[] = {
     {TitleKind::Text, "text", N_("Text")},
     {TitleKind::Counter, "counter", N_("Zähler")},
     {TitleKind::Progress, "progress", N_("Fortschrittsbalken")},
+    {TitleKind::Shape, "shape", N_("Form")},
+    {TitleKind::Drawing, "drawing", N_("Zeichnung")},
+};
+// The outline a shape title draws (core/Shapes.h makes the points): ellipse in its box (a circle when square),
+// rectangle with rounded corners, triangle pointing up, arrow pointing right (shaft and head), line (stroked only),
+// star with `points` tips, regular polygon with `points` corners
+enum class ShapeKind { Ellipse, Rect, Triangle, Arrow, Line, Star, Polygon };
+struct ShapeKindInfo { ShapeKind kind; const char* id; const char* name; };
+inline constexpr ShapeKindInfo kShapeKinds[] = {
+    {ShapeKind::Ellipse, "ellipse", N_("Ellipse")},   {ShapeKind::Rect, "rect", N_("Rechteck")},
+    {ShapeKind::Triangle, "triangle", N_("Dreieck")}, {ShapeKind::Arrow, "arrow", N_("Pfeil")},
+    {ShapeKind::Line, "line", N_("Linie")},           {ShapeKind::Star, "star", N_("Stern")},
+    {ShapeKind::Polygon, "polygon", N_("Vieleck")},
+};
+// What fills a shape: its colour, nothing (stroke only), or the picture below it blurred / as a mosaic (it hides a
+// face, a number plate, a name - like an adjustment clip limited to the shape)
+enum class ShapeFill { Color, None, Blur, Pixelate };
+struct ShapeFillInfo { ShapeFill fill; const char* id; const char* name; };
+inline constexpr ShapeFillInfo kShapeFills[] = {
+    {ShapeFill::Color, "color", N_("Farbe")},
+    {ShapeFill::None, "none", N_("Keine")},
+    {ShapeFill::Blur, "blur", N_("Unschärfe")},
+    {ShapeFill::Pixelate, "pixelate", N_("Verpixeln")},
+};
+// A shape title's own values (TitleStyle::kind == Shape). The rest comes from the title: fill colour = `color`, stroke
+// = outline (on, colour, width; drawn on the outline, half inside), shadow = look.shadow*, centre = posX/posY, opacity =
+// the clip's. Lengths in pixels of the project format. Keyframes: AnimParam::ShapeWidth/Height/Rotation/Reveal.
+struct ShapeStyle {
+    ShapeKind kind = ShapeKind::Ellipse;
+    double width = 300, height = 300; // the box; a line: length x thickness; an arrow: length x head width
+    double rotation = 0;   // degrees clockwise
+    double corner = 0;     // rectangle: corner radius (pixels)
+    int points = 5;        // star tips / polygon corners (3..32)
+    double inner = 0.45;   // star: inner radius / outer radius
+    ShapeFill fill = ShapeFill::Color;
+    double amount = 50;    // blur: strength 0..100 like the blur effect (100 = 1/20 of the frame height);
+                           // pixelate: block size 0..100 (100 = 1/10 of the frame height)
+    double feather = 0;    // soft edge of the fill (pixels)
+    double spotlight = 0;  // 0..100: the picture outside the shape is darkened by so much percent
+    double reveal = 100;   // stroke drawn from its start up to this percent of its length (the stroke draws itself)
+    // Follows a tracker node of another clip's compositing graph (core/CompTrack.h follow rule; 0 = none): the shape
+    // moves with it from where it was drawn at the analysis' start
+    int followClip = 0, followNode = 0;
+    bool readsBelow() const { return fill == ShapeFill::Blur || fill == ShapeFill::Pixelate || spotlight > 0; }
+    bool operator==(const ShapeStyle&) const = default;
+};
+// One stroke of a drawing title (0.22, TitleKind::Drawing; core/Drawing.h): a polyline in 0..1 of the project frame
+// (x of its width, y of its height, y down: sharp in any resolution, small in the file), drawn with round ends.
+// pressure: per point 0..1 (a pen; empty = all 1), the width there is width * pressure. width: fraction of the frame
+// height (0.01 = 10.8 px at 1080). A single point is a dot.
+struct DrawStroke {
+    QVector<QPointF> points;
+    QVector<float> pressure;
+    QColor color = Qt::white;
+    double width = 0.008;
+    double opacity = 1; // 0..1
+    bool operator==(const DrawStroke&) const = default;
+};
+// A drawing title's own values (TitleStyle::kind == Drawing): its strokes in drawing order. Moved by the title position
+// (posX/posY, pixels, y up like a title), scaled/turned by the clip's transform like any title; follows a tracker with
+// the shape's follow fields (shape.followClip/followNode). reveal > 0: the strokes draw themselves one after another
+// from the clip's start over that many seconds (each takes the share of the time its length has).
+struct DrawingStyle {
+    QVector<DrawStroke> strokes;
+    double reveal = 0; // seconds; 0 = all drawn at once
+    bool operator==(const DrawingStyle&) const = default;
 };
 // How a counter writes its number: thousands separator and decimal point. Stored with the title (default: the UI
 // language's way when it is made), so a project renders the same on every machine whatever its language.
@@ -258,10 +328,14 @@ struct TitleStyle {
     TitleLook look; // fill, edge, shadow, glow (0.19; text and counter titles)
     TitleAnim enter = TitleAnim::None, exit = TitleAnim::None; // entry / exit animation (seconds below)
     double enterLen = 0.2, exitLen = 0.2;
+    ShapeStyle shape; // kind Shape only (0.22); a drawing uses its followClip/followNode
+    DrawingStyle drawing; // kind Drawing only (0.22)
     bool hasBrandRef() const { return colorRef || outlineRef || boxRef || fontRef; }
 
     bool isCounter() const { return kind == TitleKind::Counter; }
     bool isProgress() const { return kind == TitleKind::Progress; }
+    bool isShape() const { return kind == TitleKind::Shape; }
+    bool isDrawing() const { return kind == TitleKind::Drawing; }
     bool operator==(const TitleStyle&) const = default;
 
     // Font for drawing: "Sans" (default, also stored that way in projects) does not exist on Windows
@@ -276,6 +350,10 @@ struct TitleStyle {
     QString firstLine() const
     {
         if (isProgress()) return T("Fortschrittsbalken");
+        if (isDrawing()) return T("Zeichnung");
+        if (isShape())
+            for (const auto& k : kShapeKinds)
+                if (k.kind == shape.kind) return T(k.name);
         if (isCounter()) {
             const auto num = [](double v) { return QString::number(v, 'g', 12).replace('.', I18n::decimalPoint()); };
             return QString("%1%2 → %3%4").arg(prefix, num(countFrom), num(countTo), suffix).trimmed();
@@ -388,6 +466,7 @@ enum class AnimParam {
     GradeGainY, GradeGainR, GradeGainG, GradeGainB,
     GradeOffsetY, GradeOffsetR, GradeOffsetG, GradeOffsetB,
     GradeContrast, GradePivot, GradeSaturation, GradeTemp, GradeTint, GradeExposure,
+    ShapeWidth, ShapeHeight, ShapeRotation, ShapeReveal, // shape title (0.22, TitleStyle::shape)
     Count
 };
 // Interpolation at a keyframe (right-click on the diamond as in DaVinci):
@@ -547,6 +626,10 @@ struct Clip {
     QString keepRegion;
     // Placeholder of a template (0.18, core/TemplateFill.h); not set = an ordinary clip
     ClipSlot slot;
+    // Audio only: the channels of the audio stream the clip plays (0-based, one = mono in the middle, two = left and
+    // right), e.g. {2, 3} for a wireless microphone on channels 3/4 of a camera file. Empty = all channels as the
+    // stream has them (0.23, channel routing).
+    QVector<int> sourceChannels;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
     bool hasRamp() const { return !ramp.isEmpty() && !freeze; }
@@ -629,6 +712,31 @@ struct TrackDynamics {
     bool operator==(const TrackDynamics&) const = default;
 };
 
+// Which track it is while the program runs: every new Track gets its own, copies keep it (undo snapshots, edits of the
+// timeline), so a window bound to a track can follow it when tracks are added, removed or reordered (also equal empty
+// ones). Not saved, and never part of ==: two tracks with the same content are equal.
+struct TrackUid {
+    quint64 value = next();
+    bool operator==(const TrackUid&) const { return true; }
+    static quint64 next()
+    {
+        static std::atomic<quint64> last{0};
+        return ++last;
+    }
+};
+
+// Track automation (0.23, core/Automation.h): a point of a curve over timeline frames (not clip frames: it stays at its
+// place in the timeline when a clip moves; ripple edits move it with the time around it). Linear between points, the
+// first/last value holds before/after them.
+struct AutoPoint {
+    int frame = 0;  // timeline frame
+    double db = 0;  // volume: dB on top of the track fader (0 = the fader's level); pan: on top of the pan knob
+    bool operator==(const AutoPoint&) const = default;
+};
+using AutoCurve = QVector<AutoPoint>; // sorted by frame, each frame at most once; empty = no automation
+// Which automation curve of a track (Track::volumeAuto / Track::panAuto)
+enum class AutoTarget { Volume, Pan };
+
 struct Track {
     TrackKind kind = TrackKind::Video;
     QString name;  // assigned by the user (double-click in the track header); empty = default "Video 1"/"Audio 1"
@@ -644,6 +752,22 @@ struct Track {
     // Audio only: EQ -> compressor -> fader/pan
     TrackEq eq;
     TrackDynamics dynamics;
+    // Audio only, surround panner (mix in 5.1/7.1, ChannelLayout::surroundPan; a stereo mix ignores it): front (0)
+    // to surround (100), share of the front pair in the centre speaker (0..100), send to the LFE (dB, <= -60 = off)
+    double panDepth = 0.0;
+    double panCenter = 0.0;
+    double lfeDb = kMinVolumeDb;
+    bool hasSurroundPan() const { return panDepth != 0.0 || panCenter != 0.0 || lfeDb > kMinVolumeDb; }
+    // Audio only, volume automation (Studio pen in track mode, CLI op track_volume): what is heard is the fader plus
+    // this curve (dB). The fader trims the whole curve; empty = the fader alone (the mix is what it always was).
+    AutoCurve volumeAuto;
+    // Audio only, pan automation (0.23, Studio Points/pen in track mode with "Pan", write mode, CLI op track_pan): what
+    // is heard is the pan knob plus this curve (-100..+100 after adding), the same model as the volume. In 5.1/7.1 it
+    // moves the surround panner's left-right position; depth, centre and LFE stay as set.
+    AutoCurve panAuto;
+    AutoCurve& automation(AutoTarget t) { return t == AutoTarget::Pan ? panAuto : volumeAuto; }
+    const AutoCurve& automation(AutoTarget t) const { return t == AutoTarget::Pan ? panAuto : volumeAuto; }
+    TrackUid uid; // (last: aggregate initialisation Track{kind} stays as it is)
     bool operator==(const Track&) const = default;
 };
 
@@ -788,12 +912,19 @@ struct Timeline {
     // For rendering only, in the entries of `nested`: the sequence's resolution (Project::sequenceFormat). A nested
     // sequence of another size than the timeline it lies in is rendered at its own size and fitted in like a clip.
     QSize frameSize;
+    // For editing only: the project's frame rate, set by Project::edit/editSequences before an edit runs, so that
+    // values in seconds from a clip's start (comp text from/until, Comp::followHead) follow a cut or head trim.
+    // 0 = unknown (a timeline edited outside a Project): those values stay. Never saved, not part of undo.
+    double frameRate = 0;
+    // For rendering only (Project::renderTimeline): channels of the mix (ProjectFormat::audioChannels, 2/6/8);
+    // Audio::Mixer mixes in this format. Never saved, not part of undo.
+    int audioChannels = 2;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
-    // Same cut (without `nested`/`angles`/`frameSize`, which only serve rendering).
+    // Same cut (without `nested`/`angles`/`frameSize`/`frameRate`/`audioChannels`, which only serve rendering and editing).
     // By hand: enter new fields here, otherwise changes to them do not end up in undo
     bool operator==(const Timeline& o) const
     {
@@ -825,6 +956,10 @@ struct Sequence {
 struct AudioStreamInfo {
     int channels = 2;
     QString title; // stream title from the file (empty = none)
+    // Can schneidi play it? A stream without a decoder here, without values (an empty MPEG-TS sound PID) or in a sample
+    // format the sound path does not play keeps its place (streams count by their place in the file) but is never
+    // placed, transcribed or analysed. Older project files: true.
+    bool playable = true;
     bool operator==(const AudioStreamInfo&) const = default;
 };
 
@@ -861,6 +996,12 @@ struct MediaInfo {
     // Audio streams in file order (at the end because of aggregate initialization; empty for older project files: then 1 stream if hasAudio)
     QVector<AudioStreamInfo> audioStreams;
     int audioStreamCount() const { return hasAudio ? std::max<int>(1, audioStreams.size()) : 0; }
+    // Can this stream be played (see AudioStreamInfo::playable)? Streams the list does not name: yes, if the file has sound
+    bool audioStreamPlayable(int stream) const
+    {
+        if (stream < 0 || stream >= audioStreamCount()) return false;
+        return stream >= audioStreams.size() || audioStreams[stream].playable;
+    }
     // Display name of a stream: title from the file, otherwise "Track N"
     QString audioStreamName(int stream) const
     {
@@ -887,6 +1028,16 @@ struct MediaInfo {
     // game stretched to 16:9, marked in the Media Pool or by its watch folder. Media Pool tiles show it too.
     double pictureAspect = 0;
 };
+
+// After a clip got another file or audio stream: channel routing (Clip::sourceChannels) the clip's stream of m lacks
+// is dropped, like StreamPresets placing a rule for a file with fewer channels (none left = all channels again). A
+// stream the media info does not describe (channels unknown) keeps the routing.
+inline void fitSourceChannels(Clip& c, const MediaInfo& m)
+{
+    if (c.sourceChannels.isEmpty() || c.audioStream < 0 || c.audioStream >= m.audioStreams.size()) return;
+    const int have = m.audioStreams[c.audioStream].channels;
+    c.sourceChannels.removeIf([have](int ch) { return ch < 0 || ch >= have; });
+}
 
 // Bin (folder) in the Media Pool; Master (id 0) is not in the list, parent 0 = directly under Master
 struct MediaBin {

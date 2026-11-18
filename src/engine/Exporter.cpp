@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Exporter.h"
 
+#include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/RenderJob.h"
+#include "core/SourceBitrate.h"
 #include "core/Subtitles.h"
 #include "core/SystemMemory.h"
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/ClipFormat.h"
+#include "engine/ColorGrade.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MemoryRelease.h"
@@ -103,16 +106,20 @@ QString partPath(const QString& target, const QString& id)
 
 // Temporary files of renders to `target` that were killed (crash, SIGKILL, power off) stay behind: removed once
 // nothing has written them for an hour (a running render writes its part file all the time; another render to the
-// same name keeps its own).
+// same name keeps its own). The same for the x264/x265 extension's intermediates of every render into this folder
+// (ExternalEncoder::intermediatePath of a part file: ".<part file>.schneidi-video.nut", hidden, up to several GB; its
+// program writes it all the time while encoding).
 void removeStaleParts(const QString& target)
 {
     const QFileInfo fi(target);
     const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
     const QRegularExpression part("^" + QRegularExpression::escape(fi.completeBaseName()) + "\\.[0-9a-f]{8}\\.part"
                                   + QRegularExpression::escape(suffix) + "$");
+    static const QRegularExpression intermediate("^\\..+\\.[0-9a-f]{8}\\.part(\\.[^.]+)?\\.schneidi-video\\.nut$");
     const QDateTime old = QDateTime::currentDateTime().addSecs(-3600);
     for (const QFileInfo& f : fi.dir().entryInfoList(QDir::Files | QDir::Hidden))
-        if (part.match(f.fileName()).hasMatch() && f.lastModified() < old) QFile::remove(f.absoluteFilePath());
+        if ((part.match(f.fileName()).hasMatch() || intermediate.match(f.fileName()).hasMatch()) && f.lastModified() < old)
+            QFile::remove(f.absoluteFilePath());
 }
 
 // Rename from onto to, replacing an existing file. QFile::rename refuses an existing target: the old file is moved
@@ -128,6 +135,15 @@ bool replaceFile(const QString& from, const QString& to)
     }
     QFile::remove(aside);
     return true;
+}
+
+// Channels the audio encoder writes for a mix of `want` channels: want when it has a layout of that many with the
+// mix's channel mapping (or takes any count), else stereo (MP3; ALAC has no 7.1 with side surrounds). 0 = the encoder
+// is missing.
+int encoderChannels(const QString& codecName, int want)
+{
+    if (!avcodec_find_encoder_by_name(codecName.toUtf8().constData())) return 0;
+    return ExportWriter::writesChannels(codecName, want) ? want : 2;
 }
 
 // The sample format the audio encoder gets: the wanted one if the codec takes it, otherwise the codec's first; empty =
@@ -203,6 +219,16 @@ bool Exporter::readsFile(const Timeline& tl, const QString& path)
         for (const Timeline& n : *tl.nested)
             if (timelineReads(n, path)) return true;
     return false;
+}
+
+QString Exporter::overwrittenSource(const Timeline& tl, const QString& path, const QString& subtitlePath)
+{
+    QStringList targets{path};
+    if (!subtitlePath.isEmpty())
+        for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, subtitlePath)) targets << srt.path;
+    for (const QString& target : std::as_const(targets))
+        if (!target.isEmpty() && readsFile(tl, target)) return target;
+    return {};
 }
 
 bool Exporter::anyRunning()
@@ -349,6 +375,7 @@ Exporter::~Exporter()
 bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error)
 {
     if (isRunning()) return false;
+    ColorGrade::revalidateLuts(); // a LUT file changed just before: the export uses it as it is now
     const int end = TimelineOps::endFrame(tl);
     m_from = std::clamp(s.from, 0, std::max(0, end - 1));
     const int to = s.to < 0 ? end - 1 : std::min(s.to, end - 1);
@@ -357,15 +384,11 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (error) *error = end <= 0 ? T("Die Timeline ist leer.") : T("Der In/Out-Bereich enthält nichts.");
         return false;
     }
-    QStringList targets{s.path};
-    if (!s.subtitlePath.isEmpty())
-        for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, s.subtitlePath)) targets << srt.path;
-    for (const QString& target : std::as_const(targets))
-        if (!target.isEmpty() && readsFile(tl, target)) {
-            if (error) *error = T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
-                                    .arg(QFileInfo(target).fileName());
-            return false;
-        }
+    if (const QString target = overwrittenSource(tl, s.path, s.subtitlePath); !target.isEmpty()) {
+        if (error) *error = T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
+                                .arg(QFileInfo(target).fileName());
+        return false;
+    }
     // Stabilization needs its analysis pass: run what is missing first, never export unstabilized silently
     if (!std::exchange(m_analysisDone, false) && runAnalyses(tl, s)) return true;
 
@@ -383,7 +406,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // An encoder this FFmpeg does not have (the GPL-free build has no x264/x265 and offers what it has instead):
     // say so instead of failing without a reason
     if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())
-        && HardwareEncoders::externalProgram(s.videoCodec).isEmpty()) {
+        && HardwareEncoders::externalProgram(s.videoCodec).isEmpty() && !ExportWriter::isOwnH264(s.videoCodec)) {
         if (error) *error = T("Video-Encoder %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
         return false;
     }
@@ -495,6 +518,41 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         break;
     }
     m_note = s.encoderNote;
+    // Channels of the file: asked for, else the mix's format (the project's: stereo, 5.1, 7.1). An encoder without
+    // that many gets the 5.1 downmix of a 7.1 mix if it has 5.1 (AC-3, ALAC), else the stereo one (MP3); the note
+    // says so.
+    int audioChannels = s.audioChannels > 0 ? s.audioChannels : ChannelLayout::valid(tl.audioChannels);
+    if (sound && audioChannels > 2) {
+        const int can = encoderChannels(s.audioCodec, audioChannels);
+        if (can != audioChannels && audioChannels == 8 && encoderChannels(s.audioCodec, 6) == 6) {
+            // AC-3 (and ALAC: its only 7.1 is "7.1(wide)"): 5.1 keeps the surrounds – the 7.1 mix with its side and
+            // back pairs folded into them (ChannelLayout::conversion)
+            const QString why = T("%1 schreibt kein %2, der Ton ist auf 5.1 heruntergemischt.")
+                                    .arg(s.audioCodec, ChannelLayout::name(audioChannels));
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+            audioChannels = 6;
+        } else if (can != audioChannels) {
+            const QString why = T("%1 schreibt kein %2, der Ton ist auf Stereo heruntergemischt.")
+                                    .arg(s.audioCodec, ChannelLayout::name(audioChannels));
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+            audioChannels = 2;
+        }
+    }
+    m_settings.audioChannels = audioChannels;
+    // Quality "like source": the bit rate of the media shown, at the output's size and frame rate
+    m_targetBitrateK = 0;
+    if (s.sourceQuality && !s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
+        const SourceBitrate::Result r = SourceBitrate::target(tl, m_from, m_from + m_length - 1, out.size(), rate,
+                                                              [](const QString& path) { return MediaProbe::videoRate(path); });
+        m_targetBitrateK = r.targetK;
+        if (r.targetK > 0) {
+            qInfo("Export: quality like source, %d kbit/s (%d files, %d frames)", r.targetK, r.files, r.frames);
+        } else {
+            qInfo("Export: quality like source, no source bit rate known: quality High");
+            const QString why = T("Bitrate der Quelle unbekannt, mit Qualität „Hoch“ gerendert.");
+            m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
+        }
+    }
     m_usedCodec.clear();
     m_copiedPercent = 0;
     // Effects this engine does not have (frei0r/LADSPA plugins, ids of newer versions) stay in the project but are
@@ -518,24 +576,31 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     const bool sameSize = out.size() == s.format.size();
     // (not with x264/x265 of the extension: its program encodes the whole video in one go)
     if (s.smartRender && !s.overlay && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
-        && !convertRate && sameSize && HardwareEncoders::externalProgram(s.videoCodec).isEmpty())
+        && !convertRate && sameSize && HardwareEncoders::externalProgram(s.videoCodec).isEmpty()
+        && !ExportWriter::isOwnH264(s.videoCodec)) // (the own encoder has no pieces to put between copies)
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
+    m_keyframes = ExportWriter::isOwnH264(s.videoCodec) ? cutFrames(tl, m_from, m_length, s.format.rate, rate) : QVector<int>();
 
     // Renderer and mixer are made in a thread (smart render looks at the files to copy), so the window stays
     // responsive. launch() continues in this thread. Sources open with their first frame.
     auto graph = std::make_shared<Graph>();
-    Picture::Gpu::Service::prepare(); // the GPU's surface on this thread (the renderer is made in the build thread)
+    // The GPU's surface on this thread (the renderer is made in the build thread), also while the app still defers it
+    Picture::Gpu::Service::prepare(true);
     const int from = m_from, length = m_length, frames = m_frames;
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
     std::optional<Timeline> mixed;
     if (sound) mixed = tl;
-    m_build = QThread::create([graph, scaled = std::move(scaled), mixed = std::move(mixed), out, s, threads, from,
-                               length, frames, rate, convertRate, smart, copy = m_copy] {
+    // A cancel (stopBuild) waits for this thread: it stops between its steps and between the files it opens. What it
+    // made then is never used (its finished() is stale).
+    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), mixed = std::move(mixed), out, s,
+                               threads, from, length, frames, rate, convertRate, smart, audioChannels, copy = m_copy] {
         Graph& g = *graph;
         {
             if (smart)
-                if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size()); cs > 0) g.colorspace = cs;
+                if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size(), cancel.get()); cs > 0)
+                    g.colorspace = cs;
+            if (*cancel) return;
             if (!s.videoCodec.isEmpty()) {
                 Picture::Options po;
                 po.format = out;
@@ -548,10 +613,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 po.overlay = s.overlay;
                 g.renderer = std::make_shared<Picture::Renderer>(scaled, po);
             }
+            if (*cancel) return;
             if (mixed) {
                 Audio::Mixer::Options o;
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
                 o.rate = s.audioRate > 0 ? s.audioRate : 48000;
+                o.outputChannels = std::max(2, audioChannels); // mono: the writer takes the mean of the stereo mix
+                o.limitOutput = true; // a downmix stays under the limiter's ceiling
                 g.mixer = std::make_shared<Audio::Mixer>(*mixed, s.format.rate, o);
             }
             g.length = convertRate ? std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps()))) : length;
@@ -607,6 +675,46 @@ bool Exporter::launch(QString* error)
     return true;
 }
 
+QVector<int> Exporter::cutFrames(const Timeline& tl, int from, int length, FrameRate timelineRate, FrameRate outputRate)
+{
+    // The lowest visible video track with pictures inside the range is the edit's main picture: its hard cuts (no
+    // transition at the clip's start) to another source are where the picture changes as a whole. Titles and overlays
+    // above change only a part. Not forced:
+    // - a cut within the same file right after the clip before it (a split, a talking head's jump cut, the same
+    //   recording a bit later): the picture hardly changes there, a key frame would only cost bits; a real change
+    //   is still found by the encoder's scene detection
+    // - a cut closer than kOwnMinKeyDistance output frames to the last forced key frame (or the first picture): a
+    //   montage of 2-3 frame clips must not become a row of key frames
+    QVector<int> cuts;
+    const int end = from + length;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        QVector<const Clip*> clips;
+        for (const Clip& c : t.clips)
+            if (c.enabled && c.kind != ClipKind::Title && c.start < end && c.end() > from) clips << &c;
+        if (clips.isEmpty()) continue;
+        std::sort(clips.begin(), clips.end(), [](const Clip* a, const Clip* b) { return a->start < b->start; });
+        int lastKey = 0;
+        for (qsizetype i = 0; i < clips.size(); ++i) {
+            const Clip& c = *clips[i];
+            if (c.transIn > 0 || c.start <= from) continue;
+            const Clip* before = i > 0 ? clips[i - 1] : nullptr;
+            if (before && before->end() == c.start && !c.mediaPath.isEmpty() && before->mediaPath == c.mediaPath
+                && before->kind == c.kind)
+                continue;
+            // First output frame showing the clip: output frame k shows timeline frame from + floor(k * tl / out)
+            const int64_t a = int64_t(c.start - from) * outputRate.num * timelineRate.den;
+            const int64_t b = int64_t(outputRate.den) * timelineRate.num;
+            const int k = int(b > 0 ? (a + b - 1) / b : 0);
+            if (k - lastKey < kOwnMinKeyDistance) continue;
+            cuts << k;
+            lastKey = k;
+        }
+        break;
+    }
+    return cuts;
+}
+
 QString Exporter::fallbackCodec(const QString& failed) const
 {
     // A hardware encoder: the software one chosen with it; x264/x265 of the extension (a separate program): the free one
@@ -639,6 +747,8 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::lowMemoryOptions(const QString&
     // lookahead 10 too (20-25 at its presets)
     if (codec == "libx264") return {{QByteArrayLiteral("rc-lookahead"), QByteArrayLiteral("10")}};
     if (codec == "libx265") return {{QByteArrayLiteral("x265-params"), QByteArrayLiteral("rc-lookahead=10")}};
+    // The own H.264 encoder keeps whole pictures in its lookahead (40 by default): 10 as well
+    if (ExportWriter::isOwnH264(codec)) return {{QByteArrayLiteral("lookahead"), QByteArrayLiteral("10")}};
     return {};
 }
 
@@ -647,7 +757,24 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     const ExportSettings& s = m_settings;
     QVector<QPair<QByteArray, QByteArray>> o;
     if (s.videoCodec.isEmpty()) return o;
-    if (HardwareEncoders::isHardwareCodec(codec)) {
+    const int target = m_targetBitrateK; // quality "like source": a bit rate instead of a constant quality
+    if (ExportWriter::isOwnH264(codec)) {
+        // Own encoder: a fixed QP from the quality level; "Web" adds the cap as "bitrate" (the writer keeps the QP when
+        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter).
+        // "Like source": the source's rate as that cap - two passes towards it, or "High" when that stays below it
+        o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
+        if (target > 0) o.append({"bitrate", QByteArray::number(target)});
+        else if (s.maxBitrateK > 0) o.append({"bitrate", QByteArray::number(s.maxBitrateK)});
+        if (m_shortLookahead) o += lowMemoryOptions(codec); // (8K, low memory)
+    } else if (target > 0) {
+        // Average bit rate with some room for hard scenes (VBV: 1.5x peak, 2x buffer); one pass
+        const QVector<QPair<QString, QString>> rate = HardwareEncoders::isHardwareCodec(codec)
+                                                          ? HardwareEncoders::bitrateOptions(codec, target)
+                                                          : HardwareEncoders::softwareBitrateOptions(codec, target);
+        for (const auto& [key, value] : rate) o.append({key.toUtf8(), value.toUtf8()});
+        if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
+        if (m_shortLookahead) o += lowMemoryOptions(codec);
+    } else if (HardwareEncoders::isHardwareCodec(codec)) {
         for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
     } else {
         const auto own = HardwareEncoders::softwareOptions(codec, s.crf, outputSize(), outputFps());
@@ -661,12 +788,14 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
         // (shortLookahead, also with threads asked for: 8K, 40 frames = 4 GB): shorter lookahead
         if (m_shortLookahead) o += lowMemoryOptions(codec);
     }
-    if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
+    if (s.maxBitrateK > 0 && target <= 0 && !ExportWriter::isOwnH264(codec)) { // quality target as before, but capped (VBV)
         o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
         o.append({"bufsize", QByteArray::number(s.maxBitrateK * 2) + "k"});
     }
     for (const QString& option : s.codecOptions) { // "key=value" from the format (profile, speed …)
         const qsizetype eq = option.indexOf('=');
+        // (VP9's "vb=0" is its constant quality mode: not with a bit rate target)
+        if (eq > 0 && target > 0 && (option.left(eq) == "vb" || option.left(eq) == "b")) continue;
         if (eq > 0) o.append({option.left(eq).toUtf8(), option.mid(eq + 1).toUtf8()});
     }
     return o;
@@ -681,6 +810,7 @@ int Exporter::audioBitrateK() const
 {
     const QString& c = m_settings.audioCodec;
     if (c.isEmpty() || c.startsWith("pcm_") || c == "alac" || c == "flac") return 0;
+    if (c == "ac3") return RenderSettings::ac3BitrateK(m_settings.audioChannels);
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
 
@@ -706,6 +836,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.length = m_length;
     w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
+    w.keyframes = m_keyframes;
     w.subtitles = m_textTracks;
     if (!s.videoCodec.isEmpty()) w.externalProgram = HardwareEncoders::externalProgram(codec);
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;
@@ -752,7 +883,7 @@ void Exporter::pollWriter()
     case ExportWriter::State::Running: {
         // GIF: the conversion afterwards gets the last tenth
         const int scale = m_settings.output == ExportSettings::Output::Gif ? 90 : 100;
-        emit progress(std::clamp(m_writer->framesWritten() * scale / std::max(1, m_length), 0, scale - 1));
+        emit progress(std::clamp(int(m_writer->progress() * scale), 0, scale - 1));
         return;
     }
     case ExportWriter::State::Failed: {

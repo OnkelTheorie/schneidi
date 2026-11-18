@@ -14,7 +14,14 @@
 #include "engine/video/Convert.h"
 
 #include <QElapsedTimer>
+#include <QFile>
 #include <QGuiApplication>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+#ifdef SCHNEIDI_HAVE_RHI
+#include <rhi/qshader.h>
+#endif
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -256,6 +263,9 @@ int main(int argc, char** argv)
             {"p010 709 1:1", AV_PIX_FMT_P010LE, 709, false},
             // No BT.2020 case: the CPU conversion has no 2020 matrix for swscale (takes the context's last one)
             {"yuv420p 601 1:1", AV_PIX_FMT_YUV420P, 601, false},
+            // Cr before Cb in the shared plane: the shader reads .rg as Cb, Cr (colours swapped before 0.21)
+            {"nv21 709 limited 1:1", AV_PIX_FMT_NV21, 709, false},
+            {"nv42 709 limited 1:1", AV_PIX_FMT_NV42, 709, false},
         };
         const int w = 256, h = 144;
         for (const Case& c : cases) {
@@ -307,6 +317,135 @@ int main(int argc, char** argv)
             CHECK(d.mean <= 1.5);
             CHECK(d.psnr >= 32);
         }
+    }
+
+    // 4b. Strong downscaling of a fine pattern (zone plate: every frequency up to 1/2 cycle per pixel): the card must
+    // average like Compose::draw's halvings, not pick texels (that is stair-stepping / moire). RGBA (stills, layers made
+    // on the CPU) and Y'CbCr, evenly and along one axis only (squeezed).
+    {
+        const int w = 1024, h = 768;
+        std::vector<uint8_t> plate(size_t(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const double dx = x - w / 2.0, dy = y - h / 2.0;
+                const uint8_t v = uint8_t(std::lround(127.5 + 127.5 * std::cos(M_PI * (dx * dx + dy * dy) / w)));
+                uint8_t* p = &plate[(size_t(y) * w + x) * 4];
+                p[0] = p[1] = p[2] = v;
+                p[3] = 255;
+            }
+        // The same as Y'CbCr (full range, neutral chroma): toRgba gives back the plate
+        auto yuv = std::make_shared<Video::Picture>();
+        yuv->frame = av_frame_alloc();
+        yuv->frame->format = AV_PIX_FMT_YUVJ444P;
+        yuv->frame->width = w;
+        yuv->frame->height = h;
+        av_frame_get_buffer(yuv->frame, 64);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                yuv->frame->data[0][size_t(y) * yuv->frame->linesize[0] + x] = plate[(size_t(y) * w + x) * 4];
+                yuv->frame->data[1][size_t(y) * yuv->frame->linesize[1] + x] = 128;
+                yuv->frame->data[2][size_t(y) * yuv->frame->linesize[2] + x] = 128;
+            }
+        const Video::Info yinfo = infoFor(*yuv, 709, true);
+        struct Case {
+            const char* name;
+            double kx, ky;
+            bool planes;
+            bool mips = false; // RGBA: uploaded with mip levels (stills)
+        };
+        const Case cases[] = {
+            {"zone plate RGBA at 1/4", 0.25, 0.25, false},
+            {"zone plate RGBA at 0.18", 0.18, 0.18, false},
+            {"zone plate RGBA at 1/4 x, 1 y", 0.25, 1.0, false},
+            {"zone plate RGBA mips at 1/4", 0.25, 0.25, false, true},
+            {"zone plate RGBA mips at 1/4 x, 1 y", 0.25, 1.0, false, true},
+            {"zone plate yuv at 1/4", 0.25, 0.25, true},
+            {"zone plate yuv at 1/4 x, 0.9 y", 0.25, 0.9, true},
+        };
+        for (const Case& c : cases) {
+            const int W = int(std::ceil(w * c.kx)) + 8, H = int(std::ceil(h * c.ky)) + 8;
+            const Compose::Affine m = Compose::placement(4, 4, w * c.kx, h * c.ky, 0, w, h, true, true);
+            std::vector<uint8_t> cpu(size_t(W) * H * 4, 0), out(cpu.size());
+            Compose::draw(cpu.data(), W, H, plate.data(), w, h, m, 1.0);
+            gpu->begin();
+            Gpu::TexturePtr t = c.planes ? gpu->uploadYuv(yuv->frame, yinfo, true) : gpu->uploadRgba(plate.data(), w, h, true, c.mips);
+            if (!CHECK(t != nullptr)) {
+                gpu->finish();
+                continue;
+            }
+            Gpu::TexturePtr canvas = gpu->target(QSize(W, H));
+            gpu->draw(*canvas, {t.get(), m, 1.0, nullptr, {}});
+            gpu->readRgba(*canvas, out.data());
+            gpu->finish();
+            const Diff d = compare(cpu.data(), out.data(), cpu.size(), 4, 3);
+            show(c.name, d);
+            // Against the plate itself averaged over each target pixel (8x8 points of the formula, inside only): how
+            // much of the moire is left, the card next to the CPU
+            std::vector<uint8_t> ideal, cpuIn, gpuIn;
+            for (int Y = 6; Y < H - 6 && 4 + (Y + 2) / c.ky < 4 + h; ++Y)
+                for (int X = 6; X < W - 6; ++X) {
+                    const double x0 = (X - 4) / c.kx, y0 = (Y - 4) / c.ky;
+                    if (x0 + 1 / c.kx > w - 2 || y0 + 1 / c.ky > h - 2) continue;
+                    double sum = 0;
+                    for (int j = 0; j < 8; ++j)
+                        for (int i = 0; i < 8; ++i) {
+                            const double dx = x0 + (i + 0.5) / 8 / c.kx - 0.5 - w / 2.0, dy = y0 + (j + 0.5) / 8 / c.ky - 0.5 - h / 2.0;
+                            sum += 127.5 + 127.5 * std::cos(M_PI * (dx * dx + dy * dy) / w);
+                        }
+                    ideal.push_back(uint8_t(std::lround(sum / 64)));
+                    cpuIn.push_back(cpu[(size_t(Y) * W + X) * 4]);
+                    gpuIn.push_back(out[(size_t(Y) * W + X) * 4]);
+                }
+            const Diff ci = compare(ideal.data(), cpuIn.data(), ideal.size(), 1), gi = compare(ideal.data(), gpuIn.data(), ideal.size(), 1);
+            std::printf("  %-34s area average: CPU %s, GPU %s\n", "", qPrintable(text(ci)), qPrintable(text(gi)));
+            // Picked texels differ from the average by up to the full contrast in the fine rings (~15 dB both ways
+            // before). Whole halvings: the same picture as the CPU. 0.18 (5.6:1): the CPU halves twice and then
+            // bilinear at 1.4:1 still skips texels; the card averages the whole footprint - closer to the area
+            // average than the CPU, so only that comparison counts there
+            if (c.kx != 0.18) {
+                CHECK(d.psnr >= 40);
+                CHECK(d.mean <= 1.0);
+            }
+            CHECK(gi.psnr >= 32);
+            // A software rasterizer's generateMips (llvmpipe: box filter) is ~1.3 dB short of the CPU here; cards match
+            CHECK(gi.psnr >= ci.psnr - (gpu->info().software ? 1.5 : 1.0));
+        }
+    }
+
+    // 4c. A cropped layer shrunk 4:1 without mips: what the crop cut away never shows at the edge (the taps are cropped
+    // each, as Compose::crop clears the source before the CPU draws). Left half red, right half green, the green half
+    // cropped away: no green anywhere, the picture as the CPU draws it
+    {
+        const int w = 512, h = 256;
+        std::vector<uint8_t> src(size_t(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                uint8_t* p = &src[(size_t(y) * w + x) * 4];
+                p[0] = x < w / 2 - 2 ? 255 : 0; // the edge inside a target pixel (4 source pixels from 252)
+                p[1] = x < w / 2 - 2 ? 0 : 255;
+                p[2] = 0;
+                p[3] = 255;
+            }
+        const QRectF crop(0, 0, w / 2 - 2, h);
+        const int W = w / 4 + 8, H = h / 4 + 8;
+        const Compose::Affine m = Compose::placement(4, 4, w / 4.0, h / 4.0, 0, w, h, true, true);
+        std::vector<uint8_t> cropped = src, cpu(size_t(W) * H * 4, 0), out(cpu.size());
+        const uint8_t none[4] = {0, 0, 0, 0};
+        Compose::crop(cropped.data(), w, h, crop.left(), crop.top(), crop.right(), crop.bottom(), none);
+        Compose::draw(cpu.data(), W, H, cropped.data(), w, h, m, 1.0);
+        gpu->begin();
+        Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, true);
+        Gpu::TexturePtr canvas = gpu->target(QSize(W, H));
+        gpu->draw(*canvas, {t.get(), m, 1.0, nullptr, crop});
+        gpu->readRgba(*canvas, out.data());
+        gpu->finish();
+        int green = 0;
+        for (size_t i = 0; i < out.size(); i += 4) green = std::max(green, int(out[i + 1]));
+        const Diff d = compare(cpu.data(), out.data(), cpu.size());
+        show("cropped RGBA at 1/4", d);
+        std::printf("  %-34s most green %d\n", "", green);
+        CHECK(green <= 2);
+        CHECK(d.psnr >= 40);
     }
 
     // 5. Colour grade: baked correction on the CPU vs the 3D LUT on the card
@@ -480,6 +619,108 @@ int main(int argc, char** argv)
     }
 
     std::printf("passes last frame %d, pooled textures %d\n", gpu->stats().passes, gpu->stats().texturesPooled);
+
+    // A 3D LUT dropped while its frame is still recorded (a cache evicting it: Renderer keeps 16, the compositing
+    // passes 8; up to three jobs share one frame): the draw recorded with it must still read it. Before 0.21 the
+    // texture went at once and the next allocation took its place - the first layer was graded with the second grade
+    {
+        const int w = 128, h = 80;
+        const std::vector<uint8_t> src = testRgba(w, h, false, 21);
+        ColorGrade::Params pa, pb;
+        pa.saturation = 0, pa.gain[0] = 1.3;          // gray and brighter
+        pb.offset[2] = 60, pb.temperature = -2500;    // strongly blue
+        auto ba = ColorGrade::bake(pa, nullptr), bb = ColorGrade::bake(pb, nullptr);
+        std::vector<uint8_t> cpuA = src, cpuB = src, outA(src.size()), outB(src.size());
+        ColorGrade::apply(cpuA.data(), w, h, *ba, 1);
+        ColorGrade::apply(cpuB.data(), w, h, *bb, 1);
+        for (int round = 0; round < 3; ++round) { // the second and third round take pooled LUTs
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, false);
+            Gpu::TexturePtr ca = gpu->target(QSize(w, h)), cb = gpu->target(QSize(w, h));
+            Gpu::LutPtr la = gpu->gradeLut(*ba);
+            gpu->draw(*ca, {t.get(), {}, 1.0, la.get(), {}});
+            la.reset(); // evicted mid-frame
+            std::vector<Gpu::LutPtr> more;
+            for (int i = 0; i < 4; ++i) more.push_back(gpu->gradeLut(*bb)); // new LUTs while the first is in flight
+            gpu->draw(*cb, {t.get(), {}, 1.0, more.back().get(), {}});
+            gpu->readRgba(*ca, outA.data());
+            gpu->readRgba(*cb, outB.data());
+            CHECK(gpu->finish());
+            const Diff da = compare(cpuA.data(), outA.data(), cpuA.size()), db = compare(cpuB.data(), outB.data(), cpuB.size());
+            show(round ? "LUT dropped mid-frame (pooled)" : "LUT dropped mid-frame", da);
+            CHECK(da.mean <= 1.0 && da.max <= 6);
+            CHECK(db.mean <= 1.0 && db.max <= 6);
+        }
+        // Keyframed grades bake one LUT per frame: the textures are reused, not made anew each frame
+        const int before = gpu->stats().lutsMade;
+        for (int f = 0; f < 10; ++f) {
+            gpu->begin();
+            ColorGrade::Params p;
+            p.saturation = 50 + f;
+            Gpu::LutPtr l = gpu->gradeLut(*ColorGrade::bake(p, nullptr));
+            Gpu::TexturePtr t = gpu->uploadRgba(src.data(), w, h, false);
+            Gpu::TexturePtr c = gpu->target(QSize(w, h));
+            gpu->draw(*c, {t.get(), {}, 1.0, l.get(), {}});
+            gpu->finish();
+        }
+        std::printf("  3D LUT textures made for 10 keyframed frames: %d\n", gpu->stats().lutsMade - before);
+        CHECK(gpu->stats().lutsMade - before <= 2);
+    }
+
+#ifdef SCHNEIDI_HAVE_RHI
+    // Run-time shaders (customPass): more than the 16 kept pipelines in one frame - the one dropped must not be freed
+    // while a pass recorded with it waits for the frame's end; and the kept ones are the recently used (LRU)
+    {
+        const QString qsb = QStandardPaths::findExecutable("qsb", {"/usr/lib/qt6/bin", "/usr/lib/x86_64-linux-gnu/qt6/bin"});
+        QTemporaryDir tmp;
+        auto bake = [&](const char* name, const char* body) {
+            const QString in = tmp.filePath(QString("%1.frag").arg(name)), out = tmp.filePath(QString("%1.qsb").arg(name));
+            QFile f(in);
+            if (!f.open(QIODevice::WriteOnly)) return QShader();
+            f.write("#version 440\nlayout(location = 0) in vec2 dpos;\nlayout(location = 0) out vec4 fragColor;\n"
+                    "layout(std140, binding = 0) uniform Uniforms { vec4 rect; vec4 target; vec4 inv0; vec4 inv1; vec4 src;"
+                    " vec4 chroma; mat4 yuv; vec4 lut; vec4 crop; };\nlayout(binding = 1) uniform sampler2D tex0;\n"
+                    "void main() { ");
+            f.write(body);
+            f.write(" }\n");
+            f.close();
+            QProcess p;
+            p.start(qsb, {"--glsl", "300 es,150,330", "--hlsl", "50", "--msl", "12", "-o", out, in});
+            if (!p.waitForFinished(60000) || p.exitCode() != 0) return QShader();
+            QFile o(out);
+            return o.open(QIODevice::ReadOnly) ? QShader::fromSerialized(o.readAll()) : QShader();
+        };
+        const QShader red = qsb.isEmpty() ? QShader() : bake("red", "fragColor = vec4(1.0, 0.0, 0.0, 1.0);");
+        const QShader blue = qsb.isEmpty() ? QShader() : bake("blue", "fragColor = vec4(0.0, 0.0, 1.0, 1.0);");
+        if (!red.isValid() || !blue.isValid()) {
+            std::printf("  custom shaders: no qsb, skipped\n");
+        } else {
+            const float p[40] = {};
+            const QSize sz(16, 16);
+            std::vector<uint8_t> first(16 * 16 * 4);
+            gpu->begin();
+            Gpu::TexturePtr a = gpu->customPass("red", red, sz, p, nullptr);
+            CHECK(a != nullptr);
+            if (a) gpu->readRgba(*a, first.data());
+            std::vector<Gpu::TexturePtr> keep;
+            for (int i = 0; i < 16; ++i) keep.push_back(gpu->customPass(QByteArray("blue") + QByteArray::number(i), blue, sz, p, nullptr));
+            CHECK(gpu->finish());
+            std::printf("  custom pass before 16 others in one frame: %d %d %d\n", first[0], first[1], first[2]);
+            CHECK(first[0] == 255 && first[2] == 0);
+            // LRU: one shader used every frame next to a new one each frame stays made
+            const int before = gpu->stats().pipelinesMade;
+            for (int f = 0; f < 24; ++f) {
+                gpu->begin();
+                Gpu::TexturePtr h = gpu->customPass("hot", red, sz, p, nullptr);
+                Gpu::TexturePtr o = gpu->customPass(QByteArray("other") + QByteArray::number(f), blue, sz, p, nullptr);
+                gpu->finish();
+            }
+            const int made = gpu->stats().pipelinesMade - before;
+            std::printf("  custom pipelines made for 24 frames of hot + new: %d\n", made);
+            CHECK(made == 25);
+        }
+    }
+#endif
 
     // Pool: textures of sizes nobody asks for any more are released after a while (each title size stayed for good)
     {

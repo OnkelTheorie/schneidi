@@ -38,7 +38,12 @@ QJsonObject cmdExportTimeline(const QJsonObject& a, Context&)
     if (QFileInfo::exists(out) && !a["overwrite"].toBool()) fail("EXISTS", "file exists (overwrite: true replaces it): " + out);
     Interchange::Sequence seq = Interchange::fromTimeline(s.project, s.project.currentSequence());
     Interchange::applyStartTimecodes(seq, &Engine::startTimecode);
-    const QByteArray data = Interchange::write(seq, f);
+    QByteArray data;
+    try {
+        data = Interchange::write(seq, f);
+    } catch (const Interchange::Error& e) { // EDL of a 100/120 fps timeline
+        fail("BAD_ARGUMENT", e.message);
+    }
     QDir().mkpath(QFileInfo(out).absolutePath());
     QFile file(out);
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size()) fail("WRITE_FAILED", "cannot write " + out);
@@ -57,7 +62,7 @@ QJsonObject importTimeline(Session& s, const QJsonObject& a)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) fail("NOT_FOUND", "cannot read " + path);
     const Interchange::Format f = formatArg(a, path);
-    const FrameRate edlRate = a.contains("fps") ? nearestFrameRate(a["fps"].toDouble()) : s.format().rate;
+    const FrameRate edlRate = a.contains("fps") ? projectFrameRate(a["fps"].toDouble()) : s.format().rate;
     Interchange::Sequence seq;
     try {
         seq = Interchange::read(file.readAll(), f, edlRate);
@@ -68,7 +73,9 @@ QJsonObject importTimeline(Session& s, const QJsonObject& a)
     // Format: an empty project takes the file's (like opening it in DaVinci), else the timeline is converted
     const ProjectFormat before = s.project.format();
     if (!s.project.frameRateLocked() && (seq.format.rate != before.rate || (seq.hasSize && seq.format.size() != before.size()))) {
-        QJsonObject op{{"op", "format"}, {"fps", seq.format.rate.fps()}};
+        // The exact rate (120000/1001, 12, 47.952 …) like the app; fps would only take the offered ones
+        QJsonObject op{{"op", "format"},
+                       {"_rate", QJsonObject{{"num", seq.format.rate.num}, {"den", seq.format.rate.den}}}};
         if (seq.hasSize) op["width"] = seq.format.width, op["height"] = seq.format.height;
         applyOp(s, op);
     }

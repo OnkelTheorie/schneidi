@@ -298,6 +298,11 @@ void testFileKeys()
             }
     for (const char* kind : {"media", "grade", "text", "blur", "crop", "mask", "shadow", "glitch", "matte_tune"})
         CHECK(find(QString::fromLatin1(kind)) != nullptr);
+    // The core's mask kinds are exactly the engine's kinds with a mask output
+    for (const NodeType& k : all())
+        if (!CHECK_EQ(::Comp::outputsMask(k.id), k.output == Buf::Mask)) qWarning() << "outputsMask" << k.id;
+    CHECK(::Comp::maskBehindPicture("mask", "clip") && ::Comp::maskBehindPicture("matte", QString()));
+    CHECK(!::Comp::maskBehindPicture("mask", "mask") && !::Comp::maskBehindPicture("blur", "clip"));
 }
 
 // Project file: LUT and textures relative to the project file (folder moved), the LUT by name in the own LUTs folder

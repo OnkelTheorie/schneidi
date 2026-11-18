@@ -62,7 +62,24 @@ public:
         QVector<Subtitles::TextTrack> subtitles;
         // x264/x265 of the extension: its ffmpeg program encodes the video (engine/ExternalEncoder; no smart render)
         QString externalProgram;
+        // Own H.264 encoder (videoCodec kOwnH264): output frames that start with a key frame (hard cuts of the
+        // timeline; sorted). The encoder also finds scene changes itself.
+        QVector<int> keyframes;
     };
+    // schneidi's own H.264 encoder (engine/encoder/h264, experimental): not an FFmpeg encoder, written by the writer
+    // itself (Annex B packets into the muxer, parameter sets as the stream's extradata). 8-bit 4:2:0 only, with
+    // B-frames (adaptive runs, the encoder's default count). Options: "qp" (fixed quantizer), "bitrate" (kbit/s cap: a
+    // first pass analyses every picture and predicts the size at "qp"; below the cap the QP stays, else the second pass
+    // aims at the cap), "lookahead" (pictures, low memory), "bframes" (most B pictures in a run, 0 = none)
+    static constexpr const char* kOwnH264 = "h264_own";
+    static bool isOwnH264(const QString& codec) { return codec == QLatin1String(kOwnH264); }
+    // The own encoder's fixed QP for an x264-like CRF (the export's quality levels)
+    static int ownH264Qp(int crf);
+    // Why the own encoder cannot write pictures of this size at this frame rate (empty = it can): smaller than
+    // kOwnMinSide on a side, or above the highest H.264 level (6.2: more than 8K, 8K over 120 fps). The writer refuses
+    // those itself; a bit rate cap above 6.2's is refused once the first pass has decided on two passes.
+    static constexpr int kOwnMinSide = 32;
+    static QString ownSizeProblem(QSize size, double fps);
     // Picture engine and audio mixer
     struct Own {
         std::shared_ptr<Picture::Renderer> renderer; // nullptr = audio only
@@ -88,6 +105,11 @@ public:
     // soundOnly: and the container is one for sound (no video by default: .aac yes, .mp4 no)
     static bool containerSurelyTakes(const QString& path, const QString& videoCodec, const QString& audioCodec,
                                      bool soundOnly = false);
+    // Does the audio encoder write `channels` (1, 2, 6, 8) with the mix's channel mapping (core/ChannelLayout.h:
+    // FFmpeg's "5.1" with the back pair - or "5.1(side)", AC-3's name of the same surround pair - and "7.1")? An
+    // encoder that only has another layout of that many channels (ALAC's 7.1 is "7.1(wide)": front-centre pair in
+    // place of the side pair) does not count. Encoders without a layout list (PCM, FLAC) take any count.
+    static bool writesChannels(const QString& audioCodec, int channels);
 
     // Smart render (s.copy): the mixer delivers the sound of every output frame
     ExportWriter(const Settings& s, Own own);
@@ -102,9 +124,14 @@ public:
     bool encoderFailed() const;
     QString error() const;
     int framesWritten() const;
+    // Share of the work done, 0..1: framesWritten() / length, with the own encoder's two passes the first pass
+    // (rendering and analysing only) counts as a small part
+    double progress() const;
     int framesCopied() const; // smart render: of framesWritten()
     // Smart render failed as a whole (e.g. the muxer refused the stream): render again without
     bool smartFailed() const;
+    // Tests only: no memory for the sound encoder's frames (true until switched off again)
+    static void failSoundBufferForTests(bool on);
 
 private:
     struct Impl;

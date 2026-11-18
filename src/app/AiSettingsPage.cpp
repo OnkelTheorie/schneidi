@@ -38,6 +38,16 @@ QLabel* hint(const QString& text)
     return l;
 }
 
+// A choice box that gives way in a narrow page (a long language, a large font): not as wide as its longest entry,
+// the open list shows the entries whole
+QComboBox* narrowable(QComboBox* box)
+{
+    box->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    box->setMinimumContentsLength(8);
+    box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    return box;
+}
+
 } // namespace
 
 AiSettingsPage::AiSettingsPage(const AiSettings& s, QWidget* parent) : QWidget(parent), m_initial(s), m_color(s.color)
@@ -104,7 +114,7 @@ AiSettingsPage::AiSettingsPage(const AiSettings& s, QWidget* parent) : QWidget(p
 
     // The indicator next to the project name
     f = formOf(addSection(T("Anzeige oben")));
-    m_indicator = new QComboBox;
+    m_indicator = narrowable(new QComboBox);
     m_indicator->addItem(T("Solange eine KI verbunden ist"), int(AiSettings::Indicator::WhileActive));
     m_indicator->addItem(T("Immer"), int(AiSettings::Indicator::Always));
     m_indicator->addItem(T("Nie"), int(AiSettings::Indicator::Never));
@@ -132,6 +142,8 @@ QGroupBox* AiSettingsPage::addSection(const QString& title, int index)
     auto* box = new QGroupBox(title);
     auto* form = new QFormLayout(box);
     form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    // A long label (Russian, a large font) puts its field below it instead of pushing the page wider than the dialog
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
     const int stretch = m_sections->count() - 1; // the stretch stays last
     m_sections->insertWidget(index < 0 || index > stretch ? stretch : index, box);
     return box;
@@ -285,7 +297,7 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
     QFormLayout* f = formOf(box);
     f->addRow(hint(T("Im Bereich „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede "
                      "andere KI. Jede Änderung lässt sich rückgängig machen.")));
-    m_chatProvider = new QComboBox;
+    m_chatProvider = narrowable(new QComboBox);
     m_chatProvider->setObjectName("ai_chat_provider");
     for (const Ai::Preset& p : Ai::presets()) m_chatProvider->addItem(T(p.name), p.id);
     const Ai::Choice choice = Ai::choose(m_initial.chatProvider, m_initial.chatAddress, m_initial.chatModels, m_company);
@@ -297,10 +309,9 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
     m_chatAddress->setClearButtonEnabled(true);
     f->addRow(T("Adresse"), m_chatAddress);
     auto* modelRow = new QHBoxLayout;
-    m_chatModel = new QComboBox;
+    m_chatModel = narrowable(new QComboBox);
     m_chatModel->setObjectName("ai_chat_model");
     m_chatModel->setEditable(true);
-    m_chatModel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto* load = new QPushButton(T("Modelle laden"));
     load->setObjectName("ai_chat_models");
     load->setToolTip(T("Die Modelle, die der Anbieter anbietet, in die Liste holen"));
@@ -320,7 +331,7 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
     m_keyState = hint({});
     m_keyState->setObjectName("ai_chat_key_state");
     f->addRow(m_keyState);
-    m_approval = new QComboBox;
+    m_approval = narrowable(new QComboBox);
     m_approval->setObjectName("ai_chat_approval");
     m_approval->addItem(T("Automatisch: jede Änderung gilt sofort"), int(AiSettings::Approval::Auto));
     m_approval->addItem(T("Annehmen: erst ansehen, dann übernehmen oder verwerfen"), int(AiSettings::Approval::Review));
@@ -332,7 +343,7 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
                      "oder verwirfst sie.")));
     f->addRow(hint(T("Plan: die KI ändert erst nichts, sondern zeigt ihre Schritte mit Begründung. Du hakst an, was "
                      "geschehen soll, und führst es als einen Schritt aus – oder verwirfst den Plan.")));
-    m_compact = new QComboBox;
+    m_compact = narrowable(new QComboBox);
     m_compact->setObjectName("ai_chat_compact");
     m_compact->addItem(T("Automatisch"), int(Ai::Compact::Auto));
     m_compact->addItem(T("Immer"), int(Ai::Compact::On));

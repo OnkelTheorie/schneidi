@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
+
+#include "ui/studio/StudioPage.h"
+#include "ui/studio/StudioTracks.h"
 #include "app/AiChatPanel.h"
 #include "app/ExtensionsDialog.h"
 
@@ -60,7 +63,12 @@
 #include <QActionGroup>
 #include <climits>
 #include <tuple>
+#include <QAbstractSpinBox>
 #include <QApplication>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QMouseEvent>
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -123,6 +131,9 @@ void MainWindow::buildActions()
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
     makeAction(file, "project_open_video", T("Video als Projekt öffnen…"), QKeySequence(), [this] { openMediaAsProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
+    m_recentMenu->setObjectName("recent_menu");
+    // Files moved or deleted since the window was built: greyed out when the menu opens, not only at the start
+    connect(m_recentMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildRecentMenu);
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
@@ -263,12 +274,40 @@ void MainWindow::buildActions()
     });
     timeline->addSeparator();
     QMenu* toolsMenu = timeline->addMenu(T("Werkzeuge"));
-    makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
+    // On the Studio page A and P pick its tools (Auswahl / Stift) - the same actions, so a changed key binding follows
+    makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [this, tv] {
+        if (m_page == Page::Studio && m_studioPage) m_studioPage->tracks()->setTool(StudioTracks::Tool::Select);
+        else tv->setTool(TimelineView::Tool::Select);
+    });
     makeAction(toolsMenu, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
     // No default keys: Y and U (Premiere's) select from the playhead and switch the edit point side here
     makeAction(toolsMenu, "tool_slip", T("Inhalt-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
     makeAction(toolsMenu, "tool_slide", T("Gleiten-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slide); });
     makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
+    // Paint in the viewer (0.22): strokes become a drawing clip on a track above the picture
+    m_drawAction = makeAction(toolsMenu, "tool_draw", T("Malen"), QKeySequence("P"), [this] {
+        if (m_page == Page::Studio && m_studioPage) {
+            // The Studio page has no picture to paint on: its pen (volume) instead; painting stays as it was (the
+            // trigger flipped the check)
+            const QSignalBlocker b(m_drawAction);
+            m_drawAction->setChecked(!m_drawAction->isChecked());
+            m_studioPage->tracks()->setTool(StudioTracks::Tool::Pen);
+            return;
+        }
+        setDrawTool(m_drawAction->isChecked());
+    });
+    m_drawAction->setCheckable(true);
+    // The Effects Library's "Malen" entry names the key (it follows a changed key binding)
+    const auto drawKey = [this] { m_effects->setDrawShortcut(m_drawAction->shortcut()); };
+    drawKey();
+    connect(m_drawAction, &QAction::changed, this, drawKey);
+    // Esc while typing in a field (the Inspector's numbers, a title's text) is the field's: it cancels/leaves the edit
+    // and painting goes on; only Esc elsewhere ends painting. The window shortcut takes the key before the field sees it
+    m_drawEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] {
+        if (escapeToFocusedField()) return;
+        setDrawTool(false);
+    });
+    m_drawEscape->setEnabled(false); // only while painting (updateEscapeKeys)
     makeAction(toolsMenu, "snapping", T("Einrasten an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
@@ -305,12 +344,26 @@ void MainWindow::buildActions()
         QSettings().setValue("edit/splitOnSelectedTracks", on);
     });
     QMenu* trimMenu = timeline->addMenu(T("Teilen, Trimmen und Verschieben"));
-    makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
-               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(trimMenu, "trim_start", T("Anfang bis zum Abspielkopf trimmen"), QKeySequence("Shift+["),
-               [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
-    makeAction(trimMenu, "trim_end", T("Ende bis zum Abspielkopf trimmen"), QKeySequence("Shift+]"),
-               [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
+    // Second keys every keyboard layout can type: Shift+[ / Shift+] and Ctrl+\ need AltGr on German, French, Nordic
+    // and most other layouts (InputBindings::secondKeysAdded() gives them to older key files too)
+    const auto secondKey = [](QAction* a, const QKeySequence& key2) {
+        InputBindings& b = InputBindings::instance();
+        for (const InputBindings::Entry& e : b.entries())
+            if (e.action == a) {
+                const InputBindings::Entry entry = e;
+                b.registerAction(a, entry.id, entry.category, entry.defaultKey, entry.scope, key2);
+                return;
+            }
+    };
+    secondKey(makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
+                         [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); }),
+              QKeySequence("Shift+B"));
+    secondKey(makeAction(trimMenu, "trim_start", T("Anfang bis zum Abspielkopf trimmen"), QKeySequence("Shift+["),
+                         [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); }),
+              QKeySequence("Shift+Q"));
+    secondKey(makeAction(trimMenu, "trim_end", T("Ende bis zum Abspielkopf trimmen"), QKeySequence("Shift+]"),
+                         [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); }),
+              QKeySequence("Shift+W"));
     // Selected edit point (V): , and . trim it. Otherwise trim mode and slip tool: slip the selection (like DaVinci),
     // slide tool: slide it, otherwise move
     makeAction(trimMenu, "select_edit_point", T("Nächsten Schnittpunkt auswählen"), QKeySequence("V"),
@@ -509,7 +562,11 @@ void MainWindow::buildActions()
     viewOpts->addSeparator();
     makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
-    makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
+    // On the Studio page the key fits its tracks (its own view, the page's "Fit" button), elsewhere the timeline
+    makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [this, tv] {
+        if (m_page == Page::Studio && m_studioPage) m_studioPage->tracks()->fit();
+        else tv->zoomToFit();
+    });
     // No default key: editors share none for it (Kdenlive's Shift+L sits in the J/K/L transport family)
     timeline->addSeparator();
     makeAction(timeline, "lock_tracks", T("Spuren sperren/entsperren (Auswahl, sonst Zielspuren)"), QKeySequence(),
@@ -758,6 +815,7 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_edit", T("Seite Schneiden"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_comp", T("Seite Compositing"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
+    makeAction(workspace, "page_studio", T("Seite Studio"), QKeySequence("Shift+7"), [this] { showPage(Page::Studio); });
     makeAction(workspace, "page_deliver", T("Seite Export"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
     // The same checkboxes as the right-click on the page bar
     QMenu* visiblePages = workspace->addMenu(T("Sichtbare Seiten"));
@@ -793,6 +851,10 @@ void MainWindow::buildActions()
                                     [this] { setViewerFullScreen(m_fullScreenAction->isChecked()); });
     m_fullScreenAction->setCheckable(true);
     m_viewer->addViewAction(m_fullScreenAction, Viewer::ViewIcon::FullScreen);
+    // The whole program full screen (browsers: F11 - here Replace like in other editors, so Ctrl+F11; rebindable)
+    m_appFullScreenAction = makeAction(workspace, "app_full_screen", T("Programm im Vollbild"), QKeySequence("Ctrl+F11"),
+                                       [this] { setAppFullScreen(m_appFullScreenAction->isChecked()); });
+    m_appFullScreenAction->setCheckable(true);
     // Preview on a second monitor (ui/SecondScreen): the key moves it on to the next monitor, after the last one back
     m_secondScreenAction = makeAction(workspace, "viewer_second_screen", T("Vorschau auf zweitem Monitor"),
                                       QKeySequence("Ctrl+Shift+F"), [this] {
@@ -1008,4 +1070,23 @@ void MainWindow::editBrandKit()
     // The project's own kit (changed: set + applied as one step) or the global one applied
     if (dlg.project() != m_project->brand()) m_editor->setProjectBrand(dlg.project());
     else m_editor->applyBrand();
+}
+
+bool MainWindow::escapeToFocusedField()
+{
+    QWidget* f = QApplication::focusWidget();
+    if (!f || f->window() != this) return false;
+    auto* combo = qobject_cast<QComboBox*>(f);
+    const bool field = qobject_cast<QLineEdit*>(f) || qobject_cast<QAbstractSpinBox*>(f) || qobject_cast<QTextEdit*>(f)
+                       || qobject_cast<QPlainTextEdit*>(f) || (combo && combo->isEditable());
+    if (!field) return false;
+    // The field's own Esc first (ScrubField: back to the value before typing), then the focus leaves it. Sending a
+    // key press runs the shortcut map again: the painting Esc is off meanwhile, or it would come back here
+    const bool drawEscape = m_drawEscape && m_drawEscape->isEnabled();
+    if (drawEscape) m_drawEscape->setEnabled(false);
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(f, &press);
+    if (drawEscape) m_drawEscape->setEnabled(true);
+    if (f->hasFocus()) f->clearFocus();
+    return true;
 }

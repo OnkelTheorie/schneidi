@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: schneidi without a window, for scripts and AIs. Same project files and editing logic as the app.
-//   schneidi-cli help                      all commands (JSON)
+//   schneidi-cli help                      the commands in short; help <command>: its parameters (JSON)
 //   schneidi-cli info film.schneidi        timeline as JSON
 //   schneidi-cli mcp                       MCP server on stdio (Claude Desktop, Claude Code, …)
 //   schneidi-cli serve --root /data        MCP server over HTTP (AIs on other devices, Docker), cli/Serve.h
@@ -13,6 +13,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 #include "cli/Setup.h"
+#include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/I18n.h"
 #include "core/SettingsIsolation.h"
@@ -37,6 +38,12 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+
+#ifdef Q_OS_WIN
+#include <io.h> // _isatty
+#else
+#include <unistd.h> // isatty
+#endif
 
 namespace {
 
@@ -70,12 +77,17 @@ QJsonObject parseArgs(const Cli::Command& cmd, const QStringList& args)
     for (int i = 0; i < args.size(); ++i) {
         const QString& a = args[i];
         if (a.startsWith("--") && a.size() > 2) {
-            QString name = a.mid(2).replace('-', '_');
+            // Only the option's name is normalised (--dry-run = --dry_run), never its value: `--media=my-clip.mkv`
+            // became my_clip.mkv
+            QString name = a.mid(2);
             QString value;
-            if (const int eq = name.indexOf('='); eq > 0) {
+            const int eq = name.indexOf('=');
+            if (eq > 0) {
                 value = name.mid(eq + 1);
                 name = name.left(eq);
-            } else {
+            }
+            name.replace('-', '_');
+            if (eq <= 0) {
                 const Cli::Param* p = nullptr;
                 for (const Cli::Param& x : cmd.params)
                     if (x.name == name) p = &x;
@@ -125,10 +137,7 @@ int main(int argc, char* argv[])
     // No window, no sound: titles still need Qt's painting (fonts), hence a GUI application on the offscreen platform
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi"); // same backups, effects and settings as the app
-#ifdef Q_OS_WIN
-    QGuiApplication::setOrganizationName("schneidi");
-#endif
+    AppPaths::setProgramNames(); // same backups, effects and settings as the app
     QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));
     I18n::install("en");
     std::setlocale(LC_NUMERIC, "C"); // C libraries (FFmpeg option parsing) read numbers with a dot
@@ -162,6 +171,20 @@ int main(int argc, char* argv[])
         }
     }
     if (name == "setup") return Cli::Setup::run(args, pretty);
+    // A person at a terminal (stderr is one, no AI tool runs us): a short tip when Claude is here but not connected -
+    // the same offer rules as the app's question (a few times, two weeks apart). Never in mcp/serve, never on stdout.
+#ifdef Q_OS_WIN
+    const bool terminal = _isatty(_fileno(stderr));
+#else
+    const bool terminal = isatty(fileno(stderr));
+#endif
+    if (terminal && name != "mcp" && name != "serve" && qEnvironmentVariableIsEmpty("CLAUDECODE")
+        && Cli::Setup::offerDue()) {
+        Cli::Setup::offerShown();
+        std::fprintf(stderr, "Tip: %s is installed. Connect it to schneidi: schneidi-cli setup claude\n"
+                             "     (no more tips: schneidi-cli setup claude --never)\n",
+                     qPrintable(Cli::Setup::claudeFound().join(" and ")));
+    }
 
     // The HTTP server only routes: the engine runs in its workers (`mcp` processes)
     if (name == "serve") return Cli::Serve::run(args);
@@ -170,7 +193,8 @@ int main(int argc, char* argv[])
         Engine::initHeadless();
     }
     // Third-party licenses of what this program really loads (FFmpeg's configuration, GPL libraries);
-    // exit code 1 when a SCHNEIDI_NO_GPL build finds anything GPL (the check of the bundled packages)
+    // exit code 1 when a SCHNEIDI_NO_GPL build finds anything GPL (the check of the GPL-free packages); the GitHub
+    // downloads list their FFmpeg with x264/x265 here as GPL parts
     if (name == "--licenses") {
         QJsonArray parts, gpl;
         for (const Licenses::Part& p : Licenses::report()) {
@@ -184,7 +208,7 @@ int main(int argc, char* argv[])
     if (name == "mcp") {
         Cli::Mcp::Options opt;
         try {
-            const auto o = Cli::Serve::parseOptions(args, {"root", "map"}, {"no-extensions"});
+            const auto o = Cli::Serve::parseOptions(args, {"root", "map"}, {"no-extensions"}, "mcp");
             Cli::Sandbox::configure({o.value("root").value(0), o.value("map")});
             opt.root = Cli::Sandbox::root();
             opt.app = Cli::Sandbox::appAllowed();

@@ -15,6 +15,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -392,5 +393,42 @@ int main(int argc, char** argv)
                 starvedStats.underruns, starvedLargest);
     CHECK(starvedStats.underruns >= 3); // the case happened
     CHECK_EQ(starvedClicks, 0);
+
+    // 12. Backwards the track meters show every block: a chunk is mixed at once (8192 samples, ~170 ms), but its peaks
+    // belong to the blocks it plays in (before, only the chunk's first block carried them: a meter flickering at ~6 Hz)
+    qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
+    auto back = std::make_unique<Audio::Player>(opt);
+    back->setTimeline(tl, kFps);
+    back->play(double(frameStart(200)), -1.0);
+    back->release();
+    sleepMs(150);
+    back->takeLevels();
+    int polls = 0, lit = 0;
+    for (int i = 0; i < 40; ++i) {
+        sleepMs(20);
+        const std::vector<float> lv = back->takeLevels();
+        ++polls;
+        if (lv.size() == 4 && lv[0] > 0.1f) ++lit; // the clip at -6 dB, the track at -3 dB (5.): ~0.18
+    }
+    std::printf("Rückwärts: Spurpegel in %d von %d Abfragen\n", lit, polls);
+    CHECK(lit >= polls * 9 / 10);
+
+    // 13. New file lengths (a file overwritten: reopenFiles() built the mix with the old length, the project measures
+    // the new one later) build the mix anew; the same lengths or only new files do not
+    QHash<QString, int> lengths{{tones[0], 360}, {tones[1], 360}};
+    back->setFileLengths(lengths);
+    sleepMs(100);
+    const int builtBefore = back->stats().mixers;
+    back->setFileLengths(lengths);
+    lengths.insert(tmp.filePath("other.wav"), 50);
+    back->setFileLengths(lengths);
+    sleepMs(100);
+    CHECK_EQ(back->stats().mixers, builtBefore);
+    lengths[tones[1]] = 200;
+    back->setFileLengths(lengths);
+    sleepMs(100);
+    std::printf("Neue Dateilänge: %d Mischer vorher, %d nachher\n", builtBefore, back->stats().mixers);
+    CHECK_EQ(back->stats().mixers, builtBefore + 1);
+    back.reset();
     return Check::result();
 }

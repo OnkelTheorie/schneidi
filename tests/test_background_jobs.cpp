@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Background work at the bottom right of the status bar (ui/BackgroundJobs) and the proxies' batch progress
+// Background work at the bottom right of the page bar (ui/BackgroundJobs) and the proxies' batch progress
 // (ui/ProxyProgress).
 // ProxyBatch on made-up queues: count, overall fraction (finished files plus the running one's share), files that
 // leave without a proxy drop out of the batch, a new batch starts at zero. BackgroundJobs alone: shown while a job
@@ -7,24 +7,33 @@
 // for the hold time and then the indicator hides. In the app with tiny synthetic clips and the real ProxyManager
 // (ffmpeg): the indicator shows "Proxy 1/3 – …" while pending, the tooltip names the waiting files, the Media Pool's
 // thin bar shows too; after the last file "Proxies done", then it hides; ✕ cancels the queue.
-// BACKGROUND_JOBS_DUMP=<folder>: pictures of the status bar and the pool header; BACKGROUND_JOBS_LANG=ru (another
+// Failed proxies never block: no message box (a batch of failures opened one per file), the status bar names it, the
+// indicator keeps one "proxies failed" entry (count) whose tooltip has each file with ffmpeg's last lines, until its ✕;
+// a file whose proxy is made after all leaves it, another project clears it.
+// BACKGROUND_JOBS_DUMP=<folder>: pictures of the page bar and the pool header; BACKGROUND_JOBS_LANG=ru (another
 // language), BACKGROUND_JOBS_FONT=1.25 (larger font) to check that the texts fit.
 
 #include "check.h"
 
 #include "app/MainWindow.h"
 #include "core/I18n.h"
+#include "core/Project.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
+#include "engine/RenderCache.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/ElidedLabel.h"
 #include "ui/MediaPool.h"
 #include "ui/ProxyProgress.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QJsonObject>
+#include <QMessageBox>
+#include <QTimer>
 #include <QProgressBar>
 #include <QStatusBar>
 #include <QTemporaryDir>
@@ -171,7 +180,8 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     auto* jobs = w.findChild<BackgroundJobs*>();
     auto* pool = w.findChild<MediaPool*>();
     if (!CHECK(jobs && pool)) return;
-    CHECK(w.statusBar()->isAncestorOf(jobs));
+    QWidget* bar = w.findChild<QWidget*>("PageBar"); // the bottom row (the status bar itself is hidden)
+    if (!CHECK(bar && bar->isAncestorOf(jobs))) return;
     CHECK(jobs->isHidden());
     jobs->setHoldMs(300);
     ProxyManager* proxies = engine.proxies();
@@ -195,7 +205,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     CHECK_EQ(jobs->percent(), 0);
     CHECK(!poolBar->isHidden());
     settle();
-    dump(w.statusBar(), "statusbar-running");
+    dump(bar, "statusbar-running");
     // Counts up file by file, never backwards
     int lastPercent = 0;
     bool sawSecond = false;
@@ -211,7 +221,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
             sawSecond = true;
             CHECK(jobs->percent() >= 33);
             CHECK(poolBar->value() >= 333);
-            dump(w.statusBar(), "statusbar-second");
+            dump(bar, "statusbar-second");
             dump(pool, "pool-second", QRect(0, 0, pool->width(), 60));
         }
     }
@@ -223,7 +233,7 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     CHECK_EQ(jobs->text(), T("Proxys fertig"));
     CHECK(poolBar->isHidden());
     settle();
-    dump(w.statusBar(), "statusbar-done");
+    dump(bar, "statusbar-done");
     QTest::qWait(450);
     CHECK(jobs->isHidden());
 
@@ -245,7 +255,186 @@ void testApp(MainWindow& w, Engine& engine, const QString& dir)
     for (const QString& c : more) CHECK(!proxies->hasProxy(c));
 }
 
+// Proxy errors: emitted as ProxyManager emits them (ffmpeg's tail), plus a real one (a file without video)
+void testFailures(MainWindow& w, Engine& engine, const QString& dir)
+{
+    auto* jobs = w.findChild<BackgroundJobs*>();
+    if (!CHECK(jobs)) return;
+    ProxyManager* proxies = engine.proxies();
+    // A message box would block right in the emit: closed by this timer, counted as a failure of the test
+    int boxes = 0;
+    QTimer closer;
+    QObject::connect(&closer, &QTimer::timeout, [&] {
+        for (QWidget* top : QApplication::topLevelWidgets())
+            if (auto* box = qobject_cast<QMessageBox*>(top); box && box->isVisible()) {
+                ++boxes;
+                box->done(0);
+            }
+    });
+    closer.start(20);
+    for (int i = 1; i <= 3; ++i)
+        emit proxies->failed(QString("%1/broken-%2.mp4").arg(dir).arg(i),
+                             T("Proxy konnte nicht erzeugt werden:\n%1").arg(QString("[h264 @ 0x1] error %1 while decoding").arg(i)));
+    settle();
+    CHECK_EQ(boxes, 0);
+    CHECK(w.statusBar()->currentMessage().contains("broken-3.mp4"));
+    CHECK(jobs->hasJob("proxy_errors"));
+    CHECK(!jobs->isHidden());
+    CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(3));
+    CHECK(jobs->percent() < 0); // a message, no progress bar
+    for (int i = 1; i <= 3; ++i) {
+        CHECK(jobs->toolTip().contains(QString("broken-%1.mp4").arg(i)));
+        CHECK(jobs->toolTip().contains(QString("error %1 while decoding").arg(i)));
+    }
+    // A real failure through the queue: sound only, no video
+    const QString wav = Check::makeMedia(dir + "/sound.wav", {"-f", "lavfi", "-i", "sine=frequency=440:duration=1"});
+    if (CHECK(!wav.isEmpty())) {
+        proxies->generate({wav});
+        QElapsedTimer t;
+        t.start();
+        while (proxies->pendingCount() > 0 && t.elapsed() < 20000) QTest::qWait(10);
+        settle();
+        CHECK_EQ(boxes, 0);
+        CHECK(jobs->toolTip().contains("sound.wav"));
+        CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(4));
+    }
+    // Stays (no hold time) until dismissed with its ✕
+    QTest::qWait(jobs->holdMs() + 150);
+    CHECK(jobs->hasJob("proxy_errors"));
+    auto* cancel = jobs->findChild<QToolButton*>("background_jobs_cancel");
+    if (CHECK(cancel && cancel->isVisible())) {
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        settle();
+        CHECK(!jobs->hasJob("proxy_errors"));
+        CHECK(jobs->isHidden());
+    }
+    // The next failure starts a new count
+    emit proxies->failed(dir + "/again.mp4", "boom");
+    settle();
+    CHECK(jobs->hasJob("proxy_errors"));
+    CHECK_EQ(jobs->text(), T("Proxy fehlgeschlagen: %1").arg("again.mp4"));
+    CHECK(jobs->toolTip().contains("again.mp4"));
+    // A failed file whose proxy is made after all (tried again) leaves the list
+    const QString made = dir + "/clip-1.mp4"; // has its proxy from testApp
+    if (CHECK(proxies->hasProxy(made))) {
+        emit proxies->failed(made, "first try failed");
+        settle();
+        CHECK_EQ(jobs->text(), T("%1 Proxys fehlgeschlagen").arg(2));
+        emit proxies->proxyChanged(made); // as when its proxy is finished
+        settle();
+        CHECK_EQ(jobs->text(), T("Proxy fehlgeschlagen: %1").arg("again.mp4"));
+        CHECK(!jobs->toolTip().contains("clip-1.mp4"));
+    }
+    // Another project: its files, not the old ones' failures
+    auto* project = w.findChild<Project*>();
+    if (CHECK(project)) {
+        project->reset();
+        settle();
+        CHECK(!jobs->hasJob("proxy_errors"));
+        CHECK(ProxyProgress::of(proxies)->failures().isEmpty());
+    }
+    CHECK_EQ(boxes, 0);
+}
+
 } // namespace
+
+// Render cache (Playback > Render Cache: Smart renders clips with effects ahead): a job while it renders ("Render-Cache
+// – <clip> – 0 %", what it is and how to switch it off in the tooltip), the ruler bar names the clip and its state;
+// the ✕ pauses it until the next change of a cached clip; the app's live state tells an AI the same
+void testRenderCache(MainWindow& w, Engine& engine, const QString& dir)
+{
+    auto* jobs = w.findChild<BackgroundJobs*>();
+    auto* view = w.findChild<TimelineView*>();
+    if (!CHECK(jobs && view)) return;
+    jobs->setHoldMs(300);
+    QTest::qWait(450);
+    CHECK(jobs->isHidden());
+    const QStringList clips = makeClips(dir, "cache", 1);
+    if (!CHECK_EQ(clips.size(), 1)) return;
+    RenderCache* cache = engine.renderCache();
+    cache->clear();
+    cache->setPlaying(true); // holds the render at 0 % (it pauses while the preview plays)
+    w.importFiles(clips, true);
+    settle();
+    int id = 0;
+    for (const Track& t : w.liveProject()->timeline().video)
+        for (const Clip& c : t.clips)
+            if (c.mediaPath == clips[0]) id = c.id;
+    if (!CHECK(id > 0)) return;
+    w.editor()->addEffect({id}, "blur");
+    cache->setMode(RenderCache::Mode::Smart);
+    QElapsedTimer t;
+    t.start();
+    while (!cache->isRendering() && t.elapsed() < 10000) QTest::qWait(20);
+    settle();
+    if (!CHECK(cache->isRendering())) return;
+    CHECK_EQ(jobs->text(), T("Render-Cache – %1 – %2 %").arg("cache-1.mp4").arg(0));
+    CHECK(jobs->toolTip().contains(T("✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus")));
+    auto* cancel = jobs->findChild<QToolButton*>("background_jobs_cancel");
+    if (!CHECK(cancel && cancel->isVisible())) return;
+    CHECK_EQ(cancel->toolTip(), T("Render-Cache pausieren (bis zur nächsten Änderung)"));
+    QJsonObject live = w.liveRenderCache();
+    CHECK_EQ(live["mode"].toString(), QString("smart"));
+    CHECK_EQ(live["state"].toString(), QString("rendering"));
+    CHECK_EQ(live["clip"].toString(), QString("cache-1.mp4"));
+    // The bar at the top of the ruler: the clip and its state
+    auto rulerTip = [view] {
+        for (int x = 0; x < view->width(); x += 4)
+            if (const QString tip = view->renderCacheToolTip(QPoint(x, 1)); !tip.isEmpty()) return tip;
+        return QString();
+    };
+    CHECK(rulerTip().startsWith(T("Render-Cache: %1 – %2").arg("cache-1.mp4", T("noch nicht gerendert"))));
+    CHECK(view->renderCacheToolTip(QPoint(view->width() / 2, 20)).isEmpty()); // below the bar: not its tooltip
+    settle();
+    dump(w.findChild<QWidget*>("PageBar"), "statusbar-render-cache");
+
+    // ✕: paused until the next change
+    QTest::mouseClick(cancel, Qt::LeftButton);
+    settle();
+    CHECK(cache->isPaused());
+    CHECK(!cache->isRendering());
+    CHECK_EQ(jobs->text(), T("Render-Cache pausiert bis zur nächsten Änderung"));
+    CHECK(rulerTip().contains(T("pausiert")));
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("paused"));
+    cache->setPlaying(false);
+    QTest::qWait(2500); // longer than the rest before rendering
+    CHECK(cache->isPaused());
+    CHECK(!cache->isRendering());
+    CHECK(jobs->isHidden());
+
+    // A change of the clip resumes; at the end "done"
+    w.editor()->modifyClips({id}, "trim", [](Clip& c) { c.out -= 2; });
+    bool done = false;
+    t.restart();
+    while (!done && t.elapsed() < 60000) {
+        QTest::qWait(10);
+        done = jobs->text() == T("Render-Cache fertig");
+    }
+    CHECK(done);
+    CHECK(!cache->isPaused());
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("idle"));
+    CHECK_EQ(w.liveRenderCache()["cached"].toInt(), 1);
+    CHECK(rulerTip().contains(T("fertig")));
+    // An AI pauses it the same way and resumes it (pause:false)
+    w.editor()->modifyClips({id}, "trim", [](Clip& c) { c.out -= 2; });
+    t.restart();
+    while (!cache->isRendering() && t.elapsed() < 10000) QTest::qWait(10);
+    w.liveRenderCacheControl("", true);
+    CHECK(cache->isPaused());
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("paused"));
+    w.liveRenderCacheControl("", false);
+    CHECK(!cache->isPaused());
+    CHECK(cache->pendingCount() > 0 || cache->isRendering());
+    t.restart();
+    while (w.liveRenderCache()["state"].toString() != "idle" && t.elapsed() < 60000) QTest::qWait(20);
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("idle"));
+    // ... and switches it off
+    w.liveRenderCacheControl("off", false);
+    CHECK(cache->mode() == RenderCache::Mode::Off);
+    CHECK_EQ(w.liveRenderCache()["state"].toString(), QString("off"));
+    cache->setMode(RenderCache::Mode::User);
+    cache->clear();
+}
 
 int main(int argc, char** argv)
 {
@@ -274,5 +463,7 @@ int main(int argc, char** argv)
     w.activateWindow();
     CHECK(QTest::qWaitForWindowActive(&w));
     testApp(w, engine, dir.path());
+    testFailures(w, engine, dir.path());
+    testRenderCache(w, engine, dir.path());
     return Check::result();
 }

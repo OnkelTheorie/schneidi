@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Restore after a crash (MainWindow::offerAutosaveRestore): a broken automatic backup says why it cannot be restored
-// and is moved aside, so the next start does not offer it again; a good one is restored.
+// and is moved aside, so the next start does not offer it again; a good one is restored. The backup of another slot
+// (a second window that crashed while this slot's window was closed normally) is offered too, unless a running
+// window holds that slot. Opening a backup removes the automatic backup of the project left; File › Recent Projects
+// greys out a moved-away project when the menu opens.
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -13,6 +17,9 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QLockFile>
+#include <QMenu>
+#include <QSettings>
 #include <QMessageBox>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -56,7 +63,7 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     MainWindow w(&engine);
 
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString dir = AppPaths::writable(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
     const QString backup = dir + "/autosave." + ProjectFile::Extension; // the first slot
     const auto broken = [&] {
@@ -95,6 +102,72 @@ int main(int argc, char** argv)
         CHECK_EQ(answer.texts.size(), qsizetype(1));
         CHECK(w.liveProject()->isModified());
         CHECK(w.liveProject()->timeline().markers.contains(42));
+    }
+    // Another window's backup (slot 2: two windows were open, the second crashed, the first was closed normally):
+    // this window has slot 1 and no backup, it offers slot 2's (it was never offered unless two windows started)
+    {
+        QFile::remove(backup);
+        const QString second = dir + "/autosave-2." + ProjectFile::Extension;
+        const QString third = dir + "/autosave-3." + ProjectFile::Extension;
+        ProjectData data;
+        data.timeline.markers << 77;
+        CHECK(ProjectFile::save(data, second, &err));
+        QSettings().setValue("autosave/projectPath-2", dir + "/second.schneidi");
+        data.timeline.markers = {88};
+        CHECK(ProjectFile::save(data, third, &err));
+        QLockFile running(dir + "/autosave-3.lock"); // slot 3 belongs to a window that still runs: not its backup
+        CHECK(running.tryLock(0));
+        Answerer answer(QMessageBox::Yes);
+        CHECK(w.offerAutosaveRestore());
+        if (CHECK_EQ(answer.texts.size(), qsizetype(1))) CHECK(answer.texts[0].contains("second.schneidi"));
+        CHECK(w.liveProject()->timeline().markers.contains(77));
+        CHECK(QFileInfo::exists(third));
+        // The window now owns slot 2 (its next backups and the removal on saving go there) and gave slot 1 free
+        QLockFile one(dir + "/autosave-1.lock"), two(dir + "/autosave-2.lock");
+        CHECK(!two.tryLock(0));
+        CHECK(one.tryLock(0));
+    }
+    // File › Open Backup…: the automatic backup of the project left (its changes saved or discarded) goes; a crash
+    // right after must not offer those changes
+    {
+        const QString own = dir + "/autosave-2." + ProjectFile::Extension; // this window's slot now
+        ProjectData left;
+        left.timeline.markers << 5;
+        CHECK(ProjectFile::save(left, own, &err));
+        ProjectData kept;
+        kept.timeline.markers << 6;
+        const QString copy = tmp.path() + "/backup." + ProjectFile::Extension;
+        CHECK(ProjectFile::save(kept, copy, &err));
+        CHECK(w.openBackup(copy));
+        CHECK(w.liveProject()->timeline().markers.contains(6));
+        CHECK(w.liveProject()->isModified());
+        CHECK(!QFileInfo::exists(own));
+        // Opening the automatic backup itself: it is what was opened, never deleted under it
+        ProjectData self;
+        self.timeline.markers << 7;
+        CHECK(ProjectFile::save(self, own, &err));
+        CHECK(w.openBackup(QDir(QFileInfo(own).absolutePath()).filePath("./" + QFileInfo(own).fileName())));
+        CHECK(w.liveProject()->timeline().markers.contains(7));
+        CHECK(QFileInfo::exists(own));
+    }
+    // File › Recent Projects: a project moved away since the menu was built is greyed out when the menu opens
+    {
+        const QString there = tmp.path() + "/recent." + ProjectFile::Extension;
+        CHECK(ProjectFile::save(ProjectData{}, there, &err));
+        QSettings().setValue("recentProjects", QStringList{there});
+        auto* recent = w.findChild<QMenu*>("recent_menu");
+        if (CHECK(recent)) {
+            const auto entry = [&]() -> QAction* {
+                for (QAction* a : recent->actions())
+                    if (a->toolTip() == there) return a;
+                return nullptr;
+            };
+            emit recent->aboutToShow();
+            if (CHECK(entry())) CHECK(entry()->isEnabled());
+            QFile::remove(there);
+            emit recent->aboutToShow();
+            if (CHECK(entry())) CHECK(!entry()->isEnabled());
+        }
     }
     return Check::result();
 }

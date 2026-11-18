@@ -249,11 +249,24 @@ void apply(QApplication& app)
     app.setPalette(p);
 
     QFont f = app.font();
-    f.setPointSizeF(9.0);
+    // Devanagari (Hindi) carries its vowel signs above and below the line: at the same point size its letters look a
+    // size smaller than Latin text and are hard to read at 9 pt - the Hindi UI gets a slightly larger font
+    f.setPointSizeF(I18n::installedLanguage() == "hi" ? 10.0 : 9.0);
+    QStringList families{f.family()};
 #ifdef Q_OS_WIN
     // Segoe UI lacks symbols like ⏮ ⏸ ✂; without Segoe UI Symbol as a fallback Windows takes the colored emoji font
-    f.setFamilies({f.family(), "Segoe UI Symbol"});
+    families << "Segoe UI Symbol";
 #endif
+    // Scripts the UI font lacks: a font drawn to match it, before the system's own fallback (on Debian that took
+    // FreeSans for Hindi, whose Devanagari is small and cramped). Families that are not installed are skipped.
+#if defined(Q_OS_WIN)
+    families << "Nirmala UI";
+#elif defined(Q_OS_MACOS)
+    families << "Kohinoor Devanagari";
+#else
+    families << "Noto Sans Devanagari";
+#endif
+    f.setFamilies(families);
     app.setFont(f);
 
     app.setStyleSheet(QString(R"(

@@ -70,6 +70,7 @@ struct DeviceInfo {
     QString device;         // driver's device name
     QString error;          // why not
     bool comp = false;      // compositing graphs work on it (Context::compSupported)
+    int maxTextureSize = 0; // largest texture side (QRhi::TextureSizeMax; D3D11 16384): larger pictures stay on the CPU
 };
 
 // The device a Context gets on this machine (probed once, on the first call; GUI application needed)
@@ -102,13 +103,25 @@ public:
 
     // false: the card refused the frame (context lost, driver reset): every operation would do nothing
     bool begin();
-    // Submits what was recorded, waits for the card, fills the readbacks
-    void finish();
+    // Submits what was recorded, waits for the card, fills the readbacks. false: the card failed the frame (device
+    // lost, driver reset): no readback was filled, nothing of the frame may be used
+    bool finish();
+    // The device is gone (QRhi::isDeviceLost): the Context must be made anew
+    bool lost() const;
+    // Tests: the current frame's end reports the device lost, and begin() refuses from then on (as a real loss)
+    void simulateDeviceLoss();
+    // Tests: the current frame's readbacks come back empty while the frame reports success (Qt's D3D11 backend after
+    // a device removal)
+    void simulateEmptyReadbacks();
 
     // A pooled RGBA8 render target (premultiplied), cleared to `clear` (straight RGBA 0..1) by its first pass
     TexturePtr target(QSize size, const float clear[4] = nullptr);
-    // Upload RGBA (8 bit, rows tightly packed)
-    TexturePtr uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied);
+    // Upload RGBA (8 bit, rows tightly packed). Not copied: `rgba` must stay valid until finish() (Service::run returns
+    // after it, so the caller's buffers of a job qualify)
+    // mips: also build mip levels (drawn at 2:1 or smaller; for a picture uploaded once and drawn many times, e.g. a
+    // still: the draw then reads one level instead of averaging many taps). Straight alpha with mips: the levels average
+    // straight colour (dark fringes at soft edges) - premultiply first unless it is opaque
+    TexturePtr uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied, bool mips = false);
     // Upload a decoded software picture (planar/semi-planar 8 or 10-bit Y'CbCr); nullptr = format not supported (then
     // convert on the CPU and use uploadRgba). mips: also build mip levels (drawn at 2:1 or smaller)
     TexturePtr uploadYuv(const AVFrame* frame, const Video::Info& info, bool mips = false);
@@ -124,6 +137,10 @@ public:
         double opacity = 1.0;
         const Lut3d* grade = nullptr;
         QRectF crop;                // source pixels kept, empty = all
+        // Set: source pixels -> target pixels through this projective map instead of m (a picture tilted in depth,
+        // a corner pin; Compose::draw with a Homography: mip steps by the overall shrink)
+        bool projective = false;
+        Compose::Homography h;
     };
     // Source over: draws the layer onto dst (premultiplied)
     void draw(Texture& dst, const Layer& layer);
@@ -148,7 +165,7 @@ public:
     // ---- Fragment shaders made at run time (effect "shader", engine/picture/ShaderEffect): the same uniform block and
     // bindings as the built-in shaders (quad.vert), p = its 10 parameter vec4 after rect and target, t0 = the input
     // (binding 1). Draws over all of a new RGBA8 target(size). key names the shader (its pipeline is kept for the next
-    // frames; at most 16 shaders, the oldest are dropped). nullptr = the pipeline could not be made
+    // frames; at most 16 shaders, the least recently used is dropped). nullptr = the pipeline could not be made
     TexturePtr customPass(const QByteArray& key, const QShader& frag, QSize size, const float p[40], const Texture* t0);
 
     // Readbacks, filled by the next finish(); the memory must stay valid until then
@@ -160,6 +177,8 @@ public:
     struct Stats {
         int texturesPooled = 0;  // render targets kept for reuse
         int passes = 0;          // passes of the last frame
+        int lutsMade = 0;        // 3D LUT textures made (not taken from the pool)
+        int pipelinesMade = 0;   // customPass pipelines made
     };
     Stats stats() const;
 
@@ -180,25 +199,39 @@ class Service {
 public:
     // Makes the OpenGL surface ahead when called on the GUI thread (QOffscreenSurface needs it on the offscreen platform;
     // ~40 ms, mostly loading the GL library). Renderer's constructor calls it, so a first instance() on a worker (export
-    // workers, preview pump) finds it.
-    static void prepare();
+    // workers, preview pump) finds it. `now`: also while prepare() is deferred (an export about to start).
+    static void prepare(bool now = false);
     // GUI app: prepare() only posts the work to the event loop (not in the way of the start); a worker asking for
-    // instance() meanwhile waits for it (at most 2 s)
-    static void setDeferredPrepare(bool deferred);
+    // instance() meanwhile waits for it (at most 2 s). `schedule` decides when the posted work runs (the app: after
+    // its window's first paint); without one, as soon as the event loop runs.
+    using Scheduler = std::function<void(std::function<void()>)>;
+    static void setDeferredPrepare(bool deferred, Scheduler schedule = {});
     // nullptr when SCHNEIDI_GPU=0, no GUI application, or no hardware device (then the CPU path). The first call starts
     // the GPU thread and waits until its context is made (or refused).
     static Service* instance();
     // As instance(), but while a deferred prepare() is pending it starts the service in the background and returns
     // nullptr at once with *decided = false (render this frame on the CPU, ask again for the next)
     static Service* tryInstance(bool* decided);
+    // The GPU thread is being set up right now (or its deferred prepare() waits in the event queue): other OpenGL
+    // setup on the GUI thread waits for it where it can (the driver serializes context creation; both would stall
+    // longer side by side)
+    static bool starting();
     // Ends the GPU thread (its context released on it); after that run() refuses. Done on QCoreApplication::aboutToQuit
     static void shutdown();
     // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);
-    // false = shut down or the card refused the frame, nothing ran (the caller takes the CPU path)
+    // false = shut down, or the card refused or failed the frame (device lost: the context is made again for the next
+    // one): nothing of the job may be used, the caller takes the CPU path
     bool run(const std::function<void(Context&)>& job);
+    // Tests: the next frame with work fails as on a lost device (Context::simulateDeviceLoss) / its readbacks come
+    // back empty (Context::simulateEmptyReadbacks)
+    void simulateDeviceLoss();
+    void simulateEmptyReadbacks();
+    // false: the engine went off (the device was lost and no new context could be made): run() refuses at once
+    bool available() const;
     // The caller is the GPU thread itself (inside a job): run() would wait for itself
     bool onThread() const;
-    const DeviceInfo& info() const;
+    // A copy: renewed when the context is made again after a device loss
+    DeviceInfo info() const;
 
 private:
     Service() = default;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaIndex.h"
 
+#include "core/AppPaths.h"
 #include "core/PathKey.h"
 #include "engine/FaceDetect.h"
 #include "engine/MediaProbe.h"
@@ -574,8 +575,8 @@ QString cacheKey(const QString& file, const QString& audioWay, const QString& fa
 
 int contentReadCount() { return g_contentReads.load(); }
 
-QString cacheDir() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/index"; }
-QString notesDir() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/index"; }
+QString cacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/index"; }
+QString notesDir() { return AppPaths::writable(QStandardPaths::AppDataLocation) + "/index"; }
 
 std::optional<Entry> cached(const QString& file)
 {

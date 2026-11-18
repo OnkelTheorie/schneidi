@@ -70,6 +70,7 @@ void addClips(const Timeline& tl, QStringList* out)
 
 Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPath)
 {
+    ProxyManager::reloadQuality(); // "other size" and the kept names follow the quality set now (maybe by the app)
     Plan p;
     const QDir dir(dirPath.isEmpty() ? ProxyManager::cacheDir() : dirPath);
     const QSet<QString> kept = proxyNames(keep);
@@ -104,7 +105,7 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
             item.original = n.original;
             if (n.original.isEmpty()) item.reason = Reason::Unknown;
             else if (!QFileInfo::exists(n.original)) item.reason = Reason::Missing;
-            else if (n.maxSize > 0 && n.maxSize != ProxyManager::kMaxSize) item.reason = Reason::OtherSize;
+            else if (n.maxSize > 0 && n.maxSize != ProxyManager::maxSize()) item.reason = Reason::OtherSize;
             else if (QFileInfo(ProxyManager::proxyPath(n.original)).completeBaseName() != hash) item.reason = Reason::Changed;
             else item.reason = Reason::Unused;
         }
@@ -119,6 +120,7 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
 
 qint64 apply(const Plan& plan, const QStringList& busy, const QStringList& keep)
 {
+    ProxyManager::reloadQuality();
     const QSet<QString> writing = fileNames(busy);
     const QSet<QString> kept = proxyNames(keep);
     qint64 freed = 0;

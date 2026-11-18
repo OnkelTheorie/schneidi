@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Stabilizer.h"
 
+#include "core/AppPaths.h"
 #include "core/EffectRegistry.h"
 #include "core/Retime.h"
 #include "core/I18n.h"
@@ -225,7 +226,7 @@ QString Stabilizer::Request::key() const
 
 QString Stabilizer::cacheDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/stabilize";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/stabilize";
 }
 
 QString Stabilizer::unsupportedReason(const Clip& c)

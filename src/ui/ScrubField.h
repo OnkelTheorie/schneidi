@@ -12,9 +12,14 @@ public:
     double value() const { return m_value; }
     void setValue(double v); // without callback
     void setRange(double min, double max);
-    void setSuffix(const QString& s) { m_suffix = s; showValue(); }
+    void setSuffix(const QString& s);
     // Display for the smallest value (e.g. "-∞")
-    void setMinimumText(const QString& t) { m_minText = t; showValue(); }
+    void setMinimumText(const QString& t);
+    // Display for the value 0 when 0 means something else than a number (a range's end "0 = to the clip's end")
+    void setZeroText(const QString& t);
+    // May get narrower than its usual width when the panel is narrow (the Inspector): wider only for a long value,
+    // never narrower than the text it shows (sign, suffix, "-∞")
+    void setShrinkable(bool on);
 
     std::function<void(double)> onChange; // on every change (also while dragging)
     std::function<void()> onFinish;       // drag released / input committed
@@ -25,8 +30,11 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
     void focusOutEvent(QFocusEvent*) override;
+    void changeEvent(QEvent*) override; // font change: fitWidth()
 
 private:
+    void fitWidth();
+    int widestText() const;
     void showValue();
     QString number() const;
     void startEditing();
@@ -35,7 +43,8 @@ private:
 
     double m_value = 0, m_min, m_max, m_step;
     int m_decimals;
-    QString m_suffix, m_minText;
+    bool m_shrinkable = false;
+    QString m_suffix, m_minText, m_zeroText;
     bool m_editing = false;
     bool m_pressed = false, m_dragging = false;
     int m_lastX = 0, m_pressX = 0;

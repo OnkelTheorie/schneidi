@@ -8,6 +8,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/CodeTrust.h"
+#include "core/CompTrack.h"
 #include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CustomEffects.h"
@@ -20,6 +21,7 @@
 #include <QUndoStack>
 
 #include <algorithm>
+#include <cmath>
 
 namespace PC = Picture::Comp;
 
@@ -149,6 +151,26 @@ QString untrustedCode(const Clip& c, int node)
     return CodeTrust::isTrusted(code) ? QString() : code;
 }
 
+QString trackerWarning(const Clip& c, int node, double fps)
+{
+    CompGraph g;
+    const CompNode* n = graphOf(c, &g) ? g.node(node) : nullptr;
+    if (!n || n->type != QLatin1String(::Comp::kTrackerType)) return {};
+    const double rate = fps > 0 ? fps : 25;
+    const auto clock = [&](int clipFrame) {
+        const int s = int(std::floor(std::max(0, c.start + clipFrame) / rate));
+        return QStringLiteral("%1:%2").arg(s / 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'));
+    };
+    QStringList parts;
+    for (const ::Comp::TrackGap& gap : ::Comp::trackGaps(c, node)) {
+        if (gap.bridged()) continue;
+        if (gap.openEnd) parts << T("ab %1 nicht wiedergefunden").arg(clock(gap.from));
+        else if (gap.openStart) parts << T("erst ab %1 gefunden").arg(clock(gap.to + 1));
+        else parts << QStringLiteral("%1–%2").arg(clock(gap.from), clock(gap.to));
+    }
+    return parts.isEmpty() ? QString() : T("Punkt verloren: %1").arg(parts.join(QStringLiteral(" · ")));
+}
+
 Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
 {
     if (node == 0 && !matte) return tl;
@@ -187,6 +209,16 @@ Timeline viewTimeline(Timeline tl, int clipId, int node, bool matte)
     return tl;
 }
 
+void dropRefusedStep(QUndoStack* undo, int before)
+{
+    if (undo->index() <= before) return;
+    // An empty macro changed nothing: obsolete, undo() deletes it instead of keeping it for redo (one with children is
+    // undone the normal way)
+    if (const QUndoCommand* c = undo->command(undo->index() - 1); c && c->childCount() == 0)
+        const_cast<QUndoCommand*>(c)->setObsolete(true);
+    undo->undo();
+}
+
 bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with, QString* err)
 {
     QString why;
@@ -202,7 +234,7 @@ bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrNam
     undo->beginMacro(T("Rezept „%1“ anwenden").arg(CompRecipes::shownName(*r)));
     const bool ok = editor->setCompGraph(ids, g, values, kinds(), &why);
     undo->endMacro();
-    if (!ok && undo->index() > before) undo->undo(); // an empty macro: gone again
+    if (!ok) dropRefusedStep(undo, before); // an empty macro: gone again, not left as a redo step
     if (!ok && err) *err = why;
     return ok;
 }

@@ -31,7 +31,7 @@
 #include <QSignalBlocker>
 
 namespace {
-constexpr int kAngleKeys = 9; // keys 1-9 like DaVinci
+constexpr int kAngleKeys = MulticamView::kAngleKeys; // keys 1-9: cells 1-9 of the grid's page
 constexpr int kTargetTracks = 8;
 } // namespace
 
@@ -113,6 +113,7 @@ void MainWindow::setupMulticam()
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateMulticamProxies);
     connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateMulticamProxies);
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateMulticamProxies);
+    connect(proxies, &ProxyManager::qualityChanged, this, &MainWindow::updateMulticamProxies);
     updateMulticamProxies();
 }
 

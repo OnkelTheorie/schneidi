@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ProxyManager.h"
+#include "core/AppPaths.h"
 #include "engine/Bundle.h"
 
 #include "core/I18n.h"
@@ -19,15 +20,18 @@ extern "C" {
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -35,6 +39,9 @@ namespace {
 
 constexpr const char* kSettingKey = "playback/useProxy";
 constexpr const char* kImportKey = "proxy/onImport";
+constexpr const char* kQualityKey = "proxy/quality";
+// quality() is asked for every proxy lookup (preview, thumbnails): read the setting once. -1 = not read yet
+std::atomic<int> g_quality{-1};
 
 // What ffmpeg needs to know about the source; read with the own decoder (engine/video/Reader), which interprets the
 // file the way the preview does (same frame rate, same color matrix)
@@ -47,6 +54,9 @@ struct SourceInfo {
     bool alpha = false; // transparent pixels (VP8/VP9 with alpha, ProRes 4444, PNG/QuickTime RLE in MOV)
     QString decoder;    // the reader's (libvpx-vp9 for VP9 with alpha)
     double seconds = 0;
+    int width = 0, height = 0; // the picture's pixels
+    bool interlaced = false;
+    QString parity = QStringLiteral("auto"); // interlaced: the field shown first ("tff", "bff"; "auto": not known)
 };
 
 struct ProxyJob {
@@ -96,6 +106,8 @@ SourceInfo probeSource(const QString& path)
     // The highest frame rate with variable frame rate (r_frame_rate as the preview counts it): CFR only duplicates
     s.rateNum = in.frameRate.num;
     s.rateDen = in.frameRate.den;
+    s.width = in.width;
+    s.height = in.height;
     s.colorspace = in.colorspace; // a guess by picture size already when the file states none
     s.fullRange = in.fullRange;
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(in.format);
@@ -103,6 +115,19 @@ SourceInfo probeSource(const QString& path)
     if (desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA)) {
         const std::shared_ptr<const Video::Picture> first = reader->picture(0);
         s.alpha = first && seeThrough(first->frame);
+    }
+    // Interlaced: from the stream's field order, else (not stated) from the first picture
+    if (in.fieldOrder != AV_FIELD_UNKNOWN) {
+        s.interlaced = in.fieldOrder != AV_FIELD_PROGRESSIVE;
+    } else if (const std::shared_ptr<const Video::Picture> first = reader->picture(0)) {
+        s.interlaced = !first->progressive;
+    }
+    // The field shown first: as the decoder flags the first picture, else as the stream states it (see
+    // Video::topFieldShownFirst; the reader's pictures carry the same answer)
+    if (s.interlaced) {
+        const std::shared_ptr<const Video::Picture> first = reader->picture(0);
+        const std::optional<bool> top = Video::topFieldShownFirst(first ? first->frame : nullptr, in.fieldOrder);
+        s.parity = top ? (*top ? "tff" : "bff") : "auto";
     }
     s.decoder = in.codec;
     if (media) s.seconds = media->length / 25.0;
@@ -122,8 +147,56 @@ const char* ffColorspace(int cs)
     }
 }
 
+// Filters an ffmpeg program lists (`ffmpeg -filters`), cached per file and modification time. Only a listing that
+// worked is kept: a failed or timed-out one (a virus scanner holding the program, a slow first start) is tried again
+// next time instead of leaving the program without deinterlacing for the process's life.
+QStringList listFilters(const QString& program)
+{
+    static std::mutex mutex;
+    static QHash<QString, QStringList> cache;
+    const QFileInfo info(program);
+    const QString key = info.absoluteFilePath() + '|' + QString::number(info.lastModified().toMSecsSinceEpoch());
+    {
+        std::lock_guard lock(mutex);
+        if (auto it = cache.constFind(key); it != cache.cend()) return *it;
+    }
+    QProcess p;
+    p.start(program, {"-hide_banner", "-nostdin", "-filters"});
+    QStringList list;
+    if (p.waitForStarted(10000) && p.waitForFinished(20000) && p.exitStatus() == QProcess::NormalExit
+        && p.exitCode() == 0) {
+        // " TSC bwdif             V->V       Deinterlace the input image." (FFmpeg <= 8: three flag columns),
+        // " TS bwdif              V->V       ..." (FFmpeg 9: two). Recognised by the "in->out" column, not the flags.
+        for (const QByteArray& line : p.readAllStandardOutput().split('\n')) {
+            const QList<QByteArray> words = line.simplified().split(' ');
+            if (words.size() >= 3 && words[2].contains("->")) list << QString::fromUtf8(words[1]);
+        }
+    } else {
+        if (p.state() != QProcess::NotRunning) {
+            p.kill(); // our own process
+            p.waitForFinished(2000);
+        }
+        return list;
+    }
+    std::lock_guard lock(mutex);
+    cache.insert(key, list);
+    return list;
+}
+
+// The deinterlacer the ffmpeg program has: bwdif (sharper, fewer jaggies on edges), else yadif; empty = none.
+// One picture per frame (the proxy keeps the original's frame rate and frame count)
+QString deinterlaceFilter(const QString& program, const QString& parity)
+{
+    if (!QFileInfo(program).isAbsolute()) return {};
+    const QStringList filters = listFilters(program);
+    const QString options = QString("=mode=send_frame:parity=%1:deint=all").arg(parity);
+    if (filters.contains("bwdif")) return "bwdif" + options;
+    if (filters.contains("yadif")) return "yadif" + options;
+    return {};
+}
+
 // Runs in a helper thread (opening + decoding the first frame can take a while at 4K): assemble the ffmpeg call
-ProxyJob prepareJob(const QString& original, const QString& part)
+ProxyJob prepareJob(const QString& original, const QString& part, int maxSize)
 {
     ProxyJob job;
     const SourceInfo info = probeSource(original);
@@ -133,9 +206,9 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     }
     job.durationUs = info.seconds * 1e6;
 
-    // Longer edge at most kMaxSize (1080p -> 540p, 4K -> quarter), never enlarge; anamorphic pixels
+    // Longer edge at most maxSize (quality Small: 1080p -> 540p, 4K -> quarter), never enlarge; anamorphic pixels
     // (sar) are made square. Even dimensions for yuv420p.
-    const QString k = QString::number(ProxyManager::kMaxSize);
+    const QString k = QString::number(maxSize);
     const QString f = QString("min(1,%1/max(iw*sar,ih))").arg(k);
     // Fix the color matrix as the decoder assumes it for the original (also for files without tag), so that ffmpeg does not
     // "correct" it and the proxy looks exactly like the original in the preview
@@ -144,6 +217,15 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
                                   ":in_color_matrix=%2:out_color_matrix=%2:in_range=%3:out_range=tv,setsar=1")
                               .arg(f, matrix, info.fullRange ? "pc" : "tv");
+    // Interlaced (DV, broadcast, camcorders): the two fields deinterlaced before scaling - scaled as one picture the
+    // fields of two moments blend into combs and ghosts in the proxy (the original's preview draws field by field)
+    if (info.interlaced) {
+        if (const QString deint = deinterlaceFilter(Bundle::tool("ffmpeg"), info.parity); !deint.isEmpty())
+            scale.prepend(deint + ',');
+        else
+            qWarning("Proxy of interlaced %s without deinterlacing: ffmpeg has neither bwdif nor yadif",
+                     qPrintable(original));
+    }
     // Frame 0 of the proxy = frame 0 of the original. The decoder counts from the first video key frame;
     // FFmpeg (without -copyts) shifts by the container start, the earliest of all streams. A recording whose sound
     // starts before the picture (OBS, phones, games: ~1 frame) would put the first picture at +1 frame, and the
@@ -171,8 +253,12 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     if (info.alpha)
         args << "-c:v" << "libvpx-vp9" << "-deadline" << "realtime" << "-cpu-used" << "8" << "-row-mt" << "1"
              << "-b:v" << "0" << "-crf" << "30" << "-auto-alt-ref" << "0";
-    else
-        args << HardwareEncoders::proxyVideoArguments();
+    else {
+        // The proxy's size (without the sar correction, close enough for the bit rate)
+        const double f = std::min(1.0, double(maxSize) / std::max({info.width, info.height, 1}));
+        args << HardwareEncoders::proxyVideoArguments(QSize(int(info.width * f), int(info.height * f)),
+                                                      maxSize >= ProxyManager::kFullSize);
+    }
     // VP8/VP9 alpha: ffmpeg's own decoders drop it, libvpx reads it (as the reader does)
     if (info.alpha && info.decoder.startsWith("libvpx")) {
         const qsizetype input = args.indexOf("-i");
@@ -205,6 +291,13 @@ ProxyJob prepareJob(const QString& original, const QString& part)
 
 } // namespace
 
+QStringList ProxyManager::proxyArguments(const QString& original, int maxSize)
+{
+    return prepareJob(original, QStringLiteral("-"), maxSize).args;
+}
+
+QStringList ProxyManager::programFilters(const QString& program) { return listFilters(program); }
+
 ProxyManager::ProxyManager(QObject* parent) : QObject(parent)
 {
     m_enabled = QSettings().value(kSettingKey, true).toBool();
@@ -223,7 +316,7 @@ ProxyManager::~ProxyManager()
 
 QString ProxyManager::cacheDir()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/proxies";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/proxies";
 }
 
 QString ProxyManager::decodeSource(const QString& original)
@@ -234,6 +327,77 @@ QString ProxyManager::decodeSource(const QString& original)
 
 QString ProxyManager::proxyPath(const QString& original)
 {
+    return proxyPath(original, maxSize());
+}
+
+QStringList ProxyManager::withProxy(const QStringList& originals, int maxSize)
+{
+    QStringList out;
+    for (const QString& p : originals)
+        if (!p.isEmpty() && !out.contains(p) && QFileInfo::exists(p) && QFileInfo::exists(proxyPath(p, maxSize))) out << p;
+    return out;
+}
+
+ProxyManager::Quality ProxyManager::quality()
+{
+    int q = g_quality.load(std::memory_order_relaxed);
+    if (q < 0) {
+        const QString v = QSettings().value(kQualityKey).toString();
+        q = int(v == "full" ? Quality::Full : v == "large" ? Quality::Large : v == "medium" ? Quality::Medium : Quality::Small);
+        g_quality.store(q, std::memory_order_relaxed);
+    }
+    return Quality(q);
+}
+
+void ProxyManager::reloadQuality()
+{
+    QSettings settings;
+    settings.sync(); // picks up what another process wrote
+    g_quality.store(-1, std::memory_order_relaxed);
+}
+
+int ProxyManager::maxSizeOf(Quality q)
+{
+    switch (q) {
+    case Quality::Medium: return 1280;
+    case Quality::Large: return 1920;
+    case Quality::Full: return kFullSize;
+    case Quality::Small: break;
+    }
+    return kMaxSize;
+}
+
+QString ProxyManager::qualityLabel(Quality q)
+{
+    switch (q) {
+    case Quality::Medium: return "720p";
+    case Quality::Large: return "1080p";
+    case Quality::Full: return T("volle Auflösung");
+    case Quality::Small: break;
+    }
+    return "540p";
+}
+
+void ProxyManager::setQuality(Quality q)
+{
+    if (q == quality()) return;
+    QSettings().setValue(kQualityKey, q == Quality::Full     ? "full"
+                                      : q == Quality::Large  ? "large"
+                                      : q == Quality::Medium ? "medium"
+                                                             : "small");
+    g_quality.store(int(q), std::memory_order_relaxed);
+    // The proxy being made has the old size: start it again first (the waiting ones are made at the new size)
+    if (!m_current.isEmpty()) {
+        const QString was = m_current;
+        stopCurrent();
+        m_queue.prepend(was);
+        startNext();
+    }
+    emit qualityChanged();
+}
+
+QString ProxyManager::proxyPath(const QString& original, int maxSize)
+{
     // Key as with the waveform cache: changed originals automatically get a new proxy. The trailing version is
     // raised when proxies made before are wrong: 2 = frame 0 at the first video key frame (older proxies of files
     // whose picture starts after the sound were one frame early)
@@ -242,7 +406,7 @@ QString ProxyManager::proxyPath(const QString& original)
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
-                           .arg(kMaxSize);
+                           .arg(maxSize);
     const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
     return cacheDir() + "/" + hash + ".mp4";
 }
@@ -408,12 +572,23 @@ void ProxyManager::startNext()
         emit queueChanged();
         return;
     }
+    // Already there at the current size (the quality was switched back meanwhile): nothing to make
+    while (!m_queue.isEmpty() && hasProxy(m_queue.first())) {
+        const QString done = m_queue.takeFirst();
+        emit progress(done, -1);
+        emit proxyChanged(done);
+    }
+    if (m_queue.isEmpty()) {
+        emit queueChanged();
+        return;
+    }
     const QString original = m_queue.takeFirst();
     m_current = original;
     // A name of its own: another schneidi on the same cache (a second window, the app and a CLI) making the proxy of
     // the same file at once writes its own part file - two ffmpegs in one file would give a broken proxy
+    m_currentSize = maxSize();
     m_currentPart = QString("%1.%2.part.mp4")
-                        .arg(proxyPath(original).chopped(4))
+                        .arg(proxyPath(original, m_currentSize).chopped(4))
                         .arg(QRandomGenerator::global()->generate(), 8, 16, QChar('0'));
     m_progress = 0;
     m_errorTail.clear();
@@ -423,7 +598,9 @@ void ProxyManager::startNext()
     // Probe the source in a helper thread, then start ffmpeg in the UI thread (cancel in between: job expires)
     const int job = ++m_job;
     auto result = std::make_shared<ProxyJob>();
-    m_probeThread = QThread::create([result, original, part = m_currentPart] { *result = prepareJob(original, part); });
+    m_probeThread = QThread::create([result, original, part = m_currentPart, size = m_currentSize] {
+        *result = prepareJob(original, part, size);
+    });
     m_probeThread->setParent(this); // destructor waits for all still running ones
     connect(m_probeThread, &QThread::finished, this, [this, result, original, job, thread = m_probeThread] {
         thread->deleteLater();
@@ -493,11 +670,11 @@ void ProxyManager::onFinished(int exitCode, bool crashed)
     m_currentPart.clear();
     m_progress = 0;
 
-    const QString target = proxyPath(original);
+    const QString target = proxyPath(original, m_currentSize); // the size it was made at
     if (!crashed && exitCode == 0 && QFileInfo(part).size() > 0) {
         QFile::remove(target);
         QFile::rename(part, target); // only now visible -> never half-finished proxies in the preview
-        ProxyCleanup::writeNote(target, original, kMaxSize); // which file it is for (cleaning up tells why it goes)
+        ProxyCleanup::writeNote(target, original, m_currentSize); // which file it is for (cleaning up tells why it goes)
     } else {
         QFile::remove(part);
         qWarning("Proxy fehlgeschlagen (%s, Code %d): %s", qPrintable(original), exitCode, qPrintable(tail));

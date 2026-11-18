@@ -3,6 +3,7 @@
 // clip onto the selection, video/audio separate, own color correction stays with "Effects", speed with ripple,
 // one undo step; dialog (grayed-out checkmarks, remembered choice).
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "app/PasteAttributesDialog.h"
 #include "app/Theme.h"
@@ -40,6 +41,7 @@ EffectInstance fx(const QString& id, double v)
 
 struct Fixture {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor{&project, &sel};
     Fixture()

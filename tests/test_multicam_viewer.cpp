@@ -296,6 +296,31 @@ void testActiveAngleFramedAndNamed()
     CHECK_EQ(f.view.angleName(1), QString("Theo"));
 }
 
+// Only cells a key reaches carry a number: keys 1-9 cut to cells 1-9 of the page, so in a 4x4 grid cells 10-16 show
+// just their name (a "10" there promised a key that does nothing)
+void testOnlyKeyedCellsNumbered()
+{
+    Fixture f(12);
+    f.view.setPlaying(false);
+    CHECK_EQ(f.view.perPage(), 16);
+    for (int i = 0; i < 12; ++i) f.ed.renameMulticamAngle(f.seq, i, "X"); // same name: the label width = the number
+    QImage grid(640, 360, QImage::Format_RGB32);
+    grid.fill(Qt::darkGray);
+    f.view.setFrame(grid);
+    f.view.setPosition(100);
+    const QImage shot = f.view.grab().toImage();
+    // Width of the label box in the top left corner of a cell (the row just inside its top padding)
+    const auto boxWidth = [&](int cell) {
+        const QRect r = MulticamGrid::cell(f.view.gridRect(), 12, cell, f.view.columns());
+        int w = 0;
+        for (int x = r.left() + 1; x < r.right() - 1; ++x) w += QColor(shot.pixel(x, r.top() + 5)) != QColor(Qt::darkGray);
+        return w;
+    };
+    const int one = boxWidth(0), nine = boxWidth(8), ten = boxWidth(9), twelve = boxWidth(11);
+    if (!CHECK(one > 0 && ten > 0 && ten < one && twelve == ten && ten < nine))
+        std::printf("       label widths: 1=%d 9=%d 10=%d 12=%d\n", one, nine, ten, twelve);
+}
+
 void testPagesAndLayoutChoice()
 {
     Fixture f(10);
@@ -598,6 +623,7 @@ int main(int argc, char** argv)
     testCutAndSwitchSlots();
     testNoMulticamClipAtPlayhead();
     testActiveAngleFramedAndNamed();
+    testOnlyKeyedCellsNumbered();
     testPagesAndLayoutChoice();
     testProxyHintForManyCells();
     testGridOfPortraitTimeline();

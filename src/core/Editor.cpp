@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Editor.h"
 
+#include "core/Automation.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Generators.h"
@@ -11,6 +12,7 @@
 #include "core/Retime.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
@@ -188,7 +190,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
                 Clip v = c;
                 v.id = newId();
                 v.pictureAspect = info->pictureAspect; // the picture only
-                TimelineOps::placeClip(tl.video[idx], v, newId);
+                TimelineOps::placeClip(tl.video[idx], v, newId, tl.frameRate);
             }
             QVector<int> sound;
             for (int k : streams) {
@@ -199,8 +201,9 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
                 a.audioStream = placed[k].stream;
                 a.enabled = placed[k].enabled;
                 a.volumeDb = placed[k].volumeDb;
+                a.sourceChannels = placed[k].channels;
                 if (tl.audio[at].name.isEmpty()) tl.audio[at].name = placed[k].trackLabel;
-                TimelineOps::placeClip(tl.audio[at], a, newId);
+                TimelineOps::placeClip(tl.audio[at], a, newId, tl.frameRate);
                 sound << a.id;
             }
             muteRepeatedSound(tl, sound);
@@ -209,7 +212,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
     });
 }
 
-void Editor::addTitle(int frame, int track, int length, TitleKind kind)
+void Editor::addTitle(int frame, int track, int length, TitleKind kind, const std::function<void(Clip&)>& setup)
 {
     Project* p = m_project;
     const Timeline& cur = p->timeline();
@@ -225,6 +228,17 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         c.title.outlineOn = true;
         c.title.outlineWidth = std::round(c.title.size / 20);
         c.title.numbers = Generators::numberStyleOfLanguage(); // stored: renders the same on every machine
+    } else if (kind == TitleKind::Shape) {
+        // A circle a quarter of the picture high in the middle, white without a stroke; no text (an older version
+        // reads it as an empty text title: it draws nothing)
+        c.title.text.clear();
+        c.title.shape.width = c.title.shape.height = std::round(std::min(fmt.width, fmt.height) / 4.0);
+        c.title.outlineWidth = std::max(2.0, std::round(std::min(fmt.width, fmt.height) / 180.0));
+        c.title.outlineColor = QColor(255, 214, 0);
+    } else if (kind == TitleKind::Drawing) {
+        // Strokes only (painted in the viewer or given to op 'draw'); no text (an older version reads it as an empty
+        // text title: it draws nothing)
+        c.title.text.clear();
     } else if (kind == TitleKind::Progress) {
         // Along the whole timeline unless placed with a length; top edge: the apps cover the bottom of a vertical video
         c.title.text.clear();
@@ -243,6 +257,7 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
                     if (x.start < length && x.end() > 0) track = -1;
         }
     }
+    if (setup) setup(c);
     c.start = std::max(0, frame);
     c.in = 0;
     // Placed with its final length: placing 5 s first and shortening afterwards overwrote what followed on the track
@@ -257,9 +272,9 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
         return;
     }
     c.id = p->newClipId();
-    p->edit(T("Titel einfügen"), [&](Timeline& tl) {
+    p->edit(kind == TitleKind::Drawing ? T("Zeichnen") : T("Titel einfügen"), [&](Timeline& tl) {
         TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
-        TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); });
+        TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); }, tl.frameRate);
     });
     m_selection->set({c.id});
 }
@@ -276,7 +291,7 @@ void Editor::setTitleLength(int clipId, int length)
         Track& t = tl.track(ref);
         t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(), [&](const Clip& x) { return x.id == clipId; }),
                       t.clips.end());
-        TimelineOps::placeClip(t, c, [p] { return p->newClipId(); }); // a longer title overwrites its new range only
+        TimelineOps::placeClip(t, c, [p] { return p->newClipId(); }, tl.frameRate); // a longer title overwrites its new range only
     });
 }
 
@@ -390,6 +405,75 @@ int Editor::duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const D
             if (Clip* c = TimelineOps::findClip(tl, id); c && Ducking::apply(*c, ranges, params)) ++ducked;
     });
     return ducked;
+}
+
+int Editor::unduck(const QVector<int>& ids)
+{
+    const Timeline& cur = m_project->timeline();
+    QVector<int> keyed;
+    for (int id : ids) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(cur, id, &ref);
+        if (c && ref.kind == TrackKind::Audio && !TimelineOps::isLocked(cur, id) && Keys::animated(*c, AnimParam::Volume)
+            && !keyed.contains(id))
+            keyed << id;
+    }
+    if (keyed.isEmpty()) return 0;
+    m_project->edit(T("Absenken aufheben"), [&](Timeline& tl) {
+        for (int id : keyed)
+            if (Clip* c = TimelineOps::findClip(tl, id)) Keys::clear(*c, AnimParam::Volume);
+    });
+    return int(keyed.size());
+}
+
+bool Editor::drawVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || !VolumeDraw::spansEnough(stroke))
+        return false;
+    bool changed = false;
+    m_project->edit(T("Lautstärke zeichnen"), [&](Timeline& tl) {
+        for (Clip& c : tl.audio[track].clips)
+            if (!c.isTitle()) changed |= VolumeDraw::apply(c, stroke, smoothing);
+    });
+    return changed;
+}
+
+bool Editor::drawTrackVolume(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || !VolumeDraw::spansEnough(stroke))
+        return false;
+    Track t = cur.audio[track];
+    if (!VolumeDraw::applyTrack(t, stroke, smoothing) || t.volumeAuto == cur.audio[track].volumeAuto) return false;
+    emit mixerOnlyEdit(); // the preview takes it live (Audio::Mixer::updateMix)
+    m_project->edit(T("Spur-Lautstärke zeichnen"), [&](Timeline& tl) { tl.audio[track].volumeAuto = t.volumeAuto; });
+    return true;
+}
+
+bool Editor::drawTrackPan(int track, const QVector<VolumeDraw::Point>& stroke, int smoothing)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked || !VolumeDraw::spansEnough(stroke))
+        return false;
+    Track t = cur.audio[track];
+    if (!VolumeDraw::applyTrack(t, stroke, smoothing, AutoTarget::Pan) || t.panAuto == cur.audio[track].panAuto) return false;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Spur-Pan zeichnen"), [&](Timeline& tl) { tl.audio[track].panAuto = t.panAuto; });
+    return true;
+}
+
+bool Editor::setTrackAutomation(int track, const AutoCurve& curve, const QString& undoText, const QString& mergeKey,
+                                AutoTarget target)
+{
+    const Timeline& cur = m_project->timeline();
+    if (track < 0 || track >= cur.audio.size() || cur.audio[track].locked) return false;
+    const AutoCurve next = Automation::normalized(curve, target);
+    if (next == cur.audio[track].automation(target)) return false;
+    emit mixerOnlyEdit();
+    m_project->edit(undoText.isEmpty() ? T("Spur-Automation") : undoText,
+                    [&](Timeline& tl) { tl.audio[track].automation(target) = next; }, mergeKey);
+    return true;
 }
 
 void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,
@@ -582,7 +666,10 @@ bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
                           "auseinanderlaufen; die Spur entsperren");
         return false;
     }
-    m_project->edit(T("Lücke schließen"), [&](Timeline& tl) { TimelineOps::rippleTracks(tl, {{to, from - to}}, {}); });
+    // Markers in the empty gap mark a moment, not content: they land on the cut point
+    m_project->edit(T("Lücke schließen"), [&](Timeline& tl) {
+        TimelineOps::rippleTracks(tl, {{to, from - to}}, {}, nullptr, TimelineOps::MarkerCut::MoveToCut);
+    });
     return true;
 }
 
@@ -601,7 +688,7 @@ void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, co
                     if (t.locked) continue;
                     TimelineOps::clearDissolveAt(t, from);
                     TimelineOps::clearDissolveAt(t, to);
-                    TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); });
+                    TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); }, tl.frameRate);
                 }
             TimelineOps::resolvePendingLinks(tl, [p] { return p->newLinkId(); });
             if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {});
@@ -615,13 +702,118 @@ void Editor::rippleDeleteSelection()
     const QVector<int> cues = selectedSubtitles();
     const QVector<int> ids = withCopies(editable(clipIdsOf(m_selection->ids())));
     if (ids.isEmpty() && cues.isEmpty()) return;
+    bool refused = false;
+    TimelineOps::RippleResult result;
+    QString note;
     m_project->edit(T("Löschen mit Nachrücken"), [&](Timeline& tl) {
+        const Timeline before = tl;
         removeCues(tl, cues); // subtitles: without ripple (gap stays)
         if (ids.isEmpty()) return;
         TimelineOps::detachTransitions(tl, ids);
-        TimelineOps::rippleDelete(tl, ids);
+        result = TimelineOps::rippleDelete(tl, ids);
+        refused = !keepsLinks(before, tl, {}, &note);
     });
+    if (refused) return; // the selection stays: the user can change it or the other track
+    // Time meant to go that stays because other clips lie in it (not a group's own J/L tail)
+    QStringList says;
+    if (!note.isEmpty()) says << note;
+    if (result.meantRemoved < result.meant)
+        says << (result.meantRemoved == 0
+                     ? T("Nicht nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein Clip – sonst "
+                         "liefen Bild und Ton auseinander")
+                     : T("Nur %1 von %2 Bildern nachgerückt: Auf einer anderen Spur liegt in der gelöschten Zeit noch ein "
+                         "Clip – sonst liefen Bild und Ton auseinander")
+                           .arg(result.meantRemoved)
+                           .arg(result.meant));
+    if (!says.isEmpty()) tell(says.join(" – "), false);
     m_selection->clear();
+}
+
+void Editor::tell(const QString& text, bool refused)
+{
+    m_notice = {text, refused};
+    emit notice(text);
+}
+
+QString Editor::linksRefusal(const Timeline& before, const Timeline& after, const QSet<int>& ignore, QString* note) const
+{
+    const QVector<QPair<int, int>> apart = TimelineOps::linksApart(before, after, ignore);
+    if (apart.isEmpty()) return {};
+    struct Side {
+        int id = 0;
+        TrackRef ref;
+        int moved = 0;
+    };
+    const auto side = [&](int id) {
+        Side s{id, {}, 0};
+        const Clip* was = TimelineOps::findClip(before, id, &s.ref);
+        const Clip* now = TimelineOps::findClip(after, id);
+        s.moved = was && now ? std::abs(now->start - was->start) : 0;
+        return s;
+    };
+    const auto nameOf = [&](int id) {
+        const Clip* c = TimelineOps::findClip(before, id);
+        return c ? m_project->clipName(*c) : QString();
+    };
+    // Linked clips on a locked track: locking is the way to move only one side - done, with a note
+    QVector<QPair<Side, Side>> hard, locked;
+    for (const auto& [a, b] : apart) {
+        const Side x = side(a), y = side(b);
+        (before.track(x.ref).locked || before.track(y.ref).locked ? locked : hard) << qMakePair(x, y);
+    }
+    if (hard.isEmpty()) {
+        if (note) {
+            const auto& [x, y] = locked.first();
+            const Side& stay = before.track(x.ref).locked ? x : y;
+            const Clip *x0 = TimelineOps::findClip(before, x.id), *y0 = TimelineOps::findClip(before, y.id);
+            const Clip *x1 = TimelineOps::findClip(after, x.id), *y1 = TimelineOps::findClip(after, y.id);
+            const int by = std::abs(((x1->start - x1->in) - (y1->start - y1->in)) - ((x0->start - x0->in) - (y0->start - y0->in)));
+            *note = T("%1 ist gesperrt und blieb stehen: Bild und Ton von „%2“ sind jetzt um %3 Bilder versetzt")
+                        .arg(trackShortName(stay.ref), nameOf(stay.id))
+                        .arg(by);
+        }
+        return {};
+    }
+    const auto& [x, y] = hard.first();
+    const Side& stay = x.moved <= y.moved ? x : y;
+    // A clip on the staying track across the first place where something moved: that track cannot follow
+    QHash<int, int> startNow; // id -> start in `after` (one pass, not a search per clip)
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : after.tracks(k))
+            for (const Clip& c : t.clips) startNow.insert(c.id, c.start);
+    int from = INT_MAX;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : before.tracks(k))
+            for (const Clip& c : t.clips)
+                if (const auto now = startNow.constFind(c.id); now != startNow.cend() && *now != c.start)
+                    from = std::min(from, c.start);
+    bool across = false;
+    if (stay.moved == 0)
+        for (const Clip& c : before.track(stay.ref).clips)
+            if (startNow.value(c.id, INT_MIN) == c.start && c.start < from && c.end() > from) across = true;
+    if (across)
+        return T("Nicht ausgeführt: Auf %1 liegt ein Clip über der Schnittstelle, die Spur kann nicht mit – Bild und Ton "
+                 "von „%2“ liefen auseinander. Den Clip dort kürzen oder verschieben, dann geht es")
+            .arg(trackShortName(stay.ref), nameOf(stay.id));
+    return T("Nicht ausgeführt: Bild und Ton von „%1“ würden auf %2 und %3 unterschiedlich weit verschoben und liefen "
+             "auseinander")
+        .arg(nameOf(stay.id), trackShortName(x.ref), trackShortName(y.ref));
+}
+
+bool Editor::keepsLinks(const Timeline& before, Timeline& tl, const QSet<int>& ignore, QString* note)
+{
+    QString n;
+    const QString why = linksRefusal(before, tl, ignore, &n);
+    if (!why.isEmpty()) {
+        tl = before;
+        tell(why, true);
+        return false;
+    }
+    if (!n.isEmpty()) {
+        if (note) *note = n;
+        else tell(n, false);
+    }
+    return true;
 }
 
 void Editor::selectAll()
@@ -911,18 +1103,21 @@ void Editor::paste(int frame)
     QSet<int> pasted;
     p->edit(T("Einfügen"), [&](Timeline& tl) {
         QHash<int, int> linkMap; // copy gets its own link
+        QHash<int, int> idMap;   // old -> new (a shape following a clip pasted with it follows the copy)
         for (const auto& it : items) {
             Clip c = it.clip;
             c.id = p->newClipId();
+            idMap.insert(it.clip.id, c.id);
             c.start += frame;
             if (c.linkId) {
                 if (!linkMap.contains(c.linkId)) linkMap[c.linkId] = p->newLinkId();
                 c.linkId = linkMap[c.linkId];
             }
             TimelineOps::ensureTracks(tl, it.ref.kind, it.ref.index + 1);
-            TimelineOps::placeClip(tl.track(it.ref), c, [p] { return p->newClipId(); });
+            TimelineOps::placeClip(tl.track(it.ref), c, [p] { return p->newClipId(); }, tl.frameRate);
             pasted.insert(c.id);
         }
+        Shapes::remapFollow(tl, idMap);
     });
     m_selection->set(pasted);
 }

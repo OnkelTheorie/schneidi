@@ -17,6 +17,7 @@ class RenderQueue;
 class RenderQueuePanel;
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLineEdit;
 class QPushButton;
 class QLabel;
@@ -77,6 +78,7 @@ private:
     void updateFormat(); // resolutions matching the project settings
     void updateRateLabel(); // timeline entry of the frame rate, with the preset's cap
     void updateControls(); // fields depending on the format (audio only, quality)
+    void updateSourceBitrate(); // quality "like source": its target in the choice ("Wie Quelle (≈ 30 Mbit/s)")
     void reloadPresets(const QString& select = {});
     void syncPresetToSettings(); // setting changed -> matching preset or "Eigene Einstellungen"
     // The fix button for the sound findings of a check (loudness measured on the checked timeline `tl`)
@@ -108,6 +110,8 @@ private:
     int m_maxFps = 0; // from the preset (Shorts/Reels/TikTok: up to 60 fps) while the frame rate follows the timeline
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;
+    QComboBox* m_audioFormat = nullptr; // sound codec of the MP4 formats: AAC / AC-3 (RenderSettings::audioFormat)
+    QFormLayout* m_form = nullptr;
     QComboBox* m_threads; // threads for rendering (data: count, 0 = all)
     QComboBox* m_range; // whole timeline / In-Out range
     QCheckBox* m_smart; // smart render (H.264/H.265 only)

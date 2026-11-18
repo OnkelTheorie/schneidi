@@ -22,6 +22,7 @@ extern "C" {
 }
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -288,6 +289,32 @@ void testRender(const QString& dir)
     CHECK(std::abs(gi.r - (255 - g0.r)) < 6);
     // Missing LUT: picture stays (no crash)
     CHECK(diff(render(one(grade({{"lut", QDir(dir).filePath("weg.cube")}})), fmt, 10), ref) < 0.5);
+    // One renderer over a LUT file that changes: missing first (drive not mounted yet), then there, then overwritten -
+    // every render uses the file as it is now (the renderer kept the first result by path for its whole life)
+    {
+        const QString later = QDir(dir).filePath("later.cube");
+        QFile::remove(later);
+        Picture::Options o;
+        o.format = fmt;
+        o.mode = Picture::Mode::Export;
+        Picture::Renderer lr(one(grade({{"lut", later}})), o);
+        CHECK(diff(lr.render(10).toImage(), ref) < 0.5);
+        CHECK(writeFile(later, cube(5, [](double& r, double& g, double& b) { r = 1 - r; g = 1 - g; b = 1 - b; })));
+        ColorGrade::revalidateLuts(); // (loadLut looks at a file at most every kLutRecheckMs; an export start: at once)
+        const Rgb appeared = gray(lr.render(11).toImage());
+        if (!CHECK(std::abs(appeared.r - (255 - g0.r)) < 6))
+            std::printf("       LUT that appeared later: gray %.1f, expected %.1f\n", appeared.r, 255 - g0.r);
+        // Overwritten with an identity of another size and a later time
+        CHECK(writeFile(later, cube(3, [](double&, double&, double&) {})));
+        {
+            QFile f(later);
+            if (f.open(QIODevice::ReadWrite))
+                f.setFileTime(QDateTime::currentDateTime().addSecs(5), QFileDevice::FileModificationTime);
+        }
+        ColorGrade::revalidateLuts();
+        if (const double d = diff(lr.render(12).toImage(), ref); !CHECK(d < 1.0))
+            std::printf("       overwritten LUT still applied: differs by %.3f\n", d);
+    }
 
     // Keyframes gain 0 (frame 0) -> 1 (frame 50); splitting at 25 changes nothing
     const Timeline keyed = one([](Clip& c) {

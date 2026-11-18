@@ -14,6 +14,7 @@
 // No CPU fallback: without a GPU the effect is skipped (Renderer warns, `check`/`render` list it as skipped).
 #include "engine/picture/CustomEffects.h"
 
+#include "core/AppPaths.h"
 #include "engine/picture/gpu/Gpu.h"
 
 #include <QCoreApplication>
@@ -234,7 +235,7 @@ QByteArray keyOf(const QString& source)
 
 QString cacheFile(const QByteArray& key)
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    const QString dir = AppPaths::writable(QStandardPaths::CacheLocation);
     if (dir.isEmpty()) return {};
     return QDir(dir).filePath(QStringLiteral("shaders/%1.qsb").arg(QString::fromLatin1(key)));
 }

@@ -16,6 +16,8 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
+
 namespace Masks {
 
 inline constexpr int kMaxPoints = 32; // polygon / bezier corners
@@ -70,6 +72,10 @@ struct Geometry {
 // The shape in pixels of a picture of `size` (bezier curves flattened to within a quarter pixel)
 Geometry toPixels(const Spec& s, QSize size);
 Geometry followed(Geometry g, const Follow& f);
+// Every point of the shape through `map` (pixels to pixels; 0.22: a perspective map, the homography of a four-corner
+// tracker): a rectangle or ellipse becomes the polygon of its outline first (an ellipse within a quarter pixel), a
+// gradient maps its two points. A point map gives no finite place (behind the horizon): empty
+Geometry mapped(Geometry g, const std::function<bool(QPointF in, QPointF* out)>& map);
 // Pixels where the shape's value can be > 0 without invert (whole-picture bounds for a linear gradient); not
 // clipped to the picture. Empty for an empty shape
 QRectF bounds(const Geometry& g);

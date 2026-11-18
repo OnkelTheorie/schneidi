@@ -146,7 +146,13 @@ void MainWindow::exportTimelineDialog()
         return;
     Interchange::Sequence seq = Interchange::fromTimeline(*m_project);
     Interchange::applyStartTimecodes(seq, &Engine::startTimecode);
-    const QByteArray data = Interchange::write(seq, format);
+    QByteArray data;
+    try {
+        data = Interchange::write(seq, format);
+    } catch (const Interchange::Error& e) { // EDL of a 100/120 fps timeline
+        QMessageBox::warning(this, title, e.message);
+        return;
+    }
     QSaveFile out(path);
     if (!out.open(QIODevice::WriteOnly) || out.write(data) != data.size() || !out.commit()) {
         QMessageBox::warning(this, title, T("Datei konnte nicht gespeichert werden:\n%1").arg(path));

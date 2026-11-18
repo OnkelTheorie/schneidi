@@ -4,6 +4,8 @@
 #include "core/Dynamics.h"
 #include "core/Editor.h"
 #include "core/Project.h"
+#include "core/TimelineOps.h"
+#include "ui/DynCurve.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -22,11 +24,19 @@ QString shown(double v)
     return s.replace('.', QLocale().decimalPoint());
 }
 
-bool parsed(const QLineEdit* e, double* v)
+// Model value into a field, unless the user is typing in it (text not yet committed): a change from elsewhere (CLI,
+// undo, another window) never overwrites what is being typed
+void showValue(QLineEdit* e, double v)
+{
+    if (!e->isModified()) e->setText(shown(v));
+}
+
+bool parsed(QLineEdit* e, double* v)
 {
     bool ok = false;
     const double x = QString(e->text()).trimmed().replace(',', '.').toDouble(&ok);
     if (ok) *v = x;
+    e->setModified(false); // taken (or refused): the model's value shows again
     return ok;
 }
 } // namespace
@@ -34,11 +44,16 @@ bool parsed(const QLineEdit* e, double* v)
 DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     : QDialog(parent), m_editor(editor), m_track(track)
 {
-    setWindowTitle(T("Kompressor – %1").arg(trackShortName({TrackKind::Audio, track})));
+    showTitle();
+    if (const QVector<Track>& audio = editor->project()->timeline().audio; track >= 0 && track < audio.size())
+        m_trackUid = audio[track].uid.value;
     auto* root = new QVBoxLayout(this);
     m_on = new QCheckBox(T("Kompressor an"));
     m_on->setObjectName("dynamicsOn");
     root->addWidget(m_on);
+    m_curve = new DynCurve(editor, track);
+    m_curve->setObjectName("dynamicsCurve");
+    root->addWidget(m_curve, 1);
     auto* form = new QFormLayout;
     auto field = [&](const char* name, const QString& label, const QString& unit, const QString& tip) {
         auto* e = new QLineEdit;
@@ -65,7 +80,10 @@ DynamicsDialog::DynamicsDialog(Editor* editor, int track, QWidget* parent)
     root->addWidget(buttons);
 
     connect(m_on, &QCheckBox::toggled, this, &DynamicsDialog::commit);
-    connect(editor->project(), &Project::timelineChanged, this, &DynamicsDialog::sync);
+    connect(editor->project(), &Project::timelineChanged, this, &DynamicsDialog::followTrack);
+    // The track number belongs to this timeline of this project: another one closes the window
+    connect(editor->project(), &Project::loaded, this, &DynamicsDialog::detach);
+    connect(editor->project(), &Project::currentSequenceChanged, this, &DynamicsDialog::detach);
     sync();
 }
 
@@ -79,7 +97,7 @@ void DynamicsDialog::sync()
     const std::pair<QLineEdit*, double> values[] = {{m_threshold, d.thresholdDb}, {m_ratio, d.ratio},
                                                     {m_attack, d.attackMs},       {m_release, d.releaseMs},
                                                     {m_knee, d.kneeDb},           {m_makeup, d.makeupDb}};
-    for (const auto& [e, v] : values) e->setText(shown(v));
+    for (const auto& [e, v] : values) showValue(e, v);
 }
 
 void DynamicsDialog::commit()
@@ -96,4 +114,36 @@ void DynamicsDialog::commit()
     parsed(m_makeup, &d.makeupDb);
     m_editor->setTrackDynamics(m_track, d);
     sync(); // clamped values / invalid text back to the model's value
+}
+
+void DynamicsDialog::showTitle() { setWindowTitle(T("Kompressor – %1").arg(trackShortName({TrackKind::Audio, m_track}))); }
+
+void DynamicsDialog::followTrack()
+{
+    if (m_track < 0) return; // detached
+    const int t = TimelineOps::followTrack(m_editor->project()->timeline().audio, m_trackUid, m_track);
+    if (t < 0) {
+        detach();
+        return;
+    }
+    if (t != m_track) {
+        m_track = t;
+        m_curve->setTrack(t);
+        showTitle();
+        if (property("mixerStrip").isValid()) setProperty("mixerStrip", t); // the Mixer finds it at its strip
+    }
+    sync();
+}
+
+void DynamicsDialog::detach()
+{
+    // Typed text is dropped, never committed: closing takes the focus away (editingFinished), and the track number
+    // would now point at a track of the other project/timeline
+    m_track = -1;
+    m_curve->setTrack(-1);
+    for (QLineEdit* e : findChildren<QLineEdit*>()) {
+        const QSignalBlocker block(e);
+        e->setModified(false);
+    }
+    close();
 }

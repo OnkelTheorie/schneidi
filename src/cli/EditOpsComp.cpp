@@ -10,6 +10,7 @@
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/CompRecipes.h"
+#include "core/EffectFavorites.h"
 #include "core/CompTrack.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
@@ -17,6 +18,7 @@
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/RegionPick.h"
 #include "engine/picture/CompCutout.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CompTrack.h"
@@ -356,7 +358,7 @@ void opComp(Session& s, const QJsonObject& op)
                                             }())}};
         if (!r->note.isEmpty()) note["next"] = r->note;
         if (const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.first()))
-            if (const EffectInstance* e = EffectRegistry::instance(*c, ::Comp::kEffectId)) note["graph"] = compJson(*e, s.format());
+            if (const EffectInstance* e = EffectRegistry::instance(*c, ::Comp::kEffectId)) note["graph"] = compJson(*e, s.format(), c);
         s.notes << QJsonObject{{"comp_recipe", note}};
         return;
     }
@@ -386,8 +388,37 @@ void opCompFrom(Session& s, const QJsonObject& op)
         if (TrackRef r; TimelineOps::findClip(s.project.timeline(), id, &r) && r.kind == TrackKind::Video) clip = id;
     const Clip* c = TimelineOps::findClip(s.project.timeline(), clip);
     QJsonObject note{{"clip", clip}, {"timeline", seq}};
-    if (c) note["graph"] = compJson(*EffectRegistry::instance(*c, ::Comp::kEffectId), s.format());
+    if (c) note["graph"] = compJson(*EffectRegistry::instance(*c, ::Comp::kEffectId), s.format(), c);
     s.notes << QJsonObject{{"comp_from", note}};
+}
+
+// {op:'node', clip, id, range:[from, to]}: the node works in timeline frames [from, to) of the clip (stored as seconds
+// from the clip's start, Comp::rangeValues); range:false = the whole clip again
+void opNodeRange(Session& s, const QJsonObject& op, const Clip& c, const CompNode& n)
+{
+    if (op.contains("params") || op.contains("out") || op.contains("link") || op.contains("unlink"))
+        fail("BAD_ARGUMENT", "node: give range alone (then params/out in another op)");
+    if (!::Comp::hasRange(n.type))
+        fail("BAD_ARGUMENT", QString("node %1 (%2) has no time range: masks and trackers work over the whole clip")
+                                 .arg(n.id).arg(n.type));
+    const double fps = s.format().rate.fps();
+    const QJsonValue v = op.value("range");
+    double from = 0, until = 0;
+    if (!(v.isNull() || (v.isBool() && !v.toBool()))) {
+        const QJsonArray r = v.toArray();
+        if (r.size() != 2)
+            fail("BAD_ARGUMENT", "node: range is [from, to] in timeline times (frames, \"4.5s\", timecode), to "
+                                 "exclusive; range:false = the whole clip");
+        const QJsonObject pair{{"from", r[0]}, {"to", r[1]}};
+        const int a = timeOf(s, pair, "from"), b = timeOf(s, pair, "to");
+        if (b <= a) fail("BAD_ARGUMENT", "node: range 'to' must be after 'from'");
+        if (a < c.start || b > c.end())
+            fail("BAD_ARGUMENT", QString("node %1: range must lie inside clip %2 (%3..%4, to exclusive), got %5..%6")
+                                     .arg(n.id).arg(c.id).arg(c.start).arg(c.end()).arg(a).arg(b));
+        if (a > c.start || b < c.end()) ::Comp::rangeValues(c, a, b, fps, &from, &until); // the whole clip = no range
+    }
+    QString err;
+    if (!s.editor.setCompNodeRange(c.id, n.id, from, until, &err)) fail("FAILED", err);
 }
 
 void opNode(Session& s, const QJsonObject& op)
@@ -438,6 +469,10 @@ void opNode(Session& s, const QJsonObject& op)
         done(s.editor.removeCompNode(clip, id, kKinds, &err));
         return;
     }
+    if (op.contains("range")) { // the time range in timeline times (0.22)
+        opNodeRange(s, op, c, *n);
+        return;
+    }
     // params and out:true together are one undo step
     struct Macro {
         QUndoStack* undo = nullptr;
@@ -454,7 +489,23 @@ void opNode(Session& s, const QJsonObject& op)
     if (op.contains("params")) {
         const QVariantMap values = nodeValues(s, kindOf(n->type, QString("node %1").arg(id)), op.value("params"),
                                               QString("node %1").arg(id), fxEffectOf(c, id));
-        if (!values.isEmpty()) done(s.editor.setCompNodeValues(clip, id, values, &err));
+        if (op.contains("at")) { // like the Inspector: an animated value gets a keyframe there, others their value
+            const int at = timeOf(s, op, "at");
+            if (at < c.start || at >= c.end())
+                fail("BAD_ARGUMENT", QString("node %1: at must lie inside clip %2 (%3..%4)")
+                                         .arg(id).arg(clip).arg(c.start).arg(c.end() - 1));
+            if (!values.isEmpty()) done(s.editor.setCompNodeValuesAt(clip, id, values, at, {}, &err));
+        } else {
+            // The keyframes of an animated value win over its static value: setting that would do nothing
+            for (auto it = values.begin(); it != values.end(); ++it)
+                if (Keys::animated(c, Keys::effectParam(QString::fromLatin1(::Comp::kEffectId),
+                                                        CompGraph::paramKey(id, it.key()))))
+                    fail("BAD_ARGUMENT", QString("node %1: '%2' is animated (keyframes), a plain value would not show; "
+                                                 "give at:<time> to set its keyframe there, or use {op:'keyframe', "
+                                                 "param:'comp.n%1.%2', at, value}")
+                                             .arg(id).arg(it.key()));
+            if (!values.isEmpty()) done(s.editor.setCompNodeValues(clip, id, values, &err));
+        }
         any = true;
     }
     if (op.value("out").toBool()) {
@@ -464,10 +515,49 @@ void opNode(Session& s, const QJsonObject& op)
     if (!any) fail("BAD_ARGUMENT", "node: nothing to do (params, out:true or remove:true)");
 }
 
+// track_node with mode and/or corners (0.22, mode quad): sets them on the node before the analysis; *undo is then an
+// open macro (the values and the result are one step). false = nothing given
+bool setTrackStart(Session& s, const QJsonObject& op, int clip, int node, QUndoStack** undo)
+{
+    if (!op.contains("mode") && !op.contains("corners")) return false;
+    QVariantMap values;
+    if (op.contains("mode")) {
+        const QString mode = op.value("mode").toString();
+        if (!PC::trackModeFromId(mode, nullptr))
+            fail("BAD_ARGUMENT", QString("track_node: mode is point, two, face or quad (not '%1')").arg(mode));
+        values["mode"] = mode;
+    }
+    if (op.contains("corners")) {
+        const QJsonArray a = op.value("corners").toArray();
+        if (a.size() != 4)
+            fail("BAD_ARGUMENT", "track_node: corners are four [x, y] (0..1 of the clip's picture), clockwise from the top left");
+        double to[8];
+        for (int i = 0; i < 4; ++i) {
+            const QJsonArray p = a[i].toArray();
+            if (p.size() != 2 || !p[0].isDouble() || !p[1].isDouble() || p[0].toDouble() < 0 || p[0].toDouble() > 1
+                || p[1].toDouble() < 0 || p[1].toDouble() > 1)
+                fail("BAD_ARGUMENT", QString("track_node: corner %1 must be [x, y] with numbers 0..1").arg(i));
+            to[2 * i] = p[0].toDouble(), to[2 * i + 1] = p[1].toDouble();
+            values[QString::fromLatin1(::Comp::kQuadStartKeys[2 * i])] = to[2 * i];
+            values[QString::fromLatin1(::Comp::kQuadStartKeys[2 * i + 1])] = to[2 * i + 1];
+        }
+        Compose::Homography h;
+        if (!Compose::homography(to, to, &h))
+            fail("BAD_ARGUMENT", "track_node: the corners make no quad (three on a line, or crossed: give them clockwise "
+                                 "from the top left)");
+        if (!values.contains("mode")) values["mode"] = QString::fromLatin1(::Comp::kQuadMode);
+    }
+    *undo = s.project.undoStack();
+    (*undo)->beginMacro(T("Knoten verfolgen"));
+    QString err;
+    if (!s.editor.setCompNodeValues(clip, node, values, &err)) fail("FAILED", err.isEmpty() ? QString("could not set the start values") : err);
+    return true;
+}
+
 void opTrackNode(Session& s, const QJsonObject& op)
 {
     const Clip& c = clipOf(s, op, "clip");
-    const Clip clip = c; // the timeline changes below
+    Clip clip = c; // the timeline changes below
     if (!op.contains("node")) fail("BAD_ARGUMENT", "missing 'node' (id of a tracker node)");
     const int node = op.value("node").toInt();
     const CompGraph g = graphOfClip(clip);
@@ -475,6 +565,14 @@ void opTrackNode(Session& s, const QJsonObject& op)
     if (!n) fail("NOT_FOUND", QString("no node %1 in the graph of clip %2").arg(node).arg(clip.id));
     if (n->type != QLatin1String(::Comp::kTrackerType))
         fail("BAD_ARGUMENT", QString("node %1 is a %2 node, not a tracker").arg(node).arg(n->type));
+    struct Macro {
+        QUndoStack* undo = nullptr;
+        ~Macro()
+        {
+            if (undo) undo->endMacro();
+        }
+    } macro;
+    if (setTrackStart(s, op, clip.id, node, &macro.undo)) clip = *TimelineOps::findClip(s.project.timeline(), clip.id);
     // Timeline frames in, clip frames for the analysis (backwards when to < from)
     const int last = clip.length() - 1;
     const int from = std::clamp(timeOf(s, op, "from", clip.start) - clip.start, 0, last);
@@ -482,16 +580,143 @@ void opTrackNode(Session& s, const QJsonObject& op)
     const PC::TrackRun r = PC::trackNode(s.format(), clip, node, from, to);
     if (!r.error.isEmpty()) fail("FAILED", r.error);
     if (r.points.isEmpty()) fail("FAILED", QString("nothing tracked for node %1").arg(node));
-    if (!s.editor.trackCompNode(clip.id, node, r.points)) fail("FAILED", "could not store the tracking result");
+    if (!s.editor.trackCompNode(clip.id, node, r.points, ::Comp::TrackLoss{r.lostFrames, r.gaveUp, to}))
+        fail("FAILED", "could not store the tracking result");
     QJsonObject note{{"clip", clip.id}, {"node", node}, {"from", clip.start + from}, {"to", clip.start + to},
                      {"points", int(r.points.size())}, {"lost_frames", int(r.lostFrames.size())},
                      {"gave_up", r.gaveUp}, {"outliers", r.outliers}};
+    // Where followers lose it, as stored (seen keys: lost frames at the end of a run that did not give up are none)
+    QJsonArray lost;
+    if (const Clip* now = TimelineOps::findClip(s.project.timeline(), clip.id))
+        for (const ::Comp::TrackGap& gap : ::Comp::trackGaps(*now, node)) lost << QJsonArray{clip.start + gap.from, clip.start + gap.to};
+    note["lost"] = lost;
     note["lost_at"] = r.lostAt >= 0 ? QJsonValue(clip.start + r.lostAt) : QJsonValue();
     note["found_at"] = r.foundAt >= 0 ? QJsonValue(clip.start + r.foundAt) : QJsonValue();
     if (r.gaveUp)
         note["hint"] = "lost for too long: the track stops there; start a new track_node from a frame where it is "
                        "visible again (from), or move the start points (ax, ay)";
+    // Mode quad: the corners at the last frame tracked, and corners tracked further inside (no structure there)
+    if (!r.points.isEmpty() && r.points.last().quad) {
+        QJsonArray corners;
+        for (const QPointF& p : r.points.last().corners)
+            corners << QJsonArray{std::round(p.x() * 10000) / 10000, std::round(p.y() * 10000) / 10000};
+        note["corners"] = corners;
+        note["corners_at"] = clip.start + r.points.last().frame;
+        if (!r.movedIn.isEmpty()) {
+            QJsonArray moved;
+            for (int i : r.movedIn) moved << i;
+            note["moved_in"] = moved;
+            note["hint"] = QString("corner(s) %1 lie on a flat area: tracked a bit further inside (the corners follow "
+                                   "the other points' perspective); better: corners on visible structure").arg([&] {
+                QStringList l;
+                for (int i : r.movedIn) l << QString::number(i);
+                return l.join(", ");
+            }());
+        }
+    }
     s.notes << QJsonObject{{"track_node", note}};
+}
+
+// The occluder mask of a graph for pick_region add without node: a mask feeding a merge's "mask" input (recipe
+// text_behind_object: 6), walked back to the start of its chain (masks read through their "mask" input). 0 = none
+int occluderMask(const CompGraph& g)
+{
+    for (const CompLink& l : g.links) {
+        const CompNode* from = g.node(l.from);
+        const CompNode* to = g.node(l.to);
+        if (!from || !to || from->type != QLatin1String("mask") || to->type != QLatin1String("merge")
+            || l.input != QLatin1String("mask"))
+            continue;
+        int node = from->id;
+        for (int guard = 0; guard < 64; ++guard) {
+            int prev = 0;
+            for (const CompLink& m : g.links)
+                if (m.to == node && m.input == QLatin1String("mask"))
+                    if (const CompNode* p = g.node(m.from); p && p->type == QLatin1String("mask")) prev = p->id;
+            if (!prev) break;
+            node = prev;
+        }
+        return node;
+    }
+    return 0;
+}
+
+// {op:'pick_region', clip, at?, point:[x, y], tolerance?, add?, node?, combine?} (0.22): the even surface around a
+// point as a polygon (engine/RegionPick); add puts it into a mask of the clip's graph (recipe text_behind_object when
+// the clip has none), one undo step
+void opPickRegion(Session& s, const QJsonObject& op)
+{
+    const Clip& c = clipOf(s, op, "clip");
+    const Clip clip = c;
+    const QJsonArray pt = op.value("point").toArray();
+    if (pt.size() != 2 || !pt[0].isDouble() || !pt[1].isDouble() || pt[0].toDouble() < 0 || pt[0].toDouble() > 1
+        || pt[1].toDouble() < 0 || pt[1].toDouble() > 1)
+        fail("BAD_ARGUMENT", "pick_region: point is [x, y] with numbers 0..1 of the clip's picture (look with `frames` first)");
+    const QPointF point(pt[0].toDouble(), pt[1].toDouble());
+    const int at = timeOf(s, op, "at", clip.start);
+    if (at < clip.start || at >= clip.end())
+        fail("BAD_ARGUMENT", QString("pick_region: at must lie inside clip %1 (%2..%3)").arg(clip.id).arg(clip.start).arg(clip.end() - 1));
+    RegionPick::Options o;
+    if (op.contains("tolerance")) o.tolerance = numberOf(op, "tolerance", 0, 1);
+    RegionPick::Combine mode = RegionPick::Combine::Replace;
+    if (op.contains("combine") && !RegionPick::combineFromId(op.value("combine").toString(), &mode))
+        fail("BAD_ARGUMENT", "pick_region: combine is replace, add or subtract");
+    const bool add = op.value("add").toBool() || op.contains("node") || mode != RegionPick::Combine::Replace;
+    if (clip.isNested() || clip.isTitle())
+        fail("BAD_ARGUMENT", "pick_region works on video clips only (not on titles, compound or multicam clips)");
+    const QImage picture = RegionPick::clipPicture(s.format(), clip, at - clip.start, o.maxEdge);
+    const RegionPick::Result r = RegionPick::pick(picture, point, o);
+    if (!r.ok()) fail("FAILED", r.error.isEmpty() ? QString("nothing picked") : r.error);
+    QJsonArray polygon;
+    for (const QPointF& p : r.polygon) polygon << QJsonArray{std::round(p.x() * 10000) / 10000, std::round(p.y() * 10000) / 10000};
+    QJsonObject note{{"clip", clip.id}, {"at", at}, {"polygon", polygon}, {"points", int(r.polygon.size())},
+                     {"area", std::round(r.area * 10000) / 10000}, {"touches_edge", r.touchesEdge}};
+    if (!r.warning.isEmpty()) note["warning"] = r.warning;
+    if (add) {
+        struct Macro {
+            QUndoStack* undo = nullptr;
+            ~Macro()
+            {
+                if (undo) undo->endMacro();
+            }
+        } macro;
+        macro.undo = s.project.undoStack();
+        macro.undo->beginMacro(T("Fläche wählen"));
+        QString err;
+        CompGraph g = graphOfClip(clip, false);
+        int node = op.value("node").toInt();
+        if (g.nodes.isEmpty()) { // no graph yet: the recipe that hides text behind the surface
+            if (node) fail("NOT_FOUND", QString("clip %1 has no compositing graph (without node, add:true puts the recipe text_behind_object on)").arg(clip.id));
+            const Parsed p = recipeGraph(s, QJsonObject{{"recipe", "text_behind_object"}});
+            if (!s.editor.setCompGraph({clip.id}, p.graph, p.values, kKinds, &err)) fail("FAILED", err);
+            g = p.graph;
+            node = occluderMask(g);
+            note["recipe"] = "text_behind_object";
+        } else if (!node) {
+            node = occluderMask(g);
+            if (!node)
+                fail("NOT_FOUND", QString("clip %1's graph has no mask in a merge's mask input: give node (a mask id), "
+                                          "or put recipe text_behind_object on").arg(clip.id));
+        }
+        const CompNode* n = g.node(node);
+        if (!n) fail("NOT_FOUND", QString("no node %1 in the graph of clip %2").arg(node).arg(clip.id));
+        if (n->type != QLatin1String("mask")) fail("BAD_ARGUMENT", QString("node %1 is a %2 node, not a mask").arg(node).arg(n->type));
+        QPointF placed(-1, -1);
+        const int id = RegionPick::applyPick(s.editor, s.format(), clip.id, node, mode, r.polygon, at, &picture, &placed, &err);
+        if (!id) fail("FAILED", err);
+        note["node"] = id;
+        if (placed.x() >= 0) note["tracker_point"] = QJsonArray{placed.x(), placed.y()};
+        const Clip* now = TimelineOps::findClip(s.project.timeline(), clip.id);
+        const EffectInstance* e = now ? EffectRegistry::instance(*now, ::Comp::kEffectId) : nullptr;
+        const int follow = e ? ::Comp::followId(e->params.value(CompGraph::paramKey(id, "follow")).toDouble()) : 0;
+        if (follow > 0) {
+            note["follow"] = follow;
+            note["next"] = QString("track the surface so the mask stays on it: {op:'track_node', clip:%1, node:%2, from:%3} "
+                                   "(and to:%4 from:%3 for the frames before); check with `frames` {clip:%1, node:%5}")
+                               .arg(clip.id).arg(follow).arg(at).arg(clip.start).arg(g.out);
+        }
+    }
+    s.notes << QJsonObject{{"pick_region", note}};
 }
 
 } // namespace
@@ -529,6 +754,7 @@ QJsonArray recipesJson()
         if (!r.description.isEmpty()) o["description"] = r.description;
         if (!r.note.isEmpty()) o["note"] = r.note;
         if (!r.dir.isEmpty()) o["folder"] = QDir::toNativeSeparators(r.dir);
+        if (EffectFavorites::isFavorite("recipe:" + r.id)) o["favorite"] = true; // marked in the Effects Library
         list << o;
     }
     return list;
@@ -568,13 +794,32 @@ QJsonArray compNodeKindsJson()
         if (k.id == QLatin1String(::Comp::kTrackerType))
             o["note"] = "ax, ay (bx, by) = start points as 0..1 of the CLIP's own picture (without letterbox bars) at "
                         "the start frame; edit op track_node writes x, y, scale, angle as keyframes and rx, ry (the "
-                        "reference point); followers (follow = this id) move by (x - rx, y - ry) and scale/turn around (x, y)";
+                        "reference point); followers (follow = this id) move by (x - rx, y - ry) and scale/turn around (x, y). "
+                        "mode quad: start corners q0x..q3y (clockwise from the top left), results c0x..c3y as keyframes "
+                        "(track_node with corners sets the start)";
+        if (k.id == QLatin1String("mask"))
+            o["note"] = "positions 0..1 of the picture; follow = a tracker id: moved/scaled/turned by the follow rule, "
+                        "a quad tracker carries every point in perspective (start corners -> corners found). "
+                        "Op pick_region makes a polygon of the even surface around a point";
+        if (k.id == QLatin1String(PC::kCornerPinType))
+            o["note"] = "corners c0x..c3y as 0..1 of the picture, clockwise from the top left; follow = a tracker id: a "
+                        "quad tracker's corners are used, another tracker moves the own corners by the follow rule. "
+                        "Its src picture (its content area: a text's box) is stretched onto the corners, transparent "
+                        "outside - merge it over the clip";
+        if (k.id == QLatin1String(::Comp::kCameraType))
+            o["note"] = "the shared 2.5D camera (no picture, never linked; one per graph): layers (transform, media, "
+                        "text, text3d) with params {z: depth} move with it (camera: its id, 0 = the graph's camera) - z 1 = the picture plane, 2 = twice as far "
+                        "(a pan by p moves it p/2), 0 = the camera leaves it alone; at rest every z looks as without "
+                        "a camera. pan_x/pan_y in picture widths/heights (camera moves right/down, the picture the other "
+                        "way), push = dolly forward (near layers grow more), zoom without parallax, drift_* = steady "
+                        "move per second without keyframes (the push eases off, never through the picture), follow = a tracker id (its motion becomes pan/push/roll). "
+                        "Recipe parallax_photo";
         list << o;
     }
     return list;
 }
 
-QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
+QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f, const Clip* clip)
 {
     CompGraph g;
     if (!::Comp::graphOf(e, &g)) return {{"broken", true}};
@@ -599,21 +844,43 @@ QJsonObject compJson(const EffectInstance& e, const ProjectFormat& f)
                             v[shown] = v.take(k);
             o["params"] = v;
         }
+        if (::Comp::NodeRange r; clip && ::Comp::activeRange(e, n.id, &r, clip, 0)) { // where it works (timeline frames)
+            int first = 0, end = 0;
+            ::Comp::rangeFrames(*clip, r, f.rate.fps(), &first, &end);
+            o["range"] = QJsonArray{first, end};
+            if (r.keyed) o["range_keyframed"] = true; // from/until have keyframes: the range at the clip's start
+        }
         if (!PC::find(n.type)) o["available"] = false; // a newer version's kind: passed through
         for (const char* key : {"e_chain", "e_code"}) // custom code not confirmed (core/CodeTrust.h): passed through
             if (!CodeTrust::isTrusted(values.value(n.id).value(QLatin1String(key)).toString())) o["untrusted"] = true;
+        if (clip && n.type == QLatin1String(::Comp::kTrackerType)) // where it lost the point (keys n<id>.seen)
+            if (const QVector<::Comp::TrackGap> gaps = ::Comp::trackGaps(*clip, n.id); !gaps.isEmpty()) {
+                QJsonArray lost;
+                for (const ::Comp::TrackGap& gap : gaps) lost << QJsonArray{clip->start + gap.from, clip->start + gap.to};
+                o["lost"] = lost;
+                if (gaps.last().openEnd || gaps.first().openStart) o["lost_ended"] = true;
+            }
         if (n.type == QLatin1String(PC::kCutoutType)) // not analysed: shows nothing (EditOpsCutout.cpp)
             if (const QString hint = PC::cutoutHint(values.value(n.id).value(PC::kCutoutCacheKey).toString()); !hint.isEmpty())
                 o["hint"] = hint;
+        if (n.type == QLatin1String(::Comp::kCameraType)) { // the layers in its space (0.22)
+            QJsonArray layers;
+            for (const CompNode& m : g.nodes)
+                if (::Comp::layerCameraOf(e, g, m.id, clip) == n.id)
+                    layers << m.id;
+            o["layers"] = layers;
+            if (layers.isEmpty())
+                o["hint"] = QString("no layer stands in its space yet: {op:'node', clip, id:<layer>, params:{z:1}} on a "
+                                    "transform, media, text or text3d node (camera:%1 names it, 0 = the graph's camera)").arg(n.id);
+        }
         nodes << o;
     }
     for (const CompLink& l : g.links) links << QJsonArray{l.from, l.to, l.input};
     QJsonObject o{{"nodes", nodes}, {"links", links}, {"out", g.out}};
     QJsonArray unused;
     const QVector<int> order = g.evalOrder();
-    QSet<int> followed; // trackers read through `follow` (a value, not a link) are used
-    for (int id : order)
-        if (const int f = ::Comp::followId(e.params.value(CompGraph::paramKey(id, "follow")).toDouble())) followed.insert(f);
+    // Trackers read through `follow`, cameras through `camera` (values, not links) are used
+    const QSet<int> followed = ::Comp::valueReads(e, g, order, clip);
     for (const CompNode& n : g.nodes)
         if (!order.contains(n.id) && !followed.contains(n.id)) unused << n.id;
     if (!unused.isEmpty()) o["unused"] = unused; // do not reach the output
@@ -642,6 +909,10 @@ void checkCompParam(Session& s, const QVector<int>& ids, AnimParam p, double* lo
             fail("BAD_ARGUMENT", QString("comp.%1: node %2 (%3) has no parameter '%4'").arg(full).arg(node).arg(n->type, key));
         if (ep && ep->type != EffectParam::Double)
             fail("BAD_ARGUMENT", QString("comp.%1: only numbers have keyframes (%2 is a %3)").arg(full, key, typeName(ep->type)));
+        // A camera's drift is a steady move (0.22): keyframes would not be integrated - animate pan/push instead
+        if (n->type == QLatin1String(::Comp::kCameraType) && key.startsWith(QLatin1String("drift_")))
+            fail("BAD_ARGUMENT", QString("comp.%1: a camera's drift is steady (no keyframes); animate pan_x, pan_y or "
+                                         "push with keyframes instead").arg(full));
         if (ep && ep->min < ep->max) {
             *lo = std::max(*lo, ep->min);
             *hi = std::min(*hi, ep->max);
@@ -727,7 +998,10 @@ void addCompOps(QVector<OpDef>& ops)
                  "(background, color, tolerance …), text_behind (background, text, color, size, x, y; the subject "
                  "from a key), blur_face (x, y, size, radius, track; then track_node on node 2), pip_frame (x, y, "
                  "size, frame_color, shadow), glitch_title (text, color, size, strength - mild), sticker_track "
-                 "(sticker = a file, x, y, size; then track_node on node 2). with:{slot: value} fills them (files = "
+                 "(sticker = a file, x, y, size; then track_node on node 2), screen_replace (picture = a file, left, top, "
+                 "right, bottom; then track_node on node 2 with corners), text_behind_object / sticker_behind_object (text "
+                 "or sticker = a file, x, y, size: behind a wall, pillar or car; then pick_region with add:true and "
+                 "track_node on node 2). with:{slot: value} fills them (files = "
                  "media pool items, imported), '<node id>.<key>' sets any node value; missing slots keep the "
                  "recipe's values; an unknown slot is an error. The answer's notes give the graph and the next step. "
                  R"(Example: {"op":"comp","clips":[4],"recipe":"greenscreen","with":{"background":"/videos/beach.jpg","tolerance":0.35}}. )"
@@ -751,23 +1025,65 @@ void addCompOps(QVector<OpDef>& ops)
                  "the new node; input:false only adds it (a text or color to link yourself). A clip without a graph "
                  "gets one ('clip' node first). The answer's notes give the new id and the graph. remove: what read "
                  "the node reads its first input instead (a chain stays a chain). link replaces what was in that "
-                 "input; a cycle or an input the type does not have is an error. unlink takes the link from `from` "
-                 "(without input: the one it feeds). File values (media path, grade lut, text texture) must be "
+                 "input; a cycle or an input the type does not have is an error. params of an animated value (keyframes) "
+                 "need at:<time>: a keyframe there (like the Inspector; other values just change). A mask kind (mask, matte) behind a "
+                 "picture node is only added (link it into a merge's mask input). unlink takes the link from `from` "
+                 "(without input: the one it feeds). Camera (2.5D parallax): {op:'node', clip, add:{type:'camera', "
+                 "params:{drift_x:0.02}}} then params {z:2} on transform/media/text/text3d nodes (camera:<id> names it, "
+                 "0 = the graph's camera): near layers (small z) move further than far ones (`effects kind:'nodes'` explains its values; recipe "
+                 "parallax_photo). Time range: {op:'node', clip, id, range:[from, to]} (timeline times, to "
+                 "exclusive; range:false or the whole clip = no range): the node works only there - outside, a node with a picture "
+                 "input hands it on unchanged (a merge shows its bg), a generator (text, media, color) shows nothing; "
+                 "stored as params from/until in seconds from the clip's start (params:{from:2, until:5.5} works too, "
+                 "until 0 = to the end), they follow cuts and trims. Masks and trackers have none. `info` gives each "
+                 "node's range in timeline frames. File values (media path, grade lut, text texture) must be "
                  "readable files; a lut also by name as in op 'look'. Example: blur only in a mask - "
                  R"({"op":"node","clip":4,"add":{"type":"blur","params":{"radius":12}}} then {"op":"node","clip":4,"add":{"type":"mask","params":{"shape":"ellipse"}},"input":false} and {"op":"node","clip":4,"link":[3,2,"mask"]}.)",
-                 opNode, QStringList{"id", "params", "remove", "link", "unlink", "out"}}
+                 opNode, QStringList{"id", "params", "remove", "link", "unlink", "out", "at", "range"}}
         << OpDef{"track_node", "{op:'track_node', clip, node, from?, to?}",
                  "run a tracker node: follows its point(s) or a face over the clip; masks/transforms with follow:<id> "
                  "go along",
-                 "node = id of a 'tracker' node (mode point|two|face, start points ax, ay, bx, by at frame `from`, as 0..1 "
+                 "node = id of a 'tracker' node (mode point|two|face|quad, start points ax, ay, bx, by at frame `from`, as 0..1 "
                  "of the clip's own picture without letterbox bars). "
+                 "Four corners of a flat surface (a screen, a sign, a wall in perspective): "
+                 "{op:'track_node', clip, node, mode:'quad', corners:[[x, y], [x, y], [x, y], [x, y]]} (0..1, clockwise "
+                 "from the top left; sets the node's mode and start corners q0x..q3y, one undo step with the result). "
+                 "It writes the corners as keyframes c0x..c3y (notes: corners at the last frame) and x, y, scale, angle "
+                 "of the middle; a corner hidden or jumping is put where the other three say (counted in outliers); a "
+                 "corner on a flat area is tracked a bit further inside (notes: moved_in, hint). A 'corner_pin' node "
+                 "with follow:<id> lays its src picture onto those corners: {op:'node', clip, add:{type:'corner_pin', "
+                 "params:{follow:2}}, input:false}, then link a picture into it and merge it over the clip (recipe "
+                 "screen_replace does all of that). "
                  "from/to = timeline times inside the clip (default: the whole clip; to before from = backwards). "
                  "The result becomes keyframes of the node's x, y, scale, angle (replacing those in the range) and its "
                  "reference point rx, ry; followers move by (x - rx, y - ry). The "
                  "notes say points, lost_at/found_at (timeline frames where it lost/found the point again), gave_up "
-                 "(lost too long: stopped) and outliers (two points: frames that used one). Face mode needs the "
-                 "'faces' extension.",
-                 opTrackNode, QStringList{"clips"}};
+                 "(lost too long: stopped after max_lost frames in a row, default 50), outliers (two points: frames "
+                 "that used one) and lost: [[from, to], ...] (timeline frames, inclusive) where the point was not "
+                 "seen (frames lost at the end without giving up are no gap: followers hold). Those frames become keyframes of the node's 'seen' (1 found, 0 lost). What followers do there "
+                 "is the node's value lost (set it with {op:'node', clip, id, params:{lost:'hold'}}): 'auto' "
+                 "(default: hold for a face, else fade), 'fade' (fade out over 0.2 s, in again when found), 'hold' (stay at the last place seen) or "
+                 "'bridge' (move straight through the gap, like before 0.22); gaps up to 5 frames are bridged "
+                 "always. `info` lists each tracker's gaps, `check` warns (tracker_lost, tracker_ended). Face mode "
+                 "needs the 'faces' extension.",
+                 opTrackNode, QStringList{"clips"}}
+        << OpDef{"pick_region", "{op:'pick_region', clip, at?, point, tolerance?, add?, node?, combine?}",
+                 "the even surface around a point (a wall, a pillar, a car) as a polygon; add:true makes it a mask the "
+                 "text goes behind",
+                 "point = [x, y] 0..1 of the clip's own picture at timeline time `at` (default: the clip's start; look "
+                 "with `frames` first). From there the region of similar color grows (stops at sharp edges, holes "
+                 "filled) and its outline becomes a polygon of at most 24 corners (notes: polygon [[x, y], ...], area = "
+                 "share of the picture, touches_edge, warning when it spread over most of the picture or stayed tiny). "
+                 "tolerance 0..1 (default 0.35): higher takes more different colors (a wall with shadows), lower stops "
+                 "earlier. add:true puts it into a mask: node = that mask's id (default: the mask in a merge's mask "
+                 "input; a clip without a graph gets recipe text_behind_object, whose mask 6 keeps the object in front "
+                 "of the words); combine 'replace' (default), 'add' (another surface: a new mask chained behind, "
+                 "combine add) or 'subtract' (take a part away). The mask keeps following its tracker (follow): picked "
+                 "at a frame where the tracker moved, the corners are drawn back to its reference (a four-corner "
+                 "tracker: through its perspective). A fresh point tracker gets its point on structure at the "
+                 "surface's edge (notes: tracker_point, next = the track_node to run). One undo step. Check with "
+                 "`frames` {clip, node} (the merge's output); points can be dragged on the Comp page afterwards.",
+                 opPickRegion};
 }
 
 } // namespace Cli::detail

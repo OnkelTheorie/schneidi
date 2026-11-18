@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -52,10 +53,24 @@ public:
     QStringList inputs(const QString& id) const;        // always kSlots entries
     QStringList defaultInputs(const QString& id) const; // always kSlots entries
     QKeySequence current(const QString& id) const;      // first key of the action (empty if none)
-    // Sets one slot; the same input in the other slot is cleared, a mouse button is taken from other actions
-    // (one action per mouse button)
-    void setInput(const QString& id, int slot, const QString& input);
-    void setInputs(const QString& id, const QStringList& inputs);
+    // An input taken away from another action (setInput/setInputs, removeDuplicates)
+    struct Taken {
+        QString id;    // the action that lost it
+        QString input; // the input it lost
+    };
+    // Sets one slot; the same input in the other slot is cleared. A key is taken from the other actions of the same
+    // scope (two actions on one key would both stop working), a mouse button from every other action (one action per
+    // mouse button). Returns what was taken from whom (for the dialog's notice)
+    QVector<Taken> setInput(const QString& id, int slot, const QString& input);
+    QVector<Taken> setInputs(const QString& id, const QStringList& inputs);
+    // One action per key and scope, one per mouse button: a key two registered actions have (a hand-edited or imported
+    // file) stays with the action that has it from the file over one that has it as a default, among those with the
+    // first in menu order; the others lose it (logged). Changes the set only, not the actions (callers apply it). Done
+    // by load() once actions are registered, saveIfIncomplete(), importSet() and loading an own preset
+    QVector<Taken> removeDuplicates();
+    // Two actions that share their keys on purpose: only one of them is enabled at a time (multicam angle N and video
+    // target track N, Alt+N)
+    static bool sharedOnPurpose(const QString& a, const QString& b);
     void resetAll();
     // A whole set of keys, mouse buttons and wheel (same format as keybindings.json), e.g. to take it to another
     // computer or keep several: export writes the current set, import replaces it (actions missing in the file get
@@ -83,6 +98,7 @@ public:
         int taken = 0;                    // commands with a key that schneidi has
         int unknown = 0;                  // commands with a key that schneidi lacks (ignored)
         int dropped = 0;                  // keys left out: another panel's (context) or one a command has already
+        QStringList notTaken;             // action ids whose key in the file schneidi cannot read (Esc, Ins...)
         bool ok = false;                  // a readable shortcut file
     };
     static KysResult readKys(const QByteArray& xml);
@@ -123,6 +139,20 @@ public:
     // Is the key of this event one of the action's keys (enabled actions only)? A key of the number pad also counts
     // as the same key without the pad (Enter, Delete, digits)
     static bool matches(const QAction* action, const QKeyEvent* e);
+    // The key of a key press as a binding (the key bindings dialog). A letter of a non-Latin layout (Russian, Greek...)
+    // becomes the Latin key of the same physical key - the one shortcuts match there; on Windows, AltGr typing a
+    // character arrives as Ctrl+Alt, which is dropped. Shift+Tab arrives as Backtab: Tab.
+    // `native` = how to read the event's native codes (the running platform's; tests pass one)
+    enum class NativeKeys { Windows, Xkb, None };
+    static NativeKeys platformNativeKeys();
+    static QKeyCombination bindingKey(const QKeyEvent* e, NativeKeys native = platformNativeKeys());
+    // Keys the main window uses itself while a mode is on (Esc ends the large viewer and a voice-over take): bound to a
+    // window action they clash there (the key bindings dialog marks them)
+    static QStringList windowInternalKeys();
+    // While a mode of the main window uses `key` itself (`owner` "large_viewer"/"voiceover": Esc ends it), window
+    // actions bound to it give it up on their QAction - two enabled Esc shortcuts are ambiguous and neither fires, the
+    // mode wins. The bindings stay; the actions get the key back once no owner holds it
+    void holdWindowKey(const QString& owner, const QString& key, bool on);
     // The action among `actions` whose keys match the key event, else nullptr
     static QAction* matching(const QList<QAction*>& actions, const QKeyEvent* event);
 
@@ -132,6 +162,7 @@ private:
 
     void save();
     void apply(const Entry& e) const; // keys of the action's slots -> QAction
+    void applyAll();                  // every registered action + the mouse buttons
     void rebuildMouse();
     QJsonObject toJson() const;
     void applyJson(const QJsonObject& root, bool withWheel); // shortcuts, mouse (and wheel) from a file
@@ -147,4 +178,5 @@ private:
     QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> action
     bool m_fileExisted = false;
     QString m_preset;                          // see currentPreset()
+    QHash<QString, QSet<QString>> m_held;      // holdWindowKey: key -> owners
 };

@@ -10,6 +10,8 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -82,6 +84,88 @@ int main(int argc, char** argv)
         CHECK(Cli::Guide::installSkill(dir.filePath("schneidi"), &error));
         CHECK(readFile(dir.filePath("schneidi/SKILL.md")).startsWith("---\nname: schneidi"));
         CHECK(QFile::exists(dir.filePath("schneidi/references/ad.md")));
+    }
+
+    // --- Option names are normalised (--dry-run = --dry_run), their values are not: `new --media=<path>` turned the
+    // hyphens of the path into underscores (report 9.11.), the project file too
+    {
+        QTemporaryDir dir;
+        const QString media = Check::makeMedia(dir.filePath("my-clip-2026-11-03.mkv"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=160x90:d=1:r=25", "-c:v", "ffv1"});
+        const QString project = dir.filePath("my-cut.schneidi");
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("QT_QPA_PLATFORM", "offscreen");
+        p.setProcessEnvironment(env);
+        p.start(Check::cliPath(), {"new", "--project=" + project, "--media=" + media});
+        CHECK(p.waitForFinished(60000));
+        CHECK_EQ(p.exitCode(), 0);
+        CHECK(QFile::exists(project));
+        CHECK(!QFile::exists(dir.filePath("my_cut.schneidi")));
+        CHECK(readFile(project).contains(QFileInfo(media).fileName().toUtf8()));
+    }
+
+    // --- The stdio MCP server of a running chat after an update: the program file on disk is not the one running.
+    // Every tool result then says so (restart the MCP server / the chat) instead of answering silently with the old
+    // build (report 9.11.)
+    {
+        QTemporaryDir dir;
+        const QString exe = dir.filePath(QFileInfo(Check::cliPath()).fileName());
+        CHECK(QFile::copy(Check::cliPath(), exe));
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("QT_QPA_PLATFORM", "offscreen");
+        env.remove("APPIMAGE");
+        // The copy finds its libraries where the build put them (Windows looks for DLLs along PATH)
+        env.insert("PATH", QFileInfo(Check::cliPath()).absolutePath() + QDir::listSeparator() + env.value("PATH"));
+        p.setProcessEnvironment(env);
+        p.start(exe, {"mcp"});
+        CHECK(p.waitForStarted(10000));
+        int id = 0;
+        const auto call = [&](const QJsonObject& msg) {
+            QJsonObject m = msg;
+            m["jsonrpc"] = "2.0";
+            m["id"] = ++id;
+            p.write(QJsonDocument(m).toJson(QJsonDocument::Compact) + '\n');
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 30000) {
+                if (!p.canReadLine() && !p.waitForReadyRead(1000)) continue;
+                while (p.canReadLine()) {
+                    const QJsonObject o = QJsonDocument::fromJson(p.readLine()).object();
+                    if (o["id"].toInt() == id) return o;
+                }
+            }
+            return QJsonObject();
+        };
+        const auto texts = [](const QJsonObject& answer) {
+            QString all;
+            for (const QJsonValue& c : answer["result"]["content"].toArray()) all += c["text"].toString() + "\n";
+            return all;
+        };
+        call({{"method", "initialize"},
+              {"params", QJsonObject{{"protocolVersion", "2025-03-26"}, {"capabilities", QJsonObject{}},
+                                     {"clientInfo", QJsonObject{{"name", "test"}, {"version", "1"}}}}}});
+        const QJsonObject guideCall{{"method", "tools/call"},
+                                    {"params", QJsonObject{{"name", "guide"}, {"arguments", QJsonObject{}}}}};
+        const QString before = texts(call(guideCall));
+        CHECK(before.contains("topics"));
+        CHECK(!before.contains("was updated"));
+        // An update replaces the file (the new one renamed into its place, as installers and package managers do)
+        const QString fresh = exe + ".new";
+        CHECK(QFile::copy(Check::cliPath(), fresh));
+        QFile f(fresh);
+        if (CHECK(f.open(QIODevice::Append))) f.write("x"); // another build: another size
+        f.close();
+        // (the running file is moved aside, not removed: Windows cannot delete a running program, only rename it)
+        CHECK(QFile::rename(exe, exe + ".old"));
+        CHECK(QFile::rename(fresh, exe));
+        const QString after = texts(call(guideCall));
+        CHECK(after.contains("topics")); // the tool still answers
+        CHECK(after.contains("schneidi was updated"));
+        CHECK(after.contains("restart"));
+        p.closeWriteChannel();
+        if (!p.waitForFinished(10000)) p.kill();
     }
 
 #ifdef Q_OS_WIN

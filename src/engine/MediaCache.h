@@ -19,6 +19,7 @@
 #include <QString>
 #include <QVector>
 #include <QWaitCondition>
+#include <atomic>
 #include <deque>
 #include <memory>
 
@@ -48,8 +49,19 @@ public:
     // Only look up, request nothing (for substitute images from coarser levels)
     QImage cachedThumbnail(const QString& path, int frame);
 
-    // Waveform (possibly still incomplete) or nullptr; requests it if needed. stream: audio stream of the file (0 = first)
-    std::shared_ptr<const Waveform> waveform(const QString& path, int stream = 0);
+    // Waveform (possibly still incomplete) or nullptr; requests it if needed. stream: audio stream of the file (0 =
+    // first); channels: only these channels of it (Clip::sourceChannels, channel routing; empty = all), the peaks of
+    // exactly what the clip plays (one channel = in the middle, -3 dB). Routed waveforms are combined from the peaks
+    // of every channel of the stream, decoded once per stream and kept on disk: all routings of a stream share them.
+    // Unrouted: the stream as the mixer reads it in stereo (its own cache file, as before 0.23).
+    std::shared_ptr<const Waveform> waveform(const QString& path, int stream = 0, const QVector<int>& channels = {});
+
+    // Streams decoded for waveforms so far (tests: two routings of one stream decode it once)
+    int waveDecodes() const { return m_waveDecodes.load(); }
+    // Bytes of per-channel peaks read from disk for routed waveforms (tests: only the routed channels are read)
+    qint64 channelBytesRead() const { return m_channelBytesRead.load(); }
+    // Disk cache file of the per-channel peaks of a stream (tests: an old or damaged file there is rebuilt)
+    static QString channelPeaksFile(const QString& path, int stream, const FrameRate& rate);
 
     // Project settings changed: frames count in the new frame rate, images in the new aspect ratio
     // -> discard everything computed (waveforms on disk are separated by frame rate)
@@ -99,6 +111,12 @@ private:
     QHash<QString, KeyIndex> m_keys;
     std::deque<QString> m_stripJobs;
     QWaitCondition m_stripCond;
+
+    std::atomic<int> m_waveDecodes{0};
+    std::atomic<qint64> m_channelBytesRead{0};
+    // The routed waveform's thread part: per-channel peaks from disk (only the routed channels) or a decode, then combined
+    void routedWave(const QString& key, const QString& path, int stream, const QVector<int>& pick,
+                    const ProjectFormat& format, int gen, int fileGen);
 
     QHash<QString, std::shared_ptr<const Waveform>> m_waves;
     std::deque<QString> m_waveJobs;

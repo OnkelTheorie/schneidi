@@ -7,6 +7,7 @@
 // app's own chat may only plan (PLAN_MODE), the user runs the plan through Server::runForChat.
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -47,7 +48,8 @@ public:
     bool livePlaying() const override { return false; }
     void liveSeek(int) override {}
     void livePlay(bool) override {}
-    bool liveSave(const QString&, QString*) override { return false; }
+    int saves = 0;
+    bool liveSave(const QString&, QString*) override { return ++saves, false; }
     void liveGenerateProxies(const QStringList&) override {}
     QJsonObject liveProxyState(const QString&) const override { return {}; }
     void liveConnectionChanged(bool, const QString&) override {}
@@ -60,6 +62,8 @@ public:
         lastPlan = plan;
     }
     bool livePlanOnly() const { return planOnly; }
+    bool reviewOnly = false;
+    bool liveReviewOnly() const { return reviewOnly; }
 };
 
 // One 300-frame media file (not on disk: edits only need its length) on V1/A1
@@ -284,7 +288,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // registry of running apps, backups and plans
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     // Plan ids across processes: the id's file is made at once, so another process that read the same counter (here:
     // the counter is gone again) cannot get that id before the first one wrote its plan
@@ -409,7 +413,31 @@ int main(int argc, char* argv[])
     const QJsonObject again = server.runForChat("edit", {{"project", "@app"}, {"plan_id", chatPlan}, {"run", QJsonArray{1}}});
     CHECK_EQ(again["error"]["code"].toString(),
              QString("NOT_FOUND"));
+    // Undo, redo and saving stay the user's in plan mode and in review mode (the user accepts or discards the chat's
+    // changes at the end): an undo of the chat's and an edit after it dropped the user's own steps, and "discard"
+    // then went back to the wrong state; reading the app's state is fine
+    const auto ownSteps = [&](const QString& mode) {
+        const int index = fake.project.undoStack()->index(), saves = fake.saves;
+        for (const char* action : {"undo", "redo", "save"})
+            CHECK_EQ(code(cli({"app", action}, chatEnv)), mode);
+        CHECK_EQ(fake.project.undoStack()->index(), index);
+        CHECK_EQ(fake.saves, saves);
+        // Opening a project replaced the one under review (its undo history cleared), media came into the pool
+        CHECK_EQ(code(cli({"app", "open", "--files", QJsonDocument(QJsonArray{fake.path}).toJson(QJsonDocument::Compact)},
+                          chatEnv)),
+                 mode);
+        CHECK_EQ(code(cli({"app", "state"}, chatEnv)), QString("ok"));
+    };
+    ownSteps("PLAN_MODE");
+    CHECK_EQ(code(cli({"app", "clean_proxies", "--delete"}, chatEnv)), QString("PLAN_MODE")); // deletes files
+    CHECK_EQ(code(cli({"app", "clean_proxies"}, chatEnv)), QString("ok"));                    // only lists them
     fake.planOnly = false;
+    fake.reviewOnly = true;
+    ownSteps("REVIEW_MODE");
+    // The chat's own edits still run in review mode, an AI from outside may undo (the modes are the chat's)
+    CHECK_EQ(code(cli({"edit", "@app", "--ops", R"([{"op":"marker","at":5}])"}, chatEnv)), QString("ok"));
+    CHECK_EQ(code(cli({"app", "undo"})), QString("ok"));
+    fake.reviewOnly = false;
 
     // speak without `at` in a plan: where the playhead was when the plan was made, not where it is at the run (the
     // playhead is not part of the plan's base). A fake piper: this program (no real piper needed)

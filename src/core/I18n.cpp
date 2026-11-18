@@ -167,6 +167,8 @@ QChar groupSeparatorOf(const QString& lang)
     return QChar(0x00a0);
 }
 
+QString installedLanguage() { return s_installed.isEmpty() ? language() : s_installed; }
+
 QChar decimalPoint() { return decimalPointOf(s_installed.isEmpty() ? language() : s_installed); }
 
 QChar groupSeparator() { return groupSeparatorOf(s_installed.isEmpty() ? language() : s_installed); }

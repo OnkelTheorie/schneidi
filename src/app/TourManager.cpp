@@ -18,7 +18,13 @@
 TourManager::TourManager(QMainWindow* window, Project* project, Host host)
     : QObject(window), m_window(window), m_project(project), m_host(std::move(host)), m_overlay(new TourOverlay(window))
 {
-    m_runner.setConditions([this](const TourStep& s) { begin(s); }, [this](const QString& c) { return holds(c); });
+    // Before a step's condition is first tested: the clips the user deleted are back (the step then waits as usual)
+    m_runner.setConditions(
+        [this](const TourStep& s) {
+            prepare(s);
+            begin(s);
+        },
+        [this](const QString& c) { return holds(c); });
     connect(&m_runner, &TourRunner::stepChanged, this, &TourManager::enterStep);
     connect(&m_runner, &TourRunner::waitingChanged, this, &TourManager::showStep);
     connect(&m_runner, &TourRunner::finished, this, &TourManager::finished);
@@ -178,6 +184,9 @@ void TourManager::launch(const Tour& t)
             offers << T(it->text);
     }
     m_overlay->measureSteps(texts, offers);
+    m_hadClip = false;
+    m_lostShown = false;
+    m_notes.clear();
     emit runningChanged(true);
     m_runner.start(t);
 }
@@ -195,7 +204,13 @@ void TourManager::enterStep()
     if (!s) return;
     if (!s->page.isEmpty() && m_host.page && m_host.showPage && m_host.page() != s->page) m_host.showPage(s->page);
     if (!s->tool.isEmpty() && m_host.setTool) m_host.setTool(s->tool);
-    if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) (*it)();
+    if (const auto it = m_host.actions.constFind(s->action); !s->action.isEmpty() && it != m_host.actions.cend()) {
+        m_busy = true; // what the action changes is no step of the user's (it never ends a wait)
+        (*it)();
+        m_busy = false;
+    }
+    if (m_host.takeNote)
+        if (const QString note = m_host.takeNote(); !note.isEmpty()) m_notes << note;
     // Targets inside a scroll area (the Color page's controls on a low screen) scrolled into view: a panel's own
     // scrolling, not the timeline's; once more after the new page's layout
     const auto reveal = [this, target = s->target] {
@@ -211,6 +226,7 @@ void TourManager::enterStep()
     reveal();
     QTimer::singleShot(0, this, reveal);
     begin(*s); // what the page switch or the action did (the playhead into a clip) is not the user's doing
+    m_lostShown = m_hadClip && m_host.hasClip && !m_host.hasClip();
     showStep();
 }
 
@@ -221,7 +237,59 @@ void TourManager::showStep()
     QString offer;
     if (const auto it = m_host.offers.constFind(s->offer); !s->offer.isEmpty() && it != m_host.offers.cend())
         if (!it->needed || it->needed()) offer = T(it->text);
-    m_overlay->showStep(stepText(*s), m_runner.index(), m_runner.count(), m_runner.waiting(), offer);
+    m_overlay->showStep(shownText(), m_runner.index(), m_runner.count(), m_runner.waiting(), offer);
+}
+
+QString TourManager::shownText() const
+{
+    const TourStep* s = m_runner.step();
+    if (!s) return {};
+    QString out = stepText(*s);
+    const bool last = m_runner.index() + 1 == m_runner.count(); // no next step to bring them back
+    QStringList notes = !m_lostShown ? m_notes
+                        : last       ? QStringList{N_("Hoppla, alle Clips sind weg. {key:undo} holt sie zurück.")}
+                                     : QStringList{N_("Hoppla, alle Clips sind weg. {key:undo} holt sie zurück – sonst "
+                                                      "hole ich sie beim nächsten Schritt zurück.")};
+    for (const QString& n : std::as_const(notes)) out += "<br><br><i>" + richText(n) + "</i>";
+    return out;
+}
+
+void TourManager::prepare(const TourStep& step)
+{
+    m_notes.clear();
+    if (!m_host.hasClip || !m_host.restoreClip) return;
+    if (m_host.hasClip()) {
+        m_hadClip = true;
+        return;
+    }
+    // Deleted (all of them: select all, then Delete) at an earlier step, or never placed (the drag step skipped).
+    // Not on a step that asks the user to place one (Back to the drag step): it waits for the drag again
+    if (!m_hadClip && step.needs != QLatin1String("clip")) return;
+    if (step.wait == QLatin1String("clip_on_timeline")) return;
+    m_busy = true;
+    const Host::Restored r = m_host.restoreClip(m_hadClip); // undo only what the user deleted
+    m_busy = false;
+    if (r == Host::Restored::Undone) m_notes << N_("Die Timeline war leer: Ich habe die Clips mit {key:undo} zurückgeholt.");
+    if (r == Host::Restored::Placed) m_notes << N_("Ich habe dir einen Clip in die Timeline gelegt.");
+    if (r != Host::Restored::No) m_hadClip = true;
+}
+
+void TourManager::updateLost()
+{
+    if (!m_runner.running() || !m_host.hasClip) return;
+    const bool has = m_host.hasClip();
+    if (has) m_hadClip = true;
+    const bool lost = m_hadClip && !has;
+    if (lost == m_lostShown) return;
+    m_lostShown = lost;
+    if (lost) m_notes.clear(); // "brought back" would be wrong now
+    m_overlay->setStepText(shownText()); // the text only: the buttons and the keyboard focus stay
+}
+
+void TourManager::dropNote(const QString& german)
+{
+    if (!m_notes.removeAll(german) || !m_runner.running()) return;
+    m_overlay->setStepText(shownText());
 }
 
 void TourManager::finished(bool)
@@ -237,7 +305,9 @@ void TourManager::finished(bool)
 
 void TourManager::poke()
 {
+    if (m_busy) return; // the tour's own change (a repair, a step's action): looked at once it is done
     m_runner.check();
+    updateLost();
     // A page switch from the tour itself may hide a target or show it: the overlay follows on its own timer
 }
 
@@ -283,8 +353,13 @@ bool TourManager::holds(const QString& c) const
 QString TourManager::stepText(const TourStep& step) const
 {
     // The dictionaries keep the placeholder as it is: only the key itself depends on the user (preset, own keys)
+    return richText(step.text);
+}
+
+QString TourManager::richText(const QString& german) const
+{
     static const QRegularExpression placeholder(QStringLiteral("\\{key:([A-Za-z0-9_]+)\\}"));
-    const QString text = T(step.text);
+    const QString text = T(german);
     QString out;
     qsizetype at = 0;
     for (auto it = placeholder.globalMatch(text); it.hasNext();) {

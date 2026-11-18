@@ -237,9 +237,6 @@ int main(int argc, char* argv[])
     QGuiApplication qapp(argc, argv);
     QCoreApplication::setOrganizationName("schneidi-tests");
     QCoreApplication::setApplicationName("schneidi-test-handover");
-#ifdef Q_OS_WIN
-    QStandardPaths::setTestModeEnabled(true); // XDG does not apply there
-#endif
     if (child) return launch(QString::fromLocal8Bit(argv[2]), QByteArray(argv[3]).toInt());
     // Nothing runs: nobody takes the files, at once
     QElapsedTimer t;

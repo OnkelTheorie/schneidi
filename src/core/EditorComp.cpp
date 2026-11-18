@@ -11,6 +11,7 @@
 
 #include <QSet>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -95,10 +96,13 @@ bool Editor::setCompGraph(const QVector<int>& ids, const CompGraph& graph, const
     }
     if (targets.isEmpty()) return failWith(err, QStringLiteral("no video clip on an unlocked track among the clips"));
     modifyClips(targets, T("Compositing-Graph setzen"), [&](Clip& c) {
+        const EffectInstance* old = EffectRegistry::instance(c, Comp::kEffectId);
+        const bool on = !old || old->enabled; // a bypassed comp stays bypassed (a new graph or recipe)
         EffectRegistry::remove(c, Comp::kEffectId); // old values and keyframes go
         EffectRegistry::add(c, Comp::kEffectId);
         EffectInstance* e = EffectRegistry::instance(c, Comp::kEffectId);
         if (!e) return;
+        e->enabled = on;
         Comp::setGraph(*e, graph);
         for (auto it = values.begin(); it != values.end(); ++it)
             if (graph.node(it.key()))
@@ -144,12 +148,14 @@ int Editor::addCompNode(int clipId, const QString& type, const QVariantMap& valu
         int from = after;
         if (from == 0) from = g.out;
         if (after > 0 && !g.node(after)) return failWith(why, QStringLiteral("no node %1 in the graph").arg(after));
+        const CompNode* behind = g.node(from);
+        const bool onlyAdded = Comp::maskBehindPicture(type, behind ? behind->type : QString());
         CompNode n;
         n.id = g.nextId();
         n.type = type;
         if (const CompNode* a = g.node(from)) n.pos = a->pos + QPointF(160, 0);
         g.nodes << n;
-        if (!input.isEmpty() && from > 0) {
+        if (!input.isEmpty() && from > 0 && !onlyAdded) {
             for (CompLink& l : g.links)
                 if (l.from == from) l.from = n.id; // the readers of `from` read the new node
             if (g.out == from) g.out = n.id;
@@ -175,6 +181,7 @@ bool Editor::removeCompNode(int clipId, int node, const CompGraph::KindInfo& kin
 {
     return editComp(clipId, T("Knoten entfernen"), [&](CompGraph& g, EffectInstance&, QString* why) {
         if (!g.node(node)) return failWith(why, QStringLiteral("no node %1 in the graph").arg(node));
+        const bool picture = !Comp::outputsMask(g.node(node)->type);
         const CompLink* through = throughLink(g, node);
         const int source = through ? through->from : 0;
         QVector<CompLink> links;
@@ -189,7 +196,18 @@ bool Editor::removeCompNode(int clipId, int node, const CompGraph::KindInfo& kin
         g.links = links;
         g.nodes.removeIf([&](const CompNode& n) { return n.id == node; });
         if (g.out == node) g.out = source;
-        if (g.out == 0 && !g.nodes.isEmpty()) g.out = g.nodes.last().id;
+        if (const CompNode* o = g.node(g.out); o && Comp::outputsMask(o->type)) g.out = 0; // never a mask
+        // No output left: the last node with a picture (a mask would make the engine ignore the graph), else none
+        for (qsizetype i = g.nodes.size() - 1; g.out == 0 && i >= 0; --i)
+            if (!Comp::outputsMask(g.nodes[i].type)) g.out = g.nodes[i].id;
+        if (g.out == 0 && !g.nodes.isEmpty())
+            return failWith(why, picture ? QStringLiteral("node %1 is the last node with a picture: the graph would have "
+                                                          "no output (masks are none); add a picture node first, or "
+                                                          "remove the whole graph")
+                                               .arg(node)
+                                         : QStringLiteral("the graph has only masks, no node with a picture, so it "
+                                                          "has no output (it does nothing); add a picture node first, "
+                                                          "or remove the whole graph"));
         return true;
     }, kinds, err);
 }
@@ -352,3 +370,28 @@ int Editor::duplicateCompNode(int clipId, int node, const QPointF& pos, QString*
     added = copy.id;
     return added;
 }
+
+bool Editor::setCompNodeRange(int clipId, int node, double from, double until, QString* err)
+{
+    if (!std::isfinite(from) || !std::isfinite(until)) return failWith(err, QStringLiteral("the range is not a number"));
+    if (until != 0 && until <= from)
+        return failWith(err, QStringLiteral("the range ends (%1 s) before it starts (%2 s)").arg(until).arg(from));
+    if (const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId))
+        for (const char* key : {Comp::kFromKey, Comp::kUntilKey})
+            if (Keys::animated(*c, Keys::effectParam(QString::fromLatin1(Comp::kEffectId),
+                                                     CompGraph::paramKey(node, QString::fromLatin1(key)))))
+                return failWith(err, QStringLiteral("node %1: '%2' has keyframes, they decide the range; remove them first "
+                                                    "({op:'keyframe', clips, param:'comp.n%1.%2', at, remove:true})")
+                                         .arg(node).arg(key));
+    return editComp(clipId, T("Zeitbereich des Knotens"), [&](CompGraph& g, EffectInstance& e, QString* why) {
+        const CompNode* n = g.node(node);
+        if (!n) return failWith(why, QStringLiteral("no node %1 in the graph").arg(node));
+        if (!Comp::hasRange(n->type))
+            return failWith(why, QStringLiteral("node %1 (%2) has no time range (masks and trackers work everywhere)")
+                                     .arg(node).arg(n->type));
+        e.params[CompGraph::paramKey(node, QString::fromLatin1(Comp::kFromKey))] = std::max(0.0, from);
+        e.params[CompGraph::paramKey(node, QString::fromLatin1(Comp::kUntilKey))] = until;
+        return true;
+    }, {}, err);
+}
+

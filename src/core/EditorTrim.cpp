@@ -99,6 +99,43 @@ Timeline Editor::previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) cons
     return tl;
 }
 
+QString Editor::trimEditRefusal(const TimelineOps::TrimEdit& e, int delta) const
+{
+    QString why;
+    allowedTrimEdit(e, delta, &why);
+    return why;
+}
+
+int Editor::allowedTrimEdit(const TimelineOps::TrimEdit& e, int delta, QString* why, Timeline* preview) const
+{
+    const Timeline& now = m_project->timeline();
+    const QSet<int> trimmed(e.ids.cbegin(), e.ids.cend());
+    const auto refusal = [&](const Timeline& after) { return linksRefusal(now, after, trimmed, nullptr); };
+    Timeline at = previewTrimEdit(e, delta);
+    QString reason = e.kind == TimelineOps::TrimKind::Ripple && delta != 0 ? refusal(at) : QString();
+    if (why) *why = reason;
+    if (reason.isEmpty()) {
+        if (preview) *preview = at;
+        return delta;
+    }
+    // The furthest allowed one between 0 (always: nothing changes) and delta (refused); the farther, the more comes
+    // apart, so halving finds it in a few previews
+    int ok = 0, no = delta;
+    Timeline okTimeline = now;
+    while (std::abs(no - ok) > 1) {
+        const int mid = ok + (no - ok) / 2;
+        Timeline t = previewTrimEdit(e, mid);
+        if (refusal(t).isEmpty()) {
+            ok = mid;
+            okTimeline = std::move(t);
+        } else {
+            no = mid;
+        }
+    }
+    if (preview) *preview = okTimeline;
+    return ok;
+}
+
 void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
 {
     using TimelineOps::TrimKind;
@@ -107,7 +144,12 @@ void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
                          : e.kind == TrimKind::Roll ? T("Schnittpunkt verschieben")
                          : e.kind == TrimKind::Slip ? T("Inhalt im Clip verschieben")
                                                     : T("Clip zwischen den Nachbarn gleiten lassen");
-    m_project->edit(text, [&](Timeline& tl) { TimelineOps::applyTrimEdit(tl, e, delta, sourceLength()); });
+    m_project->edit(text, [&](Timeline& tl) {
+        const Timeline before = tl;
+        TimelineOps::applyTrimEdit(tl, e, delta, sourceLength());
+        // A ripple that a blocked or locked track cannot follow: refused (the trimmed clips change on purpose)
+        if (e.kind == TrimKind::Ripple) keepsLinks(before, tl, QSet<int>(e.ids.cbegin(), e.ids.cend()));
+    });
 }
 
 TimelineOps::TrimEdit Editor::splitEdit(int clipId, TimelineOps::Edge edge) const

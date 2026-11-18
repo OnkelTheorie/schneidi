@@ -28,7 +28,8 @@ bool builtIn(const QString& codec);
 // x264/x265 through the extension (engine/Extensions, engine/ExternalEncoder): the extension's ffmpeg program when
 // `codec` is libx264/libx265, not built in, and that program lists it (asked once per program file). Empty = no.
 QString externalProgram(const QString& codec);
-// GPL-free replacement of an x264/x265/SVT-AV1 codec that this FFmpeg has (libx264 -> libopenh264); empty = none
+// GPL-free replacement of an x264/x265/SVT-AV1 codec that this FFmpeg has (libx264 -> libopenh264; in the GPL-free build
+// (SCHNEIDI_NO_GPL) libx264 -> the own encoder ExportWriter::kOwnH264); empty = none
 QString freeReplacement(const QString& codec);
 bool isFreeReplacement(const QString& codec); // libopenh264, libkvazaar
 // When `codec` is the free replacement for H.264/H.265: what that means and how to get x264/x265 (the CLI command,
@@ -43,8 +44,10 @@ bool formatAvailable(const QString& format);
 // Encoder options of a software codec for a quality (crf as for x264: 18/22/28) where the codec has no "crf" of its
 // own (OpenH264, kvazaar); empty for the others (they take crf)
 QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, QSize size, double fps);
-// ffmpeg arguments for the video encoder of proxy files (short GOP, no B-frames, fast to decode): x264, else OpenH264
-QStringList proxyVideoArguments();
+// ffmpeg arguments for the video encoder of proxy files (short GOP, no B-frames, fast to decode): x264, else OpenH264.
+// size = the proxy's picture (OpenH264's bit rate grows with it), full = the original's size (proxy quality "full
+// resolution": a bit more quality, the point is the lighter codec)
+QStringList proxyVideoArguments(QSize size = QSize(960, 540), bool full = false);
 bool isHardwareCodec(const QString& codec);
 VideoEncoder encoderOfCodec(const QString& codec); // Software for anything that is not a hardware codec
 
@@ -54,6 +57,12 @@ QString vaapiDevice();
 // Encoder options for a hardware codec (passed to the export writer and to the ffmpeg test the same way).
 // crf = quality of the software encoder (18/22/28): mapped to the encoder's own constant quality scale.
 QVector<QPair<QString, QString>> codecOptions(const QString& codec, int crf);
+// The same for a video bit rate target (export quality "like source", kbit/s): variable bit rate around it with a peak
+// of 1.5x and a buffer of 2x (NVENC VBR, VAAPI VBR, Quick Sync VBR)
+QVector<QPair<QString, QString>> bitrateOptions(const QString& codec, int kbit);
+// A software codec's options for a bit rate target: x264/x265/VP9 average bit rate with the same peak and buffer,
+// SVT-AV1 its VBR, OpenH264/kvazaar their bit rate modes
+QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, int kbit);
 // Pixel format given to the writer ("vaapi" = upload to the VAAPI device)
 QString pixelFormat(const QString& codec);
 // ffmpeg arguments for a test encode of a few frames of this size (black picture, output discarded)

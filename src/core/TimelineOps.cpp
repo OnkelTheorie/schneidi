@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TimelineOps.h"
 
+#include "core/Automation.h"
 #include "core/CompGraph.h"
 #include "core/Keyframes.h"
 #include "core/Subtitles.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <optional>
 
 namespace {
 
@@ -73,14 +75,81 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds)
     return refs;
 }
 
-void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip)
+void rippleAnnotations(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving,
+                       MarkerCut markerCut)
+{
+    if ((tl.markers.isEmpty() && tl.notes.isEmpty() && tl.sections.isEmpty()) || shifts.isEmpty()) return;
+    int first = INT_MAX; // first frame the ripple touches
+    for (const auto& s : shifts) first = std::min(first, s.first + std::min(0, s.second));
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const auto& tracks = std::as_const(tl).tracks(k);
+        for (int i = 0; i < tracks.size(); ++i)
+            if (!moving.contains(TrackRef{k, i}))
+                for (const Clip& c : tracks[i].clips)
+                    if (c.end() > first) return; // content that stays: only part of the timeline moves
+    }
+    // Where a frame lands; one in time taken out lands on the cut point (cut, if given, says it was in there)
+    const auto moved = [&](int at, bool* cut) {
+        for (const auto& s : shifts)
+            if (s.second < 0 && s.first + s.second < at && at < s.first) {
+                at = s.first; // counts from the end of the time taken out
+                if (cut) *cut = true;
+            }
+        int d = 0;
+        for (const auto& s : shifts)
+            if (s.first <= at) d += s.second;
+        return std::max(0, at + d);
+    };
+    // A moment (marker, note) in time taken out: goes with the content (Delete) or lands on the cut point
+    const auto point = [&](int at) -> std::optional<int> {
+        bool cut = false;
+        const int to = moved(at, &cut);
+        if (cut && markerCut == MarkerCut::Delete) return std::nullopt;
+        return to;
+    };
+    QVector<int> markers;
+    markers.reserve(tl.markers.size());
+    for (int m : std::as_const(tl.markers))
+        if (const auto at = point(m)) markers << *at;
+    std::sort(markers.begin(), markers.end());
+    markers.erase(std::unique(markers.begin(), markers.end()), markers.end());
+    if (markers != tl.markers) tl.markers = markers;
+    QVector<TimelineNote> notes;
+    notes.reserve(tl.notes.size());
+    for (TimelineNote n : std::as_const(tl.notes))
+        if (const auto at = point(n.at)) {
+            n.at = *at;
+            notes << n;
+        }
+    std::stable_sort(notes.begin(), notes.end(), [](const TimelineNote& a, const TimelineNote& b) { return a.at < b.at; });
+    if (notes != tl.notes) tl.notes = notes;
+    // A section is a stretch of time: both edges move like moments that land on the cut point, so time taken out
+    // shortens it (a section only in that time goes); time inserted at an edge joins the section that ends there
+    QVector<StorySection> sections;
+    sections.reserve(tl.sections.size());
+    for (StorySection s : std::as_const(tl.sections)) {
+        s.from = moved(s.from, nullptr);
+        s.to = moved(s.to, nullptr);
+        if (s.to > s.from) sections << s;
+    }
+    if (sections != tl.sections) tl.sections = sections;
+}
+
+void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
+                  const QVector<QPair<int, int>>* markerShifts, MarkerCut markerCut)
 {
     if (shifts.isEmpty()) return;
+    QVector<TrackRef> moving = skip; // tracks that go along (for markers, notes and sections)
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
         auto& tracks = tl.tracks(k);
         for (int i = 0; i < tracks.size(); ++i) {
             Track& t = tracks[i];
-            if (t.locked || skip.contains(TrackRef{k, i}) || t.clips.isEmpty()) continue;
+            if (t.locked || skip.contains(TrackRef{k, i})) continue;
+            moving << TrackRef{k, i};
+            if (t.clips.isEmpty()) {
+                Automation::rippleTrack(t, shifts);
+                continue;
+            }
             QVector<Clip> moved = t.clips;
             bool changed = false;
             for (Clip& c : moved) {
@@ -90,11 +159,16 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
                 c.start += d;
                 changed |= d != 0;
             }
-            if (!changed) continue;
-            // Order stays; if anything overlaps, the track stays as it is
+            // Order stays; if anything overlaps, the track stays as it is (its automation too)
             bool ok = moved.first().start >= 0;
             for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end();
-            if (!ok) continue;
+            if (!ok) {
+                moving.removeLast();
+                continue;
+            }
+            // The automation moves with the time even where no clip of the track moved (points after the last clip)
+            Automation::rippleTrack(t, shifts);
+            if (!changed) continue;
             // release a dissolve that has been pushed apart (otherwise it would turn into fade out and fade in)
             for (int j = 1; j < moved.size(); ++j)
                 if (t.clips[j - 1].end() == t.clips[j].start && moved[j - 1].end() != moved[j].start
@@ -108,6 +182,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
     // Subtitle tracks move along the same way (locked ones stay put, like DaVinci)
     for (SubtitleTrack& st : tl.subtitles)
         if (!st.locked) Subtitles::ripple(st, shifts);
+    rippleAnnotations(tl, markerShifts ? *markerShifts : shifts, moving, markerCut);
 }
 
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
@@ -174,6 +249,54 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds)
     return out;
 }
 
+namespace {
+
+// After a cut gave the right pieces of link groups new links (old link -> new link): an uncut partner (on a track
+// without a right piece) goes with the right piece it plays in sync with (same file and playback, same start - in,
+// overlapping in time) - unless it is in sync with the left piece too (it lies under both, or only under the left
+// one): then it stays, as before. A partner of another file (a recorder's sound to a camera's picture) goes with the
+// piece it lies under more. The pieces: the clips of the link on the tracks that were cut.
+void relinkUncut(Timeline& tl, const QHash<int, int>& rightLinks)
+{
+    const auto inSync = [](const Clip& a, const Clip& b) {
+        return a.mediaPath == b.mediaPath && a.start - a.in == b.start - b.in && a.start < b.end() && b.start < a.end()
+               && a.speed == b.speed && a.reverse == b.reverse && a.freeze == b.freeze && a.ramp == b.ramp;
+    };
+    QHash<int, int> relink; // clip id -> new link
+    for (auto m = rightLinks.cbegin(); m != rightLinks.cend(); ++m) {
+        const int oldLink = m.key(), newLink = m.value();
+        QVector<const Clip*> right, left, partners;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : std::as_const(tl).tracks(k)) {
+                const bool cut = std::any_of(t.clips.cbegin(), t.clips.cend(), [&](const Clip& c) { return c.linkId == newLink; });
+                for (const Clip& c : t.clips) {
+                    if (c.linkId == newLink) right << &c;
+                    else if (c.linkId == oldLink) (cut ? left : partners) << &c;
+                }
+            }
+        const auto overlap = [](const Clip* a, const QVector<const Clip*>& pieces) {
+            int n = 0;
+            for (const Clip* p : pieces) n += std::max(0, std::min(a->end(), p->end()) - std::max(a->start, p->start));
+            return n;
+        };
+        for (const Clip* c : std::as_const(partners)) {
+            if (!c->keepRegion.isEmpty()) continue; // kill feed copies follow their clip their own way (cutCopiesLikeBases)
+            const auto sameFile = [&](const Clip* p) { return p->mediaPath == c->mediaPath; };
+            const bool ofTheFile = std::any_of(right.cbegin(), right.cend(), sameFile)
+                                   || std::any_of(left.cbegin(), left.cend(), sameFile);
+            if (ofTheFile ? std::any_of(right.cbegin(), right.cend(), [&](const Clip* r) { return inSync(*c, *r); })
+                                && std::none_of(left.cbegin(), left.cend(), [&](const Clip* l) { return inSync(*c, *l); })
+                          // another file (camera + recorder): with the piece it lies under more
+                          : overlap(c, right) > overlap(c, left))
+                relink.insert(c->id, newLink);
+        }
+    }
+    if (!relink.isEmpty())
+        changeClips(tl, [&](const Clip& c) { return relink.contains(c.id); }, [&](Clip& c) { c.linkId = relink.value(c.id); });
+}
+
+} // namespace
+
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
 {
     QHash<int, int> map;
@@ -181,6 +304,43 @@ void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
         if (!map.contains(c.linkId)) map[c.linkId] = newLinkId();
         c.linkId = map[c.linkId];
     });
+    QHash<int, int> rightLinks;
+    for (auto m = map.cbegin(); m != map.cend(); ++m) rightLinks.insert(-m.key(), m.value());
+    relinkUncut(tl, rightLinks);
+}
+
+QVector<QPair<int, int>> linksApart(const Timeline& before, const Timeline& after, const QSet<int>& ignore)
+{
+    const auto playsLike = [](const Clip& a, const Clip& b) {
+        return a.speed == b.speed && a.reverse == b.reverse && a.freeze == b.freeze && a.ramp == b.ramp;
+    };
+    const auto linked = [](const Timeline& tl) {
+        QHash<int, Clip> m;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : tl.tracks(k))
+                for (const Clip& c : t.clips)
+                    if (c.linkId > 0) m.insert(c.id, c);
+        return m;
+    };
+    const QHash<int, Clip> was = linked(before), now = linked(after);
+    QHash<int, QVector<int>> groups; // link -> clips in both, same link, same playback
+    for (auto it = now.cbegin(); it != now.cend(); ++it) {
+        const auto old = was.constFind(it.key());
+        if (old == was.cend() || ignore.contains(it.key()) || old->linkId != it->linkId || !playsLike(*old, *it)) continue;
+        groups[it->linkId] << it.key();
+    }
+    QVector<QPair<int, int>> out;
+    for (const QVector<int>& ids : std::as_const(groups))
+        for (qsizetype i = 0; i < ids.size(); ++i)
+            for (qsizetype j = i + 1; j < ids.size(); ++j) {
+                const Clip &a0 = was[ids[i]], &b0 = was[ids[j]], &a1 = now[ids[i]], &b1 = now[ids[j]];
+                if (!playsLike(a1, b1)) continue;
+                const int d0 = (a0.start - a0.in) - (b0.start - b0.in), d1 = (a1.start - a1.in) - (b1.start - b1.in);
+                const bool synced = a0.mediaPath == b0.mediaPath ? d0 == 0 : a0.start < b0.end() && b0.start < a0.end();
+                if (synced && d0 != d1) out << qMakePair(std::min(ids[i], ids[j]), std::max(ids[i], ids[j]));
+            }
+    std::sort(out.begin(), out.end()); // (the hash's order changes per run: the message names the same pair each time)
+    return out;
 }
 
 void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& newId)
@@ -237,6 +397,7 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
                 q.out = q.in + (hi - lo) - 1;
                 if (lo > c.start) q.transIn = 0, q.fadeIn = 0;
                 if (hi < c.end()) q.transOut = 0, q.fadeOut = 0;
+                Comp::followHead(q, lo - c.start, after.frameRate);
                 q.linkId = x->linkId;
                 kept = kept || x->id == base->id;
                 q.id = x->id == base->id ? c.id : 0;
@@ -261,11 +422,14 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
     }
 }
 
-void clearRange(Track& track, int start, int end, const IdGen& newId)
+void clearRange(Track& track, int start, int end, const IdGen& newId, double fps)
 {
     if (end <= start) return;
+    // Nothing there: the track stays untouched (read-only, undo snapshots share its clips)
+    const QVector<Clip>& clips = std::as_const(track.clips);
+    if (std::none_of(clips.cbegin(), clips.cend(), [&](const Clip& c) { return c.end() > start && c.start < end; })) return;
     QVector<Clip> result;
-    for (const Clip& c : track.clips) {
+    for (const Clip& c : clips) {
         if (c.end() <= start || c.start >= end) { // no overlap
             result << c;
             continue;
@@ -282,6 +446,7 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
             right.start = end;
             right.transIn = 0;
             right.fadeIn = 0;
+            Comp::followHead(right, end - c.start, fps);
             result << left << right;
         } else if (c.start < start) { // cut off the end
             Clip left = c;
@@ -295,6 +460,7 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
             right.start = end;
             right.transIn = 0;
             right.fadeIn = 0;
+            Comp::followHead(right, end - c.start, fps);
             result << right;
         }
         // otherwise: completely covered -> gone
@@ -303,9 +469,9 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
     sortTrack(track);
 }
 
-void placeClip(Track& track, const Clip& clip, const IdGen& newId)
+void placeClip(Track& track, const Clip& clip, const IdGen& newId, double fps)
 {
-    clearRange(track, clip.start, clip.end(), newId);
+    clearRange(track, clip.start, clip.end(), newId, fps);
     track.clips << clip;
     sortTrack(track);
 }
@@ -345,15 +511,17 @@ void shiftFrom(Track& track, int frame, int delta)
     for (Clip& c : track.clips)
         if (c.start >= frame) c.start += delta;
     sortTrack(track);
+    if (delta != 0) Automation::rippleTrack(track, {{frame, delta}});
 }
 
 void clearDissolveAt(Track& track, int frame)
 {
-    for (int i = 0; i + 1 < track.clips.size(); ++i) {
-        Clip& a = track.clips[i];
-        Clip& b = track.clips[i + 1];
-        if (a.end() == frame && isDissolve(a, b)) a.transOut = b.transIn = 0;
-    }
+    // Read first, written only where there is one (undo snapshots share the clips of the other tracks)
+    for (qsizetype i = 0; i + 1 < track.clips.size(); ++i)
+        if (const Clip& a = std::as_const(track.clips)[i]; a.end() == frame && isDissolve(a, std::as_const(track.clips)[i + 1])) {
+            track.clips[i].transOut = 0;
+            track.clips[i + 1].transIn = 0;
+        }
 }
 
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
@@ -380,11 +548,13 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
         }
         c->out = c->in + (frame - c->start) - 1;
         Keys::split(original, *c, right); // split keyframes, interpolated value at the edge
+        Comp::followHead(right, frame - original.start, tl.frameRate); // its graph's picture stays in place
         Track& t = tl.track(ref);
         t.clips << right;
         sortTrack(t);
         created << right.id;
     }
+    relinkUncut(tl, linkMap); // a partner that starts after the cut plays with the right piece
     return created;
 }
 
@@ -398,42 +568,94 @@ void ensureTracks(Timeline& tl, TrackKind kind, int count)
     }
 }
 
-void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
+RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds)
 {
-    // deleted ranges of all tracks combined -> offset for the other tracks
+    // Deleted ranges of all tracks combined
     const QVector<TrackRef> edited = tracksOf(tl, clipIds);
     QVector<QPair<int, int>> ranges;
-    for (int id : clipIds)
-        if (const Clip* c = findClip(tl, id)) ranges << qMakePair(c->start, c->end());
+    struct Span { int start, end, link; bool picture; };
+    QVector<Span> spans; // the deleted clips (before)
+    for (int id : clipIds) {
+        TrackRef ref;
+        if (const Clip* c = findClip(tl, id, &ref)) {
+            ranges << qMakePair(c->start, c->end());
+            spans << Span{c->start, c->end(), c->linkId, ref.kind == TrackKind::Video};
+        }
+    }
     std::sort(ranges.begin(), ranges.end());
     QVector<QPair<int, int>> merged;
     for (const auto& r : ranges) {
         if (!merged.isEmpty() && r.first <= merged.last().second) merged.last().second = std::max(merged.last().second, r.second);
         else merged << r;
     }
-    QVector<QPair<int, int>> shifts;
-    for (const auto& r : merged) shifts << qMakePair(r.second, r.first - r.second);
-
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
-        for (auto& t : tl.tracks(k)) {
-            QVector<QPair<int, int>> gaps; // deleted ranges [start, end)
-            QVector<Clip> kept;
-            for (const Clip& c : t.clips) {
-                if (clipIds.contains(c.id)) gaps << qMakePair(c.start, c.end());
-                else kept << c;
+    // What stays on the affected tracks
+    QVector<QVector<Clip>> kept;
+    QVector<QPair<int, int>> covered; // [start, end) of the clips that stay, all affected tracks
+    for (const TrackRef& ref : edited) {
+        QVector<Clip> rest;
+        for (const Clip& c : std::as_const(tl).track(ref).clips)
+            if (!clipIds.contains(c.id)) {
+                rest << c;
+                covered << qMakePair(c.start, c.end());
             }
-            if (gaps.isEmpty()) continue;
-            for (Clip& c : kept) {
-                int shift = 0;
-                for (const auto& g : gaps)
-                    if (g.second <= c.start) shift += g.second - g.first;
-                c.start -= shift;
-            }
-            t.clips = kept;
-            sortTrack(t);
+        kept << rest;
+    }
+    std::sort(covered.begin(), covered.end());
+    // The time taken out: the deleted time where nothing stays on any affected track. Every track moves up by it
+    // together (the others in rippleTracks): each affected track by only its own gaps took linked clips apart (two
+    // clips deleted on different tracks at different times), and taking out time where a clip stays on another
+    // affected track (an L-cut: the sound of the deleted clip under the next picture) moved that clip against its
+    // sound. Nothing on the affected tracks lies in that time, so none of their clips can run into another.
+    QVector<QPair<int, int>> shifts; // (end of the time taken out, minus its length)
+    for (const auto& r : merged) {
+        int from = r.first;
+        for (const auto& c : std::as_const(covered)) {
+            if (c.second <= from || c.first >= r.second) continue;
+            if (c.first > from) shifts << qMakePair(c.first, from - c.first);
+            from = std::max(from, c.second);
+            if (from >= r.second) break;
         }
+        if (from < r.second) shifts << qMakePair(r.second, from - r.second);
+    }
+    // Only the affected tracks are written here (undo snapshots share the rest)
+    for (qsizetype i = 0; i < edited.size(); ++i) {
+        QVector<Clip>& rest = kept[i];
+        for (Clip& c : rest) {
+            int d = 0;
+            for (const auto& s : std::as_const(shifts))
+                if (s.first <= c.start) d += s.second;
+            c.start += d;
+        }
+        Track& t = tl.track(edited[i]);
+        t.clips = rest;
+        sortTrack(t);
+        Automation::rippleTrack(t, shifts);
     }
     rippleTracks(tl, shifts, edited);
+    RippleResult result;
+    for (const auto& r : std::as_const(merged)) result.deleted += r.second - r.first;
+    for (const auto& s : std::as_const(shifts)) result.removed -= s.second;
+    // The time meant to go: of a linked group with a picture the picture's time (its sound's own J/L tail under the
+    // next clip is no loss, a shorter sound does not make it less), of other clips their time; how much of it went
+    QSet<int> withPicture;
+    for (const Span& span : std::as_const(spans))
+        if (span.link > 0 && span.picture) withPicture.insert(span.link);
+    QVector<QPair<int, int>> meant;
+    for (const Span& span : std::as_const(spans))
+        if (span.picture || span.link <= 0 || !withPicture.contains(span.link)) meant << qMakePair(span.start, span.end);
+    std::sort(meant.begin(), meant.end());
+    QVector<QPair<int, int>> meantMerged;
+    for (const auto& r : std::as_const(meant)) {
+        if (!meantMerged.isEmpty() && r.first <= meantMerged.last().second)
+            meantMerged.last().second = std::max(meantMerged.last().second, r.second);
+        else meantMerged << r;
+    }
+    for (const auto& m : std::as_const(meantMerged)) {
+        result.meant += m.second - m.first;
+        for (const auto& s : std::as_const(shifts)) // the time taken out: [end - length, end)
+            result.meantRemoved += std::max(0, std::min(m.second, s.first) - std::max(m.first, s.first + s.second));
+    }
+    return result;
 }
 
 int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind anchorKind, int trackDelta)
@@ -474,7 +696,7 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
         removeClip(tl, m.clip.id);
         ensureTracks(tl, m.target.kind, m.target.index + 1);
     }
-    for (const auto& m : moving) placeClip(tl.track(m.target), m.clip, newId);
+    for (const auto& m : moving) placeClip(tl.track(m.target), m.clip, newId, tl.frameRate);
 }
 
 int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
@@ -512,6 +734,7 @@ void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
         if (edge == Edge::Start) {
             c->start += delta;
             c->in += delta;
+            Comp::followHead(*c, delta, tl.frameRate);
         } else {
             c->out += delta;
         }
@@ -531,12 +754,13 @@ void trimClipsOver(Timeline& tl, const QVector<int>& clipIds, Edge edge, int del
         if (edge == Edge::Start) {
             trimmed.start += delta;
             trimmed.in += delta;
+            Comp::followHead(trimmed, delta, tl.frameRate);
         } else {
             trimmed.out += delta;
         }
         Track& track = tl.track(ref);
         track.clips.removeIf([id](const Clip& o) { return o.id == id; });
-        placeClip(track, trimmed, newId); // overwrites what the longer clip covers now
+        placeClip(track, trimmed, newId, tl.frameRate); // overwrites what the longer clip covers now
     }
 }
 
@@ -643,7 +867,7 @@ int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const Source
     return std::clamp(delta, std::min(lo, 0), std::max(hi, 0));
 }
 
-void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength)
+void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength, MarkerCut markerCut)
 {
     delta = clampTrimEdit(tl, e, delta, sourceLength);
     if (delta == 0) return;
@@ -661,21 +885,48 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             if (const Clip* c = findClip(tl, id, &ref)) perTrack[qMakePair(int(ref.kind), ref.index)] << qMakePair(c->end(), shift);
         }
         QVector<QPair<int, int>> shifts;
-        for (const auto& list : perTrack)
-            if (list.size() > shifts.size()) shifts = list;
+        QPair<int, int> lead; // the track the others follow
+        for (auto it = perTrack.cbegin(); it != perTrack.cend(); ++it)
+            if (it.value().size() > shifts.size()) {
+                shifts = it.value();
+                lead = it.key();
+            }
+        // Automation of the trimmed tracks: the time trimmed off goes (head: at the clip's start, where its content
+        // moves from), time added comes in there
+        QMap<QPair<int, int>, QVector<QPair<int, int>>> autoShifts;
+        for (int id : e.ids) {
+            TrackRef ref;
+            if (const Clip* c = findClip(tl, id, &ref)) {
+                auto& list = autoShifts[qMakePair(int(ref.kind), ref.index)];
+                if (e.edge == Edge::End) list << qMakePair(c->end(), delta);
+                else if (delta > 0) list << qMakePair(c->start + delta, -delta);
+                else list << qMakePair(c->start, -delta);
+            }
+        }
+        for (auto it = autoShifts.cbegin(); it != autoShifts.cend(); ++it) {
+            Track& t = tl.track(TrackRef{TrackKind(it.key().first), it.key().second});
+            Automation::rippleTrack(t, it.value());
+        }
         for (int id : e.ids) {
             TrackRef ref;
             Clip* c = findClip(tl, id, &ref);
             if (!c) continue;
             const int oldEnd = c->end();
-            if (e.edge == Edge::Start) c->in += delta;
-            else c->out += delta;
+            if (e.edge == Edge::Start) {
+                c->in += delta; // the clip stays, its content moves: like a head trim for the graph
+                Comp::followHead(*c, delta, tl.frameRate);
+            } else {
+                c->out += delta;
+            }
             // further trimmed clips of the same track move too (otherwise, depending on the order, a gap remains
             // or the rest slides under them)
             for (Clip& o : tl.track(ref).clips)
                 if (o.id != id && o.start >= oldEnd) o.start += shift;
         }
-        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited);
+        // Markers follow the content of the lead track's trimmed clips (head: from the clip's start, like its
+        // automation), so a marker on the trimmed-off part goes and one on the rest stays on its picture
+        const QVector<QPair<int, int>> markerShifts = autoShifts.value(lead);
+        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited, &markerShifts, markerCut);
         break;
     }
     case TrimKind::Roll:
@@ -685,6 +936,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             if (Clip* c = findClip(tl, id)) {
                 c->start += delta;
                 c->in += delta;
+                Comp::followHead(*c, delta, tl.frameRate);
             }
         break;
     case TrimKind::Slip:
@@ -712,6 +964,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             if (Clip* c = findClip(tl, id)) {
                 c->start += delta;
                 c->in += delta;
+                Comp::followHead(*c, delta, tl.frameRate);
             }
         for (int id : e.ids)
             if (Clip* c = findClip(tl, id)) c->start += delta;
@@ -720,16 +973,19 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
     }
 }
 
-QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength)
+namespace {
+
+// The spans of clips [from, to) of a track, as if the track held only those clips
+QVector<TransitionSpan> transitionsOf(const QVector<Clip>& clips, qsizetype from, qsizetype to,
+                                      const SourceLength& sourceLength)
 {
     QVector<TransitionSpan> spans;
-    const auto& clips = track.clips;
     // Portion of the start that a transition already occupies (dissolve + fade out fit in the clip)
     int usedIn = 0;
-    for (int i = 0; i < clips.size(); ++i) {
+    for (qsizetype i = from; i < to; ++i) {
         const Clip& c = clips[i];
-        const Clip* prev = i > 0 ? &clips[i - 1] : nullptr;
-        const Clip* next = i + 1 < clips.size() ? &clips[i + 1] : nullptr;
+        const Clip* prev = i > from ? &clips[i - 1] : nullptr;
+        const Clip* next = i + 1 < to ? &clips[i + 1] : nullptr;
         const bool dissolveIn = prev && isDissolve(*prev, c);
         if (!dissolveIn) usedIn = 0; // otherwise already set at the predecessor
         if (c.transIn > 0 && !dissolveIn) { // fade in
@@ -766,6 +1022,32 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         const int len = std::min(c.transOut, room); // fade out
         if (len > 0) spans << TransitionSpan{c.id, 0, c.end() - len, c.end(), c.end(), c.transOutStyle};
     }
+    return spans;
+}
+
+} // namespace
+
+QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength)
+{
+    return transitionsOf(track.clips, 0, track.clips.size(), sourceLength);
+}
+
+QVector<TransitionSpan> transitionsAt(const Track& track, int frame, const SourceLength& sourceLength)
+{
+    const QVector<Clip>& clips = track.clips;
+    // A clip's spans lie within it, a dissolve's up to the end of the next clip: only the last clip starting at or
+    // before the frame and the one before it can have a span there
+    const qsizetype last =
+        std::upper_bound(clips.begin(), clips.end(), frame, [](int f, const Clip& c) { return f < c.start; })
+        - clips.begin() - 1;
+    if (last < 0) return {};
+    // A clip's transitions depend on the dissolves into it: from the start of that chain on (where nothing comes in,
+    // the whole track's walk starts afresh too). The clip after `last` is there as its partner; its own spans start
+    // after the frame and are dropped below.
+    qsizetype from = std::max<qsizetype>(0, last - 1);
+    while (from > 0 && isDissolve(clips[from - 1], clips[from])) --from;
+    QVector<TransitionSpan> spans = transitionsOf(clips, from, std::min(clips.size(), last + 2), sourceLength);
+    spans.removeIf([frame](const TransitionSpan& s) { return frame < s.start || frame >= s.end; });
     return spans;
 }
 
@@ -969,6 +1251,14 @@ bool usesMediaOnVideo(const Timeline& tl, const QString& path)
                 if (e.effectId == QLatin1String(Comp::kEffectId) && Comp::mediaPaths(e).contains(path)) return true;
         }
     return false;
+}
+
+int followTrack(const QVector<Track>& tracks, quint64 uid, int index)
+{
+    if (index >= 0 && index < tracks.size() && tracks[index].uid.value == uid) return index;
+    for (int i = 0; i < tracks.size(); ++i)
+        if (tracks[i].uid.value == uid) return i;
+    return -1;
 }
 
 } // namespace TimelineOps

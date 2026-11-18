@@ -7,9 +7,11 @@
 #include "cli/Mcp.h"
 #include "core/Project.h"
 #include "core/EffectRegistry.h"
+#include <QSettings>
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
+#include "engine/ClipFormat.h"
 #include "engine/Exporter.h"
 
 #include <QLockFile>
@@ -219,6 +221,38 @@ int runTests(int argc, char** argv)
         CHECK(at("1,5s, 3s,2,25s") == (QJsonArray{"1.5s", "3s", "2.25s"}));
         CHECK(at("6,95") == (QJsonArray{"6", "95"}));
         CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
+        // Numbers as text: no thousands separators ("1,500" was 1500); a lone comma is a decimal comma
+        {
+            const Cli::Command* newCmd = Cli::find("new");
+            const auto fps = [&](const char* text) {
+                return Cli::normalize(*newCmd, {{"project", g_path}, {"fps", text}})["fps"].toDouble();
+            };
+            CHECK_EQ(fps("1,5"), 1.5);
+            CHECK_EQ(fps("1,50"), 1.5);
+            CHECK_EQ(fps("1,5000"), 1.5);
+            // One comma and three digits: 1500 in English, 1.5 in German - refused with both spellings to choose
+            for (const char* amb : {"1,500", "-12,250", "100,000"}) {
+                QString msg;
+                try {
+                    Cli::normalize(*newCmd, {{"project", g_path}, {"fps", amb}});
+                } catch (const Cli::Error& e) {
+                    msg = e.code + ": " + e.message;
+                }
+                Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("ambiguous") && msg.contains("fps"),
+                              qPrintable(msg), __FILE__, __LINE__);
+            }
+            CHECK_EQ(fps("29.97"), 29.97);
+            CHECK_EQ(fps("25"), 25.0);
+            for (const char* bad : {"1,500.5", "1,000,000", "1.5.5", "nan"}) {
+                QString code;
+                try {
+                    Cli::normalize(*newCmd, {{"project", g_path}, {"fps", bad}});
+                } catch (const Cli::Error& e) {
+                    code = e.code;
+                }
+                CHECK_EQ(code, QString("BAD_ARGUMENT"));
+            }
+        }
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
         // A file name with a comma stays one path in a comma-separated string; other pieces still split
         {
@@ -249,6 +283,24 @@ int runTests(int argc, char** argv)
             message = e.message;
         }
         CHECK(message.contains("'file'") && message.contains("source") && message.contains("sheet"));
+        // A whole number given with a fraction (audio_stream 1.5) or out of range was silently 0 (the first stream):
+        // refused like "1.5" as text; 2.0 and 1e3 are whole numbers
+        const Cli::Command* overview = Cli::find("overview");
+        const auto integerCode = [&](const QJsonValue& v) {
+            try {
+                return QString::number(Cli::normalize(*overview, {{"file", g_path}, {"audio_stream", v}})["audio_stream"].toInt());
+            } catch (const Cli::Error& e) {
+                return e.code;
+            }
+        };
+        CHECK_EQ(integerCode(1.5), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode("1.5"), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(-0.5), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(3e9), QString("BAD_ARGUMENT"));
+        CHECK_EQ(integerCode(2.0), QString("2"));
+        CHECK_EQ(integerCode(1e3), QString("1000"));
+        CHECK_EQ(integerCode(-1), QString("-1"));
+        CHECK_EQ(integerCode("2"), QString("2"));
         // "--target_lufs nan" reads as a number but is none: refused (check left out its loudness test silently)
         const Cli::Command* check = Cli::find("check");
         for (const char* bad : {"nan", "inf", "-inf"}) {
@@ -288,6 +340,24 @@ int runTests(int argc, char** argv)
         CHECK_EQ(at("1:02.5"), 1563);
         CHECK_EQ(at("00:01:30"), 2250); // hours:minutes:seconds
         CHECK_EQ(at("90:00"), 135000); // 90 minutes
+        // 29.97: "HH:MM:SS;FF" is drop-frame timecode (1 h = 107892 frames), ':' stays non-drop
+        {
+            ProjectFormat ntsc;
+            ntsc.rate = FrameRate{30000, 1001};
+            const auto atN = [&](const char* t) { return Cli::detail::parseTime(QJsonValue(t), ntsc, "at"); };
+            CHECK_EQ(atN("01:00:00;00"), 107892);
+            CHECK_EQ(atN("00:10:00;00"), 17982);
+            CHECK_EQ(atN("00:01:00;02"), 1800);
+            CHECK_EQ(atN("01:00:00:00"), 108000);
+            // Beyond 100000 hours dropFrameNumber gives -1: an error, not frame -1
+            QString code;
+            try {
+                atN("100001:00:00;00");
+            } catch (const Cli::Error& e) {
+                code = e.code + e.message;
+            }
+            CHECK(code.startsWith("BAD_ARGUMENT") && code.contains("too long"));
+        }
         for (const char* bad : {"00:00:04:50", "00:00:04:25", "00:61:00:00", "1:75", "00:00:04:20.5", "1:2:3:4:5",
                                 "1;30", "00:00;04:20", "1:", ":30", "1:3a", "1:30.", "00:00:04;20;1"})
             CHECK_EQ(timeError(QJsonValue(bad)), QString("BAD_ARGUMENT"));
@@ -309,9 +379,21 @@ int runTests(int argc, char** argv)
             CHECK(message.contains("\"6.95s\"") && message.contains("whole numbers"));
         }
     }
+    // Without a command: every command in short (name and first sentence) and where the details are - not ~80 KB of
+    // parameters at a terminal; --all: everything
     const QJsonObject help = run("help", {});
     CHECK_EQ(help["commands"].toArray().size(), int(Cli::commands().size()));
-    CHECK(help.contains("servers") && help.contains("usage"));
+    CHECK(help.contains("usage") && help.contains("more") && !help.contains("servers"));
+    CHECK(!help["commands"][0].toObject().contains("params"));
+    CHECK(QJsonDocument(help).toJson(QJsonDocument::Compact).size() < 10000);
+    for (const QJsonValue& c : help["commands"].toArray()) { // an abbreviation does not end the first sentence
+        const QString summary = c["summary"].toString();
+        for (const char* abbr : {"e.g.", "i.e.", "etc.", "vs."})
+            if (!CHECK(!summary.endsWith(QLatin1String(abbr)))) std::printf("       %s\n", qPrintable(summary));
+    }
+    const QJsonObject all = run("help", {{"all", true}});
+    CHECK_EQ(all["commands"].toArray().size(), int(Cli::commands().size()));
+    CHECK(all.contains("servers") && all.contains("usage") && all["commands"][0].toObject().contains("params"));
     // One command: only that (the MCP/HTTP server options were 2.5 KB of every `help edit --op …` answer)
     const QJsonObject one = run("help", {{"command", "watch"}});
     CHECK(one["commands"].toArray().size() == 1 && !one.contains("servers") && !one.contains("usage"));
@@ -823,6 +905,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive/Monday"));
         ed(R"([{"op":"bin","bin":"Archive/Monday","remove":true}])");
         CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive"));
+        // "Master" alone is the root bin, not a new sub-bin of that name (as in watch folders)
+        ed(R"([{"op":"bin","bin":"Archive","into":"master"},{"op":"media","media":"/x/a.mp4","bin":"Master"}])");
+        CHECK(!run("info", {{"project", g_path}})["media"][0].toObject().contains("bin"));
+        ed(R"([{"op":"media","media":"/x/a.mp4","bin":"Archive"}])");
+        CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive")); // still top level
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Master","rename":"Root"}])"}}),
+                 QString("BAD_ARGUMENT"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Nope","remove":true}])"}}), QString("NOT_FOUND"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Archive","into":"Archive/Sub"}])"}}),
                  QString("BAD_ARGUMENT"));
@@ -1145,11 +1234,76 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         };
         CHECK_EQ(kindOf("denoise"), QString("audio"));
         CHECK_EQ(kindOf("stabilize"), QString("video"));
+        // Every effect names its category (what it is for); `category` lists only those, an unknown one is refused
+        for (const QJsonValue& e : fx)
+            Check::report(!e["category"].toString().isEmpty(), "effect has a category", __FILE__, __LINE__, e["effect"].toString());
+        const QJsonObject colorOnly = run("effects", {{"category", "color"}});
+        QStringList colorIds;
+        for (const QJsonValue& e : colorOnly["effects"].toArray()) {
+            CHECK_EQ(e["category"].toString(), QString("color"));
+            colorIds << e["effect"].toString();
+        }
+        CHECK(colorIds.contains("color") && colorIds.contains("grade") && !colorIds.contains("blur"));
+        CHECK(!colorOnly.contains("luts"));
+        CHECK_EQ(run("effects", {{"category", "voice"}})["effects"][0]["effect"].toString(), QString("voiceclean"));
+        CHECK_EQ(errorOf("effects", {{"category", "loud"}}), QString("BAD_ARGUMENT"));
+        // Favourites of the app's Effects Library: marked in the full list, `favorites` lists them (and recently used)
+        // as the ops take them, entries that are gone are left out
+        QSettings().setValue("effects/favorites", QStringList{"fx:blur", "video:cross_dissolve", "shape:arrow", "fx:gone",
+                                                               "lut:@/LUTs/gone.cube", "recipe:pip_frame"});
+        QSettings().setValue("effects/recent", QStringList{"title:counter", "fx:denoise"});
+        bool blurFavorite = false, colorFavorite = true;
+        for (const QJsonValue& e : run("effects", {})["effects"].toArray()) {
+            if (e["effect"].toString() == "blur") blurFavorite = e["favorite"].toBool();
+            if (e["effect"].toString() == "color") colorFavorite = e["favorite"].toBool();
+        }
+        CHECK(blurFavorite && !colorFavorite);
+        const QJsonObject favs = run("effects", {{"favorites", true}});
+        const QJsonArray fl = favs["favorites"].toArray();
+        CHECK_EQ(fl.size(), 4);
+        if (fl.size() == 4) {
+            CHECK(fl[0]["type"].toString() == "video_effect" && fl[0]["effect"].toString() == "blur"
+                  && fl[0]["category"].toString() == "blur");
+            CHECK(fl[1]["type"].toString() == "transition" && fl[1]["transition"].toString() == "cross_dissolve");
+            CHECK(fl[2]["type"].toString() == "shape" && fl[2]["shape"].toString() == "arrow");
+            CHECK(fl[3]["type"].toString() == "recipe" && fl[3]["recipe"].toString() == "pip_frame");
+        }
+        const QJsonArray rl = favs["recent"].toArray();
+        CHECK(rl.size() == 2 && rl[0]["title"].toString() == "counter" && rl[1]["effect"].toString() == "denoise");
+        QSettings().remove("effects/favorites");
+        QSettings().remove("effects/recent");
         const QJsonArray params = run("effects", {{"effect", "stabilize"}})["effects"][0]["params"].toArray();
         bool analysis = false;
         for (const QJsonValue& p : params)
             if (p["key"].toString() == "shakiness") analysis = p["analysis"].toBool();
         CHECK(analysis);
+    }
+
+    // Timeline markers follow ripple ops of the CLI (insert, ripple delete, ripple trim) like the app
+    {
+        const auto markers = [](const QJsonObject& r) {
+            QVector<int> out;
+            for (const QJsonValue& v : std::as_const(r)["timeline"]["markers"].toArray()) out << v.toInt();
+            return out;
+        };
+        const auto clipsOfV1 = [] {
+            QVector<int> out;
+            for (const QJsonValue& c : run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"].toArray())
+                out << c["id"].toInt();
+            return out;
+        };
+        QJsonObject r = edit(R"([{"op":"clear"},{"op":"append","media":"/x/a.mp4","in":0,"out":50},
+                                 {"op":"append","media":"/x/a.mp4","in":50,"out":90},
+                                 {"op":"marker","at":10},{"op":"marker","at":40},{"op":"marker","at":45},
+                                 {"op":"marker","at":60}])");
+        CHECK_EQ(markers(r), QVector<int>({10, 40, 45, 60}));
+        r = edit(R"([{"op":"insert","media":"/x/a.mp4","at":20,"in":0,"out":10}])"); // 10 frames at 20
+        CHECK_EQ(markers(r), QVector<int>({10, 50, 55, 70}));
+        const QVector<int> ids = clipsOfV1();
+        r = edit(QString(R"([{"op":"trim","clip":%1,"edge":"end","by":-5,"mode":"ripple"}])").arg(ids[2]).toUtf8().constData());
+        CHECK_EQ(markers(r), QVector<int>({10, 50, 55, 65})); // [55, 60) trimmed off, 55 = the cut stays
+        r = edit(QString(R"([{"op":"delete","clips":[%1],"ripple":true}])").arg(ids.last()).toUtf8().constData());
+        CHECK_EQ(markers(r), QVector<int>({10, 50, 55})); // the last clip [55, 95) takes 65, the one at its start stays
     }
 
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
@@ -1829,6 +1983,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 CHECK(std::abs(slotKills[0] - 1.0) < 0.15);
                 CHECK(std::abs(slotKills[1] - 3.5) < 0.15);
             }
+            // ... and right away (report 9.11.: a new line where an old one just went was taken for the old one,
+            // matched by its place only): another text in the same slot in the next frame is a new line
+            const QString swap = Check::makeMedia(
+                dir.filePath("cs2_swap.mkv"),
+                {"-f", "lavfi", "-i",
+                 "color=c=0x707070:s=1920x1080:d=6:r=25," + line(74, "between(t,1,2.99)", textA) + ","
+                     + line(74, "gte(t,3)", textB),
+                 "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+            QVector<double> swapKills;
+            for (const QJsonValue& c : run("highlights", {{"file", swap}})["candidates"].toArray())
+                for (const QJsonValue& k : c["kill_s"].toArray()) swapKills << k.toDouble();
+            std::sort(swapKills.begin(), swapKills.end());
+            if (CHECK_EQ(swapKills.size(), 2)) {
+                CHECK(std::abs(swapKills[0] - 1.0) < 0.15);
+                CHECK(std::abs(swapKills[1] - 3.0) < 0.15);
+            }
             // Teamkills (review 9.11.: a teamkill counted as a kill): long lines "killer  weapon  victim" with the
             // names in team colours (T yellow, CT blue). A at 1 s: T kills CT, a kill. B at 1.6 s: T kills T, a
             // teamkill inside A's moment (lowers its score). C at 4 s: T kills T again, a teamkill on its own (no moment)
@@ -1878,6 +2048,95 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             for (const QJsonValue& c : hd["candidates"].toArray()) dmKills += c["kills"].toInt();
             CHECK_EQ(dmKills, 2);
             CHECK(!hd.contains("teamkills"));
+            // Assists (report 9.11.: "X + Onkel Theo -> Y" counted as the player's kill): the player's lines are
+            // their kills and their assists, "killer + assister  weapon  victim" with a white "+". The player's name
+            // (P: six thin bars) is the first one of their kills; a teammate (M: one stripe). A at 1 s: "P  weapon
+            // V", a kill. B at 2.5 s: "P + M  weapon  V", a kill with an assist. C at 4 s: "M + P  weapon  V": M
+            // killed, the player only assisted, no kill
+            {
+                const auto box = [](int x, int y, int w, int h, const QString& c, const QString& when) {
+                    return QString(",drawbox=x=%1:y=%2:w=%3:h=%4:c=%5:t=fill:enable='%6'")
+                        .arg(x).arg(y).arg(w).arg(h).arg(c, when);
+                };
+                const auto player = [&](int x, int y, const QString& when) {
+                    QString s;
+                    for (int k = 0; k < 6; ++k) s += box(x + 10 * k, y, 6, 12, t, when);
+                    return s;
+                };
+                const auto mate = [&](int x, int y, const QString& when) { return box(x, y + 4, 60, 4, t, when); };
+                const auto plus = [&](int x, int y, const QString& when) {
+                    return box(x, y + 5, 8, 2, "white", when) + box(x + 3, y + 2, 2, 8, "white", when);
+                };
+                // A filled round icon after the name (a grenade): no "+"
+                const auto disc = [&](int x, int y, const QString& when) {
+                    return box(x + 3, y + 2, 2, 1, "white", when) + box(x + 2, y + 3, 4, 1, "white", when)
+                           + box(x, y + 4, 8, 4, "white", when) + box(x + 2, y + 8, 4, 1, "white", when)
+                           + box(x + 3, y + 9, 2, 1, "white", when);
+                };
+                const auto assistLine = [&](int y, const QString& when, int kind, int victimW = 100) {
+                    const int ty = y + 10;
+                    QString s = QString(",drawbox=x=1510:y=%1:w=400:h=31:c=0x181818:t=fill:enable='%2',"
+                                        "drawbox=x=1510:y=%1:w=400:h=31:c=0xd8444a:t=1:enable='%2'")
+                                    .arg(y)
+                                    .arg(when);
+                    if (kind == 0) s += player(1530, ty, when);
+                    if (kind == 1) s += player(1530, ty, when) + plus(1598, ty, when) + mate(1612, ty, when);
+                    if (kind == 2) s += mate(1530, ty, when) + plus(1598, ty, when) + player(1612, ty, when);
+                    if (kind == 3) s += player(1530, ty, when) + disc(1598, ty, when);
+                    return s + box(1700, ty, 50, 12, "white", when) + box(1790, ty, victimW, 12, ct, when);
+                };
+                const QString assists = Check::makeMedia(
+                    dir.filePath("cs2_assist.mkv"),
+                    {"-f", "lavfi", "-i",
+                     "color=c=0x707070:s=1920x1080:d=6:r=25" + assistLine(74, "gte(t,1)", 0)
+                         + assistLine(108, "gte(t,2.5)", 1) + assistLine(142, "gte(t,4)", 2),
+                     "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+                const QJsonObject ha = run("highlights", {{"file", assists}});
+                QVector<double> assistKills;
+                for (const QJsonValue& c : ha["candidates"].toArray())
+                    for (const QJsonValue& k : c["kill_s"].toArray()) assistKills << k.toDouble();
+                std::sort(assistKills.begin(), assistKills.end());
+                if (CHECK_EQ(assistKills.size(), 2)) {
+                    CHECK(std::abs(assistKills[0] - 1.0) < 0.15);
+                    CHECK(std::abs(assistKills[1] - 2.5) < 0.15);
+                }
+                if (CHECK_EQ(ha["assists"].toArray().size(), 1)) CHECK(std::abs(ha["assists"][0].toDouble() - 4.0) < 0.15);
+                CHECK(ha["assists_note"].isString());
+                const auto killsAndAssists = [&](const QString& name, const QString& lines) {
+                    const QJsonObject h = run("highlights", {{"file", Check::makeMedia(dir.filePath(name),
+                                                              {"-f", "lavfi", "-i", "color=c=0x707070:s=1920x1080:d=6:r=25" + lines,
+                                                               "-c:v", "ffv1", "-pix_fmt", "bgr0"})}});
+                    QVector<double> k;
+                    for (const QJsonValue& c : h["candidates"].toArray())
+                        for (const QJsonValue& x : c["kill_s"].toArray()) k << x.toDouble();
+                    std::sort(k.begin(), k.end());
+                    QVector<double> as;
+                    for (const QJsonValue& x : h["assists"].toArray()) as << x.toDouble();
+                    return std::make_pair(k, as);
+                };
+                // More assists than kills (review 11.11.): "M + P" twice and one "P + M" kill. The first name most
+                // lines share is M's, but only the player can be first in a line without "+": with none of those
+                // nothing tells the names apart, all three count (never the player's kill taken for an assist)
+                {
+                    const auto [k, as] = killsAndAssists("cs2_more_assists.mkv",
+                                                         assistLine(74, "gte(t,1)", 2, 100) + assistLine(108, "gte(t,2.5)", 2, 80)
+                                                             + assistLine(142, "gte(t,4)", 1, 90));
+                    if (CHECK_EQ(k.size(), 3)) CHECK(std::abs(k[2] - 4.0) < 0.15);
+                    CHECK(as.isEmpty());
+                }
+                // A round icon after the name (a grenade kill) is no "+": the player's two grenade kills tell their
+                // name, the "M + P" line is an assist
+                {
+                    const auto [k, as] = killsAndAssists("cs2_grenade.mkv",
+                                                         assistLine(74, "gte(t,1)", 3, 100) + assistLine(108, "gte(t,2.5)", 3, 80)
+                                                             + assistLine(142, "gte(t,4)", 2, 90));
+                    if (CHECK_EQ(k.size(), 2)) {
+                        CHECK(std::abs(k[0] - 1.0) < 0.15);
+                        CHECK(std::abs(k[1] - 2.5) < 0.15);
+                    }
+                    if (CHECK_EQ(as.size(), 1)) CHECK(std::abs(as[0] - 4.0) < 0.15);
+                }
+            }
         }
         // Without sound: the frame the line began to show
         if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {
@@ -1933,6 +2192,193 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK(stillLength > 0);
             CHECK_EQ(clips[2]["end"].toInt() - clips[2]["start"].toInt(), stillLength);
         }
+    }
+    // A still with 2 billion frames of position and length: the sums overflowed int (in + duration, at + length). Refused
+    // beyond 2^30, the most a project file keeps (a longer clip came back cut on loading); the project stays as it was
+    {
+        const QString still = dir.filePath("bg.png");
+        const QString proj = dir.filePath("still.schneidi");
+        const QByteArray before = [&] { QFile f(proj); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); }();
+        CHECK(!before.isEmpty());
+        for (const QString& ops : {QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":2000000000,"track":"V1"}])"),
+                                   QString(R"([{"op":"place","media":"%1","at":0,"in":2000000000,"duration":2000000000,"track":"V1"}])"),
+                                   QString(R"([{"op":"place","media":"%1","at":2000000000,"duration":10,"track":"V1"}])"),
+                                   QString(R"([{"op":"append","media":"%1","duration":2000000000}])"),
+                                   QString(R"([{"op":"keep","media":"%1","at":1073741800,"ranges":[[0,10],[0,100]]}])"),
+                                   // longer than 2^29 frames (a project file keeps no longer clip)
+                                   QString(R"([{"op":"place","media":"%1","at":0,"duration":536870913,"track":"V3"}])"),
+                                   // a still's in lies inside its few frames: in 600 million with 24 frames is a
+                                   // clip of 600 million frames
+                                   QString(R"([{"op":"place","media":"%1","at":0,"in":600000000,"duration":24,"track":"V3"}])")}) {
+            CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", ops.arg(still)}}), QString("BAD_ARGUMENT"));
+            QFile f(proj);
+            CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == before);
+        }
+        // Up to the limit it works and loads back the same
+        const QJsonObject r = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":1073741800,"duration":24,"track":"V2"}])").arg(still)}});
+        const QJsonArray placed = r["timeline"]["tracks"][1]["clips"].toArray();
+        if (CHECK_EQ(placed.size(), qsizetype(1))) {
+            CHECK_EQ(placed[0]["start"].toInt(), 1073741800);
+            CHECK_EQ(placed[0]["end"].toInt(), 1073741824);
+            CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][1]["clips"][0]["end"].toInt(), 1073741824);
+        }
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"duration":536870912,"track":"V3"}])").arg(still)}});
+        CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][2]["clips"][0]["end"].toInt(), 536870912);
+    }
+    // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
+    // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)
+    {
+        const QString clip = Check::makeMedia(dir.filePath("subsrc.mp4"), {"-f", "lavfi", "-i", "testsrc2=s=64x36:r=25:d=1",
+                                                                           "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QString proj = dir.filePath("subs.schneidi");
+        run("new", {{"project", proj}, {"fps", 25}, {"width", 320}, {"height", 180}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"},
+            {"op":"subtitle","text":"Hi","at":0,"duration":10}])").arg(clip)}});
+        const qint64 size = QFileInfo(clip).size();
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", clip}, {"format", "srt"}, {"overwrite", true}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", clip}, {"format", "vtt"}, {"overwrite", true}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(QFileInfo(clip).size(), size); // the clip is untouched
+        // The extension must fit the format: SRT text in "x.mp4", WebVTT in "x.srt" are refused
+        CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("subx.mp4")}, {"format", "srt"}}).contains(".srt"));
+        CHECK(!QFileInfo::exists(dir.filePath("subx.mp4")));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("subx.srt")}, {"format", "vtt"}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK(!QFileInfo::exists(dir.filePath("subx.srt")));
+        // Fitting names still work (upper case too), a missing extension is added
+        CHECK_EQ(run("render", {{"project", proj}, {"out", dir.filePath("subok.VTT")}, {"format", "vtt"}})["cues"].toInt(), 1);
+        CHECK(run("render", {{"project", proj}, {"out", dir.filePath("subok2")}, {"format", "srt"}})["out"].toString()
+                  .endsWith("subok2.srt"));
+        // Round trip: schneidi's own WebVTT read back by op subtitles (the WEBVTT header took the first cue's place,
+        // and &amp;/&lt; stayed escaped)
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"subtitles","name":"two","cues":[{"from":12,"to":18,"text":"A & <b> --> c"},
+            {"from":19,"to":24,"text":"Zwei"}]}])"}});
+        const QString vtt = dir.filePath("round.vtt");
+        CHECK(run("render", {{"project", proj}, {"out", vtt}, {"format", "vtt"}})["cues"].toInt() >= 1);
+        const QJsonObject back = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"subtitles","srt":"%1"}])").arg(vtt)}});
+        CHECK(!back.contains("notes"));
+        const QJsonArray subs = run("info", {{"project", proj}})["timeline"]["subtitles"].toArray();
+        if (CHECK_EQ(subs.size(), qsizetype(3))) {
+            const QJsonArray rc = subs[2]["cues"].toArray();
+            // the file holds one of the two tracks (the main one): read back with the same cues
+            bool same = false;
+            for (int t = 0; t < 2 && !same; ++t) {
+                const QJsonArray want = subs[t]["cues"].toArray();
+                same = !rc.isEmpty() && rc.size() == want.size();
+                for (int i = 0; same && i < rc.size(); ++i)
+                    same = rc[i]["text"] == want[i]["text"] && rc[i]["start"] == want[i]["start"] && rc[i]["end"] == want[i]["end"];
+            }
+            CHECK(same);
+        }
+        // A broken SRT entry is reported, not silently dropped
+        const QString bad = dir.filePath("bad.srt");
+        {
+            QFile f(bad);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write("1\n00:00:00,000 --> 00:00:01,000\nok\n\n2\n00:00:xx --> 00:00:02,000\nbroken\n");
+        }
+        const QJsonObject withBad = run("edit", {{"project", proj}, {"dry_run", true}, {"ops", QString(R"([{"op":"subtitles","srt":"%1"}])").arg(bad)}});
+        CHECK(withBad["notes"][0].toString().contains("1 broken entry"));
+    }
+    // Frame rates: standard ones and 48/100/120 as given; any other refused with the list (12 became 23.976 and 90
+    // became 60 in silence)
+    {
+        const QString proj = dir.filePath("rates.schneidi");
+        for (const double fps : {120.0, 100.0, 48.0, 29.97, 23.976, 59.94}) {
+            const QJsonObject r = run("new", {{"project", proj}, {"fps", fps}, {"overwrite", true}});
+            CHECK(std::abs(run("info", {{"project", proj}})["format"]["fps"].toDouble() - fps) < 0.01);
+            (void)r;
+        }
+        for (const double fps : {12.0, 90.0, 47.0, 119.0}) {
+            const QString msg = messageOf("new", {{"project", proj}, {"fps", fps}, {"overwrite", true}});
+            Check::report(msg.contains("48, 50") && msg.contains("120"), qPrintable(msg), __FILE__, __LINE__);
+        }
+        run("new", {{"project", proj}, {"fps", 25}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"format","fps":100}])"}});
+        CHECK_EQ(run("info", {{"project", proj}})["format"]["fps"].toDouble(), 100.0);
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", R"([{"op":"format","fps":90}])"}}), QString("BAD_ARGUMENT"));
+        CHECK_EQ(run("info", {{"project", proj}})["format"]["fps"].toDouble(), 100.0);
+        // Template and export rates: 48 stays 48 (was 50), a template's own rate stays itself
+        CHECK(Cli::detail::templateFrameRate(48) == (FrameRate{48, 1}));
+        CHECK(std::abs(Cli::detail::templateFrameRate(119.88).fps() - 119.88) < 0.001);
+        CHECK(Cli::detail::exportFrameRate(12) == (FrameRate{12, 1}));
+        CHECK(Cli::detail::exportFrameRate(120) == (FrameRate{120, 1}));
+        CHECK(Cli::detail::exportFrameRate(59.94) == (FrameRate{60000, 1001}));
+    }
+    // An imported timeline's exact frame rate (119.88 from Premiere/FCP7, 12, 47.952) into an empty project: kept like
+    // the app does (the format op refused it, so the import failed)
+    {
+        const QString proj = dir.filePath("hfr-import.schneidi");
+        const auto importRate = [&](int timebase, bool ntsc) {
+            const QString xml = dir.filePath(QString("hfr-%1-%2.xml").arg(timebase).arg(ntsc));
+            QFile f(xml);
+            if (!f.open(QIODevice::WriteOnly)) return QString("cannot write");
+            f.write(QString("<xmeml version=\"4\"><sequence><name>hfr</name><rate><timebase>%1</timebase><ntsc>%2</ntsc>"
+                            "</rate><media><video><format><samplecharacteristics><width>1280</width><height>720</height>"
+                            "</samplecharacteristics></format></video></media></sequence></xmeml>")
+                        .arg(timebase)
+                        .arg(ntsc ? "TRUE" : "FALSE")
+                        .toUtf8());
+            f.close();
+            run("new", {{"project", proj}, {"overwrite", true}});
+            run("import", {{"project", proj}, {"timeline_file", xml}});
+            const QJsonObject fmt = run("info", {{"project", proj}})["format"].toObject();
+            return fmt["fps_label"].toString() + " " + QString::number(fmt["width"].toInt());
+        };
+        CHECK_EQ(importRate(120, true), QString("120000/1001 1280"));
+        CHECK_EQ(importRate(12, false), QString("12/1 1280"));
+        CHECK_EQ(importRate(48, true), QString("48000/1001 1280"));
+        CHECK_EQ(importRate(90, false), QString("90/1 1280"));
+        // `_rate` is no user key of its own: fps stays the checked one, both together are refused
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", R"([{"op":"format","fps":25,"_rate":{"num":12,"den":1}}])"}}),
+                 QString("BAD_ARGUMENT"));
+        // An EDL's frame rate as given (13 snapped to 12 or 23.976 in silence)
+        const QString edl = dir.filePath("rate.edl");
+        {
+            QFile f(edl);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write("TITLE: r\n\n001  AX       V     C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n");
+        }
+        CHECK(messageOf("import", {{"project", proj}, {"timeline_file", edl}, {"fps", 13}}).contains("120"));
+    }
+    // render --fps: 48/100/120 of a high frame rate project too (nearestExportRate stopped at 60: 120 rendered 60 and
+    // 48 rendered 50), other rates refused; a platform preset (up to 60 fps) halves 120
+    {
+        const QString proj = dir.filePath("hfr-render.schneidi");
+        const auto rateOf = [](const QString& file) {
+            const ClipFormat cf = detectClipFormat(file);
+            return QString("%1/%2").arg(cf.rate.num).arg(cf.rate.den);
+        };
+        for (const int fps : {120, 100}) {
+            run("new", {{"project", proj}, {"fps", fps}, {"overwrite", true}});
+            run("edit", {{"project", proj}, {"ops", R"([{"op":"title","text":"Hi","at":0,"duration":"1s"}])"}});
+            const QString own = dir.filePath(QString("hfr-%1.mp4").arg(fps));
+            run("render", {{"project", proj}, {"out", own}, {"height", 180}, {"to", "0.5s"}, {"overwrite", true}});
+            CHECK_EQ(rateOf(own), QString("%1/1").arg(fps));
+        }
+        // the 100 fps project: --fps 100 and 48 as asked
+        for (const int fps : {100, 48}) {
+            const QString out = dir.filePath(QString("hfr-as-%1.mp4").arg(fps));
+            run("render", {{"project", proj}, {"out", out}, {"height", 180}, {"to", "0.5s"}, {"fps", fps}, {"overwrite", true}});
+            CHECK_EQ(rateOf(out), QString("%1/1").arg(fps));
+        }
+        run("new", {{"project", proj}, {"fps", 120}, {"overwrite", true}});
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"title","text":"Hi","at":0,"duration":"1s"}])"}});
+        const QString as120 = dir.filePath("hfr-as-120.mp4");
+        run("render", {{"project", proj}, {"out", as120}, {"height", 180}, {"to", "0.5s"}, {"fps", "120"}, {"overwrite", true}});
+        CHECK_EQ(rateOf(as120), QString("120/1"));
+        const QString tiktok = dir.filePath("hfr-tiktok.mp4");
+        run("render", {{"project", proj}, {"out", tiktok}, {"preset", "tiktok"}, {"to", "0.3s"}, {"overwrite", true}});
+        CHECK_EQ(rateOf(tiktok), QString("60/1"));
+        const QString msg = messageOf("render", {{"project", proj}, {"out", dir.filePath("hfr-13.mp4")}, {"fps", 13}});
+        Check::report(msg.contains("13") && msg.contains("120") && msg.contains("12,"), qPrintable(msg), __FILE__, __LINE__);
+        // EDL has two frame digits: refused at 120 fps with the reason, FCP7 XML is written
+        const QString edlMsg = messageOf("export_timeline", {{"project", proj}, {"out", dir.filePath("hfr.edl")}});
+        Check::report(edlMsg.contains("99"), qPrintable(edlMsg), __FILE__, __LINE__);
+        CHECK(!QFileInfo::exists(dir.filePath("hfr.edl")));
+        run("export_timeline", {{"project", proj}, {"out", dir.filePath("hfr.xml")}});
+        CHECK(QFileInfo::exists(dir.filePath("hfr.xml")));
     }
     // remove_track: names are those of the timeline when the op runs; several in one op are named before any goes;
     // the error names the tracks there are (AI run 2026-10-28 removed A1-A3, then "A5" failed without saying why)

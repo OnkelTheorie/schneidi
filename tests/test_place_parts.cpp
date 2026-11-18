@@ -3,6 +3,7 @@
 // sticky "leave out sound" setting, F9 (sourceEdit) with it, and a timeline drop with Shift / Ctrl / a Viewer handle
 // (offscreen). The Media Pool keeps the file's sound in every case; each placement is one undo step.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -30,6 +31,7 @@ int clipCount(const QVector<Track>& tracks)
 
 struct Fixture {
     Project project;
+    TimelineGuard guard_project{project};
     Selection sel;
     Editor editor{&project, &sel};
     Fixture()

@@ -16,6 +16,7 @@
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/MemoryRelease.h"
 #include "engine/OutputColor.h"
 #include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
@@ -23,6 +24,11 @@
 #include "engine/picture/CustomEffects.h"
 #include "engine/picture/Effects.h"
 #include "engine/picture/Interpolate.h"
+#include "engine/picture/CompTrack.h"
+#include "engine/picture/ShapePaint.h"
+#include "engine/picture/DrawPaint.h"
+#include "core/Drawing.h"
+#include "core/Shapes.h"
 #include "engine/picture/TitleLook.h"
 #include "engine/picture/gpu/CompGpu.h"
 #include "engine/picture/gpu/Gpu.h"
@@ -44,6 +50,7 @@ extern "C" {
 #include <QHash>
 #include <QImageReader>
 #include <QPainter>
+#include <QSet>
 #include <QStringList>
 
 #include <algorithm>
@@ -293,6 +300,7 @@ struct VideoSource {
     int length = 0;     // frames in the project rate (as MLT's producer length)
     bool hasAlpha = false; // pixel format with alpha
     QString file;          // the file decoded (the proxy in a preview with proxies)
+    QString media;         // the media file of the project it stands for (named when it is lost)
     qint64 modified = 0;   // its time of change at opening (ms since the epoch): names its pictures with the path
 };
 
@@ -306,6 +314,9 @@ struct Source {
     std::shared_ptr<StillSource> still;
     bool failed = false;
     FileStamp::Stamp stamp; // of the media file when opened: another one = the file was overwritten, open it again
+    std::chrono::steady_clock::time_point opened; // when it was opened (or the open failed): a lost one is retried
+    bool lost = false;  // failed although the file opened before (Renderer::retryLost tries it again)
+    uint64_t retry = 0; // Impl::retryGen when it was opened
     std::chrono::steady_clock::time_point used;
     int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
 };
@@ -315,6 +326,14 @@ thread_local int64_t t_frame = -1;
 // Its hints (null = none) and whether a close picture stood in for one of its videos
 thread_local const RenderHints* t_hints = nullptr;
 thread_local bool t_exact = true;
+// A video's decoder was lost for good (Video::Reader::failed): an export renders no frame without it (render() null)
+thread_local bool t_sourceLost = false;
+thread_local QString t_lostFile; // its media file
+// A lost source (its file opened before, then could not be opened or read: a USB disk or share gone) is opened again
+// after the next seek or play start (Renderer::retryLost), and at most this often: a file back with the same content
+// (FileStamp sees no change) shows again, a file still gone costs one failed open per seek, never one per frame (each
+// open of a gone share may block). Files that never opened stay failed (offline media, unreadable imports).
+constexpr std::chrono::milliseconds kRetryBroken{1500};
 
 // GPU path (0.19): a clip whose compositing graph the card may evaluate. clipLayer() of that clip plans the graph
 // (gpu/CompGpu) instead of evaluating it, and hands back where the result goes instead of drawing it
@@ -326,6 +345,15 @@ struct CompCapture {
     double opacity = 1;
 };
 thread_local CompCapture* t_compCapture = nullptr;
+// The timeline being drawn on this thread (the root, or the content of a compound clip): what a shape following a
+// tracker looks its tracked clip up in. And a number per rendered frame, so per-frame caches never outlive it
+thread_local const Timeline* t_timeline = nullptr;
+thread_local uint64_t t_renderSeq = 0;
+struct TimelineScope {
+    const Timeline* outer;
+    explicit TimelineScope(const Timeline& tl) : outer(t_timeline) { t_timeline = &tl; }
+    ~TimelineScope() { t_timeline = outer; }
+};
 
 // Preview: what a decoder keeps of the pictures decoded on the way to a jump's target (steps back after a jump)
 constexpr int64_t kSeekWindowBytes = 96ll * 1024 * 1024;
@@ -430,11 +458,13 @@ struct Renderer::Impl {
 
     std::mutex sourceMutex;
     std::map<QString, Source> sources;
+    QSet<QString> opened; // media files opened once (sourceMutex): failing later = lost
+    std::atomic<uint64_t> retryGen{0}; // counts retryLost(): a lost source is tried again once per count
+    mutable std::mutex lostMutex;
+    QString lost; // media file of the last frame that went without a lost source (lostSource)
     std::mutex lengthMutex;
     std::map<QString, int> lengths; // file -> length in project frames (mediaLength)
 
-    std::mutex lutMutex;
-    std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
     // Gradients of luma transitions and wipes (8-bit gray, rows tightly packed), by style and size: building one
     // costs more than the rest of the frame (iris 1080p: 75 ms; it was built for every frame of the transition)
     std::mutex gradientMutex;
@@ -451,7 +481,15 @@ struct Renderer::Impl {
     std::atomic<bool> gpuDecided{false};
     Gpu::Service* gpuService()
     {
-        if (!options.gpu || gpuDecided.load()) return gpu.load();
+        if (!options.gpu) return nullptr;
+        if (gpuDecided.load()) {
+            Gpu::Service* s = gpu.load();
+            if (s && !s->available()) { // went off for good (device lost): no more draws built for nothing
+                gpu = nullptr;
+                return nullptr;
+            }
+            return s;
+        }
         bool decided = false;
         Gpu::Service* s = Gpu::Service::tryInstance(&decided);
         if (decided) {
@@ -482,12 +520,19 @@ struct Renderer::Impl {
         const QString key = lane + '|' + file;
         {
             std::vector<Source> stale; // closed outside the lock
+            Source retried;            // a broken one tried again (closed outside the lock too)
             std::lock_guard lock(sourceMutex);
             auto it = sources.find(key);
             if (it != sources.end() && it->second.stamp == stamp) {
-                it->second.used = std::chrono::steady_clock::now();
-                it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
-                return it->second;
+                const auto now = std::chrono::steady_clock::now();
+                const bool lost = it->second.lost || (it->second.video && it->second.video->reader->failed());
+                if (!lost || it->second.retry == retryGen.load() || now - it->second.opened < kRetryBroken) {
+                    it->second.used = now;
+                    it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
+                    return it->second;
+                }
+                retried = std::move(it->second); // lost, and a seek or play since: try the file again
+                sources.erase(it);
             }
             // Overwritten under the same name: everything kept of the old content goes - in every lane (mediaLength
             // reads any lane's source: one of the old content would bring the old length back)
@@ -510,6 +555,7 @@ struct Renderer::Impl {
         }
         Source s;
         s.stamp = stamp;
+        s.retry = retryGen.load();
         if (looksLikeStill(file)) {
             QImageReader reader(file);
             reader.setAutoTransform(true);
@@ -560,16 +606,31 @@ struct Renderer::Impl {
                     v->length = int(double(v->info.duration) / AV_TIME_BASE * options.format.rate.fps() + 0.5);
                 if (direction < 0) r->setBehind(std::max(4, backwardKeep(v->info.width, v->info.height)));
                 v->file = file;
+                v->media = path;
                 v->modified = QFileInfo(file).lastModified().toMSecsSinceEpoch();
                 v->reader = std::move(r);
                 s.video = std::move(v);
             }
         }
         s.failed = !s.video && !s.still;
-        s.used = std::chrono::steady_clock::now();
+        s.used = s.opened = std::chrono::steady_clock::now();
         s.usedFrame = t_frame;
-        std::lock_guard lock(sourceMutex);
-        return sources.emplace(key, s).first->second;
+        bool lost = false;
+        Source result;
+        {
+            std::lock_guard lock(sourceMutex);
+            if (!s.failed) opened.insert(path);
+            else lost = s.lost = opened.contains(path);
+            result = sources.emplace(key, s).first->second;
+        }
+        if (lost) {
+            // It opened before: lost while the project is open (a disk or share gone, the file moved). An export stops
+            // naming it; the preview tells (Options::sourceLost) and tries again on a later request (kRetryBroken)
+            t_sourceLost = true;
+            t_lostFile = path;
+            if (options.sourceLost) options.sourceLost(path);
+        }
+        return result;
     }
 
     // Pictures a decoder keeps behind the last request while playing backwards: a whole GOP if memory allows (each
@@ -630,15 +691,9 @@ struct Renderer::Impl {
         return lengths.emplace(file, length).first->second;
     }
 
-    std::shared_ptr<const ColorGrade::Lut> lut(const QString& path)
-    {
-        std::lock_guard lock(lutMutex);
-        auto it = luts.find(path);
-        if (it != luts.end()) return it->second;
-        auto l = ColorGrade::loadLut(path);
-        luts.emplace(path, l);
-        return l;
-    }
+    // loadLut keeps the loaded LUTs itself and reads a file again once its time or size changed (a LUT overwritten,
+    // or one on a drive mounted after the project was opened); a cache by path here would keep the first result
+    static std::shared_ptr<const ColorGrade::Lut> lut(const QString& path) { return ColorGrade::loadLut(path); }
 
     // An effect instance's values for VideoEffects::apply (by property name, keyframes at clip frame t)
     static VideoEffects::Params effectParams(const Clip& c, const EffectInstance& inst, const EffectDescriptor& d, double t)
@@ -733,6 +788,9 @@ struct Renderer::Impl {
         const EffectInstance* comp = EffectRegistry::instance(c, ::Comp::kEffectId);
         const bool composed = comp && comp->enabled && applyComp(img, c, *comp, t, ctx, frameHeight / ctx.PH, lane, nested);
         if (!composed && nested && nested->deferred) renderNested(img, *nested);
+        // Clip in a shape (0.22) last: the cut edge, stroke and shadow stay as set whatever the effects did
+        if (Shapes::ClipShape cs; !img.empty() && Shapes::clipShapeAt(c, t, &cs))
+            ShapePaint::clipShape(img.data(), img.w, img.h, cs, frameHeight / std::max(1.0, ctx.PH));
     }
 
     // The clip's only picture effect is an enabled compositing graph (no grade, stabilization, other effects)
@@ -831,7 +889,10 @@ struct Renderer::Impl {
         if (t_compCapture && t_compCapture->clip == &c && !t_compCapture->plan) {
             // The card evaluates the graph (its CPU nodes are evaluated and kept in the plan here); img stays
             QString why;
-            if ((t_compCapture->plan = Gpu::planComp(comp, env, &compCache, &why))) {
+            // Nodes outside their time range are out of the way here already (0.22): the card sees what works at t
+            EffectInstance active;
+            const bool ranged = Comp::activeGraph(comp, t, ctx.fps, &c, &active);
+            if ((t_compCapture->plan = Gpu::planComp(ranged ? active : comp, env, &compCache, &why))) {
                 img.px.swap(clip.px);
                 return true;
             }
@@ -1025,6 +1086,10 @@ struct Renderer::Impl {
         bool exact = true;
         auto pic = v.reader->picture(request, fetch, &exact);
         if (!exact) t_exact = false;
+        if (!pic && v.reader->failed()) {
+            t_sourceLost = true;
+            t_lostFile = v.media;
+        }
         if (!pic || !pic->frame) return {};
         return pic;
     }
@@ -1071,7 +1136,12 @@ struct Renderer::Impl {
     void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0, QPoint shift = {},
                    QRect* bounds = nullptr)
     {
-        const Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        if (c.title.isShape() || c.title.isDrawing()) { // following a tracker: fades with it when the point is lost
+            Masks::Follow f;
+            double seen = 1;
+            if (shapeFollow(c, t, ctx, &f, &seen)) m.opacity *= seen;
+        }
         if (m.opacity <= 0) {
             if (bounds) *bounds = QRect();
             return;
@@ -1099,6 +1169,14 @@ struct Renderer::Impl {
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
         if (st.isProgress()) {
             drawProgress(layer, c, t, ctx, shift, bounds);
+            return;
+        }
+        if (st.isShape()) {
+            drawShape(layer, c, t, ctx, shift, bounds, m);
+            return;
+        }
+        if (st.isDrawing()) {
+            drawDrawing(layer, c, t, ctx, shift, bounds, m);
             return;
         }
         double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
@@ -1222,6 +1300,236 @@ struct Renderer::Impl {
         v.shine = l.solidShine;
         v.metal = l.solidMetal;
         Text3d::render(mesh, v, layer.data(), layer.w, layer.h);
+    }
+
+    // Where a shape title following a tracker (ShapeStyle::followClip/followNode) is carried at its clip frame t:
+    // the tracked clip's tracker values (0..1 of its picture) placed where that picture lies in the frame at zoom and
+    // position (its rotation and crop are left out), in project pixels. seen = the tracker's visibility. false = none
+    bool shapeFollow(const Clip& c, double t, const Ctx& ctx, Masks::Follow* f, double* seen)
+    {
+        const ShapeStyle& s = c.title.shape;
+        const Timeline* tl = t_timeline ? t_timeline : ctx.root.get();
+        if (s.followClip <= 0 || s.followNode <= 0 || !tl) return false;
+        // Asked several times per frame (visibility, bounds, drawing): the graph is read once
+        struct Cached {
+            uint64_t seq = 0;
+            const Timeline* tl = nullptr;
+            const Clip* clip = nullptr;
+            double t = 0;
+            bool ok = false;
+            Masks::Follow f;
+            double seen = 1;
+        };
+        thread_local Cached cache[4];
+        thread_local int next = 0;
+        for (const Cached& k : cache)
+            if (k.seq == t_renderSeq && k.tl == tl && k.clip == &c && k.t == t) {
+                if (k.ok) {
+                    *f = k.f;
+                    *seen = k.seen;
+                }
+                return k.ok;
+            }
+        Cached& slot = cache[next];
+        next = (next + 1) % 4;
+        slot = Cached{t_renderSeq, tl, &c, t};
+        TrackRef ref;
+        const Clip* tracked = TimelineOps::findClip(*tl, s.followClip, &ref);
+        if (!tracked) return false;
+        // The tracked clip was split (the part after the cut has a new id): the clip on its track at this frame
+        // with the same tracker
+        const int at0 = c.start + int(std::floor(t));
+        Picture::Comp::FollowAt at;
+        if ((at0 < tracked->start || at0 >= tracked->end()) && ref.kind == TrackKind::Video && ref.index < tl->video.size())
+            for (const Clip& o : tl->video[ref.index].clips)
+                if (at0 >= o.start && at0 < o.end() && o.mediaPath == tracked->mediaPath
+                    && Picture::Comp::followAt(o, s.followNode, at0 - o.start, ctx.fps, &at)) {
+                    tracked = &o;
+                    break;
+                }
+        const double tt = c.start + t - tracked->start;
+        if (!Picture::Comp::followAt(*tracked, s.followNode, tt, ctx.fps, &at)) return false;
+        double aspect = tracked->isTitle() || tracked->isNested() ? 0.0 : MediaAspect::ofClip(*tracked);
+        if (aspect <= 0 && !tracked->isTitle() && !tracked->isNested()) aspect = nativeAspect(*tracked, QStringLiteral("follow"));
+        const QSizeF fit = MediaAspect::fit(aspect, QSizeF(ctx.PW, ctx.PH));
+        const bool transform = Keys::hasTransform(*tracked);
+        const int tf = int(std::lround(std::clamp(tt, 0.0, double(std::max(0, tracked->length() - 1)))));
+        const double zx = transform ? Keys::valueAt(*tracked, AnimParam::ZoomX, tf) : 1.0;
+        const double zy = transform ? Keys::valueAt(*tracked, AnimParam::ZoomY, tf) : 1.0;
+        const double px = transform ? Keys::valueAt(*tracked, AnimParam::PosX, tf) : 0.0;
+        const double py = transform ? Keys::valueAt(*tracked, AnimParam::PosY, tf) : 0.0;
+        const double fw = fit.width() * zx, fh = fit.height() * zy;
+        const QPointF centre(ctx.PW / 2 + px, ctx.PH / 2 - py);
+        auto place = [&](QPointF q) { return centre + QPointF((q.x() - 0.5) * fw, (q.y() - 0.5) * fh); };
+        f->from = place(at.from);
+        f->to = place(at.to);
+        f->scale = at.scale;
+        f->angle = at.angle;
+        *seen = at.seen;
+        slot.ok = true;
+        slot.f = *f;
+        slot.seen = *seen;
+        return true;
+    }
+
+    // A shape title's outline at clip frame t in project pixels (keyframes, title motion, tracker); placed = also
+    // through the clip's own transform (zoom, position, rotation: for the shapes drawn straight onto the frame)
+    Shapes::Outline shapeOutline(const Clip& c, double t, const Ctx& ctx, const Generators::TitleMotion& m,
+                                 bool placed, double* reveal)
+    {
+        Shapes::Place p = Shapes::placeAt(c, t, ctx.PW, ctx.PH);
+        if (m.scale != 1) {
+            p.w *= m.scale;
+            p.h *= m.scale;
+        }
+        p.center.ry() -= m.rise * std::max(p.h, 1.0);
+        *reveal = p.reveal;
+        Masks::Follow f;
+        double seen = 1;
+        const bool follows = shapeFollow(c, t, ctx, &f, &seen);
+        const double tolerance = 0.25 * ctx.PH / std::max(1, ctx.H);
+        Shapes::Outline o = Shapes::placed(c.title.shape, p, follows ? &f : nullptr, tolerance);
+        if (placed && Keys::hasTransform(c)) {
+            const double zx = Keys::valueAt(c, AnimParam::ZoomX, t), zy = Keys::valueAt(c, AnimParam::ZoomY, t);
+            const QPointF to(ctx.PW / 2 + Keys::valueAt(c, AnimParam::PosX, t), ctx.PH / 2 - Keys::valueAt(c, AnimParam::PosY, t));
+            const double a = Keys::valueAt(c, AnimParam::Rotation, t) * std::numbers::pi / 180; // counterclockwise
+            const double cs = std::cos(a), sn = std::sin(a);
+            for (QPointF& q : o.points) {
+                const QPointF d((q.x() - ctx.PW / 2) * zx, (q.y() - ctx.PH / 2) * zy);
+                q = to + QPointF(d.x() * cs + d.y() * sn, -d.x() * sn + d.y() * cs);
+            }
+        }
+        return o;
+    }
+
+    QColor shapeFill(const Clip& c, double t) const
+    {
+        if (c.title.shape.fill != ShapeFill::Color && c.title.shape.kind != ShapeKind::Line) return Qt::transparent;
+        return Keys::animated(c, AnimParam::TitleColor) ? Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, t))
+                                                        : c.title.color;
+    }
+
+    // Shape title (core/Shapes.h, 0.22): fill, stroke and shadow; the picture below (blur, pixelate, spotlight) is
+    // shapeBelow's. Same arguments as drawTitle
+    void drawShape(Image& layer, const Clip& c, double t, const Ctx& ctx, QPoint shift, QRect* bounds,
+                   const Generators::TitleMotion& m)
+    {
+        double reveal = 1;
+        Shapes::Outline o = shapeOutline(c, t, ctx, m, false, &reveal);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        if (bounds) {
+            const QRectF r = Shapes::bounds(c.title, o);
+            *bounds = QRectF(r.x() * sx, r.y() * sy, r.width() * sx, r.height() * sy).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
+            return;
+        }
+        for (QPointF& q : o.points) q = QPointF(q.x() * sx, q.y() * sy);
+        ShapePaint::paint(layer.data(), layer.w, layer.h, shift, o, c.title, reveal, sy, 1.0, shapeFill(c, t));
+    }
+
+    // Drawing title (core/Drawing.h, 0.22): its strokes at clip frame t (title position, tracker, the part drawn so far
+    // when it draws itself), the title motion's scale and rise around the whole drawing's middle. Same arguments as
+    // drawTitle
+    void drawDrawing(Image& layer, const Clip& c, double t, const Ctx& ctx, QPoint shift, QRect* bounds,
+                     const Generators::TitleMotion& m)
+    {
+        // The clip is a window onto the drawing: after a split or a trimmed start the reveal goes on from there
+        const double fraction = Drawing::revealFraction(c.title.drawing, std::max(0.0, t + c.in), ctx.fps);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        // In output pixels
+        const auto placed = [&](const Masks::Follow* f) {
+            QVector<Drawing::Placed> strokes = Drawing::place(c, t, ctx.PW, ctx.PH, f);
+            if (m.scale != 1 || m.rise != 0) {
+                const QRectF all = Drawing::bounds(strokes);
+                const QPointF mid = all.center();
+                const QPointF rise(0, -m.rise * std::max(all.height(), 1.0));
+                for (Drawing::Placed& s : strokes) {
+                    for (QPointF& q : s.points) q = mid + (q - mid) * m.scale + rise;
+                    for (double& w : s.widths) w *= m.scale;
+                }
+            }
+            strokes = Drawing::revealed(strokes, fraction);
+            for (Drawing::Placed& s : strokes) {
+                for (QPointF& q : s.points) q = QPointF(q.x() * sx, q.y() * sy);
+                for (double& w : s.widths) w *= sy;
+            }
+            return strokes;
+        };
+        // Nothing changing over time (all drawn, no tracker, no title motion, no moving keys): the painted picture
+        // is kept per clip and size; a change of the strokes is new data (they are compared as shared data)
+        const bool still = fraction >= 1 && m.scale == 1 && m.rise == 0 && c.title.shape.followClip <= 0
+                           && !Keys::animated(c, AnimParam::TitlePosX) && !Keys::animated(c, AnimParam::TitlePosY);
+        if (still) {
+            struct Cached {
+                QVector<DrawStroke> strokes; // held: the data cannot be freed and reused while it is the key
+                double x = 0, y = 0, PW = 0, PH = 0;
+                int W = 0, H = 0;
+                QRect bounds;
+                DrawPaint::Painted painted;
+            };
+            thread_local Cached cache[2];
+            thread_local int next = 0;
+            const QVector<DrawStroke>& key = c.title.drawing.strokes;
+            Cached* hit = nullptr;
+            for (Cached& k : cache)
+                if (k.W > 0 && k.strokes.constData() == key.constData() && k.strokes.size() == key.size() && k.x == c.title.posX
+                    && k.y == c.title.posY && k.PW == ctx.PW && k.PH == ctx.PH && k.W == ctx.W && k.H == ctx.H)
+                    hit = &k;
+            if (!hit) {
+                hit = &cache[next];
+                next = (next + 1) % 2;
+                const QVector<Drawing::Placed> strokes = placed(nullptr);
+                *hit = Cached{key, c.title.posX, c.title.posY, ctx.PW, ctx.PH, ctx.W, ctx.H,
+                              Drawing::bounds(strokes).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H),
+                              DrawPaint::render(strokes, QRect(0, 0, ctx.W, ctx.H))};
+            }
+            if (bounds) *bounds = hit->bounds;
+            else DrawPaint::put(layer.data(), layer.w, layer.h, shift, hit->painted);
+            return;
+        }
+        Masks::Follow f;
+        double seen = 1;
+        const bool follows = shapeFollow(c, t, ctx, &f, &seen);
+        const QVector<Drawing::Placed> strokes = placed(follows ? &f : nullptr);
+        if (bounds) {
+            *bounds = Drawing::bounds(strokes).toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
+            return;
+        }
+        DrawPaint::paint(layer.data(), layer.w, layer.h, shift, strokes);
+    }
+
+    // A shape that changes the picture below it (blur or pixelate fill, spotlight) at clip frame t, straight onto the
+    // frame so far with its opacity times k; then its stroke, shadow and colour fill over it
+    void shapeBelow(Image& canvas, const Clip& c, int t, const Ctx& ctx, double k, bool paint = true)
+    {
+        Generators::TitleMotion m = Generators::titleMotion(c.title, t, c.length(), ctx.fps);
+        Masks::Follow f;
+        double seen = 1;
+        if (shapeFollow(c, t, ctx, &f, &seen)) k *= seen;
+        k *= m.opacity;
+        if (k <= 0) return;
+        double reveal = 1;
+        Shapes::Outline o = shapeOutline(c, t, ctx, m, true, &reveal);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        for (QPointF& q : o.points) q = QPointF(q.x() * sx, q.y() * sy);
+        ShapePaint::below(canvas.data(), canvas.w, canvas.h, o, c.title.shape, sy, k);
+        if (paint) ShapePaint::paint(canvas.data(), canvas.w, canvas.h, {}, o, c.title, reveal, sy, k, shapeFill(c, t));
+    }
+
+    // A shape at frame f that reads the picture below it: the card does not make that (the frame goes the CPU way)
+    bool shapeReadsBelow(const Timeline& tl, int f)
+    {
+        const auto reads = [](const Clip* c) {
+            return c && c->enabled && c->isTitle() && c->title.isShape() && c->title.shape.readsBelow();
+        };
+        for (const Track& track : tl.video) {
+            if (track.hidden) continue;
+            if (reads(clipAt(track, f))) return true;
+            for (const auto& s : spansAt(track, f, tl)) // a side of a transition reaching past its clip
+                if (f >= s.start && f < s.end)
+                    for (const Clip& c : track.clips)
+                        if ((c.id == s.leftId || c.id == s.rightId) && reads(&c)) return true;
+        }
+        return false;
     }
 
     // Progress bar title (core/Generators.h): the track (box colour, when on) along the edge and its filled part in the
@@ -1517,8 +1825,7 @@ struct Renderer::Impl {
                 break;
             }
         if (!near) return {};
-        const QVector<TimelineOps::TransitionSpan> spans =
-            TimelineOps::transitions(track, [&](const Clip& c) { return sourceLength(c, tl); });
+        const QVector<TimelineOps::TransitionSpan> spans = spansAt(track, f, tl);
         auto byId = [&](int id) -> const Clip* {
             for (const Clip& c : track.clips)
                 if (c.id == id) return &c;
@@ -1567,6 +1874,15 @@ struct Renderer::Impl {
         for (const Clip& c : track.clips) any = any || c.transIn > 0 || c.transOut > 0;
         if (!any) return {};
         return TimelineOps::transitions(track, [&](const Clip& c) { return sourceLength(c, tl); });
+    }
+
+    // The spans of spansOf() that cover frame f: source lengths only of the clips around f (each can open a file)
+    QVector<TimelineOps::TransitionSpan> spansAt(const Track& track, int f, const Timeline& tl)
+    {
+        bool any = false;
+        for (const Clip& c : track.clips) any = any || c.transIn > 0 || c.transOut > 0;
+        if (!any) return {};
+        return TimelineOps::transitionsAt(track, f, [&](const Clip& c) { return sourceLength(c, tl); });
     }
 
     static const Clip* clipAt(const Track& track, int f)
@@ -1625,7 +1941,7 @@ struct Renderer::Impl {
     bool covers(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix)
     {
         if (track.hidden) return false;
-        for (const auto& s : spansOf(track, tl))
+        for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) return false;
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled || c->isTitle() || c->isNested() || c->mediaPath.isEmpty()) return false;
@@ -1679,7 +1995,7 @@ struct Renderer::Impl {
         for (int i = tl.video.size() - 1; i >= 0 && index < 0; --i) {
             const Track& track = tl.video[i];
             if (track.hidden) continue;
-            for (const auto& span : spansOf(track, tl))
+            for (const auto& span : spansAt(track, f, tl))
                 if (f >= span.start && f < span.end) return false;
             if (const Clip* c = clipAt(track, f); c && c->enabled) index = i;
         }
@@ -1726,8 +2042,18 @@ struct Renderer::Impl {
                    const Timeline& tl, const QString& prefix, int depth)
     {
         if (track.hidden) return;
-        for (const auto& s : spansOf(track, tl))
+        for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) {
+                // A shape that hides what lies below (blur, pixelate, spotlight) does so at full strength through
+                // its transitions: a face must never show sharp while the blur fades in or dissolves into its other
+                // half. Only its stroke, shadow and colour take part in the transition (trackLayer)
+                for (const int id : {s.leftId, s.rightId})
+                    for (const Clip& sc : track.clips)
+                        if (id && sc.id == id && sc.enabled && sc.isTitle() && sc.title.isShape() && sc.title.shape.readsBelow()) {
+                            const int st = f - sc.start;
+                            const double op = Keys::hasOpacity(sc) ? std::clamp(Keys::valueAt(sc, AnimParam::Opacity, st) / 100.0, 0.0, 1.0) : 1.0;
+                            shapeBelow(canvas, sc, st, ctx, op, false);
+                        }
                 Image layer = trackLayer(track, trackIndex, f, ctx, tl, prefix, depth);
                 if (!layer.empty()) Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
                 return;
@@ -1737,6 +2063,11 @@ struct Renderer::Impl {
         const QString lane = trackClipLane(tl, trackIndex, *c, prefix);
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
+        if (c->isTitle() && c->title.isShape() && c->title.shape.readsBelow()) { // works on the frame below it
+            const double opacity = Keys::hasOpacity(*c) ? std::clamp(Keys::valueAt(*c, AnimParam::Opacity, t) / 100.0, 0.0, 1.0) : 1.0;
+            shapeBelow(canvas, *c, t, ctx, opacity * fade);
+            return;
+        }
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
         // original with its effects; not while Before/After shows a graded clip without its grade
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
@@ -2186,7 +2517,6 @@ struct Renderer::Impl {
         QRectF crop;
         bool graded = false;
         ColorGrade::Params grade;
-        QString gradeLutPath;
         std::shared_ptr<const ColorGrade::Lut> gradeLut;
         // Group/Mix/Luma
         std::vector<GpuOp> a, b;
@@ -2200,14 +2530,22 @@ struct Renderer::Impl {
     bool gpuClip(const Clip& c, int t, const Ctx& ctx, const QString& lane)
     {
         if (!c.enabled || c.isTitle() || c.isNested() || c.mediaPath.isEmpty()) return false;
+        // A stabilizer without its analysis leaves the picture as it is: the card draws it like the raw clip (an
+        // analyzed one is checked below). Otherwise the clip would change paths, and look, when the effect is added
         for (const EffectInstance& e : c.effects)
-            if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
+            if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId) && e.effectId != QLatin1String("stabilize"))
+                return false;
         if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
         // Tilted in depth: the card draws affine placements only; the CPU draws it through its homography
         if (tiltedEver(c)) return false;
         const Source s = source(c.mediaPath, lane);
-        if (s.still) return true;
+        // Larger than the card's largest texture (a panorama still; D3D11 takes 16384 px): drawn on the CPU
+        const Gpu::Service* gpuNow = gpu.load(std::memory_order_relaxed);
+        const int maxTexture = gpuNow ? gpuNow->info().maxTextureSize : 0;
+        auto tooLarge = [maxTexture](int w, int h) { return maxTexture > 0 && std::max(w, h) > maxTexture; };
+        if (s.still) return !tooLarge(s.still->image.width(), s.still->image.height());
+        if (s.video && tooLarge(s.video->info.width, s.video->info.height)) return false;
         // In-between pictures of slow motion come from the CPU (engine/picture/Interpolate)
         int64_t i0 = 0;
         double frac = 0;
@@ -2233,6 +2571,17 @@ struct Renderer::Impl {
             op.info = s.video->info;
             nw = op.picture->frame->width;
             nh = op.picture->frame->height;
+            // Interlaced 8-bit planar 4:2:0: the chroma rows alternate between the two fields. The CPU converts it
+            // field by field (Video::toRgba); the card samples the chroma plane as one picture and blended the
+            // fields' colours (stripes of one field tinted by the other). Converted here, the card draws the RGBA
+            // picture (from the layer pool). Only the formats the CPU converts field by field: the others (NV12, P010
+            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same
+            const auto fmt = AVPixelFormat(op.picture->frame->format);
+            if (!op.picture->progressive && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) && nw > 0 && nh > 0) {
+                auto img = std::make_shared<Image>(nw, nh);
+                if (!Video::toRgba(*op.picture, op.info, img->data(), nw, nh, ctx.preview)) return false;
+                op.rgba = std::move(img);
+            }
         }
         if (nw <= 0 || nh <= 0) return false;
         layersDecoded.fetch_add(1, std::memory_order_relaxed);
@@ -2275,7 +2624,6 @@ struct Renderer::Impl {
             if (!p.isNeutral() || l) {
                 op.graded = true;
                 op.grade = p;
-                op.gradeLutPath = lp;
                 op.gradeLut = std::move(l);
             }
         }
@@ -2375,7 +2723,11 @@ struct Renderer::Impl {
         Gpu::Service* gpu = this->gpu.load(std::memory_order_relaxed);
         // (a tilted clip: the graph's result is placed through a homography, which only the CPU path draws)
         if (comp && comp->enabled && gpu && gpu->info().comp && !c.transform.hasBlurFill() && c.keepRegion.isEmpty()
-            && !c.isTitle() && !tiltedEver(c)) {
+            && !c.isTitle() && !tiltedEver(c)
+            && [&] {
+                   const EffectInstance* cs = EffectRegistry::instance(c, Shapes::kClipShapeEffect);
+                   return !cs || !cs->enabled; // a cut to a shape is made on the CPU after the graph
+               }()) {
             cap.clip = &c;
             t_compCapture = &cap;
         }
@@ -2487,7 +2839,7 @@ struct Renderer::Impl {
                   const QString& prefix, int depth)
     {
         if (track.hidden) return;
-        for (const auto& s : spansOf(track, tl))
+        for (const auto& s : spansAt(track, f, tl))
             if (f >= s.start && f < s.end) {
                 gpuTransition(ops, track, trackIndex, s, f, ctx, tl, prefix, depth);
                 return;
@@ -2547,6 +2899,7 @@ struct Renderer::Impl {
     // The draws of a timeline's picture at frame f (as renderTimeline)
     void gpuTimeline(std::vector<GpuOp>& ops, const Timeline& tl, int f, const Ctx& ctx, bool subtitles)
     {
+        const TimelineScope scope(tl);
         int lowest = 0;
         for (int i = tl.video.size() - 1; i >= 0; --i)
             if (covers(tl.video[i], i, f, ctx, tl, QString())) {
@@ -2567,20 +2920,22 @@ struct Renderer::Impl {
     struct LutCache {
         struct Entry {
             ColorGrade::Params params;
-            QString lutPath;
+            // The loaded LUT itself, not its path: a file read again (overwritten, or missing before) is a new
+            // object. Held here, so its address cannot be reused by another LUT while the entry lives
+            std::shared_ptr<const ColorGrade::Lut> source;
             Gpu::LutPtr lut;
         };
         std::vector<Entry> entries;
         Gpu::LutPtr get(Gpu::Context& g, const GpuOp& op)
         {
             for (size_t i = 0; i < entries.size(); ++i)
-                if (entries[i].params == op.grade && entries[i].lutPath == op.gradeLutPath) {
+                if (entries[i].params == op.grade && entries[i].source == op.gradeLut) {
                     std::rotate(entries.begin(), entries.begin() + i, entries.begin() + i + 1);
                     return entries.front().lut;
                 }
             Gpu::LutPtr l = g.gradeLut(*ColorGrade::bake(op.grade, op.gradeLut.get()));
             if (!l) return {};
-            entries.insert(entries.begin(), {op.grade, op.gradeLutPath, l});
+            entries.insert(entries.begin(), {op.grade, op.gradeLut, l});
             if (entries.size() > 16) entries.pop_back();
             return l;
         }
@@ -2597,6 +2952,7 @@ struct Renderer::Impl {
         std::vector<Gpu::TexturePtr> textures;
         std::vector<std::vector<uint8_t>> buffers;
         bool compRefused = false; // a compositing graph the card did not make: the frame goes the CPU way
+        bool refused = false;     // a picture the card did not take (upload refused): the frame goes the CPU way
     };
 
     // GPU thread: the draws onto dst (size of the output)
@@ -2610,7 +2966,10 @@ struct Renderer::Impl {
             switch (op.kind) {
             case GpuOp::Draw: {
                 Gpu::TexturePtr src;
-                if (op.picture) {
+                const bool upload = (op.rgba && !op.rgba->empty()) || op.picture || op.still;
+                if (op.rgba && !op.rgba->empty()) { // made on the CPU (also an interlaced picture, see gpuMediaOp)
+                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied, op.mips);
+                } else if (op.picture) {
                     src = g.uploadYuv(op.picture->frame, op.info, op.mips);
                     if (!src) { // a format the planes upload does not take after all: converted here
                         const int w = op.picture->frame->width, h = op.picture->frame->height;
@@ -2626,14 +2985,29 @@ struct Renderer::Impl {
                     if (it != stills.end() && it->second.first.lock() == op.still) {
                         src = it->second.second;
                     } else {
+                        // With mip levels: uploaded once, drawn every frame - shrunk, a level is read instead of a grid
+                        // of taps. The levels average what is stored: a still with transparency is premultiplied first
                         const QImage& img = op.still->image;
-                        src = g.uploadRgba(img.constBits(), img.width(), img.height(), false);
+                        if (op.still->opaque) {
+                            src = g.uploadRgba(img.constBits(), img.width(), img.height(), false, true);
+                        } else {
+                            std::vector<uint8_t> pm(size_t(img.width()) * img.height() * 4);
+                            for (int y = 0; y < img.height(); ++y) {
+                                const uint8_t* in = img.constScanLine(y);
+                                uint8_t* out = pm.data() + size_t(y) * img.width() * 4;
+                                for (int x = 0; x < img.width() * 4; x += 4) {
+                                    const uint32_t a = in[x + 3];
+                                    for (int c = 0; c < 3; ++c) out[x + c] = uint8_t((in[x + c] * a + 127) / 255);
+                                    out[x + 3] = uint8_t(a);
+                                }
+                            }
+                            src = g.uploadRgba(pm.data(), img.width(), img.height(), true, true);
+                            keep.buffers.push_back(std::move(pm)); // read when the frame is submitted
+                        }
                         for (auto e = stills.begin(); e != stills.end();) // sources closed since: textures go
                             e = e->second.first.expired() ? stills.erase(e) : std::next(e);
                         if (src) stills[op.still.get()] = {op.still, src};
                     }
-                } else if (op.rgba && !op.rgba->empty()) {
-                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied);
                 } else if (op.comp) {
                     src = Gpu::runComp(g, *op.comp, &keep.textures);
                     if (!src) { // (a pass or a texture refused) not a frame without the clip: the CPU makes it
@@ -2643,7 +3017,13 @@ struct Renderer::Impl {
                         return;
                     }
                 }
-                if (!src) break;
+                if (!src) {
+                    // An upload the card refused (larger than it takes, out of memory): not a frame without the
+                    // layer - the CPU makes the frame
+                    if (!upload) break;
+                    keep.refused = true;
+                    return;
+                }
                 Gpu::LutPtr lut = op.graded ? luts.get(g, op) : nullptr;
                 g.draw(dst, {src.get(), op.m, op.opacity, lut.get(), op.crop});
                 keep.textures.push_back(std::move(src));
@@ -2685,6 +3065,7 @@ struct Renderer::Impl {
     // The frame on the GPU path into f (buffer or hints.yuv); false = the card could not do it (CPU path then)
     bool renderGpu(Gpu::Service& gpu, Frame& f, int64_t frame, const Ctx& ctx, const RenderHints& hints)
     {
+        if (shapeReadsBelow(*ctx.root, int(frame))) return false; // blur/pixelate/spotlight shapes: CPU
         std::vector<GpuOp> ops;
         gpuTimeline(ops, *ctx.root, int(frame), ctx, options.subtitles);
         if (hints.cancel && hints.cancel->load()) return true; // caller sees the cancel
@@ -2705,7 +3086,7 @@ struct Renderer::Impl {
             Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
             if (!canvas) return;
             runOps(g, *canvas, ops, size, keep);
-            if (keep.compRefused) return;
+            if (keep.compRefused || keep.refused) return;
             if (yuv) yuvDone = g.readYuv(*canvas, *yuv);
             if (!yuvDone) {
                 if (!rgba) return; // the card could not write the planes after all: CPU path
@@ -2714,8 +3095,9 @@ struct Renderer::Impl {
             keep.textures.push_back(std::move(canvas));
             ok = true;
         });
-        (void)ran; // shut down or the frame refused: the job did not run, ok stays false
-        if (!ok) {
+        // Not run: shut down, or the card refused or failed the frame (device lost: the job ran, but its readbacks were
+        // never filled - the buffer holds an old picture) -> CPU path
+        if (!ran || !ok) {
             f.m_buffer.reset();
             return false;
         }
@@ -2732,6 +3114,7 @@ struct Renderer::Impl {
     void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool subtitles,
                         int depth)
     {
+        const TimelineScope scope(tl);
         // Top down to the first track that surely covers the frame: what lies below is never decoded
         // (tests/test_occlusion), then bottom up onto the canvas
         int lowest = 0;
@@ -2817,12 +3200,23 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     if (d->options.mode == Mode::Export && frame % 16 == 0)
         d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
     t_frame = frame;
+    ++t_renderSeq;
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
+    t_sourceLost = false;
+    t_lostFile.clear();
+    // Export: a frame without a video whose decoder was lost is no frame (the export fails, saying so, instead of
+    // writing the clip black)
+    const auto lost = [&] {
+        if (!t_sourceLost || d->options.mode != Mode::Export) return false;
+        std::lock_guard lock(d->lostMutex);
+        d->lost = t_lostFile;
+        return true;
+    };
 
     if (hints.yuv && d->passThrough(int(frame), ctx, *hints.yuv)) {
         t_hints = nullptr;
-        if (hints.cancel && hints.cancel->load()) return {};
+        if ((hints.cancel && hints.cancel->load()) || lost()) return {};
         Frame f;
         f.m_yuvWritten = true;
         f.m_exact = t_exact;
@@ -2838,7 +3232,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
         Frame f;
         if (d->renderGpu(*gpu, f, frame, ctx, hints)) {
             t_hints = nullptr;
-            if (hints.cancel && hints.cancel->load()) return {};
+            if ((hints.cancel && hints.cancel->load()) || lost()) return {};
             f.m_exact = t_exact;
             f.m_width = ctx.W;
             f.m_height = ctx.H;
@@ -2863,7 +3257,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.subtitles, 0);
     canvas.px.swap(f.m_buffer->data);
     t_hints = nullptr;
-    if (hints.cancel && hints.cancel->load()) return {};
+    if ((hints.cancel && hints.cancel->load()) || lost()) return {};
     f.m_exact = t_exact;
     f.m_width = ctx.W;
     f.m_height = ctx.H;
@@ -2957,12 +3351,93 @@ void Renderer::prepare(int64_t frame)
     }
 }
 
-void Renderer::trim()
+void Renderer::trim(int64_t shown)
 {
-    const auto now = std::chrono::steady_clock::now();
+    trim(std::chrono::steady_clock::now(), shown);
+}
+
+void Renderer::trim(std::chrono::steady_clock::time_point now, int64_t shown)
+{
+    // Sources stay open over pauses, however long: Play opening its files again waited for the first picture (1080p60
+    // ~260 ms, 4K HEVC ~550 ms; open: 2-15 ms, bench_play_after_pause), and the readers put an unused decoder to sleep
+    // themselves (video/Reader: all but the 4 most recent after 4 s; asleep ~2 MB each). Closed only
+    // - under memory pressure: everything unused for a few seconds
+    // - no longer used by the timeline (project closed, clip deleted, the proxy finished): after 30 s unused (an undo
+    //   right after a delete finds it open)
+    // - beyond kKeepSources by last use, once unused for 10 s: playing through many files does not keep all of them
+    //   (a sleeping reader's thread also keeps up to ~50 MB of glibc arena)
+    using namespace std::chrono;
+    const bool pressure = MemoryRelease::underPressure();
+    std::shared_ptr<const Timeline> tl;
+    {
+        std::lock_guard lock(d->snapMutex);
+        tl = d->snapshot;
+    }
+    // The files the timeline reads: originals, the proxies read for them, rendered clips
+    // ... and those of the clips at the shown frame (outer timeline; a compound clip's inner files all count)
+    QSet<QString> used, atShown;
+    if (tl) {
+        std::function<void(const Timeline&, bool)> collect = [&](const Timeline& t, bool outer) {
+            for (const QVector<Track>* tracks : {&t.video, &t.audio})
+                for (const Track& track : *tracks)
+                    for (const Clip& c : track.clips) {
+                        const bool here = outer && shown >= 0 && tracks == &t.video && shown >= c.start
+                                          && shown < c.end();
+                        if (here && c.isNested() && tl->nested)
+                            if (const auto n = tl->nested->constFind(c.sequenceId); n != tl->nested->cend()) {
+                                QSet<QString> inner;
+                                std::swap(inner, used);
+                                collect(*n, false);
+                                std::swap(inner, used);
+                                atShown.unite(inner);
+                                used.unite(inner);
+                            }
+                        if (c.mediaPath.isEmpty()) continue;
+                        QStringList files{c.mediaPath};
+                        if (d->options.proxy) files << d->options.proxy(c.mediaPath);
+                        if (d->options.renderCache && tracks == &t.video)
+                            if (const QString file = d->options.renderCache(c); !file.isEmpty()) files << file;
+                        for (const QString& f : files) {
+                            used.insert(f);
+                            if (here) atShown.insert(f);
+                        }
+                    }
+        };
+        collect(*tl, true);
+        if (tl->nested)
+            for (const Timeline& n : *tl->nested) collect(n, false);
+    }
+    std::vector<Source> closed; // closed outside the lock (a reader joins its threads)
     std::lock_guard lock(d->sourceMutex);
-    for (auto it = d->sources.begin(); it != d->sources.end();)
-        it = now - it->second.used > std::chrono::seconds(30) ? d->sources.erase(it) : std::next(it);
+    const auto fileOf = [](const QString& key) { return key.mid(key.indexOf('|') + 1); };
+    for (auto it = d->sources.begin(); it != d->sources.end();) {
+        const auto idle = now - it->second.used;
+        // A still picture (up to 4x the project's pixels as RGBA: ~33 MB at 1080p, ~133 MB at 4K) is quick to read
+        // again and holds no decoder: closed after 30 s unused, as before
+        const bool drop = (pressure && idle > seconds(5))
+                          || (idle > seconds(30) && (it->second.still || !used.contains(fileOf(it->first))));
+        if (drop) {
+            closed.push_back(std::move(it->second));
+            it = d->sources.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (int(d->sources.size()) > kKeepSources) {
+        // Never what the shown frame needs (paused: Play goes on from there), whatever its last use - the pump may
+        // have rendered ahead into the next clip and prepared later ones since
+        std::vector<std::pair<steady_clock::time_point, QString>> byUse;
+        for (const auto& [key, s] : d->sources)
+            if (!atShown.contains(fileOf(key))) byUse.emplace_back(s.used, key);
+        std::sort(byUse.begin(), byUse.end()); // least recently used first
+        size_t over = d->sources.size() - kKeepSources;
+        for (size_t i = 0; i < byUse.size() && over > 0; ++i, --over) {
+            if (now - byUse[i].first <= seconds(10)) break; // in use: kept beyond the count
+            auto it = d->sources.find(byUse[i].second);
+            closed.push_back(std::move(it->second));
+            d->sources.erase(it);
+        }
+    }
 }
 
 int64_t Renderer::length() const
@@ -2972,6 +3447,17 @@ int64_t Renderer::length() const
 }
 
 const Options& Renderer::options() const { return d->options; }
+
+void Renderer::retryLost()
+{
+    ++d->retryGen;
+}
+
+QString Renderer::lostSource() const
+{
+    std::lock_guard lock(d->lostMutex);
+    return d->lost;
+}
 
 Renderer::Stats Renderer::stats() const
 {

@@ -2,6 +2,7 @@
 #include "app/ProjectSettingsDialog.h"
 
 #include "app/Theme.h"
+#include "core/ChannelLayout.h"
 #include "core/I18n.h"
 
 #include <QCheckBox>
@@ -13,8 +14,10 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool rateLocked, QWidget* parent)
-    : QDialog(parent)
+    : QDialog(parent), m_current(current)
 {
     setWindowTitle(T("Projekteinstellungen"));
 
@@ -51,12 +54,21 @@ ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool 
     m_rate->setCurrentIndex(rateIndex);
     m_rate->setEnabled(!rateLocked);
 
+    // Sound channels of the mix (0.23): what the mixer, the export and the loudness measurement use
+    m_channels = new QComboBox;
+    m_channels->setObjectName("audio_channels");
+    m_channels->addItem(T("Stereo"), 2);
+    m_channels->addItem("5.1", 6);
+    m_channels->addItem("7.1", 8);
+    m_channels->setCurrentIndex(std::max(0, m_channels->findData(ChannelLayout::valid(current.audioChannels))));
+
     auto* form = new QFormLayout;
     form->setContentsMargins(12, 12, 12, 4);
     form->setVerticalSpacing(8);
     form->addRow(T("Timeline-Auflösung"), m_resolution);
     form->addRow(T("Größe"), sizeRow);
     form->addRow(T("Timeline-Framerate"), m_rate);
+    form->addRow(T("Tonkanäle"), m_channels);
     // Checked = the first clip in an empty timeline may change it (as always); start templates can fix it
     m_clipResolution = new QCheckBox(T("Auflösung"));
     m_clipResolution->setObjectName("clip_resolution");
@@ -135,10 +147,11 @@ bool ProjectSettingsDialog::fixedFrameRate() const { return !m_clipRate->isCheck
 
 ProjectFormat ProjectSettingsDialog::format() const
 {
-    ProjectFormat f;
+    ProjectFormat f = m_current; // anything the dialog does not show stays
     f.width = m_width->value() & ~1;
     f.height = m_height->value() & ~1;
     const QSize r = m_rate->currentData().toSize();
     f.rate = {r.width(), r.height()};
+    f.audioChannels = m_channels->currentData().toInt();
     return f;
 }

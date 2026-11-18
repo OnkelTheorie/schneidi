@@ -272,12 +272,13 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
             x.audioStream = tg.stream.stream;
             x.enabled = tg.stream.enabled;
             x.volumeDb = tg.stream.volumeDb;
+            x.sourceChannels = tg.stream.channels;
             if (t.name.isEmpty()) t.name = tg.stream.trackLabel;
             sound << x.id;
         }
         TimelineOps::clearDissolveAt(t, x.start);
         TimelineOps::clearDissolveAt(t, x.end());
-        TimelineOps::placeClip(t, x, newId);
+        TimelineOps::placeClip(t, x, newId, tl.frameRate);
     }
     muteRepeatedSound(tl, sound);
 }
@@ -317,7 +318,7 @@ int Editor::placeRecording(const QString& path, int track, double fileStart, int
         TimelineOps::clearDissolveAt(t, c.end());
         if (replaced)
             for (const Clip& o : t.clips) *replaced += o.start < c.end() && o.end() > c.start;
-        TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); });
+        TimelineOps::placeClip(t, c, [this] { return m_project->newClipId(); }, tl.frameRate);
     };
     if (!other) {
         m_project->edit(T("Voiceover aufnehmen"), place);
@@ -524,16 +525,19 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     case M::AppendAtEnd: text = T("Am Ende anhängen: %1"); break;
     case M::FitToFill: text = T("Einpassen: %1"); break;
     }
+    bool refused = false;
     p->edit(text.arg(m.name), [&](Timeline& tl) {
+        const Timeline before = tl;
         auto newId = [p] { return p->newClipId(); };
         for (const TrackRef& r : rippleTracks) ensureTracks(tl, r.kind, r.index + 1);
         if (mode == M::Insert) {
             insertGap(tl, rippleTracks, start, len, newId, [p] { return p->newLinkId(); });
             insertSubtitleGap(tl, start, len, newId); // subtitles stay in sync (locked tracks not)
+            rippleAnnotations(tl, {{start, len}}, rippleTracks); // markers, notes, sections too, unless a locked track holds content
         }
         if (mode == M::RippleOverwrite) {
             for (const TrackRef& r : rippleTracks) {
-                clearRange(tl.track(r), start, replaceEnd, newId);
+                clearRange(tl.track(r), start, replaceEnd, newId, tl.frameRate);
                 shiftFrom(tl.track(r), rippleFrom, rippleDelta);
             }
             // other unlocked tracks stay in sync (stay put if they would overwrite)
@@ -543,7 +547,11 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         if (mode == M::RippleOverwrite && m2.hasAudio) streams = streamTracksInOrder(tl, m2, aTrack, start, len);
         placeSource(tl, m2, sIn, len, start, vTrack, aTrack, speed, &streams);
         if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // like DaVinci: used marks are consumed
+        // An insert between a picture and its sound (an L-cut's sound after the insert point, the picture before it)
+        // would take them apart: refused, like a ripple (keepsLinks)
+        if (mode == M::Insert || mode == M::RippleOverwrite) refused = !keepsLinks(before, tl, {});
     });
+    if (refused) return playhead;
     return mode == M::Replace ? playhead : start + len;
 }
 

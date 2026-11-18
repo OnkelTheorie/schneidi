@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompEval.h"
+#include "engine/picture/CompCamera.h"
+#include "engine/picture/CompTrack.h"
 
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
@@ -9,10 +11,12 @@
 #include <QDataStream>
 #include <QHash>
 #include <QIODevice>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 
 namespace Picture::Comp {
 
@@ -107,11 +111,118 @@ QStringList unknownKinds(const EffectInstance& comp)
     return out;
 }
 
+namespace {
+
+// Nodes outside their time range taken out of g's way (activeGraph). A reader of a node that gives nothing (a
+// generator, a chain of such) reads one added transparent color node instead: a filter without its src makes nothing
+// at all and would end the graph. *transparent = that node's id (0 = none added). false = g unchanged
+bool rangeGraph(CompGraph& g, const EffectInstance& comp, double t, double fps, const Clip* clip, int* transparent)
+{
+    *transparent = 0;
+    // Cheap first, without allocating: a stored or animated from/until at all (most graphs have none)
+    static const QLatin1String fromTail(".from"), untilTail(".until");
+    bool any = false;
+    for (auto it = comp.params.cbegin(); it != comp.params.cend() && !any; ++it)
+        any = (it.key().endsWith(fromTail) || it.key().endsWith(untilTail)) && it.value().toDouble() != 0;
+    if (clip && !any)
+        for (auto it = clip->keys.cbegin(); it != clip->keys.cend() && !any; ++it) {
+            if (it.value().isEmpty() || !Keys::isEffectParam(it.key())) continue;
+            QString effect, full;
+            any = Keys::effectParamOf(it.key(), &effect, &full) && effect == QLatin1String(::Comp::kEffectId)
+                  && (full.endsWith(fromTail) || full.endsWith(untilTail));
+        }
+    if (!any) return false;
+    const QVector<int> order = g.evalOrder();
+    const double s = t / std::max(1e-6, fps);
+    // The clip's own picture somewhere up the chain into id (a Clip node; not a sticker, text or image branch)
+    QSet<int> seen;
+    const std::function<bool(int)> fromClip = [&](int id) {
+        if (id <= 0 || seen.contains(id)) return false;
+        seen.insert(id);
+        if (const CompNode* n = g.node(id); n && n->type == QLatin1String("clip")) return true;
+        for (const CompLink& l : g.links)
+            if (l.to == id && fromClip(l.from)) return true;
+        return false;
+    };
+    QHash<int, int> through; // node out of its range -> the node whose picture it hands on (-1 = none)
+    for (int id : order) {
+        const CompNode* n = g.node(id);
+        if (!n || !::Comp::hasRange(n->type)) continue;
+        double from = 0, until = 0;
+        ::Comp::rangeAt(comp, clip, id, t, &from, &until);
+        if (::Comp::inRange(from, until, s)) continue;
+        const CompLink* l = nullptr;
+        for (const char* name : {"src", "bg", "fg"})
+            if ((l = g.linkInto(id, QString::fromLatin1(name)))) break;
+        int from_ = l ? l->from : -1;
+        // A node that places something gives nothing outside its range, not its input unplaced over the whole frame:
+        // a corner pin always, a transform of anything but the clip's own picture (a sticker, a text, an image)
+        if (n->type == QLatin1String("corner_pin")) from_ = -1;
+        else if (n->type == QLatin1String("transform") && from_ > 0) {
+            seen.clear();
+            if (!fromClip(from_)) from_ = -1;
+        }
+        if (from_ > 0 && through.contains(from_)) from_ = through.value(from_); // a chain (order: resolved before)
+        through.insert(id, from_);
+    }
+    if (through.isEmpty()) return false;
+    auto source = [&](int id) {
+        int from = through.value(id);
+        if (from < 0) {
+            if (!*transparent) {
+                *transparent = g.nextId();
+                g.nodes << CompNode{*transparent, QStringLiteral("color"), {}};
+            }
+            from = *transparent;
+        }
+        return from;
+    };
+    bool changed = false;
+    for (CompLink& l : g.links)
+        if (through.contains(l.from)) {
+            l.from = source(l.from);
+            changed = true;
+        }
+    if (through.contains(g.out)) {
+        g.out = source(g.out);
+        changed = true;
+    }
+    return changed;
+}
+
+bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& comp, const Env& env, Cache* cache,
+                   Buf* out, Stats* stats);
+
+constexpr const char* kTransparent = "#00000000";
+
+} // namespace
+
 bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out, Stats* stats)
 {
     if (env.size.isEmpty()) return false;
     CompGraph g;
     if (!::Comp::graphOf(comp, &g)) return false;
+    int transparent = 0;
+    rangeGraph(g, comp, env.t, env.fps, env.clip, &transparent);
+    return evaluateGraph(g, transparent, comp, env, cache, out, stats);
+}
+
+bool activeGraph(const EffectInstance& comp, double t, double fps, const Clip* clip, EffectInstance* out)
+{
+    CompGraph g;
+    int transparent = 0;
+    if (!::Comp::graphOf(comp, &g) || !rangeGraph(g, comp, t, fps, clip, &transparent)) return false;
+    *out = comp;
+    if (transparent) out->params[CompGraph::paramKey(transparent, QStringLiteral("color"))] = QString::fromLatin1(kTransparent);
+    ::Comp::setGraph(*out, g);
+    return true;
+}
+
+namespace {
+
+bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& comp, const Env& env, Cache* cache,
+                   Buf* out, Stats* stats)
+{
     const QVector<int> order = g.evalOrder();
     if (order.isEmpty()) return false;
 
@@ -122,6 +233,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         QString key;
         if (CompGraph::splitParamKey(it.key(), &id, &key)) values[id].insert(key, it.value());
     }
+    if (transparent) values[transparent].insert(QStringLiteral("color"), QString::fromLatin1(kTransparent));
     QHash<int, QSet<QString>> animated;
     if (env.clip)
         for (auto it = env.clip->keys.cbegin(); it != env.clip->keys.cend(); ++it) {
@@ -156,6 +268,9 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
         return numValue(*k, valuesOf(id), key);
     };
 
+    QHash<int, ::Comp::FollowTime> followTimes; // per tracker followed (gaps, lost mode) at env.t
+    const int graphCamera = ::Comp::graphCamera(g); // the graph's camera (0.22)
+
     // Static: kind not varying, no keyframes, every connected input static; keyed by its values and the inputs' keys
     for (int id : order) {
         NodeState& s = state[id];
@@ -170,6 +285,22 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 const NodeType* fk = fn ? find(fn->type) : nullptr;
                 if (animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
                 else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
+            }
+        }
+        // A layer in a camera's space (0.22) reads the camera's values (and its tracker's): static only while those
+        // are fixed (no keyframes, no drift), keyed by them
+        if (isStatic && s.kind->param(QString::fromLatin1(::Comp::kCameraKey))
+            && valueOf(id, s.kind, QString::fromLatin1(::Comp::kLayerDepthKey)) > 0) {
+            if (const int c = ::Comp::cameraOf(comp, g, id, env.clip, env.t); c > 0) {
+                const NodeType* ck = find(QString::fromLatin1(::Comp::kCameraType));
+                if (animated.contains(c) || (ck && varies(*ck, valuesOf(c)))) isStatic = false;
+                else key = mix(key, ownHash(QString::fromLatin1(::Comp::kCameraType), valuesOf(c), env));
+                if (const int f = ::Comp::followId(valueOf(c, ck, QStringLiteral("follow"))); isStatic && f > 0) {
+                    const CompNode* fn = g.node(f);
+                    const NodeType* fk = fn ? find(fn->type) : nullptr;
+                    if (animated.contains(f) || (fk && varies(*fk, valuesOf(f)))) isStatic = false;
+                    else key = mix(key, ownHash(fn ? fn->type : QString(), valuesOf(f), env));
+                }
             }
         }
         for (const CompLink& l : g.links)
@@ -347,12 +478,22 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
                 const NodeType* ok = o ? find(o->type) : nullptr;
                 // A tracker's x/y/rx/ry by the follow rule (core/CompTrack.h): not analyzed yet = at its reference
                 // point, so a follower does not move (Picture::Comp::trackerValue)
-                if (ok && o->type == QLatin1String(::Comp::kTrackerType))
+                if (ok && o->type == QLatin1String(::Comp::kTrackerType)) {
+                    // Losing the point (0.22): its gaps and lost mode (seen, held values)
+                    auto ft = followTimes.constFind(other); // once per tracker and frame (numOf runs ~7x a follower)
+                    if (ft == followTimes.cend())
+                        ft = followTimes.insert(other, followTime(env.clip, other, valuesOf(other), env.t, env.fps));
                     return ::Comp::followValue(
                         key, textValue(*ok, valuesOf(other), QStringLiteral("mode")),
                         [&](const QString& q) { return valuesOf(other).contains(q) || isAnimated(other, q); },
-                        [&](const QString& q) { return valueOf(other, ok, q); });
+                        [&](const QString& q) { return valueOf(other, ok, q); }, &*ft);
+                }
                 return valueOf(other, ok, key);
+            };
+            ctx.graphCamera = graphCamera;
+            ctx.typeOf = [&](int other) {
+                const CompNode* o = g.node(other);
+                return o ? o->type : QString();
             };
             ctx.input = [&, id](const QString& name) { return inputOf(id, name); };
             ctx.take = take;
@@ -365,7 +506,10 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
             ctx.clipPicture = env.clipPicture;
             ctx.mediaPicture = env.mediaPicture;
             Buf result;
-            if (k->eval(ctx, &result) && !result.isNull() && result.w == env.size.width()
+            const bool made = k->eval(ctx, &result);
+            // A layer in a camera's space moved by it (0.22; the transform does it in its own draw)
+            if (made && !result.isNull() && finishesWithCamera(*k)) applyCamera(ctx, result);
+            if (made && !result.isNull() && result.w == env.size.width()
                 && result.h == env.size.height()) {
                 if (isStatic && cache) {
                     s.kept = std::make_shared<const Buf>(std::move(result));
@@ -406,5 +550,7 @@ bool evaluate(const EffectInstance& comp, const Env& env, Cache* cache, Buf* out
     for (NodeState& s : state) release(s);
     return ok;
 }
+
+} // namespace
 
 } // namespace Picture::Comp

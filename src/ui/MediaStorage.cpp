@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/MediaStorage.h"
+#include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/ProxyManager.h"
+#include "engine/StorageThumbCache.h"
 #include "engine/video/Thumbnails.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
@@ -29,6 +31,7 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QThreadPool>
+#include <QShowEvent>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -46,6 +49,7 @@ constexpr QSize kListIcon{48, 27};
 constexpr int kPathRole = Qt::UserRole;
 constexpr int kDirRole = Qt::UserRole + 1;
 constexpr int kLoadedRole = Qt::UserRole + 2;
+constexpr int kDeferredListMs = 1000; // the start folder of a panel not shown, listed after the window is up
 
 const QStringList& videoExt()
 {
@@ -151,7 +155,8 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
 {
     setObjectName("Panel");
     m_thumbPool = new QThreadPool(this);
-    m_thumbPool->setMaxThreadCount(1);
+    // Several files at once, but leave most of the machine to the preview and everything else (low priority anyway)
+    m_thumbPool->setMaxThreadCount(std::clamp(QThread::idealThreadCount() / 4, 1, 3));
     m_thumbPool->setThreadPriority(QThread::LowPriority);
 
     auto* title = new QLabel(T("Dateibrowser"));
@@ -267,8 +272,8 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     split->addWidget(m_tree);
     split->addWidget(fileArea);
     split->setStretchFactor(1, 1);
-    split->setSizes({110, 400});
     split->setCollapsible(1, false); // folder tree can be pushed shut completely in narrow columns
+    SplitterMemory::remember(split, "mediaStorageTree", {110, 400}); // the user's drag comes back on the next start
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -298,7 +303,20 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     QString last = s.value("mediaStorage/folder").toString();
     if (last.isEmpty() || !QFileInfo(last).isDir()) last = m_locations.value(0);
     m_savedFolder = QDir::cleanPath(last);
+    m_deferFiles = true;
     setFolder(last);
+    m_deferFiles = false;
+}
+
+void MediaStorage::showEvent(QShowEvent* event)
+{
+    listPendingFiles();
+    QWidget::showEvent(event);
+}
+
+void MediaStorage::listPendingFiles()
+{
+    if (m_filesPending) rebuildFiles();
 }
 
 MediaStorage::~MediaStorage()
@@ -452,6 +470,12 @@ void MediaStorage::setFolder(const QString& dir)
         QSettings().setValue("mediaStorage/folder", clean);
     }
     m_list->scrollToTop();
+    if (m_deferFiles && !isVisible()) {
+        // Not shown yet: listed when it shows, else shortly after the start (the thumbnails load in the background)
+        m_filesPending = true;
+        QTimer::singleShot(kDeferredListMs, this, &MediaStorage::listPendingFiles);
+        return;
+    }
     rebuildFiles();
 }
 
@@ -467,6 +491,7 @@ QStringList MediaStorage::mediaIn(const QString& dir) const
 
 void MediaStorage::rebuildFiles()
 {
+    m_filesPending = false;
     QStringList selected = selectedFiles();
     m_scrub->forget();
     m_hoverPath.clear();
@@ -474,6 +499,7 @@ void MediaStorage::rebuildFiles()
     m_items.clear();
     m_shown.clear();
     m_thumbQueue.clear();
+    m_thumbOnDisk.clear();
     if (m_folder.isEmpty()) return;
 
     const QDir dir(m_folder);
@@ -494,6 +520,7 @@ void MediaStorage::rebuildFiles()
             } else {
                 pm = placeholder("…");
                 queueThumb(path);
+                if (QFileInfo::exists(StorageThumbCache::fileFor(fi))) m_thumbOnDisk.insert(path);
             }
         }
         auto* it = new QListWidgetItem(fi.fileName());
@@ -588,17 +615,25 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
 
 void MediaStorage::queueThumb(const QString& path)
 {
-    if (!m_thumbQueue.contains(path) && path != m_thumbPath) m_thumbQueue << path;
+    if (!m_thumbQueue.contains(path) && !m_thumbRunning.contains(path)) m_thumbQueue << path;
 }
 
-int MediaStorage::nextInView() const
+int MediaStorage::nextInView(bool onDiskOnly) const
 {
     // What is shown first, then what is nearest to it: scrolled down, the clips coming into view load next and not
-    // the ones above that nobody looks at
+    // the ones above that nobody looks at. A list not shown (the panel off, the window not up yet: a new folder starts at
+    // the top) simply in its order: asking a hidden list for item places lays out every item, once per thumbnail (a
+    // folder of ~150 clips kept the start ~120 ms busy right after the first paint, the panel was not even on)
+    if (!m_list->isVisible()) {
+        for (int i = 0; i < m_thumbQueue.size(); ++i)
+            if (!onDiskOnly || m_thumbOnDisk.contains(m_thumbQueue[i])) return i;
+        return -1;
+    }
     const QRect view = m_list->viewport()->rect();
-    int best = 0;
+    int best = -1;
     int bestDistance = std::numeric_limits<int>::max();
     for (int i = 0; i < m_thumbQueue.size(); ++i) {
+        if (onDiskOnly && !m_thumbOnDisk.contains(m_thumbQueue[i])) continue;
         const QListWidgetItem* it = m_items.value(m_thumbQueue[i]);
         if (!it) return i; // gone, dropped at once
         const QRect r = m_list->visualItemRect(it);
@@ -616,40 +651,60 @@ int MediaStorage::nextInView() const
 
 void MediaStorage::nextThumb()
 {
-    if (Background::foregroundBusy() && m_thumbPath.isEmpty() && !m_thumbQueue.isEmpty()) { // later, the preview first
-        if (!m_thumbRetry) {
-            m_thumbRetry = true;
-            QTimer::singleShot(200, this, [this] {
-                m_thumbRetry = false;
-                nextThumb();
-            });
+    while (m_thumbRunning.size() < m_thumbPool->maxThreadCount() && !m_thumbQueue.isEmpty()) {
+        // Pictures on disk first (a small JPEG each, also while the preview is busy), then decoding - later if the
+        // preview works (it comes first)
+        int index = nextInView(true);
+        if (index < 0) {
+            if (Background::foregroundBusy()) {
+                if (!m_thumbRetry) {
+                    m_thumbRetry = true;
+                    QTimer::singleShot(200, this, [this] {
+                        m_thumbRetry = false;
+                        nextThumb();
+                    });
+                }
+                return;
+            }
+            index = nextInView(false);
         }
-        return;
-    }
-    while (m_thumbPath.isEmpty() && !m_thumbQueue.isEmpty()) {
-        const QString path = m_thumbQueue.takeAt(nextInView());
+        const QString path = m_thumbQueue.takeAt(index);
+        const bool onDisk = m_thumbOnDisk.remove(path);
         if (!m_items.contains(path)) continue; // folder changed in the meantime
-        // Video: the frame at 1 s (for very short clips the first one), upright; pictures too in that thread (a folder
-        // of big PNGs, which decode at full size, blocked the window for all of them in one go)
+        // Video: the key frame at 1 s (for very short clips the first one), upright; pictures too in that thread (a
+        // folder of big PNGs, which decode at full size, blocked the window for all of them in one go)
         const bool image = imageExt().contains(QFileInfo(path).suffix().toLower());
-        m_thumbPath = path;
+        m_thumbRunning.insert(path);
         const QString source = image ? path : ProxyManager::decodeSource(path);
-        m_thumbPool->start([this, path, source, image] {
-            Background::lowerThisThread(Background::Level::Low); // own pool: its thread does nothing else
-            QImage img;
-            if (image) {
-                QImageReader reader(source);
-                reader.setAutoTransform(true);
-                const QSize size = reader.size();
-                if (size.isValid()) reader.setScaledSize(size.scaled(kThumb, Qt::KeepAspectRatio));
-                img = reader.read();
-            } else {
-                img = Video::stillAt(source, 1.0, kThumb);
+        m_thumbPool->start([this, path, source, image, onDisk] {
+            Background::lowerThisThread(Background::Level::Low); // own pool: its threads do nothing else
+            const QFileInfo file(path);
+            QImage img = onDisk ? StorageThumbCache::load(file) : QImage();
+            if (img.isNull()) {
+                if (image) {
+                    QImageReader reader(source);
+                    reader.setAutoTransform(true);
+                    const QSize size = reader.size();
+                    if (size.isValid()) reader.setScaledSize(size.scaled(kThumb, Qt::KeepAspectRatio));
+                    img = reader.read();
+                    // as framed() shows it: transparent parts over black (JPEG has no alpha), at most kThumb large
+                    if (!img.isNull() && (img.width() > kThumb.width() || img.height() > kThumb.height()))
+                        img = img.scaled(kThumb, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    if (img.hasAlphaChannel()) {
+                        QImage opaque(img.size(), QImage::Format_RGB32);
+                        opaque.fill(Qt::black);
+                        QPainter(&opaque).drawImage(0, 0, img);
+                        img = opaque;
+                    }
+                } else {
+                    img = Video::thumbnailAt(source, 1.0, kThumb);
+                }
+                if (!img.isNull()) StorageThumbCache::store(file, img);
             }
             QMetaObject::invokeMethod(
                 this,
                 [this, path, img] {
-                    m_thumbPath.clear();
+                    m_thumbRunning.remove(path);
                     thumbDone(path, img.isNull() ? placeholder("?") : framed(img));
                     nextThumb();
                 },

@@ -17,9 +17,11 @@
 // - Neutral defaults: a new node changes nothing it does not show (no glow, glitch or sound switched on by itself).
 
 #include "core/EffectRegistry.h"
+#include "engine/video/Compose.h"
 
 #include <QColor>
 #include <QHash>
+#include <QPointF>
 #include <QRect>
 #include <QSize>
 #include <QString>
@@ -74,6 +76,10 @@ struct NodeCtx {
     // scale by "scale" / turn by "angle" (clockwise) around (x, y), in pixels. A transform keeps its own x/y as its
     // placement and adds that. Not analyzed: x/y = rx/ry, scale 1, angle 0 = nothing moves
     std::function<double(int node, const QString& key)> numOf;
+    // Another node's kind id ("" = no such node): a layer checks that the node its "camera" names is a camera (0.22)
+    std::function<QString(int node)> typeOf;
+    // The graph's camera (its first node of kind camera, 0.22): a layer with a depth and camera 0 stands in its space
+    int graphCamera = 0;
 
     // Picture at an input (nullptr = not connected or the node there made nothing)
     std::function<const Buf*(const QString& input)> input;
@@ -133,7 +139,8 @@ struct RunOptions {
     double fps = 25;
     std::function<Buf(const QString& path, double clipTime)> mediaPicture;
     const Buf* clipPicture = nullptr;
-    QHash<int, QVariantMap> otherNodes; // values of other nodes for numOf (id -> {key: value})
+    QHash<int, QVariantMap> otherNodes; // values of other nodes for numOf (id -> {key: value}; "type" = typeOf)
+    int graphCamera = 0;                // NodeCtx::graphCamera
 };
 // false = unknown kind or the node made nothing
 bool runNode(const QString& type, const QVariantMap& params, const QHash<QString, Buf>& inputs, const RunOptions& opt,
@@ -155,6 +162,10 @@ int choiceValue(const NodeType& k, const QVariantMap& values, const QString& key
 // until 0 = to the end) and "fade" (seconds in and out). visibleRangeParams() = those three values,
 // visibleWeight() = 0 outside, 1 inside, a ramp in the fades; rangeVaries() = the node changes with time because of it
 QVector<EffectParam> visibleRangeParams();
+// The time range "from"/"until" alone (core/CompGraph.h: Comp::hasRange), for every other kind with a picture output:
+// added to each such kind once in all(), after its own values; outside the range the engine hands the node's input on
+// (Picture::Comp::activeGraph)
+QVector<EffectParam> rangeParams();
 double visibleWeight(const NodeCtx& ctx);
 bool rangeVaries(const QVariantMap& values);
 
@@ -164,9 +175,23 @@ void fadeContent(Buf& b, double opacity);
 void registerCoreNodes(QVector<NodeType>& out);  // A: clip, media, color, gradient, merge, transform, crop, blur, color grade, fx
 void registerMaskNodes(QVector<NodeType>& out);  // B: mask, matte
 void registerKeyNodes(QVector<NodeType>& out);   // C: key, matte_tune
-void registerTrackNodes(QVector<NodeType>& out); // D: tracker
+void registerTrackNodes(QVector<NodeType>& out); // D: tracker, corner_pin
+
+// Corner pin (0.22, CompNodesTrack.cpp): kind id, its corners in pixels of a picture of `size` at the node's values
+// num(key) and the followed tracker's numOf(id, key) (as NodeCtx; the follow rule of core/CompTrack.h, a quad
+// tracker's corners), *seen = visibility 0..1 (tracker lost, opacity). false = not a usable quad (not finite).
+// cornerPinMap: the homography taking the picture's content area onto the corners (false: crossed, folded)
+inline constexpr const char* kCornerPinType = "corner_pin";
+bool cornerPinCorners(const std::function<double(const QString&)>& num,
+                      const std::function<double(int, const QString&)>& numOf, QSize size, QPointF out[4], double* seen);
+bool cornerPinMap(const QRect& area, const QPointF corners[4], Compose::Homography* out);
+// A mask following a four-corner tracker (0.22, CompNodesMask.cpp): the homography from the tracker's start corners
+// q0x..q3y to its corners c0x..c3y (value(key) = the tracker's value as followers read it), both times the picture's
+// W x H. false = no quad (crossed, three on a line) or not finite
+bool quadMap(const std::function<double(const QString&)>& value, double W, double H, Compose::Homography* out);
 void registerStyleNodes(QVector<NodeType>& out); // E: text, shadow, glitch
 void registerCutoutNodes(QVector<NodeType>& out); // cutout (AI person matte, CompNodesCutout.cpp)
 void registerText3dNodes(QVector<NodeType>& out); // 3D text (round 3): text3d
+void registerCameraNodes(QVector<NodeType>& out); // camera (0.22, CompCamera.cpp): the shared 2.5D camera
 
 } // namespace Picture::Comp

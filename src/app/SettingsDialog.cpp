@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/SettingsDialog.h"
+#include "app/UiScale.h"
 
 #include "app/AiSettingsPage.h"
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
+#include "engine/Engine.h"
+#include "engine/audio/Device.h"
 #include "engine/Background.h"
 #include "ui/comp/CompShared.h"
 #include "ui/WheelGuard.h"
@@ -24,6 +27,8 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <algorithm>
+#include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -32,10 +37,24 @@
 
 namespace {
 
+// Scrolls only downwards: the dialog is at least as wide as the page's narrowest layout (long labels already put
+// their fields below them, hints wrap), so nothing is cut off at the right in a long language with a large font
+class PageArea : public QScrollArea {
+public:
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget())
+            s.setWidth(std::max(s.width(), widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width()
+                                               + 2 * frameWidth()));
+        return s;
+    }
+};
+
 // Pages scroll when they get longer than the dialog (the AI page grows with the chat settings)
 QScrollArea* scrolling(QWidget* page)
 {
-    auto* area = new QScrollArea;
+    auto* area = new PageArea;
     area->setWidget(page);
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);
@@ -93,6 +112,18 @@ QWidget* SettingsDialog::buildGeneral()
     for (const I18n::Language& l : I18n::languages()) m_language->addItem(l.name, l.code);
     m_language->setCurrentIndex(std::max(0, m_language->findData(I18n::language())));
     form->addRow(T("Sprache"), m_language);
+    // The whole interface larger (fonts, panels, icons): for a 4K screen at 100 % (app/UiScale.h)
+    m_uiScale = new QComboBox;
+    m_uiScale->addItem(T("Wie das System"), 0.0);
+    const auto percent = [](double f) { return QString::number(qRound(f * 100)) + " %"; };
+    for (double f : UiScale::steps()) m_uiScale->addItem(percent(f), f);
+    // A saved size the list lacks (set by hand in the settings file): shown as it is, OK keeps it
+    if (const double saved = UiScale::saved(); saved > 0 && m_uiScale->findData(saved) < 0)
+        m_uiScale->addItem(percent(saved), saved);
+    m_uiScale->setCurrentIndex(std::max(0, m_uiScale->findData(UiScale::saved())));
+    form->addRow(T("Größe"), m_uiScale);
+    if (const QString own = UiScale::userFactor(); !own.isEmpty())
+        form->addRow(hint(T("Wird von QT_SCALE_FACTOR=%1 überschrieben (beim Start gesetzt).").arg(own)));
     auto* buttons = new QHBoxLayout;
     auto* design = new QPushButton(T("Design…"));
     connect(design, &QPushButton::clicked, this, &SettingsDialog::designRequested);
@@ -102,7 +133,7 @@ QWidget* SettingsDialog::buildGeneral()
     buttons->addWidget(keys);
     buttons->addStretch(1);
     form->addRow(buttons);
-    form->addRow(hint(T("Sprache und Design ändern sich nach dem Neustart von schneidi.")));
+    form->addRow(hint(T("Sprache, Größe und Design ändern sich nach dem Neustart von schneidi.")));
     lay->addWidget(look);
 
     // Update hint (the check itself happens in the main window; "Check now" asks right here)
@@ -201,6 +232,15 @@ QWidget* SettingsDialog::buildGeneral()
     m_proxyImport->addItem(T("Immer"), int(ProxyManager::ImportRule::Always));
     m_proxyImport->setCurrentIndex(std::max(0, m_proxyImport->findData(int(ProxyManager::importRule()))));
     xform->addRow(T("Beim Import erzeugen"), m_proxyImport);
+    m_proxyQuality = new QComboBox;
+    m_proxyQuality->setObjectName("proxy_quality");
+    using Q = ProxyManager::Quality;
+    m_proxyQuality->addItem(T("Klein (540p, am schnellsten)"), int(Q::Small));
+    m_proxyQuality->addItem(T("Mittel (720p)"), int(Q::Medium));
+    m_proxyQuality->addItem(T("Groß (1080p)"), int(Q::Large));
+    m_proxyQuality->addItem(T("Volle Auflösung (nur leichter Codec)"), int(Q::Full));
+    m_proxyQuality->setCurrentIndex(std::max(0, m_proxyQuality->findData(int(ProxyManager::quality()))));
+    xform->addRow(T("Qualität"), m_proxyQuality);
     xform->addRow(hint(T("Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die "
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
@@ -235,6 +275,25 @@ QWidget* SettingsDialog::buildGeneral()
     rform->addRow(hint(T("Automatisch: so groß, wie die Vorschau gerade angezeigt wird. Mehr Pixel sind schärfer, "
                          "brauchen aber einen schnellen Rechner. Der Export nutzt immer die volle Auflösung.")));
     lay->addWidget(viewerBox);
+
+    // Sound output (also in Playback › Audio › Output device); the list is read now: devices come and go
+    auto* soundBox = new QGroupBox(T("Ton"));
+    auto* sform = new QFormLayout(soundBox);
+    sform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_audioOutput = new QComboBox;
+    m_audioOutput->setObjectName("audio_output");
+    m_audioOutput->addItem(T("Systemstandard"), QString());
+    const QString currentOutput = Engine::audioOutput();
+    bool found = currentOutput.isEmpty();
+    for (const Audio::Device::Output& o : Audio::Device::outputs(Engine::audioDriver())) {
+        m_audioOutput->addItem(o.name, o.id);
+        found = found || o.id == currentOutput;
+    }
+    if (!found) m_audioOutput->addItem(T("%1 (nicht angeschlossen)").arg(currentOutput), currentOutput);
+    m_audioOutput->setCurrentIndex(std::max(0, m_audioOutput->findData(currentOutput)));
+    sform->addRow(T("Ausgabegerät"), m_audioOutput);
+    sform->addRow(hint(T("Wohin schneidi den Ton spielt. Systemstandard folgt dem Gerät, das im System gewählt ist.")));
+    lay->addWidget(soundBox);
 
     // Preview on a second monitor (Workspace menu): what the main window does with the viewer's area meanwhile
     auto* preview = new QGroupBox(T("Vorschau auf zweitem Monitor"));
@@ -285,6 +344,16 @@ PreviewResolution::Choice SettingsDialog::previewResolution(PreviewResolution::T
     return PreviewResolution::Choice(box->currentData().toInt());
 }
 
+QString SettingsDialog::audioOutput() const
+{
+    return m_audioOutput->currentData().toString();
+}
+
+ProxyManager::Quality SettingsDialog::proxyQuality() const
+{
+    return ProxyManager::Quality(m_proxyQuality->currentData().toInt());
+}
+
 ProxyManager::ImportRule SettingsDialog::proxyImportRule() const
 {
     return ProxyManager::ImportRule(m_proxyImport->currentData().toInt());
@@ -324,3 +393,5 @@ void SettingsDialog::showTab(Tab tab)
 AiSettings SettingsDialog::aiSettings() const { return m_aiPage->settings(); }
 
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
+
+double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }

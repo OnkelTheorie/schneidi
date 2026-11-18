@@ -65,6 +65,10 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::GradeTemp, "gradeTemp", false, nullptr, 0, 0},
     {AnimParam::GradeTint, "gradeTint", false, nullptr, 0, 0},
     {AnimParam::GradeExposure, "gradeExposure", false, nullptr, 0, 0},
+    {AnimParam::ShapeWidth, "shapeWidth", false, N_("Form Breite"), 0, kBig},
+    {AnimParam::ShapeHeight, "shapeHeight", false, N_("Form Höhe"), 0, kBig},
+    {AnimParam::ShapeRotation, "shapeRotation", false, N_("Form Drehung"), -kBig, kBig},
+    {AnimParam::ShapeReveal, "shapeReveal", false, N_("Rand gezeichnet"), 0, 100},
 };
 
 // Dynamic effect parameters (Keys::effectParam): interned per "fx:<effect>:<key>". Read from render threads too
@@ -306,6 +310,10 @@ double staticValue(const Clip& c, AnimParam p)
     case AnimParam::TitlePosX: return c.title.posX;
     case AnimParam::TitlePosY: return c.title.posY;
     case AnimParam::TitleColor: return fromColor(c.title.color);
+    case AnimParam::ShapeWidth: return c.title.shape.width;
+    case AnimParam::ShapeHeight: return c.title.shape.height;
+    case AnimParam::ShapeRotation: return c.title.shape.rotation;
+    case AnimParam::ShapeReveal: return c.title.shape.reveal;
     case AnimParam::Volume: return c.volumeDb;
     case AnimParam::Pan: return c.pan;
     default: break;
@@ -340,6 +348,10 @@ void setStaticValue(Clip& c, AnimParam p, double v)
     case AnimParam::TitlePosX: c.title.posX = v; break;
     case AnimParam::TitlePosY: c.title.posY = v; break;
     case AnimParam::TitleColor: c.title.color = toColor(v); break;
+    case AnimParam::ShapeWidth: c.title.shape.width = v; break;
+    case AnimParam::ShapeHeight: c.title.shape.height = v; break;
+    case AnimParam::ShapeRotation: c.title.shape.rotation = v; break;
+    case AnimParam::ShapeReveal: c.title.shape.reveal = v; break;
     case AnimParam::Volume: c.volumeDb = v; break;
     case AnimParam::Pan: c.pan = v; break;
     default: {
@@ -379,10 +391,12 @@ double valueAt(const Clip& c, AnimParam p, double t)
     const double s = c.in + t; // source frame
     if (s <= k.first().frame) return k.first().value;
     if (s >= k.last().frame) return k.last().value;
-    for (int i = 1; i < k.size(); ++i) {
-        if (s > k[i].frame) continue;
-        const Keyframe& a = k[i - 1];
-        const Keyframe& b = k[i];
+    // The first key at or after s (binary search; keys are sorted by frame). k[0] < s < k.last() here, so it is one of
+    // k[1..]; with several keys on one frame the first of them, as a linear search from the front would find
+    const auto bIt = std::partition_point(k.cbegin() + 1, k.cend(), [s](const Keyframe& key) { return s > key.frame; });
+    if (bIt != k.cend()) {
+        const Keyframe& a = *(bIt - 1);
+        const Keyframe& b = *bIt;
         const double u = (s - a.frame) / double(b.frame - a.frame);
         const bool color = info(p).color;
         if (bezierSegment(a, b) && !color) return bezierValue(a, b, s - a.frame);

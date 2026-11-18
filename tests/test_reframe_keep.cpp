@@ -6,6 +6,7 @@
 // highlights reading a game's kill feed by itself with the tighter CS2 region (game picture left of the lines is no
 // kill).
 #include "render_check.h"
+#include "timeline_guard.h"
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
@@ -148,6 +149,7 @@ void testEditor(const QString& dir)
 {
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const int seq = p.addTimeline("Short", 0, QSize(1080, 1920));
@@ -241,6 +243,7 @@ void testEditor(const QString& dir)
         ProjectData d;
         CHECK(ProjectFile::load(path, &d, &error));
         Project q;
+        TimelineGuard guard_q{q};
         q.load(d);
         q.setCurrentSequence(seq);
         const Clip* l = keptCopy(q.timeline());
@@ -294,6 +297,7 @@ void testPictureAspect()
     // again, all in one undo step
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const QSizeF frame(1080, 1920);
@@ -385,6 +389,7 @@ void testFollow(const QString& dir)
 {
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const int seq = p.addTimeline("Short", 0, QSize(1080, 1920));
@@ -523,7 +528,7 @@ void testFollow(const QString& dir)
     });
     step("disable", [&] { sel.set({game, sound}); ed.toggleSelectionEnabled(); }, [&] { synced("disable"); });
     // The copy by hand: moved alone in time, placed and zoomed alone
-    step("copy alone", [&] { ed.moveClips(ed.withLinked({copy}), 5, TrackKind::Video, 0); }, [&] {
+    step("copy alone", [&] { guard_p.allowSlip({copy}); ed.moveClips(ed.withLinked({copy}), 5, TrackKind::Video, 0); }, [&] {
         CHECK_EQ(base().start, 20);
         CHECK_EQ(copies().value(0).second.start, 25);
     });
@@ -543,6 +548,7 @@ void testFollow(const QString& dir)
     ProjectData d;
     CHECK(ProjectFile::load(path, &d, &error));
     Project q;
+    TimelineGuard guard_q{q};
     q.load(d);
     q.setCurrentSequence(seq);
     Selection qs;
@@ -563,6 +569,7 @@ void testFollowNotSound()
 {
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.setCurrentSequence(p.addTimeline("Short", 0, QSize(1080, 1920)));
@@ -593,6 +600,7 @@ void testFollowNotSound()
     };
     ed.setLinkedSelection(false);
     CHECK(ed.followingCopies({sound}).isEmpty());
+    guard_p.allowSlip({sound}); // linked selection off: the sound alone
     ed.moveClips({sound}, 7, TrackKind::Audio, 0);
     inPlace("sound moved");
     p.undoStack()->undo();
@@ -663,10 +671,47 @@ void testFollowNotSound()
 
 // Reframing a whole timeline leaves its overlays (a small webcam picture on V2) where they are; asked for by id, one
 // is reframed
+// The copy on a locked track: a speed change of its clip leaves it (and its track) alone, like every other edit on a
+// locked track
+void testRetimeLockedCopy()
+{
+    MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
+    Project p;
+    TimelineGuard guard_p{p};
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.setCurrentSequence(p.addTimeline("Short", 0, QSize(1080, 1920)));
+    p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
+    int game = 0;
+    p.edit("setup", [&](Timeline& tl) {
+        Clip v;
+        v.id = game = p.newClipId();
+        v.mediaPath = "/x/cs2/a.mkv";
+        v.start = 20;
+        v.in = 100;
+        v.out = 159;
+        v.linkId = p.newLinkId();
+        tl.video[0].clips << v;
+    });
+    const auto keeps = ed.reframeKeeps({game}, Reframe::Mode::Center, {}, {});
+    ed.reframeClips({game}, Reframe::Mode::Center, {}, {}, &keeps);
+    if (!CHECK_EQ(keptCopies(p.timeline()).size(), 1)) return;
+    const int track = keptCopies(p.timeline())[0].first;
+    ed.toggleTrackLock({TrackKind::Video, track});
+    const Track lockedBefore = p.timeline().video[track];
+    guard_p.stopSyncCheck(); // the clip changes speed, its locked copy cannot follow
+    ed.setClipSpeed({game}, {0.5, false, false, true}, true);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), game)->speed, 0.5);
+    CHECK(p.timeline().video[track] == lockedBefore);
+    ed.addSpeedPoint(game, 40);
+    CHECK(p.timeline().video[track] == lockedBefore);
+}
+
 void testOverlays()
 {
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const QSizeF frame(1080, 1920);
@@ -773,6 +818,7 @@ void testCli(const QString& dir, const QString& game, const QString& plain)
     int source = 0;
     {
         Project p;
+        TimelineGuard guard_p{p};
         p.addMedia({game, "clip.mkv", 150, true, true, false});
         p.addMedia({plain, "plain.mkv", 150, true, true, false});
         p.edit("setup", [&](Timeline& tl) {
@@ -810,6 +856,7 @@ void testCli(const QString& dir, const QString& game, const QString& plain)
         QString error;
         CHECK(ProjectFile::load(path, &d, &error));
         Project q;
+        TimelineGuard guard_q{q};
         q.load(d);
         for (const Sequence& s : q.sequences())
             if (s.name == "Short") q.setCurrentSequence(s.id);
@@ -883,6 +930,7 @@ void testCliFollow(const QString& dir, const QString& game, const QString& plain
     int source = 0;
     {
         Project p;
+        TimelineGuard guard_p{p};
         p.addMedia({game, "clip.mkv", 150, true, true, false});
         p.addMedia({plain, "plain.mkv", 150, true, true, false});
         p.edit("setup", [&](Timeline& tl) {
@@ -1102,6 +1150,7 @@ void testOverwriteCopy()
 {
     MediaAspect::setProbe([](const QString&) { return 16.0 / 9.0; });
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     const int seq = p.addTimeline("Short", 0, QSize(1080, 1920));
@@ -1180,6 +1229,7 @@ int main(int argc, char** argv)
     testPictureAspect();
     testFollow(tmp.path());
     testFollowNotSound();
+    testRetimeLockedCopy();
     testOverwriteCopy();
     testOverlays();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");

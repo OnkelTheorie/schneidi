@@ -12,9 +12,10 @@ namespace SettingsIsolation {
 constexpr const char* kVariable = "SCHNEIDI_TEST_SETTINGS";
 
 // Call first in main(), before any QSettings/QStandardPaths use (works before the application object exists).
-// Settings: <folder>/settings/<organization>/<application>.ini. Data, config, cache: on Linux/BSD <folder>/data,
-// /config, /cache through the XDG variables (only where they are unset: a test may point a child elsewhere); on
-// Windows and macOS, where XDG does nothing, QStandardPaths' test mode (never the real AppData/Library folders).
+// Settings: <folder>/settings/<organization>/<application>.ini. Data, config, cache: <folder>/data, /config, /cache
+// through the XDG variables (only where they are unset: a test may point a child elsewhere), on every platform: Qt
+// reads them on Linux/BSD, core/AppPaths.h on Windows and macOS (which also turn on QStandardPaths' test mode for
+// anything that still asks Qt directly: never the real AppData/Library folders).
 // Returns the folder (absolute), empty = not set (nothing changed).
 QString apply();
 

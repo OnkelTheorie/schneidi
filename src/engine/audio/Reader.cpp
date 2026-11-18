@@ -11,12 +11,17 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
+#include <QFileInfo>
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <numeric>
+#include <optional>
 #include <vector>
 
 namespace Audio {
@@ -27,6 +32,7 @@ constexpr double kPreroll = 0.2;     // decoded before a jump target: codec (AAC
 constexpr double kJitter = 0.010;    // timestamp deviations below this are ignored (like aresample min_hard_comp)
 constexpr double kMaxForward = 2.0;  // forward jumps up to this far decode on instead of seeking
 constexpr double kKeepBack = 0.25;   // decoded samples kept before the last read (small steps back without a seek)
+constexpr std::chrono::milliseconds kRetryLost{1500}; // a lost file is tried again at most this often
 constexpr double kBackoff[] = {1.0, 4.0}; // seek further back when the first packet came too late
 constexpr int kProbePackets = 2000;  // read at most this many packets to find the picture's first key frame
 constexpr int kGridFrames = 24;      // frames measured in a stream with coarse timestamps (Matroska)
@@ -38,6 +44,45 @@ constexpr double kOutlierCheck = 1.0;
 // for 5.1); 64 KB find it just as well
 constexpr int64_t kCodecProbeBytes = 1 << 16;
 constexpr int64_t kFar = -(int64_t(1) << 42); // "long before anything" (years), safe to multiply by a grid step
+// A stream the stream analysis found no values for (no packet in its first seconds: an empty MPEG-TS sound PID, sound
+// that starts late) is searched for its first sound in this much of the file at most (as MediaProbe's long analysis),
+// not to the file's end. Found none: the stream is dead (remembered per file while it stays the same: every later
+// open fails at once - playback, waveforms, export open a clip's stream again and again).
+constexpr int64_t kDeadSearchBytes = 120LL << 20;
+
+struct DeadStream {
+    QString path;
+    int stream = 0;
+    qint64 size = -1, modified = 0;
+};
+std::mutex g_deadMutex;
+std::vector<DeadStream>& deadStreams()
+{
+    static std::vector<DeadStream> list;
+    return list;
+}
+
+bool knownDead(const QString& path, int stream)
+{
+    std::lock_guard lock(g_deadMutex);
+    for (const DeadStream& d : deadStreams()) {
+        if (d.path != path || d.stream != stream) continue;
+        const QFileInfo fi(path);
+        return fi.size() == d.size && fi.lastModified().toMSecsSinceEpoch() == d.modified;
+    }
+    return false;
+}
+
+void rememberDead(const QString& path, int stream)
+{
+    const QFileInfo fi(path);
+    std::lock_guard lock(g_deadMutex);
+    auto& list = deadStreams();
+    list.erase(std::remove_if(list.begin(), list.end(), [&](const DeadStream& d) { return d.path == path && d.stream == stream; }),
+               list.end());
+    if (list.size() >= 256) list.erase(list.begin()); // a bounded list: the oldest goes
+    list.push_back(DeadStream{path, stream, fi.size(), fi.lastModified().toMSecsSinceEpoch()});
+}
 
 int64_t floorDiv(int64_t a, int64_t b)
 {
@@ -68,9 +113,16 @@ struct Reader::Impl {
     bool zeroKnown = false;
     int outRate = 48000;
     int outChannels = 0;
+    bool channelsDecided = false; // outChannels fixed at the first frame (Options::stereoBelow, pick)
+    bool stereoBelow = false;
+    std::vector<int> pick;
     StreamInfo info;
     Stats stats;
     bool error = false;
+    // When opening the lost file last failed: until kRetryLost later, jumps read silence without trying (a reversed clip
+    // jumps back every block; each open of a gone network share or USB disk may block the mixer)
+    std::chrono::steady_clock::time_point lostAt{};
+    bool lostTried = false;
     std::deque<AVPacket*> queued; // packets of the stream read while looking for the picture's first key frame
 
     // Resampler input as the decoded frames come (HE-AAC may differ from the container's values)
@@ -256,10 +308,19 @@ struct Reader::Impl {
             av_channel_layout_default(&inLayout, std::max(1, f->ch_layout.nb_channels));
         else
             av_channel_layout_copy(&inLayout, &f->ch_layout);
+        if (!channelsDecided) {
+            channelsDecided = true;
+            if (!pick.empty()) outChannels = 2;
+            else if (stereoBelow && outChannels > 2 && inLayout.nb_channels <= 2) outChannels = 2;
+        }
         if (outChannels <= 0) outChannels = inLayout.nb_channels;
         if (outLayout.nb_channels != outChannels) {
             av_channel_layout_uninit(&outLayout);
-            if (inLayout.nb_channels == outChannels) av_channel_layout_copy(&outLayout, &inLayout);
+            // 5.1 and 7.1 in the mix's order (core/ChannelLayout.h): FFmpeg's "5.1" (back pair, its default for six
+            // channels is the side pair) and "7.1"; FFmpeg maps a side pair to the back pair and back
+            if (outChannels == 6) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_5POINT1_BACK);
+            else if (outChannels == 8) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_7POINT1);
+            else if (inLayout.nb_channels == outChannels) av_channel_layout_copy(&outLayout, &inLayout);
             else av_channel_layout_default(&outLayout, outChannels);
         }
         if (swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLTP, outRate, &inLayout, AVSampleFormat(f->format),
@@ -272,7 +333,26 @@ struct Reader::Impl {
         // Channels without positions (no standard layout for that count: a 64-channel recorder track) give FFmpeg
         // nothing to mix by, and swr_init failed: silence. Own matrix: input channel i goes to output i % out, every
         // output the mean of its inputs (fewer inputs than outputs: the inputs repeat).
-        if (inLayout.order == AV_CHANNEL_ORDER_UNSPEC && inLayout.nb_channels != outChannels) {
+        if (!pick.empty()) {
+            // Picked channels (routing): the first to the left, the second to the right; one alone in the middle
+            // (-3 dB each side, like FFmpeg's mono -> stereo). A channel the stream does not have stays silent.
+            const int in = inLayout.nb_channels;
+            std::vector<double> matrix(size_t(in) * 2, 0.0);
+            const auto set = [&](int row, int ch, double g) {
+                if (ch >= 0 && ch < in) matrix[size_t(row) * size_t(in) + size_t(ch)] = g;
+            };
+            if (pick.size() == 1) {
+                set(0, pick[0], 0.70710678118654752440);
+                set(1, pick[0], 0.70710678118654752440);
+            } else {
+                set(0, pick[0], 1.0);
+                set(1, pick[1], 1.0);
+            }
+            if (swr_set_matrix(swr, matrix.data(), in) < 0) {
+                swr_free(&swr);
+                return false;
+            }
+        } else if (inLayout.order == AV_CHANNEL_ORDER_UNSPEC && inLayout.nb_channels != outChannels) {
             const int in = inLayout.nb_channels, out = outChannels;
             std::vector<double> matrix(size_t(in) * size_t(out), 0.0);
             for (int o = 0; o < out; ++o) {
@@ -607,14 +687,20 @@ struct Reader::Impl {
     void seek(int64_t target, int tryNo, bool fresh = false)
     {
         ++stats.seeks;
-        if (!fmt || !dec) fresh = true; // lost before: open the file anew
+        const bool wasLost = !fmt || !dec;
+        if (wasLost) fresh = true; // lost before: open the file anew
         attempt = tryNo;
         validFrom = target;
         wantOut = target - seconds(kPreroll);
+        if (wasLost && lostTried && std::chrono::steady_clock::now() - lostAt < kRetryLost) {
+            lose(); // tried a moment ago: silence and the error, no new attempt yet
+            return;
+        }
         const long double back = tryNo > 0 ? kBackoff[tryNo - 1] : 0;
         const long double t = zero + (long double)wantOut / outRate - back;
-        // The start = the stream's first packet (an AAC priming packet lies before the file's start time)
-        int64_t begin = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
+        // The start = the stream's first packet (an AAC priming packet lies before the file's start time). No demuxer
+        // (lost before): fresh, so the file is opened anew below and `begin` is not used
+        int64_t begin = fmt && fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
         if (firstTs != AV_NOPTS_VALUE) begin = std::min(begin, firstTs);
         const int64_t ts = std::llround(t * AV_TIME_BASE);
         fromStart = fresh || wantOut <= info.start || ts <= begin;
@@ -638,9 +724,12 @@ struct Reader::Impl {
             avcodec_flush_buffers(dec);
         }
         if (!fmt || !dec) {
+            lostAt = std::chrono::steady_clock::now();
+            lostTried = true;
             lose();
             return;
         }
+        if (wasLost) error = false; // the file is back: its error is over
         swr_free(&swr);
         inRate = 0;
         inFormat = -1;
@@ -753,10 +842,14 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
         if (error) *error = why;
         return nullptr;
     };
+    if (knownDead(path, stream)) return fail(QStringLiteral("audio stream %1 holds no sound").arg(stream));
     std::unique_ptr<Reader> r(new Reader);
     Impl& d = *r->d;
     d.outRate = options.rate > 0 ? options.rate : 48000;
     d.outChannels = options.channels;
+    d.stereoBelow = options.stereoBelow;
+    d.pick = options.pick;
+    if (d.pick.size() > 2) d.pick.resize(2);
     int e = OpenMedia::input(&d.fmt, path.toUtf8().constData());
     if (e < 0) return fail(errorText(e));
 
@@ -784,6 +877,8 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     d.fmt->probesize = std::min(d.fmt->probesize, kCodecProbeBytes);
     AVStream* st = d.fmt->streams[d.index];
     d.tb = st->time_base;
+    // No values after the stream analysis: maybe late, maybe never any packet (searched in kDeadSearchBytes)
+    const bool unsettled = st->codecpar->ch_layout.nb_channels <= 0 || st->codecpar->sample_rate <= 0;
 
     int video = -1;
     for (unsigned i = 0; i < d.fmt->nb_streams && video < 0; ++i) {
@@ -795,7 +890,10 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
 
     const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id);
     if (!codec) return fail(QStringLiteral("no decoder for %1").arg(avcodec_get_name(st->codecpar->codec_id)));
-    if (!d.openDecoder()) return fail(QStringLiteral("cannot open the %1 decoder").arg(codec->name));
+    if (!d.openDecoder()) {
+        if (unsettled) rememberDead(path, stream);
+        return fail(QStringLiteral("cannot open the %1 decoder").arg(codec->name));
+    }
     d.pkt = av_packet_alloc();
     d.frame = av_frame_alloc();
     d.info.hasPicture = video >= 0;
@@ -841,8 +939,22 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     d.validFrom = d.wantOut = kFar;
     d.keepFrom = kFar;
     d.silentFrom = std::numeric_limits<int64_t>::max();
-    while (!d.started && d.step()) {}
-    if (!d.started) return fail(d.error ? QStringLiteral("cannot decode the audio") : QStringLiteral("no audio samples"));
+    const int readErrorsBefore = d.stats.readErrors;
+    {
+        std::optional<OpenMedia::ReadLimit> limit;
+        if (unsettled) limit.emplace(d.fmt, kDeadSearchBytes);
+        while (!d.started && d.step()) {}
+        if (!d.started && limit && limit->reached()) {
+            rememberDead(path, stream);
+            return fail(QStringLiteral("audio stream %1 holds no sound (none in its first %2 MB)").arg(stream).arg(kDeadSearchBytes >> 20));
+        }
+    }
+    if (!d.started) {
+        // Read to the file's end without a packet of it: dead. Not after a read error (a network share's hiccup):
+        // the next open tries again
+        if (unsettled && !d.error && d.stats.readErrors == readErrorsBefore) rememberDead(path, stream);
+        return fail(d.error ? QStringLiteral("cannot decode the audio") : QStringLiteral("no audio samples"));
+    }
     d.info.codec = QString::fromUtf8(d.dec->codec->name);
     d.info.sourceRate = d.inRate;
     d.info.sourceChannels = d.inLayout.nb_channels;

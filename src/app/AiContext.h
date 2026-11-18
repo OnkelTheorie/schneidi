@@ -30,20 +30,46 @@ constexpr qint64 kCompactBelow = 32768;
 bool useCompact(Compact mode, const Endpoint& e, qint64 context);
 
 // The tools in short: all of them, each with the first sentence of its description and short parameter texts (the
-// first clause); rarely needed tools (kRareTools) with parameter names and types only; `edit` lists its ops as
-// signatures written as calls ("split(at, clip?)"; editOps: the 'ops' of `help` with command 'edit'; empty = `edit`
-// stays as it is); `help` says it has the details of every tool. The order and the names stay.
+// first clause; at most kParamText characters of them per tool); rarely needed tools (kRareTools) with parameter names
+// and types only; `edit` lists its ops as signatures written as calls
+// ("split(at, clip?)", see compactOps; editOps: the 'ops' of `help` with command 'edit'; empty = `edit` stays as it
+// is); `help` says it has the details of every tool. The order and the names stay. New ops and parameters cost their
+// names and a bounded short text, so the request stays within kCompactBudget without trimming texts by hand.
 // In short also: time parameters typed as text only, op signatures without the values of optional keys, and no text
 // for a parameter whose text kSharedParam or more tools share word for word ("project": "project file").
 QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps);
 constexpr int kSharedParam = 3;
+// A tool's description in short: its first sentence, at most this long
+constexpr int kToolText = 130;
+// At most this many characters of parameter texts per tool (the longest are left out first)
+constexpr qsizetype kParamText = 400;
+// Tools the chat uses for nearly every task: more room for their parameter texts (render: quality, subtitles)
+qsizetype paramTextFor(const QString& tool);
 // The tool server's instructions in short: without the list of what each tool is for (the tool descriptions say it)
 // and without how the app's project works live (the app chat's own part says it)
 QString compactInstructions(const QString& instructions);
 // What the short request (system prompt and tools, no chat) may take at most, in characters: about 7,500 tokens, so
-// it fits an 8192-token local model with room for a short chat (test_ai_chat checks it)
+// it fits an 8192-token local model with room for a short chat (test_ai_chat checks it). Measured with Ollama (0.22,
+// 28,762 characters incl. the chat template): Llama 3.2 6,909 tokens (4.16 characters per token), Qwen 2.5 7,060
+// (4.07) - the full budget leaves them ~600 tokens of 8192; Gemma 4 8,068 (3.56, its tool template is long) needs a
+// 16k context. The chat itself checks with 3.5 characters per token (AiChat::estimatedTokens: nothing goes out that
+// a server could cut), so it refuses 8192 and takes 12288 and up; several tool steps need kStepsContext
 constexpr qint64 kCompactBudget = 31000;
 extern const QStringList kRareTools;
+// The ops of `edit` in short, so that a new op costs at most about kOpChars characters (the short request no longer
+// grows past its budget with every op): the ops of common edits (kCoreOps) with their whole signature, rarely needed
+// ones (kRareOps) by name only, every other op with its required keys and as many optional ones as fit in kOpChars,
+// then "…" (more keys or forms: `help`). Every op's full text stays one `help` call away.
+QString compactOps(const QJsonArray& editOps);
+constexpr int kOpChars = 56;
+extern const QStringList kCoreOps;
+extern const QStringList kRareOps;
+// An op's 'usage' from `help` written as a call, without the values of optional keys: "{op:'split', at, clip?}" ->
+// "split(at, clip?)" (what kCoreOps show)
+QString shortUsage(const QString& usage);
+// A signature "name(a, b?, c?)" cut to `max` characters: required keys always, optional ones while they fit, "…"
+// for the rest (other forms "… or name(…)" included)
+QString cappedUsage(const QString& usage, int max);
 // The editing guide's main points (instead of its whole main text), the task guides after it ("- ad: Ad, …" lines)
 QString compactGuide(const QString& topics);
 // The first sentence of a tool description, at most `max` characters (cut at a clause outside brackets)
@@ -69,8 +95,11 @@ qint64 contextOf(const QString& kind, const QJsonObject& answer, const QString& 
 qint64 contextFrom(const QHash<QString, qint64>& found);
 // Room the chat needs besides the instructions and tools: the user's words, tool results, the model's answers
 constexpr qint64 kChatRoom = 4096;
+// The context a chat of several tool steps needs: below it a few tool results (up to ~6,000 tokens each) fill the
+// context and the chat drops older ones (AiChat::fitHistory); twice as much is better
+constexpr qint64 kStepsContext = 32768;
 // The context to set on the server for a request whose fixed part (instructions, tools) has `fixed` tokens: the next
-// power of two with room for the chat
+// power of two with room for the chat, at least kStepsContext
 qint64 recommendedContext(qint64 fixed);
 
 } // namespace Ai

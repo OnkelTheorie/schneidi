@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Log file for feedback (Windows has no terminal): Qt messages, FFmpeg warnings and
-// ffmpeg errors end up in <AppData>/logs/schneidi.log. Rotated at startup, the last 3 runs are kept.
+// ffmpeg errors end up in <AppData>/logs/schneidi.log. Rotated at startup, the last 3 runs are kept. A run that did
+// not end normally (crashed, killed after a hang, display gone) or that hung (app/HangWatch.h) is also copied to
+// logs/kept/ (the last 10): a user who starts schneidi a few more times would otherwise rotate it away.
 
 #include <QString>
 

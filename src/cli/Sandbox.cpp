@@ -5,8 +5,9 @@
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 #include "core/EffectFolders.h"
-#include "core/EffectRegistry.h"
 #include "core/Project.h"
+#include "core/ProjectFile.h"
+#include "core/ProjectRefs.h"
 
 #include <QDir>
 #include <QFile>
@@ -272,29 +273,41 @@ bool allowedFile(const QString& given, const QStringList& own)
 
 } // namespace
 
+namespace {
+
+// The server's own LUTs and transition images (`effects` lists them) are allowed in projects
+QStringList ownFolders()
+{
+    QStringList own{QDir::cleanPath(EffectFolders::root())};
+    if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
+    return own;
+}
+
+} // namespace
+
+bool projectFileAllowed(const QString& path)
+{
+    if (state().root.isEmpty()) return true;
+    if (!allowedFile(path, ownFolders())) return false;
+    const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    return !hidden(clean) && !namesOtherFiles(clean);
+}
+
 void checkProject(const Project& p)
+{
+    if (!state().root.isEmpty()) checkProject(p.data());
+}
+
+void checkProject(const ProjectData& data)
 {
     const State& s = state();
     if (s.root.isEmpty()) return;
+    ProjectData d = data; // forEach may change paths, this only reads them
     QStringList files;
-    for (const MediaInfo& m : p.media()) files << m.path;
-    for (const WatchFolder& w : p.watchFolders()) files << w.path; // `watch` would list and import from there
-    for (const Sequence& q : p.sequences())
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& t : q.timeline.tracks(k))
-                for (const Clip& c : t.clips) {
-                    files << c.mediaPath << c.transInStyle.luma << c.transOutStyle.luma;
-                    for (const EffectInstance& e : c.effects)
-                        if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
-                            for (const EffectParam& param : d->params)
-                                if (param.type == EffectParam::Path) files << e.params.value(param.key).toString();
-                }
-    // The server's own LUTs and transition images (`effects` lists them) are allowed
-    QStringList own{QDir::cleanPath(EffectFolders::root())};
-    if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
+    ProjectRefs::forEach(d, [&](QString& path, ProjectRefs::Kind) { files << path; });
+    const QStringList own = ownFolders();
     files.removeDuplicates();
     for (const QString& f : files) {
-        if (f.isEmpty() || EffectFolders::isBuiltin(f)) continue;
         if (allowedFile(f, own)) {
             // Inside, but hidden or a playlist/MLT XML that reads files from anywhere
             const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(f));

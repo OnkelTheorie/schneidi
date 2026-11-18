@@ -44,10 +44,15 @@ struct ExportSettings {
     QStringList codecOptions; // further encoder options "key=value" (ProRes/DNxHR profile, VP9 speed …)
     int crf = 20;             // quality: smaller = better
     int maxBitrateK = 0;      // video bit rate cap (kbit/s), 0 = none
+    // Quality "like source" (RenderSettings::kQualitySource): start() aims the video at the bit rate of the media the
+    // range shows (core/SourceBitrate, targetBitrateK()); unknown = crf ("High") and a note saying so
+    bool sourceQuality = false;
     QString preset = "medium"; // speed vs. file size
     int audioBitrateK = 192;
     QString audioSampleFormat; // empty = codec default (Apple Lossless: s16p/s32p for 16/24 bit)
-    int audioRate = 0, audioChannels = 0; // 0 = 48 kHz stereo (speech to text wants 16 kHz mono)
+    // 0 = 48 kHz and the mix's channels (Timeline::audioChannels: stereo, 5.1, 7.1; speech to text wants 16 kHz mono).
+    // More channels than the encoder writes (MP3 and 5.1): the stereo downmix, said in note().
+    int audioRate = 0, audioChannels = 0;
     FrameRate rate{0, 1};      // frame rate of the file; num 0 = like the timeline (format.rate)
     bool burnSubtitles = false; // burn the visible subtitle track into the image
     // Additionally write the visible subtitle track as SRT here, the other tracks with entries next to it
@@ -114,7 +119,7 @@ public:
     // 12) keeps the preset's lookahead - a shorter one costs quality, which nobody asked for there.
     static bool lowMemoryLookahead(int processors, const ThreadChoice& automatic);
     // Encoder options of a render whose threads were lowered a lot for the RAM (lowMemoryLookahead): shorter
-    // lookahead of x264/x265 (a format's own options still win: they are applied after)
+    // lookahead of x264/x265 and the own H.264 encoder (a format's own options still win: they are applied after)
     static QVector<QPair<QByteArray, QByteArray>> lowMemoryOptions(const QString& codec);
     // The most memory the video decoders of the range [from, to) hold at one frame: every clip showing then with a
     // decoder of its own (another file, or the same file at another position: picture-in-picture, a transition;
@@ -130,9 +135,16 @@ public:
     // How many images are rendered at once: threads (0 = all), but 1 if a frame needs the one before (stabilizing
     // with border "keep")
     static int parallelFrames(const Timeline& tl, int threads);
+    // Output frames where the picture cuts hard (the main video track's clip starts without a transition from another
+    // source), sorted, at least kOwnMinKeyDistance apart: key frames of the own H.264 encoder
+    static constexpr int kOwnMinKeyDistance = 6; // as the encoder's scene detection
+    static QVector<int> cutFrames(const Timeline& tl, int from, int length, FrameRate timelineRate, FrameRate outputRate);
     // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it
     // (source and output destroyed) – refuse like DaVinci instead of asking.
     static bool readsFile(const Timeline& tl, const QString& path);
+    // The first file an export would write that the timeline reads (empty: none): `path` and, with a subtitle path,
+    // every subtitle file of Subtitles::srtFiles. Shared by the export and the CLI's subtitle-only render.
+    static QString overwrittenSource(const Timeline& tl, const QString& path, const QString& subtitlePath = {});
     // Do both paths point to the same existing file? (Windows: case does not matter)
     static bool sameFile(const QString& a, const QString& b);
     // The lossless intermediate of a GIF export with this part id (ExportSettings::partId), in the temp folder
@@ -144,6 +156,10 @@ public:
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
+    // After start(): channels of the file's sound (1, 2, 6, 8)
+    int audioChannels() const { return m_settings.audioChannels; }
+    // Quality "like source": the video bit rate aimed at (kbit/s) of the last start(), 0 = none (unknown: crf)
+    int targetBitrateK() const { return m_targetBitrateK; }
     // After start(): effects the render leaves out because this version does not have them (frei0r/LADSPA plugins of
     // older projects, ids of newer versions); only those of what is written (picture, sound)
     const QVector<Picture::SkippedEffect>& skippedEffects() const { return m_skipped; }
@@ -226,6 +242,7 @@ private:
     // queued (disconnecting does not take back what is queued already): that one is stale and must do nothing.
     quint64 m_threadRun = 0;
 
+    QVector<int> m_keyframes;          // own H.264 encoder: cuts (cutFrames)
     QVector<SmartRender::Span> m_copy; // smart render: what may be copied (empty = encode everything)
     int m_copiedPercent = 0;
     // Smart render failed as a whole: render again encoding everything
@@ -251,6 +268,7 @@ private:
     int m_threads = 0, m_frames = 1;
     bool m_threadsLowMemory = false;
     bool m_shortLookahead = false; // lowMemoryOptions (shortLookahead or lowMemoryLookahead)
+    int m_targetBitrateK = 0;      // quality "like source" (ExportSettings::sourceQuality), 0 = crf
     QString m_usedCodec, m_note;
     QVector<Picture::SkippedEffect> m_skipped;
     QTimer m_timer;

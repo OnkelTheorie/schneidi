@@ -5,6 +5,7 @@
 #include "cli/Live.h"
 
 #include "core/I18n.h"
+#include "engine/MediaProbe.h"
 #include "engine/BarDetect.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
@@ -139,10 +140,37 @@ QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list)
             for (int i = 0; i < count; ++i) all << QString("%1 = %2").arg(i).arg(info.audioStreamName(i));
             fail("BAD_ARGUMENT", QString("no audio stream '%1' in %2 (streams: %3)").arg(s, info.path, all.join(", ")));
         }
+        requirePlayableStream(info, index);
         if (!out.contains(index)) out << index;
     }
     if (out.isEmpty()) fail("BAD_ARGUMENT", "audio_stream is empty");
     return out;
+}
+
+int audioStreamArg(const MediaInfo& info, const QJsonObject& a)
+{
+    if (a.contains("audio_stream")) {
+        const int stream = a["audio_stream"].toInt();
+        requirePlayableStream(info, stream);
+        return stream;
+    }
+    // Not named: the first one that plays (a file whose stream 0 is empty or of a codec this build lacks still has
+    // its sound analysed, as transcribe does); only a stream the caller named is an error when it can't be played
+    for (int i = 0; i < std::max(1, info.audioStreamCount()); ++i)
+        if (info.audioStreamPlayable(i)) return i;
+    fail("NO_AUDIO", "no audio stream of " + info.path + " can be played");
+}
+
+void requirePlayableStream(const MediaInfo& info, int stream)
+{
+    const int count = info.audioStreamCount();
+    if (stream < 0 || stream >= count)
+        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s); stream counts from 0").arg(count));
+    if (!info.audioStreamPlayable(stream))
+        fail("BAD_ARGUMENT", QString("audio stream %1 (%2) of %3 cannot be played: no decoder here for its codec, or it "
+                                     "holds no sound")
+                                 .arg(stream)
+                                 .arg(info.audioStreamName(stream), info.path));
 }
 
 // "x,y,w,h" in pixels of the full picture, or fractions of it when all four are <= 1 ("0.75,0,0.25,0.3")
@@ -299,8 +327,19 @@ QJsonObject probeOne(const QJsonObject& a)
     }
     if (m.info.hasAudio) {
         QJsonArray streams;
-        for (int i = 0; i < m.info.audioStreamCount(); ++i) streams << m.info.audioStreamName(i);
+        QJsonArray dead; // streams schneidi cannot play (no decoder here, no sound): listed for their place, never used
+        for (int i = 0; i < m.info.audioStreamCount(); ++i) {
+            streams << m.info.audioStreamName(i);
+            if (!m.info.audioStreamPlayable(i)) dead << i;
+        }
         o["audio_streams"] = streams;
+        if (!dead.isEmpty()) o["unplayable_audio_streams"] = dead;
+        // Channels and layout per stream (channel routing: op 'route' counts channels from 1)
+        QJsonArray layouts;
+        const QVector<MediaProbe::AudioLayout> found = MediaProbe::audioLayouts(m.info.path);
+        for (int i = 0; i < found.size(); ++i)
+            layouts << QJsonObject{{"stream", i}, {"channels", found[i].channels}, {"layout", found[i].layout}};
+        if (!layouts.isEmpty()) o["audio_channels"] = layouts;
     }
     if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
     if (m.info.hasVideo) {
@@ -333,7 +372,13 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
         if (!Extensions::remove(*i)) fail("FAILED", "could not remove " + i->id + " (in use? stop running exports, speech and transcriptions first)");
         done << QJsonObject{{"removed", i->id}};
     }
-    const QVector<const Extensions::Item*> install = Extensions::withDependencies(items(a["install"].toString()));
+    // x264/x265 built into this FFmpeg (the GitHub downloads since 0.21): the extension would add nothing
+    const bool x264BuiltIn = HardwareEncoders::builtIn("libx264") && HardwareEncoders::builtIn("libx265");
+    QVector<const Extensions::Item*> install;
+    for (const Extensions::Item* i : Extensions::withDependencies(items(a["install"].toString()))) {
+        if (i->id == "x264" && x264BuiltIn && !a["reinstall"].toBool()) done << QJsonObject{{"built_in", i->id}};
+        else install << i;
+    }
     qint64 total = 0, before = 0;
     for (const Extensions::Item* i : install) total += i->size;
     for (const Extensions::Item* i : install) {
@@ -364,6 +409,7 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     for (const Extensions::Item& i : Extensions::catalog()) {
         QJsonObject o{{"id", i.id}, {"name", T(i.name)}, {"description", T(i.description)},
                       {"download_mb", std::round(i.size / 1e5) / 10}, {"installed", Extensions::isInstalled(i)}};
+        if (i.id == "x264" && x264BuiltIn) o["built_in"] = true; // not needed: this package has x264/x265
         list << o;
     }
     QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};

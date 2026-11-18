@@ -9,6 +9,7 @@
 #include "cli/Sandbox.h"
 #include "cli/ServeDetail.h"
 #include "cli/ServeJobs.h"
+#include "core/AppPaths.h"
 #include "core/ProjectFile.h"
 
 #include <QCoreApplication>
@@ -22,6 +23,7 @@
 #include <QNetworkAccessManager>
 #include <QPointer>
 #include <QRandomGenerator>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -651,7 +653,7 @@ namespace {
 
 // ---------- Options ----------
 
-QString tokenFile() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/serve-token"; }
+QString tokenFile() { return AppPaths::writable(QStandardPaths::AppDataLocation) + "/serve-token"; }
 
 Options parse(const QStringList& args)
 {
@@ -714,10 +716,26 @@ Options parse(const QStringList& args)
         if (opt.token.isEmpty()) {
             opt.token = randomToken(32);
             QDir().mkpath(QFileInfo(f.fileName()).absolutePath());
-            if (!f.open(QIODevice::WriteOnly) || f.write(opt.token.toUtf8() + '\n') < 0)
-                fail("WRITE_FAILED", "cannot store the token in " + f.fileName());
-            f.close();
-            f.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+            // A new file, owner-only before the token goes in (as Live.cpp): never readable by others, not even for a
+            // moment, and an old file someone else had opened never gets it
+            const auto store = [&] {
+                QSaveFile out(f.fileName());
+                bool written = out.open(QIODevice::WriteOnly);
+                const bool owner = written && out.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+#ifndef Q_OS_WIN // Windows only has a read-only flag here (the profile folder itself is private)
+                written = written && owner;
+#else
+                Q_UNUSED(owner);
+#endif
+                return written && out.write(opt.token.toUtf8() + '\n') >= 0 && out.commit();
+            };
+            // Windows cannot replace a file another program holds open (a virus scanner, an editor): a few tries
+            bool written = store();
+            for (int i = 0; i < 4 && !written; ++i) {
+                QThread::msleep(100);
+                written = store();
+            }
+            if (!written) fail("WRITE_FAILED", "cannot store the token in " + f.fileName());
         }
         opt.tokenFrom = f.fileName();
         opt.tokenShown = true;
@@ -730,12 +748,14 @@ Options parse(const QStringList& args)
 
 } // namespace
 
-QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringList& valued, const QStringList& flags)
+QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringList& valued, const QStringList& flags,
+                                         const QString& command)
 {
+    const QString see = " (see: schneidi-cli help " + command + ")";
     QHash<QString, QStringList> out;
     for (int i = 0; i < args.size(); ++i) {
         const QString& a = args[i];
-        if (!a.startsWith("--") || a.size() < 3) fail("USAGE", "unexpected argument: " + a + " (see: schneidi-cli help)");
+        if (!a.startsWith("--") || a.size() < 3) fail("USAGE", "unexpected argument: " + a + see);
         QString name = a.mid(2);
         QString value;
         const qsizetype eq = name.indexOf('=');
@@ -747,7 +767,7 @@ QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringL
             out[name] << "true";
             continue;
         }
-        if (!valued.contains(name)) fail("USAGE", "unknown option --" + name + " (see: schneidi-cli help)");
+        if (!valued.contains(name)) fail("USAGE", "unknown option --" + name + see);
         if (eq < 0) {
             if (i + 1 >= args.size()) fail("USAGE", "missing value for --" + name);
             value = args[++i];

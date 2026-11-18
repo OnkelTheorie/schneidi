@@ -27,4 +27,11 @@ bool handsOver(const QStringList& args);
 // handed over: with a second schneidi running, the project would land in that one and this window would be gone.
 QStringList restart(const QString& projectPath);
 
+// --help/-h and --version/-v: printed to stdout before anything else, no window, no display needed (main.cpp; on
+// Windows the GUI program writes into the console it was started from)
+enum class Info { None, Help, Version };
+Info info(const QStringList& args);
+// The help text (program = how it was called, version = the version label)
+QString helpText(const QString& program, const QString& version);
+
 } // namespace LaunchArgs

@@ -1,5 +1,5 @@
-# Build environment for the GPL-free bundle: schneidi's build packages + what packaging/linux/build-ffmpeg-lgpl.sh
-# needs (only BSD/MIT/LGPL libraries). Debian 13 like CI.
+# Build environment for the bundled FFmpeg: schneidi's build packages + what packaging/linux/build-ffmpeg-lgpl.sh
+# needs (BSD/MIT/LGPL libraries; x264/x265 only for GPL_ENCODERS=1, the default). Debian 13 like CI.
 #   docker build -f packaging/linux/Dockerfile.ffmpeg-lgpl -t schneidi-lgpl-build packaging/linux
 #   docker run --rm -v "$PWD:/w" -w /w schneidi-lgpl-build packaging/linux/build-ffmpeg-lgpl.sh
 ARG BASE=debian:trixie
@@ -12,6 +12,7 @@ RUN apt-get update \
         zlib1g-dev libbz2-dev liblzma-dev \
         nasm libopenh264-dev libkvazaar-dev libsvtav1enc-dev libvpx-dev libdav1d-dev \
         libopus-dev libvorbis-dev libmp3lame-dev libwebp-dev libva-dev libdrm-dev libvpl-dev \
+        libx264-dev libx265-dev \
  && rm -rf /var/lib/apt/lists/*
 # Qt plugins build-appimage.sh puts into the AppImage (Wayland platform, SVG icons)
 RUN apt-get update \

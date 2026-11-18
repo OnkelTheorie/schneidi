@@ -3,11 +3,13 @@
 // limiter) and Normalize Audio Levels (measured like the app's dialog)
 #include "cli/CommandsDetail.h"
 
+#include "core/Automation.h"
 #include "core/Dynamics.h"
 #include "core/Equalizer.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/Speech.h"
+#include "core/TaskProgress.h"
 #include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/AudioAnalysis.h"
@@ -16,6 +18,7 @@
 #include "engine/VoiceClean.h"
 
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QSet>
@@ -71,8 +74,112 @@ void opAudioStream(Session& s, const QJsonObject& op)
         const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
         if (!m || stream >= m->audioStreamCount())
             fail("BAD_ARGUMENT", QString("clip %1 has %2 audio stream(s); stream counts from 0").arg(id).arg(m ? m->audioStreamCount() : 0));
+        requirePlayableStream(*m, stream);
     }
-    s.editor.modifyClips(ids, "Audio stream", [stream](Clip& c) { c.audioStream = stream; });
+    s.editor.modifyClips(ids, "Audio stream", [&s, stream](Clip& c) {
+        c.audioStream = stream;
+        if (const MediaInfo* m = s.project.mediaInfo(c.mediaPath)) fitSourceChannels(c, *m);
+    });
+}
+
+// Channel routing: which channels of their stream the clips play (Clip::sourceChannels), e.g. a wireless microphone on
+// channels 3/4 of a camera file. With track: a copy of each clip on that audio track plays those channels (the
+// microphone as its own track under the camera sound), the clips themselves stay.
+void opRoute(Session& s, const QJsonObject& op)
+{
+    if (!op.contains("channels")) fail("BAD_ARGUMENT", "missing 'channels': [3, 4], \"3-4\", 3 or \"all\" (counted from 1)");
+    QVector<int> pick; // 0-based
+    const QJsonValue v = op.value("channels");
+    const auto add = [&pick](double n) {
+        if (n < 1 || n > 64 || n != std::floor(n)) fail("BAD_ARGUMENT", "channels count from 1 (to 64)");
+        pick << int(n) - 1;
+    };
+    if (v.isArray()) {
+        for (const QJsonValue& x : v.toArray()) add(x.toDouble(0));
+    } else if (v.isDouble()) {
+        add(v.toDouble());
+    } else {
+        const QString t = v.toString().trimmed().toLower();
+        if (t != "all") {
+            const QStringList parts = t.split(QRegularExpression("[-,/ ]+"), Qt::SkipEmptyParts);
+            for (const QString& part : parts) {
+                bool ok = false;
+                const double n = part.toDouble(&ok);
+                if (!ok) fail("BAD_ARGUMENT", "channels: [3, 4], \"3-4\", 3 or \"all\" (counted from 1)");
+                add(n);
+            }
+            if (pick.isEmpty()) fail("BAD_ARGUMENT", "channels: [3, 4], \"3-4\", 3 or \"all\" (counted from 1)");
+        }
+    }
+    if (pick.size() > 2)
+        fail("BAD_ARGUMENT", "at most two channels per clip (one = mono in the middle, two = left and right); route "
+                             "more channels as further clips with track");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Audio, "channel routing");
+    for (int id : ids) {
+        const Clip& c = *TimelineOps::findClip(s.project.timeline(), id);
+        if (c.isNested() || c.mediaPath.isEmpty()) fail("BAD_ARGUMENT", QString("clip %1 is not from a file").arg(id));
+        const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+        const int channels = m && c.audioStream < m->audioStreams.size() ? m->audioStreams[c.audioStream].channels : 2;
+        for (int ch : pick)
+            if (ch >= channels)
+                fail("BAD_ARGUMENT", QString("clip %1 plays a stream with %2 channel(s) (`probe` lists them); channel %3 "
+                                             "is not there").arg(id).arg(channels).arg(ch + 1));
+    }
+    const auto label = [&pick] {
+        if (pick.isEmpty()) return QStringLiteral("all channels");
+        QStringList n;
+        for (int ch : pick) n << QString::number(ch + 1);
+        return (pick.size() == 1 ? QStringLiteral("channel ") : QStringLiteral("channels ")) + n.join('+');
+    };
+    if (!op.contains("track")) {
+        s.editor.modifyClips(ids, T("Kanäle"), [pick](Clip& c) { c.sourceChannels = pick; });
+        s.notes << QString("%1 clip(s) play %2").arg(ids.size()).arg(label());
+        return;
+    }
+    // Copies on another audio track
+    const Timeline& tl = s.project.timeline();
+    int track = -1;
+    const bool fresh = op.value("track").toString().trimmed().toLower() == "new";
+    if (fresh) {
+        track = int(tl.audio.size());
+    } else {
+        TrackKind k = TrackKind::Audio;
+        track = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Audio || track >= tl.audio.size())
+            fail("BAD_ARGUMENT", "track must be an audio track (A1 …) or 'new'");
+        if (tl.audio[track].locked) fail("FAILED", trackName({TrackKind::Audio, track}) + " is locked");
+        for (int id : ids) {
+            const Clip& c = *TimelineOps::findClip(tl, id);
+            for (const Clip& o : tl.audio[track].clips)
+                if (o.start < c.end() && c.start < o.end())
+                    fail("FAILED", QString("%1 is not free where clip %2 lies (%3); give another track or 'new'")
+                                       .arg(trackName({TrackKind::Audio, track})).arg(id).arg(tc(c.start, s.format())));
+        }
+    }
+    const QString name = op.value("name").toString().trimmed();
+    QVector<int> made;
+    s.project.edit(T("Kanäle auf eigene Spur"), [&](Timeline& t) {
+        if (fresh) {
+            Track nt;
+            nt.kind = TrackKind::Audio;
+            nt.name = name;
+            t.audio << nt;
+        } else if (!name.isEmpty()) {
+            t.audio[track].name = name;
+        }
+        for (int id : ids) {
+            Clip c = *TimelineOps::findClip(t, id);
+            c.id = s.project.newClipId();
+            c.sourceChannels = pick;
+            QVector<Clip>& clips = t.audio[track].clips;
+            const auto at = std::lower_bound(clips.begin(), clips.end(), c.start,
+                                             [](const Clip& x, int start) { return x.start < start; });
+            clips.insert(at, c);
+            made << c.id;
+        }
+    });
+    s.notes << QString("%1 clip(s) with %2 on %3%4").arg(made.size()).arg(label(), trackName({TrackKind::Audio, track}),
+                                                                         fresh ? QStringLiteral(" (a new track)") : QString());
 }
 
 using Range = std::pair<int, int>; // timeline frames [first, second)
@@ -80,7 +187,8 @@ using Range = std::pair<int, int>; // timeline frames [first, second)
 // The 400 ms loudness blocks of the mix in each of `ranges` (sorted, not overlapping), loudness only (the steps
 // below need no true peak, which costs as much again). One pass over [first start, last end); what lies between the
 // ranges is mixed too, so callers give ranges close together (clips one after the other) or call it per range.
-std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timeline& tl, const std::vector<Range>& ranges)
+std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timeline& tl, const std::vector<Range>& ranges,
+                                             const std::function<bool(double)>& progress = {})
 {
     std::vector<LoudnessMeter> meters(ranges.size());
     if (ranges.empty()) return {};
@@ -92,7 +200,8 @@ std::vector<std::vector<double>> rangeBlocks(const ProjectFormat& f, const Timel
                                      if (r < ranges.size() && frame >= ranges[r].first && pcm)
                                          meters[r].addPlanar(pcm, samples, channels, rate);
                                      ++frame;
-                                 });
+                                 },
+                                 progress, 0); // loudness over every channel of a 5.1/7.1 mix
     std::vector<std::vector<double>> out;
     out.reserve(meters.size());
     for (const LoudnessMeter& m : meters) out.push_back(m.blocks());
@@ -122,11 +231,6 @@ void mixToLoudness(Session& s, int track, double target)
     };
     const int end = TimelineOps::endFrame(s.project.renderTimeline());
     if (end <= 0) s.failEmpty();
-    const auto measure = [&] { // the whole, with true peak (what the answer shows)
-        const auto l = meter.measure(timeline(), 0, end);
-        if (!l || l->integrated <= LoudnessMeter::kSilence) fail("FAILED", "no sound to measure");
-        return *l;
-    };
     // Where the steps measure: the whole, or on a long edit 8 windows of 10 s spread over it
     std::vector<Range> windows;
     const int window = int(std::lround(10 * f.rate.fps()));
@@ -135,11 +239,40 @@ void mixToLoudness(Session& s, int track, double target)
             const int mid = int((i + 0.5) * end / 8);
             windows.push_back({mid - window / 2, mid + window / 2});
         }
+    // Progress for a caller that follows it (TaskProgress: the Studio page's dialog, ~50 s on a 30 min edit) and its
+    // cancel. In units of one measurement of the whole; how many there are is known only at the end: about the first,
+    // the steps (on the windows a fraction of one each) and the check of the whole
+    const double windowUnit = windows.empty() ? 1.0 : double(windows.size()) * window / end;
+    const double expected = windows.empty() ? 3.0 : 2.0 + 4 * windowUnit;
+    double done = 0, shown = 0;
+    const auto progressOf = [&](double unit) -> std::function<bool(double)> {
+        if (!TaskProgress::active()) return {};
+        return [&, unit](double fraction) {
+            shown = std::clamp((done + fraction * unit) / std::max(expected, done + unit), shown, 0.99);
+            return TaskProgress::report(shown);
+        };
+    };
+    const auto stopIfCanceled = [](bool canceled) {
+        if (canceled) fail("CANCELED", "canceled");
+    };
+    const auto measure = [&] { // the whole, with true peak (what the answer shows)
+        stopIfCanceled(!TaskProgress::report(shown));
+        const auto l = meter.measure(timeline(), 0, end, progressOf(1.0));
+        stopIfCanceled(!TaskProgress::report(shown));
+        done += 1.0;
+        if (!l || l->integrated <= LoudnessMeter::kSilence) fail("FAILED", "no sound to measure");
+        return *l;
+    };
     const auto sampled = [&] {
         const Timeline tl = timeline();
         std::vector<double> blocks;
-        for (const Range& w : windows)
-            for (const std::vector<double>& b : rangeBlocks(f, tl, {w})) blocks.insert(blocks.end(), b.begin(), b.end());
+        const double each = windowUnit / std::max<size_t>(1, windows.size());
+        for (const Range& w : windows) {
+            for (const std::vector<double>& b : rangeBlocks(f, tl, {w}, progressOf(each)))
+                blocks.insert(blocks.end(), b.begin(), b.end());
+            stopIfCanceled(!TaskProgress::report(shown));
+            done += each;
+        }
         return LoudnessMeter::integratedOf(blocks);
     };
     const QString what = track >= 0 ? QString("A%1").arg(track + 1) : QString("mix");
@@ -204,6 +337,8 @@ void mixToLoudness(Session& s, int track, double target)
         if (want >= kMaxVolumeDb - 0.05 && reached < target - kTolerance)
             note += QString(" - not reached: the fader is at its +12 dB end, %1 LU short").arg(target - reached, 0, 'f', 1);
         s.notes << note;
+        s.notes << QJsonObject{{"loudness", QJsonObject{{"of", what}, {"target_lufs", target}, {"before_lufs", l.integrated},
+                                                        {"after_lufs", reached}, {"true_peak_db", peak}, {"limiter", false}}}};
         return;
     }
     // Steps on what `probe` measures toward `goal`; false = at an end or the limiter takes (almost) everything
@@ -260,6 +395,10 @@ void mixToLoudness(Session& s, int track, double target)
         note += QString(" - %1 LU over the target").arg(l.integrated - target, 0, 'f', 1);
     }
     s.notes << note;
+    // The same in numbers (the Studio page shows before -> after)
+    s.notes << QJsonObject{{"loudness", QJsonObject{{"of", what}, {"target_lufs", target}, {"before_lufs", before},
+                                                    {"after_lufs", l.integrated}, {"true_peak_db", l.truePeakDb},
+                                                    {"limiter", true}}}};
 }
 
 // compressor:{on?, threshold_db?, ratio?, attack_ms?, release_ms?, knee_db?, makeup_db?} onto d; giving values
@@ -293,7 +432,11 @@ TrackDynamics compressorFrom(const QJsonValue& v, TrackDynamics d)
 // the EQ on (like dragging a point in the app)
 TrackEq eqFrom(const QJsonValue& v, TrackEq eq)
 {
-    if (!v.isObject()) fail("BAD_ARGUMENT", "'eq' must be an object like {on:true, bands:[{band:3, freq:2500, gain_db:3}]}");
+    if (v.isString()) { // a preset by name (the Studio page's "Stimme")
+        if (v.toString().trimmed().toLower() == "voice") return Equalizer::voicePreset();
+        fail("BAD_ARGUMENT", "unknown eq preset '" + v.toString() + "' (there is 'voice')");
+    }
+    if (!v.isObject()) fail("BAD_ARGUMENT", "'eq' must be an object like {on:true, bands:[{band:3, freq:2500, gain_db:3}]} or 'voice'");
     const QJsonObject o = v.toObject();
     bool changed = false;
     for (const QJsonValue& bv : o.value("bands").toArray()) {
@@ -324,7 +467,8 @@ void opMixer(Session& s, const QJsonObject& op)
     const double targetLufs = toLoudness ? numberOf(op, "target_lufs", -70, 0) : 0;
     if (toLoudness && op.contains("volume_db")) fail("BAD_ARGUMENT", "give volume_db or target_lufs, not both");
     if (track == "master") {
-        if (op.contains("pan") || op.contains("mute") || op.contains("solo") || op.contains("compressor") || op.contains("eq"))
+        if (op.contains("pan") || op.contains("mute") || op.contains("solo") || op.contains("compressor") || op.contains("eq")
+            || op.contains("depth") || op.contains("center") || op.contains("lfe_db"))
             fail("BAD_ARGUMENT", "the master has volume_db, limiter and limiter_db (eq and compressor are per track)");
         double db = 0, ceiling = 0;
         if (op.contains("volume_db")) db = numberOf(op, "volume_db", kMinVolumeDb, kMaxVolumeDb);
@@ -342,6 +486,10 @@ void opMixer(Session& s, const QJsonObject& op)
         fail("BAD_ARGUMENT", "track must be an audio track like A1 (or 'master')");
     if (op.contains("limiter") || op.contains("limiter_db")) fail("BAD_ARGUMENT", "the limiter is on the master only");
     double db = 0, pan = 0;
+    const Track& before = s.project.timeline().audio[index];
+    const double depth = op.contains("depth") ? numberOf(op, "depth", 0, 100) : before.panDepth;
+    const double center = op.contains("center") ? numberOf(op, "center", 0, 100) : before.panCenter;
+    const double lfe = op.contains("lfe_db") ? numberOf(op, "lfe_db", kMinVolumeDb, kMaxVolumeDb) : before.lfeDb;
     if (op.contains("volume_db")) db = numberOf(op, "volume_db", kMinVolumeDb, kMaxVolumeDb);
     if (op.contains("pan")) pan = numberOf(op, "pan", -100, 100);
     const Track& now = s.project.timeline().audio[index];
@@ -354,6 +502,11 @@ void opMixer(Session& s, const QJsonObject& op)
     if (op.contains("solo")) s.editor.setTrackSolo(index, op.value("solo").toBool());
     s.editor.setTrackDynamics(index, dynamics);
     s.editor.setTrackEq(index, eq);
+    if (op.contains("depth") || op.contains("center") || op.contains("lfe_db")) {
+        s.editor.setTrackSurround(index, depth, center, lfe);
+        if (s.project.format().audioChannels == 2)
+            s.notes << "depth/center/lfe_db act in a 5.1/7.1 mix only (the project is stereo: {op:'format', channels:'5.1'})";
+    }
     if (toLoudness) mixToLoudness(s, index, targetLufs);
 }
 
@@ -564,6 +717,68 @@ AfterLimiter normalizeAfterLimiter(Session& s, const Timeline& before, const QVe
     return out;
 }
 
+// Track volume / pan automation (Track::volumeAuto / panAuto): points replace the curve (or the part [from, to]),
+// clear removes it. Volume points carry db, pan points pan (both on top of the fader / knob).
+void opTrackAutomation(Session& s, const QJsonObject& op, AutoTarget target)
+{
+    const bool pan = target == AutoTarget::Pan;
+    const char* key = pan ? "pan" : "db";
+    const QString what = pan ? QStringLiteral("pan automation") : QStringLiteral("volume automation");
+    TrackKind k = TrackKind::Video;
+    const int index = parseTrack(op.value("track"), &k);
+    if (k != TrackKind::Audio || index < 0 || index >= s.project.timeline().audio.size())
+        fail("BAD_ARGUMENT", "track must be an audio track like A1");
+    const Track& t = s.project.timeline().audio[index];
+    if (t.locked) fail("LOCKED", QString("track %1 is locked").arg(trackName({k, index})));
+    const bool clear = op.value("clear").toBool();
+    if (clear == op.contains("points")) fail("BAD_ARGUMENT", "give points (a curve) or clear:true");
+    const ProjectFormat& fmt = s.project.format();
+    const bool part = op.contains("from") || op.contains("to");
+    if (clear) {
+        if (part) fail("BAD_ARGUMENT", "clear removes the whole curve (for a part give points with from/to)");
+        if (!s.editor.setTrackAutomation(index, {}, T("Spur-Automation entfernen"), {}, target))
+            s.notes << QString("%1 had no %2").arg(trackName({k, index}), what);
+        return;
+    }
+    if (!op.value("points").isArray())
+        fail("BAD_ARGUMENT", pan ? "points must be a list like [{at:0, pan:0}, {at:'2s', pan:-50}]"
+                                 : "points must be a list like [{at:0, db:0}, {at:'2s', db:-12}]");
+    AutoCurve pts;
+    const double lo = Automation::minValue(target), hi = Automation::maxValue(target);
+    for (const QJsonValue& v : op.value("points").toArray()) {
+        QJsonValue at, val;
+        if (v.isArray() && v.toArray().size() == 2) {
+            at = v.toArray()[0];
+            val = v.toArray()[1];
+        } else if (v.isObject()) {
+            at = v.toObject().value("at");
+            val = v.toObject().value(key);
+        }
+        if (at.isUndefined() || !val.isDouble())
+            fail("BAD_ARGUMENT", QString("every point needs at (a time) and %1 (a number)").arg(key));
+        const double d = val.toDouble();
+        if (d < lo || d > hi)
+            fail("BAD_ARGUMENT", QString("%1 %2 out of range %3..%4 (on top of the %5)")
+                                     .arg(key).arg(d).arg(lo).arg(hi).arg(pan ? "pan knob" : "fader"));
+        pts << AutoPoint{parseTime(at, fmt, "points.at"), d};
+    }
+    if (pts.isEmpty() && !part) fail("BAD_ARGUMENT", "points is empty (to remove the curve give clear:true)");
+    AutoCurve next = Automation::normalized(pts, target);
+    if (part) {
+        const int from = op.contains("from") ? parseTime(op.value("from"), fmt, "from") : (next.isEmpty() ? 0 : next.first().frame);
+        const int to = op.contains("to") ? parseTime(op.value("to"), fmt, "to") : (next.isEmpty() ? from : next.last().frame);
+        if (to < from) fail("BAD_ARGUMENT", "to lies before from");
+        AutoCurve whole = t.automation(target);
+        Automation::replaceRange(whole, from, to, next, target);
+        next = whole;
+    }
+    if (!s.editor.setTrackAutomation(index, next, {}, {}, target))
+        s.notes << QString("%1: the %2 is already like that").arg(trackName({k, index}), what);
+}
+
+void opTrackVolume(Session& s, const QJsonObject& op) { opTrackAutomation(s, op, AutoTarget::Volume); }
+void opTrackPan(Session& s, const QJsonObject& op) { opTrackAutomation(s, op, AutoTarget::Pan); }
+
 void opNormalize(Session& s, const QJsonObject& op)
 {
     const QString mode = op.value("mode").toString("peak");
@@ -708,9 +923,38 @@ void opDuck(Session& s, const QJsonObject& op)
     } else {
         ids = clipsOn(s, op, TrackKind::Audio, "ducking");
     }
-    if (!op.contains("under")) fail("BAD_ARGUMENT", "missing 'under' (the tracks whose sound lowers the music, e.g. \"A1\")");
+    if (op.value("remove").toBool()) { // ducking off: the volume keyframes go, the clip volume stays
+        const int n = s.editor.unduck(ids);
+        s.notes << QString("removed the volume keyframes (ducking) of %1 of %2 clip(s)").arg(n).arg(ids.size());
+        return;
+    }
+    // The tracks whose sound lowers it: by (a list ["A1","A3"] or "A1,A3"; 'under' is the same), default all
+    // other audible tracks with clips (solo wins), as the Studio page does
+    if (op.contains("by") && op.contains("under")) fail("BAD_ARGUMENT", "give 'by' or 'under', not both");
+    QJsonValue by = op.contains("by") ? op.value("by") : op.value("under");
+    if (by.isArray()) {
+        QStringList names;
+        for (const QJsonValue& v : by.toArray()) names << (v.isDouble() ? QString("A%1").arg(v.toInt()) : v.toString());
+        by = names.join(',');
+    }
     const Timeline tl = s.project.renderTimeline();
-    const QVector<int> voice = audioTracksOf(s.project, tl, op.value("under"));
+    QVector<int> voice;
+    if (!by.isUndefined() && !by.isNull()) {
+        voice = audioTracksOf(s.project, tl, by);
+        if (voice.isEmpty()) fail("BAD_ARGUMENT", "'by' names no track");
+    } else {
+        const bool solo = std::any_of(cur.audio.begin(), cur.audio.end(), [](const Track& t) { return t.solo; });
+        QStringList names;
+        for (int i = 0; i < cur.audio.size(); ++i) {
+            const Track& t = cur.audio[i];
+            const bool music = std::any_of(t.clips.begin(), t.clips.end(), [&](const Clip& c) { return ids.contains(c.id); });
+            if (music || t.clips.isEmpty() || (solo ? !t.solo : t.muted)) continue;
+            voice << i;
+            names << QString("A%1").arg(i + 1);
+        }
+        if (voice.isEmpty()) fail("BAD_ARGUMENT", "no other audible track with clips to duck under; give 'by'");
+        by = names.join(',');
+    }
     for (int id : ids)
         for (const int v : voice)
             for (const Clip& c : cur.audio.value(v).clips)
@@ -741,7 +985,7 @@ void opDuck(Session& s, const QJsonObject& op)
                        .arg(ids.size())
                        .arg(params.amountDb, 0, 'f', 1)
                        .arg(ranges->size())
-                       .arg(op.value("under").toVariant().toString())
+                       .arg(by.toString())
                        .arg(covered / fps, 0, 'f', 1)
                        .arg(length / fps, 0, 'f', 1)
                        .arg(params.thresholdDb, 0, 'f', 0);
@@ -783,11 +1027,14 @@ void opCleanVoice(Session& s, const QJsonObject& op)
             if (!op.value(key).isBool()) fail("BAD_ARGUMENT", QString("'%1' must be true or false").arg(key));
             values[key] = op.value(key).toBool();
         }
-    const QVector<int> done = s.editor.cleanVoice(ids, values);
+    if (op.contains("eq") && !op.value("eq").isBool()) fail("BAD_ARGUMENT", "'eq' must be true or false");
+    const bool voiceEq = op.value("eq").toBool();
+    const QVector<int> done = s.editor.cleanVoice(ids, values, voiceEq);
     s.notes << QString("voice cleaning on %1 audio clip(s); the sound is %2 ms late inside the effect, compensated "
                        "(stays in sync)")
                    .arg(done.size())
                    .arg(std::lround(VoiceClean::latencyFor(48000) * 1000.0 / 48000));
+    if (voiceEq && !done.isEmpty()) s.notes << QString("EQ preset 'voice' on the clips' audio track(s)");
 }
 
 // ---------- speak ----------
@@ -943,8 +1190,19 @@ void addAudioOps(QVector<OpDef>& ops)
                  opVolume, kClipKeys}
         << OpDef{"audio_stream", "{op:'audio_stream', clips, stream}",
                  "which audio stream of the file the clips play (0 = first; `probe` lists them)", {}, opAudioStream, kClipKeys}
-        << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, mute?, solo?, limiter?, "
-                          "limiter_db?, compressor?, eq?}",
+        << OpDef{"route", "{op:'route', clips, channels, track?, name?}",
+                 "channel routing: which channels of their audio stream the clips play (a wireless microphone on "
+                 "channels 3/4 of a camera file); with track a copy on that audio track plays them",
+                 "channels counted from 1 as `probe` lists them (audio_streams[].channels/layout): [3, 4] or \"3-4\" "
+                 "= left and right, 3 = one channel in the middle (mono), \"all\" = every channel again (the "
+                 "default). Without track the clips themselves change. track:'A3' or 'new' = a copy of each clip (same "
+                 "place, linked with its video) on that audio track playing those channels, the clips stay as they "
+                 "are - e.g. {op:'route', clips:[5], channels:[1,2]} then {op:'route', clips:[5], channels:[3,4], "
+                 "track:'new', name:'Funk'}. The target track must be free there. name = label of the track. Older "
+                 "schneidi versions cannot open a project with routed clips (format 8).",
+                 opRoute, kClipKeys}
+        << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, depth?, center?, lfe_db?, "
+                          "mute?, solo?, limiter?, limiter_db?, compressor?, eq?}",
                  "track faders like the Mixer; the master has volume_db, limiter (on/off) and limiter_db (ceiling, "
                  "default -1). target_lufs measures the mix (master) or the track alone and sets the fader so it "
                  "reaches that loudness (e.g. -14 for streaming; turn the limiter on first). Tracks also have a "
@@ -953,12 +1211,45 @@ void addAudioOps(QVector<OpDef>& ops)
                  "(default 10), release_ms? (default 150), knee_db? (default 6), makeup_db? (default 0)} - tames peaks "
                  "(game sound, shouting); stereo-linked. eq:{on?, bands?:[{band, on?, freq?, gain_db?, q?}]} - 6 bands "
                  "like Fairlight: 1 high pass (off by default), 2 low shelf, 3 and 4 bell, 5 high shelf, 6 low pass "
-                 "(off by default); freq 20..20000 Hz, gain_db -24..24 (not for 1 and 6), q 0.1..10. Giving values "
+                 "(off by default); freq 20..20000 Hz, gain_db -24..24 (not for 1 and 6), q 0.1..10; eq:'voice' = the preset "
+                 "for speech (as the Studio page's \"Stimme säubern\"). Giving values "
                  "switches the compressor / the band and the EQ on unless 'on' is given. `info` shows both on the track. "
                  "target_lufs with the limiter on: measured after the limiter and stepped until within 0.2 LU; the "
                  "master beyond its +12 dB raises the audible tracks' faders by the same amount (the limiter holds "
-                 "the peaks); the notes say what was reached and, when it is not reachable, how far it got.",
+                 "the peaks); the notes say what was reached and, when it is not reachable, how far it got (and in numbers: "
+                 "{loudness:{of, target_lufs, before_lufs, after_lufs, true_peak_db, limiter}}). "
+                 "Surround panner (project in 5.1/7.1, {op:'format', channels}): pan = left/right, depth 0..100 = "
+                 "front to surround (7.1: 50 = side, 100 = back), center 0..100 = share of the front pair in the "
+                 "centre speaker, lfe_db = send to the LFE (-60 = off, low-passed at 120 Hz). A 5.1/7.1 file's centre, "
+                 "LFE and surrounds pass through; the panner places its front pair and mono/stereo clips.",
                  opMixer}
+        << OpDef{"track_volume", "{op:'track_volume', track:'A1', points?:[{at, db}], from?, to?, clear?}",
+                 "volume automation of an audio track: a curve over the timeline's time on top of the track fader "
+                 "(music down under a voice-over without touching the clips)",
+                 "points = the curve: at = a time (frames, \"4.5s\", timecode), db = dB on top of the track fader "
+                 "(0 = the fader's level, -12 = 12 dB quieter, -72 = silent; what plays is fader + curve, clamped "
+                 "to -inf..+12). Linear between points; before the first and after the last their value holds. "
+                 "Replaces the whole curve - with from/to only that part: the curve outside stays (a point with the "
+                 "old value right before from and after to holds it), e.g. {op:'track_volume', track:'A2', from:'10s', "
+                 "to:'20s', points:[{at:'10s', db:-12}, {at:'20s', db:-12}]} = A2 12 dB down from 10 to 20 s. "
+                 "clear:true removes the curve (the fader alone again). The curve belongs to the timeline, not to "
+                 "clips: moving a clip leaves it; ripple edits (ripple delete, insert, ripple trim) move it with the "
+                 "time. The track fader ({op:'mixer', volume_db}) trims the whole curve. `info` lists it on the "
+                 "track (volume_automation: [{at, db}]). Clip volume keyframes (op 'volume', 'duck') come on top. "
+                 "Older schneidi versions cannot open a project with track automation (format 8). Pan: op 'track_pan'.",
+                 opTrackVolume}
+        << OpDef{"track_pan", "{op:'track_pan', track:'A1', points?:[{at, pan}], from?, to?, clear?}",
+                 "pan automation of an audio track: a curve over the timeline's time on top of the track's pan knob "
+                 "(a sound wandering from left to right)",
+                 "Works like track_volume: points = the curve, at = a time, pan = on top of the pan knob ({op:'mixer', "
+                 "pan}; -100 = left, 0 = the knob, +100 = right; what plays is knob + curve, clamped to -100..+100, "
+                 "range -200..+200), [[at, pan]] works too. Linear between points, the first/last value holds; from/to "
+                 "replace only that part, clear:true removes the curve (the knob alone again), e.g. {op:'track_pan', "
+                 "track:'A1', points:[{at:0, pan:-100}, {at:'4s', pan:100}]} = A1 from left to right in 4 s. Ripple "
+                 "edits move it like the volume curve; the pan knob trims the whole curve. In 5.1/7.1 it moves the "
+                 "surround panner's left/right (depth, center, lfe stay). `info` lists it on the track "
+                 "(pan_automation: [{at, pan}]). Format 8 like track_volume.",
+                 opTrackPan}
         << OpDef{"normalize", "{op:'normalize', clips, mode?:'peak'|'lufs', target?, relative?, allow_track_gain?}",
                  "Normalize Audio Levels: sets only the given clips' volume",
                  "Changes only the clips given (with their linked partners unless linked:false): one clip id = that "
@@ -973,15 +1264,17 @@ void addAudioOps(QVector<OpDef>& ops)
                  "limiter; relative: all together) and corrected toward the target (never the master); the notes "
                  "say what was reached and why when not. Measures the files (takes a while).",
                  opNormalize, kClipKeys}
-        << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?}",
+        << OpDef{"duck", "{op:'duck', clips|track, by?, under?, amount_db?, threshold_db?, attack?, release?, hold?, remove?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
-                 "clips or track = the music; under = the tracks that duck it (\"A1\", \"A1,A3\" or stream/track "
-                 "names like \"Mikrofon\"). amount_db: how far down (default -12), threshold_db: what counts as "
+                 "clips or track = the music; by = the tracks that duck it ([\"A1\",\"A3\"], \"A1,A3\" or stream/"
+                 "track names like \"Mikrofon\"; 'under' is the same), default all other audible tracks with clips "
+                 "(solo wins). amount_db: how far down (default -12), threshold_db: what counts as "
                  "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
                  "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
-                 "keyframes; run it again after editing.",
+                 "keyframes; run it again after editing. remove:true takes the ducking off again (the clips' volume "
+                 "keyframes go, their volume stays; no 'by' needed).",
                  opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes
-        << OpDef{"clean_voice", "{op:'clean_voice', clips|track, amount?, gate?, clicks?, shape?, room?, remove?}",
+        << OpDef{"clean_voice", "{op:'clean_voice', clips|track, amount?, gate?, clicks?, shape?, room?, eq?, remove?}",
                  "\"Stimme säubern\": clean speech in one call (voice-overs, TTS, voice chat in game clips) - noise "
                  "and background sounds out (a soft room sound stays), pauses lowered, voice evened out",
                  "Adds the audio effect voiceclean to the clips (a video clip stands for its linked audio) or to every "
@@ -993,7 +1286,9 @@ void addAudioOps(QVector<OpDef>& ops)
                  "the voice gets more even (quiet words up, loud ones down; not louder overall); room -80..-40 (default "
                  "-60) = dBFS of the room sound kept under the voice and in the pauses (the original's noise lowered "
                  "to this, but always by at least 12 dB), so pauses do not go dead silent. For speech only: "
-                 "ambience, nature sound or music without a voice is removed as noise. remove:true takes it off. "
+                 "ambience, nature sound or music without a voice is removed as noise. eq:true also puts the EQ preset 'voice' (high "
+                 "pass 80 Hz, -2.5 dB at 300 Hz, +1.5 dB presence and air) on the clips' audio tracks, in the same step "
+                 "(the Studio page's \"Stimme säubern\"). remove:true takes it off. "
                  "Works at any sample rate, "
                  "offline and the same in preview and export; the effect's ~57 ms delay is compensated (lips stay in "
                  "sync). The same effect is in `effects` (id voiceclean) for the generic effect op.",

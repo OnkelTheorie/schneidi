@@ -13,9 +13,17 @@
 #include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QOffscreenSurface>
+#include <QOpenGLContext>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <rhi/qrhi.h>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX // windows.h (through d3d11.h) would define min/max macros
+#endif
+#include <d3d11.h>
+#endif
 #endif
 
 extern "C" {
@@ -82,8 +90,9 @@ struct Uniforms {
     float yuv[16] = {};
     float lut[4] = {};
     float crop[4] = {0, 0, -1, -1};
+    float persp[4] = {0, 0, 1, 0}; // layer.frag: destination -> source w (g, h, i); affine = 0, 0, 1
 };
-static_assert(sizeof(Uniforms) == 192);
+static_assert(sizeof(Uniforms) == 208);
 
 class Texture {
 public:
@@ -135,6 +144,9 @@ QSurfaceFormat glFormat()
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
     format.setVersion(3, 3);
     format.setProfile(QSurfaceFormat::CoreProfile);
+    // A GPU reset (driver crash, hang recovery) is then reported (QRhi::isDeviceLost) instead of every later frame
+    // failing silently
+    format.setOption(QSurfaceFormat::ResetNotification);
     return format;
 }
 
@@ -185,14 +197,19 @@ struct Context::Impl {
     // Compositing (RGBA16F targets: pipelines of their own, the render pass differs)
     std::unique_ptr<QRhiGraphicsPipeline> layer16Ps, comp16Ps[4];
     QShader compFrag[4];
-    // Run-time shaders (customPass) by key, the oldest first
+    // Run-time shaders (customPass) by key, least recently used first
     std::vector<std::pair<QByteArray, std::unique_ptr<QRhiGraphicsPipeline>>> customPs;
+    // Pipelines dropped from customPs while the frame may still use them: released after its end (finish())
+    std::vector<std::unique_ptr<QRhiGraphicsPipeline>> retiredPs;
     bool compOk = false;
 
     // Per-pass resources, reused frame after frame (slot i = i-th pass of the frame)
     std::vector<std::unique_ptr<QRhiBuffer>> ubos;
     std::vector<std::unique_ptr<QRhiShaderResourceBindings>> srbs;
     int passes = 0, lastPasses = 0;
+    int lutsMade = 0, pipelinesMade = 0;
+    bool simulatedLoss = false; // simulateDeviceLoss()
+    bool simulatedEmpty = false; // simulateEmptyReadbacks()
 
     // Texture pool: shared state so textures given out can find it (or know it is gone)
     struct Pool {
@@ -205,13 +222,24 @@ struct Context::Impl {
     static constexpr uint64_t kUnusedFrames = 240, kSweepEvery = 120;
     std::shared_ptr<Pool> pool = std::make_shared<Pool>();
 
+    // 3D LUTs: a LUT dropped by its owner (a cache evicting it, the last draw of a keyframed grade) may still be read
+    // by a pass of the frame being recorded (up to three jobs share one frame), so it is never released at once: it
+    // waits in `retired` for the frame's end and is then kept for the next gradeLut of its size (keyframed grades
+    // bake a LUT per frame: no new 52^3 texture each time)
+    struct LutPool {
+        std::mutex lock;
+        std::vector<std::unique_ptr<Lut3d>> retired, free;
+    };
+    static constexpr size_t kFreeLuts = 8;
+    std::shared_ptr<LutPool> luts = std::make_shared<LutPool>();
+
     // Pictures referenced by uploads until finish() (the GL backend reads them when the frame is submitted)
     std::vector<AVFrame*> heldFrames;
     std::vector<std::shared_ptr<const void>> heldData;
 
     struct Readback {
         std::unique_ptr<QRhiReadbackResult> result;
-        std::function<void(const QByteArray&)> deliver;
+        std::function<bool(const QByteArray&)> deliver;
     };
     std::vector<Readback> readbacks;
 
@@ -223,6 +251,8 @@ struct Context::Impl {
         userData.reset();
         compData.reset();
         pool.reset(); // textures still given out leak their GPU objects instead of touching a dead QRhi
+        luts.reset(); // as the textures (LUTs still given out leak theirs)
+        retiredPs.clear();
     }
 
     QRhiResourceUpdateBatch* batch()
@@ -424,7 +454,7 @@ struct Context::Impl {
         cb->endPass();
     }
 
-    void readback(Texture& t, std::function<void(const QByteArray&)> deliver)
+    void readback(Texture& t, std::function<bool(const QByteArray&)> deliver)
     {
         flushClear(t);
         Readback rb;
@@ -502,6 +532,8 @@ std::unique_ptr<Context> Context::create(QOffscreenSurface* surface, QString* wh
         return {};
     }
     c->d->info.comp = c->d->compOk;
+    const int maxSize = c->d->rhi->resourceLimit(QRhi::TextureSizeMax);
+    c->d->info.maxTextureSize = maxSize > 0 ? maxSize : 16384; // (unknown: what every backend takes)
     return c;
 }
 
@@ -513,24 +545,48 @@ std::shared_ptr<void>& Context::compData() { return d->compData; }
 bool Context::begin()
 {
     if (d->recording) return true;
+    if (d->simulatedLoss) return false;
     if (d->rhi->beginOffscreenFrame(&d->cb) != QRhi::FrameOpSuccess) return false;
     d->recording = true;
     d->passes = 0;
     return true;
 }
 
-void Context::finish()
+bool Context::finish()
 {
-    if (!d->recording) return;
+    if (!d->recording) return true;
     if (d->pending) {
         d->cb->resourceUpdate(d->pending);
         d->pending = nullptr;
     }
-    d->rhi->endOffscreenFrame(); // waits for the card: readbacks are complete
+    QRhi::FrameOpResult r = d->rhi->endOffscreenFrame(); // waits for the card: readbacks are complete
+    if (d->simulatedLoss) r = QRhi::FrameOpDeviceLost;
+    if (std::exchange(d->simulatedEmpty, false))
+        for (auto& rb : d->readbacks) rb.result->data.clear();
     d->recording = false;
     d->lastPasses = d->passes;
-    for (auto& rb : d->readbacks) rb.deliver(rb.result->data);
+    // A failed frame (device lost, driver reset) filled no readback: nothing is delivered, the caller's buffers keep
+    // what they had and the jobs count as not run (Service), so nobody takes them for the card's picture
+    // A readback that came back short counts the same: Qt's D3D11 backend reports success after a device removal
+    // (the staging Map fails with a warning only, the data stays empty)
+    bool delivered = true;
+    if (r == QRhi::FrameOpSuccess)
+        for (auto& rb : d->readbacks) delivered = rb.deliver(rb.result->data) && delivered;
+    if (r != QRhi::FrameOpSuccess || !delivered)
+        qWarning("GPU picture engine: the card failed a frame (%s)",
+                 r == QRhi::FrameOpDeviceLost ? "device lost" : r == QRhi::FrameOpSuccess ? "readback empty" : "error");
     d->readbacks.clear();
+    d->retiredPs.clear(); // the frame is done with them
+    {
+        std::vector<std::unique_ptr<Lut3d>> drop; // released outside the lock
+        std::lock_guard<std::mutex> g(d->luts->lock);
+        for (auto& l : d->luts->retired) d->luts->free.push_back(std::move(l));
+        d->luts->retired.clear();
+        while (d->luts->free.size() > Impl::kFreeLuts) {
+            drop.push_back(std::move(d->luts->free.front()));
+            d->luts->free.erase(d->luts->free.begin());
+        }
+    }
     for (AVFrame* f : d->heldFrames) av_frame_free(&f);
     d->heldFrames.clear();
     d->heldData.clear();
@@ -547,11 +603,27 @@ void Context::finish()
                     ++it;
                 }
     }
+    return r == QRhi::FrameOpSuccess && delivered;
+}
+
+void Context::simulateDeviceLoss() { d->simulatedLoss = true; }
+void Context::simulateEmptyReadbacks() { d->simulatedEmpty = true; }
+
+bool Context::lost() const
+{
+    if (d->simulatedLoss || d->rhi->isDeviceLost()) return true;
+#ifdef Q_OS_WIN
+    // Qt's D3D11 backend notices a removed device only on a swapchain's Present - offscreen frames never do: ask
+    if (d->rhi->backend() == QRhi::D3D11)
+        if (const auto* h = static_cast<const QRhiD3D11NativeHandles*>(d->rhi->nativeHandles()); h && h->dev)
+            return static_cast<ID3D11Device*>(h->dev)->GetDeviceRemovedReason() != S_OK;
+#endif
+    return false;
 }
 
 TexturePtr Context::target(QSize size, const float clear[4])
 {
-    if (size.isEmpty()) return {};
+    if (size.isEmpty() || std::max(size.width(), size.height()) > d->info.maxTextureSize) return {};
     TexturePtr t = d->take({0, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size); });
     if (!t) return {};
     t->pendingClear = true;
@@ -560,25 +632,34 @@ TexturePtr Context::target(QSize size, const float clear[4])
     return t;
 }
 
-TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied)
+TexturePtr Context::uploadRgba(const uint8_t* rgba, int w, int h, bool premultiplied, bool mips)
 {
-    if (!rgba || w <= 0 || h <= 0) return {};
-    TexturePtr t = d->take({1, w, h, 0, 0}, [&] {
+    if (!rgba || w <= 0 || h <= 0 || std::max(w, h) > d->info.maxTextureSize) return {};
+    const int levels = mips ? d->rhi->mipLevelsForSize(QSize(w, h)) : 1;
+    TexturePtr t = d->take({1, w, h, 0, levels}, [&] {
         auto t = std::make_unique<Texture>();
         t->size = QSize(w, h);
-        t->tex[0].reset(d->rhi->newTexture(QRhiTexture::RGBA8, t->size));
+        QRhiTexture::Flags flags;
+        if (mips) flags |= QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips;
+        t->tex[0].reset(d->rhi->newTexture(QRhiTexture::RGBA8, t->size, 1, flags));
         return t->tex[0]->create() ? std::move(t) : nullptr;
     });
     if (!t) return {};
     t->kind = premultiplied ? Texture::Rgba : Texture::RgbaStraight;
-    QRhiTextureSubresourceUploadDescription desc(rgba, quint32(size_t(w) * h * 4));
+    t->mipLevels = levels;
+    // Read in place when the frame is submitted (finish()), like uploadYuv's planes: the pointer constructor copied
+    // every picture into a fresh QByteArray on the GPU thread - three full-HD layers of a compositing graph cost ~10 ms
+    // per frame there (page faults of 8 MB allocations), the one thread every preview frame waits for
+    QRhiTextureSubresourceUploadDescription desc;
+    desc.setData(QByteArray::fromRawData(reinterpret_cast<const char*>(rgba), qsizetype(size_t(w) * h * 4)));
     d->batch()->uploadTexture(t->tex[0].get(), QRhiTextureUploadDescription({0, 0, desc}));
+    if (mips) d->batch()->generateMips(t->tex[0].get());
     return t;
 }
 
 TexturePtr Context::uploadGray(const uint8_t* gray, int w, int h)
 {
-    if (!gray || w <= 0 || h <= 0) return {};
+    if (!gray || w <= 0 || h <= 0 || std::max(w, h) > d->info.maxTextureSize) return {};
     TexturePtr t = d->take({2, w, h, 0, 0}, [&] {
         auto t = std::make_unique<Texture>();
         t->size = QSize(w, h);
@@ -594,7 +675,8 @@ TexturePtr Context::uploadGray(const uint8_t* gray, int w, int h)
 
 TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, bool mips)
 {
-    if (!frame || frame->width <= 0 || frame->height <= 0) return {};
+    if (!frame || frame->width <= 0 || frame->height <= 0 || std::max(frame->width, frame->height) > d->info.maxTextureSize)
+        return {};
     const auto fmt = AVPixelFormat(frame->format);
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
     if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BE))
@@ -646,6 +728,9 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     m[0] = a, m[1] = a, m[2] = a, m[3] = 0;
     m[4] = 0, m[5] = float(gu), m[6] = float(bu), m[7] = 0;
     m[8] = float(rv), m[9] = float(gv), m[10] = 0, m[11] = 0;
+    // The shader samples the shared chroma plane as (.r, .g) = columns 1, 2: Cr first (NV21, NV42) swaps them
+    if (semi && desc->comp[1].offset > desc->comp[2].offset)
+        for (int i = 4; i < 8; ++i) std::swap(m[i], m[i + 4]);
     m[12] = float(-ys * yo - rv * co), m[13] = float(-ys * yo - (gu + gv) * co), m[14] = float(-ys * yo - bu * co), m[15] = 1;
 
     // Keep the picture until finish(): the upload reads the plane memory when the frame is submitted (no copy here)
@@ -682,10 +767,34 @@ LutPtr Context::gradeLut(const ColorGrade::Baked& baked, int n)
                 p[3] = 255;
             }
     ColorGrade::apply(lattice.data(), n * n, n, baked, 1);
-    auto lut = std::make_shared<Lut3d>();
-    lut->size = n;
-    lut->tex.reset(d->rhi->newTexture(QRhiTexture::RGBA8, n, n, n, 1, QRhiTexture::ThreeDimensional));
-    if (!lut->tex->create()) return {};
+    std::unique_ptr<Lut3d> made;
+    {
+        std::lock_guard<std::mutex> g(d->luts->lock);
+        auto& free = d->luts->free;
+        auto it = std::find_if(free.rbegin(), free.rend(), [n](const auto& l) { return l->size == n; });
+        if (it != free.rend()) {
+            made = std::move(*it);
+            free.erase(std::next(it).base());
+        }
+    }
+    if (!made) {
+        made = std::make_unique<Lut3d>();
+        made->size = n;
+        made->tex.reset(d->rhi->newTexture(QRhiTexture::RGBA8, n, n, n, 1, QRhiTexture::ThreeDimensional));
+        if (!made->tex->create()) return {};
+        ++d->lutsMade;
+    }
+    // Dropped: back to the pool after the frame that may still read it (never released while recorded)
+    std::weak_ptr<Impl::LutPool> weak = d->luts;
+    LutPtr lut(made.release(), [weak](Lut3d* l) {
+        if (auto pool = weak.lock()) {
+            std::lock_guard<std::mutex> g(pool->lock);
+            pool->retired.emplace_back(l);
+            return;
+        }
+        (void)l->tex.release(); // context gone: its QRhi too
+        delete l;
+    });
     QList<QRhiTextureUploadEntry> entries;
     const size_t slice = size_t(n) * n * 4;
     for (int z = 0; z < n; ++z)
@@ -702,31 +811,68 @@ void Context::draw(Texture& dst, const Layer& layer)
     if (!d->recording || !s || s == &dst || dst.kind != Texture::Target || layer.opacity <= 0) return; // no feedback loop
     const Compose::Affine& m = layer.m;
     const double det = m.a * m.e - m.b * m.d;
-    if (std::abs(det) < 1e-12) return;
+    if (!layer.projective && std::abs(det) < 1e-12) return;
     Uniforms u;
     const int sw = s->size.width(), sh = s->size.height();
     // Bounding box of the drawn source (+1 pixel: soft edge), as Compose::draw
     double x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
-    for (const auto& [sx, sy] : {std::pair{0.0, 0.0}, std::pair{double(sw), 0.0}, std::pair{0.0, double(sh)},
-                                 std::pair{double(sw), double(sh)}}) {
-        const double x = m.a * sx + m.b * sy + m.c, y = m.d * sx + m.e * sy + m.f;
-        x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+    double quadArea = 0; // projective: the area the source covers (its overall shrink picks the mip level)
+    double q[8];         // the source's corners on the target
+    {
+        int i = 0;
+        for (const auto& [sx, sy] : {std::pair{0.0, 0.0}, std::pair{double(sw), 0.0}, std::pair{double(sw), double(sh)},
+                                     std::pair{0.0, double(sh)}}) {
+            double x = 0, y = 0;
+            if (layer.projective) {
+                if (!Compose::mapPoint(layer.h, sx, sy, &x, &y)) return; // behind the camera (Compose::homography refuses it)
+            } else {
+                x = m.a * sx + m.b * sy + m.c, y = m.d * sx + m.e * sy + m.f;
+            }
+            q[2 * i] = x, q[2 * i + 1] = y;
+            ++i;
+            x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+        }
+        for (int k = 0; k < 4; ++k) quadArea += q[2 * k] * q[2 * ((k + 1) % 4) + 1] - q[2 * ((k + 1) % 4)] * q[2 * k + 1];
+        quadArea = std::abs(quadArea) / 2;
     }
+    if (layer.projective && quadArea < 0.25) return; // as Compose::draw
     const double W = dst.size.width(), H = dst.size.height();
     u.rect[0] = float(std::clamp(std::floor(x0) - 1, 0.0, W));
     u.rect[1] = float(std::clamp(std::floor(y0) - 1, 0.0, H));
     u.rect[2] = float(std::clamp(std::ceil(x1) + 1, 0.0, W));
     u.rect[3] = float(std::clamp(std::ceil(y1) + 1, 0.0, H));
     if (u.rect[0] >= u.rect[2] || u.rect[1] >= u.rect[3]) return;
-    const double ia = m.e / det, ib = -m.b / det, id = -m.d / det, ie = m.a / det;
-    u.inv0[0] = float(ia), u.inv0[1] = float(ib), u.inv0[2] = float(-(ia * m.c + ib * m.f));
-    u.inv1[0] = float(id), u.inv1[1] = float(ie), u.inv1[2] = float(-(id * m.c + ie * m.f));
+    if (layer.projective) {
+        Compose::Homography inv;
+        if (!Compose::invert(layer.h, &inv)) return;
+        // Scaled so that w is 1 on average over the drawn quad's corners (positive inside: the shader drops w <= 0)
+        double w = 0;
+        for (int k = 0; k < 4; ++k) w += (inv.m[6] * q[2 * k] + inv.m[7] * q[2 * k + 1] + inv.m[8]) / 4;
+        if (!std::isfinite(w) || std::abs(w) < 1e-15) return;
+        for (int k = 0; k < 3; ++k) {
+            u.inv0[k] = float(inv.m[k] / w);
+            u.inv1[k] = float(inv.m[3 + k] / w);
+            u.persp[k] = float(inv.m[6 + k] / w);
+        }
+    } else {
+        const double ia = m.e / det, ib = -m.b / det, id = -m.d / det, ie = m.a / det;
+        u.inv0[0] = float(ia), u.inv0[1] = float(ib), u.inv0[2] = float(-(ia * m.c + ib * m.f));
+        u.inv1[0] = float(id), u.inv1[1] = float(ie), u.inv1[2] = float(-(id * m.c + ie * m.f));
+    }
     u.inv0[3] = float(std::lround(std::clamp(layer.opacity, 0.0, 1.0) * 256) / 256.0);
-    // Mip level: Compose::draw halves while 2:1 or more is left (per axis; the card halves both: the smaller one)
-    if (s->mipLevels > 1) {
-        const double ax = std::hypot(m.a, m.d), ay = std::hypot(m.b, m.e);
-        const double n = std::min(ax > 0 ? 1.0 / ax : 1.0, ay > 0 ? 1.0 / ay : 1.0);
-        u.inv1[3] = float(std::clamp(int(std::floor(std::log2(std::max(1.0, n + 1e-9)))), 0, s->mipLevels - 1));
+    // Compose::draw halves while 2:1 or more is left (per axis). The card: the mip level both axes allow (the smaller
+    // reduction), what is left per axis (no mips: all of it; squeezed: the larger one) averaged by the shader's grid of
+    // taps over the pixel's footprint - bilinear alone skipped texels there (stair-steps)
+    {
+        double ax = std::hypot(m.a, m.d), ay = std::hypot(m.b, m.e);
+        if (layer.projective) ax = ay = std::sqrt(quadArea / std::max(1.0, double(sw) * sh)); // the overall shrink
+        const double nx = ax > 0 ? 1.0 / ax : 1.0, ny = ay > 0 ? 1.0 / ay : 1.0;
+        int level = 0;
+        if (s->mipLevels > 1)
+            level = std::clamp(int(std::floor(std::log2(std::max(1.0, std::min(nx, ny) + 1e-9)))), 0, s->mipLevels - 1);
+        u.inv1[3] = float(level);
+        u.lut[2] = float(nx / double(1 << level) + 1e-6);
+        u.lut[3] = float(ny / double(1 << level) + 1e-6);
     }
     u.src[0] = float(sw), u.src[1] = float(sh), u.src[2] = float(s->log2cw), u.src[3] = float(s->log2ch);
     u.chroma[2] = s->sampleScale;
@@ -790,7 +936,7 @@ bool Context::compSupported() const { return d->compOk; }
 
 TexturePtr Context::compTarget(QSize size, const float clear[4])
 {
-    if (size.isEmpty() || !d->compOk) return {};
+    if (size.isEmpty() || !d->compOk || std::max(size.width(), size.height()) > d->info.maxTextureSize) return {};
     TexturePtr t = d->take({5, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size, true); });
     if (!t) return {};
     t->pendingClear = true;
@@ -823,8 +969,14 @@ TexturePtr Context::customPass(const QByteArray& key, const QShader& frag, QSize
 {
     if (!d->recording || !frag.isValid() || size.isEmpty()) return {};
     auto it = std::find_if(d->customPs.begin(), d->customPs.end(), [&](const auto& e) { return e.first == key; });
-    if (it == d->customPs.end()) {
-        if (d->customPs.size() >= 16) d->customPs.erase(d->customPs.begin());
+    if (it != d->customPs.end()) { // used now: the most recent (the last one)
+        std::rotate(it, it + 1, d->customPs.end());
+        it = d->customPs.end() - 1;
+    } else {
+        if (d->customPs.size() >= 16) { // the least recently used goes - after this frame (a pass may use it)
+            if (d->customPs.front().second) d->retiredPs.push_back(std::move(d->customPs.front().second));
+            d->customPs.erase(d->customPs.begin());
+        }
         d->customPs.emplace_back(key, nullptr);
         it = d->customPs.end() - 1;
     }
@@ -835,7 +987,9 @@ TexturePtr Context::customPass(const QByteArray& key, const QShader& frag, QSize
     Uniforms u;
     u.rect[2] = float(size.width()), u.rect[3] = float(size.height());
     std::memcpy(u.inv0, p, 40 * sizeof(float));
+    const bool made = !it->second;
     d->pass(*out, it->second, frag, false, u, t0 ? t0->tex[0].get() : nullptr, nullptr, nullptr, nullptr);
+    if (made && it->second) ++d->pipelinesMade;
     if (!it->second) { // the pipeline was refused (pass() drew nothing)
         d->customPs.erase(it);
         return {};
@@ -850,7 +1004,7 @@ void Context::readRgba(const Texture& t, uint8_t* out)
     d->readback(const_cast<Texture&>(t), [dst = out, sz](const QByteArray& data) {
         uint8_t* out = dst;
         const size_t n = size_t(sz.width()) * sz.height();
-        if (size_t(data.size()) < n * 4) return;
+        if (size_t(data.size()) < n * 4) return false;
         const auto* s = reinterpret_cast<const uint8_t*>(data.constData());
         for (size_t i = 0; i < n; ++i, s += 4, out += 4) { // premultiplied -> straight
             const unsigned a = s[3];
@@ -862,6 +1016,7 @@ void Context::readRgba(const Texture& t, uint8_t* out)
             }
             out[3] = uint8_t(a);
         }
+        return true;
     });
 }
 
@@ -907,9 +1062,10 @@ bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
         // The texture stays referenced by the lambda until delivered (pooled again afterwards)
         d->readback(*packed, [dst, stride, p, packed](const QByteArray& data) {
             const size_t rowBytes = size_t(p.texW) * 4;
-            if (size_t(data.size()) < rowBytes * p.texH) return;
+            if (size_t(data.size()) < rowBytes * p.texH) return false;
             for (int y = 0; y < p.rows; ++y)
                 std::memcpy(dst + size_t(y) * stride, data.constData() + y * rowBytes, size_t(p.bytes));
+            return true;
         });
     }
     return true;
@@ -923,6 +1079,8 @@ Context::Stats Context::stats() const
         s.texturesPooled = int(d->pool->free.size());
     }
     s.passes = d->lastPasses;
+    s.lutsMade = d->lutsMade;
+    s.pipelinesMade = d->pipelinesMade;
     return s;
 }
 
@@ -965,6 +1123,35 @@ struct Service::Impl {
         std::condition_variable doneCv;
     };
     std::deque<Job*> queue;
+    std::atomic<bool> loseDevice{false}; // simulateDeviceLoss()
+    std::atomic<bool> emptyReadbacks{false}; // simulateEmptyReadbacks()
+    std::atomic<bool> off{false};            // no context any more (available())
+    mutable std::mutex infoMutex;            // info is renewed after a remake (read by the render threads)
+    int remade = 0;
+
+    // The device is lost: the context (and everything on the card: pools, the callers' caches in userData) is made
+    // anew on the same surface. A few times per run; a device that keeps getting lost turns the engine off (every job
+    // then reports not run: CPU path). false = no context now
+    bool remake()
+    {
+        context.reset();
+        constexpr int kRemakes = 3;
+        if (remade >= kRemakes) {
+            off = true;
+            return false;
+        }
+        ++remade;
+        QString why;
+        context = Context::create(surface.get(), &why, envSwitch() == 1);
+        if (context) {
+            qWarning("GPU picture engine: device lost, context made again (%d of %d)", remade, kRemakes);
+            std::lock_guard lock(infoMutex); // the new device may take other sizes / formats
+            info = context->info();
+        }
+        else qWarning("GPU picture engine off: device lost and no new context (%s)", qPrintable(why));
+        off = context == nullptr;
+        return context != nullptr;
+    }
 
     void loop()
     {
@@ -984,20 +1171,31 @@ struct Service::Impl {
             }
             const bool quit = !jobs.back()->fn;
             const size_t work = jobs.size() - (quit ? 1 : 0);
-            // A frame the card refuses runs no job: their readbacks would stay unfilled and look like a result
-            if (work > 0 && context->begin()) {
-                for (size_t i = 0; i < work; ++i) {
-                    (*jobs[i]->fn)(*context);
-                    jobs[i]->ran = true;
+            // A frame the card refuses (begin) or fails (finish: device lost, driver reset) counts as not run: its
+            // readbacks are unfilled and must not look like a result - the callers take the CPU path for it
+            if (work > 0) {
+                bool begun = context && context->begin();
+                if (!begun && context && context->lost() && remake()) begun = context->begin(); // lost before
+                if (begun) {
+                    if (loseDevice.exchange(false)) context->simulateDeviceLoss();
+                    if (emptyReadbacks.exchange(false)) context->simulateEmptyReadbacks();
+                    for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
+                    const bool ok = context->finish();
+                    for (size_t i = 0; i < work; ++i) jobs[i]->ran = ok;
+                    if (!ok && context->lost()) remake(); // the next frame on a new device
                 }
-                context->finish();
             }
             if (quit) context.reset(); // on its own thread (GL context, textures)
             {
+                // Notified under the lock: a job lives on its waiter's stack, and a waiter woken early (spuriously, or
+                // by another job's notify) that sees done returns and ends the job - with its condition variable -
+                // before a notify after the unlock would reach it
                 std::lock_guard lock(mutex);
-                for (Job* job : jobs) job->done = true;
+                for (Job* job : jobs) {
+                    job->done = true;
+                    job->doneCv.notify_all();
+                }
             }
-            for (Job* job : jobs) job->doneCv.notify_all();
             if (quit) return;
         }
     }
@@ -1011,16 +1209,82 @@ std::atomic<int> g_state{0}; // 0 not started, 1 starting in the background, 2 d
 namespace {
 bool g_deferred = false;          // setDeferredPrepare
 bool g_preparePosted = false;     // a deferred prepare() waits in the GUI thread's event queue
+Service::Scheduler g_schedule;    // setDeferredPrepare: when the deferred prepare() runs (empty: next event loop turn)
+bool g_parked = false;            // the deferred prepare() waits for g_schedule (not yet in the event queue)
 std::condition_variable g_surfaceReady;
+
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+// The surface of a deferred prepare(), made on the GUI thread in the format a helper thread resolved (a surface made
+// meanwhile, prepare(true), wins)
+void makeDeferredSurface(const QSurfaceFormat& format)
+{
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        if (g_surface || g_surfaceTaken) return;
+    }
+    auto* surface = new QOffscreenSurface;
+    surface->setFormat(format);
+    surface->create();
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        g_surface = surface;
+        g_preparePosted = false;
+    }
+    g_surfaceReady.notify_all();
+    StartupTrace::mark("GPU surface made");
+}
+
+// The deferred prepare() as a job for the GUI thread's event loop (a second run finds the surface and does nothing).
+// QRhiGles2InitParams::newFallbackSurface() makes a throwaway OpenGL context to resolve the surface's format: ~150 ms
+// with the NVIDIA driver, on the GUI thread a frozen window. That context is made on a helper thread here; the GUI
+// thread only makes the surface (QOffscreenSurface needs the GUI thread on some platforms).
+void deferredPrepareJob()
+{
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        g_deferred = false;
+        g_parked = false;
+        if (g_surface || g_surfaceTaken) return;
+    }
+    if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return;
+    // A platform that allows no OpenGL context off the GUI thread: the whole surface here, as before
+    if (!QOpenGLContext::supportsThreadedOpenGL()) {
+        Service::prepare(true);
+        return;
+    }
+    QThreadPool::globalInstance()->start([] {
+        QSurfaceFormat format = glFormat();
+        {
+            QOpenGLContext probe;
+            probe.setFormat(format);
+            if (probe.create()) format = probe.format();
+        }
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [format] { makeDeferredSurface(format); },
+                                  Qt::QueuedConnection);
+    });
+}
+
+// Someone needs the GPU before g_schedule's time (a worker waits for the surface): the parked job on the next turn
+void promoteParkedPrepare()
+{
+    std::lock_guard lock(g_surfaceMutex);
+    if (!g_parked) return;
+    g_parked = false;
+    QMetaObject::invokeMethod(QCoreApplication::instance(), &deferredPrepareJob, Qt::QueuedConnection);
+}
+// tryInstance's background start: renders on the CPU meanwhile, so it waits for the scheduled prepare() (no hurry)
+thread_local bool t_backgroundStart = false;
+#endif
 } // namespace
 
-void Service::setDeferredPrepare(bool deferred)
+void Service::setDeferredPrepare(bool deferred, Scheduler schedule)
 {
     std::lock_guard lock(g_surfaceMutex);
     g_deferred = deferred;
+    g_schedule = std::move(schedule);
 }
 
-void Service::prepare()
+void Service::prepare(bool now)
 {
 #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
     if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())
@@ -1029,16 +1293,19 @@ void Service::prepare()
     {
         std::lock_guard lock(g_surfaceMutex);
         if (g_surface || g_surfaceTaken) return;
+        if (now) {
+            g_deferred = false;
+            g_parked = false; // a parked job finds the surface made
+        }
         if (g_deferred) { // later, from the event loop (keeps the GL library load out of the start)
             if (!g_preparePosted) {
                 g_preparePosted = true;
-                QTimer::singleShot(0, QCoreApplication::instance(), [] {
-                    {
-                        std::lock_guard lock(g_surfaceMutex);
-                        g_deferred = false;
-                    }
-                    prepare();
-                });
+                if (g_schedule) {
+                    g_parked = true;
+                    g_schedule(&deferredPrepareJob);
+                } else {
+                    QTimer::singleShot(0, QCoreApplication::instance(), &deferredPrepareJob);
+                }
             }
             return;
         }
@@ -1058,6 +1325,16 @@ void Service::prepare()
 
 Service* Service::instance()
 {
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+    // Needed now (not tryInstance's background start) while prepare() still waits for its time: the GUI thread makes
+    // the surface at once (it may be about to wait for a background start that waits for the surface), a worker has
+    // the GUI thread make it on its next turn
+    if (g_state.load() != 2 && !t_backgroundStart && envSwitch() != 0
+        && qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        if (QThread::currentThread() == QCoreApplication::instance()->thread()) prepare(true);
+        else promoteParkedPrepare();
+    }
+#endif
     static Service* service = []() -> Service* {
         if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return nullptr;
         struct Decided {
@@ -1075,8 +1352,12 @@ Service* Service::instance()
         prepare();
         {
             std::unique_lock lock(g_surfaceMutex);
-            // A deferred prepare() is about to run on the GUI thread: wait for it a little
-            if (!gui && g_preparePosted) g_surfaceReady.wait_for(lock, std::chrono::seconds(2), [] { return g_surface != nullptr; });
+            // A deferred prepare() is to run on the GUI thread (the app: after the window's open animation, at the
+            // latest ~4 s after the start): wait for it - making the surface and context here instead would make an
+            // OpenGL context while the window may still animate (the NVIDIA driver stalls the X server meanwhile).
+            // Bounded: a GUI thread that never gets there must not leave the worker waiting for good.
+            if (!gui && g_preparePosted)
+                g_surfaceReady.wait_for(lock, std::chrono::seconds(10), [] { return g_surface != nullptr; });
             d->surface.reset(std::exchange(g_surface, nullptr));
             g_surfaceTaken = true;
         }
@@ -1129,6 +1410,14 @@ Service* Service::instance()
     return service;
 }
 
+bool Service::starting()
+{
+    if (g_state.load() == 1) return true;
+    std::lock_guard lock(g_surfaceMutex);
+    // A posted prepare() that finds the surface made meanwhile (instance() needed it now) does nothing
+    return g_preparePosted && !g_surface && !g_surfaceTaken;
+}
+
 Service* Service::tryInstance(bool* decided)
 {
     if (g_state.load() == 2) {
@@ -1145,7 +1434,12 @@ Service* Service::tryInstance(bool* decided)
         return instance();
     }
     int idle = 0;
-    if (g_state.compare_exchange_strong(idle, 1)) std::thread([] { instance(); }).detach();
+    if (g_state.compare_exchange_strong(idle, 1)) std::thread([] {
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+            t_backgroundStart = true;
+#endif
+            instance();
+        }).detach();
     *decided = false;
     return nullptr;
 }
@@ -1173,6 +1467,7 @@ bool Service::run(const std::function<void(Context&)>& job)
 {
     Impl::Job j;
     j.fn = &job;
+    if (d->off.load()) return false; // the engine went off (device lost for good): CPU path, no wait for the thread
     std::unique_lock lock(d->mutex);
     if (d->stopping) return false; // shut down: the caller takes the CPU path
     d->queue.push_back(&j);
@@ -1181,7 +1476,15 @@ bool Service::run(const std::function<void(Context&)>& job)
     return j.ran;
 }
 
-const DeviceInfo& Service::info() const { return d->info; }
+DeviceInfo Service::info() const
+{
+    std::lock_guard lock(d->infoMutex);
+    return d->info;
+}
+
+void Service::simulateDeviceLoss() { d->loseDevice = true; }
+void Service::simulateEmptyReadbacks() { d->emptyReadbacks = true; }
+bool Service::available() const { return !d->off.load(); }
 
 bool Service::onThread() const { return std::this_thread::get_id() == d->thread.get_id(); }
 
@@ -1223,9 +1526,12 @@ std::shared_ptr<void>& Context::userData()
 std::shared_ptr<void>& Context::compData() { return userData(); }
 const DeviceInfo& Context::info() const { return d->info; }
 bool Context::begin() { return false; }
-void Context::finish() {}
+bool Context::finish() { return true; }
+void Context::simulateDeviceLoss() {}
+void Context::simulateEmptyReadbacks() {}
+bool Context::lost() const { return false; }
 TexturePtr Context::target(QSize, const float*) { return {}; }
-TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool) { return {}; }
+TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
 TexturePtr Context::uploadYuv(const AVFrame*, const Video::Info&, bool) { return {}; }
 TexturePtr Context::uploadGray(const uint8_t*, int, int) { return {}; }
 LutPtr Context::gradeLut(const ColorGrade::Baked&, int) { return {}; }
@@ -1241,18 +1547,22 @@ bool Context::readYuv(const Texture&, const OutputColor::Target&) { return false
 Context::Stats Context::stats() const { return {}; }
 QSize size(const Texture& t) { return t.size; }
 bool canUpload(int) { return false; }
-void Service::prepare() {}
-void Service::setDeferredPrepare(bool) {}
+void Service::prepare(bool) {}
+void Service::setDeferredPrepare(bool, Scheduler) {}
 Service* Service::instance() { return nullptr; }
 Service* Service::tryInstance(bool* decided)
 {
     *decided = true;
     return nullptr;
 }
+bool Service::starting() { return false; }
 void Service::shutdown() {}
+void Service::simulateDeviceLoss() {}
+void Service::simulateEmptyReadbacks() {}
+bool Service::available() const { return false; }
 bool Service::run(const std::function<void(Context&)>&) { return false; }
 bool Service::onThread() const { return false; }
-const DeviceInfo& Service::info() const { return probe(); }
+DeviceInfo Service::info() const { return probe(); }
 
 #endif
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Path keys (core/PathKey): one key per file for caches, notes, plan/backup folders and locks - absolute and clean,
 // lower case on Windows (both ways tested on every platform through the parameter); the keys that use it.
+#include "core/AppPaths.h"
 #include "core/PathKey.h"
 #include "core/ProjectFile.h"
 #include "engine/MediaIndex.h"
@@ -16,7 +17,7 @@ int main(int argc, char** argv)
 {
     Check::initEnv();
     QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
 
@@ -46,6 +47,13 @@ int main(int argc, char** argv)
         CHECK(!PathKey::isInside("/t/intro2/a.png", "/t/intro", fold));
         CHECK(!PathKey::isInside("/t/intro/../b.png", "/t/intro", fold));
     }
+    // One media file in clips and the pool (edit 'media'+'source', index placements, render review hits): as
+    // Project::mediaInfo matches it - on Windows case and separators do not matter
+    CHECK(PathKey::same("C:/Clips/A.mp4", "c:\\clips\\a.mp4", true));
+    CHECK(!PathKey::same("C:/Clips/A.mp4", "c:/clips/a.mp4", false));
+    CHECK(!PathKey::same("C:/Clips/A.mp4", "C:/Clips/B.mp4", true));
+    CHECK(!PathKey::same("", "x", true));
+    for (bool fold : {false, true}) CHECK(PathKey::same("/x/a.mp4", "/x/a.mp4", fold));
 #ifdef Q_OS_WIN
     CHECK(PathKey::kFoldCase);
 #else

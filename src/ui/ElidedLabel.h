@@ -6,7 +6,7 @@
 #include <cmath>
 
 // One line of text that never widens its layout: too long, it ends in "…" (or loses its middle, ElideMiddle) and the
-// tooltip holds all of it. setFullText() instead of setText(); the contents margins are kept free.
+// tooltip holds all of it. setFullText() instead of setText(); the contents margins (and padding) are kept free.
 class ElidedLabel : public QLabel {
 public:
     explicit ElidedLabel(Qt::TextElideMode mode = Qt::ElideRight) : m_mode(mode) {}
@@ -37,11 +37,8 @@ protected:
     }
 
 private:
-    QSize margins() const
-    {
-        const QMargins m = contentsMargins();
-        return {m.left() + m.right(), m.top() + m.bottom()};
-    }
+    // Contents margins, frame and a style sheet's padding (QLabel#PanelTitle): all that lies outside contentsRect()
+    QSize margins() const { return size() - contentsRect().size(); }
 
     QString m_text;
     Qt::TextElideMode m_mode;

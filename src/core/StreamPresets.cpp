@@ -49,7 +49,16 @@ QVector<StreamRule> StreamPresets::plan(const MediaInfo& m) const
         r.title = streamTitle(m, k);
         out << r;
     }
-    if (n < 2) return out;
+    // A stream schneidi cannot play is never placed, whatever a rule says
+    const auto dead = [&m](int k) { return !m.audioStreamPlayable(k); };
+    const auto skipDead = [&] {
+        for (int k = 0; k < n; ++k)
+            if (dead(k)) out[k].action = StreamRule::Action::Skip;
+    };
+    if (n < 2) {
+        skipDead();
+        return out;
+    }
 
     QVector<bool> ruled(n, false);
     for (int k = 0; k < n; ++k) {
@@ -64,13 +73,19 @@ QVector<StreamRule> StreamPresets::plan(const MediaInfo& m) const
     if (muteMix) {
         // Only when the file has single streams besides its mixes (which are not left out)
         bool single = false;
-        for (int k = 0; k < n; ++k) single = single || (!isMixTitle(out[k].title) && out[k].action != StreamRule::Action::Skip);
+        for (int k = 0; k < n; ++k)
+            single = single || (!dead(k) && !isMixTitle(out[k].title) && out[k].action != StreamRule::Action::Skip);
         if (single)
             for (int k = 0; k < n; ++k)
                 if (!ruled[k] && isMixTitle(out[k].title)) out[k].action = StreamRule::Action::Mute;
     }
-    if (std::all_of(out.begin(), out.end(), [](const StreamRule& r) { return r.action == StreamRule::Action::Skip; }))
-        for (StreamRule& r : out) r.action = StreamRule::Action::Mute;
+    skipDead();
+    // Rules that leave out every playable stream: all of them muted instead (the file's sound stays at hand)
+    bool anyPlaced = false;
+    for (int k = 0; k < n; ++k) anyPlaced = anyPlaced || out[k].action != StreamRule::Action::Skip;
+    if (!anyPlaced)
+        for (int k = 0; k < n; ++k)
+            if (!dead(k)) out[k].action = StreamRule::Action::Mute;
     return out;
 }
 
@@ -85,6 +100,9 @@ QVector<StreamPlacement> StreamPresets::placements(const MediaInfo& m) const
         s.enabled = p[k].action != StreamRule::Action::Mute;
         s.volumeDb = std::clamp(p[k].volumeDb, kMinVolumeDb, kMaxVolumeDb);
         s.trackLabel = p[k].trackName.isEmpty() ? m.audioStreamTrackLabel(k) : p[k].trackName;
+        const int have = k < m.audioStreams.size() ? m.audioStreams[k].channels : 2;
+        for (int ch : p[k].channels) // a rule for another file with more channels: what this stream lacks is left out
+            if (ch >= 0 && ch < have) s.channels << ch;
         out << s;
     }
     return out;
@@ -110,12 +128,13 @@ QVector<StreamRule> StreamPresets::learn(const Timeline& tl, const MediaInfo& m,
     for (int k = 0; k < clips.size(); ++k) {
         StreamRule r;
         r.title = streamTitle(m, k).trimmed();
-        if (r.title.isEmpty()) continue;
+        if (r.title.isEmpty() || !m.audioStreamPlayable(k)) continue; // a dead stream says nothing about its title
         if (!clips[k]) {
             r.action = StreamRule::Action::Skip;
         } else {
             r.action = clips[k]->enabled ? StreamRule::Action::Place : StreamRule::Action::Mute;
             r.volumeDb = clips[k]->volumeDb;
+            r.channels = clips[k]->sourceChannels;
             const QString name = tracks[k]->name.trimmed();
             if (!name.isEmpty() && name != r.title) r.trackName = name;
         }
@@ -146,6 +165,11 @@ QJsonObject StreamPresets::toJson() const
         QJsonObject o{{"title", r.title}, {"action", actionName(r.action)}};
         if (r.volumeDb != 0) o["volumeDb"] = r.volumeDb;
         if (!r.trackName.isEmpty()) o["track"] = r.trackName;
+        if (!r.channels.isEmpty()) {
+            QJsonArray channels;
+            for (int ch : r.channels) channels << ch + 1;
+            o["channels"] = channels;
+        }
         list << o;
     }
     return {{"muteMix", muteMix}, {"rules", list}};
@@ -164,6 +188,8 @@ StreamPresets StreamPresets::fromJson(const QJsonObject& o)
         rule.action = a == "mute" ? StreamRule::Action::Mute : a == "skip" ? StreamRule::Action::Skip : StreamRule::Action::Place;
         rule.volumeDb = std::clamp(r.value("volumeDb").toDouble(), kMinVolumeDb, kMaxVolumeDb);
         rule.trackName = r.value("track").toString().trimmed();
+        for (const QJsonValue& ch : r.value("channels").toArray())
+            if (const int n = ch.toInt(); n >= 1 && n <= 64 && rule.channels.size() < 2) rule.channels << n - 1;
         p.rules << rule;
     }
     return p;

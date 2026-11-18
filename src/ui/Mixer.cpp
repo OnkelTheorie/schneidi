@@ -5,12 +5,14 @@
 #include "app/EqDialog.h"
 #include "app/Theme.h"
 #include "app/VoiceoverRecorder.h"
+#include "core/Automation.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Loudness.h"
 #include "engine/Engine.h"
+#include "ui/CompactButton.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -111,6 +113,7 @@ public:
         m_overMark = mark;
         update();
     }
+    bool dragging() const { return m_dragging; }
     void setValue(double db)
     {
         if (db == m_db) return;
@@ -305,6 +308,7 @@ public:
 
     std::function<void(double)> onChange;
     std::function<void()> onFinish;
+    bool dragging() const { return m_dragging; }
 
     void setValue(double v)
     {
@@ -563,14 +567,39 @@ public:
 
     void setVolume(double db)
     {
+        shown = db;
         fader->setValue(db);
-        value->setText(formatVolumeDb(db));
+        const QString text = formatVolumeDb(db);
+        if (value->text() != text) value->setText(text);
     }
+    // Track automation: the fader shows the level at the playhead (fader + curve), moving it trims the whole curve
+    void setAutomated(bool on)
+    {
+        if (on == automated) return;
+        automated = on;
+        value->setStyleSheet(QString("color: %1; font-size: 8pt;").arg((on ? Theme::secondary : Theme::text).name()));
+        const QString tip = on ? T("Automation: zeigt den Pegel am Abspielkopf; der Fader verschiebt die ganze Kurve") : QString();
+        value->setToolTip(tip);
+        fader->setToolTip(tip);
+    }
+    double shown = 0;
+    bool automated = false;
     void setPan(double v)
     {
+        shownPan = v;
         pan->setValue(v);
         panLabel->setText(panText(v));
     }
+    // Pan automation: the knob shows the pan at the playhead (knob + curve), turning it trims the whole curve
+    void setPanAutomated(bool on)
+    {
+        if (on == panAutomated) return;
+        panAutomated = on;
+        panLabel->setStyleSheet(on ? QString("color: %1;").arg(Theme::secondary.name()) : QString());
+        panLabel->setToolTip(on ? T("Pan-Automation: zeigt den Pan am Abspielkopf; der Regler verschiebt die ganze Kurve") : QString());
+    }
+    double shownPan = 0;
+    bool panAutomated = false;
 
     QLabel* name;
     PanKnob* pan;
@@ -599,8 +628,8 @@ public:
     LoudnessView()
     {
         setMinimumHeight(120);
-        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-        setFixedWidth(kStripW + 20);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding); // takes the mixer's spare width
+        setMinimumWidth(kStripW + 20);
     }
 
     void setReading(const LoudnessReading& r, bool live)
@@ -640,8 +669,10 @@ protected:
         const auto yOf = [&](double lufs) {
             return bottom - int(std::lround(std::clamp((lufs - kFloor) / -kFloor, 0.0, 1.0) * h));
         };
-        // Bars M and S
-        const int bw = 9, x0 = 6;
+        // Bars M and S; wider and centered when the meter has room to spare (Mixer::fitStrips gives it the rest)
+        const int extra = std::max(0, width() - (kStripW + 20));
+        const int bw = 9 + std::min(extra / 4, 15);
+        const int x0 = 6 + std::max(0, (extra - 2 * (bw - 9)) / 2);
         const double values[2] = {m_live ? m_r.momentary : LoudnessMeter::kSilence,
                                   m_live ? m_r.shortTerm : LoudnessMeter::kSilence};
         const char* names[2] = {"M", "S"};
@@ -734,7 +765,7 @@ public:
         lay->addWidget(name);
         view = new LoudnessView;
         view->setToolTip(name->toolTip());
-        lay->addWidget(view, 1, Qt::AlignHCenter);
+        lay->addWidget(view, 1);
         reset = new QToolButton;
         reset->setText(T("Zurücksetzen"));
         reset->setFocusPolicy(Qt::NoFocus);
@@ -758,7 +789,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
     // Title row; on the right the voice-over controls (input level, record)
-    auto* titleRow = new QWidget;
+    auto* titleRow = m_titleRow = new QWidget;
     titleRow->setObjectName("PanelTitle");
     titleRow->setAttribute(Qt::WA_StyledBackground);
     titleRow->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
@@ -772,7 +803,9 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_inputMeter = new InputMeter;
     m_inputMeter->hide();
     titleLay->addWidget(m_inputMeter);
-    m_record = new QToolButton;
+    auto* record = new CompactButton;
+    record->setCompactText("●"); // a narrow mixer: only the dot
+    m_record = record;
     m_record->setObjectName("voiceover_record");
     m_record->setText("● " + T("Voiceover"));
     m_record->setCheckable(true);
@@ -785,7 +818,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
                                      Theme::readableOn(Theme::recording).name()));
     m_record->setEnabled(false); // until a recorder is set
     // Voice cleaning for the whole voice track in one click: the armed track, else the target audio track
-    m_cleanVoice = new QToolButton;
+    m_cleanVoice = new CompactButton; // a narrow mixer: the text ends in "…"
     m_cleanVoice->setObjectName("clean_voice");
     m_cleanVoice->setText(T("Stimme säubern"));
     m_cleanVoice->setFocusPolicy(Qt::NoFocus);
@@ -901,8 +934,10 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         }
         menu.exec(m_loudness->mapToGlobal(pos));
     });
-    row->addWidget(m_loudness);
-    row->addStretch(1);
+    // The loudness meter takes what the strips leave, up to one strip more (fitStrips); a wider panel than that
+    // stays plain on the right - the strips are never stretched
+    row->addWidget(m_loudness, 1);
+    row->addStretch(0);
     root->addLayout(row, 1);
 
     setMinimumWidth(kStripW * 3 + 40);
@@ -934,10 +969,22 @@ bool Mixer::eventFilter(QObject* watched, QEvent* e)
 {
     if (e->type() == QEvent::MouseButtonDblClick)
         for (int i = 0; i < m_strips.size(); ++i) {
+            const bool eq = watched == m_strips[i]->eq;
+            if (!eq && watched != m_strips[i]->dyn) continue;
+            // One window per strip: a second double click brings the open one up
             QDialog* dialog = nullptr;
-            if (watched == m_strips[i]->eq) dialog = new EqDialog(editor(), i, this);
-            else if (watched == m_strips[i]->dyn) dialog = new DynamicsDialog(editor(), i, this);
-            if (!dialog) continue;
+            for (QDialog* d : findChildren<QDialog*>(Qt::FindDirectChildrenOnly))
+                if (d->isVisible() && d->property("mixerStrip").toInt() == i && d->property("mixerEq").toBool() == eq)
+                    dialog = d;
+            if (dialog) {
+                dialog->raise();
+                dialog->activateWindow();
+                return true;
+            }
+            if (eq) dialog = new EqDialog(editor(), i, this);
+            else dialog = new DynamicsDialog(editor(), i, this);
+            dialog->setProperty("mixerStrip", i);
+            dialog->setProperty("mixerEq", eq);
             dialog->setAttribute(Qt::WA_DeleteOnClose);
             dialog->show(); // not modal: the preview keeps playing while adjusting
             return true;    // no second click (would switch back)
@@ -953,12 +1000,18 @@ void Mixer::rebuildStrips(int count)
     for (int i = 0; i < count; ++i) {
         auto* s = new ChannelStrip(false);
         s->fader->onChange = [this, i, s](double db) {
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With automation the fader shows the level at the playhead: a move trims the whole curve by as much
+            const double fader = t && !t->volumeAuto.isEmpty() ? t->volumeDb + (db - s->shown) : db;
             s->setVolume(db);
-            m_editor->setTrackVolume(i, db, "mixer-vol-" + QString::number(i));
+            m_editor->setTrackVolume(i, fader, "mixer-vol-" + QString::number(i));
         };
         s->pan->onChange = [this, i, s](double v) {
+            const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+            // With pan automation the knob shows the pan at the playhead: a turn trims the whole curve by as much
+            const double knob = t && !t->panAuto.isEmpty() ? t->pan + (v - s->shownPan) : v;
             s->setPan(v);
-            m_editor->setTrackPan(i, v, "mixer-pan-" + QString::number(i));
+            m_editor->setTrackPan(i, knob, "mixer-pan-" + QString::number(i));
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
         const auto track = [this, i]() -> const Track* {
@@ -1038,30 +1091,36 @@ void Mixer::resizeEvent(QResizeEvent* e)
     fitStrips();
 }
 
-// Only whole channel strips, like DaVinci: a strip area a few pixels narrower than all strips gave a scrollbar
-// that moved only those few pixels and looked stuck. A strip that does not fit completely scrolls in instead;
-// the leftover space stays empty on the right (growToFit widens the mixer so that usually all strips fit).
+// Only whole channel strips at their natural width: a strip area a few pixels narrower than all strips gave a scrollbar
+// that moved only those few pixels and looked stuck; a strip that does not fit completely scrolls in instead. The
+// leftover (less than a strip) goes to the loudness meter, so there is no empty column beside it. A panel wider than
+// all strips does not stretch them (0.21 did, it looked bloated): the loudness meter takes at most one strip more, the
+// rest stays plain on the right - the column is made only as wide as the mixer needs (MainWindow::updateRightColumn).
 void Mixer::fitStrips()
 {
-    // Never wider than all strips + master + loudness: a wider splitter share (dragged, restored, window
-    // maximized) left an empty area on the right; the splitter gives the rest to the timeline. Not in a column (below
-    // the Inspector): the column would take that limit and squeeze the panel above
+    // Beside the timeline never wider than all strips + master + loudness: the splitter gives the rest to the timeline.
+    // Not in a column (below the Inspector): the column would take that limit and squeeze the panel above
     auto* sp = qobject_cast<QSplitter*>(parentWidget());
     setMaximumWidth(sp && sp->orientation() == Qt::Vertical ? QWIDGETSIZE_MAX
                                                              : int(m_strips.size()) * kStripW + fixedWidth());
-    if (m_strips.isEmpty()) {
-        m_stripScroll->setFixedWidth(0);
-        return;
-    }
-    const int shown = std::clamp((width() - fixedWidth()) / kStripW, 1, int(m_strips.size()));
-    m_stripScroll->setFixedWidth(shown * kStripW); // fixed: the box layout would otherwise hand a few pixels to the spacer
+    const int loudness = m_loudness->minimumSizeHint().width();
+    m_loudness->setMaximumWidth(loudness + kStripW);
+    const int n = int(m_strips.size());
+    const int shown = std::clamp((width() - fixedWidth()) / kStripW, n ? 1 : 0, n);
+    m_stripScroll->setFixedWidth(shown * kStripW); // fixed: the box layout would otherwise share out the difference
     // The scrollbar under the strips takes height: keep master and loudness bottoms level with the strips
-    const int sb = shown < m_strips.size() ? m_stripScroll->horizontalScrollBar()->sizeHint().height() : 0;
+    const int sb = shown < n ? m_stripScroll->horizontalScrollBar()->sizeHint().height() : 0;
     m_master->layout()->setContentsMargins(5, 4, 3, 4 + sb);
     m_loudness->layout()->setContentsMargins(3, 4, 3, 4 + sb);
 }
 
-int Mixer::fixedWidth() const { return m_master->minimumWidth() + m_loudness->minimumSizeHint().width(); }
+int Mixer::naturalWidth() const
+{
+    // The title row's voice-over buttons whole too (long names, e.g. Russian with a large font)
+    return std::max(int(m_strips.size()) * kStripW + fixedWidth(), m_titleRow->sizeHint().width());
+}
+
+int Mixer::fixedWidth() const { return kStripW + 2 + m_loudness->minimumSizeHint().width(); }
 
 // Widen the mixer (or the column it is in) in the nearest side-by-side splitter (taking from the timeline) until all
 // strips fit, at most to 45 % of the splitter. Only grows, so a mixer the user made narrower stays narrower until it is
@@ -1074,7 +1133,7 @@ void Mixer::growToFit()
         item = sp;
         sp = qobject_cast<QSplitter*>(sp->parentWidget());
     }
-    if (!sp || !isVisible() || sp->count() < 2) return;
+    if (!sp || !isVisible() || sp->count() < 2 || m_keepWidth) return;
     QList<int> sizes = sp->sizes();
     const int idx = sp->indexOf(item), other = idx == 0 ? 1 : 0;
     const int want = std::min(int(m_strips.size()) * kStripW + fixedWidth(), (sizes[idx] + sizes[other]) * 45 / 100);
@@ -1107,8 +1166,10 @@ void Mixer::sync()
         ChannelStrip* s = m_strips[i];
         s->name->setText(trackShortName({TrackKind::Audio, i})); // like DaVinci "A1", name as tooltip
         s->name->setToolTip(trackDisplayName(t, {TrackKind::Audio, i}));
-        s->setVolume(t.volumeDb);
-        s->setPan(t.pan);
+        s->setAutomated(!t.volumeAuto.isEmpty());
+        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
+        s->setPanAutomated(!t.panAuto.isEmpty());
+        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, m_engine->position()) : t.pan);
         s->mute->setChecked(t.muted); // setChecked does not trigger clicked
         s->solo->setChecked(t.solo);
         s->eq->setChecked(t.eq.on);
@@ -1144,6 +1205,13 @@ void Mixer::tick()
         if (silent) s->fader->setLevel(kSilent, kSilent);
         s->fader->tick(dt);
     };
+    // Read mode: automated faders follow their curve at the playhead
+    const Timeline& tl = m_project->timeline();
+    for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
+        if (ChannelStrip* s = m_strips[i]) {
+            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
+            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], m_engine->position()));
+        }
     for (ChannelStrip* s : m_strips) step(s);
     step(m_master);
     for (ChannelStrip* s : m_strips) s->updatePeak();

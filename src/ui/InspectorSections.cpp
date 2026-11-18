@@ -41,30 +41,100 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QTextBoundaryFinder>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include <utility>
 #include "ui/InspectorDetail.h"
 
 using namespace InspectorDetail;
 
+namespace {
+
+// The reset arrow follows the font's size (a large UI font gets a larger arrow), not its glyphs (resetIcon)
+class ResetButton : public QToolButton {
+public:
+    ResetButton()
+    {
+        setText("↺"); // not shown (the icon is), names the button (tests, accessibility)
+        setIcon(resetIcon());
+        setToolButtonStyle(Qt::ToolButtonIconOnly);
+        fitIcon();
+    }
+
+protected:
+    void changeEvent(QEvent* e) override
+    {
+        QToolButton::changeEvent(e);
+        if (e->type() == QEvent::FontChange) fitIcon();
+    }
+
+private:
+    void fitIcon() { setIconSize(QSize(1, 1) * std::max(10, int(std::lround(fontMetrics().height() * 0.7)))); }
+};
+
+} // namespace
+
 QToolButton* Inspector::resetButton(const std::function<void()>& fn)
 {
-    auto* b = new QToolButton;
-    b->setText("↺");
+    auto* b = new ResetButton;
     b->setToolTip(T("Zurücksetzen"));
     b->setAutoRaise(true);
     b->setFocusPolicy(Qt::NoFocus);
-    b->setStyleSheet(QString("QToolButton { color: %1; }").arg(Theme::textDim.name()));
+    // Narrow side padding: the reset column is in every row, its width counts towards the panel's minimum width (the
+    // style's own margin still leaves air around the arrow)
+    b->setStyleSheet("QToolButton { padding: 3px 1px; }");
     connect(b, &QToolButton::clicked, this, fn);
     return b;
 }
 
+namespace {
+
+// A row label that wraps only when the panel is too narrow for it: its size hint is the text on one line (a word-
+// wrapped QLabel asks for less and wrapped in a grid even with room to spare), its minimum the widest part it cannot
+// break (a word; CJK text breaks between characters)
+class RowLabel : public QLabel {
+public:
+    using QLabel::QLabel;
+    QSize sizeHint() const override
+    {
+        const int width = extra() + advance(text());
+        const int height = heightForWidth(width);
+        return {width, height > 0 ? height : QLabel::sizeHint().height()};
+    }
+    QSize minimumSizeHint() const override
+    {
+        const QString t = text();
+        int widest = 0;
+        QTextBoundaryFinder breaks(QTextBoundaryFinder::Line, t);
+        for (qsizetype from = 0, to; (to = breaks.toNextBoundary()) >= 0; from = to)
+            widest = std::max(widest, advance(t.mid(from, to - from).trimmed()));
+        return {extra() + widest, QLabel::minimumSizeHint().height()};
+    }
+
+private:
+    // Rounded up and one pixel more: at exactly the integer advance the text may already wrap
+    int advance(const QString& s) const
+    {
+        return s.isEmpty() ? 0 : int(std::ceil(QFontMetricsF(font()).horizontalAdvance(s))) + 1;
+    }
+    int extra() const
+    {
+        const QMargins m = contentsMargins();
+        return m.left() + m.right() + 2 * margin();
+    }
+};
+
+} // namespace
+
 QLabel* Inspector::rowLabel(const QString& text)
 {
-    auto* l = new QLabel(text);
+    auto* l = new RowLabel(text);
     l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // Two lines rather than a wider panel: long labels (Russian, a large font) wrap, but only when there is no room
+    l->setWordWrap(true);
     l->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     return l;
 }
@@ -210,9 +280,10 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
     auto* body = new QWidget;
     auto* grid = new QGridLayout(body);
     grid->setContentsMargins(10, 6, 4, 8);
-    grid->setHorizontalSpacing(6);
+    // Every pixel across counts: the widest row sets the panel's minimum width (no sideways scrolling)
+    grid->setHorizontalSpacing(4);
     grid->setVerticalSpacing(4);
-    grid->setColumnMinimumWidth(0, 72);
+    grid->setColumnMinimumWidth(0, 60);
     grid->setColumnStretch(1, 1);
     connect(toggle, &QToolButton::toggled, body, [body](bool open) {
         body->setProperty("collapsed", !open);
@@ -700,6 +771,7 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
 {
     auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max, anim, s.effect};
     p->edit->setValue(def);
+    p->edit->setShrinkable(true); // a narrow panel: the fields give a little before the panel scrolls or widens
     if (!key.isEmpty()) p->edit->setObjectName("inspector_" + key); // tests, styles
     p->edit->onChange = [this, p, key, text, field](double v) {
         if (p->slider) {
@@ -717,6 +789,26 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
     return p;
 }
 
+void Inspector::separateSliderSteps(QSlider* slider)
+{
+    static constexpr char kStep[] = "schneidiUndoStep";
+    // Every action the user starts without holding the handle begins a new step. The value is applied after
+    // actionTriggered (valueChanged follows), so a page/single step is closed there; an absolute-set click
+    // (SliderMove before the press counts) stays open for the drag that follows, its release closes it.
+    connect(slider, &QAbstractSlider::actionTriggered, this, [this, slider](int action) {
+        if (slider->isSliderDown() || action == QAbstractSlider::SliderNoAction) return; // a drag: closed on release
+        m_editor->project()->closeMerge();
+        slider->setProperty(kStep, action != QAbstractSlider::SliderMove);
+    });
+    connect(slider, &QSlider::valueChanged, this, [this, slider] {
+        if (!slider->property(kStep).toBool()) return;
+        slider->setProperty(kStep, false);
+        m_editor->project()->closeMerge();
+    });
+    connect(slider, &QSlider::sliderPressed, this, [slider] { slider->setProperty(kStep, false); }); // (step at the end)
+    connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+}
+
 Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QString& label, double min, double max,
                                        double def, double step, int decimals, const Field& field,
                                        std::optional<AnimParam> anim)
@@ -732,7 +824,7 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
         const QSignalBlocker b(p->slider); // avoid feedback
         if (p->edit->onChange) p->edit->onChange(p->edit->value());
     });
-    connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
+    separateSliderSteps(slider);
 
     auto* box = new QHBoxLayout;
     box->setContentsMargins(0, 0, 0, 0);
@@ -761,7 +853,7 @@ QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const Q
     Param* py = makeParam(s, key + "Y", label + " Y", min, max, def, step, decimals, y, ay);
     auto* box = new QHBoxLayout;
     box->setContentsMargins(0, 0, 0, 0);
-    box->setSpacing(4);
+    box->setSpacing(2);
     box->addStretch(1);
     box->addWidget(axisLabel("X"));
     box->addWidget(px->edit);

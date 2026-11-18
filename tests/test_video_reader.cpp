@@ -5,6 +5,10 @@
 // - several threads asking one reader a little out of order (export workers, read-ahead)
 // - hardware decoding (if this machine has a device) = software decoding bit for bit (H.264, 10-bit HEVC)
 // - unused readers close their decoder after a pause and give the same pictures when asked again
+// - a reader opened ahead (Reader::prepare) is taken by the next open() of the file with the same decoder options;
+//   one whose job has not started is cancelled and the file opened at once; dropPrepared closes the rest
+// - a decoder that cannot be opened again (after a hardware failure) answers nothing at once, for good
+// - a gap in the timestamps of a variable-rate file (a picture held for 2 s) shows the held picture, not the next one
 // plus the frame properties the file states (size, rotation, colour standard and range, interlacing, alpha).
 // Replaces the comparison with MLT's producer (test_video_decoder, until 0.15).
 
@@ -12,10 +16,12 @@
 
 #include "engine/ClipFormat.h"
 #include "engine/MediaProbe.h"
+#include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
 #include "engine/video/Scan.h"
 
 extern "C" {
+#include <libavcodec/defs.h>
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
@@ -23,12 +29,18 @@ extern "C" {
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
+#include <QSemaphore>
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
+#include <future>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <thread>
 
@@ -135,6 +147,64 @@ void testThreads(const Media& m, const QVector<QByteArray>& ref)
                   QString("%1 wrong pictures").arg(wrong.load()));
 }
 
+// Reader::prepare (the app's start with a project): the next open() with the same threads/hardware takes the reader
+// opened ahead - with the taker's other options - and gives the same pictures; other options open the file anew
+void testPrepared(const Media& m, const QVector<QByteArray>& ref)
+{
+    Video::Reader::Options o;
+    o.hardware = false;
+    o.keepBytes = 1; // a preview's kind of reader (the taker's size applies)
+    Video::Reader::prepare(m.path, o);
+    CHECK_EQ(Video::Reader::preparedCount(), 1);
+    Video::Reader::Options other = o;
+    other.threads = 2;
+    auto fresh = Video::Reader::open(m.path, other);
+    CHECK(fresh);
+    CHECK_EQ(Video::Reader::preparedCount(), 1); // not taken: other threads
+    Video::Reader::Options thumbnail = o;
+    thumbnail.autoBackward = false;
+    CHECK(Video::Reader::open(m.path, thumbnail));
+    CHECK_EQ(Video::Reader::preparedCount(), 1); // not taken: another kind of user
+    Video::Reader::Options taker = o;
+    taker.ahead = 3;
+    taker.keepBytes = 64 << 20;
+    auto r = Video::Reader::open(m.path, taker);
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+    if (!CHECK(r)) return;
+    int wrong = 0;
+    for (int pos : {0, m.frames / 2, 3, m.frames - 1})
+        if (const auto p = r->picture(pos); !p || p->position != pos || bytesOf(p->frame) != ref.value(pos)) ++wrong;
+    CHECK_EQ(wrong, 0);
+    auto again = Video::Reader::open(m.path, taker); // taken once only: this one opens the file
+    CHECK(again && again->picture(1));
+
+    // Few cores, the pool busy: the prepare job has not started when the file is needed - cancelled, the file opens
+    // at once instead of waiting for the pool (and the job does nothing when it gets its turn)
+    QThreadPool* pool = QThreadPool::globalInstance();
+    const int threads = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore hold;
+    pool->start([&hold] { hold.acquire(); });
+    Video::Reader::prepare(m.path, o);
+    QElapsedTimer t;
+    t.start();
+    auto direct = Video::Reader::open(m.path, taker);
+    CHECK(direct && direct->picture(2));
+    CHECK(t.elapsed() < 5000);
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+    hold.release();
+    pool->waitForDone();
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+    pool->setMaxThreadCount(threads);
+
+    // dropPrepared closes what nobody took
+    Video::Reader::prepare(m.path, o);
+    pool->waitForDone();
+    CHECK_EQ(Video::Reader::preparedCount(), 1);
+    Video::Reader::dropPrepared();
+    CHECK_EQ(Video::Reader::preparedCount(), 0);
+}
+
 // Hardware pictures = software pictures (H.264/HEVC decoding is bit exact)
 void testHardware(const Media& m)
 {
@@ -181,6 +251,103 @@ void testHibernate(const QString& path)
         const auto p = readers[i]->picture(10 + i);
         CHECK(p && bytesOf(p->frame) == first[i]);
     }
+}
+
+// Variable frame rate with a gap: picture N of the file shows its frame number as luma (16 + 2N), pictures 0..29
+// stand at positions 0..29 (60 fps), picture 29 is held for 2 s, pictures 30..59 stand at 150..179. Every position in
+// the gap shows the held picture 29 (it is on screen until the next one), not picture 30 two seconds too early - when
+// playing in order, after a seek into the gap (fresh or used reader, preview seek window or none), stepping back.
+int lumaOf(const std::shared_ptr<const Video::Picture>& p)
+{
+    if (!p || !p->frame) return -1;
+    const AVFrame* f = p->frame;
+    int64_t sum = 0;
+    for (int y = 0; y < f->height; ++y)
+        for (int x = 0; x < f->width; ++x) sum += f->data[0][y * f->linesize[0] + x];
+    return int((sum + f->width * f->height / 2) / (int64_t(f->width) * f->height));
+}
+
+void testVfrGap(const QString& path)
+{
+    const auto expected = [](int position) {
+        const int picture = position < 30 ? position : position < 150 ? 29 : std::min(59, position - 120);
+        return 16 + 2 * picture;
+    };
+    int wrong = 0;
+    QString first;
+    const auto check = [&](Video::Reader& r, int position, const char* how) {
+        const int got = lumaOf(r.picture(position));
+        if (std::abs(got - expected(position)) <= 1) return;
+        if (++wrong == 1)
+            first = QString("%1 at %2: luma %3, expected %4").arg(how).arg(position).arg(got).arg(expected(position));
+    };
+    for (const int64_t keep : {int64_t(0), int64_t(96) * 1024 * 1024}) {
+        Video::Reader::Options o;
+        o.hardware = false;
+        o.keepBytes = keep;
+        {
+            auto r = Video::Reader::open(path, o);
+            if (!CHECK(r)) return;
+            CHECK(r->info().frameRate.num == 60 && r->info().frameRate.den == 1);
+            for (int p = 0; p < 180; ++p) check(*r, p, "in order");
+        }
+        for (int p : {30, 60, 100, 149, 150, 151}) { // a fresh reader, straight into the gap
+            auto r = Video::Reader::open(path, o);
+            check(*r, p, "fresh seek");
+        }
+        {
+            auto r = Video::Reader::open(path, o);
+            for (int p : {170, 60, 40, 120, 160, 31, 149, 28, 29, 30, 150, 148}) check(*r, p, "jumps");
+            for (int p = 155; p >= 25; --p) check(*r, p, "backwards");
+        }
+    }
+    // No pictures kept behind and none ahead (hover-scrub thumbnails, ScrubFrames): a request in the gap is answered,
+    // not seeked for forever (evict() dropped the held picture, the request seeked again - 100 % CPU). A cancel after
+    // 10 s turns a hang into a failure.
+    const auto guarded = [&](Video::Reader& r, int p, const char* how) {
+        std::atomic<bool> cancel{false}, answered{false};
+        std::thread timer([&] {
+            for (int i = 0; i < 1000 && !answered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            cancel = true;
+        });
+        Video::Reader::Fetch fetch;
+        fetch.cancel = &cancel;
+        const int got = lumaOf(r.picture(p, fetch));
+        answered = true;
+        timer.join();
+        if (std::abs(got - expected(p)) > 1 && ++wrong == 1)
+            first = QString("%1 at %2: luma %3, expected %4").arg(how).arg(p).arg(got).arg(expected(p));
+    };
+    Video::Reader::Options none;
+    none.hardware = false;
+    none.ahead = 0;
+    none.behind = 0;
+    for (int p : {100, 60, 149, 30, 120})
+        if (auto r = Video::Reader::open(path, none)) guarded(*r, p, "behind 0, fresh");
+    if (auto r = Video::Reader::open(path, none))
+        for (int p = 0; p < 180; p += 7) guarded(*r, p, "behind 0, in order");
+    Check::report(wrong == 0, "vfr gap: the held picture", __FILE__, __LINE__,
+                  QString("%1 wrong pictures, first %2").arg(wrong).arg(first));
+}
+
+// The hardware decoder failed and the software one does not open either (out of memory): every request is answered
+// with nothing at once and failed() says so. The decoder thread used to go on with the unopened decoder (a crash in
+// avcodec_flush_buffers, or requests waiting forever).
+void testDecoderLost(const QString& path)
+{
+    auto r = Video::Reader::open(path);
+    if (!CHECK(r)) return;
+    CHECK(r->picture(5) != nullptr);
+    CHECK(!r->failed());
+    Video::Reader::loseDecoderForTests(true);
+    auto asked = std::async(std::launch::async, [&] { return r->picture(60) == nullptr; });
+    const bool answered = asked.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    Video::Reader::loseDecoderForTests(false);
+    if (!CHECK(answered)) return;
+    CHECK(asked.get());
+    CHECK(r->failed());
+    CHECK(r->picture(6) == nullptr); // at once, no thread left to answer
+    CHECK_EQ(r->stats().hardwareFailures, 1);
 }
 
 // A reversed clip in a forward export (or forward playback): the export's small windows (4 behind, 6 ahead), four
@@ -230,6 +397,129 @@ uint32_t sampleAt(const AVFrame* f, int x, int y)
 }
 
 // A file with a rotation tag comes upright: the plain file's picture turned by a quarter (the tag's direction)
+// Interlaced 4:2:0 converted field by field (chroma row k belongs to field k % 2) in limited and in full range
+// (yuvj420p, or yuv420p marked full): full range went the progressive way before 0.21 - each field's lines took the
+// other field's colour. Top field red, bottom field blue
+void testInterlacedFields()
+{
+    struct Case {
+        AVPixelFormat fmt;
+        bool full;
+    };
+    for (const Case c : {Case{AV_PIX_FMT_YUV420P, false}, Case{AV_PIX_FMT_YUV420P, true}, Case{AV_PIX_FMT_YUVJ420P, true}}) {
+        const int w = 64, h = 32;
+        Video::Picture pic;
+        pic.frame = av_frame_alloc();
+        pic.frame->format = c.fmt;
+        pic.frame->width = w;
+        pic.frame->height = h;
+        if (!CHECK(av_frame_get_buffer(pic.frame, 32) == 0)) return;
+        pic.progressive = false;
+        pic.topFieldFirst = true;
+        // BT.601 red / blue as Y, Cb, Cr
+        const int red[3] = {c.full ? 76 : 81, c.full ? 85 : 90, c.full ? 255 : 240};
+        const int blue[3] = {c.full ? 29 : 41, c.full ? 255 : 240, c.full ? 107 : 110};
+        for (int y = 0; y < h; ++y) std::memset(pic.frame->data[0] + y * pic.frame->linesize[0], (y % 2 ? blue : red)[0], w);
+        for (int y = 0; y < h / 2; ++y)
+            for (int p = 1; p <= 2; ++p) std::memset(pic.frame->data[p] + y * pic.frame->linesize[p], (y % 2 ? blue : red)[p], w / 2);
+        Video::Info info;
+        info.width = w;
+        info.height = h;
+        info.format = c.fmt;
+        info.colorspace = 601;
+        info.fullRange = c.full;
+        std::vector<uint8_t> out(size_t(w) * h * 4);
+        if (!CHECK(Video::toRgba(pic, info, out.data(), w, h, false))) continue;
+        int wrong = 0;
+        for (int y = 4; y < h - 4; ++y) {
+            const uint8_t* px = &out[(size_t(y) * w + w / 2) * 4];
+            const bool isRed = px[0] > 200 && px[2] < 60, isBlue = px[2] > 200 && px[0] < 60;
+            wrong += y % 2 ? !isBlue : !isRed;
+        }
+        std::printf("  interlaced %s %s: %d of %d lines in the wrong colour\n", av_get_pix_fmt_name(c.fmt),
+                    c.full ? "full" : "limited", wrong, h - 8);
+        CHECK_EQ(wrong, 0);
+    }
+}
+
+// Which field is shown first, per file: the decoder's flag on interlaced pictures, else the stream's field order
+// (TT/TB top first, BB/BT bottom first). A bottom-first H.264 in MP4 states TT (the parser's guess without timing SEI)
+// while the decoded pictures say bottom first; the reader trusted the stream's TT and called it top first. Each
+// picture: the top field's lines dark, the bottom field's light - the decoded picture keeps them on their lines (and
+// the field-wise RGBA conversion too), whichever field is shown first. Progressive files stay progressive.
+void testFieldOrder(const QString& dir)
+{
+    const auto make = [&](const QString& name, const QString& field) {
+        QString chain = "color=c=gray:size=352x288:rate=25:duration=0.4,format=yuv420p,"
+                        "geq=lum='if(mod(Y\\,2)\\,235\\,16)':cb=128:cr=128";
+        QStringList flags;
+        if (!field.isEmpty()) {
+            chain += ",setfield=" + field;
+            flags << "-flags" << "+ilme+ildct";
+        }
+        return Check::makeMedia(dir + "/" + name, QStringList{"-f", "lavfi", "-i", chain} + flags
+                                                      + QStringList{"-c:v", "libx264", "-preset", "ultrafast", "-qp",
+                                                                    "10", "-pix_fmt", "yuv420p"});
+    };
+    struct Case {
+        const char* name;
+        const char* field; // "" progressive
+    };
+    for (const Case c : {Case{"fields-progressive.mp4", ""}, Case{"fields-tff.mp4", "tff"}, Case{"fields-tff.mkv", "tff"},
+                         Case{"fields-bff.mp4", "bff"}, Case{"fields-bff.mkv", "bff"}, Case{"fields-bff.mov", "bff"}}) {
+        const QString path = make(c.name, c.field);
+        if (!Check::report(!path.isEmpty(), c.name, __FILE__, __LINE__, "ffmpeg could not make the file")) continue;
+        const auto r = Video::Reader::open(path);
+        if (!CHECK(r)) continue;
+        const bool interlaced = *c.field != 0, top = QByteArray(c.field) == "tff";
+        const int order = r->info().fieldOrder;
+        int wrong = 0, darkTop = 0, pictures = 0;
+        for (int i = 0; i < 8; ++i) {
+            const auto p = r->picture(i);
+            if (!p || !p->frame) break;
+            ++pictures;
+            if (p->progressive == interlaced || (interlaced && p->topFieldFirst != top)) ++wrong;
+            // Rows 100..187: even (top field) rows dark, odd (bottom field) rows light
+            const AVFrame* f = p->frame;
+            double even = 0, odd = 0;
+            for (int y = 100; y < 188; ++y)
+                for (int x = 100; x < 252; ++x) (y % 2 ? odd : even) += f->data[0][size_t(y) * f->linesize[0] + x];
+            if (even < odd) ++darkTop;
+            if (i == 0 && interlaced) { // the field-wise conversion keeps the lines on their field
+                std::vector<uint8_t> rgba(size_t(f->width) * f->height * 4);
+                Video::Picture view;
+                view.frame = av_frame_clone(f);
+                view.progressive = p->progressive;
+                view.topFieldFirst = p->topFieldFirst;
+                if (CHECK(Video::toRgba(view, r->info(), rgba.data(), f->width, f->height, false))) {
+                    const auto at = [&](int y) { return rgba[(size_t(y) * f->width + 176) * 4]; };
+                    CHECK(at(144) < 60 && at(145) > 200);
+                }
+            }
+        }
+        std::printf("  %s: stream field order %d, %d pictures, %d with the wrong field order, %d with the top field "
+                    "dark\n", c.name, order, pictures, wrong, darkTop);
+        CHECK(pictures >= 8);
+        Check::report(wrong == 0, qPrintable(QString(c.name) + ": progressive/field shown first"), __FILE__, __LINE__);
+        CHECK_EQ(darkTop, pictures);
+        // The shared mapping: the stream's order alone (no picture) and an interlaced picture's flag
+        const std::optional<bool> stream = Video::topFieldShownFirst(nullptr, order);
+        if (QByteArray(c.name).endsWith(".mkv")) CHECK(stream && *stream == top);
+        if (!interlaced) CHECK(!stream || order == AV_FIELD_PROGRESSIVE);
+    }
+    AVFrame* f = av_frame_alloc();
+    f->flags = AV_FRAME_FLAG_INTERLACED;
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_TT) == std::optional<bool>(false)); // the picture's flag wins
+    f->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_BT) == std::optional<bool>(true));
+    f->flags = 0; // a progressive picture: the stream says
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_TB) == std::optional<bool>(true));
+    CHECK(Video::topFieldShownFirst(f, AV_FIELD_BB) == std::optional<bool>(false));
+    CHECK(!Video::topFieldShownFirst(f, AV_FIELD_PROGRESSIVE));
+    CHECK(!Video::topFieldShownFirst(f, AV_FIELD_UNKNOWN));
+    av_frame_free(&f);
+}
+
 void testRotation(const QString& plain, const QString& rotated, double degrees, const QString& name = {})
 {
     auto a = Video::Reader::open(plain), b = Video::Reader::open(rotated);
@@ -320,8 +610,10 @@ int main(int argc, char** argv)
                                                                  "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
                                                                  "-x265-params", "log-level=error",
                                                                  "-video_track_timescale", "600"}), 60);
-    // Interlaced (top field first)
-    add("interlaced", Check::makeMedia(file("interlaced.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libx264",
+    // Interlaced (top field first). The pictures must be marked top-first (setfield): from progressive pictures the
+    // libx264 wrapper codes bottom first despite tff=1, and only the muxer's -field_order says TT
+    add("interlaced", Check::makeMedia(file("interlaced.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-vf",
+                                                                "setfield=tff", "-c:v", "libx264",
                                                                 "-flags", "+ildct+ilme", "-x264opts", "tff=1",
                                                                 "-pix_fmt", "yuv420p", "-field_order", "tt"}), 50);
     // SD with BT.601 tag
@@ -355,7 +647,47 @@ int main(int argc, char** argv)
             continue;
         testSeeks(m, ref);
         if (m.name == "h264" || m.name == "hevc-10bit" || m.name == "prores") testThreads(m, ref);
+        if (m.name == "h264") testPrepared(m, ref);
         if (m.name == "long-gop") testBackwards(m, ref, m.frames - 1, 100);
+    }
+
+    // A Matroska file cut short (a recording that crashed): some demuxers say EIO at the cut. The file is still there
+    // as opened, so that is its end - every picture before it comes, the reader is not "lost" (which would fail an
+    // export and reopen it on every seek)
+    {
+        const QString whole = Check::makeMedia(file("whole.mkv"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+                                                                   "-t", "4", "-c:v", "libx264", "-g", "25",
+                                                                   "-pix_fmt", "yuv420p"});
+        QFile in(whole), out(file("cut.mkv"));
+        if (CHECK(!whole.isEmpty() && in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly))) {
+            out.write(in.read(in.size() * 6 / 10 + 7)); // in the middle of a block
+            out.close();
+            Video::Reader::Options o;
+            o.hardware = false;
+            Video::Reader::eioAtEndForTests(true); // FFmpeg 7.1 says EOF there, other builds EIO
+            auto r = Video::Reader::open(file("cut.mkv"), o);
+            if (CHECK(r)) {
+                int got = 0;
+                for (int i = 0; i < 100; ++i)
+                    if (const auto p = r->picture(i); p && p->position == i) ++got;
+                CHECK(got >= 50); // more than half of the 100 frames were written
+                CHECK(got < 100);
+                CHECK(!r->failed());
+                const auto again = r->picture(10); // a seek back after the end still answers
+                CHECK(again && again->position == 10);
+            }
+            // The same read error with the file gone: lost (a disk pulled). Windows does not rename a file another
+            // handle has open (the reader's), so there it cannot go away this way
+#ifndef Q_OS_WIN
+            auto gone = Video::Reader::open(file("cut.mkv"), o);
+            if (CHECK(gone) && CHECK(gone->picture(0))) {
+                CHECK(QFile::rename(file("cut.mkv"), file("cut-away.mkv")));
+                for (int i = 1; i < 100 && !gone->failed(); ++i) gone->picture(i);
+                CHECK(gone->failed());
+            }
+#endif
+            Video::Reader::eioAtEndForTests(false);
+        }
     }
 
     // What the files state
@@ -385,6 +717,8 @@ int main(int argc, char** argv)
         const auto p = r->picture(3);
         CHECK(p && p->progressive);
     }
+    testInterlacedFields();
+    testFieldOrder(dir.path());
     testRotation(file("h264.mp4"), file("rotated.mp4"), 90);
     // Formats a quarter turn cannot keep: 4:2:2 (camera files, iPhone ProRes 422 shot in portrait), palette, 1 bit
     struct Turn {
@@ -514,5 +848,14 @@ int main(int argc, char** argv)
     if (!hd10.isEmpty()) testHardware(Media{"hevc 10 bit 720p", hd10, 60});
 
     testHibernate(file("h264.mp4"));
+    testDecoderLost(file("h264.mp4"));
+    // Picture 29 held for 2 s (lossless: the luma is the picture's number), Matroska (1 ms timestamps)
+    if (const QString vfr = Check::makeMedia(file("vfr-gap.mkv"),
+                                             {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=60,format=yuv420p,geq=lum='16+2*N':cb=128:cr=128",
+                                              "-frames:v", "60", "-vf", "setpts='if(gte(N,30),(N+120)/60/TB,N/60/TB)'",
+                                              "-fps_mode", "vfr", "-c:v", "libx264", "-g", "60", "-qp", "0", "-pix_fmt",
+                                              "yuv420p"});
+        CHECK(!vfr.isEmpty()))
+        testVfrGap(vfr);
     return Check::result();
 }

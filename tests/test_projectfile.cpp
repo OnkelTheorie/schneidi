@@ -3,6 +3,7 @@
 // all values come back unchanged (also fields that would be lost on the first save).
 // Also: moved project folder (relative paths), invalid/too new files.
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Interchange.h"
@@ -474,6 +475,49 @@ int main(int argc, char** argv)
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
     }
 
+    // --- Media no timeline uses (left in the Media Pool): the open dialog says so (MainWindow::applyLoaded). A file of
+    // another timeline or a title's texture counts as used
+    {
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[
+            {"path":"/weg/a.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/b.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/c.mp4","length":100,"hasVideo":true},
+            {"path":"/weg/d.png","length":1,"hasVideo":true,"isImage":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":9}]}],"audio":[]}})",
+                                    tmp.filePath("pool.schneidi"), &d, &err));
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/b.mp4", "/weg/c.mp4", "/weg/d.png"}));
+        Sequence other;
+        other.id = 99;
+        other.timeline.video.resize(1);
+        other.timeline.video[0].clips << mk(5, "/weg/b.mp4", 0, 0, 9);
+        Clip title;
+        title.id = 6;
+        title.kind = ClipKind::Title;
+        title.title.look.texture = "/weg/d.png";
+        other.timeline.video[0].clips << title;
+        d.sequences << other;
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
+        CHECK_EQ(ProjectFile::missingMedia(d).size(), 4); // missing all the same
+        // A transition's wipe picture and a brand kit file are used too (core/ProjectRefs: one list of every path)
+        d.media << d.media[2] << d.media[2];
+        d.media[4].path = "/weg/wipe.png";
+        d.media[5].path = "/weg/logo.png";
+        d.timeline.video[0].clips[0].transOutStyle.luma = "/weg/wipe.png";
+        BrandKit kit;
+        kit.logo = "/weg/logo.png";
+        d.brand = kit;
+        CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
+        // ... and relink finds the wipe picture again (it pointed at the old path before)
+        const QString found = tmp.filePath("wischen");
+        QDir().mkpath(found);
+        QFile wipe(found + "/wipe.png");
+        CHECK(wipe.open(QIODevice::WriteOnly));
+        wipe.close();
+        CHECK_EQ(ProjectFile::relink(&d, found), 1);
+        CHECK_EQ(d.timeline.video[0].clips[0].transOutStyle.luma, found + "/wipe.png");
+    }
+
     // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
     {
         ProjectData d;
@@ -668,6 +712,106 @@ int main(int argc, char** argv)
             CHECK(!opened(words, p).isEmpty());
             if (CHECK(p.media().size() == 1 && p.media()[0].transcripts.size() == 1))
                 CHECK(p.media()[0].transcripts[0].words.value(0).from == qint64(1) << 50);
+        }
+        // Clips with the same id or none, clips lying over each other on a track (edited by hand or by an AI): every
+        // clip gets an id of its own - above every id of the project, also those of timelines read later (a cue's new
+        // id once could be one of them) - and one lying over another moves to the first free track above at the same
+        // time (nothing is lost, its partner moves the same way and stays in sync)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{
+                "video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99,"link":1},
+                                   {"id":1,"media":0,"start":50,"in":0,"out":99,"link":2},
+                                   {"media":0,"start":200,"in":0,"out":9}]}],
+                "audio":[{"clips":[{"id":2,"media":0,"start":0,"in":0,"out":99,"link":1},
+                                   {"id":2,"media":0,"start":50,"in":0,"out":99,"link":2}]}],
+                "subtitles":[{"cues":[{"id":2,"start":0,"end":10,"text":"a"}]}]},
+                "sequences":[{"id":7,"name":"B","timeline":{"video":[{"clips":[{"id":3,"media":0,"start":0,"in":0,"out":9}]}]}}],
+                "lastClipId":2})";
+            CHECK(!opened(json, p).isEmpty());
+            QSet<int> ids;
+            int clips = 0;
+            for (const Sequence& s : p.sequences()) {
+                CHECK_TIMELINE(s.timeline);
+                for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
+                    for (const Track& t : *tracks)
+                        for (const Clip& c : t.clips) {
+                            CHECK(!ids.contains(c.id));
+                            ids.insert(c.id);
+                            ++clips;
+                        }
+                for (const SubtitleTrack& t : s.timeline.subtitles)
+                    for (const SubtitleCue& c : t.cues) CHECK(!ids.contains(c.id)), ids.insert(c.id);
+            }
+            CHECK_EQ(clips, 6);
+            const Timeline& tl = p.timeline();
+            CHECK_EQ(Check::dump(tl), QString("V1: a[0-100|0-99] a[200-210|0-9]  V2: a[50-150|0-99]  A1: a[0-100|0-99]  "
+                                              "A2: a[50-150|0-99]"));
+            if (CHECK(tl.video.size() == 2 && tl.audio.size() == 2)) {
+                CHECK_EQ(tl.video[0].clips[0].id, 1); // the first one keeps its id
+                CHECK_EQ(tl.video[1].clips.value(0).linkId, tl.audio[1].clips.value(0).linkId);
+            }
+            // New ids come after every id there was: a new clip does not take one either
+            const int next = p.newClipId();
+            CHECK(next > *std::max_element(ids.cbegin(), ids.cend()));
+            CHECK(stable(json));
+        }
+        // ... not onto a track that plays otherwise (muted, other volume, locked) - a new track with the settings of its
+        // own; in a multicam clip always a new track (the angles point at tracks: another one is another camera)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[]}],
+                "audio":[{"volumeDb":-6,"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                                                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},
+                         {"muted":true,"clips":[]},{"locked":true,"clips":[]},{"volumeDb":-3,"clips":[]}]}})";
+            CHECK(!opened(json, p).isEmpty());
+            const Timeline& tl = p.timeline();
+            CHECK_TIMELINE(tl);
+            if (CHECK_EQ(int(tl.audio.size()), 5)) {
+                CHECK_EQ(Check::dump(tl), QString("V1:  A1: a[0-100|0-99]  A2:  A3:  A4:  A5: a[50-150|0-99]"));
+                CHECK_EQ(tl.audio[4].volumeDb, -6.0);
+                CHECK(!tl.audio[4].muted && !tl.audio[4].locked);
+            }
+            // A track above that plays the same way is taken
+            const QByteArray same = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}})";
+            CHECK(!opened(same, p).isEmpty());
+            CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: a[50-150|0-99]  A1:"));
+            // Multicam: V2 is the second camera - the clip goes to a new track
+            const QByteArray multicam = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},
+                {"id":2,"multicam":true,"angles":[{"name":"A","video":0,"audio":[]},{"name":"B","video":1,"audio":[]}],
+                 "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}}]})";
+            CHECK(!opened(multicam, p).isEmpty());
+            if (const Sequence* m = p.sequence(2); CHECK(m)) {
+                CHECK_TIMELINE(m->timeline);
+                CHECK_EQ(Check::dump(m->timeline), QString("V1: a[0-100|0-99]  V2:  V3: a[50-150|0-99]  A1:"));
+            }
+        }
+        // Multicam: overlapping sound moved to a new track stays audible in the angle that heard its track; a second
+        // one goes onto that same new track; a new track is never locked (even from a locked one)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},
+                {"id":2,"multicam":true,"angles":[{"name":"A","video":0,"audio":[0]},{"name":"B","video":1,"audio":[1]}],
+                 "timeline":{"video":[{"clips":[]},{"clips":[]}],"audio":[{"locked":true,"clips":[
+                 {"id":1,"media":0,"start":0,"in":0,"out":99},{"id":2,"media":0,"start":10,"in":0,"out":9},
+                 {"id":3,"media":0,"start":30,"in":0,"out":9}]},{"clips":[]}]}}]})";
+            CHECK(!opened(json, p).isEmpty());
+            if (const Sequence* m = p.sequence(2); CHECK(m)) {
+                CHECK_TIMELINE(m->timeline);
+                CHECK_EQ(Check::dump(m->timeline), QString("V1:  V2:  A1: a[0-100|0-99]  A2:  A3: a[10-20|0-9] a[30-40|0-9]"));
+                if (CHECK_EQ(int(m->angles.size()), 2)) {
+                    CHECK_EQ(m->angles[0].audioTracks, (QVector<int>{0, 2}));
+                    CHECK_EQ(m->angles[1].audioTracks, (QVector<int>{1}));
+                }
+                if (CHECK_EQ(int(m->timeline.audio.size()), 3)) CHECK(!m->timeline.audio[2].locked);
+            }
         }
         // A still frame before the file's start: its first frame (was saved without it and came back as `in`)
         {

@@ -103,8 +103,12 @@ public:
     struct CacheSpan {
         int start = 0, end = 0; // timeline frames, end exclusive
         double done = 0;
+        QString name; // the clip's (tooltip)
     };
-    void setRenderCacheSpans(const QVector<CacheSpan>& spans);
+    // paused: the user paused the cache (its job's ✕), the red parts wait for the next change
+    void setRenderCacheSpans(const QVector<CacheSpan>& spans, bool paused = false);
+    // Tooltip over the bar at `pos` (widget coordinates; empty = not over it): clip, how far, what the colors mean
+    QString renderCacheToolTip(const QPoint& pos) const;
 
     // Retime controls like DaVinci (Retime Controls): bar at the top of the clip with speed per section and speed points
     void setRetimeControls(const QVector<int>& ids, bool on);
@@ -112,6 +116,11 @@ public:
     // Curve editor under the clip (only clips with keyframes); param = shown parameter (Count = first animated)
     void setCurveEditor(const QVector<int>& ids, bool on, AnimParam param = AnimParam::Count);
     bool curveEditorShown(int clipId) const;
+    // Which track automation an audio lane shows (view state per timeline view, not in the project; header menu
+    // "Anzeigen: Lautstärke / Pan"): Volume = the level line (only with a volume curve), Pan = the pan line around the
+    // lane's middle (top = right, bottom = left). Display only: track automation is edited on the Studio page.
+    void setAutoShown(int audioTrack, AutoTarget target);
+    AutoTarget autoShown(int audioTrack) const { return m_panLanes.contains(audioTrack) ? AutoTarget::Pan : AutoTarget::Volume; }
 
     // Voice-over (app/VoiceoverRecorder): the armed audio track (its mic in the header lit, -1 = none), whether it
     // records, and the input level shown in that header (dBFS, while armed)
@@ -159,6 +168,8 @@ signals:
     void soundDropRequested(const QByteArray& sound, int frame);
     // A compositing recipe from the Effects Library dropped onto video clip `clipId` (MainWindow applies it)
     void recipeDropped(int clipId, const QString& recipe);
+    // Double-click on a node's time range bar: open that node on the Comp page
+    void compNodeOpenRequested(int clipId, int node);
     // Right-click on a clip (it is selected then)
     void clipMenuRequested(const QPoint& globalPos);
     // Double-click on a subtitle: edit the text in the Inspector
@@ -213,7 +224,39 @@ private:
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
                       CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
-                      TrackMaybeMove, TrackMove, Rubber, SectionEdge, Marks };
+                      TrackMaybeMove, TrackMove, Rubber, SectionEdge, Marks, NodeRange };
+    // Time ranges of compositing nodes (0.22, TimelineNodes.cpp): bars at the bottom of a clip with a graph
+    struct NodeBar {
+        int node = 0;
+        QString label;          // kind and text/file, translated
+        int first = 0, end = 0; // timeline frames, end exclusive (the dragged one: where it goes)
+        QRect rect;
+        bool keyed = false; // from/until have keyframes: the range at the playhead, not draggable
+    };
+    struct NodeHit {
+        int clipId = 0;
+        int node = 0;
+        int part = 0; // -1 start edge, 0 the bar (moves), 1 end edge
+        bool keyed = false;
+    };
+    // The bars of clip c drawn in r (at most 3); more = how many are left out ("+n"); dot = the mark of a clip too low
+    // for bars (empty = none)
+    QVector<NodeBar> nodeBars(const QRect& r, const Clip& c, int* more = nullptr, QRect* dot = nullptr) const;
+    void drawNodeBars(QPainter& p, const QRect& r, const Clip& c);
+    std::optional<NodeHit> nodeBarAt(const QPoint& pos) const;
+    QString nodeBarToolTip(const QPoint& pos) const;
+    int nodeSnapDelta(const QVector<int>& edges) const; // playhead, clip edges, markers; correction or 0
+    // nodeBarPress starts a drag; false = no (draggable) bar there. Called after fade handles, transitions and clip
+    // edges had their chance (a bar never blocks trimming)
+    bool nodeBarPress(const QPoint& pos);
+    void nodeBarDrag(const QPoint& pos);
+    void nodeBarRelease();                              // one undo step (Editor::setCompNodeRange)
+    bool nodeBarDoubleClick(const QPoint& pos);         // compNodeOpenRequested
+    void setNodeHover(const QPoint& pos);
+    NodeHit m_nodeDrag, m_nodeHover;
+    int m_nodeStartFirst = 0, m_nodeStartEnd = 0; // the dragged bar at the press
+    int m_nodeFirst = 0, m_nodeEnd = 0;           // and now
+    double m_nodeFrom = 0, m_nodeUntil = 0;       // its stored values at the press
     // Retime bar: speed point (point >= 0) or section (segment >= 0) under the mouse
     struct RetimeHit {
         int clipId = 0;
@@ -371,6 +414,7 @@ private:
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
                   const QVector<TimelineOps::TransitionSpan>& spans = {}, const QColor& color = {});
     void drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips);
+    void drawTrackAutomation(QPainter& p, const Row& row, const Track& track);
     void drawFilmstrip(QPainter& p, const QRect& body, const Clip& c);
     void drawWaveform(QPainter& p, const QRect& body, const Clip& c, const QVector<TimelineOps::TransitionSpan>& spans,
                       const QColor& color);
@@ -413,6 +457,8 @@ private:
     Editor* m_editor;
     MediaCache* m_cache = nullptr;
     QVector<CacheSpan> m_cacheSpans;
+    bool m_cachePaused = false;
+    static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
     bool m_snap = true;
@@ -441,7 +487,9 @@ private:
     // Trim mode: running edit, delta and preview of the timeline
     TimelineOps::TrimEdit m_trimEdit;
     TrimHit m_trimHit{TimelineOps::TrimKind::Ripple, 0, TimelineOps::Edge::End};
-    int m_trimEditDelta = 0;
+    int m_trimEditDelta = 0;  // shown (allowed) one
+    int m_trimEditWanted = 0; // the one the mouse asks for
+    QString m_trimEditWhy;    // why the wanted one is not allowed (shown in the status bar once)
     std::optional<Timeline> m_trimPreview;
     // Trim view: last emitted frames (only changes are sent); shown = trimFramesChanged sent since the press
     TrimFrames::View m_trimFrames;
@@ -464,6 +512,7 @@ private:
 
     // Keyframe lanes: expanded clips (view state, not in the project) and dragging diamonds
     QSet<int> m_keyLanes;
+    QSet<int> m_panLanes; // audio track indices showing the pan automation instead of the volume (setAutoShown)
     int m_keyDragClip = 0;
     int m_keyDelta = 0;
 

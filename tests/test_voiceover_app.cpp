@@ -44,11 +44,14 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QToolButton>
 #include <QUndoStack>
 #include <clocale>
+#include <functional>
 
 namespace {
 
@@ -590,6 +593,167 @@ int main(int argc, char** argv)
             CHECK(Voiceover::isVoiceoverTrack(project->timeline().audio[tracks - 1]));
         while (project->undoStack()->index() > undo) project->undoStack()->undo();
         recorder->setArmedTrack(-1);
+    }
+
+    // ---- User report 2026-11-11 "schneidi lags briefly when Voiceover starts": a sound server takes 30-50 ms to open
+    // an input (measured, PipeWire: 31-52 ms per take, plus up to 20 ms closing the armed track's meter), all on the
+    // GUI thread. Inputs open on their own thread now: with an input that takes 250 ms to open, arming and the record
+    // key return at once; the take still begins only once the input runs (words right at the start are kept, the
+    // take lines up as before)
+    if (!e2e) {
+        qputenv("SCHNEIDI_AUDIO_INPUT", "burst:100");
+        qputenv("SCHNEIDI_AUDIO_INPUT_DELAY", "250");
+        w.liveSelection()->clear();
+        const int undo = project->undoStack()->index();
+        const QDir folder(Voiceover::folder(QString()));
+        QElapsedTimer t;
+        t.start();
+        recorder->setArmedTrack(0); // the meter's input opens
+        const qint64 arm = t.elapsed();
+        std::printf("slow input: arming took %lld ms\n", arm);
+        CHECK(arm < 30);
+        CHECK(recorder->metering());
+        wait(400); // the meter runs
+        t.start();
+        recorder->setArmedTrack(-1); // and closes
+        const qint64 disarm = t.elapsed();
+        std::printf("slow input: disarming took %lld ms\n", disarm);
+        CHECK(disarm < 30);
+        CHECK(!recorder->metering());
+        recorder->setArmedTrack(0);
+        wait(400);
+        recorder->setArmedTrack(-1); // a take on a free track (an armed one with sound: punch-in, no head)
+        engine.seek(50);
+        wait(100);
+        view->setFocus();
+        t.start();
+        QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
+        const qint64 press = t.elapsed();
+        std::printf("slow input: the record key took %lld ms\n", press);
+        CHECK(press < 30);
+        CHECK(recorder->recording());
+        CHECK(!recorder->live());     // "Gleich …" while the input opens
+        CHECK(engine.speed() == 0.0); // the timeline waits for the input
+        CHECK(waitLive(recorder));
+        wait(600);
+        t.start();
+        CHECK(recorder->stop());
+        std::printf("slow input: stopping took %lld ms\n", t.elapsed());
+        const int track = recorder->placedTrack();
+        const Timeline& tl = project->timeline();
+        if (CHECK(track > 0 && track < tl.audio.size() && tl.audio[track].clips.size() == 1)) {
+            const Clip& c = tl.audio[track].clips[0];
+            std::printf("slow input take: start %d (playhead 50) in %d\n", c.start, c.in);
+            CHECK_EQ(c.in, 0); // the burst at file sample 0 is in the clip
+            CHECK(c.start <= 50 && c.start >= 25);
+            float first = 0;
+            for (int i = 0; i < 10 && i < recorder->take().peaks().size(); ++i)
+                first = std::max(first, recorder->take().peaks()[i]);
+            CHECK(first > 0.2f); // the burst came in
+        }
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+
+        // Stopped (or cancelled) before the input ran: nothing recorded, no step, no file left behind
+        const int files = int(folder.entryList({"*.wav"}, QDir::Files).size());
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        CHECK(recorder->recording());
+        CHECK(engine.openEnd());
+        QString error;
+        CHECK(!recorder->stop(&error));
+        CHECK(!error.isEmpty());
+        CHECK(!recorder->recording());
+        CHECK(!engine.openEnd());
+        CHECK(recorder->start());
+        recorder->cancel();
+        CHECK(!recorder->recording());
+        wait(700); // the input opened meanwhile is closed again
+        CHECK(!recorder->recording());
+        CHECK(engine.speed() == 0.0);
+        CHECK_EQ(project->undoStack()->index(), undo);
+        CHECK_EQ(int(folder.entryList({"*.wav"}, QDir::Files).size()), files);
+        CHECK(w.statusBar()->currentMessage() != T("Voiceover: gleich …")); // review: it did not stay
+
+        // Review: pressed while the timeline plays, the input taking 300 ms: the timeline stops at the key press and
+        // the take begins exactly there (not where the playhead got to meanwhile), on the free track, nothing replaced
+        qputenv("SCHNEIDI_AUDIO_INPUT_DELAY", "300");
+        const double fps = project->frameRate();
+        engine.seek(25);
+        wait(100);
+        engine.play();
+        wait(300);
+        QTest::keyClick(view, Qt::Key_R, Qt::ShiftModifier);
+        const int pressed = engine.position();
+        CHECK(pressed > 25);
+        CHECK(engine.speed() == 0.0);
+        wait(150);
+        CHECK_EQ(engine.position(), pressed); // it waits there while the input opens
+        CHECK(recorder->recording() && !recorder->live());
+        CHECK(waitLive(recorder));
+        CHECK(engine.speed() == 1.0);
+        CHECK(engine.position() >= pressed && engine.position() <= pressed + int(fps / 2));
+        wait(500);
+        CHECK(recorder->stop());
+        CHECK_EQ(recorder->replaced(), 0);
+        {
+            const int track = recorder->placedTrack();
+            const Timeline& tl = project->timeline();
+            if (CHECK(track > 0 && track < tl.audio.size() && tl.audio[track].clips.size() == 1)) {
+                const Clip& c = tl.audio[track].clips[0];
+                std::printf("pressed while playing at %d: take start %d in %d\n", pressed, c.start, c.in);
+                CHECK(c.start <= pressed && c.start >= pressed - int(fps)); // the head before it is kept
+                CHECK_EQ(c.in, 0);
+            }
+        }
+        while (project->undoStack()->index() > undo) project->undoStack()->undo();
+
+        // Review: a seek, a play (Space) or the source view while the input opens ends the take: nothing recorded
+        const int files2 = int(folder.entryList({"*.wav"}, QDir::Files).size());
+        auto endsBeforeItRan = [&](const char* what, const std::function<void()>& meanwhile) {
+            engine.seek(25);
+            wait(100);
+            CHECK(recorder->start());
+            wait(50);
+            meanwhile();
+            wait(700);
+            if (!CHECK(!recorder->recording())) std::printf("       %s did not end the opening take\n", what);
+            CHECK(!engine.openEnd());
+            engine.pause();
+            if (engine.mode() != Engine::Mode::Timeline) engine.showTimeline(25);
+            wait(50);
+            CHECK_EQ(project->undoStack()->index(), undo);
+            CHECK_EQ(int(folder.entryList({"*.wav"}, QDir::Files).size()), files2);
+        };
+        endsBeforeItRan("a seek", [&] { engine.seek(10); });
+        endsBeforeItRan("play", [&] { engine.play(); });
+        endsBeforeItRan("the source view", [&] { engine.showSource(a); });
+
+        // Review: an input that does not open in time: the take ends with a clear message (the warning closed here)
+        recorder->setOpenTimeout(100);
+        QString failure;
+        const auto failConn = QObject::connect(recorder, &VoiceoverRecorder::failed, [&](const QString& e) { failure = e; });
+        QTimer closer;
+        QObject::connect(&closer, &QTimer::timeout, [] {
+            for (QWidget* top : QApplication::topLevelWidgets())
+                if (auto* box = qobject_cast<QMessageBox*>(top); box && box->isVisible()) box->reject();
+        });
+        closer.start(50);
+        engine.seek(25);
+        wait(100);
+        CHECK(recorder->start());
+        wait(250);
+        CHECK(!recorder->recording());
+        CHECK(!failure.isEmpty());
+        wait(400); // the input opened late is closed again, its file removed
+        CHECK_EQ(int(folder.entryList({"*.wav"}, QDir::Files).size()), files2);
+        CHECK(w.statusBar()->currentMessage() != T("Voiceover: gleich …"));
+        closer.stop();
+        QObject::disconnect(failConn);
+        recorder->setOpenTimeout(5000);
+        CHECK_EQ(project->undoStack()->index(), undo);
+        qputenv("SCHNEIDI_AUDIO_INPUT_DELAY", "");
+        qputenv("SCHNEIDI_AUDIO_INPUT", "sine:440");
     }
 
     // Review 2026-11-09: a take a crash left running (its file named in the settings) is offered once, not modal

@@ -26,15 +26,24 @@ using EditorDetail::fitTransitions;
 
 void EditorDetail::fitTransitions(Timeline& tl, const QSet<int>& clipIds, const TimelineOps::SourceLength& len)
 {
+    // Read-only first, written only where a value changes (undo snapshots share the untouched tracks)
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : tl.tracks(k)) {
+        for (qsizetype i = 0; i < std::as_const(tl).tracks(k).size(); ++i) {
+            const Track& t = std::as_const(tl).tracks(k)[i];
+            if (std::none_of(t.clips.cbegin(), t.clips.cend(), [&](const Clip& c) { return clipIds.contains(c.id); }))
+                continue;
             QHash<int, int> in, out;
             for (const auto& s : TimelineOps::transitions(t, len)) {
                 if (s.leftId) out[s.leftId] = s.length();
                 if (s.rightId) in[s.rightId] = s.length();
             }
-            for (Clip& c : t.clips) {
-                if (!clipIds.contains(c.id)) continue;
+            QVector<qsizetype> changed;
+            for (qsizetype j = 0; j < t.clips.size(); ++j) {
+                const Clip& c = t.clips[j];
+                if (clipIds.contains(c.id) && (c.transIn != in.value(c.id) || c.transOut != out.value(c.id))) changed << j;
+            }
+            for (qsizetype j : std::as_const(changed)) { // (writing may detach: `t` is not used from here on)
+                Clip& c = tl.tracks(k)[i].clips[j];
                 c.transIn = in.value(c.id);
                 c.transOut = out.value(c.id);
             }
@@ -247,15 +256,16 @@ bool Editor::trimForTransition(Timeline& tl, int leftId, int rightId, Transition
         const int dl = std::max(0, after - handleOut), dr = std::max(0, before - handleIn);
         if (l->length() - dl < std::max(1, before) || r->length() - dr < std::max(1, after)) continue;
         Timeline t = tl;
+        // The trim makes room for the transition, no content is cut: markers on the trimmed piece go to the cut
         if (dl > 0) {
             const TrimEdit e = trimEdit(TrimKind::Ripple, leftId, Edge::End);
             if (TimelineOps::clampTrimEdit(t, e, -dl, len) != -dl) return false;
-            TimelineOps::applyTrimEdit(t, e, -dl, len);
+            TimelineOps::applyTrimEdit(t, e, -dl, len, TimelineOps::MarkerCut::MoveToCut);
         }
         if (dr > 0) {
             const TrimEdit e = trimEdit(TrimKind::Ripple, rightId, Edge::Start);
             if (TimelineOps::clampTrimEdit(t, e, dr, len) != dr) return false;
-            TimelineOps::applyTrimEdit(t, e, dr, len);
+            TimelineOps::applyTrimEdit(t, e, dr, len, TimelineOps::MarkerCut::MoveToCut);
         }
         tl = t;
         return true;

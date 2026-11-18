@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "app/OpenTrace.h"
+#include "core/Shapes.h"
 #include "core/StartupTrace.h"
 #include "app/TourManager.h"
 #include "ui/TourOverlay.h"
@@ -39,6 +41,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/video/Hardware.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/ClipFormat.h"
@@ -68,6 +71,8 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QCursor>
+#include <QScreen>
 #include <QActionGroup>
 #include <QApplication>
 #include <QMouseEvent>
@@ -109,6 +114,51 @@ QString MainWindow::appName()
     return "schneidi " + QCoreApplication::applicationVersion().section(" (", 0, 0);
 }
 
+QRect MainWindow::fitToScreen(const QRect& wanted, const QRect& available, const QMargins& frame)
+{
+    const QRect room = available.marginsRemoved(frame);
+    if (room.width() < 100 || room.height() < 100) return room; // a tiny screen: all of it
+    const bool fits = wanted.isValid() && wanted.width() <= room.width() && wanted.height() <= room.height();
+    if (fits && wanted.intersects(available)) { // on this screen: pushed fully inside
+        QRect r = wanted;
+        r.moveLeft(std::clamp(r.left(), room.left(), room.right() - r.width() + 1));
+        r.moveTop(std::clamp(r.top(), room.top(), room.bottom() - r.height() + 1));
+        return r;
+    }
+    QRect r(0, 0, room.width() * 9 / 10, room.height() * 9 / 10);
+    if (fits) r.setSize(wanted.size()); // from another (disconnected) screen: its size, centred here
+    r.moveCenter(room.center());
+    return r;
+}
+
+QScreen* MainWindow::startScreen()
+{
+    if (QScreen* s = QGuiApplication::screenAt(QCursor::pos())) return s;
+    return QGuiApplication::primaryScreen();
+}
+
+void MainWindow::placeOnScreen(const QRect& wanted)
+{
+    // Before the first show the window has no screen of its own yet (Qt gives it the primary one): it starts where
+    // the user is looking, the screen under the mouse cursor (two monitors: not always on the primary one)
+    QScreen* s = isVisible() && screen() ? screen() : startScreen();
+    if (!s) return;
+    if (!isVisible() && screen() != s) setScreen(s);
+    if (layout()) layout()->activate(); // the minimum of the pages as they are now
+    const QRect available = s->availableGeometry();
+    QRect r = fitToScreen(wanted, available);
+    // Never below the window's own minimum (the Edit page's panels): grown, then moved inside again; a screen smaller
+    // than it gets the window at its top left
+    const QSize least = minimumSizeHint().expandedTo(minimumSize());
+    if (r.width() < least.width() || r.height() < least.height()) {
+        r.setSize(r.size().expandedTo(least));
+        r = fitToScreen(r, available);
+        if (r.width() < least.width() || r.height() < least.height())
+            r = QRect(available.marginsRemoved(kFrameEstimate).topLeft(), r.size().expandedTo(least));
+    }
+    setGeometry(r);
+}
+
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
 {
     setWindowTitle(appName());
@@ -145,6 +195,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_engineTimer.setInterval(30);
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
         m_engine->updateTimeline(previewTimeline()); // the Comp page may show one node of a graph
+        OpenTrace::timelineSent();
         updateRenderCacheBar();
     });
     connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
@@ -197,6 +248,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             proxiesChanged();
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
+    connect(proxies, &ProxyManager::qualityChanged, this, proxiesChanged); // other proxy files now
     setupProxyHint();
     setupBackgroundJobs();
     // Before/After: cached clips contain the correction -> rebuild the preview so they come from the original
@@ -214,6 +266,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(Stabilizer::instance(), &Stabilizer::resultReady, this, &MainWindow::updateRenderCacheBar);
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
+    // A source lost while the project is open (disk or share gone, file moved): named, the preview tries it again
+    connect(m_engine, &Engine::sourceLost, this, [this](const QString& path) {
+        statusBar()->showMessage(T("Quelldatei nicht lesbar: %1 – neuer Versuch beim nächsten Abspielen oder Springen")
+                                     .arg(QFileInfo(path).fileName()),
+                                 8000);
+    });
 
     // Engine -> playhead (timeline and multicam grid; in source mode the playhead stays put)
     TimelineView* tv = m_timeline->view();
@@ -233,6 +291,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::keyPickRequested, this, &MainWindow::startKeyPick);
     connect(m_inspector, &Inspector::keyPickCancelled, this, &MainWindow::stopKeyPick);
     connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
+    connect(m_inspector, &Inspector::drawToolRequested, this, [this] { setDrawTool(true); });
     connect(m_selection, &Selection::changed, this, [this] {
         if (m_keyPicker) stopKeyPick();
         if (m_page == Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
@@ -303,12 +362,30 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     // Drag-fill of a template placeholder: what was done, briefly
     connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
     connect(tv, &TimelineView::message, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
+    // An edit refused or only partly done (a ripple that would take picture and sound apart): why
+    connect(m_editor, &Editor::notice, this, [this](const QString& text) { statusBar()->showMessage(text, 8000); });
     // Recipe dropped on a clip: applied after the drop (it may ask for a file)
     connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
         // The clip that got it selected: the Comp page and the Inspector show it next (not another one selected before)
         QTimer::singleShot(0, this, [this, clipId, recipe] {
             if (applyRecipe({clipId}, recipe)) m_selection->set({clipId});
         });
+    });
+    // Double-click on a node's time range bar: the node on the Comp page, the playhead inside its range
+    connect(tv, &TimelineView::compNodeOpenRequested, this, [this](int clipId, int node) {
+        openComp(clipId);
+        if (m_compPage) m_compPage->selectNode(node);
+        const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
+        const EffectInstance* e = c ? EffectRegistry::instance(*c, Comp::kEffectId) : nullptr;
+        Comp::NodeRange r;
+        if (!e || !Comp::activeRange(*e, node, &r)) return;
+        int first = 0, end = 0;
+        Comp::rangeFrames(*c, r, m_project->format().rate.fps(), &first, &end);
+        const int at = m_timeline->view()->playhead();
+        if (first < end && (at < first || at >= end)) {
+            if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(first);
+            else m_engine->seek(first);
+        }
     });
     // After the drop (the drag source waits until dropEvent returns; a message box there would block it)
     connect(tv, &TimelineView::soundDropRequested, this, [this](const QByteArray& sound, int frame) {
@@ -488,6 +565,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_effects, &EffectsLibrary::titleRequested, this,
             [this, tv](int kind) { m_editor->addTitle(tv->playhead(), -1, 0, TitleKind(kind)); });
+    connect(m_effects, &EffectsLibrary::shapeRequested, this, [this, tv](const QString& kind) { addShape(tv->playhead(), -1, kind); });
+    connect(m_effects, &EffectsLibrary::drawRequested, this, [this] { setDrawTool(true); });
+    m_effects->setHistory([this] { return m_project->undoStack(); }); // recently used = what changed the project
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
         const QVector<int> targets = m_editor->effectTargets(tv->playhead(), Editor::effectKind(id));
@@ -548,8 +628,16 @@ void MainWindow::connectColorPage()
     if (m_tours) connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
 }
 
+void MainWindow::warmUpVideoDecoding()
+{
+    // The graphics card's decoder (CUDA: 100-250 ms to open) opens beside the rest of the work, not when the first
+    // picture waits for it. Not without a screen (tests, --screenshot): nothing plays there.
+    if (QGuiApplication::platformName() != QLatin1String("offscreen")) Video::Hardware::warmUp();
+}
+
 void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)
 {
+    warmUpVideoDecoding();
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
     // Test helper (--demo): put files one after another on V1/A1; project format from the first clip without asking
@@ -559,18 +647,46 @@ void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, boo
 
 MediaInfo MainWindow::probeCached(const QString& path)
 {
-    auto it = m_probeCache.find(path);
-    if (it == m_probeCache.end()) it = m_probeCache.insert(path, m_engine->probe(path));
-    return *it;
+    // On the UI thread (the timeline's drag-enter, a template slot): a quick look that never runs the long stream
+    // analysis; when it was skipped, the full probe follows in the background (kept for the next drag-enter and the
+    // import of the drop)
+    if (std::optional<ProbeResult> known = m_probeCache.find(path)) return known->info;
+    const ProbeResult quick = ProbeCache::probe(path, m_project->format().rate, false);
+    if (quick.partial) probeLater(path);
+    else m_probeCache.insert(quick);
+    return quick.info;
+}
+
+// A shape title of one kind ("arrow"; unknown = the default circle), its box made for the kind like the Inspector's
+// kind switch does (a line gets a line's thickness)
+void MainWindow::addShape(int frame, int track, const QString& kindId)
+{
+    ShapeKind kind = ShapeKind::Ellipse;
+    if (!Shapes::kindFromId(kindId, &kind) || kind == ShapeKind::Ellipse) {
+        m_editor->addTitle(frame, track, 0, TitleKind::Shape);
+        return;
+    }
+    const int height = m_project->timelineFormat().height;
+    m_editor->addTitle(frame, track, 0, TitleKind::Shape, [kind, height](Clip& c) {
+        const QSizeF size = Shapes::sizeForKind(c.title.shape, kind, Shapes::lineThickness(height));
+        c.title.shape.width = size.width();
+        c.title.shape.height = size.height();
+        c.title.shape.kind = kind;
+    });
 }
 
 void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlaceParts parts)
 {
     if (paths.size() == 1 && MediaPool::isTitleItem(paths.first())) {
         const QString& p = paths.first();
+        if (const QString kind = MediaPool::shapeKindOf(p); !kind.isEmpty()) { // a shape of one kind (Effects Library)
+            addShape(frame, track, kind);
+            return;
+        }
         m_editor->addTitle(frame, track, 0,
                            p == MediaPool::CounterItem    ? TitleKind::Counter
                            : p == MediaPool::ProgressItem ? TitleKind::Progress
+                           : p == MediaPool::ShapeItem    ? TitleKind::Shape
                                                           : TitleKind::Text);
         return;
     }
@@ -592,17 +708,23 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track, PlacePar
     QStringList unknown;
     for (const QString& p : paths)
         if (!m_project->mediaInfo(p)) unknown << p;
-    if (!unknown.isEmpty()) m_mediaPool->importFiles(unknown);
-    if (m_project->frameRateLocked()) {
-        m_editor->addMediaAt(paths, frame, track, parts);
-        return;
-    }
     // Empty timeline: possibly ask about the project format – only after the drop (no modal query in the middle
     // of drag & drop, the source, e.g. the file manager, would otherwise wait)
-    QTimer::singleShot(0, this, [this, paths, frame, track, parts] {
-        offerClipFormat(paths, true);
+    const auto place = [this, paths, frame, track, parts] {
+        if (!m_project->frameRateLocked()) offerClipFormat(paths, true);
         m_editor->addMediaAt(paths, frame, track, parts);
-    });
+    };
+    if (!unknown.isEmpty()) {
+        // New files are probed after the drop returned: the import waits for its probes (a progress dialog, an
+        // "unreadable" message) and the drag source (Windows Explorer over OLE) would wait with it
+        QTimer::singleShot(0, this, [this, unknown, place] {
+            m_mediaPool->importFiles(unknown);
+            place();
+        });
+        return;
+    }
+    if (m_project->frameRateLocked()) place();
+    else QTimer::singleShot(0, this, place);
 }
 
 void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
@@ -619,8 +741,8 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         const ClipFormat cf = detectClipFormat(path);
         if (!cf.ok) return;
         const ProjectFormat cur = m_project->format();
-        // A fixed resolution or frame rate (start template, Project Settings) stays as it is
-        ProjectFormat want;
+        // A fixed resolution or frame rate (start template, Project Settings) stays as it is; so do the sound channels
+        ProjectFormat want = cur;
         want.width = fixedSize ? cur.width : cf.width;
         want.height = fixedSize ? cur.height : cf.height;
         want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;
@@ -685,9 +807,9 @@ void MainWindow::previewFile(const QString& path)
     }
     const MediaInfo& before = m_editor->previewSource();
     MediaInfo info;
-    const auto cached = m_probeCache.constFind(path);
-    if (cached != m_probeCache.cend()) {
-        info = *cached;
+    const std::optional<ProbeResult> cached = m_probeCache.find(path);
+    if (cached) {
+        info = cached->info;
     } else {
         info.path = path;
         info.name = QFileInfo(path).fileName();
@@ -700,17 +822,34 @@ void MainWindow::previewFile(const QString& path)
     m_editor->setPreviewSource(info);
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, 0));
-    if (cached != m_probeCache.cend()) return;
-    // Probing opens the file once more (mostly ~1 ms, other containers up to ~0.5 s): in the
-    // background, the window stays usable
+    if (!cached) probeLater(path);
+}
+
+void MainWindow::updateLiveWaiting()
+{
+    if (!m_liveWaiting) return;
+    if (!m_liveTourMessage.isEmpty()) m_liveWaiting(m_liveTourMessage);
+    else if (m_mediaPool && m_mediaPool->probing())
+        m_liveWaiting("schneidi is reading media files the user imports; try again in a moment");
+    else m_liveWaiting({});
+}
+
+void MainWindow::probeLater(const QString& path)
+{
+    // Probing opens the file once more (mostly ~1 ms, other containers up to ~0.5 s, a long stream analysis up to a
+    // minute): in the background, the window stays usable. The Viewer's file takes the result.
+    if (m_probing.contains(path)) return;
+    m_probing.insert(path);
     QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), path] {
-        const MediaInfo probed = Engine::probe(format, path);
+        const ProbeResult probed = ProbeCache::probe(path, format.rate);
         QMetaObject::invokeMethod(qApp, [guard, format, probed] {
-            if (!guard || guard->m_project->format() != format) return; // lengths count in another frame rate now
-            guard->m_probeCache.insert(probed.path, probed);
+            if (!guard) return;
+            guard->m_probing.remove(probed.info.path);
+            if (guard->m_project->format() != format) return; // lengths count in another frame rate now
+            guard->m_probeCache.insert(probed); // dropped if the file changed meanwhile
             const MediaInfo& shown = guard->m_editor->previewSource();
-            if (shown.path != probed.path) return; // another file meanwhile, or imported
-            MediaInfo info = probed;
+            if (shown.path != probed.info.path) return; // another file meanwhile, or imported
+            MediaInfo info = probed.info;
             info.markIn = shown.markIn;
             info.markOut = shown.markOut;
             info.markers = shown.markers;
@@ -784,10 +923,54 @@ void MainWindow::setProjectFormat(const ProjectFormat& format)
 
 void MainWindow::updateRenderCacheBar()
 {
+    RenderCache* cache = m_engine->renderCache();
     QVector<TimelineView::CacheSpan> spans;
-    for (const RenderCache::Span& s : m_engine->renderCache()->spans(m_project->timeline()))
-        spans << TimelineView::CacheSpan{s.start, s.end, s.done};
-    m_timeline->view()->setRenderCacheSpans(spans);
+    bool allDone = true;
+    for (const RenderCache::Span& s : cache->spans(m_project->timeline())) {
+        spans << TimelineView::CacheSpan{s.start, s.end, s.done, s.name};
+        allDone &= s.done >= 1.0;
+    }
+    m_timeline->view()->setRenderCacheSpans(spans, cache->isPaused());
+    updateRenderCacheJob(allDone);
+}
+
+void MainWindow::updateRenderCacheJob(bool allDone)
+{
+    // Rendering in the background shows as a job (bottom right) with a ✕ that pauses it: without it the user saw
+    // only the bar above the ruler and took it for a proxy he could not stop
+    if (!m_backgroundJobs) return;
+    RenderCache* cache = m_engine->renderCache();
+    const QString id = "render_cache";
+    if (cache->isRendering()) {
+        BackgroundJobs::Job job;
+        job.text = T("Render-Cache – %1 – %2 %").arg(cache->currentName()).arg(int(cache->currentProgress() * 100));
+        job.fraction = cache->currentProgress();
+        QStringList tip{T("Rendert Clips mit Effekten oder geänderter Geschwindigkeit vor, damit die Vorschau flüssig "
+                          "läuft (der Export rechnet immer aus den Originalen).")};
+        if (const QStringList waiting = cache->pendingNames(); !waiting.isEmpty())
+            tip << T("Danach: %1").arg(waiting.join(", "));
+        tip << T("✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus");
+        job.toolTip = tip.join("\n");
+        job.cancel = [cache] { cache->pauseUntilChange(); };
+        job.cancelToolTip = T("Render-Cache pausieren (bis zur nächsten Änderung)");
+        m_backgroundJobs->setJob(id, job);
+        m_renderCacheJob = true;
+        return;
+    }
+    if (!m_renderCacheJob) return;
+    if (cache->pendingCount() > 0) { // the next clip starts in a moment
+        BackgroundJobs::Job job;
+        job.text = T("Render-Cache – wartet (%1)").arg(cache->pendingNames().join(", "));
+        job.fraction = -1;
+        job.cancel = [cache] { cache->pauseUntilChange(); };
+        job.cancelToolTip = T("Render-Cache pausieren (bis zur nächsten Änderung)");
+        m_backgroundJobs->setJob(id, job);
+        return;
+    }
+    m_renderCacheJob = false;
+    if (cache->isPaused()) m_backgroundJobs->finishJob(id, T("Render-Cache pausiert bis zur nächsten Änderung"));
+    else if (allDone && cache->mode() != RenderCache::Mode::Off) m_backgroundJobs->finishJob(id, T("Render-Cache fertig"));
+    else m_backgroundJobs->removeJob(id);
 }
 
 void MainWindow::grabStill()
@@ -1198,7 +1381,7 @@ void MainWindow::exportSubtitlesDialog()
 void MainWindow::setupBackgroundJobs()
 {
     m_backgroundJobs = new BackgroundJobs;
-    statusBar()->addPermanentWidget(m_backgroundJobs);
+    m_pageBarRight->addWidget(m_backgroundJobs); // right in the page bar (the status bar is hidden)
     ProxyManager* proxies = m_engine->proxies();
     ProxyProgress* progress = ProxyProgress::of(proxies);
     connect(progress, &ProxyProgress::changed, m_backgroundJobs, [this, proxies, progress] {
@@ -1212,6 +1395,23 @@ void MainWindow::setupBackgroundJobs()
     });
     connect(progress, &ProxyProgress::finished, m_backgroundJobs,
             [this, progress] { m_backgroundJobs->finishJob("proxies", progress->finishedText()); });
+    // Failed proxies: never a message box (a batch of failures opened one per file and stopped the work) - one line
+    // in the status line, and one entry here that stays with the details per file (ffmpeg's last lines) in its tooltip
+    connect(progress, &ProxyProgress::failuresChanged, m_backgroundJobs, [this, progress] {
+        if (progress->failures().isEmpty()) {
+            m_backgroundJobs->removeJob("proxy_errors");
+            return;
+        }
+        BackgroundJobs::Job job;
+        job.text = progress->failureText();
+        job.toolTip = progress->failureDetails();
+        job.notice = true;
+        job.cancel = [progress] { progress->clearFailures(); };
+        m_backgroundJobs->setJob("proxy_errors", job);
+        statusBar()->showMessage(T("Proxy fehlgeschlagen: %1 – Details unten rechts")
+                                     .arg(QFileInfo(progress->failures().back().file).fileName()),
+                                 8000);
+    });
 }
 
 void MainWindow::setupProxyHint()
@@ -1221,39 +1421,66 @@ void MainWindow::setupProxyHint()
         if (speed == 1.0) m_playMeter.start(m_project->frameRate(), m_playClock.elapsed());
         else m_playMeter.stop();
     });
-    connect(m_engine, &Engine::positionChanged, this, [this] {
-        if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || !m_slowFiles.isEmpty()) return;
-        m_slowFiles = playingVideoFiles();
-        m_slowEffects = expensiveAtPlayhead();
-        m_slowRate = m_playMeter.rate();
-        m_slowFps = m_playMeter.fps();
-        qInfo("Playback too slow: %.1f of %.2f pictures/s", m_slowRate, m_slowFps);
-        updateProxyHint();
-    });
     ProxyManager* proxies = m_engine->proxies();
     RenderCache* cache = m_engine->renderCache();
+    connect(m_engine, &Engine::positionChanged, this, [this, proxies] {
+        if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || m_slow) return;
+        m_slow = true;
+        m_slowFiles = playingVideoFiles();
+        m_slowEffects = expensiveAtPlayhead();
+        m_slowWithProxies = true;
+        if (proxies->enabled()) // switched off: the user wants the originals, proxies are no offer
+            for (const QString& f : std::as_const(m_slowFiles))
+                if (!proxies->hasProxy(f)) m_slowWithProxies = false;
+        m_slowRate = m_playMeter.rate();
+        m_slowFps = m_playMeter.fps();
+        m_slowRes = m_viewerRes;
+        qInfo("Playback too slow: %.1f of %.2f pictures/s at a %dx%d preview", m_slowRate, m_slowFps,
+              m_engine->previewSize().width(), m_engine->previewSize().height());
+        updateProxyHint();
+    });
     connect(m_viewer, &Viewer::hintAccepted, this, [this, proxies, cache] {
-        if (offersRenderCache()) {
+        switch (std::exchange(m_hintOffer, HintOffer::None)) {
+        case HintOffer::SmallerPreview:
+            // Exactly the size the hint named (the resolution changed since: offered anew). Done at once (the viewer
+            // shows the new size for a moment); still too slow: a new measurement decides
+            if (m_viewerRes != m_offeredFrom) return updateProxyHint();
+            m_slow = false;
+            m_slowFiles.clear();
+            m_slowEffects = false;
+            setPreviewResolution(PreviewResolution::Target::Viewer, m_offeredRes); // (updates the hint)
+            restartPlayMeter();
+            return;
+        case HintOffer::RenderCache:
             // Effects were the cost: their clips get rendered in the background; if it still stutters afterwards,
             // a new measurement offers proxies
+            m_slow = false;
             m_slowFiles.clear();
             m_slowEffects = false;
             cache->setMode(RenderCache::Mode::Smart);
+            restartPlayMeter();
             return updateProxyHint();
+        case HintOffer::Proxies: {
+            QStringList missing;
+            for (const QString& f : std::as_const(m_slowFiles))
+                if (!proxies->isPending(f) && !proxies->hasProxy(f)) missing << f;
+            proxies->generate(missing);
+            return updateProxyHint(); // (generate may queue nothing: no signal, the hint must not stay with a dead button)
         }
-        QStringList missing;
-        for (const QString& f : std::as_const(m_slowFiles))
-            if (!proxies->isPending(f) && !proxies->hasProxy(f)) missing << f;
-        proxies->generate(missing);
+        case HintOffer::None: return;
+        }
     });
     connect(m_viewer, &Viewer::hintClosed, this, [this] {
         m_proxyHintClosed = true;
+        m_slow = false;
         m_slowFiles.clear();
+        m_hintOffer = HintOffer::None;
     });
     connect(cache, &RenderCache::modeChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
+    connect(proxies, &ProxyManager::qualityChanged, this, &MainWindow::updateProxyHint);
 
     // Proxies on import (Settings › General): every way a file comes into the open project (Media Pool, drop on the
     // timeline, watch folders, the live MCP/CLI import) says mediaImported; undo/redo and loading a project do not
@@ -1270,6 +1497,7 @@ void MainWindow::setupProxyHint()
     connect(m_project, &Project::loaded, proxies, [this, proxies] {
         m_importedMedia.clear();
         proxies->dropImports();
+        ProxyProgress::of(proxies)->clearFailures(); // the old project's files
     });
 }
 
@@ -1282,12 +1510,35 @@ bool MainWindow::offersRenderCache() const
 
 void MainWindow::updateProxyHint()
 {
-    if (offersRenderCache())
+    // What helps first: a preview the user raised above the automatic size goes back to it (decoding is rarely the
+    // cost then, proxies would leave every effect at as many pixels); then the smart render cache when effects play,
+    // proxies for files without them; a smaller preview again when every file had its proxy already
+    m_hintOffer = HintOffer::None;
+    if (!m_slow) return m_viewer->setHint({});
+    // Measured with another resolution choice (changed in the menu since): says nothing about this one
+    const std::optional<PreviewResolution::Choice> smaller = m_viewerRes == m_slowRes ? smallerPreview() : std::nullopt;
+    const auto offerSmaller = [&] {
+        m_hintOffer = HintOffer::SmallerPreview;
+        m_offeredRes = *smaller;
+        m_offeredFrom = m_viewerRes;
+        const QSize then = PreviewResolution::sizeFor(m_engine->frameSize(), previewEdgeFor(*smaller));
+        m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s) bei einer Vorschau von %3 Pixeln. Mit %4 läuft "
+                            "sie flüssiger, der Export bleibt in voller Auflösung. Zurückstellen: Rechtsklick auf die "
+                            "Vorschau › Vorschau-Auflösung")
+                              .arg(qRound(m_slowRate))
+                              .arg(qRound(m_slowFps))
+                              .arg(PreviewResolution::sizeText(m_engine->previewSize()), PreviewResolution::sizeText(then)),
+                          T("Vorschau verkleinern"));
+    };
+    if (smaller == PreviewResolution::Choice::Auto) return offerSmaller();
+    if (offersRenderCache()) {
+        m_hintOffer = HintOffer::RenderCache;
         return m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. "
                                    "Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
                                    "weiter die Originale")
                                      .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
                                  T("Render-Cache: Intelligent"));
+    }
     const ProxyManager* proxies = m_engine->proxies();
     int missing = 0, pending = 0;
     if (proxies->enabled()) // proxy media switched off: the user wants the originals
@@ -1295,17 +1546,27 @@ void MainWindow::updateProxyHint()
             if (proxies->isPending(f)) ++pending;
             else if (!proxies->hasProxy(f)) ++missing;
         }
-    if (missing > 0)
+    if (missing > 0) {
+        m_hintOffer = HintOffer::Proxies;
         m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Proxy-Medien machen die Vorschau flüssig, "
                             "der Export nutzt weiter die Originale")
                               .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
                           T("Proxy-Medien erzeugen"));
-    else if (pending > 0)
+    } else if (pending > 0) {
         m_viewer->setHint(T("Proxy-Medien werden erzeugt (noch %1) …").arg(pending));
-    else {
-        m_slowFiles.clear(); // all there (or switched off): a new measurement decides again
+    } else if (m_slowWithProxies && smaller) {
+        offerSmaller(); // measured with every proxy there: they did not help
+    } else {
+        // All there now (or switched off, or nothing smaller): a new measurement decides again
+        m_slow = false;
+        m_slowFiles.clear();
         m_viewer->setHint({});
     }
+}
+
+void MainWindow::restartPlayMeter()
+{
+    if (m_playMeter.running()) m_playMeter.start(m_playMeter.fps(), m_playClock.elapsed());
 }
 
 bool MainWindow::expensiveAtPlayhead() const

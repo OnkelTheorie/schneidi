@@ -11,7 +11,9 @@
 #include "app/DesignDialog.h"
 #include "app/Log.h"
 #include "app/NormalizeDialog.h"
+#include "app/OpenTrace.h"
 #include "app/PasteAttributesDialog.h"
+#include "core/AppPaths.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "app/StartTemplatesPage.h"
@@ -34,6 +36,7 @@
 #include "engine/RenderCache.h"
 #include "ui/TrustDialog.h"
 #include "ui/DeliverPanel.h"
+#include "ui/ElidedLabel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
@@ -88,16 +91,23 @@
 namespace {
 // A function, not a global: a global would be built before the dictionary is loaded (always German)
 QString fileFilter() { return T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension); }
+
+QDir autosaveDir() { return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)); }
+QString autosaveLockPath(int slot) { return autosaveDir().filePath(QString("autosave-%1.lock").arg(slot)); }
+QString autosaveFile(int slot)
+{
+    const QString name = slot == 1 ? QString("autosave") : QString("autosave-%1").arg(slot);
+    return autosaveDir().filePath(QString("%1.%2").arg(name, ProjectFile::Extension));
 }
+} // namespace
 
 QString MainWindow::autosavePath()
 {
-    const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
     if (m_autosaveSlot == 0) {
-        dir.mkpath(".");
+        autosaveDir().mkpath(".");
         // occupy the first free slot; a crashed instance leaves an orphaned lock, which QLockFile detects
         for (int slot = 1; slot <= 9 && m_autosaveSlot == 0; ++slot) {
-            auto lock = std::make_unique<QLockFile>(dir.filePath(QString("autosave-%1.lock").arg(slot)));
+            auto lock = std::make_unique<QLockFile>(autosaveLockPath(slot));
             if (lock->tryLock(0)) {
                 m_autosaveSlot = slot;
                 m_autosaveLock = std::move(lock);
@@ -105,8 +115,24 @@ QString MainWindow::autosavePath()
         }
         if (m_autosaveSlot == 0) m_autosaveSlot = 10; // all taken: own slot without lock
     }
-    const QString name = m_autosaveSlot == 1 ? QString("autosave") : QString("autosave-%1").arg(m_autosaveSlot);
-    return dir.filePath(QString("%1.%2").arg(name, ProjectFile::Extension));
+    return autosaveFile(m_autosaveSlot);
+}
+
+bool MainWindow::adoptOrphanedAutosave()
+{
+    // Each window writes into its own slot: the backup of a window that crashed while another one had slot 1 lies in
+    // a later slot, which a single window never looks into. A slot whose lock is free (no running window) and that
+    // holds a backup becomes this window's slot, so restoring, later backups and removing it all go there.
+    autosavePath(); // own slot first: a slot other windows already hold stays theirs
+    for (int slot = 1; slot <= 9; ++slot) {
+        if (slot == m_autosaveSlot || !QFileInfo::exists(autosaveFile(slot))) continue;
+        auto lock = std::make_unique<QLockFile>(autosaveLockPath(slot));
+        if (!lock->tryLock(0)) continue; // a running window's
+        m_autosaveSlot = slot;
+        m_autosaveLock = std::move(lock); // the previous slot's lock is released
+        return true;
+    }
+    return false;
 }
 
 QString MainWindow::autosaveKey() const
@@ -119,7 +145,7 @@ void MainWindow::updateTitle()
     const QString name = m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName();
     const QString shown = name + (m_project->isModified() ? " *" : "");
     setWindowTitle(shown + " – " + appName());
-    if (m_titleLabel) m_titleLabel->setText(shown);
+    if (m_titleLabel) m_titleLabel->setFullText(shown);
 }
 
 void MainWindow::setProjectPath(const QString& path)
@@ -239,8 +265,21 @@ void MainWindow::startProject(const StartTemplate& t)
     m_templateCopies.clear();
     const ProjectData d = StartTemplates::apply(t); // Neutral: the empty project as always
     m_engine->setFormat(d.format); // media lengths already fit (empty) -> do not re-read
+    // The old project's per-timeline zoom/scroll/playhead belong to it: the switch handler (currentSequenceChanged)
+    // must neither keep them nor restore them for the new project's timelines (same ids)
+    m_sequenceView.clear();
+    m_sequencePos.clear();
+    m_shownSequence = d.currentSequence;
     m_project->load(d);
+    m_sequenceView.clear(); // nothing the switch kept during loading (a template without its current sequence: 0)
+    m_sequencePos.clear();
+    m_shownSequence = m_project->currentSequence();
     m_sourcePos.clear();
+    // New project = the user's step: keep the zoom, start at the front and top (like a timeline never shown)
+    TimelineView* tv = m_timeline->view();
+    const ViewState v = tv->view();
+    tv->setZoomAndScroll(v.pxPerFrame, 0, 0);
+    tv->setPlayhead(0);
     m_engine->showTimeline(0);
     setProjectPath({});
     removeAutosave();
@@ -318,6 +357,7 @@ void MainWindow::openMediaAsProjectDialog()
 
 void MainWindow::openMediaAsProject(const QStringList& files)
 {
+    warmUpVideoDecoding();
     // Neutral, not the default start template: the clip decides the format, not a template's fixed 9:16
     startProject(StartTemplates::find(StartTemplates::NeutralId).value_or(StartTemplates::builtIn().value(0)));
     QStringList paths;
@@ -388,15 +428,28 @@ void MainWindow::saveEffectPreset()
 
 bool MainWindow::openProject(const QString& path)
 {
+    OpenTrace::begin();
+    warmUpVideoDecoding();
     ProjectData data;
     QString error, warning;
     if (!ProjectFile::load(path, &data, &error, &warning)) {
         QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
         return false;
     }
+    OpenTrace::mark("file parsed");
+    if (OpenTrace::enabled()) {
+        auto* watch = new OpenTrace::Watch(m_timeline->view(), [this, path] {
+            openProject(qEnvironmentVariable("SCHNEIDI_OPEN_TRACE_NEXT", path));
+        });
+        connect(m_engine, &Engine::frameReady, watch, [](const QImage&) { OpenTrace::Watch::frameEmitted(); },
+                Qt::DirectConnection);
+        connect(m_engine, &Engine::frameReady, watch,
+                [watch](const QImage& img) { watch->frameDelivered(OpenTrace::hasContent(img)); }, Qt::QueuedConnection);
+    }
     if (!applyLoaded(std::move(data), path)) return false;
     removeAutosave();
     showLoadWarning(warning);
+    OpenTrace::mark("openProject returned");
     return true;
 }
 
@@ -416,12 +469,23 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     int relinked = 0;
     for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
-        QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
-                        missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
-                                            : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
-                        QMessageBox::NoButton, this);
+        // Files only the Media Pool still lists (no timeline reads them) cost nothing: said, so nobody hunts for them
+        const QStringList unused = ProjectFile::unusedMedia(data);
+        const bool allUnused = std::all_of(missing.cbegin(), missing.cend(), [&](const QString& p) { return unused.contains(p); });
+        QString text;
+        if (allUnused)
+            text = missing.size() == 1
+                       ? T("1 Datei im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt "
+                           "sie: das Projekt spielt und exportiert auch ohne sie.")
+                       : T("%1 Dateien im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt "
+                           "sie: das Projekt spielt und exportiert auch ohne sie.").arg(missing.size());
+        else
+            text = missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
+                                       : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size());
+        QMessageBox box(QMessageBox::Warning, T("Medien fehlen"), text, QMessageBox::NoButton, this);
         QStringList names;
-        for (const QString& p : missing.mid(0, 15)) names << p;
+        for (const QString& p : missing.mid(0, 15))
+            names << (!allUnused && unused.contains(p) ? T("%1 (in keiner Timeline benutzt)").arg(p) : p);
         if (missing.size() > 15) names << "…";
         box.setInformativeText(names.join('\n'));
         QPushButton* search = box.addButton(T("Ordner durchsuchen…"), QMessageBox::AcceptRole);
@@ -457,14 +521,32 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     if (m_colorPanel) m_colorPanel->discardTracking();
     m_chatSeen.reset();
     m_probeCache.clear();
+    OpenTrace::mark("missing media/effects checked");
     m_engine->setFormat(data.format); // media lengths in the file already count at this frame rate
+    OpenTrace::mark("engine format set");
+    // The timeline shown after loading is set up below (restoreViews, the engine): the switch to another timeline
+    // (currentSequenceChanged) has nothing to keep of the old project's and must not seek the engine, which still
+    // has the old timeline - it drew the old project's picture once more before the new one
+    m_shownSequence = data.currentSequence;
+    m_sequenceView.clear(); // the old project's (same ids): restoreViews sets the new ones
+    m_sequencePos.clear();
     m_project->load(data);
+    OpenTrace::mark("project loaded (signals handled)");
     if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
     m_sourcePos.clear();
+    // The new timeline reaches the picture engine now, not after the edit debounce (m_engineTimer): its first frame
+    // renders while the window paints, instead of the old project's picture being shown first
+    m_engineTimer.stop();
+    m_engine->setLoadPosition(data.playhead);
+    m_engine->updateTimeline(previewTimeline());
+    OpenTrace::timelineSent();
+    updateRenderCacheBar();
     m_engine->showTimeline(data.playhead);
+    OpenTrace::mark("engine showTimeline");
     m_timeline->view()->setPlayhead(data.playhead);
     restoreViews(data);
     setProjectPath(path);
+    OpenTrace::mark("views restored, path set");
     return true;
 }
 
@@ -518,14 +600,23 @@ void MainWindow::openBackupDialog()
     QDir().mkpath(dir);
     const QString path = QFileDialog::getOpenFileName(this, T("Sicherungskopie öffnen"), dir, fileFilter());
     if (path.isEmpty()) return;
+    openBackup(path);
+}
+
+bool MainWindow::openBackup(const QString& path)
+{
     ProjectData data;
     QString error;
     if (!ProjectFile::load(path, &data, &error)) {
         QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
-        return;
+        return false;
     }
-    if (!applyLoaded(std::move(data), {})) return;
+    if (!applyLoaded(std::move(data), {})) return false;
+    // The project left (saved or discarded) is not what a crash should offer now; the backup is autosaved anew.
+    // The automatic backup itself opened: that is the file the user picked, it stays.
+    if (QFileInfo(path) != QFileInfo(autosavePath())) removeAutosave(); // (same file: canonical, case per system)
     m_project->markModified();
+    return true;
 }
 
 bool MainWindow::save()
@@ -613,7 +704,8 @@ void MainWindow::removeAutosave()
 
 bool MainWindow::offerAutosaveRestore()
 {
-    if (m_autosaveDisabled || !QFileInfo::exists(autosavePath())) return false;
+    if (m_autosaveDisabled) return false;
+    if (!QFileInfo::exists(autosavePath()) && !adoptOrphanedAutosave()) return false;
     const QString original = QSettings().value(autosaveKey()).toString();
     const QString name = original.isEmpty() ? T("Unbenannt") : QFileInfo(original).fileName();
     const auto answer = QMessageBox::question(
@@ -668,7 +760,10 @@ void MainWindow::rebuildRecentMenu()
             if (maybeLeaveProject()) openProject(path);
         });
         a->setToolTip(path);
-        a->setEnabled(QFileInfo::exists(path));
+        // Runs each time the menu opens. A network path (UNC) whose server is offline can make this check stall for
+        // seconds on Windows: such entries stay enabled (opening says so if the file is gone)
+        const bool network = path.startsWith(QLatin1String("//")) || path.startsWith(QLatin1String("\\\\"));
+        a->setEnabled(network || QFileInfo::exists(path));
     }
     m_recentMenu->setEnabled(!recent.isEmpty());
 }

@@ -1,0 +1,29 @@
+Source code of the third-party parts in this package (schneidi @VERSION@)
+=======================================================================
+
+This package contains programs and libraries under the GNU General Public License (GPL-2.0-or-later: FFmpeg as
+built here with x264 and x265, x264, x265) and the GNU Lesser General Public License (LGPL: FFmpeg's libraries, Qt,
+libnuma and others listed in THIRD_PARTY.md). Their licences let you get, change and share the complete source code
+of these parts.
+
+Where the source is
+-------------------
+The complete corresponding source code of these parts, for exactly this version, is published next to the package:
+
+    https://github.com/OnkelTheorie/schneidi/releases/tag/v@VERSION@
+    asset "schneidi-@VERSION@-gpl-sources.tar"
+
+It contains the FFmpeg source release, the scripts and settings it was built with (packaging/linux/build-ffmpeg-lgpl.sh,
+packaging/ffmpeg-components.txt), and the source packages of x264, x265 and libnuma that the binaries were built from
+(Debian source packages for Linux and Docker, MSYS2 source packages for Windows). schneidi's own source code
+(AGPL-3.0-only) is the repository itself: https://github.com/OnkelTheorie/schneidi (tag v@VERSION@).
+
+Written offer
+-------------
+For at least three years after this version was released, anyone who received this package may ask for the complete
+corresponding source code of its GPL and LGPL parts, on a medium customarily used for software interchange, for no
+more than the cost of physically performing the source distribution. Ask by opening an issue at
+
+    https://github.com/OnkelTheorie/schneidi/issues
+
+and name the version (@VERSION@) and the package (AppImage, Windows or Docker image).

@@ -119,6 +119,7 @@ struct ColorEvent {
     double area; // part of the whole picture
     int onset;   // the first frame where the change began to show (a kill feed line slides in over a few frames)
     bool teamkill = false; // a kill feed line whose victim is in the killer's team colour (framedLineEvents)
+    bool assist = false;   // a kill feed line of the player's assist: "A + player  weapon  C" (framedLineEvents)
 };
 struct ColorEvents {
     QVector<ColorEvent> events; // in time order
@@ -137,6 +138,13 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
 // has the killer's team colour is a teamkill (ColorEvent::teamkill).
 ColorEvents framedLineEvents(const MediaSource& m, const QRectF& region, const QColor& color, double lineHeight,
                              double rightEdge, double lineLeft, const std::function<void(double)>& progress);
+
+// ---------- Sound channels (AnalysisAudio.cpp) ----------
+
+// Argument `channels` of `loudness`/`check` for a project mixing in `project` channels: which channel format to
+// measure, like `render --channels` (project/absent = the mix's own -> 0; "stereo"/2, "5.1"/6, "7.1"/8). *note:
+// for a 5.1/7.1 mix measured as it is, how to measure what a stereo export (MP3, --channels stereo) writes instead.
+int measuredChannels(const QJsonObject& a, int project, QString* note);
 
 // ---------- Highlights (AnalysisHighlights.cpp) ----------
 

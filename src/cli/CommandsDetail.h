@@ -45,6 +45,13 @@ double seconds(int frames, const ProjectFormat& fmt);
 QJsonObject range(int from, int to, const ProjectFormat& fmt);
 // width/height/fps of `a` over `f` (the format of a new project's start template)
 ProjectFormat parseFormat(const QJsonObject& a, ProjectFormat f = {});
+// A project frame rate from `fps`: a standard rate (23.976 … 60) or 48/100/120; any other fails with the list
+// (`what` names the argument in that message)
+FrameRate projectFrameRate(double fps, const QString& what = "fps");
+// An output frame rate (`render --fps`): the project rates plus 10/12/15; any other fails with the list
+FrameRate exportFrameRate(double fps);
+// A content template's frame rate (from its file): an offered rate when it is one, else that rate itself (> 0)
+FrameRate templateFrameRate(double fps);
 QJsonObject formatJson(const ProjectFormat& f);
 // Own import presets for audio streams (`info`, `templates`): mute_mix, rules {title, action, volume_db, track}
 QJsonObject importPresetsJson(const StreamPresets& p);
@@ -169,6 +176,19 @@ void addSfxOps(QVector<OpDef>& ops);   // EditOpsSfx.cpp: sound effects
 void addTalkOps(QVector<OpDef>& ops);  // EditOpsTalk.cpp: talking head / interview
 // Compositing graph (0.19, EditOpsComp.cpp): ops comp, comp_from, node, track_node
 void addCompOps(QVector<OpDef>& ops);
+// Shapes (0.22, EditOpsShape.cpp): ops shape, clip_shape; a shape title as `info` shows it
+void addShapeOps(QVector<OpDef>& ops);
+// A title or shape placed on a track (EditOpsEdit.cpp): the clips [from, to) of video track `track` overlapped before,
+// and the notes saying what happened to them
+QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to);
+void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before);
+QJsonObject shapeJson(const TitleStyle& t);
+// op shape/draw `follow` (EditOpsShape.cpp): {clip, node}, a node id or false into t.shape.followClip/followNode;
+// placeAtRef = put the title onto the tracked point (a shape not placed by hand)
+void applyFollow(Session& s, TitleStyle& t, const QJsonObject& op, const Clip& title, int titleTrack, bool placeAtRef);
+// Drawings (0.22, EditOpsDraw.cpp): op draw; a drawing title as `info` shows it
+void addDrawOps(QVector<OpDef>& ops);
+QJsonObject drawingJson(const TitleStyle& t, const ProjectFormat& f);
 // AI cutout (0.19, EditOpsCutout.cpp): op cutout_node
 void addCutoutOps(QVector<OpDef>& ops);
 // `effects kind:'nodes'`: every node kind with inputs, output and parameters (key, type, default, range, choices)
@@ -177,8 +197,9 @@ QJsonArray compNodeKindsJson();
 QJsonArray recipesJson();
 QJsonArray recipeSlotsJson(const ::CompRecipe& r);
 // A clip's graph for `info` and answers: nodes with their values, links [from, to, input], out, unused (nodes not
-// reaching out), cost_ms (rough estimate at the format's size, ExportCheck::compCostMs)
-QJsonObject compJson(const EffectInstance& comp, const ProjectFormat& f);
+// reaching out), cost_ms (rough estimate at the format's size, ExportCheck::compCostMs). With the clip: each tracker's
+// gaps as lost [[from, to], ...] (timeline frames, inclusive) and lost_ended (never found again)
+QJsonObject compJson(const EffectInstance& comp, const ProjectFormat& f, const Clip* clip = nullptr);
 // op 'keyframe' on a node value ("comp.n3.size"): every clip must have that node with a number parameter of that
 // key; *lo/*hi = its range (unchanged for other parameters)
 void checkCompParam(Session& s, const QVector<int>& ids, AnimParam p, double* lo, double* hi);
@@ -286,6 +307,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx); // CommandsShort.cpp
 QJsonObject cmdBrand(const QJsonObject& a, Context& ctx); // CommandsBrand.cpp
 // The kit fields of `brand set` (logo, logo_corner, logo_size, colors, fonts, intro, outro) in `a` over `k`
 BrandKit brandWithFields(BrandKit k, const QJsonObject& a); // CommandsBrand.cpp
+// The kit a project's own kit starts from (`p.effectiveBrand()`, maybe the global one): in a work folder without the
+// files a project may not name there (cli/Sandbox.h projectFileAllowed) - the global kit's may lie anywhere
+BrandKit projectKitBase(BrandKit k); // CommandsBrand.cpp
 // Templates (CommandsTemplate.cpp): `templates` (start templates of CommandsProject.cpp + content templates), filling
 // one into a new project (reusable: render N times), a placeholder as `info`/`templates` show it, the edit ops'
 // values and context, the beats a live fill needs measured here
@@ -321,6 +345,10 @@ QString trackLabel(const Project& p, const Timeline& tl, int audioTrack);
 // Audio streams of a file: "4", "Mikrofon", "Discord,Mikrofon" (numbers from 0 or stream names as `probe` lists them).
 // Throws if one is not there
 QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list);
+// Throws BAD_ARGUMENT if `stream` is no stream of the file or one schneidi cannot play (no decoder here, no sound in it)
+void requirePlayableStream(const MediaInfo& info, int stream);
+// The 'audio_stream' argument: the named one (must play), else the first stream that plays (NO_AUDIO if none)
+int audioStreamArg(const MediaInfo& info, const QJsonObject& a);
 
 QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);

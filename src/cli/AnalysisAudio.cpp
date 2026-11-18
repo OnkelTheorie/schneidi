@@ -2,6 +2,7 @@
 // schneidi-cli: looking at the sound of the material (silence, peaks, loudness, transcribe)
 #include "cli/AnalysisDetail.h"
 
+#include "core/ChannelLayout.h"
 #include "core/Loudness.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
@@ -31,9 +32,7 @@ LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::funct
     Clip c;
     c.mediaPath = m.info.path;
     c.out = m.info.length - 1;
-    c.audioStream = a["audio_stream"].toInt();
-    if (c.audioStream >= m.info.audioStreamCount())
-        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+    c.audioStream = audioStreamArg(m.info, a);
     const std::atomic<bool>* stop = cancelFlag();
     const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress, stop](double p) {
         if (progress) progress(p);
@@ -160,7 +159,7 @@ QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
                 o.only << kind;
             }
             if (a.contains("min_conf")) o.minConf = a["min_conf"].toDouble();
-            const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, a["audio_stream"].toInt(), o);
+            const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, audioStreamArg(m.info, a), o);
             if (!r.error.isEmpty()) {
                 if (o.engine == AudioEvents::Engine::Yamnet && !AudioEvents::yamnetAvailable())
                     fail("NOT_INSTALLED", r.error + " - or use events:'heuristic'");
@@ -249,6 +248,19 @@ QJsonObject loudnessJson(const AudioAnalysis::Loudness& l)
 }
 } // namespace
 
+int measuredChannels(const QJsonObject& a, int project, QString* note)
+{
+    const QString c = a["channels"].toVariant().toString().trimmed().toLower(); // "5.1" or 6
+    int n = c.isEmpty() || c == "project" ? 0 : ChannelLayout::parse(c);
+    if (n == 0 && !c.isEmpty() && c != "project") fail("BAD_ARGUMENT", "channels must be stereo, 5.1, 7.1 or project");
+    if (n == ChannelLayout::valid(project)) n = 0;
+    if (note && n == 0 && ChannelLayout::surround(project))
+        *note = QString("measured over all channels of the %1 mix; a stereo export (MP3, render --channels stereo) "
+                        "writes its downmix, limited after downmixing: measure that with channels:'stereo'")
+                    .arg(ChannelLayout::name(project));
+    return n;
+}
+
 QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
@@ -264,8 +276,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
         Clip c;
         c.mediaPath = m.info.path;
         c.out = m.info.length - 1;
-        c.audioStream = a["audio_stream"].toInt();
-        if (c.audioStream >= m.info.audioStreamCount()) fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+        c.audioStream = audioStreamArg(m.info, a);
         const auto l = AudioAnalysis::clipLoudness(m.format, c, progress);
         if (!l) fail("DECODE_FAILED", "could not read the sound");
         result["loudness"] = loudnessJson(*l);
@@ -303,10 +314,14 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
             tl.audio[i].muted = !only.contains(i);
             tl.audio[i].solo = false;
         }
-    const auto l = AudioAnalysis::timelineLoudness(f, tl, from, to, progress);
+    QString note;
+    const int channels = measuredChannels(a, f.audioChannels, &note);
+    const auto l = AudioAnalysis::timelineLoudness(f, tl, from, to, progress, nullptr, channels);
     if (!l) fail("DECODE_FAILED", "could not mix the sound");
     result["range"] = range(from, to, f);
     result["loudness"] = loudnessJson(*l);
+    result["channels"] = ChannelLayout::name(channels > 0 ? channels : f.audioChannels);
+    if (!note.isEmpty()) result["note"] = note;
     return result;
 }
 

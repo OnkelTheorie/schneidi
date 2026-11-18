@@ -24,6 +24,7 @@
 #include "core/StartTemplates.h"
 #include "core/StreamPresets.h"
 #include "engine/Engine.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -103,7 +104,11 @@ void testIsolation()
 {
     CHECK(QSettings().fileName().contains("schneidi-tests"));
     CHECK(StartTemplates::dir().contains("schneidi-test-start-templates"));
-    CHECK(StartTemplates::dir().contains("qttest")); // QStandardPaths test mode (".qttest" on Linux, "qttest" on Windows)
+#if !defined(Q_OS_WIN) && !defined(Q_OS_DARWIN)
+    // QStandardPaths test mode; on Windows/macOS a test run uses its own XDG_* folders instead (core/AppPaths.h),
+    // checked by the folder name above
+    CHECK(StartTemplates::dir().contains(".qttest"));
+#endif
 }
 
 // Neutral = the project schneidi always started with, byte for byte, and the default
@@ -691,6 +696,22 @@ void testMainWindow(const QString& dir)
     CHECK(editor->streamPresets().muteMix);
     p->setImportPresets(std::nullopt);
     CHECK(!editor->streamPresets().muteMix);
+
+    // A new project starts at the front with the playhead at 0, never with the old project's zoom/scroll/playhead of a
+    // timeline with the same id (the timeline switch kept them per timeline id)
+    if (auto* tv = w.findChild<TimelineView*>(); CHECK(tv)) {
+        const int main = p->currentSequence();
+        tv->setZoomAndScroll(2.0, 500, 0);
+        tv->setPlayhead(300);
+        p->setCurrentSequence(p->addTimeline());
+        CHECK(p->currentSequence() != main);
+        w.newProjectFromTemplate(builtIn(StartTemplates::NeutralId));
+        QApplication::processEvents();
+        CHECK_EQ(p->currentSequence(), main); // the case: the same id as the old project's timeline
+        CHECK_EQ(tv->view().leftFrame, 0.0);
+        CHECK_EQ(tv->playhead(), 0);
+        CHECK_EQ(tv->view().pxPerFrame, 2.0); // the zoom stays
+    }
 
     // File › New Project from Template: every template, the default marked
     auto* menu = w.findChild<QMenu*>("template_menu");

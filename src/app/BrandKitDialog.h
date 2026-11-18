@@ -51,4 +51,5 @@ private:
     QVector<QToolButton*> m_colors;
     QVector<QCheckBox*> m_fontOn;
     QVector<QFontComboBox*> m_fonts;
+    QStringList m_shownFonts; // per box: the family it stands for (empty = none yet)
 };

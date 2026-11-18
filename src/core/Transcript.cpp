@@ -322,8 +322,11 @@ QVector<int> defaultStreams(const MediaInfo& info)
     QVector<int> voice;
     if (info.audioStreamCount() > 1)
         for (int i = 0; i < info.audioStreams.size(); ++i)
-            if (isVoiceName(info.audioStreams[i].title)) voice << i;
-    return voice.isEmpty() ? QVector<int>{0} : voice;
+            if (info.audioStreamPlayable(i) && isVoiceName(info.audioStreams[i].title)) voice << i;
+    if (!voice.isEmpty()) return voice;
+    for (int i = 0; i < info.audioStreamCount(); ++i) // the first stream that can be played
+        if (info.audioStreamPlayable(i)) return {i};
+    return {0};
 }
 
 QVector<int> voiceTracks(const Timeline& tl, const std::function<QString(const Clip&)>& streamName)

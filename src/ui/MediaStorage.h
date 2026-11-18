@@ -39,6 +39,7 @@ public:
     HoverScrub* hoverScrub() const { return m_scrub; }
 
 protected:
+    void showEvent(QShowEvent* event) override; // the start's folder listing, if it still waits (see the constructor)
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 signals:
@@ -61,11 +62,12 @@ private:
     void saveLocations();
     void setListMode(bool list);
     void updatePathLabel();
-    // Thumbnails: one after another via engine/video/Thumbnails (videos, in m_thumbPool) resp. QImageReader (images),
-    // remembered in memory
+    // Thumbnails: in m_thumbPool via engine/video/Thumbnails (videos: the key frame near 1 s) resp. QImageReader
+    // (images), remembered in memory and on disk (engine/StorageThumbCache); the ones on disk come first, then what is
+    // in view
     void queueThumb(const QString& path);
     void nextThumb();
-    int nextInView() const; // index in m_thumbQueue to make next
+    int nextInView(bool onDiskOnly) const; // index in m_thumbQueue to make next, -1: none (onDiskOnly: of m_thumbOnDisk)
     void thumbDone(const QString& path, const QPixmap& pm);
     void updateItem(QListWidgetItem* it); // icon (thumbnail or hover picture + pool mark) and tooltip of a file
     static QString poolKey(const QString& path);
@@ -74,6 +76,11 @@ private:
     QString m_folder;
     QString m_savedFolder;
     bool m_persistent = true;
+    // The start's folder listing waits until the panel shows or the window is up (the constructor's setFolder; ~15 ms
+    // for a folder of 200 clips, most users have the panel off)
+    bool m_deferFiles = false;
+    bool m_filesPending = false;
+    void listPendingFiles();
     QTreeWidget* m_tree;
     QListWidget* m_list;
     QLabel* m_pathLabel;
@@ -89,7 +96,8 @@ private:
     QString m_hoverPath;   // entry showing a hover picture
     QPixmap m_hoverPixmap;
     QStringList m_thumbQueue;
+    QSet<QString> m_thumbOnDisk; // queued files whose thumbnail is in StorageThumbCache: loaded first (~1 ms each)
     bool m_thumbRetry = false; // nextThumb() waits for foreground work (Background::foregroundBusy)
-    QThreadPool* m_thumbPool; // one video thumbnail at a time
-    QString m_thumbPath;      // video whose thumbnail is being made
+    QThreadPool* m_thumbPool;  // a few low-priority threads (a quarter of the cores, 1-3)
+    QSet<QString> m_thumbRunning; // files whose thumbnail is being made
 };

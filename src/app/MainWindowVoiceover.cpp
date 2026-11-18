@@ -3,6 +3,7 @@
 // mic buttons in the timeline's audio track headers (arm, right-click = input), the record button in the timeline's
 // toolbar and in the Mixer, the growing take in the timeline, the sign in the viewer, Esc to stop
 #include "app/MainWindow.h"
+#include "app/InputBindings.h"
 #include "app/VoiceoverRecorder.h"
 
 #include "core/I18n.h"
@@ -38,26 +39,20 @@ void fillInputMenu(QMenu* menu, const std::function<void()>& changed)
     menu->clear();
     auto* group = new QActionGroup(menu);
     const QString current = Voiceover::Settings::load().input;
-    auto add = [&](const QString& id, const QString& text) {
-        QAction* a = menu->addAction(text);
+    const QVector<VoiceoverRecorder::InputChoice> choices = VoiceoverRecorder::inputChoices();
+    for (int i = 0; i < choices.size(); ++i) {
+        const VoiceoverRecorder::InputChoice& c = choices[i];
+        QAction* a = menu->addAction(c.name);
         a->setCheckable(true);
-        a->setChecked(id == current);
+        a->setChecked(c.id == current);
         group->addAction(a);
+        const QString id = c.id;
         QObject::connect(a, &QAction::triggered, menu, [id, changed] {
-            Voiceover::Settings s = Voiceover::Settings::load();
-            s.input = id;
-            s.save();
+            VoiceoverRecorder::setInput(id);
             if (changed) changed();
         });
-    };
-    add(QString(), T("Systemstandard"));
-    menu->addSeparator();
-    bool found = current.isEmpty();
-    for (const Audio::Device::Output& o : Audio::Capture::inputs(Engine::audioDriver())) {
-        add(o.id, o.name);
-        found = found || o.id == current;
+        if (i == 0) menu->addSeparator(); // the system default above the devices
     }
-    if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
 }
 
 } // namespace
@@ -118,10 +113,13 @@ void MainWindow::setupVoiceover()
     });
     m_voiceoverEscape->setEnabled(false);
     connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
-        m_voiceoverEscape->setEnabled(on);
-        if (m_largeEscape) m_largeEscape->setEnabled(m_large.active && !on); // see setViewerLarge
-        if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input runs, the timeline not yet heard
-        else m_viewer->setRecording(false);
+        updateEscapeKeys(); // Esc ends the recording first
+        if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input opens, the timeline not yet heard
+        else {
+            m_viewer->setRecording(false);
+            // Ended before it ran (stopped, cancelled, no input): "gleich …" does not stay (finished/failed say more)
+            if (statusBar()->currentMessage() == T("Voiceover: gleich …")) statusBar()->clearMessage();
+        }
     });
     // Red (viewer sign, toolbar mic, the take in the timeline) only once the take really runs
     connect(m_voiceover, &VoiceoverRecorder::liveChanged, this, [this](bool on) {
@@ -130,6 +128,10 @@ void MainWindow::setupVoiceover()
         if (m_voiceoverAction) m_voiceoverAction->setChecked(true);
         statusBar()->showMessage(T("Voiceover: Aufnahme auf %1 läuft – Esc oder Leertaste beendet")
                                      .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
+    });
+    // The input did not open (start() returned at once, the input opens on its own thread)
+    connect(m_voiceover, &VoiceoverRecorder::failed, this, [this](const QString& error) {
+        QMessageBox::warning(this, T("Voiceover aufnehmen"), error);
     });
     connect(m_voiceover, &VoiceoverRecorder::finished, this,
             [this](const QString& path, bool placed, const QString& error) {

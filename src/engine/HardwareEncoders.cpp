@@ -3,7 +3,9 @@
 
 #include "core/I18n.h"
 #include "engine/Bundle.h"
+#include "engine/ExportWriter.h"
 #include "engine/Extensions.h"
+#include "engine/Licenses.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -242,6 +244,9 @@ QString externalProgram(const QString& codec)
 
 QString freeReplacement(const QString& codec)
 {
+    // The GPL-free build writes H.264 with schneidi's own encoder (about x264's quality at the same size, OpenH264
+    // needs about twice the size); every other build with x264 missing keeps OpenH264
+    if (codec == QLatin1String("libx264") && Licenses::builtWithoutGpl()) return ExportWriter::kOwnH264;
     for (const auto& r : kFree)
         if (codec == QLatin1String(r.codec) && builtIn(r.replacement)) return r.replacement;
     return {};
@@ -278,7 +283,8 @@ QString softwareCodec(const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (!*f.videoCodec) return {};
-    if (builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty()) return f.videoCodec;
+    if (ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty())
+        return f.videoCodec;
     return freeReplacement(f.videoCodec);
 }
 
@@ -288,7 +294,7 @@ bool formatAvailable(const QString& format)
     if (QLatin1String(f.id) != format) return false;
     if (*f.audioCodec && !builtIn(renderFormat(format).audioCodec)) return false;
     // (the extension last: asking its program takes a moment, and the panel's format list asks at start)
-    if (!*f.videoCodec || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
+    if (!*f.videoCodec || ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
         || !externalProgram(f.videoCodec).isEmpty())
         return true;
     return f.hardware && probed() && !available(format).isEmpty();
@@ -311,12 +317,16 @@ QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, 
     return {};
 }
 
-QStringList proxyVideoArguments()
+QStringList proxyVideoArguments(QSize size, bool full)
 {
     if (builtIn("libx264"))
-        return {"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode"};
-    // GPL-free build: OpenH264 at a bit rate that suits the proxy size (at most 960 px wide, see ProxyManager)
-    return {"-c:v", "libopenh264", "-rc_mode", "quality", "-b:v", "6M", "-allow_skip_frames", "0"};
+        return {"-c:v", "libx264", "-preset", "veryfast", "-crf", full ? "21" : "23", "-tune", "fastdecode"};
+    // GPL-free build: OpenH264 at a bit rate that suits the proxy size: 6 Mbit/s at 960x540, growing with the pixels
+    // (720p ~10, 1080p ~24, 4K ~95 at most 100), a quarter more at full resolution
+    const double pixels = std::max(1.0, double(size.width()) * size.height());
+    const double mbit = std::clamp(6.0 * pixels / (960.0 * 540.0) * (full ? 1.25 : 1.0), 6.0, 100.0);
+    return {"-c:v", "libopenh264", "-rc_mode", "quality", "-b:v", QString("%1M").arg(int(std::lround(mbit))),
+            "-allow_skip_frames", "0"};
 }
 
 VideoEncoder encoderOfCodec(const QString& codec)
@@ -359,6 +369,38 @@ QVector<QPair<QString, QString>> codecOptions(const QString& codec, int crf)
     case VideoEncoder::Software: break;
     }
     return {};
+}
+
+namespace {
+QVector<QPair<QString, QString>> averageRate(int kbit)
+{
+    const auto k = [](qint64 v) { return QString::number(std::max<qint64>(1, v)) + "k"; };
+    return {{"b", k(kbit)}, {"maxrate", k(qint64(kbit) * 3 / 2)}, {"bufsize", k(qint64(kbit) * 2)}};
+}
+} // namespace
+
+QVector<QPair<QString, QString>> bitrateOptions(const QString& codec, int kbit)
+{
+    if (kbit <= 0) return {};
+    QVector<QPair<QString, QString>> o;
+    switch (encoderOfCodec(codec)) {
+    case VideoEncoder::Nvenc: o = {{"preset", "p5"}, {"tune", "hq"}, {"rc", "vbr"}}; break;
+    case VideoEncoder::Vaapi: o = {{"rc_mode", "VBR"}}; break;
+    case VideoEncoder::Qsv: o = {{"preset", "medium"}}; break; // b < maxrate = VBR
+    case VideoEncoder::Auto:
+    case VideoEncoder::Software: return {};
+    }
+    return o + averageRate(kbit);
+}
+
+QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, int kbit)
+{
+    if (kbit <= 0) return {};
+    const QString k = QString::number(kbit) + "k";
+    if (codec == "libopenh264") return {{"rc_mode", "bitrate"}, {"b", k}, {"allow_skip_frames", "0"}, {"profile", "high"}, {"coder", "cabac"}};
+    if (codec == "libkvazaar") return {{"b", k}, {"kvazaar-params", "preset=fast"}};
+    if (codec == "libsvtav1") return {{"b", k}}; // VBR; its peak rate needs CRF mode
+    return averageRate(kbit); // libx264, libx265, libvpx-vp9
 }
 
 QString pixelFormat(const QString& codec)

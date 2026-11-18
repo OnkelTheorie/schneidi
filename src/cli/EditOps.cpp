@@ -4,6 +4,7 @@
 
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
+#include "core/PathKey.h"
 #include "core/Presets.h"
 #include "core/Retime.h"
 #include "core/StreamPresets.h"
@@ -122,7 +123,7 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
         for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
             for (const Track& t : *tracks)
                 for (const Clip& c : t.clips) {
-                    if (c.kind != ClipKind::Media || c.mediaPath != path) continue;
+                    if (c.kind != ClipKind::Media || !PathKey::same(c.mediaPath, path)) continue;
                     const int at = timelineAtSource(s, c, source);
                     if (at >= 0 && (best < 0 || at < best)) best = at;
                     if (used.size() < 12) used << sourceSpan(s, c);
@@ -196,14 +197,45 @@ QColor colorOf(const QJsonValue& v, const QString& what)
 
 namespace {
 
+// The last frame a project file keeps (ProjectFile's intOf): a clip beyond it came back cut on loading, and the sum of
+// two times near int's end (a still at 2 billion frames with 2 billion frames of length) overflowed
+constexpr qint64 kMaxFrame = qint64(1) << 30;
+
 // Source range [in, out) of a media file: defaults to the whole file
 void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
 {
     *in = timeOf(s, op, "in", 0);
-    *out = op.contains("out") ? timeOf(s, op, "out") : m.length;
-    if (op.contains("duration")) *out = *in + timeOf(s, op, "duration");
-    if (!m.isImage) *out = std::min(*out, m.length); // a still takes any length (its default: the still length)
+    qint64 end = op.contains("out") ? timeOf(s, op, "out") : m.length;
+    if (op.contains("duration")) end = qint64(*in) + timeOf(s, op, "duration");
+    if (!m.isImage) end = std::min<qint64>(end, m.length); // a still takes any length (its default: the still length)
+    if (end > kMaxFrame)
+        fail("BAD_ARGUMENT", QString("the source range ends at frame %1, beyond the limit of %2").arg(end).arg(kMaxFrame));
+    *out = int(end);
     if (*in >= *out) fail("BAD_ARGUMENT", QString("empty source range %1..%2 (media has %3 frames)").arg(*in).arg(*out).arg(m.length));
+}
+
+// The source range [in, out) placed at `at` must fit what a project file keeps: the clip's end on the timeline and its
+// material in/out within kMaxFrame, its length at most kMaxLength (ProjectFile clamps longer ones on loading). Its
+// in and length as Editor::placeSourceRange makes them (in/out clamped to the media, material frames at this speed; a
+// still has none), in double: no overflow here
+constexpr double kMaxLength = double(1 << 29);
+
+void checkPlacedEnd(int at, int in, int out, double speed, const MediaInfo& m)
+{
+    if (m.isImage || speed <= 0) speed = 1.0;
+    const double first = std::clamp<double>(in, 0, std::max(0, m.length - 1));
+    const double last = m.isImage ? std::max<double>(out - 1, first) : std::clamp<double>(out - 1, first, std::max(0, m.length - 1));
+    const auto material = [speed](double f) { return std::max(0.0, std::ceil(f / speed - 1e-6)); };
+    const double sIn = material(first), len = std::max(1.0, material(last + 1) - sIn);
+    const double end = double(std::max(0, at)) + len;
+    if (len > kMaxLength)
+        fail("BAD_ARGUMENT", QString("the clip would be %1 frames long, more than the limit of %2")
+                                 .arg(len, 0, 'f', 0).arg(kMaxLength, 0, 'f', 0));
+    if (end > double(kMaxFrame))
+        fail("BAD_ARGUMENT", QString("the clip would end at frame %1, beyond the limit of %2").arg(end, 0, 'f', 0).arg(kMaxFrame));
+    if (sIn + len - 1 > double(kMaxFrame)) // a very slow speed: material frames beyond what a project keeps
+        fail("BAD_ARGUMENT", QString("at speed %1 the source range reaches material frame %2, beyond the limit of %3")
+                                 .arg(speed).arg(sIn + len - 1, 0, 'f', 0).arg(kMaxFrame));
 }
 
 // "ST1" or 1 -> subtitle track index; missing = -1 (the visible track)
@@ -339,6 +371,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     sourceRange(s, op, m, &in, &out);
     const int at = append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at");
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
+    checkPlacedEnd(at, in, out, speed, m);
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed, partsOf(op, m));
     noteDoubledMix(s, m, at, at + len);
     placedInterpolate(s, op, m, at, at + len, speed);
@@ -381,6 +414,7 @@ void opKeep(Session& s, const QJsonObject& op)
         // speed: of this range, else of the whole op
         const QJsonObject sp = o.contains("speed") ? o : op;
         const double speed = sp.contains("speed") ? numberOf(sp, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
+        checkPlacedEnd(at, in, out, speed, m);
         at += s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed, parts);
         slowest = std::min(slowest, speed);
     }
@@ -444,7 +478,7 @@ void opAlign(Session& s, const QJsonObject& op)
                 if (tracks == &tl.video && track.hidden) continue;
                 for (const Clip& c : track.clips)
                     if (c.kind == ClipKind::Media && c.enabled && t >= c.start && t < c.end()
-                        && (path.isEmpty() ? tracks == &tl.video : c.mediaPath == path))
+                        && (path.isEmpty() ? tracks == &tl.video : PathKey::same(c.mediaPath, path)))
                         return &c;
             }
         return nullptr;
@@ -618,7 +652,14 @@ void opSubtitles(Session& s, const QJsonObject& op)
         const QString path = absolute(op.value("srt").toString());
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) fail("NOT_FOUND", "cannot read " + path);
-        cues = Subtitles::parseSrt(f.readAll(), s.project.frameRate());
+        int skipped = 0;
+        cues = Subtitles::parseSrt(f.readAll(), s.project.frameRate(), &skipped);
+        if (skipped > 0)
+            s.notes << QString("subtitles: %1 broken entr%2 in %3 skipped (no readable time line, times like "
+                               "00:01:02,500 --> 00:01:04,000, or no text)")
+                           .arg(skipped)
+                           .arg(skipped == 1 ? "y" : "ies")
+                           .arg(QFileInfo(path).fileName());
         if (trackName.isEmpty()) trackName = QFileInfo(path).completeBaseName();
     } else if (op.contains("words")) {
         // One cue per word with its time: grouped into readable cues below, the word times kept
@@ -880,7 +921,10 @@ QVector<OpDef> makeOps()
         {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles",
          "A video clip takes its linked sound along; sound clips named alone go alone (the picture and the other "
          "streams stay, linked). linked:true = all partners, false = exactly the given clips. ripple:true closes the "
-         "gap and takes the partners along unless linked:false.",
+         "gap and takes the partners along unless linked:false; only the deleted time free on all affected tracks is "
+         "taken out (a note says when less), and a ripple that would take linked picture and sound apart (an unlocked "
+         "track that cannot follow, e.g. a clip lies across the cut) fails with OUT_OF_SYNC (also speed, trim with "
+         "ripple, insert); a partner on a locked track stays on purpose (a note says how far apart).",
          opDelete, kClipKeys},
         {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
          "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
@@ -984,6 +1028,8 @@ QVector<OpDef> makeOps()
     addTalkOps(ops);
     addCompOps(ops);
     addCutoutOps(ops);
+    addShapeOps(ops);
+    addDrawOps(ops);
     addTemplateOps(ops);
     return ops;
 }
@@ -1165,7 +1211,14 @@ void applyOp(Session& s, const QJsonObject& given)
                 break;
             }
     s.selection.clear();
+    s.editor.takeNotice(); // (one from an earlier op is not this one's)
     def->run(s, op);
+    // The editor refused (a ripple would take linked clips apart) or did not do all of it: an error the AI can act on,
+    // resp. a note
+    if (const Editor::Notice n = s.editor.takeNotice(); !n.text.isEmpty()) {
+        if (n.refused) fail("OUT_OF_SYNC", QString("%1: %2").arg(name, n.text));
+        s.notes << QString("%1: %2").arg(name, n.text);
+    }
 }
 
 QString editHelp()

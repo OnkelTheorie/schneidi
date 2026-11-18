@@ -195,6 +195,24 @@ void testBackgroundThreads()
     Background::setChosenThreads(1);
     CHECK_EQ(Background::threads(6), 1); // the choice wins, also over a larger default
     CHECK_EQ(SettingsDialog(AiSettings{}).backgroundThreads(), 1); // shown again
+
+    // Sound output device: "system default" first, the stored device chosen; a stored device that is not there is
+    // still listed (unplugged), so opening and confirming the dialog never switches it away by itself
+    {
+        QSettings().remove("audio/output");
+        SettingsDialog dlg(AiSettings{});
+        auto* combo = dlg.findChild<QComboBox*>("audio_output");
+        if (CHECK(combo && combo->count() >= 1)) {
+            CHECK(combo->itemData(0).toString().isEmpty());
+            CHECK(dlg.audioOutput().isEmpty());
+        }
+        QSettings().setValue("audio/output", "gone-headset-123");
+        SettingsDialog again(AiSettings{});
+        CHECK_EQ(again.audioOutput(), QString("gone-headset-123"));
+        auto* c2 = again.findChild<QComboBox*>("audio_output");
+        if (CHECK(c2)) CHECK(c2->currentText().contains("gone-headset-123"));
+        QSettings().remove("audio/output");
+    }
     Background::setChosenThreads(100000);
     CHECK_EQ(Background::threads(6), QThread::idealThreadCount()); // at most the logical processors
     QSettings().remove("performance");

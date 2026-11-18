@@ -33,6 +33,7 @@ public:
 
     AiSettings aiSettings() const;
     QString language() const; // code, as I18n::language()
+    double uiScale() const;   // interface size (UiScale::saved: 0 = the system's)
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
@@ -45,6 +46,10 @@ public:
     PreviewResolution::Choice previewResolution(PreviewResolution::Target target) const;
     // Proxy media made right on import (ProxyManager::importRule)
     ProxyManager::ImportRule proxyImportRule() const;
+    // Size of proxy media (ProxyManager::quality)
+    ProxyManager::Quality proxyQuality() const;
+    // Sound output device (Engine::audioOutput id, empty = system default)
+    QString audioOutput() const;
     bool ownProjectFolder() const;
     QString projectFolder() const;
     // The stored choice (QSettings "project/ownFolder", "project/folder"); folder() = the default when none is stored
@@ -69,11 +74,14 @@ private:
     AiSettingsPage* m_aiPage = nullptr;
     StartTemplatesPage* m_templatesPage = nullptr;
     QComboBox* m_language = nullptr;
+    QComboBox* m_uiScale = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;
     QCheckBox* m_autoLink = nullptr;
     QComboBox* m_secondScreen = nullptr;
     QComboBox* m_proxyImport = nullptr;
+    QComboBox* m_proxyQuality = nullptr;
+    QComboBox* m_audioOutput = nullptr;
     QComboBox* m_viewerResolution = nullptr;
     QComboBox* m_monitorResolution = nullptr;
     QLineEdit* m_folder = nullptr;

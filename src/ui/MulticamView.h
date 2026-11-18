@@ -60,6 +60,8 @@ public:
     // More cells than this on a page play smoothly only with proxies: H.264 decodes only at full size, so 16 1080p
     // decoders are a slide show (docs/archiv/plan-0.8.md)
     static constexpr int kProxyHintCells = 4;
+    // Keys 1-9 (cut) and Alt+1-9 (switch) reach cells 1-9 of the shown page; only those cells carry their number
+    static constexpr int kAngleKeys = 9;
     // Media files on the angles' picture tracks (what proxies help with), each once
     QStringList angleFiles() const;
     // Proxy state of angleFiles(), fed by the main window: files without a proxy (not queued), files being generated

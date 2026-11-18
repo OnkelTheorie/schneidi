@@ -18,6 +18,9 @@ struct StreamRule {
     Action action = Action::Place;
     double volumeDb = 0.0;    // clip volume
     QString trackName;        // name for a new audio track (empty = the stream title)
+    // Channels of the stream its clips play (Clip::sourceChannels, 0-based, at most two; settings JSON counts from 1);
+    // empty = all. E.g. a recorder's stream "Kamera" with the wireless microphone on channels 3/4.
+    QVector<int> channels;
     bool operator==(const StreamRule&) const = default;
 };
 
@@ -27,6 +30,7 @@ struct StreamPlacement {
     bool enabled = true;
     double volumeDb = 0.0;
     QString trackLabel; // label for an unnamed audio track (empty = default "Audio N")
+    QVector<int> channels; // Clip::sourceChannels of its clips (StreamRule::channels)
 };
 
 struct StreamPresets {

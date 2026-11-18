@@ -162,7 +162,9 @@ public:
     // (affects only the organization, not the media list itself).
     const QVector<MediaBin>& bins() const { return m_bins; }
     const MediaBin* bin(int id) const;
-    QString binName(int id) const;                // 0 = "Master"
+    QString binName(int id) const;                // 0 = "Master" (in the UI language)
+    // A bin path that means the root bin: one part "Master" (any case) or the root's name in the UI language
+    bool isRootBinPath(const QString& path) const;
     QVector<int> childBins(int parent) const;     // sorted by name (like DaVinci)
     bool binInside(int id, int ancestor) const;   // id == ancestor or below
     int addBin(int parent, const QString& name = {}); // default name "Bin 1", "Bin 2" ...; returns the id
@@ -256,6 +258,9 @@ private:
     ProjectFormat m_format;
     ProjectFormat m_timelineFormat; // last announced timelineFormat()
     void noteTimelineFormat(bool always = false); // emits timelineFormatChanged when it changed
+    // Every sequence's Timeline::frameRate = the project's (edits and their previews on a copy shift comp values in
+    // seconds the same way): after loading, undo/redo, a format or sequence change
+    void stampFrameRate();
     QVector<Sequence> m_sequences; // never empty
     int m_current = 1;             // id of the opened sequence
     int m_lastSequenceId = 1;
@@ -270,6 +275,9 @@ private:
     std::optional<BrandKit> m_brand;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
+    // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo
+    // that brings the bin back puts them in it again (bin ids are never reused)
+    QHash<QString, int> m_binsUndone;
     QUndoStack m_ownUndo;
     std::unique_ptr<QUndoStack> m_asideUndo; // while the user's history is aside: the one in use
     QUndoStack* m_undo = &m_ownUndo;

@@ -296,6 +296,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trimHit = *hit;
         m_trimEdit = split ? m_editor->splitEdit(hit->clipId, hit->edge) : m_editor->trimEdit(hit->kind, hit->clipId, hit->edge);
         m_trimEditDelta = 0;
+        m_trimEditWanted = 0;
+        m_trimEditWhy.clear();
         m_trimPreview = m_editor->project()->timeline();
         m_drag = Drag::TrimEdit;
         updateTrimFrames(*m_trimPreview, m_trimEdit, 0);
@@ -320,6 +322,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         }
         return;
     }
+    // A node's time range bar (moves, its ends trim it); clip edges, fade handles and transitions above win
+    if (!edgeAt(pos) && nodeBarPress(pos)) return;
     if (const auto hit = edgeAt(pos)) {
         // Alt-drag at a cut (a clip touches it on the other side): only this track's edge rolls, the linked partners
         // keep their cut and stay linked (J/L cut: the sound starts early or runs on under the next picture)
@@ -331,6 +335,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
                 m_trimHit = TrimHit{TimelineOps::TrimKind::Roll, hit->clipId, hit->edge};
                 m_trimEdit = split;
                 m_trimEditDelta = 0;
+                m_trimEditWanted = 0;
+                m_trimEditWhy.clear();
                 m_trimPreview = m_editor->project()->timeline();
                 m_drag = Drag::TrimEdit;
                 updateTrimFrames(*m_trimPreview, m_trimEdit, 0);
@@ -583,14 +589,28 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         }
         if (!edges.isEmpty()) delta += snapDelta(edges, exclude);
         delta = m_editor->clampTrimEdit(m_trimEdit, delta);
+        if (delta == m_trimEditWanted && m_trimPreview) return; // nothing new (one preview per change, not per pixel)
+        m_trimEditWanted = delta;
+        // A ripple that would take linked picture and sound apart: the preview stops at the last allowed delta (release
+        // applies that) and says why - once per reason, cleared back in the allowed range
+        QString why;
+        Timeline preview;
+        delta = m_editor->allowedTrimEdit(m_trimEdit, delta, &why, &preview);
+        if (why != m_trimEditWhy) {
+            m_trimEditWhy = why;
+            emit message(why);
+        }
         if (delta != m_trimEditDelta || !m_trimPreview) {
             m_trimEditDelta = delta;
-            m_trimPreview = m_editor->previewTrimEdit(m_trimEdit, delta);
+            m_trimPreview = std::move(preview);
             updateTrimFrames(*m_trimPreview, m_trimEdit, delta);
             update();
         }
         return;
     }
+    case Drag::NodeRange:
+        nodeBarDrag(pos);
+        return;
     case Drag::CurvePoint:
     case Drag::CurveHandle:
         curveMove(pos, mods);
@@ -688,6 +708,13 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         updateHoverCursor(e->position().toPoint());
         return;
     }
+    if (m_drag == Drag::NodeRange) {
+        m_drag = Drag::None;
+        nodeBarRelease();
+        updateHoverCursor(e->position().toPoint());
+        update();
+        return;
+    }
     if (m_drag == Drag::Marks) {
         m_drag = Drag::None;
         marksRelease();
@@ -743,6 +770,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;
+    m_trimEditWhy.clear(); // (its message stays a while: why the trim stopped there)
     if (trimmed || trimEdit) endTrimFrames(); // viewer back to the playhead frame
     if (keys && m_keyDelta != 0) { // one undo step per drag
         const QVector<int> times = m_editor->selection()->keyTimes().values().toVector();
@@ -780,6 +808,7 @@ void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::LeftButton && pos.x() >= kHeaderW && curveDoubleClick(pos)) return;
+    if (e->button() == Qt::LeftButton && nodeBarDoubleClick(pos)) return; // the node on the Comp page
     // Double-click on the track name: rename (like DaVinci)
     if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
         if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {

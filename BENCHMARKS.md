@@ -64,6 +64,7 @@ large project, all threads: s / peak RAM (MB) | memory peak / after giving back 
 | 0.18.0 (13e0e58d) [d] | 2026-11-06 | 0.3 | 418 / 433 | 0.42 | 31.9 / 33.2 | 152 / 214 | 60.7 / 22.9 | 2.17 | 39.23 / 1570 | 1277 / 670 | 19.4 / 31.12 |
 | 0.19.0 (b5197a8c) [e] | 2026-11-07 | 0.1 | 453 / 443 | 0.33 | 32 / 33.5 | 113 / 248 | 57.1 / 23.4 | 2.15 | 37.45 / 1554 | 1168 / 651 | 21.84 / 35.48 |
 | 0.20.0 (4208f321) [f] | 2026-11-09 | 1.0 | 403 / 385 | 0.43 | 32.3 / 33.6 | 134 / 228 | 60.2 / 23.8 | 1.88 | 37.83 / 1552 | 1167 / 635 | 19.57 / 30.86 |
+| 0.21.0 (c83ad1cc) [g] | 2026-11-12 | 0.8 | 399 / 394 | 0.31 | 32.1 / 33.2 | 127 / 218 | 57.1 / 19.0 | 2.16 | 38.45 / 1549 | 1165 / 652 | 19.51 / 31.03 |
 
 Notes on rows:
 
@@ -98,11 +99,31 @@ Notes on rows:
   and 18.8 / 19.0 ms for compose (RGBA 1080p) – the same in both versions, so both are noise.
 - **[f]** 0.20.0: the window comes up without waiting for the splash any more – measured offscreen (no splash there), so the gain on a desktop is larger than these numbers show. With one core and 1 GB (`--cpuset-cpus=0 --memory 1g`): 388 / 390 ms. The first run had the project render at 2.8 s / 1037 MB with the container daemon busy in the background; a rerun in calm gave 1.88 s / 701 MB (the number in the table).
 
+- **[g]** 0.21.0: no number more than 8 % worse than 0.20.0. Playback showed 57.1 instead of 60.2 fps (−5 %, under the
+  15 % threshold; 0.19.0 also had 57.1) with a shorter longest gap (19 ms); the CLI render of the project with all threads
+  used 704 instead of 1037 MB at its peak.
+
 ## Raspberry Pi Zero 2 W
 
 The Pi is not a target for comfortable editing; the tests show that schneidi starts, plays and renders on a computer with
 415 MB of RAM. All services on the Pi were stopped during the runs. Pi timings fluctuate from hour to hour (the swap state
 of the SD card changes them): the same task was 129 s at noon and 152 to 189 s in the evening.
+
+### 0.21.0 on the Pi (2026-11-12)
+
+Same Pi, files and script as above (services stopped during the runs). Window: median of 3 starts after the first
+(the very first start after copying the program took 6.0 s).
+
+| Task | 0.21.0 |
+|---|---|
+| Window visible, empty / with a 720p clip | 3.7 s / 3.8 to 3.9 s |
+| Peak RAM, empty / with a 720p clip | 108 / 222 MB |
+| Playback 720p30 original | 30.5 frames/s over 10 s (one gap of 172 ms in the first second) |
+| Playback 720p30 with a grade | 24.7 frames/s (stutters in seconds 2 to 5, then steady 30) |
+| Playback 1080p30 / 1080p60 original | 1.8 / 1.2 frames/s – the Pi cannot decode them in real time |
+| Playback 1080p60 from proxies | 56.1 frames/s over 10 s, a steady 60 from the third second on |
+| Jump in the timeline, original → proxies | 2.4 s → 0.05 s (median of 30) |
+| Export 5 s of 720p (x264, 4 threads) / 1080p | 55.5 s / 270.7 s, peak 206 / 255 MB |
 
 ### Same task in two versions (A/B, 2026-11-06)
 
@@ -181,6 +202,23 @@ behind. Conclusion: 4K on the Pi works only with a proxy, and the proxy only whi
 The CS2 short is CPU-bound on the Pi (decoding 39 Mbit/s 1080p60 and scaling up 3.2 times, about 3 s of CPU per frame for
 646 frames) and still pages memory out; the project's goal for the Pi is "runs stably", not speed on long shorts. The
 low-memory rule (limits threads by available RAM) was built and measured in this series on development branches.
+
+## Android phone (Galaxy A51, 0.21.0, 2026-11-12)
+
+0.20.0 (runs of 2026-11-09 and repeats today) and 0.21.0 on the same phone, same clip and jobs, single runs.
+
+| Job | 0.20.0 | 0.21.0 |
+|---|---|---|
+| `probe` | 0.62 s / 69 MB | 0.60 s / 69 MB |
+| `render` 10 s 1080p, Smart Render | 24.1 s / 1084 MB | 22.2 s / **696 MB** |
+| `render` 10 s 1080p, full re-encode | 110.1 s / 826 MB | 103.3 s / 826 MB |
+| `highlights` 30 s cs2 (not cached) | – | 14.8 s / 196 MB |
+| `short` 9:16, 15 s, no captions | 168.9 s / 1303 MB | 165.9 s / 1301 MB |
+
+Smart Render needs about a third less memory. The peak of `short` jumps between about 900 MB and about 1300 MB from run
+to run in both versions (0.20.0 had 903 MB on 2026-11-09 and 1303 MB today); its time is the same. The 0.20.0 row of
+2026-11-09 shows `highlights` at 0.5 s because its result came from the analysis cache of an earlier run. The full
+re-encode gives a file of the same size to the byte as 0.20.0.
 
 ## Android phone (Galaxy A51, 0.20.0, 2026-11-09)
 

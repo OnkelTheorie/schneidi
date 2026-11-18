@@ -1,0 +1,16 @@
+{
+ "id": "studio",
+ "title": "Studio",
+ "order": 5,
+ "offerOn": "page:studio",
+ "steps": [
+  {"target": "studio_tracks", "page": "studio", "text": "Die Tonspuren mit großen Wellenformen. Ein Klick setzt den Abspielkopf und wählt den Clip, das Mausrad scrollt wie in der Timeline."},
+  {"target": "studio_tool_points|studio_pen", "page": "studio", "text": "Mit „Punkte“ klickst du auf die Linie und ziehst Punkte hoch oder runter. Mit dem Stift zeichnest du die Kurve in einem Strich. Jeder Strich ist ein Schritt zum Rückgängigmachen."},
+  {"target": "studio_pen_clip|studio_pen_track|studio_auto_volume|studio_auto_pan", "page": "studio", "text": "„Spur“ bearbeitet die Automation der ganzen Spur, „Clip“ die Keyframes der Clips. Mit „Pegel“ und „Pan“ wählst du, ob du die Lautstärke oder das Panorama formst."},
+  {"target": "studio_smoothing", "page": "studio", "text": "Glätten bestimmt, wie ruhig ein gezeichneter Strich wird. Bei „Aus“ bleibt er genau so, wie du ihn gezogen hast."},
+  {"target": "studio_write", "page": "studio", "text": "Mit „Schreiben“ nimmt schneidi beim Abspielen auf, was du an Fader und Pan-Regler drehst, als Automation der Spur. Ein Durchlauf ist ein Schritt zum Rückgängigmachen."},
+  {"target": "studio_mixer", "page": "studio", "text": "Rechts das Mischpult: je Spur ein schmaler Streifen mit Fader, Panorama, Stumm und Solo. Die kleinen Kurven zeigen EQ und Kompressor, ein Klick darauf öffnet das große Fenster. Viele Spuren scrollen seitlich, der Master bleibt rechts stehen."},
+  {"target": "studio_loudness", "page": "studio", "text": "Über dem Mischpult misst schneidi beim Abspielen die Lautheit am Master: Integriert (I) sollte beim Ziel liegen, True Peak (TP) unter der Grenze bleiben."},
+  {"target": "studio_tools_toggle|studio_tools", "page": "studio", "action": "studio_tools", "text": "„Werkzeuge“ klappt unten die Werkzeuge auf: Stimme säubern, Musik absenken, Lautheit auf Ziel, Aufnahme und Effektklänge. Links wählst du das Werkzeug, oben die Spur, auf die es wirkt."}
+ ]
+}

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "app/InputBindings.h"
+
 #include <QDialog>
 
 class QComboBox;
@@ -23,10 +25,13 @@ private:
     void applyFilter();
     void editSlot(int row, int slot);
     void resetRow(int row);
+    // "M was on „Add marker“ - removed there": what an assignment took from other actions
+    void showTaken(const QVector<InputBindings::Taken>& taken);
 
     QLineEdit* m_filter;
     QTableWidget* m_table;
     QComboBox* m_preset;
     QLabel* m_comeFrom;
     QLabel* m_summary;
+    QLabel* m_notice;
 };

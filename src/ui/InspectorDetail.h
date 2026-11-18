@@ -222,6 +222,32 @@ inline QIcon pipetteIcon()
     return icon;
 }
 
+// Reset arrow (an open circle turning back, like "↺"): drawn, not a character, so its width does not depend on which
+// fallback font happens to have the arrow (Noto Sans has none; the next family's arrow grew from 10 to 14 px in
+// Noto 2026.11, every Inspector row with it)
+inline QIcon resetIcon()
+{
+    auto draw = [](const QColor& col) {
+        QPixmap pm(32, 32);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF circle(5, 6, 22, 22);
+        p.setPen(QPen(col, 3, Qt::SolidLine, Qt::RoundCap));
+        p.drawArc(circle, 100 * 16, -290 * 16); // from the top, clockwise round to the upper left
+        // Arrowhead at the arc's start (top), pointing left: the arrow turns counter-clockwise
+        p.setPen(Qt::NoPen);
+        p.setBrush(col);
+        const QPointF tip(circle.center().x() - 6, circle.top());
+        p.drawPolygon(QPolygonF({tip, tip + QPointF(8, -6.5), tip + QPointF(8, 6.5)}));
+        return pm;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(Theme::textDim), QIcon::Normal);
+    icon.addPixmap(draw(Theme::text), QIcon::Active);
+    return icon;
+}
+
 inline int sliderPos(double v, double min, double max)
 {
     return int(std::lround((v - min) / std::max(1e-9, max - min) * kSliderSteps));

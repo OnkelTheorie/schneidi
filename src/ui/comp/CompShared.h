@@ -12,6 +12,7 @@
 
 class Editor;
 class Project;
+class QUndoStack;
 class QWidget;
 struct CompRecipe;
 
@@ -51,6 +52,11 @@ QString nodeSummary(const Clip& c, const CompNode& n);
 // when rendering; empty = none, or trusted
 QString untrustedCode(const Clip& c, int node);
 
+// Tracker node `node` of clip c lost its point (gaps its followers do not bridge, core/CompTrack.h): where, for the
+// node's warning badge and the Inspector ("Punkt verloren: 00:12–00:14 · ab 00:20 nicht wiedergefunden"); empty = no
+// such gap, or no tracker. fps = the timeline's (the times are timeline times)
+QString trackerWarning(const Clip& c, int node, double fps);
+
 // `tl` with the graph of clip `clipId` ending at node `node` (0 = its own output) and, with `matte`, the alpha of
 // that picture as gray (a mask node always shows as gray): what the viewer plays on the Comp page. Unchanged when the
 // clip has no graph or the node is missing.
@@ -64,6 +70,10 @@ inline bool isRecipe(const QString& effectId) { return effectId.startsWith(QLati
 // Recipe `idOrName` on the video clips `ids` with the slots of `with` (CompRecipes::apply + Editor::setCompGraph,
 // one undo step named after the recipe). Media/file slot values are taken as absolute paths. False + err when the
 // recipe is missing, a slot does not fit or no clip takes it
+// A step whose edits were all refused (an empty macro on top, above index `before`): taken off the history, also from
+// redo (QUndoCommand::setObsolete), so no "Redo: …" of nothing is left
+void dropRefusedStep(QUndoStack* undo, int before);
+
 bool applyRecipe(Editor* editor, const QVector<int>& ids, const QString& idOrName, const QVariantMap& with = {},
                  QString* err = nullptr);
 // The same from a GUI act: asks for the files of the recipe's required media/file slots first (a file dialog over

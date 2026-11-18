@@ -1,6 +1,8 @@
 # FFmpeg components of the bundled packages (AppImage, Windows program folder, Docker image): what schneidi uses.
 # Read by packaging/linux/build-ffmpeg-lgpl.sh (Linux and MSYS2): FFmpeg is configured with --disable-everything and
-# one --enable-<type>=<name> per line. Names as `./configure --list-<type>s` prints them; shell patterns (pcm_*) work.
+# one --enable-<type>=<name> per line. GPL components (libx264, libx265) are only built with GPL_ENCODERS=1 (the
+# default, GitHub downloads); the GPL-free build (GPL_ENCODERS=0) leaves them out because configure refuses them
+# without --enable-gpl. Names as `./configure --list-<type>s` prints them; shell patterns (pcm_*) work.
 # A name configure does not know stops the build. Components whose library is missing on a platform (VAAPI on
 # Windows, D3D11VA on Linux, an encoder library) are left out by configure itself.
 #
@@ -9,7 +11,8 @@
 #   Users notice a file that does not open, not a few hundred KB. tools/ffmpeg-import-check.sh compares against the
 #   full build.
 # - Export: every encoder/muxer of core/RenderJob.cpp (render formats), engine/HardwareEncoders.cpp (hardware and
-#   GPL-free replacements, proxy encoder), engine/RenderCache.cpp, engine/Transcriber.cpp, engine/Exporter.cpp (GIF).
+#   GPL-free replacements, proxy encoder), engine/RenderCache.cpp, engine/Transcriber.cpp, engine/Exporter.cpp (GIF),
+#   engine/ExportWriter.cpp (embedded subtitle streams: without their encoder the export leaves them out silently).
 # - Devices: none, except the lavfi input of the hardware encoder test.
 # - Filters: only the bundled ffmpeg program uses them (proxies, render cache, GIF palette, hardware encoder test,
 #   SCHNEIDI_ANALYSIS=ffmpeg comparisons) plus those its command line inserts by itself (autorotate, format/rate
@@ -204,6 +207,9 @@ decoder adpcm_*
 
 # ---- Encoders ----
 # render formats (core/RenderJob.cpp) and their GPL-free replacements (engine/HardwareEncoders.cpp)
+# x264/x265: GPL, only in the GPL_ENCODERS=1 build (see the head of this file)
+encoder libx264
+encoder libx265
 encoder libopenh264
 encoder libkvazaar
 encoder libsvtav1
@@ -219,6 +225,8 @@ encoder libmp3lame
 encoder libopus
 encoder flac
 encoder alac
+# 5.1 for TVs/AV receivers (RenderSettings::audioFormat "ac3", 0.23): LGPL like the rest, its patents ran out (2017)
+encoder ac3
 encoder pcm_s16le
 encoder pcm_s24le
 encoder pcm_s32le
@@ -237,6 +245,14 @@ encoder av1_vaapi
 encoder h264_qsv
 encoder hevc_qsv
 encoder av1_qsv
+# subtitle streams in the export (engine/ExportWriter.cpp openTextStreams: MP4/MOV mov_text, MKV SRT, WebM WebVTT)
+# and their decoders (a player-side read back in test_captions; small)
+encoder movtext
+encoder subrip
+encoder webvtt
+decoder movtext
+decoder subrip
+decoder webvtt
 # the ffmpeg program: `-f null` (hardware test, analyses), `-f rawvideo` (region analysis)
 encoder wrapped_avframe
 encoder rawvideo
@@ -366,6 +382,9 @@ filter vflip
 filter rotate
 filter crop
 filter split
+# proxies of interlaced material (engine/ProxyManager.cpp): bwdif, yadif where bwdif is missing (both LGPL-2.1+)
+filter bwdif
+filter yadif
 filter palettegen
 filter paletteuse
 filter hwupload

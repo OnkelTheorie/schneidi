@@ -5,6 +5,8 @@
 
 #include "core/Types.h"
 
+#include <QSet>
+
 #include <functional>
 
 using IdGen = std::function<int()>;
@@ -27,7 +29,25 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 // shifts: (from frame, offset) - a clip moves by the sum of the offsets whose frame is <= its start.
 // If a track would overwrite a clip that stays (or slide before frame 0), it stays
 // entirely put - never overwrite.
-void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip);
+// What happens to timeline markers and notes in time a ripple takes out: only removing real content (ripple delete,
+// ripple trim of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap or trimming clips for
+// a transition moves them to the cut point (they mark a moment, not the removed content). Story sections get shorter
+// either way (see rippleAnnotations).
+enum class MarkerCut { Delete, MoveToCut };
+// Timeline markers, notes and story sections follow (rippleAnnotations) with `markerShifts` if given (ripple trim:
+// the trimmed clip's content), else with `shifts`.
+void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
+                  const QVector<QPair<int, int>>* markerShifts = nullptr, MarkerCut markerCut = MarkerCut::Delete);
+// The timeline's own annotations - markers, notes (TimelineNote::at) and story sections - follow a ripple (shifts as
+// in rippleTracks, in frames before the edit), but only when it moves the whole timeline: if a track outside
+// `moving` (locked, or held by an overlap) has a clip that ends after the first edit point, they all stay - they
+// belong to the timeline, not to one track. Markers and notes in time taken out [from + offset, from) go
+// (MarkerCut::Delete) or land on the cut point (MoveToCut), except one exactly at its start (stays); those from
+// `from` on move by the offsets. Equal markers merge (notes keep their own). A section's edges move the same way but
+// always land on the cut point: time taken out shortens it, a section only in that time goes; time inserted at an
+// edge joins the section that ends there.
+void rippleAnnotations(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& moving,
+                       MarkerCut markerCut = MarkerCut::Delete);
 // How far (frames to the left) the other tracks can move up from `from` without overwriting
 // (unlocked subtitle tracks count too)
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip);
@@ -46,9 +66,18 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
 // clips in it are shortened, split or removed. Nothing moves up.
 // If a linked clip is split, the right piece provisionally gets the linkId -old (same on all tracks);
 // resolvePendingLinks (called by Project::edit) turns that into a new common link.
-void clearRange(Track& track, int start, int end, const IdGen& newId);
-// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id
+// A clip cut off at its start keeps its comp graph's picture in place (Comp::followHead; fps = Timeline::frameRate).
+void clearRange(Track& track, int start, int end, const IdGen& newId, double fps);
+// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id. A partner
+// that was not cut (on a track without a right piece) goes with the right piece when it plays in sync with it (same
+// file and playback, same start - in, overlapping in time) and not with the left piece that kept the old link (a
+// delete range over a picture whose sound starts after the range); otherwise it keeps the old link. A partner of
+// another file (a recorder's sound to a camera's picture) goes with the piece it lies under more.
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId);
+// Linked pairs (ids) in sync in `before` - the same file showing the same frame at the same place, or other files side
+// by side in time - whose offset (start - in) to each other changed in `after`; pairs where one clip is in `ignore`
+// (changed on purpose), plays otherwise now (speed, reverse, freeze, ramp) or is gone are left out.
+QVector<QPair<int, int>> linksApart(const Timeline& before, const Timeline& after, const QSet<int>& ignore = {});
 // After an edit from `before` to `after`: kill feed copies (Reframe::keepCopy, linked to their clip) that the edit left
 // as they were while it cut their clip in place (another clip overwrote its middle, an end or all of it: clearRange,
 // placeClip) are cut the same way - the part over the new clip goes, each piece stays linked to the clip's piece
@@ -69,7 +98,7 @@ void changeClips(Timeline& tl, Need need, Apply apply)
 }
 
 // Places a clip on the track in overwrite mode.
-void placeClip(Track& track, const Clip& clip, const IdGen& newId);
+void placeClip(Track& track, const Clip& clip, const IdGen& newId, double fps);
 
 bool removeClip(Timeline& tl, int clipId);
 
@@ -86,12 +115,23 @@ void clearDissolveAt(Track& track, int frame);
 // Creates missing tracks until there are `count` tracks of the kind (names V3, A3, ...).
 void ensureTracks(Timeline& tl, TrackKind kind, int count);
 
-// Deletes clips with ripple: on the affected tracks everything following moves up (like Shift+Del in DaVinci),
-// the other unlocked tracks move along by the deleted ranges (rippleTracks).
-void rippleDelete(Timeline& tl, const QVector<int>& clipIds);
+// Deletes clips with ripple: the time taken out is the deleted time where nothing stays on any affected track (an
+// L-cut's sound under the next picture keeps that time, so linked clips stay in sync). The affected tracks move up by
+// it; the other unlocked tracks too, unless a clip of theirs would run into another one there (rippleTracks: that
+// track stays). Returns the frames taken out (less than deleted when clips stay in the deleted time).
+struct RippleResult {
+    int deleted = 0; // frames of deleted time (all tracks together)
+    int removed = 0; // frames taken out of the timeline
+    // The time meant to go: of a linked group with a picture the picture's time (its sound's own J/L tail under the
+    // next clip does not count), of other clips their time; and how much of it was taken out (less: other clips stay
+    // in it)
+    int meant = 0, meantRemoved = 0;
+};
+RippleResult rippleDelete(Timeline& tl, const QVector<int>& clipIds);
 
 // Splits the clips at frame `frame`. Right halves get new IDs; linked
-// pairs stay linked (new common linkId for the right parts).
+// pairs stay linked (new common linkId for the right parts; a partner that was not split and plays in sync with a
+// right part only - an L-cut's sound starting after `frame` - goes with it, see resolvePendingLinks).
 // Returns the IDs of the new right parts.
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
                      const IdGen& newClipId, const IdGen& newLinkId);
@@ -144,7 +184,9 @@ struct TrimEdit {
 };
 // Largest allowed delta in the direction of `delta` (source material, at least 1 frame, neighbors, frame 0)
 int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength);
-void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength);
+// `markerCut`: what a ripple trim does to timeline markers on the trimmed-off part (a transition's trim moves them)
+void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength,
+                   MarkerCut markerCut = MarkerCut::Delete);
 
 // Effective transition on a track (see Clip::transIn/transOut)
 struct TransitionSpan {
@@ -160,6 +202,9 @@ struct TransitionSpan {
 // Transitions of a track with the length that really fits: Cross Dissolve centered on the cut,
 // shortened if handles (material beyond in/out) or clip length do not suffice; length 0 is dropped.
 QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength);
+// The spans of transitions() that cover `frame`, asking sourceLength only for the clips around it (a source length
+// can mean opening the file: the first frame of a project with many dissolves waited for all of them)
+QVector<TransitionSpan> transitionsAt(const Track& track, int frame, const SourceLength& sourceLength);
 
 // Fade handle ramp (0..1, linear) at clip frame t (from clip start); fades limited to the clip length.
 // Video uses the value as opacity, audio as a sine curve (audioFadeGain).
@@ -195,5 +240,10 @@ int endFrame(const Timeline& tl);
 bool sameNested(const Timeline& a, const Timeline& b);
 // Is the file anywhere on a video track? (e.g. only rebuild the preview if a proxy belongs to it)
 bool usesMediaOnVideo(const Timeline& tl, const QString& path);
+
+// Where the track with `uid` (Track::uid) is now in `tracks` (a window bound to a track follows it when tracks are
+// added, removed or reordered, by hand or by undo); -1 = gone. `index` = where it was: kept when a copy of the track
+// (same uid) lies elsewhere too.
+int followTrack(const QVector<Track>& tracks, quint64 uid, int index);
 
 } // namespace TimelineOps

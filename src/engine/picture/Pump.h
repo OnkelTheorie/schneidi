@@ -22,6 +22,8 @@
 //
 // Positions are content frames (the multicam grid's are sequence frames; the Engine adds its offset).
 
+#include "core/SystemMemory.h"
+
 #include <QImage>
 
 #include <atomic>
@@ -51,8 +53,9 @@ public:
         // Called from a worker now and then while playing forward with frame = next frame to show: open decoders and
         // decode the first pictures of clips that start soon (optional)
         std::function<void(int64_t)> prepare;
-        // Called now and then (idle workers): drop decoders unused for a while (optional)
-        std::function<void()> trim;
+        // Called now and then (idle workers) with the frame shown (the next one due): drop decoders unused for a while,
+        // never the shown frame's (optional)
+        std::function<void(int64_t shown)> trim;
         double fps = 25; // content frames per second (clock frames to seconds)
     };
     // Where the sound is, in content frames (fractional: frame f plays from f to f + 1); NaN = no clock (show at once)
@@ -66,7 +69,9 @@ public:
     Pump(const Pump&) = delete;
     Pump& operator=(const Pump&) = delete;
 
-    // Shows `content` from `position` on at `speed` (nullptr = nothing: no frames)
+    // Shows `content` from `position` on at `speed` (nullptr = nothing: no frames). The content shown already, both
+    // stopped: only a seek - frames rendered or under way stay valid. After the content's output changed (model,
+    // output size, grade bypass) call refresh() as well, a second setContent() of the same content does not redraw.
     void setContent(std::shared_ptr<const Content> content, int64_t position, double speed);
     // Speed change; position = where playback goes on (the frame shown when stopping). Same direction while playing:
     // the frames rendered ahead stay.
@@ -88,10 +93,17 @@ public:
         int cancelled = 0;   // still renders given up because the position moved on
         int64_t recentBytes = 0; // memory the recently shown frames hold now
     };
-    // Memory for recently shown frames (bytes; tests make it small)
+    // Memory for recently shown frames (bytes; tests make it small). Default: recentBudgetFor(SystemMemory::read())
     void setRecentBudget(int64_t bytes);
+    // The default budget for a machine: 1/16 of its RAM (or of the cgroup limit, the smaller), 16 to 192 MB - a
+    // 16-GB computer keeps 192 MB, a Raspberry Pi Zero 2 W (415 MB) 26 MB
+    static int64_t recentBudgetFor(const SystemMemory::Info& memory);
     // Forgets the recently shown frames (memory given back while idle; they are rendered again when wanted)
     void dropRecent();
+    // The picture of the content changed without a new generation (a stabilization finished while playing: a refresh
+    // would drop the frames prepared ahead, a hitch): the recently shown frames are forgotten, and frames whose
+    // render began before are still shown but not kept - stepping back renders them again with the change
+    void forgetRecent();
     Stats stats() const;
 
 private:

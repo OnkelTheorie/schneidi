@@ -11,6 +11,7 @@
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "ui/Inspector.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
@@ -18,6 +19,7 @@
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <cmath>
+#include <random>
 
 namespace {
 
@@ -31,6 +33,65 @@ Clip clip(int length)
     c.in = 0;
     c.out = length - 1;
     return c;
+}
+
+// Keys::valueAt finds the segment by binary search (0.23): identical to the old linear search from the front. A segment's
+// value depends only on its two keys, so a clip with just the keys the linear search would pick (and the next one) must
+// give the very same number (exact compare) - for random tracks with every ease, Bezier handles, on and between keys,
+// outside.
+void testValueAtSearch()
+{
+    std::mt19937 rng(23);
+    std::uniform_int_distribution<int> gap(1, 40), ease(0, 4), count(1, 40);
+    std::uniform_real_distribution<double> val(-60, 12), handle(-8, 8);
+    int checked = 0;
+    for (int round = 0; round < 300; ++round) {
+        Clip c = clip(2000);
+        c.in = round % 3 == 0 ? 37 : 0; // keys at source frames
+        KeyTrack k;
+        int f = c.in + gap(rng) - 10;
+        const int n = count(rng);
+        for (int i = 0; i < n; ++i) {
+            Keyframe key;
+            key.frame = f;
+            key.value = val(rng);
+            key.ease = KeyEase(ease(rng));
+            key.inDt = -std::abs(handle(rng));
+            key.inDv = handle(rng);
+            key.outDt = std::abs(handle(rng));
+            key.outDv = handle(rng);
+            k << key;
+            f += gap(rng);
+        }
+        for (AnimParam p : {AnimParam::Volume, AnimParam::Opacity, AnimParam::TitleColor}) {
+            Clip a = c;
+            a.keys[p] = k;
+            const double from = k.first().frame - c.in - 5, to = k.last().frame - c.in + 5;
+            for (double t = from; t <= to; t += 0.25) {
+                const double s = c.in + t;
+                double expect;
+                if (s <= k.first().frame) expect = Keys::valueAt([&] { Clip x = c; x.keys[p] = {k.first()}; return x; }(), p, t);
+                else if (s >= k.last().frame) expect = Keys::valueAt([&] { Clip x = c; x.keys[p] = {k.last()}; return x; }(), p, t);
+                else {
+                    int i = 1;
+                    while (s > k[i].frame) ++i; // the old linear search
+                    // Its two keys, and the next one: on a key's own frame the section ending there counts (not
+                    // the key's value as the last key would give)
+                    Clip few = c;
+                    few.keys[p] = {k[i - 1], k[i]};
+                    if (i + 1 < k.size()) few.keys[p] << k[i + 1];
+                    expect = Keys::valueAt(few, p, t);
+                }
+                const double got = Keys::valueAt(a, p, t);
+                if (got != expect) {
+                    CHECK_EQ(got, expect);
+                    return;
+                }
+                ++checked;
+            }
+        }
+    }
+    CHECK(checked > 100000);
 }
 
 void testValues()
@@ -282,6 +343,7 @@ void testUi()
     project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 1, 0});
     auto opacity = [&] { return TimelineOps::findClip(project.timeline(), 1)->keys.value(AnimParam::Opacity); };
 
+    Inspector insp(&editor); // closes the merge series when the selection changes: never while a point is dragged
     TimelineView tv(&editor);
     tv.resize(1200, 500);
     tv.show();
@@ -311,6 +373,22 @@ void testUi()
     project.undoStack()->undo();
     CHECK_EQ(opacity().last().frame, 80);
     CHECK(close(opacity().last().value, 80));
+
+    // A drag over many frames (the selected point moves with it, setKeyframes each time): still one undo step
+    {
+        const int before = project.undoStack()->index();
+        const QPoint from(xOf(80), yOf(80));
+        mouse(tv, QEvent::MouseButtonPress, from, Qt::LeftButton);
+        // to the left, about 12 frames
+        for (int f = 1; f <= 6; ++f)
+            mouse(tv, QEvent::MouseMove, from + QPoint(-int(std::lround(f * 2 * ppf)), -2 * f), Qt::LeftButton);
+        mouse(tv, QEvent::MouseButtonRelease, from + QPoint(-int(std::lround(12 * ppf)), -12), Qt::NoButton);
+        CHECK(opacity().last().frame >= 66 && opacity().last().frame <= 72);
+        CHECK_EQ(project.undoStack()->index(), before + 1);
+        project.undoStack()->undo();
+        CHECK_EQ(opacity().last().frame, 80);
+        CHECK(close(opacity().last().value, 80));
+    }
 
     // Shift = one axis only; snapping to keyframe 50 of the other parameter
     drag(tv, {xOf(80), yOf(80)}, {xOf(51) + 1, yOf(80) - 3}, Qt::ShiftModifier);
@@ -373,6 +451,7 @@ int main(int argc, char** argv)
     Theme::apply(app);
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
+    testValueAtSearch();
     testValues();
     testAutoHandles();
     testSplit();

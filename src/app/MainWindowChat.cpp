@@ -57,16 +57,18 @@ void MainWindow::buildChat()
     // Plans belong to the project they were made on: another one opened, their cards cannot run any more
     // (Not when a tour trades the user's project for its practice project and back: the plans are still the user's)
     connect(m_project, &Project::loaded, m_chat, [this] {
-        if (!m_tourSwap) m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+        if (m_tourSwap) return;
+        m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
+        // A review counts undo steps of the project it started on: the loaded one has another history, accept and
+        // discard would combine or undo the wrong steps. Nothing to review any more.
+        if (m_review.pending) m_chatPanel->hideApproval();
+        m_review = {};
     });
     m_chat->setLanguage(languageName(I18n::language()));
     m_chat->setCompact(m_aiSettings.compact);
-    m_chatPanel = new AiChatPanel(m_chat);
+    m_chatPanel = new AiChatPanel(m_chat, m_chatSplit); // right in its splitter (placeChat orders it)
     m_chatPanel->setKeyHint([this](const QString& provider) { return chatKeyHint(provider); });
     m_chatPanel->setSender([this](const QString& text) { return sendChat(text); });
-    m_chatSplit = new QSplitter(Qt::Horizontal);
-    m_chatSplit->setObjectName("aiChatSplit");
-    m_chatSplit->addWidget(m_pages);
     m_chatSplit->setChildrenCollapsible(false);
     connect(m_chatSplit, &QSplitter::splitterMoved, this, [this] {
         if (m_autosaveDisabled || m_chatPanel->isHidden()) return; // test runs leave the user's layout alone
@@ -259,6 +261,9 @@ void MainWindow::liveCommandRunning(bool running, bool ownChat)
 }
 
 bool MainWindow::livePlanOnly() const { return m_aiSettings.approval == AiSettings::Approval::Plan; }
+
+// A request that started in review mode is open (also when the setting changed meanwhile)
+bool MainWindow::liveReviewOnly() const { return m_review.active; }
 
 void MainWindow::livePlan(const QString& state, const QJsonObject& plan, bool ownChat)
 {

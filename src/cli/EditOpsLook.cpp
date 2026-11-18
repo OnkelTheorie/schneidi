@@ -14,6 +14,7 @@
 #include "core/TimelineOps.h"
 #include "engine/BarDetect.h"
 #include "engine/ColorGrade.h"
+#include "engine/KillFeedLines.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/TextRegions.h"
 #include "engine/Tracker.h"
@@ -48,6 +49,8 @@ constexpr NamedParam kNamed[] = {
     {"title_size", AnimParam::TitleSize},   {"title_x", AnimParam::TitlePosX},
     {"title_y", AnimParam::TitlePosY},      {"title_color", AnimParam::TitleColor},
     {"volume", AnimParam::Volume},          {"pan", AnimParam::Pan},
+    {"shape_width", AnimParam::ShapeWidth}, {"shape_height", AnimParam::ShapeHeight},
+    {"shape_rotation", AnimParam::ShapeRotation}, {"shape_reveal", AnimParam::ShapeReveal},
 };
 
 constexpr const char* kEaseNames[] = {"linear", "ease_in", "ease_out", "ease_in_out", "bezier"};
@@ -876,18 +879,47 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
                                      "give game (%2) or a region \"x,y,w,h\"")
                                  .arg(clips.join(", "), games.join(", ")));
     }
-    s.editor.reframeClips(targets, mode, paths, contents, &keeps);
+    // The kill feed copies follow the feed's lines (hidden while there are none), when they can be read
+    QHash<int, QVector<Reframe::Keep>> fitted = keeps;
+    {
+        QStringList errors;
+        const auto feeds = KillFeedLines::feeds(clips, f, mode, contents, choice, [&s](const QString& path) {
+            const MediaInfo* m = s.project.mediaInfo(path);
+            return m ? m->length : 0;
+        }, &errors);
+        for (const QString& e : errors) s.notes << "kill feed lines not read, the whole region is kept: " + e;
+        KillFeedLines::attach(fitted, feeds);
+    }
+    s.editor.reframeClips(targets, mode, paths, contents, &fitted);
     if (!overlays.isEmpty())
         s.notes << QString("overlays not reframed, they keep their place and size in the frame: clips %1 (a smaller "
                            "picture on a track above V1, e.g. a webcam; name them in clips:[…] to reframe them anyway)")
                        .arg(overlayIds.join(", "));
-    QStringList kept;
+    QStringList kept, followed, noLines, whole;
     for (int id : targets)
-        for (const Reframe::Keep& k : keeps.value(id))
+        for (const Reframe::Keep& k : fitted.value(id)) {
+            const Reframe::FeedUse use = Reframe::feedUse(k.feed);
+            if (use == Reframe::FeedUse::None) {
+                noLines << QString::number(id);
+                continue;
+            }
             kept << QString("%1: %2 (%3)").arg(id).arg(k.id, GameHud::regionText(k.region));
+            if (use == Reframe::FeedUse::Follow) followed << QString::number(id);
+            else if (k.feed.measured) whole << QString::number(id);
+        }
     if (!kept.isEmpty())
         s.notes << "kept readable at the top of the frame (a cropped copy of the clip on a track above, info "
                    "keep_region): " + kept.join(", ");
+    if (!followed.isEmpty())
+        s.notes << "the kill feed copy follows its lines (clips " + followed.join(", ")
+                       + "): hidden while the feed is empty, as tall as its lines and as wide as the widest one";
+    if (!noLines.isEmpty())
+        s.notes << "no kill feed line in clips " + noLines.join(", ") + ": no kill feed copy for them";
+    if (!whole.isEmpty())
+        s.notes << QString("no kill feed line found in clips %1 over %2 s of footage or more (the game's HUD may have "
+                           "another scale or layout): their copy keeps the whole kill feed region all the time")
+                       .arg(whole.join(", "))
+                       .arg(Reframe::kFeedFallback);
     QStringList cropped;
     for (auto it = contents.cbegin(); it != contents.cend(); ++it)
         if (BarDetect::hasBars(*it)) cropped << QFileInfo(it.key()).fileName() + " (" + contentText(*it) + ")";
@@ -1058,6 +1090,10 @@ void addLookOps(QVector<OpDef>& ops)
                  "the kill feed of game footage when the reframe cuts the sides away (the game from game, or from the "
                  "folder or file name: cs2, valorant - as `highlights` knows them); 'killfeed' = that kill feed "
                  "always; a region \"x,y,w,h\" (fractions 0..1 of the whole picture) = that part; 'none' = nothing. "
+                 "A CS2 kill feed copy follows the feed's lines (read 10 times a second): hidden while there are none, "
+                 "as tall as the lines and as wide as the widest one (keyframes on opacity, crop and place); a clip "
+                 "without any line gets no copy, unless it is 20 s of footage or longer (then the HUD probably looks "
+                 "other than the analysis knows: the copy keeps the whole region, a note says so). "
                  "The copy is linked to its clip (`info` link) and follows it: move, trim, split, delete, speed go "
                  "for both; place or crop the copy itself with 'transform' on its id. "
                  "Reframing a clip again replaces its earlier copies (none removes them); `info` shows them with "
@@ -1087,7 +1123,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "animate a value",
                  "param: zoom (zoom_x and zoom_y together; `info` shows them as zoom while they match), zoom_x, "
                  "zoom_y, x, y, rotation, tilt_x, tilt_y, fov, crop_left, crop_right, crop_top, crop_bottom, opacity, "
-                 "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
+                 "title_size, title_x, title_y, title_color (\"#rrggbb\"; a shape: its fill), shape_width, shape_height, "
+                 "shape_rotation, shape_reveal (0..100, the stroke drawing itself), volume (dB, audio clips), pan (-100..100, "
                  "audio clips) or an effect parameter \"<effect>.<key>\" (keys: `effects <id>`; grade values: "
                  "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip (its end counts as "
                  "its last frame; outside is an error - with several clips, ones no time falls in are left alone), or "

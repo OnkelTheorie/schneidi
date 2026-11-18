@@ -7,6 +7,7 @@
 #include "app/KeyBindingsDialog.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QFile>
 #include <QJsonArray>
@@ -165,9 +166,9 @@ int main(int argc, char** argv)
         if (!CHECK(row >= 0)) return Check::result();
         auto capture = [&](int col) {
             emit table->cellDoubleClicked(row, col);
-            return qobject_cast<QLabel*>(table->cellWidget(row, col));
+            return table->cellWidget(row, col);
         };
-        if (QLabel* c = capture(3); CHECK(c)) {
+        if (QWidget* c = capture(3); CHECK(c)) {
             QKeyEvent ctrl(QEvent::KeyPress, Qt::Key_Control, Qt::ControlModifier); // modifiers alone wait
             QApplication::sendEvent(c, &ctrl);
             CHECK_EQ(b.inputs("extra"), QStringList({"", ""}));
@@ -177,7 +178,7 @@ int main(int argc, char** argv)
         QApplication::processEvents();
         CHECK_EQ(b.inputs("extra"), QStringList({"", "Ctrl+Shift+J"}));
         CHECK_EQ(table->item(row, 3)->text(), QKeySequence("Ctrl+Shift+J").toString(QKeySequence::NativeText));
-        if (QLabel* c = capture(2); CHECK(c)) {
+        if (QWidget* c = capture(2); CHECK(c)) {
             QMouseEvent press(QEvent::MouseButtonPress, QPointF(5, 5), QPointF(5, 5), Qt::ForwardButton,
                               Qt::ForwardButton, Qt::NoModifier);
             QApplication::sendEvent(c, &press);
@@ -185,9 +186,9 @@ int main(int argc, char** argv)
         QApplication::processEvents();
         CHECK_EQ(b.inputs("extra"), QStringList({"mouse:forward", "Ctrl+Shift+J"}));
         CHECK_EQ(table->item(row, 2)->text(), InputBindings::mouseButtonText(Qt::ForwardButton));
-        if (QLabel* c = capture(2); CHECK(c)) { // Esc cancels
-            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-            QApplication::sendEvent(c, &esc);
+        if (QWidget* c = capture(2); CHECK(c)) { // the small cancel button cancels (Esc is a key like any other)
+            auto* cancel = c->findChild<QAbstractButton*>("key_capture_cancel");
+            if (CHECK(cancel)) cancel->click();
         }
         QApplication::processEvents();
         CHECK_EQ(b.inputs("extra"), QStringList({"mouse:forward", "Ctrl+Shift+J"}));
@@ -239,13 +240,20 @@ int main(int argc, char** argv)
         };
         CHECK(!conflict("delete_alt"));
         CHECK(!conflict("render_queue_delete"));
-        b.setInput("render_queue_other", 0, "Del"); // the same key twice in the panel: marked
+        // Assigning a key of the panel takes it from the other panel action, never from the window's
+        b.setInput("render_queue_other", 0, "Del");
+        CHECK(!b.inputs("render_queue_delete").contains("Del"));
+        CHECK(b.inputs("delete_alt").contains("Del"));
+        b.setInputs("render_queue_delete", b.defaultInputs("render_queue_delete"));
+        CHECK(!b.inputs("render_queue_other").contains("Del"));
+        // The same key twice in the panel (a new action's default another one has): marked
+        QAction panelThird;
+        b.registerPanelAction(&panelThird, "render_queue_third", "Render", "render_queue", QKeySequence(Qt::Key_Delete));
         dlg.close();
         KeyBindingsDialog again;
         table = again.findChild<QTableWidget*>();
-        CHECK(conflict("render_queue_other"));
+        CHECK(conflict("render_queue_third"));
         CHECK(!conflict("delete_alt"));
-        b.setInputs("render_queue_other", {});
     }
     return Check::result();
 }

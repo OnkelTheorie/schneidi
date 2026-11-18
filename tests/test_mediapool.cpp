@@ -3,12 +3,16 @@
 // broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
 #include "check.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include <QEventLoop>
 #include <QThread>
+#include <QThreadPool>
+
+#include <algorithm>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -51,7 +55,7 @@ int main(int argc, char** argv)
     const int sub = p.addBin(b1, "Unter");
     CHECK_EQ(p.binName(b1), QString("Ordner 1"));
     CHECK_EQ(p.binName(b2), QString("Zeug"));
-    CHECK_EQ(p.binName(0), QString("Master"));
+    CHECK_EQ(p.binName(0), QString("Master")); // German (source language) keeps the short name, not the key
     CHECK_EQ(p.childBins(0), (QVector<int>{b1, b2}));
     CHECK_EQ(p.childBins(b1), QVector<int>{sub});
     CHECK(p.binInside(sub, b1) && p.binInside(sub, 0) && !p.binInside(b1, sub));
@@ -109,6 +113,41 @@ int main(int argc, char** argv)
     d.bin = 999;
     p.addMedia(d);
     CHECK_EQ(binOf(p, "d.mp4"), 0);
+
+    // --- Imported into a bin right after creating it (the import is not in the history): undo of the bin puts the
+    //     file into Master, redo back into the bin (before: it stayed in Master); also over two levels of bins
+    {
+        Project q;
+        QUndoStack* u = q.undoStack();
+        const int bin = q.addBin(0, "Neu");
+        MediaInfo e = media("e.mp4");
+        e.bin = bin;
+        q.addMedia(e);
+        CHECK_EQ(binOf(q, "e.mp4"), bin);
+        u->undo();
+        CHECK(!q.bin(bin) && binOf(q, "e.mp4") == 0);
+        u->redo();
+        CHECK_EQ(binOf(q, "e.mp4"), bin);
+        const int inner = q.addBin(bin, "Innen");
+        MediaInfo f = media("f.mp4");
+        f.bin = inner;
+        q.addMedia(f);
+        u->undo();
+        u->undo();
+        CHECK(binOf(q, "e.mp4") == 0 && binOf(q, "f.mp4") == 0);
+        u->redo();
+        CHECK(binOf(q, "e.mp4") == bin && binOf(q, "f.mp4") == 0);
+        u->redo();
+        CHECK(binOf(q, "e.mp4") == bin && binOf(q, "f.mp4") == inner);
+        // Moved by hand while its bin was gone: stays where the user put it
+        u->undo();
+        q.moveMediaToBin({"/x/f.mp4"}, bin);
+        CHECK_EQ(binOf(q, "f.mp4"), bin);
+        u->undo();
+        CHECK_EQ(binOf(q, "f.mp4"), 0); // where it was before the move
+        u->redo();
+        CHECK_EQ(binOf(q, "f.mp4"), bin);
+    }
 
     // --- Save -> load: everything the same, new bin ID after loading not duplicated
     {
@@ -193,7 +232,7 @@ int main(int argc, char** argv)
         int items = 0;
         for (QTreeWidgetItemIterator it(tree); *it; ++it) ++items;
         CHECK_EQ(items, 1 + int(p.bins().size()));
-        CHECK_EQ(list->count(), 1 + 1 + 2); // Master: Titel + Timeline 1 + c, d
+        CHECK_EQ(list->count(), 2 + 1 + 2); // Master: Text and Form + Timeline 1 + c, d
         pool.setCurrentBin(sub);
         app.processEvents();
         CHECK_EQ(list->count(), 2); // a, b
@@ -300,13 +339,23 @@ int main(int argc, char** argv)
                 if (last->icon().cacheKey() != before.last()) loop.quit();
             });
             poll.start(20);
-            QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+            QTimer::singleShot(60000, &loop, &QEventLoop::quit); // under load it takes long; quits as soon as it is there
             loop.exec();
             CHECK(last->icon().cacheKey() != before.last()); // the last one got its thumbnail
-            int waiting = 0; // out of view at the top, still without one (the first one may have been under way)
-            for (int i = 1; i < 10; ++i)
-                if (list->item(i)->icon().cacheKey() == before[i]) ++waiting;
-            CHECK_EQ(waiting, 9);
+            // Out of view at the top, still without one. Some may have been under way before the scroll: at most one
+            // per worker of the thumbnail pool (read from the pool itself, not worked out from the cores: the test ran
+            // in cgroups with other core counts than the formula assumed) - and they are the first ones (the view was
+            // at the top then). Every other one at the top waits.
+            const auto* pool = storage.findChild<QThreadPool*>();
+            const int workers = pool ? pool->maxThreadCount() : 1;
+            int loaded = 0, beyond = 0;
+            for (int i = 0; i < 10; ++i)
+                if (list->item(i)->icon().cacheKey() != before[i]) {
+                    ++loaded;
+                    if (i >= workers) ++beyond;
+                }
+            CHECK(loaded <= workers);
+            CHECK_EQ(beyond, 0);
         }
     }
 
@@ -528,6 +577,17 @@ int main(int argc, char** argv)
         q.setFormat({1280, 720, q.format().rate});
         app.processEvents();
         CHECK(tipOf(edit).contains("1280 × 720"));
+    }
+    // The root bin's name follows the UI language (it is not stored in the project, id 0 is fixed). It has its own
+    // key, not the mixer's "Master" bus (zh "总输出" = main output): a language without its translation yet shows
+    // English, never the bus word
+    {
+        Project q;
+        I18n::install("zh");
+        CHECK_EQ(q.binName(0), I18n::translate("zh", "Master-Ordner"));
+        CHECK(q.binName(0) != I18n::translate("zh", "Master"));
+        CHECK(q.isRootBinPath("master") && q.isRootBinPath(" Master/") && q.isRootBinPath(q.binName(0)));
+        CHECK(!q.isRootBinPath("") && !q.isRootBinPath("Master/Clips") && !q.isRootBinPath("Clips"));
     }
     return Check::result();
 }

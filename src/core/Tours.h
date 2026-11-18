@@ -32,6 +32,10 @@ struct TourStep {
     // The timeline tool the step needs, switched to when it is entered ("select", "trim", "blade"; empty = as it is).
     // The user's own tool comes back when the tour ends
     QString tool;
+    // What the step needs on the practice project, made sure of when it is entered ("clip" = a video clip on the
+    // timeline: placed when there is none, e.g. the step asking to drag one was skipped). Clips the user deleted are
+    // brought back at any step once the timeline had some (app/TourManager.cpp)
+    QString needs;
 };
 
 struct Tour {

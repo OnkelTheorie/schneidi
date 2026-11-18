@@ -112,7 +112,7 @@ QJsonObject overviewFile(const QJsonObject& a, Context& ctx)
         Clip c;
         c.mediaPath = m.info.path;
         c.out = length - 1;
-        c.audioStream = a["audio_stream"].toInt();
+        c.audioStream = audioStreamArg(m.info, a);
         const double end = picture ? 0.3 : 1;
         if (const auto p = AudioAnalysis::clipFramePeaks(f, c, [&ctx, end](double p) {
                 if (ctx.progress) ctx.progress(p * end);

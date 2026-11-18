@@ -7,6 +7,7 @@
 // Everything stays in the test's own folders.
 
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"
@@ -727,6 +728,7 @@ void testSpeedNotSticky()
         slotOf(d, 1).fit = SlotFit::Speed;
         apply(d, {{"clip1", Value::ofFile(kShort)}}, ctx);
         Project p;
+        TimelineGuard guard_p{p};
         Selection sel;
         Editor ed(&p, &sel);
         p.load(d);
@@ -978,6 +980,7 @@ void testCompoundShrink()
 void testUserEditsForgetLength()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     p.load(project());
@@ -1017,6 +1020,7 @@ void testUserEditsForgetLength()
 void testEditorParts()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     ProjectData d = project();
@@ -1053,6 +1057,7 @@ void testEditorParts()
 void testEditor()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     ProjectData d = project();

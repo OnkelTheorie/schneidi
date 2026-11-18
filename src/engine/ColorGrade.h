@@ -76,8 +76,13 @@ void prepare(Lut& lut);
 // For extensions see EffectFolders::lutSuffixes.
 // Reads a LUT file (format by extension, also Qt resources ":/…") without a cache; nullptr + error on failure
 std::shared_ptr<const Lut> parseLut(const QString& path, QString* error = nullptr);
-// Like parseLut, but cached by path + modification time (preview/export)
+// Like parseLut, but cached by path + modification time + size (preview/export). The file is looked at again at most
+// every kLutRecheckMs per path (not per frame); one that cannot be reached any more (a network drive gone) keeps the
+// LUT loaded before, a failure is retried once the file is there.
 std::shared_ptr<const Lut> loadLut(const QString& path, QString* error = nullptr);
+inline constexpr int kLutRecheckMs = 1500;
+// The next loadLut of every path looks at its file at once (an export starts, the user picks a LUT)
+void revalidateLuts();
 
 // The per-pixel correction (params + LUT) computed once into tables: per channel what depends on one channel
 // (exact for 8-bit input), saturation in fixed point, a 3D LUT as fixed-point nodes interpolated trilinearly.

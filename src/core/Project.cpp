@@ -253,6 +253,7 @@ Timeline emptyTimeline()
 Project::Project(QObject* parent) : QObject(parent)
 {
     m_sequences << Sequence{1, T("Timeline %1").arg(1), false, 0, emptyTimeline()};
+    stampFrameRate();
     connect(m_undo, &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
 }
 
@@ -301,6 +302,7 @@ void Project::load(const ProjectData& d)
     m_format = d.format;
     m_media = d.media;
     m_bins = d.bins;
+    m_binsUndone.clear();
     m_lastBinId = 0;
     for (const MediaBin& b : m_bins) m_lastBinId = std::max(m_lastBinId, b.id);
     m_sequences = d.sequences;
@@ -396,6 +398,7 @@ void Project::load(const ProjectData& d)
     markSaved();
     emit formatChanged();
     noteTimelineFormat(true);
+    stampFrameRate();
     emit mediaChanged();
     emit sequencesChanged();
     emit poolChanged();
@@ -425,6 +428,7 @@ void Project::markSaved()
 void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey)
 {
     Timeline after = timeline();
+    after.frameRate = frameRate(); // seconds-based clip values follow cuts and head trims (Comp::followHead)
     fn(after);
     // A clip overwritten in place: its kill feed copy is cut the same way (every overwrite path at once)
     TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
@@ -483,6 +487,7 @@ void Project::applyFormat(const ProjectFormat& format, const QVector<Sequence>& 
 {
     m_format = format;
     m_sequences = sequences;
+    stampFrameRate();
     emit formatChanged();
     noteTimelineFormat();
     emit timelineChanged();
@@ -533,7 +538,15 @@ void Project::setTimeline(const Timeline& tl)
 {
     current().timeline = tl;
     current().timeline.nested.reset();
+    current().timeline.frameRate = frameRate();
     emit timelineChanged();
+}
+
+void Project::stampFrameRate()
+{
+    const double fps = frameRate();
+    for (Sequence& s : m_sequences)
+        if (s.timeline.frameRate != fps) s.timeline.frameRate = fps;
 }
 
 void Project::setTimeline(int sequenceId, const Timeline& tl)
@@ -567,6 +580,7 @@ void Project::setCurrentSequence(int id)
     if (id == m_current || !sequence(id)) return;
     closeMerge();
     m_current = id;
+    stampFrameRate();
     emit currentSequenceChanged();
     noteTimelineFormat();
     emit timelineChanged();
@@ -575,6 +589,7 @@ void Project::setCurrentSequence(int id)
 void Project::editSequences(const QString& text, const std::function<void(QVector<Sequence>&, int& current)>& fn)
 {
     QVector<Sequence> after = m_sequences;
+    for (Sequence& seq : after) seq.timeline.frameRate = frameRate();
     int cur = m_current;
     fn(after, cur);
     if (after.isEmpty()) return;
@@ -586,6 +601,7 @@ void Project::editSequences(const QString& text, const std::function<void(QVecto
 void Project::applySequences(const QVector<Sequence>& sequences, int cur)
 {
     m_sequences = sequences;
+    stampFrameRate();
     for (const Sequence& s : m_sequences) m_lastSequenceId = std::max(m_lastSequenceId, s.id);
     const bool switched = cur != m_current;
     m_current = cur;
@@ -753,12 +769,14 @@ Timeline Project::renderTimeline(int sequenceId) const
     const Sequence* s = sequenceId ? sequence(sequenceId) : &current();
     Timeline tl = s ? s->timeline : timeline();
     tl.frameSize = sequenceFormat(s ? s->id : 0).size();
+    tl.audioChannels = m_format.audioChannels;
     auto nested = std::make_shared<NestedTimelines>();
     for (const Sequence& x : m_sequences) {
         Timeline t = x.timeline;
         t.nested.reset();
         t.angles = x.multicam ? x.angles : QVector<MulticamAngle>{};
         t.frameSize = sequenceFormat(x.id).size();
+        t.audioChannels = m_format.audioChannels;
         nested->insert(x.id, t);
     }
     tl.nested = std::move(nested);
@@ -781,6 +799,7 @@ const MediaInfo* Project::mediaInfo(const QString& path) const
 void Project::addMedia(const MediaInfo& info)
 {
     if (mediaInfo(info.path)) return;
+    m_binsUndone.remove(info.path); // imported anew: where it goes now counts
     m_media << info;
     if (m_media.last().bin != 0 && !bin(m_media.last().bin)) m_media.last().bin = 0;
     m_mediaDirty = true;
@@ -1153,9 +1172,24 @@ const MediaBin* Project::bin(int id) const
 
 QString Project::binName(int id) const
 {
-    if (id == 0) return QStringLiteral("Master"); // is called that in German DaVinci too
+    // The root bin is not stored by name (id 0 is fixed), so its name follows the UI language. Its own key, not the
+    // mixer's "Master" bus: some languages name the bus with a word that does not fit a bin. CLI/MCP bin paths start
+    // below the root; a path that is just "Master" (or the root's name in the UI language) means the root itself.
+    // German (the source language) keeps the short "Master": the key only tells the translators what it is
+    if (id == 0) {
+        const QString name = T("Master-Ordner");
+        return name == QLatin1String("Master-Ordner") ? QStringLiteral("Master") : name;
+    }
     const MediaBin* b = bin(id);
     return b ? b->name : QString();
+}
+
+bool Project::isRootBinPath(const QString& path) const
+{
+    const QStringList parts = path.split('/', Qt::SkipEmptyParts);
+    if (parts.size() != 1) return false;
+    const QString name = parts[0].trimmed();
+    return name.compare("Master", Qt::CaseInsensitive) == 0 || name.compare(binName(0), Qt::CaseInsensitive) == 0;
 }
 
 QVector<int> Project::childBins(int parent) const
@@ -1199,7 +1233,15 @@ void Project::applyPool(const PoolState& state)
     for (const MediaBin& b : m_bins) m_lastBinId = std::max(m_lastBinId, b.id);
     for (MediaInfo& m : m_media) {
         const auto it = state.media.constFind(m.path);
-        if (it == state.media.cend()) continue; // imported later -> leave unchanged
+        if (it == state.media.cend()) { // imported later -> leave unchanged, but follow its bin through undo/redo
+            if (m.bin != 0 && !bin(m.bin)) m_binsUndone.insert(m.path, m.bin); // sanitizePool puts it into Master
+            else if (const auto b = m_binsUndone.constFind(m.path); m.bin == 0 && b != m_binsUndone.cend() && bin(*b)) {
+                m.bin = *b;
+                m_binsUndone.erase(b);
+            }
+            continue;
+        }
+        m_binsUndone.remove(m.path); // the step knows where it is
         m.bin = it->bin;
         m.clipColor = it->color;
         m.flags = it->flags;

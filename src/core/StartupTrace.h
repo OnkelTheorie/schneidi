@@ -2,6 +2,7 @@
 #pragma once
 // Startup phase timer: SCHNEIDI_STARTUP_TRACE=1 logs "startup: <phase> <ms since main>" (and the gap to the previous
 // mark) for every StartupTrace::mark(). Off: one cached flag test per mark, nothing else.
+// SCHNEIDI_STARTUP_TRACE=2 also quits the app 2.5 s after the main window's first paint (measuring runs).
 
 #include <QByteArray>
 #include <QElapsedTimer>

@@ -2,6 +2,7 @@
 // schneidi-cli edit operations on timelines (sequences) and compound clips, like the Media Pool in the app
 #include "cli/CommandsDetail.h"
 
+#include "core/ChannelLayout.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 
@@ -156,6 +157,8 @@ void opFormat(Session& s, const QJsonObject& op)
 {
     if (op.contains("timeline")) {
         if (op.contains("fps")) fail("BAD_ARGUMENT", "the frame rate belongs to the project: leave out 'timeline' for fps");
+        if (op.contains("channels"))
+            fail("BAD_ARGUMENT", "the sound channels belong to the project: leave out 'timeline' for channels");
         const int id = s.sequenceOf(op.value("timeline"));
         bool useProject = false;
         const QSize size = sizeOf(op, &useProject, s.project.sequenceFormat(id).size());
@@ -167,8 +170,17 @@ void opFormat(Session& s, const QJsonObject& op)
     if (op.value("aspect").toString().trimmed().toLower() == "project")
         fail("BAD_ARGUMENT", "aspect:'project' needs 'timeline' (which timeline goes back to the project's resolution)");
     if (const QSize size = sizeOf(op, nullptr, f.size()); !size.isEmpty()) f.width = size.width(), f.height = size.height();
-    if (op.contains("fps")) {
-        const FrameRate rate = nearestFrameRate(numberOf(op, "fps", 1, 120));
+    if (op.contains("fps") && op.contains("_rate")) fail("BAD_ARGUMENT", "give fps or _rate, not both");
+    if (op.contains("fps") || op.contains("_rate")) {
+        // fps: typed by a user or an AI, one of the offered rates. _rate {num, den}: the exact rate of an imported
+        // timeline (119.88, 12, 47.952 …), kept like the app does, only brought inside the limits
+        FrameRate rate;
+        if (op.contains("_rate")) {
+            const QJsonObject r = op.value("_rate").toObject();
+            rate = withinLimits({f.width, f.height, {r.value("num").toInt(), r.value("den").toInt()}}).rate;
+        } else {
+            rate = projectFrameRate(numberOf(op, "fps", 1, 120));
+        }
         if (rate != f.rate && s.project.frameRateLocked())
             fail("FAILED", "the frame rate can only change while all timelines are empty; make a new "
                            "project with `new --fps` instead");
@@ -195,6 +207,11 @@ void opFormat(Session& s, const QJsonObject& op)
                      .arg(f.width)
                      .arg(f.height)
                      .arg(others.join(", ")));
+    }
+    if (op.contains("channels")) {
+        const int n = ChannelLayout::parse(op.value("channels").toVariant().toString()); // "5.1" or 6
+        if (n == 0) fail("BAD_ARGUMENT", "channels must be stereo, 5.1 or 7.1");
+        f.audioChannels = n;
     }
     const FrameRate oldRate = s.project.format().rate;
     s.project.setFormat(f);
@@ -234,17 +251,23 @@ void addTimelineOps(QVector<OpDef>& ops)
         << OpDef{"place_timeline", "{op:'place_timeline', timeline, at?, track?}",
                  "put another timeline (or compound clip) as one clip into this one (default: at the end)", {},
                  opPlaceTimeline}
-        << OpDef{"format", "{op:'format', timeline?, aspect?, width?, height?, fps?, confirm?}",
+        << OpDef{"format", "{op:'format', timeline?, aspect?, width?, height?, fps?, channels?, confirm?}",
                  "with timeline: only that timeline's resolution (a 9:16 short next to the 16:9 edit); without: the "
-                 "project's resolution (all timelines without their own) and frame rate (only while all are empty)",
+                 "project's resolution (all timelines without their own), frame rate (only while all are empty) and "
+                 "sound channels (channels: stereo, 5.1 or 7.1)",
                  "timeline = id or name: that timeline gets its own resolution, positions/sizes in it are scaled, the "
                  "project and the other timelines stay; aspect:'project' gives it the project's again. aspect: 16:9, "
                  "9:16 (1080x1920), 1:1, 4:5, 4:3, or width+height (even). Without timeline it changes the project's "
                  "resolution: every timeline without its own resolution is scaled (bars for clips of the old shape). "
                  "With the project open in the app (@app) that is refused while other such timelines hold clips: ask "
                  "the user first and send confirm:true only after they said yes. fps never takes timeline (one rate "
-                 "per project). Nested timelines of another resolution are fitted in like a clip of that shape.",
-                 opFormat};
+                 "per project; 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100 or 120, others are refused). Nested timelines of another resolution are fitted in like a clip of that shape. "
+                 "channels (project only): the mix's format - stereo (default), 5.1 (FL FR FC LFE Ls Rs) or 7.1 (… Lss "
+                 "Rss). In 5.1/7.1 mono and stereo clips are placed by their track's surround panner ({op:'mixer', "
+                 "track, pan, depth, center, lfe_db}), 5.1/7.1 files keep their channels; the app plays the stereo "
+                 "downmix, `render` writes the format (channels arg to choose another), `loudness`/`check` measure "
+                 "over all channels. Projects in 5.1/7.1 open only in schneidi 0.23 or newer.",
+                 opFormat, {"_rate"}}; // _rate: an imported timeline's exact rate (import timeline_file)
 }
 
 } // namespace Cli::detail

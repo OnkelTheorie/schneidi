@@ -14,13 +14,18 @@
 namespace Cli::Serve {
 
 // Options of `serve` and `mcp`: "--name value" or "--name=value"; `valued` take a value (may repeat), `flags` none.
-// Throws Error (USAGE) for anything else.
-QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringList& valued, const QStringList& flags);
+// Throws Error (USAGE) for anything else, pointing to `schneidi-cli help <command>` ("serve" or "mcp").
+QHash<QString, QStringList> parseOptions(const QStringList& args, const QStringList& valued, const QStringList& flags,
+                                         const QString& command = QStringLiteral("serve"));
 
 // `schneidi-cli help`: the two servers (mcp, serve) with their options
 QJsonObject help();
 
 // Runs until SIGINT/SIGTERM; exit code
 int run(const QStringList& args);
+
+// Puts the file `from` at `to` in one step, replacing a file there (POSIX rename, Windows MoveFileExW with
+// MOVEFILE_REPLACE_EXISTING): either `to` is the new file and `from` is gone, or (false) both stay as they were.
+bool replaceFile(const QString& from, const QString& to);
 
 } // namespace Cli::Serve

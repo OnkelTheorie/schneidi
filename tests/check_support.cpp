@@ -56,12 +56,11 @@ void isolateSettings()
         dir.mkpath(".");
         QFile marker(dir.filePath(kMarker));
         if (marker.open(QIODevice::WriteOnly)) marker.close();
-#if !defined(Q_OS_WIN) && !defined(Q_OS_DARWIN)
-        // Set here, not only where unset: the user's own XDG variables (ctest inherits them) must not leak in
+        // Set here, not only where unset: the user's own XDG variables (ctest inherits them) must not leak in. All
+        // platforms: on Windows/macOS AppPaths::writable follows them in a test run (core/AppPaths.h)
         for (const auto& [name, sub] : {std::pair{"XDG_CONFIG_HOME", "config"}, std::pair{"XDG_DATA_HOME", "data"},
                                         std::pair{"XDG_CACHE_HOME", "cache"}})
             qputenv(name, QDir::toNativeSeparators(dir.absoluteFilePath(sub)).toLocal8Bit());
-#endif
         qputenv(kOwned, "1");
     }
     SettingsIsolation::apply();

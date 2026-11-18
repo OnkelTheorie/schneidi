@@ -40,6 +40,8 @@ public:
     // A tour step: text (rich text), "index+1/count", which buttons. waiting = the step waits for the user ("Skip" instead of
     // "Next"), offer = the text of an extra button (empty = none; "Load sample clips")
     void showStep(const QString& text, int index, int count, bool waiting, const QString& offer = {});
+    // A new text for the step shown (a note below it came or went): the buttons and the keyboard focus stay
+    void setStepText(const QString& text);
     // A question (no hole, bubble in the middle): its answers as buttons, left to right; `flat` ones go to the left
     // side, the primary one is the default; Esc picks the one marked `escape`
     struct Choice {

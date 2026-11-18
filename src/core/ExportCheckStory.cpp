@@ -312,8 +312,12 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
     }
 
     const auto endsNear = [&](int frame) { return to - frame <= std::max(1, framesOf(0.5, f)); };
-    if (sections.isEmpty()) {
-        // No sections: a call to action can only be guessed: text or speech near the end
+    // A story planned with sections (more than a hook and free ones, e.g. the moments `short` marks): it asks for a
+    // call-to-action section. Else one can only be guessed: text or speech near the end
+    const bool planned = std::any_of(sections.begin(), sections.end(), [](const StorySection& s) {
+        return s.kind != StoryKind::Hook && s.kind != StoryKind::Free;
+    });
+    if (!planned) {
         if (!o.platform.isEmpty() && length > 6) {
             const int tail = to - std::max(framesOf(3, f), (to - from) * 15 / 100);
             const bool text = firstText(tl, tail, to) >= 0;
@@ -323,7 +327,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
                              T("Am Ende weder Text noch Sprache – ein Aufruf (folgen, kommentieren, Link) fehlt wohl"),
                              tail, to);
         }
-        return out;
+        if (sections.isEmpty()) return out;
     }
 
     const auto firstOf = [&](StoryKind k) -> const StorySection* {
@@ -371,7 +375,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
                          q.to);
     }
 
-    if (!cta)
+    if (!cta && planned)
         out << issue(Severity::Info, "story_no_cta",
                      T("Kein Aufruf-Abschnitt – am Ende sagen, was Zuschauer tun sollen (folgen, kommentieren, Link)"));
 

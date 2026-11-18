@@ -9,6 +9,7 @@
 // keyframe, a marker, max_shift.
 #include "cli/Commands.h"
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -313,7 +314,7 @@ int main(int argc, char* argv[])
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8());
     qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8());
     QGuiApplication app(argc, argv);
-    QGuiApplication::setApplicationName("schneidi");
+    AppPaths::setProgramNames(); // the program's folders (also on Windows: with its organization)
 
     const QString file = tmp.path() + "/song.wav";
     CHECK(writeWav(file, song()));

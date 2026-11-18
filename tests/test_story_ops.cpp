@@ -13,6 +13,7 @@
 #include "core/TimelineOps.h"
 
 #include "check.h"
+#include "timeline_guard.h"
 
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -95,6 +96,7 @@ void testPure()
 void testTeaser()
 {
     Project p;
+    TimelineGuard guard_p{p};
     setup(p);
     Timeline tl = p.timeline();
     tl.sections = {{StoryKind::Build, {}, 0, 300}};
@@ -129,6 +131,7 @@ void testTeaser()
 void testEditor()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     setup(p);
@@ -208,6 +211,7 @@ void testOps(const QString& dir)
     g_path = dir + "/story.schneidi";
     {
         Project p;
+        TimelineGuard guard_p{p};
         setup(p);
         QString error;
         if (!CHECK(ProjectFile::save(p.data(), g_path, &error))) return;
@@ -298,6 +302,9 @@ void testOps(const QString& dir)
     }
     // With suggested sections: every variant keeps a build after its hook (no time without a section)
     edit({QJsonObject{{"op", "sections"}, {"auto", true}}});
+    // ... and a note and a marker at frame 250: C cuts out [0, 197), they follow it once (not twice) to 53
+    edit({QJsonObject{{"op", "note"}, {"at", 250}, {"text", "hier"}}});
+    edit({QJsonObject{{"op", "marker"}, {"at", 250}}});
     edit({QJsonObject{{"op", "hook_variants"}, {"at", QJsonArray{"8.4s"}}, {"question", "Wer?"}}});
     {
         const auto p = loaded();
@@ -309,6 +316,10 @@ void testOps(const QString& dir)
             for (int i = 1; i < sec.size(); ++i) covered &= sec[i].from == sec[i - 1].to;
             bool build = false;
             for (const StorySection& x : sec) build |= x.kind == StoryKind::Build;
+            if (n.startsWith("Hook C")) {
+                if (CHECK_EQ(q.timeline.notes.size(), 1)) CHECK_EQ(q.timeline.notes[0].at, 53);
+                CHECK_EQ(q.timeline.markers, QVector<int>({53}));
+            }
             if (!CHECK(covered && (build || n.startsWith("Hook C")))) { // C: 4 s left, all of it is the opening
                 std::printf("       %s:", qPrintable(n));
                 for (const StorySection& x : sec) std::printf(" %d-%d", x.from, x.to);

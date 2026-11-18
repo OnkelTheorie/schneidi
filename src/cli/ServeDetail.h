@@ -80,7 +80,8 @@ private:
         QHash<QString, QString> calls; // JSON-RPC request id (as JSON text) -> job, for notifications/cancelled
     };
     struct Upload {
-        std::unique_ptr<QSaveFile> file;
+        std::unique_ptr<QSaveFile> file; // on writePath(target), see ServeFiles.cpp
+        QString target;
         bool existed = false;
     };
 

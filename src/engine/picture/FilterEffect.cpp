@@ -8,7 +8,7 @@
 // Options are allowlisted too: by their type (numbers, switches, colours, sizes, durations, flag names cannot name a
 // file) and every text option by name, reviewed per filter (expressions, point lists, colour names; never psfile or
 // plot). The chain must be one linear chain (no labels, no ';'), and all of it is checked on the parsed chain BEFORE
-// any filter is made (a filter's init may already open its file). The bundled LGPL FFmpeg
+// any filter is made (a filter's init may already open its file). The bundled FFmpeg
 // (packaging/ffmpeg-components.txt) builds exactly these filters.
 #include "engine/picture/CustomEffects.h"
 

@@ -2,6 +2,7 @@
 // Pure C++20, no external libraries.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -55,7 +56,7 @@ public:
         if (other.pending_)
             u(uint32_t(other.acc_ & ((uint64_t(1) << other.pending_) - 1)), other.pending_);
     }
-    size_t bitCount() const { return bytes_.size() * 8 + size_t(pending_); }
+    std::size_t bitCount() const { return bytes_.size() * 8 + std::size_t(pending_); }
 
     // Only valid when byte aligned.
     const std::vector<uint8_t>& bytes() const { return bytes_; }

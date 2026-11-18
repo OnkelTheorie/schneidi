@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/MediaPool.h"
+#include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
 #include "core/CompGraph.h"
@@ -13,11 +14,14 @@
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaIndex.h"
+#include "engine/MediaProbe.h"
+#include "engine/ProbeCache.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
 #include "ui/ProxyProgress.h"
+#include "ui/CompactButton.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "ui/TimelineFormatDialog.h"
@@ -29,6 +33,7 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDrag>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QFileDialog>
@@ -40,6 +45,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMap>
+#include <QProgressDialog>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
@@ -83,12 +92,25 @@ protected:
         QStringList paths;
         for (QListWidgetItem* it : items) {
             const QString path = it->data(Qt::UserRole).toString();
-            if (path != MediaPool::TitleItem) paths << path; // sequences too: can be moved into bins
+            if (!MediaPool::isTitleItem(path)) paths << path; // sequences too: can be moved into bins
         }
         if (!paths.isEmpty()) data->setData(MediaPool::ListMimeType, paths.join('\n').toUtf8());
         return data;
     }
     QStringList mimeTypes() const override { return {MediaPool::MimeType, MediaPool::ListMimeType}; }
+    // Never QAbstractItemView::startDrag: a drop that ends as a Move (Shift held over a target that takes the proposed
+    // action, a bin) would make it delete the dragged rows itself - the clip gone from the list and MediaPool's
+    // path -> item map left with a freed item. The pool rebuilds itself after a move into a bin.
+    void startDrag(Qt::DropActions actions) override
+    {
+        const QList<QListWidgetItem*> items = selectedItems();
+        if (items.isEmpty()) return;
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mimeData(items));
+        const QIcon icon = items.first()->icon();
+        if (!icon.isNull()) drag->setPixmap(icon.pixmap(iconSize().isValid() ? iconSize() : kListIcon));
+        drag->exec(actions, Qt::CopyAction);
+    }
 };
 
 // Bin list: drag clips or bins onto it = move (Delete removes the selected bin: MediaPool::keyActions)
@@ -301,10 +323,13 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_sortKey = sort == "date" ? SortKey::Date : sort == "duration" ? SortKey::Duration : SortKey::Name;
     m_sortAscending = settings.value("mediaPool/sortAscending", true).toBool();
 
-    auto* title = new QLabel(T("Medienpool"));
+    // A narrow pool (1024 px wide window, a long language): the title ends in "…", the import button shows "+"
+    auto* title = new ElidedLabel;
+    title->setFullText(T("Medienpool"));
     title->setObjectName("PanelTitle");
-    auto* importBtn = new QToolButton;
+    auto* importBtn = new CompactButton;
     importBtn->setText(T("Importieren…"));
+    importBtn->setCompactText("+");
     connect(importBtn, &QToolButton::clicked, this, &MediaPool::importDialog);
 
     // View like DaVinci at the top right of the Media Pool: icon/list view, sorting
@@ -376,8 +401,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setObjectName("pool_search");
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
-    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
+    // The field takes the room of the title it replaces and needs no more (the title elides down to nothing): opening
+    // the search never widens the pool, the Viewer beside stays put; with room the field stretches (stretch 1)
+    m_search->setSizePolicy(QSizePolicy::Ignored, m_search->sizePolicy().verticalPolicy());
     connect(m_search, &QLineEdit::textChanged, this, [this] {
         rebuildClips();
         m_indexTimer->start(); // the material search after a short pause in typing
@@ -410,6 +436,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     header->addWidget(m_listView);
     header->addWidget(m_sortBtn);
     header->addWidget(importBtn);
+    // The symbol buttons with narrow padding and the sort menu without its arrow (the symbol says it): the header
+    // decides the pool's minimum width, which counts for a 1024 px wide window with a long language or a big font
+    for (QToolButton* b : {m_searchBtn, m_thumbView, m_listView, m_sortBtn})
+        b->setStyleSheet("QToolButton { padding: 3px 3px; } QToolButton::menu-indicator { image: none; }");
 
     // Bin list on the left (Master on top, sub-bins indented)
     auto* bins = new BinTree;
@@ -496,7 +526,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
         if (const int seq = sequenceOfItem(path)) emit sequenceOpenRequested(seq);
-        else if (path != TitleItem) emit sourceRequested(path);
+        else if (!isTitleItem(path)) emit sourceRequested(path);
     });
 
     auto* clipArea = new QWidget;
@@ -543,14 +573,15 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     clipSplit->setStretchFactor(0, 3);
     clipSplit->setStretchFactor(1, 2);
     clipSplit->setChildrenCollapsible(false);
+    SplitterMemory::remember(clipSplit, "mediaPoolIndex", {300, 200}); // the user's drag comes back on the next start
     clipLay->addWidget(clipSplit, 1);
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(m_bins);
     split->addWidget(clipArea);
     split->setStretchFactor(1, 1);
-    split->setSizes({110, 400});
     split->setChildrenCollapsible(false);
+    SplitterMemory::remember(split, "mediaPoolBins", {110, 400}); // the user's drag comes back on the next start
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -633,11 +664,12 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     ProxyManager* proxies = m_engine->proxies();
     connect(proxies, &ProxyManager::progress, this, [this](const QString& path, int) { updateItem(path); });
     connect(proxies, &ProxyManager::proxyChanged, this, &MediaPool::updateItem);
+    connect(proxies, &ProxyManager::qualityChanged, this, [this] { // the proxy marks follow the new quality's files
+        for (const QString& path : m_items.keys()) updateItem(path);
+    });
     connect(proxies, &ProxyManager::queueChanged, this, &MediaPool::updateProxyStatus);
     connect(ProxyProgress::of(proxies), &ProxyProgress::changed, this, &MediaPool::updateProxyStatus);
-    connect(proxies, &ProxyManager::failed, this, [this](const QString& path, const QString& msg) {
-        QMessageBox::warning(this, T("Proxy-Medien"), QFileInfo(path).fileName() + "\n" + msg);
-    });
+    // Failures are not asked about here: the main window reports them without blocking (status line, background jobs)
     applyViewMode();
     rebuild();
     updateProxyStatus();
@@ -652,31 +684,88 @@ void MediaPool::importDialog()
     importFiles(files);
 }
 
-QStringList MediaPool::addFiles(const QStringList& paths, int bin)
+QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int bin, bool again, int* added)
 {
-    // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s) – side
-    // by side in threads, otherwise the window stood still for seconds when importing a dozen stills. Added in the
-    // given order.
-    QVector<MediaInfo> infos(paths.size());
-    if (paths.size() == 1) {
-        infos[0] = m_engine->probe(paths[0]);
-    } else {
-        const ProjectFormat format = m_engine->format();
-        QThreadPool pool;
-        pool.setMaxThreadCount(std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, int(paths.size())));
-        MediaInfo* out = infos.data(); // detached once here, the threads only write their own element
-        for (int i = 0; i < paths.size(); ++i)
-            pool.start([out, &format, &paths, i] { out[i] = Engine::probe(format, paths[i]); });
-        pool.waitForDone();
+    if (added) *added = 0;
+    // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s, a long stream analysis up to a
+    // minute): side by side in threads, the window repainting meanwhile (a progress dialog with Cancel when it takes
+    // longer; until then no input reaches the window). Added in the given order. A file the drop preview probed
+    // already (ProbeCache) is not probed again, unless `again` (Retry).
+    const int n = int(paths.size());
+    QVector<ProbeResult> results(n);
+    QVector<int> todo;
+    for (int i = 0; i < n; ++i) {
+        std::optional<ProbeResult> known = m_probeCache && !again ? m_probeCache->find(paths[i]) : std::nullopt;
+        if (known && (known->usable() || !known->why.isEmpty())) results[i] = *std::move(known); // with its reason
+        else todo << i;
     }
-    QStringList failed;
-    for (MediaInfo& info : infos) {
-        if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) {
-            failed << info.name;
+    if (!todo.isEmpty()) {
+        const FrameRate rate = m_engine->format().rate;
+        auto shared = std::make_shared<std::atomic<bool>>(false); // canceled: files not started yet are left out
+        std::atomic<int> done{0};
+        QVector<bool> skipped(n, false);
+        QThreadPool pool;
+        pool.setMaxThreadCount(std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, int(todo.size())));
+        ProbeResult* out = results.data(); // detached once here, the threads only write their own element
+        bool* skip = skipped.data();
+        for (int i : todo)
+            pool.start([out, skip, shared, &done, &paths, rate, i] {
+                if (shared->load()) skip[i] = true;
+                else out[i] = ProbeCache::probe(paths[i], rate);
+                ++done;
+            });
+        const int total = int(todo.size());
+        QEventLoop loop;
+        QTimer tick;
+        tick.setInterval(20);
+        QElapsedTimer since;
+        since.start();
+        std::unique_ptr<QProgressDialog> progress;
+        constexpr int kQuietMs = 400; // shorter: no dialog flashes up
+        connect(&tick, &QTimer::timeout, &loop, [&] {
+            if (done.load() >= total || (!progress && since.elapsed() >= kQuietMs)) loop.quit();
+            if (progress) progress->setValue(done.load());
+        });
+        tick.start();
+        // Live requests and watch folders wait meanwhile (MainWindow::updateLiveWaiting, FolderWatch's busy check)
+        ++m_probing;
+        if (m_probing == 1) emit probingChanged(true);
+        if (done.load() < total) loop.exec(QEventLoop::ExcludeUserInputEvents);
+        if (done.load() < total) {
+            progress = std::make_unique<QProgressDialog>(T("Medien werden gelesen …"), T("Abbrechen"), 0, total, this);
+            progress->setWindowModality(Qt::ApplicationModal);
+            progress->setMinimumDuration(0);
+            progress->setAutoClose(false);
+            progress->setAutoReset(false);
+            connect(progress.get(), &QProgressDialog::canceled, &loop, [this, shared, &progress] {
+                shared->store(true);
+                m_importCanceled = true; // a folder import stops with its next folder
+                progress->setLabelText(T("Wird abgebrochen …")); // the files being read now finish first
+            });
+            progress->show();
+            loop.exec();
+        }
+        pool.waitForDone();
+        if (--m_probing == 0) emit probingChanged(false);
+        for (int i = 0; i < n; ++i)
+            if (skipped[i]) results[i] = {}; // left out: neither imported nor reported
+        if (m_probeCache)
+            for (int i : todo)
+                if (!skipped[i]) m_probeCache->insert(results[i]);
+    }
+    // The bin went meanwhile (nothing should change the project during the wait; to be safe): the top level
+    if (bin != 0 && !m_project->bin(bin)) bin = 0;
+    QVector<Unreadable> failed;
+    for (ProbeResult& r : results) {
+        if (r.info.path.isEmpty()) continue; // canceled
+        if (!r.usable()) {
+            failed << Unreadable{r.info.path, bin, r.why, r.busy};
             continue;
         }
+        MediaInfo info = r.info;
         info.bin = bin;
         m_project->addMedia(info);
+        if (added) ++*added;
     }
     return failed;
 }
@@ -692,9 +781,63 @@ void MediaPool::importFiles(const QStringList& paths)
     }
     if (!subtitles.isEmpty()) emit subtitleFilesImported(subtitles);
     if (files.isEmpty()) return;
-    const QStringList failed = addFiles(files, m_currentBin); // like DaVinci: import lands in the selected bin
-    if (!failed.isEmpty())
-        QMessageBox::warning(this, T("Import"), T("Nicht lesbar:") + "\n" + failed.join('\n'));
+    m_importCanceled = false;
+    reportUnreadable(addFiles(files, m_currentBin)); // import lands in the selected bin
+}
+
+void MediaPool::reportUnreadable(QVector<Unreadable> failed)
+{
+    using MediaProbe::Busy;
+    const auto label = [](const Unreadable& u) {
+        return u.busy == Busy::Locked    ? T("von einem anderen Programm gesperrt")
+               : u.busy == Busy::Written ? T("gerade erst geschrieben")
+                                         : QString();
+    };
+    while (!failed.isEmpty()) {
+        QStringList lines, reasons;
+        bool locked = false, written = false;
+        for (const Unreadable& u : failed) {
+            const QString name = QFileInfo(u.path).fileName(), why = label(u);
+            lines << (why.isEmpty() ? name : QString("%1 (%2)").arg(name, why));
+            reasons << QDir::toNativeSeparators(u.path) + ": " + (u.why.isEmpty() ? QString("?") : u.why);
+            locked = locked || u.busy == Busy::Locked;
+            written = written || u.busy == Busy::Written;
+        }
+        const bool one = failed.size() == 1;
+        QString text = one ? T("schneidi konnte in %1 kein Bild und keinen Ton finden.").arg(QFileInfo(failed[0].path).fileName())
+                           : T("schneidi konnte in %1 Dateien kein Bild und keinen Ton finden:").arg(failed.size()) + "\n"
+                                 + lines.join('\n');
+        // The real reason first (a damaged file stays damaged however fresh it is), then what a moment may change
+        QString info;
+        if (one && failed[0].busy == Busy::Locked) {
+            info = T("Ein anderes Programm hält die Datei gerade (Aufnahme, Kopie oder Virenprüfung?). Erneut versuchen?");
+        } else {
+            if (one && !failed[0].why.isEmpty()) info = T("Grund: %1").arg(failed[0].why) + "\n\n";
+            if (locked || written)
+                info += one ? T("Die Datei wurde gerade erst geschrieben – läuft die Aufnahme, der Download oder die Kopie "
+                                "noch, klappt es vielleicht gleich. Erneut versuchen?")
+                            : T("Manche Dateien werden vielleicht noch geschrieben oder sind gesperrt. Erneut versuchen?");
+            else
+                info += one ? T("Die Datei ist beschädigt oder enthält nichts, was schneidi abspielen kann.")
+                            : T("Die Dateien sind beschädigt oder enthalten nichts, was schneidi abspielen kann. Die "
+                                "Details nennen die Gründe.");
+        }
+        QMessageBox box(QMessageBox::Warning, T("Import"), text, QMessageBox::NoButton, this);
+        box.setInformativeText(info);
+        box.setDetailedText(reasons.join('\n'));
+        QPushButton* retry = box.addButton(T("Erneut versuchen"), QMessageBox::AcceptRole);
+        QPushButton* close = box.addButton(QMessageBox::Close);
+        box.setDefaultButton(locked || written ? retry : close);
+        box.exec();
+        if (box.clickedButton() != retry) return;
+        // Each into the bin it was meant for, as files of that bin together
+        QVector<Unreadable> still;
+        QMap<int, QStringList> byBin;
+        for (const Unreadable& u : failed) byBin[u.bin] << u.path;
+        for (auto it = byBin.cbegin(); it != byBin.cend(); ++it) // a bin left empty went: the selected one
+            still << addFiles(it.value(), it.key() == 0 || m_project->bin(it.key()) ? it.key() : m_currentBin, true);
+        failed = std::move(still);
+    }
 }
 
 namespace {
@@ -714,19 +857,19 @@ bool containsMedia(const QString& dir, int depth)
 void MediaPool::importFolder(const QString& dir)
 {
     if (!containsMedia(dir, 0)) return; // otherwise an empty undo step would remain and the project would count as modified
-    QStringList failed;
+    QVector<Unreadable> failed;
     QUndoStack* undo = m_project->undoStack();
     undo->beginMacro(T("Ordner importieren"));
+    m_importCanceled = false;
     importFolderInto(dir, m_currentBin, 0, &failed);
     undo->endMacro();
-    if (!failed.isEmpty())
-        QMessageBox::warning(this, T("Import"), T("Nicht lesbar:") + "\n" + failed.join('\n'));
+    reportUnreadable(failed);
 }
 
 // Only creates the bin if there is media in the folder (or below); returns whether anything was imported
-bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed)
+bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QVector<Unreadable>* failed)
 {
-    if (depth > 8) return false; // protection against very deep trees
+    if (depth > 8 || m_importCanceled) return false; // protection against very deep trees; Cancel stops the rest
     const QDir d(dir);
     QStringList files;
     for (const QFileInfo& fi : d.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware))
@@ -738,9 +881,9 @@ bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, Q
     const int bin = m_project->addBin(parentBin, d.dirName());
     bool any = false;
     if (!files.isEmpty()) {
-        const QStringList bad = addFiles(files, bin);
-        *failed << bad;
-        any = bad.size() < files.size();
+        int added = 0;
+        *failed << addFiles(files, bin, false, &added);
+        any = added > 0; // canceled files are neither added nor unreadable: an empty bin goes
     }
     for (const QFileInfo& sub : subdirs) any = importFolderInto(sub.absoluteFilePath(), bin, depth + 1, failed) || any;
     if (!any) m_project->removeBin(bin); // nothing usable inside
@@ -982,6 +1125,25 @@ void MediaPool::rebuildClips()
         titleItem->setData(Qt::UserRole, QString(TitleItem));
         titleItem->setToolTip(T("Titel – in die Timeline ziehen"));
         m_list->addItem(titleItem);
+        // Shape (0.22): circle, rectangle, arrow … as a clip of its own
+        QPixmap shapeThumb(kThumb);
+        shapeThumb.fill(Theme::titleClip.darker(135));
+        {
+            QPainter p(&shapeThumb);
+            p.setRenderHint(QPainter::Antialiasing);
+            const double side = std::min(shapeThumb.width(), shapeThumb.height()) * 0.42;
+            const QPointF c(shapeThumb.width() / 2.0, shapeThumb.height() / 2.0);
+            p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0), 3));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(c + QPointF(-side * 0.35, 0), side / 2, side / 2);
+            p.setBrush(QColor(255, 214, 0));
+            p.setPen(Qt::NoPen);
+            p.drawRect(QRectF(c.x() + side * 0.05, c.y() - side * 0.4, side * 0.8, side * 0.8));
+        }
+        auto* shapeItem = new QListWidgetItem(QIcon(shapeThumb), T("Form\nKreis, Pfeil …"));
+        shapeItem->setData(Qt::UserRole, QString(ShapeItem));
+        shapeItem->setToolTip(T("Form (Kreis, Rechteck, Pfeil, Stern …) – in die Timeline ziehen"));
+        m_list->addItem(shapeItem);
     }
 
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
@@ -1209,6 +1371,8 @@ QRect MediaPool::itemArea(const QString& path) const
 {
     QListWidgetItem* it = m_items.value(path);
     if (!it || it->isHidden() || !m_list->isVisible()) return {};
+    // A tour points at this item: bring it into view first (the Text/Form entries can push it below the fold)
+    m_list->scrollToItem(it, QAbstractItemView::EnsureVisible);
     const QRect r = m_list->visualItemRect(it).intersected(m_list->viewport()->rect());
     if (r.isEmpty()) return {};
     return QRect(m_list->viewport()->mapTo(this, r.topLeft()), r.size());
@@ -1219,7 +1383,7 @@ QStringList MediaPool::selectedMedia() const
     QStringList paths;
     for (QListWidgetItem* it : m_list->selectedItems()) {
         const QString path = it->data(Qt::UserRole).toString();
-        if (path != TitleItem && !sequenceOfItem(path)) paths << path;
+        if (!isTitleItem(path) && !sequenceOfItem(path)) paths << path;
     }
     return paths;
 }

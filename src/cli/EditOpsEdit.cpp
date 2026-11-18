@@ -117,13 +117,14 @@ void applyLook(TitleLook& look, const QJsonObject& op)
 {
     QJsonObject o = op;
     if (const QJsonValue tex = op.value("texture"); tex.isString() || tex.isObject()) {
-        // The picture as an absolute path (the project file stores it relative too)
+        // The picture as an absolute path (the project file stores it relative too); in a work folder only one in it
         QJsonObject t = tex.isObject() ? tex.toObject() : QJsonObject{{"path", tex.toString()}};
         if (t.contains("path")) {
-            const QString path = t.value("path").toString();
+            const QString given = t.value("path").toString();
+            const QString path = given.isEmpty() ? given : absolute(given);
             if (path.isEmpty() || !QFileInfo(path).isFile())
-                fail("BAD_ARGUMENT", QString("texture: picture file not found: '%1'").arg(path));
-            t["path"] = QFileInfo(path).absoluteFilePath();
+                fail("BAD_ARGUMENT", QString("texture: picture file not found: '%1'").arg(given));
+            t["path"] = path;
         }
         o["texture"] = t;
     }
@@ -196,9 +197,12 @@ MotionEase easeOf(const QJsonObject& op, const char* key)
 TitleKind titleKindOf(const QJsonObject& op)
 {
     const QString id = op.value("kind").toString();
+    // Shapes and drawings have ops of their own (a title op would leave them empty)
+    if (id == QLatin1String("shape") || id == QLatin1String("drawing"))
+        fail("BAD_ARGUMENT", QString("kind %1 has its own op: %2").arg(id, id == QLatin1String("shape") ? "shape" : "draw"));
     for (const auto& k : kTitleKinds)
         if (id == QLatin1String(k.id)) return k.kind;
-    fail("BAD_ARGUMENT", "kind must be text, counter or progress");
+    fail("BAD_ARGUMENT", "kind must be text, counter or progress (shapes have their own op: shape, drawings op draw)");
 }
 
 void applyGenerator(TitleStyle& t, const QJsonObject& op)
@@ -262,6 +266,8 @@ bool applyCaptions(CaptionStyle& c, const QJsonObject& op, const char* modeKey)
     return any;
 }
 
+} // namespace
+
 // Clips of the video track `track` that [from, to) overlaps, by id (before a title is placed or lengthened there)
 QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
 {
@@ -273,7 +279,12 @@ QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
     return out;
 }
 
-QString clipWord(const Clip& c) { return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip"); }
+static QString clipWord(const Clip& c)
+{
+    if (c.isTitle() && c.title.isShape()) return QString("shape \"%1\"").arg(c.title.firstLine());
+    if (c.isTitle() && c.title.isDrawing()) return QString("drawing (%1 strokes)").arg(c.title.drawing.strokes.size());
+    return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip");
+}
 
 // Placing on a track overwrites what is there (like `place`); say what happened to each clip that was in the range,
 // so that a second title over the first one does not silently replace it
@@ -303,6 +314,8 @@ void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before)
         s.notes << "a track holds one clip at a time: to show two titles at once, leave out `track` (the new title "
                    "goes on a free track above) or give each its own track";
 }
+
+namespace {
 
 void opTitle(Session& s, const QJsonObject& op)
 {
@@ -731,8 +744,9 @@ void opMarks(Session& s, const QJsonObject& op)
 
 int binOf(Session& s, const QString& path)
 {
-    // "Name" or "Parent/Child"; created if missing
+    // "Name" or "Parent/Child"; created if missing; "Master" alone = the root bin
     int bin = 0;
+    if (s.project.isRootBinPath(path)) return bin;
     for (const QString& part : path.split('/', Qt::SkipEmptyParts)) {
         int found = -1;
         for (int child : s.project.childBins(bin))
@@ -742,10 +756,11 @@ int binOf(Session& s, const QString& path)
     return bin;
 }
 
-// An existing bin by path, -1 = none
+// An existing bin by path, -1 = none; "Master" alone = the root bin (0)
 int findBin(const Session& s, const QString& path)
 {
     int bin = 0;
+    if (s.project.isRootBinPath(path)) return bin;
     for (const QString& part : path.split('/', Qt::SkipEmptyParts)) {
         int found = -1;
         for (int child : s.project.childBins(bin))
@@ -766,7 +781,8 @@ void opBin(Session& s, const QJsonObject& op)
         return;
     }
     const int bin = findBin(s, path);
-    if (bin <= 0) fail("NOT_FOUND", "no bin " + path + " (`info` lists the bins of the media)");
+    if (bin == 0) fail("BAD_ARGUMENT", "the root bin (Master) cannot be renamed, removed or moved");
+    if (bin < 0) fail("NOT_FOUND", "no bin " + path + " (`info` lists the bins of the media)");
     if (op.value("remove").toBool()) {
         s.project.removeBin(bin); // its media and sub-bins move up into the parent
         return;
@@ -1037,7 +1053,8 @@ void addEditOps(QVector<OpDef>& ops)
         << OpDef{"bin", "{op:'bin', bin, rename?, into?, remove?}",
                  "Media Pool bins: create (with missing parents), rename, move into another bin (\"\" = top level) or "
                  "remove",
-                 "bin = \"Name\" or \"A/B\" (not case-sensitive). Without rename/into/remove the bin is created. "
+                 "bin = \"Name\" or \"A/B\" (not case-sensitive); \"Master\" alone is the top level (also for "
+                 "into and op media's bin). Without rename/into/remove the bin is created. "
                  "remove:true deletes the bin; its media and sub-bins move into its parent bin (nothing is deleted "
                  "from disk). `info` media show their bin as a path.",
                  opBin}

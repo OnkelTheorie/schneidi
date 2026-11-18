@@ -1,0 +1,28 @@
+{
+    "name": "Parallax photo",
+    "description": "A photo in two layers moved by a shared camera: the person in front comes closer faster than the background behind (2.5D, a Ken Burns move with depth).",
+    "name_de": "Parallax-Foto",
+    "description_de": "Ein Foto in zwei Ebenen, bewegt von einer gemeinsamen Kamera: die Person vorn kommt schneller näher als der Hintergrund dahinter (2,5D, Ken-Burns-Fahrt mit Tiefe).",
+    "name_en": "Parallax photo",
+    "description_en": "A photo in two layers moved by a shared camera: the person in front comes closer faster than the background behind (2.5D, a Ken Burns move with depth).",
+    "note": "Cut the person out once: {op:'cutout_node', clip, node:3} (needs the 'cutout' extension); until then the photo moves as one layer. The camera (node 6) drifts slowly forward and to the right from the clip's start (drift_push, drift_x per second); keyframes on comp.n6.pan_x / push work too. The background keeps the person (no fill): keep the move small, or put the person in the middle.",
+    "graph": {
+        "nodes": [
+            {"id": 1, "type": "clip", "x": 0, "y": 60},
+            {"id": 2, "type": "transform", "x": 320, "y": 0, "params": {"size": 1.08, "z": 1.5, "camera": 6}},
+            {"id": 3, "type": "cutout", "x": 160, "y": 120},
+            {"id": 4, "type": "transform", "x": 320, "y": 120, "params": {"size": 1.08, "z": 1, "camera": 6}},
+            {"id": 5, "type": "merge", "x": 480, "y": 60},
+            {"id": 6, "type": "camera", "x": 160, "y": 240, "params": {"drift_push": 0.03, "drift_x": 0.006}}
+        ],
+        "links": [[1, 2, "src"], [1, 3, "src"], [3, 4, "src"], [2, 5, "bg"], [4, 5, "fg"]],
+        "out": 5
+    },
+    "slots": {
+        "push": {"type": "number", "description": "how fast the camera moves forward, share of the distance per second (0.03: slow)", "targets": ["6.drift_push"]},
+        "pan_x": {"type": "number", "description": "how fast it moves right, picture widths per second (negative: left)", "targets": ["6.drift_x"]},
+        "pan_y": {"type": "number", "description": "how fast it moves down, picture heights per second (negative: up)", "targets": ["6.drift_y"]},
+        "depth": {"type": "number", "description": "distance of the background (the person stands at 1; larger = more parallax)", "targets": ["2.z"]},
+        "overscan": {"type": "number", "description": "both layers this much bigger, so the move shows no edge (1.08)", "targets": ["2.size", "4.size"]}
+    }
+}

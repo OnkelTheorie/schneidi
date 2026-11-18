@@ -2,6 +2,7 @@
 #include "engine/VideoEffects.h"
 
 #include "engine/video/Blend.h"
+#include "engine/video/Compose.h"
 
 #include <algorithm>
 #include <cmath>
@@ -92,27 +93,31 @@ void boxRows(const T* src, T* dst, int w, int h, int ch, int r)
     }
 }
 
-// Box blur of radius r along the columns: all columns of a row at once (contiguous memory, vectorizable)
+// Box blur of radius r along the columns: all columns of a row at once (contiguous memory, vectorizable); only the
+// values i0..i1 of each row (of w * ch), so bands of columns can run on several threads with the same result
 template <typename T>
-void boxCols(const T* src, T* dst, int w, int h, int ch, int r)
+void boxCols(const T* src, T* dst, int w, int h, int ch, int r, size_t i0 = 0, size_t i1 = SIZE_MAX)
 {
     using S = BoxSum<T>;
     constexpr S top = std::numeric_limits<T>::max();
     const int div = 2 * r + 1;
     const S inv = (65536u + S(div) / 2) / S(div);
     const size_t line = size_t(w) * ch;
-    std::vector<S> sum(line, 0);
-    auto row = [&](int y) { return src + size_t(std::clamp(y, 0, h - 1)) * line; };
+    i1 = std::min(i1, line);
+    if (i1 <= i0) return;
+    const size_t n = i1 - i0;
+    std::vector<S> sum(n, 0);
+    auto row = [&](int y) { return src + size_t(std::clamp(y, 0, h - 1)) * line + i0; };
     for (int k = -r; k <= r; ++k) {
         const T* s = row(k);
-        for (size_t i = 0; i < line; ++i) sum[i] += s[i];
+        for (size_t i = 0; i < n; ++i) sum[i] += s[i];
     }
     for (int y = 0; y < h; ++y) {
-        T* d = dst + size_t(y) * line;
-        for (size_t i = 0; i < line; ++i) d[i] = T(std::min<S>(top, (sum[i] * inv + 32768) >> 16));
+        T* d = dst + size_t(y) * line + i0;
+        for (size_t i = 0; i < n; ++i) d[i] = T(std::min<S>(top, (sum[i] * inv + 32768) >> 16));
         const T* add = row(y + r + 1);
         const T* sub = row(y - r);
-        for (size_t i = 0; i < line; ++i) sum[i] += S(add[i]) - sub[i];
+        for (size_t i = 0; i < n; ++i) sum[i] += S(add[i]) - sub[i];
     }
 }
 
@@ -130,7 +135,8 @@ void blurRadii(double sigma, int radii[3])
     }
 }
 
-// Gaussian blur with sigma (pixels) on interleaved channels
+// Gaussian blur with sigma (pixels) on interleaved channels. Large pictures in bands on Compose::forRows' threads
+// (rows for the row pass, columns for the column pass): the same values as on one thread
 template <typename T>
 void blur(T* buf, int w, int h, int ch, double sigma)
 {
@@ -138,9 +144,20 @@ void blur(T* buf, int w, int h, int ch, double sigma)
     int radii[3];
     blurRadii(sigma, radii);
     std::vector<T> tmp(size_t(w) * h * ch);
+    const size_t line = size_t(w) * ch;
+    // Bands of at least ~64 K values per job (smaller ones cost more to hand out than they save)
+    const int minRows = std::max(1, int(65536 / std::max<size_t>(1, line)));
+    constexpr size_t kColBand = 64; // values per column band (whole cache lines)
+    const int colBands = int((line + kColBand - 1) / kColBand);
+    const int minColBands = std::max(1, int(65536 / (kColBand * size_t(std::max(1, h)))));
     for (int rad : radii) {
-        boxRows(buf, tmp.data(), w, h, ch, std::min(rad, w));
-        boxCols(tmp.data(), buf, w, h, ch, std::min(rad, h));
+        const int rr = std::min(rad, w), rc = std::min(rad, h);
+        Compose::forRows(h, minRows, [&](int y0, int y1) {
+            boxRows(buf + size_t(y0) * line, tmp.data() + size_t(y0) * line, w, y1 - y0, ch, rr);
+        });
+        Compose::forRows(colBands, minColBands, [&](int b0, int b1) {
+            boxCols(tmp.data(), buf, w, h, ch, rc, size_t(b0) * kColBand, size_t(b1) * kColBand);
+        });
     }
 }
 
@@ -709,6 +726,11 @@ void gaussian(uint8_t* rgba, int w, int h, double sigma)
             p[c] = a8 ? uint8_t(std::min(255u, (pm[i * 4 + c] * 255u + a / 2) / std::max(1u, a))) : 0;
         p[3] = a8;
     }
+}
+
+void gaussianPlane(uint16_t* plane, int w, int h, double sigma)
+{
+    if (plane) blur(plane, w, h, 1, sigma);
 }
 
 bool isOwn(const QString& effectId) { return entry(effectId) != nullptr; }

@@ -167,6 +167,31 @@ QString videoTag(const QString& path)
     return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
 }
 
+// Decoded pictures come out in presentation order: their pts rise (ffprobe, the decoder's output order). FFmpeg 9 once
+// decoded copied HEVC GOPs with the encoded piece's parameter sets (no reordering): pts 6656, 8704, 7680, 7168, ...
+bool picturesInOrder(const QString& path, const char* name)
+{
+    QProcess p;
+    p.start("ffprobe", {"-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts", "-of", "csv=p=0", path});
+    p.waitForFinished(60000);
+    const QList<QByteArray> lines = p.readAllStandardOutput().split('\n');
+    qint64 last = -1;
+    int count = 0;
+    for (const QByteArray& line : lines) {
+        const QByteArray t = line.trimmed();
+        if (t.isEmpty()) continue;
+        bool ok = false;
+        const qint64 pts = t.left(t.indexOf(',') < 0 ? t.size() : t.indexOf(',')).toLongLong(&ok);
+        if (!ok || pts <= last) {
+            std::printf("       %s: picture %d has pts %s after %lld\n", name, count, t.constData(), qlonglong(last));
+            return false;
+        }
+        last = pts;
+        ++count;
+    }
+    return count > 0;
+}
+
 QByteArray sound(const QString& path)
 {
     QProcess p;
@@ -329,6 +354,14 @@ void testExports(const QString& dir)
                                                                                 << tag709);
         if (CHECK(!h.isEmpty())) {
             compare("hevc", dir, cuts(h, h, false), settings(dir + "/x.mp4", "libx265"), 100, 120);
+            // Encoded piece first (no B-frames), then copied GOPs with B-frames: each decoded with its own parameter
+            // sets, shown in order; also when a copied GOP comes first (its parameter sets in the stream header)
+            CHECK(picturesInOrder(dir + "/hevc-smart.mp4", "hevc"));
+            Timeline copyFirst;
+            copyFirst.video.resize(1);
+            copyFirst.video[0].clips << clipOf(1, h, 0, 20, 40) << clipOf(2, h, 40, 7, 30) << clipOf(3, h, 70, 60, 40);
+            compare("hevc-copyfirst", dir, copyFirst, settings(dir + "/x.mp4", "libx265"), 70, 90);
+            CHECK(picturesInOrder(dir + "/hevc-copyfirst-smart.mp4", "hevc-copyfirst"));
             // 'hvc1' on both: Apple players play no 'hev1'
             CHECK_EQ(videoTag(dir + "/hevc-normal.mp4"), QString("hvc1"));
             CHECK_EQ(videoTag(dir + "/hevc-smart.mp4"), QString("hvc1"));

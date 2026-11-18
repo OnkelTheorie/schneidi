@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/FrameGaps.h"
+#include "core/AppPaths.h"
 #include "engine/OpenMedia.h"
 
 extern "C" {
@@ -47,7 +48,7 @@ QString keyOf(const QFileInfo& fi)
 
 QString cacheFile(const QString& key)
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/gaps/" + key + ".json";
+    return AppPaths::writable(QStandardPaths::CacheLocation) + "/gaps/" + key + ".json";
 }
 
 std::optional<std::optional<Stutter::Scan>> loadDisk(const QString& key)

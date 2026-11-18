@@ -15,12 +15,16 @@ extern "C" {
 }
 
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QFileInfo>
+#include <QThreadPool>
 
 #include <algorithm>
+#include <map>
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cerrno>
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
@@ -93,6 +97,9 @@ struct LongAnalysis {
 
 std::mutex g_longMutex;
 std::atomic<int> g_longRuns{0};
+// Reader::loseDecoderForTests: 1 = the next decoder thread to look falls back, 2 = software decoders do not open
+std::atomic<int> g_loseDecoder{0};
+std::atomic<bool> g_eioAtEnd{false}; // Reader::eioAtEndForTests
 std::unordered_map<std::string, LongAnalysis>& longAnalyses()
 {
     static std::unordered_map<std::string, LongAnalysis> m;
@@ -136,6 +143,19 @@ QString errorText(int code)
     char buf[AV_ERROR_MAX_STRING_SIZE] = {};
     av_strerror(code, buf, sizeof buf);
     return QString::fromUtf8(buf);
+}
+
+// A read error that means the file is gone or its device is (a USB disk pulled, a network share dropped), not its end
+// or damaged data
+bool lostFile(int code)
+{
+    if (code == AVERROR(EIO) || code == AVERROR(ENOENT) || code == AVERROR(ENXIO) || code == AVERROR(ENODEV)
+        || code == AVERROR(EBADF))
+        return true;
+#ifdef ESTALE
+    if (code == AVERROR(ESTALE)) return true; // NFS
+#endif
+    return false;
 }
 
 // MLT's guess_frame_rate (producer_avformat.c); 0/1 = unknown (the producer then uses the profile's rate)
@@ -602,6 +622,9 @@ struct Reader::Impl {
     int64_t validFrom = kNothing;                    // requests from here on can be answered by pics
     bool ended = false;                              // the decoder gave its last frame
     bool stop = false;
+    bool lost = false; // the decoder could not be opened again: no more pictures (Reader::failed)
+    std::atomic<int> readError{0}; // the file could not be read any more (a disk or share gone): lost as well
+    qint64 openSize = -1;          // the file's size when opened (a read error with the file as it was = damaged data)
     bool started = false;
     std::list<Request*> pending;
     int64_t high = -1;       // highest position asked for recently (read-ahead reference)
@@ -656,13 +679,20 @@ struct Reader::Impl {
         return AV_PIX_FMT_NONE;
     }
 
+    // Decoder thread: the file is no longer there as it was opened (gone, its disk gone, other size)
+    bool fileGone() const
+    {
+        const QFileInfo fi(QString::fromUtf8(path));
+        return !fi.exists() || (openSize >= 0 && fi.size() != openSize);
+    }
+
     bool openDecoder(bool hardware, QString* error)
     {
         avcodec_free_context(&dec);
         av_buffer_unref(&hw.context);
         hw = {};
         dec = avcodec_alloc_context3(codec);
-        if (!dec || avcodec_parameters_to_context(dec, stream->codecpar) < 0) {
+        if (!dec || avcodec_parameters_to_context(dec, stream->codecpar) < 0 || (!hardware && g_loseDecoder == 2)) {
             if (error) *error = QStringLiteral("decoder context");
             return false;
         }
@@ -718,7 +748,9 @@ struct Reader::Impl {
             const auto it = std::lower_bound(pics.begin(), pics.end(), r.position,
                                              [](const auto& p, int64_t pos) { return p->position < pos; });
             if (it != pics.end()) {
-                r.result = *it;
+                // A gap in the timestamps (variable frame rate: a picture held for seconds): the picture before it is
+                // still on screen there, not the next one (pics are the pictures decoded in a row, none missing)
+                r.result = (*it)->position > r.position && it != pics.begin() ? *std::prev(it) : *it;
                 r.done = true;
                 return true;
             }
@@ -873,10 +905,14 @@ struct Reader::Impl {
         // (playing on), the usual few
         const int window = seekWindow();
         const bool nearSeek = window > 0 && seekTarget >= 0 && high >= 0 && high - seekTarget < window;
-        const int limit = nearSeek ? std::max(behind(), window) : behind();
+        // At least one before: the picture on screen at ref when ref falls into a gap of the timestamps (variable
+        // frame rate); dropping it made the request seek again, and again (Options::behind = 0: scrub thumbnails)
+        const int limit = std::max(1, nearSeek ? std::max(behind(), window) : behind());
         while (before > limit && pics.size() > 1) {
-            validFrom = std::max(validFrom, pics.front()->position + 1);
             pics.pop_front();
+            // From the new first one on (not the dropped one + 1): in a gap of the timestamps after the dropped one,
+            // the dropped one was on screen - such a request seeks now instead of getting the next picture
+            validFrom = std::max(validFrom, pics.front()->position);
             --before;
         }
     }
@@ -975,8 +1011,12 @@ struct Reader::Impl {
     {
         AVPacket* send = pkt;
         if (!draining) {
-            const int r = av_read_frame(fmt, pkt);
+            int r = av_read_frame(fmt, pkt);
+            if (r == AVERROR_EOF && g_eioAtEnd) r = AVERROR(EIO);
             if (r == AVERROR(EAGAIN)) return;
+            // Some demuxers say EIO for data cut short (Matroska of a recording that crashed): with the file still there
+            // as opened it is its end, as before; only a file gone or changed under it is lost
+            if (r < 0 && lostFile(r) && fileGone()) readError = r;
             if (r < 0) {
                 draining = true;
                 send = nullptr;
@@ -1049,8 +1089,7 @@ struct Reader::Impl {
             const AVCodecParameters* par = stream->codecpar;
             d.progressive = !(frame->flags & AV_FRAME_FLAG_INTERLACED)
                             && (par->field_order == AV_FIELD_PROGRESSIVE || par->field_order == AV_FIELD_UNKNOWN);
-            d.topFieldFirst = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) || par->field_order == AV_FIELD_TT
-                              || par->field_order == AV_FIELD_TB;
+            d.topFieldFirst = topFieldShownFirst(frame, par->field_order).value_or(false);
             if (d.position >= target - keepReach) dec->skip_loop_filter = AVDISCARD_NONE;
             d.frame = av_frame_clone(frame);
             av_frame_unref(frame);
@@ -1065,10 +1104,20 @@ struct Reader::Impl {
         wantHardware = false;
         restart(kNothing);
         lock.unlock();
-        QString ignored;
-        openDecoder(false, &ignored);
+        QString error;
+        const bool ok = openDecoder(false, &error);
         lock.lock();
         stats.hardware = false;
+        if (!ok) loseDecoder(error);
+    }
+
+    // Decoder thread, lock held: the decoder cannot be opened again (out of memory). Every request is answered with
+    // nothing, at once, instead of waiting for a decoder that never decodes (an export hung there).
+    void loseDecoder(const QString& error)
+    {
+        qWarning("Video: decoder of %s lost: %s", path.constData(), qPrintable(error));
+        lost = true;
+        stop = true;
     }
 
     // Decoder thread, lock held: close the decoder and drop every picture (opened again on the next request)
@@ -1088,12 +1137,12 @@ struct Reader::Impl {
     void wake(std::unique_lock<std::mutex>& lock)
     {
         lock.unlock();
-        QString ignored;
+        QString error;
         hwRefused = false;
-        const bool ok = openDecoder(wantHardware, &ignored);
+        const bool ok = openDecoder(wantHardware, &error);
         lock.lock();
         hibernating = false;
-        if (!ok) stop = true; // cannot happen (it opened before); answer every request with nothing
+        if (!ok) loseDecoder(error); // it opened before: out of memory
     }
 
     void finishLoop()
@@ -1138,8 +1187,14 @@ struct Reader::Impl {
         std::vector<Decoded> fresh;
         std::vector<std::shared_ptr<const Picture>> finished;
         while (!stop) {
-            if (finishFailed) {
+            if (const int r = readError.load()) { // not the end of the file: the file is gone (tried again by its user)
+                loseDecoder(QString("cannot read the file: %1").arg(errorText(r)));
+                continue;
+            }
+            if (finishFailed || g_loseDecoder == 1) {
                 finishFailed = false;
+                int armed = 1;
+                g_loseDecoder.compare_exchange_strong(armed, 2);
                 fallBack(lock);
                 continue;
             }
@@ -1204,6 +1259,22 @@ struct Reader::Impl {
                     before = d;
                 } else {
                     keep.push_back(d);
+                }
+            }
+            // The first picture at or after the target comes after it (a gap in the timestamps, variable frame rate:
+            // the picture before was held for seconds): the newest one before the target is what is on screen there,
+            // kept as well. Else the next one answered, up to seconds too early. (A picture kept before the target
+            // came after any not kept: then that one is the newest, and the raw tail is gone.)
+            if (!keep.empty() && keep.front().position > target) {
+                if (!before.frame) {
+                    lock.lock();
+                    if (gen == generation) std::swap(before, rawTail);
+                    lock.unlock();
+                }
+                if (before.frame) {
+                    keptFrom = std::min(keptFrom, before.position);
+                    keep.insert(keep.begin(), before);
+                    before = {};
                 }
             }
             std::shared_ptr<const Picture> nearPic;
@@ -1308,6 +1379,18 @@ struct Reader::Impl {
     }
 };
 
+std::optional<bool> topFieldShownFirst(const AVFrame* frame, int fieldOrder)
+{
+    if (frame && (frame->flags & AV_FRAME_FLAG_INTERLACED)) return (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) != 0;
+    switch (fieldOrder) {
+    case AV_FIELD_TT:
+    case AV_FIELD_TB: return true;
+    case AV_FIELD_BB:
+    case AV_FIELD_BT: return false;
+    default: return std::nullopt;
+    }
+}
+
 double streamRotation(const AVStream* stream)
 {
     return rotationOf(stream);
@@ -1382,11 +1465,157 @@ std::optional<double> zeroOffset(const QString& path)
 Reader::Reader() : d(std::make_unique<Impl>()) {}
 Reader::~Reader() = default;
 
+namespace {
+
+// Reader::prepare: readers opened ahead, by path. No thread waits for a taker: the open runs as one pool job, a reader
+// not taken in time is closed by the next prepare()/open()/dropPrepared() that finds it expired.
+struct Prepared {
+    enum class State { Queued, Opening, Done, Cancelled };
+    Reader::Options options;
+    State state = State::Queued;
+    std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    std::unique_ptr<Reader> reader; // Done: the reader (null: the file did not open)
+};
+std::mutex g_preparedMutex;
+std::condition_variable g_preparedCv;
+std::multimap<QString, std::shared_ptr<Prepared>> g_prepared; // guarded by g_preparedMutex
+thread_local bool t_preparing = false; // the job of prepare(): its open() never takes a prepared reader
+bool g_preparedQuit = false;           // the application quits: a job closes what it opened (guarded by the mutex)
+
+// Takes the expired ones (or all) out of g_prepared (lock held): their readers, to be closed outside the lock. A queued
+// one is cancelled (its job does nothing), one being opened is left to its job (expired once it is done)
+std::vector<std::unique_ptr<Reader>> takeExpired(bool all)
+{
+    std::vector<std::unique_ptr<Reader>> out;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = g_prepared.begin(); it != g_prepared.end();) {
+        Prepared& p = *it->second;
+        const bool expired = all || now - p.since > std::chrono::milliseconds(Reader::kPreparedMs);
+        if (expired && p.state != Prepared::State::Opening) {
+            if (p.state == Prepared::State::Queued) p.state = Prepared::State::Cancelled;
+            out.push_back(std::move(p.reader));
+            it = g_prepared.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return out;
+}
+
+std::unique_ptr<Reader> takePrepared(const QString& path, const Reader::Options& options)
+{
+    std::vector<std::unique_ptr<Reader>> expired;
+    std::unique_ptr<Reader> taken;
+    {
+        std::unique_lock lock(g_preparedMutex);
+        if (g_prepared.empty()) return nullptr;
+        expired = takeExpired(false);
+        auto [from, to] = g_prepared.equal_range(path);
+        for (auto it = from; it != to; ++it) {
+            const std::shared_ptr<Prepared> p = it->second;
+            // The same decoder (threads, hardware) and the same kind of user: a preview's reader (seek window,
+            // steps back) is not given to a thumbnail's
+            if (p->options.threads != options.threads || p->options.hardware != options.hardware
+                || p->options.autoBackward != options.autoBackward
+                || (p->options.keepBytes > 0) != (options.keepBytes > 0))
+                continue;
+            g_prepared.erase(it);
+            // Its job has not started (few cores, a busy pool): cancelled, the caller opens the file itself now
+            if (p->state == Prepared::State::Queued) {
+                p->state = Prepared::State::Cancelled;
+                break;
+            }
+            // Being opened: that is sooner than opening it once more
+            g_preparedCv.wait(lock, [&p] { return p->state == Prepared::State::Done; });
+            taken = std::move(p->reader);
+            break;
+        }
+    }
+    return taken; // `expired` closes outside the lock
+}
+
+} // namespace
+
+void Reader::prepare(const QString& path, const Options& options)
+{
+    static std::once_flag hooked;
+    std::call_once(hooked, [] {
+        // At the quit: nothing is kept for a taker any more
+        if (QCoreApplication* app = QCoreApplication::instance())
+            QObject::connect(app, &QCoreApplication::aboutToQuit, app, [] {
+                {
+                    std::lock_guard lock(g_preparedMutex);
+                    g_preparedQuit = true;
+                }
+                dropPrepared();
+            });
+    });
+    auto p = std::make_shared<Prepared>();
+    p->options = options;
+    std::vector<std::unique_ptr<Reader>> expired;
+    {
+        std::lock_guard lock(g_preparedMutex);
+        expired = takeExpired(false);
+        g_prepared.emplace(path, p);
+    }
+    // One pool job that only opens (waited for at exit: a driver call is never cut off halfway)
+    QThreadPool::globalInstance()->start([path, options, p] {
+        {
+            std::lock_guard lock(g_preparedMutex);
+            if (p->state == Prepared::State::Cancelled) return;
+            p->state = Prepared::State::Opening;
+        }
+        t_preparing = true;
+        std::unique_ptr<Reader> reader = open(path, options);
+        t_preparing = false;
+        {
+            std::lock_guard lock(g_preparedMutex);
+            if (!g_preparedQuit) p->reader = std::move(reader); // else closed here, below
+            p->state = Prepared::State::Done;
+            p->since = std::chrono::steady_clock::now(); // kept kPreparedMs from now on
+            if (g_preparedQuit)
+                for (auto it = g_prepared.begin(); it != g_prepared.end(); ++it)
+                    if (it->second == p) {
+                        g_prepared.erase(it);
+                        break;
+                    }
+        }
+        g_preparedCv.notify_all();
+    });
+}
+
+void Reader::dropPrepared()
+{
+    std::vector<std::unique_ptr<Reader>> readers;
+    {
+        std::lock_guard lock(g_preparedMutex);
+        readers = takeExpired(true);
+    }
+}
+
+int Reader::preparedCount()
+{
+    std::lock_guard lock(g_preparedMutex);
+    return int(g_prepared.size());
+}
+
+void Reader::prepare(const QString& path)
+{
+    prepare(path, Options{});
+}
+
 std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options, QString* error)
 {
+    if (std::unique_ptr<Reader> prepared = t_preparing ? nullptr : takePrepared(path, options)) {
+        // Before its decoding thread starts (the first picture()): the taker's windows and limits
+        std::lock_guard lock(prepared->d->m);
+        prepared->d->opt = options;
+        return prepared;
+    }
     std::unique_ptr<Reader> reader(new Reader);
     Impl& d = *reader->d;
     d.path = path.toUtf8();
+    d.openSize = QFileInfo(path).exists() ? QFileInfo(path).size() : -1;
     d.opt = options;
     // Opens the file and picks the first video stream with a decoder that is no cover picture (MLT's
     // find_default_streams). analyze = seconds the stream analysis reads at most (0 = FFmpeg's default, 5 s).
@@ -1507,6 +1736,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     in.hasBFrames = d.dec->has_b_frames > 0;
     in.duration = d.fmt->duration == AV_NOPTS_VALUE ? -1 : d.fmt->duration;
     in.codec = QString::fromLatin1(d.codec->name);
+    in.fieldOrder = int(par->field_order);
     const AVCodecDescriptor* desc = avcodec_descriptor_get(par->codec_id);
     d.mustDecode = !desc || !(desc->props & AV_CODEC_PROP_INTRA_ONLY);
     d.planarFormat = in.format;
@@ -1559,6 +1789,7 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fe
         Impl* impl = d.get();
         d->thread = std::thread([impl] { impl->run(); });
     }
+    if (d->lost) return nullptr; // the decoder thread has ended: nobody would answer
     if (fetch.cancel && fetch.cancel->load()) return nullptr; // before it moves the read-ahead's target
     // Read-ahead follows requests in order; out-of-order workers stay within a few frames
     d->sequential = d->high >= 0 && position >= d->high - 8 && position <= d->high + 2;
@@ -1589,6 +1820,22 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fe
     }
     if (exact) *exact = req.exact;
     return req.result;
+}
+
+bool Reader::failed() const
+{
+    std::lock_guard lock(d->m);
+    return d->lost;
+}
+
+void Reader::eioAtEndForTests(bool on)
+{
+    g_eioAtEnd = on;
+}
+
+void Reader::loseDecoderForTests(bool on)
+{
+    g_loseDecoder = on ? 1 : 0;
 }
 
 Reader::Stats Reader::stats() const

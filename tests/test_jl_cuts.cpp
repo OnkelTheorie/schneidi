@@ -14,6 +14,7 @@
 #include "engine/AudioAnalysis.h"
 
 #include "check.h"
+#include "timeline_guard.h"
 
 #include <QFile>
 #include <QGuiApplication>
@@ -76,6 +77,7 @@ QByteArray state(const Project& p)
 void testSoundEdge()
 {
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
     setup(p);
@@ -196,6 +198,7 @@ void testJlCutOp(const QString& dir)
     g_path = dir + "/jl.schneidi";
     {
         Project p;
+        TimelineGuard guard_p{p};
         setup(p);
         QString error;
         if (!CHECK(ProjectFile::save(p.data(), g_path, &error))) return;
@@ -246,7 +249,9 @@ void testJlCutOp(const QString& dir)
     // A1's, the note says where A2's cut really is and the error names the times
     {
         Project p;
+        TimelineGuard guard_p{p};
         setup(p);
+        guard_p.allowSlip({7, 8}); // taken apart on purpose
         p.edit("apart", [](Timeline& tl) {
             tl.audio[1].clips[0] = media(7, 0, 195, 105, 1, 1);  // file 195..299: nothing after
             tl.audio[1].clips[1] = media(8, 105, 0, 95, 2, 1);   // file 0..: nothing before

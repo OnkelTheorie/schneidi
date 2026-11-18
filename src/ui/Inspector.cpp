@@ -9,9 +9,12 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Shapes.h"
+#include "core/StartupTrace.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "ui/ElidedLabel.h"
 #include "ui/ScrubField.h"
 #include "ui/WheelGuard.h"
 
@@ -33,16 +36,55 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include "ui/InspectorDetail.h"
 
 using namespace InspectorDetail;
+
+namespace {
+
+// A page of the Inspector: scrolls only up and down. Its minimum width is the page's own (plus the vertical
+// scrollbar), so the panel never gets narrower than its rows: with a large font or a long language the panel is a bit
+// wider instead of scrolling sideways or cutting off the keyframe buttons.
+class PageScroll : public QScrollArea {
+public:
+    PageScroll()
+    {
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setWidgetResizable(true);
+        setFrameShape(QFrame::NoFrame);
+    }
+    void setPage(QWidget* page)
+    {
+        setWidget(page);
+        page->installEventFilter(this);
+    }
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QScrollArea::minimumSizeHint();
+        if (widget())
+            s.setWidth(widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width() + 2 * frameWidth());
+        return s;
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        // Rows shown, hidden or added (effect sections): the needed width may change
+        if (watched == widget() && event->type() == QEvent::LayoutRequest) updateGeometry();
+        return QScrollArea::eventFilter(watched, event);
+    }
+};
+
+} // namespace
 
 Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
 {
@@ -81,12 +123,15 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         tabLay->addWidget(b);
     }
     tabLay->addStretch(1);
-    connect(m_tabs, &QButtonGroup::idClicked, m_pages, &QStackedWidget::setCurrentIndex);
+    connect(m_tabs, &QButtonGroup::idClicked, this, [this](int page) {
+        ensurePage(page);
+        m_pages->setCurrentIndex(page);
+    });
 
     // ---- Overall layout ----
     // Before the pages are built: they then grow inside the panel's own tree. Hung in after the last page, the whole
     // finished tree changed parents in one go (~60-80 ms of the start in 0.16, the window showed ~50 ms later than 0.15)
-    m_clipName = new QLabel;
+    m_clipName = new ElidedLabel(Qt::ElideMiddle);
     m_clipName->setAlignment(Qt::AlignCenter);
     m_clipName->setContentsMargins(8, 4, 8, 4);
     m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
@@ -111,18 +156,16 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         auto* lay = new QVBoxLayout(page);
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(0);
-        auto* scroll = new QScrollArea;
-        scroll->setWidget(page);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
+        auto* scroll = new PageScroll;
+        scroll->setPage(page);
         m_pages->addWidget(scroll);
         return lay;
     };
     QVBoxLayout* videoLay = makePage();
     QVBoxLayout* audioLay = makePage();
-    buildTitlePage(makePage());
-    buildTransitionPage(makePage());
-    buildSubtitlePage(makePage());
+    // Title, transition and subtitle pages: built when first needed (ensurePage), ~45 ms of the start otherwise. Their
+    // empty places in the stack take no width: the panel is as wide as the built pages need
+    for (int page : {kTitlePage, kTransitionPage, kSubtitlePage}) m_unbuilt.insert(page, makePage());
     QVBoxLayout* fxLay = makePage();
 
     const TrackKind V = TrackKind::Video;
@@ -295,6 +338,31 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         shapeBox->setCurrentIndex(i);
         shapeBox->setEnabled(c->kind == ClipKind::Media);
     };
+    // Cut the picture to a circle, star … (effect "clip_shape", its values then in the Effects tab): found here, where
+    // one looks for the picture's outline, not only in the Effects Library
+    auto* shapeCut = new QPushButton(T("Form…"));
+    shapeCut->setObjectName("ClipShapeButton");
+    shapeCut->setFocusPolicy(Qt::NoFocus);
+    shapeCut->setToolTip(T("Schneidet das Bild als Kreis, Rechteck, Stern … aus (Effekt „Clip in Form“, z. B. Facecam "
+                           "als Kreis); die Werte stehen dann unter Effekte"));
+    connect(shapeCut, &QPushButton::clicked, this, [this] {
+        const QString id = QString::fromLatin1(Shapes::kClipShapeEffect);
+        if (const Clip* c = primary(TrackKind::Video); c && EffectRegistry::has(*c, id)) {
+            m_tabs->button(kEffectsPage)->click(); // already cut: show its values
+            return;
+        }
+        m_editor->addEffect(selectedIds(TrackKind::Video), id);
+    });
+    crop.grid->addWidget(rowLabel(T("Form")), crop.rows, 0);
+    crop.grid->addWidget(shapeCut, crop.rows, 1, Qt::AlignLeft);
+    ++crop.rows;
+    m_refreshers << [this, shapeCut] {
+        const Clip* c = primary(TrackKind::Video);
+        if (!c) return;
+        const bool has = EffectRegistry::has(*c, QString::fromLatin1(Shapes::kClipShapeEffect));
+        const QString text = has ? T("Form bearbeiten…") : T("Form…");
+        if (shapeCut->text() != text) shapeCut->setText(text);
+    };
 
     // ---- Composite ----
     Section comp = addSection(videoLay, V, T("Überlagerung"), [](Clip& c) {
@@ -396,6 +464,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     fxBarLay->setContentsMargins(10, 6, 6, 6);
     auto* fxHint = new QLabel(T("Entfernen: Papierkorb am Effekt"));
     fxHint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    fxHint->setWordWrap(true);
     auto* removeAll = new QPushButton(T("Alle entfernen"));
     removeAll->setFocusPolicy(Qt::NoFocus);
     connect(removeAll, &QPushButton::clicked, this,
@@ -477,7 +546,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         const Project* project = m_editor->project();
         apply(A, {}, T("Quell-Tonspur"), [project, stream](Clip& c) {
             const MediaInfo* m = project->mediaInfo(c.mediaPath);
-            if (m && stream < m->audioStreamCount()) c.audioStream = stream; // other files without this stream stay as they are
+            if (!m || stream >= m->audioStreamCount()) return; // other files without this stream stay as they are
+            c.audioStream = stream;
+            fitSourceChannels(c, *m);
         });
     });
     m_refreshers << [this, streamBox, streamLabel] {
@@ -499,11 +570,76 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);
 
+    StartupTrace::mark("  Inspector video+audio pages");
+    finishPage(m_pages);
+    StartupTrace::mark("  Inspector box widths");
     m_tabs->button(0)->setChecked(true);
     WheelGuard::install(this); // scrolling the pages over sliders and boxes must not change their values
-    connect(editor->selection(), &Selection::changed, this, &Inspector::refresh);
+    connect(editor->selection(), &Selection::changed, this, [this] {
+        // Other clips, another transition or edit point: typing or dragging there is a new undo step, never merged
+        // with the last one's. Selected keyframes alone (setKeyframes, also on every frame of a curve point drag)
+        // keep the series: the drag stays one step.
+        const Selection* sel = m_editor->selection();
+        if (sel->ids() != m_shownIds || sel->transition() != m_shownTransition || sel->editPoint() != m_shownEditPoint) {
+            m_shownIds = sel->ids();
+            m_shownTransition = sel->transition();
+            m_shownEditPoint = sel->editPoint();
+            m_editor->project()->closeMerge();
+        }
+        refresh();
+    });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
+    // Another project (new/opened): its clip ids are not the old one's, a remembered shape height would go to a
+    // stranger
+    connect(editor->project(), &Project::loaded, this, [this] { m_heightBeforeLine.clear(); });
     refresh();
+}
+
+void Inspector::finishPage(QWidget* root)
+{
+    // Choice boxes: as wide as their longest entry when there is room, in a narrow panel they give way (the entry
+    // ends in "…") instead of widening it
+    for (QComboBox* box : root->findChildren<QComboBox*>())
+        box->setMinimumWidth(std::min(box->minimumSizeHint().width(), box->fontMetrics().averageCharWidth() * 8 + 24));
+    // Number fields made outside makeParam (subtitles, titles): may give a little in a narrow panel too
+    for (QLineEdit* edit : root->findChildren<QLineEdit*>())
+        if (auto* field = dynamic_cast<ScrubField*>(edit)) field->setShrinkable(true);
+    // A check box alone in the value column may use the reset and keyframe columns too (long texts, a large font)
+    for (QGridLayout* grid : root->findChildren<QGridLayout*>()) {
+        QVector<QLayoutItem*> alone;
+        for (int i = 0; i < grid->count(); ++i) {
+            int row, column, rows, columns;
+            grid->getItemPosition(i, &row, &column, &rows, &columns);
+            if (column == 1 && columns == 1 && qobject_cast<QCheckBox*>(grid->itemAt(i)->widget())
+                && !grid->itemAtPosition(row, 2) && !grid->itemAtPosition(row, 3))
+                alone << grid->itemAt(i);
+        }
+        for (QLayoutItem* item : alone) {
+            int row, column, rows, columns;
+            grid->getItemPosition(grid->indexOf(item), &row, &column, &rows, &columns);
+            grid->takeAt(grid->indexOf(item));
+            grid->addItem(item, row, 1, 1, std::max(1, grid->columnCount() - 1), item->alignment());
+        }
+    }
+}
+
+void Inspector::ensurePage(int page)
+{
+    QVBoxLayout* lay = m_unbuilt.take(page);
+    if (!lay) return;
+    if (page == kTitlePage) buildTitlePage(lay);
+    else if (page == kTransitionPage) buildTransitionPage(lay);
+    else if (page == kSubtitlePage) buildSubtitlePage(lay);
+    finishPage(lay->parentWidget());
+    // The new rows count for the panel's width from now on (as when they were built with the others)
+    m_pages->updateGeometry();
+    m_content->updateGeometry();
+    updateGeometry();
+}
+
+void Inspector::ensureAllPages()
+{
+    for (int page : m_unbuilt.keys()) ensurePage(page);
 }
 
 Inspector::~Inspector()
@@ -551,7 +687,11 @@ void Inspector::setPlayhead(int frame)
     m_playhead = frame;
     // Only redisplay when something can change (every frame during playback)
     const Clip* shown[] = {primary(TrackKind::Video), primary(TrackKind::Audio)};
-    if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) refresh();
+    if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) {
+        m_valuesOnly = true;
+        refresh();
+        m_valuesOnly = false;
+    }
 }
 
 QVector<int> Inspector::selectedIds(TrackKind kind, bool title, const QString& effect) const
@@ -588,6 +728,21 @@ void Inspector::apply(TrackKind kind, const QString& key, const QString& text, c
 
 void Inspector::refresh()
 {
+    // The rows shown or hidden below change the width the panel needs, also on the pages not shown (the stack is as
+    // wide as its widest page). Rows hidden there, or while the content was hidden, tell nobody: the layouts kept the
+    // old minimum (the template placeholder rows of the first build, 325 px in Russian) and a splitter took it at
+    // some later layout - the right column grew a few pixels by itself (after a tour it came back wider). So the
+    // stack, the content and the panel say it themselves once the rows are set
+    struct Told {
+        Inspector* self;
+        ~Told()
+        {
+            if (self->m_valuesOnly) return; // a playhead step: values change, not which rows show (every frame)
+            self->m_pages->updateGeometry();
+            self->m_content->updateGeometry();
+            self->updateGeometry();
+        }
+    } told{this};
     m_tabs->button(kSubtitlePage)->setVisible(false);
     if (refreshTransition()) return;
     if (refreshSubtitle()) return;
@@ -607,15 +762,20 @@ void Inspector::refresh()
     const int count = int(groups.size());
     QString name = m_editor->project()->clipName(*shown); // compound clips: name of the sequence
     if (count > 1) name += QString("  (+%1)").arg(count - 1);
-    m_clipName->setText(name);
+    m_clipName->setFullText(name);
     m_clipName->setToolTip(shown->mediaPath);
 
     // Gray out tabs without a matching clip like in DaVinci; title tab only for title clips
     const Clip* t = primary(TrackKind::Video, true);
     m_tabs->button(0)->setEnabled(v);
     m_tabs->button(1)->setEnabled(a);
+    if (t) ensurePage(kTitlePage); // its fields and m_params before the values are shown below
     m_tabs->button(kTitlePage)->setEnabled(t);
     m_tabs->button(kTitlePage)->setVisible(t);
+    if (t) // the same page edits a shape or a drawing: named after what is selected
+        m_tabs->button(kTitlePage)->setText(QString("T\n%1").arg(t->title.isShape()     ? T("Form")
+                                                                 : t->title.isDrawing() ? T("Zeichnung")
+                                                                                        : T("Titel")));
     const int fx = v ? effectCount(*v) : 0;
     m_tabs->button(kEffectsPage)->setText(QString("fx\n%1").arg(fx ? T("Effekte (%1)").arg(fx) : T("Effekte")));
     m_tabs->button(kEffectsPage)->setVisible(fx > 0);

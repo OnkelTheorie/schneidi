@@ -360,14 +360,11 @@ void CompCanvas::addNode(const QString& type)
     if (!PC::kindInfo(type, &inputs)) return;
     // Behind the selected node (or the output): it feeds the new node's first input. Only added (the user wires it):
     // a generator, and a mask behind a picture (its input combines masks; it goes into a merge's mask input)
-    const PC::NodeType* k = PC::find(type);
+    // (Editor::addCompNode applies that rule itself, Comp::maskBehindPicture; here it decides the place)
     const int from = m_selected ? m_selected : m_graph.out;
     const CompNode* f = m_graph.node(from);
-    const PC::NodeType* fk = f ? PC::find(f->type) : nullptr;
-    const bool maskBehindPicture = k && k->output == PC::Buf::Mask && (!fk || fk->output != PC::Buf::Mask);
-    const QString input = inputs.isEmpty() || (maskBehindPicture && !m_graph.isEmpty()) || !CompUi::autoLink()
-                              ? QString()
-                              : inputs.first();
+    const bool maskBehindPicture = ::Comp::maskBehindPicture(type, f ? f->type : QString());
+    const QString input = inputs.isEmpty() || maskBehindPicture || !CompUi::autoLink() ? QString() : inputs.first();
     // Its place: right of `from` in a chain, left below it when only added (it mostly feeds `from`: a merge's fg);
     // further down while that is taken. Placed in the same undo step (an unplaced graph gets every shown place, as a
     // node drag does)
@@ -380,9 +377,14 @@ void CompCanvas::addNode(const QString& type)
         return false;
     };
     for (int i = 0; i < 50 && taken(at); ++i) at.ry() += 70;
-    QUndoStack* undo = m_editor->project()->undoStack();
-    undo->beginMacro(T("Knoten hinzufügen"));
     QString err;
+    if (m_editor->editable({m_clipId}).isEmpty()) { // refused before a step begins (no empty one in the history)
+        report(false, T("Der Clip liegt auf einer gesperrten Spur"));
+        return;
+    }
+    QUndoStack* undo = m_editor->project()->undoStack();
+    const int steps = undo->index();
+    undo->beginMacro(T("Knoten hinzufügen"));
     const int id = m_editor->addCompNode(m_clipId, type, {}, m_selected, input, CompUi::kinds(), &err);
     if (id) {
         QHash<int, QPointF> places = before;
@@ -390,6 +392,7 @@ void CompCanvas::addNode(const QString& type)
         m_editor->moveCompNodes(m_clipId, places);
     }
     undo->endMacro();
+    if (!id) CompUi::dropRefusedStep(undo, steps); // refused: the empty macro goes, also from redo
     report(id != 0, err);
     if (id) {
         refresh();
@@ -444,6 +447,7 @@ void CompCanvas::paintEvent(QPaintEvent*)
     }
     const double z = m_view.zoom;
     const Clip* clipPtr = TimelineOps::findClip(m_editor->project()->timeline(), m_clipId);
+    const double fps = m_editor->project()->timelineFormat().rate.fps();
     // Wires
     auto wire = [&](const QPointF& a, const QPointF& b, const QColor& col) {
         QPainterPath path(a);
@@ -483,8 +487,21 @@ void CompCanvas::paintEvent(QPaintEvent*)
                       n.id == m_selected || out ? 2 : 1));
         p.setBrush(Qt::NoBrush);
         p.drawPath(box);
+        // A tracker that lost its point carries a warning badge in its header (tooltip: where)
+        const bool lostBadge = clipPtr && !CompUi::trackerWarning(*clipPtr, n.id, fps).isEmpty();
+        if (lostBadge) {
+            const double d = (kHeader - 8) * z;
+            const QRectF badge(r.right() - 5 * z - d, r.top() + (kHeader * z - d) / 2, d, d);
+            p.setPen(Qt::NoPen);
+            p.setBrush(Theme::warning);
+            p.drawEllipse(badge);
+            p.setPen(Theme::readableOn(Theme::warning));
+            p.setFont(bold);
+            p.drawText(badge, Qt::AlignCenter, QStringLiteral("!"));
+            p.setBrush(Qt::NoBrush);
+        }
         p.setPen(Theme::text);
-        const QRectF titleRect(r.left() + 7 * z, r.top(), r.width() - 14 * z, kHeader * z);
+        const QRectF titleRect(r.left() + 7 * z, r.top(), r.width() - (lostBadge ? kHeader + 12 : 14) * z, kHeader * z);
         // A long name ("Alphamaske verfeinern 3", Russian names) in a smaller font first, cut off only below 75 %
         QFont title = bold;
         const QString name = CompUi::nodeName(n);
@@ -673,8 +690,14 @@ bool CompCanvas::event(QEvent* e)
         if (inputAt(h->pos(), &input)) text = CompUi::portHelp(input);
         else if (outputAt(h->pos())) text = T("Ausgang des Knotens: von hier zum Eingang eines anderen Knotens ziehen");
         else if (const int id = nodeAt(h->pos()))
-            if (const CompNode* n = m_graph.node(id))
+            if (const CompNode* n = m_graph.node(id)) {
                 if (const PC::NodeType* k = PC::find(n->type)) text = k->description;
+                // A tracker that lost its point: where first (its warning badge)
+                if (const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_clipId))
+                    if (const QString warn = CompUi::trackerWarning(*c, id, m_editor->project()->timelineFormat().rate.fps());
+                        !warn.isEmpty())
+                        text = warn + QStringLiteral("\n\n") + text;
+            }
         if (!text.isEmpty()) {
             QToolTip::showText(h->globalPos(), text, this);
             return true;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test tracks: add/delete, lock, rename, color, ripple across all unlocked tracks, track header operation (offscreen)
 #include "check.h"
+#include "timeline_guard.h"
 
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -37,6 +38,7 @@ static const Clip* F(const Project& p, int id) { return TimelineOps::findClip(p.
 static void setup(Project& p)
 {
     p.reset();
+    while (p.newClipId() < 100) {} // the clips below get their ids by hand: new ones (titles, cues) above them
     p.addMedia({"/x/a.mp4", "a.mp4", 1000, true, true, false});
     p.addMedia({"/x/m.mp3", "m.mp3", 1000, false, true, false});
     p.edit("setup", [](Timeline& tl) {
@@ -52,6 +54,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("tracks");
     Project p;
+    TimelineGuard guard_p{p};
     Selection sel;
     Editor ed(&p, &sel);
 
@@ -101,6 +104,322 @@ int main(int argc, char** argv)
     setup(p);
     ed.setClipSpeed({1}, {0.5, false, false, true}, true);
     CHECK(F(p, 1)->length() == 200 && F(p, 2)->start == 200 && F(p, 22)->start == 350);
+    // Two unlinked clips on different tracks at different times twice as fast: every track moves up by both (V1 by
+    // its own clip only took x apart from its sound on A1)
+    setup(p);
+    p.edit("x", [](Timeline& tl) {
+        tl.video[0].clips = {mk(31, 0, 100), mk(32, 100, 100, 5), mk(33, 500, 100, 6)};
+        tl.audio[0].clips = {mk(41, 100, 100, 5), mk(42, 300, 100, 0, "/x/m.mp3"), mk(43, 500, 100, 6)};
+        tl.audio[1].clips = {mk(51, 700, 100, 0, "/x/m.mp3")};
+    });
+    ed.setClipSpeed({31, 42}, {2.0, false, false, true}, true);
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-50|0-49] a[50-150|0-99] a[400-500|0-99]  V2:  "
+                                                "A1: a[50-150|0-99] m[250-300|0-49] a[400-500|0-99]  A2: m[600-700|0-99]"));
+
+    // A dissolve on a retimed track that the speed change pushes apart (A stays, B moves with V1's longer clip): it is
+    // released, not left as a fade out and a fade in
+    setup(p);
+    p.edit("x", [](Timeline& tl) {
+        tl.video[0].clips = {mk(31, 0, 100)};
+        while (tl.video.size() < 2) tl.video << Track{};
+        Clip a = mk(32, 60, 40), b = mk(33, 100, 50, 0), q = mk(34, 200, 50);
+        a.in = b.in = 300;
+        a.out = 339;
+        b.out = 349;
+        a.transOut = b.transIn = 10;
+        tl.video[1].clips = {a, b, q};
+        tl.audio[0].clips.clear();
+        tl.audio[1].clips.clear();
+    });
+    ed.setClipSpeed({31, 34}, {0.5, false, false, true}, true);
+    CHECK_EQ(F(p, 33)->start, 200);
+    CHECK(F(p, 32)->transOut == 0 && F(p, 33)->transIn == 0);
+    CHECK_EQ(F(p, 34)->start, 300);
+
+    // --- A ripple that would take linked picture and sound apart is refused with a reason (nothing changes, no undo
+    // step): A2 cannot move up (the music lies across the edit point) while V2 can, so x on V2 and its sound on A2
+    // came apart. Ripple delete, speed with ripple, one side deleted alone; locked: also ripple trim.
+    {
+        const auto layout = [&](bool lockA2, bool music) {
+            setup(p);
+            p.edit("x", [&](Timeline& tl) {
+                while (tl.video.size() < 2) tl.video << Track{};
+                tl.video[0].clips = {mk(1, 0, 100, 1), mk(2, 100, 100, 2)};
+                tl.audio[0].clips = {mk(11, 0, 100, 1), mk(12, 100, 100, 2)};
+                tl.video[1].clips = {mk(31, 300, 100, 3)};
+                tl.audio[1].clips = {mk(22, 300, 100, 3)};
+                if (music) tl.audio[1].clips.prepend(mk(21, 50, 250, 0, "/x/m.mp3"));
+                tl.audio[1].locked = lockA2;
+            });
+            ed.takeNotice();
+        };
+        const auto refused = [&](const char* what, const QString& says) {
+            const Editor::Notice n = ed.takeNotice();
+            const bool ok = n.refused && n.text.contains(says);
+            if (!ok) std::printf("       %s: %s\n", what, qPrintable(n.text));
+            return ok;
+        };
+        layout(false, true);
+        Timeline was = p.timeline();
+        int undo = p.undoStack()->index();
+        sel.set({1, 11});
+        ed.rippleDeleteSelection();
+        CHECK(p.timeline() == was && p.undoStack()->index() == undo);
+        CHECK(refused("ripple delete", "A2"));
+        CHECK(sel.contains(1)); // the selection stays
+        ed.setClipSpeed({1}, {2.0, false, false, true}, true);
+        CHECK(p.timeline() == was && p.undoStack()->index() == undo);
+        CHECK(refused("speed", "A2"));
+        ed.setClipSpeed({1}, {2.0, false, false, true}, false); // without ripple nothing moves: fine
+        CHECK_EQ(F(p, 1)->speed, 2.0);
+        CHECK(ed.takeNotice().text.isEmpty());
+        // Only the picture of a linked clip: its sound stays in the deleted time, A1 cannot move up
+        layout(false, false);
+        was = p.timeline();
+        sel.set({1});
+        ed.rippleDeleteSelection();
+        CHECK(p.timeline() == was);
+        CHECK(refused("picture alone", "A1"));
+        // A locked track with a partner: locking is the way to move one side only - done, a note says how far apart
+        layout(true, false);
+        sel.set({1, 11});
+        guard_p.allowSlip({31, 22});
+        ed.rippleDeleteSelection();
+        CHECK(F(p, 31)->start == 200 && F(p, 22)->start == 300);
+        const auto lockedNote = [&](const char* what, const QString& by) {
+            const Editor::Notice n = ed.takeNotice();
+            const bool ok = !n.refused && n.text.contains("A2") && n.text.contains(by);
+            if (!ok) std::printf("       %s: %s\n", what, qPrintable(n.text));
+            return ok;
+        };
+        CHECK(lockedNote("locked", "100"));
+        layout(true, false);
+        const auto e = ed.trimEdit(TimelineOps::TrimKind::Ripple, 1, TimelineOps::Edge::End);
+        guard_p.allowSlip({31, 22});
+        ed.applyTrimEdit(e, -30);
+        CHECK(F(p, 31)->start == 270 && F(p, 22)->start == 300);
+        CHECK(lockedNote("ripple trim, locked", "30"));
+        // The refusal names the reason that holds: a clip across the edit point (only there), otherwise picture and
+        // sound moving by different amounts (P on V2 starts before the trimmed clip's end, its sound after it)
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            while (tl.video.size() < 2) tl.video << Track{};
+            tl.video[0].clips = {mk(1, 0, 100)};
+            tl.audio[0].clips.clear();
+            Clip v = mk(31, 90, 60, 3), a = mk(22, 110, 40, 3);
+            a.in = 20;
+            a.out = 59;
+            tl.video[1].clips = {v};
+            tl.audio[1].clips = {a};
+        });
+        ed.takeNotice();
+        was = p.timeline();
+        const auto lengthen = ed.trimEdit(TimelineOps::TrimKind::Ripple, 1, TimelineOps::Edge::End);
+        CHECK(!ed.trimEditRefusal(lengthen, 20).isEmpty()); // the drag preview holds still
+        CHECK(ed.trimEditRefusal(lengthen, 0).isEmpty());
+        ed.applyTrimEdit(lengthen, 20);
+        CHECK(p.timeline() == was);
+        CHECK(refused("ripple trim across", "V2"));
+        // Nothing linked on the track that stays: as before (A2 stays, the rest moves up)
+        layout(false, true);
+        p.edit("x", [](Timeline& tl) { tl.audio[1].clips.removeLast(); tl.video[1].clips[0].linkId = 0; });
+        sel.set({1, 11});
+        ed.rippleDeleteSelection();
+        CHECK(F(p, 2)->start == 0 && F(p, 31)->start == 200 && F(p, 21)->start == 50);
+        CHECK(ed.takeNotice().text.isEmpty());
+    }
+    // --- Ripple delete of a linked pair with its own L-cut tail: the tail stays as a gap, no warning (it is not
+    // time meant to go)
+    {
+        setup(p);
+        p.edit("x", [](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 100, 1), mk(2, 100, 100, 2)};
+            Clip xa = mk(11, 0, 120, 1), ya = mk(12, 120, 80, 2);
+            ya.in = 20;
+            ya.out = 99;
+            tl.audio[0].clips = {xa, ya};
+            tl.audio[1].clips.clear();
+        });
+        ed.takeNotice();
+        sel.set({1, 11});
+        ed.rippleDeleteSelection();
+        CHECK(F(p, 2)->start == 0 && F(p, 12)->start == 20);
+        const Editor::Notice n = ed.takeNotice();
+        if (!CHECK(n.text.isEmpty())) std::printf("       %s\n", qPrintable(n.text));
+    }
+    // --- Ripple delete taking out less than was deleted (each deleted clip lies under a clip that stays on the other
+    // track): done, and says why it moved up less (not like a broken command)
+    {
+        setup(p);
+        p.edit("x", [](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 50), mk(2, 50, 50)};
+            tl.audio[0].clips.clear();
+            tl.audio[1].clips = {mk(21, 0, 50, 0, "/x/m.mp3"), mk(22, 50, 50, 0, "/x/m.mp3")};
+        });
+        ed.takeNotice();
+        sel.set({1, 22});
+        ed.rippleDeleteSelection();
+        CHECK(!F(p, 1) && !F(p, 22) && F(p, 2)->start == 50);
+        const Editor::Notice n = ed.takeNotice();
+        CHECK(!n.refused && n.text.contains(T("Nicht nachgerückt")));
+        p.edit("x", [](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 50), mk(2, 50, 50), mk(3, 200, 10)};
+            tl.audio[1].clips = {mk(21, 0, 40, 0, "/x/m.mp3"), mk(22, 150, 10, 0, "/x/m.mp3")};
+        });
+        sel.set({1, 2, 22});
+        ed.rippleDeleteSelection(); // 110 frames deleted, [0,40) under the music that stays: 70 frames out
+        CHECK_EQ(F(p, 3)->start, 130);
+        const Editor::Notice m = ed.takeNotice();
+        CHECK(!m.refused && m.text.contains("70") && m.text.contains("110"));
+    }
+
+    // --- Speed on an L-cut pair (the sound starts later, other in points): both new in points come from the same
+    // place, so picture and sound stay in sync to the frame (each rounded alone, they could end one frame apart)
+    for (const double speed : {0.33, 0.7, 1.5, 2.37}) {
+        for (const bool reverse : {false, true}) {
+            for (const int vIn : {37, 41, 113}) {
+                setup(p);
+                p.edit("x", [&](Timeline& tl) {
+                    Clip v = mk(61, 100, 200, 9), a = mk(62, 160, 140, 9);
+                    v.in = vIn;
+                    v.out = vIn + 199;
+                    a.in = vIn + 60;
+                    a.out = a.in + 139;
+                    tl.video[0].clips = {v};
+                    tl.audio[0].clips = {a};
+                    tl.audio[1].clips.clear();
+                });
+                ed.setClipSpeed({61}, {speed, reverse, false, true}, true);
+                const Clip* v = F(p, 61);
+                const Clip* a = F(p, 62);
+                if (!CHECK(v && a && v->speed == speed && v->start - v->in == a->start - a->in))
+                    std::printf("       speed %g reverse %d in %d\n", speed, int(reverse), vIn);
+                if (reverse) continue;
+                ed.addSpeedPoint(61, 190);
+                ed.setSegmentSpeed(61, 1, speed * 1.7);
+                v = F(p, 61);
+                a = F(p, 62);
+                if (!CHECK(v && a && v->ramp == a->ramp && v->start - v->in == a->start - a->in))
+                    std::printf("       ramp after speed %g in %d\n", speed, vIn);
+            }
+        }
+    }
+
+    // --- Speed on razor-cut pieces of one take (same file, each piece its own link): every piece keeps its own content
+    // and length (one offset for all squeezed the later pieces)
+    {
+        setup(p);
+        p.edit("x", [](Timeline& tl) {
+            QVector<Clip> v, a;
+            for (int k = 0; k < 4; ++k) {
+                Clip c = mk(70 + k, k * 100, 100, 20 + k);
+                c.in = k * 100;
+                c.out = c.in + 99;
+                v << c;
+                c.id = 80 + k;
+                a << c;
+            }
+            tl.video[0].clips = v;
+            tl.audio[0].clips = a;
+            tl.audio[1].clips.clear();
+        });
+        ed.selectAll();
+        ed.setClipSpeed(ed.selection()->ids().values().toVector(), {1.1, false, false, true}, true);
+        int at = 0;
+        for (int k = 0; k < 4; ++k) {
+            const Clip* v = F(p, 70 + k);
+            const Clip* a = F(p, 80 + k);
+            if (!CHECK(v && a)) continue;
+            CHECK(std::abs(v->length() - 91) <= 1 && std::abs(v->in - int(k * 100 / 1.1)) <= 1);
+            CHECK(v->start == at && a->start == v->start && a->in == v->in && a->length() == v->length());
+            at = v->end();
+        }
+    }
+    // --- Speed with ripple on an L-cut and a J-cut (picture and sound end at different points): what follows moves by
+    // one amount on all tracks - in sync, nothing refused (the changes of picture and sound were added up)
+    for (const bool lcut : {true, false})
+        for (const double speed : {0.5, 2.0}) {
+            setup(p);
+            p.edit("x", [&](Timeline& tl) {
+                // L: the sound runs 20 longer; J: the next sound starts 20 early
+                Clip x = mk(1, 0, 200, 1), xa = mk(11, 0, lcut ? 220 : 180, 1);
+                Clip y = mk(2, 200, 100, 2), ya = mk(12, lcut ? 220 : 180, lcut ? 80 : 120, 2);
+                y.in = 300;
+                y.out = 399;
+                ya.in = lcut ? 320 : 280;
+                ya.out = (lcut ? 320 + 79 : 280 + 119);
+                tl.video[0].clips = {x, y};
+                tl.audio[0].clips = {xa, ya};
+                tl.audio[1].clips = {mk(21, 700, 10, 0, "/x/m.mp3")};
+            });
+            ed.takeNotice();
+            ed.setClipSpeed({1}, {speed, false, false, true}, true);
+            const Clip *x = F(p, 1), *xa = F(p, 11), *y = F(p, 2), *ya = F(p, 12), *m = F(p, 21);
+            const Editor::Notice n = ed.takeNotice();
+            if (!CHECK(!n.refused && x->speed == speed)) std::printf("       %s\n", qPrintable(n.text));
+            CHECK(y->start - y->in == ya->start - ya->in);              // in sync
+            CHECK(y->start >= x->end() && ya->start >= xa->end());      // nothing overlaps
+            CHECK(y->start == x->end() || ya->start == xa->end());      // no more room than needed
+            CHECK_EQ(m->start - 700, y->start - 200);                   // the others: by the same amount
+        }
+
+    // --- Two separate clips ending together, their changes apart by rounding (+100, +99): what follows moves by the
+    // larger one, not by both
+    {
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            while (tl.video.size() < 2) tl.video << Track{};
+            tl.video[0].clips = {mk(1, 0, 100), mk(2, 100, 50)};
+            tl.video[1].clips = {mk(31, 1, 99), mk(32, 100, 50)};
+            tl.audio[0].clips.clear();
+            tl.audio[1].clips = {mk(21, 300, 10, 0, "/x/m.mp3")};
+        });
+        ed.setClipSpeed({1, 31}, {0.5, false, false, true}, true);
+        CHECK(F(p, 1)->length() == 200 && F(p, 31)->length() == 198);
+        CHECK(F(p, 2)->start == 200 && F(p, 32)->start == 200 && F(p, 21)->start == 400);
+    }
+    // --- A linked sound that starts where its picture ends moves up with it on speed-up; an unselected clip before it
+    // on its track would be run into: refused (it overlapped)
+    {
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            tl.video[0].clips = {mk(1, 0, 100, 7)};
+            Clip a = mk(12, 100, 100, 7);
+            a.in = 100;
+            a.out = 199;
+            tl.audio[0].clips = {mk(11, 0, 100, 0, "/x/m.mp3"), a};
+            tl.audio[1].clips.clear();
+        });
+        ed.takeNotice();
+        const Timeline was = p.timeline();
+        ed.setClipSpeed({1}, {2.0, false, false, true}, true);
+        CHECK(p.timeline() == was);
+        const Editor::Notice n = ed.takeNotice();
+        if (!CHECK(n.refused && n.text.contains("A1"))) std::printf("       %s\n", qPrintable(n.text));
+    }
+    // --- The ripple-trim drag stops at the furthest allowed delta (here: none - P on V2 starts before the edit point,
+    // its sound after it), says why; an allowed one is kept as it is
+    {
+        setup(p);
+        p.edit("x", [&](Timeline& tl) {
+            while (tl.video.size() < 2) tl.video << Track{};
+            tl.video[0].clips = {mk(1, 0, 100)};
+            tl.audio[0].clips.clear();
+            Clip v = mk(31, 90, 60, 3), a = mk(22, 110, 40, 3);
+            a.in = 20;
+            a.out = 59;
+            tl.video[1].clips = {v};
+            tl.audio[1].clips = {a};
+        });
+        const auto e = ed.trimEdit(TimelineOps::TrimKind::Ripple, 1, TimelineOps::Edge::End);
+        QString why;
+        Timeline preview;
+        CHECK_EQ(ed.allowedTrimEdit(e, 20, &why, &preview), 0);
+        CHECK(!why.isEmpty() && preview == p.timeline());
+        p.edit("x", [](Timeline& tl) { tl.audio[1].clips[0].start = 90; tl.audio[1].clips[0].in = 0; });
+        CHECK_EQ(ed.allowedTrimEdit(e, 20, &why, &preview), 20);
+        CHECK(why.isEmpty() && TimelineOps::findClip(preview, 1)->length() == 120);
+    }
 
     // --- Lock: nothing changeable, not selectable
     setup(p);
@@ -383,6 +702,65 @@ int main(int argc, char** argv)
         CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &back3, &err3));
         CHECK(back3.timeline.audio[0].name == "Musik" && back3.timeline.audio[0].pan == 30 && back3.timeline.audio[2].muted);
         CHECK(back3.timeline.audio[2].clips.size() == 3 && back3.timeline.video[1].clips.size() == 3);
+    }
+
+    // --- Target tracks follow undo/redo of track add/delete/move (before: they stayed where the step had put them,
+    //     e.g. on a track that undo had removed again)
+    {
+        setup(p); // V1 V2, A1 A2
+        using TP = QPair<int, int>;
+        const auto targets = [&] { return TP(ed.targetVideoTrack(), ed.targetAudioTrack()); };
+        // Add below the target: target moves up with its track; undo -> back on the same track
+        ed.setTargetTracks(1, 1);
+        ed.addTrack(TrackKind::Audio, 0);
+        CHECK(targets() == TP(1, 2));
+        p.undoStack()->undo();
+        CHECK(p.timeline().audio.size() == 2);
+        CHECK(targets() == TP(1, 1));
+        p.undoStack()->redo();
+        CHECK(targets() == TP(1, 2));
+        p.undoStack()->undo();
+        // Add on top, the user targets the new track; undo removes it -> the target goes back to an existing one
+        ed.addTrack(TrackKind::Video, 2);
+        ed.setTargetTracks(2, 1);
+        p.undoStack()->undo();
+        CHECK(p.timeline().video.size() == 2);
+        CHECK(targets() == TP(1, 1));
+        p.undoStack()->redo();
+        CHECK(p.timeline().video.size() == 3 && targets().first < 3);
+        p.undoStack()->undo();
+        // Delete the target track: undo puts the target back on it; delete a track below: undo -> same track again
+        ed.setTargetTracks(1, 1);
+        ed.removeTrack({TrackKind::Audio, 1});
+        CHECK(targets() == TP(1, 0));
+        p.undoStack()->undo();
+        CHECK(targets() == TP(1, 1));
+        p.undoStack()->redo();
+        CHECK(targets() == TP(1, 0));
+        p.undoStack()->undo();
+        ed.removeTrack({TrackKind::Video, 0});
+        CHECK(targets() == TP(0, 1));
+        p.undoStack()->undo();
+        CHECK(targets() == TP(1, 1));
+        // Move: target follows its track, also back on undo
+        ed.setTargetTracks(0, 0);
+        ed.moveTrack(TrackKind::Audio, 0, 1);
+        CHECK(targets() == TP(0, 1));
+        p.undoStack()->undo();
+        CHECK(targets() == TP(0, 0));
+        p.undoStack()->redo();
+        CHECK(targets() == TP(0, 1));
+        // Changed by hand after the step: undo keeps the chosen track (it moves back with it) instead of resetting
+        ed.setTargetTracks(0, 0); // the old A2, now at index 0
+        p.undoStack()->undo();    // ... back at index 1
+        CHECK(targets() == TP(0, 1));
+        // Undo never leaves a target beyond the tracks, still one undo step per operation
+        const int steps = p.undoStack()->index();
+        ed.addTrack(TrackKind::Audio, 2);
+        CHECK(p.undoStack()->index() == steps + 1);
+        ed.setTargetTracks(0, 2);
+        p.undoStack()->undo();
+        CHECK(ed.targetAudioTrack() < p.timeline().audio.size());
     }
 
     // --- UI: track header, clicks
