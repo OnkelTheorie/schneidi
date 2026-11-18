@@ -6523,6 +6523,15 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     if (est)
         *est = -1;
+    // Half a level or more from scan position `from` on (the positions fineLambda weighs).
+    auto reachesHigh = [](const double* xs, int from, int count) {
+        for (int k = from; k < count; ++k)
+            if (std::abs(xs[k]) >= 0.5)
+                return true;
+        return false;
+    };
+    const bool noteFine = fineLambda < 0 && tPsy.weight > 0;
+    ir.fineMayDiffer = !noteFine; // (not asked for: assume it may)
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
@@ -6579,6 +6588,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 uint64_t nz = 0;
                 const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
                                               est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
+                if (noteFine && !ir.fineMayDiffer)
+                    ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom8, 64);
                 const bool any = nz != 0;
                 std::fill(levels8[b8], levels8[b8] + 64, 0);
                 for (uint64_t m = nz; m; m &= m - 1) {
@@ -6590,6 +6601,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 if (any)
                     cbpLuma |= 1 << b8;
             } else {
+                ir.fineMayDiffer = true;
                 for (int k = 0; k < 64; ++k)
                     if (levels8[b8][k] != 0) {
                         cbpLuma |= 1 << b8;
@@ -6638,6 +6650,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             gain[blkIdx] = 0.0;
             jBlk[blkIdx] = eBlk[blkIdx] = 0.25 * emptyOf8->energy8[blkIdx >> 2];
+            ir.fineMayDiffer = true; // the finer plan is made without emptyOf8
             continue;
         }
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
@@ -6666,6 +6679,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
             }
             gain[blkIdx] = nz ? zeroJ - jBlk[blkIdx] : 0.0;
+            if (noteFine && !ir.fineMayDiffer)
+                ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom4, 16);
             if (gDecLog && nz && fineLambda < 0)
                 decLogSample(levels[blkIdx], xs, scale4, lambda, gain[blkIdx]);
             continue;
@@ -6680,6 +6695,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
         }
         gain[blkIdx] = sparseLevelGain(levels[blkIdx], xs, scale4, lambda);
+        ir.fineMayDiffer = true;
     }
     // Residual groups that do not pay for themselves: an 8x8 group is coded only when its blocks
     // together gain more than its own signalling and the context cost of a non-empty group
@@ -6687,11 +6703,17 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     double sum = 0;
     for (int b8 = 0; b8 < 4; ++b8) {
         const double groupGain = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
-        if (groupGain > lambda * kGroupBits)
+        if (groupGain > lambda * kGroupBits) {
             cbpLuma |= 1 << b8; // a group with a positive gain has a level
-        else
+        } else {
+            // (The plan with fineLambda is made without est: its gains count the squared error after the last
+            // level twice, so it may keep a group dropped here.)
+            if (noteFine && !ir.fineMayDiffer)
+                for (int k = 0; k < 4 && !ir.fineMayDiffer; ++k)
+                    ir.fineMayDiffer = std::any_of(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, [](int v) { return v != 0; });
             for (int k = 0; k < 4; ++k)
                 std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
+        }
         if (est && trellisPath)
             for (int k = 0; k < 4; ++k)
                 sum += (cbpLuma >> b8) & 1 ? jBlk[b8 * 4 + k] : eBlk[b8 * 4 + k];
@@ -6699,6 +6721,15 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     if (est && trellisPath)
         *est = sum;
     ir.cbpLuma = cbpLuma;
+}
+
+// Whether two plans of the same prediction and transform hold the same levels (then they are the same macroblock).
+template <class Residual>
+static bool samePlan(const Residual& a, const Residual& b, bool t8)
+{
+    if (a.cbpLuma != b.cbpLuma)
+        return false;
+    return t8 ? std::memcmp(a.levels8, b.levels8, sizeof a.levels8) == 0 : std::memcmp(a.levels, b.levels, sizeof a.levels) == 0;
 }
 
 // Second half: reconstruction of the planned levels over the prediction lp (and the 8x8 levels
@@ -7277,11 +7308,13 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // half a level: -0.8 %).
     static const bool kZeroQuad = !devEnv("H264_ZEROQ") || std::atoi(devEnv("H264_ZEROQ")) != 0;
     static const bool kZero8 = !devEnv("H264_ZERO8") || std::atoi(devEnv("H264_ZERO8")) != 0;
+    struct Plan {
+        InterResidual r4, r8;
+        double j4, j8;
+    };
+    Plan pw, ps;                             // the 16x16 layout's and the split's
+    const InterResidual* wonPlan = nullptr;  // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
-        struct Plan {
-            InterResidual r4, r8;
-            double j4, j8;
-        };
         auto plan = [&](const Choice& c, Plan& p) {
             const PredCache& pc = predictLayout(c);
             if (lateValid && c.layout == 0) {
@@ -7309,6 +7342,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 best = c;
                 bestT8 = t8;
                 bestPsy = interPsy;
+                wonPlan = t8 ? &p.r8 : &p.r4;
             }
             return cost;
         };
@@ -7330,11 +7364,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             }
             return std::min(first, other);
         };
-        Plan pw;
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
-            Plan ps;
             plan(split, ps);
             // Header bits of both layouts as the CAVLC count (type, references, vector differences).
             auto headBits = [&](const Choice& c) {
@@ -7435,10 +7467,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     } // !useEst
     // Psy: the winner once more with the finer quantisation (see gPsyFine).
-    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe) {
+    // (Not where the chosen plan has nothing at the positions the finer lambda weighs: it would come out again.)
+    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe && !(wonPlan && !wonPlan->fineMayDiffer)) {
         InterResidual fine;
         planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
-        if (fine.cbpLuma || interBits.syn.cbpLuma) { // else the same macroblock again
+        // (Not where the finer plan is the chosen one again - no level changed, or both are empty: the same macroblock.)
+        if ((fine.cbpLuma || interBits.syn.cbpLuma) && !(wonPlan && samePlan(fine, *wonPlan, bestT8))) {
             MbOut fineBits;
             const double costFine = encodeInter(best, fineBits, bestT8, &fine);
             if (costFine < costInter) {
@@ -8170,6 +8204,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     // trellis, whose own cost (squared error + lambda * coefficient and side bits) picks the one
     // that is coded for real - as in P pictures (Encoder modeEstimate), instead of 4x4 for all and
     // 8x8 only for the winner.
+    InterResidual r8[kMaxBCands + 1], r4[kMaxBCands + 1];
+    const InterResidual* wonPlan = nullptr; // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
         static const bool kZeroQuadB = !devEnv("H264_ZEROQ") || std::atoi(devEnv("H264_ZEROQ")) != 0;
         static const bool kZero8B = !devEnv("H264_ZERO8") || std::atoi(devEnv("H264_ZERO8")) != 0;
@@ -8177,7 +8213,6 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         // kBPrune times the best one's is not coded for real. Measured (fixed QP, CS2, 3 B forced):
         // 1.1 +0.1 % of the B pictures' bits for -2.1 % instructions. H264_BPRUNE overrides, 0 = off.
         static const double kBPrune = devEnv("H264_BPRUNE") ? std::atof(devEnv("H264_BPRUNE")) : 1.1;
-        InterResidual r8[kMaxBCands + 1], r4[kMaxBCands + 1];
         double jBest[kMaxBCands + 1];
         bool use8[kMaxBCands + 1];
         double jMin = 1e300;
@@ -8242,6 +8277,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 saveMb(mbx, mby, interState);
                 bestWhich = which;
                 bestT8 = t8;
+                wonPlan = t8 ? &r8[which] : &r4[which];
             }
         }
     } else {
@@ -8277,13 +8313,24 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     }
     // Psy: the winner once more with the finer quantisation (see gPsyFine).
     if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0) {
-        MbOut fineBits;
-        const double costFine = encodeB(bestWhich, fineBits, bestT8, lambda * gPsyFine);
-        if (costFine < costInter) {
-            costInter = costFine;
-            chosenDelta = sentDelta;
-            interBits = std::move(fineBits);
-            saveMb(mbx, mby, interState);
+        // Planned first: where the finer plan is the chosen one again (no level changed), coding it would give the
+        // same macroblock.
+        InterResidual fine;
+        bool same = wonPlan && !wonPlan->fineMayDiffer; // nothing at the positions the finer lambda weighs
+        if (wonPlan && !same) {
+            planInterLuma(mbx, mby, bestWhich ? clp[bestWhich - 1] : dlp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
+            same = samePlan(fine, *wonPlan, bestT8);
+        }
+        if (!same) {
+            MbOut fineBits;
+            const double costFine = wonPlan ? encodeB(bestWhich, fineBits, bestT8, -1.0, &fine)
+                                            : encodeB(bestWhich, fineBits, bestT8, lambda * gPsyFine);
+            if (costFine < costInter) {
+                costInter = costFine;
+                chosenDelta = sentDelta;
+                interBits = std::move(fineBits);
+                saveMb(mbx, mby, interState);
+            }
         }
     }
 
