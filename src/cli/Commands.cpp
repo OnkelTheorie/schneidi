@@ -435,6 +435,59 @@ bool isProjectFile(const QString& path)
 
 QString trackName(TrackRef r) { return QString("%1%2").arg(r.kind == TrackKind::Video ? "V" : "A").arg(r.index + 1); }
 
+int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind)
+{
+    static const QRegularExpression code("^\\s*[VvAa]?\\d+\\s*$");
+    if (!v.isString() || code.match(v.toString()).hasMatch()) return parseTrack(v, kind);
+    const QString name = v.toString().trimmed();
+    QVector<TrackRef> found;
+    for (const TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (int i = 0; i < tl.tracks(k).size(); ++i)
+            if (!name.isEmpty() && tl.tracks(k)[i].name.trimmed().compare(name, Qt::CaseInsensitive) == 0) found << TrackRef{k, i};
+    if (found.size() == 1) {
+        if (kind) *kind = found.first().kind;
+        return found.first().index;
+    }
+    if (found.size() > 1) {
+        QStringList refs;
+        for (const TrackRef& r : found) refs << trackName(r);
+        fail("BAD_ARGUMENT", QString("several tracks are named '%1' (%2): give one of those").arg(name, refs.join(", ")));
+    }
+    QStringList names;
+    for (const TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (int i = 0; i < tl.tracks(k).size(); ++i)
+            names << trackName({k, i}) + (tl.tracks(k)[i].name.trimmed().isEmpty() ? QString() : " '" + tl.tracks(k)[i].name.trimmed() + "'");
+    fail("NOT_FOUND", QString("no track '%1' (tracks: %2)").arg(name, names.join(", ")));
+}
+
+QString silentMixNote(const Timeline& tl)
+{
+    const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    QStringList muted, disabled;
+    bool any = false;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const Track& t = tl.audio[i];
+        if (t.clips.isEmpty()) continue;
+        any = true;
+        const QString name = trackName({TrackKind::Audio, i}) + (t.name.trimmed().isEmpty() ? QString() : " '" + t.name.trimmed() + "'");
+        if (t.muted || (solo && !t.solo)) {
+            muted << name;
+            continue;
+        }
+        if (std::any_of(t.clips.begin(), t.clips.end(), [](const Clip& c) { return c.enabled; })) return {};
+        disabled << name;
+    }
+    if (!any) return {};
+    QStringList parts;
+    if (!muted.isEmpty())
+        parts << QString("track(s) %1 %2 (e.g. {op:'track', track:'%3', mute:false})")
+                     .arg(muted.join(", "), solo ? "muted or outside the solo" : "muted",
+                          muted.first().section(' ', 0, 0));
+    if (!disabled.isEmpty())
+        parts << QString("every clip on %1 disabled ({op:'enable', clips:[...]})").arg(disabled.join(", "));
+    return "the whole mix is silent: the sound clips lie on " + parts.join("; ");
+}
+
 // "V1", "A2" or a number (1 = first track); returns the index (0-based)
 int parseTrack(const QJsonValue& v, TrackKind* kind)
 {
@@ -1122,7 +1175,7 @@ const QVector<Command>& commands()
                            "the error names the ones that fit", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String,
-           "h264 (default), h265, av1, vp9 (WebM); s264 (experimental: schneidi's H.264 encoder s264, 8-bit 4:2:0, "
+           "h264 (default; \"mp4\" = h264, \"webm\" = vp9), h265, av1, vp9 (WebM); s264 (experimental: schneidi's H.264 encoder s264, 8-bit 4:2:0, "
            "slower than x264, use it only when asked; quality 3 = high, two passes towards the cap only when needed); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
@@ -1222,6 +1275,10 @@ const QVector<Command>& commands()
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
           {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts, hits on kills"},
+          {"audio_stream", T::String, "sound of recordings with several audio streams: game (default: only the game "
+                                      "sound - no Mix, voice chat like Discord, microphone or music like Spotify - when "
+                                      "such a stream is there), all (every stream as the game template places it: the "
+                                      "Mix muted), or stream numbers/names like \"3\" or \"System Output,Mikrofon\""},
           {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
           {"game", T::String, "kill feed of this game for the moments, and kept readable at the top of the short "
                               "(reframe keep): cs2 or valorant (default: from the folder or file name, e.g. "

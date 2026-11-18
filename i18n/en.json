@@ -3448,5 +3448,6 @@
  "Wirkt auf alles außer der Auswahl": "Works on everything except the selection",
  "Y": "Y",
  "Zieh den Punkt in einem Rad zu einer Farbe hin: Dieser Bereich wird so eingefärbt. Das Rädchen darunter macht den Bereich heller oder dunkler. Doppelklick setzt zurück.": "Drag the point in a wheel towards a colour: that range takes on the colour. The small wheel below makes the range brighter or darker. Double-click resets.",
- "Zu den Rädern: sie wirken dann nur in der Auswahl (Ebene „Q“)": "To the wheels: they then work in the selection only (layer “Q”)"
+ "Zu den Rädern: sie wirken dann nur in der Auswahl (Ebene „Q“)": "To the wheels: they then work in the selection only (layer “Q”)",
+ "Lautheitsbereich %1 LU (über %2): leise und laute Stellen liegen weit auseinander – Kompressor oder Pegel der lauten Stellen senken": "Loudness range %1 LU (over %2): quiet and loud parts lie far apart – use a compressor or lower the loud parts"
 }

@@ -268,10 +268,24 @@ QVector<int> videoOnly(const Timeline& tl, const QVector<int>& ids)
 int localFrame(const Clip& c, int frame) { return std::clamp(frame - c.start, 0, std::max(0, c.length() - 1)); }
 } // namespace
 
+void Editor::modifyGrade(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
+                         const QString& mergeKey)
+{
+    const QVector<int> leads = editable(videoOnly(m_project->timeline(), ids));
+    QVector<int> all = leads;
+    for (int id : followingCopies(leads, true))
+        if (!all.contains(id)) all << id;
+    if (all.isEmpty()) return;
+    m_project->edit(text, [&](Timeline& tl) {
+        for (int id : all)
+            if (Clip* c = TimelineOps::findClip(tl, id)) fn(*c);
+    }, mergeKey);
+}
+
 void Editor::setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimParam, double>>& values, int frame,
                             const QString& text, const QString& mergeKey)
 {
-    modifyClips(videoOnly(m_project->timeline(), ids), text, [&](Clip& c) {
+    modifyGrade(ids, text, [&](Clip& c) {
         EffectRegistry::add(c, kGrade); // already present: nothing
         for (const auto& [p, v] : values) {
             // Values of a window only where the clip has that window
@@ -291,7 +305,8 @@ void Editor::resetGrade(const QVector<int>& ids, const QVector<AnimParam>& param
     for (int id : videoOnly(m_project->timeline(), ids))
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && EffectRegistry::has(*c, kGrade))
             targets << id;
-    modifyClips(targets, text, [&](Clip& c) {
+    modifyGrade(targets, text, [&](Clip& c) {
+        if (!EffectRegistry::has(c, kGrade)) return; // a copy without a grade
         if (params.isEmpty()) {
             EffectRegistry::remove(c, kGrade);
             return;
@@ -309,7 +324,7 @@ void Editor::resetGrade(const QVector<int>& ids, const QVector<AnimParam>& param
 
 void Editor::setGradeLut(const QVector<int>& ids, const QString& path)
 {
-    modifyClips(videoOnly(m_project->timeline(), ids), path.isEmpty() ? T("LUT entfernen") : T("LUT laden"),
+    modifyGrade(ids, path.isEmpty() ? T("LUT entfernen") : T("LUT laden"),
                 [&](Clip& c) {
                     EffectRegistry::add(c, kGrade);
                     EffectRegistry::instance(c, kGrade)->params["lut"] = path;
@@ -318,7 +333,7 @@ void Editor::setGradeLut(const QVector<int>& ids, const QString& path)
 
 void Editor::setGradeEnabled(const QVector<int>& ids, bool on)
 {
-    modifyClips(videoOnly(m_project->timeline(), ids), on ? T("Farbkorrektur an") : T("Farbkorrektur aus"),
+    modifyGrade(ids, on ? T("Farbkorrektur an") : T("Farbkorrektur aus"),
                 [&](Clip& c) {
                     if (EffectInstance* e = EffectRegistry::instance(c, kGrade)) e->enabled = on;
                 });
@@ -380,7 +395,7 @@ void Editor::setGradeCurve(const QVector<int>& ids, GradeCurves::Kind kind, cons
 {
     const QString text = GradeCurves::format(points);
     const QString key = GradeCurves::key(kind);
-    modifyClips(videoOnly(m_project->timeline(), ids), T("Kurve"), [&](Clip& c) {
+    modifyGrade(ids, T("Kurve"), [&](Clip& c) {
         EffectRegistry::add(c, kGrade);
         EffectInstance* e = EffectRegistry::instance(c, kGrade);
         if (GradeCurves::isIdentity(GradeCurves::parse(text), kind)) e->params.remove(key); // straight: as never set

@@ -313,7 +313,8 @@ struct PresetsScope {
     StreamPresets saved;
     PresetsScope(Session& s, const QJsonObject& op) : editor(s.editor), saved(s.editor.streamPresets())
     {
-        if (!op.value("presets").toBool(true)) editor.setStreamPresets(StreamPresets::none());
+        // audio_streams: those streams as they are in the file (onlyStreams leaves out the others)
+        if (!op.value("presets").toBool(true) || op.contains("audio_streams")) editor.setStreamPresets(StreamPresets::none());
     }
     ~PresetsScope() { editor.setStreamPresets(saved); }
 };
@@ -340,6 +341,28 @@ void noteDoubledMix(Session& s, const MediaInfo& m, int from, int to)
                        "{op:'disable', clips:%3} turns the Mix off (or `new` with template game mutes it on import)")
                    .arg(QFileInfo(m.path).fileName(), singles.join(", "),
                         QString::fromUtf8(QJsonDocument(mixClips).toJson(QJsonDocument::Compact)));
+}
+
+// audio_streams: [0, 3], "System Output" or "0,3" - only these audio streams of `m` stay of what an op just placed
+// in [from, to) (a game clip's Discord, microphone and music left out in one go, t6s duel 18.11.)
+void onlyStreams(Session& s, const QJsonObject& op, const MediaInfo& m, int from, int to)
+{
+    if (!op.contains("audio_streams") || !m.hasAudio) return;
+    const QJsonValue v = op.value("audio_streams");
+    QStringList spec;
+    if (v.isArray())
+        for (const QJsonValue& x : v.toArray()) spec << (x.isDouble() ? QString::number(x.toInt()) : x.toString());
+    else
+        spec << (v.isDouble() ? QString::number(v.toInt()) : v.toString());
+    const QVector<int> keep = audioStreamsOf(m, spec.join(','));
+    QSet<int> drop;
+    for (const Track& t : s.project.timeline().audio)
+        for (const Clip& c : t.clips)
+            if (c.mediaPath == m.path && c.start >= from && c.start < to && !keep.contains(c.audioStream)) drop << c.id;
+    if (drop.isEmpty()) return;
+    s.selection.set(drop);
+    s.editor.deleteSelection();
+    s.selection.clear();
 }
 
 // interpolate on the video clips of `m` an op just placed in [from, to) (slowest = its slowest speed)
@@ -373,6 +396,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
     checkPlacedEnd(at, in, out, speed, m);
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed, partsOf(op, m));
+    onlyStreams(s, op, m, at, at + len);
     noteDoubledMix(s, m, at, at + len);
     placedInterpolate(s, op, m, at, at + len, speed);
 }
@@ -418,6 +442,7 @@ void opKeep(Session& s, const QJsonObject& op)
         at += s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed, parts);
         slowest = std::min(slowest, speed);
     }
+    onlyStreams(s, op, m, start, at);
     noteDoubledMix(s, m, start, at);
     placedInterpolate(s, op, m, start, at, slowest);
 }
@@ -828,7 +853,7 @@ void opAddTrack(Session& s, const QJsonObject& op)
 
 void opRemoveTrack(Session& s, const QJsonObject& op)
 {
-    if (const QString st = op.value("track").toString().trimmed().toUpper(); st.startsWith("ST")) {
+    if (const QString st = op.value("track").toString().trimmed().toUpper(); st.startsWith("ST") && st.mid(2).toInt() > 0) {
         const int index = st.mid(2).toInt() - 1;
         if (index < 0 || index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + st);
         if (s.project.timeline().subtitles[index].locked) fail("FAILED", "cannot remove subtitle track " + st + ": it is locked");
@@ -843,7 +868,7 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     QVector<TrackRef> refs;
     for (const QJsonValue& v : given) {
         TrackKind k = TrackKind::Video;
-        const int index = parseTrack(v, &k);
+        const int index = parseTrackIn(s.project.timeline(), v, &k);
         if (!refs.contains(TrackRef{k, index})) refs << TrackRef{k, index};
     }
     const Timeline& tl = s.project.timeline();
@@ -887,18 +912,20 @@ const char* const kPresetsDetails =
     "or new tracks below. Sound that already plays there (a second copy of the same moment, e.g. picture-in-picture; "
     "a blurred background needs no copy: op 'transform' fit:'blur') comes in disabled: 'enable' turns it on. "
     "video_only:true places the picture without its sound (b-roll, a clip whose sound is not wanted), "
-    "audio_only:true the sound without its picture; the file in the Media Pool keeps both";
+    "audio_only:true the sound without its picture; the file in the Media Pool keeps both. audio_streams: only "
+    "these audio streams of the file, by number or name (e.g. [3] or ['System Output'] for a game recording's game "
+    "sound without Discord, microphone and music; `probe` lists them), each as it is in the file";
 
 QVector<OpDef> makeOps()
 {
     QVector<OpDef> ops{
-        {"append", "{op:'append', media, in?, out?|duration?, speed?, interpolate?, track?, presets?, video_only?, audio_only?}",
+        {"append", "{op:'append', media, in?, out?|duration?, speed?, interpolate?, track?, presets?, video_only?, audio_only?, audio_streams?}",
          "put a source range at the end of the timeline", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }, {"at"}},
-        {"place", "{op:'place', media, at, in?, out?|duration?, speed?, interpolate?, track?, presets?, video_only?, audio_only?}",
+        {"place", "{op:'place', media, at, in?, out?|duration?, speed?, interpolate?, track?, presets?, video_only?, audio_only?, audio_streams?}",
          "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
-        {"keep", "{op:'keep', media, ranges:[[from,to]|{from,to,speed?},...], at?, speed?, interpolate?, track?, presets?, video_only?, audio_only?}",
+        {"keep", "{op:'keep', media, ranges:[[from,to]|{from,to,speed?},...], at?, speed?, interpolate?, track?, presets?, video_only?, audio_only?, audio_streams?}",
          "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep,
          {"range", "from", "to"}}, // one range written another way (small models)
         {"align", "{op:'align', events:[times], to:[times]|{first, every}, max_shift?, accent?, strength?}",
@@ -1011,7 +1038,8 @@ QVector<OpDef> makeOps()
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},
         {"remove_track", "{op:'remove_track', track} or {op:'remove_track', tracks:[…]}",
-         "remove tracks with their clips (not the last one of a kind; ST1 … = subtitle tracks)",
+         "remove tracks with their clips (V1/A2 or a track's name like 'Mix'; not the last one of a kind; ST1 … = "
+         "subtitle tracks)",
          "Track names are those of the timeline when the op runs: after removing A1 the old A2 is A1, so a second op "
          "{track:'A5'} means the track that was A6. Several tracks in ONE op (tracks:['A1','A2','A5'] or "
          "track:[…]) are all named as they are before it and removed together.",

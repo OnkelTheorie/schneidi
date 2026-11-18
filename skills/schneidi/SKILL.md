@@ -38,7 +38,8 @@ names cost a failed call.
 2. **Say the plan in 2-3 sentences** (length, structure, format), then go ahead. Don't wait for approval unless the
    plan rests on a guess about something important that the user can easily answer.
 3. **Build it in small steps.** Create the project with `new` (with `media` it takes frame rate and size from the
-   first video unless you give `fps`/`width`/`height`; vertical = width 1080, height 1920). `new` starts from the user's default start template; name one with `template` when it
+   first video unless you give `fps`/`width`/`height`; vertical = width 1080, height 1920). `new` starts from the user's default start template (it can be a game layout with a muted
+   "Mix" track; the answer's `notes` say so - pass `template` "neutral" for plain tracks); name one with `template` when it
    fits the task: `podcast` (tracks Voice 1, Voice 2, Music), `vertical` (9:16), `game` (multi-stream recordings:
    the Mix stream comes in muted). `templates` lists them with the user's own and the **content templates**:
    finished projects with slots for clips, texts, music and logo (`short-hook`, `gaming-highlight`, `product-15s`,

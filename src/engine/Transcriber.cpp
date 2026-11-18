@@ -132,8 +132,17 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         QString error;
         if (!Transcript::parseWhisperJson(json.readAll(), &m_result, &error)) return done(false, error);
         m_result.levels = wavLevels(m_tmp->filePath("audio.wav"));
+        // Silence: whatever whisper wrote is made up; else its well-known made-up lines go
+        if (Transcript::isSilent(m_result.levels)) {
+            m_result.dropped = int(m_result.words.size());
+            m_result.words.clear();
+        } else {
+            m_result.dropped = Transcript::dropHallucinations(m_result.words, m_result.levels);
+        }
         Transcript::fitToSpeech(m_result.words, m_result.levels);
         const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
+        // A chosen language is what whisper wrote in; it reports "en" when it heard nothing
+        if (lang != QLatin1String("auto")) m_result.language = lang;
         if (m_request.checkLanguage && lang != QLatin1String("auto") && !m_result.words.isEmpty()) return runDetection();
         done(true, {});
     });

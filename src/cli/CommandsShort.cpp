@@ -13,6 +13,7 @@
 #include "core/SfxPlace.h"
 #include "core/SfxSynth.h"
 #include "core/ShortPick.h"
+#include "core/StreamPresets.h"
 #include "engine/Extensions.h"
 
 #include <QDir>
@@ -114,6 +115,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
     pick.minS = std::min(pick.minS, pick.maxS);
+    // Sound of the recordings: game (default: only the game sound of multi-stream recordings), all, or streams
+    const QString streamChoice = a.contains("audio_stream") ? a["audio_stream"].toVariant().toString().trimmed() : QString("game");
     const GameHud::Game* game = nullptr;
     const bool noGame = a.contains("game") && a["game"].toString().trimmed().compare("none", Qt::CaseInsensitive) == 0;
     if (a.contains("game") && !noGame) {
@@ -150,6 +153,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         double fps = 0;
         QSize shape; // the first recording's picture size: the cut's shape
         bool streams = false;
+        QVector<QJsonValue> soundOf(files.size()); // per recording: audio_streams for its keep (undefined = all)
+        QStringList soundNotes;
         for (int i = 0; i < files.size(); ++i) {
             const QJsonObject pr = run("probe", {{"file", files[i]}}, step(0.01 * i / files.size(), 0.01 * (i + 1) / files.size()));
             if (!pr["video"].toBool()) fail("BAD_MEDIA", "not a video: " + files[i]);
@@ -159,7 +164,25 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                 shape = QSize(pr["width"].toInt(), pr["height"].toInt());
             }
             streams |= pr["audio_streams"].toArray().size() > 1;
+            QStringList names;
+            for (const QJsonValue& v : pr["audio_streams"].toArray()) names << v.toString();
+            if (streamChoice.compare("all", Qt::CaseInsensitive) == 0 || names.size() < 2) continue;
+            if (streamChoice.compare("game", Qt::CaseInsensitive) != 0) {
+                soundOf[i] = streamChoice; // numbers or names, checked by keep
+                continue;
+            }
+            const QVector<int> g = StreamPresets::gameStreams(names);
+            if (g.isEmpty()) continue;
+            QJsonArray list;
+            QStringList kept;
+            for (int k : g) list << k, kept << names[k];
+            soundOf[i] = list;
+            soundNotes << QString("%1: %2").arg(QFileInfo(files[i]).fileName(), kept.join(", "));
         }
+        if (!soundNotes.isEmpty())
+            done << QString("sound: only the game streams (%1); audio_stream:'all' keeps voice chat, microphone and "
+                            "music too")
+                        .arg(soundNotes.join("; "));
         // 2. The project: a new one next to the video unless one is given (that one gets the new timelines)
         if (project.isEmpty()) {
             const QFileInfo o(out);
@@ -248,8 +271,13 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         const auto moment = [&](const ShortPick::Moment& m) {
             moments << QJsonObject{{"file", files[m.file]}, {"from_s", secondsOf(m.from)}, {"to_s", secondsOf(m.to)}};
         };
+        const auto keepOp = [&](int file, const QJsonArray& ranges) {
+            QJsonObject k{{"op", "keep"}, {"media", files[file]}, {"ranges", ranges}};
+            if (soundOf[file].isArray() || soundOf[file].isString()) k["audio_streams"] = soundOf[file];
+            return k;
+        };
         if (best >= 0) {
-            ops << QJsonObject{{"op", "keep"}, {"media", files[picked[best].file]}, {"ranges", QJsonArray{range(picked[best])}}};
+            ops << keepOp(picked[best].file, QJsonArray{range(picked[best])});
             moment(picked[best]);
         }
         for (int i = 0; i < files.size(); ++i) {
@@ -260,7 +288,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                 ranges << range(m);
                 moment(m);
             }
-            if (!ranges.isEmpty()) ops << QJsonObject{{"op", "keep"}, {"media", files[i]}, {"ranges", ranges}};
+            if (!ranges.isEmpty()) ops << keepOp(i, ranges);
         }
         // The story: the first moment is the hook (`check` story_no_hook reads it), every other one a section of
         // its own (no stretch without a section; the short's copy keeps them). The moments lie one after the other in

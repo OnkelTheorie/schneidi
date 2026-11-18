@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/StreamPresets.h"
 
+#include "core/Transcript.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QSettings>
 #include <algorithm>
 
@@ -38,6 +41,17 @@ bool StreamPresets::isMixTitle(const QString& title)
     const QString t = title.trimmed();
     if (!t.startsWith("mix", Qt::CaseInsensitive)) return false;
     return t.size() == 3 || !t.at(3).isLetter();
+}
+
+QVector<int> StreamPresets::gameStreams(const QStringList& titles)
+{
+    if (titles.size() < 2) return {};
+    static const QRegularExpression other("discord|teamspeak|\\bts3?\\b|mumble|chat|spotify|music|musik|song|radio|browser",
+                                          QRegularExpression::CaseInsensitiveOption);
+    QVector<int> out;
+    for (int i = 0; i < titles.size(); ++i)
+        if (!isMixTitle(titles[i]) && !Transcript::isVoiceName(titles[i]) && !other.match(titles[i]).hasMatch()) out << i;
+    return out.size() < titles.size() ? out : QVector<int>{};
 }
 
 QVector<StreamRule> StreamPresets::plan(const MediaInfo& m) const

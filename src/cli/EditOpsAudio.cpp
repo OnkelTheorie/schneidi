@@ -491,9 +491,9 @@ void opMixer(Session& s, const QJsonObject& op)
         return;
     }
     TrackKind k = TrackKind::Video;
-    const int index = parseTrack(op.value("track"), &k);
+    const int index = parseTrackIn(s.project.timeline(), op.value("track"), &k);
     if (k != TrackKind::Audio || index >= s.project.timeline().audio.size())
-        fail("BAD_ARGUMENT", "track must be an audio track like A1 (or 'master')");
+        fail("BAD_ARGUMENT", "track must be an audio track like A1 or its name (or 'master')");
     if (op.contains("limiter") || op.contains("limiter_db")) fail("BAD_ARGUMENT", "the limiter is on the master only");
     double db = 0, pan = 0;
     const Track& before = s.project.timeline().audio[index];
