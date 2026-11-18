@@ -58,7 +58,7 @@ bool ownLevelFits(const schneidi::h264::EncoderConfig& c)
 QString ownLevelProblem(const schneidi::h264::EncoderConfig& c)
 {
     if (ownLevelFits(c)) return {};
-    return QStringLiteral("the own H.264 encoder cannot write %1x%2 at %3 fps%4: above the highest H.264 level (6.2: "
+    return QStringLiteral("s264 cannot write %1x%2 at %3 fps%4: above the highest H.264 level (6.2: "
                           "up to 8K at 120 fps); use H.264 or H.265")
         .arg(c.width)
         .arg(c.height)
@@ -316,7 +316,7 @@ bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const 
         if (pf == AV_PIX_FMT_NONE) return no("unknown pixel format " + pixFmt);
         // The own encoder takes 8-bit 4:2:0 only: no 10 bit (HDR), no 4:2:2/4:4:4, no alpha, no full range
         if (isOwnH264(videoCodec) && pf != AV_PIX_FMT_YUV420P)
-            return no("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not " + pixFmt);
+            return no("s264 writes only 8-bit 4:2:0 (yuv420p), not " + pixFmt);
         // Converted by OutputColor, uploaded (VAAPI) or by swscale from RGBA
         OutputColor::Target t;
         if (pf != AV_PIX_FMT_VAAPI && !OutputColor::targetOf(pf, t) && !sws_isSupportedOutput(pf))
@@ -788,7 +788,7 @@ struct ExportWriter::Impl {
                   bits / 1000.0 * std::max(1.0, fps) / std::max(1, s.length), ownBitrateK,
                   ownFixedQp ? "fixed QP" : "two passes towards the cap");
         } catch (const std::exception& e) {
-            fail(QStringLiteral("own H.264 encoder, first pass: %1").arg(e.what()), true);
+            fail(QStringLiteral("s264, first pass: %1").arg(e.what()), true);
             return false;
         }
         return !stop;
@@ -1204,7 +1204,7 @@ struct ExportWriter::Impl {
         if (!s.videoCodec.isEmpty()) {
             // The own encoder takes 8-bit 4:2:0 only (supportsOwn refuses the rest before, this is the last guard)
             if (isOwnH264(s.videoCodec) && pixFmt != AV_PIX_FMT_YUV420P) {
-                fail(QStringLiteral("the own H.264 encoder writes only 8-bit 4:2:0 (yuv420p), not %1").arg(s.pixFmt));
+                fail(QStringLiteral("s264 writes only 8-bit 4:2:0 (yuv420p), not %1").arg(s.pixFmt));
                 return false;
             }
             // ... and not tiny pictures or ones above the highest level (before the first pass, not after it)
@@ -1294,7 +1294,7 @@ struct ExportWriter::Impl {
             ownEnc = std::make_unique<schneidi::h264::Encoder>(c);
             header = ownEnc->headers();
         } catch (const std::exception& e) {
-            fail(QStringLiteral("own H.264 encoder cannot be opened: %1").arg(e.what()), true);
+            fail(QStringLiteral("s264 cannot be opened: %1").arg(e.what()), true);
             return false;
         }
         AVCodecParameters* par = vst->codecpar;
@@ -1347,7 +1347,7 @@ struct ExportWriter::Impl {
         packet->pts = ownEnc->lastDisplayIndex();
         packet->dts = ownPackets++ - ownEnc->reorderDelay();
         if (packet->pts < packet->dts) {
-            fail(QStringLiteral("own H.264 encoder: picture %1 shown before it is decoded").arg(packet->pts));
+            fail(QStringLiteral("s264: picture %1 shown before it is decoded").arg(packet->pts));
             return false;
         }
         packet->duration = 1;
@@ -1369,7 +1369,7 @@ struct ExportWriter::Impl {
         try {
             au = ownEnc->encode(ownPicture(f), ownKeyAt(f->pts));
         } catch (const std::exception& e) {
-            fail(QStringLiteral("own H.264 encoder: %1").arg(e.what()), true);
+            fail(QStringLiteral("s264: %1").arg(e.what()), true);
             return false;
         }
         return au.empty() || writeOwn(au);
@@ -1383,7 +1383,7 @@ struct ExportWriter::Impl {
             try {
                 au = ownEnc->flush();
             } catch (const std::exception& e) {
-                fail(QStringLiteral("own H.264 encoder: %1").arg(e.what()), true);
+                fail(QStringLiteral("s264: %1").arg(e.what()), true);
                 return false;
             }
             if (au.empty()) return true;
@@ -2190,7 +2190,7 @@ QString ExportWriter::error() const
 QString ExportWriter::ownSizeProblem(QSize size, double fps)
 {
     if (size.width() < kOwnMinSide || size.height() < kOwnMinSide)
-        return QStringLiteral("the own H.264 encoder needs at least %1x%1 pixels, not %2x%3")
+        return QStringLiteral("s264 needs at least %1x%1 pixels, not %2x%3")
             .arg(kOwnMinSide)
             .arg(size.width())
             .arg(size.height());

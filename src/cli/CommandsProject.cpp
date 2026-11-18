@@ -865,7 +865,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings = p->settings;
         job.preset = p->name;
     }
-    const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
+    const QString formatId = canonicalFormatId(a.contains("format") ? a["format"].toString() : job.settings.format);
     const auto& formats = renderFormats();
     const bool srtOnly = formatId == "srt" || formatId == "vtt"; // only the subtitle files (SRT or WebVTT)
     if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; })) {
@@ -944,7 +944,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         const QString c = a["audio_codec"].toString().trimmed().toLower().remove('-'); // "ac3", "AC-3"
         if (c == "ac3") {
             if (!job.settings.audioFormatChoices().contains("ac3"))
-                fail("BAD_ARGUMENT", "audio_codec ac3 needs an MP4 video format (h264, h265, av1, h264_own)");
+                fail("BAD_ARGUMENT", "audio_codec ac3 needs an MP4 video format (h264, h265, av1, s264)");
             if (!HardwareEncoders::builtIn("ac3")) fail("BAD_ARGUMENT", "this build of FFmpeg has no AC-3 encoder");
             job.settings.audioFormat = "ac3";
         } else if (c.isEmpty() || c == "default" || c == "aac") {

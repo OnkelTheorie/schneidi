@@ -33,9 +33,10 @@ const QVector<RenderFormatInfo>& renderFormats()
         // VP9 constant quality needs bit rate 0; "good" + cpu-used 4 + row-mt: reasonable speed
         {"vp9", "VP9 (WebM)", "webm", "libvpx-vp9", "libopus", "yuv420p", K::Video, {24, 31, 37}, false, false,
          "vb=0 deadline=good cpu-used=4 row-mt=1"},
-        // schneidi's own H.264 encoder, experimental (engine/encoder/h264): never a default, in no preset. Quality
-        // levels as x264's CRF (ExportWriter::ownH264Qp makes a QP of them), "web" = the cap as a bit rate target
-        {"h264_own", N_("H.264 (eigener Encoder, experimentell)"), "mp4", "h264_own", "aac", "yuv420p", K::Video,
+        // s264, schneidi's own H.264 encoder, experimental (engine/encoder/h264): never a default, in no preset, never
+        // a fallback. Quality levels as x264's CRF (ExportWriter::ownH264Qp makes a QP of them), "web" = the cap as a
+        // bit rate target. Id "h264_own" up to 0.23 (renderFormat maps it)
+        {"s264", N_("s264 (experimentell)"), "mp4", "s264", "aac", "yuv420p", K::Video,
          {18, 22, 28}, true, false, ""},
         // Mastering / exchange with other editors: fixed (high) quality, uncompressed sound
         {"prores", "ProRes 422 HQ (MOV)", "mov", "prores_ks", "pcm_s24le", "yuv422p10le", K::Video, {}, false, false, "vprofile=3"},
@@ -64,11 +65,17 @@ const QVector<RenderFormatInfo>& renderFormats()
     return formats;
 }
 
+QString canonicalFormatId(const QString& id)
+{
+    return id == QLatin1String("h264_own") ? QStringLiteral("s264") : id; // (s264's id up to 0.23)
+}
+
 const RenderFormatInfo& renderFormat(const QString& id)
 {
     const auto& f = renderFormats();
+    const QString canonical = canonicalFormatId(id);
     for (const RenderFormatInfo& i : f)
-        if (id == QLatin1String(i.id)) return i;
+        if (canonical == QLatin1String(i.id)) return i;
     return f.first();
 }
 

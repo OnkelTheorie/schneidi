@@ -72,8 +72,12 @@ public:
     // B-frames (adaptive runs, the encoder's default count). Options: "qp" (fixed quantizer), "bitrate" (kbit/s cap: a
     // first pass analyses every picture and predicts the size at "qp"; below the cap the QP stays, else the second pass
     // aims at the cap), "lookahead" (pictures, low memory), "bframes" (most B pictures in a run, 0 = none)
-    static constexpr const char* kOwnH264 = "h264_own";
-    static bool isOwnH264(const QString& codec) { return codec == QLatin1String(kOwnH264); }
+    static constexpr const char* kOwnH264 = "s264";
+    // ("h264_own": its name up to 0.23, still in saved render settings)
+    static bool isOwnH264(const QString& codec)
+    {
+        return codec == QLatin1String(kOwnH264) || codec == QLatin1String("h264_own");
+    }
     // The own encoder's fixed QP for an x264-like CRF (the export's quality levels)
     static int ownH264Qp(int crf);
     // Why the own encoder cannot write pictures of this size at this frame rate (empty = it can): smaller than

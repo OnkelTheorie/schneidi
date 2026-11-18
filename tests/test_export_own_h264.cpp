@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// schneidi's own H.264 encoder as the experimental export format "h264_own": never the default, in no preset; a short
+// schneidi's own H.264 encoder s264 as the experimental export format "s264" (id "h264_own" up to 0.23, still read):
+// never the default, in no preset, never a fallback (not even in the GPL-free build); a short
 // synthetic timeline into MP4 and MKV (ffprobe sees H.264, frame count, duration, frame rate, decodes without errors,
 // PSNR against the source, a forced key frame at a cut between two near-identical sources, BT.709 limited range in the
 // SPS's VUI and the container, the level from levelIdcFor); which cuts force key frames (no splits, jump cuts or
@@ -15,7 +16,6 @@
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
-#include "engine/Licenses.h"
 #include "engine/encoder/h264/H264Encoder.h"
 #include "engine/RenderQueue.h"
 
@@ -102,7 +102,7 @@ ExportSettings settings(const QString& path, int quality = 0, const ProjectForma
     RenderJob j;
     j.id = 1;
     j.path = path;
-    j.settings.format = "h264_own";
+    j.settings.format = "s264";
     j.settings.quality = quality;
     ExportSettings s = RenderQueue::exportSettings(j, format);
     s.threads = 4;
@@ -258,18 +258,22 @@ QString pictureTypes(const QString& path)
 
 void testNotDefault()
 {
-    CHECK(RenderSettings().format != QLatin1String("h264_own"));
-    CHECK_EQ(QString(renderFormat("h264_own").id), QString("h264_own"));
-    CHECK_EQ(QString(renderFormat("h264_own").videoCodec), QString(ExportWriter::kOwnH264));
-    CHECK(!renderFormat("h264_own").hardware); // no encoder choice: always the own one
-    CHECK(HardwareEncoders::formatAvailable("h264_own"));
-    // The GPL-free build (no x264 built in or installed) writes H.264 with the own encoder instead of OpenH264
-    if (Licenses::builtWithoutGpl() && HardwareEncoders::externalProgram("libx264").isEmpty())
-        CHECK_EQ(HardwareEncoders::softwareCodec("h264"), QString(ExportWriter::kOwnH264));
-    else if (HardwareEncoders::builtIn("libx264"))
-        CHECK_EQ(HardwareEncoders::softwareCodec("h264"), QString("libx264"));
+    CHECK(RenderSettings().format != QLatin1String("s264"));
+    CHECK_EQ(QString(renderFormat("s264").id), QString("s264"));
+    CHECK_EQ(QString(renderFormat("s264").videoCodec), QString(ExportWriter::kOwnH264));
+    CHECK(!renderFormat("s264").hardware); // no encoder choice: always s264
+    CHECK(HardwareEncoders::formatAvailable("s264"));
+    // The id up to 0.23 still means s264 (saved render settings, user presets)
+    CHECK_EQ(QString(renderFormat("h264_own").id), QString("s264"));
+    CHECK(ExportWriter::isOwnH264("h264_own"));
+    RenderSettings old;
+    old.format = "h264_own";
+    CHECK_EQ(RenderSettings::fromJson(old.toJson()).format, QString("s264"));
+    // Never chosen automatically: software H.264 is x264 or OpenH264, also in the GPL-free build
+    CHECK(!ExportWriter::isOwnH264(HardwareEncoders::softwareCodec("h264")));
+    if (HardwareEncoders::builtIn("libx264")) CHECK_EQ(HardwareEncoders::softwareCodec("h264"), QString("libx264"));
     for (const RenderPreset& p : RenderPresets::builtins())
-        if (!CHECK(p.settings.format != QLatin1String("h264_own"))) std::printf("       preset %s\n", qPrintable(p.id));
+        if (!CHECK(p.settings.format != QLatin1String("s264"))) std::printf("       preset %s\n", qPrintable(p.id));
     // An unknown format falls back to H.264 with x264/OpenH264, never to the own encoder
     CHECK_EQ(QString(renderFormat("nonsense").id), QString("h264"));
     // Quality levels -> QP: finer for better, in range
@@ -351,11 +355,11 @@ void testBFrames(const QString& dir)
         std::printf("  reference %s (%s): video starts %.4f s, audio %.4f s\n", ext, qPrintable(s.videoCodec), pk.videoStart,
                     pk.audioStart);
     }
-    // 0 = the default (runs of up to 8 B pictures here: longer than the pyramid's 4, so plain runs), 1 = runs of at most
-    // 3 (bframes=3): B pyramid, the middle B picture decoded before its outer ones, 2 = no B pictures
+    // 0 = the default (runs of up to 8 B pictures, since the encoder's B pyramid also on long runs a pyramid), 1 = runs of
+    // at most 3 (bframes=3): B pyramid, the middle B picture decoded before its outer ones, 2 = no B pictures
     for (const int variant : {0, 1, 2})
         for (const char* name : {"b.mp4", "b.mkv"}) {
-            const bool withB = variant != 2, pyramid = variant == 1;
+            const bool withB = variant != 2, pyramid = withB;
             const QString path = dir + "/" + QStringList{"", "pyr-", "nob-"}[variant] + name;
             const bool mkv = QString(name).endsWith("mkv");
             Timeline tl = timeline(g_media);
@@ -647,13 +651,11 @@ void testReview()
     RenderJob j;
     j.id = 1;
     j.path = "/nowhere/review.mp4";
-    j.settings.format = "h264_own";
+    j.settings.format = "s264";
     j.review = true;
     const ExportSettings s = RenderQueue::exportSettings(j, kFmt);
     CHECK(!ExportWriter::isOwnH264(s.videoCodec));
-    // (the GPL-free build's software H.264 is the own encoder itself: OpenH264 for the review there)
-    const QString plain = HardwareEncoders::resolve(VideoEncoder::Software, "h264").codec;
-    CHECK_EQ(s.videoCodec, ExportWriter::isOwnH264(plain) ? QString("libopenh264") : plain);
+    CHECK_EQ(s.videoCodec, HardwareEncoders::resolve(VideoEncoder::Software, "h264").codec);
     CHECK_EQ(s.preset, QString("ultrafast"));
     CHECK(!s.smartRender);
     j.review = false;

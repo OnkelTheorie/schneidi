@@ -260,7 +260,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/VideoEffects.h     src/engine/VideoEffects.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/ExportWriter.h     src/engine/ExportWriter.cpp
-    # Own H.264 encoder (experimental export option "h264_own"; prototype tool h264-proto below)
+    # Own H.264 encoder (s264, the experimental export option "s264"; prototype tool h264-proto below)
     src/engine/encoder/h264/H264Encoder.h src/engine/encoder/h264/H264Encoder.cpp
     src/engine/encoder/h264/Cavlc.h       src/engine/encoder/h264/Cavlc.cpp
     src/engine/encoder/h264/H264Cabac.cpp
@@ -735,7 +735,7 @@ if(SCHNEIDI_FUZZ)
     add_subdirectory(tests/fuzz)
 endif()
 
-# Own H.264 encoder (in the app as the experimental export format "h264_own"): the prototype tool, build with `cmake --build build --target h264-proto`
+# Own H.264 encoder (s264, in the app as the experimental export format "s264"): the prototype tool, build with `cmake --build build --target h264-proto`
 add_executable(h264-proto EXCLUDE_FROM_ALL
     tools/h264proto/main.cpp
     src/engine/encoder/h264/Cavlc.cpp

@@ -1122,8 +1122,8 @@ const QVector<Command>& commands()
                            "the error names the ones that fit", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String,
-           "h264 (default), h265, av1, vp9 (WebM); h264_own (experimental own encoder: 8-bit 4:2:0, "
-           "slower than x264; quality 3 = high, two passes towards the cap only when needed); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
+           "h264 (default), h265, av1, vp9 (WebM); s264 (experimental: schneidi's H.264 encoder s264, 8-bit 4:2:0, "
+           "slower than x264, use it only when asked; quality 3 = high, two passes towards the cap only when needed); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
@@ -1147,8 +1147,7 @@ const QVector<Command>& commands()
                                  "or installed as the extension 'x264', else the free OpenH264/kvazaar (about twice "
                                  "the file size for the same quality): then the answer has 'encoder_hint' and "
                                  "'better_encoder' (install it with `extensions` install x264, ask the user first: "
-                                 "72 MB download, GPL). The GPL-free build writes software H.264 with schneidi's own encoder "
-                                 "(h264_own, about x264's size; no hint)"},
+                                 "72 MB download, GPL)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
                                   "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
