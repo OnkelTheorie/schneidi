@@ -811,6 +811,8 @@ int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const Source
             if (const Clip* c = findClip(tl, id, &ref)) {
                 if (e.edge == Edge::Start) limitStart(*c, lo, hi);
                 else limitEnd(*c, lo, hi, sourceLength);
+                // (A head trim also moves what lies over the clip after the cut, applyTrimEdit; a track where that
+                // would overlap stays as it is)
                 from = std::min(from, c->end());
                 ++perTrack[qMakePair(int(ref.kind), ref.index)];
             }
@@ -882,7 +884,12 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
         QMap<QPair<int, int>, QVector<QPair<int, int>>> perTrack; // (kind, index) -> (old end, offset)
         for (int id : e.ids) {
             TrackRef ref;
-            if (const Clip* c = findClip(tl, id, &ref)) perTrack[qMakePair(int(ref.kind), ref.index)] << qMakePair(c->end(), shift);
+            if (const Clip* c = findClip(tl, id, &ref)) {
+                // Tail: from its old end. Head: the content moves (its in changes), so do the clips of the other
+                // tracks over it from the cut on (a sound effect on a kill inside the clip stayed put, duel 18.11.)
+                const int at = e.edge == Edge::End ? c->end() : c->start + std::max(0, delta);
+                perTrack[qMakePair(int(ref.kind), ref.index)] << qMakePair(at, shift);
+            }
         }
         QVector<QPair<int, int>> shifts;
         QPair<int, int> lead; // the track the others follow

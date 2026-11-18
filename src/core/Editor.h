@@ -63,7 +63,8 @@ public:
     QVector<int> withLinked(const QVector<int>& ids) const;
     // The kill feed copies (Reframe::keepCopy, linked to their clip) that follow a clip among `ids` that is no copy
     // itself, also those among `ids`; never on locked tracks. They move, trim, split, retime and go with their clip.
-    QVector<int> followingCopies(const QVector<int>& ids) const;
+    // lockedToo: also those on locked tracks (where copies usually lie; the grade follows its clip there)
+    QVector<int> followingCopies(const QVector<int>& ids, bool lockedToo = false) const;
     // `ids` and their following copies (the edits that change a clip's time: moving, deleting, trimming, splitting,
     // retiming - whatever the "Linked Selection" setting)
     QVector<int> withCopies(const QVector<int>& ids) const;
@@ -236,6 +237,10 @@ public:
     QVector<int> selectedAudioClips() const;
     // Change any clip property (Inspector). Same mergeKey = one undo step.
     void modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
+                     const QString& mergeKey = {});
+    // The same for the colour grade of video clips: their kill feed copies get it too, also on a locked track (the
+    // copy is a crop of the same picture; ungraded it looked washed out above the graded clip, duel 18.11.)
+    void modifyGrade(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                      const QString& mergeKey = {});
     // Blade: split clip (with linked partners) or subtitle entry (only this one) at `frame`
     void bladeAt(int clipId, int frame);

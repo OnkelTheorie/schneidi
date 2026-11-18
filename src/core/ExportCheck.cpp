@@ -388,7 +388,8 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
             if (seconds >= o.subtitleMinS && cps > o.subtitleMaxCps)
                 out << issue(Severity::Warning, "subtitle_fast",
                              T("Untertitel zu schnell (%1 Zeichen/s, höchstens %2): „%3“")
-                                 .arg(num(cps, 0), num(o.subtitleMaxCps, 0), cue.text.simplified()),
+                                 .arg(num(cps, std::lround(cps) <= o.subtitleMaxCps ? 1 : 0), // 21.3 is no "21, at most 21"
+                                      num(o.subtitleMaxCps, 0), cue.text.simplified()),
                              cue.start, cue.end);
         }
     }

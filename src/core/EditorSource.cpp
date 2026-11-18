@@ -174,6 +174,18 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
     // single stream
     const int a0 = streamTrackStart(tl, m, aTrack, start, length);
     QVector<int> out = streamTracksInOrder(tl, m, aTrack, start, length);
+    if (n == 1 && out[0] >= 0 && out[0] < tl.audio.size() && tl.audio[out[0]].muted) {
+        // The file's only sound never goes onto a muted track (a template's muted "Mix" track made a podcast
+        // silent, duel 18.11.): the first unmuted, unlocked track free over the range (an unnamed one first: the
+        // others are named after other sound), else a new one at the bottom
+        const auto fine = [&](int j) { return !tl.audio[j].muted && !locked(j) && empty(j); };
+        int pick = -1;
+        for (int j = 0; j < tl.audio.size() && pick < 0; ++j)
+            if (fine(j) && tl.audio[j].name.trimmed().isEmpty()) pick = j;
+        for (int j = 0; j < tl.audio.size() && pick < 0; ++j)
+            if (fine(j)) pick = j;
+        out[0] = pick >= 0 ? pick : int(tl.audio.size());
+    }
     if (n < 2) return out;
     const bool overMaterial = m.hasVideo && vTrack >= 0 ? !emptyIn(tl.video, vTrack) : !empty(aTrack);
     if (overMaterial) return out;

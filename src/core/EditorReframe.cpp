@@ -30,7 +30,7 @@ QVector<int> Editor::reframeTargets(const QVector<int>& ids, QVector<int>* overl
     return out;
 }
 
-QVector<int> Editor::followingCopies(const QVector<int>& ids) const
+QVector<int> Editor::followingCopies(const QVector<int>& ids, bool lockedToo) const
 {
     const Timeline& tl = m_project->timeline();
     // Of the video clips among ids that are no copies themselves: the copy shares its link with the clip's sound too,
@@ -44,7 +44,7 @@ QVector<int> Editor::followingCopies(const QVector<int>& ids) const
     for (const Track& t : tl.video)
         for (const Clip& x : t.clips)
             if (!x.keepRegion.isEmpty() && leads.contains({x.linkId, x.mediaPath})) out << x.id;
-    return editable(out);
+    return lockedToo ? out : editable(out);
 }
 
 QVector<int> Editor::withCopies(const QVector<int>& ids) const

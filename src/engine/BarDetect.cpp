@@ -7,6 +7,7 @@
 
 extern "C" {
 #include <libavutil/frame.h>
+#include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
 
@@ -32,7 +33,8 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 6; // bump when the measurement changes (6: fixed pictures instead of the nearest decoded)
+constexpr int kVersion = 7; // bump when the measurement changes (6: fixed pictures instead of the nearest decoded;
+                            // 7: pictures with transparency have no bars)
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
 constexpr int kMaxDecode = 250; // pictures decoded at most per spot for an exact picture (files with few key frames)
@@ -259,8 +261,11 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
     std::vector<double> at;
     for (int i = 0; i < kSamples; ++i) at.push_back(0.05 + 0.9 * (i + 0.5) / kSamples);
     SwsContext* sws = nullptr;
+    bool alpha = false; // a logo PNG: its transparent edge shows what lies below, it is no bar (it read as black)
     const int got = Video::fixedPictures(path, at, kSamples / 2, kMaxDecode, [&](const AVFrame* f, int turns) {
         if (cancel && cancel->load()) return false;
+        if (const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(AVPixelFormat(f->format)); d && (d->flags & AV_PIX_FMT_FLAG_ALPHA))
+            alpha = true;
         // Shrunk as stored, then turned upright (sideways: stored kH x kW)
         const bool sideways = turns % 2 != 0;
         const int w = sideways ? kH : kW, h = sideways ? kW : kH;
@@ -293,6 +298,7 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
         ir.setAutoTransform(true);
         const QImage img = ir.read();
         if (img.isNull()) return fail(T("Datei lässt sich nicht öffnen: %1").arg(path));
+        alpha = alpha || img.hasAlphaChannel();
         const QImage g = img.convertToFormat(QImage::Format_Grayscale8).scaled(kW, kH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         std::vector<uint8_t> gray(size_t(kW) * kH);
         for (int y = 0; y < kH; ++y) std::copy_n(g.constScanLine(y), kW, gray.begin() + std::ptrdiff_t(y) * kW);
@@ -300,7 +306,7 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
     }
     if (cancel && cancel->load()) return fail(T("Abgebrochen."));
     if (pics.empty()) return fail(T("Kein Bild vom Clip"));
-    const QRectF out = measure(pics);
+    const QRectF out = alpha ? QRectF(0, 0, 1, 1) : measure(pics);
     {
         QMutexLocker lock(&g_mutex);
         g_memory.insert(base(path), out);

@@ -67,6 +67,72 @@ Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs
     return l;
 }
 
+bool isSilent(const Levels& levels)
+{
+    return std::none_of(levels.db.begin(), levels.db.end(), [](float db) { return db > -60.f; });
+}
+
+int dropHallucinations(QVector<Word>& words, const Levels& levels)
+{
+    // Lower-case letters and digits of each word, split at everything else ("Amara.org-Community" = 3 tokens)
+    QStringList tokens;
+    QVector<int> wordOf; // token -> word index
+    for (int i = 0; i < words.size(); ++i) {
+        QString t;
+        for (const QChar c : words[i].text.toLower()) t += c.isLetterOrNumber() ? c : QChar(' ');
+        for (const QString& x : t.split(' ', Qt::SkipEmptyParts)) {
+            tokens << x;
+            wordOf << i;
+        }
+    }
+    struct Phrase { QStringList tokens; bool always; };
+    static const QVector<Phrase> phrases = {
+        {{"untertitelung", "des", "zdf"}, true},
+        {{"untertitelung", "im", "auftrag", "des", "zdf"}, true},
+        {{"untertitel", "im", "auftrag", "des", "zdf"}, true},
+        {{"untertitel", "der", "amara", "org", "community"}, true},
+        {{"untertitel", "von", "stephanie", "geiges"}, true},
+        {{"subtitles", "by", "the", "amara", "org", "community"}, true},
+        {{"untertitelung", "br"}, true},
+        {{"vielen", "dank", "fürs", "zuschauen"}, false},
+        {{"vielen", "dank", "für", "s", "zuschauen"}, false},
+        {{"danke", "fürs", "zuschauen"}, false},
+        {{"thanks", "for", "watching"}, false},
+        {{"thank", "you", "for", "watching"}, false},
+        {{"bis", "zum", "nächsten", "mal"}, false},
+    };
+    const auto quiet = [&](qint64 from, qint64 to) {
+        if (levels.db.isEmpty()) return false;
+        const int a = int(std::clamp<qint64>(from / levels.frameMs, 0, levels.db.size()));
+        const int b = int(std::clamp<qint64>(to / levels.frameMs + 1, a, levels.db.size()));
+        for (int i = a; i < b; ++i)
+            if (levels.db[i] > -45.f) return false;
+        return true;
+    };
+    QVector<bool> drop(words.size(), false);
+    for (int t = 0; t < tokens.size(); ++t)
+        for (const Phrase& p : phrases) {
+            if (t + p.tokens.size() > tokens.size()) continue;
+            bool same = true;
+            for (int k = 0; k < p.tokens.size() && same; ++k) same = tokens[t + k] == p.tokens[k];
+            if (!same) continue;
+            int last = t + int(p.tokens.size()) - 1;
+            // ", 2020" or "2018" after it belongs to the line
+            while (last + 1 < tokens.size() && tokens[last + 1].size() == 4 && tokens[last + 1].toInt() > 1900) ++last;
+            const int w0 = wordOf[t], w1 = wordOf[last];
+            if (!p.always && !quiet(words[w0].from, words[w1].to)) continue;
+            for (int w = w0; w <= w1; ++w) drop[w] = true;
+        }
+    int removed = 0;
+    QVector<Word> kept;
+    for (int i = 0; i < words.size(); ++i) {
+        if (drop[i]) ++removed;
+        else kept << words[i];
+    }
+    words = kept;
+    return removed;
+}
+
 namespace {
 // Prefix sums of the loud frames; loud = clearly above the quiet parts (20th percentile), at least -50 dB
 QVector<int> loudPrefix(const Levels& levels)

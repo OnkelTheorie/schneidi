@@ -25,6 +25,7 @@ struct Result {
     QString language; // detected or given, e.g. "de"
     QVector<Word> words;
     Levels levels; // of the audio whisper heard (engine/Transcriber), for startAtSound
+    int dropped = 0; // words of made-up lines removed (dropHallucinations) or heard in silence
 };
 
 // whisper-cli JSON output (-oj) of a run with one word per segment (-ml 1 -sow). false = not readable.
@@ -50,6 +51,16 @@ QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& leve
 qint64 spokenEnd(const Word& w);
 
 Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs = 10);
+
+// No audible sound at all (every level below -60 dB, or no levels): a muted track or a disabled stream, not a
+// quiet voice; whisper then makes up words ("Untertitelung des ZDF")
+bool isSilent(const Levels& levels);
+
+// Whisper's well-known made-up lines from the TV subtitles it learned from ("Untertitelung des ZDF, 2020",
+// "Untertitel der Amara.org-Community", "Subtitles by …") are removed wherever they are; the polite endings ("Vielen
+// Dank fürs Zuschauen", "Thanks for watching") only where `levels` are quiet under them (said for real they stay).
+// Returns how many words were removed.
+int dropHallucinations(QVector<Word>& words, const Levels& levels);
 
 // Whisper often stretches words over the pause or unrecognised sound (laughter) before them ("Das ist scheiße"
 // 6.5–15.4 s, spoken from 13.9 s); subtitles then start far too early. Runs of words longer than their spoken length
