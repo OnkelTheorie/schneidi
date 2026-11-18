@@ -2,6 +2,7 @@
 // Clause numbers refer to ITU-T H.264. The encoder mirrors the decoder's
 // reconstruction exactly (8.3, 8.5), so later P frames can reference it.
 #include "Simd.h" // first: no floating-point contraction (see there)
+#include "DevEnv.h"
 #include "H264Encoder.h"
 #include "FrameCoder.h"
 
@@ -40,7 +41,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
                     int highFrom = 0, double* zeroCost = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
-static const bool gTiming = std::getenv("H264_TIMING") != nullptr;
+static const bool gTiming = devEnv("H264_TIMING") != nullptr;
 struct PhaseClock {
     std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
     double ms[8] = {};
@@ -57,7 +58,7 @@ struct PhaseClock {
 namespace {
 
 // Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
-const bool gStats = std::getenv("H264_STATS") != nullptr;
+const bool gStats = devEnv("H264_STATS") != nullptr;
 std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
 std::mutex gStatMutex;
 double gStatT8LossIf4[20] = {}, gStatT8LossIf8[20] = {}; // RD cost lost if only 4x4 / only 8x8 were coded
@@ -70,15 +71,17 @@ std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of t
 double gStatEstT8[8][3] = {}, gStatEstSplit[8][3] = {}, gStatEstTotal = 0;
 // B macroblocks: skip, direct, 16x16 L0 / L1 / Bi, 16x8 or 8x16, 8x8, intra, and of the coded inter ones the 8x8 transform.
 std::atomic<long> gStatB[9] = {};
+std::atomic<long> gStatCalls[10] = {}; // calls: plan 8x8, plan 4x4, motion search, SATD position, SAD position (sadPart), intra try, mbBits, P macroblocks, -, chroma
+std::atomic<long> gStatB2[6] = {}; // B macroblocks: early skip, direct-plan skip, searched, split searched, 8x8 searched, split or 8x8 coded for real
 // Experiments (H264_EXP bit mask), for A/B measurements only.
-const int gExp = std::getenv("H264_EXP") ? std::atoi(std::getenv("H264_EXP")) : 0;
+const int gExp = devEnv("H264_EXP") ? std::atoi(devEnv("H264_EXP")) : 0;
 // Deblocking filter offsets (slice_alpha_c0_offset_div2 / slice_beta_offset_div2, -6..6), for
 // measurements only: H264_DBA / H264_DBB.
-const int gDeblockA = std::clamp(std::getenv("H264_DBA") ? std::atoi(std::getenv("H264_DBA")) : 0, -6, 6);
-const int gDeblockB = std::clamp(std::getenv("H264_DBB") ? std::atoi(std::getenv("H264_DBB")) : 0, -6, 6);
+const int gDeblockA = std::clamp(devEnv("H264_DBA") ? std::atoi(devEnv("H264_DBA")) : 0, -6, 6);
+const int gDeblockB = std::clamp(devEnv("H264_DBB") ? std::atoi(devEnv("H264_DBB")) : 0, -6, 6);
 // AQ texture measure (experiment, H264_AQEDGE): 0 = variance of the macroblock, 1 = mean of its
 // 8x8 quadrants' variances, 2 = mean of the two flattest quadrants.
-const int gAqEdge = std::getenv("H264_AQEDGE") ? std::atoi(std::getenv("H264_AQEDGE")) : 0;
+const int gAqEdge = devEnv("H264_AQEDGE") ? std::atoi(devEnv("H264_AQEDGE")) : 0;
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
@@ -91,24 +94,24 @@ thread_local char tDecision[160] = {};
 // BD-rate PSNR-Y / SSIM-Y / instructions): threshold 1.2 alone +0.17 / +0.11 % / -5.9 %, all three
 // +0.30 / +0.22 % / -7.8 %; pre-selection 1.1 with limit 0.9 +0.31 / +0.53 % / -6.4 % (no).
 thread_local int tIntraEst16 = -1;
-const double gIntraSel = std::getenv("H264_INTRASEL") ? std::atof(std::getenv("H264_INTRASEL")) : 1.2;
+const double gIntraSel = devEnv("H264_INTRASEL") ? std::atof(devEnv("H264_INTRASEL")) : 1.2;
 // With the pre-selection: an intra type is also given up once its SATD exceeds this many times the
 // inter cost (the motion search's SATD + mode bits; H264_INTRAINTER, 0 = no such limit).
 thread_local double tInterCost = -1;
-const double gIntraInter = std::getenv("H264_INTRAINTER") ? std::atof(std::getenv("H264_INTRAINTER")) : 1.0;
+const double gIntraInter = devEnv("H264_INTRAINTER") ? std::atof(devEnv("H264_INTRAINTER")) : 1.0;
 // Set by encodeMbIntra when every intra type was given up (nothing coded).
 thread_local bool tIntraNone = false;
 // Intra try in P pictures only when its estimate is below gIntraFactor x the inter cost (2.0 before 11.11.:
 // -10 % instructions for +0.17 % BD-rate), and in the borderline case (estimate above the inter
 // cost) without Intra 8x8 / 16x16 (-8 % for +0.2 %). H264_FULLINTRA=1 restores the full search.
-const bool gFullIntra = std::getenv("H264_FULLINTRA") != nullptr;
+const bool gFullIntra = devEnv("H264_FULLINTRA") != nullptr;
 // 1.5 -> 1.2 (12.11., with the pre-selection below): see gIntraSel. 1.2 -> 1.1 (14.11.; two-pass,
 // 4 rates, BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation; instructions two-pass 8 Mbit/s
 // CS2): +0.14 / +0.09, +0.14 / +0.02, -0.03 / -0.08, +0.18 / +0.77 % for -1.6 %; 1.0: +0.28 / +0.20,
 // +0.44 / +0.14, +0.06 / -0.12, -0.11 / -0.84 % for -3.7 %.
-const double gIntraFactor = std::getenv("H264_INTRAF") ? std::atof(std::getenv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.1;
+const double gIntraFactor = devEnv("H264_INTRAF") ? std::atof(devEnv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.1;
 // B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
-const bool gBParts = !std::getenv("H264_BPARTS") || std::atoi(std::getenv("H264_BPARTS")) != 0;
+const bool gBParts = !devEnv("H264_BPARTS") || std::atoi(devEnv("H264_BPARTS")) != 0;
 // Psycho-visual RD of the macroblock a thread is deciding (FrameCoder::psyBegin): the weight of a
 // unit of distance in its cost (0 = off) and the Hadamard coefficient magnitudes of the source's
 // four 8x8 luma blocks (hadamardMags8x8U8).
@@ -127,34 +130,34 @@ thread_local PsyMb tPsy;
 // candidate +0.2..0.9 / +2.5..3.2 / -0.08..-0.14; with the intra one below as well +0.5..1.1 /
 // +2.9..4.0 / -0.08..-0.11; psyRd 2.0 +1.2..1.8 / +5.7..7.2 / -0.20..-0.41. H264_PSYQ overrides
 // (0 = no such candidate).
-const double gPsyFine = std::getenv("H264_PSYQ") ? std::atof(std::getenv("H264_PSYQ")) : 0.25;
+const double gPsyFine = devEnv("H264_PSYQ") ? std::atof(devEnv("H264_PSYQ")) : 0.25;
 // The finer quantisation leaves the lowest frequencies as they are (scan positions below these, 4x4
 // and 8x8 transform): a DC or first AC level more in one block and not in its neighbour is a
 // visible step at high QP, not texture. H264_PSYQ4 / H264_PSYQ8 override.
-const int gPsyFineFrom4 = std::getenv("H264_PSYQ4") ? std::atoi(std::getenv("H264_PSYQ4")) : 3;
-const int gPsyFineFrom8 = std::getenv("H264_PSYQ8") ? std::atoi(std::getenv("H264_PSYQ8")) : 6;
+const int gPsyFineFrom4 = devEnv("H264_PSYQ4") ? std::atoi(devEnv("H264_PSYQ4")) : 3;
+const int gPsyFineFrom8 = devEnv("H264_PSYQ8") ? std::atoi(devEnv("H264_PSYQ8")) : 6;
 // The same for intra macroblocks, whose quantisation rounds down below 2/3 of a step: the chosen
 // type once more rounding to nearest (tIntraFine: offset gPsyIntraRound instead of 1/3), and the
 // psy cost decides. H264_PSYIQ overrides (0 = no such candidate).
-const double gPsyIntraRound = std::getenv("H264_PSYIQ") ? std::atof(std::getenv("H264_PSYIQ")) : 0.5;
+const double gPsyIntraRound = devEnv("H264_PSYIQ") ? std::atof(devEnv("H264_PSYIQ")) : 0.5;
 thread_local bool tIntraFine = false;
 // B pictures: B_8x8 with direct 8x8 blocks (H264_B8X8=0 turns it off, for measurements).
-const bool gB8x8 = !std::getenv("H264_B8X8") || std::atoi(std::getenv("H264_B8X8")) != 0;
+const bool gB8x8 = !devEnv("H264_B8X8") || std::atoi(devEnv("H264_B8X8")) != 0;
 // B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
 // the average of the two vectors as found), tried where the average is within this factor of the
 // better single list. In long runs only (a slow zoom: +0.06 dB at 2 Mbit/s, and most macroblocks
 // are skipped before it); in short runs it costs +16 % instructions for 0.6 % of the B pictures'
 // bits (a pan with B pictures). H264_BIREFINE sets the rounds for all runs.
-const int gBiRefineEnv = std::getenv("H264_BIREFINE") ? std::atoi(std::getenv("H264_BIREFINE")) : -1;
+const int gBiRefineEnv = std::clamp(devEnv("H264_BIREFINE") ? std::atoi(devEnv("H264_BIREFINE")) : -1, -1, 8);
 constexpr int kBiRefineLong = 2;
 // B pictures: the splits (16x8, 8x16, 8x8) are not searched where the 16x16 estimate is below this
 // many lambda (as for P pictures, H264_SPLITSKIP). 0 = always.
-const double gBSplitSkip = std::getenv("H264_BSPLITSKIP") ? std::atof(std::getenv("H264_BSPLITSKIP")) : 200.0;
-const double gBiRefineNear = std::getenv("H264_BIREFINE_NEAR") ? std::atof(std::getenv("H264_BIREFINE_NEAR")) : 1.15;
+const double gBSplitSkip = devEnv("H264_BSPLITSKIP") ? std::atof(devEnv("H264_BSPLITSKIP")) : 200.0;
+const double gBiRefineNear = devEnv("H264_BIREFINE_NEAR") ? std::atof(devEnv("H264_BIREFINE_NEAR")) : 1.15;
 // B pictures: candidates coded for real (direct aside): the best 16x16, the best split and, with
 // H264_BRD, the other choices of lists of the 16x16 layout.
 constexpr int kMaxBCands = 4;
-const double gBRd = std::getenv("H264_BRD") ? std::atof(std::getenv("H264_BRD")) : 0.0;
+const double gBRd = devEnv("H264_BRD") ? std::atof(devEnv("H264_BRD")) : 0.0;
 // B pictures keep their reference pictures' texture (EncoderConfig::bSharp, FrameCoder::encodeMbB).
 // H264_BSHARP overrides the weight (0 = off).
 // - In the search's SATD estimates (list 0, list 1 or both per partition, direct or searched per
@@ -171,17 +174,17 @@ const double gBRd = std::getenv("H264_BRD") ? std::atof(std::getenv("H264_BRD"))
 // - Not in long runs (more than four B pictures, as placed on still or slowly zooming material):
 //   their B pictures do not pulse more than x264's (sharpness step 0.018 against 0.020) and the
 //   cost would take 6 points of their gain. H264_BSHARPLONG=1 applies it there too.
-const double gBSharpEnv = std::getenv("H264_BSHARP") ? std::atof(std::getenv("H264_BSHARP")) : -1.0;
-const double gBSharpEst = std::getenv("H264_BSHARPEST") ? std::atof(std::getenv("H264_BSHARPEST")) : 1.0;
-const double gBSharpKeep = std::getenv("H264_BSHARPKEEP") ? std::atof(std::getenv("H264_BSHARPKEEP")) : 0.85;
-const bool gBSharpLong = std::getenv("H264_BSHARPLONG") && std::atoi(std::getenv("H264_BSHARPLONG")) != 0;
+const double gBSharpEnv = devEnv("H264_BSHARP") ? std::atof(devEnv("H264_BSHARP")) : -1.0;
+const double gBSharpEst = devEnv("H264_BSHARPEST") ? std::atof(devEnv("H264_BSHARPEST")) : 1.0;
+const double gBSharpKeep = devEnv("H264_BSHARPKEEP") ? std::atof(devEnv("H264_BSHARPKEEP")) : 0.85;
+const bool gBSharpLong = devEnv("H264_BSHARPLONG") && std::atoi(devEnv("H264_BSHARPLONG")) != 0;
 // Texture keepers (psy-RD, bSharp) by the source macroblock's texture (the AQ's energy, log2 of 256 x variance + 1):
 // none below gFlatLo, in full from gFlatHi. A flat or smoothly shaded macroblock has no texture to keep - there
 // both only cost: psy codes quantisation noise as "detail", bSharp refuses the average of two pictures, which on
 // a gradient is exactly the picture in between. H264_FLATLO / H264_FLATHI override; H264_FLATHI=0: off (the
 // stream before 16.11.2026).
-const double gFlatLo = std::getenv("H264_FLATLO") ? std::atof(std::getenv("H264_FLATLO")) : 6.0;
-const double gFlatHi = std::getenv("H264_FLATHI") ? std::atof(std::getenv("H264_FLATHI")) : 9.0;
+const double gFlatLo = devEnv("H264_FLATLO") ? std::atof(devEnv("H264_FLATLO")) : 6.0;
+const double gFlatHi = devEnv("H264_FLATHI") ? std::atof(devEnv("H264_FLATHI")) : 9.0;
 inline double textureShare(float energy)
 {
     if (!(gFlatHi > 0))
@@ -189,14 +192,14 @@ inline double textureShare(float energy)
     return std::clamp((double(energy) - gFlatLo) / std::max(1e-6, gFlatHi - gFlatLo), 0.0, 1.0);
 }
 // B pictures: transform by estimate (see encodeMbB; EncoderConfig::modeEstimate). H264_BEST=0/1 overrides.
-const int gBEstEnv = std::getenv("H264_BEST") ? std::atoi(std::getenv("H264_BEST")) : -1;
+const int gBEstEnv = devEnv("H264_BEST") ? std::atoi(devEnv("H264_BEST")) : -1;
 // The lookahead's vectors along the planned references (Encoder::takeLookaheadVectors) as start
 // points of the motion search: 1 = B pictures, 2 = also P pictures after a run of B pictures
 // (default), 0 = none (H264_LASTART). The vectors exist where the tree or the rate control asked
 // for the searches; H264_LASTART set makes them also without (fixed QP without the tree, for
 // measurements).
-const int gLaStart = std::getenv("H264_LASTART") ? std::atoi(std::getenv("H264_LASTART")) : 2;
-const bool gLaStartForce = std::getenv("H264_LASTART") && std::atoi(std::getenv("H264_LASTART")) > 0;
+const int gLaStart = std::clamp(devEnv("H264_LASTART") ? std::atoi(devEnv("H264_LASTART")) : 2, 0, 8);
+const bool gLaStartForce = devEnv("H264_LASTART") && std::atoi(devEnv("H264_LASTART")) > 0;
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -296,7 +299,7 @@ inline uint8_t clip1(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
 // siblings (10 threads on 6 cores: 128 is 4 % faster than 8192). H264_SPIN overrides.
 int spinFor(int threads)
 {
-    if (const char* e = std::getenv("H264_SPIN"))
+    if (const char* e = devEnv("H264_SPIN"))
         return std::atoi(e);
     const int hw = int(std::thread::hardware_concurrency());
     return hw > 0 && 2 * threads <= hw ? 8192 : 128;
@@ -348,15 +351,15 @@ inline int quantize(int coef, int mf, int qbits, int offset)
 // 8x8 group of four blocks is coded only when they together gain more than kGroupBits (see
 // planInterLuma). Fitted by fixed-QP BD-rate on our test material (0, 3, 6, 10, 15 bits tried; a
 // further macroblock-level threshold over all kept groups gained nothing). H264_DECG overrides it.
-const double kGroupBits = std::getenv("H264_DECG") ? std::atof(std::getenv("H264_DECG")) : 3.0;
+const double kGroupBits = devEnv("H264_DECG") ? std::atof(devEnv("H264_DECG")) : 3.0;
 // Bit model of a sparse 4x4 block (every coefficient below 1.5 levels) for the paths without the
 // CABAC trellis: block overhead + bits per non-zero level, fitted by least squares to the trellis'
 // own bit counts on our test material (H264_DECLOG=1 prints the fit).
-const double kBlkBits = std::getenv("H264_DECA") ? std::atof(std::getenv("H264_DECA")) : 0.0;
-const double kNzBits = std::getenv("H264_DECB") ? std::atof(std::getenv("H264_DECB")) : 3.7;
+const double kBlkBits = devEnv("H264_DECA") ? std::atof(devEnv("H264_DECA")) : 0.0;
+const double kNzBits = devEnv("H264_DECB") ? std::atof(devEnv("H264_DECB")) : 3.7;
 
 // Fit data of the bit model (H264_DECLOG=1): normal equations of bits ~ 1 + nonzero.
-const bool gDecLog = std::getenv("H264_DECLOG") != nullptr;
+const bool gDecLog = devEnv("H264_DECLOG") != nullptr;
 std::mutex gDecLogMutex;
 struct DecFit {
     double m[2][2] = {}, v[2] = {}, sq = 0;
@@ -855,19 +858,19 @@ void FrameCoder::loadSource(const Picture& pic)
 // B probe (see BProbe): B pictures are placed where runs of two need at least this much fewer bits
 // (H264_BPROBE_GAIN; measured: slow zoom -0.3 .. -0.5, game, camera and noise -0.05 .. +0.6).
 // H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
-static const bool kBProbe = !std::getenv("H264_BPROBE") || std::atoi(std::getenv("H264_BPROBE")) != 0;
+static const bool kBProbe = !devEnv("H264_BPROBE") || std::atoi(devEnv("H264_BPROBE")) != 0;
 // Where B pictures pay is decided from the lookahead's costs (BPlanner) since 15.11.2026;
 // H264_BPLAN=0: by the probe's small encodes as before (the fallback, and for comparisons).
-static const bool kBPlan = !std::getenv("H264_BPLAN") || std::atoi(std::getenv("H264_BPLAN")) != 0;
+static const bool kBPlan = !devEnv("H264_BPLAN") || std::atoi(devEnv("H264_BPLAN")) != 0;
 static const bool kBGate = kBPlan || kBProbe; // false: runs of B pictures everywhere
 // The probe's first question: runs of this many B pictures against none (3 = with the pyramid).
-static const int kBProbeShort = std::getenv("H264_BPROBE_SHORT") ? std::atoi(std::getenv("H264_BPROBE_SHORT")) : 3;
+static const int kBProbeShort = std::clamp(devEnv("H264_BPROBE_SHORT") ? std::atoi(devEnv("H264_BPROBE_SHORT")) : 3, 1, 8);
 // A new measurement before the interval is over when the pictures' activity (lookahead cost with
 // motion against intra) is this factor away from that of the last measurement's pictures, for two
 // pictures in a row and not sooner than the gap: a game clip goes from standing to running and back
 // within a second. 0 = only by the interval.
-static const double kBProbeChange = std::getenv("H264_BPROBE_CHANGE") ? std::atof(std::getenv("H264_BPROBE_CHANGE")) : 1.35;
-static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::getenv("H264_BPROBE_GAP")) : 30;
+static const double kBProbeChange = devEnv("H264_BPROBE_CHANGE") ? std::atof(devEnv("H264_BPROBE_CHANGE")) : 1.35;
+static const int kBProbeGap = std::clamp(devEnv("H264_BPROBE_GAP") ? std::atoi(devEnv("H264_BPROBE_GAP")) : 30, 1, 100000);
 // Nothing to measure (next to nothing is coded: a still picture, a desktop, the player standing):
 // runs of the short length (1, default) or no B pictures (0, as before 15.11.2026).
 // Adaptive placement in one pass: the first pictures after the clip's first one are P pictures. The rate
@@ -877,28 +880,28 @@ static const int kBProbeGap = std::getenv("H264_BPROBE_GAP") ? std::atoi(std::ge
 // 39 for the rest). 0 = none. Not where the probe found B pictures a clear gain (below kBWarmGain)
 // or chose long runs: such material keeps its B pictures throughout, and twelve P pictures cost it
 // a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
-static const int kBWarmup = std::getenv("H264_BWARMUP") ? std::atoi(std::getenv("H264_BWARMUP")) : 12;
+static const int kBWarmup = std::clamp(devEnv("H264_BWARMUP") ? std::atoi(devEnv("H264_BWARMUP")) : 12, 0, 100000);
 // With a first pass (two-pass plan) the same count: tried without them on 16.11.2026 - detailed camera
 // footage and calm game scenes gain a little (crowd_run, 150 pictures at 10 Mbit/s: +0.04 dB PSNR-Y,
 // +0.002 SSIM-Y, +0.2 VMAF; a calm game scene +0.05 dB at 1.5 Mbit/s), but game action loses much more
 // (CS2, 600 pictures at 3 Mbit/s: -0.27 dB, VMAF -2.2 at 1.4 % more bits). H264_BWARMUP2P sets the
 // count of the two-pass plan alone (measuring).
-static const int kBWarmupPlanned = std::getenv("H264_BWARMUP2P") ? std::atoi(std::getenv("H264_BWARMUP2P")) : kBWarmup;
-static const double kBWarmGain = std::getenv("H264_BWARMGAIN") ? std::atof(std::getenv("H264_BWARMGAIN")) : -0.2;
-static const int kBRefQpEnv = std::getenv("H264_BREFQP") ? std::atoi(std::getenv("H264_BREFQP")) : -1;
-static const int kPyramidMaxRun = std::getenv("H264_PYRAMID_MAXRUN") ? std::atoi(std::getenv("H264_PYRAMID_MAXRUN")) : 4;
-static const int kShortRun = std::getenv("H264_SHORTRUN") ? std::atoi(std::getenv("H264_SHORTRUN")) : 4;
-static const double kBProbeFlat = std::getenv("H264_BPROBE_FLAT") ? std::atof(std::getenv("H264_BPROBE_FLAT")) : 0.75;
-static const bool kBProbeOneWay = std::getenv("H264_BPROBE_ONEWAY") && std::atoi(std::getenv("H264_BPROBE_ONEWAY")) != 0;
-static const bool kBProbeLongClear = !std::getenv("H264_BPROBE_LONGCLEAR") || std::atoi(std::getenv("H264_BPROBE_LONGCLEAR")) != 0;
-static const bool kBProbeStill = !std::getenv("H264_BPROBE_STILL") || std::atoi(std::getenv("H264_BPROBE_STILL")) != 0;
-static const int kBProbeInterval = std::getenv("H264_BPROBE_INTERVAL") ? std::atoi(std::getenv("H264_BPROBE_INTERVAL")) : BProbe::kInterval;
+static const int kBWarmupPlanned = std::clamp(devEnv("H264_BWARMUP2P") ? std::atoi(devEnv("H264_BWARMUP2P")) : kBWarmup, 0, 100000);
+static const double kBWarmGain = devEnv("H264_BWARMGAIN") ? std::atof(devEnv("H264_BWARMGAIN")) : -0.2;
+static const int kBRefQpEnv = std::clamp(devEnv("H264_BREFQP") ? std::atoi(devEnv("H264_BREFQP")) : -1, -1, 12);
+static const int kPyramidMaxRun = std::clamp(devEnv("H264_PYRAMID_MAXRUN") ? std::atoi(devEnv("H264_PYRAMID_MAXRUN")) : 4, 0, 16);
+static const int kShortRun = std::clamp(devEnv("H264_SHORTRUN") ? std::atoi(devEnv("H264_SHORTRUN")) : 4, 0, 16);
+static const double kBProbeFlat = devEnv("H264_BPROBE_FLAT") ? std::atof(devEnv("H264_BPROBE_FLAT")) : 0.75;
+static const bool kBProbeOneWay = devEnv("H264_BPROBE_ONEWAY") && std::atoi(devEnv("H264_BPROBE_ONEWAY")) != 0;
+static const bool kBProbeLongClear = !devEnv("H264_BPROBE_LONGCLEAR") || std::atoi(devEnv("H264_BPROBE_LONGCLEAR")) != 0;
+static const bool kBProbeStill = !devEnv("H264_BPROBE_STILL") || std::atoi(devEnv("H264_BPROBE_STILL")) != 0;
+static const int kBProbeInterval = std::clamp(devEnv("H264_BPROBE_INTERVAL") ? std::atoi(devEnv("H264_BPROBE_INTERVAL")) : BProbe::kInterval, 1, 100000);
 // B pictures from a gain of 4.5 % on (15 % until 15.11.2026: the B pictures did not pay on moving
 // material then). Measured gains (probe with B QP +2): slow zoom -0.3 .. -0.6, moving phases of a
 // calm game scene -0.09 .. -0.3, a pan -0.055 .. -0.25, camera footage -0.05 .. -0.06, action
 // -0.04 .. +0.5. The pan with the crosshair trail (-0.055) and the calmest start of an action clip
 // (-0.037) lie close together: the threshold sits between them.
-static const double kBProbeGain = std::getenv("H264_BPROBE_GAIN") ? std::atof(std::getenv("H264_BPROBE_GAIN")) : -0.045;
+static const double kBProbeGain = devEnv("H264_BPROBE_GAIN") ? std::atof(devEnv("H264_BPROBE_GAIN")) : -0.045;
 
 namespace {
 
@@ -966,7 +969,7 @@ void addCostHist(FirstPassStats& st, const LookaheadFrame& f)
 } // namespace
 
 // H264_FPASYNC=0: the first pass analyses each batch on the caller's thread (as before 14.11.).
-static const bool gFirstPassAsync = !std::getenv("H264_FPASYNC") || std::atoi(std::getenv("H264_FPASYNC")) != 0;
+static const bool gFirstPassAsync = !devEnv("H264_FPASYNC") || std::atoi(devEnv("H264_FPASYNC")) != 0;
 
 // A new measurement every kInterval pictures and from each scene change or keyframe the caller asks
 // for on (also one inside the pictures being collected: they start again there).
@@ -998,7 +1001,7 @@ bool BProbe::collectFirst()
     const bool still = result != 0;
     resultStart_ = firstStart_;
     clear_ = result == 0 && gain < kBWarmGain;
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    static const bool trace = devEnv("H264_B_TRACE") != nullptr;
     if (trace)
         std::fprintf(stderr, "bprobe: picture %d gain %+.3f run %d\n", resultStart_, gain, run_);
     // The long run is only asked for where B pictures are a clear gain (a slow zoom: -0.3 ..
@@ -1039,7 +1042,7 @@ bool BProbe::add(const Lookahead& la, const LookaheadFrame& f, int index, int bf
     pics_.push_back(la.halfPicture(f));
     if (index > start_)
         activitySum_ += activity;
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    static const bool trace = devEnv("H264_B_TRACE") != nullptr;
     const int shortRun = std::min(bframes, kBProbeShort);
     const int count = int(pics_.size());
     if (count == shortRun + 2) {
@@ -1183,7 +1186,7 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
         });
     }
     const double floorBits = (0.002 * w * h + 256.0) * (count - 1);
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    static const bool trace = devEnv("H264_B_TRACE") != nullptr;
     if (r0 < floorBits) {
         if (trace)
             std::fprintf(stderr, "bprobe: P runs %.0f bits at QP %d, under the floor of %.0f\n", r0, kQp, floorBits);
@@ -1216,7 +1219,7 @@ FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t kee
 {
     stats_->bMax = bframes_;
     // H264_KEEPANALYSIS=0: the encoder analyses every picture again (for measurements).
-    if (const char* e = std::getenv("H264_KEEPANALYSIS"))
+    if (const char* e = devEnv("H264_KEEPANALYSIS"))
         keepBytes_ = std::atoi(e) ? keepBytes_ : 0;
 }
 
@@ -1409,7 +1412,7 @@ std::vector<uint8_t> keyPlan(const FirstPassStats& st, const EncoderConfig& cfg,
 // Constant quality: log2 of the mean first-pass cost per macroblock (+ 1) over the pictures that do not repeat the
 // one before - the same measure crfQp takes around a picture.
 // A picture whose lookahead cost per macroblock is below this repeats the picture before (an exact copy costs 2).
-static const double gCrfRepeat = std::getenv("H264_CRFREPEAT") ? std::atof(std::getenv("H264_CRFREPEAT")) : 4.0;
+static const double gCrfRepeat = devEnv("H264_CRFREPEAT") ? std::atof(devEnv("H264_CRFREPEAT")) : 4.0;
 double crfClipComplexity(const FirstPassStats& st, const EncoderConfig& cfg)
 {
     const double mbs = double((cfg.width + 15) / 16) * ((cfg.height + 15) / 16);
@@ -1440,7 +1443,7 @@ ChunkPlan planChunks(const FirstPassStats& st, const EncoderConfig& cfg, int chu
         // The keyframe nearest to the even split within a quarter chunk, else the split itself
         // (H264_CHUNK_EVEN: always the split, to measure what a seam costs).
         const int target = int(int64_t(c) * n / chunks);
-        const int window = std::getenv("H264_CHUNK_EVEN") ? -1 : n / chunks / 4;
+        const int window = devEnv("H264_CHUNK_EVEN") ? -1 : n / chunks / 4;
         int best = target;
         for (int d = 0; d <= window; ++d) {
             if (target - d > plan.start.back() + minFrames / 2 && key[size_t(target - d)]) {
@@ -1569,41 +1572,41 @@ std::vector<uint8_t> vbvJoinChunk(const std::vector<uint8_t>& firstAu, int frame
 }
 
 // Classes of P pictures for the first-pass rate control (H264_TPBIN=0: one k for all).
-static const bool gTpBin = !std::getenv("H264_TPBIN") || std::atoi(std::getenv("H264_TPBIN")) != 0;
+static const bool gTpBin = !devEnv("H264_TPBIN") || std::atoi(devEnv("H264_TPBIN")) != 0;
 // Two-pass: P pictures after a run of B pictures are their own kind in the bit model; until one is
 // coded their k is this factor times the other P pictures'. 0 = one kind (as before 15.11.2026).
-static const double gTpAfterB = std::getenv("H264_TPAFTERB") ? std::atof(std::getenv("H264_TPAFTERB")) : 1.6;
+static const double gTpAfterB = devEnv("H264_TPAFTERB") ? std::atof(devEnv("H264_TPAFTERB")) : 1.6;
 // Two-pass: B pictures in cost classes like the P pictures (H264_TPBINB=0: one k for all B pictures, as before
 // 16.11.2026). The B pictures of a moving stretch cost several times the bits per cost of those between
 // standing pictures; with one k the plan misjudged a clip that has both.
-static const bool gTpBinB = !std::getenv("H264_TPBINB") || std::atoi(std::getenv("H264_TPBINB")) != 0;
+static const bool gTpBinB = !devEnv("H264_TPBINB") || std::atoi(devEnv("H264_TPBINB")) != 0;
 // How far (in QP) the two-pass QP may leave the QP that fits the whole clip's budget with the model
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
-static const double gTpDev = std::getenv("H264_TPDEV") ? std::atof(std::getenv("H264_TPDEV")) : 2.0;
+static const double gTpDev = devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV")) : 2.0;
 // How much of the way from that plan QP to the QP that spends exactly what is left the picture's QP
 // goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
 // learns; the other also swings with every stretch the model misjudged, and near the clip's end with
 // little left to spread an error over.
-static const bool gTpSeedTree = !std::getenv("H264_TPSEEDTREE") || std::atoi(std::getenv("H264_TPSEEDTREE")) != 0;
-static const double gTpFollow = std::getenv("H264_TPFOLLOW") ? std::atof(std::getenv("H264_TPFOLLOW")) : 0.25;
+static const bool gTpSeedTree = !devEnv("H264_TPSEEDTREE") || std::atoi(devEnv("H264_TPSEEDTREE")) != 0;
+static const double gTpFollow = devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPFOLLOW")) : 0.25;
 // The rest of the way is gone slowly: the gap between the two QPs, averaged over about this many
 // seconds of pictures, is added in full less the quarter above (H264_TPLAG, default 2; 0 = not at
 // all: a model that stays wrong in one direction then misses the clip's size by what it is wrong,
 // measured up to 7 %). A stretch the model misjudges for a moment moves the QP little, a lasting
 // debt is paid. Measured on seven clips of 4 to 30 s: every target within 2 % at 2 s (within 2.5 %
 // at 4 s), for 0.2 to 0.5 % of BD-rate; H264_TPFOLLOW=0 with it is 0.5 to 1 % better and misses by up to 3.3 %.
-static const double gTpLag = std::getenv("H264_TPLAG") ? std::atof(std::getenv("H264_TPLAG")) : 2.0;
+static const double gTpLag = devEnv("H264_TPLAG") ? std::atof(devEnv("H264_TPLAG")) : 2.0;
 // The least budget the pictures left are planned with: this share of what they cost at the plan
 // QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
 // overdrawn clip coded its last pictures finer than planned).
-static const double gTpRestFloor = std::getenv("H264_TPRESTFLOOR") ? std::atof(std::getenv("H264_TPRESTFLOOR")) : 0.5;
+static const double gTpRestFloor = devEnv("H264_TPRESTFLOOR") ? std::atof(devEnv("H264_TPRESTFLOOR")) : 0.5;
 
 // Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
 // largest QP offset (H264_QCBLUR, H264_QCMAX: experiment knobs).
-static const double gQcBlur = std::getenv("H264_QCBLUR") ? std::atof(std::getenv("H264_QCBLUR")) : 1.5;
-static const double gQcMax = std::getenv("H264_QCMAX") ? std::atof(std::getenv("H264_QCMAX")) : 4.0;
+static const double gQcBlur = devEnv("H264_QCBLUR") ? std::atof(devEnv("H264_QCBLUR")) : 1.5;
+static const double gQcMax = devEnv("H264_QCMAX") ? std::atof(devEnv("H264_QCMAX")) : 4.0;
 
 // The bit model's dead zone: a block costs bits in proportion to its lookahead cost over the
 // quantiser step (cost * 2^(-qp/6)) above gTpDead; below it nothing (H264_TPDEAD; 0 = the model
@@ -1611,15 +1614,15 @@ static const double gQcMax = std::getenv("H264_QCMAX") ? std::atof(std::getenv("
 // phases, fixed QP 30 and 36: without it the same pictures' bits per cost differ by 2.6x between
 // the two QPs and by 3-4x between standing and moving pictures, with a dead zone of 2 by 1.2x and
 // 1.5-2x. gTpFloor: what a picture costs per macroblock whatever its content (headers, skips).
-static const double gTpDead = std::getenv("H264_TPDEAD") ? std::atof(std::getenv("H264_TPDEAD")) : 2.0;
-static const double gTpFloor = std::getenv("H264_TPFLOOR") ? std::atof(std::getenv("H264_TPFLOOR")) : 0.03;
+static const double gTpDead = devEnv("H264_TPDEAD") ? std::atof(devEnv("H264_TPDEAD")) : 2.0;
+static const double gTpFloor = devEnv("H264_TPFLOOR") ? std::atof(devEnv("H264_TPFLOOR")) : 0.03;
 
 // Two-pass: the plan's costs follow the pictures' real references (H264_TPRUN=0: every picture against the
 // one before, as the first pass measured it and as before 16.11.2026). A recording with duplicated pictures (a
 // game at 12 fps captured at 60) has its changes on single pictures and nothing between: a P picture after a
 // run of B pictures that happens to be a duplicate of the picture before looked free and cost fourteen times
 // the plan, the B picture on the change looked expensive and was a copy of the P picture after it.
-static const bool gTpRun = !std::getenv("H264_TPRUN") || std::atoi(std::getenv("H264_TPRUN")) != 0;
+static const bool gTpRun = !devEnv("H264_TPRUN") || std::atoi(devEnv("H264_TPRUN")) != 0;
 
 // What picture j needs at a quantiser scale against the picture before it (key: as an I picture), in bits per
 // k: its blocks' first-pass costs over the quantiser step, each above the dead zone (from the picture's cost
@@ -1768,7 +1771,7 @@ void Encoder::tpBuildTables()
 }
 
 // The most the clip's start may take from the rest of the clip, as a share of the clip's bits (H264_STARTSHARE).
-static const double gStartShare = std::getenv("H264_STARTSHARE") ? std::atof(std::getenv("H264_STARTSHARE")) : 0.025;
+static const double gStartShare = devEnv("H264_STARTSHARE") ? std::atof(devEnv("H264_STARTSHARE")) : 0.025;
 
 // The clip's start (EncoderConfig::startBoostQp): the first startBoostSeconds get a finer QP, fading out over as
 // long again, as far as the bits for it stay within gStartShare of the clip's (the model as the probe left it:
@@ -1805,7 +1808,7 @@ void Encoder::tpStartBoost(double kI, double kP)
         }
         boost = lo;
     }
-    if (std::getenv("H264_RC_TRACE"))
+    if (devEnv("H264_RC_TRACE"))
         std::fprintf(stderr, "rc: start boost %.2f QP (%.1f %% of the clip's bits)\n", boost, 100.0 * extra(boost) / std::max(1.0, total));
     if (boost < 0.05)
         return;
@@ -1829,7 +1832,7 @@ double Encoder::twoPassQp(double kI, double kP, double kB, double planQp) const
                                                          : 0.5 * left * perFrame;
     const double budget = std::max(double(st.size()) * perFrame - rcBits_, least);
     const double qp = tpSolve(tpRemTab_, budget, kI, kP, kB);
-    static const bool trace = std::getenv("H264_RC_TRACE") != nullptr;
+    static const bool trace = devEnv("H264_RC_TRACE") != nullptr;
     if (trace)
         std::fprintf(stderr, "tp: frame %d left %.0f budget %.0f qp %.2f\n", frameIndex_, left, budget, qp);
     return qp;
@@ -1848,13 +1851,13 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
 // AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
 // (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
-static const double gCrfBase = std::getenv("H264_CRFBASE") ? std::atof(std::getenv("H264_CRFBASE")) : 5.6;
+static const double gCrfBase = devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 5.6;
 // QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
 // with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
-static const double gCrfSlope = std::getenv("H264_CRFSLOPE") ? std::atof(std::getenv("H264_CRFSLOPE")) : 0.87;
-static const double gCrfFps = std::getenv("H264_CRFFPS") ? std::atof(std::getenv("H264_CRFFPS")) : 2.4;
+static const double gCrfSlope = devEnv("H264_CRFSLOPE") ? std::atof(devEnv("H264_CRFSLOPE")) : 0.87;
+static const double gCrfFps = devEnv("H264_CRFFPS") ? std::atof(devEnv("H264_CRFFPS")) : 2.4;
 // H264_CRFREF: a fixed reference complexity instead of the clip's mean (the scale before 16.11.2026 used 7; measuring only).
-static const double gCrfRef = std::getenv("H264_CRFREF") ? std::atof(std::getenv("H264_CRFREF")) : -1.0;
+static const double gCrfRef = devEnv("H264_CRFREF") ? std::atof(devEnv("H264_CRFREF")) : -1.0;
 
 // The lookahead cost of each picture as it joins the queue (constant quality: the complexity around a picture).
 void Encoder::noteCost(const LookaheadFrame& f)
@@ -1875,7 +1878,7 @@ void Encoder::noteCost(const LookaheadFrame& f)
         crfSum_[j + 1] = crfSum_[j] + (counts ? crfCost_[j] : 0.0);
         crfCount_[j + 1] = crfCount_[j] + (counts ? 1 : 0);
     }
-    if (std::getenv("H264_RC_TRACE"))
+    if (devEnv("H264_RC_TRACE"))
         std::fprintf(stderr, "crfcost: picture %d cost per macroblock %.2f\n", f.index, f.interSum / (double(mbW_) * mbH_));
 }
 
@@ -2032,7 +2035,7 @@ struct Encoder::Pool {
 // overrides the length of that start.
 int Encoder::inFlightAt(int index) const
 {
-    static const int kWarm = std::getenv("H264_WARM") ? std::atoi(std::getenv("H264_WARM")) : 16;
+    static const int kWarm = std::clamp(devEnv("H264_WARM") ? std::atoi(devEnv("H264_WARM")) : 16, 0, 100000);
     return index < kWarm ? 2 : kInFlight;
 }
 
@@ -2171,13 +2174,39 @@ void Encoder::takeLookaheadVectors(const LookaheadFrame& frame, FrameCoder& fc, 
 void Encoder::runBSearches(int threads)
 {
     const int maxB = cfg_.bframes;
-    for (const BSearchJob& j : bSearchJobs_) {
-        if (j.kind == 0)
-            la_->searchFwd(*j.f, *j.other, j.a, maxB, threads);
-        else if (j.kind == 1)
-            la_->searchBack(*j.other, *j.f, *j.third, j.c, maxB, threads);
-        else
-            la_->biCost(*j.other, *j.f, *j.third, j.a, j.c, maxB, cfg_.weightedBipred);
+    // The searches read only what the analysis left in the pictures and write each its own entry, so they all run
+    // side by side, one thread each (a search's rows in a wavefront gain nothing: measured, one thread was as fast
+    // as six); the costs from both lists follow, since each needs its picture's two searches. The entries are made
+    // here first, so no job resizes a container another one is in.
+    std::vector<size_t> searches, costs;
+    for (size_t i = 0; i < bSearchJobs_.size(); ++i) {
+        const BSearchJob& j = bSearchJobs_[i];
+        if (j.kind == 0 && j.f->fwd.size() != size_t(maxB) + 2)
+            j.f->fwd.assign(size_t(maxB) + 2, LookaheadSearch{});
+        if (j.kind == 1 && j.other->back.size() != size_t(maxB) + 1)
+            j.other->back.assign(size_t(maxB) + 1, LookaheadSearch{});
+        if (j.kind == 2 && j.other->bi.size() != size_t(bComboCount(maxB))) {
+            j.other->bi.assign(size_t(bComboCount(maxB)), {});
+            j.other->biSum.assign(size_t(bComboCount(maxB)), -1.0);
+        }
+        (j.kind == 2 ? costs : searches).push_back(i);
+    }
+    for (const std::vector<size_t>* stage : {&searches, &costs}) {
+        if (stage->empty())
+            continue;
+        std::atomic<size_t> nextJob{0};
+        auto worker = [&] {
+            for (size_t k; (k = nextJob.fetch_add(1, std::memory_order_relaxed)) < stage->size();) {
+                const BSearchJob& j = bSearchJobs_[(*stage)[k]];
+                if (j.kind == 0)
+                    la_->searchFwd(*j.f, *j.other, j.a, maxB, 1);
+                else if (j.kind == 1)
+                    la_->searchBack(*j.other, *j.f, *j.third, j.c, maxB, 1);
+                else
+                    la_->biCost(*j.other, *j.f, *j.third, j.a, j.c, maxB, cfg_.weightedBipred);
+            }
+        };
+        runOnThreads(std::clamp(threads, 1, int(stage->size())), worker);
     }
 }
 
@@ -2498,7 +2527,7 @@ LookaheadFrame* Encoder::pickNext()
         return nullptr;
     if (!queue_.front().decided) {
         planQueue();
-        static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+        static const bool trace = devEnv("H264_B_TRACE") != nullptr;
         for (size_t j = 0; j < queue_.size(); ++j) {
             LookaheadFrame& f = queue_[j];
             f.decided = true;
@@ -2667,7 +2696,7 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
         vbvMinFill_ = std::min(vbvMinFill_, vbvOutFill_);
         vbvOutFill_ = std::min(vbvOutFill_ + vbvTick(), vbvSize());
         vbvDone_.push_back({fc.frameNo_, fc.vbvClass_, fc.vbvQp_ + fc.vbvShift_, fc.vbvCost_, bits});
-        if (std::getenv("H264_VBV_TRACE"))
+        if (devEnv("H264_VBV_TRACE"))
             std::fprintf(stderr, "vbv out: frame %d %c qp %.2f bits %.0f predicted %.0f fill %.1f %%\n", fc.frameNo_, "IPB"[fc.rcType_],
                          fc.vbvQp_, bits, fc.vbvPred_, 100.0 * vbvOutFill_ / vbvSize());
     }
@@ -2706,7 +2735,7 @@ double Encoder::treeStrength(const LookaheadFrame& f) const
     // Next to short runs (as placed on moving material, with the pyramid) the full strength: there
     // the P pictures carry the B pictures as they carry each other without them (game footage,
     // two-pass, runs of 3: 10 % fewer bits than with the reduced strength).
-    static const bool kShortFull = !std::getenv("H264_BTREE_SHORT") || std::atoi(std::getenv("H264_BTREE_SHORT")) != 0;
+    static const bool kShortFull = !devEnv("H264_BTREE_SHORT") || std::atoi(devEnv("H264_BTREE_SHORT")) != 0;
     return useB() && f.nearB && !(kShortFull && f.nearRun <= kShortRun) ? cfg_.mbtreeStrengthB : cfg_.mbtreeStrength;
 }
 
@@ -2909,7 +2938,7 @@ void FrameCoder::waveBegin(int threads, RefPic* out, bool writerThread)
     w.firstOpen.store(0, std::memory_order_relaxed);
     // A parked row goes on once it can do a batch (not one macroblock at a time behind the row
     // above); small enough that every thread still finds a row across the picture's width.
-    static const int kBatchEnv = std::getenv("H264_BATCH") ? std::atoi(std::getenv("H264_BATCH")) : -1;
+    static const int kBatchEnv = std::clamp(devEnv("H264_BATCH") ? std::atoi(devEnv("H264_BATCH")) : -1, -1, 64);
     w.batch = kBatchEnv >= 0 ? kBatchEnv : std::clamp(mbW_ / (2 * std::max(1, threads)), 0, 8);
     w.written.store(0, std::memory_order_relaxed);
     w.rowsDone.store(0, std::memory_order_relaxed);
@@ -3105,7 +3134,7 @@ void FrameCoder::traceMb(int mbx, int mby, const MbSyntax& syn) const
 {
     static const std::array<int, 4> win = [] {
         std::array<int, 4> w = {-1, -1, -1, -1};
-        if (const char* e = std::getenv("H264_MB_TRACE"))
+        if (const char* e = devEnv("H264_MB_TRACE"))
             std::sscanf(e, "%d,%d,%d,%d", &w[0], &w[1], &w[2], &w[3]);
         return w;
     }();
@@ -3415,10 +3444,16 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
         else
             appendNal(out, refPic_ ? 2 : 0, 1, bw.bytes());
     }
-    if (gStats && bSlice_)
+    if (gStats && bSlice_) {
+        std::fprintf(stderr, "statsCalls: plan8 %ld plan4 %ld search %ld satd %ld sad(sub) %ld intra %ld mbBits %ld P mbs %ld chroma %ld\n", gStatCalls[0].load(),
+                     gStatCalls[1].load(), gStatCalls[2].load(), gStatCalls[3].load(), gStatCalls[4].load(), gStatCalls[5].load(), gStatCalls[6].load(),
+                     gStatCalls[7].load(), gStatCalls[9].load());
+        std::fprintf(stderr, "statsB2: early skip %ld plan skip %ld searched %ld split search %ld 8x8 search %ld split candidate %ld\n", gStatB2[0].load(),
+                     gStatB2[1].load(), gStatB2[2].load(), gStatB2[3].load(), gStatB2[4].load(), gStatB2[5].load());
         std::fprintf(stderr, "statsB: skip %ld direct %ld L0 %ld L1 %ld Bi %ld split %ld 8x8 %ld intra %ld t8 %ld\n", gStatB[0].load(),
                      gStatB[1].load(), gStatB[2].load(), gStatB[3].load(), gStatB[4].load(), gStatB[5].load(), gStatB[6].load(),
                      gStatB[7].load(), gStatB[8].load());
+    }
     if (gStats && pSlice_ && !bSlice_) {
         std::fprintf(stderr, "stats: inter %ld with luma %ld 8x8 %ld (%.1f %% of coded, %.1f %% of inter)\n", long(gStatInter.load()),
                      long(gStatInterCbp.load()), long(gStatT8.load()), 100.0 * gStatT8.load() / std::max<long>(1, gStatInterCbp.load()),
@@ -3492,13 +3527,13 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int frameNum, int idrCount, Phas
 
 // ---- VBV (EncoderConfig::vbvMaxrateKbps / vbvBufsizeKbits) ----
 
-static const double gVbvSafe = std::getenv("H264_VBV_SAFE") ? std::atof(std::getenv("H264_VBV_SAFE")) : 2.0;
-static const double gVbvDecay = std::getenv("H264_VBV_DECAY") ? std::atof(std::getenv("H264_VBV_DECAY")) : 0.6;
-static const double gVbvTarget = std::getenv("H264_VBV_TARGET") ? std::atof(std::getenv("H264_VBV_TARGET")) : 0.5;
-static const bool gVbvTrace = std::getenv("H264_VBV_TRACE") != nullptr;
+static const double gVbvSafe = devEnv("H264_VBV_SAFE") ? std::atof(devEnv("H264_VBV_SAFE")) : 2.0;
+static const double gVbvDecay = devEnv("H264_VBV_DECAY") ? std::atof(devEnv("H264_VBV_DECAY")) : 0.6;
+static const double gVbvTarget = devEnv("H264_VBV_TARGET") ? std::atof(devEnv("H264_VBV_TARGET")) : 0.5;
+static const bool gVbvTrace = devEnv("H264_VBV_TRACE") != nullptr;
 // VBV inside the picture (FrameCoder::vbvRowAdjust); H264_VBV_ROWS=0: frame level only (measuring).
-static const bool gVbvRows = !std::getenv("H264_VBV_ROWS") || std::atoi(std::getenv("H264_VBV_ROWS")) != 0;
-static const double gVbvRowMargin = std::getenv("H264_VBV_ROWMARGIN") ? std::atof(std::getenv("H264_VBV_ROWMARGIN")) : 0.02;
+static const bool gVbvRows = !devEnv("H264_VBV_ROWS") || std::atoi(devEnv("H264_VBV_ROWS")) != 0;
+static const double gVbvRowMargin = devEnv("H264_VBV_ROWMARGIN") ? std::atof(devEnv("H264_VBV_ROWMARGIN")) : 0.02;
 
 // The real sizes of the pictures up to upTo (coding order) go into the decision side's buffer and bit model.
 void Encoder::vbvLearn(int upTo)
@@ -3538,7 +3573,7 @@ double Encoder::vbvK(int type) const
 // grow faster than that (noise and fine texture that a coarser QP quantised away come back: measured up to 4x for
 // 4 QP), so there they double every gVbvSteep QP. It decides only where the buffer gets tight, so erring high
 // costs little.
-static const double gVbvSteep = std::getenv("H264_VBV_STEEP") ? std::atof(std::getenv("H264_VBV_STEEP")) : 3.0;
+static const double gVbvSteep = devEnv("H264_VBV_STEEP") ? std::atof(devEnv("H264_VBV_STEEP")) : 3.0;
 
 double Encoder::vbvPredict(int type, double cost, double qp) const
 {
@@ -3553,7 +3588,7 @@ double Encoder::vbvPredict(int type, double cost, double qp) const
 // A P or B picture whose motion cost is near its intra cost (a cut, a flash the scene detection let through)
 // codes like an I picture: as many bits per cost as one, far more than a P picture's (measured 2.8x on a cut
 // inside a run of B pictures), so it goes by the I pictures' k and teaches them.
-static const double gVbvCut = std::getenv("H264_VBV_CUT") ? std::atof(std::getenv("H264_VBV_CUT")) : 0.6;
+static const double gVbvCut = devEnv("H264_VBV_CUT") ? std::atof(devEnv("H264_VBV_CUT")) : 0.6;
 
 int Encoder::vbvClass(const LookaheadFrame& f, int type) const
 {
@@ -3860,7 +3895,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         } else
             markKeyframes();
         frame.keyframe = idr;
-        static const bool kBRefTree = !std::getenv("H264_BREFTREE") || std::atoi(std::getenv("H264_BREFTREE")) != 0;
+        static const bool kBRefTree = !devEnv("H264_BREFTREE") || std::atoi(devEnv("H264_BREFTREE")) != 0;
         if (type == 2 && (!bRef || !kBRefTree)) {
             fc.treeOffset_.clear(); // nothing references a B picture
         } else if (cfg_.mbtree) {
@@ -3913,7 +3948,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             }
             return need;
         };
-        const bool windowOnly = std::getenv("H264_RC_WINDOW") != nullptr;
+        const bool windowOnly = devEnv("H264_RC_WINDOW") != nullptr;
         // First pass: the whole clip's costs are known, one QP for all of it.
         const bool twoPass = cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size();
         if (twoPass && frameIndex_ == 0) {
@@ -4051,7 +4086,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     rcKSum_[1] *= more;
                 }
                 const double predicted = steadyQp();
-                if (std::getenv("H264_RC_TRACE"))
+                if (devEnv("H264_RC_TRACE"))
                     std::fprintf(stderr, "rc: probe at %d predicts %.1f\n", probeQp, predicted);
                 if (std::abs(predicted - probeQp) <= 4.0)
                     break;
@@ -4066,7 +4101,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         const double debt = rcBits_ - rcTarget_;
         const double overflow = std::clamp(1.0 + debt / (10.0 * perFrame * cfg_.fps), 0.7, 1.4);
         double qp = steadyQp() + 6.0 * std::log2(overflow);
-        if (std::getenv("H264_RC_TRACE"))
+        if (devEnv("H264_RC_TRACE"))
             std::fprintf(stderr, "rc: frame %d overflow %.2f kI %.3f kP %.3f cost %.0f (intra %.0f inter %.0f) qp %.2f\n",
                          frameIndex_, overflow, kOf(true), kOf(false), costUsed, frame.intraSum, frame.interSum, qp);
         if (twoPass) {
@@ -4084,7 +4119,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             }
             if (gTpDev > 0 && rcFramesSeen_ >= 12)
                 qp = std::clamp(qp, plan - gTpDev, plan + gTpDev);
-            if (std::getenv("H264_RC_TRACE"))
+            if (devEnv("H264_RC_TRACE"))
                 std::fprintf(stderr, "rc3: frame %d rest %.2f plan %.2f\n", frameIndex_, rest, plan);
             const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
             if (rcQp_ > 0)
@@ -4098,7 +4133,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 for (int k = 0; k < kTpQSteps; ++k)
                     from[k] = std::max(0.0, from[k] - row[size_t(k)]);
             }
-            if (std::getenv("H264_RC_TRACE"))
+            if (devEnv("H264_RC_TRACE"))
                 std::fprintf(stderr, "rc2: frame %d kI %.3f kP %.3f qp %.2f\n", frameIndex_, kOf(true), kOf(false), qp);
         } else if (rcQp_ > 0) {
             qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
@@ -4152,7 +4187,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // are) came out 3 QP coarser against x264 than moving footage. So the picture's QP moves by the
         // mean offset of the full strength (unclamped) against the one applied; the split stays as it is.
         // B pictures (no tree of their own) take their reference's. H264_CRFTREEX: weight (measuring).
-        static const double kCrfTreeX = std::getenv("H264_CRFTREEX") ? std::atof(std::getenv("H264_CRFTREEX")) : 1.0;
+        static const double kCrfTreeX = devEnv("H264_CRFTREEX") ? std::atof(devEnv("H264_CRFTREEX")) : 1.0;
         if (!fc.treeOffset_.empty()) {
             double t = 0, x = 0;
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m) {
@@ -4165,7 +4200,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         const double q = std::clamp(idr ? (cfg_.gop > 1 ? p - 3 : p) : type == 2 ? p + (bRef ? bRefQp : bQp) : p, 10.0, 51.0);
         cfg_.qp = int(std::lround(q));
         qpFrac = float(q - cfg_.qp);
-        if (std::getenv("H264_RC_TRACE"))
+        if (devEnv("H264_RC_TRACE"))
             std::fprintf(stderr, "crf: picture %d complexity %.2f P qp %.2f intra %.1f inter %.1f tree shift %.2f\n", frame.index, complexity, p,
                          frame.intraSum / (double(mbW_) * mbH_), frame.interSum / (double(mbW_) * mbH_), crfTreeShift_);
     } else if (idr && cfg_.gop > 1) {
@@ -4198,7 +4233,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     }
     fc.cfg_.qp = cfg_.qp;
     fc.qpFrac_ = qpFrac;
-    static const bool kQpTrace = std::getenv("H264_QP_TRACE") != nullptr;
+    static const bool kQpTrace = devEnv("H264_QP_TRACE") != nullptr;
     if (kQpTrace && lookahead) {
         double tm = 0;
         for (float o : fc.treeOffset_)
@@ -4891,6 +4926,8 @@ struct FrameCoder::ChromaMb {
 
 void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64])
 {
+    if (gStats)
+        ++gStatCalls[9];
     const bool left = mbx > 0, top = topMbAvailable(mby);
     const int cw = padW_ / 2;
     const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
@@ -5300,6 +5337,8 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
 
 bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
 {
+    if (gStats)
+        ++gStatCalls[5];
     ChromaMb ch;
     analyseChroma(mbx, mby, ch);
     if (cfg_.mode == IntraMode::Intra16)
@@ -6229,7 +6268,7 @@ void FrameCoder::rdoQuantize(int* levels, const int* residual, int qp, double la
 // +0.14, +0.12 / +0.12, +0.10 / -0.04, +0.19 / +0.56 % for -3.2 %; 11 +0.62 / +0.47, +0.57 / +0.43,
 // +0.05 / -0.20, +0.74 / +1.45 % for -4.9 % (too dear); 21 against 22 +0.31, +0.42, +0.08, +0.05 %
 // for -0.8 %.
-static const int gSubpelBoth = std::getenv("H264_SUBPEL") ? std::atoi(std::getenv("H264_SUBPEL")) : 22;
+static const int gSubpelBoth = devEnv("H264_SUBPEL") ? std::atoi(devEnv("H264_SUBPEL")) : 22;
 static const int gSubpelHalf = gSubpelBoth / 10, gSubpelQuarter = gSubpelBoth % 10;
 
 template <typename Cost>
@@ -6279,6 +6318,8 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                                 double lambdaSad, const std::pair<int, int>* starts, int startCount, int subpel, int& outX,
                                 int& outY, double predCost, double* fullPelCost) const
 {
+    if (gStats)
+        ++gStatCalls[2];
     const int range = 64 * 4;
     bool useSatd = false;
     // Full-pel positions (all of the first stage) read the plane in place: the SAD of sadPart
@@ -6353,8 +6394,8 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     // pictures' bits for +1.1 % instructions), H264_MEFULL = r every full-pel position within r
     // samples (an upper bound: r = 16 -3.6 % of all bits without the start points); H264_MEONLYB=1
     // only in B pictures.
-    static const int kMeSq = std::getenv("H264_MESQ") ? std::atoi(std::getenv("H264_MESQ")) : 0;
-    static const bool kMeOnlyB = std::getenv("H264_MEONLYB") && std::atoi(std::getenv("H264_MEONLYB")) != 0;
+    static const int kMeSq = std::clamp(devEnv("H264_MESQ") ? std::atoi(devEnv("H264_MESQ")) : 0, 0, 64);
+    static const bool kMeOnlyB = devEnv("H264_MEONLYB") && std::atoi(devEnv("H264_MEONLYB")) != 0;
     const bool meExtra = !kMeOnlyB || bSlice_;
     if (kMeSq && meExtra) { // the four diagonal neighbours at one sample, repeated while one is better
         for (int iter = 0; iter < 8; ++iter) {
@@ -6374,7 +6415,7 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                 break;
         }
     }
-    static const int kMeFull = std::getenv("H264_MEFULL") ? std::atoi(std::getenv("H264_MEFULL")) : 0;
+    static const int kMeFull = std::clamp(devEnv("H264_MEFULL") ? std::atoi(devEnv("H264_MEFULL")) : 0, 0, 64);
     if (kMeFull > 0 && meExtra) {
         const int cx0 = bx, cy0 = by;
         for (int dy = -kMeFull; dy <= kMeFull; ++dy)
@@ -6470,6 +6511,8 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
                                InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8)
 {
+    if (gStats)
+        ++gStatCalls[t8 ? 0 : 1];
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int qpDiv = qp / 6, qpMod = qp % 6;
     const int qbits = 15 + qpDiv;
@@ -6480,6 +6523,15 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     const CabacEncoder* live = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     if (est)
         *est = -1;
+    // Half a level or more from scan position `from` on (the positions fineLambda weighs).
+    auto reachesHigh = [](const double* xs, int from, int count) {
+        for (int k = from; k < count; ++k)
+            if (std::abs(xs[k]) >= 0.5)
+                return true;
+        return false;
+    };
+    const bool noteFine = fineLambda < 0 && tPsy.weight > 0;
+    ir.fineMayDiffer = !noteFine; // (not asked for: assume it may)
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
@@ -6536,6 +6588,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 uint64_t nz = 0;
                 const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
                                               est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
+                if (noteFine && !ir.fineMayDiffer)
+                    ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom8, 64);
                 const bool any = nz != 0;
                 std::fill(levels8[b8], levels8[b8] + 64, 0);
                 for (uint64_t m = nz; m; m &= m - 1) {
@@ -6547,6 +6601,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 if (any)
                     cbpLuma |= 1 << b8;
             } else {
+                ir.fineMayDiffer = true;
                 for (int k = 0; k < 64; ++k)
                     if (levels8[b8][k] != 0) {
                         cbpLuma |= 1 << b8;
@@ -6595,6 +6650,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             gain[blkIdx] = 0.0;
             jBlk[blkIdx] = eBlk[blkIdx] = 0.25 * emptyOf8->energy8[blkIdx >> 2];
+            ir.fineMayDiffer = true; // the finer plan is made without emptyOf8
             continue;
         }
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
@@ -6623,6 +6679,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
             }
             gain[blkIdx] = nz ? zeroJ - jBlk[blkIdx] : 0.0;
+            if (noteFine && !ir.fineMayDiffer)
+                ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom4, 16);
             if (gDecLog && nz && fineLambda < 0)
                 decLogSample(levels[blkIdx], xs, scale4, lambda, gain[blkIdx]);
             continue;
@@ -6637,6 +6695,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
         }
         gain[blkIdx] = sparseLevelGain(levels[blkIdx], xs, scale4, lambda);
+        ir.fineMayDiffer = true;
     }
     // Residual groups that do not pay for themselves: an 8x8 group is coded only when its blocks
     // together gain more than its own signalling and the context cost of a non-empty group
@@ -6644,11 +6703,17 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     double sum = 0;
     for (int b8 = 0; b8 < 4; ++b8) {
         const double groupGain = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
-        if (groupGain > lambda * kGroupBits)
+        if (groupGain > lambda * kGroupBits) {
             cbpLuma |= 1 << b8; // a group with a positive gain has a level
-        else
+        } else {
+            // (The plan with fineLambda is made without est: its gains count the squared error after the last
+            // level twice, so it may keep a group dropped here.)
+            if (noteFine && !ir.fineMayDiffer)
+                for (int k = 0; k < 4 && !ir.fineMayDiffer; ++k)
+                    ir.fineMayDiffer = std::any_of(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, [](int v) { return v != 0; });
             for (int k = 0; k < 4; ++k)
                 std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
+        }
         if (est && trellisPath)
             for (int k = 0; k < 4; ++k)
                 sum += (cbpLuma >> b8) & 1 ? jBlk[b8 * 4 + k] : eBlk[b8 * 4 + k];
@@ -6656,6 +6721,15 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     if (est && trellisPath)
         *est = sum;
     ir.cbpLuma = cbpLuma;
+}
+
+// Whether two plans of the same prediction and transform hold the same levels (then they are the same macroblock).
+template <class Residual>
+static bool samePlan(const Residual& a, const Residual& b, bool t8)
+{
+    if (a.cbpLuma != b.cbpLuma)
+        return false;
+    return t8 ? std::memcmp(a.levels8, b.levels8, sizeof a.levels8) == 0 : std::memcmp(a.levels, b.levels, sizeof a.levels) == 0;
 }
 
 // Second half: reconstruction of the planned levels over the prediction lp (and the 8x8 levels
@@ -6746,6 +6820,8 @@ bool FrameCoder::writeInterResidual(int mbx, int mby, int qp, bool t8, const Int
 
 bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
 {
+    if (gStats)
+        ++gStatCalls[7];
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const size_t mbIndex = size_t(mby) * mbW_ + mbx;
     const int qp = mbQp_[mbIndex];
@@ -6801,11 +6877,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
-    const double ssdSkip = double(mbSsd(mbx, mby));
-    const double costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    // The skip's cost and state: set after the early skip (macroblocks that stop there need neither).
+    double ssdSkip = 0, costSkip = 0;
     tDecision[0] = 0;
     MbState skipState;
-    saveMb(mbx, mby, skipState);
 
     // Early skip: if the skip residual quantises to nothing anyway, skip is all but certain
     // to win; spare the motion search.
@@ -6827,7 +6902,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     };
     fullPelCost_[mbIndex] = -1.0f;
     // H264_EARLYSKIP=0: no early skip (measurements; skip then goes through the full decision).
-    static const bool kEarlySkip = !std::getenv("H264_EARLYSKIP") || std::atoi(std::getenv("H264_EARLYSKIP")) != 0;
+    static const bool kEarlySkip = !devEnv("H264_EARLYSKIP") || std::atoi(devEnv("H264_EARLYSKIP")) != 0;
     // Experiment (16.11.2026, off): early skip only where the skip is also close to the source - squared
     // error (luma + chroma) up to H264_EARLYSKIPSSD lambda (0 = no limit); H264_EARLYSKIPSSDB the same for
     // the B pictures' direct skip. At a high QP a residual quantises to nothing although the prediction is
@@ -6839,19 +6914,22 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // scene +0.3 / -0.2 / +1.4 %. Not the default: it costs +5 / +7 % instructions in P pictures alone (CS2 /
     // the calm scene, two-pass) and +12 / +50 % with the B pictures' limit, and the chroma planes lose 0.1
     // to 0.2 dB on the game clips while luma gains - to be tuned (limit by QP, chroma, speed) first.
-    static const double kEarlySkipSsd = std::getenv("H264_EARLYSKIPSSD") ? std::atof(std::getenv("H264_EARLYSKIPSSD")) : 0.0;
-    static const double kEarlySkipFloor = std::getenv("H264_EARLYSKIPFLOOR") ? std::atof(std::getenv("H264_EARLYSKIPFLOOR")) : 0.0;
+    static const double kEarlySkipSsd = devEnv("H264_EARLYSKIPSSD") ? std::atof(devEnv("H264_EARLYSKIPSSD")) : 0.0;
+    static const double kEarlySkipFloor = devEnv("H264_EARLYSKIPFLOOR") ? std::atof(devEnv("H264_EARLYSKIPFLOOR")) : 0.0;
     // H264_EARLYSKIPLIGHT: what a refused skip does without (bit 0: the split search, bit 1: the intra try).
-    static const int kEarlySkipLight = std::getenv("H264_EARLYSKIPLIGHT") ? std::atoi(std::getenv("H264_EARLYSKIPLIGHT")) : 3;
+    static const int kEarlySkipLight = devEnv("H264_EARLYSKIPLIGHT") ? std::atoi(devEnv("H264_EARLYSKIPLIGHT")) : 3;
     int offSkip = 0; // the skip's residual quantises to nothing, but the skip is far from the source
     if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
-        if (kEarlySkipSsd <= 0 || ssdSkip <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
+        if (kEarlySkipSsd <= 0 || double(mbSsd(mbx, mby)) <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
             result.syn.kind = MbSyntax::Kind::Skip;
             mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
             return false;
         }
         offSkip = kEarlySkipLight;
     }
+    ssdSkip = double(mbSsd(mbx, mby));
+    costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    saveMb(mbx, mby, skipState);
 
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
     // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
@@ -6877,7 +6955,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // Experiment H264_COARSE = factor (0 = off): a start point as good as the full-pel cost the
     // neighbours' 16x16 searches ended with (times factor) skips the coarse search steps. 1.5:
     // +0.20 % BD-rate for -1.2 % instructions, with the split rule above +0.55 % -> not used.
-    static const double kCoarse = std::getenv("H264_COARSE") ? std::atof(std::getenv("H264_COARSE")) : 0.0;
+    static const double kCoarse = devEnv("H264_COARSE") ? std::atof(devEnv("H264_COARSE")) : 0.0;
     double predFull = -1;
     if (kCoarse > 0 && pSlice_ && !bSlice_) {
         const float l = mbx > 0 ? fullPelCost_[mbIndex - 1] : -1.0f;
@@ -6965,8 +7043,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // instructions): 120 +0.03 % / -2.6 %, 160 +0.15 % / -7.4 %, 200 +0.53 % / -12.7 %. With the mode
     // decision by estimate (which gained 0.40 %): 180 +0.23 % / -3.0 %, 200 +0.43 % / -5.5 % against 160
     // -> 200 there, 160 without it. H264_SPLITSKIP overrides (0 = always search the splits).
-    static const double kSplitSkipEnv = std::getenv("H264_SPLITSKIP") ? std::atof(std::getenv("H264_SPLITSKIP")) : -1.0;
-    static const int kRdEstEnv = std::getenv("H264_RDEST") ? std::atoi(std::getenv("H264_RDEST")) : -1;
+    static const double kSplitSkipEnv = devEnv("H264_SPLITSKIP") ? std::atof(devEnv("H264_SPLITSKIP")) : -1.0;
+    static const int kRdEstEnv = devEnv("H264_RDEST") ? std::atoi(devEnv("H264_RDEST")) : -1;
     const bool kRdEst = (kRdEstEnv < 0 ? cfg_.modeEstimate : kRdEstEnv != 0) && useCabac() && useT8() && cfg_.effort > 0;
     const double kSplitSkip = kSplitSkipEnv >= 0 ? kSplitSkipEnv : kRdEst ? 200.0 : 160.0;
     // Exception (13.11.): the 16x16 cost may be low overall but sit in one part of the macroblock
@@ -6982,8 +7060,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // -0.1 / -0.1 % for +1.8 %, calm -0.1 / -0.2 % for +0.2 %. Concentration 0.45: animation
     // fixed QP -3.6 instead of -4.3 %, CS2 +2.1 %; 0.35: CS2 +7.7 %. H264_SPLITQ / H264_SPLITR
     // override, H264_SPLITQ=0 = off (the stream before).
-    static const double kSplitQuad = std::getenv("H264_SPLITQ") ? std::atof(std::getenv("H264_SPLITQ")) : 0.5;
-    static const double kSplitConc = std::getenv("H264_SPLITR") ? std::atof(std::getenv("H264_SPLITR")) : 0.4;
+    static const double kSplitQuad = devEnv("H264_SPLITQ") ? std::atof(devEnv("H264_SPLITQ")) : 0.5;
+    static const double kSplitConc = devEnv("H264_SPLITR") ? std::atof(devEnv("H264_SPLITR")) : 0.4;
     // The 8x8 plan of the 16x16 layout right after its search (mode decision by estimate; kept
     // for the decision below), for two shortcuts:
     // - Late skip: the search ended on the skip vector and the trellis leaves no luma level of the
@@ -6994,8 +7072,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // Measured 14.11. (two-pass, 4 rates, BD-rate PSNR-Y on CS2 / camera / calm / animation;
     // instructions two-pass 8 Mbit/s CS2): late skip -0.03 / -0.03 / +0.04 / +0.34 % for -1.2 %,
     // no split search +0.03 / +0.01 / -0.04 / -0.18 % for -1.1 %.
-    static const bool kLateSkip = !std::getenv("H264_LATESKIP") || std::atoi(std::getenv("H264_LATESKIP")) != 0;
-    static const bool kZeroNoSplit = !std::getenv("H264_ZERONOSPLIT") || std::atoi(std::getenv("H264_ZERONOSPLIT")) != 0;
+    static const bool kLateSkip = !devEnv("H264_LATESKIP") || std::atoi(devEnv("H264_LATESKIP")) != 0;
+    static const bool kZeroNoSplit = !devEnv("H264_ZERONOSPLIT") || std::atoi(devEnv("H264_ZERONOSPLIT")) != 0;
     InterResidual lateR8;
     double lateJ8 = 0;
     bool lateValid = false, wholeZero = false;
@@ -7041,7 +7119,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         // cost is within 1.1 times the 16x16 cost. Measured (two-pass, AQ + tree, 600 pictures CS2,
         // BD-rate PSNR-Y / instructions): +0.29 % / -4.8 %; always refining the best split +0.37 % /
         // -3.8 %. H264_QPELSPLIT = c overrides, 0 = every split searched to quarter-pel.
-        static const double kQpelSplit = std::getenv("H264_QPELSPLIT") ? std::atof(std::getenv("H264_QPELSPLIT")) : 1.1;
+        static const double kQpelSplit = devEnv("H264_QPELSPLIT") ? std::atof(devEnv("H264_QPELSPLIT")) : 1.1;
         const bool lateSubpel = gExp & 256;
         subpelNow = lateSubpel ? 0 : kQpelSplit > 0 ? 1 : 2;
         split = tryLayout(3);
@@ -7165,8 +7243,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     };
     // Transform size by SATD (experiment H264_EXP & 512): the 8x8 Hadamard of the residual against
     // four 4x4 ones; clearly one way -> only that transform is coded, else both (as without).
-    static const double kT8Lo = std::getenv("H264_T8LO") ? std::atof(std::getenv("H264_T8LO")) : 1.0;
-    static const double kT8Hi = std::getenv("H264_T8HI") ? std::atof(std::getenv("H264_T8HI")) : 1.0;
+    static const double kT8Lo = devEnv("H264_T8LO") ? std::atof(devEnv("H264_T8LO")) : 1.0;
+    static const double kT8Hi = devEnv("H264_T8HI") ? std::atof(devEnv("H264_T8HI")) : 1.0;
     const bool t8Pre = useT8() && cfg_.effort > 0 && (gExp & 512);
     auto satd48 = [&](const Choice& c, int& s4, int& s8) {
         const Layout& layout = kLayouts[c.layout];
@@ -7192,14 +7270,14 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         satd48(c, s4, s8);
         if (double(s8) < kT8Lo * s4)
             return 1;
-        static const double kT8Slope = std::getenv("H264_T8SLOPE") ? std::atof(std::getenv("H264_T8SLOPE")) : 0.0;
+        static const double kT8Slope = devEnv("H264_T8SLOPE") ? std::atof(devEnv("H264_T8SLOPE")) : 0.0;
         if (double(s8) > (kT8Hi + kT8Slope * std::max(0, qp - 26)) * s4)
             return 2;
         return 0;
     };
     // Try the split for real when its estimate is close or better.
     // Measured: 1.0 is as fast as 1.1 and -0.04 % BD-rate (0.95: +0.44 %). H264_SPLITF overrides.
-    static const double kSplitTry = std::getenv("H264_SPLITF") ? std::atof(std::getenv("H264_SPLITF")) : 1.0;
+    static const double kSplitTry = devEnv("H264_SPLITF") ? std::atof(devEnv("H264_SPLITF")) : 1.0;
     MbOut interBits;
     double costInter = 1e300;
     bool chosenInterDelta = false;
@@ -7216,8 +7294,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // -0.40 / -0.33 % / -1.7 % (the split now competes with its best transform, not only with 4x4;
     // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit 1.0: +0.10 %
     // for another -0.5 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
-    static const double kEstBoth = std::getenv("H264_ESTBOTH") ? std::atof(std::getenv("H264_ESTBOTH")) : 0.0;
-    static const double kEstSplit = std::getenv("H264_ESTSPLIT") ? std::atof(std::getenv("H264_ESTSPLIT")) : 1e9;
+    static const double kEstBoth = devEnv("H264_ESTBOTH") ? std::atof(devEnv("H264_ESTBOTH")) : 0.0;
+    static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1e9;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
@@ -7228,13 +7306,15 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // +0.05 / +0.05, +0.01 / -0.04, -0.22 / -0.29 % for -2.2 %; the second +0.05 / -0.06, +0.35 /
     // +0.13, +0.18 / +0.09, +0.54 / -0.66 % for -2.3 % (only quadrants with every coefficient below
     // half a level: -0.8 %).
-    static const bool kZeroQuad = !std::getenv("H264_ZEROQ") || std::atoi(std::getenv("H264_ZEROQ")) != 0;
-    static const bool kZero8 = !std::getenv("H264_ZERO8") || std::atoi(std::getenv("H264_ZERO8")) != 0;
+    static const bool kZeroQuad = !devEnv("H264_ZEROQ") || std::atoi(devEnv("H264_ZEROQ")) != 0;
+    static const bool kZero8 = !devEnv("H264_ZERO8") || std::atoi(devEnv("H264_ZERO8")) != 0;
+    struct Plan {
+        InterResidual r4, r8;
+        double j4, j8;
+    };
+    Plan pw, ps;                             // the 16x16 layout's and the split's
+    const InterResidual* wonPlan = nullptr;  // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
-        struct Plan {
-            InterResidual r4, r8;
-            double j4, j8;
-        };
         auto plan = [&](const Choice& c, Plan& p) {
             const PredCache& pc = predictLayout(c);
             if (lateValid && c.layout == 0) {
@@ -7262,6 +7342,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 best = c;
                 bestT8 = t8;
                 bestPsy = interPsy;
+                wonPlan = t8 ? &p.r8 : &p.r4;
             }
             return cost;
         };
@@ -7283,11 +7364,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             }
             return std::min(first, other);
         };
-        Plan pw;
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
-            Plan ps;
             plan(split, ps);
             // Header bits of both layouts as the CAVLC count (type, references, vector differences).
             auto headBits = [&](const Choice& c) {
@@ -7388,10 +7467,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     } // !useEst
     // Psy: the winner once more with the finer quantisation (see gPsyFine).
-    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe) {
+    // (Not where the chosen plan has nothing at the positions the finer lambda weighs: it would come out again.)
+    if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe && !(wonPlan && !wonPlan->fineMayDiffer)) {
         InterResidual fine;
         planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
-        if (fine.cbpLuma || interBits.syn.cbpLuma) { // else the same macroblock again
+        // (Not where the finer plan is the chosen one again - no level changed, or both are empty: the same macroblock.)
+        if ((fine.cbpLuma || interBits.syn.cbpLuma) && !(wonPlan && samePlan(fine, *wonPlan, bestT8))) {
             MbOut fineBits;
             const double costFine = encodeInter(best, fineBits, bestT8, &fine);
             if (costFine < costInter) {
@@ -7436,7 +7517,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
     }
 
-    static const bool kTrace = std::getenv("H264_MB_TRACE") != nullptr;
+    static const bool kTrace = devEnv("H264_MB_TRACE") != nullptr;
     if (kTrace)
         std::snprintf(tDecision, sizeof tDecision, " | lam %.0f skip %.0f inter %.0f (layout %d mv %d,%d) intra %.0f", lambda,
                       costSkip, costInter, best.layout, best.mv[0][0], best.mv[0][1], costIntra < 1e299 ? costIntra : -1.0);
@@ -7684,22 +7765,48 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         lostDirect = lostOf(e / 2, detail(dlp, 16, 16), std::min(satd[0], satd[1]), gBSharpKeep > 0 ? satd16(dlp) : 0);
     }
     const double sharpDirect = sharp * lambdaSad * lostDirect;
-    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby) + sharpDirect;
-    MbState skipState;
-    saveMb(mbx, mby, skipState);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
     // type and vector of a copy from one picture would cost (about six bits).
-    static const double kEarlySkipFloorB = std::getenv("H264_EARLYSKIPFLOOR") ? std::atof(std::getenv("H264_EARLYSKIPFLOOR")) : 0.0;
-    static const double kEarlySkipSsdB = std::getenv("H264_EARLYSKIPSSDB") ? std::atof(std::getenv("H264_EARLYSKIPSSDB")) : 0.0;
+    static const double kEarlySkipFloorB = devEnv("H264_EARLYSKIPFLOOR") ? std::atof(devEnv("H264_EARLYSKIPFLOOR")) : 0.0;
+    static const double kEarlySkipSsdB = devEnv("H264_EARLYSKIPSSDB") ? std::atof(devEnv("H264_EARLYSKIPSSDB")) : 0.0;
     if (sharpDirect <= 6 * lambda && (kEarlySkipSsdB <= 0 || double(mbSsd(mbx, mby)) <= std::max(kEarlySkipSsdB * lambda, kEarlySkipFloorB)) &&
         skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-        if (gStats)
+        if (gStats) {
             ++gStatB[0];
+            ++gStatB2[0];
+        }
         return false;
     }
+    // Only macroblocks that go on need the skip's cost and its state (most of a calm picture stops above).
+    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby) + sharpDirect;
+    MbState skipState;
+    saveMb(mbx, mby, skipState);
     const double estDirect = double(satd16(dlp)) + lambdaSad + sharp * gBSharpEst * 0.5 * lostDirect;
+
+    // The direct prediction's 8x8 plan, made before the searches (the choice of transform below starts with it, so
+    // it is not made twice): where it leaves no luma level, the split layouts are not searched (kBZeroNoSplit).
+    // Measured 18.11.2026 (two-pass, 4 rates, BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation; instructions
+    // two-pass): +0.01 / 0.00, 0.00 / 0.00, -0.11 / -0.10, -0.03 / +0.01 % for -0.3 / -0.1 / -8.1 / -0.3 %.
+    // (Skipping such a macroblock outright, without the 16x16 search, cost +5 % on footage with grain: the search
+    // finds the better average of both lists there.)
+    static const bool kBZeroNoSplit = !devEnv("H264_BZERONOSPLIT") || std::atoi(devEnv("H264_BZERONOSPLIT")) != 0;
+    // The same for the 16x16 candidate's plan, made right after its search. Measured the same way: 0.00 / -0.02,
+    // +0.02 / -0.05, -0.06 / -0.04, -0.74 / +0.20 % for -1.1 / -1.8 / -6.7 / -3.4 %.
+    static const bool kBZero16NoSplit = !devEnv("H264_BZERO16NOSPLIT") || std::atoi(devEnv("H264_BZERO16NOSPLIT")) != 0;
+    // B_8x8 is searched only where a two-part layout already beats 16x16 by estimate: +0.01 / 0.00, +0.02 / +0.03,
+    // -0.03 / 0.00, -0.01 / +0.02 % for -0.8 / -2.3 / -2.5 / -0.9 %.
+    static const bool kB8x8AfterSplit = !devEnv("H264_B8X8AFTER") || std::atoi(devEnv("H264_B8X8AFTER")) != 0;
+    InterResidual directR8;
+    double directJ8 = 0;
+    bool directPlanned = false;
+    const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+    const bool useEst = (gBEstEnv < 0 ? cfg_.modeEstimate : gBEstEnv != 0) && liveCe && useT8() && cfg_.effort > 0;
+    if (kBZeroNoSplit && useEst && sharpDirect <= 6 * lambda) {
+        planInterLuma(mbx, mby, dlp, qp, lambda, true, true, directR8, &directJ8);
+        directPlanned = true;
+    }
 
     // ---- Candidate 2: motion search in both lists. Start points: the direct vector, the
     // neighbours' vectors and the co-located block's vector scaled to this picture's distance.
@@ -7955,19 +8062,38 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     Cand cands[kMaxBCands];
     cands[0] = tryShape(0);
     int candCount = 1;
-    if (cfg_.effort > 0 && gBParts && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
+    if (gStats)
+        ++gStatB2[2];
+    uint8_t clp[kMaxBCands][256], ccp[kMaxBCands][2][64];
+    InterResidual wholeR8;
+    double wholeJ8 = 0;
+    bool wholePlanned = false;
+    bool noSplit = directPlanned && directR8.cbpLuma == 0;
+    if (kBZero16NoSplit && useEst && !noSplit) {
+        predictBi(mbx, mby, 0, 0, 4, 4, cands[0].use[0], cands[0].mv[0][0], cands[0].mv[0][1], clp[0], ccp[0]);
+        planInterLuma(mbx, mby, clp[0], qp, lambda, true, true, wholeR8, &wholeJ8);
+        wholePlanned = true;
+        noSplit = wholeR8.cbpLuma == 0;
+    }
+    if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
+        if (gStats)
+            ++gStatB2[3];
         for (int shape : {1, 2}) {
             const Cand c = tryShape(shape);
             if (c.cost < cands[1].cost)
                 cands[1] = c;
         }
-        if (gB8x8) {
+        if (gB8x8 && !(kB8x8AfterSplit && cands[1].cost >= cands[0].cost)) {
+            if (gStats)
+                ++gStatB2[4];
             const Cand c = tryB8x8(cands[0]);
             if (c.cost < cands[1].cost)
                 cands[1] = c;
         }
         if (cands[1].cost < cands[0].cost)
             candCount = 2;
+        if (gStats && candCount == 2)
+            ++gStatB2[5];
     }
     double estSearch = candCount == 2 ? cands[1].cost : cands[0].cost;
     // Rate-distortion choice among the estimates (H264_BRD = factor, 0 = off): every candidate
@@ -7992,8 +8118,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
 
     // Codes the direct prediction (which = 0) or a searched candidate (1, 2) with its residual;
     // leaves its state in the macroblock and returns SSD + lambda * bits.
-    uint8_t clp[kMaxBCands][256], ccp[kMaxBCands][2][64];
-    for (int k = 0; k < candCount; ++k)
+    for (int k = wholePlanned ? 1 : 0; k < candCount; ++k)
         for (int p = 0; p < cands[k].count; ++p) {
             const Part& P = kPart[cands[k].shape][p];
             if (cands[k].use[p] == 0) { // a direct 8x8 block: the direct prediction's quarter
@@ -8075,27 +8200,48 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     double bestPsy = 0;
     bool chosenDelta = false;
     MbState interState;
-    const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     // Transform by estimate (H264_BEST): per candidate both transforms are quantised with the
     // trellis, whose own cost (squared error + lambda * coefficient and side bits) picks the one
     // that is coded for real - as in P pictures (Encoder modeEstimate), instead of 4x4 for all and
     // 8x8 only for the winner.
-    const bool useEst = (gBEstEnv < 0 ? cfg_.modeEstimate : gBEstEnv != 0) && liveCe && useT8() && cfg_.effort > 0;
+    InterResidual r8[kMaxBCands + 1], r4[kMaxBCands + 1];
+    const InterResidual* wonPlan = nullptr; // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
-        static const bool kZeroQuadB = !std::getenv("H264_ZEROQ") || std::atoi(std::getenv("H264_ZEROQ")) != 0;
-        static const bool kZero8B = !std::getenv("H264_ZERO8") || std::atoi(std::getenv("H264_ZERO8")) != 0;
+        static const bool kZeroQuadB = !devEnv("H264_ZEROQ") || std::atoi(devEnv("H264_ZEROQ")) != 0;
+        static const bool kZero8B = !devEnv("H264_ZERO8") || std::atoi(devEnv("H264_ZERO8")) != 0;
         // A candidate whose estimate (with its vector and type bits as the CAVLC count) is above
         // kBPrune times the best one's is not coded for real. Measured (fixed QP, CS2, 3 B forced):
         // 1.1 +0.1 % of the B pictures' bits for -2.1 % instructions. H264_BPRUNE overrides, 0 = off.
-        static const double kBPrune = std::getenv("H264_BPRUNE") ? std::atof(std::getenv("H264_BPRUNE")) : 1.1;
-        InterResidual r8[kMaxBCands + 1], r4[kMaxBCands + 1];
+        static const double kBPrune = devEnv("H264_BPRUNE") ? std::atof(devEnv("H264_BPRUNE")) : 1.1;
         double jBest[kMaxBCands + 1];
         bool use8[kMaxBCands + 1];
         double jMin = 1e300;
+        // A candidate whose SATD estimate is above kBPlanPrune times the best one's is not planned at all (the plans
+        // are the dearer half of a candidate). Measured 18.11.2026 with the three rules above (two-pass, 4 rates,
+        // BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation against none of them; instructions two-pass /
+        // fixed QP 30): 1.1 +0.01 / -0.01, +0.04 / -0.04, -0.11 / +0.04, -0.16 / +0.28 % for -3.6 / -6.4 / -8.6 /
+        // -5.7 % and -6.9 / -8.8 / -2.9 / -5.2 %; 1.0 (only the best one) -0.08 / -0.09, -0.14 / 0.00, +0.32 /
+        // +1.37, 0.00 / +0.62 % (calm loses SSIM). H264_BPLANPRUNE overrides, 0 = off.
+        static const double kBPlanPrune = devEnv("H264_BPLANPRUNE") ? std::atof(devEnv("H264_BPLANPRUNE")) : 1.1;
+        double estMin = estDirect;
+        for (int k = 0; k < candCount; ++k)
+            estMin = std::min(estMin, cands[k].cost);
+        bool planned[kMaxBCands + 1];
         for (int which = 0; which <= candCount; ++which) {
             const uint8_t* lp = which ? clp[which - 1] : dlp;
             double j8 = 0, j4 = 1e300;
-            planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+            planned[which] = !(kBPlanPrune > 0 && (which ? cands[which - 1].cost : estDirect) > kBPlanPrune * estMin);
+            if (!planned[which])
+                continue;
+            if (which == 0 && directPlanned) {
+                r8[0] = directR8;
+                j8 = directJ8;
+            } else if (which == 1 && wholePlanned) {
+                r8[1] = wholeR8;
+                j8 = wholeJ8;
+            } else {
+                planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+            }
             j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r8[which].cbpLuma, true);
             if (!(kZero8B && r8[which].cbpLuma == 0)) {
                 planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr);
@@ -8118,7 +8264,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             }
         }
         for (int which = 0; which <= candCount; ++which) {
-            if (kBPrune > 0 && jBest[which] > kBPrune * jMin)
+            if (!planned[which] || (kBPrune > 0 && jBest[which] > kBPrune * jMin))
                 continue;
             const bool t8 = use8[which];
             MbOut candBits;
@@ -8131,6 +8277,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 saveMb(mbx, mby, interState);
                 bestWhich = which;
                 bestT8 = t8;
+                wonPlan = t8 ? &r8[which] : &r4[which];
             }
         }
     } else {
@@ -8166,13 +8313,24 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     }
     // Psy: the winner once more with the finer quantisation (see gPsyFine).
     if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0) {
-        MbOut fineBits;
-        const double costFine = encodeB(bestWhich, fineBits, bestT8, lambda * gPsyFine);
-        if (costFine < costInter) {
-            costInter = costFine;
-            chosenDelta = sentDelta;
-            interBits = std::move(fineBits);
-            saveMb(mbx, mby, interState);
+        // Planned first: where the finer plan is the chosen one again (no level changed), coding it would give the
+        // same macroblock.
+        InterResidual fine;
+        bool same = wonPlan && !wonPlan->fineMayDiffer; // nothing at the positions the finer lambda weighs
+        if (wonPlan && !same) {
+            planInterLuma(mbx, mby, bestWhich ? clp[bestWhich - 1] : dlp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
+            same = samePlan(fine, *wonPlan, bestT8);
+        }
+        if (!same) {
+            MbOut fineBits;
+            const double costFine = wonPlan ? encodeB(bestWhich, fineBits, bestT8, -1.0, &fine)
+                                            : encodeB(bestWhich, fineBits, bestT8, lambda * gPsyFine);
+            if (costFine < costInter) {
+                costInter = costFine;
+                chosenDelta = sentDelta;
+                interBits = std::move(fineBits);
+                saveMb(mbx, mby, interState);
+            }
         }
     }
 
@@ -8242,7 +8400,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
 // row up to mbx and every row r - j above up to column mbx + 2j - what the wavefront has finished for certain
 // before this macroblock starts, on any number of threads. Projection: their bits, plus the planned share of the
 // rest scaled by what the seen part took against its plan (at the QPs it got) and by 2^(-rise/6).
-static const double gVbvRowStart = std::getenv("H264_VBV_ROWSTART") ? std::atof(std::getenv("H264_VBV_ROWSTART")) : 0.05;
+static const double gVbvRowStart = devEnv("H264_VBV_ROWSTART") ? std::atof(devEnv("H264_VBV_ROWSTART")) : 0.05;
 
 int FrameCoder::vbvRowAdjust(int mbx, int r)
 {
@@ -8547,9 +8705,9 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
 // Weighted prediction, deciding (experiment knobs): the weighted block means must leave at most
 // H264_WPTHR of the unweighted difference to the reference and gain at least H264_WPMIN grey levels
 // per block on average.
-static const double gWpThr = std::getenv("H264_WPTHR") ? std::atof(std::getenv("H264_WPTHR")) : 0.8;
-static const double gWpMin = std::getenv("H264_WPMIN") ? std::atof(std::getenv("H264_WPMIN")) : 0.25;
-static const bool gWpTrace = std::getenv("H264_WP_TRACE") != nullptr;
+static const double gWpThr = devEnv("H264_WPTHR") ? std::atof(devEnv("H264_WPTHR")) : 0.8;
+static const double gWpMin = devEnv("H264_WPMIN") ? std::atof(devEnv("H264_WPMIN")) : 0.25;
+static const bool gWpTrace = devEnv("H264_WP_TRACE") != nullptr;
 
 void FrameCoder::computeBlockMeans()
 {
@@ -8806,6 +8964,8 @@ void FrameCoder::mcLumaPlain(const RefPic& R, int x0, int y0, int fx, int fy, in
 // SAD (full-pel fast path) or SATD of a partition against the reference.
 int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const
 {
+    if (gStats)
+        ++gStatCalls[satd ? 3 : 4];
     const int px = mbx * 16 + x4 * 4, py = mby * 16 + y4 * 4;
     const int w = w4 * 4, h = h4 * 4;
     const size_t lo = size_t(py) * padW_ + px;
@@ -9106,7 +9266,7 @@ void FrameCoder::planMacroblockQp()
             // kbit/s / 38.71 dB; 2: 62.44 at 560 / -0.01 dB; 3: 62.65 at 560 / -0.01; 4: 62.86 at 548 / -0.04;
             // 6: 63.07 at 540 / -0.30 (the cartoon's flat areas lose what its busy ones gain).
             // H264_AQFLOOR overrides (0 = off, the stream before 16.11.2026).
-            static const double kAqFloor = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 3.0;
+            static const double kAqFloor = devEnv("H264_AQFLOOR") ? std::atof(devEnv("H264_AQFLOOR")) : 3.0;
             const double e = std::log2(variance + 1.0);
             mbEnergy_[size_t(mby) * mbW_ + mbx] = float(e);
             mean += std::max(e, kAqFloor);
@@ -9117,11 +9277,11 @@ void FrameCoder::planMacroblockQp()
     // busy macroblocks - where its bits go - pushed up to 8 QP coarser and the cartoon came out
     // ~6 QP coarser against x264 than game footage; calm grain (~15) and game footage (~13) hardly move. H264_CRFAQB: weight (0 = the mean as in the other
     // modes), H264_CRFAQREF: the energy (measuring).
-    static const double kCrfAqB = std::getenv("H264_CRFAQB") ? std::atof(std::getenv("H264_CRFAQB")) : 1.0;
-    static const double kCrfAqRef = std::getenv("H264_CRFAQREF") ? std::atof(std::getenv("H264_CRFAQREF")) : 13.0;
+    static const double kCrfAqB = devEnv("H264_CRFAQB") ? std::atof(devEnv("H264_CRFAQB")) : 1.0;
+    static const double kCrfAqRef = devEnv("H264_CRFAQREF") ? std::atof(devEnv("H264_CRFAQREF")) : 13.0;
     if (cfg_.crf >= 0 && cfg_.bitrateKbps <= 0)
         mean += kCrfAqB * (kCrfAqRef - mean);
-    static const bool aqTrace = std::getenv("H264_AQ_TRACE") != nullptr;
+    static const bool aqTrace = devEnv("H264_AQ_TRACE") != nullptr;
     if (aqTrace) {
         double tm = 0;
         if (treeOffset_.size() == size_t(n))
@@ -9130,7 +9290,7 @@ void FrameCoder::planMacroblockQp()
         std::fprintf(stderr, "aq: frame %d qp %d mean %.2f tree %.2f\n", displayIndex_, cfg_.qp, mean, tm / n);
     }
     for (int m = 0; m < n; ++m) {
-        static const double kAqFloor2 = std::getenv("H264_AQFLOOR") ? std::atof(std::getenv("H264_AQFLOOR")) : 3.0;
+        static const double kAqFloor2 = devEnv("H264_AQFLOOR") ? std::atof(devEnv("H264_AQFLOOR")) : 3.0;
         double offset = std::clamp(cfg_.aqStrength * (std::max(double(mbEnergy_[size_t(m)]), kAqFloor2) - mean) * 0.5, -8.0, 8.0);
         if (tree)
             offset += treeOffset_[size_t(m)];
@@ -9207,7 +9367,44 @@ bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const u
     int lim[8];
     limits(qp, lim);
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
+    // A coefficient is at most the block's sum of absolute differences times the product of the two basis rows'
+    // largest entries (1, 2 or 4 by position class), so a block whose SAD is small enough is below every limit
+    // without being transformed (the common case where a picture stands still).
+    const int sadLimit = std::min({lim[0], lim[1] / 2, lim[5] / 4});
+    int sad4[16];
+    {
+        const uint8_t* sp = &srcY_[lumaOff];
+#ifdef SCHNEIDI_H264_SSE2
+        const __m128i zero = _mm_setzero_si128(), ones = _mm_set1_epi16(1);
+        for (int band = 0; band < 4; ++band) {
+            __m128i lo = zero, hi = zero; // column sums of the band's four rows
+            for (int y = band * 4; y < band * 4 + 4; ++y) {
+                const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(sp + size_t(y) * padW_));
+                const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(lp + y * 16));
+                const __m128i d = _mm_or_si128(_mm_subs_epu8(a, b), _mm_subs_epu8(b, a));
+                lo = _mm_add_epi16(lo, _mm_unpacklo_epi8(d, zero));
+                hi = _mm_add_epi16(hi, _mm_unpackhi_epi8(d, zero));
+            }
+            alignas(16) int pairs[8]; // sums of two columns each
+            _mm_store_si128(reinterpret_cast<__m128i*>(pairs), _mm_madd_epi16(lo, ones));
+            _mm_store_si128(reinterpret_cast<__m128i*>(pairs + 4), _mm_madd_epi16(hi, ones));
+            for (int i = 0; i < 4; ++i)
+                sad4[band * 4 + i] = pairs[2 * i] + pairs[2 * i + 1];
+        }
+#else
+        for (int b = 0; b < 16; ++b) {
+            const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
+            int sum = 0;
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    sum += std::abs(int(sp[size_t(oy + y) * padW_ + ox + x]) - int(lp[(oy + y) * 16 + ox + x]));
+            sad4[b] = sum;
+        }
+#endif
+    }
     for (int b = 0; b < 16; ++b) {
+        if (sad4[b] <= sadLimit)
+            continue;
         const int ox = (b & 3) * 4, oy = (b >> 2) * 4;
         int coef[16];
         forward4x4Diff(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, lp + oy * 16 + ox, 16, coef);
@@ -9246,6 +9443,8 @@ bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const u
 // slice's current context states.
 double FrameCoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
 {
+    if (gStats)
+        ++gStatCalls[6];
     const size_t top = size_t(rowKey_[size_t(mby)]);
     const CabacEncoder* live = cabacByTop_[top];
     if (!live)

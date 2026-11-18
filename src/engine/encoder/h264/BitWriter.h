@@ -22,6 +22,14 @@ public:
             bytes_.push_back(uint8_t(acc_ >> pending_));
         }
     }
+    // One whole byte (the fast way while byte aligned).
+    void byte(uint8_t value)
+    {
+        if (pending_ == 0)
+            bytes_.push_back(value);
+        else
+            u(value, 8);
+    }
     void flag(bool b) { u(b ? 1u : 0u, 1); }
 
     // Unsigned Exp-Golomb.

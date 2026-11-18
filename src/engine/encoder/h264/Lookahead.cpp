@@ -2,6 +2,7 @@
 // predictions and of a small motion search (full-pel diamond on SAD, half-pel on SATD) against
 // the previous picture, plus the macroblock tree that propagates these costs backwards.
 #include "Simd.h" // first: no floating-point contraction (see there)
+#include "DevEnv.h"
 #include "Lookahead.h"
 
 #include "Satd.h"
@@ -291,7 +292,14 @@ std::vector<uint8_t> Lookahead::halfPicture(const LookaheadFrame& f) const
 }
 
 // H264_LASUBPEL=0: the lookahead's half-pel step measures all eight neighbours.
-static const bool gLaSubpel = !std::getenv("H264_LASUBPEL") || std::atoi(std::getenv("H264_LASUBPEL")) != 0;
+// A block (8x8 of the half picture) that one of the start points already predicts with a SAD of at most gLaStill
+// keeps that vector without the search around it: the still parts of drawn or calm material, where the search
+// was most of the lookahead's work. Measured 18.11.2026 (two-pass, 4 rates, BD-rate PSNR-Y / SSIM-Y on CS2, camera,
+// calm, animation; instructions two-pass): 16 -0.01 / -0.01, -0.01 / -0.02, 0.00 / 0.00, -0.01 / -0.09 % for
+// -0.3 / -0.2 / 0.0 / -14.9 % (8 and 32 the same work, animation -0.4 and +0.5 %). Taking the zero vector without
+// trying the start points cost the animation +1.4 %. H264_LASTILL overrides, 0 = off.
+static const int gLaStill = devEnv("H264_LASTILL") ? std::max(0, std::atoi(devEnv("H264_LASTILL"))) : 16;
+static const bool gLaSubpel = !devEnv("H264_LASUBPEL") || std::atoi(devEnv("H264_LASUBPEL")) != 0;
 
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
                       int seedScale, const LookaheadFrame* src, const std::atomic<int>* prevRows, std::atomic<int>* ownRows,
@@ -405,6 +413,16 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
                 tryStart(prev->mvx[m], prev->mvy[m]);
             if (seed)
                 tryStart(seed->mvx[m] * seedScale, seed->mvy[m] * seedScale);
+            if (gLaStill > 0 && best - mvCost(2 * bestX, 2 * bestY) <= gLaStill) {
+                // One of the start points already matches: no search around it.
+                const int found = satd8x8U8Fast(cur, stride, at(prev->half, bx * 8 + bestX, by * 8 + bestY), stride) +
+                                  mvCost(2 * bestX, 2 * bestY);
+                f.mvx[m] = int16_t(2 * bestX);
+                f.mvy[m] = int16_t(2 * bestY);
+                f.interCost[m] = found;
+                interSum += std::min(found, intra);
+                return;
+            }
             for (int step : {4, 2, 1})
                 for (int iter = 0; iter < 16; ++iter) {
                     bool moved = false;
@@ -803,7 +821,7 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
 // action +8 / +6 % at 1.06.
 static double planEnv(const char* name, double def)
 {
-    const char* e = std::getenv(name);
+    const char* e = devEnv(name);
     return e ? std::atof(e) : def;
 }
 // Dead zone of a block's cost (SATD of the half picture's 8x8 block).
@@ -1029,7 +1047,7 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         if (kPlanMove > 0 && accStep_ > 0 && (accFar_ >= kPlanMove * accStep_ || accLive_ < kPlanGrain * accCount_))
             gate_ |= kMoving;
     }
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    static const bool trace = devEnv("H264_B_TRACE") != nullptr;
     if (trace)
         std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held, far %.2f, live %.2f: run %d%s\n",
                      anchor_ + 1, sumP / (double(n) * p), sumB / (double(n) * p), sumFar / double(n), sumP > 0 ? sumB / sumP : 0.0, ratio,
