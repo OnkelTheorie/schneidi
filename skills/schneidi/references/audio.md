@@ -40,7 +40,12 @@ a clip plays; `tracks` in `silence`, `transcribe` and `loudness` picks what is a
 A recording with a **Mix stream plus its single streams** then plays everything twice (too loud, clipping). A project
 made with `new` `template` "game" mutes the Mix by itself (its own import presets, `info` shows `import_presets`). Else
 look at `info` after placing such a file: if "Mix" and its parts are all enabled, switch off one side with `enable`
-(usually the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`.
+(usually the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`. Only some streams of
+a recording: `keep`/`append`/`place` with `audio_streams` (numbers or names, e.g. `["System Output"]` for the game
+sound without Discord, microphone and music). Track names work wherever a track is named (`mixer`, `track`,
+`remove_track`: `"Mix"`). A file with a single audio stream never lands on a muted track. If the whole mix is silent
+(everything on muted tracks or disabled), `info` notes it and `check` reports `mix_silent`; `transcribe` then says the
+audio is silent instead of suggesting `music:true`.
 
 ## Voice-over
 You cannot speak: a voice-over comes from a file the user gives (`{"op":"voiceover","file":"…","at":"2s"}`; with
