@@ -2,6 +2,7 @@
 // predictions and of a small motion search (full-pel diamond on SAD, half-pel on SATD) against
 // the previous picture, plus the macroblock tree that propagates these costs backwards.
 #include "Simd.h" // first: no floating-point contraction (see there)
+#include "DevEnv.h"
 #include "Lookahead.h"
 
 #include "Satd.h"
@@ -291,7 +292,7 @@ std::vector<uint8_t> Lookahead::halfPicture(const LookaheadFrame& f) const
 }
 
 // H264_LASUBPEL=0: the lookahead's half-pel step measures all eight neighbours.
-static const bool gLaSubpel = !std::getenv("H264_LASUBPEL") || std::atoi(std::getenv("H264_LASUBPEL")) != 0;
+static const bool gLaSubpel = !devEnv("H264_LASUBPEL") || std::atoi(devEnv("H264_LASUBPEL")) != 0;
 
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
                       int seedScale, const LookaheadFrame* src, const std::atomic<int>* prevRows, std::atomic<int>* ownRows,
@@ -803,7 +804,7 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
 // action +8 / +6 % at 1.06.
 static double planEnv(const char* name, double def)
 {
-    const char* e = std::getenv(name);
+    const char* e = devEnv(name);
     return e ? std::atof(e) : def;
 }
 // Dead zone of a block's cost (SATD of the half picture's 8x8 block).
@@ -1029,7 +1030,7 @@ void BPlanner::evaluate(const Lookahead& la, int maxB, int threads)
         if (kPlanMove > 0 && accStep_ > 0 && (accFar_ >= kPlanMove * accStep_ || accLive_ < kPlanGrain * accCount_))
             gate_ |= kMoving;
     }
-    static const bool trace = std::getenv("H264_B_TRACE") != nullptr;
+    static const bool trace = devEnv("H264_B_TRACE") != nullptr;
     if (trace)
         std::fprintf(stderr, "bplan: picture %d P %.0f B %.0f per block (its P picture %.0f), %.3f now, %.3f held, far %.2f, live %.2f: run %d%s\n",
                      anchor_ + 1, sumP / (double(n) * p), sumB / (double(n) * p), sumFar / double(n), sumP > 0 ? sumB / sumP : 0.0, ratio,

@@ -2,6 +2,7 @@
 // Serialises the syntax elements the macroblock coders chose; context selection follows the
 // neighbour rules of 9.3.3.1.1 (availability stops at slice edges like everywhere else).
 #include "Simd.h" // first: no floating-point contraction (see there)
+#include "DevEnv.h"
 #include "Cabac.h"
 #include "FrameCoder.h"
 
@@ -581,7 +582,7 @@ template void FrameCoder::cabacWriteMb<CabacCounter>(CabacCounter&, FrameCoder::
 // x: real-valued levels in scan order; cat 2 (luma 4x4) or 5 (luma 8x8). Returns levels in scan order.
 // A level of 1.5 or more only rounds down or up, never to zero (-1.1 % instructions, BD-rate
 // -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
-static const bool gTrellisTwo = std::getenv("H264_TRELLIS3") == nullptr;
+static const bool gTrellisTwo = devEnv("H264_TRELLIS3") == nullptr;
 
 // Squared pixel errors of a block at level 0, in one pass from the end (count a multiple of 4):
 // end = one past the last coefficient of half a level or more, tail = sum of the squares from end
