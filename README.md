@@ -159,7 +159,7 @@ edges; never a default.
 | AI cutout, own FFmpeg filter / GLSL effects | 0.19 | experimental | The cutout is an optional extension; a GLSL effect needs an installed `qsb` |
 | Studio page, automation | 0.23 | young | |
 | 5.1/7.1 surround | 0.23 | young | Checked with meters and test files, little real-world use yet |
-| Curves, qualifier, stills, master wheel | 0.24 | young | The qualifier cannot be combined with a shape window yet; no side-by-side stills compare; no curve keyframes |
+| Curves, qualifier, stills, master wheel | 0.24 | young | No curve keyframes; the qualifier has no spatial mask smoothing; with a qualifier or hue curves active a fine 65-point LUT is resampled to 33 points |
 | HDR → SDR, 10-bit export | 0.24 | young | PQ above 1000 nits goes to white; Dolby Vision only through its HLG/HDR10 base; no HDR export yet; VAAPI/Quick Sync 10-bit not checked on real hardware |
 | **s264** (own H.264 encoder) | 0.24 | experimental | Slower than x264 and never the default; x264 stays the encoder to use |
 | Windows build | 0.5 | young | No download yet, build it yourself; tested less than Linux and not in CI |
