@@ -61,8 +61,8 @@ the overview. Everything listed here is also reachable from the command line and
 
 - **Color page:** color wheels with a master wheel below each, contrast, saturation, temperature, tint and exposure, LUTs (.cube, .3dl, .csp, Hald)
 - **Curves** (master, R, G, B, hue vs hue, hue vs saturation, luma vs saturation) over a histogram of the picture
-- **Qualifier:** picks a color – sky, skin – by hue, saturation and brightness with soft edges, a mask view and its own correction. Not yet combinable with a shape window; with a qualifier or hue curves active, a fine 65-point user LUT is resampled to 33 points
-- **Stills gallery:** keep a still of a grade, compare it with a wipe in the viewer and apply that grade to other clips (side by side and stills from the command line are still missing)
+- **Qualifier:** picks a color – sky, skin – by hue, saturation and brightness with soft edges, a mask view and its own correction. Can be limited to a shape window; with a qualifier or hue curves active, a fine 65-point user LUT is resampled to 33 points
+- **Stills gallery:** keep a still of a grade, compare it with a wipe or side by side in the viewer and apply that grade to other clips; also from the command line (op `still`, `frames still:`)
 - **Windows** (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - A built-in **Edit look** preset (teal shadows, warm highlights, skin kept, a soft glow) in one click; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper on a large picture of the clip
 - Video scopes: waveform, RGB parade, vectorscope, histogram
