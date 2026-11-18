@@ -113,6 +113,7 @@ struct Reader::Impl {
     bool zeroKnown = false;
     int outRate = 48000;
     int outChannels = 0;
+    bool asSource = false; // Options::channels 0: the stream's own channels in its own order, never remixed
     bool channelsDecided = false; // outChannels fixed at the first frame (Options::stereoBelow, pick)
     bool stereoBelow = false;
     std::vector<int> pick;
@@ -318,7 +319,10 @@ struct Reader::Impl {
             av_channel_layout_uninit(&outLayout);
             // 5.1 and 7.1 in the mix's order (core/ChannelLayout.h): FFmpeg's "5.1" (back pair, its default for six
             // channels is the side pair) and "7.1"; FFmpeg maps a side pair to the back pair and back
-            if (outChannels == 6) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_5POINT1_BACK);
+            // As the source (channels 0): its own layout, also for six or eight channels that are not 5.1/7.1 (6.0,
+            // hexagonal, 7.1 wide …: a remix would move channels, and channel i would no longer be the stream's i)
+            if (asSource && inLayout.nb_channels == outChannels) av_channel_layout_copy(&outLayout, &inLayout);
+            else if (outChannels == 6) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_5POINT1_BACK);
             else if (outChannels == 8) av_channel_layout_from_mask(&outLayout, AV_CH_LAYOUT_7POINT1);
             else if (inLayout.nb_channels == outChannels) av_channel_layout_copy(&outLayout, &inLayout);
             else av_channel_layout_default(&outLayout, outChannels);
@@ -847,6 +851,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     Impl& d = *r->d;
     d.outRate = options.rate > 0 ? options.rate : 48000;
     d.outChannels = options.channels;
+    d.asSource = options.channels <= 0;
     d.stereoBelow = options.stereoBelow;
     d.pick = options.pick;
     if (d.pick.size() > 2) d.pick.resize(2);

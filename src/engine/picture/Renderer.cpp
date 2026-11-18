@@ -15,6 +15,7 @@
 #include "core/TimelineOps.h"
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
+#include "engine/HdrTone.h"
 #include "engine/Lumas.h"
 #include "engine/MemoryRelease.h"
 #include "engine/OutputColor.h"
@@ -507,6 +508,7 @@ struct Renderer::Impl {
         double fps = 25;
         bool preview = false;
         bool bypassGrade = false;
+        int maskClip = 0; // clip whose grade shows its qualifier's selection (preview), 0 = none
         // The video being made (progress bars fill over it): the timeline being rendered (TimelineOps::endFrame), in
         // an export of a range only that range
         int begin = 0, end = 0;
@@ -748,13 +750,12 @@ struct Renderer::Impl {
                                               img.h, nullptr, fit.width() / ctx.PW, fit.height() / ctx.PH))
                 img = std::move(warped);
         }
-        if (ColorGrade::active(c) && !ctx.bypassGrade) {
-            const ColorGrade::Params p = ColorGrade::at(c, t);
+        if ((ColorGrade::active(c) || (c.id == ctx.maskClip && GradeQualifier::exists(c))) && !ctx.bypassGrade) {
+            ColorGrade::Params p = ColorGrade::at(c, t);
+            if (c.id == ctx.maskClip && p.qualifier.on) p.view = ColorGrade::View::QualifierMask;
             const QString lp = ColorGrade::lutPath(c);
             const auto l = lp.isEmpty() ? nullptr : lut(lp);
-            if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
-            for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t))
-                ColorGrade::applyWindow(img.data(), img.w, img.h, ColorGrade::onPicture(w, QSizeF(ctx.PW, ctx.PH), fit));
+            ColorGrade::applyClip(img.data(), img.w, img.h, c, t, p, l.get(), QSizeF(ctx.PW, ctx.PH), fit);
         }
         if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
             if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
@@ -958,7 +959,7 @@ struct Renderer::Impl {
         }
         const double file = fileFrame(c, t, *s.video, ctx);
         if (file < 0) return {};
-        return videoFrame(*s.video, file, dw, dh, ctx, native, into);
+        return videoFrame(*s.video, file, dw, dh, ctx, native, into, c.hdrToSdr);
     }
 
     // Slow motion with in-between pictures (Clip::interpolate): where clip frame t falls between two stream frames,
@@ -992,6 +993,15 @@ struct Renderer::Impl {
         return *frac >= 1e-3 && *frac <= 1 - 1e-3 && *i0 >= 0 && (streamLength <= 0 || *i0 + 1 < streamLength);
     }
 
+    // The stream's description as a clip shows it: without HDR -> SDR when the clip has it off (Clip::hdrToSdr)
+    static Video::Info shownInfo(const Video::Info& info, bool tone)
+    {
+        if (tone || !info.tone.active()) return info;
+        Video::Info i = info;
+        i.tone = {};
+        return i;
+    }
+
     static bool inBetween(const Clip& c, int t, const QString& lane, const VideoSource& v, int dw, int dh, const Ctx& ctx,
                           QSize* native, uint8_t* into, Image* result)
     {
@@ -1009,8 +1019,9 @@ struct Renderer::Impl {
         const auto pb = v.reader->picture(i0 + 1, fetch, &exactB);
         if (!pb || !pb->frame || !exactB) return false;
         Image a(dw, dh), b(dw, dh);
-        if (!Video::toRgba(*pa, v.info, a.data(), dw, dh, ctx.preview) ||
-            !Video::toRgba(*pb, v.info, b.data(), dw, dh, ctx.preview))
+        const Video::Info info = shownInfo(v.info, c.hdrToSdr);
+        if (!Video::toRgba(*pa, info, a.data(), dw, dh, ctx.preview) ||
+            !Video::toRgba(*pb, info, b.data(), dw, dh, ctx.preview))
             return false;
         *native = QSize(pa->frame->width, pa->frame->height);
         Image out;
@@ -1095,22 +1106,24 @@ struct Renderer::Impl {
     }
 
     // Frame `file` (project rate) of a video at dw x dh (into: straight into that picture, see mediaPicture)
+    // tone: HDR -> SDR for an HDR source (Clip::hdrToSdr)
     static Image videoFrame(const VideoSource& v, double file, int dw, int dh, const Ctx& ctx, QSize* native,
-                            uint8_t* into = nullptr)
+                            uint8_t* into = nullptr, bool tone = true)
     {
         const auto pic = fetchPicture(v, file, ctx);
         if (!pic) return {};
         *native = QSize(pic->frame->width, pic->frame->height);
         if (dw <= 0 || dh <= 0) return {};
+        const Video::Info info = shownInfo(v.info, tone);
         if (into) { // straight into the caller's picture (a layer that covers the frame)
-            if (!Video::toRgba(*pic, v.info, into, dw, dh, ctx.preview)) return {};
+            if (!Video::toRgba(*pic, info, into, dw, dh, ctx.preview)) return {};
             Image done;
             done.w = dw;
             done.h = dh;
             return done; // size only: the pixels are in `into`
         }
         Image out(dw, dh);
-        if (!Video::toRgba(*pic, v.info, out.data(), dw, dh, ctx.preview)) return {};
+        if (!Video::toRgba(*pic, info, out.data(), dw, dh, ctx.preview)) return {};
         return out;
     }
 
@@ -1981,7 +1994,7 @@ struct Renderer::Impl {
     // plain FFmpeg transcode). false = render it normally.
     bool passThrough(int f, const Ctx& ctx, const OutputColor::Target& t)
     {
-        if (options.mode != Mode::Export || options.transparent || t.bits != 8
+        if (options.mode != Mode::Export || options.transparent || (t.bits != 8 && t.bits != 10)
             || (t.layout != OutputColor::Layout::Yuv420 && t.layout != OutputColor::Layout::Nv12))
             return false;
         const Timeline& tl = *ctx.root;
@@ -2009,6 +2022,7 @@ struct Renderer::Impl {
         const Source s = source(c.mediaPath, lane);
         if (!s.video) return false;
         const Video::Info& info = s.video->info;
+        if (info.tone.active() && c.hdrToSdr) return false; // HDR mapped to SDR: not the planes as they are
         auto family = [](int cs) { return cs == 170 || cs == 470 || cs == 624 ? 601 : cs == 2021 ? 2020 : cs; };
         if (family(info.colorspace) != family(t.colorspace)) return false;
         int64_t i0 = 0;
@@ -2023,7 +2037,19 @@ struct Renderer::Impl {
         const bool full = format == AV_PIX_FMT_YUVJ420P || info.fullRange;
         if (fr->width != ctx.W || fr->height != ctx.H || full != t.fullRange) return false;
         const int cw = (ctx.W + 1) / 2, ch = (ctx.H + 1) / 2;
-        if (t.layout == OutputColor::Layout::Yuv420 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
+        // 10 bit (H.265/AV1 10 bit) from a 10-bit source: its words as they are (yuv420p10le, P010), the one place the
+        // CPU keeps 10 bits; other frames of a 10-bit export come from the 8-bit canvas
+        const bool ten = t.bits == 10;
+        if (ten && t.layout == OutputColor::Layout::Yuv420 && !t.msb && format == AV_PIX_FMT_YUV420P10LE) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W * 2, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw * 2, ch);
+            av_image_copy_plane(t.planes[2], t.strides[2], fr->data[2], fr->linesize[2], cw * 2, ch);
+        } else if (ten && t.layout == OutputColor::Layout::Nv12 && t.msb && format == AV_PIX_FMT_P010LE) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W * 2, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw * 4, ch);
+        } else if (ten) {
+            return false;
+        } else if (t.layout == OutputColor::Layout::Yuv420 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
             av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W, ctx.H);
             av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw, ch);
             av_image_copy_plane(t.planes[2], t.strides[2], fr->data[2], fr->linesize[2], cw, ch);
@@ -2071,7 +2097,7 @@ struct Renderer::Impl {
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
         // original with its effects; not while Before/After shows a graded clip without its grade
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
-            && !(ctx.bypassGrade && ColorGrade::active(*c))) {
+            && !(ctx.bypassGrade && ColorGrade::active(*c)) && c->id != ctx.maskClip) {
             if (const QString file = options.renderCache(*c); !file.isEmpty()) {
                 const Source s = source(file, lane + QStringLiteral("c"));
                 if (s.video) {
@@ -2536,6 +2562,8 @@ struct Renderer::Impl {
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId) && e.effectId != QLatin1String("stabilize"))
                 return false;
         if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
+        // A qualifier limited to a window: the CPU path (mask in pixels)
+        if (!ctx.bypassGrade && GradeQualifier::windowOf(c) > 0) return false;
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
         // Tilted in depth: the card draws affine placements only; the CPU draws it through its homography
         if (tiltedEver(c)) return false;
@@ -2568,7 +2596,7 @@ struct Renderer::Impl {
             if (file < 0) return false;
             op.picture = fetchPicture(*s.video, file, ctx);
             if (!op.picture) return false;
-            op.info = s.video->info;
+            op.info = shownInfo(s.video->info, c.hdrToSdr);
             nw = op.picture->frame->width;
             nh = op.picture->frame->height;
             // Interlaced 8-bit planar 4:2:0: the chroma rows alternate between the two fields. The CPU converts it
@@ -2617,8 +2645,9 @@ struct Renderer::Impl {
         op.opacity = opacity * k;
         // Shrunk 2:1 or more: mip levels (as Compose::draw's 2x2 steps)
         op.mips = std::hypot(op.m.a, op.m.d) <= 0.5 && std::hypot(op.m.b, op.m.e) <= 0.5;
-        if (ColorGrade::active(c) && !ctx.bypassGrade) {
-            const ColorGrade::Params p = ColorGrade::at(c, t);
+        if ((ColorGrade::active(c) || (c.id == ctx.maskClip && GradeQualifier::exists(c))) && !ctx.bypassGrade) {
+            ColorGrade::Params p = ColorGrade::at(c, t);
+            if (c.id == ctx.maskClip && p.qualifier.on) p.view = ColorGrade::View::QualifierMask;
             const QString lp = ColorGrade::lutPath(c);
             auto l = lp.isEmpty() ? nullptr : lut(lp);
             if (!p.isNeutral() || l) {
@@ -2850,7 +2879,7 @@ struct Renderer::Impl {
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
-            && !(ctx.bypassGrade && ColorGrade::active(*c))) {
+            && !(ctx.bypassGrade && ColorGrade::active(*c)) && c->id != ctx.maskClip) {
             if (const QString file = options.renderCache(*c); !file.isEmpty()) {
                 const Source s = source(file, lane + QStringLiteral("c"));
                 if (s.video) {
@@ -3075,21 +3104,25 @@ struct Renderer::Impl {
         bool ok = false;
         GpuKeep keep;
         const OutputColor::Target* yuv =
-            hints.yuv && hints.yuv->bits == 8
+            hints.yuv && (hints.yuv->bits == 8 || hints.yuv->bits == 10)
                     && (hints.yuv->layout == OutputColor::Layout::Yuv420 || hints.yuv->layout == OutputColor::Layout::Nv12)
                 ? hints.yuv
                 : nullptr;
+        // A 10-bit output (H.265/AV1 10 bit): the frame in RGBA16F where the card can (else RGBA8: the planes are then
+        // 8-bit precise), so a 10-bit source keeps its precision up to the planes (layers drawn straight onto it;
+        // groups and transitions still pass an 8-bit target). Only through readYuv: when that fails, the CPU path
+        const bool ten = yuv && yuv->bits == 10;
         if (!yuv) f.m_buffer = pool().take(size_t(ctx.W) * ctx.H * 4);
         uint8_t* rgba = f.m_buffer ? f.m_buffer->data.data() : nullptr;
         const bool ran = gpu.run([&](Gpu::Context& g) {
             const float black[4] = {0, 0, 0, 1};
-            Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
+            Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black, ten);
             if (!canvas) return;
             runOps(g, *canvas, ops, size, keep);
             if (keep.compRefused || keep.refused) return;
             if (yuv) yuvDone = g.readYuv(*canvas, *yuv);
             if (!yuvDone) {
-                if (!rgba) return; // the card could not write the planes after all: CPU path
+                if (!rgba || ten) return; // the card could not write the planes after all: CPU path
                 g.readRgba(*canvas, rgba);
             }
             keep.textures.push_back(std::move(canvas));
@@ -3194,6 +3227,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     }
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
+    ctx.maskClip = ctx.preview && d->options.qualifierMask ? d->options.qualifierMask->load() : 0;
 
     // Export renders forward: decoders (and their cached pictures) of clips the export has passed go. A source asked
     // for again later (the same file further on) is opened again.

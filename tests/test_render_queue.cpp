@@ -465,9 +465,9 @@ int main(int argc, char** argv)
                 panel.setSettings(nv);
                 CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
                 CHECK(panel.makeJob().settings.encoder == VideoEncoder::Nvenc);
-                format->setCurrentIndex(3); // AAC: no video encoder
+                format->setCurrentIndex(format->findData(QString("aac"))); // audio only: no video encoder
                 CHECK(!encoder->isEnabled());
-                format->setCurrentIndex(1); // H.265
+                format->setCurrentIndex(format->findData(QString("h265")));
                 CHECK(encoder->isEnabled());
                 CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
                 panel.setSettings(youtube);

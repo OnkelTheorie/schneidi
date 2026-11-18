@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Convert.h"
 #include "engine/video/Compose.h"
+#include "engine/HdrTone.h"
 
 extern "C" {
 #include <libavutil/imgutils.h>
@@ -93,7 +94,8 @@ int sourceRange(AVPixelFormat f, bool tagged)
 }
 
 // Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same); slot =
-// another context for a second pass in the same thread
+// another context for a second pass in the same thread (2: the scaling pass of HDR pictures, so the bands' contexts
+// in slots 0/1 never replace it)
 SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, int flags, int dw = 0, int dh = 0,
                           int slot = 0)
 {
@@ -101,7 +103,7 @@ SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, in
         SwsContext* ctx = nullptr;
         ~Holder() { sws_freeContext(ctx); }
     };
-    thread_local Holder holders[2];
+    thread_local Holder holders[3];
     Holder& holder = holders[slot];
     holder.ctx = sws_getCachedContext(holder.ctx, w, h, src, dw ? dw : w, dh ? dh : h, dst, flags, nullptr, nullptr, nullptr);
     return holder.ctx;
@@ -225,6 +227,70 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
     }
 }
 
+// HDR (Info::tone): converted to 16-bit RGB (the 10-bit signal kept), then mapped to 8-bit SDR by engine/HdrTone.
+// Scaled pictures first get their planes scaled in their own format (one pass, Y'CbCr -> Y'CbCr); the conversion to
+// RGB and the mapping then run in horizontal bands over threads, each band with a buffer of its own (16-bit RGB only for
+// its rows, freed after). Interlaced pictures are converted as progressive (10-bit formats are anyway, see convert).
+bool convertHdr(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast)
+{
+    const AVFrame* frame = pic.frame;
+    const int w = frame->width, h = frame->height;
+    const AVPixelFormat src = withRange(AVPixelFormat(frame->format), info.fullRange);
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(src);
+    if (!desc) return false;
+    const bool rgbSource = desc->flags & AV_PIX_FMT_FLAG_RGB;
+    const uint8_t* const* inData = frame->data;
+    const int* inStride = frame->linesize;
+    // The planes at the destination size; kept per thread (preview size, ~2 bytes per pixel and plane), reused
+    thread_local std::vector<uint8_t> scaled;
+    uint8_t* midData[4] = {};
+    int midStride[4] = {};
+    if (dw != w || dh != h) {
+        const int size = av_image_get_buffer_size(src, dw, dh, 32);
+        if (size <= 0) return false;
+        scaled.resize(size_t(size));
+        av_image_fill_arrays(midData, midStride, scaled.data(), src, dw, dh, 32);
+        SwsContext* scale = cachedContext(w, h, src, src, fast ? SWS_BILINEAR : kScaleFlags, dw, dh, 2);
+        if (!scale) return false;
+        sws_scale(scale, frame->data, frame->linesize, 0, h, midData, midStride);
+        inData = midData;
+        inStride = midStride;
+    }
+    const int planes = av_pix_fmt_count_planes(src);
+    const int sub = desc->log2_chroma_h;
+    const int flags = swsFlags(dw, dh, src, dw, dh, AV_PIX_FMT_RGBA64);
+    // Bands of whole chroma rows; one band for small pictures
+    const int bands = std::clamp(dh / 64, 1, 8);
+    const int step = ((dh + bands - 1) / bands + (1 << sub) - 1) & ~((1 << sub) - 1);
+    std::atomic<bool> ok{true};
+    Compose::forRows(bands, 1, [&](int first, int last) {
+        thread_local std::vector<uint16_t> wide; // one band of 16-bit RGB (an eighth of the picture at most), reused
+        for (int b = first; b < last; ++b) {
+            const int y0 = b * step, y1 = std::min(dh, y0 + step);
+            if (y0 >= y1) continue;
+            SwsContext* ctx = cachedContext(dw, y1 - y0, src, AV_PIX_FMT_RGBA64, flags, 0, 0, y1 - y0 == step ? 0 : 1);
+            if (!ctx) {
+                ok = false;
+                continue;
+            }
+            lumaTransfer(ctx, rgbSource ? 601 : info.colorspace, 601, sourceRange(src, info.fullRange));
+            const uint8_t* in[4] = {};
+            int stride[4] = {};
+            for (int i = 0; i < planes; ++i) {
+                const int s = (i == 1 || i == 2) ? sub : 0;
+                in[i] = inData[i] + size_t(y0 >> s) * inStride[i];
+                stride[i] = inStride[i];
+            }
+            wide.resize(size_t(dw) * (y1 - y0) * 4);
+            uint8_t* o[4] = {reinterpret_cast<uint8_t*>(wide.data())};
+            const int oStride[4] = {dw * 8};
+            sws_scale(ctx, in, stride, 0, y1 - y0, o, oStride);
+            HdrTone::toSdrRgba64(info.tone, wide.data(), dw * 8, out + size_t(y0) * dw * 4, dw * 4, dw, y1 - y0, 1);
+        }
+    });
+    return ok;
+}
+
 } // namespace
 
 int swsColorspace(int colorspace)
@@ -245,6 +311,7 @@ int swsColorspace(int colorspace)
 bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast)
 {
     if (!pic.frame || dw <= 0 || dh <= 0) return false;
+    if (info.tone.active()) return convertHdr(pic, info, out, dw, dh, fast);
     const int w = pic.frame->width, h = pic.frame->height;
     if (dw == w && dh == h) {
         // Planar YUV, progressive, exact conversion: in horizontal bands over threads (point sampling at the same

@@ -4,6 +4,8 @@
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
 #include "core/Ducking.h"
+#include "core/GradeCurves.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/NameBlur.h"
 #include "core/Multicam.h"
@@ -467,7 +469,8 @@ public:
     void setGradeLut(const QVector<int>& ids, const QString& path); // empty = remove LUT
     void setGradeEnabled(const QVector<int>& ids, bool on);
     // Keyframe for the whole correction (like a DaVinci node): set or remove all values at the frame.
-    // window = 0: the grade's own values, 1..GradeWindows::kMax: that window's correction, shape and fill amount
+    // window = 0: the grade's own values, 1..GradeWindows::kMax: that window's correction, shape and fill amount,
+    // GradeQualifier::kLayer: the qualifier's correction and range
     void setGradeKeyframe(const QVector<int>& ids, int frame, bool on, int window = 0);
     // Windows of the grade (shape masks, core/GradeWindows): add window n (shape "rectangle"/"ellipse", creates the
     // grade if needed; clips that already have window n keep it), remove it, set a fixed property
@@ -475,6 +478,20 @@ public:
     void addGradeWindow(const QVector<int>& ids, int n, const QString& shape);
     void removeGradeWindow(const QVector<int>& ids, int n);
     void setGradeWindowOption(const QVector<int>& ids, int n, const QString& key, const QVariant& value);
+    // Curve of the grade (core/GradeCurves; empty points = straight again). Same mergeKey = one undo step (a drag)
+    void setGradeCurve(const QVector<int>& ids, GradeCurves::Kind kind, const QVector<QPointF>& points,
+                       const QString& mergeKey = {});
+    // Qualifier of the grade (core/GradeQualifier): add (default range, creates the grade if needed), remove, set
+    // its range (one undo step per mergeKey) and invert; its correction goes through setGradeValues with
+    // GradeQualifier::param, its keyframes through setGradeKeyframe with window = GradeQualifier::kLayer
+    void addGradeQualifier(const QVector<int>& ids);
+    void removeGradeQualifier(const QVector<int>& ids);
+    void setGradeQualifierRange(const QVector<int>& ids, const GradeQualifier::Range& range, int frame,
+                                const QString& mergeKey = {});
+    // Only "invert" (each clip keeps its own range)
+    void setGradeQualifierInvert(const QVector<int>& ids, bool invert);
+    // Limit the qualifier to shape window n (0 = the whole picture); clips without that window keep theirs
+    void setGradeQualifierWindow(const QVector<int>& ids, int n);
     // Tracking result: window n of the clip follows the points (keyframes for x/y on every point; keyframes there and
     // between `from` and the last point are replaced, `from` keeps its position as a keyframe). One undo step.
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
@@ -565,6 +582,11 @@ public:
     // before). Copies the Color page grade (wheels, LUT, its keyframes) and leaves other effects alone; a source
     // without a grade resets the targets. Each paste is one undo step. EditorAttributes.cpp
     bool copyGrade(int clipId);           // false = no video clip
+    // Color page stills (core/GradeStills, kept in the project): a still of `picture` with the grade of clip `clipId`
+    // (0 = no still: not a video clip), the grade of still `stillId` onto clips (one undo step), a still removed
+    int addGradeStill(int clipId, const QImage& picture, const QString& label);
+    bool applyGradeStill(int stillId, const QVector<int>& ids);
+    void removeGradeStill(int stillId);
     bool hasCopiedGrade() const { return m_gradeClipboard.has_value(); }
     void pasteGrade(const QVector<int>& ids);
     // Both clipboards as they are, and put back (a tour keeps the user's aside while its practice project is open)
@@ -714,6 +736,9 @@ public:
     // picture. With `fill` the area around the picture too (FitFill::Blur: a 4:3 picture in a 16:9 frame gets blurred
     // sides instead of black ones). One undo step; returns the number of clips changed.
     int setPictureAspect(const QVector<int>& ids, double aspect, std::optional<FitFill> fill = std::nullopt);
+    // HDR -> SDR of the clips (Clip::hdrToSdr; video clips of the open timeline, linked ones not added). One undo
+    // step; returns the number of clips changed
+    int setHdrToSdr(const QVector<int>& ids, bool on);
 
     // ---- Story sections and notes of the open timeline (Timeline::sections / notes, core/Story.h). EditorStory.cpp
     // Each call is one undo step. addSection: empty = done, else why not (overlap, empty range)

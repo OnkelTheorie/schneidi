@@ -305,6 +305,12 @@ void Engine::createPump()
 void Engine::setFormat(const ProjectFormat& format)
 {
     if (format == m_format && m_formatSet) return;
+    if (m_formatSet && format.samePicture(m_format)) {
+        // Only the mix's channels: nothing of the picture to rebuild and no pause; the mixer takes the channels
+        // with the next built timeline (renderTimeline().audioChannels)
+        m_format = format;
+        return;
+    }
     m_player->pause();
     if (m_pump) m_pump->setContent(nullptr, 0, 0);
     m_timelineContent.reset();
@@ -537,6 +543,7 @@ Picture::Options Engine::previewOptions(const QSize& output) const
     o.proxy = [resolved](const QString& path) { return resolved->proxy(path); };
     o.renderCache = [resolved](const Clip& c) { return resolved->cached(c); };
     o.gradeBypass = m_gradeBypass;
+    o.qualifierMask = m_qualifierMask;
     o.parallelFrames = m_pump ? m_pump->workers() : 1;
     // From a rendering thread: the signal is queued to the receivers (the window names the file)
     o.sourceLost = [self = QPointer<Engine>(const_cast<Engine*>(this))](const QString& path) {
@@ -923,6 +930,12 @@ void Engine::setColorBypass(bool on)
     if (m_gradeBypass->exchange(on) == on) return;
     refresh(); // the renderers read the switch at the next frame
     emit colorBypassChanged(on);
+}
+
+void Engine::setQualifierMask(int clipId)
+{
+    if (m_qualifierMask->exchange(clipId) == clipId) return;
+    refresh(); // the renderers read it at the next frame
 }
 
 void Engine::setPreviewFullSize(bool full)

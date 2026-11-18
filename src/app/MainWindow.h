@@ -20,6 +20,7 @@
 #include <QLockFile>
 #include <QMainWindow>
 #include <QMargins>
+#include <QPointF>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -329,7 +330,8 @@ private:
     void projectSettingsDialog();
     void grabStill();
     // Green Screen pipette (Inspector): the viewer shows the clip alone without its key until a click picks the color
-    void startKeyPick(int clipId);
+    // qualifier = the Color page's qualifier pipette (the picture before the qualifier, LUT and windows)
+    void startKeyPick(int clipId, bool qualifier = false);
     void stopKeyPick();
     void updateRenderCacheBar(); // render cache bar above the timeline
     void updateRenderCacheJob(bool allDone); // its job at the bottom right (ui/BackgroundJobs)
@@ -514,6 +516,11 @@ private:
     DeliverPanel* m_deliver = nullptr;
     class CompPage* m_compPage = nullptr; // built on the first showing (startup stays fast)
     class StudioPage* m_studioPage = nullptr; // built on the first showing (startup stays fast)
+    // The Studio page's sizes are set once (its defaults or the user's), then it keeps them: a round trip to another
+    // page changes nothing (the defaults depend on the strips' widths, which settle only once the page showed). The
+    // viewer's height in its column is kept while the viewer is on another page. Reset: a tour, "reset sizes".
+    bool m_studioSized = false;
+    QList<int> m_studioSideSizes;
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
@@ -742,8 +749,13 @@ private:
         int compClip = 0;       // the clip the Comp page showed
         std::shared_ptr<const Editor::Clipboards> clipboards; // the user's copied clips and grade
         QVector<SavedView> views; // the timelines' zoom and scroll, set again once the layout is back
+        std::optional<QPointF> studioView; // the Studio lanes' zoom (x) and left frame (y), if the page was built
+        bool studioFitPending = false;     // the lanes were still to be fitted (a project opened while hidden)
+        bool studioSized = false;          // its sizes were set (m_studioSized) and the viewer's height there
+        QList<int> studioSideSizes;
     } m_tourSaved;
     bool m_tourSwap = false; // the user's project and the practice project trade places: no "another project" effects
+    bool m_reloadingSame = false; // checkProjectFile reads the open project's file again: not a new view (core rule)
     void closePopups(); // open context menus closed (before the project under them changes)
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;

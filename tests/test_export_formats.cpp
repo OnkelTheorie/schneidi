@@ -193,6 +193,8 @@ void testVideoFormats(const QString& dir)
     struct Case { const char* format; const char* file; const char* codec; const char* profile; const char* pixFmt; const char* audio; };
     const Case cases[] = {
         {"av1", "v.av1.mp4", "av1", nullptr, "yuv420p", "aac"},
+        {"h265-10", "v10.h265.mp4", "hevc", "Main 10", "yuv420p10le", "aac"}, // 0.24: 10 bit (Main10)
+        {"av1-10", "v10.av1.mp4", "av1", nullptr, "yuv420p10le", "aac"},
         {"vp9", "v.webm", "vp9", nullptr, "yuv420p", "opus"},
         {"prores", "hq.mov", "prores", "HQ", "yuv422p10le", "pcm_s24le"},
         {"prores422", "std.mov", "prores", "Standard", "yuv422p10le", "pcm_s24le"},

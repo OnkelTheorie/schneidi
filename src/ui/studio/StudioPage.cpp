@@ -7,6 +7,7 @@
 #include "core/Project.h"
 #include "core/Editor.h"
 #include "ui/ElidedLabel.h"
+#include "ui/FlowLayout.h"
 #include "ui/studio/StudioMixer.h"
 #include "ui/studio/StudioTools.h"
 #include "ui/studio/StudioTracks.h"
@@ -52,23 +53,24 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     bar->setObjectName("PanelTitle");
     bar->setAttribute(Qt::WA_StyledBackground);
     bar->setStyleSheet(QString("QWidget#PanelTitle { background: %1; }").arg(Theme::panelHeader.name()));
-    // Two rows: the tools (and Fit) on top, what the pen/points write and the smoothing below - one row was wider
-    // than a 1024 px window with a large font
-    auto* barRows = new QVBoxLayout(bar);
-    barRows->setContentsMargins(4, 2, 4, 2);
-    barRows->setSpacing(2);
-    auto* barLay = new QHBoxLayout;
-    barLay->setSpacing(4);
-    barRows->addLayout(barLay);
-    auto* optionsLay = new QHBoxLayout;
-    optionsLay->setSpacing(4);
-    barRows->addLayout(optionsLay);
-    // The title gives way first in a narrow row (a long language, a large font): the tools stay whole
+    // Groups of buttons that wrap into further rows when the width runs out (a long language, a large font: the page
+    // never widens a 1024 px window); a wide window has them in one row
+    auto* flow = new FlowLayout(bar, 12, 2);
+    flow->setContentsMargins(4, 2, 4, 2);
+    QHBoxLayout* barLay = nullptr;
+    const auto newGroup = [&] {
+        auto* g = new QWidget;
+        barLay = new QHBoxLayout(g);
+        barLay->setContentsMargins(0, 0, 0, 0);
+        barLay->setSpacing(4);
+        flow->addWidget(g);
+    };
+    newGroup();
     auto* title = new ElidedLabel;
     title->setFullText(T("Tonspuren"));
     title->setObjectName("PanelTitle");
-    barLay->addWidget(title, 1);
-    barLay->addSpacing(8);
+    barLay->addWidget(title);
+    newGroup();
     auto tool = [&](const QString& text, const QString& name, const QString& tip) {
         auto* b = new QToolButton;
         b->setText(text);
@@ -78,7 +80,8 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
         b->setToolTip(tip);
         b->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 1px 8px; border: none; }"
                                  "QToolButton:checked { background: %3; color: %4; }")
-                             .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(), Theme::onPrimary.name()));
+                                 .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(), Theme::onPrimary.name()) +
+                         Theme::disabledToolButtonStyle());
         barLay->addWidget(b);
         return b;
     };
@@ -105,13 +108,13 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     fit->setText(T("Einpassen"));
     fit->setFocusPolicy(Qt::NoFocus);
     fit->setToolTip(T("Das ganze Projekt in die Breite einpassen"));
-    barLay->addSpacing(8);
+    newGroup();
     barLay->addWidget(fit);
     // Write mode (touch): playing, a moved fader or pan knob writes the track's automation
     auto* write = tool(T("Schreiben"), "studio_write",
                        T("Schreibmodus: beim Abspielen schreiben Fader und Pan-Regler die Automation ihrer Spur; beim "
                          "Loslassen gleitet der Wert zur Kurve zurück. Ein Durchlauf = ein Schritt zum Rückgängigmachen"));
-    barLay = optionsLay; // the second row (tool() adds there now)
+    newGroup(); // what the pen/points write (tool() adds to the group begun last)
     // What the pen writes: the track's automation (a curve over the timeline's time, also between clips; it stays
     // when clips move) or the volume keyframes of the clips under the stroke (they move with their clip)
     auto* penClip = tool(T("Clip"), "studio_pen_clip",
@@ -123,7 +126,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     targetGroup->addButton(penClip);
     targetGroup->addButton(penTrack);
     // Which curve of the track (track mode): its level or its pan
-    barLay->addSpacing(6);
+    newGroup();
     auto* autoVolume = tool(T("Pegel"), "studio_auto_volume", T("Punkte und Stift bearbeiten die Lautstärke-Automation der Spur"));
     auto* autoPan = tool(T("Pan"), "studio_auto_pan",
                          T("Punkte und Stift bearbeiten die Pan-Automation der Spur (oben rechts, Mitte Mitte, unten links)"));
@@ -131,7 +134,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     autoGroup->addButton(autoVolume);
     autoGroup->addButton(autoPan);
     autoVolume->setChecked(true);
-    barLay->addSpacing(6);
+    newGroup();
     // The label gives way in a narrow row (the box keeps its tooltip)
     auto* smoothLabel = new ElidedLabel;
     smoothLabel->setFullText(T("Glätten"));
@@ -141,7 +144,7 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_smoothing->setToolTip(T("Wie stark ein gezeichneter Strich geglättet wird"));
     for (const Smoothing& s : kSmoothing) m_smoothing->addItem(T(s.name), s.frames);
     barLay->addWidget(m_smoothing);
-    barLay->addStretch(1);
+    newGroup();
     // The tools drawer under the lanes: closed until wanted (the lanes keep the height)
     m_toolsButton = tool(T("Werkzeuge"), "studio_tools_toggle",
                          T("Werkzeuge ein- und ausklappen: Stimme säubern, Musik absenken, Lautheit auf Ziel, Aufnahme, "
@@ -167,11 +170,19 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     const bool clipTarget = QSettings().value("studio/penTarget").toString() == QLatin1String("clip");
     (clipTarget ? penClip : penTrack)->setChecked(true);
     m_tracks->setPenTarget(clipTarget ? StudioTracks::PenTarget::Clip : StudioTracks::PenTarget::Track);
-    autoVolume->setEnabled(!clipTarget);
-    autoPan->setEnabled(!clipTarget);
-    connect(penClip, &QToolButton::toggled, this, [this, autoVolume, autoPan](bool on) {
-        autoVolume->setEnabled(!on); // clip keyframes are volume only
-        autoPan->setEnabled(!on);
+    // Level / pan pick a curve of the track's automation: with the pen on the clips (their keyframes are volume
+    // only) they are off, look it (the style's disabled rule) and their tooltip says why
+    const QString volumeTip = autoVolume->toolTip(), panTip = autoPan->toolTip();
+    const auto curvesFor = [autoVolume, autoPan, volumeTip, panTip](bool clip) {
+        const QString why = T("Nur im Modus „Spur“: „Clip“ zeichnet die Lautstärke-Keyframes der Clips");
+        autoVolume->setEnabled(!clip);
+        autoPan->setEnabled(!clip);
+        autoVolume->setToolTip(clip ? why : volumeTip);
+        autoPan->setToolTip(clip ? why : panTip);
+    };
+    curvesFor(clipTarget);
+    connect(penClip, &QToolButton::toggled, this, [this, curvesFor](bool on) {
+        curvesFor(on);
         if (!on) return;
         m_tracks->setPenTarget(StudioTracks::PenTarget::Clip);
         QSettings().setValue("studio/penTarget", "clip");
@@ -202,10 +213,15 @@ StudioPage::StudioPage(Editor* editor, Engine* engine, MediaCache* cache, QWidge
     m_tools->hide();
     connect(m_toolsButton, &QToolButton::toggled, this, &StudioPage::setToolsOpen);
     connect(m_tools, &StudioTools::closeRequested, this, [this] { setToolsOpen(false); });
+    // Another tool, a result line: the drawer grows to show it whole if the lanes can give the room
+    connect(m_tools, &StudioTools::neededHeightChanged, this, [this] {
+        if (toolsOpen()) growTools();
+    });
 
     // The right column: the viewer comes on top (index 0) when the page shows, then the loudness and the mixer
     m_mixer = new StudioMixer(editor, engine);
     connect(write, &QToolButton::toggled, m_mixer, &StudioMixer::setWriteMode); // off by default
+    connect(m_tools, &StudioTools::loudnessTargetChanged, m_mixer, &StudioMixer::refreshLoudnessSettings);
     m_sideBox = new QWidget;
     m_sideBox->setObjectName("studio_side");
     auto* sideLay = new QVBoxLayout(m_sideBox);
@@ -240,10 +256,26 @@ void StudioPage::setToolsOpen(bool open)
     const int total = sizes.value(0) + sizes.value(1);
     if (total <= 0) return; // not laid out yet (the page's first showing sets the sizes)
     if (sizes.value(1) <= 0 || sizes.value(1) > total * 0.6) {
-        const int want = std::max(m_tools->sizeHint().height(), m_tools->minimumSizeHint().height()) + 40;
-        const int h = std::clamp(want, std::min(160, total / 2), std::max(1, int(total * 0.45)));
+        const int want = std::max(m_tools->neededHeight(), m_tools->minimumSizeHint().height());
+        // Bounds of their own first: a low page (under ~355 px) would give lo > hi (std::clamp's precondition)
+        const int hi = std::max(1, int(total * 0.45));
+        const int lo = std::min({160, total / 2, hi});
+        const int h = std::clamp(want, lo, hi);
         m_left->setSizes({std::max(1, total - h), h});
     }
+    growTools();
+}
+
+void StudioPage::growTools()
+{
+    // Never shorter than the chosen tool needs, as long as the lanes keep half the height (then the drawer
+    // scrolls); never shrunk here (a size the user dragged larger stays)
+    const QList<int> sizes = m_left->sizes();
+    const int total = sizes.value(0) + sizes.value(1);
+    if (total <= 0 || sizes.value(1) <= 0) return;
+    const int hi = std::max(sizes.value(1), total / 2);
+    const int h = std::min(m_tools->neededHeight(), hi);
+    if (h > sizes.value(1)) m_left->setSizes({std::max(1, total - h), h});
 }
 
 int StudioPage::defaultSideWidth(int pageWidth) const

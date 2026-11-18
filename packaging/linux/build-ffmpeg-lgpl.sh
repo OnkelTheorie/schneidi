@@ -24,8 +24,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.5}"
 FFMPEG_SHA256="${FFMPEG_SHA256:-de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f}"
-NVHEADERS_VERSION="12.2.72.0" # NVENC/NVDEC headers (MIT), header-only
-NVHEADERS_SHA256="c295a2ba8a06434d4bdc5c2208f8a825285210d71d91d572329b2c51fd0d4d03"
+# NVENC/NVDEC headers (MIT, header-only). Their API version is the minimum NVIDIA driver NVENC runs on: 13.x needs
+# 570+, 12.2 551.76+ (Linux 550.54), 12.1 531.61+, 12.0 522.25+ (Linux 520.56). schneidi uses only h264/hevc_nvenc with
+# p1-p7 presets, tune hq, vbr/cq (SDK 10+); 12.1/12.2 add only split-frame encoding, temporal filter, lookahead level,
+# UHQ tuning and H.264 10-bit (Blackwell), none of them used. 12.0 still has AV1 NVENC (RTX 40+), so it is the
+# oldest SDK that loses nothing: NVENC works on drivers from late 2022 (e.g. 560.94 from Windows Update for Pascal).
+# Always our pinned copy, never a system/MSYS2 package (MSYS2 ships 13.x = driver 570+).
+NVHEADERS_VERSION="12.0.16.1"
+NVHEADERS_SHA256="bfb3306f22c169fedcfc5489b344f414089eec796ffd528412677b0c872bc6e2"
 GPL_ENCODERS="${GPL_ENCODERS:-1}"
 case "$GPL_ENCODERS" in 0 | 1) ;; *) echo "!! GPL_ENCODERS must be 0 or 1" >&2; exit 1 ;; esac
 FULL="${FFMPEG_FULL:-0}"
@@ -33,7 +39,7 @@ COMPONENTS="$ROOT/packaging/ffmpeg-components.txt"
 stamp() {
     local list
     list="$(sha256sum "$COMPONENTS" | cut -d' ' -f1)"
-    echo "ffmpeg=$FFMPEG_VERSION gpl_encoders=$GPL_ENCODERS full=$FULL components=$list"
+    echo "ffmpeg=$FFMPEG_VERSION nvheaders=$NVHEADERS_VERSION gpl_encoders=$GPL_ENCODERS full=$FULL components=$list"
 }
 if [ "${1:-}" = "--stamp" ]; then stamp; exit 0; fi
 if [ "$GPL_ENCODERS" = 1 ]; then WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg}"; else WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg-lgpl}"; fi
@@ -55,8 +61,9 @@ fetch() { # file url sha256
     else echo ">> sha256 of $1 (pin it in this script): $(sha256sum "$file" | cut -d' ' -f1)"; fi
 }
 
-# --- NVENC headers (Debian 13 has no package for them in main) ---
-if ! pkg-config --exists ffnvcodec 2>/dev/null; then
+# --- NVENC headers: always the pinned version, installed into the prefix (its pkgconfig comes first below). Already
+# there in exactly this version (the Flatpak's own module, built offline): taken as it is. ---
+if [ "$(pkg-config --modversion ffnvcodec 2>/dev/null || true)" != "$NVHEADERS_VERSION" ]; then
     fetch "nv-codec-headers-$NVHEADERS_VERSION.tar.gz" \
         "https://github.com/FFmpeg/nv-codec-headers/releases/download/n$NVHEADERS_VERSION/nv-codec-headers-$NVHEADERS_VERSION.tar.gz" \
         "$NVHEADERS_SHA256"
@@ -66,6 +73,8 @@ if ! pkg-config --exists ffnvcodec 2>/dev/null; then
     make -C "$WORK/nv-codec-headers" PREFIX="$PREFIX" install >/dev/null
 fi
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+found="$(pkg-config --modversion ffnvcodec 2>/dev/null || true)"
+[ "$found" = "$NVHEADERS_VERSION" ] || { echo "!! pkg-config finds ffnvcodec $found, not the pinned $NVHEADERS_VERSION" >&2; exit 1; }
 
 # --- FFmpeg ---
 fetch "ffmpeg-$FFMPEG_VERSION.tar.xz" "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" "$FFMPEG_SHA256"

@@ -50,7 +50,10 @@ QString StillFetcher::key(const QString& path, int frame)
 void StillFetcher::setFormat(const ProjectFormat& format)
 {
     QMutexLocker lock(&m_mutex);
-    if (format == m_format) return;
+    if (format.samePicture(m_format)) { // only the mix's channels: the stills stay
+        m_format = format;
+        return;
+    }
     m_format = format;
     ++m_generation;
     m_cache.clear();

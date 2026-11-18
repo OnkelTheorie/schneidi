@@ -119,8 +119,10 @@ public:
     // Which track automation an audio lane shows (view state per timeline view, not in the project; header menu
     // "Anzeigen: Lautstärke / Pan"): Volume = the level line (only with a volume curve), Pan = the pan line around the
     // lane's middle (top = right, bottom = left). Display only: track automation is edited on the Studio page.
+    // Kept per track (Track::uid): it stays with the track when tracks move, a new track or another project shows the
+    // volume
     void setAutoShown(int audioTrack, AutoTarget target);
-    AutoTarget autoShown(int audioTrack) const { return m_panLanes.contains(audioTrack) ? AutoTarget::Pan : AutoTarget::Volume; }
+    AutoTarget autoShown(int audioTrack) const;
 
     // Voice-over (app/VoiceoverRecorder): the armed audio track (its mic in the header lit, -1 = none), whether it
     // records, and the input level shown in that header (dBFS, while armed)
@@ -512,7 +514,7 @@ private:
 
     // Keyframe lanes: expanded clips (view state, not in the project) and dragging diamonds
     QSet<int> m_keyLanes;
-    QSet<int> m_panLanes; // audio track indices showing the pan automation instead of the volume (setAutoShown)
+    QSet<quint64> m_panLanes; // Track::uid of the audio tracks showing the pan automation instead of the volume
     int m_keyDragClip = 0;
     int m_keyDelta = 0;
 

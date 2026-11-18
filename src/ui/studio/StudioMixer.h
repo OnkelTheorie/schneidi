@@ -17,6 +17,8 @@
 #include "core/AutomationWriter.h"
 
 #include <QElapsedTimer>
+
+#include <functional>
 #include <QStringList>
 #include <QVector>
 #include <QWidget>
@@ -62,6 +64,12 @@ public:
     bool writeMode() const { return m_writeMode; }
     AutomationWriter& writer() { return m_writer; }
 
+    // The loudness target and true-peak limit (settings audio/loudnessTarget, audio/truePeakLimit) read again: on
+    // showing and after "Lautheit auf Ziel" (StudioTools::loudnessTargetChanged); kept in between
+    void refreshLoudnessSettings();
+    // Where the timeline's playhead is while the engine shows a file (Source mode; MainWindow: the timeline view's)
+    void setTimelinePlayhead(std::function<int()> playhead) { m_timelinePlayhead = std::move(playhead); }
+
     static constexpr int kStripW = 76;
 
 protected:
@@ -91,7 +99,12 @@ private:
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock, m_lastLevels;
     int m_channels = 2; // until the first levels tell the mix's count
+    double m_loudnessTarget = -14.0, m_truePeakLimit = -1.0; // refreshLoudnessSettings()
     bool m_writeMode = false;
     AutomationWriter m_writer;
-    bool playing() const;
+    bool playing() const; // the timeline plays (not a file previewed in Source mode)
+    // The timeline's playhead; in Source mode (a file previewed) the last one the timeline had
+    int timelinePosition() const;
+    mutable int m_lastTimelinePos = 0;
+    std::function<int()> m_timelinePlayhead;
 };

@@ -7,7 +7,7 @@
 //   more) never changes them (core rule);
 // - the pen: a drag over a clip's lane makes volume keyframes at the drawn level, one undo step per stroke;
 // - the meters take the channel count from the levels (6 channels = 5.1 bars; back to 2), never a fixed stereo pair;
-// - layout: at 1024 px wide, in German and Russian, normal and large font, nothing of the page is cut off (every label,
+// - layout: at 1024 px wide, in German, Russian and Ukrainian, normal and large font, nothing of the page is cut off (every label,
 //   button, box at least its minimum width and inside its parent) and the window does not grow; the
 //   lanes are the widest part, the master is pinned at the mixer column's right end, the tools drawer is closed (open:
 //   still nothing cut off, every tool's page); at 1920 px every strip shown; 12 tracks: the narrow strips scroll
@@ -28,6 +28,7 @@
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
+#include "app/TourManager.h"
 #include "app/Theme.h"
 #include "app/VoiceoverRecorder.h"
 #include "cli/Live.h"
@@ -43,6 +44,8 @@
 #include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
+#include "ui/DynCurve.h"
+#include "ui/ElidedLabel.h"
 #include "ui/Viewer.h"
 #include "core/AutomationWriter.h"
 #include "ui/studio/StudioMixer.h"
@@ -76,6 +79,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QTranslator>
 #include <QToolButton>
 #include <QUndoStack>
 #include <clocale>
@@ -292,7 +296,7 @@ void testWindow(Engine& engine, const QString& audioFile)
             const QLabel* value = nullptr;
             for (QLabel* l : fader->parentWidget()->findChildren<QLabel*>())
                 if (l->text().endsWith(" dB") && l->toolTip().contains("Automation")) value = l;
-            const double shown = value ? value->text().section(' ', 0, 0).replace(QChar(0x2212), '-').toDouble() : 1e9;
+            const double shown = value ? value->text().section(' ', 0, 0).replace(QChar(0x2212), '-').replace(',', '.').toDouble() : 1e9;
             const double want = Automation::levelAt(project->timeline().audio[0], engine.position());
             Check::report(std::abs(shown - want) < 0.11, "fader shows the automated level", __FILE__, __LINE__,
                           QString("%1 / %2 at %3").arg(value ? value->text() : "-").arg(want).arg(engine.position()));
@@ -984,6 +988,8 @@ void testTools(Engine& engine, const QString& voiceFile, const QString& musicFil
     }
 }
 
+QString drawerCut(StudioPage* page); // (below)
+
 // Nothing of the page cut off: every label, button and box at least its minimum width, inside its parent
 QString cutOff(QWidget* root)
 {
@@ -1015,7 +1021,7 @@ void testLayout(Engine& engine, const QString& audioFile)
     QFont big = normal;
     big.setPointSizeF(normal.pointSizeF() * 1.5);
     const QString dumpDir = qEnvironmentVariable("STUDIO_PAGE_DUMP");
-    for (const char* lang : {"de", "ru"})
+    for (const char* lang : {"de", "ru", "uk"}) // (ru and uk: the longest words of the tool bar)
         for (bool large : {false, true}) {
             const QString where = QString("%1 %2").arg(lang, large ? "large" : "normal");
             I18n::install(lang);
@@ -1093,12 +1099,31 @@ void testLayout(Engine& engine, const QString& audioFile)
                     const QString open = cutOff(page);
                     Check::report(open.isEmpty(), "nothing cut off with the tools open", __FILE__, __LINE__,
                                   QString("%1 tool %2: %3").arg(where).arg(t).arg(open));
+                    // Nothing of the tool beyond the drawer's area (reachable by scrolling), the drawer as tall as
+                    // the lanes let it
+                    const QString drawer = drawerCut(page);
+                    Check::report(drawer.isEmpty(), "tool whole in the drawer", __FILE__, __LINE__,
+                                  QString("%1 tool %2: %3").arg(where).arg(t).arg(drawer));
                 }
                 Check::report(page->tracks()->laneHeight() >= 40 && page->tracks()->height() >= 120, "lanes with the tools open",
                               __FILE__, __LINE__, QString("%1: lanes %2 px, lane %3").arg(where).arg(page->tracks()->height())
                                                       .arg(page->tracks()->laneHeight()));
                 if (!dumpDir.isEmpty()) w.grab().save(QString("%1/studio-%2-%3-tools.png").arg(dumpDir, lang, large ? "large" : "normal"));
                 Check::report(w.width() == 1024, "window not wider with the tools", __FILE__, __LINE__, where);
+                // The tool bar's rows (wrapped in a narrow column) whole, also with the tools drawer dragged as tall as
+                // the splitter lets it (the lanes at their least)
+                if (QWidget* bar = page->left()->widget(0)->findChild<QWidget*>("PanelTitle", Qt::FindDirectChildrenOnly);
+                    CHECK(bar)) {
+                    const QList<int> before = page->left()->sizes();
+                    page->left()->setSizes({1, before.value(0) + before.value(1)});
+                    settle(3);
+                    Check::report(bar->height() >= bar->heightForWidth(bar->width()) && page->tracks()->height() > 0,
+                                  "tool bar rows whole", __FILE__, __LINE__,
+                                  QString("%1: bar %2 < %3, lanes %4").arg(where).arg(bar->height())
+                                      .arg(bar->heightForWidth(bar->width())).arg(page->tracks()->height()));
+                    page->left()->setSizes(before);
+                    settle(2);
+                }
                 page->setToolsOpen(false);
             }
         }
@@ -1230,6 +1255,947 @@ void testLayout(Engine& engine, const QString& audioFile)
     }
 }
 
+// The value label under a strip's fader ("-20,0 dB" -> -20)
+double faderShown(QWidget* fader)
+{
+    if (!fader) return 1e9;
+    for (QLabel* l : fader->parentWidget()->findChildren<QLabel*>(Qt::FindDirectChildrenOnly))
+        if (l->text().endsWith(" dB")) return l->text().section(' ', 0, 0).replace(QChar(0x2212), '-').replace(',', '.').toDouble();
+    return 1e9;
+}
+
+// Release review of 0.23, one block per finding (two tracks: A1 voice 50-150, A2 music 0-200)
+void testReviewFixes(Engine& engine, const QString& voiceFile, const QString& musicFile)
+{
+    QSettings().remove("layout");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    {
+        ProjectData d;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 2);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = voiceFile;
+        v.start = 50;
+        v.in = 0;
+        v.out = 99;
+        d.timeline.audio[0].clips << v;
+        Clip m;
+        m.id = 2;
+        m.mediaPath = musicFile;
+        m.in = 0;
+        m.out = 199;
+        d.timeline.audio[1].clips << m;
+        d.lastClipId = 2;
+        p->load(d);
+        p->addMedia(Engine::probe(p->format(), voiceFile));
+        p->addMedia(Engine::probe(p->format(), musicFile));
+    }
+    w.showPage(Page::Studio);
+    settle(5);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    StudioMixer* mixer = page->mixer();
+    StudioTracks* tracks = page->tracks();
+    QUndoStack* undo = p->undoStack();
+    QWidget* faderA1 = mixer->findChild<QWidget*>("studio_fader_A1");
+    if (!CHECK(faderA1)) return;
+
+    // (1) A file previewed in the viewer (Source mode, e.g. Tools > Effect sounds > Listen): its positions are frames
+    // of that file. Read-mode faders keep the timeline's last position; write mode does not record while it plays.
+    {
+        const int at = undo->index();
+        p->edit("auto", [](Timeline& tl) { tl.audio[0].volumeAuto = {{0, -20}, {60, -20}, {100, 0}}; });
+        engine.seek(30);
+        settle();
+        QTest::qWait(80);
+        CHECK(std::abs(faderShown(faderA1) + 20) < 0.11);
+        engine.showSource(musicFile, 150); // at 150 the timeline's curve would say 0 dB
+        settle();
+        QTest::qWait(80);
+        Check::report(std::abs(faderShown(faderA1) + 20) < 0.11, "source mode: fader keeps the timeline's level",
+                      __FILE__, __LINE__, QString::number(faderShown(faderA1)));
+        mixer->setWriteMode(true);
+        engine.play();
+        if (CHECK(waitFor([&] { return !std::isnan(engine.soundFrame()); }, 4000))) {
+            const QPoint c(faderA1->width() * 3 / 4, faderA1->height() / 2);
+            mouse(faderA1, QEvent::MouseButtonPress, c, Qt::LeftButton);
+            mouse(faderA1, QEvent::MouseMove, c - QPoint(0, 10), Qt::LeftButton);
+            mouse(faderA1, QEvent::MouseMove, c - QPoint(0, 20), Qt::LeftButton);
+            mouse(faderA1, QEvent::MouseButtonRelease, c - QPoint(0, 20), Qt::NoButton);
+            settle();
+            CHECK(!mixer->writer().inPass());
+            CHECK_EQ(int(p->timeline().audio[0].volumeAuto.size()), 3); // nothing written into the curve
+        }
+        engine.pause();
+        mixer->setWriteMode(false);
+        engine.showTimeline(30);
+        settle();
+        while (undo->index() > at) undo->undo();
+    }
+
+    // (2) A drag whose release never arrives (the page changed under the mouse) ends: a move without the button, or
+    // the page hidden, ends it like a release - nothing moves afterwards, the next drag is its own undo step
+    {
+        page->findChild<QToolButton*>("studio_tool_points")->click();
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const int y0 = body.bottom() - int(std::lround(VolumeDraw::posOf(0) * (body.height() - 1)));
+        const QPoint on(int(tracks->xOf(100)), y0);
+        for (int how = 0; how < 2; ++how) {
+            const int at = undo->index();
+            mouse(tracks, QEvent::MouseButtonPress, on, Qt::LeftButton);
+            settle();
+            if (!CHECK_EQ(undo->index(), at + 1)) break; // the point set
+            if (how == 0) {
+                mouse(tracks, QEvent::MouseMove, on - QPoint(0, 30), Qt::NoButton);
+            } else {
+                w.showPage(Page::Edit);
+                settle();
+                w.showPage(Page::Studio);
+                settle();
+            }
+            mouse(tracks, QEvent::MouseMove, on - QPoint(0, 40), Qt::LeftButton);
+            settle();
+            const AutoCurve& a = p->timeline().audio[0].volumeAuto;
+            Check::report(a.size() == 1 && std::abs(Automation::levelAt(p->timeline().audio[0], 100)) < 0.01,
+                          how == 0 ? "a move without the button ends the point drag" : "hiding ends the point drag",
+                          __FILE__, __LINE__, QString::number(Automation::levelAt(p->timeline().audio[0], 100)));
+            CHECK_EQ(undo->index(), at + 1);
+            mouse(tracks, QEvent::MouseButtonRelease, on - QPoint(0, 40), Qt::NoButton);
+            while (undo->index() > at) undo->undo();
+        }
+        // The mixer's fader and pan bar: hidden mid-drag (they have no mouse tracking, so a move without the button
+        // never reaches them) - the drag ends, its undo step closed
+        QWidget* pan = mixer->findChild<QWidget*>("studio_pan_A1");
+        if (CHECK(pan)) {
+            for (QWidget* control : {faderA1, pan}) {
+                const bool vertical = control == faderA1;
+                const QPoint c(vertical ? control->width() * 3 / 4 : control->width() / 2, control->height() / 2);
+                const QPoint step = vertical ? QPoint(0, -10) : QPoint(10, 0);
+                const Track before = p->timeline().audio[0];
+                mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                settle();
+                const int at = undo->index();
+                const double moved = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                CHECK(moved != (vertical ? before.volumeDb : before.pan));
+                w.showPage(Page::Edit);
+                settle();
+                w.showPage(Page::Studio);
+                settle();
+                mouse(control, QEvent::MouseMove, c + 4 * step, Qt::LeftButton);
+                settle();
+                const double now = vertical ? p->timeline().audio[0].volumeDb : p->timeline().audio[0].pan;
+                Check::report(now == moved, vertical ? "fader drag ended" : "pan drag ended", __FILE__, __LINE__,
+                              QString("%1 -> %2").arg(moved).arg(now));
+                // The merge is closed: the next drag (same merge key) is a step of its own
+                mouse(control, QEvent::MouseButtonPress, c, Qt::LeftButton);
+                mouse(control, QEvent::MouseMove, c + step, Qt::LeftButton);
+                mouse(control, QEvent::MouseButtonRelease, c + step, Qt::NoButton);
+                settle();
+                CHECK_EQ(undo->index(), at + 1);
+                while (undo->index() > at - 1) undo->undo();
+            }
+        }
+    }
+
+    // (3) One window per track: an EQ window follows its track when a track is inserted before it - a click on that
+    // track's strip brings it up, a click on the track now at its old place opens that track's own
+    {
+        const int at = undo->index();
+        QDialog* eqA2 = mixer->openEditor(1, true);
+        if (CHECK(eqA2)) {
+            w.editor()->addTrack(TrackKind::Audio, 0);
+            settle();
+            CHECK(mixer->openEditor(2, true) == eqA2);
+            QDialog* other = mixer->openEditor(1, true);
+            CHECK(other && other != eqA2);
+            if (other) other->close();
+            eqA2->close();
+            settle();
+        }
+        while (undo->index() > at) undo->undo();
+        settle();
+    }
+
+    // (4) The pen's stroke while drawing the pan sits where the pan is drawn (pan scale), not on the volume scale
+    {
+        page->findChild<QToolButton*>("studio_tool_pen")->click();
+        page->findChild<QToolButton*>("studio_pen_track")->click();
+        page->findChild<QToolButton*>("studio_auto_pan")->click();
+        CHECK(tracks->autoTarget() == AutoTarget::Pan);
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const int py = body.bottom() - int(std::lround(0.2 * (body.height() - 1))); // pan -60
+        const int x0 = int(tracks->xOf(60)), x1 = int(tracks->xOf(140));
+        mouse(tracks, QEvent::MouseButtonPress, QPoint(x0, py), Qt::LeftButton);
+        for (int i = 1; i <= 10; ++i) mouse(tracks, QEvent::MouseMove, QPoint(x0 + (x1 - x0) * i / 10, py), Qt::LeftButton);
+        const QImage shot = tracks->grab().toImage();
+        const int x = (x0 + x1) / 2;
+        int found = -1;
+        for (int y = body.top(); y <= body.bottom(); ++y) {
+            const QColor c = shot.pixelColor(x, y);
+            if (std::abs(c.red() - Theme::secondary.red()) + std::abs(c.green() - Theme::secondary.green())
+                    + std::abs(c.blue() - Theme::secondary.blue()) < 40
+                && std::abs(y - py) < std::abs(found - py))
+                found = y;
+        }
+        Check::report(std::abs(found - py) <= 3, "pan stroke drawn on the pan scale", __FILE__, __LINE__,
+                      QString("y %1, want %2").arg(found).arg(py));
+        const int at = undo->index();
+        mouse(tracks, QEvent::MouseButtonRelease, QPoint(x1, py), Qt::NoButton);
+        settle();
+        while (undo->index() > at) undo->undo();
+        page->findChild<QToolButton*>("studio_auto_volume")->click();
+        page->findChild<QToolButton*>("studio_tool_points")->click();
+    }
+
+    // (5) The tools drawer opened on a low page (under ~355 px for lanes + tools): its height between bounds that
+    // never invert (std::clamp with lo > hi aborts in builds with _GLIBCXX_ASSERTIONS, as some distributions build)
+    {
+        page->setToolsOpen(false);
+        QSplitter* left = page->left();
+        left->resize(left->width(), 300);
+        const int total = left->sizes().value(0) + left->sizes().value(1);
+        page->setToolsOpen(true);
+        const QList<int> sizes = left->sizes();
+        Check::report(total > 0 && total < 355 && sizes.value(0) > 0 && sizes.value(1) > 0, // (the splitter keeps minimums)
+                      "tools drawer on a low page", __FILE__, __LINE__,
+                      QString("total %1, tools %2").arg(total).arg(sizes.value(1)));
+        page->setToolsOpen(false);
+        settle();
+    }
+
+    // (6) A mixer-only change repaints only what shows it: a fader move of A2 only A2's lane (not A1's, not the EQ
+    // pictures), an EQ change of A1 only A1's EQ picture (no lane)
+    {
+        struct PaintCounter : QObject {
+            int paints = 0;
+            bool eventFilter(QObject*, QEvent* e) override
+            {
+                if (e->type() == QEvent::Paint) ++paints;
+                return false;
+            }
+        };
+        QWidget* eqA1 = mixer->findChild<QWidget*>("studio_eqthumb_A1");
+        QWidget* dynA1 = mixer->findChild<QWidget*>("studio_dynthumb_A1");
+        if (CHECK(eqA1 && dynA1 && eqA1->isVisible())) {
+            PaintCounter eqPaints, dynPaints;
+            eqA1->installEventFilter(&eqPaints);
+            dynA1->installEventFilter(&dynPaints);
+            const int at = undo->index();
+            settle();
+            eqPaints.paints = dynPaints.paints = 0;
+            const int lanePaints = tracks->paintCount();
+            w.editor()->setTrackVolume(1, -7, "test-vol");
+            p->closeMerge();
+            settle();
+            CHECK_EQ(eqPaints.paints, 0);
+            CHECK_EQ(dynPaints.paints, 0);
+            CHECK(tracks->paintCount() > lanePaints);
+            const QRegion painted = tracks->lastPaintRegion();
+            CHECK(painted.intersects(tracks->laneRect(1)));
+            Check::report(!painted.intersects(tracks->laneRect(0).adjusted(0, 0, 0, -1)), "only the changed lane drawn",
+                          __FILE__, __LINE__);
+            TrackEq eq = p->timeline().audio[0].eq;
+            eq.on = !eq.on;
+            const int lanePaints2 = tracks->paintCount();
+            w.editor()->setTrackEq(0, eq);
+            settle();
+            CHECK(eqPaints.paints > 0);
+            CHECK_EQ(dynPaints.paints, 0);
+            CHECK_EQ(tracks->paintCount(), lanePaints2);
+            // Tracks swapped (A1 has the changed EQ): both EQ pictures and both lanes drawn anew; undone: again
+            QWidget* eqA2 = mixer->findChild<QWidget*>("studio_eqthumb_A2");
+            if (CHECK(eqA2)) {
+                PaintCounter eq2Paints;
+                eqA2->installEventFilter(&eq2Paints);
+                for (int step = 0; step < 2; ++step) {
+                    eqPaints.paints = eq2Paints.paints = 0;
+                    if (step == 0) p->edit("swap", [](Timeline& tl) { std::swap(tl.audio[0], tl.audio[1]); });
+                    else undo->undo();
+                    settle();
+                    CHECK(eqPaints.paints > 0 && eq2Paints.paints > 0);
+                    const QRegion lanes = tracks->lastPaintRegion();
+                    Check::report(lanes.intersects(tracks->laneRect(0)) && lanes.intersects(tracks->laneRect(1)),
+                                  step == 0 ? "lanes drawn after a track swap" : "lanes drawn after its undo", __FILE__,
+                                  __LINE__);
+                }
+                eqA2->removeEventFilter(&eq2Paints);
+            }
+            // The EQ change undone: its picture drawn again
+            eqPaints.paints = 0;
+            undo->undo();
+            settle();
+            CHECK(eqPaints.paints > 0);
+            eqA1->removeEventFilter(&eqPaints);
+            dynA1->removeEventFilter(&dynPaints);
+            while (undo->index() > at) undo->undo();
+            settle();
+        }
+    }
+
+    // (7) A take growing on its lane draws only the part it grew by (and its right edge), not the whole view
+    {
+        tracks->fit();
+        settle();
+        Voiceover::LiveTake take(10, 10, p->frameRate(), 48000);
+        take.add(48000, 0.5f); // one second
+        tracks->setLiveTake(&take, 0);
+        settle();
+        const double x2 = tracks->xOf(take.end());
+        take.add(72000, 0.5f); // half a second more
+        const double x3 = tracks->xOf(take.end());
+        const int before = tracks->paintCount();
+        tracks->setLiveTake(&take, 0);
+        settle();
+        CHECK(tracks->paintCount() > before);
+        const QRect drawn = tracks->lastPaintRegion().boundingRect();
+        Check::report(drawn.left() >= int(x2) - 8 && drawn.right() <= int(x3) + 8 && drawn.width() < tracks->width() / 2,
+                      "only the grown part of the take drawn", __FILE__, __LINE__,
+                      QString("%1..%2, grew %3..%4").arg(drawn.left()).arg(drawn.right()).arg(x2).arg(x3));
+        tracks->setLiveTake(nullptr, -1);
+        settle();
+    }
+
+    // (8) The loudness target is read once (not twice per 30 ms tick): again when the page shows (the Edit mixer may
+    // have changed it) and when "Lautheit auf Ziel" set it
+    {
+        const QLabel* target = nullptr;
+        for (QLabel* l : mixer->loudness()->findChildren<QLabel*>())
+            if (l->text().endsWith(" LUFS")) target = l; // "Ziel −14 LUFS" (in the language the run left)
+        if (CHECK(target)) {
+            QSettings().setValue("audio/loudnessTarget", -23.0);
+            w.showPage(Page::Edit);
+            settle();
+            w.showPage(Page::Studio);
+            settle();
+            CHECK(target->text().contains(QChar(0x2212) + QString("23 LUFS"))); // a real minus, as the drawer writes it
+            QSettings().setValue("audio/loudnessTarget", -16.0);
+            emit page->tools()->loudnessTargetChanged();
+            settle();
+            CHECK(target->text().contains(QChar(0x2212) + QString("16 LUFS")));
+            QSettings().setValue("audio/loudnessTarget", -14.0);
+            mixer->refreshLoudnessSettings();
+        }
+    }
+
+    // (9) A double click on the level line (Points): the press sets a point, the double click puts it at 0 dB - one
+    // undo step for both
+    {
+        page->findChild<QToolButton*>("studio_tool_points")->click();
+        page->findChild<QToolButton*>("studio_pen_track")->click();
+        p->edit("fader", [](Timeline& tl) { tl.audio[0].volumeDb = -6; });
+        settle();
+        const int at = undo->index();
+        const QRect body = tracks->laneRect(0).adjusted(0, 4, 0, -4);
+        const QPoint on(int(tracks->xOf(100)), body.bottom() - int(std::lround(VolumeDraw::posOf(-6) * (body.height() - 1))));
+        mouse(tracks, QEvent::MouseButtonPress, on, Qt::LeftButton);
+        mouse(tracks, QEvent::MouseButtonRelease, on, Qt::NoButton);
+        QMouseEvent dbl(QEvent::MouseButtonDblClick, QPointF(on), tracks->mapToGlobal(QPointF(on)), Qt::LeftButton,
+                        Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tracks, &dbl);
+        mouse(tracks, QEvent::MouseButtonRelease, on, Qt::NoButton);
+        settle();
+        CHECK_EQ(int(p->timeline().audio[0].volumeAuto.size()), 1);
+        CHECK(std::abs(Automation::levelAt(p->timeline().audio[0], 100)) < 1e-6);
+        CHECK_EQ(undo->index(), at + 1);
+        undo->undo();
+        CHECK(p->timeline().audio[0].volumeAuto.isEmpty());
+        undo->undo();
+    }
+
+    // (10) Ctrl+= / Ctrl+- on the Studio page zoom its tracks (around the playhead), not the hidden timeline
+    {
+        TimelineView* tv = w.findChild<TimelineView*>();
+        QAction* in = InputBindings::instance().action("zoom_in");
+        QAction* out = InputBindings::instance().action("zoom_out");
+        if (CHECK(tv && in && out)) {
+            tracks->fit();
+            engine.seek(100);
+            settle();
+            const ViewState timelineBefore = tv->view();
+            const double before = tracks->view().pxPerFrame;
+            const double xBefore = tracks->xOf(100);
+            in->trigger();
+            settle();
+            CHECK(std::abs(tracks->view().pxPerFrame - before * 1.5) < 1e-9);
+            CHECK(std::abs(tracks->xOf(100) - xBefore) < 1.0); // around the playhead
+            out->trigger();
+            settle();
+            CHECK(std::abs(tracks->view().pxPerFrame - before) < 1e-9);
+            CHECK_EQ(tv->view().pxPerFrame, timelineBefore.pxPerFrame);
+            CHECK_EQ(tv->view().leftFrame, timelineBefore.leftFrame);
+        }
+    }
+    // (11) A slow drag (1 px per move, as a hand moving slowly sends) moves the fader from 0 dB and the pan from the
+    // centre (with Shift too): every step is smaller than the rounding or the snap, the drag adds them up
+    {
+        p->edit("reset", [](Timeline& tl) {
+            tl.audio[0].volumeDb = 0;
+            tl.audio[0].volumeAuto.clear();
+            tl.audio[0].pan = 0;
+            tl.audio[0].panAuto.clear();
+        });
+        settle();
+        const int at = undo->index();
+        QWidget* fader = mixer->findChild<QWidget*>("studio_fader_A1"); // the strips may have been rebuilt since
+        if (!CHECK(fader)) return;
+        const int b = fader->height() - 6, t = 10;
+        QPoint c(fader->width() * 3 / 4, b - int(std::lround(VolumeDraw::posOf(0) * (b - t))));
+        mouse(fader, QEvent::MouseButtonPress, c, Qt::LeftButton);
+        for (int i = 0; i < 20; ++i) {
+            c -= QPoint(0, 1);
+            mouse(fader, QEvent::MouseMove, c, Qt::LeftButton);
+        }
+        mouse(fader, QEvent::MouseButtonRelease, c, Qt::NoButton);
+        settle();
+        Check::report(p->timeline().audio[0].volumeDb > 1.0, "slow fader drag moves it", __FILE__, __LINE__,
+                      QString::number(p->timeline().audio[0].volumeDb));
+        CHECK_EQ(undo->index(), at + 1);
+        if (QWidget* pan = mixer->findChild<QWidget*>("studio_pan_A1"); CHECK(pan)) {
+            QPoint q(pan->width() / 2, pan->height() / 2);
+            mouse(pan, QEvent::MouseButtonPress, q, Qt::LeftButton);
+            for (int i = 0; i < 10; ++i) {
+                q += QPoint(1, 0);
+                QMouseEvent ev(QEvent::MouseMove, q, pan->mapToGlobal(q), Qt::NoButton, Qt::LeftButton, Qt::ShiftModifier);
+                QApplication::sendEvent(pan, &ev);
+            }
+            mouse(pan, QEvent::MouseButtonRelease, q, Qt::NoButton);
+            settle();
+            Check::report(p->timeline().audio[0].pan > 2.5, "slow pan drag with Shift moves it", __FILE__, __LINE__,
+                          QString::number(p->timeline().audio[0].pan));
+        }
+        while (undo->index() > at) undo->undo();
+    }
+}
+
+// The Studio page first shown while the viewer previews a file (Source mode): the automated faders show the level at
+// the timeline's playhead (MainWindow tells the mixer), not at frame 0 or the file's frame
+void testSourceOnFirstShow(Engine& engine, const QString& voiceFile, const QString& musicFile)
+{
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    {
+        ProjectData d;
+        d.format.rate = {25, 1};
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = voiceFile;
+        v.out = 99;
+        d.timeline.audio[0].clips << v;
+        d.timeline.audio[0].volumeAuto = {{0, 0}, {40, 0}, {60, -20}, {100, -20}};
+        d.lastClipId = 1;
+        p->load(d);
+        p->addMedia(Engine::probe(p->format(), voiceFile));
+    }
+    settle();
+    engine.seek(80);
+    settle();
+    engine.showSource(musicFile, 10); // at 10 the curve would say 0 dB
+    settle();
+    w.showPage(Page::Studio);
+    settle(5);
+    QTest::qWait(80);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    QWidget* fader = page->mixer()->findChild<QWidget*>("studio_fader_A1");
+    if (engine.mode() == Engine::Mode::Source)
+        Check::report(std::abs(faderShown(fader) + 20) < 0.11, "first shown in Source mode: the timeline's level",
+                      __FILE__, __LINE__, QString::number(faderShown(fader)));
+    engine.showTimeline(0);
+    settle();
+}
+
+
+// A project of `tracks` audio tracks, one voice clip each (frames 0-99, ids 1..tracks); A1 has a second one (50 frames
+// later) when `second`
+void loadVoices(Project* p, const QString& voiceFile, int tracks, bool second = false)
+{
+    ProjectData d;
+    d.format.rate = {25, 1};
+    TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+    TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, tracks);
+    int id = 0;
+    for (int t = 0; t < tracks; ++t) {
+        Clip c;
+        c.id = ++id;
+        c.mediaPath = voiceFile;
+        c.in = 0;
+        c.out = 99;
+        d.timeline.audio[t].clips << c;
+    }
+    if (second) {
+        Clip c;
+        c.id = ++id;
+        c.mediaPath = voiceFile;
+        c.start = 150;
+        c.in = 0;
+        c.out = 49;
+        d.timeline.audio[0].clips << c;
+    }
+    d.lastClipId = id;
+    p->load(d);
+    p->addMedia(Engine::probe(p->format(), voiceFile));
+}
+
+// Nothing of the chosen tool lies outside the drawer's scroll area (reachable by scrolling), and the drawer is as
+// tall as it needs while the lanes keep half the height
+QString drawerCut(StudioPage* page)
+{
+    StudioTools* tools = page->tools();
+    auto* stack = tools->findChild<QWidget*>("studio_tools_inner");
+    QWidget* card = nullptr;
+    for (QWidget* c : stack->findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+        if (c->objectName().startsWith("studio_card_") && c->isVisible()) card = c;
+    if (!card) return "no card";
+    QStringList bad;
+    for (QWidget* c : card->findChildren<QWidget*>()) {
+        if (!c->isVisible()) continue;
+        if (!qobject_cast<QLabel*>(c) && !qobject_cast<QAbstractButton*>(c) && !qobject_cast<QComboBox*>(c) &&
+            !qobject_cast<QListWidget*>(c) && !qobject_cast<QLineEdit*>(c))
+            continue;
+        const QRect r(c->mapTo(stack, QPoint(0, 0)), c->size());
+        if (!stack->rect().contains(r))
+            bad << QString("%1 '%2' %3,%4 %5x%6 outside the stack %7x%8").arg(c->metaObject()->className(), c->objectName())
+                       .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height()).arg(stack->width()).arg(stack->height());
+        // Not squeezed under its own height either (a layout short of room overlaps its rows)
+        if (c->height() + 1 < c->minimumSizeHint().height() && !qobject_cast<QListWidget*>(c))
+            bad << QString("%1 '%2' %3 px tall < %4").arg(c->metaObject()->className(), c->objectName()).arg(c->height())
+                       .arg(c->minimumSizeHint().height());
+    }
+    const QList<int> sizes = page->left()->sizes();
+    const int want = std::min(tools->neededHeight(), (sizes.value(0) + sizes.value(1)) / 2);
+    if (tools->height() + 2 < want) bad << QString("drawer %1 px < %2").arg(tools->height()).arg(want);
+    return bad.join("; ");
+}
+
+// Only this language's translators (installing another one adds to the ones before: German would show the last one)
+void useLanguage(const char* lang)
+{
+    for (QTranslator* t : qApp->findChildren<QTranslator*>()) {
+        QCoreApplication::removeTranslator(t);
+        delete t;
+    }
+    I18n::install(lang);
+}
+
+// The findings of the UI walkthrough before 0.23.0 (each block one finding)
+void testUiFindings(Engine& engine, const QString& voiceFile)
+{
+    useLanguage("de");
+    QSettings().remove("layout");
+    QSettings().remove("studio/penTarget");
+    QSettings().remove("studio/tool");
+    QSettings().setValue("audio/loudnessTarget", -14.0);
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1432, 822);
+    w.show();
+    w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
+        return Cli::Live::runForUser(&w, command, args, undoText);
+    });
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    Project* p = w.liveProject();
+    loadVoices(p, voiceFile, 5);
+    w.showPage(Page::Studio);
+    settle(5);
+    StudioPage* page = w.studioPage();
+    if (!CHECK(page)) return;
+    StudioTools* tools = page->tools();
+    StudioMixer* mixer = page->mixer();
+    QUndoStack* undo = p->undoStack();
+
+    // (1) "Clip" mode: Pegel / Pan are off and look it (not the checked colour), their tooltip says why
+    {
+        auto* penClip = page->findChild<QToolButton*>("studio_pen_clip");
+        auto* penTrack = page->findChild<QToolButton*>("studio_pen_track");
+        auto* autoVolume = page->findChild<QToolButton*>("studio_auto_volume");
+        auto* autoPan = page->findChild<QToolButton*>("studio_auto_pan");
+        if (CHECK(penClip && penTrack && autoVolume && autoPan)) {
+            const QString volumeTip = autoVolume->toolTip();
+            const QColor onColor = autoVolume->grab().toImage().pixelColor(3, 3);
+            CHECK(autoVolume->isChecked() && autoVolume->isEnabled());
+            penClip->click();
+            settle();
+            CHECK(!autoVolume->isEnabled() && !autoPan->isEnabled());
+            CHECK(autoVolume->isChecked()); // the choice stays for the track mode
+            CHECK(autoVolume->toolTip().contains("Spur") && autoVolume->toolTip() != volumeTip);
+            CHECK(autoPan->toolTip() == autoVolume->toolTip());
+            const QImage off = autoVolume->grab().toImage();
+            const QColor bg = off.pixelColor(3, 3);
+            Check::report(bg != onColor && bg != Theme::primary, "disabled checked button not highlighted", __FILE__,
+                          __LINE__, QString("%1 (on %2)").arg(bg.name(), onColor.name()));
+            CHECK(bg == Theme::control);
+            // Its text dimmed: no pixel of the full text colour
+            bool fullText = false;
+            for (int y = 0; y < off.height(); ++y)
+                for (int x = 0; x < off.width(); ++x) fullText |= off.pixelColor(x, y) == Theme::text;
+            CHECK(!fullText);
+            penTrack->click();
+            settle();
+            CHECK(autoVolume->isEnabled() && autoVolume->toolTip() == volumeTip);
+            CHECK(autoVolume->grab().toImage().pixelColor(3, 3) == Theme::primary);
+        }
+    }
+
+    // (6) Levels in the UI language with a real minus (the fader's value, the meters, "Ziel −14 LUFS")
+    {
+        CHECK_EQ(formatVolumeDb(-19.14), QString::fromUtf8("−19,1 dB"));
+        CHECK_EQ(formatVolumeDb(1.5), QString("+1,5 dB"));
+        CHECK_EQ(formatVolumeDb(-0.01), QString("0,0 dB"));
+        CHECK_EQ(formatVolumeDb(kMinVolumeDb), QString::fromUtf8("−∞ dB"));
+        if (auto* fader = page->findChild<QWidget*>("studio_fader_A1"); CHECK(fader)) {
+            p->edit("vol", [](Timeline& tl) { tl.audio[0].volumeDb = -6.5; });
+            settle(3);
+            QString shown;
+            for (QLabel* l : fader->parentWidget()->findChildren<QLabel*>(Qt::FindDirectChildrenOnly))
+                if (l->text().endsWith(" dB")) shown = l->text();
+            CHECK_EQ(shown, QString::fromUtf8("−6,5 dB"));
+            undo->undo();
+        }
+        for (QLabel* l : mixer->loudness()->findChildren<QLabel*>())
+            if (l->text().endsWith(" LUFS")) CHECK_EQ(l->text(), QString::fromUtf8("Ziel −14 LUFS"));
+        useLanguage("en");
+        CHECK_EQ(formatVolumeDb(-19.14), QString::fromUtf8("−19.1 dB"));
+        useLanguage("de");
+    }
+
+    // (7) One clip: singular ("Für 1 Clip auf A1", "Gesäubert: 1 Clip"), two: plural
+    {
+        page->setToolsOpen(true);
+        settle();
+        tools->setTargetTrack(1);
+        settle();
+        auto* info = static_cast<ElidedLabel*>(tools->findChild<QLabel*>("studio_target_info"));
+        if (CHECK(info)) {
+            CHECK_EQ(info->fullText(), QString("Für 1 Clip auf A2"));
+            w.editor()->selection()->set({2});
+            settle();
+            CHECK_EQ(info->fullText(), QString("Für 1 gewählten Clip auf A2"));
+            w.editor()->selection()->clear();
+            settle();
+        }
+        CHECK_EQ(tools->cleanVoice(), 1);
+        if (auto* line = tools->findChild<QLabel*>("studio_clean_result"); CHECK(line))
+            CHECK(line->text().startsWith("Gesäubert: 1 Clip, "));
+        undo->undo();
+        const QByteArray before = ProjectFile::toJson(p->data(), QString());
+        loadVoices(p, voiceFile, 5, true); // A1: two clips
+        tools->setTargetTrack(0);
+        settle();
+        if (info) CHECK_EQ(info->fullText(), QString("Für alle 2 Clips auf A1"));
+        CHECK_EQ(tools->cleanVoice(), 2);
+        if (auto* line = tools->findChild<QLabel*>("studio_clean_result"); CHECK(line))
+            CHECK(line->text().startsWith("Gesäubert: 2 Clips, "));
+        loadVoices(p, voiceFile, 5);
+        settle();
+        (void)before;
+    }
+
+    // (4) "Lautheit auf Ziel": one undo step, also once everything that follows it (the meter's target, the mixer's
+    // sync) has run; one Ctrl+Z takes back the master level and the limiter together
+    {
+        tools->setCurrentTool(2);
+        settle();
+        const double masterBefore = p->timeline().masterVolumeDb;
+        const bool limiterBefore = p->timeline().masterLimiter;
+        const int at = undo->index();
+        if (auto* go = tools->findChild<QToolButton*>("studio_loudness_apply"); CHECK(go)) go->click();
+        settle(10);
+        QTest::qWait(200);
+        settle(5);
+        CHECK_EQ(undo->index(), at + 1);
+        CHECK(p->timeline().masterLimiter);
+        CHECK(std::abs(p->timeline().masterVolumeDb - masterBefore) > 0.05);
+        // (2) The result line appeared under the button: inside the drawer (reachable), the drawer grew for it
+        const QString cut = drawerCut(page);
+        Check::report(cut.isEmpty(), "loudness result line whole", __FILE__, __LINE__, cut);
+        // The key, as the user presses it (the focus wherever the click left it)
+        w.activateWindow();
+        QWidget* focus = QApplication::focusWidget() ? QApplication::focusWidget() : &w;
+        QTest::keyClick(focus, Qt::Key_Z, Qt::ControlModifier);
+        settle(5);
+        Check::report(undo->index() == at, "one Ctrl+Z undoes it", __FILE__, __LINE__,
+                      QString("index %1, at %2, focus %3").arg(undo->index()).arg(at)
+                          .arg(focus->metaObject()->className()));
+        CHECK_EQ(p->timeline().masterVolumeDb, masterBefore);
+        CHECK_EQ(p->timeline().masterLimiter, limiterBefore);
+    }
+
+    // (4b) After the measuring dialog the window takes the keys back only if it had them and the user stayed: gone to
+    // another program meanwhile (the application inactive; here another window of ours stands for it) it stays there
+    {
+        QWidget other;
+        other.resize(200, 100);
+        for (bool leave : {false, true}) {
+            w.activateWindow();
+            QTest::qWaitForWindowActive(&w);
+            const int at = undo->index();
+            bool left = false;
+            QTimer poll;
+            poll.setInterval(0);
+            QObject::connect(&poll, &QTimer::timeout, [&] {
+                if (!leave || left || !tools->findChild<QProgressDialog*>()) return;
+                left = true;
+                other.show();
+                other.activateWindow();
+                emit qApp->applicationStateChanged(Qt::ApplicationInactive);
+            });
+            poll.start();
+            CHECK(tools->loudnessToTarget());
+            poll.stop();
+            settle(5);
+            if (leave) {
+                CHECK(left);
+                Check::report(QApplication::activeWindow() != &w, "the window does not take the keys back from another program",
+                              __FILE__, __LINE__, QApplication::activeWindow() ? QApplication::activeWindow()->objectName() : "none");
+                other.hide();
+            } else {
+                CHECK(QApplication::activeWindow() == &w);
+            }
+            while (undo->index() > at) undo->undo();
+        }
+        w.activateWindow();
+        settle();
+    }
+
+    // (2b) A drawer the user dragged smaller than its tool needs stays so (it scrolls): the scroll bar that comes, the
+    // text that wraps anew never grow it back; choosing a tool or a result line may
+    {
+        // A narrow column (the text wraps, and wraps anew when the scroll bar takes width)
+        const QList<int> rootSizes = page->root()->sizes();
+        page->root()->setSizes({420, rootSizes.value(0) + rootSizes.value(1) - 420});
+        tools->setCurrentTool(2);
+        settle(3);
+        CHECK(tools->loudnessToTarget()); // a long result line
+        settle(5);
+        const QList<int> sizes = page->left()->sizes();
+        const int total = sizes.value(0) + sizes.value(1);
+        const int small = std::max(tools->minimumSizeHint().height(), 110);
+        Check::report(small < tools->neededHeight(), "the drawer needs more than the dragged size", __FILE__, __LINE__,
+                      QString("%1 / %2").arg(small).arg(tools->neededHeight()));
+        page->left()->setSizes({total - small, small});
+        for (int i = 0; i < 5; ++i) {
+            settle(3);
+            const int h = page->left()->sizes().value(1);
+            Check::report(std::abs(h - small) <= 2, "a drawer dragged smaller stays smaller", __FILE__, __LINE__,
+                          QString("%1 px, dragged to %2, needs %3").arg(h).arg(small).arg(tools->neededHeight()));
+            if (std::abs(h - small) > 2) break;
+        }
+        auto* scroll = tools->findChild<QScrollArea*>("studio_tools_scroll");
+        CHECK(scroll && scroll->verticalScrollBar()->maximum() > 0);
+        undo->undo();
+        page->root()->setSizes(rootSizes);
+        page->setToolsOpen(false);
+        settle();
+        page->setToolsOpen(true);
+        settle();
+    }
+
+    // (2) Every tool whole in the drawer (1432 x 822, five tracks), also in a large font in a 1024 x 700 window
+    for (int t = 0; t < tools->toolCount(); ++t) {
+        tools->setCurrentTool(t);
+        settle(3);
+        const QString cut = drawerCut(page);
+        Check::report(cut.isEmpty(), "tool whole in the drawer", __FILE__, __LINE__, QString("tool %1: %2").arg(t).arg(cut));
+    }
+    page->setToolsOpen(false);
+    settle();
+
+    // (3) Another page and back: the same layout (the lanes, the viewer, the mixer keep their sizes)
+    {
+        const auto sizes = [&] {
+            return QList<QList<int>>{page->root()->sizes(), page->side()->sizes(), page->left()->sizes()};
+        };
+        const QList<QList<int>> first = sizes();
+        for (Page other : {Page::Edit, Page::Color, Page::Media}) {
+            w.showPage(other);
+            settle(3);
+            w.showPage(Page::Studio);
+            settle(5);
+            const QList<QList<int>> again = sizes();
+            Check::report(again == first, "same layout after a round trip", __FILE__, __LINE__,
+                          QString("root %1/%2 -> %3/%4, side %5/%6 -> %7/%8")
+                              .arg(first[0].value(0)).arg(first[0].value(1)).arg(again[0].value(0)).arg(again[0].value(1))
+                              .arg(first[1].value(0)).arg(first[1].value(1)).arg(again[1].value(0)).arg(again[1].value(1)));
+        }
+        // With the drawer open too
+        page->setToolsOpen(true);
+        settle(3);
+        const QList<QList<int>> open = sizes();
+        w.showPage(Page::Edit);
+        settle(3);
+        w.showPage(Page::Studio);
+        settle(5);
+        CHECK(sizes() == open);
+        page->setToolsOpen(false);
+        settle();
+    }
+
+    // (8) The wheel over the strips scrolls them sideways (twelve tracks: more than fit), plain and with Shift
+    {
+        loadVoices(p, voiceFile, 12);
+        settle(5);
+        QScrollBar* bar = mixer->stripsArea()->horizontalScrollBar();
+        auto* fader = page->findChild<QWidget*>("studio_fader_A2");
+        if (CHECK(fader && bar->maximum() > 0)) {
+            bar->setValue(0);
+            const double faderDb = p->timeline().audio[1].volumeDb;
+            // Delivered as Qt delivers a real wheel (a sent one is not passed on): to the widget under the pointer,
+            // then to its parents while none takes it
+            const auto wheel = [&](QPoint angle, Qt::KeyboardModifiers mods) {
+                const QPointF at(fader->width() / 2.0, fader->height() / 2.0);
+                const QPointF global = fader->mapToGlobal(at);
+                for (QWidget* x = fader; x; x = x->parentWidget()) {
+                    QWheelEvent e(x->mapFromGlobal(global), global, QPoint(), angle, Qt::NoButton, mods, Qt::NoScrollPhase,
+                                  false);
+                    QApplication::sendEvent(x, &e);
+                    if (e.isAccepted() || x->isWindow()) break;
+                }
+                settle(1);
+            };
+            wheel(QPoint(0, -120), Qt::NoModifier);
+            CHECK_EQ(bar->value(), std::min(bar->maximum(), int(StudioMixer::kStripW)));
+            wheel(QPoint(0, 120), Qt::NoModifier);
+            CHECK_EQ(bar->value(), 0);
+            wheel(QPoint(0, -120), Qt::ShiftModifier);
+            CHECK(bar->value() > 0);
+            wheel(QPoint(120, 0), Qt::ShiftModifier); // Shift turned into a sideways wheel by the system
+            CHECK_EQ(bar->value(), 0);
+            CHECK_EQ(p->timeline().audio[1].volumeDb, faderDb); // the fader never moved
+        }
+        loadVoices(p, voiceFile, 5);
+        settle(3);
+    }
+
+    // (9) The compressor window's reading sits on the background: no grid line through it
+    {
+        QDialog* d = mixer->openEditor(0, false);
+        settle(3);
+        auto* curve = d ? d->findChild<DynCurve*>("dynamicsCurve") : nullptr;
+        if (CHECK(curve)) {
+            const QImage img = curve->grab().toImage();
+            const QRect box = curve->labelRect().toAlignedRect().adjusted(1, 1, -1, -1);
+            int grid = 0;
+            for (int y = box.top(); y <= box.bottom(); ++y)
+                for (int x = box.left(); x <= box.right(); ++x) grid += img.pixelColor(x, y) == Theme::control ? 1 : 0;
+            Check::report(grid == 0, "no grid line through the reading", __FILE__, __LINE__,
+                          QString("%1 px of grid in %2").arg(grid).arg(curve->labelText()));
+            CHECK(curve->labelText().contains(QString(":1")));
+        }
+        if (d) d->close();
+        settle();
+    }
+
+    // (5) Another project loaded: the Studio lanes show the whole of it (a new view, like the timeline's), not the
+    // zoom of the project before; a tour's practice project too, and its end gives the user's zoom back
+    {
+        StudioTracks* tracks = page->tracks();
+        const auto endX = [&] { return tracks->xOf(TimelineOps::endFrame(p->timeline())); };
+        const auto fitted = [&] {
+            const QRect lane = tracks->laneRect(0);
+            return tracks->view().leftFrame == 0 && endX() > lane.left() + lane.width() * 0.8 && endX() <= lane.right() + 1;
+        };
+        tracks->setView(0.5, 0); // the user zoomed out (a long project before)
+        QTemporaryDir dir;
+        const QString file = dir.path() + "/other.schneidi";
+        {
+            ProjectData d = p->data();
+            for (Track& t : d.timeline.audio)
+                for (Clip& c : t.clips) c.out = 49; // shorter: two seconds
+            QString err;
+            CHECK(ProjectFile::save(d, file, &err));
+        }
+        if (CHECK(w.openProject(file))) {
+            settle(5);
+            Check::report(fitted(), "a loaded project fits the lanes", __FILE__, __LINE__,
+                          QString("end at %1, lane %2..%3, zoom %4").arg(endX()).arg(tracks->laneRect(0).left())
+                              .arg(tracks->laneRect(0).right()).arg(tracks->view().pxPerFrame));
+        }
+        // Loaded while the page is hidden: fitted when it shows
+        tracks->setView(0.5, 0);
+        w.showPage(Page::Edit);
+        settle();
+        CHECK(w.openProject(file));
+        settle(3);
+        w.showPage(Page::Studio);
+        settle(5);
+        CHECK(fitted());
+        // The user's own zoom now, then a tour: its practice project fitted, the user's zoom back at its end
+        tracks->setView(3.0, 20);
+        settle();
+        const ViewState user = tracks->view();
+        bool running = false;
+        QObject::connect(w.tours(), &TourManager::runningChanged, &w, [&running](bool on) { running = on; });
+        w.tours()->start("studio");
+        settle(10);
+        if (CHECK(running)) {
+            Check::report(tracks->view().pxPerFrame != user.pxPerFrame && tracks->view().leftFrame == 0,
+                          "the practice project not at the user's zoom", __FILE__, __LINE__,
+                          QString::number(tracks->view().pxPerFrame));
+            w.tours()->stop();
+            settle(10);
+        }
+        CHECK_EQ(tracks->view().pxPerFrame, user.pxPerFrame);
+        CHECK_EQ(tracks->view().leftFrame, user.leftFrame);
+
+        // An outside change of the open file (schneidi-cli, an AI): read again, the same project - the lanes keep the
+        // user's zoom like the timeline (core rule)
+        if (CHECK(!p->isModified())) {
+            ProjectData d = p->data();
+            d.timeline.audio[0].clips[0].out = 39;
+            QString err;
+            QTest::qWait(1100); // another modification time than the file had
+            CHECK(ProjectFile::save(d, file, &err));
+            CHECK(waitFor([&] { return p->timeline().audio[0].clips[0].out == 39; }, 6000));
+            settle(5);
+            CHECK_EQ(tracks->view().pxPerFrame, user.pxPerFrame);
+            CHECK_EQ(tracks->view().leftFrame, user.leftFrame);
+            CHECK(!tracks->fitPending());
+        }
+
+        // A project opened while the page is hidden, then a tour: its end leaves the lanes to be fitted to that
+        // project (not the zoom of the one before, nor the practice project's)
+        tracks->setView(3.0, 20);
+        w.showPage(Page::Edit);
+        settle();
+        CHECK(w.openProject(file));
+        settle(3);
+        CHECK(tracks->fitPending());
+        w.tours()->start("studio");
+        settle(10);
+        w.tours()->stop();
+        settle(10);
+        w.showPage(Page::Studio);
+        settle(5);
+        Check::report(fitted(), "fitted after the tour", __FILE__, __LINE__,
+                      QString("zoom %1, left %2").arg(tracks->view().pxPerFrame).arg(tracks->view().leftFrame));
+    }
+
+    // No "−0" on the mixer: the loudness target near zero reads "0"
+    {
+        QSettings().setValue("audio/loudnessTarget", -0.2);
+        mixer->refreshLoudnessSettings();
+        settle();
+        for (QLabel* l : mixer->loudness()->findChildren<QLabel*>())
+            if (l->text().endsWith(" LUFS")) CHECK_EQ(l->text(), QString("Ziel 0 LUFS"));
+        QSettings().setValue("audio/loudnessTarget", -14.0);
+        mixer->refreshLoudnessSettings();
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1254,5 +2220,8 @@ int main(int argc, char** argv)
     testWindow(engine, audio);
     testTools(engine, audio, music);
     testLayout(engine, audio);
+    testReviewFixes(engine, audio, music);
+    testSourceOnFirstShow(engine, audio, music);
+    testUiFindings(engine, audio);
     return Check::result();
 }

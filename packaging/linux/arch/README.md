@@ -68,6 +68,17 @@ makepkg -si --skipchecksums
 Only committed files are packed. Remove the tarball afterwards, otherwise a later `makepkg` reuses it instead of
 downloading the release.
 
+### Building without Arch (container)
+
+`build-in-container.sh` builds the package on any Linux machine with podman or docker: it packs a git ref as the
+source tarball, runs `makepkg` (with the tests) in a clean `archlinux` container, then installs the package in a
+second fresh container and starts both programs as a smoke test.
+
+```sh
+REF=v0.23.0 packaging/linux/arch/build-in-container.sh /tmp/arch-out      # a release tag; default REF is HEAD
+packaging/linux/arch/build-in-container.sh /tmp/arch-out -- --nocheck     # skip the test suite
+```
+
 ### A new version
 
 Set `pkgver` to the new version (the tag is `v<pkgver>`), `pkgrel=1`, then update the checksum and `.SRCINFO`:

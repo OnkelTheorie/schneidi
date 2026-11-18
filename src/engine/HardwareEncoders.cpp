@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QThreadPool>
 #include <algorithm>
 #include <cmath>
@@ -22,6 +23,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
 }
 
 namespace HardwareEncoders {
@@ -36,6 +38,7 @@ struct State {
     ProbeState probe = ProbeState::Idle;
     QHash<QString, int> results; // "codec WxH" -> 1 works, -1 fails
     QString vaapiDevice;         // render device chosen by the probe (empty = first one found)
+    QHash<QString, QString> reasons; // codec -> driverHint() of its failed probe test
 };
 
 State& state()
@@ -44,9 +47,23 @@ State& state()
     return s;
 }
 
-QString cacheKey(const QString& codec, QSize size)
+QString cacheKey(const QString& codec, QSize size, bool tenBit = false)
 {
-    return QString("%1 %2x%3").arg(codec).arg(size.width()).arg(size.height());
+    return QString("%1 %2x%3%4").arg(codec).arg(size.width()).arg(size.height()).arg(tenBit ? " 10" : "");
+}
+
+// The encoder takes this pixel format (FFmpeg's list; no list = anything)
+bool encoderTakes(const QString& codec, const char* pixFmt)
+{
+    const AVCodec* c = avcodec_find_encoder_by_name(codec.toUtf8().constData());
+    if (!c) return false;
+    const AVPixelFormat want = av_get_pix_fmt(pixFmt);
+    if (want == AV_PIX_FMT_NONE) return true;
+    const void* list = nullptr;
+    int n = 0;
+    if (avcodec_get_supported_config(nullptr, c, AV_CODEC_CONFIG_PIX_FORMAT, 0, &list, &n) < 0 || !list) return true;
+    const auto* formats = static_cast<const AVPixelFormat*>(list);
+    return std::find(formats, formats + n, want) != formats + n;
 }
 
 const QSize kProbeSize(640, 360);
@@ -67,7 +84,7 @@ QStringList vaapiDevices()
 #endif
 }
 
-QStringList argumentsFor(const QString& codec, QSize size, int crf, const QString& device)
+QStringList argumentsFor(const QString& codec, QSize size, int crf, const QString& device, bool tenBit = false)
 {
     QStringList args{"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error"};
     const bool vaapi = codec.endsWith("_vaapi");
@@ -75,16 +92,16 @@ QStringList argumentsFor(const QString& codec, QSize size, int crf, const QStrin
     args << "-f" << "lavfi" << "-i"
          << QString("color=black:s=%1x%2:r=25").arg(std::max(16, size.width())).arg(std::max(16, size.height()))
          << "-frames:v" << "3";
-    if (vaapi) args << "-vf" << "format=nv12,hwupload";
-    else args << "-pix_fmt" << pixelFormat(codec);
+    if (vaapi) args << "-vf" << (tenBit ? "format=p010,hwupload" : "format=nv12,hwupload");
+    else args << "-pix_fmt" << pixelFormat(codec, tenBit);
     args << "-c:v" << codec;
     for (const auto& [key, value] : codecOptions(codec, crf)) args << QString("-%1:v").arg(key) << value;
     args << "-f" << "null" << "-";
     return args;
 }
 
-// Runs test encodes in parallel (blocking), returns which worked
-QVector<bool> runTests(const QVector<QStringList>& argLists)
+// Runs test encodes in parallel (blocking), returns which worked; outputs: FFmpeg's output of each test
+QVector<bool> runTests(const QVector<QStringList>& argLists, QStringList* outputs = nullptr)
 {
     const QString ffmpeg = Bundle::tool("ffmpeg");
     std::vector<std::unique_ptr<QProcess>> procs;
@@ -103,8 +120,9 @@ QVector<bool> runTests(const QVector<QStringList>& argLists)
             p->waitForFinished(2000);
             works = false;
         }
-        if (!works && Bundle::verboseLogging())
-            qInfo("Hardware encoder test failed: %s", p->readAll().trimmed().constData());
+        const QByteArray output = p->readAll().trimmed();
+        if (!works && Bundle::verboseLogging()) qInfo("Hardware encoder test failed: %s", output.constData());
+        if (outputs) *outputs << QString::fromUtf8(output);
         ok << works;
     }
     return ok;
@@ -122,20 +140,35 @@ void runProbe()
         for (const char* format : {"h264", "h265"}) codecs << codecName(e, format);
     QVector<QStringList> args;
     for (const QString& c : codecs) args << argumentsFor(c, kProbeSize, 22, {});
-    const QVector<bool> ok = runTests(args);
+    // H.265 10 bit (Main10) separately: older cards encode 8-bit H.265 but not 10 bit
+    const QVector<QString> tenBit{codecName(VideoEncoder::Nvenc, "h265-10"), codecName(VideoEncoder::Qsv, "h265-10")};
+    for (const QString& c : tenBit) args << argumentsFor(c, kProbeSize, 22, {}, true);
+    QStringList outputs;
+    const QVector<bool> ok = runTests(args, &outputs);
     QHash<QString, int> results;
-    for (int i = 0; i < codecs.size(); ++i) results[cacheKey(codecs[i], kProbeSize)] = ok[i] ? 1 : -1;
+    QHash<QString, QString> reasons;
+    for (int i = 0; i < tenBit.size(); ++i) results[cacheKey(tenBit[i], kProbeSize, true)] = ok[codecs.size() + i] ? 1 : -1;
+    for (int i = 0; i < codecs.size(); ++i) {
+        results[cacheKey(codecs[i], kProbeSize)] = ok[i] ? 1 : -1;
+        if (!ok[i])
+            if (const QString hint = driverHint(outputs.value(i)); !hint.isEmpty()) {
+                reasons[codecs[i]] = hint;
+                qWarning("%s: %s", qPrintable(codecs[i]), qPrintable(outputs.value(i).simplified()));
+            }
+    }
 
     // VAAPI: the first render device where H.264 or H.265 works (with several cards e.g. NVIDIA on renderD128 and
     // the Intel/AMD chip on renderD129)
     QString chosen;
     const QString h264 = codecName(VideoEncoder::Vaapi, "h264"), hevc = codecName(VideoEncoder::Vaapi, "h265");
-    results[cacheKey(h264, kProbeSize)] = results[cacheKey(hevc, kProbeSize)] = -1;
+    results[cacheKey(h264, kProbeSize)] = results[cacheKey(hevc, kProbeSize)] = results[cacheKey(hevc, kProbeSize, true)] = -1;
     for (const QString& device : vaapiDevices()) {
-        const QVector<bool> v = runTests({argumentsFor(h264, kProbeSize, 22, device), argumentsFor(hevc, kProbeSize, 22, device)});
+        const QVector<bool> v = runTests({argumentsFor(h264, kProbeSize, 22, device), argumentsFor(hevc, kProbeSize, 22, device),
+                                          argumentsFor(hevc, kProbeSize, 22, device, true)});
         if (v[0] || v[1]) {
             results[cacheKey(h264, kProbeSize)] = v[0] ? 1 : -1;
             results[cacheKey(hevc, kProbeSize)] = v[1] ? 1 : -1;
+            results[cacheKey(hevc, kProbeSize, true)] = v[2] ? 1 : -1;
             chosen = device;
             break;
         }
@@ -143,13 +176,14 @@ void runProbe()
 
     QStringList working;
     for (auto it = results.cbegin(); it != results.cend(); ++it)
-        if (it.value() > 0) working << it.key().section(' ', 0, 0);
+        if (it.value() > 0) working << it.key().section(' ', 0, 0) + (it.key().endsWith(" 10") ? " (10 bit)" : "");
     qInfo("Hardware encoders: %s", working.isEmpty() ? "none" : qPrintable(working.join(", ")));
 
     {
         std::lock_guard lock(st.mutex);
         for (auto it = results.cbegin(); it != results.cend(); ++it) st.results.insert(it.key(), it.value());
         if (!chosen.isEmpty()) st.vaapiDevice = chosen;
+        st.reasons = reasons;
         st.probe = ProbeState::Done;
     }
     st.done.notify_all();
@@ -176,7 +210,7 @@ QString codecName(VideoEncoder e, const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (!f.hardware) return softwareCodec(format);
-    const QString base = QLatin1String(f.id) == QLatin1String("h265") ? "hevc" : "h264";
+    const QString base = QLatin1String(f.id).startsWith(QLatin1String("h265")) ? "hevc" : "h264"; // also h265-10
     switch (e) {
     case VideoEncoder::Nvenc: return base + "_nvenc";
     case VideoEncoder::Vaapi: return base + "_vaapi";
@@ -252,6 +286,14 @@ QString freeReplacement(const QString& codec)
     return {};
 }
 
+// The free replacement for a format, only if it takes the format's pixel format (kvazaar: 8 bit only, so no H.265
+// 10 bit in the GPL-free build without a Main10 graphics card)
+static QString freeReplacementFor(const RenderFormatInfo& f)
+{
+    const QString r = freeReplacement(f.videoCodec);
+    return r.isEmpty() || encoderTakes(r, f.pixFmt) ? r : QString();
+}
+
 bool isFreeReplacement(const QString& codec)
 {
     return codec == "libopenh264" || codec == "libkvazaar";
@@ -285,7 +327,7 @@ QString softwareCodec(const QString& format)
     if (!*f.videoCodec) return {};
     if (ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !externalProgram(f.videoCodec).isEmpty())
         return f.videoCodec;
-    return freeReplacement(f.videoCodec);
+    return freeReplacementFor(f);
 }
 
 bool formatAvailable(const QString& format)
@@ -294,7 +336,7 @@ bool formatAvailable(const QString& format)
     if (QLatin1String(f.id) != format) return false;
     if (*f.audioCodec && !builtIn(renderFormat(format).audioCodec)) return false;
     // (the extension last: asking its program takes a moment, and the panel's format list asks at start)
-    if (!*f.videoCodec || ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
+    if (!*f.videoCodec || ExportWriter::isOwnH264(f.videoCodec) || builtIn(f.videoCodec) || !freeReplacementFor(f).isEmpty()
         || !externalProgram(f.videoCodec).isEmpty())
         return true;
     return f.hardware && probed() && !available(format).isEmpty();
@@ -403,41 +445,47 @@ QVector<QPair<QString, QString>> softwareBitrateOptions(const QString& codec, in
     return averageRate(kbit); // libx264, libx265, libvpx-vp9
 }
 
-QString pixelFormat(const QString& codec)
+QString pixelFormat(const QString& codec, bool tenBit)
 {
     switch (encoderOfCodec(codec)) {
-    case VideoEncoder::Vaapi: return "vaapi"; // the writer converts to NV12 and uploads to the device
-    case VideoEncoder::Qsv: return "nv12";
-    default: return "yuv420p";
+    case VideoEncoder::Vaapi: return "vaapi"; // the writer converts to NV12 (10 bit: P010) and uploads to the device
+    case VideoEncoder::Qsv: return tenBit ? "p010le" : "nv12";
+    default: return tenBit ? "p010le" : "yuv420p"; // NVENC: P010 selects Main10
     }
 }
 
-QStringList testArguments(const QString& codec, QSize size, int crf)
+QStringList testArguments(const QString& codec, QSize size, int crf, bool tenBit)
 {
-    return argumentsFor(codec, size, crf, vaapiDevice());
+    return argumentsFor(codec, size, crf, vaapiDevice(), tenBit);
 }
 
-int cachedResult(const QString& codec, QSize size)
+int cachedResult(const QString& codec, QSize size, bool tenBit)
 {
     State& st = state();
     std::lock_guard lock(st.mutex);
-    return st.results.value(cacheKey(codec, size), 0);
+    return st.results.value(cacheKey(codec, size, tenBit), 0);
 }
 
-void remember(const QString& codec, QSize size, bool works)
+void remember(const QString& codec, QSize size, bool works, bool tenBit)
 {
     State& st = state();
     std::lock_guard lock(st.mutex);
-    st.results[cacheKey(codec, size)] = works ? 1 : -1;
+    st.results[cacheKey(codec, size, tenBit)] = works ? 1 : -1;
 }
 
-bool test(const QString& codec, QSize size, int crf)
+bool test(const QString& codec, QSize size, int crf, bool tenBit)
 {
-    if (const int r = cachedResult(codec, size)) return r > 0;
+    if (const int r = cachedResult(codec, size, tenBit)) return r > 0;
     if (codec.endsWith("_vaapi") && vaapiDevice().isEmpty()) return false;
-    const bool works = runTests({testArguments(codec, size, crf)}).value(0);
-    remember(codec, size, works);
+    const bool works = runTests({testArguments(codec, size, crf, tenBit)}).value(0);
+    remember(codec, size, works, tenBit);
     return works;
+}
+
+bool tenBitFormat(const QString& format)
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    return QLatin1String(f.id) == format && QByteArray(f.pixFmt).contains("10");
 }
 
 QVector<VideoEncoder> available(const QString& format)
@@ -445,8 +493,9 @@ QVector<VideoEncoder> available(const QString& format)
     if (!renderFormat(format).hardware) return {};
     ensureProbed();
     QVector<VideoEncoder> list;
+    const bool tenBit = tenBitFormat(format); // Main10 has a probe result of its own
     for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv, VideoEncoder::Vaapi})
-        if (cachedResult(codecName(e, format), kProbeSize) > 0) list << e;
+        if (cachedResult(codecName(e, format), kProbeSize, tenBit) > 0) list << e;
     return list;
 }
 
@@ -505,6 +554,9 @@ static Choice resolveHardware(VideoEncoder wanted, const QString& format)
             c.codec = codecName(list.first(), format);
         } else {
             c.codec = software;
+            // An NVIDIA card whose driver is too old for NVENC: say so (a driver update makes exports much faster)
+            if (const QString reason = unavailableReason(VideoEncoder::Nvenc); !reason.isEmpty())
+                c.note = T("%1 Mit Software gerendert.").arg(reason);
         }
         return c;
     }
@@ -513,9 +565,42 @@ static Choice resolveHardware(VideoEncoder wanted, const QString& format)
         c.codec = codecName(wanted, format);
     } else {
         c.codec = software;
-        c.note = T("%1 ist auf diesem Rechner nicht verfügbar, mit Software gerendert.").arg(videoEncoderLabel(wanted));
+        const QString reason = unavailableReason(wanted);
+        c.note = reason.isEmpty()
+                     ? T("%1 ist auf diesem Rechner nicht verfügbar, mit Software gerendert.").arg(videoEncoderLabel(wanted))
+                     : T("%1 Mit Software gerendert.").arg(reason);
     }
     return c;
+}
+
+QString driverHint(const QString& ffmpegOutput)
+{
+    // FFmpeg's nvenc.c: "Driver does not support the required nvenc API version. Required: 13.0 Found: 12.2" and
+    // "The minimum required Nvidia driver for nvenc is 570.0 or newer"
+    static const QRegularExpression api(QStringLiteral("nvenc API version\\.?\\s*Required:\\s*(\\d+\\.\\d+)\\s*Found:\\s*(\\d+\\.\\d+)"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression driver(QStringLiteral("minimum required Nvidia driver for nvenc is\\s*([0-9][0-9.]*[0-9])"),
+                                           QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch a = api.match(ffmpegOutput), d = driver.match(ffmpegOutput);
+    if (!a.hasMatch() && !d.hasMatch()) return {};
+    if (a.hasMatch() && d.hasMatch())
+        return T("NVIDIA-Treiber zu alt für NVENC (gefunden: API %1, nötig: API %2, Treiber %3 oder neuer) – bitte "
+                 "aktualisieren.")
+            .arg(a.captured(2), a.captured(1), d.captured(1));
+    if (a.hasMatch())
+        return T("NVIDIA-Treiber zu alt für NVENC (gefunden: API %1, nötig: API %2) – bitte aktualisieren.")
+            .arg(a.captured(2), a.captured(1));
+    return T("NVIDIA-Treiber zu alt für NVENC (nötig: Treiber %1 oder neuer) – bitte aktualisieren.").arg(d.captured(1));
+}
+
+QString unavailableReason(VideoEncoder e)
+{
+    if (e != VideoEncoder::Nvenc && e != VideoEncoder::Qsv && e != VideoEncoder::Vaapi) return {};
+    State& st = state();
+    std::lock_guard lock(st.mutex);
+    for (const char* format : {"h264", "h265"})
+        if (const QString r = st.reasons.value(codecName(e, format)); !r.isEmpty()) return r;
+    return {};
 }
 
 void resetForTests()
@@ -526,17 +611,22 @@ void resetForTests()
     st.probe = ProbeState::Idle;
     st.results.clear();
     st.vaapiDevice.clear();
+    st.reasons.clear();
 }
 
-void fakeProbeForTests(const QStringList& working)
+void fakeProbeForTests(const QStringList& working, const QString& nvencReason)
 {
     resetForTests();
     State& st = state();
     std::lock_guard lock(st.mutex);
+    if (!nvencReason.isEmpty())
+        for (const char* format : {"h264", "h265"}) st.reasons[codecName(VideoEncoder::Nvenc, format)] = nvencReason;
     for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv, VideoEncoder::Vaapi})
         for (const char* format : {"h264", "h265"}) {
             const QString codec = codecName(e, format);
             st.results[cacheKey(codec, kProbeSize)] = working.contains(codec) ? 1 : -1;
+            if (QLatin1String(format) == QLatin1String("h265"))
+                st.results[cacheKey(codec, kProbeSize, true)] = working.contains(codec + ":10") ? 1 : -1;
         }
     st.probe = ProbeState::Done;
 }

@@ -58,6 +58,24 @@ struct Hasher {
             num(p.offset[i]);
         }
         for (double v : {p.contrast, p.pivot, p.saturation, p.temperature, p.tint, p.exposure}) num(v);
+        for (const QVector<QPointF>& curve : p.curves.points) {
+            num(int(curve.size()));
+            for (const QPointF& q : curve) {
+                num(q.x());
+                num(q.y());
+            }
+        }
+        num(int(p.qualifier.on));
+        num(p.qualifier.window);
+        if (p.qualifier.on) {
+            const GradeQualifier::Range& r = p.qualifier.range;
+            for (double v : {r.hue, r.hueWidth, r.hueSoft, r.satLow, r.satHigh, r.satSoft, r.lumLow, r.lumHigh, r.lumSoft})
+                num(v);
+            num(int(r.invert));
+            ColorGrade::Params q;
+            static_cast<ColorGrade::Correction&>(q) = p.qualifier.correction;
+            params(q);
+        }
     }
 };
 
@@ -73,6 +91,8 @@ GradedThumbs::Spec GradedThumbs::specAt(const Clip& c, double t)
     s.params = ColorGrade::at(c, t);
     s.lut = ColorGrade::lutPath(c);
     s.windows = ColorGrade::windowsAt(c, t);
+    if (s.params.qualifier.on && s.params.qualifier.window > 0)
+        s.qualifierWindow = ColorGrade::Window{GradeWindows::geometryAt(c, s.params.qualifier.window, t), {}, {}};
     if (s.params.isNeutral() && s.lut.isEmpty() && s.windows.isEmpty()) return s;
     Hasher h;
     h.params(s.params);
@@ -86,6 +106,12 @@ GradedThumbs::Spec GradedThumbs::specAt(const Clip& c, double t)
         h.num(int(w.fill.fill));
         h.num(w.fill.amount);
         h.num(int(w.fill.color.rgba()));
+    }
+    if (s.qualifierWindow) {
+        const GradeWindows::Geometry& g = s.qualifierWindow->geometry;
+        h.num(int(g.shape));
+        for (double v : {g.x, g.y, g.width, g.height, g.rotation, g.softness}) h.num(v);
+        h.num(int(g.invert));
     }
     s.hash = h.h ? h.h : 1;
     s.media = c.mediaPath;
@@ -126,6 +152,10 @@ QImage GradedThumbs::apply(const QImage& image, const Spec& spec)
     std::vector<ColorGrade::Window> windows;
     for (const ColorGrade::Window& w : spec.windows)
         windows.push_back(ColorGrade::onPicture(w, QSizeF(frame.size()), QSizeF(picture.size())));
+    // The qualifier's window last in the list while it moves with the picture below, then taken out again
+    const bool qualifierWindow = spec.qualifierWindow.has_value();
+    if (qualifierWindow)
+        windows.push_back(ColorGrade::onPicture(*spec.qualifierWindow, QSizeF(frame.size()), QSizeF(picture.size())));
     if (const Spec::Placement& pl = spec.placement; !pl.isIdentity()) {
         // Zoomed, moved, cropped: the picture as placed (it may reach past the frame), the part of it that shows
         // (crop off, inside the frame) is graded; the windows move and scale along with the picture
@@ -155,7 +185,17 @@ QImage GradedThumbs::apply(const QImage& image, const Spec& spec)
     // Graded alone: lift/offset/LUT would tint the bars, a window over them would paint them, a blur pull them in
     QImage part = picture == img.rect() ? img : img.copy(picture);
     uint8_t* bits = part.bits();
-    if (!spec.params.isNeutral() || lut) ColorGrade::apply(bits, part.width(), part.height(), spec.params, lut.get());
+    if (qualifierWindow) { // primary, the qualifier inside its window, then the LUT (as ColorGrade::applyClip)
+        const GradeWindows::Geometry g = windows.back().geometry;
+        windows.pop_back();
+        ColorGrade::Params primary = spec.params;
+        primary.qualifier.on = false;
+        if (!primary.isNeutral()) ColorGrade::apply(bits, part.width(), part.height(), primary, nullptr);
+        ColorGrade::applyQualifierWindow(bits, part.width(), part.height(), spec.params, g);
+        if (lut) ColorGrade::apply(bits, part.width(), part.height(), ColorGrade::Params{}, lut.get());
+    } else if (!spec.params.isNeutral() || lut) {
+        ColorGrade::apply(bits, part.width(), part.height(), spec.params, lut.get());
+    }
     for (const ColorGrade::Window& w : windows) ColorGrade::applyWindow(bits, part.width(), part.height(), w);
     if (picture != img.rect())
         for (int y = 0; y < part.height(); ++y)

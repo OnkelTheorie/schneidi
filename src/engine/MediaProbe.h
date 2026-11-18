@@ -12,6 +12,7 @@
 #include "core/ProjectFormat.h"
 #include "core/SourceBitrate.h"
 #include "core/Types.h"
+#include "engine/HdrTone.h"
 
 #include <QString>
 
@@ -57,5 +58,12 @@ struct AudioLayout {
     QString layout;
 };
 QVector<AudioLayout> audioLayouts(const QString& path);
+
+// The HDR transfer (HLG/PQ, engine/HdrTone) of the file's picture: from the container header, a small stream analysis
+// when an H.264/H.265/AV1/VP9 stream states none there (only in its bitstream). Blocking (opens the file): background
+// threads only (engine/HdrScan). Cached per path + size + time of change
+HdrTone::Transfer hdrTransfer(const QString& path);
+// The cached answer only (no file opened; nullopt = not looked at yet): for the GUI thread (proxy and render cache keys)
+std::optional<HdrTone::Transfer> hdrTransferCached(const QString& path);
 
 } // namespace MediaProbe

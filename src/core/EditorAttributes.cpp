@@ -236,6 +236,45 @@ void Editor::pasteGrade(const QVector<int>& ids)
     if (!targets.isEmpty()) modifyClips(targets, T("Farbkorrektur einfügen"), [&](Clip& c) { pasteColor(c, src); });
 }
 
+int Editor::addGradeStill(int clipId, const QImage& picture, const QString& label)
+{
+    TrackRef ref;
+    const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId, &ref);
+    if (!c || ref.kind != TrackKind::Video || picture.isNull()) return 0;
+    QVector<GradeStill> stills = m_project->stills();
+    const int id = GradeStills::nextId(stills);
+    const GradeStill made = GradeStills::make(id, label, picture, *c);
+    if (made.image.isEmpty()) return 0;
+    stills << made;
+    while (stills.size() > GradeStills::kMaxCount) stills.removeFirst();
+    m_project->setStills(stills, T("Standbild aufnehmen"));
+    return id;
+}
+
+bool Editor::applyGradeStill(int stillId, const QVector<int>& ids)
+{
+    const QVector<GradeStill>& stills = m_project->stills();
+    const auto it = std::find_if(stills.begin(), stills.end(), [&](const GradeStill& s) { return s.id == stillId; });
+    if (it == stills.end()) return false;
+    const Clip src = it->grade;
+    const Timeline& tl = m_project->timeline();
+    QVector<int> targets;
+    for (int id : editable(ids)) {
+        TrackRef ref;
+        if (TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) targets << id;
+    }
+    if (targets.isEmpty()) return false;
+    modifyClips(targets, T("Farbkorrektur vom Standbild"), [&](Clip& c) { pasteColor(c, src); });
+    return true;
+}
+
+void Editor::removeGradeStill(int stillId)
+{
+    QVector<GradeStill> stills = m_project->stills();
+    stills.removeIf([&](const GradeStill& s) { return s.id == stillId; });
+    m_project->setStills(stills, T("Standbild löschen"));
+}
+
 bool Editor::applyGradeFromPrevious(int clipId, int back)
 {
     const Timeline& tl = m_project->timeline();

@@ -32,10 +32,12 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <optional>
 
 namespace {
 
@@ -47,14 +49,16 @@ constexpr int kThumbH = 28;      // the EQ and compressor pictures in a strip
 
 double meterPos(double db) { return std::clamp((db - kFloor) / -kFloor, 0.0, 1.0); }
 
+// A reading in the UI language with a real minus (as the tools drawer writes them: "Ziel −14 LUFS")
 QString number(double v, int decimals = 1)
 {
-    return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint());
+    if (std::abs(v) < 0.5 * std::pow(10.0, -decimals)) v = 0; // never "−0,0" (a value that rounds to zero)
+    return QString::number(v, 'f', decimals).replace('.', I18n::decimalPoint()).replace('-', QChar(0x2212));
 }
 
 QString signedDb(double db)
 {
-    if (db <= -99) return QStringLiteral("-∞");
+    if (db <= -99) return QString(QChar(0x2212)) + QStringLiteral("∞");
     return (db > 0.05 ? "+" : "") + number(db);
 }
 
@@ -68,7 +72,8 @@ QToolButton* smallButton(const QString& text, const QColor& on, const QString& t
     b->setMinimumHeight(20); // the width from its text (an explicit minimum width would let the layout cut it)
     b->setStyleSheet(QString("QToolButton { background: %1; color: %2; font-weight: 600; padding: 0 3px; border: none; }"
                              "QToolButton:checked { background: %3; color: %4; }")
-                         .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()));
+                             .arg(Theme::control.name(), Theme::text.name(), on.name(), Theme::readableOn(on).name()) +
+                         Theme::disabledToolButtonStyle());
     return b;
 }
 
@@ -239,23 +244,27 @@ protected:
         m_dragging = true;
         m_lastY = e->position().y();
         if (std::abs(e->position().y() - posY()) > 8) jumpTo(e->position().y()); // a click beside the handle: there
+        m_dragPos = VolumeDraw::posOf(m_db);
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_dragging) return;
+        if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dy = e->position().y() - m_lastY;
         m_lastY = e->position().y();
         const double h = std::max(1, bottom() - top());
-        double pos = VolumeDraw::posOf(m_db) - dy / h * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0);
-        double db = VolumeDraw::dbAt(pos);
+        // The drag position adds up every move unrounded: a slow drag (1 px per move, less than the 0.1 dB rounding
+        // or the 0 dB snap) still gets somewhere instead of falling back to the shown value each time
+        m_dragPos = std::clamp(m_dragPos - dy / h * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0), 0.0, 1.0);
+        double db = VolumeDraw::dbAt(m_dragPos);
         if (std::abs(db) < 0.4) db = 0; // 0 dB snaps
         change(db);
     }
-    void mouseReleaseEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
+    void hideEvent(QHideEvent* e) override
     {
-        if (!m_dragging) return;
-        m_dragging = false;
-        if (onFinish) onFinish();
+        QWidget::hideEvent(e);
+        endDrag(); // hidden mid-drag (another page): the drag ends as on a release, its undo step closed
     }
     void mouseDoubleClickEvent(QMouseEvent*) override
     {
@@ -264,6 +273,12 @@ protected:
     }
 
 private:
+    void endDrag()
+    {
+        if (!m_dragging) return;
+        m_dragging = false;
+        if (onFinish) onFinish();
+    }
     double posY() const { return bottom() - VolumeDraw::posOf(m_db) * (bottom() - top()); }
     void jumpTo(double y) { change(VolumeDraw::dbAt(double(bottom() - y) / std::max(1, bottom() - top()))); }
     void change(double db)
@@ -284,6 +299,7 @@ private:
     double m_db = 0;
     bool m_dragging = false;
     double m_lastY = 0;
+    double m_dragPos = 0; // while dragging: the handle's position (0..1) before rounding and snapping
 };
 
 // Pan as a horizontal bar: drag sideways, double click = centre
@@ -322,18 +338,24 @@ protected:
     {
         m_drag = e->button() == Qt::LeftButton;
         m_lastX = e->position().x();
+        m_dragV = m_v;
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_drag) return;
+        if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dx = e->position().x() - m_lastX;
         m_lastX = e->position().x();
-        set(m_v + dx / std::max(1, width() / 2) * 100 * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
+        // Added up unrounded: small moves (Shift) get past the centre snap and the rounding
+        m_dragV = std::clamp(m_dragV + dx / std::max(1, width() / 2) * 100 * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0),
+                             -100.0, 100.0);
+        set(m_dragV);
     }
-    void mouseReleaseEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
+    void hideEvent(QHideEvent* e) override
     {
-        if (m_drag && onFinish) onFinish();
-        m_drag = false;
+        QWidget::hideEvent(e);
+        endDrag(); // hidden mid-drag (another page): the drag ends as on a release
     }
     void mouseDoubleClickEvent(QMouseEvent*) override
     {
@@ -342,6 +364,12 @@ protected:
     }
 
 private:
+    void endDrag()
+    {
+        if (!m_drag) return;
+        m_drag = false;
+        if (onFinish) onFinish();
+    }
     void set(double v)
     {
         v = std::clamp(v, -100.0, 100.0);
@@ -354,6 +382,7 @@ private:
     double m_v = 0;
     bool m_drag = false;
     double m_lastX = 0;
+    double m_dragV = 0; // while dragging: the value before rounding and snapping
 };
 
 // One surround send of a strip (5.1/7.1 projects): a bar filled from the left with its name and value in it; drag
@@ -389,7 +418,7 @@ protected:
         f.setPointSizeF(7);
         p.setFont(f);
         p.setPen(Theme::text);
-        const QString value = m_v <= m_lo && m_unit == "dB" ? QStringLiteral("-∞") : number(m_v, 0);
+        const QString value = m_v <= m_lo && m_unit == "dB" ? QString(QChar(0x2212)) + QStringLiteral("∞") : number(m_v, 0);
         p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, m_name);
         p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignRight, value + (m_unit.isEmpty() ? "" : " " + m_unit));
     }
@@ -397,18 +426,25 @@ protected:
     {
         m_drag = e->button() == Qt::LeftButton;
         m_lastX = e->position().x();
+        m_dragV = m_v;
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_drag) return;
+        if (!(e->buttons() & Qt::LeftButton)) return endDrag(); // the release went elsewhere (a page change)
         const double dx = e->position().x() - m_lastX;
         m_lastX = e->position().x();
-        set(m_v + dx / std::max(1, width()) * (m_hi - m_lo) * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0));
+        // Added up unrounded: the model sends the rounded value back after every move (setValue), small moves would
+        // be lost in it
+        m_dragV = std::clamp(m_dragV + dx / std::max(1, width()) * (m_hi - m_lo) * ((e->modifiers() & Qt::ShiftModifier) ? 0.2 : 1.0),
+                             m_lo, m_hi);
+        set(m_dragV);
     }
-    void mouseReleaseEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent*) override { endDrag(); }
+    void hideEvent(QHideEvent* e) override
     {
-        if (m_drag && onFinish) onFinish();
-        m_drag = false;
+        QWidget::hideEvent(e);
+        endDrag(); // hidden mid-drag (another page): the drag ends as on a release
     }
     void mouseDoubleClickEvent(QMouseEvent*) override
     {
@@ -417,6 +453,12 @@ protected:
     }
 
 private:
+    void endDrag()
+    {
+        if (!m_drag) return;
+        m_drag = false;
+        if (onFinish) onFinish();
+    }
     void set(double v)
     {
         v = std::clamp(v, m_lo, m_hi);
@@ -430,6 +472,7 @@ private:
     QString m_unit;
     bool m_drag = false;
     double m_lastX = 0;
+    double m_dragV = 0; // while dragging: the value before rounding
 };
 // A small picture of a track's EQ or compressor curve in its strip. A click opens the full window (EqDialog with the
 // big EQ curve, DynamicsDialog with the big compressor curve - both draggable there); a click on the "EQ" / "DYN" tag
@@ -449,6 +492,25 @@ public:
     }
     std::function<void()> onOpen;
     std::function<void()> onToggle;
+    // The model changed: drawn anew only when this track's EQ / compressor did (every timeline change lands here)
+    void refresh()
+    {
+        const auto& audio = m_editor->project()->timeline().audio;
+        if (m_track >= audio.size()) {
+            m_shownEq.reset();
+            m_shownDyn.reset();
+            return update();
+        }
+        const Track& t = audio[m_track];
+        if (m_eq) {
+            if (m_shownEq && *m_shownEq == t.eq) return;
+            m_shownEq = t.eq;
+        } else {
+            if (m_shownDyn && *m_shownDyn == t.dynamics) return;
+            m_shownDyn = t.dynamics;
+        }
+        update();
+    }
     bool isOn() const
     {
         const auto& audio = m_editor->project()->timeline().audio;
@@ -535,6 +597,8 @@ private:
     Editor* m_editor;
     int m_track;
     bool m_eq;
+    std::optional<TrackEq> m_shownEq; // what the last refresh() asked to be drawn
+    std::optional<TrackDynamics> m_shownDyn;
 };
 
 // One narrow mixer strip (a fixed width; many tracks scroll beside each other). From the top: name, EQ and compressor
@@ -857,10 +921,14 @@ private:
 
 // ---------- StudioMixer ----------
 
-namespace {
-double loudnessTarget() { return QSettings().value("audio/loudnessTarget", -14.0).toDouble(); }
-double truePeakLimit() { return QSettings().value("audio/truePeakLimit", -1.0).toDouble(); }
-} // namespace
+void StudioMixer::refreshLoudnessSettings()
+{
+    // Read here, not in tick() (every 30 ms): QSettings costs
+    m_loudnessTarget = QSettings().value("audio/loudnessTarget", -14.0).toDouble();
+    m_truePeakLimit = QSettings().value("audio/truePeakLimit", -1.0).toDouble();
+    if (m_master) m_master->fader->setOver(m_truePeakLimit);
+    if (m_loudness) m_loudness->setReading(m_engine->loudness(), false, m_loudnessTarget, m_truePeakLimit);
+}
 
 StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     : QWidget(parent), m_editor(editor), m_project(editor->project()), m_engine(engine), m_writer(editor)
@@ -891,7 +959,6 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
 
     m_master = new StudioStrip(editor, -1);
     m_master->name->setFullText(T("Master"));
-    m_master->fader->setOver(truePeakLimit());
     m_master->fader->setChannels(m_channels);
     m_master->fader->onChange = [this](double db) {
         m_master->setVolume(db);
@@ -905,7 +972,7 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
     connect(m_loudness->reset, &QToolButton::clicked, this, [this] {
         m_engine->resetLoudness();
         m_master->fader->resetPeak();
-        m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
+        m_loudness->setReading(m_engine->loudness(), false, m_loudnessTarget, m_truePeakLimit);
     });
 
     connect(m_project, &Project::timelineChanged, this, &StudioMixer::sync);
@@ -914,12 +981,17 @@ StudioMixer::StudioMixer(Editor* editor, Engine* engine, QWidget* parent)
         fitHeight(); // the surround sends take room
     });
     connect(m_engine, &Engine::audioSpeakerLevels, this, &StudioMixer::onLevels);
+    // A seek or a loop wrap while a control is held: the touches end where they were played (the stretch jumped over
+    // keeps its curve); the next move starts a new touch
+    connect(m_engine, &Engine::seeked, this, [this] {
+        if (m_writer.touching()) m_writer.jumped();
+    });
     m_timer = new QTimer(this);
     m_timer->setInterval(30);
     connect(m_timer, &QTimer::timeout, this, &StudioMixer::tick);
     m_clock.start(); // the timer runs while the mixer shows (showEvent)
     sync();
-    m_loudness->setReading(m_engine->loudness(), false, loudnessTarget(), truePeakLimit());
+    refreshLoudnessSettings();
 }
 
 QWidget* StudioMixer::loudness() const { return m_loudness; }
@@ -940,6 +1012,22 @@ bool StudioMixer::eventFilter(QObject* watched, QEvent* e)
 {
     // The strips' height follows the viewport's (the horizontal scrollbar takes some when it shows)
     if (watched == m_scroll->viewport() && e->type() == QEvent::Resize) fitHeight();
+    // The wheel scrolls the strips sideways (they never scroll up and down), plain or with Shift, over any part of
+    // them: the faders, pans and sends take no wheel, so it comes here. One notch = one strip.
+    if (watched == m_scroll->viewport() && e->type() == QEvent::Wheel) {
+        auto* wheel = static_cast<QWheelEvent*>(e);
+        QScrollBar* bar = m_scroll->horizontalScrollBar();
+        const QPoint px = wheel->pixelDelta(), angle = wheel->angleDelta();
+        // A touchpad's own sideways swipe (x) counts as it is; up/down (and Shift, which some systems turn into x)
+        // moves right on "down", like a timeline's
+        const int a = angle.y() != 0 ? angle.y() : angle.x();
+        const int p = px.y() != 0 ? px.y() : px.x();
+        if (bar->maximum() <= 0 || (a == 0 && p == 0)) return QWidget::eventFilter(watched, e);
+        const int step = p != 0 ? p : int(std::lround(a / 120.0 * bar->singleStep()));
+        bar->setValue(bar->value() - step);
+        wheel->accept();
+        return true;
+    }
     return QWidget::eventFilter(watched, e);
 }
 
@@ -959,6 +1047,7 @@ void StudioMixer::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
     if (m_syncPending) sync();
+    refreshLoudnessSettings(); // the target / true-peak limit may have changed on another page (the Edit mixer)
     fitHeight();
     m_clock.restart(); // the meters fall from now, not by the time it was hidden
     m_timer->start();
@@ -969,7 +1058,7 @@ void StudioMixer::hideEvent(QHideEvent* e)
     QWidget::hideEvent(e);
     m_timer->stop(); // another page: no meters to move
     // Without the timer tick() cannot see playback stop: a write pass ends here (open touches released, one undo step)
-    if (m_writer.inPass()) m_writer.endPass(m_engine->position());
+    if (m_writer.inPass()) m_writer.endPass(timelinePosition());
 }
 
 void StudioMixer::resizeEvent(QResizeEvent* e)
@@ -978,13 +1067,24 @@ void StudioMixer::resizeEvent(QResizeEvent* e)
     fitHeight();
 }
 
-bool StudioMixer::playing() const { return !std::isnan(m_engine->soundFrame()); }
+// Playing the timeline: an effect sound or a file previewed in the viewer (Source mode) plays on its own time axis -
+// its positions are frames of that file, nothing to write into the timeline's automation
+bool StudioMixer::playing() const { return m_engine->timelinePositions() && !std::isnan(m_engine->soundFrame()); }
+
+int StudioMixer::timelinePosition() const
+{
+    // In Source mode the engine's position is a frame of the previewed file: the timeline's playhead (MainWindow
+    // tells it; also when the page first shows while a file is previewed), else the last one seen here
+    if (m_engine->timelinePositions()) m_lastTimelinePos = m_engine->position();
+    else if (m_timelinePlayhead) m_lastTimelinePos = m_timelinePlayhead();
+    return m_lastTimelinePos;
+}
 
 void StudioMixer::setWriteMode(bool on)
 {
     if (on == m_writeMode) return;
     m_writeMode = on;
-    if (!on) m_writer.endPass(m_engine->position());
+    if (!on) m_writer.endPass(timelinePosition());
 }
 
 void StudioMixer::fitHeight()
@@ -1026,7 +1126,7 @@ void StudioMixer::rebuild(int count)
             // Write mode while playing: the move is recorded into the automation (AutomationWriter)
             if (m_writeMode && playing()) {
                 s->setVolume(db);
-                m_writer.move(i, AutoTarget::Volume, m_engine->position(), db);
+                m_writer.move(i, AutoTarget::Volume, timelinePosition(), db);
                 return;
             }
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
@@ -1038,7 +1138,7 @@ void StudioMixer::rebuild(int count)
         s->pan->onChange = [this, i, s](double v) {
             if (m_writeMode && playing()) {
                 s->setPan(v);
-                m_writer.move(i, AutoTarget::Pan, m_engine->position(), v);
+                m_writer.move(i, AutoTarget::Pan, timelinePosition(), v);
                 return;
             }
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
@@ -1049,11 +1149,11 @@ void StudioMixer::rebuild(int count)
         };
         // A touch ends on release (the pass stays one undo step until playback stops); otherwise one step per drag
         s->fader->onFinish = [this, i] {
-            if (m_writer.touching(i, AutoTarget::Volume)) m_writer.release(i, AutoTarget::Volume, m_engine->position());
+            if (m_writer.touching(i, AutoTarget::Volume)) m_writer.release(i, AutoTarget::Volume, timelinePosition());
             else if (!m_writer.inPass()) m_project->closeMerge();
         };
         s->pan->onFinish = [this, i] {
-            if (m_writer.touching(i, AutoTarget::Pan)) m_writer.release(i, AutoTarget::Pan, m_engine->position());
+            if (m_writer.touching(i, AutoTarget::Pan)) m_writer.release(i, AutoTarget::Pan, timelinePosition());
             else if (!m_writer.inPass()) m_project->closeMerge();
         };
         // Surround: the three sends go together (Editor::setTrackSurround), one undo step per drag
@@ -1100,9 +1200,15 @@ void StudioMixer::rebuild(int count)
 
 QDialog* StudioMixer::openEditor(int track, bool eq)
 {
-    // One window per track and kind: a second click brings the open one up
+    // One window per track and kind: a second click brings the open one up (the windows follow their track when
+    // tracks are added, removed or reordered: compare the track they show now)
+    const auto shows = [](const QDialog* d) {
+        if (const auto* e = qobject_cast<const EqDialog*>(d)) return e->track();
+        if (const auto* c = qobject_cast<const DynamicsDialog*>(d)) return c->track();
+        return -1;
+    };
     for (QDialog* d : findChildren<QDialog*>(Qt::FindDirectChildrenOnly))
-        if (d->isVisible() && d->property("studioTrack").toInt() == track && d->property("studioEq").toBool() == eq) {
+        if (d->isVisible() && track >= 0 && shows(d) == track && d->property("studioEq").toBool() == eq) {
             d->raise();
             d->activateWindow();
             return d;
@@ -1110,7 +1216,6 @@ QDialog* StudioMixer::openEditor(int track, bool eq)
     QDialog* d = eq ? static_cast<QDialog*>(new EqDialog(m_editor, track, this))
                     : static_cast<QDialog*>(new DynamicsDialog(m_editor, track, this));
     d->setObjectName(eq ? "studio_eq_window" : "studio_dyn_window");
-    d->setProperty("studioTrack", track);
     d->setProperty("studioEq", eq);
     d->setAttribute(Qt::WA_DeleteOnClose);
     d->adjustSize();
@@ -1155,9 +1260,9 @@ void StudioMixer::sync()
                                   .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name());
         if (s->name->styleSheet() != style) s->name->setStyleSheet(style);
         s->setAutomated(!t.volumeAuto.isEmpty());
-        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, m_engine->position()) : t.volumeDb);
+        if (!s->fader->dragging()) s->setVolume(s->automated ? Automation::levelAt(t, timelinePosition()) : t.volumeDb);
         s->setPanAutomated(!t.panAuto.isEmpty());
-        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, m_engine->position()) : t.pan);
+        if (!s->pan->dragging()) s->setPan(s->panAutomated ? Automation::panAt(t, timelinePosition()) : t.pan);
         s->surround->setVisible(surround);
         s->depth->setValue(t.panDepth);
         s->center->setValue(t.panCenter);
@@ -1166,8 +1271,8 @@ void StudioMixer::sync()
         s->solo->setChecked(t.solo);
         s->eqOpen->setToolTip(t.eq.on ? T("EQ-Fenster öffnen (EQ an)") : T("EQ-Fenster öffnen (EQ aus)"));
         s->dynOpen->setToolTip(t.dynamics.on ? T("Kompressor-Fenster öffnen (Kompressor an)") : T("Kompressor-Fenster öffnen (Kompressor aus)"));
-        s->eqThumb->update();
-        s->dynThumb->update();
+        s->eqThumb->refresh();
+        s->dynThumb->refresh();
     }
     m_master->setVolume(tl.masterVolumeDb);
     m_master->limiter->setChecked(tl.masterLimiter);
@@ -1204,15 +1309,19 @@ void StudioMixer::tick()
     const double dt = m_clock.restart() / 1000.0;
     if (!isVisible()) return;
     const bool silent = !m_lastLevels.isValid() || m_lastLevels.elapsed() > 150;
-    // Read mode: automated faders follow their curve at the playhead (playing or not)
+    // Read mode: automated faders follow their curve at the playhead (playing or not; while a file is previewed in
+    // Source mode they stay at the timeline's last position)
     const Timeline& tl = m_project->timeline();
+    const int at = timelinePosition();
     for (int i = 0; i < m_strips.size() && i < tl.audio.size(); ++i)
         if (StudioStrip* s = m_strips[i]) {
-            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], m_engine->position()));
-            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], m_engine->position()));
+            if (s->automated && !s->fader->dragging()) s->setVolume(Automation::levelAt(tl.audio[i], at));
+            if (s->panAutomated && !s->pan->dragging()) s->setPan(Automation::panAt(tl.audio[i], at));
         }
-    // Write mode: playback stopped - the pass ends (open touches released, one undo step closed)
-    if (m_writer.inPass() && !playing()) m_writer.endPass(m_engine->position());
+    // Write mode: playback stopped - the pass ends (open touches released, one undo step closed); playing with a
+    // control held still: the touch records the held value (a gap between moves is then only a seek)
+    if (m_writer.inPass() && !playing()) m_writer.endPass(at);
+    else if (m_writer.touching()) m_writer.hold(at);
     for (StudioStrip* s : m_strips) {
         if (silent) s->fader->silence();
         s->fader->tick(dt);
@@ -1221,5 +1330,5 @@ void StudioMixer::tick()
     if (silent) m_master->fader->silence();
     m_master->fader->tick(dt);
     m_master->updatePeak();
-    m_loudness->setReading(m_engine->loudness(), !silent, loudnessTarget(), truePeakLimit());
+    m_loudness->setReading(m_engine->loudness(), !silent, m_loudnessTarget, m_truePeakLimit);
 }

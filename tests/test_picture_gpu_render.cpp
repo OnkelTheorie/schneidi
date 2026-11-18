@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The picture engine's GPU path (Picture::Renderer with Options::gpu) against its CPU path, whole frames of timelines:
-// plain clips, transforms/crop/opacity, colour grade (with LUT), cross dissolve, luma and plain wipes, dip to colour,
+// plain clips, transforms/crop/opacity, colour grade (with LUT, curves and qualifier), cross dissolve, luma and plain wipes, dip to colour,
 // stills, and what the card leaves to the CPU per layer (titles, blur, blur fill, wipe border, subtitles). Tolerance
 // instead of bit equality. Also the encoder planes written by the card (RenderHints::yuv) against
 // OutputColor::fromRgba of the CPU frame. Skips (77) without a hardware GPU device (headless, software rasterizer).
@@ -183,6 +183,61 @@ int main(int argc, char** argv)
         tl.video[2].clips << top;
         same("3 tracks transform+grade", tl, {0, 29}, 1.5, 30);
         same("3 tracks preview", tl, {10}, 2.0, 30, Picture::Mode::Preview, QSize(960, 540));
+    }
+
+    // Color page 2 (0.24): tone and hue curves and a qualifier bake into the grade's 3D table, the card samples it
+    {
+        Clip c = media(1, g_a, 0, 30);
+        grade(c, false);
+        EffectInstance* e = EffectRegistry::instance(c, "grade");
+        e->params["curveY"] = QString("0,0 0.3,0.22 0.7,0.8 1,1");
+        e->params["hueSat"] = QString("0.5,0.5 0.66,0.9 0.83,0.5");
+        e->params["q.hue"] = 0.0;
+        e->params["q.hueWidth"] = 60.0;
+        e->params["q.hueSoft"] = 20.0;
+        e->params["q.satLow"] = 20.0;
+        e->params["q.satHigh"] = 100.0;
+        e->params["q.satSoft"] = 10.0;
+        e->params["q.lumLow"] = 0.0;
+        e->params["q.lumHigh"] = 100.0;
+        e->params["q.lumSoft"] = 10.0;
+        e->params["q.invert"] = false;
+        e->params["q.saturation"] = 10.0;
+        e->params["q.gainY"] = 1.2;
+        same("curves + qualifier", oneTrack({c}), {0, 12}, 1.5, 30);
+    }
+
+    // HDR -> SDR (0.24): a 10-bit HLG and PQ source, the card maps it in its layer shader, the CPU in Video::toRgba;
+    // with curves + qualifier the grade runs on the mapped picture both ways; hdrToSdr off = the signal as it is
+    for (const char* trc : {"arib-std-b67", "smpte2084"}) {
+        const QString hdr = Check::makeMedia(
+            tmp.filePath(QString("hdr-%1.mkv").arg(trc)),
+            {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=1", "-vf",
+             QString("setparams=color_trc=%1:color_primaries=bt2020:colorspace=bt2020nc,format=yuv420p10le").arg(trc),
+             "-c:v", "ffv1"});
+        if (!CHECK(!hdr.isEmpty())) continue;
+        const QByteArray name = QByteArray("HDR ") + (QByteArray(trc) == "smpte2084" ? "PQ" : "HLG");
+        // Lower PSNR than SDR: testsrc2's saturated BT.2020 edges lie outside BT.709, where the SDR gamma near black
+        // turns the last bits of difference between the shader and the CPU tables into a few code values (llvmpipe:
+        // mean 1.1-1.4, PSNR 26-29 dB against 34 dB for the same picture in SDR)
+        same(name.constData(), oneTrack({media(1, hdr, 0, 30)}), {0, 12}, 1.6, 25);
+        Clip graded = media(1, hdr, 0, 30);
+        grade(graded, false);
+        EffectInstance* e = EffectRegistry::instance(graded, "grade");
+        e->params["curveY"] = QString("0,0 0.3,0.22 0.7,0.8 1,1");
+        e->params["q.hue"] = 0.0;
+        e->params["q.hueWidth"] = 60.0;
+        e->params["q.saturation"] = 10.0;
+        same((name + " + grade/curves/qualifier").constData(), oneTrack({graded}), {0, 12}, 1.6, 25);
+        Clip off = media(1, hdr, 0, 30);
+        off.hdrToSdr = false;
+        same((name + " off").constData(), oneTrack({off}), {0}, 1.0, 30);
+        // Off really shows the signal: brighter mid-tones than mapped (HLG) / another picture (PQ)
+        Picture::Renderer on(oneTrack({media(1, hdr, 0, 30)}), options(Picture::Mode::Export, false)),
+            raw(oneTrack({off}), options(Picture::Mode::Export, false));
+        const Picture::Frame a = on.render(0), b = raw.render(0);
+        if (CHECK(!a.isNull() && !b.isNull()))
+            CHECK(compare(a.bits(), b.bits(), size_t(a.width()) * a.height() * 4).mean > 3);
     }
 
     // A clip tilted in depth over a plain one: the card leaves it to the CPU (homography), the frame stays the same
@@ -398,11 +453,56 @@ int main(int argc, char** argv)
                         layout == OutputColor::Layout::Nv12 ? "NV12" : "4:2:0", d.mean, d.max, d.psnr);
             CHECK(d.mean <= 1.0 && d.psnr >= 40);
         }
-        // A layout the card does not write: RGBA as usual
-        OutputColor::Target t10;
-        t10.bits = 10;
+        // 10 bit (0.24, H.265/AV1 10 bit): the card writes 16-bit words from an RGBA16F frame; P010 too
+        // msb: P010; the third round after the card refused RGBA16F (an RGBA8 frame, still written by the card)
+        for (const int round : {0, 1, 2}) {
+            const bool msb = round == 1;
+            if (round == 2) Picture::Gpu::Service::instance()->refuseHalfTargets();
+            std::vector<uint16_t> ref(size_t(W) * H * 3 / 2), got(ref.size(), 7);
+            auto targetOf = [&](std::vector<uint16_t>& v) {
+                OutputColor::Target t;
+                t.layout = msb ? OutputColor::Layout::Nv12 : OutputColor::Layout::Yuv420;
+                t.bits = 10;
+                t.msb = msb;
+                t.colorspace = 709;
+                auto* b = reinterpret_cast<uint8_t*>(v.data());
+                t.planes[0] = b;
+                t.strides[0] = W * 2;
+                t.planes[1] = b + size_t(W) * H * 2;
+                t.strides[1] = msb ? W * 2 : W;
+                t.planes[2] = t.planes[1] + size_t(W / 2) * (H / 2) * 2;
+                t.strides[2] = W;
+                return t;
+            };
+            const Picture::Frame a = cpu.render(11);
+            if (!CHECK(!a.isNull())) continue;
+            OutputColor::fromRgba(a.bits(), W, H, a.stride(), targetOf(ref));
+            const OutputColor::Target t = targetOf(got);
+            Picture::RenderHints hints;
+            hints.yuv = &t;
+            const Picture::Frame b = gpu.render(11, hints);
+            CHECK(!b.isNull() && b.yuvWritten());
+            CHECK(b.gpu());
+            double sum = 0;
+            int worst = 0, low = 0;
+            for (size_t i = 0; i < ref.size(); ++i) {
+                const int diff = std::abs(int(ref[i] >> (msb ? 6 : 0)) - int(got[i] >> (msb ? 6 : 0)));
+                sum += diff;
+                worst = std::max(worst, diff);
+                if (msb && (got[i] & 63)) ++low;
+            }
+            std::printf("  yuv readback 10 bit %-12s mean %.3f max %d (10-bit steps)\n",
+                        round == 2 ? "16F refused" : msb ? "P010" : "4:2:0", sum / ref.size(), worst);
+            CHECK(sum / ref.size() <= 4.0);
+            CHECK(worst <= 400); // like the 8-bit readback above (max 90 of 255): the card's sampling at hard edges
+            CHECK_EQ(low, 0);
+        }
+        // A layout the card does not write (4:4:4): RGBA as usual
+        OutputColor::Target t444;
+        t444.layout = OutputColor::Layout::Yuv444;
+        t444.bits = 10;
         Picture::RenderHints hints;
-        hints.yuv = &t10;
+        hints.yuv = &t444;
         const Picture::Frame c = gpu.render(12, hints);
         CHECK(!c.isNull() && !c.yuvWritten() && c.bits());
         CHECK(gpu.stats().framesGpu >= 3);

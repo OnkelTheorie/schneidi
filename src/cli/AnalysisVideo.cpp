@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: looking at the picture of the material (scenes, region events, frames, scopes)
 #include "cli/AnalysisDetail.h"
+#include "cli/Live.h"
 
 #include "core/ContactSheet.h"
 #include "core/TimelineOps.h"
@@ -21,6 +22,9 @@
 #include <mutex>
 #include <utility>
 #include <vector>
+
+#include "core/GradeStills.h"
+#include "core/Project.h"
 
 namespace Cli::detail {
 
@@ -43,6 +47,8 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     std::optional<Timeline> clipOnly;
     int clipFrom = 0, clipTo = 0;
     if (isProjectFile(src)) {
+        std::optional<Live::StillPictures> pictures; // the app's snapshot with the stills' pictures
+        if (a.contains("still")) pictures.emplace();
         session = std::make_unique<Session>(src);
         session->selectTimeline(a["timeline"]);
         f = session->format();
@@ -50,8 +56,8 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         if (a.contains("clip")) clipOnly = compNodeTimeline(*session, a, &clipFrom, &clipTo);
         else if (a.contains("node") || a.contains("view"))
             fail("BAD_ARGUMENT", "node/view show a clip's compositing graph: give clip (its id) too");
-    } else if (a.contains("clip") || a.contains("node") || a.contains("view")) {
-        fail("BAD_ARGUMENT", "clip/node/view are for a project (source = the .schneidi file or \"@app\")");
+    } else if (a.contains("clip") || a.contains("node") || a.contains("view") || a.contains("still")) {
+        fail("BAD_ARGUMENT", "clip/node/view/still are for a project (source = the .schneidi file or \"@app\")");
     } else {
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
@@ -59,6 +65,48 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         if (!media.info.hasVideo) fail("NO_VIDEO", "the file has no picture (sound only): " + media.info.path);
         f = pictureFormat(media);
         length = media.info.length;
+    }
+    if (session && a.contains("still")) { // a Color page still, alone or beside the timeline at `at`
+        const int id = a["still"].toInt();
+        const QVector<GradeStill>& list = session->project.stills();
+        const auto it = std::find_if(list.begin(), list.end(), [id](const GradeStill& st) { return st.id == id; });
+        if (it == list.end()) fail("NOT_FOUND", QString("no still %1 (see `info` stills)").arg(id));
+        QImage still = GradeStills::picture(*it);
+        if (still.isNull()) fail("DECODE_FAILED", QString("still %1 cannot be read").arg(id));
+        FrameSet out;
+        out.source = absolute(src);
+        const auto fit = [maxEdge](const QImage& img) {
+            return std::max(img.width(), img.height()) > maxEdge
+                       ? img.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                       : img;
+        };
+        const QJsonArray times = a["at"].toArray();
+        if (times.isEmpty()) {
+            out.images << fit(still);
+            out.labels << QString("still %1").arg(id);
+            out.frames << QJsonObject{{"still", id}, {"label", it->label}};
+            return out;
+        }
+        if (length <= 0) session->failEmpty();
+        const auto snap = Snapshot::Source::timeline(f, session->project.renderTimeline());
+        for (const QJsonValue& v : times) {
+            const int fr = std::clamp(parseTime(v, f, "at"), 0, length - 1);
+            const QImage live = snap->frame(fr, maxEdge);
+            if (live.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1 of %2").arg(fr).arg(src));
+            // Side by side at the same height: the still left, the timeline right (as the Color page compares)
+            const QImage left = still.scaledToHeight(live.height(), Qt::SmoothTransformation);
+            QImage both(left.width() + 4 + live.width(), live.height(), QImage::Format_RGB32);
+            both.fill(Qt::black);
+            {
+                QPainter p(&both);
+                p.drawImage(0, 0, left);
+                p.drawImage(left.width() + 4, 0, live);
+            }
+            out.images << fit(both);
+            out.labels << QString("still %1 | %2").arg(id).arg(tc(fr, f));
+            out.frames << QJsonObject{{"still", id}, {"frame", fr}, {"tc", tc(fr, f)}, {"s", seconds(fr, f)}};
+        }
+        return out;
     }
     if (length <= 0) {
         if (session) session->failEmpty();

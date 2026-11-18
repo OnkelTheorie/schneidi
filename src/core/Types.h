@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <atomic>
 #include <memory>
 
@@ -40,11 +41,14 @@ constexpr double kMaxVolumeDb = 12.0;
 // limited render still passes after the AAC encoder's small overshoot
 constexpr double kDefaultLimiterDb = -1.2;
 
-// Display as in DaVinci: "+1.5 dB", "0.0 dB", "-inf dB"
+// A level for the UI: "+1,5 dB", "0,0 dB", "−19,1 dB", "−∞ dB" - the UI language's decimal separator and a real
+// minus, like the meters' readings (not for machine output: CLI/JSON write plain numbers)
 inline QString formatVolumeDb(double db)
 {
-    if (db <= kMinVolumeDb) return QStringLiteral("-∞ dB");
-    return QString("%1%2 dB").arg(db > 0.05 ? "+" : "").arg(db, 0, 'f', 1);
+    if (db <= kMinVolumeDb) return QString(QChar(0x2212)) + QStringLiteral("∞ dB");
+    if (std::abs(db) < 0.05) db = 0; // never "-0,0"
+    const QString v = QString::number(db, 'f', 1).replace('.', I18n::decimalPoint()).replace('-', QChar(0x2212));
+    return QString("%1%2 dB").arg(db > 0.05 ? "+" : "", v);
 }
 
 // What fills the frame around the fitted picture (bars of another shape, room left by zoom < 1, moves or rotation):
@@ -620,6 +624,9 @@ struct Clip {
     // Width / height the picture is shown at instead of the file's (0 = the file's): a 4:3 game image stretched to
     // 16:9 by the recorder gets its true shape back with 4/3. Video and still clips only.
     double pictureAspect = 0;
+    // An HDR source (HLG/PQ) is shown and exported as SDR BT.709 (engine/HdrTone; nothing happens to SDR sources).
+    // false = the signal as it is (graded by hand, or a look made for it)
+    bool hdrToSdr = true;
     // A part of the picture kept readable above a reframed copy of the same clip (core/Reframe.h keepCopy): what it
     // keeps ("killfeed", "custom"); empty = an ordinary clip. Not reframed itself; reframing its clip again with
     // keep settings replaces it.
@@ -1027,6 +1034,9 @@ struct MediaInfo {
     // Shape new clips of this file show their picture at (Clip::pictureAspect; 0 = the file's): a recording of a 4:3
     // game stretched to 16:9, marked in the Media Pool or by its watch folder. Media Pool tiles show it too.
     double pictureAspect = 0;
+    // HDR transfer of the picture ("HLG", "PQ"; empty = SDR): its clips are mapped to SDR (Clip::hdrToSdr), the Media
+    // Pool and the Inspector say so. Filled by MediaProbe
+    QString hdr;
 };
 
 // After a clip got another file or audio stream: channel routing (Clip::sourceChannels) the clip's stream of m lacks

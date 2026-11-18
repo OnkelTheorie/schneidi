@@ -208,6 +208,8 @@ void testKeys()
     EffectRegistry::add(fx, "blur");
     Clip fast = c;
     fast.speed = 2.0;
+    Clip graded = c; // the grade runs live: no reason to cache the clip
+    EffectRegistry::add(graded, "grade");
     Clip title;
     title.kind = ClipKind::Title;
     title.renderCache = true;
@@ -220,6 +222,8 @@ void testKeys()
     CHECK(RenderCache::wanted(fx, M::Smart));
     CHECK(RenderCache::wanted(fast, M::Smart));
     CHECK(!RenderCache::wanted(c, M::Smart));
+    CHECK(!RenderCache::wanted(graded, M::Smart));
+    CHECK(!RenderCache::isExpensive(graded));
     CHECK(RenderCache::wanted(marked, M::Smart));
     CHECK(!RenderCache::wanted(title, M::User));
     Clip off = marked;

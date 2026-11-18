@@ -13,6 +13,7 @@
 #include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -615,6 +616,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
     if (c.pictureAspect > 0) o["picture_aspect"] = std::round(c.pictureAspect * 10000) / 10000; // op picture_aspect
+    if (!c.hdrToSdr) o["hdr_to_sdr"] = false; // op hdr
     if (!c.keepRegion.isEmpty()) o["keep_region"] = c.keepRegion; // a kept region above a reframed clip (op reframe keep)
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
@@ -626,10 +628,14 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
             QJsonObject eo{{"effect", e.effectId}};
             QJsonObject params;
             QMap<int, QJsonObject> windows; // grade: its windows apart ("w1.x" -> windows[1].x)
+            QJsonObject qualifier;          // and its qualifier ("q.hue" -> qualifier.hue)
+            const bool grade = e.effectId == QLatin1String("grade");
             for (auto it = e.params.begin(); it != e.params.end(); ++it) {
                 QString key;
-                if (const int n = e.effectId == QLatin1String("grade") ? GradeWindows::windowOf(it.key(), &key) : 0)
+                if (const int n = grade ? GradeWindows::windowOf(it.key(), &key) : 0)
                     windows[n][key] = json(it.value());
+                else if (grade && GradeQualifier::isKey(it.key()))
+                    qualifier[it.key().mid(2)] = json(it.value());
                 else
                     params[EffectRegistry::shownKey(e.effectId, it.key())] = json(it.value()); // readable alias
             }
@@ -643,6 +649,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
                 }
                 eo["windows"] = list;
             }
+            if (!qualifier.isEmpty()) eo["qualifier"] = qualifier;
             if (e.effectId == QLatin1String(::Comp::kEffectId)) { // the graph short: nodes, links, out, cost
                 eo.remove("params");
                 eo["graph"] = compJson(e, f, &c);
@@ -1591,6 +1598,8 @@ const QVector<Command>& commands()
           {"width", T::Integer, "longer edge of each image in pixels, on a sheet of each tile (default 640, MCP 480)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"still", T::Integer, "for a project: a Color page still (id from `info` stills); with 'at' beside the "
+                                "timeline at those times (still left, timeline right) to compare"},
           {"clip", T::Integer, "for a project: only this clip, as its compositing graph makes it (no transform, other "
                                "clips or fades); without times its first frame"},
           {"node", T::Integer, "with clip: the picture at this node of its graph (default: the output); a mask shows "

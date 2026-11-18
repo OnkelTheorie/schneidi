@@ -96,6 +96,9 @@ public:
     // File being written right now (half-finished proxy; empty = none): cleaning up never touches it
     QString writing() const { return m_currentPart; }
 
+    // engine/HdrScan found `original` to be HDR: its proxy has another name now (proxyPath), looked up again
+    void hdrFound(const QString& original) { emit proxyChanged(original); }
+
 signals:
     void progress(const QString& original, int percent);
     // Proxy created, deleted or generation finished/canceled -> refresh display/preview

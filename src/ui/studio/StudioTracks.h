@@ -21,6 +21,7 @@
 #include <QVector>
 #include <QWidget>
 
+#include "core/Types.h"
 #include "core/VolumeDraw.h"
 
 class Editor;
@@ -55,10 +56,17 @@ public:
     AutoTarget autoTarget() const { return m_autoTarget; }
 
     const ViewState& view() const { return m_view; }
-    // Zoom and scroll as given (the first showing: the timeline's)
+    // Zoom and scroll as given (the first showing: the timeline's; a tour's end: the user's again). Drops a pending
+    // fitOnShow.
     void setView(double pxPerFrame, double leftFrame);
     // The whole project in view (the Fit button: user input)
     void fit();
+    // Another project was loaded (a new view, like the timeline's restoreViews): fit, now if the lanes show, else
+    // when they show next (their width is known then)
+    void fitOnShow();
+    bool fitPending() const { return m_fitPending; }
+    // Keyboard zoom (Ctrl+= / Ctrl+-: user input): around the playhead when it is in view, else the view's centre
+    void zoomBy(double factor);
 
     // Geometry (tests, tours): the lane of audio track `track` (its clip area, right of the header); x of a frame
     QRect laneRect(int track) const;
@@ -94,10 +102,12 @@ signals:
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
+    void showEvent(QShowEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
+    void hideEvent(QHideEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void leaveEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
@@ -106,6 +116,8 @@ protected:
     void dropEvent(QDropEvent* e) override;
 
 private:
+    void updateChangedLanes(); // the model changed: repaint only the lanes whose track changed
+    QVector<Track> m_shownAudio; // the audio tracks as last drawn (updateChangedLanes)
     void layoutLanes();      // lane height, scrollbar ranges (never a change of zoom or scroll)
     void syncScrollBars();
     int trackAt(int y) const; // -1 = none
@@ -121,6 +133,9 @@ private:
     double valueAtY(int track, int y) const;
     QString valueText(double v) const;
     void addPenPoint(const QPoint& pos);
+    // The drag ends (a release; also a move without the button or the lanes hidden mid-drag): the pen's stroke
+    // becomes one undo step (addPoint: the release point too), a dragged point's merge closes
+    void endDrag(const QPoint& pos, bool addPoint);
     void paintPart(class QPainter& p); // what lies in m_dirty
     void drawRuler(class QPainter& p);
     void drawLane(class QPainter& p, int track);
@@ -149,6 +164,7 @@ private:
     Editor* m_editor;
     QPointer<MediaCache> m_cache;
     ViewState m_view;
+    bool m_fitPending = false;
     int m_scrollY = 0; // pixels through the lanes
     int m_laneH = 96;
     int m_userLaneH = 0; // 0 = fill the room
@@ -165,9 +181,13 @@ private:
     Drag m_drag = Drag::None;
     KeyHit m_key;          // the keyframe being dragged
     QString m_keyMerge;    // its drag's undo merge key
+    KeyHit m_added;        // the point the last press set (a double click on it joins that undo step)
+    int m_addedBefore = -1; // the undo index before it was set
     int m_keyDrags = 0;
     const Voiceover::LiveTake* m_take = nullptr;
     int m_takeTrack = -1;
+    QRect m_takeRect; // where the take was drawn last (setLiveTake draws only what it grew by)
+    QRect takeRect() const;
     int m_penTrack = -1;
     QVector<VolumeDraw::Point> m_stroke;
     QPoint m_hover{-1, -1};

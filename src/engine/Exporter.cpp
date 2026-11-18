@@ -45,11 +45,20 @@
 #include <optional>
 
 extern "C" {
+#include <libavutil/pixdesc.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 }
 
 namespace {
+
+// More than 8 bits per component (yuv420p10le: H.265/AV1 10 bit, ProRes, DNxHR HQX)
+bool tenBitFormat(const QString& pixFmt)
+{
+    const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(av_get_pix_fmt(pixFmt.toUtf8().constData()));
+    return d && d->comp[0].depth > 8;
+}
+
 std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 
 // Memory model of automaticThreads (see there). Measured on a 1080x1920 short (x264 medium, peak RSS for 1, 2, 4,
@@ -663,7 +672,7 @@ bool Exporter::launch(QString* error)
     const ExportSettings& s = m_settings;
     // The writer opens the encoder itself and reports when it cannot (fallback in pollWriter). A hardware encoder that
     // already failed in this session (could not be opened): software right away
-    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize()) < 0) {
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize(), tenBitFormat(s.pixFmt)) < 0) {
         if (!fallBackToSoftware(error)) return false;
         ++g_running;
         m_timer.start();
@@ -821,7 +830,8 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     ExportWriter::Settings w;
     w.path = m_path;
     w.videoCodec = s.videoCodec.isEmpty() ? QString() : codec;
-    w.pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec) : s.pixFmt;
+    w.tenBit = tenBitFormat(s.pixFmt);
+    w.pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec, w.tenBit) : s.pixFmt;
     w.videoOptions = encoderOptions(codec);
     w.audioCodec = s.audioCodec;
     if (!s.audioCodec.isEmpty()) {
@@ -866,7 +876,8 @@ bool Exporter::startWriter(const QString& codec, QString* error)
         // the same fallback to software both times
         if (!fallbackCodec(codec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
-            if (HardwareEncoders::isHardwareCodec(codec)) HardwareEncoders::remember(codec, outputSize(), false); // not again
+            if (HardwareEncoders::isHardwareCodec(codec)) // not again (at this bit depth: 8-bit may still work)
+                HardwareEncoders::remember(codec, outputSize(), false, tenBitFormat(m_settings.pixFmt));
             QFile::remove(m_path);
             return fallBackToSoftware(error);
         }
@@ -900,7 +911,7 @@ void Exporter::pollWriter()
         if (!fallbackCodec(m_usedCodec).isEmpty() && m_writer->encoderFailed()) {
             m_writer.reset();
             if (HardwareEncoders::isHardwareCodec(m_usedCodec))
-                HardwareEncoders::remember(m_usedCodec, outputSize(), false); // not again this session
+                HardwareEncoders::remember(m_usedCodec, outputSize(), false, tenBitFormat(m_settings.pixFmt)); // not again this session
             QFile::remove(m_path);
             QString error;
             if (fallBackToSoftware(&error)) return;
@@ -999,7 +1010,8 @@ void Exporter::finishGif(bool ok, const QString& log)
 bool Exporter::writable(const ExportSettings& s, const QString& sampleFormat, QString* why) const
 {
     const QString pixFmt = s.videoCodec.isEmpty() ? QString()
-                           : HardwareEncoders::isHardwareCodec(s.videoCodec) ? HardwareEncoders::pixelFormat(s.videoCodec)
+                           : HardwareEncoders::isHardwareCodec(s.videoCodec)
+                               ? HardwareEncoders::pixelFormat(s.videoCodec, tenBitFormat(s.pixFmt))
                                                                              : s.pixFmt;
     return ExportWriter::supportsOwn(m_path, s.output == ExportSettings::Output::ImageSequence ? "image2" : QString(),
                                      s.videoCodec, pixFmt, s.audioCodec, sampleFormat, why);

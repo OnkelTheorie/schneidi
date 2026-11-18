@@ -338,6 +338,31 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         shapeBox->setCurrentIndex(i);
         shapeBox->setEnabled(c->kind == ClipKind::Media);
     };
+    // HDR -> SDR (Clip::hdrToSdr): on by default; off keeps an HDR source's signal as it is. SDR files never change
+    auto* hdrBox = new QCheckBox(T("HDR als SDR zeigen"));
+    hdrBox->setObjectName("HdrToSdr");
+    hdrBox->setFocusPolicy(Qt::NoFocus);
+    hdrBox->setToolTip(T("HDR-Videos (HLG/PQ, z. B. vom Handy) werden in Vorschau und Export in normales SDR (BT.709) "
+                         "umgerechnet, damit sie nicht blass aussehen. Aus: das Signal bleibt, wie es ist (für eine LUT "
+                         "oder Korrektur, die dafür gemacht ist). Normale Videos ändert das nicht."));
+    connect(hdrBox, &QCheckBox::clicked, this, [this](bool on) { m_editor->setHdrToSdr(selectedIds(TrackKind::Video), on); });
+    crop.grid->addWidget(rowLabel(T("HDR")), crop.rows, 0);
+    crop.grid->addWidget(hdrBox, crop.rows, 1);
+    ++crop.rows;
+    m_refreshers << [this, hdrBox] {
+        const Clip* c = primary(TrackKind::Video);
+        if (!c) return;
+        const QSignalBlocker b(hdrBox);
+        // The file's HDR transfer in the text. An SDR file (or one not known as HDR yet: engine/HdrScan looks in the
+        // background) has nothing to map: the box is off and unchecked then - never checked and greyed out - unless
+        // the clip has it off (that stays switchable back)
+        const MediaInfo* m = c->mediaPath.isEmpty() ? nullptr : m_editor->project()->mediaInfo(c->mediaPath);
+        const QString hdr = m ? m->hdr : QString();
+        const bool usable = c->kind == ClipKind::Media && (!hdr.isEmpty() || !c->hdrToSdr);
+        hdrBox->setText(hdr.isEmpty() ? T("HDR als SDR zeigen") : T("HDR (%1) als SDR zeigen").arg(hdr));
+        hdrBox->setEnabled(usable);
+        hdrBox->setChecked(usable && c->hdrToSdr);
+    };
     // Cut the picture to a circle, star … (effect "clip_shape", its values then in the Effects tab): found here, where
     // one looks for the picture's outline, not only in the Effects Library
     auto* shapeCut = new QPushButton(T("Form…"));
@@ -589,6 +614,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         refresh();
     });
     connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
+    connect(editor->project(), &Project::mediaChanged, this, &Inspector::refresh); // e.g. an HDR file found (HdrScan)
     // Another project (new/opened): its clip ids are not the old one's, a remembered shape height would go to a
     // stranger
     connect(editor->project(), &Project::loaded, this, [this] { m_heightBeforeLine.clear(); });

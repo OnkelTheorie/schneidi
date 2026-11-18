@@ -824,6 +824,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     }
     if (c.renderCache) o["renderCache"] = true;
     if (c.pictureAspect > 0) o["pictureAspect"] = c.pictureAspect; // optional: a stretched recording shown at its shape
+    if (!c.hdrToSdr) o["hdrToSdr"] = false; // optional (older versions show HDR as it is anyway)
     if (!c.keepRegion.isEmpty()) o["keepRegion"] = c.keepRegion; // optional: a kept region above a reframed clip
     if (c.transform != ClipTransform{}) o["transform"] = transformToJson(c.transform); // any value or switch changed
     if (!c.effects.isEmpty()) {
@@ -908,6 +909,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.renderCache = o.value("renderCache").toBool();
     if (c.kind == ClipKind::Media) c.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
     if (c.kind == ClipKind::Media) c.keepRegion = o.value("keepRegion").toString();
+    c.hdrToSdr = o.value("hdrToSdr").toBool(true);
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();
@@ -969,6 +971,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         if (m.pictureAspect > 0) o["pictureAspect"] = m.pictureAspect; // optional: shape of its new clips
+        if (!m.hdr.isEmpty()) o["hdr"] = m.hdr;                         // optional: HDR transfer ("HLG", "PQ")
         if (!m.audioStreams.isEmpty()) {
             QJsonArray streams;
             for (const AudioStreamInfo& a : m.audioStreams) {
@@ -1123,6 +1126,16 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     if (data.importPresets) root["importPresets"] = data.importPresets->toJson(); // optional
     // The project's own brand kit (optional, 0.18; older versions ignore it): files also relative to the project
     if (data.brand) root["brand"] = Brand::toJson(*data.brand, &projectDir);
+    // Color page stills (optional, 0.24; older versions ignore them): picture as JPEG in base64, grade as a clip
+    if (!data.stills.isEmpty()) {
+        QJsonArray stills;
+        for (const GradeStill& st : data.stills)
+            stills << QJsonObject{{"id", st.id},
+                                  {"label", st.label},
+                                  {"image", QString::fromLatin1(st.image.toBase64())},
+                                  {"grade", clipToJson(st.grade, -1, projectDir)}};
+        root["stills"] = stills;
+    }
     // Watch folders (optional, absent in old files; older versions ignore them): folder also relative to the project
     // like media, so a project moved together with its recording folder keeps watching it
     if (!data.watchFolders.isEmpty()) {
@@ -1226,6 +1239,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         for (const QJsonValue& f : o.value("flags").toArray())
             if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
         if (m.hasVideo) m.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
+        if (m.hasVideo && (o.value("hdr") == "HLG" || o.value("hdr") == "PQ")) m.hdr = o.value("hdr").toString();
         if (m.hasAudio) // missing in older files -> audioStreamCount() assumes 1 stream
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
@@ -1463,6 +1477,15 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     if (root.value("importPresets").isObject())
         d.importPresets = StreamPresets::fromJson(root.value("importPresets").toObject());
     if (root.value("brand").isObject()) d.brand = Brand::fromJson(root.value("brand").toObject(), &projectDir);
+    for (const QJsonValue& v : root.value("stills").toArray()) {
+        const QJsonObject o = v.toObject();
+        GradeStill st;
+        st.id = o.value("id").toInt();
+        st.label = o.value("label").toString();
+        st.image = QByteArray::fromBase64(o.value("image").toString().toLatin1());
+        if (o.value("grade").isObject()) st.grade = clipFromJson(o.value("grade").toObject(), {}, projectDir);
+        if (st.id > 0) d.stills << st; // without a picture too (a live snapshot leaves them out)
+    }
     for (const QJsonValue& v : root.value("watchFolders").toArray()) {
         const QJsonObject o = v.toObject();
         WatchFolder w;
@@ -1729,7 +1752,7 @@ QStringList unusedMedia(const ProjectData& data)
     return out;
 }
 
-int relink(ProjectData* data, const QString& searchDir)
+int relink(ProjectData* data, const QString& searchDir, const std::function<MediaInfo(const QString&)>& probe)
 {
     QHash<QString, QStringList> wanted; // file name -> old paths (camera names like C0001.MP4 repeat)
     for (const QString& p : missingMedia(*data)) wanted[fileNameAnyOs(p)] << p;
@@ -1779,6 +1802,36 @@ int relink(ProjectData* data, const QString& searchDir)
     }
 
     redirect(data, moved);
+    if (probe) {
+        // The files found may have other streams than the ones lost: the media list learns them, routing to channels
+        // a stream lacks now is dropped
+        QHash<QString, int> media; // new path -> its entry
+        for (int i = 0; i < data->media.size(); ++i) media.insert(data->media[i].path, i);
+        QSet<QString> fitted;
+        for (const QString& now : std::as_const(moved)) {
+            const auto it = media.constFind(now);
+            if (it == media.cend()) continue;
+            const MediaInfo fresh = probe(now);
+            if (!fresh.hasAudio) continue; // unreadable or no sound: nothing known to fit to
+            MediaInfo& m = data->media[*it];
+            m.hasAudio = true;
+            m.audioStreams = fresh.audioStreams;
+            fitted.insert(now);
+        }
+        const auto fit = [&](Timeline& tl) {
+            for (Track& t : tl.audio)
+                for (Clip& c : t.clips)
+                    if (fitted.contains(c.mediaPath)) {
+                        const MediaInfo& m = data->media[media.value(c.mediaPath)];
+                        // A stream the file found does not have (a camera file's second stream, found as a file with
+                        // one): its first stream, else the clip would play silence
+                        if (c.audioStream >= m.audioStreamCount()) c.audioStream = 0;
+                        fitSourceChannels(c, m);
+                    }
+        };
+        fit(data->timeline);
+        for (Sequence& s : data->sequences) fit(s.timeline);
+    }
     return moved.size();
 }
 

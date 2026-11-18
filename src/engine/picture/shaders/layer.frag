@@ -20,6 +20,7 @@ layout(std140, binding = 0) uniform Uniforms {
     vec4 lut;     // 3D LUT: scale, offset; source texels of the mip level per target pixel along source x, y
     vec4 crop;    // source pixels kept: x0, y0, x1, y1 (x1 < x0 = no crop)
     vec4 persp;   // destination -> source w = dot(persp.xyz, (x, y, 1)) (projective; affine: 0, 0, 1)
+    vec4 tone;    // HDR -> SDR of Y'CbCr: transfer (0 none, 1 HLG, 2 PQ), BT.2020 primaries (1) or BT.709 (0)
 };
 layout(binding = 1) uniform sampler2D tex0;
 layout(binding = 2) uniform sampler2D tex1;
@@ -82,6 +83,39 @@ vec4 sampleAt(vec2 q, ivec2 size, int lod, int mode)
     return vec4(ysum, uv * alpha, alpha);
 }
 
+// HDR -> SDR, the same calculation as engine/HdrTone (keep both alike): signal R'G'B' -> relative display light
+// (HLG: inverse OETF + OOTF for 1000 nits, PQ: EOTF; 1 = reference white 203 nits) -> BT.709 primaries -> tone curve on
+// the luminance -> out-of-gamut colours towards their luminance -> BT.1886 inverse
+vec3 hdrToSdr(vec3 c)
+{
+    vec3 lin;
+    bool wide = tone.y > 0.5;
+    if (tone.x > 1.5) { // PQ
+        vec3 p = pow(c, vec3(1.0 / 78.84375));
+        lin = 10000.0 / 203.0 * pow(max(p - 0.8359375, vec3(0.0)) / (18.8515625 - 18.6875 * p), vec3(1.0 / 0.1593017578125));
+    } else { // HLG
+        vec3 e = mix(c * c / 3.0, (exp((c - 0.55991073) / 0.17883277) + 0.28466892) / 12.0, greaterThan(c, vec3(0.5)));
+        float ys = dot(wide ? vec3(0.2627, 0.6780, 0.0593) : vec3(0.2126, 0.7152, 0.0722), e);
+        lin = ys > 0.0 ? e * (1000.0 / 203.0 * pow(ys, 0.2)) : vec3(0.0);
+    }
+    if (wide)
+        lin = vec3(dot(vec3(1.660491, -0.587641, -0.072850), lin), dot(vec3(-0.124550, 1.132900, -0.008349), lin),
+                   dot(vec3(-0.018151, -0.100579, 1.118730), lin));
+    lin *= 0.6; // HdrTone kGain
+    float y = dot(vec3(0.2126, 0.7152, 0.0722), lin);
+    if (y <= 0.0) return vec3(0.0);
+    const float knee = 0.45, peak = 1000.0 / 203.0 * 0.6, slope = (peak - knee) / (1.0 - knee);
+    float x = (y - knee) / (peak - knee);
+    float m = y <= knee ? y : knee + (1.0 - knee) * (x * slope / (1.0 + (slope - 1.0) * x));
+    if (m >= 1.0) return vec3(1.0);
+    lin *= m / y;
+    float lo = min(lin.r, min(lin.g, lin.b));
+    if (lo < 0.0) lin = m + (lin - m) * (m / (m - lo));
+    float hi = max(lin.r, max(lin.g, lin.b));
+    if (hi > 1.0) lin = m + (lin - m) * ((1.0 - m) / (hi - m));
+    return pow(clamp(lin, 0.0, 1.0), vec3(1.0 / 2.4));
+}
+
 // Share of source position st (pixels of level 0) kept by the crop (area share like Compose::crop; 1 = no crop)
 float cropShare(vec2 st)
 {
@@ -136,6 +170,7 @@ void main()
         float Y = acc.r / alpha * chroma.z;
         vec2 uv = acc.gb / alpha * chroma.z;
         vec3 c = clamp((yuv * vec4(Y, uv, 1.0)).rgb, 0.0, 1.0);
+        if (tone.x > 0.5) c = hdrToSdr(c);
         if (chroma.w > 0.5) c = texture(lut3, c * lut.x + lut.y).rgb;
         color = vec4(c * alpha, alpha);
     }

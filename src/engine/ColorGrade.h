@@ -4,9 +4,11 @@
 // calculation itself (no avfilter): lift may become negative, LUT paths need no FFmpeg escaping (Windows
 // "C:\…"), keyframes/before-after without a rebuild. The pixel computation is a pure function.
 
+#include "core/GradeQualifier.h"
 #include "core/GradeWindows.h"
 #include "core/Types.h"
 
+#include <QPointF>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -19,8 +21,9 @@ namespace ColorGrade {
 
 inline constexpr const char* EffectId = "grade";
 
-// Values as in DaVinci; wheels: [0] = master (Y), [1..3] = R/G/B
-struct Params {
+// The primary correction: values as in DaVinci; wheels: [0] = master (Y), [1..3] = R/G/B. Also the correction of a
+// window and of the qualifier.
+struct Correction {
     double lift[4] = {0, 0, 0, 0};
     double gamma[4] = {0, 0, 0, 0};
     double gain[4] = {1, 1, 1, 1};
@@ -31,14 +34,47 @@ struct Params {
     double tint = 0;         // -100..100, + = Magenta
     double exposure = 0;     // in stops
     bool isNeutral() const;
+    bool operator==(const Correction&) const = default;
+};
+
+// Curves (core/GradeCurves), indexed by GradeCurves::Kind; empty = none
+struct Curves {
+    QVector<QPointF> points[7];
+    bool isIdentity() const;     // all of them do nothing
+    bool hasHueCurves() const;   // a hue/brightness vs saturation or hue vs hue curve does something
+    bool operator==(const Curves&) const = default;
+};
+
+// Qualifier (core/GradeQualifier): its range and the correction inside it
+struct Qualifier {
+    bool on = false;
+    int window = 0; // limited to this shape window (applyQualifierWindow, not in bake), 0 = the whole picture
+    GradeQualifier::Range range;
+    Correction correction;
+    bool operator==(const Qualifier&) const = default;
+};
+
+// What the grade shows: the picture, or (preview only, the Color page's "show mask") the qualifier's selection as
+// white on black
+enum class View { Picture, QualifierMask };
+
+// Everything of the grade that works per pixel (without the windows and the LUT): the primary correction, then the
+// tone curves (master Y, then R/G/B), the saturation, the hue curves, the qualifier with its correction
+struct Params : Correction {
+    Curves curves;
+    Qualifier qualifier;
+    View view = View::Picture;
+    bool isNeutral() const; // nothing changes the picture
     bool operator==(const Params&) const = default;
 };
 
 // Animatable parameters in the order of Params (wheels each Y/R/G/B, then the sliders)
 const QVector<AnimParam>& animParams();
 
-// Values at clip frame t (keyframes interpolated); clip without "grade" = neutral
+// Values at clip frame t (keyframes interpolated, with curves and qualifier); clip without "grade" = neutral
 Params at(const Clip& c, double t);
+// Animatable correction parameters of the qualifier, in the order of Params (like animParams())
+const QVector<AnimParam>& qualifierParams();
 // Correction of window n (core/GradeWindows) at clip frame t
 Params windowAt(const Clip& c, int n, double t);
 // Animatable correction parameters of window n, in the order of Params (like animParams())
@@ -98,6 +134,15 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
 // The same without baking (the previous per-pixel code, floating point with a LUT): the reference for tests and
 // benches. The baked result differs from it by at most about 1 code value, and only with a LUT.
 void applyReference(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut);
+// A qualifier limited to a shape window (p.qualifier.window > 0; bake() leaves it out): its correction (or with
+// View::QualifierMask its selection) inside the window's mask `g` (geometry on this picture, see onPicture), on the
+// picture after the primary correction and before the LUT
+void applyQualifierWindow(uint8_t* rgba, int width, int height, const Params& p, const GradeWindows::Geometry& g);
+// The whole grade of a clip (primary, curves, qualifier - in its window or not -, LUT, windows) on its picture.
+// frame/fit as for onPicture. The Renderer's CPU path and the stills of the Color page use it.
+void applyClip(uint8_t* rgba, int width, int height, const Clip& c, double t, const Params& p, const Lut* lut,
+               QSizeF frame, QSizeF fit);
+
 // Apply a window on top: inside its mask the picture gets the window's correction and fill (blur/pixelate/color),
 // mixed by the soft edge. Only the window's area is computed.
 void applyWindow(uint8_t* rgba, int width, int height, const Window& w);

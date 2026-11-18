@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RenderCache.h"
+#include "engine/MediaProbe.h"
 #include "core/AppPaths.h"
 #include "engine/picture/Renderer.h"
 
@@ -48,6 +49,8 @@ constexpr const char* kStabilizeVersion = "stab2";
 // Since 0.15.1 retimed clips show their frames by the sound's time (RetimeMap::pictureFrame; before rounded like MLT):
 // only cache files of retimed clips are stale
 constexpr const char* kRetimeVersion = "time2";
+// Since 0.24 HDR sources are mapped to SDR (engine/HdrTone): only cache files of HDR clips are stale
+constexpr const char* kToneVersion = "tone1";
 
 QString modeId(RenderCache::Mode m)
 {
@@ -120,7 +123,10 @@ void RenderCache::setMode(Mode mode)
 
 void RenderCache::setFormat(const ProjectFormat& format)
 {
-    if (format == m_format) return;
+    if (format.samePicture(m_format)) { // only the mix's channels: the cached pictures stay valid
+        m_format = format;
+        return;
+    }
     m_format = format;
     m_jobs.clear();
     cancelCurrent(); // keys depend on the format; the next sync() queues anew
@@ -128,7 +134,11 @@ void RenderCache::setFormat(const ProjectFormat& format)
 
 bool RenderCache::isExpensive(const Clip& c)
 {
-    const bool fx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) { return e.enabled; });
+    // The colour grade (curves, qualifier, windows included) runs live in the picture engine (GPU shader / CPU LUT):
+    // caching it only re-rendered the whole clip after every grading touch
+    const bool fx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
+        return e.enabled && e.effectId != QLatin1String("grade");
+    });
     return fx || (!c.freeze && (c.speed != 1.0 || c.reverse || !c.ramp.isEmpty()));
 }
 
@@ -181,6 +191,14 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
     const QByteArray key = EffectRegistry::has(c, "chromakey") ? QByteArray(kKeyVersion) : QByteArray();
     const QByteArray stab = EffectRegistry::has(c, Stabilizer::EffectId) ? QByteArray(kStabilizeVersion) : QByteArray();
     const QByteArray retime = c.isRetimed() ? QByteArray(kRetimeVersion) : QByteArray();
+    // HDR sources are mapped to SDR since 0.24 (Clip::hdrToSdr, written only when off): their renders from before show
+    // the signal unmapped. SDR clips keep their key
+    // (the cached answer only: engine/HdrScan finds it in the background)
+    const QByteArray tone = c.hdrToSdr && !c.mediaPath.isEmpty()
+                                    && MediaProbe::hdrTransferCached(c.mediaPath).value_or(HdrTone::Transfer::None)
+                                           != HdrTone::Transfer::None
+                                ? QByteArray(kToneVersion)
+                                : QByteArray();
     // Files the effects read (a LUT): edited or replaced under the same name, the cached render is stale. The clip
     // JSON has only their paths. Nothing added without such files: other keys stay as they were
     QString files;
@@ -207,7 +225,7 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
                 if (!path.isEmpty()) addFile(path);
             }
     }
-    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + trust + files.toUtf8() + clip, QCryptographicHash::Sha1)
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + tone + trust + files.toUtf8() + clip, QCryptographicHash::Sha1)
         .toHex();
 }
 

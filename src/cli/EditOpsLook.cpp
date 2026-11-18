@@ -7,6 +7,11 @@
 #include "core/Accents.h"
 #include "core/EffectRegistry.h"
 #include "core/GameHud.h"
+#include "core/GradeCurves.h"
+#include "core/GradeQualifier.h"
+#include "core/GradeStills.h"
+#include "core/Project.h"
+#include "engine/Snapshot.h"
 #include "core/GradeWindows.h"
 #include "core/NameBlur.h"
 #include "core/Keyframes.h"
@@ -181,7 +186,117 @@ void opColor(Session& s, const QJsonObject& op)
         // A keyframe of every grade value at `at` (on) or none there (off), like a keyframe on a DaVinci node
         for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool());
     }
+    if (op.contains("curves")) {
+        const QJsonValue v = op.value("curves");
+        if (!v.isObject())
+            fail("BAD_ARGUMENT", "curves is an object like {y: [[0,0],[0.5,0.6],[1,1]], hue_sat: [[0.1,0.5],[0.6,0.8]]}");
+        const QJsonObject curves = v.toObject();
+        for (auto it = curves.begin(); it != curves.end(); ++it) {
+            GradeCurves::Kind kind;
+            if (!GradeCurves::fromCliName(it.key(), &kind))
+                fail("BAD_ARGUMENT", "unknown curve '" + it.key() + "' (y, r, g, b, hue_hue, hue_sat, lum_sat)");
+            QVector<QPointF> points;
+            if (!it.value().isNull() && !it.value().isArray())
+                fail("BAD_ARGUMENT", "curve " + it.key() + " is a list of [x, y] points (0..1), [] = straight");
+            for (const QJsonValue& p : it.value().toArray()) {
+                const QJsonArray xy = p.toArray();
+                if (xy.size() != 2 || !xy[0].isDouble() || !xy[1].isDouble())
+                    fail("BAD_ARGUMENT", "curve " + it.key() + ": every point is [x, y] with numbers 0..1");
+                points << QPointF(xy[0].toDouble(), xy[1].toDouble());
+            }
+            ed.setGradeCurve(ids, kind, points);
+        }
+    }
     if (op.contains("enabled")) ed.setGradeEnabled(ids, op.value("enabled").toBool());
+}
+
+// ---------- stills (Color page) ----------
+
+void opStill(Session& s, const QJsonObject& op)
+{
+    Editor& ed = s.editor;
+    const auto exists = [&](int id) {
+        const QVector<GradeStill>& list = s.project.stills();
+        return std::any_of(list.begin(), list.end(), [id](const GradeStill& st) { return st.id == id; });
+    };
+    if (op.contains("remove")) {
+        const int id = op.value("remove").toInt();
+        if (!exists(id)) fail("NOT_FOUND", QString("no still %1 (see `info` stills)").arg(id));
+        ed.removeGradeStill(id);
+        return;
+    }
+    if (op.contains("apply")) {
+        const int id = op.value("apply").toInt();
+        if (!exists(id)) fail("NOT_FOUND", QString("no still %1 (see `info` stills)").arg(id));
+        const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "the still's grade");
+        if (!ed.applyGradeStill(id, ids)) fail("FAILED", "no video clip to apply the grade to");
+        return;
+    }
+    if (!op.value("add").toBool()) fail("BAD_ARGUMENT", "give add:true (with clips, at?), apply:<still id> (with clips) or remove:<still id>");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a still");
+    const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.value(0));
+    if (!c) fail("NOT_FOUND", "no video clip for the still");
+    const ProjectFormat f = s.format();
+    const int at = op.contains("at") ? std::clamp(timeOf(s, op, "at"), c->start, c->end() - 1) : c->start;
+    // The frame as the viewer shows it (the whole timeline at that time), in the still's size
+    const QImage picture = Snapshot::Source::timeline(f, s.project.renderTimeline())->frame(at, GradeStills::kMaxEdge);
+    if (picture.isNull()) fail("DECODE_FAILED", QString("could not render frame %1").arg(at));
+    const QString label = op.contains("label") ? op.value("label").toString()
+                                               : s.project.clipName(*c) + "  " + tc(at, f);
+    const int id = ed.addGradeStill(c->id, picture, label);
+    s.notes << QString("still %1 added (grade of clip %2 at %3)").arg(id).arg(c->id).arg(tc(at, f));
+}
+
+// ---------- qualifier (selection by colour) ----------
+
+void opQualifier(Session& s, const QJsonObject& op)
+{
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "qualifiers");
+    Editor& ed = s.editor;
+    const auto clip = [&](int id) { return TimelineOps::findClip(s.project.timeline(), id); };
+    if (op.value("remove").toBool()) {
+        ed.removeGradeQualifier(ids);
+        return;
+    }
+    const bool any = std::any_of(ids.begin(), ids.end(), [&](int id) { return GradeQualifier::exists(*clip(id)); });
+    if (op.value("add").toBool() || op.contains("color") || !any) {
+        if (!op.value("add").toBool() && !op.contains("color") && !any)
+            s.notes << "qualifier added (default range: skin tones; pick one with color)";
+        ed.addGradeQualifier(ids);
+    }
+    for (const auto& [lo, hi] : {std::pair{"sat_low", "sat_high"}, std::pair{"lum_low", "lum_high"}})
+        if (op.contains(lo) && op.contains(hi) && op.value(lo).toDouble() > op.value(hi).toDouble())
+            fail("BAD_ARGUMENT", QString("%1 is above %2").arg(lo, hi));
+    QVector<QPair<AnimParam, double>> values;
+    if (op.contains("color")) { // a range around a colour, then single values on top
+        const GradeQualifier::Range r = GradeQualifier::around(colorOf(op.value("color"), "color"));
+        const double v[] = {r.hue, r.hueWidth, r.hueSoft, r.satLow, r.satHigh, r.satSoft, r.lumLow, r.lumHigh, r.lumSoft};
+        for (int i = 0; i < GradeQualifier::rangeKeys().size(); ++i)
+            values.append({GradeQualifier::param(GradeQualifier::rangeKeys()[i]), v[i]});
+    }
+    static const char* names[] = {"hue", "hue_width", "hue_soft", "sat_low", "sat_high", "sat_soft", "lum_low",
+                                  "lum_high", "lum_soft"};
+    for (int i = 0; i < 9; ++i)
+        if (op.contains(names[i])) {
+            const AnimParam p = GradeQualifier::param(GradeQualifier::rangeKeys()[i]);
+            values.append({p, paramValue(p, op.value(names[i]), names[i])});
+        }
+    values += gradeValues(op, ColorGrade::qualifierParams());
+    if (!values.isEmpty())
+        for (int id : ids)
+            ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Qualifier");
+    if (op.contains("invert")) ed.setGradeQualifierInvert(ids, op.value("invert").toBool());
+    if (op.contains("window")) {
+        const double v = op.value("window").toDouble(-1);
+        const int n = int(v);
+        if (!op.value("window").isDouble() || v != n || n < 0 || n > GradeWindows::kMax)
+            fail("BAD_ARGUMENT", QString("window is 0 (whole picture) or a window number 1..%1").arg(GradeWindows::kMax));
+        if (n && std::none_of(ids.begin(), ids.end(), [&](int id) { return GradeWindows::exists(*clip(id), n); }))
+            fail("NOT_FOUND", QString("no clip has window %1 (add one with op 'window')").arg(n));
+        ed.setGradeQualifierWindow(ids, n);
+    }
+    if (op.contains("keyframe"))
+        for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool(), GradeQualifier::kLayer);
 }
 
 // ---------- windows (shape masks of the grade) ----------
@@ -443,6 +558,20 @@ void opPictureAspect(Session& s, const QJsonObject& op)
     const int n = s.editor.setPictureAspect(targets, aspect);
     s.notes << (aspect > 0 ? QString("%1 clip(s) now show their picture at %2:1").arg(n).arg(std::round(aspect * 1000) / 1000)
                            : QString("%1 clip(s) show their file's own shape again").arg(n));
+}
+
+void opHdr(Session& s, const QJsonObject& op)
+{
+    QVector<int> targets = videoClipsOf(s, op, "HDR");
+    if (!op.contains("clips") && !op.contains("clip") && !op.contains("track")) // none named: every video clip
+        for (const Track& t : s.project.timeline().video)
+            for (const Clip& c : t.clips) targets << c.id;
+    if (targets.isEmpty()) fail("NOT_FOUND", "no video clip");
+    if (!op.value("to_sdr").isBool()) fail("BAD_ARGUMENT", "to_sdr must be true or false");
+    const bool on = op.value("to_sdr").toBool();
+    const int n = s.editor.setHdrToSdr(targets, on);
+    s.notes << (on ? QString("%1 clip(s) map HDR to SDR again").arg(n)
+                   : QString("%1 clip(s) keep their HDR signal as it is").arg(n));
 }
 
 // ---------- transform ----------
@@ -979,7 +1108,7 @@ void prepareReframe(const QJsonObject& editArgs, Context& ctx)
 void addLookOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"color", "{op:'color', clips, lift?, gamma?, gain?, offset?, contrast?, pivot?, saturation?, "
-                          "temperature?, tint?, exposure?, lut?, enabled?, reset?, at?, keyframe?}",
+                          "temperature?, tint?, exposure?, lut?, curves?, enabled?, reset?, at?, keyframe?}",
                  "Color page grade (primary wheels, LUT)",
                  "Wheels lift/gamma/gain/offset: a number (master) or {y, r, g, b}. Neutral: lift 0, gamma 0, gain 1, "
                  "offset 25 (ranges: lift/gamma -1..1, gain 0..4, offset 0..100). contrast 0..2 (1), pivot 0..1 "
@@ -987,8 +1116,41 @@ void addLookOps(QVector<OpDef>& ops)
                  "magenta), exposure -4..4 stops (0). lut: name from `effects` or a .cube/.3dl/.csp/Hald image file, \"\" removes it. "
                  "reset:true removes the whole grade, reset:[\"liftY\", …] sets single values back. Values that "
                  "have keyframes get one at `at` (default: clip start); keyframe:true/false with `at` sets/removes a "
-                 "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}.",
+                 "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}. "
+                 "curves: {y, r, g, b, hue_hue, hue_sat, lum_sat}, each a list of [x, y] points in 0..1 ([] = "
+                 "straight). y/r/g/b map input to output brightness (after the wheels; master y first, then the "
+                 "channel), smooth through the points and flat beyond the first and last; e.g. y [[0,0],[0.25,0.2],"
+                 "[0.75,0.82],[1,1]] = an S curve (more contrast). The others work on the hue (x 0 = red, 1/3 green, "
+                 "2/3 blue, wrapping) or the brightness (lum_sat): y 0.5 = unchanged; hue_sat/lum_sat y * 2 = "
+                 "saturation factor (0 = gray), hue_hue (y - 0.5) * 360 = hue turn in degrees (HSV hue, brightness kept). Curves are not "
+                 "animatable.",
                  opColor, kClipKeys}
+        << OpDef{"still", "{op:'still', clips?, add?, at?, label?, apply?, remove?}",
+                 "Color page stills: keep a graded frame with its grade, apply that grade to other clips",
+                 "add:true keeps the frame at `at` (timeline frame inside the first clip, default its start) as the "
+                 "viewer shows it, together with that clip's whole grade (wheels, curves, qualifier, windows, LUT, "
+                 "keyframes); the notes give its id. apply:<id> puts the still's grade onto `clips` (replacing "
+                 "theirs) - to match shots: grade one, keep a still, apply it to the others. remove:<id> deletes "
+                 "it. Stills are listed in `info` (stills) and stored in the project (at most 32). Look at one with "
+                 "{frames, source:<project>, still:<id>}, next to the timeline at a time with at:[…].",
+                 opStill, kClipKeys}
+        << OpDef{"qualifier", "{op:'qualifier', clips, add?, remove?, color?, hue?, hue_width?, hue_soft?, sat_low?, "
+                              "sat_high?, sat_soft?, lum_low?, lum_high?, lum_soft?, invert?, window?, lift?, gamma?, gain?, "
+                              "offset?, contrast?, pivot?, saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
+                 "Color page qualifier: grade only the picked colours (skin, sky)",
+                 "One per clip, part of its grade. It selects by colour: hue in degrees (0 red, 120 green, 240 blue) "
+                 "within hue_width degrees around it (360 = every hue), fading over hue_soft degrees beyond; "
+                 "saturation (chroma = max - min of R, G, B, in %) from sat_low to sat_high, brightness (luma %) "
+                 "from lum_low to lum_high, each fading over its *_soft. The selection is taken after the wheels and "
+                 "curves of the clip. color:\"#rrggbb\" sets a range around that colour (then single values on top). "
+                 "Inside the selection its own correction applies (lift … exposure like op 'color', neutral by "
+                 "default): e.g. {op:'qualifier', clips:[3], color:'#c8906c', saturation:40} = calmer skin. "
+                 "invert:true = everything except the selection. window:n limits it to shape window n of the clip (op "
+                 "'window'; its soft edge too; 0 = the whole picture again), e.g. only the face's skin. The first qualifier op on a clip adds it (default "
+                 "range: skin tones); remove:true deletes it. Values that have keyframes get one at `at`; "
+                 "keyframe:true/false sets/removes a keyframe of every qualifier value there; single values animate "
+                 "with {op:'keyframe', param:'grade.q.hue'}. Look at the result with `frames`.",
+                 opQualifier, kClipKeys}
         << OpDef{"window", "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
                            "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?, pivot?, "
                            "saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
@@ -1117,6 +1279,13 @@ void addLookOps(QVector<OpDef>& ops)
                  "new_timeline aspect:'4:3'). Crop values keep their share of the picture. There is no reliable "
                  "automatic detection: set it when the footage looks stretched (`frames`).",
                  opPictureAspect, kClipKeys}
+        << OpDef{"hdr", "{op:'hdr', clips?, track?, to_sdr}",
+                 "HDR footage (phones: HLG, PQ) shown as SDR or as it is",
+                 "to_sdr: true (default of every clip) maps an HDR source (`probe` says hdr:'HLG'/'PQ') to SDR BT.709 "
+                 "in preview and export: tone mapped, BT.2020 colours into BT.709, so phone videos do not look pale. "
+                 "false keeps the signal as it is (a LUT or grade made for the HDR signal). SDR files are never "
+                 "changed. `info` shows hdr_to_sdr:false on clips that keep it.",
+                 opHdr, kClipKeys}
         << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?, move_to?} or {op:'keyframe', "
                              "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
                              "param, clear:true}",

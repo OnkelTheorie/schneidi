@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.22.0 LANGUAGES CXX)
+project(schneidi VERSION 0.23.0 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
-set(SCHNEIDI_NEXT_VERSION 0.23.0)
+set(SCHNEIDI_NEXT_VERSION 0.24.0)
 
 # Build optimized when nothing is given (debug builds stutter in playback: own filters run per frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -162,6 +162,9 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/SystemMemory.h       src/core/SystemMemory.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
+    src/core/GradeCurves.h        src/core/GradeCurves.cpp
+    src/core/GradeQualifier.h     src/core/GradeQualifier.cpp
+    src/core/GradeStills.h        src/core/GradeStills.cpp
     src/core/CompGraph.h          src/core/CompGraph.cpp
     src/core/CompTrack.h          src/core/CompTrack.cpp
     src/core/CompRecipes.h        src/core/CompRecipes.cpp
@@ -264,6 +267,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/encoder/h264/Lookahead.h   src/engine/encoder/h264/Lookahead.cpp
     src/engine/SmartRender.h      src/engine/SmartRender.cpp
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
+    src/engine/HdrTone.h          src/engine/HdrTone.cpp
+    src/engine/HdrScan.h          src/engine/HdrScan.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
     src/engine/Inference.h        src/engine/Inference.cpp
@@ -325,6 +330,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
     src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
     src/engine/picture/gpu/Gpu.h  src/engine/picture/gpu/Gpu.cpp
+    src/engine/GpuAdapter.h       src/engine/GpuAdapter.cpp
     src/engine/picture/gpu/CompGpu.h src/engine/picture/gpu/CompGpu.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
@@ -416,6 +422,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/DisplayLoss.h         src/app/DisplayLoss.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 
+    src/ui/FlowLayout.h           src/ui/FlowLayout.cpp
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/BackgroundJobs.h       src/ui/BackgroundJobs.cpp
     src/ui/ProxyProgress.h        src/ui/ProxyProgress.cpp
@@ -469,6 +476,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/InspectorTransition.cpp
     src/ui/InspectorSubtitles.cpp
     src/ui/ColorPanel.h           src/ui/ColorPanel.cpp
+    src/ui/CurveEditor.h          src/ui/CurveEditor.cpp
     src/ui/Scopes.h               src/ui/Scopes.cpp
     src/ui/ScopesPanel.h          src/ui/ScopesPanel.cpp
     src/ui/Mixer.h                src/ui/Mixer.cpp
@@ -497,7 +505,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp src/engine/BlurFill.cpp
                                 src/engine/video/Compose.cpp src/engine/picture/ShapePaint.cpp
-                                src/engine/VideoEffects.cpp src/engine/ColorGrade.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
+                                src/engine/VideoEffects.cpp src/engine/ColorGrade.cpp src/engine/HdrTone.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 
 # One dictionary per UI language: a new i18n/<code>.json is picked up by the build and the language menu by itself
@@ -609,6 +617,7 @@ endif()
 if(WIN32)
     target_link_libraries(schneidi_lib PUBLIC advapi32) # Credential Manager: the AI chat's key (app/AiKeys.cpp)
     target_link_libraries(schneidi_lib PUBLIC ole32) # COM on the voice-over's input thread (app/VoiceoverRecorder.cpp)
+    target_link_libraries(schneidi_lib PUBLIC dxgi) # choosing the graphics card (engine/GpuAdapter.cpp)
 endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")

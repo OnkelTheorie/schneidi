@@ -2,6 +2,7 @@
 #include "buildinfo.h"
 #include "app/CrashReport.h"
 #include "app/DisplayLoss.h"
+#include "engine/GpuAdapter.h"
 #include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/Log.h"
@@ -480,6 +481,7 @@ int main(int argc, char* argv[])
     if (!screenshot.isEmpty()) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
+    GpuAdapter::applyToQt(); // Windows: the viewer's D3D11 on the same (high performance) card as the picture engine
     // Names before the application object: I18n::prepareEnvironment reads the language setting
     AppPaths::setProgramNames();
     I18n::prepareEnvironment(langOverride);
@@ -504,6 +506,7 @@ int main(int argc, char* argv[])
         if (Cli::Live::handOver(LaunchArgs::files(args))) return 0;
     }
     Log::install();
+    GpuAdapter::logChoice(); // (chosen before the application object, logged now that the log file is there)
     DisplayLoss::install(); // after the log: the display gone ends the program at once, logged (app/DisplayLoss.h)
     Extensions::cleanUp(); // old versions a running program held at its update
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
@@ -520,7 +523,7 @@ int main(int argc, char* argv[])
     // on the main thread while the window was built). A helper thread does it meanwhile; the font database keeps the
     // lists for all threads
     QThreadPool::globalInstance()->start([font = QApplication::font()] {
-        QTextLayout layout(QString::fromUtf8("…−∞↺→⇅▣▤▥▦▶◀◆◇●☰♪♫⚠✂✓✕✦✧⧓🔍"), font);
+        QTextLayout layout(QString::fromUtf8("…−∞↺→⇅▣▤▥▦▶◀◆◇●◉☰♪♫⚠✂✓✕✦✧⧓🔍"), font);
         layout.beginLayout();
         layout.createLine();
         layout.endLayout();

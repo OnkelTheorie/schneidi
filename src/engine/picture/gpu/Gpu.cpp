@@ -3,6 +3,8 @@
 #include "engine/picture/gpu/Gpu.h"
 
 #include "engine/ColorGrade.h"
+#include "engine/GpuAdapter.h"
+#include "engine/HdrTone.h"
 #include "engine/OutputColor.h"
 #include "engine/video/Reader.h"
 
@@ -91,8 +93,9 @@ struct Uniforms {
     float lut[4] = {};
     float crop[4] = {0, 0, -1, -1};
     float persp[4] = {0, 0, 1, 0}; // layer.frag: destination -> source w (g, h, i); affine = 0, 0, 1
+    float tone[4] = {};            // layer.frag: HDR -> SDR of Y'CbCr planes (transfer 0/1/2, BT.2020), engine/HdrTone
 };
-static_assert(sizeof(Uniforms) == 208);
+static_assert(sizeof(Uniforms) == 224);
 
 class Texture {
 public:
@@ -109,6 +112,7 @@ public:
     int bits = 8;
     float sampleScale = 1;
     float yuv[16] = {};
+    HdrTone::Tone tone; // Y'CbCr planes: their HDR signal mapped to SDR on the way (Video::Info::tone)
     int mipLevels = 1;
     bool half = false;                       // RGBA16F target (compositing, compTarget)
     std::tuple<int, int, int, int, int> key; // pool key
@@ -158,7 +162,12 @@ QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api, QOffs
 #if defined(Q_OS_WIN)
     api = QStringLiteral("Direct3D 11");
     QRhiD3D11InitParams params;
-    return QRhi::create(QRhi::D3D11, &params);
+    // The card GpuAdapter chose (high performance, the same one the D3D11VA decoder uses), not simply adapter 0
+    QRhiD3D11NativeHandles adapter;
+    const std::int64_t luid = GpuAdapter::chosenLuid();
+    adapter.adapterLuidLow = quint32(std::uint64_t(luid) & 0xffffffffu);
+    adapter.adapterLuidHigh = qint32(std::uint64_t(luid) >> 32);
+    return QRhi::create(QRhi::D3D11, &params, {}, luid ? &adapter : nullptr);
 #elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     api = QStringLiteral("Metal");
     QRhiMetalInitParams params;
@@ -210,6 +219,7 @@ struct Context::Impl {
     int lutsMade = 0, pipelinesMade = 0;
     bool simulatedLoss = false; // simulateDeviceLoss()
     bool simulatedEmpty = false; // simulateEmptyReadbacks()
+    bool halfRefused = false;    // an RGBA16F target could not be made (or refuseHalfTargets()): RGBA8 from then on
 
     // Texture pool: shared state so textures given out can find it (or know it is gone)
     struct Pool {
@@ -608,6 +618,7 @@ bool Context::finish()
 
 void Context::simulateDeviceLoss() { d->simulatedLoss = true; }
 void Context::simulateEmptyReadbacks() { d->simulatedEmpty = true; }
+void Context::refuseHalfTargets() { d->halfRefused = true; }
 
 bool Context::lost() const
 {
@@ -621,10 +632,18 @@ bool Context::lost() const
     return false;
 }
 
-TexturePtr Context::target(QSize size, const float clear[4])
+TexturePtr Context::target(QSize size, const float clear[4], bool half)
 {
     if (size.isEmpty() || std::max(size.width(), size.height()) > d->info.maxTextureSize) return {};
-    TexturePtr t = d->take({0, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size); });
+    if (half && (d->halfRefused || !d->rhi->isTextureFormatSupported(QRhiTexture::RGBA16F))) {
+        d->halfRefused = true;
+        half = false;
+    }
+    TexturePtr t = d->take({0, size.width(), size.height(), half ? 1 : 0, 0}, [&] { return d->makeTarget(size, half); });
+    if (!t && half) { // not made (colour buffer not renderable, out of memory): RGBA8, and not tried again
+        d->halfRefused = true;
+        t = d->take({0, size.width(), size.height(), 0, 0}, [&] { return d->makeTarget(size, false); });
+    }
     if (!t) return {};
     t->pendingClear = true;
     t->clearColor = clear ? QColor::fromRgbF(clear[0] * clear[3], clear[1] * clear[3], clear[2] * clear[3], clear[3])
@@ -713,6 +732,7 @@ TexturePtr Context::uploadYuv(const AVFrame* frame, const Video::Info& info, boo
     t->mipLevels = levels;
     // 16-bit words hold `depth` bits: low bits (yuv420p10) or high bits (p010, shift > 0)
     const int shift = desc->comp[0].shift;
+    t->tone = info.tone;
     t->sampleScale = wide ? float(65535.0 / (double((1 << depth) - 1) * double(1 << shift))) : 1.0f;
     // Y'CbCr (normalized code values) -> RGB 0..1
     double kr, kb;
@@ -877,6 +897,10 @@ void Context::draw(Texture& dst, const Layer& layer)
     u.src[0] = float(sw), u.src[1] = float(sh), u.src[2] = float(s->log2cw), u.src[3] = float(s->log2ch);
     u.chroma[2] = s->sampleScale;
     std::memcpy(u.yuv, s->yuv, sizeof u.yuv);
+    if ((s->kind == Texture::Planar || s->kind == Texture::SemiPlanar) && s->tone.active()) {
+        u.tone[0] = float(int(s->tone.transfer));
+        u.tone[1] = s->tone.bt2020 ? 1.0f : 0.0f;
+    }
     QRhiTexture* l = nullptr;
     if (layer.grade && layer.grade->tex) {
         const int n = layer.grade->size;
@@ -1023,9 +1047,10 @@ void Context::readRgba(const Texture& t, uint8_t* out)
 bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
 {
     using OutputColor::Layout;
-    if (!d->recording || t.kind != Texture::Target || t.half || out.bits != 8
+    if (!d->recording || t.kind != Texture::Target || (out.bits != 8 && out.bits != 10)
         || (out.layout != Layout::Yuv420 && out.layout != Layout::Nv12))
         return false;
+    const bool ten = out.bits == 10;
     const int w = t.size.width(), h = t.size.height();
     // RGB -> Y'CbCr code values / 255 (OutputColor's coefficients, floating point)
     double kr, kb;
@@ -1042,11 +1067,24 @@ bool Context::readYuv(const Texture& t, const OutputColor::Target& out)
     struct Plane {
         int mode, texW, texH, bytes, rows;
     };
-    std::vector<Plane> planes{{0, (w + 3) / 4, h, w, h}};
-    if (nv) planes.push_back({1, (w + 3) / 4, (h + 1) / 2, ((w + 1) / 2) * 2, (h + 1) / 2});
-    else {
-        planes.push_back({2, (w + 7) / 8, (h + 1) / 2, (w + 1) / 2, (h + 1) / 2});
-        planes.push_back({3, (w + 7) / 8, (h + 1) / 2, (w + 1) / 2, (h + 1) / 2});
+    std::vector<Plane> planes;
+    const int cw = (w + 1) / 2, ch = (h + 1) / 2;
+    if (ten) { // 16-bit words: two bytes per value (toyuv.frag modes 4-7)
+        u.lut[0] = 1020;            // as OutputColor: 8-bit code values times 4
+        u.lut[1] = out.msb ? 64 : 1; // P010: the 10 bits at the top of the word
+        planes.push_back({4, (w + 1) / 2, h, w * 2, h});
+        if (nv) planes.push_back({5, cw, ch, cw * 4, ch});
+        else {
+            planes.push_back({6, (cw + 1) / 2, ch, cw * 2, ch});
+            planes.push_back({7, (cw + 1) / 2, ch, cw * 2, ch});
+        }
+    } else {
+        planes.push_back({0, (w + 3) / 4, h, w, h});
+        if (nv) planes.push_back({1, (w + 3) / 4, ch, cw * 2, ch});
+        else {
+            planes.push_back({2, (w + 7) / 8, ch, cw, ch});
+            planes.push_back({3, (w + 7) / 8, ch, cw, ch});
+        }
     }
     for (size_t i = 0; i < planes.size(); ++i) {
         const Plane p = planes[i];
@@ -1125,6 +1163,7 @@ struct Service::Impl {
     std::deque<Job*> queue;
     std::atomic<bool> loseDevice{false}; // simulateDeviceLoss()
     std::atomic<bool> emptyReadbacks{false}; // simulateEmptyReadbacks()
+    std::atomic<bool> noHalf{false};         // refuseHalfTargets()
     std::atomic<bool> off{false};            // no context any more (available())
     mutable std::mutex infoMutex;            // info is renewed after a remake (read by the render threads)
     int remade = 0;
@@ -1179,6 +1218,7 @@ struct Service::Impl {
                 if (begun) {
                     if (loseDevice.exchange(false)) context->simulateDeviceLoss();
                     if (emptyReadbacks.exchange(false)) context->simulateEmptyReadbacks();
+                    if (noHalf.exchange(false)) context->refuseHalfTargets();
                     for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
                     const bool ok = context->finish();
                     for (size_t i = 0; i < work; ++i) jobs[i]->ran = ok;
@@ -1484,6 +1524,7 @@ DeviceInfo Service::info() const
 
 void Service::simulateDeviceLoss() { d->loseDevice = true; }
 void Service::simulateEmptyReadbacks() { d->emptyReadbacks = true; }
+void Service::refuseHalfTargets() { d->noHalf = true; }
 bool Service::available() const { return !d->off.load(); }
 
 bool Service::onThread() const { return std::this_thread::get_id() == d->thread.get_id(); }
@@ -1528,9 +1569,10 @@ const DeviceInfo& Context::info() const { return d->info; }
 bool Context::begin() { return false; }
 bool Context::finish() { return true; }
 void Context::simulateDeviceLoss() {}
+void Context::refuseHalfTargets() {}
 void Context::simulateEmptyReadbacks() {}
 bool Context::lost() const { return false; }
-TexturePtr Context::target(QSize, const float*) { return {}; }
+TexturePtr Context::target(QSize, const float*, bool) { return {}; }
 TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool, bool) { return {}; }
 TexturePtr Context::uploadYuv(const AVFrame*, const Video::Info&, bool) { return {}; }
 TexturePtr Context::uploadGray(const uint8_t*, int, int) { return {}; }
@@ -1559,6 +1601,7 @@ bool Service::starting() { return false; }
 void Service::shutdown() {}
 void Service::simulateDeviceLoss() {}
 void Service::simulateEmptyReadbacks() {}
+void Service::refuseHalfTargets() {}
 bool Service::available() const { return false; }
 bool Service::run(const std::function<void(Context&)>&) { return false; }
 bool Service::onThread() const { return false; }

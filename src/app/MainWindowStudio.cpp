@@ -6,6 +6,7 @@
 
 #include "app/VoiceoverRecorder.h"
 #include "engine/Engine.h"
+#include "ui/studio/StudioMixer.h"
 #include "ui/studio/StudioPage.h"
 #include "ui/studio/StudioTools.h"
 #include "ui/studio/StudioTracks.h"
@@ -31,6 +32,8 @@ void MainWindow::ensureStudioPage()
     // The lanes start where the timeline is (its zoom and scroll, once); from then on they are the user's own
     tracks->setView(tv->view().pxPerFrame, tv->view().leftFrame);
     tracks->setPlayhead(tv->playhead());
+    // The timeline's playhead while the viewer shows a file (Source mode): the mixer's read-mode faders stay there
+    m_studioPage->mixer()->setTimelinePlayhead([tv] { return tv->playhead(); });
     connect(m_engine, &Engine::positionChanged, tracks, [this, tracks](int f) {
         if (m_engine->timelinePositions()) tracks->setPlayhead(f);
     });

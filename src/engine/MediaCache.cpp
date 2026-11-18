@@ -300,7 +300,10 @@ void MediaCache::setFormat(const ProjectFormat& format)
 {
     {
         QMutexLocker lock(&m_mutex);
-        if (format == m_format) return;
+        if (format.samePicture(m_format)) { // only the mix's channels: thumbnails and waveforms stay
+            m_format = format;
+            return;
+        }
         m_format = format;
         ++m_generation;
         m_thumbs.clear();

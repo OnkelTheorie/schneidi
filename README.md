@@ -2,7 +2,7 @@
 
 **A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has five pages – Media, Edit, Compositing, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
+schneidi has six pages – Media, Edit, Compositing, Color, Studio and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
@@ -26,7 +26,7 @@ schneidi has five pages – Media, Edit, Compositing, Color and Deliver – and 
 - **From a recording to a short.** A 9:16 short lives next to the 16:9 edit in the same project. Auto reframe keeps the subject in view (and a game's kill feed readable at the top), word-by-word captions come from the speech, and presets for YouTube Shorts, Instagram Reels and TikTok go with a check of the platform's length limit and loudness. An AI can do all of it in one call: `schneidi-cli short` turns game recordings into a finished short.
 - **One template, many videos.** Mark the clips, texts, song and logo of an edit as placeholders and it becomes a template: drop new clips onto it in the app, or let a script or an AI fill it from a table – one finished video per product, episode or match, all with your brand kit's logo, colors and fonts.
 - **Layers, masks, keying and tracking – with nodes or as layers.** The Compositing page shows a clip's compositing as a simple layer stack or as a node graph: key a green screen, put text behind a person, blur a face that moves, stick a logo onto a surface. Ready recipes do the common jobs in one click, and an AI builds the same graphs through the command line.
-- **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
+- **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes, a sound page with automation and 5.1/7.1 surround – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
 - **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (AGPL-3.0-only). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
@@ -76,6 +76,9 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 ![Compositing page: the title MAIN STREET goes behind a green pillar; the pillar's outline, picked with one click, is the selected mask node, with "Pick surface in picture" and its points in the Inspector](screenshots/behind.png)
 **Text behind an object** – click "Pick surface in picture" and then the wall, pillar or car: schneidi outlines it, and the title passes behind it (the mask follows a tracker when the camera moves)
 
+![Color page: the stills gallery compares the ungraded still "Before" with the graded picture – a wipe line splits the viewer into the flat original on the left and the warmer, deeper version with a blue sky on the right](screenshots/color-stills.png)
+**Before and after** – keep a still of a grade and wipe across it in the viewer to see before and after (or show both side by side), then apply that grade to other clips; the deeper sky comes from the qualifier, which grades only the colors it picks
+
 ![Studio page: the audio tracks fill the page with large waveforms – the music ducked under the dialog and a voiceover, a drawn level curve with points on the music track; on the right a small viewer, the loudness readout and a mixer column with a narrow strip per track (EQ and compressor curves, pan, mute/solo, fader) and the master with its limiter](screenshots/studio.png)
 **Studio** – the mix on its own page: shape a track's level or pan with points or the pen (or ride the fader in write mode while it plays), a narrow mixer strip per track with its EQ and compressor curves a click away, and one-click tools to clean a voice, duck the music under speech or bring the whole mix to a target loudness
 
@@ -84,7 +87,7 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 
 | | |
 |---|---|
-| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse and skim folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
+| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse and skim folders, import into the Media Pool | [![Color page: the curves palette with an S curve over the histogram of a graded, sunlit courtyard from a game, RGB parade on the right](screenshots/color.png)](screenshots/color.png)<br>**Color** – wheels, curves, qualifier, stills, windows, LUTs, scopes |
 | [![Deliver page: render settings and render queue](screenshots/deliver.png)](screenshots/deliver.png)<br>**Deliver** – presets and render queue | [![Multicam view: nine angles of one event side by side](screenshots/multicam.png)](screenshots/multicam.png)<br>**Multicam** – click an angle or press 1–9 to cut to it |
 | [![Compositing page in the layer view: the same graph as a stack of layers with blend mode, mask and opacity](screenshots/comp-layers.png)](screenshots/comp-layers.png)<br>**Layers** – the same graph as a stack: blend mode, mask, opacity | [![A real 3D title: extruded, beveled golden letters turned in space, with the 3D section of the title Inspector](screenshots/title3d.png)](screenshots/title3d.png)<br>**3D titles** – real extruded letters with bevel, light and rotation |
 
@@ -108,7 +111,9 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 - **Recipes:** green screen, text behind the subject, a blurred face that follows, picture-in-picture with a frame, a title with a mild glitch, a tracked sticker – one click in the Effects Library; save your own graph as a recipe and share it as a ZIP
 - **Write your own effects:** an FFmpeg filter chain or your own GLSL shader as an effect – written by you or an AI; code that comes with someone else's project or recipe runs only after you say you trust it
 - Titles (also an animated counter and a progress bar) with **title looks** – gradient or texture fill, a 2.5D edge, drop shadow, glow – and **real 3D text** (extruded, beveled, lit, turned in space), subtitles, fades, transitions (dissolves, dips, wipes, push and whip), volume, loudness normalization
-- Color correction, curves, LUTs, effects with keyframes in any order; a built-in **Edit look** preset (teal shadows, warm highlights, skin kept, a soft glow) in one click; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper on a large picture of the clip
+- **Color page:** color wheels with a master wheel below each, **curves** (master, R, G, B, hue vs hue, hue vs saturation, luma vs saturation) over a histogram of the picture, a **qualifier** that picks a color – sky, skin – by hue, saturation and brightness with soft edges, a mask view and its own correction, and a **stills** gallery to compare grades (wipe or side by side) and copy one to other clips
+- **HDR phone footage** (HLG, PQ) looks right without a setting: shown and exported as SDR (switchable per clip); 10-bit export for H.265 and AV1
+- Color correction, LUTs, effects with keyframes in any order; a built-in **Edit look** preset (teal shadows, warm highlights, skin kept, a soft glow) in one click; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper on a large picture of the clip
 - **A format per timeline:** a 9:16 short (or 1:1, 4:5) next to the 16:9 edit in one project; copy a timeline into another shape in one step; pasting between timelines of different shapes converts positions
 - **Auto reframe:** footage fills a frame of another shape and follows its subject – the view holds still, moves smoothly and jumps only at scene cuts; in game footage the kill feed stays readable as a cropped copy at the top. Or fit the whole picture in with a blurred copy around it, on one track; **accents** (zoom punch, flash, shake) on hits and drops in one click
 - **4:3 game footage:** black bars are found and cropped; a 4:3 game that the recorder stretched to 16:9 is unstretched (per clip, per file or as a watch folder preset) and shown with black bars or blurred sides
@@ -122,9 +127,13 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 - Video scopes: waveform, RGB parade, vectorscope, histogram
 - Slip and slide tools; two-up/four-up trim view while dragging an edit
 - **Own audio engine (SMT):** sound is read, mixed and played sample-exact – lips in sync within about 1 ms in the viewer, no clicks when stopping, jumping or moving faders, real 24-bit export; choose the output device, survives an unplugged headset
+- **Studio page** for sound: the audio tracks fill the page with large waveforms; a mixer column on the right with a narrow strip per track (EQ and compressor curves to drag, pan, mute/solo, fader) and the master with its limiter and a large loudness readout (integrated, short-term, momentary, LRA, true peak); a tools drawer below the tracks cleans a voice, ducks the music under speech, brings the whole mix to a target loudness (YouTube −14, podcast −16, broadcast −23 LUFS) in one click, records a voice-over and browses the effect sounds
+- **Track automation:** a track's volume and pan as a curve – set points on the line (rubber band) or draw with the pen, smoothed; in **write mode** ride the fader or the pan knob while it plays and the moves are recorded (touch); the curves follow ripple edits and show in the Edit timeline (CLI/MCP: ops `track_volume`, `track_pan`)
+- **Multichannel sound:** stereo, 5.1 or 7.1 projects; route single channels of a source to their own track (a wireless mic on channels 3/4 of a camera file), and each clip's waveform shows exactly the stream and channels it plays; a surround panner per track (depth, center, LFE send), meters per speaker, a stereo downmix to listen on headphones, loudness (EBU R128) over all channels; export 5.1/7.1 as AAC, FLAC or WAV, and 5.1 as AC-3 (Dolby Digital) in MP4
+- Markers, notes and story sections follow ripple edits: what comes after a ripple delete or trim moves with the content, markers in the removed part go with it, closing a gap moves them to the cut
 - Loudness and true-peak meters, master limiter that holds a true-peak ceiling
 - Per-track EQ (6 bands) and compressor in the mixer, ducking (music goes down while someone speaks)
-- Files with several audio streams (OBS): import presets per stream title – mute the mix, leave out streams, name the tracks
+- Files with several audio streams (OBS): import presets per stream title – mute the mix, leave out streams, name the tracks, pick a stream's channels
 - Clip speed / retime; **smooth slow motion** with in-between frames (blended, or computed from the motion with an own optical flow; never across a scene cut) – chosen in the speed dialog (Ctrl+R)
 - **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
 - Own video decoding, also on the graphics card (NVIDIA, AMD/Intel via VA-API); proxy media and a render cache for smooth playback – schneidi offers proxies when playback cannot keep up
@@ -234,6 +243,7 @@ schneidi-cli frames talk.schneidi --clip 4 --node 2 --view matte --out key.jpg  
 schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
 schneidi-cli scopes talk.schneidi --at 10s --out scopes.png      # waveform, parade, vectorscope + numbers
 schneidi-cli loudness talk.schneidi                          # LUFS, true peak of the mix
+schneidi-cli edit talk.schneidi --ops '[{"op":"track_volume","track":"A2","points":[["10s",0],["12s",-12]]}]'   # music down at 12 s
 schneidi-cli check talk.schneidi                             # before export: gaps, missing media, subtitles, sound
 schneidi-cli render talk.schneidi --out talk-cut.mp4 --preset "YouTube 1080p"
 schneidi-cli export_timeline talk.schneidi --out talk.xml       # for Premiere / DaVinci (also .otio, .edl)
@@ -249,7 +259,7 @@ Edit operations cover cutting, inserting and source edits (insert, replace, plac
 trimming (ripple, roll, slip, slide), titles with their style, fades, transitions (dissolve, dip, wipes, luma),
 speed and speed ramps (with in-between frames), markers, subtitles (SRT or cue lists, track styles) and word captions, effects and presets, the color grade
 (wheels, LUTs, windows with blur/pixelate and tracking), transform and crop, reframe to another shape, black bars and stretched 4:3, blurring player names, keyframes for any animatable value, paste attributes, volume/pan, the mixer
-(also to a loudness target, EQ and compressor per track), ducking, loudness normalization, voice cleaning, text to speech, tracks, linking, compound
+(also to a loudness target, EQ and compressor per track, a surround panner), track volume and pan automation (`track_volume`, `track_pan`), 5.1/7.1 projects and channel routing (`format channels`, `route`), ducking, loudness normalization, voice cleaning, text to speech, tracks, linking, compound
 clips, compositing graphs (`comp` with recipes, `comp_from`, `node`, trackers with `track_node`, AI cutouts with `cutout_node`), template placeholders (mark, fill), multicam clips (create, cut to an angle, change angles, flatten), several timelines (each with its own format) and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
@@ -294,11 +304,14 @@ Ten more languages (Ukrainian, Japanese, Portuguese (Brazil), Chinese (Simplifie
 ### 0.22 – Tracking Update (released)
 Trackers notice a lost point (fade out or hold), a node's time range right on the timeline, text behind a wall or pillar, four-corner tracking with a corner pin, a shared camera with parallax, shapes and simple drawing on the video (blur a face or number plate, arrows, circles), effects sorted by purpose with favourites, a kill feed that follows its lines in 9:16 shorts, an export quality "Like source", and an interface size setting.
 
-### Next: 0.23 – Studio
-A page for sound – a big mixer, large waveforms, volume curves to draw, EQ and compressor per track, voice cleanup, loudness, recording.
+### 0.23 – Studio (released)
+A page for sound: the tracks fill the page with large waveforms, a mixer column with EQ and compressor curves per track, a tools drawer (clean a voice, duck the music, loudness to a target, record, effect sounds), track volume and pan automation with points, a pen and a write mode, 5.1/7.1 surround with channel routing, a surround panner, meters per speaker and AC-3 export, and markers, notes and story sections that follow ripple edits.
+
+### Next: 0.24 – Color Update 2
+Curves on the Color page, qualifier (select by hue, saturation and lightness), a master wheel on the color wheels, more scope overlays, and HDR to SDR for phone footage.
 
 ### Later
-- **0.24 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
+- **A page for automatic editing:** clips in, "make a short / highlights / a podcast without pauses" out, suggestions to click through – with schneidi's own analysis, the AI chat only for free wishes
 
 ## Building
 
@@ -323,7 +336,7 @@ The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer u
 
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,ntldd,miniaudio}
-pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,ffnvcodec-headers,libx264,x265}
+pacman -S --needed nasm make diffutils mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,libx264,x265}
 packaging/windows/build-windows.sh
 ```
 

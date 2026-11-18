@@ -41,6 +41,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/HdrScan.h"
 #include "engine/video/Hardware.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
@@ -58,6 +59,9 @@
 #include "ui/comp/CompShared.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
+#include "engine/ColorGrade.h"
+#include "core/GradeWindows.h"
+#include "core/GradeQualifier.h"
 #include "ui/ScopesPanel.h"
 #include "ui/Inspector.h"
 #include "ui/KeyColorPicker.h"
@@ -239,6 +243,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview
     ProxyManager* proxies = m_engine->proxies();
+    // HDR files found in the background (projects from before 0.24, transfer only in the bitstream): Media Pool mark,
+    // Inspector, their proxies' names
+    (new HdrScan(m_project, proxies, this))->scan();
     auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->renderTimeline()); };
     connect(proxies, &ProxyManager::proxyChanged, this, [this, proxiesChanged](const QString& path) {
         // also clips in compound clips (nested sequences)
@@ -288,7 +295,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_inspector, &Inspector::savePresetRequested, this, &MainWindow::saveEffectPreset);
-    connect(m_inspector, &Inspector::keyPickRequested, this, &MainWindow::startKeyPick);
+    connect(m_inspector, &Inspector::keyPickRequested, this, [this](int id) { startKeyPick(id); });
     connect(m_inspector, &Inspector::keyPickCancelled, this, &MainWindow::stopKeyPick);
     connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
     connect(m_inspector, &Inspector::drawToolRequested, this, [this] { setDrawTool(true); });
@@ -624,8 +631,20 @@ void MainWindow::connectColorPage()
     });
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
+    connect(m_engine, &Engine::frameReady, m_colorPanel, &ColorPanel::setFrame);
     m_colorPanel->setTourButtonAllowed(!m_tourSaved.active);
     if (m_tours) connect(m_colorPanel, &ColorPanel::tourRequested, m_tours, [this] { m_tours->start("color"); });
+    connect(m_colorPanel, &ColorPanel::qualifierMaskChanged, m_engine, &Engine::setQualifierMask);
+    connect(m_colorPanel, &ColorPanel::qualifierPickRequested, this, [this](int id) { startKeyPick(id, true); });
+    connect(m_colorPanel, &ColorPanel::stillGrabRequested, this, [this] {
+        m_engine->pause();
+        const QImage img = m_engine->grabStill(m_project->renderTimeline());
+        if (img.isNull()) {
+            statusBar()->showMessage(T("Das Bild konnte nicht erzeugt werden."), 4000);
+            return;
+        }
+        m_colorPanel->addStill(img, Timecode::format(m_engine->position(), m_project->fps()));
+    });
 }
 
 void MainWindow::warmUpVideoDecoding()
@@ -1003,12 +1022,19 @@ void MainWindow::grabStill()
         QMessageBox::warning(this, T("Standbild exportieren"), T("Datei konnte nicht gespeichert werden:\n%1").arg(path));
 }
 
-void MainWindow::startKeyPick(int clipId)
+void MainWindow::startKeyPick(int clipId, bool qualifier)
 {
     stopKeyPick();
     m_engine->pause();
     const Timeline full = m_project->renderTimeline();
-    const Timeline alone = KeyColorPicker::isolate(full, clipId);
+    Timeline alone = KeyColorPicker::isolate(full, clipId);
+    if (qualifier) // what the qualifier selects from: the grade without itself, the LUT and the windows
+        for (Track& t : alone.video)
+            for (Clip& c : t.clips) {
+                GradeQualifier::remove(c);
+                for (int n : GradeWindows::list(c)) GradeWindows::remove(c, n);
+                if (EffectInstance* e = EffectRegistry::instance(c, ColorGrade::EffectId)) e->params.remove("lut");
+            }
     const Clip* clip = nullptr;
     for (const Track& t : alone.video)
         if (!t.clips.isEmpty()) clip = &t.clips.first();
@@ -1024,8 +1050,12 @@ void MainWindow::startKeyPick(int clipId)
         return;
     }
     m_keyPicker = new KeyColorPicker(picture, this);
-    connect(m_keyPicker, &KeyColorPicker::picked, this, [this](const QColor& color) {
-        m_inspector->applyKeyColor(color);
+    connect(m_keyPicker, &KeyColorPicker::picked, this, [this, qualifier](const QColor& color) {
+        if (qualifier) {
+            if (m_colorPanel) m_colorPanel->applyQualifierColor(color);
+        } else {
+            m_inspector->applyKeyColor(color);
+        }
         stopKeyPick();
     });
     connect(m_keyPicker, &KeyColorPicker::cancelled, this, &MainWindow::stopKeyPick);
@@ -1033,7 +1063,7 @@ void MainWindow::startKeyPick(int clipId)
     m_keyPickWindow = new KeyPickWindow(m_keyPicker, picture.size(), this);
     connect(m_keyPickWindow, &KeyPickWindow::closeRequested, this, &MainWindow::stopKeyPick);
     m_keyPickWindow->showOn(screen());
-    m_inspector->setKeyPicking(true); // the stopKeyPick() above switched the button off
+    if (!qualifier) m_inspector->setKeyPicking(true); // the stopKeyPick() above switched the button off
 }
 
 void MainWindow::stopKeyPick()

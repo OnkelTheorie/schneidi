@@ -340,7 +340,7 @@ QWidget* MainWindow::buildPageBar()
         {"✂", N_("Schneiden"), Page::Edit},
         {"◇", N_("Compositing"), Page::Comp},
         {"◐", N_("Farbe"), Page::Color},
-        {"♪", N_("Studio"), Page::Studio},
+        {"◉", N_("Studio"), Page::Studio}, // ♪ comes from Noto Sans Symbols on Noto-only systems: a taller line, a taller bar
         {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
@@ -452,6 +452,9 @@ void MainWindow::showPage(Page page)
     setViewerLarge(false); // the page's own layout first, then the switch
     restoreViewerArea();   // the viewer moves to the new page's place: closed up there again at the end
     const Page before = m_page;
+    // The viewer leaves the Studio page's column: its height there comes back with it
+    if (before == Page::Studio && m_studioPage && m_studioPage->side()->count() == 2)
+        m_studioSideSizes = m_studioPage->side()->sizes();
     m_page = page;
     if (before == Page::Comp && page != Page::Comp && m_compPage) { // the Color page's windows over the viewer again
         m_compPage->overlay()->setVisible(false);
@@ -542,14 +545,20 @@ void MainWindow::showPage(Page page)
         // Built on the first showing: the lanes take the page, the viewer small at the top of the right column, the
         // loudness and the mixer under it
         ensureStudioPage();
+        const bool back = m_studioPage->side()->indexOf(m_viewer) < 0; // (a reset shows the page while it shows)
         m_studioPage->side()->insertWidget(0, m_viewer);
         m_studioPage->side()->setStretchFactor(1, 1);
-        const QSize room = m_pages->size();
-        const int side = m_studioPage->defaultSideWidth(room.width());
-        applySizes(m_studioPage->root(), {std::max(1, room.width() - side), side});
-        const int viewer = m_studioPage->defaultViewerHeight(side, room.height());
-        applySizes(m_studioPage->side(), {viewer, std::max(1, room.height() - viewer)});
-        applySizes(m_studioPage->left(), {std::max(1, room.height() - 220), 220});
+        if (!m_studioSized) {
+            m_studioSized = true;
+            const QSize room = m_pages->size();
+            const int side = m_studioPage->defaultSideWidth(room.width());
+            applySizes(m_studioPage->root(), {std::max(1, room.width() - side), side});
+            const int viewer = m_studioPage->defaultViewerHeight(side, room.height());
+            applySizes(m_studioPage->side(), {viewer, std::max(1, room.height() - viewer)});
+            applySizes(m_studioPage->left(), {std::max(1, room.height() - 220), 220});
+        } else if (back && m_studioSideSizes.size() == 2) {
+            m_studioPage->side()->setSizes(m_studioSideSizes); // the lanes and the drawer never changed
+        }
         m_pages->setCurrentWidget(m_studioPage);
     }
         break;
@@ -739,6 +748,7 @@ void MainWindow::resetSizes()
     settings.endGroup();
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     SplitterMemory::resetAll(this); // the splitters inside the panels (Media Pool, Media Storage, Effects)
+    m_studioSized = false;
     showPage(m_page); // sets the page's defaults again
     if (m_editRight->isVisibleTo(m_editRow)) {
         fitRightColumn(m_editRow->sizes(), true); // the column's default: as wide as its content
