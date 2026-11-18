@@ -36,11 +36,8 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 enum class MarkerCut { Delete, MoveToCut };
 // Timeline markers, notes and story sections follow (rippleAnnotations) with `markerShifts` if given (ripple trim:
 // the trimmed clip's content), else with `shifts`.
-// `fallback`: a track that would overlap with `shifts` moves with these instead (a ripple head trim: from the cut,
-// else from the clip's old end), and stays as it is only when both overlap.
 void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip,
-                  const QVector<QPair<int, int>>* markerShifts = nullptr, MarkerCut markerCut = MarkerCut::Delete,
-                  const QVector<QPair<int, int>>* fallback = nullptr);
+                  const QVector<QPair<int, int>>* markerShifts = nullptr, MarkerCut markerCut = MarkerCut::Delete);
 // Would the clips of track t, each moved by the offsets of `shifts` at or before its start, still lie in order
 // without overlap (and not before frame 0)? What rippleTracks checks per track.
 bool rippleFits(const Track& t, const QVector<QPair<int, int>>& shifts);

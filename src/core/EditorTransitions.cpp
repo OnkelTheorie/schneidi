@@ -256,17 +256,23 @@ bool Editor::trimForTransition(Timeline& tl, int leftId, int rightId, Transition
         const int dl = std::max(0, after - handleOut), dr = std::max(0, before - handleIn);
         if (l->length() - dl < std::max(1, before) || r->length() - dr < std::max(1, after)) continue;
         Timeline t = tl;
+        QSet<int> trimmed; // the clips trimmed (and their partners): their own links may change, nobody else's
         // The trim makes room for the transition, no content is cut: markers on the trimmed piece go to the cut
         if (dl > 0) {
             const TrimEdit e = trimEdit(TrimKind::Ripple, leftId, Edge::End);
             if (TimelineOps::clampTrimEdit(t, e, -dl, len) != -dl) return false;
             TimelineOps::applyTrimEdit(t, e, -dl, len, TimelineOps::MarkerCut::MoveToCut);
+            trimmed.unite(QSet<int>(e.ids.begin(), e.ids.end()));
         }
         if (dr > 0) {
             const TrimEdit e = trimEdit(TrimKind::Ripple, rightId, Edge::Start);
             if (TimelineOps::clampTrimEdit(t, e, dr, len) != dr) return false;
             TimelineOps::applyTrimEdit(t, e, dr, len, TimelineOps::MarkerCut::MoveToCut);
+            trimmed.unite(QSet<int>(e.ids.begin(), e.ids.end()));
         }
+        // Like a ripple trim by hand (allowedTrimEdit): a ripple that takes a linked picture and sound of another
+        // clip apart is refused (a V2/A2 pair moved by different amounts, review 18.11.)
+        if (!linksRefusal(tl, t, trimmed, nullptr).isEmpty()) return false;
         tl = t;
         return true;
     }

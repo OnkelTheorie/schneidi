@@ -149,8 +149,7 @@ bool rippleFits(const Track& t, const QVector<QPair<int, int>>& shifts)
 }
 
 void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& primary, const QVector<TrackRef>& skip,
-                  const QVector<QPair<int, int>>* markerShifts, MarkerCut markerCut,
-                  const QVector<QPair<int, int>>* fallback)
+                  const QVector<QPair<int, int>>* markerShifts, MarkerCut markerCut)
 {
     if (primary.isEmpty()) return;
     QVector<TrackRef> moving = skip; // tracks that go along (for markers, notes and sections)
@@ -160,8 +159,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& primary, const Q
             Track& t = tracks[i];
             if (t.locked || skip.contains(TrackRef{k, i})) continue;
             moving << TrackRef{k, i};
-            const QVector<QPair<int, int>>& shifts =
-                fallback && !rippleFits(t, primary) && rippleFits(t, *fallback) ? *fallback : primary;
+            const QVector<QPair<int, int>>& shifts = primary;
             if (t.clips.isEmpty()) {
                 Automation::rippleTrack(t, shifts);
                 continue;
@@ -838,6 +836,27 @@ void headTrimShifts(const Timeline& tl, const TrimEdit& e, int delta, QVector<QP
             if (lead) *lead = it.key();
         }
 }
+
+// Every unlocked track outside `skip` fits with `shifts` (rippleFits)
+bool allFit(const Timeline& tl, const QVector<TrackRef>& skip, const QVector<QPair<int, int>>& shifts)
+{
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (int i = 0; i < tl.tracks(k).size(); ++i) {
+            const Track& t = tl.tracks(k)[i];
+            if (!t.locked && !skip.contains(TrackRef{k, i}) && !rippleFits(t, shifts)) return false;
+        }
+    return true;
+}
+
+// A head trim moves all other tracks from the cut when every one of them fits that way, else all of them from the
+// old end (as before 0.24): one rule for every track, so a linked picture and sound on two tracks never move by
+// different amounts (review 18.11.)
+QVector<QPair<int, int>> headTrimRipple(const Timeline& tl, const TrimEdit& e, int delta, QPair<int, int>* lead = nullptr)
+{
+    QVector<QPair<int, int>> atCut, atEnd;
+    headTrimShifts(tl, e, delta, &atCut, &atEnd, lead);
+    return allFit(tl, tracksOf(tl, e.ids), atCut) ? atCut : atEnd;
+}
 } // namespace
 
 int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength)
@@ -854,37 +873,32 @@ int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const Source
             if (const Clip* c = findClip(tl, id, &ref)) {
                 if (e.edge == Edge::Start) limitStart(*c, lo, hi);
                 else limitEnd(*c, lo, hi, sourceLength);
-                // (A head trim also moves what lies over the clip after the cut, applyTrimEdit; a track where that
-                // would overlap stays as it is)
+                // (A head trim may move what lies over the clip after the cut instead, headTrimRipple)
                 from = std::min(from, c->end());
                 ++perTrack[qMakePair(int(ref.kind), ref.index)];
             }
         }
         if (from != INT_MAX && e.edge == Edge::Start && delta > 0) {
-            // Head trim: each other track moves from the cut or, where that overlaps, from the old end
-            // (applyTrimEdit); the furthest shortening every track allows either way
+            // Head trim (headTrimRipple): the furthest shortening for which all other tracks fit from the cut, or
+            // all of them from the old end. Each way alone moves further clips the further it goes, so each has a
+            // last delta that fits: found by halving
             const QVector<TrackRef> skip = tracksOf(tl, e.ids);
-            const auto fits = [&](int d) {
-                QVector<QPair<int, int>> atCut, atEnd;
-                headTrimShifts(tl, e, d, &atCut, &atEnd);
-                for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-                    for (int i = 0; i < tl.tracks(k).size(); ++i) {
-                        const Track& t = tl.tracks(k)[i];
-                        if (!t.locked && !skip.contains(TrackRef{k, i}) && !rippleFits(t, atCut) && !rippleFits(t, atEnd))
-                            return false;
-                    }
-                return true;
-            };
-            int d = std::min(delta, hi);
-            if (!fits(d)) { // the furthest that fits between 0 (always) and d (a few checks, like allowedTrimEdit)
-                int ok = 0, no = d;
+            const auto furthest = [&](bool cut) {
+                const auto fits = [&](int d) {
+                    QVector<QPair<int, int>> atCut, atEnd;
+                    headTrimShifts(tl, e, d, &atCut, &atEnd);
+                    return allFit(tl, skip, cut ? atCut : atEnd);
+                };
+                const int top = std::min(delta, hi);
+                if (fits(top)) return top;
+                int ok = 0, no = top;
                 while (no - ok > 1) {
                     const int mid = ok + (no - ok) / 2;
                     (fits(mid) ? ok : no) = mid;
                 }
-                d = ok;
-            }
-            hi = std::min(hi, d);
+                return ok;
+            };
+            hi = std::min(hi, std::max(furthest(true), furthest(false)));
         } else if (from != INT_MAX) {
             int most = 1;
             for (int n : perTrack) most = std::max(most, n);
@@ -949,10 +963,10 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
         const int shift = e.edge == Edge::Start ? -delta : delta;
         // Other tracks move like the track with the most trimmed clips (per clip from its old end),
         // otherwise they drift apart with several clips on one track
-        QVector<QPair<int, int>> shifts, atEnd;
+        QVector<QPair<int, int>> shifts;
         QPair<int, int> lead; // the track the others follow
         if (e.edge == Edge::Start) {
-            headTrimShifts(tl, e, delta, &shifts, &atEnd, &lead);
+            shifts = headTrimRipple(tl, e, delta, &lead);
         } else {
             QMap<QPair<int, int>, QVector<QPair<int, int>>> perTrack; // (kind, index) -> (old end, offset)
             for (int id : e.ids) {
@@ -1001,7 +1015,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
         // automation), so a marker on the trimmed-off part goes and one on the rest stays on its picture
         const QVector<QPair<int, int>> markerShifts = autoShifts.value(lead);
         if (!shifts.isEmpty())
-            rippleTracks(tl, shifts, edited, &markerShifts, markerCut, e.edge == Edge::Start ? &atEnd : nullptr);
+            rippleTracks(tl, shifts, edited, &markerShifts, markerCut);
         break;
     }
     case TrimKind::Roll:

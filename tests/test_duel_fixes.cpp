@@ -293,6 +293,52 @@ void testRippleHeadTrim()
     TimelineOps::applyTrimEdit(t, e, 30, {});
     CHECK_EQ(TimelineOps::findClip(t, 8)->start, 210);
     CHECK_EQ(TimelineOps::findClip(t, 9)->start, 230);
+    // Links: one rule for all tracks. Repro B: V1 0-250 alone; A2 sfx [20,50); linked va V2/A2 [60,160). From the cut
+    // A2 would overlap, so every track moves from the old end (nothing moves here) - the pair stays together
+    {
+        Timeline lb;
+        lb.video.resize(2);
+        lb.audio.resize(2);
+        lb.video[0].clips << plain(1, "/x/v.mp4", 0, 250);
+        lb.audio[1].clips << plain(20, "/x/sfx.wav", 20, 30);
+        Clip pv = plain(21, "/x/va.mp4", 60, 100), pa = plain(22, "/x/va.mp4", 60, 100);
+        pv.linkId = pa.linkId = 7;
+        lb.video[1].clips << pv;
+        lb.audio[1].clips << pa;
+        CHECK_EQ(TimelineOps::clampTrimEdit(lb, e, 30, {}), 30);
+        t = lb;
+        TimelineOps::applyTrimEdit(t, e, 30, {});
+        CHECK_EQ(TimelineOps::findClip(t, 21)->start, TimelineOps::findClip(t, 22)->start);
+        CHECK_EQ(TimelineOps::findClip(t, 21)->start, 60);
+        // 20 and 61 as well (from the cut at 20 everything fits; at 61 the pair stays before the cut)
+        for (int d : {20, 61}) {
+            CHECK_EQ(TimelineOps::clampTrimEdit(lb, e, d, {}), d);
+            t = lb;
+            TimelineOps::applyTrimEdit(t, e, d, {});
+            CHECK_EQ(TimelineOps::findClip(t, 21)->start, TimelineOps::findClip(t, 22)->start);
+        }
+    }
+    // Repro A (a transition's trim): V1 [0,200)+[200,400); A2 sfx [195,215); linked va at 260 on V2/A2; the head of
+    // the second clip trimmed by 50 - the pair moves together or not at all
+    {
+        Timeline la;
+        la.video.resize(2);
+        la.audio.resize(2);
+        la.video[0].clips << plain(1, "/x/v.mp4", 0, 200) << plain(2, "/x/v.mp4", 200, 200);
+        la.audio[1].clips << plain(30, "/x/sfx.wav", 195, 20);
+        Clip pv = plain(31, "/x/va.mp4", 260, 50), pa = plain(32, "/x/va.mp4", 260, 50);
+        pv.linkId = pa.linkId = 8;
+        la.video[1].clips << pv;
+        la.audio[1].clips << pa;
+        TimelineOps::TrimEdit h;
+        h.kind = TimelineOps::TrimKind::Ripple;
+        h.edge = TimelineOps::Edge::Start;
+        h.ids = {2};
+        const int d = TimelineOps::clampTrimEdit(la, h, 50, {});
+        t = la;
+        TimelineOps::applyTrimEdit(t, h, d, {});
+        CHECK_EQ(TimelineOps::findClip(t, 31)->start, TimelineOps::findClip(t, 32)->start);
+    }
     // Neither way fits: only as far as one of them does (here 0: [5,40) under the cut, [40,60) right after it)
     Timeline n;
     n.video.resize(1);
