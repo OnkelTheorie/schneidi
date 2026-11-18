@@ -351,3 +351,18 @@ What it says, honestly:
 
 Reproduce: the script `run.sh` (raw frames in `data/<clip>.yuv`, `h264-proto` from `cmake --build build --target
 h264-proto`, VMAF through PyAV's libvmaf) is kept outside the repository with the material.
+
+### s264 speed after the 18.11. round (quiet server)
+
+Measured on the quiet server (Ryzen 5 2400G, 6 threads, nothing else running) before and after the speed round of
+2026-11-18 (byte-wise arithmetic coder output, cheaper skip test, fewer B searches, lookahead early stop). These
+numbers replace the indicative fps of the table above. Frames per second, 1080p, x264 medium on the same machine for
+reference. The round changed the BD-rate by at most +0.44 % on any class.
+
+| Material | Mode | s264 before | s264 after | x264 medium |
+|---|---|---|---|---|
+| CS2 game recording | two-pass 8 Mbit/s | 24.9 | 26.6 | 23.0 |
+| Camera (phone) | two-pass 8 Mbit/s | 14.8 | 17.5 | 18.7 |
+| Camera (phone) | crf 23 | 8.7 | 9.8 | 15.9 |
+| Calm footage | two-pass 2 Mbit/s | 32.2 | 37.1 | 30.5 |
+| Animation | two-pass 2 Mbit/s | 41.0 | 57.3 | 49.8 |
