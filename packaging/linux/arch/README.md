@@ -15,7 +15,19 @@ chmod +x schneidi-*-x86_64.AppImage
 
 AppImages need FUSE 2 (`sudo pacman -S fuse2`); without it, add `--appimage-extract-and-run`.
 
-## 2. Native package with makepkg
+## 2. Ready package from the release
+
+Since 0.24 every release has a built package, `schneidi-<version>-1-x86_64.pkg.tar.zst` (made from this `PKGBUILD` in a
+clean Arch container):
+
+```sh
+sudo pacman -U schneidi-<version>-1-x86_64.pkg.tar.zst
+```
+
+It is built against the Qt 6 of its release day. The GPU viewer uses Qt's private RHI interface, so after an Arch Qt
+update a package of an older day may no longer start; then build it yourself (3.) or take the AppImage.
+
+## 3. Native package with makepkg
 
 The `PKGBUILD` in this folder builds schneidi from the source tarball of a release tag against Arch's own Qt 6 and
 FFmpeg. You need `base-devel` and `git`:

@@ -6,7 +6,7 @@ schneidi has six pages – Media, Edit, Compositing, Color, Studio and Deliver �
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
-**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0. The bundled packages include x264/x265 (GPL) for the best H.264/H.265 quality without a graphics card encoder ([licenses](THIRD_PARTY.md)).
+**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage, Debian package or Arch Linux package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0. The bundled packages include x264/x265 (GPL) for the best H.264/H.265 quality without a graphics card encoder ([licenses](THIRD_PARTY.md)).
 
 **Try the AI in two minutes:** make the AppImage executable (`chmod +x schneidi-*.AppImage`) and start it, open a video, click **✧ AI** at the top and pick a provider – a local model through [Ollama](https://ollama.com) needs no account (`ollama pull qwen3`, and start Ollama with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`: the tools and the editing guide do not fit its default context), Claude or an OpenAI-compatible service needs a key. Then type what you want: "remove the pauses", "cut it to the beat".
 
@@ -349,6 +349,7 @@ Other distributions: the same libraries (Qt 6 Widgets/Network and its private GU
 AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage` with an own slim FFmpeg including x264/x265 (GPL; build packages `libx264-dev libx265-dev`); `GPL_ENCODERS=0` builds a GPL-free one instead (`…-lgpl.AppImage`: OpenH264/kvazaar, x264/x265 as an optional download in the program); bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/FFmpeg, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb is built for Debian 13: it needs exactly its Qt 6.8.2 (the GPU viewer uses Qt's private RHI interface) and FFmpeg 7.1; on every other system use the AppImage.
+Arch Linux package: `packaging/linux/arch/PKGBUILD` (`makepkg -si`, against Arch's own Qt and FFmpeg; [packaging/linux/arch](packaging/linux/arch/README.md)); each release has the built `schneidi-<version>-1-x86_64.pkg.tar.zst` (`sudo pacman -U …`), which needs a rebuild after an Arch Qt update.
 
 **Windows:** via [MSYS2](https://www.msys2.org), UCRT64 environment. Clone the repo into a path without spaces or non-ASCII characters, then:
 

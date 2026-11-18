@@ -109,6 +109,15 @@
   </requires>
 
   <releases>
+    <release version="0.24.0" date="2026-11-18">
+      <description>
+        <p>Color: curves (master, RGB, hue and luma curves), a qualifier that grades only the colors it picks,
+        master wheels and a stills gallery with a before/after wipe; HDR phone footage (HLG/PQ) is shown and exported as
+        SDR without a setting; 10-bit export for H.265 and AV1; s264, an own experimental H.264 encoder (x264 stays the default);
+        fixes for AI editing.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.24.0</url>
+    </release>
     <release version="0.23.0" date="2026-11-15">
       <description>
         <p>Studio: a page for sound with large waveforms, a mixer column with EQ and compressor curves per track and
