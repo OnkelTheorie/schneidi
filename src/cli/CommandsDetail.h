@@ -9,6 +9,8 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 
+#include <optional>
+
 #include <QColor>
 #include <QHash>
 #include <QJsonArray>
@@ -128,7 +130,9 @@ QString silentMixNote(const Timeline& tl);
 // "V1", "A2" or a number (1 = first track); returns the index (0-based)
 int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);
 // The same, and a track's own name ("Mix", "Stimme 1"; any case) when it is no V1/A2/number
-int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind = nullptr);
+// only: names of tracks of this kind (mixer: audio)
+int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind = nullptr,
+                 std::optional<TrackKind> only = std::nullopt);
 // A clip as `info` shows it
 QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref);
 QJsonObject timelineJson(const Project& p);

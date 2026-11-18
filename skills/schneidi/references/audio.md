@@ -43,7 +43,7 @@ look at `info` after placing such a file: if "Mix" and its parts are all enabled
 (usually the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`. Only some streams of
 a recording: `keep`/`append`/`place` with `audio_streams` (numbers or names, e.g. `["System Output"]` for the game
 sound without Discord, microphone and music). Track names work wherever a track is named (`mixer`, `track`,
-`remove_track`: `"Mix"`). A file with a single audio stream never lands on a muted track. If the whole mix is silent
+`remove_track`: `"Mix"`). A file with a single audio stream placed without `track` into empty space skips a template's muted (Mix) track (a note says so). If the whole mix is silent
 (everything on muted tracks or disabled), `info` notes it and `check` reports `mix_silent`; `transcribe` then says the
 audio is silent instead of suggesting `music:true`.
 

@@ -171,6 +171,11 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                 soundOf[i] = streamChoice; // numbers or names, checked by keep
                 continue;
             }
+            // Not asked for: only for game material - a known game (given or from the folder/file name), or a
+            // recorder's Mix next to voice chat or music. A podcast's Mix/Mikrofon/Gast keeps every voice.
+            const bool mixAndChat = std::any_of(names.begin(), names.end(), StreamPresets::isMixTitle)
+                                 && std::any_of(names.begin(), names.end(), StreamPresets::isChatOrMusicTitle);
+            if (!a.contains("audio_stream") && !game && !mixAndChat) continue;
             const QVector<int> g = StreamPresets::gameStreams(names);
             if (g.isEmpty()) continue;
             QJsonArray list;

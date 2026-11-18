@@ -266,19 +266,77 @@ QVector<int> videoOnly(const Timeline& tl, const QVector<int>& ids)
 }
 
 int localFrame(const Clip& c, int frame) { return std::clamp(frame - c.start, 0, std::max(0, c.length() - 1)); }
+
+// A grade value of the clip's own (its windows, its qualifier) rather than of the correction of the whole picture
+bool ownGradeKey(const QString& key) { return GradeWindows::windowOf(key) > 0 || GradeQualifier::isKey(key); }
+bool ownGradeParam(AnimParam p)
+{
+    QString effectId, key;
+    return Keys::effectParamOf(p, &effectId, &key) && effectId == QLatin1String(kGrade) && ownGradeKey(key);
+}
+bool correctionParam(AnimParam p)
+{
+    QString effectId, key;
+    if (Keys::effectParamOf(p, &effectId, &key)) return effectId == QLatin1String(kGrade) && !ownGradeKey(key);
+    return int(p) >= int(AnimParam::GradeLiftY) && int(p) <= int(AnimParam::GradeExposure);
+}
+
+// A kill feed copy takes the correction of its clip (values, keyframes, LUT, curves, on/off) and keeps its own
+// windows and qualifier (a name blur made on the copy). The clip's grade off or gone: the copy's correction is
+// neutral, its own windows stay on.
+void syncCopyGrade(Clip& copy, const Clip& lead)
+{
+    const EffectInstance* from = EffectRegistry::instance(lead, kGrade);
+    int at = -1;
+    for (int i = 0; i < copy.effects.size() && at < 0; ++i)
+        if (copy.effects[i].effectId == QLatin1String(kGrade)) at = i;
+    QVariantMap own;
+    if (at >= 0)
+        for (auto it = copy.effects[at].params.cbegin(); it != copy.effects[at].params.cend(); ++it)
+            if (ownGradeKey(it.key())) own.insert(it.key(), it.value());
+    const bool ownKeys = std::any_of(copy.keys.keyBegin(), copy.keys.keyEnd(), ownGradeParam);
+    const bool hasOwn = !own.isEmpty() || ownKeys;
+    const bool on = from && from->enabled;
+    copy.keys.removeIf([](const auto& it) { return correctionParam(it.key()); });
+    if (!from && !hasOwn) {
+        if (at >= 0) copy.effects.removeAt(at);
+        return;
+    }
+    EffectInstance g = from ? *from : EffectInstance{};
+    g.effectId = kGrade;
+    for (auto it = g.params.begin(); it != g.params.end();)
+        it = ownGradeKey(it.key()) || (!on && hasOwn) ? g.params.erase(it) : std::next(it);
+    for (auto it = own.cbegin(); it != own.cend(); ++it) g.params.insert(it.key(), it.value());
+    g.enabled = hasOwn || on;
+    if (on || !hasOwn)
+        for (auto it = lead.keys.cbegin(); it != lead.keys.cend(); ++it)
+            if (correctionParam(it.key())) {
+                KeyTrack k = it.value();
+                for (Keyframe& f : k) f.frame += copy.in - lead.in;
+                copy.keys.insert(it.key(), k);
+            }
+    if (at >= 0) copy.effects[at] = g;
+    else copy.effects << g;
+}
 } // namespace
 
 void Editor::modifyGrade(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                          const QString& mergeKey)
 {
     const QVector<int> leads = editable(videoOnly(m_project->timeline(), ids));
-    QVector<int> all = leads;
-    for (int id : followingCopies(leads, true))
-        if (!all.contains(id)) all << id;
-    if (all.isEmpty()) return;
+    if (leads.isEmpty()) return;
+    QHash<int, int> leadOf; // copy -> its clip
+    for (int id : leads)
+        for (int copy : followingCopies({id}, true))
+            if (!leads.contains(copy)) leadOf.insert(copy, id);
     m_project->edit(text, [&](Timeline& tl) {
-        for (int id : all)
+        for (int id : leads)
             if (Clip* c = TimelineOps::findClip(tl, id)) fn(*c);
+        for (auto it = leadOf.cbegin(); it != leadOf.cend(); ++it) {
+            Clip* copy = TimelineOps::findClip(tl, it.key());
+            const Clip* lead = TimelineOps::findClip(tl, it.value());
+            if (copy && lead) syncCopyGrade(*copy, *lead);
+        }
     }, mergeKey);
 }
 
@@ -306,7 +364,6 @@ void Editor::resetGrade(const QVector<int>& ids, const QVector<AnimParam>& param
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && EffectRegistry::has(*c, kGrade))
             targets << id;
     modifyGrade(targets, text, [&](Clip& c) {
-        if (!EffectRegistry::has(c, kGrade)) return; // a copy without a grade
         if (params.isEmpty()) {
             EffectRegistry::remove(c, kGrade);
             return;
@@ -351,7 +408,7 @@ void Editor::setGradeKeyframe(const QVector<int>& ids, int frame, bool on, int w
         for (const QString& k : GradeWindows::correctionKeys() + GradeQualifier::rangeKeys())
             params << GradeQualifier::param(k);
     }
-    modifyClips(videoOnly(m_project->timeline(), ids), on ? T("Keyframe setzen") : T("Keyframe entfernen"),
+    modifyGrade(ids, on ? T("Keyframe setzen") : T("Keyframe entfernen"),
                 [&](Clip& c) {
                     EffectRegistry::add(c, kGrade);
                     const int t = localFrame(c, frame);

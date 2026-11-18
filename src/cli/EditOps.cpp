@@ -343,9 +343,23 @@ void noteDoubledMix(Session& s, const MediaInfo& m, int from, int to)
                         QString::fromUtf8(QJsonDocument(mixClips).toJson(QJsonDocument::Compact)));
 }
 
-// audio_streams: [0, 3], "System Output" or "0,3" - only these audio streams of `m` stay of what an op just placed
-// in [from, to) (a game clip's Discord, microphone and music left out in one go, t6s duel 18.11.)
-void onlyStreams(Session& s, const QJsonObject& op, const MediaInfo& m, int from, int to)
+// What the timeline held before an op placed clips: its clip ids and how many audio tracks it had
+struct Placing {
+    QSet<int> ids;
+    int audioTracks = 0;
+    explicit Placing(const Timeline& tl) : audioTracks(int(tl.audio.size()))
+    {
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : tl.tracks(k))
+                for (const Clip& c : t.clips) ids << c.id;
+    }
+    bool isNew(const Clip& c) const { return !ids.contains(c.id); }
+};
+
+// audio_streams: [0, 3], "System Output" or "0,3" - only these audio streams of `m` stay of what the op just placed
+// (a game clip's Discord, microphone and music left out in one go, t6s duel 18.11.); clips that were there before
+// stay, and the audio tracks the op made for the streams left out go again
+void onlyStreams(Session& s, const QJsonObject& op, const MediaInfo& m, const Placing& before)
 {
     if (!op.contains("audio_streams") || !m.hasAudio) return;
     const QJsonValue v = op.value("audio_streams");
@@ -358,11 +372,33 @@ void onlyStreams(Session& s, const QJsonObject& op, const MediaInfo& m, int from
     QSet<int> drop;
     for (const Track& t : s.project.timeline().audio)
         for (const Clip& c : t.clips)
-            if (c.mediaPath == m.path && c.start >= from && c.start < to && !keep.contains(c.audioStream)) drop << c.id;
+            if (before.isNew(c) && c.mediaPath == m.path && !keep.contains(c.audioStream)) drop << c.id;
     if (drop.isEmpty()) return;
     s.selection.set(drop);
     s.editor.deleteSelection();
     s.selection.clear();
+    for (int i = int(s.project.timeline().audio.size()) - 1; i >= before.audioTracks; --i) {
+        const TrackRef r{TrackKind::Audio, i};
+        if (s.project.timeline().audio[i].clips.isEmpty() && s.project.timeline().audio.size() > 1 && s.editor.canRemoveTrack(r))
+            s.editor.removeTrack(r);
+    }
+}
+
+// No track given and the file's only sound went past a muted template track (Editor::unmutedSoundTrack): say where
+void noteMovedSound(Session& s, const QJsonObject& op, const MediaInfo& m, const Placing& before)
+{
+    const Timeline& tl = s.project.timeline();
+    if (op.contains("track") || m.audioStreamCount() != 1 || tl.audio.isEmpty() || !tl.audio[0].muted) return;
+    for (int i = 1; i < tl.audio.size(); ++i)
+        for (const Clip& c : tl.audio[i].clips)
+            if (before.isNew(c) && c.mediaPath == m.path) {
+                const QString name = tl.audio[0].name.trimmed();
+                s.notes << QString("%1 has a single audio stream: its sound went onto %2, not onto the muted %3 (it "
+                                   "would be silent there); track:'A1' places it there anyway")
+                               .arg(QFileInfo(m.path).fileName(), trackName({TrackKind::Audio, i}),
+                                    "A1" + (name.isEmpty() ? QString() : " '" + name + "'"));
+                return;
+            }
 }
 
 // interpolate on the video clips of `m` an op just placed in [from, to) (slowest = its slowest speed)
@@ -395,8 +431,11 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     const int at = append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at");
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
     checkPlacedEnd(at, in, out, speed, m);
-    const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed, partsOf(op, m));
-    onlyStreams(s, op, m, at, at + len);
+    const Placing before(s.project.timeline());
+    const int track = op.contains("track") ? parseTrack(op.value("track")) : -1; // -1: may pass a muted template track
+    const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed, partsOf(op, m));
+    onlyStreams(s, op, m, before);
+    noteMovedSound(s, op, m, before);
     noteDoubledMix(s, m, at, at + len);
     placedInterpolate(s, op, m, at, at + len, speed);
 }
@@ -407,7 +446,8 @@ void opKeep(Session& s, const QJsonObject& op)
     const MediaInfo m = s.media(op.value("media").toString());
     int at = timeOf(s, op, "at", endOf(s));
     const int start = at;
-    const int track = parseTrack(op.value("track"));
+    const int track = op.contains("track") ? parseTrack(op.value("track")) : -1; // -1: may pass a muted template track
+    const Placing before(s.project.timeline());
     const Editor::PlaceParts parts = partsOf(op, m);
     double slowest = 1;
     QJsonArray ranges = op.value("ranges").toArray();
@@ -442,7 +482,8 @@ void opKeep(Session& s, const QJsonObject& op)
         at += s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed, parts);
         slowest = std::min(slowest, speed);
     }
-    onlyStreams(s, op, m, start, at);
+    onlyStreams(s, op, m, before);
+    noteMovedSound(s, op, m, before);
     noteDoubledMix(s, m, start, at);
     placedInterpolate(s, op, m, start, at, slowest);
 }

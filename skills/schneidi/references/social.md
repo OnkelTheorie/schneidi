@@ -35,8 +35,8 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
   for one that exists) - never `format` without `timeline` there, that turns every timeline portrait. A 16:9
   timeline placed into the short (`place_timeline`) is fitted like a 16:9 clip. Game recordings with a
   Mix stream next to the single streams: `template` "game" with `width` 1080, `height` 1920 mutes the Mix (else
-  everything plays twice). `short` keeps only the game sound of such recordings (no Discord, microphone, Spotify);
-  `audio_stream` "all" or stream names choose otherwise. By hand: `keep` with `audio_streams`.
+  everything plays twice). `short` keeps only the game sound of game recordings (a known game, or a Mix next to Discord/Spotify:
+  no voice chat, microphone or music); `audio_stream` "all", "game" or stream names choose yourself. By hand: `keep` with `audio_streams`.
 - **The short of an existing 16:9 edit in one call**: `{"op":"new_timeline","from":"<edit>","aspect":"9:16",
   "reframe":"auto"}` copies the edit (clips, titles, sound) into a new 9:16 timeline and reframes every video clip.
   Clips already in a 9:16 timeline: `{"op":"reframe"}` (all) or with `clips`/`track`.

@@ -233,7 +233,7 @@ void Editor::pasteGrade(const QVector<int>& ids)
         TrackRef ref;
         if (id != src.id && TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) targets << id;
     }
-    if (!targets.isEmpty()) modifyClips(targets, T("Farbkorrektur einfügen"), [&](Clip& c) { pasteColor(c, src); });
+    if (!targets.isEmpty()) modifyGrade(targets, T("Farbkorrektur einfügen"), [&](Clip& c) { pasteColor(c, src); });
 }
 
 int Editor::addGradeStill(int clipId, const QImage& picture, const QString& label)
@@ -264,7 +264,7 @@ bool Editor::applyGradeStill(int stillId, const QVector<int>& ids)
         if (TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) targets << id;
     }
     if (targets.isEmpty()) return false;
-    modifyClips(targets, T("Farbkorrektur vom Standbild"), [&](Clip& c) { pasteColor(c, src); });
+    modifyGrade(targets, T("Farbkorrektur vom Standbild"), [&](Clip& c) { pasteColor(c, src); });
     return true;
 }
 
@@ -292,6 +292,6 @@ bool Editor::applyGradeFromPrevious(int clipId, int back)
     if (it == order.end() || it - order.begin() < back || back < 1) return false;
     if (editable({clipId}).isEmpty()) return false;
     const Clip src = *(it - back)->clip;
-    modifyClips({clipId}, T("Farbkorrektur vom vorigen Clip"), [&](Clip& c) { pasteColor(c, src); });
+    modifyGrade({clipId}, T("Farbkorrektur vom vorigen Clip"), [&](Clip& c) { pasteColor(c, src); });
     return true;
 }

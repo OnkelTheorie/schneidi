@@ -43,14 +43,25 @@ bool StreamPresets::isMixTitle(const QString& title)
     return t.size() == 3 || !t.at(3).isLetter();
 }
 
+bool StreamPresets::isChatOrMusicTitle(const QString& title)
+{
+    static const QRegularExpression re("discord|teamspeak|\\bts3?\\b|mumble|chat|spotify|music|musik|song|radio|browser",
+                                       QRegularExpression::CaseInsensitiveOption);
+    return re.match(title).hasMatch();
+}
+
 QVector<int> StreamPresets::gameStreams(const QStringList& titles)
 {
     if (titles.size() < 2) return {};
-    static const QRegularExpression other("discord|teamspeak|\\bts3?\\b|mumble|chat|spotify|music|musik|song|radio|browser",
-                                          QRegularExpression::CaseInsensitiveOption);
+    // People and cameras are no game sound either (a podcast's "Gast", an interview's "Kamera")
+    static const QRegularExpression people("gast|guest|host|kamera|camera|\\bcam\\b|interview|sprecher|speaker|"
+                                           "moderat|stimme|narrat|podcast|lav|funk",
+                                           QRegularExpression::CaseInsensitiveOption);
     QVector<int> out;
     for (int i = 0; i < titles.size(); ++i)
-        if (!isMixTitle(titles[i]) && !Transcript::isVoiceName(titles[i]) && !other.match(titles[i]).hasMatch()) out << i;
+        if (!isMixTitle(titles[i]) && !Transcript::isVoiceName(titles[i]) && !isChatOrMusicTitle(titles[i])
+            && !people.match(titles[i]).hasMatch())
+            out << i;
     return out.size() < titles.size() ? out : QVector<int>{};
 }
 

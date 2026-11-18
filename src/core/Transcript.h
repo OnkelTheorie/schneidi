@@ -52,7 +52,7 @@ qint64 spokenEnd(const Word& w);
 
 Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs = 10);
 
-// No audible sound at all (every level below -60 dB, or no levels): a muted track or a disabled stream, not a
+// No audible sound at all (every level below -60 dB; no levels = unknown, not silent): a muted track or a disabled stream, not a
 // quiet voice; whisper then makes up words ("Untertitelung des ZDF")
 bool isSilent(const Levels& levels);
 

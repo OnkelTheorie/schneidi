@@ -174,18 +174,6 @@ QVector<int> Editor::streamTracks(const Timeline& tl, const MediaInfo& m, int aT
     // single stream
     const int a0 = streamTrackStart(tl, m, aTrack, start, length);
     QVector<int> out = streamTracksInOrder(tl, m, aTrack, start, length);
-    if (n == 1 && out[0] >= 0 && out[0] < tl.audio.size() && tl.audio[out[0]].muted) {
-        // The file's only sound never goes onto a muted track (a template's muted "Mix" track made a podcast
-        // silent, duel 18.11.): the first unmuted, unlocked track free over the range (an unnamed one first: the
-        // others are named after other sound), else a new one at the bottom
-        const auto fine = [&](int j) { return !tl.audio[j].muted && !locked(j) && empty(j); };
-        int pick = -1;
-        for (int j = 0; j < tl.audio.size() && pick < 0; ++j)
-            if (fine(j) && tl.audio[j].name.trimmed().isEmpty()) pick = j;
-        for (int j = 0; j < tl.audio.size() && pick < 0; ++j)
-            if (fine(j)) pick = j;
-        out[0] = pick >= 0 ? pick : int(tl.audio.size());
-    }
     if (n < 2) return out;
     const bool overMaterial = m.hasVideo && vTrack >= 0 ? !emptyIn(tl.video, vTrack) : !empty(aTrack);
     if (overMaterial) return out;
@@ -582,6 +570,7 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     in = std::clamp(in, 0, m.length - 1);
     out = m.isImage ? std::max(out, in) : std::clamp(out, in, m.length - 1); // a still takes any length (as trimmed)
     MediaInfo m2 = m; // locked track or a part not asked for: this part is dropped
+    const bool chosen = track >= 0; // -1: no target given (CLI append/keep without track)
     track = std::max(0, track);
     parts = placeParts(m, parts);
     if (m2.hasVideo && (parts == PlaceParts::Sound || isTrackLocked(TrackRef{TrackKind::Video, track}))) m2.hasVideo = false;
@@ -592,7 +581,36 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     const int sIn = RetimeMap::materialForPicture(in, speed);
     const int len = std::max(1, RetimeMap::materialForPicture(out + 1, speed) - sIn); // no picture past `out`
     m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
-        placeSource(tl, m2, sIn, len, std::max(0, frame), track, track, speed);
+        const int at = std::max(0, frame);
+        const int moved = chosen || !m2.hasAudio ? -1 : unmutedSoundTrack(tl, m2, track, at, len, m2.hasVideo ? track : -1);
+        if (moved < 0) {
+            placeSource(tl, m2, sIn, len, at, track, track, speed);
+            return;
+        }
+        const QVector<int> given{moved};
+        placeSource(tl, m2, sIn, len, at, track, track, speed, &given);
     });
     return len;
+}
+
+int Editor::unmutedSoundTrack(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length, int vTrack) const
+{
+    // The file's only sound into empty space on a template's muted track - one named after a Mix stream, or one that
+    // holds nothing at all (a start template's muted "Mix" made a podcast silent, duel 18.11.). Never over material
+    // (an overwrite cuts what lies there; its sound must go where the old sound was).
+    if (m_streamPresets.placements(m).size() != 1 || aTrack < 0 || aTrack >= tl.audio.size()) return -1;
+    const Track& target = tl.audio[aTrack];
+    if (!target.muted || target.locked) return -1;
+    const auto overlaps = [&](const Clip& c) { return c.start < start + length && c.end() > start; };
+    const auto empty = [&](const Track& t) { return std::none_of(t.clips.begin(), t.clips.end(), overlaps); };
+    if (!StreamPresets::isMixTitle(target.name) && !target.clips.isEmpty()) return -1;
+    if (!empty(target) || (vTrack >= 0 && vTrack < tl.video.size() && !empty(tl.video[vTrack]))) return -1;
+    // The first unmuted, unlocked track free over the range (an unnamed one first: the others are named after
+    // other sound), else a new one at the bottom
+    const auto fine = [&](int j) { return !tl.audio[j].muted && !tl.audio[j].locked && empty(tl.audio[j]); };
+    for (int j = 0; j < tl.audio.size(); ++j)
+        if (fine(j) && tl.audio[j].name.trimmed().isEmpty()) return j;
+    for (int j = 0; j < tl.audio.size(); ++j)
+        if (fine(j)) return j;
+    return int(tl.audio.size());
 }
