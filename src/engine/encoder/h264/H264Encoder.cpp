@@ -71,6 +71,8 @@ std::atomic<long> gStatIntraTry[4] = {}, gStatIntraWin[4] = {}; // by ratio of t
 double gStatEstT8[8][3] = {}, gStatEstSplit[8][3] = {}, gStatEstTotal = 0;
 // B macroblocks: skip, direct, 16x16 L0 / L1 / Bi, 16x8 or 8x16, 8x8, intra, and of the coded inter ones the 8x8 transform.
 std::atomic<long> gStatB[9] = {};
+std::atomic<long> gStatCalls[10] = {}; // calls: plan 8x8, plan 4x4, motion search, SATD position, SAD position (sadPart), intra try, mbBits, P macroblocks, -, chroma
+std::atomic<long> gStatB2[6] = {}; // B macroblocks: early skip, direct-plan skip, searched, split searched, 8x8 searched, split or 8x8 coded for real
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 const int gExp = devEnv("H264_EXP") ? std::atoi(devEnv("H264_EXP")) : 0;
 // Deblocking filter offsets (slice_alpha_c0_offset_div2 / slice_beta_offset_div2, -6..6), for
@@ -2172,13 +2174,39 @@ void Encoder::takeLookaheadVectors(const LookaheadFrame& frame, FrameCoder& fc, 
 void Encoder::runBSearches(int threads)
 {
     const int maxB = cfg_.bframes;
-    for (const BSearchJob& j : bSearchJobs_) {
-        if (j.kind == 0)
-            la_->searchFwd(*j.f, *j.other, j.a, maxB, threads);
-        else if (j.kind == 1)
-            la_->searchBack(*j.other, *j.f, *j.third, j.c, maxB, threads);
-        else
-            la_->biCost(*j.other, *j.f, *j.third, j.a, j.c, maxB, cfg_.weightedBipred);
+    // The searches read only what the analysis left in the pictures and write each its own entry, so they all run
+    // side by side, one thread each (a search's rows in a wavefront gain nothing: measured, one thread was as fast
+    // as six); the costs from both lists follow, since each needs its picture's two searches. The entries are made
+    // here first, so no job resizes a container another one is in.
+    std::vector<size_t> searches, costs;
+    for (size_t i = 0; i < bSearchJobs_.size(); ++i) {
+        const BSearchJob& j = bSearchJobs_[i];
+        if (j.kind == 0 && j.f->fwd.size() != size_t(maxB) + 2)
+            j.f->fwd.assign(size_t(maxB) + 2, LookaheadSearch{});
+        if (j.kind == 1 && j.other->back.size() != size_t(maxB) + 1)
+            j.other->back.assign(size_t(maxB) + 1, LookaheadSearch{});
+        if (j.kind == 2 && j.other->bi.size() != size_t(bComboCount(maxB))) {
+            j.other->bi.assign(size_t(bComboCount(maxB)), {});
+            j.other->biSum.assign(size_t(bComboCount(maxB)), -1.0);
+        }
+        (j.kind == 2 ? costs : searches).push_back(i);
+    }
+    for (const std::vector<size_t>* stage : {&searches, &costs}) {
+        if (stage->empty())
+            continue;
+        std::atomic<size_t> nextJob{0};
+        auto worker = [&] {
+            for (size_t k; (k = nextJob.fetch_add(1, std::memory_order_relaxed)) < stage->size();) {
+                const BSearchJob& j = bSearchJobs_[(*stage)[k]];
+                if (j.kind == 0)
+                    la_->searchFwd(*j.f, *j.other, j.a, maxB, 1);
+                else if (j.kind == 1)
+                    la_->searchBack(*j.other, *j.f, *j.third, j.c, maxB, 1);
+                else
+                    la_->biCost(*j.other, *j.f, *j.third, j.a, j.c, maxB, cfg_.weightedBipred);
+            }
+        };
+        runOnThreads(std::clamp(threads, 1, int(stage->size())), worker);
     }
 }
 
@@ -3416,10 +3444,16 @@ std::vector<uint8_t> FrameCoder::assemble(PhaseClock& clock)
         else
             appendNal(out, refPic_ ? 2 : 0, 1, bw.bytes());
     }
-    if (gStats && bSlice_)
+    if (gStats && bSlice_) {
+        std::fprintf(stderr, "statsCalls: plan8 %ld plan4 %ld search %ld satd %ld sad(sub) %ld intra %ld mbBits %ld P mbs %ld chroma %ld\n", gStatCalls[0].load(),
+                     gStatCalls[1].load(), gStatCalls[2].load(), gStatCalls[3].load(), gStatCalls[4].load(), gStatCalls[5].load(), gStatCalls[6].load(),
+                     gStatCalls[7].load(), gStatCalls[9].load());
+        std::fprintf(stderr, "statsB2: early skip %ld plan skip %ld searched %ld split search %ld 8x8 search %ld split candidate %ld\n", gStatB2[0].load(),
+                     gStatB2[1].load(), gStatB2[2].load(), gStatB2[3].load(), gStatB2[4].load(), gStatB2[5].load());
         std::fprintf(stderr, "statsB: skip %ld direct %ld L0 %ld L1 %ld Bi %ld split %ld 8x8 %ld intra %ld t8 %ld\n", gStatB[0].load(),
                      gStatB[1].load(), gStatB[2].load(), gStatB[3].load(), gStatB[4].load(), gStatB[5].load(), gStatB[6].load(),
                      gStatB[7].load(), gStatB[8].load());
+    }
     if (gStats && pSlice_ && !bSlice_) {
         std::fprintf(stderr, "stats: inter %ld with luma %ld 8x8 %ld (%.1f %% of coded, %.1f %% of inter)\n", long(gStatInter.load()),
                      long(gStatInterCbp.load()), long(gStatT8.load()), 100.0 * gStatT8.load() / std::max<long>(1, gStatInterCbp.load()),
@@ -4892,6 +4926,8 @@ struct FrameCoder::ChromaMb {
 
 void FrameCoder::analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64])
 {
+    if (gStats)
+        ++gStatCalls[9];
     const bool left = mbx > 0, top = topMbAvailable(mby);
     const int cw = padW_ / 2;
     const size_t chromaOff = size_t(mby * 8) * cw + mbx * 8;
@@ -5301,6 +5337,8 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
 
 bool FrameCoder::encodeMbIntra(MbOut& out, int mbx, int mby)
 {
+    if (gStats)
+        ++gStatCalls[5];
     ChromaMb ch;
     analyseChroma(mbx, mby, ch);
     if (cfg_.mode == IntraMode::Intra16)
@@ -6280,6 +6318,8 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                                 double lambdaSad, const std::pair<int, int>* starts, int startCount, int subpel, int& outX,
                                 int& outY, double predCost, double* fullPelCost) const
 {
+    if (gStats)
+        ++gStatCalls[2];
     const int range = 64 * 4;
     bool useSatd = false;
     // Full-pel positions (all of the first stage) read the plane in place: the SAD of sadPart
@@ -6471,6 +6511,8 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
                                InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8)
 {
+    if (gStats)
+        ++gStatCalls[t8 ? 0 : 1];
     const size_t lumaOff = size_t(mby * 16) * padW_ + mbx * 16;
     const int qpDiv = qp / 6, qpMod = qp % 6;
     const int qbits = 15 + qpDiv;
@@ -6747,6 +6789,8 @@ bool FrameCoder::writeInterResidual(int mbx, int mby, int qp, bool t8, const Int
 
 bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
 {
+    if (gStats)
+        ++gStatCalls[7];
     const int lw = mbW_ * 4, chw = mbW_ * 2;
     const size_t mbIndex = size_t(mby) * mbW_ + mbx;
     const int qp = mbQp_[mbIndex];
@@ -7695,8 +7739,10 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         skipResidualIsZero(mbx, mby, dlp, dcp, qp)) {
         result.syn.kind = MbSyntax::Kind::Skip;
         mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-        if (gStats)
+        if (gStats) {
             ++gStatB[0];
+            ++gStatB2[0];
+        }
         return false;
     }
     // Only macroblocks that go on need the skip's cost and its state (most of a calm picture stops above).
@@ -7705,42 +7751,27 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     saveMb(mbx, mby, skipState);
     const double estDirect = double(satd16(dlp)) + lambdaSad + sharp * gBSharpEst * 0.5 * lostDirect;
 
-    // Skipped before any search where the direct prediction's residual, planned with the trellis, leaves nothing
-    // to code (luma and chroma): B_Direct_16x16 would be the skipped macroblock with more bits, and a searched
-    // prediction would have to win back its type and vector bits against a prediction the quantiser already
-    // accepts. The plan is the one the choice of transform below starts with, so it is not made twice.
-    // H264_BDSKIP: 0 off, 2 plan only (streams as with 0), other = on; H264_BDSKIPSSD: only below that many lambda.
-    static const int kBDirectSkip = devEnv("H264_BDSKIP") ? std::atoi(devEnv("H264_BDSKIP")) : 0;
-    static const double kBDirectSkipSsd = devEnv("H264_BDSKIPSSD") ? std::atof(devEnv("H264_BDSKIPSSD")) : 0.0;
-    static const int kBDirectSkipRef = devEnv("H264_BDSKIPREF") ? std::atoi(devEnv("H264_BDSKIPREF")) : 1;
+    // The direct prediction's 8x8 plan, made before the searches (the choice of transform below starts with it, so
+    // it is not made twice): where it leaves no luma level, the split layouts are not searched (kBZeroNoSplit).
+    // Measured 18.11.2026 (two-pass, 4 rates, BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation; instructions
+    // two-pass): +0.01 / 0.00, 0.00 / 0.00, -0.11 / -0.10, -0.03 / +0.01 % for -0.3 / -0.1 / -8.1 / -0.3 %.
+    // (Skipping such a macroblock outright, without the 16x16 search, cost +5 % on footage with grain: the search
+    // finds the better average of both lists there.)
+    static const bool kBZeroNoSplit = !devEnv("H264_BZERONOSPLIT") || std::atoi(devEnv("H264_BZERONOSPLIT")) != 0;
+    // The same for the 16x16 candidate's plan, made right after its search. Measured the same way: 0.00 / -0.02,
+    // +0.02 / -0.05, -0.06 / -0.04, -0.74 / +0.20 % for -1.1 / -1.8 / -6.7 / -3.4 %.
+    static const bool kBZero16NoSplit = !devEnv("H264_BZERO16NOSPLIT") || std::atoi(devEnv("H264_BZERO16NOSPLIT")) != 0;
+    // B_8x8 is searched only where a two-part layout already beats 16x16 by estimate: +0.01 / 0.00, +0.02 / +0.03,
+    // -0.03 / 0.00, -0.01 / +0.02 % for -0.8 / -2.3 / -2.5 / -0.9 %.
+    static const bool kB8x8AfterSplit = !devEnv("H264_B8X8AFTER") || std::atoi(devEnv("H264_B8X8AFTER")) != 0;
     InterResidual directR8;
     double directJ8 = 0;
     bool directPlanned = false;
-    ChromaMb directCh;
-    uint8_t directRecU[64], directRecV[64];
-    bool directChroma = false;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = (gBEstEnv < 0 ? cfg_.modeEstimate : gBEstEnv != 0) && liveCe && useT8() && cfg_.effort > 0;
-    if (kBDirectSkip && useEst && (kBDirectSkipRef || !refPic_) && sharpDirect <= 6 * lambda) {
+    if (kBZeroNoSplit && useEst && sharpDirect <= 6 * lambda) {
         planInterLuma(mbx, mby, dlp, qp, lambda, true, true, directR8, &directJ8);
         directPlanned = true;
-        if (kBDirectSkip != 2 && directR8.cbpLuma == 0 &&
-            (kBDirectSkipSsd <= 0 || double(mbSsd(mbx, mby)) <= kBDirectSkipSsd * lambda)) {
-            analyseChroma(mbx, mby, directCh, dcp);
-            for (int y = 0; y < 8; ++y) {
-                std::memcpy(directRecU + y * 8, &recU_[chromaOff + size_t(y) * cw], 8);
-                std::memcpy(directRecV + y * 8, &recV_[chromaOff + size_t(y) * cw], 8);
-            }
-            directChroma = true;
-            restoreMb(mbx, mby, skipState);
-            if (directCh.cbp == 0) {
-                result.syn.kind = MbSyntax::Kind::Skip;
-                mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-                if (gStats)
-                    ++gStatB[0];
-                return false;
-            }
-        }
     }
 
     // ---- Candidate 2: motion search in both lists. Start points: the direct vector, the
@@ -7997,19 +8028,38 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     Cand cands[kMaxBCands];
     cands[0] = tryShape(0);
     int candCount = 1;
-    if (cfg_.effort > 0 && gBParts && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
+    if (gStats)
+        ++gStatB2[2];
+    uint8_t clp[kMaxBCands][256], ccp[kMaxBCands][2][64];
+    InterResidual wholeR8;
+    double wholeJ8 = 0;
+    bool wholePlanned = false;
+    bool noSplit = directPlanned && directR8.cbpLuma == 0;
+    if (kBZero16NoSplit && useEst && !noSplit) {
+        predictBi(mbx, mby, 0, 0, 4, 4, cands[0].use[0], cands[0].mv[0][0], cands[0].mv[0][1], clp[0], ccp[0]);
+        planInterLuma(mbx, mby, clp[0], qp, lambda, true, true, wholeR8, &wholeJ8);
+        wholePlanned = true;
+        noSplit = wholeR8.cbpLuma == 0;
+    }
+    if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
+        if (gStats)
+            ++gStatB2[3];
         for (int shape : {1, 2}) {
             const Cand c = tryShape(shape);
             if (c.cost < cands[1].cost)
                 cands[1] = c;
         }
-        if (gB8x8) {
+        if (gB8x8 && !(kB8x8AfterSplit && cands[1].cost >= cands[0].cost)) {
+            if (gStats)
+                ++gStatB2[4];
             const Cand c = tryB8x8(cands[0]);
             if (c.cost < cands[1].cost)
                 cands[1] = c;
         }
         if (cands[1].cost < cands[0].cost)
             candCount = 2;
+        if (gStats && candCount == 2)
+            ++gStatB2[5];
     }
     double estSearch = candCount == 2 ? cands[1].cost : cands[0].cost;
     // Rate-distortion choice among the estimates (H264_BRD = factor, 0 = off): every candidate
@@ -8034,8 +8084,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
 
     // Codes the direct prediction (which = 0) or a searched candidate (1, 2) with its residual;
     // leaves its state in the macroblock and returns SSD + lambda * bits.
-    uint8_t clp[kMaxBCands][256], ccp[kMaxBCands][2][64];
-    for (int k = 0; k < candCount; ++k)
+    for (int k = wholePlanned ? 1 : 0; k < candCount; ++k)
         for (int p = 0; p < cands[k].count; ++p) {
             const Part& P = kPart[cands[k].shape][p];
             if (cands[k].use[p] == 0) { // a direct 8x8 block: the direct prediction's quarter
@@ -8054,12 +8103,6 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         ChromaMb ch;
     };
     ChromaCache chromaCache[kMaxBCands + 1];
-    if (directChroma) {
-        chromaCache[0].valid = true;
-        chromaCache[0].ch = directCh;
-        std::memcpy(chromaCache[0].recU, directRecU, 64);
-        std::memcpy(chromaCache[0].recV, directRecV, 64);
-    }
     bool sentDelta = false;
     double lastPsy = 0; // psy cost of the coding encodeB did last
     auto encodeB = [&](int which, MbOut& io, bool t8, double fineLambda, const InterResidual* planned = nullptr) {
@@ -8138,12 +8181,29 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         double jBest[kMaxBCands + 1];
         bool use8[kMaxBCands + 1];
         double jMin = 1e300;
+        // A candidate whose SATD estimate is above kBPlanPrune times the best one's is not planned at all (the plans
+        // are the dearer half of a candidate). Measured 18.11.2026 with the three rules above (two-pass, 4 rates,
+        // BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation against none of them; instructions two-pass /
+        // fixed QP 30): 1.1 +0.01 / -0.01, +0.04 / -0.04, -0.11 / +0.04, -0.16 / +0.28 % for -3.6 / -6.4 / -8.6 /
+        // -5.7 % and -6.9 / -8.8 / -2.9 / -5.2 %; 1.0 (only the best one) -0.08 / -0.09, -0.14 / 0.00, +0.32 /
+        // +1.37, 0.00 / +0.62 % (calm loses SSIM). H264_BPLANPRUNE overrides, 0 = off.
+        static const double kBPlanPrune = devEnv("H264_BPLANPRUNE") ? std::atof(devEnv("H264_BPLANPRUNE")) : 1.1;
+        double estMin = estDirect;
+        for (int k = 0; k < candCount; ++k)
+            estMin = std::min(estMin, cands[k].cost);
+        bool planned[kMaxBCands + 1];
         for (int which = 0; which <= candCount; ++which) {
             const uint8_t* lp = which ? clp[which - 1] : dlp;
             double j8 = 0, j4 = 1e300;
+            planned[which] = !(kBPlanPrune > 0 && (which ? cands[which - 1].cost : estDirect) > kBPlanPrune * estMin);
+            if (!planned[which])
+                continue;
             if (which == 0 && directPlanned) {
                 r8[0] = directR8;
                 j8 = directJ8;
+            } else if (which == 1 && wholePlanned) {
+                r8[1] = wholeR8;
+                j8 = wholeJ8;
             } else {
                 planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
             }
@@ -8169,7 +8229,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             }
         }
         for (int which = 0; which <= candCount; ++which) {
-            if (kBPrune > 0 && jBest[which] > kBPrune * jMin)
+            if (!planned[which] || (kBPrune > 0 && jBest[which] > kBPrune * jMin))
                 continue;
             const bool t8 = use8[which];
             MbOut candBits;
@@ -8857,6 +8917,8 @@ void FrameCoder::mcLumaPlain(const RefPic& R, int x0, int y0, int fx, int fy, in
 // SAD (full-pel fast path) or SATD of a partition against the reference.
 int FrameCoder::sadPart(const RefPic& R, int mbx, int mby, int x4, int y4, int w4, int h4, int mvx, int mvy, bool satd) const
 {
+    if (gStats)
+        ++gStatCalls[satd ? 3 : 4];
     const int px = mbx * 16 + x4 * 4, py = mby * 16 + y4 * 4;
     const int w = w4 * 4, h = h4 * 4;
     const size_t lo = size_t(py) * padW_ + px;
@@ -9297,6 +9359,8 @@ bool FrameCoder::skipResidualIsZero(int mbx, int mby, const uint8_t* lp, const u
 // slice's current context states.
 double FrameCoder::mbBits(const MbOut& o, int mbx, int mby, double cavlcBits)
 {
+    if (gStats)
+        ++gStatCalls[6];
     const size_t top = size_t(rowKey_[size_t(mby)]);
     const CabacEncoder* live = cabacByTop_[top];
     if (!live)
