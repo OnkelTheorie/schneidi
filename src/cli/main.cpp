@@ -158,10 +158,27 @@ int main(int argc, char* argv[])
         return 0;
     }
     QString name = args.takeFirst();
-    // `<command> --help` (or -h) anywhere = `help <command>` (it said "missing value for --help")
-    if (name != "setup" && (args.contains("--help") || args.contains("-h"))) {
-        args = name == "help" ? QStringList{} : QStringList{name == "template" ? QString("templates") : name};
-        name = "help";
+    // `<command> --help` (or -h) = `help <command>` (it said "missing value for --help"); only as a flag of its own,
+    // not as the value of an option (`--text -h`); `help edit -h` = `help edit`
+    if (name != "setup") {
+        const Cli::Command* cmd = Cli::find(name == "template" ? QString("templates") : name);
+        bool asked = false;
+        QStringList rest;
+        for (int i = 0; i < args.size(); ++i) {
+            const QString& prev = i > 0 ? args[i - 1] : QString();
+            bool valueOfPrev = prev.startsWith("--") && prev.size() > 2 && !prev.contains('=') && prev != "--help";
+            if (valueOfPrev && cmd) {
+                const QString key = prev.mid(2).replace('-', '_');
+                for (const Cli::Param& p : cmd->params)
+                    if (p.name == key && p.type == Cli::ParamType::Boolean) valueOfPrev = false;
+            }
+            if ((args[i] == "--help" || args[i] == "-h") && !valueOfPrev) asked = true;
+            else rest << args[i];
+        }
+        if (asked) {
+            args = name == "help" ? rest : QStringList{name == "template" ? QString("templates") : name};
+            name = "help";
+        }
     }
     // `template <action> [value] …` = `templates --<action> value …` (info, fill, save, import, export, remove, rename;
     // list = all)

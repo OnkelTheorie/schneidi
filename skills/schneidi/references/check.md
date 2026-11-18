@@ -10,7 +10,7 @@ warning (a fade to black or a pause can be intended). For clipping, true peak an
 ready ops (master limiter, master fader) - pass them to `edit` and `check` again; a true peak above -1 dBTP is not
 "ok for the codec", it clips after encoding. `target_lufs` for other targets (-23 broadcast, -16 podcast).
 It also finds:
-- `mix_silent` (error): every sound clip lies on a muted track (or outside a solo) or is disabled - the message names
+- `mix_silent`: every sound clip lies on a muted track (or outside a solo) or is disabled - the message names
   the tracks and the op to unmute them.
 - `loudness_range`: the loudness range is over 15 LU (a whisper next to a loud riser): on a phone the quiet parts get
   lost - compress the loud parts or raise the quiet ones.

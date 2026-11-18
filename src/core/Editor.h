@@ -399,8 +399,12 @@ public:
     // speed != 1: the same file frames retimed (speed 0.5 = twice as long). Returns the timeline frames it took (0 =
     // nothing placed)
     // parts: picture or sound only (placeParts; op 'sfx': a video file as an effect sound leaves the picture alone)
+    // track -1: no target given (V1/A1), and then a file's only sound that would go into empty space on a
+    // template's muted track (a "Mix" track, or an empty muted one) goes onto an unmuted one (unmutedSoundTrack)
     int placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed = 1.0,
                          PlaceParts parts = PlaceParts::Both);
+    // The audio track instead of muted aTrack for the only stream of m placed over [start, start + length); -1 = keep
+    int unmutedSoundTrack(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length, int vTrack) const;
     // Target tracks for F9/F10 ... (like DaVinci Destination Controls), index 0 = V1/A1
     // Import presets for files with several audio streams (core/StreamPresets.h): used by every edit that makes
     // clips from files; changing them leaves the timeline as it is (not in the undo)

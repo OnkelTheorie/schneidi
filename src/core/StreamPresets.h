@@ -48,6 +48,8 @@ struct StreamPresets {
     // Mikrofon): the streams that are no mix, no own voice (Transcript::isVoiceName), no voice chat and no music.
     // Empty = keep them all (fewer than two streams, no such stream, or every stream is one).
     static QVector<int> gameStreams(const QStringList& titles);
+    // Voice chat or music: "Discord", "TeamSpeak", "Spotify", "Musik" …
+    static bool isChatOrMusicTitle(const QString& title);
 
     // One entry per audio stream of the file (title = the file's), empty without sound. Only files with at least two
     // streams are changed; untitled streams stay as they are; an explicit rule wins over the Mix switch; if every

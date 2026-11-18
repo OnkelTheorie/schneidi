@@ -69,7 +69,8 @@ Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs
 
 bool isSilent(const Levels& levels)
 {
-    return std::none_of(levels.db.begin(), levels.db.end(), [](float db) { return db > -60.f; });
+    // No levels = not measured (unknown), not silence
+    return !levels.db.isEmpty() && std::none_of(levels.db.begin(), levels.db.end(), [](float db) { return db > -60.f; });
 }
 
 int dropHallucinations(QVector<Word>& words, const Levels& levels)

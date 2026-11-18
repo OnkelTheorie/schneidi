@@ -409,7 +409,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         issues += ExportCheck::timeline(tl, from, to, f, opt);
         // Sound only on muted tracks or in disabled clips: measured it is just "no sound", this says why
         if (const QString silent = silentMixNote(tl); !silent.isEmpty())
-            issues << ExportCheck::Issue{ExportCheck::Severity::Error, "mix_silent", silent};
+            issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "mix_silent", silent};
         issues += ExportCheck::layout(tl, from, to, f, opt);
         // The timeline as exported (render timeline: compound clips, limiter, mute/solo)
         const Timeline render = s.project.renderTimeline();

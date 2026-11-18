@@ -33,8 +33,8 @@ namespace BarDetect {
 
 namespace {
 
-constexpr int kVersion = 7; // bump when the measurement changes (6: fixed pictures instead of the nearest decoded;
-                            // 7: pictures with transparency have no bars)
+constexpr int kVersion = 8; // bump when the measurement changes (6: fixed pictures instead of the nearest decoded;
+                            // 7: pictures with transparency have no bars; 8: only a see-through edge counts)
 constexpr int kW = 320, kH = 240;
 constexpr int kSamples = 12;
 constexpr int kMaxDecode = 250; // pictures decoded at most per spot for an exact picture (files with few key frames)
@@ -261,14 +261,37 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
     std::vector<double> at;
     for (int i = 0; i < kSamples; ++i) at.push_back(0.05 + 0.9 * (i + 0.5) / kSamples);
     SwsContext* sws = nullptr;
-    bool alpha = false; // a logo PNG: its transparent edge shows what lies below, it is no bar (it read as black)
+    SwsContext* swsAlpha = nullptr;
+    // A logo PNG: its transparent edge shows what lies below, it is no bar (it read as black). Measured at the edge:
+    // an opaque picture with an alpha channel (RGBA screenshot, ProRes 4444) keeps its bar detection
+    bool alpha = false;
+    const auto clearEdge = [](const auto& alphaAt, int w, int h) {
+        int clear = 0, all = 0;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                if (x >= 2 && x < w - 2 && y >= 2 && y < h - 2) continue; // the outer two rows and columns
+                ++all;
+                clear += alphaAt(x, y) < 32;
+            }
+        return all > 0 && clear * 4 > all; // a quarter of the edge see-through
+    };
     const int got = Video::fixedPictures(path, at, kSamples / 2, kMaxDecode, [&](const AVFrame* f, int turns) {
         if (cancel && cancel->load()) return false;
-        if (const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(AVPixelFormat(f->format)); d && (d->flags & AV_PIX_FMT_FLAG_ALPHA))
-            alpha = true;
         // Shrunk as stored, then turned upright (sideways: stored kH x kW)
         const bool sideways = turns % 2 != 0;
         const int w = sideways ? kH : kW, h = sideways ? kW : kH;
+        if (const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(AVPixelFormat(f->format));
+            !alpha && d && (d->flags & AV_PIX_FMT_FLAG_ALPHA)) {
+            swsAlpha = sws_getCachedContext(swsAlpha, f->width, f->height, AVPixelFormat(f->format), w, h,
+                                            AV_PIX_FMT_YA8, SWS_AREA, nullptr, nullptr, nullptr);
+            if (swsAlpha) {
+                std::vector<uint8_t> ya(size_t(w) * h * 2);
+                uint8_t* planes[4] = {ya.data(), nullptr, nullptr, nullptr};
+                int strides[4] = {2 * w, 0, 0, 0};
+                sws_scale(swsAlpha, f->data, f->linesize, 0, f->height, planes, strides);
+                alpha = clearEdge([&](int x, int y) { return ya[(size_t(y) * w + x) * 2 + 1]; }, w, h);
+            }
+        }
         sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), w, h, AV_PIX_FMT_GRAY8, SWS_AREA,
                                    nullptr, nullptr, nullptr);
         if (!sws) return false;
@@ -293,12 +316,16 @@ std::optional<QRectF> content(const QString& path, QString* error, const std::at
         return true;
     });
     sws_freeContext(sws);
+    sws_freeContext(swsAlpha);
     if (got < 0) {
         QImageReader ir(path);
         ir.setAutoTransform(true);
         const QImage img = ir.read();
         if (img.isNull()) return fail(T("Datei lässt sich nicht öffnen: %1").arg(path));
-        alpha = alpha || img.hasAlphaChannel();
+        if (img.hasAlphaChannel()) {
+            const QImage a = img.convertToFormat(QImage::Format_ARGB32).scaled(kW, kH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            alpha = clearEdge([&](int x, int y) { return qAlpha(a.pixel(x, y)); }, kW, kH);
+        }
         const QImage g = img.convertToFormat(QImage::Format_Grayscale8).scaled(kW, kH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         std::vector<uint8_t> gray(size_t(kW) * kH);
         for (int y = 0; y < kH; ++y) std::copy_n(g.constScanLine(y), kW, gray.begin() + std::ptrdiff_t(y) * kW);

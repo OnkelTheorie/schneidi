@@ -15,6 +15,7 @@
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/Editor.h"
+#include "core/GradeWindows.h"
 #include "core/EffectRegistry.h"
 #include "core/ExportCheck.h"
 #include "core/Keyframes.h"
@@ -76,7 +77,7 @@ Transcript::Levels levels(int ms, float db)
 void testHallucinations()
 {
     CHECK(Transcript::isSilent(levels(3000, -90)));
-    CHECK(Transcript::isSilent({}));
+    CHECK(!Transcript::isSilent({})); // not measured: unknown, the words stay
     CHECK(!Transcript::isSilent(levels(3000, -30)));
 
     // The TV subtitle credits go wherever they are, with the year after them
@@ -154,7 +155,7 @@ void testSubtitleSpeedWording()
     if (!CHECK(!message.contains("(21 ")) ) std::printf("   %s\n", qPrintable(message));
 }
 
-// --- placing: the only sound of a file onto an unmuted track
+// --- placing: the only sound of a file onto an unmuted track - only without a target and into empty space
 void testSingleStreamNotMuted()
 {
     Project p;
@@ -162,24 +163,28 @@ void testSingleStreamNotMuted()
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/podcast.mp4", "podcast.mp4", 400, true, true, false});
+    p.addMedia({"/x/s.wav", "s.wav", 400, false, true, false});
     p.edit("tracks", [](Timeline& tl) {
         tl.audio.resize(3);
         tl.audio[0].name = "Mix";
         tl.audio[0].muted = true;
         tl.audio[1].name = "Spotify";
     });
-    ed.placeSourceRange("/x/podcast.mp4", 0, 99, 0, 0, 1.0, Editor::PlaceParts::Both);
+    ed.placeSourceRange("/x/podcast.mp4", 0, 99, 0, -1, 1.0, Editor::PlaceParts::Both);
     const Timeline& tl = p.timeline();
     CHECK(tl.audio[0].clips.isEmpty());
     // An unnamed unmuted track first (the named ones belong to other sound)
     CHECK_EQ(tl.audio[2].clips.size(), 1);
     CHECK(Cli::detail::silentMixNote(tl).isEmpty());
+    // A target given (A1, a drop in the app): there, muted or not
+    ed.placeSourceRange("/x/s.wav", 0, 49, 150, 0, 1.0, Editor::PlaceParts::Both);
+    CHECK_EQ(p.timeline().audio[0].clips.size(), 1);
     // All tracks muted: a new one below
     p.edit("mute", [](Timeline& t) {
         for (Track& tr : t.audio) tr.muted = true;
     });
     CHECK(Cli::detail::silentMixNote(p.timeline()).contains("A3"));
-    ed.placeSourceRange("/x/podcast.mp4", 0, 99, 200, 0, 1.0, Editor::PlaceParts::Both);
+    ed.placeSourceRange("/x/podcast.mp4", 0, 99, 300, -1, 1.0, Editor::PlaceParts::Both);
     CHECK_EQ(p.timeline().audio.size(), 4);
     if (p.timeline().audio.size() == 4) CHECK_EQ(p.timeline().audio[3].clips.size(), 1);
     // Disabled clips on an audible track: silent too, the note says so
@@ -192,38 +197,55 @@ void testSingleStreamNotMuted()
     // A solo track that holds nothing: the rest is not heard
     Timeline solo = p.timeline();
     for (Track& t : solo.audio) t.muted = false;
-    solo.audio[0].solo = true;
+    solo.audio[1].solo = true; // A2 "Spotify": empty
     CHECK(Cli::detail::silentMixNote(solo).contains("solo"));
 }
 
+// An overwrite over material never moves the sound away: the old clip on the muted A1 is cut like the picture
+void testOverwriteOnMutedTrack()
+{
+    Project p;
+    TimelineGuard guard{p};
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/av.mp4", "av.mp4", 400, true, true, false});
+    ed.placeSourceRange("/x/av.mp4", 0, 299, 0, -1, 1.0, Editor::PlaceParts::Both);
+    p.edit("mute", [](Timeline& t) { t.audio[0].muted = true; });
+    ed.placeSourceRange("/x/av.mp4", 0, 49, 100, -1, 1.0, Editor::PlaceParts::Both);
+    const Timeline& tl = p.timeline();
+    CHECK_EQ(tl.video[0].clips.size(), 3);
+    CHECK_EQ(tl.audio[0].clips.size(), 3); // cut there too, the new sound in the middle
+    if (tl.audio.size() > 1) CHECK(tl.audio[1].clips.isEmpty());
+    // A muted track with sound of its own (not a template's empty one, not named Mix): no redirect either
+    Project q;
+    Selection sel2;
+    Editor ed2(&q, &sel2);
+    q.addMedia({"/x/av.mp4", "av.mp4", 400, true, true, false});
+    ed2.placeSourceRange("/x/av.mp4", 0, 99, 0, -1, 1.0, Editor::PlaceParts::Both);
+    q.edit("mute", [](Timeline& t) { t.audio[0].muted = true; });
+    ed2.placeSourceRange("/x/av.mp4", 0, 99, 200, -1, 1.0, Editor::PlaceParts::Both);
+    CHECK_EQ(q.timeline().audio[0].clips.size(), 2);
+}
+
 // --- ripple head trim: what lies over the clip on other tracks moves with its content
+Clip plain(int id, const QString& media, int start, int length, int in = 0)
+{
+    Clip c;
+    c.id = id;
+    c.mediaPath = media;
+    c.start = start;
+    c.in = in;
+    c.out = in + length - 1;
+    return c;
+}
+
 void testRippleHeadTrim()
 {
     Timeline tl;
     tl.video.resize(1);
     tl.audio.resize(3);
-    Clip v;
-    v.id = 1;
-    v.mediaPath = "/x/a.mp4";
-    v.in = 0;
-    v.out = 199; // 0..200
-    tl.video[0].clips << v;
-    Clip next = v;
-    next.id = 2;
-    next.start = 200;
-    next.in = 300;
-    next.out = 349;
-    tl.video[0].clips << next;
-    Clip sfx;
-    sfx.id = 3;
-    sfx.mediaPath = "/x/whoosh.wav";
-    sfx.start = 120; // on a kill inside clip 1
-    sfx.out = 9;
-    tl.audio[2].clips << sfx;
-    Clip later = sfx;
-    later.id = 4;
-    later.start = 230;
-    tl.audio[2].clips << later;
+    tl.video[0].clips << plain(1, "/x/a.mp4", 0, 200) << plain(2, "/x/a.mp4", 200, 50, 300);
+    tl.audio[2].clips << plain(3, "/x/whoosh.wav", 120, 10) << plain(4, "/x/whoosh.wav", 230, 10);
     TimelineOps::TrimEdit e;
     e.kind = TimelineOps::TrimKind::Ripple;
     e.edge = TimelineOps::Edge::Start;
@@ -245,16 +267,53 @@ void testRippleHeadTrim()
     TimelineOps::applyTrimEdit(t, e, -60, {});
     CHECK_EQ(TimelineOps::findClip(t, 3)->start, 120);
     CHECK_EQ(TimelineOps::findClip(t, 4)->start, 170);
+
+    // Review repro: V1 0-250 alone; A1 [10,40) [45,100) [250,300). From the cut [45,100) would run into [10,40): that
+    // track moves from the old end as before ([250,300) to 220), it does not freeze
+    Timeline r;
+    r.video.resize(1);
+    r.audio.resize(1);
+    r.video[0].clips << plain(1, "/x/v.mp4", 0, 250);
+    r.audio[0].clips << plain(5, "/x/m.wav", 10, 30) << plain(6, "/x/m.wav", 45, 55, 100) << plain(7, "/x/m.wav", 250, 50, 200);
+    e.edge = TimelineOps::Edge::Start;
+    CHECK_EQ(TimelineOps::clampTrimEdit(r, e, 30, {}), 30);
+    t = r;
+    TimelineOps::applyTrimEdit(t, e, 30, {});
+    CHECK_EQ(TimelineOps::findClip(t, 5)->start, 10);
+    CHECK_EQ(TimelineOps::findClip(t, 6)->start, 45);
+    CHECK_EQ(TimelineOps::findClip(t, 7)->start, 220);
+    // The other way round: A1 [240,260) [260,400) blocked the trim from the old end; from the cut it moves
+    Timeline b;
+    b.video.resize(1);
+    b.audio.resize(1);
+    b.video[0].clips << plain(1, "/x/v.mp4", 0, 250);
+    b.audio[0].clips << plain(8, "/x/m.wav", 240, 20) << plain(9, "/x/m.wav", 260, 140, 100);
+    CHECK_EQ(TimelineOps::clampTrimEdit(b, e, 30, {}), 30);
+    t = b;
+    TimelineOps::applyTrimEdit(t, e, 30, {});
+    CHECK_EQ(TimelineOps::findClip(t, 8)->start, 210);
+    CHECK_EQ(TimelineOps::findClip(t, 9)->start, 230);
+    // Neither way fits: only as far as one of them does (here 0: [5,40) under the cut, [40,60) right after it)
+    Timeline n;
+    n.video.resize(1);
+    n.audio.resize(1);
+    n.video[0].clips << plain(1, "/x/v.mp4", 0, 100);
+    n.audio[0].clips << plain(10, "/x/m.wav", 5, 35) << plain(11, "/x/m.wav", 40, 70, 100);
+    const int d = TimelineOps::clampTrimEdit(n, e, 30, {});
+    t = n;
+    TimelineOps::applyTrimEdit(t, e, d, {});
+    CHECK(TimelineOps::rippleFits(t.audio[0], {}));
+    CHECK(TimelineOps::findClip(t, 1)->in == d);
 }
 
-// --- the grade of a clip reaches its kill feed copy (on a locked track)
+// --- the grade of a clip reaches its kill feed copy (on a locked track); the copy keeps its own windows
 void testCopyGrade()
 {
     Project p;
     Selection sel;
     Editor ed(&p, &sel);
     p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
-    int lead = 0, copy = 0;
+    int lead = 0, copy = 0, other = 0;
     p.edit("setup", [&](Timeline& tl) {
         tl.video.resize(2);
         Clip v;
@@ -263,27 +322,55 @@ void testCopyGrade()
         v.out = 99;
         v.linkId = p.newLinkId();
         tl.video[0].clips << v;
+        Clip o = v;
+        o.id = other = p.newClipId();
+        o.start = 100;
+        o.linkId = p.newLinkId();
+        tl.video[0].clips << o;
         Clip k = v;
         k.id = copy = p.newClipId();
         k.keepRegion = "killfeed";
         tl.video[1].clips << k;
         tl.video[1].locked = true;
     });
+    const auto clip = [&](int id) { return TimelineOps::findClip(p.timeline(), id); };
+    const auto grade = [&](int id) { return EffectRegistry::instance(*clip(id), "grade"); };
+    const auto lut = [&](int id) { return grade(id) ? grade(id)->params.value("lut").toString() : QString(); };
     ed.setGradeLut({lead}, "/x/kino.cube");
-    const auto lut = [&](int id) {
-        const EffectInstance* e = EffectRegistry::instance(*TimelineOps::findClip(p.timeline(), id), "grade");
-        return e ? e->params.value("lut").toString() : QString();
-    };
     CHECK_EQ(lut(lead), QString("/x/kino.cube"));
     CHECK_EQ(lut(copy), QString("/x/kino.cube"));
     ed.setGradeValues({lead}, {{AnimParam::GradeSaturation, 62}}, 0, "Color");
-    const Clip* k = TimelineOps::findClip(p.timeline(), copy);
-    CHECK(k && Keys::staticValue(*k, AnimParam::GradeSaturation) == 62);
+    CHECK(Keys::staticValue(*clip(copy), AnimParam::GradeSaturation) == 62);
+    // Keyframes follow (a keyframed lead next to a static copy drifted apart)
+    ed.setGradeKeyframe({lead}, 0, true);
+    ed.setGradeValues({lead}, {{AnimParam::GradeSaturation, 20}}, 80, "Color");
+    CHECK(clip(copy)->keys.value(AnimParam::GradeSaturation) == clip(lead)->keys.value(AnimParam::GradeSaturation));
+    CHECK(!clip(copy)->keys.value(AnimParam::GradeSaturation).isEmpty());
+    // The copy's own window (a name blur made on it) stays through the lead's changes, reset and switching off
+    p.edit("window on the copy", [&](Timeline& tl) {
+        Clip* k = TimelineOps::findClip(tl, copy);
+        GradeWindows::add(*k, 1, GradeWindows::Shape::Rectangle);
+    });
+    CHECK(GradeWindows::exists(*clip(copy), 1));
     ed.setGradeEnabled({lead}, false);
-    CHECK(!EffectRegistry::instance(*TimelineOps::findClip(p.timeline(), copy), "grade")->enabled);
+    CHECK(GradeWindows::exists(*clip(copy), 1));
+    CHECK(grade(copy) && grade(copy)->enabled); // its window stays on, the correction is neutral
+    CHECK(clip(copy)->keys.value(AnimParam::GradeSaturation).isEmpty() && lut(copy).isEmpty());
+    ed.setGradeEnabled({lead}, true);
+    CHECK_EQ(lut(copy), QString("/x/kino.cube"));
+    ed.resetGrade({lead}, {}, 0, "Reset grade");
+    CHECK(!grade(lead));
+    CHECK(GradeWindows::exists(*clip(copy), 1) && lut(copy).isEmpty());
+    // Paste grade reaches the copy too (still and previous clip go the same way, modifyGrade)
+    ed.setGradeLut({other}, "/x/warm.cube");
+    CHECK(ed.copyGrade(other));
+    ed.pasteGrade({lead});
+    CHECK_EQ(lut(lead), QString("/x/warm.cube"));
+    CHECK_EQ(lut(copy), QString("/x/warm.cube"));
+    CHECK(GradeWindows::exists(*clip(copy), 1));
     // The copy alone on its locked track stays as it is (like every edit leaves it)
     ed.setGradeLut({copy}, "/x/other.cube");
-    CHECK_EQ(lut(copy), QString("/x/kino.cube"));
+    CHECK_EQ(lut(copy), QString("/x/warm.cube"));
 }
 
 // --- the game sound of a multi-stream recording
@@ -294,6 +381,11 @@ void testGameStreams()
     CHECK(StreamPresets::gameStreams({"Mix", "Discord", "Mikrofon"}).isEmpty()); // no game stream: all stay
     CHECK(StreamPresets::gameStreams({"Stereo"}).isEmpty());
     CHECK(StreamPresets::gameStreams({"Game", "Desktop"}).isEmpty()); // every one is: nothing to leave out
+    // People and cameras are no game sound (a podcast lost its host)
+    CHECK(StreamPresets::gameStreams({"Mix", "Mikrofon", "Gast"}).isEmpty());
+    CHECK(StreamPresets::gameStreams({"Kamera", "Interview", "Guest"}).isEmpty());
+    CHECK(StreamPresets::isChatOrMusicTitle("Discord") && StreamPresets::isChatOrMusicTitle("Spotify"));
+    CHECK(!StreamPresets::isChatOrMusicTitle("System Output"));
 }
 
 // --- a transparent logo is no picture with black bars
@@ -313,6 +405,11 @@ void testTransparentLogo(const QString& dir)
     flat.save(dir + "/flat.png");
     const auto f = BarDetect::content(dir + "/flat.png");
     if (CHECK(f.has_value())) CHECK(BarDetect::hasBars(*f));
+    // An opaque picture with an alpha channel (RGBA screenshot) keeps its bars
+    QImage rgba = flat.convertToFormat(QImage::Format_ARGB32);
+    rgba.save(dir + "/rgba.png");
+    const auto o = BarDetect::content(dir + "/rgba.png");
+    if (CHECK(o.has_value())) CHECK(BarDetect::hasBars(*o));
 }
 
 // --- the commands on real (made-up) media
@@ -331,6 +428,7 @@ void testCommands(const QString& dir)
                                  {"ops", QJsonArray{QJsonObject{{"op", "track"}, {"track", "A1"}, {"name", "Mix"}, {"mute", true}},
                                                     QJsonObject{{"op", "append"}, {"media", clip}}}}});
     CHECK(!r.contains("failed"));
+    CHECK(joined(r["notes"].toArray()).contains("single audio stream"));
     r = run("info", {{"project", project}});
     CHECK(!joined(r["notes"].toArray()).contains("silent"));
     // Muted afterwards: info and check tell
@@ -339,7 +437,7 @@ void testCommands(const QString& dir)
     CHECK(joined(r["notes"].toArray()).contains("the whole mix is silent"));
     r = run("check", {{"source", project}});
     CHECK(checksOf(r).contains("mix_silent"));
-    CHECK(r["errors"].toInt() >= 1);
+    CHECK(r["warnings"].toInt() >= 1); // a warning: a silent edit can be meant (music added later)
 
     // Track names: mixer, track and remove_track; "Stimme 1" is no subtitle track
     r = run("edit", {{"project", project},
@@ -358,6 +456,13 @@ void testCommands(const QString& dir)
     CHECK_EQ(run("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "remove_track"}, {"track", "Nope"}}}}})
                  ["failed"].toString(),
              QString("NOT_FOUND"));
+    // "A 1" as before; mixer finds audio tracks by name only
+    r = run("edit", {{"project", project},
+                     {"ops", QJsonArray{QJsonObject{{"op", "mixer"}, {"track", "A 1"}, {"volume_db", -2}},
+                                        QJsonObject{{"op", "track"}, {"track", "V1"}, {"name", "Bild"}}}}});
+    CHECK(!r.contains("failed"));
+    CHECK(!run("edit", {{"project", project}, {"ops", QJsonArray{QJsonObject{{"op", "mixer"}, {"track", "Bild"}, {"volume_db", -2}}}}})
+               ["failed"].toString().isEmpty());
 
     // keep with audio_streams: only the chosen streams of a recording with several
     const QString game = Check::makeMedia(
@@ -369,6 +474,8 @@ void testCommands(const QString& dir)
     if (CHECK(!game.isEmpty())) {
         const QString gp = dir + "/g.schneidi";
         run("new", {{"project", gp}, {"media", QJsonArray{game}}});
+        // Clips of the file placed before stay (only the op's own go); then only System Output of the keep
+        run("edit", {{"project", gp}, {"ops", QJsonArray{QJsonObject{{"op", "append"}, {"media", game}}}}});
         r = run("edit", {{"project", gp},
                          {"ops", QJsonArray{QJsonObject{{"op", "keep"}, {"media", game},
                                                         {"ranges", QJsonArray{QJsonArray{"0s", "1s"}, QJsonArray{"2s", "3s"}}},
@@ -385,8 +492,21 @@ void testCommands(const QString& dir)
                     if (c.audioStream == 2 && c.enabled) ++sound;
                     else ++other;
                 }
-            CHECK_EQ(sound, 2);
-            CHECK_EQ(other, 0);
+            CHECK_EQ(sound, 3);
+            CHECK_EQ(other, 2); // the append's Mix and Discord
+            CHECK_EQ(p.timeline().audio.size(), 3);
+        }
+        // A new project: the tracks the op made for streams left out go again
+        const QString gp2 = dir + "/g2.schneidi";
+        run("new", {{"project", gp2}, {"media", QJsonArray{game}}});
+        r = run("edit", {{"project", gp2},
+                         {"ops", QJsonArray{QJsonObject{{"op", "keep"}, {"media", game},
+                                                        {"ranges", QJsonArray{QJsonArray{"0s", "1s"}}},
+                                                        {"audio_streams", QJsonArray{0}}}}}});
+        if (CHECK(!r.contains("failed")) && CHECK(ProjectFile::load(gp2, &data, &error))) {
+            p.load(data);
+            CHECK_EQ(p.timeline().audio.size(), 2);
+            CHECK_EQ(p.timeline().audio[0].clips.size(), 1);
         }
     }
 
@@ -429,6 +549,17 @@ void testHelpFlag()
         if (!CHECK(o["ok"].toBool())) std::printf("   %s: %s\n", qPrintable(args.join(' ')), qPrintable(QJsonDocument(o).toJson()));
         if (args.first() != "help") CHECK(QJsonDocument(o).toJson().contains("\"params\"") || o.contains("command"));
     }
+    // `help edit -h` = help of edit; "-h" as the value of an option is a value, no help
+    QProcess p;
+    p.start(cli, {"help", "edit", "-h"});
+    if (CHECK(p.waitForFinished(60000))) CHECK(p.readAllStandardOutput().contains("\"ops\""));
+    QTemporaryDir tmp;
+    p.start(cli, {"new", tmp.filePath("h.schneidi"), "--template", "-h"});
+    if (CHECK(p.waitForFinished(60000))) {
+        const QJsonObject o = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
+        CHECK(!o["ok"].toBool());
+        CHECK(o["error"].toObject()["message"].toString().contains("-h"));
+    }
 }
 
 } // namespace
@@ -442,6 +573,7 @@ int main(int argc, char** argv)
     testReadableDefault();
     testSubtitleSpeedWording();
     testSingleStreamNotMuted();
+    testOverwriteOnMutedTrack();
     testRippleHeadTrim();
     testCopyGrade();
     testGameStreams();

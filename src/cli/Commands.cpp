@@ -435,15 +435,17 @@ bool isProjectFile(const QString& path)
 
 QString trackName(TrackRef r) { return QString("%1%2").arg(r.kind == TrackKind::Video ? "V" : "A").arg(r.index + 1); }
 
-int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind)
+int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind, std::optional<TrackKind> only)
 {
-    static const QRegularExpression code("^\\s*[VvAa]?\\d+\\s*$");
+    static const QRegularExpression code("^\\s*[VvAa]?\\s*\\d+\\s*$"); // "A2", "A 2", "2"
     if (!v.isString() || code.match(v.toString()).hasMatch()) return parseTrack(v, kind);
     const QString name = v.toString().trimmed();
     QVector<TrackRef> found;
     for (const TrackKind k : {TrackKind::Video, TrackKind::Audio})
         for (int i = 0; i < tl.tracks(k).size(); ++i)
-            if (!name.isEmpty() && tl.tracks(k)[i].name.trimmed().compare(name, Qt::CaseInsensitive) == 0) found << TrackRef{k, i};
+            if ((!only || *only == k) && !name.isEmpty()
+                && tl.tracks(k)[i].name.trimmed().compare(name, Qt::CaseInsensitive) == 0)
+                found << TrackRef{k, i};
     if (found.size() == 1) {
         if (kind) *kind = found.first().kind;
         return found.first().index;
@@ -455,7 +457,7 @@ int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind)
     }
     QStringList names;
     for (const TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (int i = 0; i < tl.tracks(k).size(); ++i)
+        for (int i = 0; i < tl.tracks(k).size() && (!only || *only == k); ++i)
             names << trackName({k, i}) + (tl.tracks(k)[i].name.trimmed().isEmpty() ? QString() : " '" + tl.tracks(k)[i].name.trimmed() + "'");
     fail("NOT_FOUND", QString("no track '%1' (tracks: %2)").arg(name, names.join(", ")));
 }
@@ -1275,10 +1277,12 @@ const QVector<Command>& commands()
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
           {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts, hits on kills"},
-          {"audio_stream", T::String, "sound of recordings with several audio streams: game (default: only the game "
-                                      "sound - no Mix, voice chat like Discord, microphone or music like Spotify - when "
-                                      "such a stream is there), all (every stream as the game template places it: the "
-                                      "Mix muted), or stream numbers/names like \"3\" or \"System Output,Mikrofon\""},
+          {"audio_stream", T::String, "sound of recordings with several audio streams: game (only the game sound - "
+                                      "no Mix, voice chat like Discord, microphone, music like Spotify, guests or "
+                                      "cameras - when such a stream is there; the default for game material: a known "
+                                      "game, or a Mix next to voice chat/music), all (every stream as the game template "
+                                      "places it: the Mix muted; the default otherwise), or stream numbers/names like "
+                                      "\"3\" or \"System Output,Mikrofon\""},
           {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
           {"game", T::String, "kill feed of this game for the moments, and kept readable at the top of the short "
                               "(reframe keep): cs2 or valorant (default: from the folder or file name, e.g. "
