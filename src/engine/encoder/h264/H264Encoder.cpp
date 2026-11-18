@@ -6802,11 +6802,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setBlocks(0, 0, 4, 4, skipX, skipY, 0);
-    const double ssdSkip = double(mbSsd(mbx, mby));
-    const double costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    // The skip's cost and state: set after the early skip (macroblocks that stop there need neither).
+    double ssdSkip = 0, costSkip = 0;
     tDecision[0] = 0;
     MbState skipState;
-    saveMb(mbx, mby, skipState);
 
     // Early skip: if the skip residual quantises to nothing anyway, skip is all but certain
     // to win; spare the motion search.
@@ -6846,13 +6845,16 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     static const int kEarlySkipLight = devEnv("H264_EARLYSKIPLIGHT") ? std::atoi(devEnv("H264_EARLYSKIPLIGHT")) : 3;
     int offSkip = 0; // the skip's residual quantises to nothing, but the skip is far from the source
     if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
-        if (kEarlySkipSsd <= 0 || ssdSkip <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
+        if (kEarlySkipSsd <= 0 || double(mbSsd(mbx, mby)) <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
             result.syn.kind = MbSyntax::Kind::Skip;
             mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
             return false;
         }
         offSkip = kEarlySkipLight;
     }
+    ssdSkip = double(mbSsd(mbx, mby));
+    costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
+    saveMb(mbx, mby, skipState);
 
     // ---- Candidate 2: inter with 16x16, 16x8, 8x16 or 8x8 partitions.
     // Motion search for one partition: diamond full-pel, then half/quarter-pel with SATD.
@@ -7685,9 +7687,6 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         lostDirect = lostOf(e / 2, detail(dlp, 16, 16), std::min(satd[0], satd[1]), gBSharpKeep > 0 ? satd16(dlp) : 0);
     }
     const double sharpDirect = sharp * lambdaSad * lostDirect;
-    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby) + sharpDirect;
-    MbState skipState;
-    saveMb(mbx, mby, skipState);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
     // type and vector of a copy from one picture would cost (about six bits).
     static const double kEarlySkipFloorB = devEnv("H264_EARLYSKIPFLOOR") ? std::atof(devEnv("H264_EARLYSKIPFLOOR")) : 0.0;
@@ -7700,7 +7699,49 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             ++gStatB[0];
         return false;
     }
+    // Only macroblocks that go on need the skip's cost and its state (most of a calm picture stops above).
+    const double costSkip = double(mbSsd(mbx, mby)) + psyCost(mbx, mby) + lambda * skipBits(mbx, mby) + sharpDirect;
+    MbState skipState;
+    saveMb(mbx, mby, skipState);
     const double estDirect = double(satd16(dlp)) + lambdaSad + sharp * gBSharpEst * 0.5 * lostDirect;
+
+    // Skipped before any search where the direct prediction's residual, planned with the trellis, leaves nothing
+    // to code (luma and chroma): B_Direct_16x16 would be the skipped macroblock with more bits, and a searched
+    // prediction would have to win back its type and vector bits against a prediction the quantiser already
+    // accepts. The plan is the one the choice of transform below starts with, so it is not made twice.
+    // H264_BDSKIP: 0 off, 2 plan only (streams as with 0), other = on; H264_BDSKIPSSD: only below that many lambda.
+    static const int kBDirectSkip = devEnv("H264_BDSKIP") ? std::atoi(devEnv("H264_BDSKIP")) : 0;
+    static const double kBDirectSkipSsd = devEnv("H264_BDSKIPSSD") ? std::atof(devEnv("H264_BDSKIPSSD")) : 0.0;
+    static const int kBDirectSkipRef = devEnv("H264_BDSKIPREF") ? std::atoi(devEnv("H264_BDSKIPREF")) : 1;
+    InterResidual directR8;
+    double directJ8 = 0;
+    bool directPlanned = false;
+    ChromaMb directCh;
+    uint8_t directRecU[64], directRecV[64];
+    bool directChroma = false;
+    const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
+    const bool useEst = (gBEstEnv < 0 ? cfg_.modeEstimate : gBEstEnv != 0) && liveCe && useT8() && cfg_.effort > 0;
+    if (kBDirectSkip && useEst && (kBDirectSkipRef || !refPic_) && sharpDirect <= 6 * lambda) {
+        planInterLuma(mbx, mby, dlp, qp, lambda, true, true, directR8, &directJ8);
+        directPlanned = true;
+        if (kBDirectSkip != 2 && directR8.cbpLuma == 0 &&
+            (kBDirectSkipSsd <= 0 || double(mbSsd(mbx, mby)) <= kBDirectSkipSsd * lambda)) {
+            analyseChroma(mbx, mby, directCh, dcp);
+            for (int y = 0; y < 8; ++y) {
+                std::memcpy(directRecU + y * 8, &recU_[chromaOff + size_t(y) * cw], 8);
+                std::memcpy(directRecV + y * 8, &recV_[chromaOff + size_t(y) * cw], 8);
+            }
+            directChroma = true;
+            restoreMb(mbx, mby, skipState);
+            if (directCh.cbp == 0) {
+                result.syn.kind = MbSyntax::Kind::Skip;
+                mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+                if (gStats)
+                    ++gStatB[0];
+                return false;
+            }
+        }
+    }
 
     // ---- Candidate 2: motion search in both lists. Start points: the direct vector, the
     // neighbours' vectors and the co-located block's vector scaled to this picture's distance.
@@ -8013,6 +8054,12 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         ChromaMb ch;
     };
     ChromaCache chromaCache[kMaxBCands + 1];
+    if (directChroma) {
+        chromaCache[0].valid = true;
+        chromaCache[0].ch = directCh;
+        std::memcpy(chromaCache[0].recU, directRecU, 64);
+        std::memcpy(chromaCache[0].recV, directRecV, 64);
+    }
     bool sentDelta = false;
     double lastPsy = 0; // psy cost of the coding encodeB did last
     auto encodeB = [&](int which, MbOut& io, bool t8, double fineLambda, const InterResidual* planned = nullptr) {
@@ -8076,12 +8123,10 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     double bestPsy = 0;
     bool chosenDelta = false;
     MbState interState;
-    const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     // Transform by estimate (H264_BEST): per candidate both transforms are quantised with the
     // trellis, whose own cost (squared error + lambda * coefficient and side bits) picks the one
     // that is coded for real - as in P pictures (Encoder modeEstimate), instead of 4x4 for all and
     // 8x8 only for the winner.
-    const bool useEst = (gBEstEnv < 0 ? cfg_.modeEstimate : gBEstEnv != 0) && liveCe && useT8() && cfg_.effort > 0;
     if (useEst) {
         static const bool kZeroQuadB = !devEnv("H264_ZEROQ") || std::atoi(devEnv("H264_ZEROQ")) != 0;
         static const bool kZero8B = !devEnv("H264_ZERO8") || std::atoi(devEnv("H264_ZERO8")) != 0;
@@ -8096,7 +8141,12 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         for (int which = 0; which <= candCount; ++which) {
             const uint8_t* lp = which ? clp[which - 1] : dlp;
             double j8 = 0, j4 = 1e300;
-            planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+            if (which == 0 && directPlanned) {
+                r8[0] = directR8;
+                j8 = directJ8;
+            } else {
+                planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+            }
             j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r8[which].cbpLuma, true);
             if (!(kZero8B && r8[which].cbpLuma == 0)) {
                 planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr);
