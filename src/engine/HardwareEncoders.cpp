@@ -5,7 +5,6 @@
 #include "engine/Bundle.h"
 #include "engine/ExportWriter.h"
 #include "engine/Extensions.h"
-#include "engine/Licenses.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -278,9 +277,6 @@ QString externalProgram(const QString& codec)
 
 QString freeReplacement(const QString& codec)
 {
-    // The GPL-free build writes H.264 with schneidi's own encoder (about x264's quality at the same size, OpenH264
-    // needs about twice the size); every other build with x264 missing keeps OpenH264
-    if (codec == QLatin1String("libx264") && Licenses::builtWithoutGpl()) return ExportWriter::kOwnH264;
     for (const auto& r : kFree)
         if (codec == QLatin1String(r.codec) && builtIn(r.replacement)) return r.replacement;
     return {};

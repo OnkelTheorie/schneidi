@@ -108,12 +108,9 @@ void RenderQueue::makeReview(ExportSettings& s)
     // The own H.264 encoder has no fast preset (it ignores "preset"; two passes with a cap): plain H.264 instead
     if (ExportWriter::isOwnH264(s.videoCodec)) {
         const HardwareEncoders::Choice c = HardwareEncoders::resolve(VideoEncoder::Software, QStringLiteral("h264"));
-        // (the GPL-free build's software H.264 is the own encoder again: OpenH264 there when it has one)
-        if (!c.codec.isEmpty() && !ExportWriter::isOwnH264(c.codec)) {
+        if (!c.codec.isEmpty()) {
             s.videoCodec = c.codec;
             s.softwareCodec = c.fallback;
-        } else if (HardwareEncoders::builtIn(QStringLiteral("libopenh264"))) {
-            s.videoCodec = s.softwareCodec = QStringLiteral("libopenh264");
         }
     }
 }

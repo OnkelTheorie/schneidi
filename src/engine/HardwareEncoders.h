@@ -28,8 +28,7 @@ bool builtIn(const QString& codec);
 // x264/x265 through the extension (engine/Extensions, engine/ExternalEncoder): the extension's ffmpeg program when
 // `codec` is libx264/libx265, not built in, and that program lists it (asked once per program file). Empty = no.
 QString externalProgram(const QString& codec);
-// GPL-free replacement of an x264/x265/SVT-AV1 codec that this FFmpeg has (libx264 -> libopenh264; in the GPL-free build
-// (SCHNEIDI_NO_GPL) libx264 -> the own encoder ExportWriter::kOwnH264); empty = none
+// GPL-free replacement of an x264/x265/SVT-AV1 codec that this FFmpeg has (libx264 -> libopenh264); empty = none
 QString freeReplacement(const QString& codec);
 bool isFreeReplacement(const QString& codec); // libopenh264, libkvazaar
 // When `codec` is the free replacement for H.264/H.265: what that means and how to get x264/x265 (the CLI command,
