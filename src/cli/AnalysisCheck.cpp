@@ -38,6 +38,7 @@ namespace Cli::detail {
 namespace {
 
 double round1(double v) { return std::round(v * 10) / 10; }
+constexpr int kMaxLoudnessRange = 15; // LU
 QString num1(double v) { return QString::number(v, 'f', 1).replace('.', I18n::decimalPoint()); }
 
 ExportCheck::Options options(const QJsonObject& a)
@@ -374,6 +375,16 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         };
     };
     QVector<ExportCheck::Issue> issues;
+    // Loudness range: quiet and loud parts far apart (a whisper next to a 21-dB riser, t8 ad 17.11.: LRA 20.9) - on a
+    // phone the quiet parts get lost or the loud ones blast. Music and film may have more; a short or ad seldom does
+    const auto wideRange = [&issues](double lra) {
+        if (lra > kMaxLoudnessRange)
+            issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "loudness_range",
+                                         T("Lautheitsbereich %1 LU (über %2): leise und laute Stellen liegen weit "
+                                           "auseinander – Kompressor oder Pegel der lauten Stellen senken")
+                                             .arg(num1(lra))
+                                             .arg(kMaxLoudnessRange)};
+    };
     Measured measured;
     QString soundNote;     // project in 5.1/7.1 measured as it is: how to measure a stereo export
     int soundChannels = 0; // project: the channel format measured
@@ -396,6 +407,9 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
         result["range"] = range(from, to, f);
         issues += ExportCheck::timeline(tl, from, to, f, opt);
+        // Sound only on muted tracks or in disabled clips: measured it is just "no sound", this says why
+        if (const QString silent = silentMixNote(tl); !silent.isEmpty())
+            issues << ExportCheck::Issue{ExportCheck::Severity::Error, "mix_silent", silent};
         issues += ExportCheck::layout(tl, from, to, f, opt);
         // The timeline as exported (render timeline: compound clips, limiter, mute/solo)
         const Timeline render = s.project.renderTimeline();
@@ -494,6 +508,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             const auto loud = AudioAnalysis::timelineLoudness(f, render, from, soundTo, progress(scanned, 0.55), &peaks, channels);
             if (!loud) fail("DECODE_FAILED", "could not mix the sound");
             measured = {peaks, *loud};
+            wideRange(loud->range);
             const QVector<ExportCheck::Issue> heard =
                 ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
             issues += heard;
@@ -555,6 +570,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             const auto loud = AudioAnalysis::clipLoudness(f, c, progress(start + (1 - start) / 2, 1));
             if (!peaks || !loud) fail("DECODE_FAILED", "could not read the sound of " + m.info.path);
             measured = {*peaks, *loud};
+            wideRange(loud->range);
             issues += ExportCheck::sound(measured.peaks, 0, loud->integrated, loud->truePeakDb, f, opt);
         }
     }

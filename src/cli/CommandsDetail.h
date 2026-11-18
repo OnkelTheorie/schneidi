@@ -122,8 +122,13 @@ private:
 // A project file (.schneidi) or "@app" (the project open in the app)
 bool isProjectFile(const QString& path);
 QString trackName(TrackRef r);
+// The timeline has sound clips but none is heard (all on muted tracks, outside a solo, or disabled): what to do about
+// it, for `info`, `check` and `transcribe`; empty when something is heard or there is no sound at all
+QString silentMixNote(const Timeline& tl);
 // "V1", "A2" or a number (1 = first track); returns the index (0-based)
 int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);
+// The same, and a track's own name ("Mix", "Stimme 1"; any case) when it is no V1/A2/number
+int parseTrackIn(const Timeline& tl, const QJsonValue& v, TrackKind* kind = nullptr);
 // A clip as `info` shows it
 QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref);
 QJsonObject timelineJson(const Project& p);

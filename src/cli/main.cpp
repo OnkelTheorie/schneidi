@@ -158,6 +158,11 @@ int main(int argc, char* argv[])
         return 0;
     }
     QString name = args.takeFirst();
+    // `<command> --help` (or -h) anywhere = `help <command>` (it said "missing value for --help")
+    if (name != "setup" && (args.contains("--help") || args.contains("-h"))) {
+        args = name == "help" ? QStringList{} : QStringList{name == "template" ? QString("templates") : name};
+        name = "help";
+    }
     // `template <action> [value] …` = `templates --<action> value …` (info, fill, save, import, export, remove, rename;
     // list = all)
     if (name == "template") {

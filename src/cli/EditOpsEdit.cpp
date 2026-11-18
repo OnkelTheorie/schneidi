@@ -525,7 +525,7 @@ void opTrack(Session& s, const QJsonObject& op)
 {
     Editor& ed = s.editor;
     const QString name = op.value("track").toString().trimmed().toUpper();
-    if (name.startsWith("ST")) {
+    if (name.startsWith("ST") && name.size() > 2 && name.mid(2).toInt() > 0) { // ST1 (not a track named "Stimme")
         // Subtitle track: name, visible (one at a time), lock, style
         const int index = name.mid(2).toInt() - 1;
         if (index < 0 || index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + name);
@@ -540,7 +540,7 @@ void opTrack(Session& s, const QJsonObject& op)
         return;
     }
     TrackKind k = TrackKind::Video;
-    const int index = parseTrack(op.value("track"), &k);
+    const int index = parseTrackIn(s.project.timeline(), op.value("track"), &k);
     if (index >= s.project.timeline().tracks(k).size()) fail("NOT_FOUND", "no track " + name);
     const TrackRef ref{k, index};
     const auto state = [&] { return s.project.timeline().track(ref); };

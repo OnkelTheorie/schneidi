@@ -310,6 +310,22 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     o["template"] = QJsonObject{{"id", t.id}, {"name", t.displayName()}};
     if (!formatFrom.isEmpty()) o["format_from"] = formatFrom; // the video whose frame rate/size the project took
     if (!backup.isEmpty()) o["backup"] = backup;
+    // Not chosen: say which template it was (the user's default can be a game template with a muted Mix track)
+    if (a["template"].toString().trimmed().isEmpty() && t.id != QLatin1String(StartTemplates::NeutralId)) {
+        QStringList muted;
+        for (int i = 0; i < p.timeline().audio.size(); ++i)
+            if (p.timeline().audio[i].muted) {
+                const QString n = p.timeline().audio[i].name.trimmed();
+                muted << trackName({TrackKind::Audio, i}) + (n.isEmpty() ? QString() : " '" + n + "'");
+            }
+        QString note = QString("no template given: the user's default start template '%1' was used "
+                           "(template:\"neutral\" for plain tracks, see `templates`)")
+                           .arg(t.displayName());
+        if (!muted.isEmpty())
+            note += QString("; it has muted track(s) %1 (a file with a single audio stream goes onto an unmuted one)")
+                        .arg(muted.join(", "));
+        o["notes"] = QJsonArray{note};
+    }
     return o;
 }
 
@@ -328,7 +344,9 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
     s.selectTimeline(a["timeline"]);
     QJsonObject o = projectJson(s.project, s.path);
     if (s.live) o["app"] = s.app; // open in the app: what the user sees there
-    if (!s.notes.isEmpty()) o["notes"] = s.notes; // the file did not open as written
+    QJsonArray notes = s.notes; // the file did not open as written
+    if (const QString silent = silentMixNote(s.project.timeline()); !silent.isEmpty()) notes << silent;
+    if (!notes.isEmpty()) o["notes"] = notes;
     // Color page stills: id, label and the clip their grade came from (`frames` still:id shows one)
     if (!s.project.stills().isEmpty()) {
         QJsonArray stills;
@@ -865,7 +883,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings = p->settings;
         job.preset = p->name;
     }
-    const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
+    QString formatId = a.contains("format") ? a["format"].toString().trimmed() : job.settings.format;
+    // Containers named as the format (an AI asked for "mp4"): their usual codec
+    QString formatNote;
+    if (const QString c = formatId.toLower(); c == "mp4" || c == "webm") {
+        formatId = c == "mp4" ? "h264" : "vp9";
+        formatNote = QString("format %1 read as %2 (formats name the codec; %2 writes .%1)").arg(c, formatId);
+    }
     const auto& formats = renderFormats();
     const bool srtOnly = formatId == "srt" || formatId == "vtt"; // only the subtitle files (SRT or WebVTT)
     if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; })) {
@@ -873,6 +897,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         for (const RenderFormatInfo& i : formats) ids << i.id;
         fail("BAD_ARGUMENT", "unknown format " + formatId + " (" + ids.join(", ") + ", srt)");
     }
+    if (!formatNote.isEmpty()) s.notes << formatNote;
     if (!srtOnly && !HardwareEncoders::formatAvailable(formatId)) {
         QStringList ids;
         for (const RenderFormatInfo& i : formats)

@@ -349,6 +349,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     int offset = 0, length = 0;
     QJsonArray notes;
     QJsonObject picked; // which sound was heard (stream or tracks), for the answer
+    QString silentMix;  // project: its whole mix is silent, and why (silentMixNote)
     if (isProjectFile(src)) {
         // The timeline's sound as it is mixed for the export; times are timeline frames
         Session s(src);
@@ -356,6 +357,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         f = s.format();
         req.timeline = s.project.renderTimeline();
         req.format = f;
+        silentMix = silentMixNote(s.project.timeline());
         const int end = TimelineOps::endFrame(req.timeline);
         if (end <= 0) s.failEmpty();
         req.from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
@@ -460,8 +462,18 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
                          .arg(int(std::lround(t.detectedProbability() * 100)))
                          .arg(r.language);
     }
-    if (segments.isEmpty() && !req.music)
+    if (Transcript::isSilent(r.levels)) {
+        // Nothing to hear: music mode would only make up words (it wrote "Untertitelung des ZDF, 2020")
+        notes << (silentMix.isEmpty() ? QString("the audio is silent (muted track or a silent stream?): nothing to "
+                                                "transcribe; check what plays with `loudness`")
+                                      : "the audio is silent - " + silentMix);
+    } else if (segments.isEmpty() && !req.music) {
         notes << "no speech found; singing or shouts in music: try again with music:true";
+    }
+    if (r.dropped > 0 && !Transcript::isSilent(r.levels))
+        notes << QString("%1 word(s) of whisper's well-known made-up lines left out (\"Untertitelung des ZDF\", "
+                         "\"Thanks for watching\" in silence)")
+                     .arg(r.dropped);
     if (!notes.isEmpty()) out["notes"] = notes;
     if (a["words"].toBool()) {
         // Word times for cutting: `to` is where the word is spoken to (pauses after it are left out)

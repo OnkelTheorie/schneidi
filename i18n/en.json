@@ -1755,6 +1755,7 @@
  "Lautheit wird gemessen…": "Measuring loudness…",
  "Lautheit zu leise": "Loudness too low",
  "Lautheit: %1 LUFS": "Loudness: %1 LUFS",
+ "Lautheitsbereich %1 LU (über %2): leise und laute Stellen liegen weit auseinander – Kompressor oder Pegel der lauten Stellen senken": "Loudness range %1 LU (over %2): quiet and loud parts lie far apart – use a compressor or lower the loud parts",
  "Lautheitsumfang (LU)": "Loudness range (LU)",
  "Lautstärke": "Volume",
  "Lautstärke zeichnen": "Draw volume",
