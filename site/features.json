@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "about": "The feature cards of the project website, in this order (the first is the large one), read by its updater at the latest release tag. image: site/img/<image>-960.webp (and -1920.webp), made from screenshots/<image>.png by tools/site_images.py --write. title and alt are plain text; text may use `code` and **bold**; more is the line under the cards with one [link text]. Checked by tools/site_figures.py --check.",
+  "features": [
+    {
+      "image": "short",
+      "tab": "Shorts",
+      "title": "The 16:9 edit and its 9:16 short in one project",
+      "text": "Auto reframe follows the subject and keeps a game's kill feed readable. Word captions come from the speech, and the export presets for YouTube Shorts, Reels and TikTok check length and loudness.",
+      "alt": "A 9:16 short next to the 16:9 edit: reframed picture with karaoke captions"
+    },
+    {
+      "image": "comp",
+      "tab": "Comp",
+      "title": "Keys, masks and tracking",
+      "text": "Green screen, text behind a person or a pillar, a blurred face that follows. Trackers notice when they lose a point and fade out or hold. As a node graph or as a simple layer stack, with ready recipes, and shapes and drawing right on the video.",
+      "alt": "The Comp page: a green screen key as a node graph with a title behind the presenter"
+    },
+    {
+      "image": "color",
+      "tab": "Color",
+      "title": "Wheels, curves, qualifier and scopes",
+      "text": "Curves over the histogram, an HSL qualifier for one color range, windows, LUTs and a stills gallery to compare grades. HDR video from phones is turned into normal SDR automatically, and H.265 and AV1 export in 10 bit.",
+      "alt": "The Color page: the curves palette with an S curve over the histogram, the RGB parade beside the viewer"
+    },
+    {
+      "image": "studio",
+      "tab": "Studio",
+      "title": "A page for the sound",
+      "text": "Large waveforms, a mixer strip per track with EQ and compressor, volume curves you draw or ride live. Clean a voice, duck the music or hit a loudness target in one click, and mix in stereo, 5.1 or 7.1.",
+      "alt": "The Studio page: audio tracks with large waveforms, a drawn level curve on the music and a mixer column with the loudness readout"
+    },
+    {
+      "image": "multicam",
+      "tab": "Multicam",
+      "title": "Hours of recordings, synced by their sound",
+      "text": "Line up several PCs or cameras automatically and cut between up to 16 angles. Click an angle or press 1 to 9.",
+      "alt": "Multicam view with nine angles of one event"
+    },
+    {
+      "image": "title3d",
+      "tab": "Titles",
+      "title": "Real 3D text, counters, captions",
+      "text": "Extruded and beveled letters with light, title looks with gradients and glow, and karaoke captions where the spoken word lights up.",
+      "alt": "A golden 3D title with bevel, turned in space"
+    },
+    {
+      "image": "templates",
+      "tab": "Templates",
+      "title": "One template, many videos",
+      "text": "Mark the clips, texts, song and logo of an edit as placeholders. Then drop new clips onto it, or fill it from a table: one finished video per row, with your brand kit's logo, colors and fonts.",
+      "alt": "File, New from Template: the built-in templates as tiles with preview, format, length and fields"
+    },
+    {
+      "image": "deliver",
+      "tab": "Deliver",
+      "title": "Presets, a render queue and a check before export",
+      "text": "Presets for YouTube, Shorts, Reels and TikTok. Before rendering, one click finds what often goes wrong: a gap between two clips, missing files, clipping, loudness off the target, text a phone app covers.",
+      "alt": "The Deliver page: render settings and the render queue"
+    }
+  ],
+  "more": {
+    "text": "Also guided tours on a practice project, ripple, roll, slip and slide trims, a brand kit, voice-over recording, offline text to speech, key sets from Premiere Pro and Final Cut Pro, a preview on a second monitor, and FCP7 XML, OpenTimelineIO and EDL to move a cut to or from other editors. [The full feature list]",
+    "link": "features"
+  }
+}
