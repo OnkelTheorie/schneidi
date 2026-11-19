@@ -335,6 +335,8 @@ int main(int argc, char** argv)
     Check::initApp("duel_leftovers");
     QTemporaryDir dir;
     testOverlayFitUnit();
+    // `short` sfx help names the whoosh it places (the computed ~0.9 s one since R7)
+    CHECK(QJsonDocument(run("help", {{"command", "short"}})).toJson().contains("computed whoosh, about 0.9 s"));
     if (Check::haveFfmpeg()) {
         testBoost(dir.path());
         testSolid(dir.path());
