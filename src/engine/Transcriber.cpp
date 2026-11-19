@@ -267,7 +267,10 @@ void Transcriber::runWhisper()
     // Music: voice detection hears no speech in a song (nothing found in a whole track, the shouted title and the
     // singing without it); without the previous text as context whisper does not loop on repeated lines
     // Verbatim: a starting text full of hesitation sounds, so whisper keeps writing them (it leaves them out otherwise)
-    if (m_request.verbatim) args << "--prompt" << verbatimPrompt(m_request.language);
+    m_promptNote.clear();
+    if (m_request.verbatim)
+        if (const QString prompt = verbatimPromptFor(m_request.language, fitsCodePage, &m_promptNote); !prompt.isEmpty())
+            args << "--prompt" << prompt;
     if (m_request.music) args << "-mc" << "0";
     else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
         args << "--vad" << "-vm" << narrowSafePath(vad) << "-vt" << "0.35";
@@ -287,27 +290,67 @@ void Transcriber::runDetection()
 
 QString Transcriber::verbatimPrompt(const QString& language)
 {
-    // Sounds whisper should write as it hears them, in a short natural line (core/ScriptAlign::isFiller knows them)
+    // Only the sounds whisper should write as it hears them (core/ScriptAlign::isFiller knows them), no phrases that
+    // could leak into the transcript
     static const QHash<QString, QString> prompts{
-        {"de", QStringLiteral("Ähm, also, äh, ich hab, ähm, gedacht, hm, ja.")},
-        {"en", QStringLiteral("Um, so, uh, I was, um, thinking, hmm, yeah.")},
-        {"fr", QStringLiteral("Euh, alors, euh, je pense, hum, que oui.")},
-        {"es", QStringLiteral("Eh, bueno, mmm, yo creo, eh, que sí.")},
-        {"it", QStringLiteral("Ehm, allora, eh, io penso, ehm, di sì.")},
-        {"pt", QStringLiteral("Ahn, então, hum, eu acho, ahn, que sim.")},
-        {"nl", QStringLiteral("Eh, nou, ehm, ik denk, uh, van wel.")},
-        {"pl", QStringLiteral("Yyy, no, eee, myślę, yyy, że tak.")},
-        {"ru", QStringLiteral("Э-э, ну, эм, я думаю, ммм, что да.")},
-        {"uk", QStringLiteral("Еее, ну, гм, я думаю, ммм, що так.")},
-        {"tr", QStringLiteral("Eee, şey, ııı, bence, hmm, evet.")},
-        {"id", QStringLiteral("Eh, jadi, ehm, saya pikir, hmm, iya.")},
-        {"ja", QStringLiteral("えー、えっと、そうですね、うーん、はい。")},
-        {"ko", QStringLiteral("어, 음, 그러니까, 음, 네.")},
-        {"zh", QStringLiteral("嗯，那个，呃，我觉得，嗯，是的。")},
-        {"hi", QStringLiteral("उम्म, तो, मुझे लगता है, हम्म, हाँ।")},
+        {"de", QStringLiteral("Ähm, äh, hm, ähm, äh.")},
+        {"en", QStringLiteral("Um, uh, hmm, um, uh.")},
+        {"fr", QStringLiteral("Euh, hmm, euh, euh.")},
+        {"es", QStringLiteral("Eh, ehm, mmm, eh.")},
+        {"it", QStringLiteral("Ehm, eh, ehm, eh.")},
+        {"pt", QStringLiteral("Ahn, hmm, ahn, ehm.")},
+        {"nl", QStringLiteral("Eh, ehm, uh, ehm.")},
+        {"pl", QStringLiteral("Yyy, eee, hmm, yyy.")},
+        {"ru", QStringLiteral("Э-э, эм, ммм, э-э.")},
+        {"uk", QStringLiteral("Еее, гм, ммм, еее.")},
+        {"tr", QStringLiteral("Eee, ııı, hmm, eee.")},
+        {"id", QStringLiteral("Eh, ehm, hmm, eh.")},
+        {"ja", QStringLiteral("えー、えっと、うーん、えー。")},
+        {"ko", QStringLiteral("음, 으음, 흠, 음.")},
+        {"zh", QStringLiteral("呃，呃，呃呃。")},
+        {"hi", QStringLiteral("उम्म, हम्म, उम्म।")},
     };
     const QString lang = language.trimmed().toLower().left(2);
-    return prompts.value(lang, QStringLiteral("Um, uh, hmm, ähm, äh, euh, eh."));
+    return prompts.value(lang, QStringLiteral("Umm, uhh, hmm, ehm."));
+}
+
+QString Transcriber::verbatimPromptFor(const QString& language, const std::function<bool(const QString&)>& fits,
+                                       QString* note)
+{
+    const QString prompt = verbatimPrompt(language);
+    if (!fits || fits(prompt)) return prompt;
+    // Latin script: the same sounds without accents fit every code page; other scripts cannot be written at all
+    static const QHash<QString, QString> ascii{
+        {"de", QStringLiteral("Ehm, hm, hmm, ehm.")}, {"fr", QStringLiteral("Euh, hmm, euh.")},
+        {"es", QStringLiteral("Eh, ehm, mmm, eh.")},  {"it", QStringLiteral("Ehm, eh, ehm.")},
+        {"pt", QStringLiteral("Ahn, hmm, ehm.")},     {"nl", QStringLiteral("Eh, ehm, uh.")},
+        {"pl", QStringLiteral("Yyy, eee, hmm.")},     {"tr", QStringLiteral("Eee, hmm, eee.")},
+        {"id", QStringLiteral("Eh, ehm, hmm.")},      {"en", QStringLiteral("Um, uh, hmm, um.")},
+    };
+    const QString lang = language.trimmed().toLower().left(2);
+    if (ascii.contains(lang) || !QStringList{"ru", "uk", "ja", "ko", "zh", "hi"}.contains(lang)) {
+        const QString plain = ascii.value(lang, QStringLiteral("Umm, uhh, hmm, ehm."));
+        if (fits(plain)) return plain;
+    }
+    if (note)
+        *note = QStringLiteral("verbatim: whisper gets no starting text in this language here (the system's code page "
+                               "cannot write it), so it may leave out more of the fillers");
+    return {};
+}
+
+bool Transcriber::fitsCodePage(const QString& text)
+{
+#ifdef Q_OS_WIN
+    // whisper-cli reads its arguments in the ANSI code page: a character it cannot hold would arrive as '?'
+    const std::wstring w = text.toStdWString();
+    BOOL usedDefault = FALSE;
+    const int n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), int(w.size()), nullptr, 0, nullptr,
+                                      &usedDefault);
+    return n > 0 && !usedDefault;
+#else
+    Q_UNUSED(text);
+    return true;
+#endif
 }
 
 // Whisper's own progress or the estimate from the time, whichever is further; never backwards

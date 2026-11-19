@@ -494,6 +494,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
                     {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
     for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
+    if (!t.promptNote().isEmpty()) notes << t.promptNote();
     if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {
         out["detected_language"] = heard;
         if (!t.otherLanguage().isEmpty())
