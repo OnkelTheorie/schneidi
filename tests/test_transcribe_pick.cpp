@@ -252,7 +252,7 @@ int main(int argc, char** argv)
             std::printf("       %s\n", qPrintable(line));
         CHECK(Transcriber::verbatimPrompt("de").contains(QString::fromUtf8("Ähm")));
         CHECK(Transcriber::verbatimPrompt("fr").contains("Euh"));
-        CHECK(Transcriber::verbatimPrompt("auto").contains("um"));
+        CHECK(Transcriber::verbatimPrompt("auto").contains("uh"));
     }
     {
         // By number (also as a JSON number) and by name
