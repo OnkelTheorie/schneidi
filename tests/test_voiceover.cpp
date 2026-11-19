@@ -559,6 +559,39 @@ int main(int argc, char** argv)
         CHECK(false);
     }
 
+    // ---- A take past the picture's end (duel 17.11.: 0.2 s black at the end): its silent tail is cut off at the
+    // picture's end; words past it are kept and the notes say so
+    if (Check::haveFfmpeg()) {
+        const QString video = Check::makeMedia(tmp.filePath("pic.mp4"), {"-f", "lavfi", "-i", "testsrc=size=160x90:rate=25:duration=2",
+                                                                         "-c:v", "mpeg4", "-q:v", "5"});
+        const QString take = Check::makeMedia(tmp.filePath("tail.wav"), {"-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                                                                         "-af", "volume=0.5,apad=pad_dur=0.6"});
+        const QString path = tmp.filePath("end.schneidi");
+        cli("new", {{"project", path}, {"fps", 25}});
+        cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"place","media":"%1","at":0}])").arg(video)}});
+        const auto takeClip = [&] {
+            ProjectData x;
+            QString e;
+            ProjectFile::load(path, &x, &e);
+            for (const Track& t : x.timeline.audio)
+                for (const Clip& c : t.clips)
+                    if (c.mediaPath.endsWith("tail.wav")) return c;
+            return Clip{};
+        };
+        // Tone 0.8-1.8 s, silence to 2.4 s: the silence past 2 s goes
+        QJsonObject r = cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"voiceover","file":"%1","at":"0.8s"}])").arg(take)}});
+        Clip c = takeClip();
+        if (!CHECK_EQ(c.end(), 50)) std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+        CHECK(QJsonDocument(r).toJson().contains("cut off there"));
+        // Tone 1.5-2.5 s (the take to 3.1 s): words past the end are kept, the notes say how much
+        cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"delete","clips":[%1]}])").arg(c.id)}});
+        r = cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"voiceover","file":"%1","at":"1.5s"}])").arg(take)}});
+        c = takeClip();
+        CHECK(c.end() >= 77 && c.end() <= 78);
+        if (!CHECK(QJsonDocument(r).toJson().contains("past the picture's end")))
+            std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+    }
+
     // ---- File names: next to the project, never over an earlier take
     {
         CHECK_EQ(Voiceover::folder(tmp.filePath("Mein Short.schneidi")), tmp.filePath("Mein Short-voiceover"));
