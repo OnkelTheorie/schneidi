@@ -559,6 +559,12 @@ void MainWindow::buildActions()
                       GradedThumbs::setEnabled(on);
                       tv->update();
                   });
+    // Overview strip above the lanes: only on the Edit page (the panel also sits on Deliver and Color)
+    addViewOption("show_timeline_overview", T("Überblick-Timeline"), "timeline/overview", false,
+                  [this](bool on) { m_timeline->setOverviewEnabled(on); });
+    m_timeline->setOverviewOnPage(m_page == Page::Edit);
+    connect(m_pages, &QStackedWidget::currentChanged, m_timeline,
+            [this] { m_timeline->setOverviewOnPage(m_page == Page::Edit); });
     viewOpts->addSeparator();
     // On the Studio page the keys zoom its tracks (their own view), elsewhere the timeline
     const auto zoom = [this, tv](double factor) {

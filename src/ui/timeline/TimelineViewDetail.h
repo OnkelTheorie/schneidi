@@ -3,6 +3,7 @@
 // Internal helpers of TimelineView, shared by its implementation files (not part of the API).
 
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineColors.h"
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -75,21 +76,9 @@ inline void drawCompoundBody(QPainter& p, const QRect& body, const QColor& base)
     p.restore();
 }
 
-// Clip color of the track: own track color, otherwise invalid (= default per clip kind)
-inline QColor trackColor(const Track& t)
-{
-    const TrackColorInfo* info = trackColorInfo(t.color);
-    return info ? QColor::fromRgba(info->rgb) : QColor();
-}
-
-// Color of a clip like DaVinci: clip color of the Media Pool clip before the track color, otherwise invalid (= default)
-inline QColor clipColor(const Project* project, const Clip& c, const Track* t)
-{
-    if (!c.isTitle())
-        if (const MediaInfo* m = project->mediaInfo(c.mediaPath))
-            if (const TrackColorInfo* info = trackColorInfo(m->clipColor)) return QColor::fromRgba(info->rgb);
-    return t ? trackColor(*t) : QColor();
-}
+// Clip/track colors live in TimelineColors.h (shared with the overview strip)
+using TimelineColors::clipColor;
+using TimelineColors::trackColor;
 
 // Microphone icon centered in r (voice-over arm): capsule, holder arc, stand
 inline void drawMic(QPainter& p, const QRectF& r, const QColor& color)

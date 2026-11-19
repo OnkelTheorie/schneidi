@@ -498,6 +498,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelineRetime.cpp
     src/ui/timeline/TimelineViewDetail.h
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
+    src/ui/timeline/TimelineColors.h
+    src/ui/timeline/TimelineOverview.h src/ui/timeline/TimelineOverview.cpp
 )
 
 # Per-pixel loops run on every exported frame: full vectorization (GCC/Clang -O2 only vectorizes loops whose length

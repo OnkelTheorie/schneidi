@@ -5,6 +5,7 @@
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "ui/timeline/TimelineOverview.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
@@ -252,12 +253,29 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     connect(m_vbar, &QScrollBar::valueChanged, m_view, &TimelineView::setScrollY);
     connect(m_view, &TimelineView::viewChanged, this, &TimelinePanel::syncScrollbars);
 
+    // --- Overview strip (off by default): as wide as the lanes, frame 0 under the lanes' left edge ---
+    m_overview = new TimelineOverview;
+    m_overview->setLeftInset(TimelineView::kHeaderW);
+    m_overview->setVisible(false);
+    // Its requests are user input: only they move the view (never a model change, core rule)
+    connect(m_overview, &TimelineOverview::seekRequested, m_view, &TimelineView::seekRequested);
+    connect(m_overview, &TimelineOverview::scrollRequested, m_view, [this](double left) { m_view->setLeftFrame(left); });
+    connect(m_overview, &TimelineOverview::rangeRequested, m_view, [this](double from, double to) {
+        const double lanes = std::max(1, m_view->width() - TimelineView::kHeaderW);
+        m_view->setZoomAndScroll(lanes / std::max(1.0, to - from), from, m_view->view().scrollY);
+    });
+    connect(m_view, &TimelineView::playheadChanged, m_overview, &TimelineOverview::setPlayhead);
+    connect(m_view, &TimelineView::viewChanged, this, &TimelinePanel::syncOverviewRange);
+    for (auto signal : {&Project::timelineChanged, &Project::poolChanged, &Project::formatChanged})
+        connect(project, signal, this, [this] { feedOverview(); });
+
     auto* grid = new QGridLayout;
     grid->setContentsMargins(0, 0, 0, 0);
     grid->setSpacing(0);
-    grid->addWidget(m_view, 0, 0);
-    grid->addWidget(m_vbar, 0, 1);
-    grid->addWidget(m_hbar, 1, 0);
+    grid->addWidget(m_overview, 0, 0);
+    grid->addWidget(m_view, 1, 0);
+    grid->addWidget(m_vbar, 1, 1);
+    grid->addWidget(m_hbar, 2, 0);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -285,6 +303,45 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setPageStep(vp);
     m_vbar->setSingleStep(20);
     m_vbar->setValue(v.scrollY);
+}
+
+void TimelinePanel::setOverviewEnabled(bool on)
+{
+    m_overviewEnabled = on;
+    syncOverview();
+}
+
+void TimelinePanel::setOverviewOnPage(bool on)
+{
+    m_overviewOnPage = on;
+    syncOverview();
+}
+
+void TimelinePanel::syncOverview()
+{
+    const bool show = overviewShown();
+    if (show == !m_overview->isHidden()) return;
+    if (show) { // it was not fed while hidden
+        feedOverview();
+        m_overview->setPlayhead(m_view->playhead());
+    }
+    m_overview->setVisible(show);
+    syncOverviewRange();
+}
+
+void TimelinePanel::syncOverviewRange()
+{
+    if (!overviewShown()) return;
+    const ViewState& v = m_view->view();
+    m_overview->setVisibleRange(v.leftFrame,
+                                v.leftFrame + std::max(0, m_view->width() - TimelineView::kHeaderW) / v.pxPerFrame);
+}
+
+void TimelinePanel::feedOverview()
+{
+    if (!overviewShown()) return;
+    const Project* p = m_editor->project();
+    m_overview->setTimeline(p->timeline(), p->frameRate(), p);
 }
 
 void TimelinePanel::rebuildTimelines()
