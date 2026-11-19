@@ -61,6 +61,7 @@ QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media,
             word.text = w.text;
             word.clipId = c.id;
             word.track = track;
+            word.language = tr->language;
             out << word;
         }
     }, retimed);

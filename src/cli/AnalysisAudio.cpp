@@ -371,6 +371,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     req.language = a.contains("language") ? a["language"].toString() : "auto";
     req.threads = a["threads"].toInt();
     req.music = a["music"].toBool();
+    req.verbatim = a["verbatim"].toBool();
     // A chosen language is checked against whisper's own detection afterwards (a wrong one gives made-up words)
     req.checkLanguage = req.language != QLatin1String("auto") && !req.music;
     ProjectFormat f;
@@ -493,6 +494,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
                     {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
     for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
+    if (!t.promptNote().isEmpty()) notes << t.promptNote();
     if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {
         out["detected_language"] = heard;
         if (!t.otherLanguage().isEmpty())

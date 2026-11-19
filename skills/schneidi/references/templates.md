@@ -24,6 +24,11 @@ look + music), `product-15s` (1:1, 3 product pictures, name, claim, call to acti
 ## Fill
 `templates` `fill:"<template>"`, `values:{slot: value}`, `out_project:"/abs/new.schneidi"`:
 - value = `"/abs/clip.mp4"`, `{"file":"/abs/clip.mp4","from":"12.5s","to":"15.5s"}` or a text (text slots).
+- `auto:true` + `files` (clips or a folder; in place the project's media by default) chooses the clip slots without
+  a value by itself: per slot the best shot of the material index (long enough, sharp, well exposed, a face, matching
+  the slot's `label`/`hint` in `index` descriptions, speech and sounds), each shot once. It builds the index where it
+  is missing (the first time slow, then cached). The answer's `auto` lists each slot's `file`, `shot`, `from_s`/`to_s`
+  and `reason` (`text` says why); describe shots with `index` `annotate` to steer it. With `dry_run` to look first.
 - The answer says per slot what was done (`adjusted`: trimmed, slowed, frozen, looped, rippled, reframed, shrunk,
   fit_music …, with `text` and `details`), `unfilled` (slots without a value keep the template's content - a
   warning; `strict:true` makes it an error), `notes` (e.g. reframed to the center because the file was not

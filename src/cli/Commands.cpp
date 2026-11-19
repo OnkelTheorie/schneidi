@@ -1033,7 +1033,15 @@ const QVector<Command>& commands()
           {"rename", T::String, "own template (id) to give `name`"},
           {"export", T::String, "template (id or name) to write as ZIP into `zip`"},
           {"zip", T::Path, "export: the ZIP file to write"},
-          {"import", T::Path, "a template ZIP to add to the own templates"}},
+          {"import", T::Path, "a template ZIP to add to the own templates"},
+          {"auto", T::Boolean, "fill (or project): the clip slots without a value get the best shots of the material "
+                               "by themselves - long enough, sharp, well exposed, a face, matching the slot's label "
+                               "and hint (`index` descriptions, speech, sounds); each shot once. Builds the material "
+                               "index where it is missing (slow the first time, cached). The answer's auto lists "
+                               "[{slot, file, shot, from_s, to_s, score, reason:{key:'slot_match', values, text}}]; "
+                               "values given stay"},
+          {"files", T::Paths, "auto: the material to choose from (files or a folder; default with project: its media "
+                              "with a picture)"}},
          cmdTemplates},
         {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
                  "source ranges). Each track shows its header and mixer state when not default: name, color, muted, "
@@ -1545,7 +1553,11 @@ const QVector<Command>& commands()
           {"beats", T::Times, "captions 'beat': beat times (from `beats` with beats:true)"},
           {"bpm", T::Number, "captions 'beat': tempo of a regular beat grid instead of beats"},
           {"first_beat", T::Time, "captions 'beat' with bpm: time of the first beat (default 0)"},
-          {"threads", T::Integer, "processor threads (default: the app setting Performance, else half of them)"}},
+          {"threads", T::Integer, "processor threads (default: the app setting Performance, else half of them)"},
+          {"verbatim", T::Boolean, "also write the hesitation sounds (äh, ähm, um, uh, euh …): whisper leaves most of "
+                                   "them out; this gives it a starting text full of them (in the chosen language). "
+                                   "For cutting fillers (edit op cut_pauses fillers:true): they are only as good as "
+                                   "the transcript"}},
          cmdTranscribe},
         {"loudness", "Measure loudness like the Mixer's meter (EBU R128 / BS.1770): integrated LUFS, loudness range, "
                      "true peak. Source: a media file, a project's mix (as exported) or single clips of a project. "
@@ -1764,6 +1776,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             if (cmd.name == "edit") args = prepareTalk(args, ctx); // whisper for rough_cut here, not in the app
             if (cmd.name == "edit") args = prepareSfx(args, ctx); // the kill feed for sfx on:'kills' here, not in the app
             if (cmd.name == "edit" || cmd.name == "templates") args = prepareTemplateFill(cmd.name, args, ctx); // songs' beats
+            if (cmd.name == "edit") args = preparePauses(args, ctx); // cut_pauses measures here, the app only cuts
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;

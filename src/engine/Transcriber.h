@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QTemporaryDir>
 
+#include <functional>
 #include <memory>
 
 class Exporter;
@@ -33,6 +34,9 @@ struct TranscribeRequest {
     // With a chosen language: afterwards let whisper detect the language too (one more short pass over the first
     // 30 s), so a wrong choice can be told (Transcriber::detectedLanguage)
     bool checkLanguage = false;
+    // Write the hesitation sounds too (äh, um, euh …): whisper leaves them out unless its starting text (the prompt)
+    // has them (verbatimPrompt). For cutting filler words.
+    bool verbatim = false;
 };
 
 class Transcriber : public QObject {
@@ -57,6 +61,18 @@ public:
                                                                                                         : QString();
     }
     static int defaultThreads();
+    // The starting text for TranscribeRequest::verbatim: a short line with that language's hesitation sounds ("auto"
+    // or an unknown language: a mix of the common ones)
+    static QString verbatimPrompt(const QString& language);
+    // What whisper really gets: verbatimPrompt when `fits` (the code page whisper-cli reads its arguments in) holds it;
+    // else for a Latin-script language the same sounds in plain ASCII, for other scripts nothing (*note says so).
+    // Never a prompt that would arrive with '?' in it
+    static QString verbatimPromptFor(const QString& language, const std::function<bool(const QString&)>& fits,
+                                     QString* note = nullptr);
+    // Windows: `text` can be written in the ANSI code page without a substitute character; elsewhere always true
+    static bool fitsCodePage(const QString& text);
+    // verbatim without a starting text (the code page could not hold it): why, for the answer; empty = none
+    QString promptNote() const { return m_promptNote; }
 
     // Progress between whisper's own updates (a 30 s clip jumped from 10 % to 100 % after a minute): estimated from
     // the time whisper has run against what it is expected to take (whisperSeconds). Follows the time up to 90 % of
@@ -88,6 +104,7 @@ private:
     bool m_cancelled = false;
     int m_stage = 0; // 0 = audio, 1 = whisper, 2 = language detection
     Transcript::Result m_result;
+    QString m_promptNote;
     QString m_detected;
     double m_detectedP = 0;
     // Stage 1: whisper's own progress (0..1), what was shown, the time it runs and is expected to take

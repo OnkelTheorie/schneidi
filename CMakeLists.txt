@@ -256,6 +256,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
     src/core/SafeGuides.h         src/core/SafeGuides.cpp
     src/core/OverlayFit.h         src/core/OverlayFit.cpp
+    src/core/PauseCut.h           src/core/PauseCut.cpp
+    src/core/SlotPick.h           src/core/SlotPick.cpp
     src/core/MusicBed.h           src/core/MusicBed.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
@@ -652,7 +654,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/EditOpsStory.cpp src/cli/EditOpsMusic.cpp src/cli/EditOpsSfx.cpp src/cli/EditOpsTalk.cpp
     src/cli/EditOpsTemplate.cpp src/cli/EditOpsComp.cpp src/cli/EditOpsShape.cpp src/cli/EditOpsDraw.cpp
-    src/cli/EditOpsCutout.cpp
+    src/cli/EditOpsCutout.cpp src/cli/EditOpsPauses.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisKillFeed.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp

@@ -34,8 +34,8 @@ waveforms) or `"video"` (small and fast, the marks burned in). Its answer has `o
 in ms) and `cuts_off_beat`. It changes nothing; check, fix, then render for real.
 
 ## Building blocks for the shape
-- Talking: `rough_cut` (script → timeline from the best takes), `best_takes`, `hide_jumps`, `broll`, `jl_cut`,
-  `room_tone` - see [talking.md](talking.md).
+- Talking: `cut_pauses` (pauses of a conversation), `rough_cut` (script → timeline from the best takes),
+  `best_takes`, `hide_jumps`, `broll`, `jl_cut`, `room_tone` - see [talking.md](talking.md).
 - Music: `fit_music` (song to the length, whole phrases out, the end kept), then `snap_to_beat` (cuts or hits on
   the beat) - see [highlights.md](highlights.md). No song: `music_bed` (mood `calm`, `drive` or `hype`, the exact
   length, its beats known).
