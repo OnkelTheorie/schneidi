@@ -153,8 +153,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
         m_format->addItem(T(f.label), QString(f.id));
         if (QLatin1String(f.id) == QLatin1String("s264"))
             m_format->setItemData(m_format->count() - 1,
-                                  T("s264 ist schneidis H.264-Encoder und noch experimentell: langsamer als x264, "
-                                    "nur 8 Bit 4:2:0."),
+                                  T("s264 ist schneidis H.264-Encoder und noch experimentell: in zwei Durchgängen schneller "
+                                    "als x264 medium bei Spiel-, ruhigem und Animationsmaterial, langsamer bei "
+                                    "Kameramaterial und mit fester Qualität; nur 8 Bit 4:2:0."),
                                   Qt::ToolTipRole);
     }
 
