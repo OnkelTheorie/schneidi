@@ -14,6 +14,13 @@
 #include <algorithm>
 #include <memory>
 
+DirectBackend::JobHandle DirectBackend::finish(const QJsonObject&, const QJsonObject&, const Progress&, const Done& onDone,
+                                               QObject*)
+{
+    onDone({{"ok", false}, {"error", QJsonObject{{"code", "NOT_SUPPORTED"}, {"message", "no finish step"}}}});
+    return {[] {}};
+}
+
 FakeDirectBackend::FakeDirectBackend(UserRunner runner, std::function<double(const QString&)> lengthOf,
                                      std::function<QString()> currentTimeline, int stepMs)
     : m_runner(std::move(runner)), m_lengthOf(std::move(lengthOf)), m_currentTimeline(std::move(currentTimeline)),

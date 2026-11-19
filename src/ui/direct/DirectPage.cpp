@@ -92,12 +92,20 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
     m_apply = new QPushButton(T("Übernehmen"));
     m_apply->setObjectName("direct_apply");
 
+    // After a short is built: its captions and effect sounds, a step of their own (shown only then)
+    m_finish = new QPushButton(T("Untertitel + Effektklänge"));
+    m_finish->setObjectName("direct_finish");
+    m_finish->setToolTip(T("Untertitel aus der Sprache (mit Whisper) und die gewählten Effektklänge auf den eben gebauten "
+                           "Short. Ein eigener Schritt zum Rückgängigmachen."));
+    m_finish->hide();
+
     m_openEdit = new QPushButton(T("In Schneiden öffnen"));
     m_openEdit->setObjectName("direct_open_edit");
     m_export = new QPushButton(T("Exportieren…"));
     m_export->setObjectName("direct_export");
     buttons->addWidget(m_resultText, 1);
     buttons->addWidget(m_apply);
+    buttons->addWidget(m_finish);
     buttons->addWidget(m_openEdit);
     buttons->addWidget(m_export);
     res->addLayout(buttons);
@@ -115,10 +123,11 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
     connect(m_suggestions, &DirectSuggestions::resuggestRequested, this, &DirectPage::suggestRequested);
     connect(m_suggestions, &DirectSuggestions::changed, this, &DirectPage::updateResult);
     connect(m_material, &DirectMaterial::changed, this, [this] {
-        m_recipes->suggestButton()->setEnabled(!m_busy && !m_material->isEmpty());
+        m_recipes->suggestButton()->setEnabled(!m_busy && !m_material->isEmpty() && m_recipes->available(m_recipes->recipe()));
     });
     connect(m_apply, &QPushButton::clicked, this, &DirectPage::applyRequested);
     connect(m_openEdit, &QPushButton::clicked, this, &DirectPage::openEditRequested);
+    connect(m_finish, &QPushButton::clicked, this, &DirectPage::finishRequested);
     connect(m_export, &QPushButton::clicked, this, &DirectPage::exportRequested);
     m_recipes->suggestButton()->setEnabled(false);
     updateResult();
@@ -136,16 +145,23 @@ void DirectPage::setBusy(bool busy, const QString& text)
 {
     m_busy = busy;
     m_recipes->setBusy(busy);
-    m_recipes->suggestButton()->setEnabled(!busy && !m_material->isEmpty());
+    m_recipes->suggestButton()->setEnabled(!busy && !m_material->isEmpty() && m_recipes->available(m_recipes->recipe()));
     m_suggestions->setBusyText(busy ? text : QString());
     updateResult();
 }
 
-void DirectPage::setApplying(bool applying)
+void DirectPage::setApplying(bool applying, const QString& text)
 {
     m_applying = applying;
-    m_resultText->setText(applying ? T("Baut die Timeline …") : QString());
+    m_resultText->setText(applying ? (text.isEmpty() ? T("Baut die Timeline …") : text) : QString());
+    if (applying) m_finish->setEnabled(false);
     updateResult();
+}
+
+void DirectPage::setFinishOffered(bool offered)
+{
+    m_finish->setVisible(offered);
+    m_finish->setEnabled(offered);
 }
 
 Timeline DirectPage::resultTimeline() const

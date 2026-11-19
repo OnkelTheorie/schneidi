@@ -12,6 +12,7 @@
 #include "app/MainWindow.h"
 #include "app/AiSettingsPage.h"
 #include "cli/Commands.h"
+#include "cli/DirectBackendReal.h"
 #include "cli/Live.h"
 #include "cli/Setup.h"
 #include "ui/FrameView.h"
@@ -595,6 +596,8 @@ int main(int argc, char* argv[])
     w.setUserRunner([&w](const QString& command, const QJsonObject& args, const QString& undoText) {
         return Cli::Live::runForUser(&w, command, args, undoText);
     });
+    // The Direct page runs the `direct` command (suggestions in the background, Übernehmen = one undo step)
+    w.setDirectBackend(std::make_unique<RealDirectBackend>(&w));
     new FirstPaintWatch(&w);
     QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
     // The viewer's GPU surface follows the open animation (X11: the window's GPU setup no longer delays the first

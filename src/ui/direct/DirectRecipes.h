@@ -49,6 +49,9 @@ public:
 
     // Turned off while a run is going (the cards stay readable)
     void setBusy(bool busy);
+    // Recipes that are not there yet: their title off with "kommt gleich" (the card stays readable, no request)
+    void setAvailable(const QStringList& ids);
+    bool available(const QString& id) const { return !m_coming.contains(id); }
 
 signals:
     void recipeChosen(const QString& id); // a card's title clicked: suggestions for it
@@ -68,6 +71,8 @@ private:
     QHash<QString, QWidget*> m_cardMore;  // the settings under "Mehr"
     QHash<QString, QToolButton*> m_titles;
     QPushButton* m_suggest = nullptr;
+    QStringList m_coming; // ids not available yet
+    bool m_busy = false;
     FlowLayout* m_chips = nullptr;
     QStackedWidget* m_stack = nullptr;
     QString m_musicFile;

@@ -1339,7 +1339,9 @@ const QVector<Command>& commands()
           {"apply", T::Object, "apply: {on:'all'|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?} (default "
                                "on:'all' = the suggestions switched on; variant n = that variant's)"},
           {"plan", T::Boolean, "apply: make a plan of the edit instead (nothing changes until it is run)"},
-          {"dry_run", T::Boolean, "apply: what the edit would do, nothing saved"}},
+          {"dry_run", T::Boolean, "apply: what the edit would do, nothing saved"},
+          {"finish", T::Object, "after a short's apply: {timeline, captions?, sfx?, game?, language?, words?} puts word "
+                                "captions (whisper) and mild effect sounds on it as one more edit"}},
          cmdDirect},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams (audio_channels: count "
                   "and layout per stream, e.g. 5.1(side) or '4 channels' of a camera with two microphones - op 'route' "

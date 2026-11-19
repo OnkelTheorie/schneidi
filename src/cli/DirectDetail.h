@@ -6,10 +6,13 @@
 #include "cli/CommandsDetail.h"
 #include "core/Direction.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+
+#include <optional>
 
 namespace Cli::detail {
 
@@ -46,5 +49,19 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
 // Applies a session as one edit (apply = {on, adjust, order, variant}); args: project?, plan?, dry_run?, and for
 // `short` the private _created (the project was made just before: its empty first timeline becomes the cut)
 QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx);
+
+// What `short` does after its cut, on its vertical timeline, as ONE edit: word captions (style karaoke|word|off: from
+// `words` = a `transcribe` words:true answer measured elsewhere, else whisper here when installed - never installed
+// from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of `game`). done/notes get what
+// happened; true = captions were put on (the render burns them in)
+struct ShortFinish {
+    QString captions = "karaoke";
+    QString sfx = "off";
+    QString game;     // empty = none
+    QString language; // empty = detect
+    std::optional<QJsonArray> words;
+};
+bool shortFinish(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx, QJsonArray* done,
+                 QJsonArray* notes);
 
 } // namespace Cli::detail

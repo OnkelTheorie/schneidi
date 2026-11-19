@@ -45,7 +45,10 @@ public:
     void setBusy(bool busy, const QString& text = {});
     bool busy() const { return m_busy; }
     // Übernehmen runs: its button off, the text beside it
-    void setApplying(bool applying);
+    void setApplying(bool applying, const QString& text = {});
+    // After a short's Übernehmen: the second button "Untertitel + Effektklänge" (finishRequested)
+    void setFinishOffered(bool offered);
+    QPushButton* finishButton() const { return m_finish; }
     bool applying() const { return m_applying; }
     // Pictures of both lists (MainWindow sets the decoder)
     DirectThumbs* thumbs() const { return m_thumbs; }
@@ -61,6 +64,7 @@ signals:
     void applyRequested();
     void openEditRequested();
     void exportRequested();
+    void finishRequested();
 
 private:
     QSplitter* m_root;
@@ -72,6 +76,7 @@ private:
     TimelineOverview* m_overview;
     QLabel* m_resultText;
     QPushButton* m_apply;
+    QPushButton* m_finish;
     QPushButton* m_openEdit;
     QPushButton* m_export;
     QWidget* m_wish;

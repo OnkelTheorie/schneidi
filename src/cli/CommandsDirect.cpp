@@ -790,6 +790,29 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
 
 QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
 {
+    // After a short's apply: its captions and effect sounds, one more edit (the Direct page's second button)
+    if (a.contains("finish")) {
+        const QJsonObject f = a["finish"].toObject();
+        QString project = a["project"].toString();
+        if (project.isEmpty() && Live::host()) project = Live::AppProject;
+        if (project.isEmpty()) fail("BAD_ARGUMENT", "finish needs the project of the short");
+        const QString timeline = f["timeline"].toString();
+        if (timeline.isEmpty()) fail("BAD_ARGUMENT", "finish needs the short's timeline (the answer's timeline)");
+        ShortFinish sf;
+        sf.captions = f["captions"].toString("karaoke").trimmed().toLower();
+        sf.sfx = f["sfx"].toString("off").trimmed().toLower();
+        if (!QStringList{"karaoke", "word", "off"}.contains(sf.captions)) fail("BAD_ARGUMENT", "captions must be karaoke, word or off");
+        if (!QStringList{"off", "mild"}.contains(sf.sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
+        const QString game = f["game"].toString();
+        if (!game.isEmpty() && game != QLatin1String("none")) sf.game = game;
+        sf.language = f["language"].toString();
+        if (f["words"].isArray()) sf.words = f["words"].toArray();
+        QJsonArray done, notes;
+        const bool captions = shortFinish(project, timeline, sf, ctx, &done, &notes);
+        QJsonObject o{{"project", project}, {"timeline", timeline}, {"captions", captions}, {"done", done}};
+        if (!notes.isEmpty()) o["notes"] = notes;
+        return o;
+    }
     if (a.contains("session") || a.contains("apply")) {
         if (!a.contains("session")) fail("BAD_ARGUMENT", "apply needs the session (its id like 'd3', or the session itself)");
         if (a.contains("recipe")) fail("BAD_ARGUMENT", "recipe makes a new session; session + apply uses one: not both");

@@ -601,3 +601,5 @@ schneidi_test(test_music_bed) # music beds: core/MusicBed (levels, clicks, grid,
 target_link_libraries(test_music_bed PRIVATE schneidi_cli_lib)
 schneidi_test(test_direct_page) # Direct page "Regie" (0.25): lazy, material drop, recipes, suggestions (on/off, order, Delete), preview, apply = one undo step, start page, layout de/ru
 target_link_libraries(test_direct_page PRIVATE schneidi_cli_lib)
+schneidi_test(test_direct_real) # Direct page with the real backend (0.25): suggest in the background, Übernehmen = one undo step, finish, coming recipes
+target_link_libraries(test_direct_real PRIVATE schneidi_cli_lib)
