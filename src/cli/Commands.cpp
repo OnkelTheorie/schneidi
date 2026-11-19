@@ -1323,7 +1323,10 @@ const QVector<Command>& commands()
                    "kills of a game's kill feed, else loud moments; with none of them sound events and picture "
                    "changes), highlights (a highlight video of any material: kills, loud, laughter, applause, cheering, "
                    "screams, lots of movement, scene changes - best first or in time, a target length or all, not the "
-                   "same scene twice, music fitted and cuts on its beat). talk, template and script follow. Suggest: "
+                   "same scene twice, music fitted and cuts on its beat), talk (the pauses and filler words of a timeline's "
+                   "voices, cut_pauses: apply = a copy of the timeline without the chosen ones), template (shots of the "
+                   "material for a content template's clip fields, templates auto), script (the takes of each "
+                   "sentence of a script, rough_cut). Suggest: "
                    "{recipe, files | project+timeline, options} -> {session:{id:'d3', material, suggestions:[{n, kind, "
                    "file, from_s, to_s, reason:{key, values, text}, labels, on, variant?}], order, length_s, target_s, "
                    "notes}, next}; sessions are kept a day. Apply: {session:'d3' (or the session object), apply:{on:'all'"
@@ -1332,7 +1335,7 @@ const QVector<Command>& commands()
                    "plan_id … run) instead. Errors: UNKNOWN_RECIPE, NO_MATERIAL, SESSION_EXPIRED, SESSION_STALE (the "
                    "material changed: suggest again), CANCELED. Every analysis is cached per file: a second recipe on "
                    "the same material is quick. `short` does recipe short + apply + captions + render in one call.",
-         {{"recipe", T::String, "suggest: short or highlights (talk, template, script follow)"},
+         {{"recipe", T::String, "suggest: short, highlights, talk, template or script"},
           {"files", T::Paths, "suggest: the recordings to look at", false, true},
           {"project", T::Path, "the project the result goes into (\"@app\" = the app's; default for apply: a new one "
                                "next to the first recording), and with timeline the material"},
@@ -1342,7 +1345,9 @@ const QVector<Command>& commands()
                                  "aspect (9:16|1:1|4:5), variants (1-3), hook (best|chronological), "
                                  "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
-                                 "music bed, null = none), order (best|time), transitions (cut|soft), game"},
+                                 "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
+                                 "min_pause_s, pad_s, fillers, tracks, target_lufs, room_tone; template: template (id; "
+                                 "none = the project's own fields); script: script|script_file, takes, language"},
           {"session", T::Object, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},
           {"apply", T::Object, "apply: {on:'all'|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?} (default "
                                "on:'all' = the suggestions switched on; variant n = that variant's)"},
