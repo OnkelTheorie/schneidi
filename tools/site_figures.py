@@ -405,8 +405,10 @@ def site_problems(data):
     elif "notice_link" in data:
         problems.append("notice_link without notice")
     news = data.get("news", {})
-    if not isinstance(news, dict) or set(news) - {"releases", "chars"}:
-        problems.append("news must be {\"releases\": N, \"chars\": N}")
+    if not isinstance(news, dict) or set(news) - {"releases", "chars", "patches"}:
+        problems.append("news must be {\"releases\": N, \"chars\": N, \"patches\": false}")
+    elif not isinstance(news.get("patches", False), bool):
+        problems.append("news.patches must be true or false")
     else:
         for k, (lo, hi, _) in (("releases", NEWS_RELEASES), ("chars", NEWS_CHARS)):
             v = news.get(k, lo)
