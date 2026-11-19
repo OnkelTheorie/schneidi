@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// schneidi-cli: edit op `music_bed` - background music of schneidi's own (core/MusicBed: nine moods, calm … happy)
+// schneidi-cli: edit op `music_bed` - background music of schneidi's own (core/MusicBed: moods calm, hype, lofi, epic, funk)
 // made in the exact length, written as a WAV next to the project ("<name>-music/", like the speech of op 'speak'),
 // placed on a music track (the earlier bed's, an empty "Musik" or a new one) and ducked under voice and recorded
 // sound (op 'duck'). Its beat grid goes
@@ -309,21 +309,19 @@ QJsonObject prepareMusicBed(const QJsonObject& editArgs, Context&)
 void addMusicBedOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"music_bed",
-                 "{op:'music_bed', mood:'calm'|'drive'|'hype'|'lofi'|'epic'|'tense'|'funk'|'retro'|'happy', "
+                 "{op:'music_bed', mood:'calm'|'hype'|'lofi'|'epic'|'funk', "
                  "length?:'timeline'|time, at?, bpm?, key?, seed?, track?, gain?, duck?}",
                  "background music of schneidi's own in the exact length (no file needed, free to use, its beats known)",
                  "Computed from synthesized instruments (no samples); each mood has its own tempo, key, chords and "
                  "how often they change, instruments, drum groove, bass line, space and arrangement: intro, main "
                  "parts with a lift, breaks in long beds and a final hit on a bar one that rings out exactly to the "
-                 "end. mood: calm (72 BPM, F major: nylon guitar, brushes - vlog, tutorial, under speech), drive "
-                 "(116 BPM, D major: power-chord guitars, rock beat - travel, sport, action), hype (128 BPM, E minor: "
-                 "supersaw, four on the floor, drops - gaming highlights, shorts), lofi (84 BPM, Eb major: electric "
-                 "piano, swung boom-bap, vinyl - study, chill, cooking), epic (90 BPM, D minor: strings, taiko, "
-                 "horns - trailer, intro, reveal), tense (100 BPM, F minor: drone, pulse, tremolo - suspense, "
-                 "horror, countdown), funk (104 BPM, E minor: slap bass, clavinet, horn stabs - fashion, food, "
-                 "dance), retro (108 BPM, A minor: 80s synthwave, gated snare - night drive, retro gaming) or happy "
-                 "(122 BPM, C major: marimba, claps, glockenspiel tune - family, kids, explainer); also 'chill', "
-                 "'cinematic', 'dark', 'synthwave', 'upbeat' … - `effects` kind:'music' lists them. length: a time "
+                 "end. mood: calm (72 BPM, F major: nylon guitar, brushes - vlog, tutorial, under speech), hype "
+                 "(128 BPM, E minor: supersaw, four on the floor, drops - gaming highlights, shorts, sport, action), "
+                 "lofi (84 BPM, Eb major: electric piano, swung boom-bap, vinyl - study, chill, cooking), epic "
+                 "(90 BPM, D minor: strings, taiko, horns - trailer, intro, reveal) or funk (104 BPM, E minor: slap "
+                 "bass, clavinet, horn stabs - fashion, food, dance, playful product); 'drive' (older projects) is "
+                 "hype, also 'chill', 'cinematic', 'dark', 'groove', 'upbeat' … - `effects` kind:'music' lists "
+                 "them. length: a time "
                  "(\"30s\") or 'timeline' "
                  "(default: from `at` to the end of the timeline); at (default 0); bpm 60-180 and key (\"A minor\", "
                  "\"F#m\", \"Eb major\") replace the mood's; seed (1 = default) picks another progression, "

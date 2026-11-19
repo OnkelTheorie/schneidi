@@ -105,8 +105,8 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   pictures, so the slow part is smooth instead of repeating each frame (stutter); the HUD stays sharp and nothing is
   blended across a cut. `"blend"` (cross-fade of neighbouring frames) is cheaper but looks soft on fast camera turns.
 - No music file? `{"op":"music_bed","mood":"hype"}` makes background music of schneidi's own in exactly the
-  timeline's length (`calm`, `drive`, `hype`, `lofi`, `epic`, `tense`, `funk`, `retro` or `happy`; `effects` with
-  kind `music` lists them with what each suits; computed, free to use) on a
+  timeline's length (`calm`, `hype`, `lofi`, `epic` or `funk`; `effects` with kind `music` lists them with what
+  each suits; computed, free to use) on a
   music track (a second call replaces the bed), ducked under voice and game sound (not under effect sounds),
   ending with a final hit; its beat grid is known, so
   `snap_to_beat` puts the cuts on it right away. `seed` (2, 3 …) gives another piece in the same mood (progression,

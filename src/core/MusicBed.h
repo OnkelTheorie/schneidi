@@ -3,26 +3,27 @@
 // Music beds of schneidi's own (edit op 'music_bed'): background music computed from synthesized voices, no samples,
 // no recordings, so it is free to use and its beat grid is known exactly (cuts snap to it without an analysis).
 //
-// Nine moods, each its own tempo, key, harmony (chord colours and how often they change), instruments, groove (drum
+// Five moods, each its own tempo, key, harmony (chord colours and how often they change), instruments, groove (drum
 // pattern, swing), bass rhythm, space (reverb, width) and arrangement:
 //   calm  - a fingerpicked nylon guitar, a soft pad, brushes and a shaker (no kick), two bars a chord
-//   drive - distorted power chords (palm-muted eighths), eighth-note bass, a rock beat
 //   hype  - pumping supersaw, off-beat bass, a 16th arp, four on the floor, risers into drops
 //   lofi  - a wobbly electric piano on jazz ninths, swung boom-bap, vinyl crackle, a dark master
 //   epic  - string ensemble and ostinato, taiko drums, a horn theme, a huge hall
-//   tense - a low drone, a 16th pulse, string tremolo on a minor second, metallic pings, a heartbeat kick
 //   funk  - slap bass, clavinet and horn stabs, a scratching guitar, ghost-note drums on swung 16ths, dry
-//   retro - 80s: octave bass, a square-wave arp and lead with echoes, a half-time gated snare, a lush pad
-//   happy - marimba, bouncy bass, claps and tambourine, a glockenspiel tune, two chords a bar, a shuffle
+// The id "drive" (public before 0.25) is read as hype. Tried in 0.25 and dropped after listening: drive (distorted
+// power chords, rock beat), tense (drone, pulse, tremolo), happy (marimba, claps, glockenspiel) and retro (80s
+// synthwave) - retro's half-time gated snare and its 16th hats made a "psssh" noise far too loud over the bed: do not
+// bring a gated snare or dense noise hats back without checking their level against the music first.
+//
 // The arrangement lies on bar boundaries: intro, main parts (a lift in every second eight bars), short breaks in long
 // beds, a final hit on the tonic at a bar one and its ring-out, faded so the bed ends exactly at the asked length.
 //
-// Voices: wavetable oscillators (band-limited harmonics, a bright and a dark table blended), FM (electric piano,
-// glockenspiel, metal), plucked strings (Karplus-Strong: the nylon guitar, the double-tracked power chords), raised-
-// cosine attacks and releases (no clicks at note boundaries), drums from pitched sines and filtered noise, a reverb
-// per mood, side-chain pumping on the beat. The master is DC-free, a look-ahead limiter catches single drum peaks, the
-// bed is normalized to kTargetLufs (BS.1770) and held under kCeilingDbtp true peak. Deterministic: the same options
-// give the same samples; `seed` picks another progression, patterns and tune.
+// Voices: wavetable oscillators (band-limited harmonics, a bright and a dark table blended), FM (electric piano),
+// plucked strings (Karplus-Strong: the nylon guitar), raised-cosine attacks and releases (no clicks at note
+// boundaries), drums from pitched sines and filtered noise, a reverb per mood, side-chain pumping on the beat. The
+// master is DC-free, a look-ahead limiter catches single drum peaks, the bed is normalized to kTargetLufs (BS.1770)
+// and held under kCeilingDbtp true peak. Deterministic: the same options give the same samples; `seed` picks another
+// progression, patterns and tune (epic: its horn theme).
 
 #include "core/Beats.h"
 
@@ -46,16 +47,15 @@ constexpr double kMinBpm = 60, kMaxBpm = 180;
 constexpr double kTargetLufs = -16.0;  // integrated loudness of the bed alone
 constexpr double kCeilingDbtp = -1.0;  // true peak at most
 
-enum class Mood { Calm, Drive, Hype, Lofi, Epic, Tense, Funk, Retro, Happy };
-constexpr Mood kMoods[] = {Mood::Calm,  Mood::Drive, Mood::Hype,  Mood::Lofi, Mood::Epic,
-                           Mood::Tense, Mood::Funk,  Mood::Retro, Mood::Happy};
+enum class Mood { Calm, Hype, Lofi, Epic, Funk };
+constexpr Mood kMoods[] = {Mood::Calm, Mood::Hype, Mood::Lofi, Mood::Epic, Mood::Funk};
 
-QString moodId(Mood m);                         // "calm", "drive", "hype", "lofi", "epic", "tense", "funk", "retro", "happy"
-// The ids, also some other words ("ruhig", "treibend", "chill", "cinematic", "dark", "groove", "synthwave",
+QString moodId(Mood m);                         // "calm", "hype", "lofi", "epic", "funk"
+// The ids, also "drive" (= hype) and some other words ("ruhig", "treibend", "chill", "cinematic", "dark", "groove",
 // "upbeat" …; case does not matter)
 std::optional<Mood> moodFrom(const QString& s);
 QStringList moodIds();
-const char* moodLabel(Mood m);   // German UI key for T(): "Ruhig", "Treibend", "Hype", "Lo-Fi", "Episch" …
+const char* moodLabel(Mood m);   // German UI key for T(): "Ruhig", "Hype", "Lo-Fi", "Episch", "Funky"
 QString description(Mood m);     // one line, English (CLI/MCP)
 double defaultBpm(Mood m);
 
@@ -71,7 +71,7 @@ QString keyName(const Key& k); // "A minor", "F# major"
 Key defaultKey(Mood m);
 
 struct Options {
-    Mood mood = Mood::Drive;
+    Mood mood = Mood::Hype;
     double length = 30;          // seconds (clamped to kMinLength..kMaxLength, kLengthSlack beyond)
     double bpm = 0;              // 0 = the mood's tempo (else clamped to kMinBpm..kMaxBpm)
     std::optional<Key> key;      // none = the mood's key
@@ -88,7 +88,7 @@ QString sectionName(Section::Kind k); // "intro", "main", "break", "ending"
 struct Result {
     std::vector<float> samples; // interleaved stereo, kRate
     double length = 0;          // seconds (= frames / kRate)
-    Mood mood = Mood::Drive;
+    Mood mood = Mood::Hype;
     double bpm = 0;
     Key key;
     unsigned seed = 1;

@@ -348,17 +348,21 @@ int main(int argc, char* argv[])
         CHECK(k("D-Dur") == (MusicBed::Key{2, false}));
         CHECK(!k("H minor") && !k("") && !k("A lydian"));
         CHECK_EQ(MusicBed::keyName({10, true}), QString("Bb minor"));
-        CHECK(MusicBed::moodFrom("treibend") == MusicBed::Mood::Drive && MusicBed::moodFrom("Ruhig") == MusicBed::Mood::Calm);
-        CHECK(MusicBed::moodFrom("Lo-Fi") == MusicBed::Mood::Lofi && MusicBed::moodFrom("synthwave") == MusicBed::Mood::Retro
-              && MusicBed::moodFrom("cinematic") == MusicBed::Mood::Epic && MusicBed::moodFrom("dark") == MusicBed::Mood::Tense);
+        // "drive" was public before 0.25 (guide, projects): it reads as hype now
+        CHECK(MusicBed::moodFrom("drive") == MusicBed::Mood::Hype && MusicBed::moodFrom("treibend") == MusicBed::Mood::Hype
+              && MusicBed::moodFrom("Ruhig") == MusicBed::Mood::Calm);
+        CHECK(MusicBed::moodFrom("Lo-Fi") == MusicBed::Mood::Lofi && MusicBed::moodFrom("cinematic") == MusicBed::Mood::Epic
+              && MusicBed::moodFrom("groove") == MusicBed::Mood::Funk);
+        CHECK(!MusicBed::moodFrom("synthwave") && !MusicBed::moodFrom("tense") && !MusicBed::moodFrom("retro")
+              && !MusicBed::moodFrom("happy"));
         CHECK(!MusicBed::moodFrom("sad"));
         // Every id reads back; ids are distinct and the labels are there
         CHECK_EQ(MusicBed::moodIds().size(), int(std::size(MusicBed::kMoods)));
         for (const MusicBed::Mood m : MusicBed::kMoods)
             CHECK(MusicBed::moodFrom(MusicBed::moodId(m)) == m && std::strlen(MusicBed::moodLabel(m)) > 0
                   && !MusicBed::description(m).isEmpty());
-        // Harmonic rhythm: calm two bars a chord, happy two chords a bar
-        CHECK(MusicBed::describe({MusicBed::Mood::Calm, 30}).chordBeats == 8 && MusicBed::describe({MusicBed::Mood::Happy, 30}).chordBeats == 2);
+        // Harmonic rhythm: calm two bars a chord, lofi one bar
+        CHECK(MusicBed::describe({MusicBed::Mood::Calm, 30}).chordBeats == 8 && MusicBed::describe({MusicBed::Mood::Lofi, 30}).chordBeats == 4);
         // Short beds: no final hit, faded; still the exact length and silence at the end (every mood)
         for (const MusicBed::Mood m : MusicBed::kMoods) {
             const MusicBed::Result s = MusicBed::make({m, 3.3});
@@ -367,12 +371,12 @@ int main(int argc, char* argv[])
             if (!CHECK(truePeak(s.samples) <= MusicBed::kCeilingDbtp + 0.05)) std::printf("       %s short: true peak\n", qPrintable(MusicBed::moodId(m)));
         }
         // A given tempo and key
-        MusicBed::Options o{MusicBed::Mood::Drive, 20};
+        MusicBed::Options o{MusicBed::Mood::Epic, 20};
         o.bpm = 95;
         o.key = MusicBed::Key{2, false};
         const MusicBed::Result g = MusicBed::describe(o);
         CHECK(g.bpm == 95 && g.key == (MusicBed::Key{2, false}) && g.chords.value(0) == "D");
-        CHECK(MusicBed::fileName(o).startsWith("music-bed-drive-95bpm-d-major-s1-960000smp-v"));
+        CHECK(MusicBed::fileName(o).startsWith("music-bed-epic-95bpm-d-major-s1-960000smp-v"));
         // The exact length is in the name: lengths less than a millisecond apart are different files
         CHECK(MusicBed::fileName({MusicBed::Mood::Calm, 10.0}) != MusicBed::fileName({MusicBed::Mood::Calm, 10.0004}));
         // A long bed has breaks (with a drop after each)
@@ -527,7 +531,7 @@ int main(int argc, char* argv[])
         Synth::Builder b(48000, 12.0, 7);
         Synth::music(b, 0, 12);
         CHECK(Synth::writeWav(song, b.s, 48000));
-        Cli::detail::storeSongBeats(QFileInfo(song).absoluteFilePath(), 0, MusicBed::describe({MusicBed::Mood::Drive, 12}).beats);
+        Cli::detail::storeSongBeats(QFileInfo(song).absoluteFilePath(), 0, MusicBed::describe({MusicBed::Mood::Hype, 12}).beats);
         edit(pj, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"},{"op":"place","media":"%1","at":0,"track":"A2"},)"
                          R"({"op":"track","track":"A2","name":"SFX"},{"op":"place","media":"%1","at":0,"track":"A3"},)"
                          R"({"op":"track","track":"A3","name":"Music"},{"op":"place","media":"%2","at":0,"track":"A4"}])")
@@ -593,7 +597,7 @@ int main(int argc, char* argv[])
         // First op: made right away
         const QJsonDocument first = QJsonDocument::fromJson(R"([{"op":"music_bed","mood":"drive","length":"6s"}])");
         Cli::detail::prepareMusicBed(QJsonObject{{"project", pj}, {"ops", first.array()}}, ctx);
-        CHECK(files().contains(MusicBed::fileName({MusicBed::Mood::Drive, 6})));
+        CHECK(files().contains(MusicBed::fileName({MusicBed::Mood::Hype, 6}))); // "drive" = hype
     }
     // snap_to_beat takes the bed's grid: a cut 0.2 s off a beat moves onto it
     {

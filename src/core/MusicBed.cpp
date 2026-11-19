@@ -144,15 +144,13 @@ constexpr int kTable = 2048;
 
 enum class Timbre {
     PadDark, PadBright, HypeBright, Bass, BassDrive, BassHype, PluckDark, PluckBright,
-    StringsDark, StringsBright, SquareDark, SquareBright, PulseDark, PulseBright, Mallet, BrassDark, BrassBright, BassSaw,
-    SlapDark, SlapBright, Sine, GuitarSaw, Glass
+    StringsDark, StringsBright, PulseDark, PulseBright, BrassDark, BrassBright, SlapDark, SlapBright, Sine
 };
 
 // Amplitude of harmonic k of a note at f Hz
 double harmonic(Timbre t, int k, double f)
 {
     const double saw = 1.0 / k, x = k * f;
-    const double square = k % 2 ? 1.0 / k : 0.0;
     const double pulse = std::abs(std::sin(kPi * k * 0.22)) / k; // a narrow pulse (22 %): hollow and nasal
     const auto lp = [x](double fc) { return 1.0 / (1.0 + std::pow(x / fc, 4)); };
     const auto bump = [x](double fc) { return 1.0 / (1.0 + std::pow((x - fc) / (0.35 * fc), 2)); };
@@ -171,19 +169,13 @@ double harmonic(Timbre t, int k, double f)
     // Bowed strings: a saw shaped by a wooden body (resonances near 280 Hz, 1 kHz and 2.6 kHz, a dip between)
     case Timbre::StringsDark: return saw * lp(900) * (1 + 1.5 * bump(280));
     case Timbre::StringsBright: return saw * lp(5200) * (0.5 + 1.4 * bump(280) + 0.9 * bump(1000) + 1.5 * bump(2600));
-    case Timbre::SquareDark: return square * lp(1100);
-    case Timbre::SquareBright: return square * lp(5200);
     case Timbre::PulseDark: return pulse * lp(1300);
     case Timbre::PulseBright: return pulse * lp(6500);
-    case Timbre::Mallet: return k == 1 ? 1 : k == 4 ? 0.22 : k == 10 ? 0.05 : 0; // the bar's tuned overtones
     case Timbre::BrassDark: return saw * lp(450);
     case Timbre::BrassBright: return saw * lp(2600) * (1 + 0.6 * lp(1600)); // a formant-ish bump
-    case Timbre::BassSaw: return (k == 1 ? 0.8 : 0) + saw * lp(1400);
     case Timbre::SlapDark: return (k == 1 ? 1.5 : 0) + saw * lp(380);
     case Timbre::SlapBright: return (k == 1 ? 1.0 : 0) + saw * lp(3200);
     case Timbre::Sine: return k == 1 ? 1 : 0;
-    case Timbre::GuitarSaw: return saw * lp(5000);
-    case Timbre::Glass: return k == 1 ? 1 : k == 2 ? 0.12 : k == 3 ? 0.18 : 0;
     }
     return 0;
 }
@@ -329,13 +321,6 @@ const std::vector<Progression>& progressions(Mood m, bool minor)
         {{Mood::Calm, true}, {{{0, MinAdd9}, {8, Maj7}, {3, Maj7}, {10, Add9}},
                               {{0, Min7}, {5, Min7}, {8, Maj7}, {7, Sus4}},
                               {{8, Maj7}, {3, Add9}, {10, Sus4}, {0, MinAdd9}}}},
-        // drive: rock triads, the flat seventh of mixolydian, a bar a chord
-        {{Mood::Drive, false}, {{{0, Maj}, {10, Maj}, {5, Maj}, {0, Maj}},
-                                {{0, Maj}, {7, Maj}, {10, Maj}, {5, Maj}},
-                                {{9, Min}, {5, Maj}, {0, Maj}, {7, Maj}}}},
-        {{Mood::Drive, true}, {{{0, Min}, {10, Maj}, {8, Maj}, {10, Maj}},
-                               {{0, Min}, {8, Maj}, {3, Maj}, {10, Maj}},
-                               {{0, Min}, {5, Min}, {8, Maj}, {7, Maj}}}},
         // hype: minor EDM loop, a bar a chord
         {{Mood::Hype, true}, {{{0, Min}, {8, Maj}, {10, Maj}, {7, Min}},
                               {{0, Min}, {8, Maj}, {3, Maj}, {10, Maj}},
@@ -357,13 +342,6 @@ const std::vector<Progression>& progressions(Mood m, bool minor)
         {{Mood::Epic, false}, {{{0, Maj}, {7, Maj}, {9, Min}, {5, Maj}},
                                {{5, Maj}, {0, Maj}, {7, Sus4}, {7, Maj}},
                                {{0, Maj}, {4, Min}, {5, Maj}, {7, Maj}}}},
-        // tense: phrygian half steps and a diminished seventh, two bars a chord
-        {{Mood::Tense, true}, {{{0, Min}, {1, Maj}, {0, Min}, {11, Dim7}},
-                               {{0, Min}, {8, Maj}, {1, Maj}, {0, Min}},
-                               {{0, Sus2}, {1, Maj}, {6, Dim7}, {0, Min}}}},
-        {{Mood::Tense, false}, {{{0, Sus2}, {1, Maj}, {0, Sus2}, {11, Dim7}},
-                                {{0, Sus2}, {8, Maj}, {1, Maj}, {0, Sus2}},
-                                {{0, Sus4}, {1, Maj}, {6, Dim7}, {0, Sus2}}}},
         // funk: a dorian vamp of sevenths and ninths, two bars a chord
         {{Mood::Funk, true}, {{{0, Min7}, {5, Dom9}},
                               {{0, Min9}, {5, Dom9}, {3, Maj7}, {2, Min7}},
@@ -371,23 +349,9 @@ const std::vector<Progression>& progressions(Mood m, bool minor)
         {{Mood::Funk, false}, {{{0, Dom9}, {5, Dom9}},
                                {{0, Dom9}, {0, Dom9}, {5, Dom9}, {7, Dom9}},
                                {{2, Min7}, {7, Dom9}}}},
-        // retro: the 80s minor loop, a bar a chord
-        {{Mood::Retro, true}, {{{0, Min}, {10, Maj}, {8, Maj}, {10, Maj}},
-                               {{0, Min}, {5, Min}, {8, Maj}, {10, Maj}},
-                               {{8, Maj}, {10, Maj}, {0, Min}, {7, Min}}}},
-        {{Mood::Retro, false}, {{{0, Maj}, {9, Min}, {5, Maj}, {7, Maj}},
-                                {{9, Min}, {5, Maj}, {0, Maj}, {7, Maj}},
-                                {{0, Maj}, {7, Maj}, {9, Min}, {5, Maj}}}},
-        // happy: bright major, two chords a bar
-        {{Mood::Happy, false}, {{{0, Maj}, {5, Maj}, {9, Min}, {7, Maj}, {0, Maj}, {5, Maj}, {7, Sus4}, {7, Maj}},
-                                {{0, Maj}, {7, Maj}, {9, Min}, {5, Maj}},
-                                {{5, Maj}, {7, Maj}, {0, Maj}, {9, Min}}}},
-        {{Mood::Happy, true}, {{{0, Min}, {8, Maj}, {3, Maj}, {10, Maj}},
-                               {{0, Min}, {10, Maj}, {8, Maj}, {10, Maj}},
-                               {{3, Maj}, {10, Maj}, {0, Min}, {8, Maj}}}},
     };
     const auto it = all.find({m, minor});
-    return it != all.end() ? it->second : all.at({Mood::Drive, minor});
+    return it != all.end() ? it->second : all.at({Mood::Hype, minor});
 }
 
 const char* const kSharps[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -475,13 +439,6 @@ Style styleOf(Mood m)
         s.bIntroFrom = 0.25, s.bIntroTo = 0.35, s.bMain = 0.35, s.bLift = 0.45, s.bBreak = 0.25, s.bEnd = 0.35, s.bRamp = 1.0;
         s.wet = 0.5, s.feedback = 0.86, s.damp = 0.45, s.size = 1.35, s.preDelay = 0.03;
         break;
-    case Mood::Drive:
-        s.bpm = 116, s.key = {2, false}, s.chordBeats = 4;
-        s.padGain = 0; // a band: guitars, bass, drums
-        s.bIntroFrom = 0.25, s.bIntroTo = 0.6, s.bMain = 0.65, s.bLift = 0.8, s.bBreak = 0.3, s.bEnd = 0.55, s.bRamp = 0.3;
-        s.wet = 0.2, s.feedback = 0.74, s.damp = 0.35, s.size = 0.8, s.preDelay = 0.012;
-        s.duck = 0.1, s.masterDrive = 0.25;
-        break;
     case Mood::Hype:
         s.bpm = 128, s.key = {4, true}, s.chordBeats = 4;
         s.padGain = 0.1, s.padDark = Timbre::PadDark, s.padBright = Timbre::HypeBright, s.padAttack = 0.04,
@@ -504,33 +461,11 @@ Style styleOf(Mood m)
         s.bIntroFrom = 0.2, s.bIntroTo = 0.7, s.bMain = 0.9, s.bLift = 1.0, s.bBreak = 0.35, s.bEnd = 0.85, s.bRamp = 1.0;
         s.wet = 0.5, s.feedback = 0.9, s.damp = 0.3, s.size = 1.6, s.preDelay = 0.04;
         break;
-    case Mood::Tense:
-        s.bpm = 100, s.key = {5, true}, s.chordBeats = 8, s.minTail = 4.0;
-        s.padGain = 0.065, s.padDark = Timbre::PadDark, s.padBright = Timbre::StringsDark, s.padAttack = 1.5,
-        s.padRelease = 1.5, s.padDetune = 9, s.padSend = 0.6;
-        s.bIntroFrom = 0.0, s.bIntroTo = 0.3, s.bMain = 0.35, s.bLift = 0.6, s.bBreak = 0.1, s.bEnd = 0.2, s.bRamp = 1.0;
-        s.wet = 0.45, s.feedback = 0.89, s.damp = 0.6, s.size = 1.45, s.preDelay = 0.05;
-        break;
     case Mood::Funk:
         s.bpm = 104, s.key = {4, true}, s.chordBeats = 8, s.swing = 0.1, s.swing16 = true, s.minTail = 2.0;
         s.padGain = 0;
         s.bIntroFrom = 0.6, s.bIntroTo = 0.7, s.bMain = 0.75, s.bLift = 0.9, s.bBreak = 0.5, s.bEnd = 0.7, s.bRamp = 0.2;
         s.wet = 0.1, s.feedback = 0.66, s.damp = 0.3, s.size = 0.6, s.preDelay = 0.005;
-        break;
-    case Mood::Retro:
-        s.bpm = 108, s.key = {9, true}, s.chordBeats = 4;
-        s.padGain = 0.045, s.padDark = Timbre::PadDark, s.padBright = Timbre::PadBright, s.padAttack = 0.35,
-        s.padRelease = 0.8, s.padDetune = 16, s.padSend = 0.55, s.padLow = 55, s.padVibrato = 6;
-        s.bIntroFrom = 0.15, s.bIntroTo = 0.55, s.bMain = 0.6, s.bLift = 0.75, s.bBreak = 0.3, s.bEnd = 0.6, s.bRamp = 0.5;
-        s.wet = 0.38, s.feedback = 0.86, s.damp = 0.25, s.size = 1.25, s.preDelay = 0.025;
-        s.duck = 0.25, s.duckRelease = 0.1;
-        break;
-    case Mood::Happy:
-        s.bpm = 122, s.key = {0, false}, s.chordBeats = 2, s.swing = 0.2, s.minTail = 2.0;
-        s.padGain = 0;
-        s.bIntroFrom = 0.7, s.bIntroTo = 0.8, s.bMain = 0.85, s.bLift = 1.0, s.bBreak = 0.6, s.bEnd = 0.8, s.bRamp = 0.2;
-        s.wet = 0.2, s.feedback = 0.75, s.damp = 0.25, s.size = 0.85, s.preDelay = 0.01;
-        s.duck = 0.08;
         break;
     }
     return s;
@@ -545,7 +480,7 @@ struct LeadNote {
 };
 
 struct Plan {
-    Mood mood = Mood::Drive;
+    Mood mood = Mood::Hype;
     Style style;
     double bpm = 0, beat = 0, bar = 0, length = 0;
     long long frames = 0;
@@ -594,7 +529,7 @@ struct Plan {
 
 int pcIn(int pc, int low) { return low + ((pc - low) % 12 + 12) % 12; } // the pitch class pc in low..low+11
 
-// The tune of moods with one (retro, happy, epic): a four-bar phrase from the seed (rhythm from the mood's patterns,
+// The tune of moods with one (epic: the horns): a four-bar phrase from the seed (rhythm from the mood's patterns,
 // chord tones on strong beats, steps of the scale between), repeated, another one in lift bars; the phrase's last
 // note lands on the chord's root
 void makeLead(Plan& p)
@@ -607,19 +542,6 @@ void makeLead(Plan& p)
     Rhythm closing;
     int lo = 60, hi = 79;
     switch (p.mood) {
-    case Mood::Retro:
-        rhythms = {{{0, 1.5}, {1.5, 1}, {2.5, 0.5}, {3, 1}}, {{0, 0.5}, {0.5, 0.5}, {1, 1}, {2, 2}},
-                   {{0, 2}, {2, 0.5}, {2.5, 0.5}, {3, 1}}, {{0.5, 1}, {1.5, 1}, {2.5, 1.5}}};
-        closing = {{0, 3.5}};
-        lo = 64, hi = 81;
-        break;
-    case Mood::Happy:
-        rhythms = {{{0, 0.5}, {0.5, 0.5}, {1, 0.5}, {2, 0.5}, {2.5, 0.5}, {3, 1}},
-                   {{0.5, 0.5}, {1, 0.5}, {1.5, 0.5}, {2, 1}, {3, 0.5}, {3.5, 0.5}},
-                   {{0, 1}, {1, 0.5}, {1.5, 0.5}, {2, 0.5}, {2.5, 0.5}, {3, 0.5}}};
-        closing = {{0, 0.5}, {0.5, 0.5}, {1, 2}};
-        lo = 72, hi = 91;
-        break;
     case Mood::Epic:
         rhythms = {{{0, 2}, {2, 2}}, {{0, 3}, {3, 1}}, {{0, 1}, {1, 1}, {2, 2}}, {{0, 1.5}, {1.5, 0.5}, {2, 2}}};
         slow = {{{0, 4}}, {{0, 2}, {2, 2}}, {{0, 3}, {3, 1}}};
@@ -901,7 +823,7 @@ Brightness brightnessOf(const Plan& p)
     br.bar = p.bar;
     br.target.assign(size_t(p.bars + 1), 0.5);
     br.ramp.assign(size_t(p.bars + 1), 0.2);
-    const bool opens = p.mood == Mood::Hype || p.mood == Mood::Retro || p.mood == Mood::Epic;
+    const bool opens = p.mood == Mood::Hype || p.mood == Mood::Epic;
     for (int b = 0; b <= p.bars; ++b) {
         const Section::Kind k = p.kindAt(b);
         double& t = br.target[size_t(b)];
@@ -1042,8 +964,8 @@ void tone(Context& c, double t0, double gate, int midi, const Env& e, double gai
     });
 }
 
-// FM (phase modulation of one sine by another): electric piano (ratio 1, a bright attack), glockenspiel (high ratio,
-// short), metal (an inharmonic ratio). Optional tremolo (a slow auto-pan) and wow (a slow pitch drift, by the bed's
+// FM (phase modulation of one sine by another): the electric piano of lofi (ratio 1, a bright attack that fades).
+// Optional tremolo (a slow auto-pan) and wow (a slow pitch drift, by the bed's
 // clock so all notes drift together, like a worn tape)
 struct FmP {
     double ratio = 1, index = 1.5, indexEnd = 0.2, indexTau = 0.2;
@@ -1124,41 +1046,6 @@ void nylon(Context& c, double t0, double gate, int midi, double gain, double pan
     });
 }
 
-// Guitar: a power chord (root, fifth, octave) of plucked strings, two takes (left and right: other picks, slightly
-// apart), driven into a soft clip, then a cabinet (high pass, low pass, a presence bump); palm-muted: the strings
-// damped, darker and shorter
-void guitar(Context& c, double t0, double gate, int root, bool muted, double gain, double send)
-{
-    const int notes[3] = {root, root + 7, root + 12};
-    KsString l[3], r[3];
-    Noise pick(std::uint32_t(t0 * 3001) + std::uint32_t(root) * 7u + 151u);
-    const float loss = muted ? 0.975f : 0.998f, bright = muted ? 0.5f : 0.8f;
-    for (int i = 0; i < 3; ++i) {
-        const double f = midiHz(notes[i]);
-        l[i].init(f * cents(-3), pick, loss, bright);
-        r[i].init(f * cents(4), pick, loss, bright);
-    }
-    const double cut = muted ? 3600 : 5200;
-    Biquad hl = Biquad::make(Biquad::High, 100, 0.7), hr = hl, ll = Biquad::make(Biquad::Low, cut, 0.8), lr = ll;
-    Biquad tl = Biquad::make(Biquad::High, 220, 0.7), tr = tl; // before the clip: a tight low end
-    Biquad ml = Biquad::make(Biquad::Band, 1700, 1.0), mr = ml, bl = Biquad::make(Biquad::Band, 160, 1.2), br = bl;
-    const Env e = muted ? Env{0.001, 0.2, 0.45, 0.03} : Env{0.002, 1.2, 0.65, 0.12};
-    const float drive = muted ? 14.0f : 18.0f;
-    note(c.bus, t0, gate, e, gain, 0, send, nullptr, [&](long long, long long) {
-        float sl = 0, sr = 0;
-        for (int i = 0; i < 3; ++i) {
-            sl += (i == 2 ? 0.7f : 1.0f) * l[i].next();
-            sr += (i == 2 ? 0.7f : 1.0f) * r[i].next();
-        }
-        float yl = ll.run(hl.run(soft(drive * tl.run(sl)) + 0.25f * soft(0.5f * drive * sl))),
-              yr = lr.run(hr.run(soft(drive * tr.run(sr)) + 0.25f * soft(0.5f * drive * sr)));
-        // the presence of the amp, and the chug of a closed cabinet when muted
-        yl += 0.9f * ml.run(yl) + (muted ? 0.8f * bl.run(yl) : 0.f);
-        yr += 0.9f * mr.run(yr) + (muted ? 0.8f * br.run(yr) : 0.f);
-        return std::pair<float, float>{yl, yr};
-    });
-}
-
 void bassNote(Context& c, double t0, double gate, int midi, const Env& e, double gain, Timbre t, bool ducked = false)
 {
     const Table& table = c.tables.get(t, midi);
@@ -1210,20 +1097,17 @@ KickP kickOf(Mood m)
 {
     switch (m) {
     case Mood::Calm: return {54, 45, 0.045, 0.2, 0.0, 0.05};
-    case Mood::Drive: return {58, 55, 0.014, 0.16, 0.0, 0.08, 0.5};
     case Mood::Hype: return {47, 115, 0.03, 0.32, 0.06, 0.02};
     case Mood::Lofi: return {52, 60, 0.04, 0.24, 0.0, 0.02};
     case Mood::Epic: return {42, 70, 0.06, 0.5, 0.02, 0.3};
-    case Mood::Tense: return {44, 50, 0.05, 0.4, 0.0, 0.2};
     case Mood::Funk: return {62, 45, 0.012, 0.12, 0.0, 0.0, 0.45};
-    case Mood::Retro: return {50, 95, 0.03, 0.28, 0.05, 0.08};
-    case Mood::Happy: return {60, 50, 0.014, 0.14, 0.0, 0.03, 0.4};
     }
     return {};
 }
 
 struct SnareP {
-    double band = 1900, noiseTau = 0.13, tone = 0.5, toneHz = 185, send = 0.3, gate = 0; // gate > 0: a gated tail (s)
+    // No gated tail any more: retro's gated snare (0.25 trial) was a far too loud "psssh" over the bed
+    double band = 1900, noiseTau = 0.13, tone = 0.5, toneHz = 185, send = 0.3;
     double lowpass = 0;
 };
 
@@ -1235,11 +1119,10 @@ void snare(Context& c, double t0, double vel, const SnareP& sp)
     const Table& sine = sineTable();
     double phase = 0;
     const double toneTau = 0.05;
-    const bool gated = sp.gate > 0;
-    Env e = gated ? Env{0.001, 0, 1, 0.025} : Env{0.001, 0, 1, 0.03};
-    const double kTone = std::exp(-1.0 / (toneTau * SR)), kNoise = std::exp(-1.0 / ((gated ? 0.5 : sp.noiseTau) * SR));
+    const Env e{0.001, 0, 1, 0.03};
+    const double kTone = std::exp(-1.0 / (toneTau * SR)), kNoise = std::exp(-1.0 / (sp.noiseTau * SR));
     double toneEnv = sp.tone, noiseEnv = 2.2;
-    note(c.bus, t0, gated ? sp.gate : sp.noiseTau * 3.5, e, vel, -0.05, sp.send, nullptr, [&](long long, long long) {
+    note(c.bus, t0, sp.noiseTau * 3.5, e, vel, -0.05, sp.send, nullptr, [&](long long, long long) {
         const float tone = lookup(sine, phase) * float(toneEnv);
         phase += sp.toneHz / SR;
         if (phase >= 1) phase -= 1;
@@ -1307,37 +1190,6 @@ void scratch(Context& c, double t0, double vel, double pan)
     note(c.bus, t0, 0.03, e, vel, pan, 0.05, nullptr, [&](long long, long long) {
         const float x = n.next();
         const float v = 2.5f * (b1.run(x) + 0.6f * b2.run(x));
-        return std::pair<float, float>{v, v};
-    });
-}
-
-// Tambourine: jingles (two high bands of noise, a little rattle in the envelope)
-void tambourine(Context& c, double t0, double vel)
-{
-    Biquad b1 = Biquad::make(Biquad::Band, 7800, 3.0), b2 = Biquad::make(Biquad::Band, 11000, 3.0);
-    Noise n(std::uint32_t(t0 * 1409) + 83);
-    Env e{0.001, 0.07, 0.0, 0.03};
-    const Table& sine = sineTable();
-    note(c.bus, t0, 0.2, e, vel, 0.35, 0.12, nullptr, [&](long long i, long long) {
-        const float x = n.next();
-        const float rattle = 0.75f + 0.25f * lookup(sine, frac(double(i) * 38.0 / SR));
-        const float v = 2.4f * rattle * (b1.run(x) + 0.7f * b2.run(x));
-        return std::pair<float, float>{v, v};
-    });
-}
-
-// Rim click: a short knock (a high sine and a band of noise)
-void rim(Context& c, double t0, double vel)
-{
-    Biquad band = Biquad::make(Biquad::Band, 2400, 2.5);
-    Noise n(std::uint32_t(t0 * 619) + 97);
-    const Table& sine = sineTable();
-    double phase = 0;
-    Env e{0.0005, 0.018, 0.0, 0.01};
-    note(c.bus, t0, 0.06, e, vel, 0.1, 0.5, nullptr, [&](long long, long long) {
-        const float v = 0.8f * lookup(sine, phase) + 1.5f * band.run(n.next());
-        phase += 1700.0 / SR;
-        if (phase >= 1) phase -= 1;
         return std::pair<float, float>{v, v};
     });
 }
@@ -1440,33 +1292,22 @@ void renderPads(Context& c)
     const Env e{s.padAttack, 0, 1, s.padRelease};
     for (const Plan::Span& sp : p.spans) {
         if (sp.kind == Section::Ending) continue;
-        const int b = sp.from / 4;
         double g = s.padGain;
         if (sp.kind == Section::Intro) g *= p.mood == Mood::Epic ? 0.8 : 0.85;
-        if (sp.kind == Section::Break) g *= p.mood == Mood::Hype ? 1.15 : p.mood == Mood::Retro ? 1.1 : 1.0;
-        if (p.mood == Mood::Drive && sp.kind == Section::Main) g *= p.lift[size_t(b)] ? 0.9 : 0.7; // the guitars lead
+        if (sp.kind == Section::Break) g *= p.mood == Mood::Hype ? 1.15 : 1.0;
         const double t0 = p.beatTime(sp.from), gate = p.beatTime(sp.to - sp.from) - (p.mood == Mood::Hype ? 0.02 : 0);
         const std::array<int, 4>& v = p.voicingAt(sp.from);
         const int root = rootPc(p, p.chordAt(sp.from));
-        if (p.mood == Mood::Tense) {
-            // A low drone of root and fifth, and in lift bars a quiet cluster of a minor second up high
-            const int r = pcIn(root, 40);
-            pad(c, t0, gate, {r, r + 7, r + 12}, e, g, -1, s.padDark, s.padBright, s.padDetune, s.padSend);
-            if (sp.kind == Section::Main && p.lift[size_t(b)])
-                pad(c, t0, gate, {v[3] + 12, v[3] + 13}, Env{2.0, 0, 1, 1.5}, g * 0.35, -1, Timbre::Glass, Timbre::Glass, 4, 0.8);
-            continue;
-        }
         const std::vector<int> notes(v.begin(), v.end());
         pad(c, t0, gate, notes, e, g, s.padRoot ? pcIn(root, 40) : -1, s.padDark, s.padBright, s.padDetune, s.padSend,
             s.padVibrato, s.padWide);
     }
     if (p.endBar > 0) { // the final chord rings out to the end
-        const bool slow = p.mood == Mood::Calm || p.mood == Mood::Epic || p.mood == Mood::Tense;
+        const bool slow = p.mood == Mood::Calm || p.mood == Mood::Epic;
         const Env end{slow ? 0.2 : 0.02, slow ? 4.0 : 2.5, 0.35, 0.01};
         const std::array<int, 4>& v = p.voicingAt(p.endBar * 4);
         const int root = rootPc(p, p.tonic);
-        std::vector<int> notes(v.begin(), v.end());
-        if (p.mood == Mood::Tense) notes = {pcIn(root, 40), pcIn(root, 40) + 7, pcIn(root, 40) + 12};
+        const std::vector<int> notes(v.begin(), v.end());
         pad(c, p.barTime(p.endBar), p.length - p.barTime(p.endBar), notes, end, s.padGain * 1.05,
             s.padRoot ? pcIn(root, 40) : -1, s.padDark, s.padBright, s.padDetune, s.padSend, s.padVibrato, s.padWide);
     }
@@ -1476,7 +1317,6 @@ void renderBass(Context& c)
 {
     const Plan& p = c.p;
     const int last = p.last();
-    const double eighth = p.beat / 2;
     const auto bassOf = [&](int beatIndex, int low) { return pcIn(rootPc(p, p.chordAt(beatIndex)), low); };
     // Moods whose bass holds the chord: one note per chord span
     if (p.mood == Mood::Calm || p.mood == Mood::Epic) {
@@ -1502,20 +1342,6 @@ void renderBass(Context& c)
         switch (p.mood) {
         case Mood::Calm:
         case Mood::Epic: break;
-        case Mood::Drive: {
-            if (k == Section::Intro) break;
-            const int m = bassOf(b * 4, 36);
-            if (k == Section::Break) {
-                bassNote(c, t0, p.bar - 0.05, m, {0.03, 2.0, 0.5, 0.2}, 0.32, Timbre::BassDrive);
-                break;
-            }
-            for (int i = 0; i < 8; ++i) {
-                const bool up = i == 7;
-                bassNote(c, t0 + i * eighth, eighth * 0.82, up ? m + 12 : m, {0.004, 0.22, 0.6, 0.03},
-                         (i % 2 == 0 ? 0.22 : 0.18) * (up ? 0.8 : 1.0), Timbre::BassDrive);
-            }
-            break;
-        }
         case Mood::Hype: {
             if (k != Section::Main) break;
             const int m = bassOf(b * 4, 33);
@@ -1535,17 +1361,6 @@ void renderBass(Context& c)
             bassNote(c, p.at(b, 1.75), p.beat * 0.5, m, e, 0.22, Timbre::Bass);
             const int m2 = bassOf(b * 4 + 2, 36);
             bassNote(c, p.at(b, 2.5), p.beat * 1.2, lift ? m2 + 7 : m2, e, 0.28, Timbre::Bass);
-            break;
-        }
-        case Mood::Tense: {
-            if (k == Section::Intro && b < p.intro / 2) break;
-            const int m = bassOf(b * 4, 33);
-            if (k == Section::Break) break;
-            static const double accent[16] = {1, 0.35, 0.5, 0.35, 0.9, 0.35, 0.5, 0.35, 1, 0.35, 0.5, 0.35, 0.9, 0.4, 0.55, 0.4};
-            for (int i = 0; i < 16; ++i)
-                tone(c, t0 + i * p.beat / 4, p.beat / 4 * 0.6, m, {0.002, 0.07, 0.25, 0.03},
-                     0.2 * accent[i] * (k == Section::Intro ? 0.7 : 1.0), 0, 0.05,
-                     ToneP{Timbre::BassDrive, Timbre::BassSaw, 0.2 + 0.5 * accent[i], 0.0, 0.04});
             break;
         }
         case Mood::Funk: {
@@ -1577,44 +1392,17 @@ void renderBass(Context& c)
             }
             break;
         }
-        case Mood::Retro: {
-            if (k == Section::Intro && b < p.intro / 2) break;
-            for (int i = 0; i < 8; ++i) {
-                const int m = bassOf(b * 4 + i / 2, 33);
-                tone(c, t0 + i * eighth, eighth * 0.7, i % 2 ? m + 12 : m, {0.002, 0.14, 0.5, 0.04},
-                     (i % 2 ? 0.24 : 0.3) * (k == Section::Break ? 0.8 : 1.0), 0, 0.02,
-                     ToneP{Timbre::BassSaw, Timbre::BassSaw, 1, 1, 1, true}, true);
-            }
-            break;
-        }
-        case Mood::Happy: {
-            if (k == Section::Intro && b < p.intro / 2) break;
-            for (int i = 0; i < 4; ++i) {
-                const int m = bassOf(b * 4 + i, 38);
-                const int note = i % 2 ? m + 7 : m;
-                bassNote(c, p.at(b, i), p.beat * 0.45, note > 52 ? note - 12 : note, {0.004, 0.2, 0.35, 0.05},
-                         i % 2 ? 0.26 : 0.32, Timbre::Bass);
-            }
-            if (lift) bassNote(c, p.at(b, 3.5), p.beat * 0.4, bassOf(b * 4 + 3, 38) + 12, {0.004, 0.15, 0.3, 0.04}, 0.18, Timbre::Bass);
-            break;
-        }
         }
     }
     if (p.endBar > 0) {
         const double t = p.barTime(p.endBar), len = p.length - t;
-        const int low = p.mood == Mood::Hype || p.mood == Mood::Epic || p.mood == Mood::Tense || p.mood == Mood::Funk
-                                || p.mood == Mood::Retro
-                            ? 33
-                            : 36;
+        const int low = p.mood == Mood::Hype || p.mood == Mood::Epic || p.mood == Mood::Funk ? 33 : 36;
         const int m = pcIn(rootPc(p, p.tonic), low);
         Timbre t0 = Timbre::Bass;
         switch (p.mood) {
-        case Mood::Drive: t0 = Timbre::BassDrive; break;
         case Mood::Hype: t0 = Timbre::BassHype; break;
         case Mood::Epic: t0 = Timbre::Sine; break;
-        case Mood::Tense: t0 = Timbre::BassDrive; break;
         case Mood::Funk: t0 = Timbre::SlapDark; break;
-        case Mood::Retro: t0 = Timbre::BassSaw; break;
         default: break;
         }
         bassNote(c, t, len, p.mood == Mood::Epic ? m - 12 : m, {0.005, 0.9, 0.0, 0.01}, 0.45, t0);
@@ -1646,23 +1434,6 @@ void renderComp(Context& c)
                 const double g = (bass ? 0.42 : 0.3) * (lift ? 1.0 : 0.92);
                 nylon(c, t0 + i * p.beat / 2, p.beat * (bass ? 1.9 : 1.4), m, human(g), bass ? -0.1 : (i % 4 == 1 ? 0.3 : -0.3),
                       0.45);
-            }
-            break;
-        }
-        case Mood::Drive: {
-            const int root = pcIn(rootPc(p, p.chordAt(b * 4)), 40);
-            if (k == Section::Intro) {
-                for (int i = 0; i < 8; ++i) guitar(c, t0 + i * p.beat / 2, p.beat / 2 * 0.7, root, true, human(0.1), 0.1);
-            } else if (k == Section::Break) {
-                guitar(c, t0, p.bar * 0.9, root, false, 0.1, 0.25);
-            } else if (lift) {
-                guitar(c, t0, p.beat * 2.4, root, false, human(0.15), 0.2);
-                guitar(c, t0 + 2.5 * p.beat, p.beat * 1.4, pcIn(rootPc(p, p.chordAt(b * 4 + 2)), 40), false, human(0.145), 0.2);
-            } else {
-                for (int i = 0; i < 8; ++i) {
-                    const int r = pcIn(rootPc(p, p.chordAt(b * 4 + i / 2)), 40);
-                    guitar(c, t0 + i * p.beat / 2, p.beat / 2 * 0.75, r, true, human(i % 2 ? 0.125 : 0.155), 0.1);
-                }
             }
             break;
         }
@@ -1722,28 +1493,6 @@ void renderComp(Context& c)
             }
             break;
         }
-        case Mood::Tense: {
-            // High strings trembling on a minor second (sixteenths, swelling over the bar) in main parts
-            if (k == Section::Main) {
-                const int top = pcIn(rootPc(p, p.chordAt(b * 4)), 79);
-                for (int i = 0; i < 16; ++i)
-                    tone(c, t0 + i * p.beat / 4, p.beat / 4 * 0.9, i % 2 ? top + 1 : top, {0.006, 0, 1, 0.03},
-                         0.012 + 0.016 * i / 15.0, i % 2 ? 0.35 : -0.35, 0.6,
-                         ToneP{Timbre::StringsDark, Timbre::StringsBright, 0.8, 0.8, 1});
-            }
-            // Metallic pings on two places a bar (from the seed), ringing into the hall
-            if (k == Section::Intro && b < p.intro / 2) break;
-            Noise where(p.seed * 389u + unsigned(((b - p.intro) % 4 + 4) % 4) * 41u + 9u);
-            const FmP metal{1.414, 2.6, 0.4, 0.25};
-            for (int i = 0; i < 2; ++i) {
-                const double pos = std::floor(where.unit() * 8) / 2;
-                const std::array<int, 4> v = p.voicingAt(b * 4 + int(pos));
-                const int m = v[size_t(where.unit() * 4) % 4] + 24;
-                fm(c, t0 + pos * p.beat, 0.1, m, {0.001, 0.5, 0.0, 0.6}, 0.08 * (k == Section::Break ? 1.2 : 1.0),
-                   i ? 0.5 : -0.5, 0.8, metal);
-            }
-            break;
-        }
         case Mood::Funk: {
             // Clavinet stabs on syncopated sixteenths (upper three notes of the chord)
             if (k == Section::Intro) break;
@@ -1771,35 +1520,6 @@ void renderComp(Context& c)
             }
             break;
         }
-        case Mood::Retro: {
-            // A square-wave arp in eighths with a dotted-eighth echo
-            static const int patterns[][8] = {{0, 1, 2, 3, 4, 3, 2, 1}, {0, 2, 1, 3, 2, 4, 3, 1}, {4, 3, 2, 0, 1, 2, 3, 2}};
-            const int* pat = patterns[p.variant % 3];
-            const ToneP tp{Timbre::SquareDark, Timbre::SquareBright, 0.9, 0.25, 0.15, true, 7};
-            for (int i = 0; i < 8; ++i) {
-                const std::array<int, 4> v = p.voicingAt(b * 4 + i / 2);
-                const int tones[5] = {v[0] + 12, v[1] + 12, v[2] + 12, v[3] + 12, v[0] + 24};
-                const int m = tones[pat[i]];
-                const double t = t0 + i * p.beat / 2, g = (k == Section::Intro ? 0.045 : 0.055) * (i % 2 ? 0.85 : 1.0);
-                const Env e{0.003, 0.25, 0.15, 0.1};
-                tone(c, t, p.beat * 0.4, m, e, g, -0.2, 0.35, tp);
-                tone(c, t + 0.75 * p.beat, p.beat * 0.4, m, e, g * 0.35, 0.6, 0.5, tp);
-            }
-            break;
-        }
-        case Mood::Happy: {
-            // Marimba bouncing through the chord in eighths
-            static const int patterns[][8] = {{0, 2, 1, 3, 0, 2, 1, 3}, {0, 1, 2, 3, 2, 1, 2, 3}, {3, 2, 0, 2, 3, 2, 1, 2}};
-            const int* pat = patterns[p.variant % 3];
-            for (int i = 0; i < 8; ++i) {
-                if (k == Section::Break && i % 2) continue;
-                const std::array<int, 4> v = p.voicingAt(b * 4 + i / 2);
-                const int m = v[size_t(pat[i])] + 12;
-                tone(c, p.at(b, i * 0.5), p.beat * 0.4, m, {0.001, 0.22, 0.0, 0.08}, human(i % 2 ? 0.1 : 0.13),
-                     i % 2 ? 0.3 : -0.3, 0.2, ToneP{Timbre::Mallet, Timbre::Mallet, 0, 0, 1});
-            }
-            break;
-        }
         }
     }
     // The final chord
@@ -1817,43 +1537,23 @@ void renderComp(Context& c)
                 fm(c, t + i * 0.03, len, v[size_t(i)], {0.003, 1.6, 0.0, 0.01}, 0.08, i % 2 ? 0.2 : -0.2, 0.3,
                    FmP{1.0, 1.8, 0.25, 0.3, 0.22, 3.6, 9});
             break;
-        case Mood::Drive: guitar(c, t, len, pcIn(rootPc(p, p.tonic), 40), false, 0.09, 0.3); break;
         case Mood::Funk:
             for (int n = 1; n < 4; ++n)
                 tone(c, t, 0.3, v[size_t(n)] + 12, {0.001, 0.2, 0.0, 0.05}, 0.06, n == 1 ? -0.3 : 0.3, 0.1,
                      ToneP{Timbre::PulseDark, Timbre::PulseBright, 1.0, 0.35, 0.08});
-            break;
-        case Mood::Happy:
-            for (int i = 0; i < 4; ++i)
-                tone(c, t + i * 0.04, len, v[size_t(i)] + 12, {0.001, 0.6, 0.0, 0.01}, 0.12, i % 2 ? 0.3 : -0.3, 0.3,
-                     ToneP{Timbre::Mallet, Timbre::Mallet, 0, 0, 1});
-            break;
-        case Mood::Tense:
-            fm(c, t, 0.1, v[0] + 24, {0.001, 1.2, 0.0, 1.0}, 0.07, 0, 0.9, FmP{1.414, 2.6, 0.4, 0.4});
             break;
         default: break;
         }
     }
 }
 
-// The tune (retro: a square lead with an echo; happy: a glockenspiel; epic: horns)
+// The tune (epic: horns, an octave below doubling them)
 void renderLead(Context& c)
 {
     const Plan& p = c.p;
     for (const LeadNote& n : p.lead) {
         const double t = p.beatTime(n.beat), len = n.len * p.beat;
         switch (p.mood) {
-        case Mood::Retro: {
-            const ToneP tp{Timbre::SquareDark, Timbre::SquareBright, 0.75, 0.45, 0.2, false, 6, 5.5, 18, 0.18};
-            const Env e{0.008, 0.3, 0.7, 0.12};
-            tone(c, t, len * 0.92, n.midi, e, 0.1 * n.vel, 0, 0.4, tp);
-            tone(c, t + 0.75 * p.beat, len * 0.92, n.midi, e, 0.03 * n.vel, -0.6, 0.5, tp);
-            tone(c, t + 1.5 * p.beat, len * 0.92, n.midi, e, 0.012 * n.vel, 0.6, 0.5, tp);
-            break;
-        }
-        case Mood::Happy:
-            fm(c, t, len * 0.5, n.midi, {0.001, 0.5, 0.0, 0.25}, 0.07 * n.vel, 0.15, 0.3, FmP{3.5, 1.4, 0.1, 0.06});
-            break;
         case Mood::Epic: {
             // The brightness swells (bStart below bEnd), a vibrato sets in
             const ToneP swell{Timbre::BrassDark, Timbre::BrassBright, 0.1, 0.65, 0.25, false, 5, 4.8, 10, 0.3};
@@ -1885,33 +1585,11 @@ void renderDrums(Context& c)
             // Brushed half time: a soft kick on one, a rim click on three, a quiet shaker
             if (k == Section::Intro || k == Section::Break) break;
             // Brushes: a swish on two and four, a shaker (no kick)
-            const SnareP brush{3800, 0.11, 0.0, 200, 0.6, 0, 7000};
+            const SnareP brush{3800, 0.11, 0.0, 200, 0.6, 7000};
             if (lift) tom(c, at(0), human(0.25), 70, 0.25, 0, 0.3); // a soft floor tom on one in lift bars
             snare(c, at(1), human(0.11), brush);
             snare(c, at(3), human(0.12), brush);
             for (int i = 0; i < 8; ++i) shaker(c, at(i * 0.5), human(i % 2 ? 0.05 : 0.085));
-            break;
-        }
-        case Mood::Drive: {
-            const SnareP sn{1900, 0.13, 0.5, 185, 0.3};
-            if (newPart) crash(c, at(0), 0.07);
-            if (k == Section::Main) {
-                kick(c, at(0), human(0.62), kp);
-                kick(c, at(2), human(0.58), kp);
-                kick(c, at(2.5), human(0.42), kp);
-                if (lift) kick(c, at(3.75), human(0.34), kp);
-                if (fill) {
-                    snare(c, at(1), human(0.32), sn);
-                    for (int i = 0; i < 8; ++i) snare(c, at(2 + i * 0.25), 0.12 + 0.22 * i / 7.0, sn);
-                } else {
-                    snare(c, at(1), human(0.42), sn);
-                    snare(c, at(3), human(0.42), sn);
-                }
-                if (lift && (b - p.intro) % 4 == 0 && !newPart) crash(c, at(0), 0.05);
-            }
-            if (k == Section::Main || k == Section::Break || (k == Section::Intro && b >= p.intro / 2))
-                for (int i = 0; i < 8; ++i) hat(c, at(i * 0.5), human(i % 2 ? 0.075 : 0.11), lift && i % 2 == 1);
-            if (fill && k != Section::Main) riser(c, t0, p.bar, 0.035);
             break;
         }
         case Mood::Hype: {
@@ -1938,7 +1616,7 @@ void renderDrums(Context& c)
             // Boom-bap on swung sixteenths: a dusty kick, a fat low snare, soft dark hats; crackle all along
             vinyl(c, b, 0.05);
             if (k == Section::Intro || k == Section::Break) break;
-            const SnareP sn{1400, 0.16, 0.6, 160, 0.2, 0, 3800};
+            const SnareP sn{1400, 0.16, 0.6, 160, 0.2, 3800};
             kick(c, at(0), human(0.7), kp);
             kick(c, at(1.75), human(0.4), kp);
             kick(c, at(2.5), human(0.6), kp);
@@ -1966,23 +1644,6 @@ void renderDrums(Context& c)
             if (fill && k != Section::Main) riser(c, t0, p.bar, 0.03);
             break;
         }
-        case Mood::Tense: {
-            // A heartbeat kick, a ticking clock (hats on the beats, sixteenths in lift bars), a rim click on four
-            if (newPart) crash(c, at(0), 0.035);
-            if (k == Section::Main) {
-                kick(c, at(0), human(0.7), kp);
-                kick(c, at(0.375), human(0.4), kp);
-                kick(c, at(2), human(0.6), kp);
-                kick(c, at(2.375), human(0.35), kp);
-                for (int i = 0; i < 4; ++i) hat(c, at(i), human(0.045), false, 9000, 0.4); // a clock ticking
-                if (lift)
-                    for (int i = 0; i < 16; ++i)
-                        if (i % 4) hat(c, at(i * 0.25), human(0.014), false, 9000, -0.4);
-                rim(c, at(3), human(0.08));
-            }
-            if (fill) riser(c, t0, p.bar, 0.025);
-            break;
-        }
         case Mood::Funk: {
             // Tight kick on syncopations, snare on two and four with ghost notes, swung 16th hats with accents
             const SnareP sn{2300, 0.1, 0.55, 210, 0.08};
@@ -2007,47 +1668,6 @@ void renderDrums(Context& c)
             }
             break;
         }
-        case Mood::Retro: {
-            // Half-time: gated snare on three, sixteenth hats, tom fills
-            const SnareP sn{1700, 0.13, 0.6, 180, 0.8, 0.28};
-            if (newPart) crash(c, at(0), 0.07);
-            if (k == Section::Main) {
-                // Half time: the kick on one (and the and of two), the gated snare on three
-                kick(c, at(0), human(0.8), kp);
-                kick(c, at(1.5), human(0.45), kp);
-                if (lift) kick(c, at(3.5), human(0.35), kp);
-                if (fill) {
-                    for (int i = 0; i < 4; ++i) tom(c, at(2 + i * 0.5), 0.45, 150 - i * 25, 0.22, 0.4 - i * 0.25, 0.4);
-                } else {
-                    snare(c, at(2), human(0.45), sn);
-                }
-                for (int i = 0; i < 16; ++i) hat(c, at(i * 0.25), human(i % 4 == 2 ? 0.05 : i % 2 ? 0.025 : 0.04), false, 8200, 0.3);
-            } else if (k == Section::Intro && b >= p.intro / 2) {
-                for (int i = 0; i < 4; ++i) hat(c, at(i), human(0.04), false, 8200, 0.3);
-            }
-            if (fill && k != Section::Main) riser(c, t0, p.bar, 0.035);
-            break;
-        }
-        case Mood::Happy: {
-            // Bouncy: kick on one and three (and the and of two), claps on two and four, tambourine and shaker
-            if (newPart) crash(c, at(0), 0.05);
-            if (k == Section::Main) {
-                kick(c, at(0), human(0.72), kp);
-                kick(c, at(1.5), human(0.4), kp);
-                kick(c, at(2), human(0.68), kp);
-                clap(c, at(1), human(0.24), -0.1, 1400);
-                clap(c, at(3), human(0.24), 0.1, 1400);
-                for (int i = 0; i < 8; ++i) tambourine(c, at(i * 0.5), human(i % 2 ? 0.07 : 0.045));
-                if (lift)
-                    for (int i = 0; i < 8; ++i) shaker(c, at(i * 0.5 + 0.25), human(0.04), 0.4);
-                if (fill)
-                    for (int i = 0; i < 4; ++i) clap(c, at(2 + i * 0.5), 0.12 + 0.05 * i, 0, 1400);
-            } else if (k == Section::Intro || k == Section::Break) {
-                clap(c, at(1), human(0.12), -0.1, 1400);
-                clap(c, at(3), human(0.12), 0.1, 1400);
-            }
-            break;
-        }
         }
     }
     if (p.endBar > 0) { // the final hit
@@ -2063,21 +1683,14 @@ void renderDrums(Context& c)
             tom(c, t, 0.75, 62, 0.5, 0, 0.5);
             crash(c, t, 0.08);
             break;
-        case Mood::Tense: kick(c, t, 0.7, kp); break;
         case Mood::Funk:
             kick(c, t, 0.8, kp);
             hat(c, t, 0.08, true, 7600, 0.2);
-            break;
-        case Mood::Happy:
-            kick(c, t, 0.8, kp);
-            clap(c, t, 0.2, 0, 1400);
-            crash(c, t, 0.06);
             break;
         default:
             kick(c, t, 0.85, kp);
             crash(c, t, p.mood == Mood::Hype ? 0.1 : 0.08);
             if (p.mood == Mood::Hype) clap(c, t, 0.18);
-            if (p.mood == Mood::Retro) snare(c, t, 0.35, SnareP{1700, 0.13, 0.6, 180, 0.8, 0.28});
             break;
         }
     }
@@ -2191,14 +1804,10 @@ QString moodId(Mood m)
 {
     switch (m) {
     case Mood::Calm: return QStringLiteral("calm");
-    case Mood::Drive: return QStringLiteral("drive");
     case Mood::Hype: return QStringLiteral("hype");
     case Mood::Lofi: return QStringLiteral("lofi");
     case Mood::Epic: return QStringLiteral("epic");
-    case Mood::Tense: return QStringLiteral("tense");
     case Mood::Funk: return QStringLiteral("funk");
-    case Mood::Retro: return QStringLiteral("retro");
-    case Mood::Happy: return QStringLiteral("happy");
     }
     return {};
 }
@@ -2209,12 +1818,13 @@ std::optional<Mood> moodFrom(const QString& s)
     for (const Mood m : kMoods)
         if (t == moodId(m)) return m;
     static const std::map<QString, Mood> other{
-        {"ruhig", Mood::Calm},       {"driving", Mood::Drive},   {"treibend", Mood::Drive},  {"rock", Mood::Drive},
+        // drive (public before 0.25: guide, projects) and its words: the closest mood left is hype (energetic, steady
+        // eighths, travel/sport/action); tense, retro and happy were tried and dropped in 0.25 (see MusicBed.h)
+        {"drive", Mood::Hype},       {"driving", Mood::Hype},    {"treibend", Mood::Hype},   {"rock", Mood::Hype},
+        {"ruhig", Mood::Calm},
         {"edm", Mood::Hype},         {"lo-fi", Mood::Lofi},      {"chill", Mood::Lofi},      {"chillhop", Mood::Lofi},
-        {"cinematic", Mood::Epic},   {"episch", Mood::Epic},     {"dark", Mood::Tense},      {"spannung", Mood::Tense},
-        {"spannend", Mood::Tense},   {"düster", Mood::Tense},    {"suspense", Mood::Tense},  {"funky", Mood::Funk},
-        {"groove", Mood::Funk},      {"synthwave", Mood::Retro}, {"80s", Mood::Retro},       {"upbeat", Mood::Happy},
-        {"fröhlich", Mood::Happy},   {"froehlich", Mood::Happy}};
+        {"cinematic", Mood::Epic},   {"episch", Mood::Epic},     {"dark", Mood::Epic},       {"düster", Mood::Epic},
+        {"funky", Mood::Funk},       {"groove", Mood::Funk},     {"upbeat", Mood::Funk},     {"fröhlich", Mood::Funk}};
     const auto it = other.find(t);
     if (it != other.end()) return it->second;
     return std::nullopt;
@@ -2231,14 +1841,10 @@ const char* moodLabel(Mood m)
 {
     switch (m) {
     case Mood::Calm: return N_("Ruhig");
-    case Mood::Drive: return N_("Treibend");
     case Mood::Hype: return N_("Hype");
     case Mood::Lofi: return N_("Lo-Fi");
     case Mood::Epic: return N_("Episch");
-    case Mood::Tense: return N_("Spannung");
     case Mood::Funk: return N_("Funky");
-    case Mood::Retro: return N_("Retro");
-    case Mood::Happy: return N_("Fröhlich");
     }
     return "";
 }
@@ -2249,9 +1855,6 @@ QString description(Mood m)
     case Mood::Calm:
         return "calm: a fingerpicked nylon guitar on soft chords (maj7, add9; two bars each), a quiet warm pad, round "
                "bass, brushes and a shaker (no kick), a wide hall (vlog, tutorial, product, under speech)";
-    case Mood::Drive:
-        return "drive: distorted power-chord guitars (palm-muted eighths, open chords in the lift), pulsing eighth-note "
-               "bass, a rock beat with fills and crashes, mixolydian major (travel, sport, action montage, ads)";
     case Mood::Hype:
         return "hype: pumping supersaw, off-beat bass, a 16th arp with echoes, four on the floor, risers into the "
                "drops (gaming highlights, shorts, hype edits)";
@@ -2261,18 +1864,9 @@ QString description(Mood m)
     case Mood::Epic:
         return "epic: string ensemble and an eighth-note ostinato, taiko and big toms, a horn theme, deep booms, a huge "
                "hall (trailer, intro, big reveal, sports finale)";
-    case Mood::Tense:
-        return "tense: a low drone, a ticking 16th pulse, string tremolo on a minor second, metallic pings, a heartbeat "
-               "kick, phrygian minor (suspense, horror, mystery, countdown)";
     case Mood::Funk:
         return "funk: slap bass, clavinet and horn stabs, a scratching guitar on swung 16ths, a tight dry kit with "
                "ghost notes, a dorian vamp (fashion, food, dance, playful product)";
-    case Mood::Retro:
-        return "retro: 80s synthwave - octave bass, a square-wave arp and lead with echoes, a half-time gated snare, a "
-               "lush pad (night drive, retro gaming, neon edits)";
-    case Mood::Happy:
-        return "happy: marimba, bouncy bass, claps and tambourine, a glockenspiel tune, two chords a bar with a shuffle "
-               "(family, kids, travel fun, explainer)";
     }
     return {};
 }
