@@ -242,8 +242,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             moments << QJsonObject{{"file", m["file"]}, {"from_s", m["from_s"]}, {"to_s", m["to_s"]}};
         if (hook == QLatin1String("best") && moments.size() > 1)
             done << QString("hook: the best moment first (%1 s of %2)")
-                        .arg(moments[0]["from_s"].toDouble())
-                        .arg(QFileInfo(moments[0]["file"].toString()).fileName());
+                        .arg(moments[0].toObject()["from_s"].toDouble())
+                        .arg(QFileInfo(moments[0].toObject()["file"].toString()).fileName());
         for (const QJsonValue& v : applied["done"].toArray())
             if (v.toString().startsWith("cut: ")) done << v;
     } else {

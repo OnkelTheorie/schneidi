@@ -1307,8 +1307,8 @@ const QVector<Command>& commands()
           {"threads", T::Integer, "as in `render`"},
           {"overwrite", T::Boolean, "replace an existing out file"}},
          cmdShort},
-        {"direct", "Direction: a recipe looks at the material and SUGGESTS what to cut, each with a reason, without "
-                   "changing anything; then apply the suggestions (all, some, edges moved, another order) as ONE edit. "
+        {"direct", "Suggests the moments of a short or highlight video, each with a reason, then applies the chosen "
+                   "ones as one edit. Suggesting changes nothing; apply takes all, some, edges moved or another order. "
                    "Recipes: short (the best moments for a vertical short, up to 3 variants without shared moments: "
                    "kills of a game's kill feed, else loud moments; with none of them sound events and picture "
                    "changes), highlights (a highlight video of any material: kills, loud, laughter, applause, cheering, "
@@ -1333,7 +1333,7 @@ const QVector<Command>& commands()
                                  "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game"},
-          {"session", T::Json, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},
+          {"session", T::Object, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},
           {"apply", T::Object, "apply: {on:'all'|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?} (default "
                                "on:'all' = the suggestions switched on; variant n = that variant's)"},
           {"plan", T::Boolean, "apply: make a plan of the edit instead (nothing changes until it is run)"},

@@ -246,7 +246,7 @@ const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_no
 
 qsizetype paramTextFor(const QString& tool)
 {
-    static const QHash<QString, qsizetype> more{{"render", 540}};
+    static const QHash<QString, qsizetype> more{{"render", 540}, {"direct", 160}};
     return more.value(tool, kParamText);
 }
 

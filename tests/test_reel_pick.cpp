@@ -14,7 +14,7 @@
 using ReelPick::Moment;
 
 namespace {
-double total(const QVector<Moment>& l)
+double sum(const QVector<Moment>& l)
 {
     double s = 0;
     for (const Moment& m : l) s += m.to - m.from;
@@ -55,7 +55,7 @@ int main(int argc, char** argv)
         ReelPick::Options o;
         o.targetS = 14;
         const QVector<Moment> p = ReelPick::pick(c, durations, o);
-        CHECK(total(p) <= 14 + 1e-6);
+        CHECK(sum(p) <= 14 + 1e-6);
         // 10-14 and 13-15 (grown to 4 s: 12.1-16.1) are one moment with the better score, first
         if (CHECK(!p.isEmpty())) {
             CHECK_EQ(p[0].file, 0);
