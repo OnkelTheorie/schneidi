@@ -21,6 +21,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <new>
+#include <system_error>
 
 namespace Cli::detail {
 
@@ -140,7 +142,13 @@ Bed ensureBed(const QString& projectPath, const MusicBed::Options& o)
     }
     QElapsedTimer t;
     t.start();
-    b.info = MusicBed::make(o);
+    try {
+        b.info = MusicBed::make(o);
+    } catch (const std::bad_alloc&) {
+        fail("FAILED", QString("not enough memory for a music bed of %1 s").arg(o.length, 0, 'f', 1));
+    } catch (const std::system_error& e) {
+        fail("FAILED", QString("cannot make the music bed: %1").arg(QString::fromLocal8Bit(e.what())));
+    }
     if (!MusicBed::writeWav(b.path, b.info)) fail("FAILED", "cannot write " + QDir::toNativeSeparators(b.path));
     b.info.samples = {};
     storeSongBeats(b.path, 0, b.info.beats);

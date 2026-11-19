@@ -19,6 +19,9 @@
 #include <mutex>
 #include <numbers>
 #include <thread>
+#include <atomic>
+#include <exception>
+#include <system_error>
 
 namespace MusicBed {
 
@@ -34,6 +37,56 @@ double smooth(double x)
 }
 double midiHz(double m) { return 440.0 * std::pow(2.0, (m - 69) / 12); }
 double cents(double c) { return std::pow(2.0, c / 1200); }
+
+// ---------- Threads ----------
+
+std::atomic<int> g_threads{0};            // 0 = automatic (setThreadsForTests)
+std::atomic<bool> g_failStarts{false};    // tests: every thread start fails
+
+int threadsFor(long long frames, long long framesPerThread, int most)
+{
+    const int forced = g_threads.load();
+    if (forced > 0) return forced;
+    const int cores = std::clamp(int(std::thread::hardware_concurrency()), 1, most);
+    return int(std::clamp<long long>(frames / framesPerThread, 1, cores));
+}
+
+// Jobs 0..n-1, job 0 here and the others on threads. A thread that cannot start (no resources) leaves its job to
+// this thread; a job that throws on its thread (no memory) is reset and run again here, where an error reaches the
+// caller instead of ending the program
+template <typename Job, typename Reset>
+void parallel(int n, Job&& job, Reset&& reset)
+{
+    std::vector<std::thread> threads;
+    threads.reserve(size_t(std::max(0, n - 1)));
+    std::vector<int> state(size_t(std::max(1, n)), 0); // 1 = threw on its thread, 2 = did not start
+    for (int i = 1; i < n; ++i) {
+        try {
+            if (g_failStarts.load()) throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
+            threads.emplace_back([&job, &state, i] {
+                try {
+                    job(i);
+                } catch (...) {
+                    state[size_t(i)] = 1;
+                }
+            });
+        } catch (const std::system_error&) {
+            state[size_t(i)] = 2;
+        }
+    }
+    std::exception_ptr error;
+    try {
+        job(0);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    for (std::thread& t : threads) t.join();
+    if (error) std::rethrow_exception(error);
+    for (int i = 1; i < n; ++i) {
+        if (state[size_t(i)] == 1) reset(i);
+        if (state[size_t(i)] != 0) job(i);
+    }
+}
 
 // ---------- Noise and filters ----------
 
@@ -1011,9 +1064,7 @@ void reverb(float* out, const float* send, long long frames, Mood m)
             previous = y;
         }
     };
-    std::thread right(side, 1);
-    side(0);
-    right.join();
+    parallel(2, side, [](int) {}); // a side allocates before it writes: nothing to undo
 }
 
 // True peak of interleaved stereo (BS.1770 4x oversampling, the coefficients of core/TruePeak), in parallel parts.
@@ -1025,7 +1076,7 @@ double truePeakDb(const std::vector<float>& s, long long frames)
     for (float v : s) samplePeak = std::max(samplePeak, std::abs(v));
     if (samplePeak <= 0) return TruePeakMeter::kSilence;
     const float threshold = 0.5f * samplePeak;
-    const int parts = int(std::clamp<long long>(frames / (kRate * 20), 1, 4));
+    const int parts = threadsFor(frames, kRate * 20LL, 4);
     std::vector<double> peaks(size_t(parts), 0.0);
     const auto x = [&](long long f, int c) { return f >= 0 && f < frames ? double(s[size_t(2 * f + c)]) : 0.0; };
     const auto work = [&](int part) {
@@ -1042,10 +1093,7 @@ double truePeakDb(const std::vector<float>& s, long long frames)
             }
         peaks[size_t(part)] = peak;
     };
-    std::vector<std::thread> threads;
-    for (int i = 1; i < parts; ++i) threads.emplace_back(work, i);
-    work(0);
-    for (std::thread& t : threads) t.join();
+    parallel(parts, work, [](int) {});
     const double peak = std::max(double(samplePeak), *std::max_element(peaks.begin(), peaks.end()));
     return 20 * std::log10(peak);
 }
@@ -1164,6 +1212,12 @@ QString sectionName(Section::Kind k)
     return {};
 }
 
+void setThreadsForTests(int count, bool failStarts)
+{
+    g_threads = std::max(0, count);
+    g_failStarts = failStarts;
+}
+
 long long frameCount(double seconds) { return std::max(1LL, std::llround(seconds * SR)); }
 
 namespace {
@@ -1227,13 +1281,14 @@ Result make(const Options& o)
         renderMelodic(c);
         renderDrums(c);
     };
-    const int threads = int(std::clamp<long long>(n / (kRate * 8), 1, std::clamp(int(std::thread::hardware_concurrency()), 1, 8)));
-    {
-        std::vector<std::thread> pool;
-        for (int t = 1; t < threads; ++t) pool.emplace_back(render, n * t / threads, n * (t + 1) / threads);
-        render(0, n / threads);
-        for (std::thread& t : pool) t.join();
-    }
+    const int threads = threadsFor(n, kRate * 8LL, 8);
+    parallel(
+        threads, [&](int t) { render(n * t / threads, n * (t + 1) / threads); },
+        [&](int t) { // a window that failed half way: its frames start again from silence
+            const long long lo = n * t / threads, hi = n * (t + 1) / threads;
+            std::fill(out.begin() + 2 * lo, out.begin() + 2 * hi, 0.f);
+            std::fill(send.begin() + lo, send.begin() + hi, 0.f);
+        });
     reverb(out.data(), send.data(), n, p.mood);
     send = {};
 
@@ -1276,14 +1331,16 @@ Result make(const Options& o)
 
     // Level: integrated loudness to the target, the true peak under the ceiling; at the same time the level and bass
     // per whole bar (before the gain, which is added to them afterwards)
-    double lufs = LoudnessMeter::kSilence;
-    std::thread loudness([&] {
+    double lufs = LoudnessMeter::kSilence, tp = TruePeakMeter::kSilence;
+    std::vector<double> barEnergy, barBass;
+    const auto loudness = [&] {
         LoudnessMeter meter;
         meter.addInterleaved(s.data(), int(n), 2, kRate);
         lufs = meter.integrated();
-    });
-    std::vector<double> barEnergy, barBass;
-    std::thread bars([&] {
+    };
+    const auto bars = [&] {
+        barEnergy.clear();
+        barBass.clear();
         Biquad lp1 = Biquad::make(Biquad::Low, 120, 0.541), lp2 = Biquad::make(Biquad::Low, 120, 1.307);
         const double barFrames = p.bar * SR;
         const int wholeBars = int(std::floor(p.length / p.bar + 1e-9));
@@ -1300,10 +1357,16 @@ Result make(const Options& o)
             barEnergy.push_back(dbOf(e / count));
             barBass.push_back(dbOf(bass / count));
         }
-    });
-    const double tp = truePeakDb(s, n);
-    loudness.join();
-    bars.join();
+    };
+    parallel(
+        g_threads.load() == 1 ? 1 : 3,
+        [&](int job) {
+            if (job == 0) tp = truePeakDb(s, n);
+            else if (job == 1) loudness();
+            else bars();
+        },
+        [](int) {});
+    if (g_threads.load() == 1) loudness(), bars();
     double gainDb = lufs > LoudnessMeter::kSilence ? kTargetLufs - lufs : 0;
     if (tp > TruePeakMeter::kSilence && tp + gainDb > kCeilingDbtp - 0.2) gainDb = kCeilingDbtp - 0.2 - tp;
     const float gain = float(std::pow(10.0, gainDb / 20));

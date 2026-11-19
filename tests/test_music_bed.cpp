@@ -220,6 +220,23 @@ int main(int argc, char* argv[])
         for (const MusicBed::Section& sec : longBed.sections) breaks += sec.kind == MusicBed::Section::Break;
         CHECK(breaks >= 1 && !longBed.beats.drops.empty());
     }
+    // Threads: 1, 3, 8 threads and every thread start failing (all on this thread) give the same samples
+    {
+        const MusicBed::Options o{MusicBed::Mood::Hype, 41.3};
+        MusicBed::setThreadsForTests(1);
+        const MusicBed::Result one = MusicBed::make(o);
+        bool same = true;
+        for (const auto& [count, failing] : {std::pair{3, false}, std::pair{8, false}, std::pair{8, true}}) {
+            MusicBed::setThreadsForTests(count, failing);
+            const MusicBed::Result many = MusicBed::make(o);
+            const bool equal = many.samples.size() == one.samples.size()
+                               && std::memcmp(many.samples.data(), one.samples.data(), one.samples.size() * sizeof(float)) == 0
+                               && many.lufs == one.lufs && many.beats.barEnergyDb == one.beats.barEnergyDb;
+            if (!CHECK(equal)) std::printf("       %d threads%s differ from one\n", count, failing ? " (starts failing)" : "");
+            same = same && equal;
+        }
+        MusicBed::setThreadsForTests(0);
+    }
     // The WAV: written atomically in blocks (more than one block of 65536 frames here), 24-bit stereo, the samples
     // as they are; writing again replaces the file and leaves nothing else in the folder
     {

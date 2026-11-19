@@ -93,6 +93,9 @@ long long frameCount(double seconds);
 Result make(const Options& o);
 // The same without making the sound (no samples, no levels per bar, no breaks/drops, lufs/truePeakDb 0): fast
 Result describe(const Options& o);
+// Tests: how many threads make a bed (0 = automatic: about one per 8 s, at most the cores) and whether every thread
+// start fails (then all runs on the calling thread); the samples are the same either way
+void setThreadsForTests(int count, bool failStarts = false);
 // 24-bit PCM WAV, stereo, kRate (the same file every time for the same result)
 bool writeWav(const QString& path, const Result& r);
 // File name of a bed: mood, tempo, key, seed, length and kVersion ("music-bed-drive-112bpm-a-minor-s1-30000ms-v1.wav")
