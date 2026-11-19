@@ -182,7 +182,8 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
     // Stutter (variable frame rate capture that dropped frames while the game lagged): the stretches inside each
     // candidate and its parts without them, so only the lagging part is cut instead of the whole moment
     const std::optional<Stutter::Scan> gaps =
-        m.info.hasVideo && !m.info.isImage ? FrameGaps::scan(m.info.path) : std::nullopt;
+        m.info.hasVideo && !m.info.isImage ? FrameGaps::scan(m.info.path, cancelFlag()) : std::nullopt;
+    failIfCanceled();
     const double fps = f.rate.fps();
     bool anyStutter = false;
     if (gaps && !gaps->jumps.isEmpty())

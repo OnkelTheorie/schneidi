@@ -114,11 +114,11 @@ QJsonObject overviewFile(const QJsonObject& a, Context& ctx)
         c.out = length - 1;
         c.audioStream = audioStreamArg(m.info, a);
         const double end = picture ? 0.3 : 1;
-        if (const auto p = AudioAnalysis::clipFramePeaks(f, c, [&ctx, end](double p) {
+        if (const auto p = AudioAnalysis::clipFramePeaks(f, c, goOn([&ctx, end](double p) {
                 if (ctx.progress) ctx.progress(p * end);
-                return true;
-            }))
+            })))
             peaks = *p;
+        failIfCanceled();
     }
     const Picture pic = picture ? pictureOf(m, ctx, m.info.hasAudio ? 0.3 : 0, 1) : Picture{};
     const int minGap = std::max(1, int(std::lround(0.5 * f.rate.fps())));
@@ -186,10 +186,10 @@ QJsonObject overviewProject(const QJsonObject& a, Context& ctx)
     const int length = TimelineOps::endFrame(tl);
     if (length <= 0) s.failEmpty();
     const int w = windowFrames(a, length, f);
-    const auto peaks = AudioAnalysis::timelineFramePeaks(f, s.project.renderTimeline(), 0, length, [&ctx](double p) {
+    const auto peaks = AudioAnalysis::timelineFramePeaks(f, s.project.renderTimeline(), 0, length, goOn([&ctx](double p) {
         if (ctx.progress) ctx.progress(p);
-        return true;
-    });
+    }));
+    failIfCanceled();
     QJsonArray windows;
     QStringList lines;
     for (int from = 0, to = 0; from < length; from = to) {

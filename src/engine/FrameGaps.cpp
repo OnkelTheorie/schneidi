@@ -88,7 +88,9 @@ void saveDisk(const QString& key, const std::optional<Stutter::Scan>& s)
 
 // The presentation times of the first video stream's packets, counted like the own decoder (engine/video/Reader.cpp):
 // frame 0 = the first key frame (0 when its DTS is negative, MP4 with B-frames)
-std::optional<Stutter::Scan> read(const QString& path)
+struct Canceled {};
+
+std::optional<Stutter::Scan> read(const QString& path, const std::atomic<bool>* cancel)
 {
     AVFormatContext* raw = nullptr;
     if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
@@ -118,7 +120,11 @@ std::optional<Stutter::Scan> read(const QString& path)
     std::vector<int64_t> stamps;
     int64_t origin = AV_NOPTS_VALUE;
     AVPacket* pkt = av_packet_alloc();
-    while (av_read_frame(fmt.get(), pkt) >= 0) {
+    for (int64_t count = 0; av_read_frame(fmt.get(), pkt) >= 0; ++count) {
+        if (cancel && count % 256 == 0 && cancel->load()) {
+            av_packet_free(&pkt);
+            throw Canceled{};
+        }
         if (pkt->stream_index == index) {
             const int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
             if (ts != AV_NOPTS_VALUE) {
@@ -139,7 +145,7 @@ std::optional<Stutter::Scan> read(const QString& path)
 
 } // namespace
 
-std::optional<Stutter::Scan> scan(const QString& path)
+std::optional<Stutter::Scan> scan(const QString& path, const std::atomic<bool>* cancel)
 {
     const QFileInfo fi(path);
     if (!fi.isFile()) return std::nullopt;
@@ -152,7 +158,11 @@ std::optional<Stutter::Scan> scan(const QString& path)
     if (const auto disk = loadDisk(key)) {
         s = *disk;
     } else {
-        s = read(fi.absoluteFilePath());
+        try {
+            s = read(fi.absoluteFilePath(), cancel);
+        } catch (const Canceled&) {
+            return std::nullopt; // not cached: the next call reads the file
+        }
         saveDisk(key, s);
     }
     QMutexLocker lock(&g_mutex);

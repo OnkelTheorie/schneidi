@@ -147,6 +147,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     FrameSet out;
     out.source = absolute(src);
     for (int i = 0; i < at.size(); ++i) {
+        failIfCanceled(); // a sheet of 100 frames of a long timeline takes a while
         const int fr = std::clamp(at[i], 0, length - 1);
         QImage img = snap->frame(fr, decodeEdge);
         if (img.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1 of %2").arg(fr).arg(src));

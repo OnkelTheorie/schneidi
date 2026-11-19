@@ -7,6 +7,7 @@
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "core/Transcript.h"
+#include "engine/AnalysisCache.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/AudioEvents.h"
 #include "engine/Extensions.h"
@@ -17,6 +18,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -25,20 +27,45 @@
 
 namespace Cli::detail {
 
+namespace {
+
+// Raise when the per-frame peaks of the same file come out differently (old cache entries are then ignored)
+constexpr int kPeaksVersion = 1;
+
+// The loudest sample of every frame of the whole file's audio stream `stream`, counted in the frame rate of `f`: from
+// the analysis cache (silence, peaks, highlights and the moments of a second recipe read it once). nullopt = no sound
+// could be decoded; CANCELED when the thread's flag is set.
+std::optional<std::vector<float>> filePeaks(const MediaSource& m, int stream, const std::function<void(double)>& progress)
+{
+    const ProjectFormat& f = m.format;
+    const QJsonObject options{{"rate", QString("%1/%2").arg(f.rate.num).arg(f.rate.den)}, {"stream", stream},
+                              {"frames", m.info.length}};
+    const AnalysisCache::Key key = AnalysisCache::key("frame-peaks", m.info.path, options, kPeaksVersion);
+    if (const auto hit = AnalysisCache::get(key)) {
+        std::vector<float> out = AnalysisCache::unpackFloats((*hit)["peaks"]);
+        if (!out.empty()) {
+            if (progress) progress(1.0);
+            return out;
+        }
+    }
+    Clip c;
+    c.mediaPath = m.info.path;
+    c.out = m.info.length - 1;
+    c.audioStream = stream;
+    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, goOn(progress));
+    failIfCanceled();
+    if (peaks && !peaks->empty())
+        AnalysisCache::put(key, {{"peaks", AnalysisCache::pack(*peaks)}});
+    return peaks;
+}
+
+} // namespace
+
 LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress)
 {
     if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
     const ProjectFormat& f = m.format;
-    Clip c;
-    c.mediaPath = m.info.path;
-    c.out = m.info.length - 1;
-    c.audioStream = audioStreamArg(m.info, a);
-    const std::atomic<bool>* stop = cancelFlag();
-    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress, stop](double p) {
-        if (progress) progress(p);
-        return !(stop && stop->load());
-    });
-    if (stop && stop->load()) fail("CANCELED", "canceled");
+    const auto peaks = filePeaks(m, audioStreamArg(m.info, a), progress);
     if (!peaks || peaks->empty()) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
     std::vector<double> db(peaks->size());
     for (size_t i = 0; i < db.size(); ++i) db[i] = 20 * std::log10(std::max(1e-6f, (*peaks)[i]));
@@ -159,7 +186,9 @@ QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
                 o.only << kind;
             }
             if (a.contains("min_conf")) o.minConf = a["min_conf"].toDouble();
+            o.progress = goOn();
             const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, audioStreamArg(m.info, a), o);
+            failIfCanceled();
             if (!r.error.isEmpty()) {
                 if (o.engine == AudioEvents::Engine::Yamnet && !AudioEvents::yamnetAvailable())
                     fail("NOT_INSTALLED", r.error + " - or use events:'heuristic'");
@@ -183,9 +212,8 @@ QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
 
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
 {
-    const auto progress = [&ctx](double p) {
+    const auto report = [&ctx](double p) {
         if (ctx.progress) ctx.progress(p);
-        return true;
     };
     const auto settings = [&a](const ProjectFormat& f) {
         const double thresholdDb = a.contains("threshold_db") ? a["threshold_db"].toDouble() : -35.0;
@@ -211,7 +239,8 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
                 tl.audio[i].muted = !only.contains(i);
                 tl.audio[i].solo = false;
             }
-        const auto peaks = AudioAnalysis::timelineFramePeaks(f, tl, from, to, progress);
+        const auto peaks = AudioAnalysis::timelineFramePeaks(f, tl, from, to, goOn(report));
+        failIfCanceled();
         if (!peaks) fail("DECODE_FAILED", "could not mix the sound");
         const auto [thresholdDb, minLen, pad] = settings(f);
         QJsonObject o{{"project", s.path.isEmpty() ? absolute(file) : s.path}, {"range", range(from, to, f)}};
@@ -222,10 +251,7 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
     const MediaSource m = openMedia(a);
     if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
     const ProjectFormat& f = m.format;
-    Clip c;
-    c.mediaPath = m.info.path;
-    c.out = m.info.length - 1;
-    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, progress);
+    const auto peaks = filePeaks(m, 0, report);
     if (!peaks) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
     const auto [thresholdDb, minLen, pad] = settings(f);
     QJsonObject o{{"file", m.info.path}};
@@ -264,10 +290,9 @@ int measuredChannels(const QJsonObject& a, int project, QString* note)
 QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
-    const auto progress = [&ctx](double p) {
+    const auto progress = goOn([&ctx](double p) {
         if (ctx.progress) ctx.progress(p);
-        return true;
-    };
+    });
     QJsonObject result{{"source", absolute(src)}};
     if (!isProjectFile(src)) {
         QJsonObject ma{{"file", src}};
@@ -278,6 +303,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
         c.out = m.info.length - 1;
         c.audioStream = audioStreamArg(m.info, a);
         const auto l = AudioAnalysis::clipLoudness(m.format, c, progress);
+        failIfCanceled();
         if (!l) fail("DECODE_FAILED", "could not read the sound");
         result["loudness"] = loudnessJson(*l);
         return result;
@@ -293,8 +319,9 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
             const Clip* c = TimelineOps::findClip(s.project.timeline(), clips[i].toVariant().toInt());
             if (!c) fail("NOT_FOUND", "no clip with id " + clips[i].toVariant().toString());
             QJsonObject o{{"clip", c->id}};
-            if (const auto l = AudioAnalysis::clipLoudness(f, *c)) o["loudness"] = loudnessJson(*l);
+            if (const auto l = AudioAnalysis::clipLoudness(f, *c, goOn())) o["loudness"] = loudnessJson(*l);
             else o["no_sound"] = true;
+            failIfCanceled();
             list << o;
             progress(double(i + 1) / clips.size());
         }
@@ -317,6 +344,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
     QString note;
     const int channels = measuredChannels(a, f.audioChannels, &note);
     const auto l = AudioAnalysis::timelineLoudness(f, tl, from, to, progress, nullptr, channels);
+    failIfCanceled();
     if (!l) fail("DECODE_FAILED", "could not mix the sound");
     result["range"] = range(from, to, f);
     result["loudness"] = loudnessJson(*l);
@@ -432,8 +460,19 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         loop.quit();
     });
     QString error;
+    failIfCanceled();
     if (!t.start(req, &error)) fail("TRANSCRIBE_FAILED", error);
+    // Canceled from outside (a background job of the app): looked at while the loop runs, whisper is stopped
+    QTimer poll;
+    if (const std::atomic<bool>* stop = cancelFlag()) {
+        QObject::connect(&poll, &QTimer::timeout, &loop, [&t, stop] {
+            if (stop->load() && t.isRunning()) t.cancel();
+        });
+        poll.start(50);
+    }
     loop.exec();
+    poll.stop();
+    failIfCanceled();
     if (!ok) fail("TRANSCRIBE_FAILED", message);
 
     const Transcript::Result& r = t.result();
