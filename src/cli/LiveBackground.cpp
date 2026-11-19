@@ -55,6 +55,8 @@ QJsonObject errorReply(const QString& code, const QString& message)
     return {{"ok", false}, {"error", QJsonObject{{"code", code}, {"message", message}}}};
 }
 
+QString code(const QJsonObject& reply) { return reply["error"].toObject()["code"].toString(); }
+
 // The command's own reading forms only (see Live.h)
 bool reading(const QString& command, const QJsonObject& args, QString* why)
 {
@@ -112,19 +114,24 @@ bool readsApp(const QJsonObject& args, LiveHost* host)
 
 class Queue : public QObject {
 public:
-    explicit Queue(QObject* parent) : QObject(parent) {}
+    explicit Queue(QCoreApplication* app) : QObject(app)
+    {
+        // Jobs stop while main()'s objects (settings, the app's name for the folders) still exist; the destructor is
+        // only the backstop
+        connect(app, &QCoreApplication::aboutToQuit, this, &Queue::stopAll);
+    }
     ~Queue() override
     {
         stopAll();
         for (const auto& job : m_running) delete job->thread; // their finished calls never come now
     }
 
-    static Queue& instance()
+    // On the UI thread, child of the application: gone (threads waited for) when it goes. nullptr without an application
+    static Queue* instance()
     {
-        // On the UI thread, child of the application: gone (threads waited for) when it goes
         static QPointer<Queue> q;
-        if (!q) q = new Queue(QCoreApplication::instance());
-        return *q;
+        if (!q && QCoreApplication::instance()) q = new Queue(QCoreApplication::instance());
+        return q;
     }
 
     void add(const std::shared_ptr<BackgroundJob>& job)
@@ -141,7 +148,6 @@ public:
         if (!job->queued) return; // running: its thread ends with CANCELED
         job->queued = false;
         m_waiting.erase(std::remove(m_waiting.begin(), m_waiting.end(), job), m_waiting.end());
-        job->reply = errorReply("CANCELED", "canceled");
         QTimer::singleShot(0, this, [this, job] { deliver(job); });
     }
 
@@ -166,9 +172,17 @@ public:
 
     void stopAll()
     {
-        for (const auto& job : m_waiting) cancel(job);
-        for (const auto& job : m_running) job->cancel = true;
-        for (const auto& job : m_running)
+        // Taken out first: cancel() of a queued job edits m_waiting
+        std::deque<std::shared_ptr<BackgroundJob>> waiting;
+        waiting.swap(m_waiting);
+        for (const auto& job : waiting) {
+            job->cancel = true;
+            job->queued = false;
+            QTimer::singleShot(0, this, [this, job] { deliver(job); });
+        }
+        const std::vector<std::shared_ptr<BackgroundJob>> running = m_running; // finished handlers come queued
+        for (const auto& job : running) job->cancel = true;
+        for (const auto& job : running)
             if (job->thread) job->thread->wait();
     }
 
@@ -234,8 +248,6 @@ private:
             } catch (...) {
                 reply = errorReply("INTERNAL", "the command failed");
             }
-            // A job canceled at its very end still says so (the caller asked it to stop and may have moved on)
-            if (job->cancel.load() && reply.value("ok").toBool()) reply = errorReply("CANCELED", "canceled");
             job->reply = reply;
         });
         connect(job->thread, &QThread::finished, this, [this, job] {
@@ -253,6 +265,17 @@ private:
         if (job->done) return;
         job->done = true;
         job->copy.data.reset(); // the project copy is not needed any more
+        // Canceled = CANCELED, whatever came of it (the caller asked it to stop and may have moved on). "late": the
+        // command had got to its end anyway (finished or failed on its own), so what it stores may be there
+        if (job->cancel.load() && code(job->reply) != QLatin1String("CANCELED")) {
+            QJsonObject reply = errorReply("CANCELED", "canceled");
+            if (!job->reply.isEmpty()) {
+                QJsonObject error = reply["error"].toObject();
+                error["late"] = true;
+                reply["error"] = error;
+            }
+            job->reply = reply;
+        }
         if (job->hasReceiver && !job->receiver) return;
         if (job->onDone) job->onDone(job->reply);
     }
@@ -266,7 +289,9 @@ private:
 
 void JobHandle::cancel() const
 {
-    if (m_job) Queue::instance().cancel(m_job);
+    if (!m_job) return;
+    if (Queue* q = Queue::instance()) q->cancel(m_job);
+    else m_job->cancel = true;
 }
 
 bool JobHandle::running() const { return m_job && !m_job->done; }
@@ -288,7 +313,7 @@ JobHandle runInBackground(const QString& command, const QJsonObject& args,
     job->onDone = std::move(onDone);
     job->receiver = receiver;
     job->hasReceiver = receiver != nullptr;
-    Queue& queue = Queue::instance();
+    Queue& queue = *Queue::instance(); // there is an application (asserted above)
     JobHandle handle;
     handle.m_job = job;
     const Command* cmd = find(command);
@@ -321,12 +346,26 @@ JobHandle runInBackground(const QString& command, const QJsonObject& args,
     return handle;
 }
 
-int backgroundLimit() { return Queue::instance().limit(); }
+int backgroundLimit()
+{
+    Queue* q = Queue::instance();
+    return q ? q->limit() : 1;
+}
 
-void setBackgroundLimit(int jobs) { Queue::instance().setLimit(jobs); }
+void setBackgroundLimit(int jobs)
+{
+    if (Queue* q = Queue::instance()) q->setLimit(jobs);
+}
 
-int backgroundJobs() { return Queue::instance().count(); }
+int backgroundJobs()
+{
+    Queue* q = Queue::instance();
+    return q ? q->count() : 0;
+}
 
-void cancelAllBackground() { Queue::instance().stopAll(); }
+void cancelAllBackground()
+{
+    if (Queue* q = Queue::instance()) q->stopAll();
+}
 
 } // namespace Cli::Live

@@ -180,14 +180,16 @@ QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject
 // - Call on the UI thread (the thread of QCoreApplication). onProgress and onDone are called there too (queued),
 //   never from inside runInBackground. onDone comes exactly once per call (also for a refusal, a canceled or queued
 //   job), with the reply of runForUser: {"ok":true,"result":{…}} or {"ok":false,"error":{"code","message"}}
-//   (code CANCELED after cancel()). onProgress(fraction 0..1, stage) may be dropped/merged when the job is fast.
+//   (code CANCELED whenever cancel() came before onDone; its error has "late":true when the command had got to its end
+//   anyway, so what it caches may be there). onProgress(fraction 0..1, stage) may be dropped/merged when the job is fast.
 // - "@app" as project/file/source (or the path of the project open in `host`): the project and the app state are copied
 //   here when the job is queued; the job reads that copy (openSession(@app, Read) on its thread), never the app's
 //   objects. Without `host` "@app" fails with NO_APP.
 // - A queue: at most one job per material file (or project) at a time, at most backgroundLimit() jobs at once (each
 //   analysis uses several threads itself). The threads run at low priority (Background::lowerThisThread).
 // - `receiver` (optional): when it is destroyed before the job ends, the callbacks are not called (a closed page).
-// - Quitting: the jobs left are canceled and waited for when the QCoreApplication goes (or cancelAllBackground()).
+// - Quitting: the jobs left are canceled and waited for at QCoreApplication::aboutToQuit (when the application goes at
+//   the latest; or cancelAllBackground()).
 class BackgroundJob;
 class JobHandle {
 public:

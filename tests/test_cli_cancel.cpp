@@ -73,6 +73,7 @@ struct Job {
     double lastProgress = 0;
     qint64 canceledAt = -1, doneAt = -1; // ms of `clock`
     bool doneInsideCall = false;
+    int doneCalls = 0;
 };
 
 QElapsedTimer g_clock;
@@ -99,6 +100,7 @@ std::shared_ptr<Job> start(const QString& command, const QJsonObject& args, doub
         [job, ui, &inCall, events, name](const QJsonObject& reply) {
             job->reply = reply;
             job->done = true;
+            ++job->doneCalls;
             job->doneAt = g_clock.elapsed();
             job->doneOnUiThread = QThread::currentThread() == ui;
             job->doneInsideCall = inCall;
@@ -320,6 +322,30 @@ int main(int argc, char** argv)
         CHECK(first->reply["ok"].toBool());
         CHECK_EQ(code(second->reply), QString("CANCELED"));
         CHECK_EQ(second->progressCalls, 0);
+    }
+
+    // --- cancelAllBackground with running and queued jobs (more than the limit, two on one file): every onDone once,
+    // CANCELED, nothing left
+    {
+        Cli::Live::setBackgroundLimit(2);
+        QVector<std::shared_ptr<Job>> jobs;
+        for (const QJsonObject& args : {QJsonObject{{"file", a}}, QJsonObject{{"file", a}}, QJsonObject{{"file", b}},
+                                        QJsonObject{{"file", talk}}, QJsonObject{{"file", b}}})
+            jobs << start("scenes", args);
+        CHECK_EQ(Cli::Live::backgroundJobs(), 5);
+        Cli::Live::cancelAllBackground();
+        CHECK(wait(jobs));
+        QCoreApplication::processEvents(); // nothing comes twice
+        for (const auto& j : jobs) {
+            CHECK_EQ(j->doneCalls, 1);
+            CHECK_EQ(code(j->reply), QString("CANCELED"));
+        }
+        CHECK_EQ(Cli::Live::backgroundJobs(), 0);
+        // Canceled after a refusal: CANCELED too (whatever came of it)
+        const auto refused = start("render", {});
+        refused->handle.cancel();
+        CHECK(wait({refused}));
+        CHECK_EQ(code(refused->reply), QString("CANCELED"));
     }
 
     // --- One job per file: the second on the same file starts when the first is done (another file does not wait)
