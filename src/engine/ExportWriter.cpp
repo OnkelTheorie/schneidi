@@ -407,6 +407,7 @@ struct ExportWriter::Impl {
     // B pictures per run (option "bframes"; the encoder's default). With B pictures the access units come out in coding
     // order: writeOwn takes pts from the encoder's display index, dts from the access unit count (see there)
     int ownBframes = schneidi::h264::EncoderConfig{}.bframes;
+    int ownSpeed = 0; // option "speed": the encoder's speed stage (EncoderConfig::speed; 0 = its default)
     // Bit rate cap ("bitrate" with "qp"): the fixed QP when the first pass predicts the clip below the cap with it
     // (ownFirstPass, before the first picture is handed over), else two passes towards the cap
     bool ownFixedQp = false;
@@ -1274,6 +1275,7 @@ struct ExportWriter::Impl {
         c.threads = ownThreads();
         c.fps = fps;
         c.bframes = ownBframes;
+        c.speed = ownSpeed;
         if (ownBitrateK > 0 && !ownFixedQp) {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
@@ -2128,6 +2130,7 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
             if (key == "lookahead") d->ownLookahead = std::clamp(value.toInt(), 0, 250);
             if (key == "bframes") d->ownBframes = std::clamp(value.toInt(), 0, 8);
             if (key == "analysis_mb") d->ownAnalysisMb = std::clamp(value.toInt(), 0, 1024);
+            if (key == "speed") d->ownSpeed = std::clamp(value.toInt(), 0, 1);
         }
         d->ownKey.assign(size_t(std::max(0, s.length)), 0);
         for (int k : s.keyframes)

@@ -8194,18 +8194,15 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         wholePlanned = true;
         noSplit = wholeR8.cbpLuma == 0;
     }
-    if (cfg_.speed >= 1 && wholePlanned && !noSplit) {
-        // Fast stage: no split search unless one quarter of the macroblock holds most of the 16x16 prediction's error.
-        static const int kShare = devEnv("H264_FASTBSHARE") ? std::atoi(devEnv("H264_FASTBSHARE")) : 50; // per cent
-        int sum = 0, most = 0;
-        for (int q = 0; q < 4; ++q) {
-            const int ox = (q & 1) * 8, oy = (q >> 1) * 8;
-            const int v = satd8x8U8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, clp[0] + oy * 16 + ox, 16);
-            sum += v;
-            most = std::max(most, v);
-        }
-        noSplit = most * 100 < sum * kShare;
-    }
+    // Fast stage: no split search where the 16x16 plan codes all four quadrants (dense texture: the splits win
+    // little there for 16 searches). A small moving part against a calm background leaves quadrants empty and keeps
+    // its splits. Measured 19.11.2026 (fixed QP 24..36, BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation;
+    // instructions QP 30): +0.46 / +0.33, +0.98 / +0.71, +0.03 / +0.02, +0.91 / +1.02 % for -3.7 / -14.0 / -0.3 /
+    // -2.4 %. Without the condition (never a split search unless one quarter holds half of the error): camera
+    // -22.8 % for +1.54 / +1.24 %, but animation +3.52 / +2.15 %. The same rule in P pictures: CS2 +2.6 % for -8 %.
+    static const bool kFastBNoSplit = !devEnv("H264_FASTBNOSPLIT") || std::atoi(devEnv("H264_FASTBNOSPLIT")) != 0;
+    if (cfg_.speed >= 1 && kFastBNoSplit && wholePlanned && wholeR8.cbpLuma == 15)
+        noSplit = true;
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)
             ++gStatB2[3];

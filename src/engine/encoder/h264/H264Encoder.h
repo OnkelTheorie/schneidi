@@ -68,9 +68,9 @@ struct EncoderConfig {
     int threads = 1;     // CABAC: macroblock rows in a wavefront (one slice); CAVLC: one slice per thread
     int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
     // Speed stage: 0 = default (the stream as without this option). 1 = fast: in B pictures the split layouts
-    // (16x8, 8x16, 8x8) are searched only where the 16x16 prediction's error sits mostly in one quarter of the
-    // macroblock (a small moving part against a background - what the splits are for); elsewhere 16x16 or
-    // direct. Fewer searches and trellis plans on dense material for a small loss (see the numbers in the notes).
+    // (16x8, 8x16, 8x8) are not searched where the 16x16 prediction's residual is coded in all four quadrants
+    // (dense texture); a small moving part against a calm background keeps them. Camera footage: 14 % fewer
+    // instructions for about 1 % BD-rate; other material gains and loses less.
     int speed = 0;
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
