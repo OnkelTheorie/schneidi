@@ -239,6 +239,35 @@ void testClickAndDrag()
     CHECK_EQ(f.seeked, seekedBefore);
 }
 
+// The left edge dragged while the view shows less than the minimum length from frame 0 (max zoom at 120 fps, narrow
+// lanes): no request, no crash (std::clamp with hi < lo aborted with _GLIBCXX_ASSERTIONS)
+void testLeftEdgeNearZero()
+{
+    TimelineOverview ov;
+    ov.resize(400, TimelineOverview::kHeight);
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << clip(1, 0, 100);
+    ov.setTimeline(tl, 120);
+    ov.setVisibleRange(0, 10); // 10 frames < 0.2 s at 120 fps (24)
+    ov.show();
+    QApplication::processEvents();
+    QSignalSpy range(&ov, &TimelineOverview::rangeRequested);
+    const QRectF r = ov.visibleRect();
+    const double y = TimelineOverview::kHeight / 2.0;
+    drag(ov, {r.left() + 0.5, y}, {r.left() + 40, y});
+    drag(ov, {r.left() + 0.5, y}, {r.left() - 40, y});
+    CHECK(range.isEmpty());
+    // With room left of the edge it zooms and never asks for a range shorter than the minimum or below 0
+    ov.setVisibleRange(100, 400);
+    const QRectF r2 = ov.visibleRect();
+    drag(ov, {r2.left() + 0.5, y}, {r2.right() + 50, y});
+    if (CHECK(!range.isEmpty())) {
+        const double from = range.last().at(0).toDouble(), to = range.last().at(1).toDouble();
+        CHECK(from >= 0 && to - from >= 24 - 1e-9);
+    }
+}
+
 void testWindow(Engine& engine)
 {
     QSettings().remove("timeline/overview");
@@ -343,6 +372,7 @@ int main(int argc, char** argv)
     testModelChangesKeepView();
     testClickAndDrag();
     testTempo();
+    testLeftEdgeNearZero();
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();

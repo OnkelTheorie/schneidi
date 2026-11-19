@@ -275,7 +275,10 @@ void TimelineOverview::mouseMoveEvent(QMouseEvent* e)
         break;
     }
     case Drag::LeftEdge: {
-        const double from = std::clamp(xToFrame(x), 0.0, m_fixed - minLen);
+        // The right edge sits closer to 0 than the minimum length (frame 0, deep zoom): nothing to zoom into.
+        // Never std::clamp here: hi < lo is undefined (aborts with _GLIBCXX_ASSERTIONS)
+        if (m_fixed <= minLen) break;
+        const double from = std::min(std::max(xToFrame(x), 0.0), m_fixed - minLen);
         emit rangeRequested(from, m_fixed);
         break;
     }
