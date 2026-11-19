@@ -13,6 +13,8 @@
 #include <QSizeF>
 #include <QVector>
 
+#include <functional>
+
 namespace OverlayFit {
 
 // One overlay before the frame changed
@@ -23,9 +25,11 @@ struct Before {
     bool picture = false;   // a media overlay (Reframe::isOverlay: a logo, a webcam picture)
 };
 
-// The overlays of `tl` in frame `from`: title clips (text, counter, shape) and picture overlays on tracks above V1,
-// not animated in place or size (those are listed in *animated and left as they are)
-QVector<Before> collect(const Timeline& tl, QSizeF from, QVector<int>* animated = nullptr);
+// The overlays of `tl` in frame `from`: title clips (text, counter, shape) and still-image overlays (a logo) on tracks
+// above V1 (isStill: the clip shows a still image), not animated in place or size (those are listed in *animated and
+// left as they are). Video overlays (a webcam picture) keep the place and size scaleTimeline gave them.
+QVector<Before> collect(const Timeline& tl, QSizeF from, const std::function<bool(const Clip&)>& isStill,
+                        QVector<int>* animated = nullptr);
 
 // Where overlays may sit in a frame: inside title safe (90 %), in a vertical frame also out of the apps' zones
 QRectF safeRect(QSizeF frame, const ExportCheck::Options& o = {});

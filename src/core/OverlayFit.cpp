@@ -59,14 +59,15 @@ Clip* clipById(Timeline& tl, int id, int* track)
 
 } // namespace
 
-QVector<Before> collect(const Timeline& tl, QSizeF from, QVector<int>* animated)
+QVector<Before> collect(const Timeline& tl, QSizeF from, const std::function<bool(const Clip&)>& isStill,
+                        QVector<int>* animated)
 {
     QVector<Before> out;
     for (int i = 0; i < tl.video.size(); ++i)
         for (const Clip& c : tl.video[i].clips) {
             const bool title = c.isTitle() && (c.title.kind == TitleKind::Text || c.title.isCounter() || c.title.isShape())
                                && !(c.title.isShape() && c.title.shape.followClip > 0);
-            const bool picture = !title && Reframe::isOverlay(c, i, MediaAspect::ofClip(c), from);
+            const bool picture = !title && isStill && isStill(c) && Reframe::isOverlay(c, i, MediaAspect::ofClip(c), from);
             if (!title && !picture) continue;
             if (movesOrSizes(c)) {
                 if (animated) *animated << c.id;

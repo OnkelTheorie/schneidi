@@ -89,7 +89,13 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         const QSize oldSize = s.project.sequenceFormat(id).size();
         QVector<int> animated;
         const QVector<OverlayFit::Before> overlays =
-            s.project.sequence(id) ? OverlayFit::collect(s.project.sequence(id)->timeline, oldSize, &animated)
+            s.project.sequence(id) ? OverlayFit::collect(
+                  s.project.sequence(id)->timeline, oldSize,
+                  [&s](const Clip& c) {
+                      const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+                      return c.kind == ClipKind::Media && m && m->isImage;
+                  },
+                  &animated)
                                    : QVector<OverlayFit::Before>{};
         if (!size.isEmpty()) s.project.setSequenceSize(id, size == s.project.format().size() ? QSize() : size);
         s.selectTimeline(id, op.value("open").toBool(s.live));
@@ -268,9 +274,10 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness, bars, keep and game too: game footage "
                  "keeps its kill feed readable at the top), else the clips keep their transform (fitted in, with bars). "
                  "Into another frame shape the overlays follow: a colour matte (op 'solid', a frame-sized shape) "
-                 "fills the new frame, a logo keeps its size to its plate, and titles, shapes and logos that land "
+                 "fills the new frame, a logo (a still image) keeps its size to its plate, and titles, shapes and logos that land "
                  "off the frame or in the phone apps' zones move, together with what lies under them, as little as "
-                 "needed into the safe area (animated ones stay; the notes list both).",
+                 "needed into the safe area (animated ones stay; video overlays such as a webcam keep their place and "
+                 "size in the frame; the notes list them).",
                  opNewTimeline}
         << OpDef{"rename_timeline", "{op:'rename_timeline', timeline?, name}", {}, {}, opRenameTimeline}
         << OpDef{"duplicate_timeline", "{op:'duplicate_timeline', timeline?, name?, switch?:false}",
