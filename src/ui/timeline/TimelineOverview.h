@@ -73,10 +73,12 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void leaveEvent(QEvent*) override;
+    void focusOutEvent(QFocusEvent*) override;
 
 private:
     enum class Drag { None, Move, LeftEdge, RightEdge };
     Drag hitTest(double x) const;
+    void endDrag();
     double contentScale() const;
     void rebuildCache();
     QRect playheadColumn(int frame) const;

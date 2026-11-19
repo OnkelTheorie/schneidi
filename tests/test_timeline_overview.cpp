@@ -268,6 +268,37 @@ void testLeftEdgeNearZero()
     }
 }
 
+// A lost release (mouse tracking is on): moves without a button after a press end the drag, nothing more is asked
+void testLostRelease()
+{
+    TimelineOverview ov;
+    ov.resize(600, TimelineOverview::kHeight);
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << clip(1, 0, 3000);
+    ov.setTimeline(tl, 25);
+    ov.setVisibleRange(500, 1000);
+    ov.show();
+    QApplication::processEvents();
+    QSignalSpy scroll(&ov, &TimelineOverview::scrollRequested), range(&ov, &TimelineOverview::rangeRequested);
+    const QRectF r = ov.visibleRect();
+    const double y = TimelineOverview::kHeight / 2.0;
+    mouse(ov, QEvent::MouseButtonPress, r.center(), Qt::LeftButton);
+    mouse(ov, QEvent::MouseMove, r.center() + QPointF(20, 0), Qt::LeftButton);
+    CHECK_EQ(scroll.size(), 1); // dragging
+    // The release never comes; the mouse moves on without a button
+    mouse(ov, QEvent::MouseMove, r.center() + QPointF(60, 0), Qt::NoButton);
+    mouse(ov, QEvent::MouseMove, r.center() + QPointF(120, 0), Qt::NoButton);
+    CHECK_EQ(scroll.size(), 1);
+    // The same for an edge
+    mouse(ov, QEvent::MouseButtonPress, {r.right() - 1, y}, Qt::LeftButton);
+    mouse(ov, QEvent::MouseMove, {r.right() + 20, y}, Qt::LeftButton);
+    CHECK_EQ(range.size(), 1);
+    mouse(ov, QEvent::MouseMove, {r.right() + 60, y}, Qt::NoButton);
+    CHECK_EQ(range.size(), 1);
+    CHECK_EQ(scroll.size(), 1);
+}
+
 void testWindow(Engine& engine)
 {
     QSettings().remove("timeline/overview");
@@ -373,6 +404,7 @@ int main(int argc, char** argv)
     testClickAndDrag();
     testTempo();
     testLeftEdgeNearZero();
+    testLostRelease();
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();

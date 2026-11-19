@@ -6,6 +6,7 @@
 #include "core/TimelineOps.h"
 #include "ui/timeline/TimelineColors.h"
 
+#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -263,6 +264,10 @@ void TimelineOverview::mouseMoveEvent(QMouseEvent* e)
                                                                    : Qt::ArrowCursor);
         return;
     }
+    if (!(e->buttons() & Qt::LeftButton)) { // the release got lost (grab taken, window switch): the drag ends
+        endDrag();
+        return;
+    }
     if (!m_moved && (e->position().toPoint() - m_pressPos).manhattanLength() < kClickSlopPx) return;
     m_moved = true;
     const double len = m_visTo - m_visFrom;
@@ -296,6 +301,11 @@ void TimelineOverview::mouseReleaseEvent(QMouseEvent* e)
     if (e->button() != Qt::LeftButton || m_drag == Drag::None) return QWidget::mouseReleaseEvent(e);
     // A click inside the rectangle (no drag): only the playhead moves, that frame is in view already
     if (!m_moved && m_pressInside) emit seekRequested(std::max(0, int(std::lround(xToFrame(e->position().x())))));
+    endDrag();
+}
+
+void TimelineOverview::endDrag()
+{
     m_drag = Drag::None;
     m_dragScale = 0;
     setCursor(Qt::ArrowCursor);
@@ -304,5 +314,13 @@ void TimelineOverview::mouseReleaseEvent(QMouseEvent* e)
 
 void TimelineOverview::leaveEvent(QEvent*)
 {
+    // Without a button down nothing can be dragged any more (a lost release)
+    if (m_drag != Drag::None && !(QGuiApplication::mouseButtons() & Qt::LeftButton)) endDrag();
     if (m_drag == Drag::None) unsetCursor();
+}
+
+void TimelineOverview::focusOutEvent(QFocusEvent* e)
+{
+    if (m_drag != Drag::None && !(QGuiApplication::mouseButtons() & Qt::LeftButton)) endDrag();
+    QWidget::focusOutEvent(e);
 }
