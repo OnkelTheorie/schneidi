@@ -14,8 +14,10 @@
 #include <algorithm>
 #include <memory>
 
-FakeDirectBackend::FakeDirectBackend(UserRunner runner, std::function<double(const QString&)> lengthOf, int stepMs)
-    : m_runner(std::move(runner)), m_lengthOf(std::move(lengthOf)), m_stepMs(std::max(0, stepMs))
+FakeDirectBackend::FakeDirectBackend(UserRunner runner, std::function<double(const QString&)> lengthOf,
+                                     std::function<QString()> currentTimeline, int stepMs)
+    : m_runner(std::move(runner)), m_lengthOf(std::move(lengthOf)), m_currentTimeline(std::move(currentTimeline)),
+      m_stepMs(std::max(0, stepMs))
 {
 }
 
@@ -34,7 +36,7 @@ QJsonObject reasonFor(const QString& kind, int i, double len)
 {
     if (kind == "pause")
         return {{"key", "pause"}, {"values", QJsonObject{{"s", len}}}, {"text", QString("pause (%1 s)").arg(len, 0, 'f', 1)}};
-    if (kind == "slot") return {{"key", "slot_match"}, {"values", QJsonObject{{"slot", i + 1}}}, {"text", "fits the slot"}};
+    if (kind == "slot") return {{"key", "slot_match"}, {"values", QJsonObject{{"slot", QString("clip%1").arg(i + 1)}}}, {"text", "fits the slot"}};
     if (kind == "take") return {{"key", "take"}, {"values", QJsonObject{{"n", i + 1}}}, {"text", "best take"}};
     switch (i % 4) {
     case 0: return {{"key", "kills"}, {"values", QJsonObject{{"n", 2}, {"extra", "multi"}}}, {"text", "2 kills (multi kill)"}};
@@ -42,6 +44,59 @@ QJsonObject reasonFor(const QString& kind, int i, double len)
     case 2: return {{"key", "loud"}, {"values", QJsonObject{{"n", 3}}}, {"text", "3 loud moments"}};
     default: return {{"key", "motion"}, {"values", QJsonObject{}}, {"text", "lots of movement"}};
     }
+}
+
+// The material's files as they are now (size + time): a changed file makes a session stale
+qint64 stampOf(const QJsonObject& session)
+{
+    qint64 stamp = 0;
+    for (const QJsonValue& v : session.value("material").toArray()) {
+        const QFileInfo fi(v.toObject().value("file").toString());
+        if (fi.isFile()) stamp = stamp * 31 + fi.size() + fi.lastModified().toMSecsSinceEpoch();
+    }
+    return stamp;
+}
+
+QJsonObject failure(const QString& code, const QString& message)
+{
+    return {{"ok", false}, {"error", QJsonObject{{"code", code}, {"message", message}}}};
+}
+
+// A few progress steps on a timer, then `result()` as the reply; cancel() ends it with CANCELED. Nothing comes once
+// the receiver is gone.
+DirectBackend::JobHandle timedJob(int stepMs, int steps, const QStringList& stages, std::function<QJsonObject()> result,
+                                  const DirectBackend::Progress& onProgress, const DirectBackend::Done& onDone,
+                                  QObject* receiver)
+{
+    struct State {
+        int step = 0;
+        bool over = false;
+    };
+    auto state = std::make_shared<State>();
+    auto* timer = new QTimer(receiver);
+    QPointer<QTimer> guard(timer);
+    QObject::connect(timer, &QTimer::timeout, receiver, [=] {
+        if (state->over) return;
+        if (state->step < steps) {
+            if (onProgress) onProgress(double(state->step) / steps, stages.value(state->step * stages.size() / steps));
+            ++state->step;
+            return;
+        }
+        state->over = true;
+        timer->deleteLater();
+        const QJsonObject reply = result();
+        if (onDone) onDone(reply);
+    });
+    timer->start(stepMs);
+    DirectBackend::JobHandle h;
+    h.cancel = [state, guard, onDone] {
+        if (state->over) return;
+        state->over = true;
+        if (!guard) return; // the receiver is gone: nothing comes
+        guard->deleteLater();
+        if (onDone) onDone(failure("CANCELED", "canceled"));
+    };
+    return h;
 }
 
 } // namespace
@@ -79,7 +134,8 @@ QJsonObject FakeDirectBackend::makeSession(const QString& recipe, const QJsonObj
                           {"reason", reasonFor(kind, n - 1, to - from)},
                           {"labels", QJsonArray{}},
                           {"on", on}};
-            if (recipe == "short") s["variant"] = 1;
+            // Short with variants: the second piece of every file belongs to variant 2 (its own pick)
+            if (recipe == "short") s["variant"] = options.value("variants").toInt(1) > 1 && k == 1 ? 2 : 1;
             suggestions.append(s);
             if (on) {
                 order.append(n);
@@ -106,51 +162,22 @@ DirectBackend::JobHandle FakeDirectBackend::suggest(const QString& recipe, const
 {
     QJsonObject reply;
     if (recipe != "short" && recipe != "highlights" && recipe != "talk" && recipe != "template" && recipe != "script")
-        reply = {{"ok", false}, {"error", QJsonObject{{"code", "UNKNOWN_RECIPE"}, {"message", "unknown recipe " + recipe}}}};
+        reply = failure("UNKNOWN_RECIPE", "unknown recipe " + recipe);
     else if (material.value("files").toArray().isEmpty() && !material.contains("timeline"))
-        reply = {{"ok", false}, {"error", QJsonObject{{"code", "NO_MATERIAL"}, {"message", "no material"}}}};
+        reply = failure("NO_MATERIAL", "no material");
     else {
+        const QJsonObject session = makeSession(recipe, material, options);
+        m_made.insert(session.value("id").toString(), stampOf(session));
         reply = {{"ok", true},
-                 {"result", QJsonObject{{"session", makeSession(recipe, material, options)},
-                                        {"next", "direct session:'…' apply:{on:'all'}"}}}};
+                 {"result", QJsonObject{{"session", session},
+                                        {"next", "direct session:'" + session.value("id").toString() + "' apply:{on:'all'}"}}}};
         ++m_sessions;
     }
-    // A few progress steps on a timer, then the reply; cancel() stops it with CANCELED
-    struct State {
-        int step = 0;
-        bool over = false;
-    };
-    auto state = std::make_shared<State>();
-    auto* timer = new QTimer(receiver);
-    QPointer<QTimer> guard(timer);
-    const int steps = 4;
-    QObject::connect(timer, &QTimer::timeout, receiver, [=] {
-        if (state->over) return;
-        if (state->step < steps) {
-            if (onProgress) onProgress(double(state->step) / steps, state->step < 2 ? "sound" : "picture");
-            ++state->step;
-            return;
-        }
-        state->over = true;
-        timer->deleteLater();
-        if (onDone) onDone(reply);
-    });
-    timer->start(m_stepMs);
-    JobHandle h;
-    h.cancel = [state, guard, onDone] {
-        if (state->over) return;
-        state->over = true;
-        if (guard) guard->deleteLater();
-        else return; // the receiver is gone: nothing comes
-        if (onDone) onDone({{"ok", false}, {"error", QJsonObject{{"code", "CANCELED"}, {"message", "canceled"}}}});
-    };
-    return h;
+    return timedJob(m_stepMs, 4, {"sound", "picture"}, [reply] { return reply; }, onProgress, onDone, receiver);
 }
 
-QJsonObject FakeDirectBackend::apply(const QJsonObject& session, const QJsonObject& choice)
+QJsonArray FakeDirectBackend::opsFor(const QJsonObject& session, const QJsonObject& choice) const
 {
-    if (!m_runner)
-        return {{"ok", false}, {"error", QJsonObject{{"code", "NO_RUNNER"}, {"message", "no user runner"}}}};
     // The checked suggestions in the chosen order, with adjusted ranges
     QHash<int, QJsonObject> byN;
     for (const QJsonValue& v : session.value("suggestions").toArray()) byN.insert(v.toObject().value("n").toInt(), v.toObject());
@@ -162,8 +189,8 @@ QJsonObject FakeDirectBackend::apply(const QJsonObject& session, const QJsonObje
         byN[n]["to_s"] = a.value("to_s");
     }
     QList<int> order;
-    const QJsonValue on = choice.value("on");
     for (const QJsonValue& v : choice.value("order").toArray()) order << v.toInt();
+    const QJsonValue on = choice.value("on");
     if (on.isArray()) {
         QList<int> wanted;
         for (const QJsonValue& v : on.toArray()) wanted << v.toInt();
@@ -171,24 +198,47 @@ QJsonObject FakeDirectBackend::apply(const QJsonObject& session, const QJsonObje
         for (int n : wanted)
             if (!order.contains(n)) order << n;
     }
+    const auto secs = [](double s) { return QString("%1s").arg(s, 0, 'f', 3); };
+    if (session.value("recipe").toString() == "talk") {
+        // A copy of the open timeline without the checked pauses (the open one stays as it is)
+        QJsonObject copy{{"op", "new_timeline"}, {"name", "Regie talk"}};
+        if (m_currentTimeline) copy["from"] = m_currentTimeline();
+        QJsonArray ranges;
+        for (int n : order) {
+            const QJsonObject p = byN.value(n);
+            ranges.append(QJsonArray{secs(p.value("from_s").toDouble()), secs(p.value("to_s").toDouble())});
+        }
+        QJsonArray ops{copy};
+        if (!ranges.isEmpty()) ops.append(QJsonObject{{"op", "delete_range"}, {"ranges", ranges}});
+        return ops;
+    }
     QJsonArray ops{QJsonObject{{"op", "new_timeline"}, {"name", "Regie " + session.value("recipe").toString()}}};
-    int clips = 0;
     for (int n : order) {
         const QJsonObject s = byN.value(n);
         const QString file = s.value("file").toString();
         if (!QFileInfo(file).isFile()) continue; // the fake places only files
         ops.append(QJsonObject{{"op", "append"},
                                {"media", file},
-                               {"in", QString("%1s").arg(s.value("from_s").toDouble(), 0, 'f', 3)},
-                               {"out", QString("%1s").arg(s.value("to_s").toDouble(), 0, 'f', 3)}});
-        ++clips;
+                               {"in", secs(s.value("from_s").toDouble())},
+                               {"out", secs(s.value("to_s").toDouble())}});
     }
-    QJsonObject reply = m_runner("edit", {{"project", "@app"}, {"ops", ops}}, T("Regie übernehmen"));
-    if (reply.value("ok").toBool()) {
-        ++m_applied;
-        QJsonObject r = reply.value("result").toObject();
-        r["clips"] = clips;
-        reply["result"] = r;
-    }
+    return ops;
+}
+
+QJsonObject FakeDirectBackend::applyNow(const QJsonObject& session, const QJsonObject& choice)
+{
+    if (!m_runner) return failure("NO_RUNNER", "no user runner");
+    const QString id = session.value("id").toString();
+    if (!m_made.contains(id)) return failure("SESSION_EXPIRED", "session " + id + " is not known (any more)");
+    if (m_made.value(id) != stampOf(session)) return failure("SESSION_STALE", "the material changed since the suggestions");
+    QJsonObject reply = m_runner("edit", {{"project", "@app"}, {"ops", opsFor(session, choice)}}, T("Regie übernehmen"));
+    if (reply.value("ok").toBool()) ++m_applied;
     return reply;
+}
+
+DirectBackend::JobHandle FakeDirectBackend::apply(const QJsonObject& session, const QJsonObject& choice,
+                                                  const Progress& onProgress, const Done& onDone, QObject* receiver)
+{
+    return timedJob(m_stepMs, 2, {"edit", "check"}, [this, session, choice] { return applyNow(session, choice); },
+                    onProgress, onDone, receiver);
 }

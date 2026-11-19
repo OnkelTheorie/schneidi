@@ -426,6 +426,11 @@ private:
     void directSuggest();                 // the page's recipe on its material (in the background, BackgroundJobs)
     void directApply();                   // the checked suggestions -> a timeline (one undo step)
     void directPreview(const QString& file, double from, double to); // a suggestion in the viewer, stops at its end
+    // Ends a running suggestion/apply job and empties the suggestions (the material changed, another project);
+    // newProject also empties the material
+    void directReset(bool material);
+    void directClearPreviewStop() { m_directStopAt = -1; }
+    void updateDirectTracks(); // the talk recipe's track list from the open timeline
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -540,6 +545,11 @@ private:
     class DirectPage* m_directPage = nullptr;   // built on the first showing (startup stays fast)
     std::unique_ptr<class DirectBackend> m_directBackend;
     std::function<void()> m_directCancel; // the running suggestion job's cancel (empty = none)
+    std::function<void()> m_directApplyCancel; // the running apply job's cancel (empty = none)
+    int m_directApplyRun = 0;
+    class QAction* m_directRemoveSuggestion = nullptr; // the page's Delete keys, registered at the start (buildActions)
+    class QAction* m_directRemoveMaterial = nullptr;
+    QList<int> m_directCenterSizes; // viewer | recipes while the viewer is on another page
     int m_directRun = 0;                  // counts suggestion jobs: a late reply of an older one is dropped
     int m_directStopAt = -1;              // a previewed suggestion stops at this source frame (-1 = none)
     QString m_directStopFile;             // ... of this file (another file in the viewer: no stop)

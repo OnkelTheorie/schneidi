@@ -52,7 +52,8 @@ QString reason(const QJsonObject& r)
     if (key == "pause") return T("Pause (%1)").arg(seconds(s));
     if (key == "filler") return T("Füllwort „%1“").arg(v.value("word").toString());
     if (key == "slot_match") {
-        const QString slot = v.value("label").toString();
+        const QJsonValue sv = v.value("slot"); // the slot's id ("clip1"; a number in older replies)
+        const QString slot = sv.isDouble() ? QString::number(sv.toInt()) : sv.toString();
         return slot.isEmpty() ? T("Passt zum Feld") : T("Passt zum Feld „%1“").arg(slot);
     }
     if (key == "take") return T("Bester Take");

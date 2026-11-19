@@ -41,6 +41,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QLabel>
@@ -49,6 +50,11 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
+#include <QSpinBox>
+#include <QStyle>
+#include <QStyleOptionViewItem>
+#include <QDoubleSpinBox>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -75,6 +81,26 @@ QAction* action(const QString& id)
     for (const InputBindings::Entry& e : InputBindings::instance().entries())
         if (e.id == id) return e.action;
     return nullptr;
+}
+
+bool viewerSays(Viewer* v, const QString& text)
+{
+    for (QLabel* l : v->findChildren<QLabel*>())
+        if (l->text() == text) return true;
+    return false;
+}
+
+// The center of a row's check indicator
+QPoint checkIndicator(QListWidget* list, QListWidgetItem* item)
+{
+    QStyleOptionViewItem opt;
+    opt.initFrom(list->viewport());
+    opt.rect = list->visualItemRect(item);
+    opt.features = QStyleOptionViewItem::HasCheckIndicator | QStyleOptionViewItem::HasDisplay
+                   | QStyleOptionViewItem::HasDecoration | QStyleOptionViewItem::WrapText;
+    opt.decorationSize = list->iconSize();
+    opt.checkState = item->checkState();
+    return list->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &opt, list).center();
 }
 
 void settle()
@@ -144,8 +170,9 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
     loadProject(w, a);
     Project* p = w.liveProject();
 
-    // Lazy, the button right of Media, the default start page is Edit
+    // Lazy, the button right of Media, the default start page is Edit; the page's keys are registered already
     CHECK(!w.directPage());
+    CHECK(action("direct_remove_suggestion") && action("direct_remove_material"));
     CHECK(!w.findChild<DirectPage*>());
     CHECK(w.currentPage() == Page::Edit);
     auto* media = w.findChild<QToolButton*>("pageButton_media");
@@ -168,11 +195,20 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
     CHECK(viewer && page->center()->indexOf(viewer) == 0);
     CHECK(!page->wishSlot()->isVisible()); // R5: no own wish line yet
     CHECK_EQ(w.livePage(), QString("direct"));
-    // Away and back: the same page, the viewer back in the middle
+    CHECK(viewerSays(viewer, "Vorschau")); // not "Timeline": the viewer shows previews here
+    settle();
+    // Away and back: the same page, the viewer back in the middle with the height the user gave it
+    page->center()->setSizes({300, 500});
+    settle();
+    const QList<int> centerSizes = page->center()->sizes();
     w.showPage(Page::Edit);
     CHECK(page->center()->indexOf(viewer) < 0);
+    CHECK(viewerSays(viewer, "Timeline"));
     CHECK(w.liveShowPage("direct"));
     CHECK(w.directPage() == page && page->center()->indexOf(viewer) == 0);
+    settle();
+    Check::report(std::abs(page->center()->sizes().value(0) - centerSizes.value(0)) <= 2, "viewer height kept", __FILE__,
+                  __LINE__, QString("%1 -> %2").arg(centerSizes.value(0)).arg(page->center()->sizes().value(0)));
     settle();
 
     // Material: a Media Pool drop, file URLs (a folder and a missing file left out), no doubles
@@ -250,6 +286,10 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
     CHECK(sug->list()->model()->moveRow({}, 3, {}, 0));
     const QList<int> after = sug->rowOrder();
     CHECK_EQ(after.first(), before.last());
+    // The choice's order: the checked rows as listed (the moved one is off: it is not in it)
+    CHECK_EQ(sug->choice().value("order").toArray().first().toInt(), sug->checkedOrder().first());
+    CHECK(!sug->choice().value("order").toArray().contains(before.last()));
+    sug->setChecked(before.last(), true);
     CHECK_EQ(sug->choice().value("order").toArray().first().toInt(), before.last());
 
     // Delete on a suggestion: the row goes, the timeline's selected clips stay
@@ -300,17 +340,139 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
         CHECK_EQ(p->undoStack()->count(), undoBefore);
         CHECK(p->mediaInfo(b) == nullptr); // not imported by a preview
     }
+    // A click on a row's checkbox toggles it and previews nothing
+    {
+        engine.pause();
+        QListWidgetItem* item = sug->list()->item(1);
+        const Qt::CheckState before = item->checkState();
+        const int at = engine.position();
+        QTest::mouseClick(sug->list()->viewport(), Qt::LeftButton, {}, checkIndicator(sug->list(), item));
+        settle();
+        CHECK(item->checkState() != before);
+        CHECK(engine.speed() == 0.0);
+        CHECK_EQ(engine.position(), at);
+        item->setCheckState(Qt::Checked);
+    }
+
+    // In/Out of the current row: the sum, the strip and the choice follow
+    {
+        sug->list()->setCurrentRow(0);
+        const int n = sug->list()->item(0)->data(Qt::UserRole).toInt();
+        const double from = sug->suggestion(n).value("from_s").toDouble();
+        const double sumBefore = sug->checkedSeconds();
+        sug->inBox()->setValue(from + 0.4);
+        CHECK(std::abs(sug->range(n).first - (from + 0.4)) < 0.01);
+        CHECK(std::abs(sug->checkedSeconds() - (sumBefore - 0.4)) < 0.01);
+        const QJsonArray adjust = sug->choice().value("adjust").toArray();
+        CHECK_EQ(adjust.size(), 1);
+        CHECK_EQ(adjust.first().toObject().value("n").toInt(), n);
+        CHECK_EQ(page->overview()->timeline().video[0].clips.value(0).in, int(std::lround((from + 0.4) * 25)));
+        sug->setRange(n, -5, 1e6); // clamped to the file (6 s)
+        CHECK(sug->range(n).first == 0.0 && std::abs(sug->range(n).second - 6.0) < 0.05);
+        sug->setRange(n, from + 0.4, sug->suggestion(n).value("to_s").toDouble());
+    }
 
     // Übernehmen: exactly one undo step, a new timeline with the checked ranges
     const int sequences = int(p->sequences().size());
+    CHECK(page->applyButton()->toolTip().contains("neue Timeline"));
     page->applyButton()->click();
-    settle();
+    CHECK(page->applying());
+    CHECK(!page->applyButton()->isEnabled()); // once at a time
+    CHECK(jobs->hasJob("direct_apply"));
+    CHECK(waitFor([&] { return !page->applying(); }));
     CHECK_EQ(p->undoStack()->count(), undoBefore + 1);
     CHECK_EQ(int(p->sequences().size()), sequences + 1);
     CHECK_EQ(int(p->timeline().video.value(0).clips.size()), 2);
+    {
+        const int n = sug->list()->item(0)->data(Qt::UserRole).toInt();
+        CHECK(std::abs(p->timeline().video.value(0).clips.value(0).in - sug->range(n).first * 25) <= 1); // the adjusted In
+    }
     p->undoStack()->undo();
     CHECK_EQ(int(p->sequences().size()), sequences);
     CHECK_EQ(timelineClips(w), clips);
+
+    // The timeline's editing keys do nothing on Regie: focus outside the lists, and no focus at all
+    {
+        w.liveSelection()->set({1, 2});
+        const int undo = p->undoStack()->count();
+        page->applyButton()->setFocus();
+        const auto target = [&w]() -> QWidget* { return QApplication::focusWidget() ? QApplication::focusWidget() : &w; };
+        for (const auto key : {Qt::Key_Delete, Qt::Key_Backspace}) QTest::keyClick(target(), key);
+        QTest::keyClick(target(), Qt::Key_V, Qt::ControlModifier);
+        QTest::keyClick(target(), Qt::Key_B, Qt::ControlModifier);
+        if (QWidget* f = QApplication::focusWidget()) f->clearFocus();
+        QTest::keyClick(&w, Qt::Key_Delete);
+        action("copy")->trigger();
+        for (const char* id : {"delete", "delete_alt", "ripple_delete", "cut", "paste", "split", "split_alt", "insert_clip",
+                               "overwrite_clip", "nudge_right", "trim_start"})
+            if (QAction* act = action(id); CHECK(act)) act->trigger();
+        settle();
+        CHECK_EQ(timelineClips(w), clips);
+        CHECK_EQ(p->undoStack()->count(), undo);
+    }
+
+    // The material changed after the suggestions: Übernehmen says so and offers new suggestions
+    {
+        QFile f(a);
+        CHECK(f.open(QIODevice::ReadWrite));
+        CHECK(f.setFileTime(QDateTime::currentDateTime().addSecs(5), QFileDevice::FileModificationTime));
+        f.close();
+        const int undo = p->undoStack()->count();
+        page->applyButton()->click();
+        CHECK(waitFor([&] { return !page->applying(); }));
+        CHECK_EQ(p->undoStack()->count(), undo);
+        auto* again = sug->findChild<QPushButton*>("direct_resuggest");
+        if (CHECK(again)) {
+            CHECK(again->isVisible());
+            again->click();
+            CHECK(waitFor([&] { return !page->busy() && sug->hasSession(); }));
+            CHECK(!again->isVisible());
+        }
+    }
+
+    // Variants (short): a picker, only the chosen variant counts (rows, sum, strip, choice)
+    if (auto* variants = page->findChild<QSpinBox*>("direct_short_variants"); CHECK(variants)) {
+        variants->setValue(2);
+        page->recipes()->suggestButton()->click();
+        CHECK(waitFor([&] { return !page->busy() && sug->hasSession(); }));
+        CHECK_EQ(sug->variantCount(), 2);
+        CHECK(sug->variantBox()->isVisible());
+        CHECK_EQ(sug->rowOrder().size(), 1); // one file, one row per variant
+        const int one = sug->rowOrder().first();
+        sug->setVariant(2);
+        CHECK_EQ(sug->rowOrder().size(), 1);
+        CHECK(sug->rowOrder().first() != one);
+        CHECK_EQ(sug->checkedOrder(), sug->rowOrder()); // a variant chosen the first time: its rows on
+        CHECK_EQ(sug->choice().value("variant").toInt(), 2);
+        CHECK_EQ(sug->choice().value("on").toArray().size(), 1);
+        CHECK_EQ(int(page->overview()->timeline().video[0].clips.size()), 1);
+        variants->setValue(1);
+    }
+
+    // Audio-only material lies on the audio track of the result strip; the talk recipe's tooltip says it copies
+    {
+        const QJsonObject session{
+            {"id", "x"}, {"recipe", "talk"},
+            {"material", QJsonArray{QJsonObject{{"file", a}, {"length_s", 6}, {"has_video", false}}}},
+            {"suggestions", QJsonArray{QJsonObject{{"n", 1}, {"kind", "moment"}, {"file", a}, {"from_s", 1.0},
+                                                   {"to_s", 2.0}, {"reason", QJsonObject{{"key", "loud"}}}, {"on", true}}}},
+            {"order", QJsonArray{1}}};
+        sug->setSession(session);
+        CHECK(page->overview()->timeline().video[0].clips.isEmpty());
+        CHECK_EQ(int(page->overview()->timeline().audio[0].clips.size()), 1);
+        CHECK(page->applyButton()->toolTip().contains("Kopie"));
+        CHECK(page->applyButton()->toolTip().contains("bis man übernimmt"));
+    }
+
+    // A run never outlives its material: a change ends it, its late reply is dropped
+    page->recipes()->suggestButton()->click();
+    CHECK(page->busy());
+    mat->addFiles({b});
+    CHECK(!page->busy());
+    CHECK(!jobs->hasJob("direct"));
+    CHECK(!sug->hasSession());
+    QTest::qWait(500);
+    CHECK(!sug->hasSession());
 
     // In Schneiden öffnen
     page->openEditButton()->click();
@@ -328,6 +490,17 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
     w.showAllPages();
     CHECK(direct->isVisible());
     CHECK(!QSettings().contains(PageVisibility::kSettingsKey)); // a test run: never saved
+
+    // ... nor its project: New Project ends it and empties the page
+    w.showPage(Page::Direct);
+    page->recipes()->suggestButton()->click();
+    CHECK(page->busy());
+    action("project_new")->trigger();
+    CHECK(!page->busy());
+    CHECK(!jobs->hasJob("direct"));
+    CHECK(mat->isEmpty());
+    QTest::qWait(500);
+    CHECK(!sug->hasSession());
 }
 
 // pages/start: the app starts there, New Project goes there, opening a project stays
@@ -504,7 +677,7 @@ void testFake()
             CHECK_EQ(command, QString("edit"));
             return QJsonObject{{"ok", true}, {"result", QJsonObject{}}};
         },
-        [](const QString&) { return 10.0; }, 5);
+        [](const QString&) { return 10.0; }, [] { return QString("7"); }, 5);
     const QJsonObject s = fake.makeSession("short", {{"files", QJsonArray{"/x/a.mkv", "/x/b.mkv"}}}, {{"max_s", 30}});
     CHECK_EQ(s.value("recipe").toString(), QString("short"));
     CHECK_EQ(s.value("suggestions").toArray().size(), 4);
@@ -536,7 +709,54 @@ void testFake()
     CHECK(reply.isEmpty()); // nothing after the cancel
     h.cancel();             // again: nothing
     CHECK(reply.isEmpty());
+    // Apply: in the background, the edit's ops; unknown sessions expired, changed material stale
+    {
+        QTemporaryDir tmp;
+        const QString f = tmp.path() + "/m.wav";
+        QFile file(f);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write("x");
+        file.close();
+        reply = {};
+        fake.suggest("short", {{"files", QJsonArray{f}}}, {{"variants", 2}}, {}, [&](const QJsonObject& r) { reply = r; }, &receiver);
+        CHECK(waitFor([&] { return !reply.isEmpty(); }, 2000));
+        const QJsonObject session = reply.value("result").toObject().value("session").toObject();
+        const QJsonArray sg = session.value("suggestions").toArray();
+        CHECK_EQ(sg.at(1).toObject().value("variant").toInt(), 2);
+        const QJsonObject choice{{"on", QJsonArray{1}}, {"order", QJsonArray{1}},
+                                 {"adjust", QJsonArray{QJsonObject{{"n", 1}, {"from_s", 1.5}, {"to_s", 3.0}}}}};
+        const QJsonArray ops = fake.opsFor(session, choice);
+        CHECK_EQ(ops.size(), 2);
+        CHECK_EQ(ops.at(1).toObject().value("in").toString(), QString("1.500s"));
+        reply = {};
+        fake.apply(session, choice, {}, [&](const QJsonObject& r) { reply = r; }, &receiver);
+        CHECK(reply.isEmpty()); // not at once
+        CHECK(waitFor([&] { return !reply.isEmpty(); }, 2000));
+        CHECK(reply.value("ok").toBool());
+        CHECK_EQ(runs, 1);
+        CHECK_EQ(lastArgs.value("ops").toArray().size(), 2);
+        CHECK_EQ(fake.applyNow(QJsonObject{{"id", "nope"}}, choice).value("error").toObject().value("code").toString(),
+                 QString("SESSION_EXPIRED"));
+        CHECK(file.open(QIODevice::Append));
+        file.write("more"); // another size: the material changed
+        file.close();
+        CHECK_EQ(fake.applyNow(session, choice).value("error").toObject().value("code").toString(), QString("SESSION_STALE"));
+        // Talk: a copy of the open timeline without the pauses
+        const QJsonObject talk = fake.makeSession("talk", {{"timeline", "@current"}}, {});
+        const QJsonArray talkOps = fake.opsFor(talk, {{"on", QJsonArray{1}}, {"order", QJsonArray{1}}});
+        CHECK_EQ(talkOps.at(0).toObject().value("op").toString(), QString("new_timeline"));
+        CHECK_EQ(talkOps.at(0).toObject().value("from").toString(), QString("7"));
+        CHECK_EQ(talkOps.at(1).toObject().value("op").toString(), QString("delete_range"));
+        // Canceled before it ran: nothing edited
+        reply = {};
+        auto ah = fake.apply(session, choice, {}, [&](const QJsonObject& r) { reply = r; }, &receiver);
+        ah.cancel();
+        CHECK_EQ(reply.value("error").toObject().value("code").toString(), QString("CANCELED"));
+        QTest::qWait(60);
+        CHECK_EQ(runs, 1);
+    }
     // The receiver gone: no callback
+    reply = {};
     {
         auto* gone = new QObject;
         fake.suggest("short", {{"files", QJsonArray{"/x/a.mkv"}}}, {}, {}, [&](const QJsonObject& r) { reply = r; }, gone);

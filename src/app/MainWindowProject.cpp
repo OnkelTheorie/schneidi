@@ -263,6 +263,7 @@ void MainWindow::newProjectFromTemplate(const StartTemplate& t)
 
 void MainWindow::startProject(const StartTemplate& t)
 {
+    directReset(true); // a Regie run on the old project ends; a new project starts with an empty page
     m_engine->pause();
     m_selection->clear();
     if (m_colorPanel) m_colorPanel->discardTracking();
@@ -522,6 +523,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
 
     m_templateDir.clear(); // a project of its own (New from template sets it again afterwards)
     m_templateCopies.clear();
+    directReset(false); // a Regie run on the old project ends (the material files stay: they are no project's)
     m_engine->pause();
     m_selection->clear();
     if (m_colorPanel) m_colorPanel->discardTracking();
