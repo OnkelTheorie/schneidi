@@ -546,6 +546,11 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         m_host->liveDirection(msg.value("session").toObject(), peer.chat);
         return;
     }
+    if (type == "direction_applied") {
+        if (!attached || !waitingNow().isEmpty()) return;
+        m_host->liveDirectApplied(msg.value("session").toObject(), msg.value("result").toObject(), peer.chat);
+        return;
+    }
     // Work of the attached AI outside the app: shown there, never answered (the client does not wait for it)
     if (type == "activity") {
         if (!attached || !waitingNow().isEmpty()) return;
@@ -1239,6 +1244,16 @@ void reportDirection(const QJsonObject& args, const QJsonObject& session)
     Connection* c = reportingConnection(args);
     if (!c || c->socket.state() != QLocalSocket::ConnectedState) return;
     c->socket.write(line(QJsonObject{{"type", "direction"}, {"session", session}}));
+    c->socket.flush();
+    if (c->socket.bytesToWrite() > 0) c->socket.waitForBytesWritten(1000);
+}
+
+void reportDirectApplied(const QJsonObject& args, const QJsonObject& session, const QJsonObject& result)
+{
+    if (g_isApp || g_host || t_appCopy) return;
+    Connection* c = reportingConnection(args);
+    if (!c || c->socket.state() != QLocalSocket::ConnectedState) return;
+    c->socket.write(line(QJsonObject{{"type", "direction_applied"}, {"session", session}, {"result", result}}));
     c->socket.flush();
     if (c->socket.bytesToWrite() > 0) c->socket.waitForBytesWritten(1000);
 }

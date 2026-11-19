@@ -2,9 +2,11 @@
 // MainWindow: the Direct page "Regie" (0.25) - built lazily on its first showing. The page asks, this file runs its
 // DirectBackend: suggestions and Übernehmen in the background (progress and ✕ in BackgroundJobs), a click on a
 // suggestion plays it in the viewer up to its end (previewFile: the project stays unmodified), Übernehmen = one undo
-// step. A run never outlives its material or project: directReset ends it.
+// step. A run never outlives its material or project: directReset ends it. The own wish line goes to the AI chat
+// (with the page's context as a note); the model's `direct` comes back through LiveHost::liveDirection.
 #include "app/MainWindow.h"
 
+#include "app/AiChat.h"
 #include "app/DirectBackend.h"
 #include "app/InputBindings.h"
 #include "app/TemplateDialogs.h"
@@ -18,6 +20,7 @@
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
 #include "ui/direct/DirectThumbs.h"
+#include "ui/direct/DirectWish.h"
 
 #include <QDir>
 #include <QFileDialog>
@@ -46,9 +49,36 @@ void MainWindow::setDirectBackend(std::unique_ptr<DirectBackend> backend)
 
 void MainWindow::liveDirection(const QJsonObject& session, bool ownChat)
 {
-    Q_UNUSED(ownChat);
+    if (ownChat && m_directWishVoid) return; // the page was reset during the request: a late answer to old material
     ensureDirectPage();
     showDirectSession(session);
+}
+
+void MainWindow::liveDirectApplied(const QJsonObject& session, const QJsonObject& result, bool ownChat)
+{
+    if (ownChat && m_directWishVoid) return;
+    // Shown like the page's own Übernehmen: its session, the short's finish for the apply's result timeline (for a
+    // short its vertical copy); without one nothing to finish
+    ensureDirectPage();
+    showDirectSession(session);
+    const bool newProject = result.value("new_project").toBool();
+    m_directApplied = {{"session", session}, {"result", result}};
+    m_directAppliedByAi = true;
+    m_directPage->setFinishOffered(!newProject && !result.value("timeline").toString().isEmpty()
+                                   && directBackend()->canFinish(session));
+    if (newProject) {
+        m_directPage->setMadeProject(result.value("project").toString());
+        return;
+    }
+    statusBar()->showMessage(T("Regie: Timeline von der KI gebaut (Rückgängig nimmt sie zurück)"), 6000);
+}
+
+void MainWindow::directAiApplyUndone()
+{
+    if (!m_directAppliedByAi) return;
+    m_directAppliedByAi = false;
+    m_directApplied = {};
+    if (m_directPage) m_directPage->setFinishOffered(false);
 }
 
 void MainWindow::showDirectSession(const QJsonObject& session)
@@ -169,6 +199,12 @@ void MainWindow::ensureDirectPage()
     });
     updateDirectTracks();
     connect(m_project, &Project::timelineChanged, m_directPage, [this] { updateDirectTracks(); });
+    // The own wish: to the AI chat; ✕ stops its turn
+    connect(m_directPage->wish(), &DirectWish::wishRequested, this, &MainWindow::directWish);
+    connect(m_directPage->wish(), &DirectWish::stopRequested, this, [this] {
+        if (m_directWishTurn && m_chat) m_chat->stop(); // its turnFinished ends the wish (directWishDone)
+    });
+    updateDirectWish();
     // A previewed suggestion stops at its end; anything else in the viewer or a pause by the user ends that
     connect(m_engine, &Engine::positionChanged, m_directPage, [this](int f) {
         if (m_directStopAt < 0) return;
@@ -199,6 +235,12 @@ void MainWindow::updateDirectTracks()
 
 void MainWindow::directReset(bool material)
 {
+    // A wish the AI still works on was about the old material/project: stopped, and nothing it does is shown
+    if (m_directWishTurn && m_chat) {
+        m_directWishVoid = true;
+        m_chat->stop(); // its turnFinished ends the wish (directWishDone)
+    }
+    m_directAppliedByAi = false;
     ++m_directRun; // late replies of what runs now are dropped
     ++m_directApplyRun;
     for (std::function<void()>* cancel : {&m_directCancel, &m_directApplyCancel})
@@ -319,6 +361,7 @@ void MainWindow::directApply()
             // A short: its captions and effect sounds are offered as the next step
             const QJsonObject session = m_directPage->suggestions()->session();
             m_directApplied = {{"session", session}, {"result", reply.value("result")}};
+            m_directAppliedByAi = false;
             m_directPage->setFinishOffered(directBackend()->canFinish(session));
             // A template filled into a new project file: nothing changed here (no undo step), the page offers it
             const QJsonObject result = reply.value("result").toObject();
@@ -419,4 +462,79 @@ void MainWindow::directPreview(const QString& file, double from, double to)
     m_engine->play();
     m_directStopAt = std::max(in + 1, out);
     m_directStopFile = m_engine->sourcePath();
+}
+
+void MainWindow::updateDirectWish()
+{
+    if (!m_directPage) return;
+    m_directPage->wish()->setVisible(m_chat && chatReady());
+}
+
+void MainWindow::directWish(const QString& text)
+{
+    if (!m_directPage || !m_chat || text.trimmed().isEmpty() || m_directWishTurn) return;
+    if (m_review.pending) {
+        m_directPage->wish()->setNote(T("Erst die Änderungen der KI übernehmen oder verwerfen."), true);
+        return;
+    }
+    if (m_chat->busy()) {
+        m_directPage->wish()->setNote(T("Der KI-Chat ist gerade beschäftigt."), true);
+        return;
+    }
+    const int first = int(m_chat->entries().size());
+    m_directPage->setWishBusy(true);
+    m_directWishTurn = true; // before the send: an answer at once (an error) ends it in chatTurnFinished
+    m_directWishFirst = first;
+    const bool plan = m_aiSettings.approval == AiSettings::Approval::Plan;
+    if (sendChat(text.trimmed(), m_directPage->wishContext(plan))) return;
+    // Not sent (no provider after all, the privacy question declined, a test run): the chat's error if it said one
+    m_directWishTurn = false;
+    m_directPage->setWishBusy(false);
+    QString error;
+    for (int i = first; i < m_chat->entries().size(); ++i)
+        if (m_chat->entries()[i].kind == AiChat::Entry::Kind::Error) error = m_chat->entries()[i].text;
+    m_directPage->wish()->setNote(error.isEmpty() ? T("Nicht an die KI geschickt.") : error, true);
+}
+
+void MainWindow::directWishDone()
+{
+    m_directWishTurn = false;
+    if (!m_directPage) return;
+    m_directPage->setWishBusy(false);
+    // The turn's last answer of the model or `direct` call, and its last error: what came last wins
+    QString answer, error;
+    int lastAnswer = -1, lastError = -1;
+    bool direct = false;
+    const QVector<AiChat::Entry>& entries = m_chat->entries();
+    for (int i = std::min<int>(m_directWishFirst, int(entries.size())); i < entries.size(); ++i) {
+        const AiChat::Entry& e = entries[i];
+        if (e.kind == AiChat::Entry::Kind::Assistant && !e.text.trimmed().isEmpty()) {
+            answer = e.text.trimmed();
+            lastAnswer = i;
+        }
+        if (e.kind == AiChat::Entry::Kind::Tool && e.tool == QLatin1String("direct") && e.state == AiChat::Entry::State::Done) {
+            direct = true;
+            lastAnswer = std::max(lastAnswer, i);
+        }
+        if (e.kind == AiChat::Entry::Kind::Error) {
+            error = e.text;
+            lastError = i;
+        }
+    }
+    if (m_chat->wasStopped()) {
+        m_directPage->wish()->setNote(m_directWishVoid ? QString() : T("Gestoppt."));
+        return;
+    }
+    if (lastError > lastAnswer) {
+        m_directPage->wish()->setNote(error, true);
+        return;
+    }
+    constexpr int kMax = 300; // a short note, the whole answer is in the chat
+    if (answer.size() > kMax) {
+        int cut = kMax - 1;
+        if (answer.at(cut - 1).isHighSurrogate()) --cut; // never half a character
+        answer = answer.left(cut) + "…";
+    }
+    if (!direct && answer.isEmpty()) answer = T("Die KI hat nichts geändert.");
+    m_directPage->wish()->setNote(answer);
 }

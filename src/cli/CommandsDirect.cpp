@@ -871,7 +871,10 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (!a.contains("session")) fail("BAD_ARGUMENT", "apply needs the session (its id like 'd3', or the session itself)");
         if (a.contains("recipe")) fail("BAD_ARGUMENT", "recipe makes a new session; session + apply uses one: not both");
         const Direction::Session s = load(a["session"]);
-        return directApply(s, a["apply"].toObject(), a, ctx);
+        const QJsonObject r = directApply(s, a["apply"].toObject(), a, ctx);
+        // An AI's apply outside the app: the Direct page shows it like its own Übernehmen (not a plan or a dry run)
+        if (!a["plan"].toBool() && !a["dry_run"].toBool() && !r.contains("plan")) Live::reportDirectApplied(a, Direction::toJson(s), r);
+        return r;
     }
     Direction::Session s = directSuggest(a, ctx);
     store(s);

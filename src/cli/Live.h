@@ -19,6 +19,7 @@
 //   {"type":"activity","id":n,"state":"start"|"progress"|"end"|"failed","tool":…,"target":…,"percent":…,
 //    "summary":{…},"error":…}         -> no answer (work outside the app, see Activity; attached client only)
 //   {"type":"direction","session":{…}}  -> no answer (`direct` made suggestions: LiveHost::liveDirection; attached only)
+//   {"type":"direction_applied","session":{…},"result":{…}} -> no answer (`direct` applied: LiveHost::liveDirectApplied)
 //   {"type":"open","files":[…]}           -> {"ok":true,"queued":bool} (`schneidi <file>` while the app runs: the
 //                                              user's hand-over, see handOver(); no attach needed, also when AIs are
 //                                              refused; opened right after the answer, or once the app stops waiting)
@@ -305,5 +306,8 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& result);
 // `direct` made new suggestions: the app that would be told of the command's activity (see Activity) hears of them
 // (LiveHost::liveDirection, for the Direct page and the chat); nothing inside the app and without one
 void reportDirection(const QJsonObject& args, const QJsonObject& session);
+// `direct` applied a session outside the app (an AI's call): the app hears of it with the apply's result
+// (LiveHost::liveDirectApplied); nothing inside the app and without one
+void reportDirectApplied(const QJsonObject& args, const QJsonObject& session, const QJsonObject& result);
 
 } // namespace Cli::Live
