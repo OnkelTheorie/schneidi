@@ -410,7 +410,7 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
 {
     Direction::Session s;
     s.recipe = a["recipe"].toString().trimmed().toLower();
-    if (s.recipe.isEmpty()) fail("BAD_ARGUMENT", "give recipe (short or highlights) to suggest, or session + apply");
+    if (s.recipe.isEmpty()) fail("BAD_ARGUMENT", "give recipe (short, highlights, talk, template or script) to suggest, or session + apply");
     static const QStringList recipes{"short", "highlights", "talk", "template", "script"};
     if (!recipes.contains(s.recipe))
         fail("UNKNOWN_RECIPE", QString("no recipe '%1' (%2)").arg(s.recipe, recipes.join(", ")));

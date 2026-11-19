@@ -1203,7 +1203,7 @@ const QVector<Command>& commands()
           {"preset", T::String, presetHelp()},
           {"format", T::String,
            "h264 (default; \"mp4\" = h264, \"webm\" = vp9), h265, av1, vp9 (WebM); s264 (experimental: schneidi's H.264 encoder s264, 8-bit 4:2:0, "
-           "slower than x264, use it only when asked; quality 3 = high, two passes towards the cap only when needed); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
+           "slower than x264 in one pass, use it only when asked; quality 3 = high, two passes towards the cap only when needed); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
@@ -1333,7 +1333,9 @@ const QVector<Command>& commands()
                    "|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?}, project?, plan?, dry_run?} -> {project, "
                    "timeline, timelines, length_s, moments, check, done, next}; plan:true makes a normal plan (edit "
                    "plan_id … run) instead. Errors: UNKNOWN_RECIPE, NO_MATERIAL, SESSION_EXPIRED, SESSION_STALE (the "
-                   "material changed: suggest again), CANCELED. Every analysis is cached per file: a second recipe on "
+                   "material or the talk timeline changed: suggest again), SESSION_PROJECT_MISMATCH (made for another "
+                   "project), FINISH_STALE, CANCELED. With project \"@app\" the app's Direct page shows the suggestions "
+                   "and the apply. Every analysis is cached per file: a second recipe on "
                    "the same material is quick. `short` does recipe short + apply + captions + render in one call.",
          {{"recipe", T::String, "suggest: short, highlights, talk, template or script"},
           {"files", T::Paths, "suggest: the recordings to look at", false, true},
