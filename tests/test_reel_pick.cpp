@@ -122,5 +122,16 @@ int main(int argc, char** argv)
         const QVector<QVector<ShortPick::Moment>> one = ShortPick::variants({{0, 10, 14, 30}}, durations, 3, o);
         CHECK_EQ(one.size(), 1);
     }
+    // ---- A later variant grown to its minimum never reaches into an earlier one's moment
+    {
+        ShortPick::Options o;
+        o.minS = 7;
+        o.maxS = 7;
+        const QVector<ShortPick::Moment> cand{{0, 10, 12, 30}, {0, 16, 18, 20}};
+        const QVector<QVector<ShortPick::Moment>> v = ShortPick::variants(cand, durations, 2, o);
+        if (CHECK_EQ(v.size(), 2))
+            for (const ShortPick::Moment& a : v[0])
+                for (const ShortPick::Moment& b : v[1]) CHECK(!(a.file == b.file && a.from < b.to - 1e-9 && b.from < a.to - 1e-9));
+    }
     return Check::result();
 }

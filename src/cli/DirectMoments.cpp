@@ -24,7 +24,7 @@ namespace Cli::detail {
 
 namespace {
 
-constexpr int kMomentsVersion = 1; // raise when the moments of a file change for the same sources
+constexpr int kMomentsVersion = 2; // raise when the moments of a file change for the same sources
 
 double round2(double v) { return std::round(v * 100) / 100; }
 
@@ -40,9 +40,11 @@ QJsonObject momentJson(double from, double to, double score, const QString& sour
 }
 
 // The highlights' candidates as moments: kills (with a kill feed) or loud moments
-QJsonArray highlightMoments(const QJsonObject& a, Context& ctx)
+// *status: "done", "none" (nothing to look at: no sound and no kill feed) or "failed"; *feed: a game's kill feed read
+QJsonArray highlightMoments(const QJsonObject& a, Context& ctx, QString* status, bool* feed)
 {
     QJsonArray out;
+    *status = "done";
     QJsonObject h{{"file", a["file"]}, {"game", a["game"].toString().isEmpty() ? QString("none") : a["game"].toString()}};
     if (a.contains("project")) h["project"] = a["project"];
     QJsonObject r;
@@ -50,8 +52,10 @@ QJsonArray highlightMoments(const QJsonObject& a, Context& ctx)
         r = highlightsFile(h, ctx);
     } catch (const Error& e) {
         if (e.code == QLatin1String("CANCELED")) throw;
-        return out; // no sound and no kill feed: nothing from this source
+        *status = e.code == QLatin1String("NO_AUDIO") ? "none" : "failed"; // never the whole suggest
+        return out;
     }
+    *feed = r.contains("game");
     for (const QJsonValue& c : r["candidates"].toArray()) {
         const int kills = c["kills"].toInt(), loud = c["loud_moments"].toInt();
         Direction::Reason reason;
@@ -71,9 +75,10 @@ QJsonArray highlightMoments(const QJsonObject& a, Context& ctx)
 }
 
 // Laughter, applause, cheering and screams as moments: a little before (what made people laugh) and after
-QJsonArray eventMoments(const MediaSource& m, double length)
+QJsonArray eventMoments(const MediaSource& m, double length, QString* status)
 {
     QJsonArray out;
+    *status = "none";
     if (!m.info.hasAudio) return out;
     AudioEvents::Options o;
     o.only = {"laughter", "applause", "cheering", "scream"};
@@ -81,6 +86,8 @@ QJsonArray eventMoments(const MediaSource& m, double length)
     o.progress = goOn();
     const AudioEvents::Result r = AudioEvents::analyzeFile(m.info.path, 0, o);
     failIfCanceled();
+    // No sound to read (or it broke off): what was read counts, the answer is not cached
+    *status = r.incomplete || (!r.error.isEmpty() && r.events.isEmpty() && r.duration <= 0) ? "failed" : "done";
     // A score below a kill (10) and about a loud burst: the kind, how sure, how long
     static const QHash<QString, double> base{{"cheering", 6}, {"laughter", 5.5}, {"applause", 5}, {"scream", 4.5}};
     for (const AudioEvents::Event& e : r.events) {
@@ -94,12 +101,21 @@ QJsonArray eventMoments(const MediaSource& m, double length)
 
 // Picture: the stretches with the most movement (mean scene score over a second well above the recording's usual)
 // and clear changes of scene; a few per recording, apart from each other
-QJsonArray pictureMoments(const MediaSource& m, double length)
+QJsonArray pictureMoments(const MediaSource& m, double length, QString* status)
 {
     QJsonArray out;
+    *status = "none";
     if (!m.info.hasVideo || m.info.isImage) return out;
-    const std::vector<PictureScore> scores = pictureScores(m, 320, [](double) {});
+    std::vector<PictureScore> scores;
+    try {
+        scores = pictureScores(m, 320, [](double) {});
+    } catch (const Error& e) {
+        if (e.code == QLatin1String("CANCELED")) throw;
+        *status = "failed"; // a broken file: the other sources still count
+        return out;
+    }
     failIfCanceled();
+    *status = "done";
     if (scores.size() < 10) return out;
     // Mean score per second
     std::vector<double> sum(size_t(std::ceil(length)) + 1, 0.0);
@@ -218,33 +234,48 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
             if (ctx.progress) sub.progress = [&ctx, from, to](double p) { ctx.progress(from + (to - from) * p); };
             return sub;
         };
+        // Game footage (a kill feed read, or the game given): the highlights alone, as `short` always took them.
+        // Other material: the loud moments and the sound events; the picture's movement only when neither found one
         Context h = part(0, 0.6);
-        const QJsonArray highlights = highlightMoments(a, h);
+        QString sound, events = "none", picture = "none";
+        bool feed = false;
+        const QJsonArray highlights = highlightMoments(a, h, &sound, &feed);
+        const bool game = feed || (!a["game"].toString().isEmpty() && a["game"].toString() != QLatin1String("none"));
         if (ctx.progress) ctx.progress(0.6);
-        QJsonArray extra = eventMoments(m, length);
-        if (ctx.progress) ctx.progress(0.75);
-        for (const QJsonValue& v : pictureMoments(m, length)) extra << v;
+        QJsonArray extra;
+        if (!game) {
+            extra = eventMoments(m, length, &events);
+            if (ctx.progress) ctx.progress(0.75);
+            if (highlights.isEmpty() && extra.isEmpty()) extra = pictureMoments(m, length, &picture);
+        }
         if (ctx.progress) ctx.progress(1);
         mat.moments = int(highlights.size() + extra.size());
-        mat.analysis = {{"sound", mat.hasAudio ? "done" : "none"},
-                        {"picture", mat.hasVideo ? "done" : "none"},
-                        {"events", mat.hasAudio ? "done" : "none"},
-                        {"speech", "none"}};
+        mat.analysis = {{"sound", sound}, {"picture", picture}, {"events", events}, {"speech", "none"}};
         out = {{"file", m.info.path}, {"material", Direction::toJson(mat)}, {"highlights", highlights}, {"extra", extra}};
-        AnalysisCache::put(key, out);
+        // A source that failed (a broken tail, a decoder missing) is asked again next time: not cached
+        if (sound != QLatin1String("failed") && events != QLatin1String("failed") && picture != QLatin1String("failed"))
+            AnalysisCache::put(key, out);
     }
-    // The index's bonus on top (it may have been built since)
-    for (const char* k : {"highlights", "extra"}) {
-        QJsonArray list = out[k].toArray();
-        indexBonus(m.info.path, list);
-        out[k] = list;
-    }
+    // The file as it is spelled now (the cache keys on the path's key: another case on Windows)
+    QJsonObject mat = out["material"].toObject();
+    mat["file"] = m.info.path;
+    out["material"] = mat;
+    out["file"] = m.info.path;
+    // The index's bonus on top (it may have been built since); not for recipe short (the highlights as they are)
+    if (!a["no_index"].toBool())
+        for (const char* k : {"highlights", "extra"}) {
+            QJsonArray list = out[k].toArray();
+            indexBonus(m.info.path, list);
+            out[k] = list;
+        }
     return out;
 }
 
-CollectedMoments collectMoments(const QStringList& files, const QString& project, const QString& game, Context& ctx)
+CollectedMoments collectMoments(const QStringList& files, const QString& project, const QString& game, bool index,
+                                Context& ctx)
 {
     QJsonObject a{{"files", QJsonArray::fromStringList(files)}, {"game", game}};
+    if (!index) a["no_index"] = true;
     if (!project.isEmpty()) a["project"] = project;
     const QJsonObject r = perFile(a, ctx, directMomentsFile, 3);
     CollectedMoments out;

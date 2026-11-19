@@ -111,7 +111,19 @@ QVector<QVector<Moment>> variants(const QVector<Moment>& candidates, const QVect
         for (const Moment& c : candidates)
             if (!overlaps(c)) left << c;
         if (v > 0 && left.isEmpty()) break;
-        const QVector<Moment> one = pick(v == 0 ? candidates : left, durations, o);
+        QVector<Moment> one = pick(v == 0 ? candidates : left, durations, o);
+        if (v > 0) {
+            // Only the fallback (no candidate fit): no variant of its own
+            if (std::all_of(one.begin(), one.end(), [](const Moment& m) { return m.score <= 0; })) break;
+            // Grown up to the minimum length into an earlier variant's moment: back to its edge
+            for (Moment& m : one)
+                for (const Moment& u : used) {
+                    if (u.file != m.file || !(m.from < u.to && u.from < m.to)) continue;
+                    if ((m.from + m.to) / 2 < (u.from + u.to) / 2) m.to = std::min(m.to, u.from);
+                    else m.from = std::max(m.from, u.to);
+                }
+            one.erase(std::remove_if(one.begin(), one.end(), [](const Moment& m) { return m.to - m.from < 0.5; }), one.end());
+        }
         if (one.isEmpty()) break;
         out << one;
         used += one;

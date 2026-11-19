@@ -1330,7 +1330,7 @@ const QVector<Command>& commands()
           {"timeline", T::String, "suggest: the recordings of this timeline of the project as the material ('@current' = "
                                   "the open one)"},
           {"options", T::Object, "suggest: the recipe's settings. short: for (shorts|reels|tiktok), min_s, max_s, "
-                                 "aspect (9:16|1:1|4:5), captions, variants (1-3), sfx, hook (best|chronological), "
+                                 "aspect (9:16|1:1|4:5), variants (1-3), hook (best|chronological), "
                                  "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game"},

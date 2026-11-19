@@ -23,8 +23,9 @@ struct DirectMoment {
     QString source;    // "highlights" (kill feed / loud), "events" (AudioEvents), "picture" (pictureScores)
 };
 
-// The moments of one file (args: file, project?, game: id or "none"): its material line, the highlights' candidates
-// (best first, as `highlights` gives them) and the moments of sound events and picture changes (best first). Every
+// The moments of one file (args: file, project?, game: id or "none", no_index?): its material line, the highlights'
+// candidates (best first, as `highlights` gives them) and, for material that is no game, the moments of sound events
+// (and of picture movement when nothing else stood out). A source that fails counts as none (not cached). Every
 // source through its cache, the whole answer in AnalysisCache ("direct-moments"); the material index's face/sharpness
 // added afterwards when it is cached (MediaIndex::cached, never built here). Throws CANCELED when canceled.
 QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx);
@@ -35,7 +36,9 @@ struct CollectedMoments {
     QVector<DirectMoment> extra;      // events + picture, best first
 };
 // directMomentsFile for every file (in parallel, perFile); project may be empty; game: id, "none" or empty (none)
-CollectedMoments collectMoments(const QStringList& files, const QString& project, const QString& game, Context& ctx);
+// index: the material index's bonus (not for recipe short)
+CollectedMoments collectMoments(const QStringList& files, const QString& project, const QString& game, bool index,
+                                Context& ctx);
 
 // The session of a suggest made in memory (not stored): for `short`
 // (found: what the collector found, before picking)

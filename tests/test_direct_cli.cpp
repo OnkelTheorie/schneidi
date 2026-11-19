@@ -291,6 +291,101 @@ int main(int argc, char** argv)
         std::printf("       second recipe on the same clip: %lld ms\n", t.elapsed());
     }
 
+    // ---- Review fixes (0.25): sessions, sources, validation
+    {
+        // Sessions live in one folder: a project-bound suggest's `next` (the id alone) works; another project is refused
+        const QString bound = dir.filePath("out/bound.schneidi");
+        run("new", {{"project", bound}, {"media", QJsonArray{clip}}});
+        const QJsonObject b = run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}}, {"project", bound},
+                                             {"options", QJsonObject{{"game", "none"}}}});
+        CHECK(b["next"].toString().startsWith("direct session:'" + b["session"]["id"].toString() + "'"));
+        const QJsonObject viaNext = run("direct", {{"session", b["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        CHECK_EQ(viaNext["project"].toString(), bound);
+        CHECK_EQ(run("direct", {{"session", b["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}, {"project", proj}})["error"].toString(),
+                 QString("SESSION_PROJECT_MISMATCH"));
+        // A plan lists only the user's steps (no hidden _direction)
+        const QJsonObject p2 = run("direct", {{"session", b["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}, {"plan", true}});
+        CHECK(!QJsonDocument(p2["plan"].toObject()).toJson().contains("_direction"));
+        // A project given that does not exist yet is made
+        const QString fresh = dir.filePath("out/made-here.schneidi");
+        const QJsonObject made = run("direct", {{"session", session["id"]}, {"apply", QJsonObject{{"on", "all"}}}, {"project", fresh}});
+        CHECK(!made.contains("error"));
+        CHECK(QFileInfo::exists(fresh));
+
+        // Validation: order, variant, adjust, platform length, overlapping edges merged
+        const QJsonArray sg = session["suggestions"].toArray();
+        const int n1 = sg[0]["n"].toInt();
+        const auto apply = [&](const QJsonObject& ap) {
+            return run("direct", {{"session", session["id"]}, {"apply", ap}, {"project", fresh}});
+        };
+        CHECK_EQ(apply({{"on", "all"}, {"order", QJsonArray{999}}})["error"].toString(), QString("BAD_ARGUMENT"));
+        CHECK_EQ(apply({{"variant", 7}})["error"].toString(), QString("BAD_ARGUMENT"));
+        CHECK_EQ(apply({{"on", QJsonArray{n1}}, {"adjust", QJsonArray{QJsonObject{{"n", n1}, {"from_s", "x"}}}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(apply({{"on", QJsonArray{n1}}, {"adjust", QJsonArray{QJsonObject{{"n", n1}, {"from_s", 0.0}, {"to_s", 40.0}}}}})["error"].toString(),
+                 QString()); // 40 s fits the 60 s of Shorts
+        QJsonObject longer = session;
+        QJsonObject lo = longer["options"].toObject();
+        lo["for"] = "reels"; // ...but not 90 s... the clip is 40 s: two copies overlapping merge
+        longer["options"] = lo;
+        if (sg.size() >= 2) {
+            const int n2 = sg[1]["n"].toInt();
+            const QJsonObject merged = apply({{"on", QJsonArray{n1, n2}},
+                                              {"adjust", QJsonArray{QJsonObject{{"n", n1}, {"from_s", 5.0}, {"to_s", 15.0}},
+                                                                    QJsonObject{{"n", n2}, {"from_s", 12.0}, {"to_s", 20.0}}}}});
+            if (CHECK_EQ(merged["moments"].toArray().size(), 1)) CHECK_EQ(merged["length_s"].toDouble(), 15.0);
+        }
+        // An inline session naming a file outside its material is refused
+        QJsonObject foreign = session;
+        QJsonArray fs = foreign["suggestions"].toArray();
+        QJsonObject f0 = fs[0].toObject();
+        f0["file"] = dir.filePath("clips/other.mp4");
+        fs[0] = f0;
+        foreign["suggestions"] = fs;
+        CHECK_EQ(run("direct", {{"session", foreign}, {"apply", QJsonObject{{"on", "all"}}}, {"project", fresh}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        // Short checks its aspect when suggesting
+        CHECK_EQ(run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}}, {"options", QJsonObject{{"aspect", "16:9"}}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+
+        // A game recording without a kill: the end of the recording, as `short` always did; no event or picture analysis
+        const QString noKill = Check::makeMedia(dir.filePath("clips/cs2/cs2_clip_quiet.mp4"),
+                                                {"-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=20", "-f", "lavfi", "-i",
+                                                 "aevalsrc='0.02*sin(2*PI*220*t)':d=20:s=48000", "-c:v", "libx264",
+                                                 "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject g = run("direct", {{"recipe", "short"}, {"files", QJsonArray{noKill}}})["session"].toObject();
+        const QJsonArray gs = g["suggestions"].toArray();
+        if (CHECK(!gs.isEmpty())) {
+            CHECK_EQ(gs[0]["reason"]["key"].toString(), QString("fallback_end"));
+            CHECK(std::abs(gs[0]["to_s"].toDouble() - 20) < 0.1);
+        }
+        CHECK_EQ(g["material"][0]["analysis"]["events"].toString(), QString("none"));
+        CHECK_EQ(g["material"][0]["analysis"]["picture"].toString(), QString("none"));
+        // A phone-like clip with laughter: a laughter moment among the short's suggestions
+        const QStringList phone = labelsOf(run("direct", {{"recipe", "short"}, {"files", QJsonArray{beach}}})["session"].toObject()["suggestions"].toArray());
+        if (!CHECK(phone.contains("laughter") || phone.contains("cheering"))) std::printf("       %s\n", qPrintable(phone.join(",")));
+        // A recording whose tail is broken still gives suggestions
+        const QString whole = Check::makeMedia(dir.filePath("clips/tail.mkv"), {"-i", beach, "-c", "copy"});
+        QFile t(whole);
+        if (CHECK(t.open(QIODevice::ReadWrite))) {
+            const qint64 size = t.size();
+            t.resize(size * 2 / 3);
+            t.close();
+        }
+        const QJsonObject broken = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{whole}}});
+        CHECK(!broken.contains("error"));
+        CHECK(!broken["session"]["suggestions"].toArray().isEmpty());
+        // Nothing stands out (a still grey picture, a quiet hum): the fallback is as long as asked for
+        const QString still = Check::makeMedia(dir.filePath("clips/still.mp4"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=25:d=30", "-f", "lavfi", "-i",
+                                                "aevalsrc='0.01*sin(2*PI*100*t)':d=30:s=48000", "-c:v", "libx264",
+                                                "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject calm = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{still}},
+                                                {"options", QJsonObject{{"length_s", 8}}}});
+        CHECK(std::abs(calm["session"]["length_s"].toDouble() - 8) < 0.2);
+        Q_UNUSED(longer);
+    }
+
     // ---- Cancel: a running suggest stops with CANCELED; an apply canceled before it starts leaves no project
     {
         const QString fresh = holiday(dir.path(), "fresh", 30, 9);

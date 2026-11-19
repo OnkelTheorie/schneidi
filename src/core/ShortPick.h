@@ -31,7 +31,8 @@ double total(const QVector<Moment>& moments);
 
 // Up to `count` shorts of the same candidates (the `direct` recipe short's variants): the first is pick(); each next
 // one picks among the candidates that share no time with a moment of the ones before (a candidate overlapping a used
-// moment is left out). A variant needs a candidate of its own: none left = no more variants (never the fallback).
+// moment is left out) and never grows into a moment of the ones before. A variant needs a candidate of its own: none
+// left (or only the fallback) = no more variants.
 QVector<QVector<Moment>> variants(const QVector<Moment>& candidates, const QVector<double>& durations, int count,
                                   const Options& o = {});
 

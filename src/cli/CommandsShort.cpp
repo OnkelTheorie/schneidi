@@ -88,7 +88,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         const QString f = absolute(v.toString());
         if (!QFileInfo(f).isFile()) fail("NOT_FOUND", "no such file: " + f);
         if (isProjectFile(f)) fail("BAD_ARGUMENT", "files are recordings; a project goes into 'project'");
-        files << f;
+        if (!files.contains(f)) files << f; // the same recording twice is one (as in `direct`)
     }
     QString project = a["project"].toString();
     if (!project.isEmpty() && project != QLatin1String(Live::AppProject)) project = absolute(project);

@@ -10,6 +10,7 @@
 
 #include "core/GameHud.h"
 #include "core/I18n.h"
+#include "core/LiveHost.h"
 #include "core/ProjectFile.h"
 #include "core/ReelPick.h"
 #include "core/RenderJob.h"
@@ -209,6 +210,12 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
         taken << x;
         ++added;
     }
+    // What else is heard or seen in a moment shows in its labels (a loud moment that is laughter)
+    for (Direction::Suggestion& x : s.suggestions)
+        for (const DirectMoment& e : found.extra)
+            if (files.value(e.file) == x.file && e.from < x.to && x.from < e.to)
+                for (const QString& l : e.labels)
+                    if (!x.labels.contains(l)) x.labels << l;
     QVector<int> first;
     for (const Direction::Suggestion& x : s.suggestions)
         if (x.variant == 1) first << x.n;
@@ -238,8 +245,12 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
     QVector<ReelPick::Moment> picked = ReelPick::pick(asMoments(all), durations, pick);
     if (picked.isEmpty()) {
         // Nothing stood out: the end of every recording (a clip tool saves the moment that just happened)
-        const QVector<ShortPick::Moment> ends = ShortPick::pick({}, durations, {});
-        picked = ends;
+        ShortPick::Options ends; // as long as asked for ('all': the last 10 s of each)
+        const double want = pick.targetS > 0 ? pick.targetS : 10.0 * durations.size();
+        ends.minS = 0;
+        ends.maxS = std::max(1.0, want);
+        ends.fallbackS = want;
+        picked = ShortPick::pick({}, durations, ends);
         s.notes << note("no_moments");
     }
     int n = 0;
@@ -268,9 +279,10 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
 
 // ---------- Stored sessions ----------
 
-QString sessionDir(const QString& project)
+// All sessions in one folder (ids unique across projects: the `next` of an answer works without the project)
+QString sessionDir()
 {
-    return planDir(project.isEmpty() || Live::isAppProject(project) ? QString() : project);
+    return QDir(ProjectFile::backupDir({})).filePath("direct-sessions");
 }
 
 void pruneSessions(const QString& dir)
@@ -282,7 +294,7 @@ void pruneSessions(const QString& dir)
 
 void store(Direction::Session& s)
 {
-    const QString dir = sessionDir(s.project);
+    const QString dir = sessionDir();
     if (!QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot write the session into " + dir);
     pruneSessions(dir);
     s.id = newPlanId(dir, "d");
@@ -291,7 +303,23 @@ void store(Direction::Session& s)
         fail("SAVE_FAILED", "cannot write the session " + f.fileName());
 }
 
-Direction::Session load(const QJsonValue& v, const QString& project)
+// Files of a session object as the program spells them (Sandbox: a work folder), every suggestion in the material
+void checkFiles(Direction::Session& s)
+{
+    QStringList files;
+    for (Direction::Material& m : s.material) {
+        m.file = absolute(m.file);
+        files << m.file;
+    }
+    for (Direction::Suggestion& x : s.suggestions) {
+        x.file = absolute(x.file);
+        if (!files.contains(x.file))
+            fail("BAD_ARGUMENT", QString("session: suggestion %1 is of %2, which is not in its material").arg(x.n).arg(x.file));
+    }
+    if (files.isEmpty()) fail("NO_MATERIAL", "session: no material");
+}
+
+Direction::Session load(const QJsonValue& v)
 {
     std::optional<Direction::Session> s;
     QString error;
@@ -301,19 +329,18 @@ Direction::Session load(const QJsonValue& v, const QString& project)
         const QDateTime made = QDateTime::fromString(s->made, Qt::ISODate);
         if (made.isValid() && made.addSecs(kSessionHours * 3600) < QDateTime::currentDateTimeUtc())
             fail("SESSION_EXPIRED", QString("session %1 is older than %2 h: suggest again").arg(s->id).arg(kSessionHours));
+        checkFiles(*s);
         return *s;
     }
     const QString id = v.toString().trimmed().toLower();
     static const QRegularExpression valid("^d[1-9][0-9]{0,8}$");
     if (!valid.match(id).hasMatch()) fail("BAD_ARGUMENT", "session: an id like 'd3' (from the answer of direct) or the session itself");
-    QStringList dirs{sessionDir(project)};
-    if (!dirs.contains(sessionDir({}))) dirs << sessionDir({});
-    for (const QString& dir : dirs) {
-        pruneSessions(dir);
-        QFile f(QDir(dir).filePath(id + ".json"));
-        if (!f.open(QIODevice::ReadOnly)) continue;
+    pruneSessions(sessionDir());
+    QFile f(QDir(sessionDir()).filePath(id + ".json"));
+    if (f.open(QIODevice::ReadOnly)) {
         s = Direction::fromJson(QJsonDocument::fromJson(f.readAll()).object(), &error);
         if (!s) fail("BAD_ARGUMENT", "session " + id + ": " + error);
+        checkFiles(*s);
         return *s;
     }
     fail("SESSION_EXPIRED", QString("no session '%1' (sessions are kept %2 h; suggest again with direct recipe:…)")
@@ -332,6 +359,21 @@ void requireFresh(const Direction::Session& s)
 }
 
 // ---------- Apply ----------
+
+// "@app" and the file the app has open are the same project
+bool sameProject(const QString& a, const QString& b)
+{
+    const auto key = [](const QString& p) {
+        QString path = p;
+        if (Live::isAppProject(p)) {
+            if (LiveHost* h = Live::host()) path = h->liveProjectPath();
+            else if (const Live::AppCopy* c = Live::appCopy()) path = c->path;
+            else return QString(Live::AppProject);
+        }
+        return path.isEmpty() ? QString(Live::AppProject) : QFileInfo(path).absoluteFilePath();
+    };
+    return key(a) == key(b);
+}
 
 // Sound of the recordings: audio_stream 'game' (default: only the game streams of game material with several
 // streams), 'all', or numbers/names - as `short` always chose (per file: undefined = all)
@@ -397,13 +439,22 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     }
     if (files.isEmpty()) fail("NO_MATERIAL", "no material: give files (recordings) or a project's timeline");
 
+    // Settings checked now, not only when applying
+    const QString aspect = s.options["aspect"].toString().trimmed();
+    const QStringList aspects = s.recipe == QLatin1String("short") ? QStringList{"9:16", "1:1", "4:5"}
+                                                                   : QStringList{"16:9", "9:16", "1:1", "4:5"};
+    if (!aspect.isEmpty() && !aspects.contains(aspect)) fail("BAD_ARGUMENT", "aspect must be " + aspects.join(", "));
+    const QString reframe = s.options["reframe"].toString().trimmed().toLower();
+    if (!reframe.isEmpty() && !QStringList{"auto", "center", "fit"}.contains(reframe))
+        fail("BAD_ARGUMENT", "reframe must be auto, center or fit");
     const QString game = gameOf(s.options, files);
     Context sub;
     sub.cancel = ctx.cancel;
     sub.progress = ctx.progress;
     // Frames of the highlights count in the project's rate (a file's own rate without one, or for the app's project)
     const QString frameProject = Live::isAppProject(s.project) ? QString() : s.project;
-    const CollectedMoments found = collectMoments(files, QFileInfo::exists(frameProject) ? frameProject : QString(), game, sub);
+    const CollectedMoments found = collectMoments(files, QFileInfo::exists(frameProject) ? frameProject : QString(), game,
+                                                  s.recipe != QLatin1String("short"), sub);
     failIfCanceled();
     s.material = found.material;
     if (s.recipe == QLatin1String("short")) suggestShort(s, found, files);
@@ -419,12 +470,16 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
 
 QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx)
 {
-    // A project this apply made itself goes again when it fails (canceled, an op refused): no half project
+    // A project this apply made itself goes again when it fails before its edit is done (canceled, an op refused): no
+    // half project, and no backups or plans of it left; once the edit is saved it stays whatever comes after
     QString made;
     try {
         return applyOnce(s, apply, args, ctx, &made);
     } catch (...) {
-        if (!made.isEmpty()) QFile::remove(made);
+        if (!made.isEmpty()) {
+            QFile::remove(made);
+            QDir(ProjectFile::backupDir(made)).removeRecursively();
+        }
         throw;
     }
 }
@@ -444,6 +499,13 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     for (const Direction::Material& m : s.material) files << m.file;
     // Which suggestions: on:'all' = the variant's (default: those switched on), on:[n…] = exactly these
     const int variant = apply.contains("variant") ? apply["variant"].toInt() : 0;
+    if (apply.contains("variant")) {
+        int most = 0;
+        for (const Direction::Suggestion& x : s.suggestions) most = std::max(most, x.variant);
+        if (!apply["variant"].isDouble() || variant < 1 || variant > most)
+            fail("BAD_ARGUMENT", most == 0 ? QString("variant: session %1 has no variants (recipe short has them)").arg(s.id)
+                                           : QString("variant: session %1 has variants 1 to %2").arg(s.id).arg(most));
+    }
     const QJsonValue on = apply.contains("on") ? apply["on"] : QJsonValue("all");
     const bool all = on.isString() && on.toString().trimmed().toLower() == QLatin1String("all");
     QVector<int> ons;
@@ -452,7 +514,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             if (variant > 0 ? x.variant == variant : x.on) ons << x.n;
     } else if (on.isArray()) {
         for (const QJsonValue& v : on.toArray()) {
-            if (!s.find(v.toInt())) fail("BAD_ARGUMENT", QString("on: session %1 has no suggestion %2").arg(s.id).arg(v.toInt()));
+            if (!v.isDouble() || !s.find(v.toInt())) fail("BAD_ARGUMENT", QString("on: session %1 has no suggestion %2").arg(s.id).arg(v.toInt()));
             ons << v.toInt();
         }
     } else {
@@ -464,6 +526,9 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         for (Direction::Suggestion& y : chosen.suggestions)
             if (y.n == v["n"].toInt()) x = &y;
         if (!x) fail("BAD_ARGUMENT", QString("adjust: no suggestion %1").arg(v["n"].toInt()));
+        for (const char* k : {"from_s", "to_s"})
+            if (v.toObject().contains(k) && !v[k].isDouble())
+                fail("BAD_ARGUMENT", QString("adjust: %1 of suggestion %2 is seconds (a number)").arg(k).arg(x->n));
         const double length = s.material.value(int(files.indexOf(x->file))).length;
         const double from = std::clamp(v["from_s"].toDouble(x->from), 0.0, length);
         const double to = std::clamp(v["to_s"].toDouble(x->to), 0.0, length);
@@ -474,31 +539,80 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     const bool hookBest = s.options["hook"].toString("best").trimmed().toLower() != QLatin1String("chronological");
     if (apply.contains("order")) {
         chosen.order.clear();
-        for (const QJsonValue& v : apply["order"].toArray()) chosen.order << v.toInt();
+        for (const QJsonValue& v : apply["order"].toArray()) {
+            const Direction::Suggestion* x = v.isDouble() ? chosen.find(v.toInt()) : nullptr;
+            if (!x || !x->on)
+                fail("BAD_ARGUMENT", QString("order: %1 is no switched-on suggestion of session %2 (switched on: %3)")
+                                         .arg(v.toVariant().toString(), s.id)
+                                         .arg([&] {
+                                             QStringList l;
+                                             for (int n : ons) l << QString::number(n);
+                                             return l.join(", ");
+                                         }()));
+            chosen.order << v.toInt();
+        }
     } else if (variant > 1 || !all || !s.find(s.order.value(0)) || !ons.contains(s.order.value(0))) {
         // The session's order was made for its first variant: another choice gets its own (hook first)
         chosen.order = s.recipe == QLatin1String("short") ? hookOrder(chosen.suggestions, ons, hookBest, files) : s.order;
     }
     const QVector<int> order = Direction::resolvedOrder(chosen);
     if (order.isEmpty()) fail("BAD_ARGUMENT", "nothing switched on: apply.on names no suggestion");
+    // Overlapping ranges of one recording (edges moved into each other) become one, at the place of the first
+    for (int n : order) {
+        Direction::Suggestion* a = nullptr;
+        for (Direction::Suggestion& y : chosen.suggestions)
+            if (y.n == n) a = &y;
+        if (!a->on) continue;
+        for (Direction::Suggestion& b : chosen.suggestions)
+            if (&b != a && b.on && b.file == a->file && b.from < a->to && a->from < b.to) {
+                a->from = std::min(a->from, b.from);
+                a->to = std::max(a->to, b.to);
+                b.on = false;
+            }
+    }
     QVector<const Direction::Suggestion*> list;
-    for (int n : order) list << chosen.find(n);
+    for (int n : order)
+        if (const Direction::Suggestion* x = chosen.find(n); x->on) list << x;
+    chosen.order.clear();
+    for (const Direction::Suggestion* x : list) chosen.order << x->n;
+    // The platform's longest length, after the choice and the moved edges
+    if (s.recipe == QLatin1String("short")) {
+        double total = 0;
+        for (const Direction::Suggestion* x : list) total += x->to - x->from;
+        const ShortPlatform* platform = shortPlatform(s.options["for"].toString("shorts"));
+        if (platform && total > platform->maxSeconds + 0.5)
+            fail("BAD_ARGUMENT", QString("the short would be %1 s, longer than %2 allows (%3 s): switch some off or "
+                                         "move their edges")
+                                     .arg(secondsOf(total))
+                                     .arg(QString::fromLatin1(platform->name))
+                                     .arg(platform->maxSeconds));
+    }
 
     const QString game = gameOf(s.options, files);
     QJsonArray done, notes;
     for (const Direction::Note& n : s.notes) notes << n.text;
     // The project: given, the session's, else a new one next to the first recording
     QString project = args["project"].toString();
+    if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
+    // A session made for one project is applied to that one (its timeline material, its frame rate)
+    if (!project.isEmpty() && !s.project.isEmpty() && !sameProject(project, s.project))
+        fail("SESSION_PROJECT_MISMATCH", QString("session %1 was made for %2, not %3: apply it there or suggest again")
+                                             .arg(s.id, s.project, project));
     if (project.isEmpty()) project = s.project;
     // Run in the app for the user (the Direct page, Live::runForUser): its project, one undo step around it all
     if (project.isEmpty() && Live::host()) project = Live::AppProject;
     if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
     const bool dry = args["dry_run"].toBool() || args["plan"].toBool();
     bool created = args["_created"].toBool();
-    if (project.isEmpty()) {
-        const QFileInfo first(files.first());
-        project = freeFile(first.absolutePath(), first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
-        if (dry) fail("BAD_ARGUMENT", "dry_run and plan need a project (give 'project')");
+    const bool missing = !project.isEmpty() && !Live::isAppProject(project) && !QFileInfo::exists(project);
+    if (project.isEmpty() || missing) {
+        if (project.isEmpty()) {
+            const QFileInfo first(files.first());
+            project = freeFile(first.absolutePath(), first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
+        } else if (QFileInfo(project).suffix().isEmpty()) {
+            project += "." + QString(ProjectFile::Extension);
+        }
+        if (dry) fail("BAD_ARGUMENT", "dry_run and plan need an existing project (give 'project')");
         const bool streams = std::any_of(s.material.begin(), s.material.end(), [](const Direction::Material& m) { return m.audioStreams.size() > 1; });
         QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(files)},
                       {"template", game != QLatin1String("none") || streams ? "game" : "neutral"}};
@@ -614,7 +728,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         }
     }
     // The project remembers the session as it was applied (the Direct page shows it again; no undo step)
-    if (!args["_no_direction"].toBool()) {
+    if (!args["_no_direction"].toBool() && !args["plan"].toBool()) { // a plan lists only what the user chose
         QJsonObject kept = Direction::toJson(chosen);
         ops << QJsonObject{{"op", "_direction"}, {"session", kept}};
     }
@@ -622,6 +736,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     if (args["plan"].toBool()) e["plan"] = true;
     if (args["dry_run"].toBool()) e["dry_run"] = true;
     const QJsonObject edited = run("edit", e);
+    madeProject->clear(); // the edit is saved: the project stays
     if (args["plan"].toBool()) {
         QJsonObject o{{"project", project}, {"plan", edited["plan"]}, {"session", s.id}};
         return o;
@@ -678,7 +793,7 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
     if (a.contains("session") || a.contains("apply")) {
         if (!a.contains("session")) fail("BAD_ARGUMENT", "apply needs the session (its id like 'd3', or the session itself)");
         if (a.contains("recipe")) fail("BAD_ARGUMENT", "recipe makes a new session; session + apply uses one: not both");
-        const Direction::Session s = load(a["session"], a["project"].toString());
+        const Direction::Session s = load(a["session"]);
         return directApply(s, a["apply"].toObject(), a, ctx);
     }
     Direction::Session s = directSuggest(a, ctx);
