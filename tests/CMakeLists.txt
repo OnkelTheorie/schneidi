@@ -595,5 +595,6 @@ schneidi_test(test_drawing) # drawings (0.22): strokes at known pixels, reveal t
 target_link_libraries(test_drawing PRIVATE schneidi_cli_lib)
 schneidi_test(test_pause_cut) # 0.25: cut_pauses (common quiet of every track, own threshold per track, pad, ripple, markers move, TRACK_LOCKED, ranges, fillers), isFiller in the UI languages
 target_link_libraries(test_pause_cut PRIVATE schneidi_cli_lib)
+add_dependencies(test_pause_cut schneidi-cli)
 schneidi_test(test_slot_pick) # 0.25: core/SlotPick (length, sharpness, label/hint match, no shot twice, fallback in order) and templates fill auto:true
 target_link_libraries(test_slot_pick PRIVATE schneidi_cli_lib)

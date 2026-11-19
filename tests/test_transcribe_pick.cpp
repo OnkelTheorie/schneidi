@@ -38,7 +38,7 @@ namespace {
 // works that long first, without a progress line (like whisper on a short clip).
 int fakeWhisper(int argc, char** argv)
 {
-    QString wav, out, lang = "de";
+    QString wav, out, lang = "de", prompt;
     bool detect = false;
     for (int i = 1; i < argc; ++i) {
         const QString a = QString::fromLocal8Bit(argv[i]);
@@ -47,11 +47,13 @@ int fakeWhisper(int argc, char** argv)
         else if (a == "-of") out = next;
         else if (a == "-l" && next != "auto") lang = next;
         else if (a == "-dl") detect = true;
+        else if (a == "--prompt") prompt = next;
     }
     // The test reads the arguments back: the files must come by name (whisper runs in their folder)
     if (const QString log = qEnvironmentVariable("SCHNEIDI_FAKE_WHISPER_LOG"); !log.isEmpty()) {
         QFile l(log);
-        if (l.open(QIODevice::Append)) l.write(("-f " + wav + " -of " + out + "\n").toUtf8());
+        if (l.open(QIODevice::Append))
+            l.write(("-f " + wav + " -of " + out + (prompt.isEmpty() ? QString() : " --prompt " + prompt) + "\n").toUtf8());
     }
     if (detect) {
         std::fprintf(stderr, "whisper_full_with_state: auto-detected language: en (p = 0.930000)\n");
@@ -233,6 +235,24 @@ int main(int argc, char** argv)
         QFile l(log);
         CHECK(l.open(QIODevice::ReadOnly));
         CHECK_EQ(QString::fromUtf8(l.readAll()).trimmed(), QString("-f audio.wav -of out"));
+    }
+    {
+        // verbatim: whisper gets a starting text full of the language's hesitation sounds (0.25, fillers to cut)
+        const QString log = dir.filePath("whisper-verbatim.log");
+        qputenv("SCHNEIDI_FAKE_WHISPER_LOG", log.toUtf8());
+        QJsonObject a = base;
+        a["verbatim"] = true;
+        a["language"] = "de";
+        run("transcribe", a);
+        qunsetenv("SCHNEIDI_FAKE_WHISPER_LOG");
+        QFile l(log);
+        CHECK(l.open(QIODevice::ReadOnly));
+        const QString line = QString::fromUtf8(l.readAll()).trimmed();
+        if (!CHECK(line.startsWith("-f audio.wav -of out --prompt " + Transcriber::verbatimPrompt("de"))))
+            std::printf("       %s\n", qPrintable(line));
+        CHECK(Transcriber::verbatimPrompt("de").contains(QString::fromUtf8("Ähm")));
+        CHECK(Transcriber::verbatimPrompt("fr").contains("Euh"));
+        CHECK(Transcriber::verbatimPrompt("auto").contains("um"));
     }
     {
         // By number (also as a JSON number) and by name

@@ -3,15 +3,21 @@
 // track, pad, fillers while the others are quiet - bleed does not count), ScriptAlign::isFiller in the UI languages,
 // and the edit op cut_pauses on two synthetic microphones: only common quiet is cut, a noisy microphone keeps its own
 // threshold, ripple over all tracks, subtitles follow, markers move to the cut, TRACK_LOCKED, a `ranges` subset, fillers
-// from fake word times. SCHNEIDI_PAUSE_BENCH=1 also measures the analysis of a 40 min two-track timeline.
+// from fake word times; live in the app the measuring runs in schneidi-cli and the app
+// only cuts (one undo step, the same as on the file). SCHNEIDI_PAUSE_BENCH=1 also measures the analysis of a 40 min two-track timeline.
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Live.h"
+#include "core/AppPaths.h"
+#include "core/LiveHost.h"
+#include "core/Selection.h"
 #include "core/PauseCut.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/ScriptAlign.h"
 #include "core/TimelineOps.h"
 #include "engine/AnalysisCache.h"
+#include "engine/Transcriber.h"
 
 #include "check.h"
 #include "synth_sounds.h"
@@ -21,7 +27,10 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProcess>
+#include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QUndoStack>
 
 #include <cmath>
 #include <memory>
@@ -157,6 +166,14 @@ void testIsFiller()
     for (const char* w : {"e", "y", "em", "ee", "её", "also", "halt", "like", "so", "este", "ну", "あの", "Kamera",
                           "a", "ah", "oh", "o", "er", "hmmm-ja", "mm", "uhr", "eben", "hum-drum"})
         if (!CHECK(!isFiller(normalize(QString::fromUtf8(w))))) std::printf("       filler but a word: %s\n", w);
+    // What `transcribe verbatim` gives whisper as its starting text is what isFiller knows (at least two per language)
+    static const QRegularExpression split(QString::fromUtf8("[\\s,.、，。।]+"));
+    for (const char* lang : {"de", "en", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "tr", "id", "ja", "ko", "zh", "hi", "auto"}) {
+        int n = 0;
+        for (const QString& w : Transcriber::verbatimPrompt(lang).split(split, Qt::SkipEmptyParts))
+            if (isFiller(normalize(w))) ++n;
+        if (!CHECK(n >= 2)) std::printf("       %s: %d fillers in the prompt\n", lang, n);
+    }
 }
 
 // Microphone A (clean) and B (noisy hiss at about -40 dBFS): A talks 0.2-2.9, 5.0-6.2 and 9.0-11.8 s, B answers
@@ -352,6 +369,103 @@ void testFillers(const QString& dir)
     for (const QJsonValue& v : pauseNote(p)["ranges"].toArray()) CHECK(v["kind"].toString() == "pause");
 }
 
+class FakeApp : public LiveHost {
+public:
+    Project project;
+    Selection selection;
+    QString path;
+    Project* liveProject() override { return &project; }
+    QString liveProjectPath() const override { return path; }
+    Selection* liveSelection() override { return &selection; }
+    int livePlayhead() const override { return 0; }
+    bool livePlaying() const override { return false; }
+    void liveSeek(int) override {}
+    void livePlay(bool) override {}
+    bool liveSave(const QString& to, QString* error) override
+    {
+        if (!to.isEmpty()) path = to;
+        return ProjectFile::save(project.data(), path, error);
+    }
+    void liveGenerateProxies(const QStringList&) override {}
+    QJsonObject liveProxyState(const QString&) const override { return {}; }
+    void liveConnectionChanged(bool, const QString&) override {}
+    void liveChanged(const LiveChange&) override {}
+    void liveActivity(const LiveActivity&) override {}
+    bool liveOpen(const QStringList&, bool, QString*) override { return true; }
+};
+
+QJsonObject cli(const QStringList& args, const QProcessEnvironment& env = QProcessEnvironment::systemEnvironment())
+{
+    QProcess p;
+    p.setProcessEnvironment(env);
+    p.start(Check::cliPath(), args);
+    p.closeWriteChannel();
+    QElapsedTimer t;
+    t.start();
+    while (p.state() != QProcess::NotRunning && !t.hasExpired(120000)) {
+        p.waitForFinished(5);
+        QCoreApplication::processEvents();
+    }
+    if (p.state() != QProcess::NotRunning) {
+        p.kill();
+        p.waitForFinished(1000);
+    }
+    QCoreApplication::processEvents();
+    const QByteArray out = p.readAllStandardOutput();
+    const QJsonObject o = QJsonDocument::fromJson(out).object();
+    if (!o["ok"].toBool()) std::printf("       %s %s\n", out.constData(), p.readAllStandardError().constData());
+    return o;
+}
+
+QByteArray state(const Project& p)
+{
+    ProjectData d = p.data();
+    d.lastClipId = d.lastLinkId = d.lastSequenceId = 0;
+    return ProjectFile::toJson(d, "/x/film.schneidi");
+}
+
+// Live: schneidi-cli measures (preparePauses, `_pauses`), the app only cuts - as one undo step, the same as on the file
+void testLive(const QString& dir)
+{
+    const QString a = dir + "/micA.wav", b = dir + "/micB.wav", music = dir + "/music.wav";
+    FakeApp fake;
+    fake.path = dir + "/live.schneidi";
+    setupProject(fake.path, a, b, music);
+    const QString copy = dir + "/live-copy.schneidi";
+    QFile::remove(copy);
+    CHECK(QFile::copy(fake.path, copy));
+    {
+        ProjectData d;
+        ProjectFile::load(fake.path, &d, nullptr);
+        fake.project.load(d);
+        fake.project.markSaved();
+    }
+    QString error;
+    Cli::Live::Server server(&fake);
+    if (!CHECK(server.start(&error))) return;
+    const QString ops = R"([{"op":"cut_pauses","tracks":"A1,A2"}])";
+    const QByteArray before = state(fake.project);
+    const int index = fake.project.undoStack()->index();
+    const int hits = AnalysisCache::hits();
+    const QJsonObject live = cli({"edit", fake.path, "--ops", ops});
+    CHECK(live["live"].toBool());
+    CHECK_EQ(fake.project.undoStack()->index(), index + 1);
+    // The app did not look at the sound itself (it would have found schneidi-cli's peaks in the shared cache)
+    CHECK_EQ(AnalysisCache::hits(), hits);
+    QProcessEnvironment noLive = QProcessEnvironment::systemEnvironment();
+    noLive.insert("XDG_DATA_HOME", dir + "/other"); // no registry: no running app
+    const QJsonObject file = cli({"edit", copy, "--ops", ops}, noLive);
+    CHECK(file["ok"].toBool() && !file["live"].toBool());
+    ProjectData d;
+    ProjectFile::load(copy, &d, nullptr);
+    Project onFile;
+    onFile.load(d);
+    CHECK(state(onFile) == state(fake.project));
+    CHECK(state(fake.project) != before);
+    fake.project.undoStack()->undo();
+    CHECK(state(fake.project) == before);
+}
+
 // 40 min, two microphones (a 60 s take of each placed 40 times): the analysis cold and from the cache
 void benchLong(const QString& dir)
 {
@@ -390,14 +504,18 @@ void benchLong(const QString& dir)
 
 int main(int argc, char** argv)
 {
+    // schneidi-cli (live part) must see the same folders: own data/cache folders for both
+    QTemporaryDir dir;
+    qputenv("XDG_DATA_HOME", (dir.path() + "/data").toUtf8());
+    qputenv("XDG_CACHE_HOME", (dir.path() + "/cache").toUtf8());
     Check::initEnv();
     QGuiApplication app(argc, argv);
-    Check::initApp("pause-cut");
-    QTemporaryDir dir;
+    AppPaths::setProgramNames();
     testCore();
     testIsFiller();
     testOp(dir.path());
     testFillers(dir.path());
+    testLive(dir.path());
     benchLong(dir.path());
     return Check::result();
 }

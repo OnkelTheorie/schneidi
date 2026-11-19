@@ -12,6 +12,15 @@ A vertical podcast clip (speaker, topic on top, word captions, logo): the `podca
   where are slips, repetitions, false starts?
 
 ## Remove pauses
+- **Conversation on a timeline (two or more microphones, also live in the app):** `{"op":"cut_pauses"}` cuts only
+  where EVERY voice track is quiet (`tracks` "A1,A2"; default the voice tracks), each track measured against its own
+  noise floor, so one hissing microphone does not hold up the cuts and nobody's answer is cut away. `min_pause`
+  "0.6s", `pad` "0.15s" (quiet kept at both ends). All tracks ripple together (music, picture, subtitles; markers in a
+  pause land on the cut); a locked track with a clip in a pause = `TRACK_LOCKED`. The notes list every range (`kind`
+  pause|filler, `tracks`, `length_s`): to let the user choose, run it with `dry_run` (or `plan`), then
+  `{"op":"cut_pauses","ranges":[[from,to],…]}` with the ranges to cut. `fillers:true` also cuts hesitation sounds
+  (äh, ähm, uh, um, euh, eee …) while the others are quiet - only those the transcript has: transcribe with
+  `verbatim:true` first, whisper leaves most of them out otherwise.
 - **From a media file** (new project; `template` "podcast" names the tracks Voice 1, Voice 2, Music, so `check` and
   `duck` know them): `silence` on the file with `project` set → the `sound` ranges go straight into `keep` (jump cut).
 - **On an existing timeline** (also live in the app): `silence` on the project → its `silence` ranges are timeline
@@ -27,7 +36,9 @@ A vertical podcast clip (speaker, topic on top, word captions, logo): the `podca
 - With `words` from `transcribe`: collect the time ranges of the unwanted words/phrases and remove them with one
   `delete_range` (`ranges`). Times from a media file are source times - map them onto the timeline or transcribe the
   project instead (its times are timeline times).
-- Whisper often leaves out "uh/um/äh"; don't promise to remove filler you cannot see in the transcript.
+- Whisper often leaves out "uh/um/äh": `transcribe` with `verbatim:true` writes more of them (a starting text full of
+  them); still, don't promise to remove filler you cannot see in the transcript. `cut_pauses` `fillers:true` cuts the
+  ones it finds.
 - For a false start ("We went - we drove to …") cut the first try, keep the clean one. Sentences said again right
   after themselves: `{"op":"best_takes"}` keeps the last good take of each (from the clips' transcripts).
 - **From a script:** `{"op":"rough_cut","script":"…"}` finds each sentence in the transcripts of the project's files
