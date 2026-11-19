@@ -23,7 +23,9 @@
 #include <utility>
 #include <vector>
 
+#include "core/ExportCheck.h"
 #include "core/GradeStills.h"
+#include "core/SafeGuides.h"
 #include "core/Project.h"
 
 namespace Cli::detail {
@@ -151,6 +153,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         const int fr = std::clamp(at[i], 0, length - 1);
         QImage img = snap->frame(fr, decodeEdge);
         if (img.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1 of %2").arg(fr).arg(src));
+        if (a["guides"].toBool()) SafeGuides::draw(img, f, ExportCheck::Options{}); // on the whole frame, then cropped
         if (crop) {
             // The snapshot may come out smaller than the format (odd sizes): scale the region along
             const double kx = double(img.width()) / full.width(), ky = double(img.height()) / full.height();

@@ -1292,7 +1292,8 @@ const QVector<Command>& commands()
                                  "the whole picture stays visible)"},
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
-          {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts, hits on kills"},
+          {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts (the computed whoosh, about 0.9 s; "
+                                 "op sfx length '0s' takes the short recorded one), hits on kills"},
           {"audio_stream", T::String, "sound of recordings with several audio streams: game (only the game sound - "
                                       "no Mix, voice chat like Discord, microphone, music like Spotify, guests or "
                                       "cameras - when such a stream is there; the default for game material: a known "
@@ -1655,7 +1656,8 @@ const QVector<Command>& commands()
         {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind, category (what "
                     "it is for) and parameter names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
                     "luma images (op 'transition'), effect presets (op 'effect' preset), accent presets (op "
-                    "'accent': zoom punch, flash, shake on kills, beats, drops) and effect sounds (op 'sfx').",
+                    "'accent': zoom punch, flash, shake on kills, beats, drops), effect sounds (op 'sfx') and with kind "
+                    "'music' the moods of the music beds (op 'music_bed').",
          {{"effect", T::String, "only this effect, with parameter details", false, true},
           {"category", T::String, "only the effects of this category (what they are for): " + [] {
                QStringList ids;
@@ -1665,7 +1667,8 @@ const QVector<Command>& commands()
           {"favorites", T::Boolean, "only the user's favourites and recently used entries of the app's Effects Library "
                                     "(effects, transitions, titles, shapes, LUTs, sounds, recipes, presets) as the ops "
                                     "take them; entries the user marked carry favorite:true in the full list too"},
-          {"kind", T::String, "'sfx': only the effect sounds; 'nodes': the node kinds of the compositing graph (edit "
+          {"kind", T::String, "'sfx': only the effect sounds; 'music': the moods of the music beds (edit op "
+                              "'music_bed'); 'nodes': the node kinds of the compositing graph (edit "
                               "ops 'comp', 'node') with inputs and parameters; 'recipes': ready compositing graphs "
                               "(edit op comp recipe) with their slots", false, true},
           {"export", T::String, "kind 'recipes': a recipe to write as ZIP (with 'to')"},
@@ -1713,7 +1716,11 @@ const QVector<Command>& commands()
           {"node", T::Integer, "with clip: the picture at this node of its graph (default: the output); a mask shows "
                                "as gray (white = inside)"},
           {"view", T::String, "with clip: 'matte' = the alpha of the picture as gray (white = solid, black = "
-                              "transparent): is a key clean?"}},
+                              "transparent): is a key clean?"},
+          {"guides", T::Boolean, "draw safe-area guides on the frames: action safe (93 %, cyan) and title safe (90 %, "
+                                 "yellow); in a vertical (9:16) picture also the zones TikTok, Reels and Shorts cover "
+                                 "with their UI (red: caption and buttons at the bottom, the top row, the buttons on the "
+                                 "right - the zones `check` warns about). Only on the images, never in a render"}},
          cmdFrames},
     };
     return list;
@@ -1750,6 +1757,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             if (cmd.name == "edit") prepareReframe(args, ctx);
             if (cmd.name == "edit") args = prepareSpeech(args, ctx); // piper/whisper here, not in the app
             if (cmd.name == "edit") args = prepareMusic(args, ctx); // beats of songs here, not in the app
+            if (cmd.name == "edit") args = prepareMusicBed(args, ctx); // music beds made here, not in the app
             if (cmd.name == "edit") args = prepareTalk(args, ctx); // whisper for rough_cut here, not in the app
             if (cmd.name == "edit") args = prepareSfx(args, ctx); // the kill feed for sfx on:'kills' here, not in the app
             if (cmd.name == "edit" || cmd.name == "templates") args = prepareTemplateFill(cmd.name, args, ctx); // songs' beats

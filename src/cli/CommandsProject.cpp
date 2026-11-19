@@ -1261,6 +1261,11 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     if (kind == "sfx")
         return {{"sounds", sfxSounds()}, {"folder", EffectFolders::soundDir()},
                 {"note", "built-in sounds are schneidi's own (synthesized, variants by seed); own: files in the folder"}};
+    if (kind == "music")
+        return {{"moods", musicBedMoods()},
+                {"note", "music beds of schneidi's own (edit op 'music_bed'): computed, no samples, free to use; "
+                         "the beat grid is known (snap_to_beat, beats need no analysis). bpm and key are the mood's "
+                         "defaults; seed picks another progression and patterns"}};
     if (kind == "nodes")
         return {{"nodes", compNodeKindsJson()},
                 {"note", "node kinds of the compositing graph (edit ops 'comp', 'node'): inputs take the picture of "
@@ -1293,7 +1298,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     }
     if (a.contains("export") || a.contains("import") || a.contains("remove"))
         fail("BAD_ARGUMENT", "export, import and remove belong to kind:'recipes'");
-    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx', 'nodes' or 'recipes' (or leave it out)");
+    if (!kind.isEmpty()) fail("BAD_ARGUMENT", "kind: 'sfx', 'music', 'nodes' or 'recipes' (or leave it out)");
     // The user's favourites and recently used entries of the Effects Library (marked in the app), as the ops take them
     if (a["favorites"].toBool())
         return {{"favorites", libraryEntriesJson(EffectFavorites::favorites())},

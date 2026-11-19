@@ -3477,5 +3477,10 @@
  "Dieses Rezept kommt in einem späteren Schritt.": "This recipe comes in a later step.",
  "Highlights": "Highlights",
  "stellt Vorschläge zusammen": "puts suggestions together",
- "Vorschläge: %1": "Suggestions: %1"
+ "Vorschläge: %1": "Suggestions: %1",
+ "Hype": "Hype",
+ "Musikbett": "Music bed",
+ "Ruhig": "Calm",
+ "Treibend": "Driving",
+ "Ton auf A%1 um +%2 dB angehoben: das Rauschen der Aufnahme kommt mit hoch (Handy) – Rauschen entfernen (clean_voice) oder weniger anheben": "Sound on A%1 raised by +%2 dB: the recording's noise comes up with it (phone) – remove the noise (clean_voice) or raise it less"
 }

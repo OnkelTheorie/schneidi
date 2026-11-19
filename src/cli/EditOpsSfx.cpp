@@ -168,6 +168,30 @@ SfxPlace::Existing existingOf(const Clip& c, double fps, const Source& src)
 
 double rounded(double seconds) { return std::round(seconds * 1000) / 1000; }
 
+// Why an op placed nothing, in words (an empty `placed` alone reads like a silent failure): each reason once, with
+// what to change
+QString nothingPlaced(const QJsonArray& skipped, const SfxPlace::Rules& rules, double end)
+{
+    QStringList whys;
+    for (const QJsonValue& v : skipped)
+        if (!whys.contains(v["why"].toString())) whys << v["why"].toString();
+    QStringList out;
+    for (const QString& why : whys) {
+        if (why == "too_close")
+            out << QString("too_close: another sound (on any track) is less than %1 s from the moment - give min_gap "
+                           "(e.g. '0s') to allow it")
+                       .arg(rounded(std::max(rules.minGap, rules.minGapLimit)));
+        else if (why == "per_minute")
+            out << QString("per_minute: already %1 sounds of this kind within a minute - give max_per_min").arg(rules.maxPerMinute);
+        else if (why == "impact_once") out << "impact_once: the video has its impact already (one per video)";
+        else if (why == "before_start") out << "before_start: the sound would begin before 0 (its lead-in is longer than the time before the moment)";
+        else if (why == "after_end")
+            out << QString("after_end: the sound would run past the picture's end (%1 s) - a shorter length or an earlier moment").arg(rounded(end));
+        else if (why == "overlaps") out << "overlaps: another clip is on the track where the sound would play - give another track";
+    }
+    return "nothing placed: " + (out.isEmpty() ? QString("no moment") : out.join("; "));
+}
+
 // The timeline without the built-in sounds (computed or recorded) on any track: what a new sound is set against
 // (a riser it lands on must not make it louder)
 Timeline withoutSounds(const Timeline& tl)
@@ -204,7 +228,13 @@ void opSfx(Session& s, const QJsonObject& op)
     const unsigned seed = seedGiven ? unsigned(numberOf(op, "seed", 1, 1000000)) : 1;
     const ProjectFormat& f = s.format();
     const double fps = f.rate.fps();
-    const double length = op.contains("length") ? seconds(timeOf(s, op, "length"), f) : 0;
+    // A whoosh without a length is the computed one at its default length (0.7-1.1 s): the recorded whooshes are
+    // 0.15 s swipes, 4 frames that went unheard over game sound (duel 17.11.). length '0s' takes the recording;
+    // the Effects Library (by hand) keeps the entry the user picked
+    const bool byHand = op.value("_by_hand").toBool();
+    const double length = op.contains("length")                                   ? seconds(timeOf(s, op, "length"), f)
+                          : src.kind == SfxSynth::Kind::Whoosh && !byHand ? SfxSynth::defaultLength(*src.kind)
+                                                                                  : 0;
 
     const QVector<Moment> moments = momentsOf(s, op, on);
     if (moments.isEmpty()) {
@@ -244,13 +274,15 @@ void opSfx(Session& s, const QJsonObject& op)
     const auto anchorOf = [&](unsigned sd) { return src.kind ? SfxSynth::anchorOf(*src.kind, sd, length) : 0.0; };
     SfxPlace::Rules rules;
     rules.minGap = op.contains("min_gap") ? seconds(timeOf(s, op, "min_gap"), f) : 1.5;
+    // A gap the caller gave is kept as given (min_gap 0: a riser bed may end on the cut a whoosh is on); only the
+    // default is never below the limit
+    if (op.contains("min_gap")) rules.minGapLimit = std::min(rules.minGapLimit, std::max(0.0, rules.minGap));
     rules.maxPerMinute = op.contains("max_per_min") ? int(numberOf(op, "max_per_min", 0, 60)) : SfxPlace::perMinute(level);
     rules.impact = src.kind == SfxSynth::Kind::Impact;
     rules.riser = src.kind == SfxSynth::Kind::Riser;
     rules.landing = src.kind == SfxSynth::Kind::Hit || src.kind == SfxSynth::Kind::Impact;
     // A sound the user dropped by hand (Effects Library): where it was put, the sparing rules are for automatic
     // placing (on cuts, kills, drops); only a sound already there at that spot stops it
-    const bool byHand = op.value("_by_hand").toBool();
     if (byHand) {
         rules.minGap = 0;
         rules.minGapLimit = 0;
@@ -364,6 +396,7 @@ void opSfx(Session& s, const QJsonObject& op)
     else note["level"] = level == "normal" ? QString("normal: 3 LU louder than the mix (as heard)") : QString("mild: as loud as the mix (as heard)");
     if (track >= 0) note["track"] = QString("A%1").arg(track + 1);
     if (!skipped.isEmpty()) note["skipped"] = skipped;
+    if (placed.isEmpty()) note["note"] = nothingPlaced(skipped, rules, end);
     s.notes << QJsonObject{{"sfx", note}};
 }
 
@@ -382,8 +415,12 @@ QJsonArray sfxSounds()
                 files << QJsonObject{{"file", QFileInfo(r.file).fileName()}, {"length_s", r.length}, {"author", r.author},
                                      {"licence", r.licence}};
             o["recorded"] = files;
-            o["length_s"] = rec.first().length;
-            o["note"] = "recorded (CC0); computed when a length is given";
+            if (k == SfxSynth::Kind::Whoosh) {
+                o["note"] = "op sfx: computed by default (about 0.9 s); the recordings (CC0, 0.15 s swipes) with length '0s'";
+            } else {
+                o["length_s"] = rec.first().length;
+                o["note"] = "recorded (CC0); computed when a length is given";
+            }
         } else {
             o["computed"] = "earshot recipe port (MIT)";
         }
@@ -444,7 +481,8 @@ void addSfxOps(QVector<OpDef>& ops)
                  "(1.5 s), at most max_per_min in any minute (mild 3, normal 6), one impact per video; the answer's "
                  "notes list what the rules left out (skipped, why). level 'mild' (default: as loud as the mix there "
                  "as heard; -10 dB over silence) or 'normal' (3 LU louder; -4 dB); volume_db sets it directly. All but the riser are "
-                 "CC0 recordings (computed ones when a length is given); the riser is computed. seed: one variant (default 1-3 in turn); length: "
+                 "CC0 recordings (computed ones when a length is given); the riser is computed, and so is the whoosh "
+                 "unless length is '0s' (its recordings are 0.15 s swipes; default the computed one, about 0.9 s). seed: one variant (default 1-3 in turn); length: "
                  "of the sound ('2s'; a riser 0.5-8 s). Only where asked: never on every cut by default.",
                  opSfx,
                  {"seed", "length", "track", "min_gap", "max_per_min", "music", "game", "_kills", "_beats", "_by_hand"}};

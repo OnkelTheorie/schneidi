@@ -14,6 +14,9 @@ It also finds:
   the tracks and the op to unmute them.
 - `loudness_range`: the loudness range is over 15 LU (a whisper next to a loud riser): on a phone the quiet parts get
   lost - compress the loud parts or raise the quiet ones.
+- `audio_boost`: a track's clips are raised by +15 dB or more (clip volume + track fader + compressor make-up +
+  master): the recording's noise comes up with it (phone recordings hiss) - `clean_voice` on them, or raise them less.
+  A warning, not an error: a very quiet recording may need it.
 - `under_music`: a track with events (game sound, speech) more than 15 LU under the music while its events play -
   raise that track or `duck` the music under it. Name the music track "Music" if it is not a plain sound file.
 - `missing_effect`: an effect this schneidi does not have (frei0r plugins of old projects) - it stays in the project

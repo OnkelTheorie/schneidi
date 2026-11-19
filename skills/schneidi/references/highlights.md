@@ -70,7 +70,9 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   (the peak on the cut), `{"op":"sfx","on":"drops"}` (a riser ending on the drop) or `at` times. It keeps them sparse by
   itself (1.5 s apart, a few per minute, one impact per video) on the track "SFX", mild by default (each sound as loud
   as the mix where it lands, as heard, so it comes across over loud game sound; `volume_db` only to set it by hand; lengths as
-  `"2s"` - a bare number is frames). Only when the user wants sounds - never on every cut unasked.
+  `"2s"` - a bare number is frames). `min_gap:"0s"` lets a sound share a moment with another one (a riser bed on its
+  own track ending on a cut that has a whoosh); when nothing is placed, the note says why. Only when the user wants
+  sounds - never on every cut unasked.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (drops from `beats`; for kills the `hit_s` of `highlights` as `{"media":"/path/clip.mkv","source":"7.67s"}`, which
   finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (mild: punch + light shake, a kill), `big` (punch + flash +
@@ -102,6 +104,11 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   "clips":[…],"interpolate":"flow"}`, also on `speed_ramp`, `place`, `append` and `keep`) - it computes in-between
   pictures, so the slow part is smooth instead of repeating each frame (stutter); the HUD stays sharp and nothing is
   blended across a cut. `"blend"` (cross-fade of neighbouring frames) is cheaper but looks soft on fast camera turns.
+- No music file? `{"op":"music_bed","mood":"hype"}` makes background music of schneidi's own in exactly the
+  timeline's length (`calm`, `drive` or `hype`; `effects` with kind `music` lists them; computed, free to use) on a
+  music track (a second call replaces the bed), ducked under voice and game sound (not under effect sounds),
+  ending with a final hit; its beat grid is known, so
+  `snap_to_beat` puts the cuts on it right away. `seed` (2, 3 …) gives another progression, `bpm`/`key` other ones.
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
   length, `fade` out the last 1-2 s. Better than a fade in the middle of the song: `fit_music` cuts the song to the
   length on its phrases and keeps its real end (`{"op":"fit_music","clip":<music clip>,"length":"timeline"}`;

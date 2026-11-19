@@ -17,7 +17,9 @@
    tools: `denoise` effect (steady hiss/fans only), `mixer` EQ (band 1 high pass ~80 Hz against rumble), `mixer`
    `compressor` for uneven speakers or shouting in games.
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice
-   track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice.
+   track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice. Without a music file:
+   `{"op":"music_bed","mood":"calm"}` makes one in the timeline's length (about -16 LUFS, already ducked under the
+   voice and recorded sound; `gain` -8 to -12 for a bed under a talk, `duck` false to leave it as it is).
 4. **Master**: `mixer` on `"master"` with `limiter` true first, then `target_lufs` -14 - it measures the mix and
    sets the fader. The limiter keeps the peaks below -1 dBTP. With the limiter on it measures after it and steps
    until the target is reached (also on peaky game sound: shots at 0 dBFS over quiet ambience), no compressor loop
@@ -49,7 +51,8 @@ audio is silent instead of suggesting `music:true`.
 
 ## Voice-over
 You cannot speak: a voice-over comes from a file the user gives (`{"op":"voiceover","file":"…","at":"2s"}`; with
-`track` it goes there and replaces what lies in its range, like an armed track) or the user records it in the app - the
+`track` it goes there and replaces what lies in its range, like an armed track; a silent tail past the picture's end is
+cut off, words past it are kept and the notes say so - then lengthen the last picture) or the user records it in the app - the
 mic in an audio track's header arms it, Shift+R (or the mic in the timeline toolbar) plays the timeline from the
 playhead and records, the take grows live in the timeline. It lands on the armed track (punch-in), else the selected
 clips' free track, else the track named Voiceover, else a free track without a name, else one new "Voiceover" track -
