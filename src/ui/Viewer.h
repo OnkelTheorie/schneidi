@@ -31,6 +31,8 @@ public:
     void setRange(int length, int markIn, int markOut);
     // Shown source (title above the image, drag into the timeline); empty = timeline
     void setSource(const QString& path, const QString& name);
+    // The title while no source is shown (empty = "Timeline"; the Regie page: "Vorschau")
+    void setTimelineTitle(const QString& title);
     // Markers on the scrubber (source markers resp. timeline markers, frames)
     void setMarkers(const QVector<int>& markers);
 
@@ -132,6 +134,7 @@ private:
     bool m_multicamOn = false;
     QWidget* m_awayPage;
     bool m_programAway = false;
+    QString m_timelineTitle;
     QString m_keptSource;        // program elsewhere: name of the source clip whose frame the picture still shows
     class ViewerOverlay* m_overlay = nullptr; // given by setOverlay; off the picture while it keeps a source frame
     QImage m_programFrame;       // the timeline's last frame: back on screen when the program comes home

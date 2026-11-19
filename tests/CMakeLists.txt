@@ -595,3 +595,5 @@ schneidi_test(test_drawing) # drawings (0.22): strokes at known pixels, reveal t
 target_link_libraries(test_drawing PRIVATE schneidi_cli_lib)
 schneidi_test(test_music_bed) # music beds: core/MusicBed (levels, clicks, grid, determinism) and the op music_bed
 target_link_libraries(test_music_bed PRIVATE schneidi_cli_lib)
+schneidi_test(test_direct_page) # Direct page "Regie" (0.25): lazy, material drop, recipes, suggestions (on/off, order, Delete), preview, apply = one undo step, start page, layout de/ru
+target_link_libraries(test_direct_page PRIVATE schneidi_cli_lib)

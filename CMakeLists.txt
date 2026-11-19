@@ -371,6 +371,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowLayout.cpp
     src/app/MainWindowComp.cpp
     src/app/MainWindowStudio.cpp
+    src/app/MainWindowDirect.cpp
+    src/app/DirectBackend.h src/app/DirectBackend.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
@@ -463,6 +465,12 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/studio/StudioTracks.h  src/ui/studio/StudioTracks.cpp
     src/ui/studio/StudioMixer.h   src/ui/studio/StudioMixer.cpp
     src/ui/studio/StudioTools.h   src/ui/studio/StudioTools.cpp
+    src/ui/direct/DirectPage.h        src/ui/direct/DirectPage.cpp
+    src/ui/direct/DirectMaterial.h    src/ui/direct/DirectMaterial.cpp
+    src/ui/direct/DirectRecipes.h     src/ui/direct/DirectRecipes.cpp
+    src/ui/direct/DirectSuggestions.h src/ui/direct/DirectSuggestions.cpp
+    src/ui/direct/DirectText.h        src/ui/direct/DirectText.cpp
+    src/ui/direct/DirectThumbs.h      src/ui/direct/DirectThumbs.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/DynCurve.h             src/ui/DynCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp

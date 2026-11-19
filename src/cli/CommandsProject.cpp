@@ -1416,9 +1416,9 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
     } else if (action == "page") {
         // The app's page (the bar at the bottom): a hidden page shows while it is the current one
         const QString page = a["page"].toString().trimmed().toLower();
-        if (page.isEmpty()) fail("BAD_ARGUMENT", "page needs 'page': media, edit, comp, color, studio or deliver");
+        if (page.isEmpty()) fail("BAD_ARGUMENT", "page needs 'page': media, direct, edit, comp, color, studio or deliver");
         if (!h->liveShowPage(page))
-            fail("BAD_ARGUMENT", "page: one of media, edit, comp, color, studio, deliver (not '" + page + "')");
+            fail("BAD_ARGUMENT", "page: one of media, direct, edit, comp, color, studio, deliver (not '" + page + "')");
     } else if (action == "undo" || action == "redo") {
         QUndoStack* u = p->undoStack();
         const bool undo = action == "undo";

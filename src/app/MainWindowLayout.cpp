@@ -58,6 +58,7 @@
 #include "ui/Viewer.h"
 #include "ui/comp/CompOverlay.h"
 #include "ui/comp/CompPage.h"
+#include "ui/direct/DirectPage.h"
 #include "ui/studio/StudioPage.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -67,6 +68,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QButtonGroup>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -214,13 +216,9 @@ void MainWindow::buildLayout()
     connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString& text) { showStatusText(text); });
     StartupTrace::mark("  statusbar");
 
-    // The Edit page, or the nearest shown one when Edit is hidden
-    const QString start = m_pageVisibility.nearestVisible(pageId(Page::Edit));
-    Page first = Page::Edit;
-    for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Studio, Page::Deliver})
-        if (pageId(p) == start) first = p;
+    // The start page (Edit unless the user chose another), or the nearest shown one when it is hidden
     StartupTrace::mark("pages assembled");
-    showPage(first);
+    showStartPage();
     StartupTrace::mark("showPage");
 }
 
@@ -288,6 +286,53 @@ QWidget* MainWindow::buildTopBar()
     return bar;
 }
 
+namespace {
+// The Direct page's symbol: a clapperboard (board with the open, striped clapper on top), in the page bar's text
+// colors - dim, the hovered text color, the primary color when its page shows (QIcon::On = checked)
+QIcon clapperIcon(int size)
+{
+    const auto draw = [size](const QColor& color) {
+        const qreal dpr = qApp->devicePixelRatio();
+        QPixmap pm(QSize(size, size) * dpr);
+        pm.setDevicePixelRatio(dpr);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        const qreal s = size, pen = std::max<qreal>(1.2, s / 11);
+        p.setPen(QPen(color, pen, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        p.setBrush(Qt::NoBrush);
+        // The board
+        const QRectF board(pen / 2 + 0.5, s * 0.42, s - pen - 1, s * 0.55 - pen / 2);
+        p.drawRect(board);
+        // The clapper: a bar hinged at the board's top left, opened a little, with three stripes
+        p.save();
+        p.translate(board.left(), board.top());
+        p.rotate(-10);
+        const QRectF bar(0, -s * 0.2, board.width(), s * 0.18);
+        p.setBrush(color);
+        p.drawRect(bar);
+        p.setPen(Qt::NoPen);
+        p.setBrush(Qt::transparent);
+        p.setCompositionMode(QPainter::CompositionMode_Clear);
+        for (int i = 0; i < 3; ++i) {
+            const qreal x = bar.left() + bar.width() * (0.12 + 0.3 * i);
+            QPolygonF stripe;
+            stripe << QPointF(x, bar.bottom() - pen * 0.6) << QPointF(x + bar.width() * 0.12, bar.bottom() - pen * 0.6)
+                   << QPointF(x + bar.width() * 0.22, bar.top() + pen * 0.6) << QPointF(x + bar.width() * 0.1, bar.top() + pen * 0.6);
+            p.drawPolygon(stripe);
+        }
+        p.restore();
+        return pm;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(Theme::textDim), QIcon::Normal, QIcon::Off);
+    icon.addPixmap(draw(Theme::text), QIcon::Active, QIcon::Off);
+    icon.addPixmap(draw(Theme::primary), QIcon::Normal, QIcon::On);
+    icon.addPixmap(draw(Theme::primary), QIcon::Active, QIcon::On);
+    return icon;
+}
+} // namespace
+
 QWidget* MainWindow::buildPageBar()
 {
     // One row at the bottom: the status text (or the name and version) on the left, the page buttons in the
@@ -337,6 +382,7 @@ QWidget* MainWindow::buildPageBar()
     m_pageButtons = new QButtonGroup(this);
     const struct { const char* icon; const char* name; Page page; } pages[] = {
         {"▤", N_("Medien"), Page::Media},
+        {"", N_("Regie"), Page::Direct}, // a clapperboard, drawn (clapperIcon): no font has one besides the emoji
         {"✂", N_("Schneiden"), Page::Edit},
         {"◇", N_("Compositing"), Page::Comp},
         {"◐", N_("Farbe"), Page::Color},
@@ -345,8 +391,16 @@ QWidget* MainWindow::buildPageBar()
     };
     for (const auto& pg : pages) {
         auto* b = new QToolButton;
-        b->setText(QString("%1  %2").arg(pg.icon, T(pg.name)));
-        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        if (*pg.icon) {
+            b->setText(QString("%1  %2").arg(pg.icon, T(pg.name)));
+            b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        } else { // a drawn symbol as tall as the text's capitals, in the colors the bar gives the text
+            const int size = b->fontMetrics().ascent();
+            b->setIcon(clapperIcon(size));
+            b->setIconSize(QSize(size, size));
+            b->setText("  " + T(pg.name)); // about the gap the others have between symbol and name ("▤  Medien")
+            b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        }
         // As tall as the bar (its line at the bottom of the bar): a symbol drawn by a taller fallback font makes one
         // button and so the bar taller, the others stretch along instead of keeping their own height
         b->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
@@ -390,8 +444,48 @@ QString MainWindow::pageId(Page page)
     case Page::Color: return "color";
     case Page::Studio: return "studio";
     case Page::Deliver: return "deliver";
+    case Page::Direct: return "direct";
     }
     return {};
+}
+
+QString MainWindow::pageTitle(Page page)
+{
+    switch (page) {
+    case Page::Media: return T("Medien");
+    case Page::Edit: return T("Schneiden");
+    case Page::Comp: return T("Compositing");
+    case Page::Color: return T("Farbe");
+    case Page::Studio: return T("Studio");
+    case Page::Deliver: return T("Export");
+    case Page::Direct: return T("Regie");
+    }
+    return {};
+}
+
+const QVector<MainWindow::Page>& MainWindow::allPages()
+{
+    static const QVector<Page> pages{Page::Media,  Page::Direct, Page::Edit,   Page::Comp,
+                                     Page::Color,  Page::Studio, Page::Deliver};
+    return pages;
+}
+
+std::optional<MainWindow::Page> MainWindow::pageForId(const QString& id)
+{
+    for (Page p : allPages())
+        if (pageId(p) == id) return p;
+    return std::nullopt;
+}
+
+void MainWindow::setStartPage(const QString& id)
+{
+    if (!m_pageVisibility.setStart(id)) return;
+    if (!m_autosaveDisabled && !m_tourSaved.active) m_pageVisibility.save(); // test runs and tours: not the user's
+}
+
+void MainWindow::showStartPage()
+{
+    showPage(pageForId(m_pageVisibility.startShown()).value_or(Page::Edit));
 }
 
 bool MainWindow::isPageHidden(Page page) const { return m_pageVisibility.isHidden(pageId(page)); }
@@ -401,9 +495,7 @@ void MainWindow::setPageHidden(Page page, bool hidden)
     if (!m_pageVisibility.setHidden(pageId(page), hidden)) return;
     if (!m_autosaveDisabled && !m_tourSaved.active) m_pageVisibility.save(); // test runs and tours: not the user's
     if (hidden && page == m_page) { // away from the page that just went
-        const QString next = m_pageVisibility.nearestVisible(pageId(page));
-        for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Studio, Page::Deliver})
-            if (pageId(p) == next) showPage(p);
+        if (const auto next = pageForId(m_pageVisibility.nearestVisible(pageId(page)))) showPage(*next);
     }
     updatePageButtons();
 }
@@ -418,13 +510,8 @@ void MainWindow::showAllPages()
 void MainWindow::fillPagesMenu(QMenu* menu)
 {
     menu->clear();
-    const struct { const char* name; Page page; } pages[] = {
-        {N_("Medien"), Page::Media},     {N_("Schneiden"), Page::Edit}, {N_("Compositing"), Page::Comp},
-        {N_("Farbe"), Page::Color},      {N_("Studio"), Page::Studio},  {N_("Export"), Page::Deliver},
-    };
-    for (const auto& pg : pages) {
-        const Page page = pg.page;
-        QAction* a = menu->addAction(T(pg.name));
+    for (const Page page : allPages()) {
+        QAction* a = menu->addAction(pageTitle(page));
         a->setObjectName("pageVisible_" + pageId(page));
         a->setCheckable(true);
         a->setChecked(!isPageHidden(page));
@@ -455,6 +542,11 @@ void MainWindow::showPage(Page page)
     // The viewer leaves the Studio page's column: its height there comes back with it
     if (before == Page::Studio && m_studioPage && m_studioPage->side()->count() == 2)
         m_studioSideSizes = m_studioPage->side()->sizes();
+    // ... and the Regie page's middle column (viewer | recipes); a preview's stop ends with the page
+    if (before == Page::Direct && m_directPage && m_directPage->center()->count() == 2) {
+        m_directCenterSizes = m_directPage->center()->sizes();
+        m_directStopAt = -1;
+    }
     m_page = page;
     if (before == Page::Comp && page != Page::Comp && m_compPage) { // the Color page's windows over the viewer again
         m_compPage->overlay()->setVisible(false);
@@ -562,6 +654,25 @@ void MainWindow::showPage(Page page)
         m_pages->setCurrentWidget(m_studioPage);
     }
         break;
+    case Page::Direct:
+        // Built on the first showing (MainWindowDirect.cpp): the viewer at the top of the middle column
+    {
+        ensureDirectPage();
+        const bool back = m_directPage->center()->indexOf(m_viewer) < 0;
+        m_directPage->center()->insertWidget(0, m_viewer);
+        m_directPage->center()->setStretchFactor(0, 1);
+        if (!m_directSized) {
+            m_directSized = true;
+            const int result = m_directPage->root()->widget(1)->sizeHint().height();
+            applySizes(m_directPage->root(), {std::max(1, m_pages->height() - result), result});
+            applySizes(m_directPage->columns(), {300, 900, 400});
+            applySizes(m_directPage->center(), {420, 360});
+        } else if (back && m_directCenterSizes.size() == 2) {
+            m_directPage->center()->setSizes(m_directCenterSizes); // the columns and the result row never changed
+        }
+        m_pages->setCurrentWidget(m_directPage);
+    }
+        break;
     }
     // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
     if (page == Page::Edit) {
@@ -582,7 +693,9 @@ void MainWindow::showPage(Page page)
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
     updatePageButtons();
     // The armed track's level meter listens only where the timeline (its mic) is shown
-    if (m_voiceover) m_voiceover->setMeterShown(page != Page::Media && page != Page::Comp);
+    if (m_voiceover) m_voiceover->setMeterShown(page != Page::Media && page != Page::Comp && page != Page::Direct);
+    // On Regie the viewer shows previews (its title says so, not "Timeline")
+    m_viewer->setTimelineTitle(page == Page::Direct ? T("Vorschau") : QString());
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
     m_effectsToggle->setEnabled(edit);
@@ -749,6 +862,8 @@ void MainWindow::resetSizes()
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     SplitterMemory::resetAll(this); // the splitters inside the panels (Media Pool, Media Storage, Effects)
     m_studioSized = false;
+    m_directSized = false;
+    m_directCenterSizes.clear();
     showPage(m_page); // sets the page's defaults again
     if (m_editRight->isVisibleTo(m_editRow)) {
         fitRightColumn(m_editRow->sizes(), true); // the column's default: as wide as its content

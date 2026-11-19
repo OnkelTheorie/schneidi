@@ -2,6 +2,7 @@
 #pragma once
 #include "engine/ProxyManager.h"
 #include "app/AiSettings.h"
+#include "app/DirectBackend.h"
 #include "app/PageVisibility.h"
 #include "core/Editor.h"
 #include "core/LiveHost.h"
@@ -79,7 +80,11 @@ public:
     int generateProxies(int scope);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
-    enum class Page { Media, Edit, Deliver, Color, Comp, Studio };
+    // Page::Direct comes last: the page buttons' ids are int(page) (the bar order is PageVisibility's)
+    enum class Page { Media, Edit, Deliver, Color, Comp, Studio, Direct };
+    // Every page in bar order, and the page of a stable id (nullopt = none)
+    static const QVector<Page>& allPages();
+    static std::optional<Page> pageForId(const QString& id);
     void showPage(Page page);
     // A voice-over take a crash left unfinished: into the Media Pool? (once, not modal; also at the start)
     void offerCrashedTake();
@@ -92,6 +97,12 @@ public:
     // The menu: one checkbox per page + "Show all pages" (cleared first)
     void fillPagesMenu(QMenu* menu);
     static QString pageId(Page page); // stable id: settings, objectName pageButton_<id>
+    static QString pageTitle(Page page); // its name in the UI language
+    // The start page (Settings › General › Interface, PageVisibility::start): shown at the start and on New Project,
+    // not when a project is opened; a hidden one gives the nearest shown page
+    QString startPage() const { return m_pageVisibility.start(); }
+    void setStartPage(const QString& id); // saved unless this is a test run
+    void showStartPage();
     // Comp page (MainWindowComp.cpp): the clip's compositing graph; built on its first showing. openComp shows clip
     // `clipId` there; "Open in Comp" gives the first selected video clip an empty graph (clip -> output) if it has
     // none; "Comp from Selection" = Editor::compFrom, then opens it
@@ -108,6 +119,12 @@ public:
     // Studio page (0.23, MainWindowStudio.cpp): sound - tracks with waveforms and the volume pen, the big mixer; built
     // on its first showing
     class StudioPage* studioPage() const { return m_studioPage; } // nullptr until the page was shown
+    // Direct page "Regie" (0.25, MainWindowDirect.cpp): material in, a recipe, suggestions to check, a timeline out;
+    // built on its first showing. The work behind it is a DirectBackend (app/DirectBackend.h): main.cpp hands in the
+    // one that runs the `direct` command; without one the page uses the fake (FakeDirectBackend).
+    class DirectPage* directPage() const { return m_directPage; } // nullptr until the page was shown
+    void setDirectBackend(std::unique_ptr<class DirectBackend> backend);
+    class DirectBackend* directBackend();
     // In-app tours (MainWindowTours.cpp, app/TourManager.h): Help › Tours; offerTours = the one question at the end of
     // the start (main.cpp, never in test runs); pageName = a page's name in the tour files ("media", "edit", ...)
     void offerTours();
@@ -405,6 +422,15 @@ private:
     // Comp page (MainWindowComp.cpp)
     void ensureCompPage();
     void ensureStudioPage();
+    void ensureDirectPage();
+    void directSuggest();                 // the page's recipe on its material (in the background, BackgroundJobs)
+    void directApply();                   // the checked suggestions -> a timeline (one undo step)
+    void directPreview(const QString& file, double from, double to); // a suggestion in the viewer, stops at its end
+    // Ends a running suggestion/apply job and empties the suggestions (the material changed, another project);
+    // newProject also empties the material
+    void directReset(bool material);
+    void directClearPreviewStop() { m_directStopAt = -1; }
+    void updateDirectTracks(); // the talk recipe's track list from the open timeline
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -516,6 +542,18 @@ private:
     DeliverPanel* m_deliver = nullptr;
     class CompPage* m_compPage = nullptr; // built on the first showing (startup stays fast)
     class StudioPage* m_studioPage = nullptr; // built on the first showing (startup stays fast)
+    class DirectPage* m_directPage = nullptr;   // built on the first showing (startup stays fast)
+    std::unique_ptr<class DirectBackend> m_directBackend;
+    std::function<void()> m_directCancel; // the running suggestion job's cancel (empty = none)
+    std::function<void()> m_directApplyCancel; // the running apply job's cancel (empty = none)
+    int m_directApplyRun = 0;
+    class QAction* m_directRemoveSuggestion = nullptr; // the page's Delete keys, registered at the start (buildActions)
+    class QAction* m_directRemoveMaterial = nullptr;
+    QList<int> m_directCenterSizes; // viewer | recipes while the viewer is on another page
+    int m_directRun = 0;                  // counts suggestion jobs: a late reply of an older one is dropped
+    int m_directStopAt = -1;              // a previewed suggestion stops at this source frame (-1 = none)
+    QString m_directStopFile;             // ... of this file (another file in the viewer: no stop)
+    bool m_directSized = false;
     // The Studio page's sizes are set once (its defaults or the user's), then it keeps them: a round trip to another
     // page changes nothing (the defaults depend on the strips' widths, which settle only once the page showed). The
     // viewer's height in its column is kept while the viewer is on another page. Reset: a tour, "reset sizes".
@@ -541,7 +579,7 @@ private:
     QButtonGroup* m_pageButtons = nullptr;
     class ElidedLabel* m_statusText = nullptr; // left in the page bar: status messages (the status bar is hidden)
     class QHBoxLayout* m_pageBarRight = nullptr; // right in the page bar: background work
-    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "studio", "deliver"}}; // bar order
+    PageVisibility m_pageVisibility{{"media", "direct", "edit", "comp", "color", "studio", "deliver"}}; // bar order
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
     QToolButton* m_storageToggle = nullptr;

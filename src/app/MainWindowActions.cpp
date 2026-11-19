@@ -177,13 +177,18 @@ void MainWindow::buildActions()
     undoAct->setEnabled(false);
     redoAct->setEnabled(false);
     edit->addSeparator();
-    makeAction(edit, "cut", T("Ausschneiden"), QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
+    // The Regie page shows no timeline: the keys that edit it do nothing there (its lists take their own Delete)
+    const auto notOnDirect = [this] { return m_page != Page::Direct; };
+    makeAction(edit, "cut", T("Ausschneiden"), QKeySequence("Ctrl+X"), [this, notOnDirect] {
+        if (notOnDirect()) m_editor->cutSelection();
+    });
     // On the Color page Ctrl+C/Ctrl+V copy and paste the grade, like DaVinci
     makeAction(edit, "copy", T("Kopieren"), QKeySequence("Ctrl+C"), [this] {
         if (m_page == Page::Color) colorPanel()->copyGrade();
         else m_editor->copySelection();
     });
-    makeAction(edit, "paste", T("Einfügen am Abspielkopf"), QKeySequence("Ctrl+V"), [this, tv] {
+    makeAction(edit, "paste", T("Einfügen am Abspielkopf"), QKeySequence("Ctrl+V"), [this, tv, notOnDirect] {
+        if (!notOnDirect()) return;
         if (m_page == Page::Color) colorPanel()->pasteGrade();
         else m_editor->paste(tv->playhead());
     });
@@ -203,7 +208,8 @@ void MainWindow::buildActions()
     // A gap picked in the timeline: every delete key closes it (DaVinci/Premiere habit), else the selection
     const auto gapOr = [this](void (Editor::*fn)()) {
         return [this, fn] {
-            if (m_page == Page::Comp) return; // no timeline on that page: the graph takes its own Delete
+            // No timeline on these pages: the graph / the Regie lists take their own Delete
+            if (m_page == Page::Comp || m_page == Page::Direct) return;
             if (!m_timeline->view()->closeSelectedGap()) (m_editor->*fn)();
         };
     };
@@ -215,9 +221,9 @@ void MainWindow::buildActions()
     edit->addSeparator();
     // Edits from the source Viewer like DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
     using SE = Editor::SourceEditMode;
-    makeAction(edit, "insert_clip", T("Am Abspielkopf einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
-    makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this] { sourceEdit(SE::Overwrite); });
-    makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this] { sourceEdit(SE::Replace); });
+    makeAction(edit, "insert_clip", T("Am Abspielkopf einfügen"), QKeySequence(Qt::Key_F9), [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::Insert); });
+    makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::Overwrite); });
+    makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::Replace); });
     // Target tracks like DaVinci (Destination Controls): Alt+1…8 video, Ctrl+Alt+1…8 audio; also click on the track label
     QMenu* dest = edit->addMenu(T("Zielspur"));
     for (int i = 0; i < 8; ++i) {
@@ -231,12 +237,12 @@ void MainWindow::buildActions()
                    QKeySequence(QString("Ctrl+Alt+%1").arg(i + 1)),
                    [this, i] { m_editor->setTargetTracks(m_editor->targetVideoTrack(), i); });
     }
-    makeAction(edit, "fit_to_fill", T("Auf Länge einpassen"), QKeySequence("Shift+F11"), [this] { sourceEdit(SE::FitToFill); });
-    makeAction(edit, "place_on_top", T("Am Abspielkopf auf freie Spur legen"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
+    makeAction(edit, "fit_to_fill", T("Auf Länge einpassen"), QKeySequence("Shift+F11"), [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::FitToFill); });
+    makeAction(edit, "place_on_top", T("Am Abspielkopf auf freie Spur legen"), QKeySequence(Qt::Key_F12), [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::PlaceOnTop); });
     makeAction(edit, "ripple_overwrite", T("Überschreiben mit Nachrücken"), QKeySequence("Shift+F10"),
-               [this] { sourceEdit(SE::RippleOverwrite); });
+               [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::RippleOverwrite); });
     makeAction(edit, "append_at_end", T("Am Ende der Timeline anhängen"), QKeySequence("Shift+F12"),
-               [this] { sourceEdit(SE::AppendAtEnd); });
+               [this, notOnDirect] { if (notOnDirect()) sourceEdit(SE::AppendAtEnd); });
     edit->addSeparator();
     makeAction(edit, "select_all", T("Alles auswählen"), QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
     makeAction(edit, "deselect", T("Auswahl aufheben"), QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
@@ -259,7 +265,7 @@ void MainWindow::buildActions()
     // Key bindings category stays "Timeline" (makeAction takes the topmost menu).
     QMenu* timeline = menuBar()->addMenu(T("&Timeline"));
     makeAction(timeline, "split", T("Clip am Abspielkopf teilen"), QKeySequence("Ctrl+B"),
-               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
+               [this, tv, notOnDirect] { if (notOnDirect()) m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(timeline, "add_transition", T("Übergang hinzufügen (Überblendung)"), QKeySequence("Ctrl+T"),
                [this, tv] {
                    const bool trim = !m_editor->transitionsLackingHandles(tv->playhead()).isEmpty()
@@ -356,13 +362,17 @@ void MainWindow::buildActions()
             }
     };
     secondKey(makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
-                         [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); }),
+                         [this, tv, notOnDirect] { if (notOnDirect()) m_editor->splitAtPlayhead(tv->playhead()); }),
               QKeySequence("Shift+B"));
     secondKey(makeAction(trimMenu, "trim_start", T("Anfang bis zum Abspielkopf trimmen"), QKeySequence("Shift+["),
-                         [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); }),
+                         [this, tv, notOnDirect] {
+                             if (notOnDirect()) m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead());
+                         }),
               QKeySequence("Shift+Q"));
     secondKey(makeAction(trimMenu, "trim_end", T("Ende bis zum Abspielkopf trimmen"), QKeySequence("Shift+]"),
-                         [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); }),
+                         [this, tv, notOnDirect] {
+                             if (notOnDirect()) m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead());
+                         }),
               QKeySequence("Shift+W"));
     // Selected edit point (V): , and . trim it. Otherwise trim mode and slip tool: slip the selection (like DaVinci),
     // slide tool: slide it, otherwise move
@@ -370,7 +380,8 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->selectNearestEditPoint(tv->playhead()); });
     makeAction(trimMenu, "edit_point_type", T("Schnittpunkt-Seite wechseln"), QKeySequence("U"),
                [this] { m_editor->cycleEditPointSide(); });
-    auto nudge = [this, tv](int frames) {
+    auto nudge = [this, tv, notOnDirect](int frames) {
+        if (!notOnDirect()) return;
         using Tool = TimelineView::Tool;
         if (m_editor->nudgeEditPoint(frames, tv->tool() == Tool::Trim)) return;
         if (tv->tool() == Tool::Trim || tv->tool() == Tool::Slip) m_editor->slipSelection(frames);
@@ -823,6 +834,7 @@ void MainWindow::buildActions()
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Seite Medien"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
+    makeAction(workspace, "page_direct", T("Seite Regie"), QKeySequence("Shift+1"), [this] { showPage(Page::Direct); });
     makeAction(workspace, "page_edit", T("Seite Schneiden"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_comp", T("Seite Compositing"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
@@ -1066,6 +1078,17 @@ void MainWindow::buildActions()
     for (QWidget* panel : std::initializer_list<QWidget*>{m_mediaPool, m_storage, m_effects, m_transcript, m_deliver,
                                                           m_deliver->queuePanel()})
         InputBindings::instance().shieldWindowKeys(panel, removing);
+
+    // The Regie page's lists (built later, MainWindow::ensureDirectPage): Delete takes a suggestion / a material clip
+    // out of its list; registered now so that the key bindings dialog lists them from the start
+    m_directRemoveSuggestion = new QAction(T("Vorschlag entfernen"), this);
+    m_directRemoveMaterial = new QAction(T("Aus dem Material nehmen"), this);
+    InputBindings::instance().registerPanelAction(m_directRemoveSuggestion, "direct_remove_suggestion", T("Regie"),
+                                                  "direct_suggestions", QKeySequence(Qt::Key_Delete),
+                                                  QKeySequence(Qt::Key_Backspace));
+    InputBindings::instance().registerPanelAction(m_directRemoveMaterial, "direct_remove_material", T("Regie"),
+                                                  "direct_material", QKeySequence(Qt::Key_Delete),
+                                                  QKeySequence(Qt::Key_Backspace));
 
     InputBindings::instance().saveIfIncomplete();
 }

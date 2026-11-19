@@ -61,12 +61,13 @@ int FlowLayout::arrange(const QRect& rect, bool apply) const
     int y = area.y();
     QVector<std::pair<QLayoutItem*, QSize>> row; // the items of the row being filled
     int rowW = 0, rowH = 0;
-    const auto flush = [&] { // places the row (each item centred in the row's height)
+    const auto flush = [&] { // places the row (each item centred in the row's height, or at its top: AlignTop)
         if (apply) {
             int x = area.x();
             for (const auto& [item, s] : row) {
                 const int w = std::min(s.width(), area.width());
-                item->setGeometry(QRect(x, y + (rowH - s.height()) / 2, w, s.height()));
+                const int top = item->alignment() & Qt::AlignTop ? y : y + (rowH - s.height()) / 2;
+                item->setGeometry(QRect(x, top, w, s.height()));
                 x += w + m_h;
             }
         }

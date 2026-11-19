@@ -51,7 +51,15 @@ void MainWindow::settingsDialog(int tab)
         if (!id.isEmpty()) templates->reload(madeDefault ? id : QString());
     });
     dlg.setPreviewProject(m_engine->frameSize());
+    // The start page: the shown pages (and the chosen one, also when hidden: it says what is saved)
+    {
+        QVector<QPair<QString, QString>> pages;
+        for (Page p : allPages())
+            if (!isPageHidden(p) || pageId(p) == startPage()) pages.append({pageId(p), pageTitle(p)});
+        dlg.setStartPages(pages, startPage());
+    }
     if (dlg.exec() != QDialog::Accepted) return;
+    if (!dlg.startPage().isEmpty()) setStartPage(dlg.startPage()); // test runs: not saved (setStartPage)
     // Start templates: the template new projects start with, whether New Project asks (test runs keep the settings)
     if (!m_autosaveDisabled) {
         StartTemplates::setDefaultId(templates->defaultId());

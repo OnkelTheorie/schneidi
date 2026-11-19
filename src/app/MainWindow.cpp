@@ -814,12 +814,14 @@ void MainWindow::showSource(const QString& path)
 {
     const MediaInfo* m = m_project->mediaInfo(path);
     if (!m) return;
+    m_directStopAt = -1; // a Regie preview's stop belongs to its own showing
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, m->markIn >= 0 ? m->markIn : 0), m->pictureAspect);
 }
 
 void MainWindow::previewFile(const QString& path)
 {
+    m_directStopAt = -1; // a Regie preview's stop belongs to its own showing (directPreview sets it after this)
     if (m_project->mediaInfo(path)) { // in the Media Pool already: its clip with its marks
         showSource(path);
         return;
