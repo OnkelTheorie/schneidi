@@ -44,6 +44,9 @@ public:
     static QStringList filesOf(const QMimeData* mime);
     static bool mayCarryFiles(const QMimeData* mime);
 
+    // The current timeline's length (seconds) for its row ("Aktuelle Timeline"); its picture comes through the
+    // thumbs' resolver
+    void setTimelineLength(double seconds);
     // Pictures of the clips (shared with the suggestions)
     void setThumbs(DirectThumbs* thumbs);
     // The page's key to take clips out (registered at the start, MainWindow): replaces the list's own action
@@ -70,6 +73,7 @@ private:
     DirectThumbs* m_thumbs = nullptr;
     DirectThumbs::Generation m_gen;
     bool m_timeline = false;
+    double m_timelineLength = 0;
     QLabel* m_hint;
     QListWidget* m_list;
     QPushButton* m_useTimeline;

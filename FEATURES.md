@@ -86,7 +86,7 @@ the overview. Everything listed here is also reachable from the command line and
 - Export and render queue: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless)
 - Hardware encoders (NVENC, VAAPI, Quick Sync) when available, else x264/x265 (included in the downloads; a GPL-free build uses OpenH264/kvazaar)
 - **10-bit export** for H.265 and AV1 (software encoders and NVENC; VAAPI and Quick Sync 10-bit are not yet checked on real hardware)
-- **s264** (experimental): schneidi's own H.264 encoder as an extra choice on the Deliver page – never the default and slower than x264; x264 stays the encoder to use
+- **s264** (experimental): schneidi's own H.264 encoder as an extra choice on the Deliver page – in two-pass faster than x264 medium on game, calm and animation footage, slower on camera footage and in CRF mode; a fast speed stage (`render` `speed: "fast"`); never the default, x264 stays the encoder to use
 - Presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; an export quality "Like source"
 - **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end, game sound buried under the music, text that TikTok/Reels/Shorts cover, black bars, stutter in recordings, and for an AI also the platform's length limit (`check --for tiktok`); one click fixes peaks and loudness (master limiter and fader)

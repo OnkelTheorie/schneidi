@@ -13,7 +13,8 @@ the preset. `help` `render` lists the current set with the user's own presets.
 - Smaller at the same quality: H.265 (Apple and modern players), AV1 (smallest, slower).
 - `format` `s264`: schneidi's own H.264 encoder, experimental (8-bit 4:2:0 only; in two passes faster than x264
   medium on game, calm and animated footage, slower on camera footage and in one pass) - only when the user asks for
-  it, never as a default.
+  it, never as a default. `speed` `fast` (s264 only) is its faster stage: camera footage ~14 % less work for ~1 %
+  larger files at the same quality.
 - More editing elsewhere: ProRes or DNxHR (big files).
 - `encoder` `auto` uses the graphics card when it works and falls back to software - leave it unless asked.
 - `height` scales (e.g. 720), `fps` changes the frame rate, `from`/`to` renders a part, `size` forces a size

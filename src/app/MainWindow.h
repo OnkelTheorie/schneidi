@@ -435,6 +435,7 @@ private:
     void directReset(bool material);
     void directClearPreviewStop() { m_directStopAt = -1; }
     void updateDirectTracks(); // the talk recipe's track list from the open timeline
+    void setDirectSourceTimeline(const QJsonObject& session); // a talk session's timeline for the result strip
     // The own wish line: shown only with a chat provider set up (as the chat panel sees it, not its setup page)
     void updateDirectWish();
     void directWish(const QString& text); // to the AI chat with the page's context; its `direct` answers on the page

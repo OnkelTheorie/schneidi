@@ -128,6 +128,8 @@ public:
     State state() const;
     // The video encoder could not be opened or failed while encoding (hardware encoder: render again with software)
     bool encoderFailed() const;
+    // The own encoder's speed stage it was configured with (option "speed"); -1 = not the own encoder
+    int ownSpeed() const;
     QString error() const;
     int framesWritten() const;
     // Share of the work done, 0..1: framesWritten() / length, with the own encoder's two passes the first pass

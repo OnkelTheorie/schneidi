@@ -404,6 +404,7 @@ void opCutPauses(Session& s, const QJsonObject& op)
     note["ranges"] = list;
     note["cut"] = int(a.ranges.size());
     note["removed_s"] = r2(seconds(removed, f));
+    if (a.fillers) note["filler_words"] = a.fillerWords;
     if (a.fillers && a.fillerWords == 0)
         note["fillers"] = "no transcript on these tracks: transcribe them first (transcribe verbatim:true writes the "
                           "fillers whisper otherwise leaves out); only pauses were cut";
@@ -411,11 +412,14 @@ void opCutPauses(Session& s, const QJsonObject& op)
         note["fillers"] = "only fillers the transcript contains (transcribe verbatim:true writes more of them)";
     if (a.ranges.isEmpty()) {
         if (!analysed) note["note"] = "no ranges given";
-        else if (!a.noisy.isEmpty())
+        else if (!a.noisy.isEmpty()) {
+            note["never_quiet"] = QJsonArray::fromStringList(a.noisy);
             note["note"] = QString("never quiet: %1 - its noise stays above the threshold, so no pause is common to all "
                                    "tracks; give threshold (dBFS, above that floor) or leave the track out with tracks")
                                .arg(a.noisy.join(", "));
-        else note["note"] = "no pause long enough where every chosen track is quiet (try a shorter min_pause)";
+        } else {
+            note["note"] = "no pause long enough where every chosen track is quiet (try a shorter min_pause)";
+        }
         s.notes << QJsonObject{{"cut_pauses", note}};
         return;
     }

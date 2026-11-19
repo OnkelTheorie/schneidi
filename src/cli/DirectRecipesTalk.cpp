@@ -167,8 +167,19 @@ void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
         s.suggestions << x;
         s.order << x.n;
     }
-    for (const char* k : {"note", "fillers"})
-        if (note[k].isString()) s.notes << Direction::Note{"talk", note[k].toString()};
+    if (o["room_tone"].toBool()) s.notes << Direction::makeNote("room_tone");
+    // The op's notes under fixed keys (the page shows them in the UI language)
+    if (note["fillers"].isString())
+        s.notes << Direction::makeNote(note["filler_words"].toInt(-1) == 0 ? "no_transcript_fillers" : "fillers_transcript");
+    if (!note["never_quiet"].toArray().isEmpty()) {
+        QStringList tracks;
+        for (const QJsonValue& t : note["never_quiet"].toArray()) tracks << t.toString();
+        s.notes << Direction::makeNote("never_quiet", {{"tracks", tracks.join(", ")}});
+    } else if (note["note"].isString() && s.suggestions.isEmpty()) {
+        s.notes << Direction::makeNote("no_pause");
+    } else if (note["note"].isString()) {
+        s.notes << Direction::Note{"talk", note["note"].toString()};
+    }
 }
 
 QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
@@ -239,7 +250,7 @@ void suggestTemplate(Direction::Session& s, const QStringList& files, Context& c
     for (const QJsonValue& p : r["auto"].toArray()) {
         if (p["file"].isString() && !used.contains(p["file"].toString())) used << p["file"].toString();
         if (p["shot"].isNull()) {
-            s.notes << Direction::Note{"template", QString("no shot for the field '%1'").arg(p["slot"].toString())};
+            s.notes << Direction::makeNote("no_shot", {{"slot", p["slot"].toString()}});
             continue;
         }
         Direction::Suggestion x;
@@ -274,8 +285,13 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
     if (!tmpl.isEmpty()) {
         // A content template: a new project of it (the app opens nothing by itself; the answer names the file)
         if (project.isEmpty() || QFileInfo::exists(project) || Live::isAppProject(project)) {
+            // In project_dir (the app: the folder for projects), else next to the first clip
             const QFileInfo first(list.isEmpty() ? QString() : list.first()->file);
-            QString base = QDir(first.absolutePath()).filePath(QFileInfo(tmpl).completeBaseName());
+            QString dir = args["project_dir"].toString().trimmed();
+            if (dir.isEmpty()) dir = first.absolutePath();
+            else dir = absolute(dir);
+            if (!args["dry_run"].toBool() && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
+            QString base = QDir(dir).filePath(QFileInfo(tmpl).completeBaseName());
             project = base + "." + QString(ProjectFile::Extension);
             for (int i = 2; QFileInfo::exists(project); ++i) project = QString("%1-%2.%3").arg(base).arg(i).arg(ProjectFile::Extension);
         }
@@ -367,7 +383,7 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
         for (const QJsonValue& alt : sentence["alternatives"].toArray()) add(alt.toObject(), false);
     }
     for (const QJsonValue& m : note["missing"].toArray())
-        s.notes << Direction::Note{"script", "not found in what was said: " + m.toString()};
+        s.notes << Direction::makeNote("not_said", {{"text", m.toString()}});
     for (const QString& f : files.isEmpty() ? used : files) s.material << materialOf(absolute(f));
 }
 

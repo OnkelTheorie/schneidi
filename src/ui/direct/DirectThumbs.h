@@ -12,6 +12,7 @@
 #include <QThreadPool>
 #include <atomic>
 #include <functional>
+#include <utility>
 #include <memory>
 
 class DirectThumbs : public QObject {
@@ -22,6 +23,10 @@ public:
     ~DirectThumbs() override;
 
     void setDecoder(Decode decode) { m_decode = std::move(decode); }
+    // A key that is no file ("@current", "@timeline:<id>": a time of a timeline) as the file shown there and its
+    // time in it; called in the UI thread when asked (MainWindow reads its project). Empty file = no picture.
+    using Resolve = std::function<std::pair<QString, double>(const QString& key, double seconds)>;
+    void setResolver(Resolve resolve) { m_resolve = std::move(resolve); }
     bool hasDecoder() const { return bool(m_decode); }
 
     // A list's generation counter: next() starts a new one (older requests are skipped)
@@ -32,7 +37,7 @@ public:
     };
 
     // The picture of `file` at `seconds` for `context` (done runs in its thread, not after it is gone or the
-    // generation moved on)
+    // generation moved on); a key of the resolver in place of a file
     void request(const QString& file, double seconds, const QSize& size, const Generation& gen, QObject* context,
                  std::function<void(const QImage&)> done);
     void waitForDone() { m_pool.waitForDone(); } // tests, the destructor
@@ -40,4 +45,5 @@ public:
 private:
     QThreadPool m_pool;
     Decode m_decode;
+    Resolve m_resolve;
 };

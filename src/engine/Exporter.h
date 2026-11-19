@@ -155,6 +155,8 @@ public:
     // every frame) and a note for the user
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
+    // s264's speed stage the finished render used (-1 = another encoder)
+    int ownSpeed() const { return m_ownSpeed; }
     QString note() const { return m_note; }
     // After start(): channels of the file's sound (1, 2, 6, 8)
     int audioChannels() const { return m_settings.audioChannels; }
@@ -245,6 +247,7 @@ private:
     QVector<int> m_keyframes;          // own H.264 encoder: cuts (cutFrames)
     QVector<SmartRender::Span> m_copy; // smart render: what may be copied (empty = encode everything)
     int m_copiedPercent = 0;
+    int m_ownSpeed = -1;
     // Smart render failed as a whole: render again encoding everything
     bool smartFallback(QString* error);
     std::unique_ptr<ExportWriter> m_writer;

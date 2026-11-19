@@ -67,8 +67,9 @@ DirectBackend::JobHandle RealDirectBackend::suggest(const QString& recipe, const
 DirectBackend::JobHandle RealDirectBackend::apply(const QJsonObject& session, const QJsonObject& choice,
                                                   const Progress& onProgress, const Done& onDone, QObject* receiver)
 {
-    return runLater(m_host, "direct", {{"session", session}, {"apply", choice}}, T("Regie: Übernehmen"), onProgress,
-                    onDone, receiver);
+    QJsonObject args{{"session", session}, {"apply", choice}};
+    if (!projectFolder().isEmpty()) args["project_dir"] = projectFolder();
+    return runLater(m_host, "direct", args, T("Regie: Übernehmen"), onProgress, onDone, receiver);
 }
 
 bool RealDirectBackend::canFinish(const QJsonObject& session) const

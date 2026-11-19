@@ -990,6 +990,15 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.encoder = videoEncoderFromId(a["encoder"].toString(), VideoEncoder::Auto, &ok);
         if (!ok) fail("BAD_ARGUMENT", "encoder must be auto, software, nvenc, vaapi or qsv");
     }
+    // s264's speed stage (ExportWriter reads the option "speed": 1 = fast)
+    bool fastS264 = false;
+    if (a.contains("speed")) {
+        const QString sp = a["speed"].toString().trimmed().toLower();
+        if (sp != QLatin1String("default") && sp != QLatin1String("fast")) fail("BAD_ARGUMENT", "speed must be default or fast");
+        if (job.settings.format != QLatin1String("s264"))
+            fail("BAD_ARGUMENT", "speed is a setting of format s264 (schneidi's H.264 encoder) only");
+        fastS264 = sp == QLatin1String("fast");
+    }
     // A render beside a game froze the PC (2026-10-28: all threads, 3.2 GB): the caller can keep it small
     int threads = 0;
     if (a.contains("threads")) {
@@ -1096,6 +1105,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         es.overlay = Picture::reviewOverlay(marks);
         RenderQueue::makeReview(es);
     }
+    if (fastS264 && ExportWriter::isOwnH264(es.videoCodec)) es.codecOptions << QStringLiteral("speed=1"); // (not a review's H.264)
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok && !es.replace && job.settings.kind() != RenderKind::ImageSequence && QFileInfo::exists(out))
@@ -1113,6 +1123,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         const QJsonObject numbers = reviewNumbers(*marks);
         for (auto it = numbers.begin(); it != numbers.end(); ++it) o[it.key()] = it.value();
     }
+    if (ex.ownSpeed() >= 0) o["s264_speed"] = ex.ownSpeed() > 0 ? "fast" : "default"; // the stage the encoder ran with
     if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc ("copy": smart render)
     if (job.settings.kind() == RenderKind::ImageSequence) {
         o["frames_dir"] = imageSequenceDir(out);
