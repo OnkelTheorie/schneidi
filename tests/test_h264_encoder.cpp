@@ -770,7 +770,7 @@ void testVbv()
 
 // The encoder's second build for x86-64-v3 CPUs (EncoderAlt, picked at run time where CMake built it and the CPU
 // has the instructions): the same streams, reconstructions and first-pass numbers as the build for every CPU - fixed
-// QP with B pictures, constant quality on several threads, two passes - and SCHNEIDI_S264_CPU=generic keeps to the
+// QP with B pictures, constant quality on several threads, two passes - and selectCpuBuild(false) keeps to the
 // first build; the own cpuid check agrees with the compiler's. The speed stage "fast" (EncoderConfig::speed 1) decodes bit-exact, does not depend on the thread
 // count, and is another stream than the default only with B pictures.
 void testCpuBuilds()
@@ -784,16 +784,13 @@ void testCpuBuilds()
         && __builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("ssse3");
     CHECK(cpuHasX86_64V3() == builtin);
 #endif
-    qunsetenv("SCHNEIDI_S264_CPU");
-    const bool v3 = std::strcmp(cpuBuild(), "x86-64-v3") == 0;
-    qputenv("SCHNEIDI_S264_CPU", "generic");
+    const bool v3 = std::strcmp(selectCpuBuild(true), "x86-64-v3") == 0;
+    CHECK(!v3 || cpuHasX86_64V3());
+    CHECK(std::strcmp(selectCpuBuild(false), "generic") == 0);
     CHECK(std::strcmp(cpuBuild(), "generic") == 0);
     if (v3) {
-        auto run = [](EncoderConfig c, int frames, bool twoPass, const char* build, std::vector<double>* costs) {
-            if (build)
-                qputenv("SCHNEIDI_S264_CPU", build);
-            else
-                qunsetenv("SCHNEIDI_S264_CPU");
+        auto run = [](EncoderConfig c, int frames, bool twoPass, bool useV3, std::vector<double>* costs) {
+            selectCpuBuild(useV3);
             if (twoPass) {
                 FirstPass fp(c.width, c.height, c.threads, c.bframes);
                 for (int t = 0; t < frames; ++t) {
@@ -806,12 +803,12 @@ void testCpuBuilds()
             }
             StreamInfo info;
             CHECK(roundTrip(c, frames, nullptr, -1, nullptr, &info));
-            qputenv("SCHNEIDI_S264_CPU", "generic");
+            selectCpuBuild(false);
             return info;
         };
         auto same = [&](const EncoderConfig& c, int frames, bool twoPass = false) {
             std::vector<double> costsGeneric, costsV3;
-            const StreamInfo a = run(c, frames, twoPass, "generic", &costsGeneric), b = run(c, frames, twoPass, nullptr, &costsV3);
+            const StreamInfo a = run(c, frames, twoPass, false, &costsGeneric), b = run(c, frames, twoPass, true, &costsV3);
             CHECK(a.hash == b.hash);
             CHECK(a.sizes == b.sizes);
             CHECK(costsGeneric == costsV3);
@@ -862,7 +859,7 @@ int main()
     Check::initEnv();
     // The cases below run the encoder's build for every CPU: the failure injection (ThreadErrors.h) and other
     // hooks reach only that one. testCpuBuilds compares the x86-64-v3 build against it.
-    qputenv("SCHNEIDI_S264_CPU", "generic");
+    selectCpuBuild(false);
     if (std::getenv("H264_TEST_CPU")) { // only the two builds and the speed stage (debugging)
         testCpuBuilds();
         return Check::result();

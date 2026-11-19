@@ -709,21 +709,34 @@ bool cpuHasX86_64V3()
 }
 
 namespace {
-// Asked for every new object (cheap), so a test can switch between the two builds.
-bool useV3()
+// Decided once, before the first Encoder or FirstPass (thread-safe); SCHNEIDI_S264_CPU=generic keeps to the build
+// for every CPU, selectCpuBuild() switches for tests.
+std::atomic<bool>& v3Chosen()
 {
 #if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
-    if (!cpuHasX86_64V3())
-        return false;
-    const char* e = std::getenv("SCHNEIDI_S264_CPU");
-    return !(e && std::strcmp(e, "generic") == 0);
+    static std::atomic<bool> chosen{[] {
+        const char* e = std::getenv("SCHNEIDI_S264_CPU");
+        return cpuHasX86_64V3() && !(e && std::strcmp(e, "generic") == 0);
+    }()};
 #else
-    return false;
+    static std::atomic<bool> chosen{false};
 #endif
+    return chosen;
 }
+bool useV3() { return v3Chosen().load(std::memory_order_relaxed); }
 } // namespace
 
 const char* cpuBuild() { return useV3() ? "x86-64-v3" : "generic"; }
+
+const char* selectCpuBuild(bool v3)
+{
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    v3Chosen().store(v3 && cpuHasX86_64V3(), std::memory_order_relaxed);
+#else
+    (void)v3;
+#endif
+    return cpuBuild();
+}
 
 void Encoder::takeAltState()
 {

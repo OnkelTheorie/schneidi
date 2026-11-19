@@ -800,9 +800,14 @@ set(SCHNEIDI_S264_V3_OBJECT "")
 if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
    AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     include(CheckCXXCompilerFlag)
+    include(CheckLinkerFlag)
     check_cxx_compiler_flag("-march=x86-64-v3" SCHNEIDI_HAVE_MARCH_V3)
+    # The one-object link (-r --force-group-allocation) needs GNU ld, whatever the compiler would pick by default
+    check_linker_flag(CXX "-fuse-ld=bfd" SCHNEIDI_HAVE_LD_BFD)
     if(NOT CMAKE_OBJCOPY OR NOT CMAKE_READELF OR NOT CMAKE_NM)
         message(STATUS "s264: no x86-64-v3 build (objcopy, readelf or nm not found) - one build for every CPU")
+    elseif(NOT SCHNEIDI_HAVE_LD_BFD)
+        message(STATUS "s264: no x86-64-v3 build (GNU ld, -fuse-ld=bfd, not available) - one build for every CPU")
     elseif(NOT SCHNEIDI_HAVE_MARCH_V3)
         message(STATUS "s264: no x86-64-v3 build (the compiler lacks -march=x86-64-v3) - one build for every CPU")
     else()
@@ -824,7 +829,7 @@ if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROC
         # One relocatable object without section groups (a group whose name is local would still be merged with the
         # other build's group of the same name), then every symbol but the entry points local
         add_custom_command(OUTPUT ${SCHNEIDI_S264_V3_OBJECT}
-            COMMAND ${CMAKE_CXX_COMPILER} -fno-lto -r -nostdlib -Wl,--force-group-allocation
+            COMMAND ${CMAKE_CXX_COMPILER} -fuse-ld=bfd -fno-lto -r -nostdlib -Wl,--force-group-allocation
                     -o ${CMAKE_BINARY_DIR}/s264_v3_all.o $<TARGET_OBJECTS:s264_v3_objects>
             COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=schneidi_s264_v3_encoder
                     --keep-global-symbol=schneidi_s264_v3_first_pass ${CMAKE_BINARY_DIR}/s264_v3_all.o ${SCHNEIDI_S264_V3_OBJECT}

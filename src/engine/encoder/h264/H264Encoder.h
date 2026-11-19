@@ -330,8 +330,11 @@ struct FirstPassAlt {
     virtual void add(const Picture& picture, bool forceKeyframe) = 0;
     virtual std::shared_ptr<const FirstPassStats> stats() const = 0;
 };
-// "x86-64-v3" where new Encoder and FirstPass objects use the second build, else "generic".
+// "x86-64-v3" where new Encoder and FirstPass objects use the second build, else "generic". Decided once
+// (the CPU, SCHNEIDI_S264_CPU); selectCpuBuild switches it for tests and measurements - true takes the second
+// build only where it exists and the CPU has it - and answers cpuBuild().
 const char* cpuBuild();
+const char* selectCpuBuild(bool v3);
 // The CPU (and operating system) can run code built with -march=x86-64-v3: AVX, AVX2, BMI1/2, FMA, F16C, LZCNT,
 // MOVBE and the x86-64-v2 set, with XCR0 enabling the SSE and AVX state. False off x86 and on other compilers.
 bool cpuHasX86_64V3();
