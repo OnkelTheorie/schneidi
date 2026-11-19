@@ -213,7 +213,9 @@ int main(int argc, char* argv[])
         o.key = MusicBed::Key{2, false};
         const MusicBed::Result g = MusicBed::describe(o);
         CHECK(g.bpm == 95 && g.key == (MusicBed::Key{2, false}) && g.chords.value(0) == "D");
-        CHECK(MusicBed::fileName(o).startsWith("music-bed-drive-95bpm-d-major-s1-20000ms-v"));
+        CHECK(MusicBed::fileName(o).startsWith("music-bed-drive-95bpm-d-major-s1-960000smp-v"));
+        // The exact length is in the name: lengths less than a millisecond apart are different files
+        CHECK(MusicBed::fileName({MusicBed::Mood::Calm, 10.0}) != MusicBed::fileName({MusicBed::Mood::Calm, 10.0004}));
         // A long bed has breaks (with a drop after each)
         const MusicBed::Result longBed = MusicBed::make({MusicBed::Mood::Hype, 90});
         int breaks = 0;

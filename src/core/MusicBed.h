@@ -98,7 +98,8 @@ Result describe(const Options& o);
 void setThreadsForTests(int count, bool failStarts = false);
 // 24-bit PCM WAV, stereo, kRate (the same file every time for the same result)
 bool writeWav(const QString& path, const Result& r);
-// File name of a bed: mood, tempo, key, seed, length and kVersion ("music-bed-drive-112bpm-a-minor-s1-30000ms-v1.wav")
+// File name of a bed: mood, tempo, key, seed, length in samples and kVersion
+// ("music-bed-drive-112bpm-a-minor-s1-1440000smp-v1.wav")
 QString fileName(const Options& o);
 
 } // namespace MusicBed

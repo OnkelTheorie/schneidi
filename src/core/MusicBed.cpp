@@ -1461,10 +1461,10 @@ QString fileName(const Options& o)
 {
     const Plan p = makePlan(o); // cheap: no sound
     QString key = keyName(p.key).toLower().replace('#', 's').replace(' ', '-');
-    return QString("music-bed-%1-%2bpm-%3-s%4-%5ms-v%6.wav")
+    return QString("music-bed-%1-%2bpm-%3-s%4-%5smp-v%6.wav")
         .arg(moodId(p.mood), QString::number(p.bpm, 'g', 6), key)
         .arg(p.seed)
-        .arg(std::llround(p.length * 1000))
+        .arg(p.frames)
         .arg(kVersion);
 }
 
