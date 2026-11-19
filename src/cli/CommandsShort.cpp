@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli `short`: from recordings (or a timeline) to a finished vertical short in one call. Only strings the
-// other commands together (probe, new, highlights, edit keep/new_timeline, transcribe, check + its fix, render), each
-// through execute() like a caller would: live in the app with "@app", no logic of its own beyond picking the moments
-// (core/ShortPick).
+// other commands together (probe, new, `direct` recipe short + apply, transcribe, check + its fix, render), each
+// through execute() like a caller would: live in the app with "@app"; the moments and the cut are `direct`'s
+// (cli/CommandsDirect.cpp, core/ShortPick).
 #include "cli/CommandsDetail.h"
+#include "cli/DirectDetail.h"
 #include "cli/Live.h"
 
 #include "core/GameHud.h"
@@ -147,47 +148,18 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     QJsonArray unused; // recordings without a moment in the short, and why
     QString cutTimeline;
 
+    QString shortTimeline;
+    QJsonArray madeNotes; // notes of the edit that made the vertical copy (what the reframe did with the kill feed)
     if (!files.isEmpty()) {
-        // 1. The recordings: length, frame rate, sound streams
-        QVector<double> durations;
+        // 1. The recordings: a picture, the frame rate, several sound streams
         double fps = 0;
-        QSize shape; // the first recording's picture size: the cut's shape
         bool streams = false;
-        QVector<QJsonValue> soundOf(files.size()); // per recording: audio_streams for its keep (undefined = all)
-        QStringList soundNotes;
         for (int i = 0; i < files.size(); ++i) {
             const QJsonObject pr = run("probe", {{"file", files[i]}}, step(0.01 * i / files.size(), 0.01 * (i + 1) / files.size()));
             if (!pr["video"].toBool()) fail("BAD_MEDIA", "not a video: " + files[i]);
-            durations << pr["seconds"].toDouble();
-            if (i == 0) {
-                fps = pr["fps"].toDouble();
-                shape = QSize(pr["width"].toInt(), pr["height"].toInt());
-            }
+            if (i == 0) fps = pr["fps"].toDouble();
             streams |= pr["audio_streams"].toArray().size() > 1;
-            QStringList names;
-            for (const QJsonValue& v : pr["audio_streams"].toArray()) names << v.toString();
-            if (streamChoice.compare("all", Qt::CaseInsensitive) == 0 || names.size() < 2) continue;
-            if (streamChoice.compare("game", Qt::CaseInsensitive) != 0) {
-                soundOf[i] = streamChoice; // numbers or names, checked by keep
-                continue;
-            }
-            // Not asked for: only for game material - a known game (given or from the folder/file name), or a
-            // recorder's Mix next to voice chat or music. A podcast's Mix/Mikrofon/Gast keeps every voice.
-            const bool mixAndChat = std::any_of(names.begin(), names.end(), StreamPresets::isMixTitle)
-                                 && std::any_of(names.begin(), names.end(), StreamPresets::isChatOrMusicTitle);
-            if (!a.contains("audio_stream") && !game && !mixAndChat) continue;
-            const QVector<int> g = StreamPresets::gameStreams(names);
-            if (g.isEmpty()) continue;
-            QJsonArray list;
-            QStringList kept;
-            for (int k : g) list << k, kept << names[k];
-            soundOf[i] = list;
-            soundNotes << QString("%1: %2").arg(QFileInfo(files[i]).fileName(), kept.join(", "));
         }
-        if (!soundNotes.isEmpty())
-            done << QString("sound: only the game streams (%1); audio_stream:'all' keeps voice chat, microphone and "
-                            "music too")
-                        .arg(soundNotes.join("; "));
         // 2. The project: a new one next to the video unless one is given (that one gets the new timelines)
         if (project.isEmpty()) {
             const QFileInfo o(out);
@@ -203,127 +175,77 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             created = true;
             done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
         }
-        // 3. The best moments of every recording
-        QVector<ShortPick::Moment> candidates;
-        QVector<int> found(files.size(), 0); // candidates per recording
-        for (int i = 0; i < files.size(); ++i) {
-            QJsonObject h{{"file", files[i]}, {"project", project}};
-            h["game"] = game ? game->id : QString("none");
-            const double f0 = 0.02 + 0.28 * i / files.size(), f1 = 0.02 + 0.28 * (i + 1) / files.size();
-            const QJsonObject hl = run("highlights", h, step(f0, f1));
-            for (const QJsonValue& c : hl["candidates"].toArray())
-                candidates << ShortPick::Moment{i, c["from_s"].toDouble(), c["to_s"].toDouble(), c["score"].toDouble()};
-            found[i] = int(hl["candidates"].toArray().size());
-        }
-        std::stable_sort(candidates.begin(), candidates.end(),
-                         [](const ShortPick::Moment& x, const ShortPick::Moment& y) { return x.score > y.score; });
-        const int withSome = int(std::count_if(found.begin(), found.end(), [](int n) { return n > 0; }));
+        // 3. The best moments of every recording: `direct` recipe short (the highlights, ShortPick)
+        QJsonObject options;
+        for (const char* k : {"min_s", "max_s", "for", "hook", "aspect", "reframe", "audio_stream"})
+            if (a.contains(k)) options[k] = a[k];
+        options["for"] = QString::fromLatin1(platform->alias);
+        if (game) options["game"] = game->id;
+        else if (noGame) options["game"] = "none";
+        CollectedMoments found;
+        Context suggestCtx = step(0.02, 0.3);
+        const Direction::Session session = directSuggest(
+            {{"recipe", "short"}, {"files", QJsonArray::fromStringList(files)}, {"project", project}, {"options", options}},
+            suggestCtx, &found);
+        QVector<int> candidates(files.size(), 0); // highlight candidates per recording
+        for (const DirectMoment& m : found.highlights) ++candidates[m.file];
+        const int count = int(found.highlights.size());
+        const int withSome = int(std::count_if(candidates.begin(), candidates.end(), [](int n) { return n > 0; }));
         done << QString("highlights: %1 candidate%2%3 in %4 of %5 recording%6")
-                    .arg(candidates.size())
-                    .arg(candidates.size() == 1 ? "" : "s")
+                    .arg(count)
+                    .arg(count == 1 ? "" : "s")
                     .arg(game ? QString(" (kill feed of %1)").arg(game->id) : QString(" (loud moments)"))
                     .arg(withSome)
                     .arg(files.size())
                     .arg(files.size() == 1 ? "" : "s");
-        const QVector<ShortPick::Moment> picked = ShortPick::pick(candidates, durations, pick);
-        if (candidates.isEmpty())
-            notes << "no highlight found: the short is the end of the recording (where a clip tool saves the moment)";
+        if (count == 0) {
+            if (found.extra.isEmpty())
+                notes << "no highlight found: the short is the end of the recording (where a clip tool saves the moment)";
+            else
+                notes << "no highlight found: the short is made of sound events and picture changes";
+        }
         // Why a recording has no moment in the short: none found in it, or its moments did not fit (better ones of
         // the others filled max_s first)
+        double maxS = session.target;
         for (int i = 0; i < files.size(); ++i) {
-            if (std::any_of(picked.begin(), picked.end(), [i](const ShortPick::Moment& m) { return m.file == i; }))
+            if (std::any_of(session.suggestions.begin(), session.suggestions.end(),
+                            [&](const Direction::Suggestion& x) { return x.on && x.file == files[i]; }))
                 continue;
-            QJsonObject u{{"file", files[i]}, {"candidates", found[i]}};
+            QJsonObject u{{"file", files[i]}, {"candidates", candidates[i]}};
             const QString name = QFileInfo(files[i]).fileName();
-            if (found[i] == 0) {
+            if (candidates[i] == 0) {
                 u["reason"] = "no_moment";
                 u["message"] = game ? QString("no kill of the player found in its kill feed (%1)").arg(game->id)
                                     : QString("no loud moment found");
             } else {
                 u["reason"] = "length";
                 u["message"] = QString("%1 moment%2 found, none fit: the better ones filled the short to max_s %3 s")
-                                   .arg(found[i])
-                                   .arg(found[i] == 1 ? "" : "s")
-                                   .arg(pick.maxS);
+                                   .arg(candidates[i])
+                                   .arg(candidates[i] == 1 ? "" : "s")
+                                   .arg(maxS);
             }
             notes << QString("%1 not used: %2").arg(name, u["message"].toString());
             unused << u;
         }
-        // 4. A cut of them in the recordings' shape (the user can rework it), one keep per recording
-        const QJsonObject before = run("info", {{"project", project}, {"summary", true}}, step(0.3, 0.3));
-        cutTimeline = uniqueTimelineName(before["timelines"].toArray(), T("Short-Schnitt"));
-        // A new project's empty first timeline becomes the cut (nothing empty left over)
-        QJsonArray ops{created ? QJsonObject{{"op", "rename_timeline"}, {"name", cutTimeline}}
-                               : QJsonObject{{"op", "new_timeline"}, {"name", cutTimeline}}};
-        // A project of another shape (an existing 9:16 one, a template's fixed resolution): the cut gets its own
-        // resolution in the recordings' shape (in the project's it held them in bars, the reframe had nothing to do)
-        const QJsonObject format = before["format"].toObject();
-        const int pw = format["width"].toInt(), ph = format["height"].toInt();
-        if (shape.width() > 0 && shape.height() > 0 && pw > 0 && ph > 0
-            && std::abs(double(shape.width()) / shape.height() - double(pw) / ph) > 0.01) {
-            const int w = std::max(16, shape.width() / 2 * 2), h = std::max(16, shape.height() / 2 * 2);
-            ops << QJsonObject{{"op", "format"}, {"timeline", cutTimeline}, {"width", w}, {"height", h}}
-                << QJsonObject{{"op", "timeline"}, {"timeline", cutTimeline}};
-        }
-        // The best moment opens the short (hook:'best', more than one moment): its own keep first, then the others
-        int best = -1;
-        if (hook == QLatin1String("best") && picked.size() > 1)
-            for (int k = 0; k < picked.size(); ++k)
-                if (best < 0 || picked[k].score > picked[best].score) best = k;
-        const auto range = [](const ShortPick::Moment& m) {
-            return QJsonArray{QString("%1s").arg(m.from, 0, 'f', 3), QString("%1s").arg(m.to, 0, 'f', 3)};
-        };
-        const auto moment = [&](const ShortPick::Moment& m) {
-            moments << QJsonObject{{"file", files[m.file]}, {"from_s", secondsOf(m.from)}, {"to_s", secondsOf(m.to)}};
-        };
-        const auto keepOp = [&](int file, const QJsonArray& ranges) {
-            QJsonObject k{{"op", "keep"}, {"media", files[file]}, {"ranges", ranges}};
-            if (soundOf[file].isArray() || soundOf[file].isString()) k["audio_streams"] = soundOf[file];
-            return k;
-        };
-        if (best >= 0) {
-            ops << keepOp(picked[best].file, QJsonArray{range(picked[best])});
-            moment(picked[best]);
-        }
-        for (int i = 0; i < files.size(); ++i) {
-            QJsonArray ranges;
-            for (int k = 0; k < picked.size(); ++k) {
-                const ShortPick::Moment& m = picked[k];
-                if (m.file != i || k == best) continue;
-                ranges << range(m);
-                moment(m);
-            }
-            if (!ranges.isEmpty()) ops << keepOp(i, ranges);
-        }
-        // The story: the first moment is the hook (`check` story_no_hook reads it), every other one a section of
-        // its own (no stretch without a section; the short's copy keeps them). The moments lie one after the other in
-        // the order of `moments`; each boundary is the same time for both sections next to it.
-        {
-            QVector<ShortPick::Moment> order;
-            if (best >= 0) order << picked[best];
-            for (int i = 0; i < files.size(); ++i)
-                for (int k = 0; k < picked.size(); ++k)
-                    if (picked[k].file == i && k != best) order << picked[k];
-            double at = 0;
-            QString from = "0";
-            for (int k = 0; k < order.size(); ++k) {
-                at += std::max(0.04, order[k].to - order[k].from);
-                const QString to = QString("%1s").arg(at, 0, 'f', 3);
-                QJsonObject sec{{"op", "section"}, {"kind", k == 0 ? "hook" : "free"}, {"from", from}, {"to", to}};
-                if (k > 0)
-                    sec["name"] = QString("%1 %2 s").arg(QFileInfo(files[order[k].file]).completeBaseName())
-                                      .arg(secondsOf(order[k].from));
-                ops << sec;
-                from = to;
-            }
-        }
-        run("edit", {{"project", project}, {"ops", ops}}, step(0.3, 0.32));
-        if (best >= 0) done << QString("hook: the best moment first (%1 s of %2)").arg(secondsOf(picked[best].from)).arg(QFileInfo(files[picked[best].file]).fileName());
-        done << QString("cut: %1 moment%2, %3 s (timeline '%4')")
-                    .arg(picked.size())
-                    .arg(picked.size() == 1 ? "" : "s")
-                    .arg(secondsOf(ShortPick::total(picked)))
-                    .arg(cutTimeline);
+        // 4. Applied: a cut in the recordings' shape (one keep per recording, the best moment first as the hook)
+        // and its vertical copy, every clip following its subject - one edit
+        Context applyCtx = step(0.3, 0.4);
+        const QJsonObject applied = directApply(session, {{"on", "all"}},
+                                                {{"project", project}, {"_created", created}, {"_no_check", true}},
+                                                applyCtx);
+        cutTimeline = applied["cut_timeline"].toString();
+        shortTimeline = applied["timeline"].toString();
+        madeNotes = applied["edit_notes"].toArray();
+        for (const QJsonValue& v : applied["done"].toArray())
+            if (!v.toString().startsWith("cut: ")) done << v;
+        for (const QJsonValue& m : applied["moments"].toArray())
+            moments << QJsonObject{{"file", m["file"]}, {"from_s", m["from_s"]}, {"to_s", m["to_s"]}};
+        if (hook == QLatin1String("best") && moments.size() > 1)
+            done << QString("hook: the best moment first (%1 s of %2)")
+                        .arg(moments[0]["from_s"].toDouble())
+                        .arg(QFileInfo(moments[0]["file"].toString()).fileName());
+        for (const QJsonValue& v : applied["done"].toArray())
+            if (v.toString().startsWith("cut: ")) done << v;
     } else {
         // An existing timeline (default: the open one) is the cut
         const QJsonObject info = run("info", {{"project", project}, {"summary", true}, {"timeline", a["timeline"]}}, step(0, 0.01));
@@ -336,18 +258,17 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                          .arg(cutTimeline)
                          .arg(secondsOf(length))
                          .arg(pick.maxS);
+        // 5. The vertical copy, every clip following its subject
+        const QJsonObject now = run("info", {{"project", project}, {"summary", true}}, step(0.32, 0.32));
+        shortTimeline = uniqueTimelineName(now["timelines"].toArray(), T("Short"));
+        // Game footage keeps its kill feed readable at the top (reframe keep:'auto'; the game given here counts)
+        QJsonObject copy{{"op", "new_timeline"}, {"name", shortTimeline}, {"from", cutTimeline},
+                         {"aspect", aspect}, {"reframe", reframe}, {"open", false}};
+        if (game) copy["game"] = game->id;
+        if (noGame) copy["keep"] = "none";
+        const QJsonObject made = run("edit", {{"project", project}, {"ops", QJsonArray{copy}}}, step(0.32, 0.4));
+        madeNotes = made["notes"].toArray();
     }
-
-    // 5. The vertical copy, every clip following its subject
-    const QJsonObject now = run("info", {{"project", project}, {"summary", true}}, step(0.32, 0.32));
-    const QString shortTimeline = uniqueTimelineName(now["timelines"].toArray(), T("Short"));
-    // Game footage keeps its kill feed readable at the top (reframe keep:'auto'; the game given here counts)
-    QJsonObject copy{{"op", "new_timeline"}, {"name", shortTimeline}, {"from", cutTimeline},
-                     {"aspect", aspect}, {"reframe", reframe}, {"open", false}};
-    if (game) copy["game"] = game->id;
-    if (noGame) copy["keep"] = "none";
-    const QJsonObject made = run("edit", {{"project", project}, {"ops", QJsonArray{copy}}}, step(0.32, 0.4));
-    const QJsonArray madeNotes = made["notes"].toArray();
     // What the reframe did with the kill feed, from its notes: copies made (following their lines or the whole
     // region), or none (no line in the clips)
     const auto noted = [&madeNotes](const QString& start, const QString& with = {}) {

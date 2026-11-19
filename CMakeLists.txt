@@ -214,6 +214,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/SourceBitrate.h      src/core/SourceBitrate.cpp
     src/core/ShortPick.h          src/core/ShortPick.cpp
+    src/core/Direction.h          src/core/Direction.cpp
+    src/core/ReelPick.h           src/core/ReelPick.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
@@ -644,6 +646,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/AnalysisKillFeed.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/CommandsIndex.cpp
+    src/cli/CommandsDirect.cpp src/cli/DirectMoments.cpp src/cli/DirectDetail.h
     src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Sandbox.h  src/cli/Sandbox.cpp

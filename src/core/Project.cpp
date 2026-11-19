@@ -304,6 +304,7 @@ ProjectData Project::data() const
     d.importPresets = m_importPresets;
     d.brand = m_brand;
     d.stills = m_stills;
+    d.direction = m_direction;
     d.templateInfo = m_templateInfo;
     d.watchFolders = m_watchFolders;
     d.watchLog = m_watchLog;
@@ -397,6 +398,7 @@ void Project::load(const ProjectData& d)
     m_importPresets = d.importPresets;
     m_brand = d.brand;
     m_stills = d.stills;
+    m_direction = d.direction;
     m_templateInfo = d.templateInfo;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
@@ -1195,6 +1197,13 @@ void Project::setHistoryAside(bool aside)
     }
     emit undoStackChanged();
     emit modifiedChanged(isModified());
+}
+
+void Project::setDirection(const QJsonObject& session)
+{
+    if (session == m_direction) return;
+    m_direction = session;
+    markModified();
 }
 
 void Project::markModified()

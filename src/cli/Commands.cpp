@@ -1307,6 +1307,38 @@ const QVector<Command>& commands()
           {"threads", T::Integer, "as in `render`"},
           {"overwrite", T::Boolean, "replace an existing out file"}},
          cmdShort},
+        {"direct", "Direction: a recipe looks at the material and SUGGESTS what to cut, each with a reason, without "
+                   "changing anything; then apply the suggestions (all, some, edges moved, another order) as ONE edit. "
+                   "Recipes: short (the best moments for a vertical short, up to 3 variants without shared moments: "
+                   "kills of a game's kill feed, else loud moments; with none of them sound events and picture "
+                   "changes), highlights (a highlight video of any material: kills, loud, laughter, applause, cheering, "
+                   "screams, lots of movement, scene changes - best first or in time, a target length or all, not the "
+                   "same scene twice, music fitted and cuts on its beat). talk, template and script follow. Suggest: "
+                   "{recipe, files | project+timeline, options} -> {session:{id:'d3', material, suggestions:[{n, kind, "
+                   "file, from_s, to_s, reason:{key, values, text}, labels, on, variant?}], order, length_s, target_s, "
+                   "notes}, next}; sessions are kept a day. Apply: {session:'d3' (or the session object), apply:{on:'all'"
+                   "|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?}, project?, plan?, dry_run?} -> {project, "
+                   "timeline, timelines, length_s, moments, check, done, next}; plan:true makes a normal plan (edit "
+                   "plan_id … run) instead. Errors: UNKNOWN_RECIPE, NO_MATERIAL, SESSION_EXPIRED, SESSION_STALE (the "
+                   "material changed: suggest again), CANCELED. Every analysis is cached per file: a second recipe on "
+                   "the same material is quick. `short` does recipe short + apply + captions + render in one call.",
+         {{"recipe", T::String, "suggest: short or highlights (talk, template, script follow)"},
+          {"files", T::Paths, "suggest: the recordings to look at", false, true},
+          {"project", T::Path, "the project the result goes into (\"@app\" = the app's; default for apply: a new one "
+                               "next to the first recording), and with timeline the material"},
+          {"timeline", T::String, "suggest: the recordings of this timeline of the project as the material ('@current' = "
+                                  "the open one)"},
+          {"options", T::Object, "suggest: the recipe's settings. short: for (shorts|reels|tiktok), min_s, max_s, "
+                                 "aspect (9:16|1:1|4:5), captions, variants (1-3), sfx, hook (best|chronological), "
+                                 "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
+                                 "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
+                                 "music bed, null = none), order (best|time), transitions (cut|soft), game"},
+          {"session", T::Json, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},
+          {"apply", T::Object, "apply: {on:'all'|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?} (default "
+                               "on:'all' = the suggestions switched on; variant n = that variant's)"},
+          {"plan", T::Boolean, "apply: make a plan of the edit instead (nothing changes until it is run)"},
+          {"dry_run", T::Boolean, "apply: what the edit would do, nothing saved"}},
+         cmdDirect},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams (audio_channels: count "
                   "and layout per stream, e.g. 5.1(side) or '4 channels' of a camera with two microphones - op 'route' "
                   "plays single channels). With gaps: the stutter "

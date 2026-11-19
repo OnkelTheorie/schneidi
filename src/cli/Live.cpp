@@ -540,6 +540,12 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                                                                         : m_refusal));
     }
     const bool attached = m_attached == s || peer.chatAttached;
+    // New suggestions of `direct` (no answer): for the Direct page and the chat
+    if (type == "direction") {
+        if (!attached || !waitingNow().isEmpty()) return;
+        m_host->liveDirection(msg.value("session").toObject(), peer.chat);
+        return;
+    }
     // Work of the attached AI outside the app: shown there, never answered (the client does not wait for it)
     if (type == "activity") {
         if (!attached || !waitingNow().isEmpty()) return;
@@ -1094,7 +1100,7 @@ bool isJob(const QString& command)
 {
     static const QStringList jobs{"probe",  "silence", "scenes", "peaks",           "highlights", "frames",
                                   "transcribe", "loudness", "scopes", "sync", "render", "export_timeline",
-                                  "extensions", "check", "overview", "beats", "index"};
+                                  "extensions", "check", "overview", "beats", "index", "direct"};
     return jobs.contains(command);
 }
 
@@ -1171,6 +1177,11 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
         return {{"count", countOf(r, {"clips"})}};
     }
     if (tool == "beats" && r.value("bpm").isDouble()) return {{"bpm", r.value("bpm")}};
+    // direct: the suggestions of a session, or the moments an apply cut
+    if (tool == "direct")
+        return {{"count", r.contains("session") && r.value("session").isObject()
+                              ? int(r.value("session").toObject().value("suggestions").toArray().size())
+                              : int(r.value("moments").toArray().size())}};
     if (tool == "render" || tool == "export_timeline")
         if (const QString out = r.value("out").toString(); !out.isEmpty()) return {{"file", out}};
     return {};
@@ -1220,6 +1231,16 @@ void Activity::progress(double p)
     m_percent = percent;
     m_lastSent = now;
     send({{"state", "progress"}, {"percent", percent}});
+}
+
+void reportDirection(const QJsonObject& args, const QJsonObject& session)
+{
+    if (g_isApp || g_host || t_appCopy) return;
+    Connection* c = reportingConnection(args);
+    if (!c || c->socket.state() != QLocalSocket::ConnectedState) return;
+    c->socket.write(line(QJsonObject{{"type", "direction"}, {"session", session}}));
+    c->socket.flush();
+    if (c->socket.bytesToWrite() > 0) c->socket.waitForBytesWritten(1000);
 }
 
 void Activity::send(QJsonObject msg)

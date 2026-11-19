@@ -62,6 +62,9 @@ struct ProjectData {
     std::optional<TemplateInfo> templateInfo;
     QVector<SavedView> views; // per timeline (optional; UI state, not part of the edit)
     QVector<GradeStill> stills; // Color page stills (optional, 0.24)
+    // The last Direct page / `direct` session (core/Direction.h as JSON, no pictures; optional, 0.25): UI state, not
+    // part of the edit (no undo step, not in a plan's base)
+    QJsonObject direction;
 };
 
 namespace ProjectFile {

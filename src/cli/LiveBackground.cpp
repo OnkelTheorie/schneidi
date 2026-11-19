@@ -61,7 +61,7 @@ QString code(const QJsonObject& reply) { return reply["error"].toObject()["code"
 bool reading(const QString& command, const QJsonObject& args, QString* why)
 {
     static const QStringList commands{"probe", "peaks",    "scenes", "highlights", "silence",   "loudness",
-                                      "beats", "overview", "index",  "transcribe", "frames"};
+                                      "beats", "overview", "index",  "transcribe", "frames", "direct"};
     const auto no = [why](const QString& text) {
         if (why) *why = text;
         return false;
@@ -78,6 +78,8 @@ bool reading(const QString& command, const QJsonObject& args, QString* why)
         return no("transcribe with apply changes the project: not in the background");
     if (command == "index" && given("annotate"))
         return no("index with annotate writes descriptions: not in the background");
+    if (command == "direct" && (given("session") || given("apply")))
+        return no("direct with a session applies it (an edit): not in the background, run the edit for the user");
     return true;
 }
 

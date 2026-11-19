@@ -207,6 +207,10 @@ public:
     const QVector<GradeStill>& stills() const { return m_stills; }
     void setStills(const QVector<GradeStill>& stills, const QString& text);
     void applyStills(const QVector<GradeStill>& stills); // only for undo
+    // The last Direct session (core/Direction.h as JSON): no undo step, but the project counts as changed (like the
+    // timeline views); unchanged = nothing
+    const QJsonObject& direction() const { return m_direction; }
+    void setDirection(const QJsonObject& session);
     // A content template's description (core/TemplateLibrary.h); kept from load() to data(), so opening and saving a
     // template keeps its name/description. No undo, no change signal (set by load / TemplateLibrary::save)
     const std::optional<TemplateInfo>& templateInfo() const { return m_templateInfo; }
@@ -282,6 +286,7 @@ private:
     std::optional<StreamPresets> m_importPresets;
     std::optional<BrandKit> m_brand;
     QVector<GradeStill> m_stills;
+    QJsonObject m_direction;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo

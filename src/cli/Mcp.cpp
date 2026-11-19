@@ -70,6 +70,8 @@ QString instructions(const Options& opt)
                 "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
                 "covers, too long without a cut, a late hook, where viewers left by a retention CSV), `render` writes a video (presets for YouTube Shorts, Instagram Reels, TikTok), `short` makes a "
                 "finished vertical short of recordings in one call (best moments, reframe, captions, check, render), "
+                "`direct` suggests what to cut (a short with variants, a highlight video of any material: kills, "
+                "loud, laughter, cheering, movement) with a reason each and applies the chosen ones as one edit, "
                 "`restore` undoes a change (`backups` lists the saved states), `brand` is the user's brand kit "
                 "(logo, colors, fonts, intro/outro; titles can follow it), "
                 "`watch` takes new files of watched folders into the media pool (a recorder's output; for automated "
@@ -108,7 +110,7 @@ QJsonArray toolList(const Options& opt)
                                                      "command 'edit' and op 'name' (or a comma list; "
                                                      "\"all\" = every op; without op: only what each op is for).")
                                            : c.summary;
-        static const QStringList longTools{"render", "transcribe", "sync", "highlights", "scenes", "index"};
+        static const QStringList longTools{"render", "transcribe", "sync", "highlights", "scenes", "index", "direct"};
         if (opt.server && longTools.contains(c.name))
             summary += QString(" On this server: if it takes longer than %1 s, the answer is a job (see `jobs`).")
                            .arg(opt.jobWaitS);

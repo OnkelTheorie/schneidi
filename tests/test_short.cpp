@@ -38,6 +38,24 @@ QJsonObject run(const QString& name, const QJsonObject& raw)
 
 bool near(double a, double b, double eps = 0.05) { return std::abs(a - b) <= eps; }
 
+// The moments `short` picked, as "file from-to; …" (file names only): stored below for each case, so `short` on top
+// of `direct` (0.25) is proven to pick exactly what it picked before
+QString momentsText(const QJsonObject& r)
+{
+    QStringList parts;
+    for (const QJsonValue& m : r["moments"].toArray())
+        parts << QString("%1 %2-%3").arg(QFileInfo(m["file"].toString()).fileName()).arg(m["from_s"].toDouble()).arg(m["to_s"].toDouble());
+    return parts.join("; ");
+}
+
+bool sameMoments(const char* name, const QJsonObject& r, const QString& expected)
+{
+    const QString got = momentsText(r);
+    if (got == expected) return true;
+    std::printf("       moments of %s: \"%s\" (expected \"%s\")\n", name, qPrintable(got), qPrintable(expected));
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -190,6 +208,7 @@ int main(int argc, char** argv)
         const QString out = dir.filePath("out/short.mp4");
         const QJsonObject r = run("short", {{"files", QJsonArray{clip}}, {"out", out}, {"game", "none"}});
         CHECK(!r.contains("error"));
+        CHECK(sameMoments("default", r, "cs2_clip_test.mp4 25.56-33.06; cs2_clip_test.mp4 5.32-12.82"));
         CHECK(QFileInfo::exists(out));
         CHECK_EQ(r["out"].toString(), out);
         const double len = r["length_s"].toDouble();
@@ -250,10 +269,12 @@ int main(int argc, char** argv)
         const QJsonObject again = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"max_s", 20}});
         CHECK_EQ(QFileInfo(again["out"].toString()).fileName(), QString("cs2_clip_test-short.mp4"));
         CHECK(again["length_s"].toDouble() <= 20.05);
+        CHECK(sameMoments("again", again, "cs2_clip_test.mp4 20-40"));
         // hook:'chronological': the moments in the order they happened
         const QJsonObject inOrder = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"game", "none"},
                                                   {"hook", "chronological"}});
         const QJsonArray ordered = inOrder["moments"].toArray();
+        CHECK(sameMoments("chronological", inOrder, "cs2_clip_test.mp4 5.32-12.82; cs2_clip_test.mp4 25.56-33.06"));
         if (CHECK(ordered.size() >= 2)) CHECK(ordered[0]["from_s"].toDouble() < ordered[1]["from_s"].toDouble());
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"hook", "loudest"}})["error"].toString(), QString("BAD_ARGUMENT"));
         // Effect sounds: none by default (sfx:'off', nothing on the cuts by itself); sfx:'mild' puts a soft whoosh on the
@@ -294,6 +315,7 @@ int main(int argc, char** argv)
                                                   {"captions", "off"}, {"min_s", 6}, {"max_s", 7},
                                                   {"out", dir.filePath("out/few.mp4")}});
             CHECK(!few.contains("error"));
+            CHECK(sameMoments("few", few, "cs2_clip_test.mp4 26.23-32.23"));
             const QJsonArray unused = few["unused"].toArray();
             if (CHECK_EQ(unused.size(), 2)) {
                 CHECK_EQ(unused[0]["file"].toString(), copy);
@@ -316,6 +338,7 @@ int main(int argc, char** argv)
         const QJsonObject inTall = run("short", {{"files", QJsonArray{clip}}, {"project", tall}, {"captions", "off"},
                                                  {"max_s", 15}, {"out", dir.filePath("out/tall.mp4")}});
         CHECK(!inTall.contains("error"));
+        CHECK(sameMoments("tall", inTall, "cs2_clip_test.mp4 25-40"));
         const QJsonObject cut = run("info", {{"project", tall}, {"timeline", "Short-Schnitt"}, {"summary", true}});
         if (!CHECK_EQ(cut["timeline"]["width"].toInt() * 9, cut["timeline"]["height"].toInt() * 16))
             std::printf("       cut %d x %d\n", cut["timeline"]["width"].toInt(), cut["timeline"]["height"].toInt());

@@ -314,6 +314,14 @@ QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
 QJsonObject cmdWatch(const QJsonObject& a, Context& ctx); // CommandsWatch.cpp
 QJsonObject cmdShort(const QJsonObject& a, Context& ctx); // CommandsShort.cpp
 QJsonObject cmdBrand(const QJsonObject& a, Context& ctx); // CommandsBrand.cpp
+// `direct` (CommandsDirect.cpp, 0.25): suggestions of a recipe (short, highlights …) and applying them as one edit
+QJsonObject cmdDirect(const QJsonObject& a, Context& ctx);
+// Edit op _direction {session} (hidden, CommandsDirect.cpp): the project's last Direct session, no undo step
+void addDirectOps(QVector<OpDef>& ops);
+// A new plan id with this prefix (p1 … for plans, d1 … for `direct` sessions) in `dir`, its file created there
+QString newPlanId(const QString& dir, const QString& prefix);
+// Where the plans (and `direct` sessions) of a project live; empty = the projects never saved
+QString planDir(const QString& projectPath);
 // The kit fields of `brand set` (logo, logo_corner, logo_size, colors, fonts, intro, outro) in `a` over `k`
 BrandKit brandWithFields(BrandKit k, const QJsonObject& a); // CommandsBrand.cpp
 // The kit a project's own kit starts from (`p.effectiveBrand()`, maybe the global one): in a work folder without the

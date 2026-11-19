@@ -409,26 +409,23 @@ QString frameRateNote(const Project& p, const QString& video)
 // A new plan id: p1, p2 … per folder, never given twice (a counter file; an old id never names a newer plan). The
 // plan's file is created here exclusively (QFile::NewOnly), so two processes planning at the same moment cannot get
 // the same id: the one that loses the race takes the next number
-QString newPlanId(const QString& dir)
+QString newPlanId(const QString& dir) { return newPlanId(dir, "p"); }
+
+QString newPlanId(const QString& dir, const QString& prefix)
 {
-    QFile counter(QDir(dir).filePath("next"));
+    // Plans keep their old counter file; other kinds count on their own ("next-d")
+    QFile counter(QDir(dir).filePath(prefix == QLatin1String("p") ? QString("next") : "next-" + prefix));
     int next = 1;
     if (counter.open(QIODevice::ReadOnly)) next = std::max(1, counter.readAll().trimmed().toInt());
     counter.close();
     for (int tries = 0;; ++next, ++tries) {
-        QFile plan(QDir(dir).filePath(QString("p%1.json").arg(next)));
+        QFile plan(QDir(dir).filePath(QString("%1%2.json").arg(prefix).arg(next)));
         if (plan.open(QIODevice::WriteOnly | QIODevice::NewOnly)) break;
         if (!plan.exists() || tries > 100000) fail("SAVE_FAILED", "cannot write a plan into " + dir);
     }
     if (counter.open(QIODevice::WriteOnly | QIODevice::Truncate)) counter.write(QByteArray::number(next + 1));
-    return QString("p%1").arg(next);
+    return QString("%1%2").arg(prefix).arg(next);
 }
-
-namespace {
-
-// ---------- Plans (edit plan:true, then plan_id + run or discard) ----------
-
-constexpr int kPlanHours = 24; // a plan nobody ran or discarded is gone after this
 
 // Plans of a project live beside its backups (AppDataLocation, portable); a project in the app never saved has
 // one folder for all of them (the project state in each plan tells them apart)
@@ -437,6 +434,13 @@ QString planDir(const QString& projectPath)
     if (projectPath.isEmpty()) return QDir(ProjectFile::backupDir({})).filePath("unsaved-plans");
     return QDir(ProjectFile::backupDir(projectPath)).filePath("plans");
 }
+
+namespace {
+
+// ---------- Plans (edit plan:true, then plan_id + run or discard) ----------
+
+constexpr int kPlanHours = 24; // a plan nobody ran or discarded is gone after this
+
 
 // The project a plan is made on, as a fingerprint: a plan runs only on exactly that state. Not part of it: what does
 // not change what the ops do (playhead, render queue, which timeline is open - the plan names its timeline, where
@@ -449,6 +453,7 @@ QByteArray planBase(const Session& s, const QString& path)
     d.renderQueue.clear();
     d.currentSequence = -1; // every timeline in "sequences"
     d.timeline = emptyTimeline();
+    d.direction = {}; // the Direct page's last session: UI state, an open plan stays valid
     // Not the path either: a plan made while the project was never saved runs once it is saved under a name
     // (media paths are absolute in the file; relative ones against a fixed folder)
     Q_UNUSED(path);
