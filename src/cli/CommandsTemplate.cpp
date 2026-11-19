@@ -308,31 +308,59 @@ QStringList autoMaterial(const QJsonObject& a, const ProjectData* project)
 // transcripts give the shots their speech.
 QJsonObject withAutoValues(const QJsonObject& a, const ProjectData& d, bool inPlace, Context& ctx)
 {
+    // Inside the app nothing is indexed (the user would wait): schneidi-cli chooses before it sends the fill
+    if (Live::host())
+        fail("LIVE_NOT_PREPARED", "auto is chosen by schneidi-cli before the fill goes to the app (prepareTemplateFill): "
+                                  "send it through schneidi-cli or MCP, or give values");
     QJsonObject out = a;
     out.remove("auto");
     out.remove("files");
     QJsonObject values = a.value("values").toObject();
-    const QStringList files = autoMaterial(a, inPlace ? &d : nullptr);
+    QStringList files = autoMaterial(a, inPlace ? &d : nullptr);
+    // What the project already shows outside its slots (the brand kit's intro/outro/logo, stills, other clips) is no
+    // material: it would be seen twice
+    QSet<QString> shown;
+    for (const auto& [seq, tl] : timelinesOf(d))
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : tl->tracks(k))
+                for (const Clip& c : t.clips)
+                    if (!c.slot.isSet() && !c.mediaPath.isEmpty()) shown.insert(QFileInfo(c.mediaPath).absoluteFilePath());
+    const BrandKit kit = Brand::effective(d);
+    for (const QString& f : {kit.intro, kit.logo, kit.outro})
+        if (!f.isEmpty()) shown.insert(QFileInfo(absolute(f)).absoluteFilePath());
+    QStringList skipped;
+    files.erase(std::remove_if(files.begin(), files.end(), [&](const QString& f) {
+                    const bool used = shown.contains(QFileInfo(f).absoluteFilePath());
+                    if (used) skipped << QFileInfo(f).fileName();
+                    return used;
+                }),
+                files.end());
     if (files.isEmpty())
         fail("NO_MATERIAL", inPlace ? "auto: the project has no video in its media; give files (or a folder) to choose from"
                                     : "auto: give files (or a folder) to choose the shots from");
     const double fps = d.format.rate.fps();
-    // The clip slotList without a value, each once (the first instance tells its length)
+    // The clip slots without a value, each once; the longest of its instances tells how long a shot must be
     QVector<SlotPick::Slot> slotList;
-    QSet<QString> seen;
+    QHash<QString, int> seen;
     for (const TemplateFill::SlotRef& r : TemplateFill::listSlots(d)) {
-        if (r.slot.kind != SlotKind::Clip || values.contains(r.slot.id) || seen.contains(r.slot.id)) continue;
-        seen.insert(r.slot.id);
+        if (r.slot.kind != SlotKind::Clip || values.contains(r.slot.id)) continue;
+        const int need = r.slot.minLen > 0 ? r.slot.minLen : (r.slot.length == SlotLength::Fixed ? r.slotLength : 0);
+        if (const auto it = seen.constFind(r.slot.id); it != seen.constEnd()) {
+            slotList[*it].minS = std::max(slotList[*it].minS, need / fps);
+            continue;
+        }
+        seen.insert(r.slot.id, int(slotList.size()));
         SlotPick::Slot x;
         x.id = r.slot.id;
         x.label = r.slot.label;
         x.hint = r.slot.hint;
-        const int need = r.slot.minLen > 0 ? r.slot.minLen : (r.slot.length == SlotLength::Fixed ? r.slotLength : 0);
         x.minS = need / fps;
         slotList << x;
     }
-    QJsonArray picks;
     QStringList notes;
+    if (!skipped.isEmpty())
+        notes << QString("auto: left out of the material, the project shows them already: %1").arg(skipped.join(", "));
+    QJsonArray picks;
     if (!slotList.isEmpty()) {
         QVector<SlotPick::Shot> shots;
         for (int i = 0; i < files.size(); ++i) {
@@ -384,9 +412,10 @@ QJsonObject withAutoValues(const QJsonObject& a, const ProjectData& d, bool inPl
                                    {"to_s", std::round(sh.shot.to * 1000) / 1000}, {"score", p.score},
                                    {"reason", reason}};
             picks << pick;
-            QJsonObject value{{"file", sh.shot.file}, {"from", QString("%1s").arg(sh.shot.from, 0, 'f', 3)}, {"auto", pick}};
-            if (int(std::floor(sh.shot.to * fps)) > int(std::ceil(sh.shot.from * fps)))
-                value["to"] = QString("%1s").arg(sh.shot.to, 0, 'f', 3);
+            // Whole frames inside the shot: its first frame rounded up (no frame of the shot before), its end down
+            const int from = int(std::ceil(sh.shot.from * fps - 1e-6)), to = int(std::floor(sh.shot.to * fps + 1e-6));
+            QJsonObject value{{"file", sh.shot.file}, {"from", from}, {"auto", pick}};
+            if (to > from) value["to"] = to;
             values[p.slot] = value;
         }
     }
@@ -395,14 +424,11 @@ QJsonObject withAutoValues(const QJsonObject& a, const ProjectData& d, bool inPl
     return out;
 }
 
-// What auto chose, for the answer: the picks and notes withAutoValues left in `_auto`, or (live, where `_auto` does not
-// go to the app) the `auto` part of the values
+// What auto chose, for the answer: the picks and notes withAutoValues left in `_auto` (live: schneidi-cli put it into
+// the arguments the app gets)
 void addAutoPicks(const QJsonObject& a, QJsonObject& o, QStringList& notes)
 {
-    QJsonArray picks = a.value("_auto").toObject().value("picks").toArray();
-    if (!a.contains("_auto"))
-        for (const QJsonValue& v : a.value("values").toObject())
-            if (v.toObject().contains("auto")) picks << v.toObject().value("auto");
+    const QJsonArray picks = a.value("_auto").toObject().value("picks").toArray();
     for (const QJsonValue& n : a.value("_auto").toObject().value("notes").toArray()) notes << n.toString();
     if (!picks.isEmpty() || a.contains("_auto")) o["auto"] = picks;
 }
@@ -853,15 +879,16 @@ QJsonObject fillBeats(const ProjectData& d, const TemplateFill::Values& values, 
 QJsonObject prepareTemplateFill(const QString& command, const QJsonObject& args, Context& ctx)
 {
     QJsonObject out = args;
+    bool autoDone = false; // the choice is made: a later failure (beats) must not send auto to the app
     try {
         if (command == "templates") {
             if (!args.contains("values") && !args.value("auto").toBool()) return args;
             Session s(args.value("project").toString()); // a copy of what the app shows
             const ProjectData d = s.project.data();
             if (args.value("auto").toBool()) {
-                // The index is built here, not in the app; the app gets the values (with what was chosen in them)
+                // The index is built here, not in the app; the app gets the values (and what was chosen, `_auto`)
                 out = withAutoValues(args, d, true, ctx);
-                out.remove("_auto");
+                autoDone = true;
             }
             const QJsonObject beats = fillBeats(d, fillValues(out.value("values"), d, d.format), d.format, ctx);
             if (!beats.isEmpty()) out["_beats"] = beats;
@@ -886,7 +913,7 @@ QJsonObject prepareTemplateFill(const QString& command, const QJsonObject& args,
         out["ops"] = ops;
     } catch (const Error& e) {
         if (e.code == "CANCELED") throw;
-        return args; // the command reports it where it runs
+        return autoDone ? out : args; // the command reports it where it runs
     }
     return out;
 }

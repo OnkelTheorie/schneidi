@@ -16,7 +16,7 @@ namespace SlotPick {
 struct Slot {
     QString id;
     QString label, hint;
-    double minS = 0; // the shortest shot that fills it (seconds; 0 = any)
+    double minS = 0; // the shortest shot that fills it (seconds; 0 = any): the longest of its instances
 };
 
 struct Shot {
@@ -43,7 +43,8 @@ struct Pick {
 // Quality points of a shot (sharpness, exposure, a face; blurry/dark/overexposed count against it); 0 when unmeasured
 double quality(const Shot& s, QStringList* what = nullptr);
 
-// One pick per slot, in the slots' order; no shot twice
+// One pick per slot, in the slots' order; no shot twice. First the slots whose label/hint something matches (the
+// best match first), then the others in their order by quality
 QVector<Pick> pick(const QVector<Slot>& slotList, const QVector<Shot>& shots);
 
 } // namespace SlotPick

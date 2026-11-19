@@ -57,6 +57,21 @@ void testCore()
     CHECK(p[1].quality.contains("sharp"));
     CHECK(p[1].quality.contains("well exposed"));
     CHECK_EQ(p[2].shot, 2); // sharp but dark beats blurry
+    // A slot that asks for something goes first: the vague slot before it does not take its shot
+    {
+        QVector<Shot> two;
+        two << shot("best.mp4", 1, 0, 4.0, 0.95, 0.5, "die Ladentheke") << shot("ok.mp4", 1, 0, 4.0, 0.5, 0.5);
+        const QVector<Pick> q = pick({Slot{"any", {}, {}, 1.0}, Slot{"shop", "Laden", {}, 1.0}}, two);
+        CHECK_EQ(q[0].slot, QString("any"));
+        CHECK_EQ(q[0].shot, 1);
+        CHECK_EQ(q[1].shot, 0);
+        // Two that ask: the better match first
+        QVector<Shot> m;
+        m << shot("a.mp4", 1, 0, 4.0, 0.5, 0.5, "Laden") << shot("b.mp4", 1, 0, 4.0, 0.5, 0.5, "Laden Theke vorne");
+        const QVector<Pick> r = pick({Slot{"s1", "Laden", {}, 1.0}, Slot{"s2", "Laden Theke", {}, 1.0}}, m);
+        CHECK_EQ(r[1].shot, 1);
+        CHECK_EQ(r[0].shot, 0);
+    }
     // No shot twice; once all are used nothing is left
     QVector<Slot> many;
     for (int i = 0; i < 7; ++i) many << Slot{QString("s%1").arg(i), {}, {}, 0};
@@ -176,6 +191,12 @@ void testCli(const QString& tmp)
     CHECK_EQ(pickOf(inPlace, "clip2")["file"].toString(), blurry);
     ProjectFile::load(out, &f, nullptr);
     if (CHECK_EQ(f.timeline.video.value(0).clips.size(), 2)) CHECK_EQ(f.timeline.video[0].clips[0].mediaPath, sharp);
+    // What the project already shows outside its slots is no material (seen twice otherwise)
+    run("edit", {{"project", out}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"track":"V2","duration":"1s"}])").arg(blurry)}});
+    const QJsonObject excl = run("templates", {{"project", out}, {"auto", true}, {"dry_run", true},
+                                               {"files", QJsonArray{blurry, sharp, shop}}});
+    for (const QJsonValue& v : excl["auto"].toArray()) CHECK(v["file"].toString() != blurry);
+    CHECK(QJsonDocument(excl["notes"].toArray()).toJson().contains("blurry.mp4"));
     // Without material
     CHECK_EQ(errorOf("templates", {{"fill", "Auto Test"}, {"out_project", tmp + "/x.schneidi"}, {"auto", true}}),
              QString("NO_MATERIAL"));
