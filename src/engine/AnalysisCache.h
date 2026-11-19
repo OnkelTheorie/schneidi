@@ -17,6 +17,7 @@
 #include <QString>
 
 #include <optional>
+#include <vector>
 
 namespace AnalysisCache {
 
@@ -27,5 +28,13 @@ void put(const QString& kind, const QString& file, const QJsonObject& options, i
 
 // The folder of all kinds (CacheLocation/analysis)
 QString folder();
+
+// Long number lists (a value per frame) inside a result: exact and small as base64 of the raw values (little-endian),
+// instead of a JSON array (a 40 min recording at 60 fps: 1 MB instead of 7, read in a few ms). Unpacking something
+// else (missing, damaged) gives an empty list.
+QString pack(const std::vector<float>& values);
+QString pack(const std::vector<double>& values);
+std::vector<float> unpackFloats(const QJsonValue& packed);
+std::vector<double> unpackDoubles(const QJsonValue& packed);
 
 } // namespace AnalysisCache

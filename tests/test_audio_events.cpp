@@ -8,6 +8,7 @@
 #include "cli/Commands.h"
 #include "core/AppPaths.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/AnalysisCache.h"
 #include "engine/AudioEvents.h"
 #include "engine/Inference.h"
 
@@ -262,7 +263,7 @@ void testFile(const QDir& dir)
         CHECK_EQ(disk.events[i].kind, r.events[i].kind);
         CHECK(std::abs(disk.events[i].from - r.events[i].from) < 0.001);
     }
-    CHECK(QDir(AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events").entryList({"*.json"}).size() >= 1);
+    CHECK(QDir(AnalysisCache::folder() + "/audio-events").entryList({"*.json"}).size() >= 1); // the shared analysis cache
     // A changed file is measured again
     {
         QFile f(wav);
@@ -504,7 +505,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("audio-events");
     Check::initEngine();
-    QDir(AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events").removeRecursively();
+    QDir(AnalysisCache::folder() + "/audio-events").removeRecursively();
     QTemporaryDir tmp;
     const QDir dir(tmp.path());
     // Tuning: AUDIO_EVENTS_DUMP=1 AUDIO_EVENTS_TUNE=1 prints the block features of the sequence only

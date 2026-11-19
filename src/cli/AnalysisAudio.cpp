@@ -41,10 +41,8 @@ std::optional<std::vector<float>> filePeaks(const MediaSource& m, int stream, co
     const QJsonObject options{{"rate", QString("%1/%2").arg(f.rate.num).arg(f.rate.den)}, {"stream", stream},
                               {"frames", m.info.length}};
     if (const auto hit = AnalysisCache::get("frame-peaks", m.info.path, options, kPeaksVersion)) {
-        const QJsonArray list = (*hit)["peaks"].toArray();
-        if (!list.isEmpty()) {
-            std::vector<float> out(size_t(list.size()));
-            for (qsizetype i = 0; i < list.size(); ++i) out[size_t(i)] = float(list[i].toDouble());
+        std::vector<float> out = AnalysisCache::unpackFloats((*hit)["peaks"]);
+        if (!out.empty()) {
             if (progress) progress(1.0);
             return out;
         }
@@ -55,11 +53,8 @@ std::optional<std::vector<float>> filePeaks(const MediaSource& m, int stream, co
     c.audioStream = stream;
     const auto peaks = AudioAnalysis::clipFramePeaks(f, c, goOn(progress));
     failIfCanceled();
-    if (peaks && !peaks->empty()) {
-        QJsonArray list;
-        for (float p : *peaks) list << double(p);
-        AnalysisCache::put("frame-peaks", m.info.path, options, kPeaksVersion, {{"peaks", list}});
-    }
+    if (peaks && !peaks->empty())
+        AnalysisCache::put("frame-peaks", m.info.path, options, kPeaksVersion, {{"peaks", AnalysisCache::pack(*peaks)}});
     return peaks;
 }
 

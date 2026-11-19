@@ -163,6 +163,24 @@ int main(int argc, char** argv)
         CHECK(!AnalysisCache::get("test", f, options, 1)); // the file changed (modification time)
         CHECK(!AnalysisCache::get("test", dir.filePath("missing.bin"), options, 1));
         AnalysisCache::put("test", dir.filePath("missing.bin"), options, 1, {{"v", 1}}); // nothing, no crash
+        // Number lists packed exactly
+        const std::vector<float> fl{0.f, 1e-7f, 0.123456789f, -3.5f};
+        const std::vector<double> db{0.0, 1.0 / 3.0, 1e300, -2.25};
+        CHECK(AnalysisCache::unpackFloats(AnalysisCache::pack(fl)) == fl);
+        CHECK(AnalysisCache::unpackDoubles(AnalysisCache::pack(db)) == db);
+        CHECK(AnalysisCache::unpackDoubles(QJsonValue("QUJD")).empty()); // 3 bytes: no whole double
+        CHECK(AnalysisCache::unpackFloats(QJsonValue(5)).empty());
+        // What storing costs on the cold path: the picture scores of a 40 min recording at 60 fps (3 values a picture)
+        std::vector<double> big(size_t(40 * 60 * 60) * 3, 0.5);
+        QElapsedTimer clock;
+        clock.start();
+        AnalysisCache::put("test", f, {{"big", true}}, 1, {{"scores", AnalysisCache::pack(big)}});
+        const double putMs = clock.nsecsElapsed() / 1e6;
+        clock.restart();
+        const auto back = AnalysisCache::get("test", f, {{"big", true}}, 1);
+        const double getMs = clock.nsecsElapsed() / 1e6;
+        CHECK(back && AnalysisCache::unpackDoubles((*back)["scores"]).size() == big.size());
+        std::printf("cache of 144000 pictures: put %.1f ms, get %.1f ms\n", putMs, getMs);
     }
 
     // --- Material: two recordings with loud bursts, a long sound file (silence), the fake whisper on the PATH

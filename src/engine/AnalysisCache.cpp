@@ -13,6 +13,9 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QtEndian>
+
+#include <cstring>
 
 namespace AnalysisCache {
 
@@ -47,6 +50,40 @@ QString entryFile(const QString& kind, const QString& file, const QJsonObject& o
 } // namespace
 
 QString folder() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/analysis"; }
+
+namespace {
+
+template <class T> QString packed(const std::vector<T>& values)
+{
+    QByteArray raw(qsizetype(values.size() * sizeof(T)), Qt::Uninitialized);
+    if constexpr (Q_BYTE_ORDER == Q_LITTLE_ENDIAN) {
+        if (!values.empty()) std::memcpy(raw.data(), values.data(), raw.size());
+    } else {
+        for (size_t i = 0; i < values.size(); ++i) qToLittleEndian(values[i], raw.data() + i * sizeof(T));
+    }
+    return QString::fromLatin1(raw.toBase64());
+}
+
+template <class T> std::vector<T> unpacked(const QJsonValue& v)
+{
+    if (!v.isString()) return {};
+    const QByteArray raw = QByteArray::fromBase64(v.toString().toLatin1());
+    if (raw.size() % qsizetype(sizeof(T)) != 0) return {};
+    std::vector<T> out(size_t(raw.size()) / sizeof(T));
+    if constexpr (Q_BYTE_ORDER == Q_LITTLE_ENDIAN) {
+        if (!out.empty()) std::memcpy(out.data(), raw.constData(), raw.size());
+    } else {
+        for (size_t i = 0; i < out.size(); ++i) out[i] = qFromLittleEndian<T>(raw.constData() + i * sizeof(T));
+    }
+    return out;
+}
+
+} // namespace
+
+QString pack(const std::vector<float>& values) { return packed(values); }
+QString pack(const std::vector<double>& values) { return packed(values); }
+std::vector<float> unpackFloats(const QJsonValue& v) { return unpacked<float>(v); }
+std::vector<double> unpackDoubles(const QJsonValue& v) { return unpacked<double>(v); }
 
 std::optional<QJsonObject> get(const QString& kind, const QString& file, const QJsonObject& options, int version)
 {

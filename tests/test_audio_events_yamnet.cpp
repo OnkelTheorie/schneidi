@@ -4,6 +4,7 @@
 // sounds of tests/synth_sounds.h: music and applause where they are, the result by "yamnet", cached, every event a
 // known kind. Loose on purpose: YAMNet was trained on real recordings, not on formant synthesis.
 #include "core/AppPaths.h"
+#include "engine/AnalysisCache.h"
 #include "engine/AudioEvents.h"
 #include "engine/Inference.h"
 
@@ -39,7 +40,7 @@ int main(int argc, char** argv)
         return Check::skip("YAMNet or ONNX Runtime not installed");
     }
     std::printf("ONNX Runtime %s, model %s\n", qPrintable(Inference::version()), qPrintable(qEnvironmentVariable("SCHNEIDI_YAMNET")));
-    QDir(AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events").removeRecursively();
+    QDir(AnalysisCache::folder() + "/audio-events").removeRecursively();
     QTemporaryDir tmp;
     Synth::Builder b(48000, 20, 9);
     Synth::music(b, 1.0, 6.0);     // 1-7

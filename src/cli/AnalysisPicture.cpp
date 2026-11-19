@@ -161,24 +161,21 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
     // read the same scores (the way of reading is part of the key: ffmpeg's are the comparison)
     const QJsonObject options{{"width", width}, {"way", ffmpegAnalysis() ? "ffmpeg" : "own"}};
     if (const auto hit = AnalysisCache::get("picture-scores", m.info.path, options, kScoresVersion)) {
-        const QJsonArray t = (*hit)["s"].toArray(), score = (*hit)["score"].toArray(), luma = (*hit)["luma"].toArray();
-        if (t.size() == score.size() && t.size() == luma.size()) {
-            std::vector<PictureScore> out(size_t(t.size()));
-            for (qsizetype i = 0; i < t.size(); ++i)
-                out[size_t(i)] = {t[i].toDouble(), score[i].toDouble(), luma[i].toDouble()};
+        // seconds, score, luma of each picture in a row
+        const std::vector<double> v = AnalysisCache::unpackDoubles((*hit)["scores"]);
+        if (v.size() % 3 == 0 && (*hit)["count"].toInteger(-1) == qint64(v.size() / 3)) {
+            std::vector<PictureScore> out(v.size() / 3);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = {v[3 * i], v[3 * i + 1], v[3 * i + 2]};
             if (progress) progress(1.0);
             return out;
         }
     }
     std::vector<PictureScore> out = measureScores(m, width, progress);
-    QJsonArray t, score, luma;
-    for (const PictureScore& p : out) {
-        t << p.seconds;
-        score << p.score;
-        luma << p.luma;
-    }
+    std::vector<double> v;
+    v.reserve(out.size() * 3);
+    for (const PictureScore& p : out) v.insert(v.end(), {p.seconds, p.score, p.luma});
     AnalysisCache::put("picture-scores", m.info.path, options, kScoresVersion,
-                       {{"s", t}, {"score", score}, {"luma", luma}});
+                       {{"count", qint64(out.size())}, {"scores", AnalysisCache::pack(v)}});
     return out;
 }
 
