@@ -602,6 +602,92 @@ FrameCoder::FrameCoder(const EncoderConfig& config)
     nzChroma_[1].resize(nzChroma_[0].size());
 }
 
+} // namespace schneidi::h264
+
+// The x86-64-v3 build of these files (see EncoderAlt): its two entry points, the only symbols that object file
+// keeps global, and the question whether this CPU can run it.
+#if defined(SCHNEIDI_S264_V3_BUILD)
+namespace {
+using namespace schneidi::h264;
+struct V3Encoder final : EncoderAlt {
+    explicit V3Encoder(const EncoderConfig& c) : e(c) {}
+    std::vector<uint8_t> headers() const override { return e.headers(); }
+    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe) override { return e.encode(picture, forceKeyframe); }
+    std::vector<uint8_t> flush() override { return e.flush(); }
+    State state() const override
+    {
+        State s;
+        s.sceneCut = e.lastWasSceneCut();
+        s.displayIndex = e.lastDisplayIndex();
+        s.weightedPictures = e.weightedPictures();
+        s.qp = e.lastQp();
+        s.vbvUnderflows = e.vbvUnderflows();
+        s.vbvFramesSinceBp = e.vbvFramesSinceBp();
+        s.type = e.lastType();
+        s.vbvMinFill = e.vbvMinFill();
+        return s;
+    }
+    const std::vector<uint8_t>& recon(int plane) const override { return plane == 0 ? e.reconY() : plane == 1 ? e.reconU() : e.reconV(); }
+    Encoder e;
+};
+struct V3FirstPass final : FirstPassAlt {
+    V3FirstPass(int w, int h, int threads, int bframes, size_t keep) : p(w, h, threads, bframes, keep) {}
+    void add(const Picture& picture, bool forceKeyframe) override { p.add(picture, forceKeyframe); }
+    std::shared_ptr<const FirstPassStats> stats() const override { return p.stats(); }
+    FirstPass p;
+};
+} // namespace
+extern "C" schneidi::h264::EncoderAlt* schneidi_s264_v3_encoder(const schneidi::h264::EncoderConfig* config)
+{
+    return new V3Encoder(*config);
+}
+extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes)
+{
+    return new V3FirstPass(width, height, threads, bframes, keepBytes);
+}
+#elif defined(SCHNEIDI_S264_HAVE_V3)
+extern "C" schneidi::h264::EncoderAlt* schneidi_s264_v3_encoder(const schneidi::h264::EncoderConfig* config);
+extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes);
+#endif
+
+namespace schneidi::h264 {
+
+namespace {
+// Asked for every new object (cheap), so a test can switch between the two builds.
+bool useV3()
+{
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    // Everything -march=x86-64-v3 lets the compiler use (the level's list; AVX2 includes the operating system's
+    // support for the wide registers).
+    static const bool cpu = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("avx") && __builtin_cpu_supports("bmi")
+        && __builtin_cpu_supports("bmi2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("lzcnt")
+        && __builtin_cpu_supports("movbe") && __builtin_cpu_supports("f16c") && __builtin_cpu_supports("popcnt")
+        && __builtin_cpu_supports("sse4.2");
+    if (!cpu)
+        return false;
+    const char* e = std::getenv("SCHNEIDI_S264_CPU");
+    return !(e && std::strcmp(e, "generic") == 0);
+#else
+    return false;
+#endif
+}
+} // namespace
+
+const char* cpuBuild() { return useV3() ? "x86-64-v3" : "generic"; }
+
+void Encoder::takeAltState()
+{
+    const EncoderAlt::State s = alt_->state();
+    lastWasSceneCut_ = s.sceneCut;
+    lastDisplayIndex_ = s.displayIndex;
+    weightedPictures_ = s.weightedPictures;
+    lastQp_ = s.qp;
+    vbvUnderflows_ = s.vbvUnderflows;
+    frameIndex_ = s.vbvFramesSinceBp; // vbvFramesSinceBp() = frameIndex_ - vbvBpFrame_ (0 here)
+    lastType_ = s.type;
+    vbvMinFill_ = s.vbvMinFill;
+}
+
 Encoder::Encoder(const EncoderConfig& config)
     : cfg_(config)
 {
@@ -617,6 +703,14 @@ Encoder::Encoder(const EncoderConfig& config)
     // (and the pictures of the run coded now be settled: the probe's answer, a keyframe behind them)
     if (useB())
         cfg_.lookahead = std::max(cfg_.lookahead, 2 * cfg_.bframes + 4);
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    // cfg_ stays as adjusted above: delay() and reorderDelay() answer from it, the same as the other build's.
+    if (useV3()) {
+        alt_.reset(schneidi_s264_v3_encoder(&config));
+        takeAltState();
+        return;
+    }
+#endif
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
     idrCount_ = cfg_.idrPicIdBase;
@@ -628,9 +722,9 @@ Encoder::Encoder(const EncoderConfig& config)
     }
 }
 
-const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : coders_[0].get())->recY_; }
-const std::vector<uint8_t>& Encoder::reconU() const { return (last_ ? last_ : coders_[0].get())->recU_; }
-const std::vector<uint8_t>& Encoder::reconV() const { return (last_ ? last_ : coders_[0].get())->recV_; }
+const std::vector<uint8_t>& Encoder::reconY() const { return alt_ ? alt_->recon(0) : (last_ ? last_ : coders_[0].get())->recY_; }
+const std::vector<uint8_t>& Encoder::reconU() const { return alt_ ? alt_->recon(1) : (last_ ? last_ : coders_[0].get())->recU_; }
+const std::vector<uint8_t>& Encoder::reconV() const { return alt_ ? alt_->recon(2) : (last_ ? last_ : coders_[0].get())->recV_; }
 
 int levelIdcFor(const EncoderConfig& cfg)
 {
@@ -677,6 +771,8 @@ int levelIdcFor(const EncoderConfig& cfg)
 
 std::vector<uint8_t> Encoder::headers() const
 {
+    if (alt_)
+        return alt_->headers();
     std::vector<uint8_t> out;
     {
         BitWriter bw; // seq_parameter_set_rbsp (7.3.2.1.1)
@@ -1214,9 +1310,16 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
 
 FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)
     : width_(width), height_(height), threads_(std::max(1, threads)),
-      la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
-      bframes_(std::clamp(bframes, 0, 8)), keepBytes_(keepAnalysisBytes), stats_(std::make_shared<FirstPassStats>())
+      bframes_(std::clamp(bframes, 0, 8)), keepBytes_(keepAnalysisBytes)
 {
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    if (useV3()) {
+        alt_.reset(schneidi_s264_v3_first_pass(width, height, threads, bframes, keepAnalysisBytes));
+        return;
+    }
+#endif
+    la_ = std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16);
+    stats_ = std::make_shared<FirstPassStats>();
     stats_->bMax = bframes_;
     // H264_KEEPANALYSIS=0: the encoder analyses every picture again (for measurements).
     if (const char* e = devEnv("H264_KEEPANALYSIS"))
@@ -1231,6 +1334,8 @@ FirstPass::~FirstPass()
 
 void FirstPass::add(const Picture& pic, bool forceKeyframe)
 {
+    if (alt_)
+        return alt_->add(pic, forceKeyframe);
     LookaheadFrame f; // the analysis reads only the luma
     f.forceKeyframe = forceKeyframe;
     f.y.resize(size_t(width_) * height_);
@@ -1378,6 +1483,8 @@ void FirstPass::analyseBatch() const
 
 std::shared_ptr<const FirstPassStats> FirstPass::stats() const
 {
+    if (alt_)
+        return alt_->stats();
     joinWorker();
     if (!batch_.empty()) {
         job_ = std::move(batch_);
@@ -2041,6 +2148,8 @@ int Encoder::inFlightAt(int index) const
 
 Encoder::~Encoder()
 {
+    if (alt_)
+        return;
     if (bSearchThread_.joinable())
         bSearchThread_.join();
     if (pendingThread_.joinable())
@@ -2255,6 +2364,11 @@ bool Encoder::movingAt(int index) const
 
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
+    if (alt_) {
+        std::vector<uint8_t> au = alt_->encode(picture, forceKeyframe);
+        takeAltState();
+        return au;
+    }
     if (broken_)
         std::rethrow_exception(broken_);
     try {
@@ -2580,6 +2694,11 @@ std::vector<uint8_t> Encoder::codeNext()
 
 std::vector<uint8_t> Encoder::flush()
 {
+    if (alt_) {
+        std::vector<uint8_t> au = alt_->flush();
+        takeAltState();
+        return au;
+    }
     if (broken_)
         std::rethrow_exception(broken_);
     try {
@@ -8074,6 +8193,18 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         planInterLuma(mbx, mby, clp[0], qp, lambda, true, true, wholeR8, &wholeJ8);
         wholePlanned = true;
         noSplit = wholeR8.cbpLuma == 0;
+    }
+    if (cfg_.speed >= 1 && wholePlanned && !noSplit) {
+        // Fast stage: no split search unless one quarter of the macroblock holds most of the 16x16 prediction's error.
+        static const int kShare = devEnv("H264_FASTBSHARE") ? std::atoi(devEnv("H264_FASTBSHARE")) : 50; // per cent
+        int sum = 0, most = 0;
+        for (int q = 0; q < 4; ++q) {
+            const int ox = (q & 1) * 8, oy = (q >> 1) * 8;
+            const int v = satd8x8U8(&srcY_[lumaOff + size_t(oy) * padW_ + ox], padW_, clp[0] + oy * 16 + ox, 16);
+            sum += v;
+            most = std::max(most, v);
+        }
+        noSplit = most * 100 < sum * kShare;
     }
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)

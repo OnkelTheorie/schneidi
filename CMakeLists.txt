@@ -786,3 +786,48 @@ if(MINGW)
                         src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Cavlc.cpp
                  APPEND PROPERTY COMPILE_OPTIONS "-Wa,-muse-unaligned-vector-move")
 endif()
+
+# The encoder a second time, compiled for x86-64-v3 (AVX2, BMI2, ...: about 8 % fewer instructions, 4-5 % fewer cycles),
+# chosen at run time by Encoder/FirstPass where the CPU has these (H264Encoder.h: EncoderAlt); same streams. The four
+# files become one object file whose symbols are all local except the two entry points, so nothing compiled for the newer
+# CPUs (the encoder's own functions, but also the standard library's templates and inline functions these files
+# instantiate) can be picked by the linker for code that runs on every CPU. x86-64 Linux with GCC or Clang and
+# binutils' objcopy only; everywhere else, and with -DSCHNEIDI_S264_V3=OFF, the one build for every CPU is all there is.
+option(SCHNEIDI_S264_V3 "s264: second build of the encoder for x86-64-v3 CPUs, picked at run time" ON)
+set(SCHNEIDI_S264_V3_OBJECT "")
+if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
+   AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_OBJCOPY)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-march=x86-64-v3" SCHNEIDI_HAVE_MARCH_V3)
+    if(SCHNEIDI_HAVE_MARCH_V3)
+        add_library(s264_v3_objects OBJECT EXCLUDE_FROM_ALL
+            src/engine/encoder/h264/Cavlc.cpp src/engine/encoder/h264/H264Encoder.cpp
+            src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Lookahead.cpp)
+        target_include_directories(s264_v3_objects PRIVATE ${CMAKE_SOURCE_DIR}/src)
+        target_compile_definitions(s264_v3_objects PRIVATE SCHNEIDI_S264_V3_BUILD)
+        target_compile_options(s264_v3_objects PRIVATE -march=x86-64-v3)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            # Static variables of inline functions as weak symbols (objcopy cannot make GNU "unique" ones local)
+            target_compile_options(s264_v3_objects PRIVATE -fno-gnu-unique)
+        endif()
+        set_target_properties(s264_v3_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        set(SCHNEIDI_S264_V3_OBJECT ${CMAKE_BINARY_DIR}/s264_v3.o)
+        # One relocatable object without section groups (a group whose name is local would still be merged with the
+        # other build's group of the same name), then every symbol but the entry points local
+        add_custom_command(OUTPUT ${SCHNEIDI_S264_V3_OBJECT}
+            COMMAND ${CMAKE_CXX_COMPILER} -r -nostdlib -Wl,--force-group-allocation -o ${CMAKE_BINARY_DIR}/s264_v3_all.o
+                    $<TARGET_OBJECTS:s264_v3_objects>
+            COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=schneidi_s264_v3_encoder
+                    --keep-global-symbol=schneidi_s264_v3_first_pass ${CMAKE_BINARY_DIR}/s264_v3_all.o ${SCHNEIDI_S264_V3_OBJECT}
+            DEPENDS s264_v3_objects $<TARGET_OBJECTS:s264_v3_objects>
+            COMMAND_EXPAND_LISTS VERBATIM
+            COMMENT "s264: x86-64-v3 build of the encoder as one object with local symbols")
+        set_source_files_properties(${SCHNEIDI_S264_V3_OBJECT} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+        # The encoder's sources ask for the entry points only with this definition (and never in the v3 build itself)
+        set_property(SOURCE src/engine/encoder/h264/H264Encoder.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+                     $<$<NOT:$<STREQUAL:$<TARGET_PROPERTY:NAME>,s264_v3_objects>>:SCHNEIDI_S264_HAVE_V3>)
+        target_sources(h264-proto PRIVATE ${SCHNEIDI_S264_V3_OBJECT})
+        target_sources(schneidi_lib PRIVATE ${SCHNEIDI_S264_V3_OBJECT})
+        message(STATUS "s264: second build for x86-64-v3, picked at run time")
+    endif()
+endif()
