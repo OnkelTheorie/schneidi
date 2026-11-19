@@ -173,6 +173,12 @@ QString normalize(const QString& word)
     return numberWords().value(plain, plain);
 }
 
+bool isFiller(const QString& w)
+{
+    static const QStringList fillers{"aeh", "aehm", "oeh", "hm", "hmm", "uh", "uhm", "um", "umm", "erm", "eh", "ehm", "mh"};
+    return fillers.contains(w);
+}
+
 namespace {
 
 // "eeeh" -> "eh", "hmmm" -> "hm": letters said longer are the same sound
@@ -187,64 +193,61 @@ QString collapsed(const QString& w)
     return out;
 }
 
-// Hesitation sounds of the UI languages, as written (folded with normalize at first use). Only sounds, no words that
-// carry meaning in some language ("also", "halt", "like", "este", "ну", "あの" stay): a cut must not take out speech.
-// exact: the sound as it is; held: only when a letter of it is held ("eee" yes, but "e" is a word in Italian and
-// Portuguese, "y" in Spanish and Polish, "em" in Portuguese)
-struct FillerSets {
-    QStringList exact, held;
-};
-
-const FillerSets& fillerSets()
+// Hesitation sounds per UI language, as written (folded with normalize at first use). Only sounds, no words that carry
+// meaning ("also", "halt", "like", "este", "ну", "あの" stay), and no answers that mean yes ("mhm", 嗯, 어): a cut must
+// not take out speech. "um" (German, Portuguese: a word) and "eh" (Portuguese "é") count there only when held.
+const QHash<QString, QStringList>& exactSets()
 {
-    static const FillerSets sets = [] {
-        const char* exact[] = {
-            // de
-            "äh", "ähm", "öh", "öhm", "ehm", "hm", "hmm", "mh", "mhm",
-            // en
-            "uh", "uhm", "um", "umm", "erm", "uhh", "ehh",
-            // fr
-            "euh", "heu", "euhm",
-            // es, it, pt, nl, id
-            "eh", "ehmm", "ahm", "uhn", "ahn", "hum",
-            // pl
-            "yyy", "eee", "emm",
-            // tr
-            "ııı", "ıı", "eeh",
-            // ru, uk
-            "э", "ээ", "эээ", "эм", "эмм", "хм", "хмм", "мм", "ммм", "гм",
-            // hi
-            "उम्म", "उम", "हम्म", "अं",
-            // ja
-            "えー", "えっと", "えーと", "えーっと", "あー", "うーん", "んー", "うー",
-            // ko
-            "음", "으음", "어", "어어", "흠",
-            // zh
-            "嗯", "呃", "嗯嗯", "呃呃",
+    static const QHash<QString, QStringList> sets = [] {
+        const QHash<QString, QVector<const char*>> raw{
+            {"de", {"äh", "ähm", "öh", "öhm", "ehm", "hm", "hmm", "erm"}},
+            {"en", {"uh", "uhm", "um", "umm", "erm", "uhh", "hm", "hmm", "eh", "ehm"}},
+            {"fr", {"euh", "euhm", "hm", "hmm"}},
+            {"es", {"eh", "ehm", "em", "hm", "hmm"}},
+            {"it", {"eh", "ehm", "uhm", "hm", "hmm"}},
+            {"pt", {"ahn", "ehm", "hm", "hmm"}},
+            {"nl", {"eh", "ehm", "uh", "uhm", "hm", "hmm"}},
+            {"pl", {"yyy", "eee", "emm", "hm", "hmm", "eh", "ehm"}},
+            {"tr", {"ııı", "ıı", "eeh", "hm", "hmm"}},
+            {"id", {"eh", "ehm", "hm", "hmm"}},
+            {"ru", {"э", "ээ", "эээ", "эм", "эмм", "хм", "хмм", "мм", "ммм"}},
+            {"uk", {"е", "гм", "хм", "хмм", "мм", "ммм", "ем"}},
+            {"hi", {"उम्म", "उम", "हम्म", "अं"}},
+            {"ja", {"えー", "えっと", "えーと", "えーっと", "あー", "うーん", "んー", "うー"}},
+            {"ko", {"음", "으음", "흠"}},
+            {"zh", {"呃", "呃呃"}},
         };
-        const char* held[] = {"e", "eh", "em", "ehm", "ahm", "uh", "um", "uhm", "hm", "m", "mh", "y", "ı", "ae", "aeh",
-                              "aehm", "oe", "oeh", "oehm", "euh", "э", "е", "м", "эм", "хм"};
-        FillerSets s;
-        for (const char* w : exact) s.exact << normalize(QString::fromUtf8(w));
-        for (const char* w : held) s.held << normalize(QString::fromUtf8(w));
-        s.exact.removeAll(QString());
-        return s;
+        QHash<QString, QStringList> out;
+        for (auto it = raw.begin(); it != raw.end(); ++it)
+            for (const char* w : it.value()) out[it.key()] << normalize(QString::fromUtf8(w));
+        return out;
     }();
     return sets;
 }
 
+// Held sounds of any language ("eeeh", "ummm", "yyyy", "ммм"), with or without a known language
+const QStringList& heldSet()
+{
+    static const QStringList set = [] {
+        QStringList s;
+        for (const char* w : {"e", "eh", "em", "ehm", "uh", "um", "uhm", "hm", "m", "y", "ı", "ae", "aeh", "aehm", "oe",
+                              "oeh", "oehm", "euh", "э", "е", "м", "эм", "хм"})
+            s << normalize(QString::fromUtf8(w));
+        return s;
+    }();
+    return set;
+}
+
 } // namespace
 
-bool isFiller(const QString& w)
+bool isFiller(const QString& w, const QString& language)
 {
     if (w.isEmpty()) return false;
-    const FillerSets& s = fillerSets();
-    if (s.exact.contains(w)) return true;
+    if (exactSets().value(language.trimmed().toLower().left(2)).contains(w)) return true;
     const QString c = collapsed(w);
     // Held: one letter at least three times ("eee", not "ee": Russian "её" folds to "ее"), or a longer sound held at all
     if (w.size() < c.size() + (c.size() == 1 ? 2 : 1)) return false;
-    // "aehhh" folds to "aeh" (ä -> ae keeps its e): the held letters after the fold
-    return s.held.contains(c) || s.exact.contains(c);
+    return heldSet().contains(c);
 }
 
 double similarity(const QString& a, const QString& b)

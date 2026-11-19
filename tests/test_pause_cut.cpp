@@ -97,7 +97,15 @@ void testCore()
         for (int i = 0; i < 10; ++i) mid[size_t(i)] = 0.f; // digital silence is left out
         CHECK(std::abs(autoThresholdDb(mid) - (-44.0)) < 0.01);
         std::vector<float> noisy(100, float(std::pow(10.0, -40 / 20.0)));
-        CHECK(std::abs(autoThresholdDb(noisy) - (-35.0)) < 1e-6); // -32 held at -35
+        CHECK(std::abs(autoThresholdDb(noisy) - (-35.0)) < 1e-6); // -32 held at -35 (its hiss is quiet under it)
+        // Hissing above the cap: quiet in under 2 % of its frames at -35 -> floor + 4 dB
+        const Threshold hiss = autoThreshold(std::vector<float>(100, float(std::pow(10.0, -33 / 20.0))));
+        CHECK(hiss.raised);
+        CHECK(std::abs(hiss.db - (-29.0)) < 0.01);
+        CHECK(std::abs(hiss.floorDb - (-33.0)) < 0.01);
+        CHECK(hiss.quietShare > 0.99);
+        // ... but not a microphone that is just loud (a floor at -45 stays capped)
+        CHECK(!autoThreshold(std::vector<float>(100, float(std::pow(10.0, -45 / 20.0)))).raised);
         CHECK(std::abs(autoThresholdDb(std::vector<float>(10, 0.f)) - kMaxThresholdDb) < 1e-6);
     }
     // Only where both are quiet; runs shorter than minPause stay; pad at both ends
@@ -115,17 +123,28 @@ void testCore()
             CHECK(r[0].kind == Kind::Pause);
         }
         CHECK(pauses({a, b}, {0, 1}, 21, 0).isEmpty());
+        // Frames without a clip on any chosen track (B-roll between two parts) are never a pause
+        std::vector<bool> present(40, true);
+        for (int i = 25; i < 30; ++i) present[size_t(i)] = false;
+        const QVector<Range> split = pauses({a, b}, {0, 1}, 5, 2, &present);
+        if (CHECK_EQ(split.size(), 2)) {
+            CHECK_EQ(split[0].from, 22);
+            CHECK_EQ(split[0].to, 23);
+            CHECK_EQ(split[1].from, 32);
+            CHECK_EQ(split[1].to, 38);
+        }
         // a alone has its quiet 10..18 too
         CHECK_EQ(pauses({a}, {0}, 5, 0).size(), 2);
         const std::vector<bool> q = quietFrames({0.001f, 0.5f}, -40, 4);
         CHECK(q == std::vector<bool>({true, false, true, true}));
     }
     // Fillers: cut while the other track is quiet; the filler's own bleed on the other mic does not block; the other
-    // speaker does
+    // speaker does; the edges snap onto the filler track's own quiet (none within 3 frames = it stays)
     {
         QVector<TranscriptCut::Word> words;
-        words << TranscriptCut::Word{10, 20, 18, "ähm", 1, 0} << TranscriptCut::Word{30, 40, 38, "Hallo", 1, 0}
-              << TranscriptCut::Word{50, 60, 58, "Äh,", 2, 0} << TranscriptCut::Word{70, 80, 78, "uh", 3, 1};
+        words << TranscriptCut::Word{10, 20, 18, "ähm", 1, 0, "de"} << TranscriptCut::Word{30, 40, 38, "Hallo", 1, 0, "de"}
+              << TranscriptCut::Word{50, 60, 58, "Äh,", 2, 0, "de"} << TranscriptCut::Word{70, 80, 78, "uh", 3, 1, "en"}
+              << TranscriptCut::Word{90, 94, 94, "ähm", 4, 0, "de"};
         std::vector<float> own(100, 0.0005f), other(100, 0.0005f);
         for (int i = 10; i < 18; ++i) {
             own[size_t(i)] = 0.5f;
@@ -136,21 +155,33 @@ void testCore()
             other[size_t(i)] = 0.4f; // the other one talks too
         }
         for (int i = 70; i < 78; ++i) other[size_t(i)] = 0.4f; // track 1's own filler
+        for (int i = 84; i < 100; ++i) own[size_t(i)] = 0.4f;  // "ähm" in the middle of a sound: no quiet edge
         const QVector<Range> f = fillers(words, {own, other}, {-50, -50}, {0, 1});
         if (CHECK_EQ(f.size(), 2)) {
-            CHECK_EQ(f[0].from, 10);
+            CHECK_EQ(f[0].from, 9); // the word starts loud: from the quiet frame before it
             CHECK_EQ(f[0].to, 18);
             CHECK_EQ(f[0].text, QString("ähm"));
             CHECK(f[0].kind == Kind::Filler);
-            CHECK_EQ(f[1].from, 70);
+            CHECK_EQ(f[1].from, 69);
             CHECK(f[1].tracks == QVector<int>({1}));
         }
         // Not measured: every filler counts
-        CHECK_EQ(fillers(words, {}, {}, {0, 1}).size(), 3);
-        // Together with the pauses: a filler inside a pause is left out, by time
+        CHECK_EQ(fillers(words, {}, {}, {0, 1}).size(), 4);
+        // The transcript's language decides: "um" is a word in German
+        QVector<TranscriptCut::Word> um{TranscriptCut::Word{10, 20, 18, "um", 1, 0, "de"}};
+        CHECK(fillers(um, {}, {}, {0}).isEmpty());
+        um[0].language = "en";
+        CHECK_EQ(fillers(um, {}, {}, {0}).size(), 1);
+        // Together with the pauses as their union: an overlapping filler joins the pause, nothing counts twice
         const QVector<Range> c = combined({Range{5, 15, Kind::Pause, {0, 1}, {}}}, f);
-        CHECK_EQ(c.size(), 2);
-        CHECK_EQ(c.last().from, 70);
+        if (CHECK_EQ(c.size(), 2)) {
+            CHECK_EQ(c[0].from, 5);
+            CHECK_EQ(c[0].to, 18);
+            CHECK(c[0].kind == Kind::Pause);
+            CHECK_EQ(c.last().from, 69);
+        }
+        const QVector<Range> two = combined({}, {Range{1, 4, Kind::Filler, {0}, "äh"}, Range{3, 6, Kind::Filler, {1}, "uh"}});
+        if (CHECK_EQ(two.size(), 1)) CHECK(two[0].tracks == QVector<int>({0, 1}));
     }
 }
 
@@ -158,33 +189,79 @@ void testIsFiller()
 {
     using ScriptAlign::isFiller;
     using ScriptAlign::normalize;
-    for (const char* w : {"äh", "Ähm", "ähhhm", "Hmmm", "uh", "um,", "Umm", "erm", "euh", "Euh...", "heu", "eh", "ehm",
-                          "eee", "yyy", "Yyyy", "ııı", "э-э", "Эм", "ммм", "хм", "гм", "еее", "उम्म", "えー", "えっと",
-                          "うーん", "음", "어", "嗯", "呃", "ahn", "hum", "emmm"})
-        if (!CHECK(isFiller(normalize(QString::fromUtf8(w))))) std::printf("       not a filler: %s\n", w);
-    // Words with meaning stay: "e" (and), "y" (and), "em" (in, pt), "ее" (её folded), "also", "like", "ну", "あの"
-    for (const char* w : {"e", "y", "em", "ee", "её", "also", "halt", "like", "so", "este", "ну", "あの", "Kamera",
-                          "a", "ah", "oh", "o", "er", "hmmm-ja", "mm", "uhr", "eben", "hum-drum"})
-        if (!CHECK(!isFiller(normalize(QString::fromUtf8(w))))) std::printf("       filler but a word: %s\n", w);
-    // What `transcribe verbatim` gives whisper as its starting text is what isFiller knows (at least two per language)
+    struct Case {
+        const char* word;
+        const char* lang;
+    };
+    const Case yes[] = {{"äh", "de"},   {"Ähm", "de"},  {"ähhhm", ""},  {"Hmmm", "de"}, {"uh", "en"},   {"um,", "en"},
+                        {"Umm", "de"},  {"erm", "en"},  {"euh", "fr"},  {"Euh...", "fr"}, {"eh", "es"}, {"ehm", "it"},
+                        {"eee", "pl"},  {"yyy", "pl"},  {"Yyyy", "es"}, {"ııı", "tr"},  {"э-э", "ru"},  {"Эм", "ru"},
+                        {"ммм", "uk"},  {"хм", "ru"},   {"гм", "uk"},   {"еее", "ru"},  {"उम्म", "hi"}, {"えー", "ja"},
+                        {"えっと", "ja"}, {"うーん", "ja"}, {"음", "ko"},    {"呃", "zh"},   {"ahn", "pt"},  {"emmm", "pt"},
+                        {"ehh", "pt"},  {"ummm", ""},   {"eeeh", "it"}};
+    for (const Case& c : yes)
+        if (!CHECK(isFiller(normalize(QString::fromUtf8(c.word)), c.lang)))
+            std::printf("       not a filler: %s (%s)\n", c.word, c.lang);
+    // Words with meaning stay: "um" (German: around), "eh"/"em" (Portuguese), "e"/"y" (and), "ее" (её folded),
+    // answers that mean yes (mhm, 嗯, 어), and without a language only held sounds ("äh" there could be anything)
+    const Case no[] = {{"um", "de"},  {"eh", "pt"},   {"em", "pt"},   {"e", "it"},    {"y", "es"},     {"ee", "pt"},
+                       {"её", "ru"},  {"mhm", "de"},  {"Mhm", "en"},  {"嗯", "zh"},   {"어", "ko"},    {"heu", "fr"},
+                       {"hum", "pt"}, {"äh", ""},     {"um", ""},     {"also", "de"}, {"like", "en"},  {"ну", "ru"},
+                       {"あの", "ja"}, {"Kamera", "de"}, {"a", "pt"},   {"ah", "de"},   {"oh", "en"},    {"er", "de"},
+                       {"mm", "en"},  {"uhr", "de"},  {"eben", "de"}, {"hmmm-ja", "de"}};
+    for (const Case& c : no)
+        if (!CHECK(!isFiller(normalize(QString::fromUtf8(c.word)), c.lang)))
+            std::printf("       filler but a word: %s (%s)\n", c.word, c.lang);
+    // rough_cut's own list stays as it was
+    CHECK(isFiller(normalize("Ähm")));
+    CHECK(isFiller(normalize("mh")));
+    CHECK(!isFiller(normalize("euh")));
+    // What `transcribe verbatim` gives whisper as its starting text is what isFiller knows (at least two per language),
+    // also the plain-ASCII one for a code page without the language's letters
     static const QRegularExpression split(QString::fromUtf8("[\\s,.、，。।]+"));
-    for (const char* lang : {"de", "en", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "tr", "id", "ja", "ko", "zh", "hi", "auto"}) {
+    const auto fillersIn = [](const QString& prompt, const QString& lang) {
         int n = 0;
-        for (const QString& w : Transcriber::verbatimPrompt(lang).split(split, Qt::SkipEmptyParts))
-            if (isFiller(normalize(w))) ++n;
-        if (!CHECK(n >= 2)) std::printf("       %s: %d fillers in the prompt\n", lang, n);
+        for (const QString& w : prompt.split(split, Qt::SkipEmptyParts))
+            if (isFiller(normalize(w), lang == "auto" ? QString() : lang)) ++n;
+        return n;
+    };
+    const auto ascii = [](const QString& t) {
+        return std::all_of(t.begin(), t.end(), [](QChar c) { return c.unicode() < 128; });
+    };
+    for (const char* lang : {"de", "en", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "tr", "id", "ja", "ko", "zh", "hi", "auto"}) {
+        const QString prompt = Transcriber::verbatimPrompt(lang);
+        if (!CHECK(fillersIn(prompt, lang) >= 2)) std::printf("       %s: too few fillers in the prompt\n", lang);
+        CHECK(Transcriber::verbatimPromptFor(lang, [](const QString&) { return true; }) == prompt);
+        // A code page that holds only ASCII: Latin scripts get plain sounds, the others no prompt and a note
+        QString note;
+        const QString plain = Transcriber::verbatimPromptFor(lang, ascii, &note);
+        const bool latin = !QStringList{"ru", "uk", "ja", "ko", "zh", "hi"}.contains(lang);
+        if (latin) {
+            CHECK(!plain.isEmpty() && ascii(plain));
+            if (!CHECK(fillersIn(plain, lang) >= 2)) std::printf("       %s: too few fillers in the ASCII prompt\n", lang);
+            CHECK(note.isEmpty());
+        } else {
+            CHECK(plain.isEmpty());
+            CHECK(!note.isEmpty());
+        }
     }
+    // Never a lossy prompt: a code page that holds nothing gives none
+    QString note;
+    CHECK(Transcriber::verbatimPromptFor("de", [](const QString&) { return false; }, &note).isEmpty());
+    CHECK(!note.isEmpty());
 }
 
-// Microphone A (clean) and B (noisy hiss at about -40 dBFS): A talks 0.2-2.9, 5.0-6.2 and 9.0-11.8 s, B answers
-// 2.9-5.0 s; both are quiet from about 6.2 to 9.0 s
+// Microphone A (clean) and B (noisy hiss at about -40 dBFS): A talks 0.2-2.9, 5.0-6.2, 9.0-9.8 s, says "ähm" at
+// 10.0-10.35 s and talks again 10.7-11.8 s; B answers 2.9-5.0 s; both are quiet from about 6.2 to 9.0 s
 void writeMics(const QString& a, const QString& b)
 {
     Synth::Builder ma(kRate, 12.0, 11), mb(kRate, 12.0, 12);
     ma.floor();
     Synth::speech(ma, 0.2, 2.7);
     Synth::speech(ma, 5.0, 1.6);
-    Synth::speech(ma, 9.0, 2.8, 120);
+    Synth::speech(ma, 9.0, 1.0, 120);
+    ma.voice(10.0, 0.35, 120, 110, Synth::vowel(1), 0.3); // "ähm"
+    Synth::speech(ma, 10.7, 1.2, 120);
     mb.floor(0.01);
     Synth::speech(mb, 2.9, 2.5, 180);
     Synth::writeWav(a, ma.s, kRate);
@@ -232,6 +309,8 @@ void testOp(const QString& dir)
                                            {"ops", QJsonArray{op({{"op", "cut_pauses"}, {"tracks", "A1,A2"}, {"threshold", -50}})}}});
         CHECK_EQ(pauseNote(r)["cut"].toInt(), 0);
         CHECK(!pauseNote(r).contains("cached")); // measured: a fresh cache folder
+        // It says which track is never quiet (not "a shorter min_pause")
+        if (!CHECK(pauseNote(r)["note"].toString().contains("A2"))) std::printf("       %s\n", qPrintable(pauseNote(r)["note"].toString()));
     }
     CHECK_EQ(AnalysisCache::hits(), hits0);
 
@@ -262,7 +341,7 @@ void testOp(const QString& dir)
             CHECK(from >= frame(5.9) && to <= frame(9.0)); // pad 0.15 s before A starts again
         }
         if (!CHECK(to <= frame(3.0) || from >= frame(4.8))) std::printf("       cut %d..%d while B talks\n", from, to);
-        if (!CHECK(to <= frame(9.0) || from >= frame(11.2))) std::printf("       cut %d..%d while A talks\n", from, to);
+        if (!CHECK(to <= frame(9.0) || from >= frame(11.4))) std::printf("       cut %d..%d while A talks\n", from, to);
     }
     CHECK(big);
     CHECK_EQ(AnalysisCache::hits() - hits0, 2);
@@ -270,10 +349,20 @@ void testOp(const QString& dir)
 
     const auto after = loaded();
     const Timeline& tl = after->timeline();
-    // Ripple over all tracks, also the music on A3 that was not listened to
+    // Ripple over all tracks, also the music on A3 that was not listened to (said so); short fades at the new edges
     CHECK_EQ(TimelineOps::endFrame(tl), end0 - removed);
     for (int t = 0; t < 3; ++t)
         if (!CHECK_EQ(trackLength(tl.audio[t]), end0 - removed)) std::printf("       A%d\n", t + 1);
+    CHECK(note["also_cut"].toString().contains("A3"));
+    {
+        const int cut = ranges[0]["from"].toInt(); // the first cut point: nothing removed before it
+        int faded = 0;
+        for (const Clip& c : tl.audio[2].clips) {
+            if (c.end() == cut && c.fadeOut == 1) ++faded;
+            if (c.start == cut && c.fadeIn == 1) ++faded;
+        }
+        CHECK_EQ(faded, 2);
+    }
     // The marker in the pause lands on the cut, the one after it moves up; the subtitle follows
     int bigFrom = 0, before75 = 0, before105 = 0, before92 = 0;
     for (const QJsonValue& v : ranges) {
@@ -311,12 +400,18 @@ void testOp(const QString& dir)
         CHECK(found);
     }
 
-    // A locked track with a clip in a pause: refused, nothing changes
-    run("edit", {{"project", g_path}, {"ops", QJsonArray{op({{"op", "track"}, {"track", "A3"}, {"lock", true}})}}});
-    const QByteArray locked = ProjectFile::toJson(loaded()->data(), g_path);
-    CHECK(errorOf({op({{"op", "cut_pauses"}, {"tracks", "A1,A2"}})}).startsWith("TRACK_LOCKED"));
-    CHECK(ProjectFile::toJson(loaded()->data(), g_path) == locked);
-    run("edit", {{"project", g_path}, {"ops", QJsonArray{op({{"op", "track"}, {"track", "A3"}, {"lock", false}})}}});
+    // A locked track (audio, subtitles) with content after the first cut: refused, nothing changes
+    for (const char* track : {"A3", "ST1"}) {
+        run("edit", {{"project", g_path}, {"ops", QJsonArray{op({{"op", "track"}, {"track", track}, {"lock", true}})}}});
+        const QByteArray locked = ProjectFile::toJson(loaded()->data(), g_path);
+        const QString e = errorOf({op({{"op", "cut_pauses"}, {"tracks", "A1,A2"}})});
+        if (!CHECK(e.startsWith("TRACK_LOCKED") && e.contains(track))) std::printf("       %s\n", qPrintable(e));
+        CHECK(ProjectFile::toJson(loaded()->data(), g_path) == locked);
+        run("edit", {{"project", g_path}, {"ops", QJsonArray{op({{"op", "track"}, {"track", track}, {"lock", false}})}}});
+    }
+    // Measured for another timeline state (live: the app checks schneidi-cli's measurement): refused
+    CHECK(errorOf({op({{"op", "cut_pauses"}, {"_pauses", QJsonObject{{"fingerprint", "x"}, {"ranges", QJsonArray{}}}}})})
+              .startsWith("PAUSES_STALE"));
 
     // ranges: exactly those (what `direct apply` sends after the user left some out); nothing is measured
     {
@@ -328,6 +423,22 @@ void testOp(const QString& dir)
         CHECK_EQ(TimelineOps::endFrame(loaded()->timeline()), end0 - (to - from));
         CHECK(errorOf({op({{"op", "cut_pauses"}, {"ranges", QJsonArray{QJsonArray{10, 5}}}})}).startsWith("BAD_ARGUMENT"));
     }
+
+    // A gap between two parts on the listened track (B-roll or a title there) is no pause; the pause inside is
+    const QString parts = dir + "/parts.schneidi";
+    run("new", {{"project", parts}, {"width", 320}, {"height", 180}, {"fps", 25}});
+    run("edit", {{"project", parts},
+                 {"ops", QJsonArray{op({{"op", "place"}, {"media", a}, {"at", 0}, {"in", 0}, {"out", "2.9s"}, {"track", "A1"}}),
+                                    op({{"op", "place"}, {"media", a}, {"at", "5s"}, {"in", "5s"}, {"out", "12s"}, {"track", "A1"}})}}});
+    const QJsonObject pr = run("edit", {{"project", parts}, {"dry_run", true},
+                                        {"ops", QJsonArray{op({{"op", "cut_pauses"}, {"tracks", "A1"}})}}});
+    bool inner = false;
+    for (const QJsonValue& v : pauseNote(pr)["ranges"].toArray()) {
+        const int from = v["from"].toInt(), to = v["to"].toInt();
+        if (!CHECK(to <= frame(2.9) || from >= frame(5.0))) std::printf("       cut %d..%d in the gap\n", from, to);
+        if (from < frame(8.0) && to > frame(7.0)) inner = true;
+    }
+    CHECK(inner);
 }
 
 // Fillers from fake word times on mic A: "ähm" at 10.0 s (B quiet) goes, "äh" at 3.5 s (B talks over it) stays
@@ -358,7 +469,10 @@ void testFillers(const QString& dir)
         if (v["kind"].toString() != "filler") continue;
         ++fillers;
         CHECK_EQ(v["text"].toString(), QString("Ähm,"));
-        CHECK_EQ(v["from"].toInt(), frame(10.0));
+        // Its edges on A's own quiet next to the word's times
+        if (!CHECK(v["from"].toInt() >= frame(10.0) - 3 && v["from"].toInt() <= frame(10.0)))
+            std::printf("       from %d\n", v["from"].toInt());
+        CHECK(v["to"].toInt() >= frame(10.35) && v["to"].toInt() <= frame(10.4) + 3);
         CHECK(v["tracks"].toArray() == QJsonArray({"A1"}));
     }
     if (!CHECK_EQ(fillers, 1)) std::printf("       %s\n", QJsonDocument(r).toJson().constData());
@@ -463,6 +577,10 @@ void testLive(const QString& dir)
     CHECK(state(onFile) == state(fake.project));
     CHECK(state(fake.project) != before);
     fake.project.undoStack()->undo();
+    CHECK(state(fake.project) == before);
+    // Not the first op: schneidi-cli does not measure it, and the app never does - a clear error, nothing changes
+    const QJsonObject late = cli({"edit", fake.path, "--ops", R"([{"op":"marker","at":"1s"},{"op":"cut_pauses","tracks":"A1,A2"}])"});
+    CHECK_EQ(late["error"]["code"].toString(), QString("LIVE_NOT_PREPARED"));
     CHECK(state(fake.project) == before);
 }
 

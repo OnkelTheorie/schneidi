@@ -17,6 +17,7 @@ struct Word {
     QString text;
     int clipId = 0;
     int track = 0; // audio track
+    QString language; // of the transcript it comes from ("de"; empty = unknown)
     bool operator==(const Word&) const = default;
 };
 
