@@ -23,6 +23,9 @@ struct Before {
     QRectF block;           // what it covers in the old frame (pixels, y down)
     bool fullFrame = false; // a shape covering the whole old frame (a colour matte)
     bool picture = false;   // a media overlay (Reframe::isOverlay: a logo, a webcam picture)
+    bool safe = false;      // inside the old frame's title-safe area (else placed at an edge on purpose)
+    bool inside = false;    // inside the old frame
+    QSizeF shapeSize;       // a shape's own size (before zoom and stroke)
 };
 
 // The overlays of `tl` in frame `from`: title clips (text, counter, shape) and still-image overlays (a logo) on tracks
@@ -31,12 +34,16 @@ struct Before {
 QVector<Before> collect(const Timeline& tl, QSizeF from, const std::function<bool(const Clip&)>& isStill,
                         QVector<int>* animated = nullptr);
 
-// Where overlays may sit in a frame: inside title safe (90 %), in a vertical frame also out of the apps' zones
-QRectF safeRect(QSizeF frame, const ExportCheck::Options& o = {});
+// Where overlays may sit in a frame: a portrait frame (9:16, 4:5) inside title safe (90 %), a 9:16 one also out of
+// the apps' zones (top, bottom; the right strip only from safeRightFrom down, as `check` has it: *rightFromY and
+// *rightX, else both -1); other frames inside action safe (93 %)
+QRectF safeRect(QSizeF frame, const ExportCheck::Options& o = {}, double* rightFromY = nullptr, double* rightX = nullptr);
 
-// After the frame changed (scaleTimeline ran on `tl`): full-frame shapes fill the new frame, picture overlays get
-// the size the short side gives (like shapes and titles), and overlays that overlap in time and place (a logo on its
-// plate) are moved together, as little as needed, into safeRect. Returns the ids it changed.
+// After the frame changed (scaleTimeline ran on `tl`): full-frame shapes fill the new frame (with the margin of
+// their own size), picture overlays get the size the short side gives (like shapes and titles), and overlays that
+// overlap in time and place (a logo on its plate) are moved together, as little as needed: into safeRect when all of
+// them were inside the old title safe, else only back into the frame when they were inside the old one (an overlay
+// at an edge or running off on purpose stays so). Returns the ids it changed.
 QVector<int> apply(Timeline& tl, const QVector<Before>& before, QSizeF from, QSizeF to, const ExportCheck::Options& o = {});
 
 } // namespace OverlayFit

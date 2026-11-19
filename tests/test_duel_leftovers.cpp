@@ -8,12 +8,16 @@
 #include "check.h"
 
 #include "cli/Commands.h"
+#include "core/OverlayFit.h"
+#include "core/ProjectFormat.h"
 
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
+
+#include "core/TimelineOps.h"
 
 namespace {
 
@@ -196,8 +200,8 @@ void testNewFormat(const QString& dir)
     // A white matte at the end, a plate in the bottom right corner with a 2:1 logo on it (zoom 0.2: 384 x 192), a text
     QJsonObject r = edit(project, {QJsonObject{{"op", "append"}, {"media", video}},
                                    QJsonObject{{"op", "solid"}, {"color", "#ffffff"}, {"at", "3s"}, {"length", "1s"}, {"track", "V2"}},
-                                   QJsonObject{{"op", "shape"}, {"kind", "rect"}, {"width", 460}, {"height", 260}, {"x", 650},
-                                               {"y", -330}, {"fill", "#ffffff"}, {"at", 0}, {"duration", "3s"}, {"track", "V3"}},
+                                   QJsonObject{{"op", "shape"}, {"kind", "rect"}, {"width", 460}, {"height", 260}, {"x", 600},
+                                               {"y", -300}, {"fill", "#ffffff"}, {"at", 0}, {"duration", "3s"}, {"track", "V3"}},
                                    QJsonObject{{"op", "place"}, {"media", logo}, {"at", 0}, {"out", "3s"}, {"track", "V4"}},
                                    QJsonObject{{"op", "title"}, {"text", "Hello"}, {"at", 0}, {"duration", "3s"}, {"track", "V5"}}});
     if (!CHECK(!r.contains("failed"))) return;
@@ -208,7 +212,7 @@ void testNewFormat(const QString& dir)
         return QJsonObject{};
     };
     const int logoId = clipOn("Timeline 1", "V4")["id"].toInt();
-    edit(project, {QJsonObject{{"op", "transform"}, {"clips", QJsonArray{logoId}}, {"zoom", 0.2}, {"x", 650}, {"y", -330}}});
+    edit(project, {QJsonObject{{"op", "transform"}, {"clips", QJsonArray{logoId}}, {"zoom", 0.2}, {"x", 600}, {"y", -300}}});
     r = edit(project, {QJsonObject{{"op", "new_timeline"}, {"from", "Timeline 1"}, {"aspect", "9:16"}, {"reframe", "auto"},
                                    {"name", "Short"}}});
     if (!CHECK(!r.contains("failed"))) return;
@@ -229,6 +233,99 @@ void testNewFormat(const QString& dir)
     CHECK(clipOn("Short", "V5").contains("id"));
 }
 
+// --- OverlayFit by itself: crop, safe areas per target, edges on purpose, a stroked frame border
+Clip shapeClip(int id, double w, double h, double x, double y)
+{
+    Clip c;
+    c.id = id;
+    c.kind = ClipKind::Title;
+    c.title.kind = TitleKind::Shape;
+    c.title.shape.kind = ShapeKind::Rect;
+    c.title.shape.width = w;
+    c.title.shape.height = h;
+    c.title.posX = x;
+    c.title.posY = y;
+    c.out = 49;
+    return c;
+}
+
+void testOverlayFitUnit()
+{
+    const QSizeF hd(1920, 1080), vert(1080, 1920);
+    // A cropped picture overlay (a 2:1 image at zoom 1, cropped to its left quarter): its block is what is left, not
+    // the whole fitted picture (that would group everything and centre it)
+    {
+        Timeline tl;
+        TimelineOps::ensureTracks(tl, TrackKind::Video, 2);
+        Clip pip;
+        pip.id = 1;
+        pip.kind = ClipKind::Media;
+        pip.mediaPath = "/x/logo.png";
+        pip.pictureAspect = 2.0; // fitted: 1920 x 960
+        pip.out = 49;
+        pip.transform.cropRight = 1440; // 480 px wide left
+        pip.transform.cropBottom = 480; // 480 px high left
+        tl.video[1].clips << pip;
+        const QVector<OverlayFit::Before> b = OverlayFit::collect(tl, hd, [](const Clip&) { return true; });
+        if (CHECK_EQ(b.size(), qsizetype(1)))
+            if (!CHECK(std::abs(b[0].block.width() - 480) < 1 && std::abs(b[0].block.height() - 480) < 1 && !b[0].fullFrame))
+                std::printf("       block %.0f x %.0f\n", b[0].block.width(), b[0].block.height());
+    }
+    // Safe rect: 16:9 = action safe; 9:16 = title safe without the top/bottom zones, the right strip only lower down
+    {
+        const QRectF a = OverlayFit::safeRect(hd);
+        CHECK(std::abs(a.width() - 1920 * 0.93) < 1 && std::abs(a.height() - 1080 * 0.93) < 1);
+        double fromY = -1, rightX = -1;
+        const QRectF v = OverlayFit::safeRect(vert, {}, &fromY, &rightX);
+        CHECK(std::abs(v.right() - 1080 * 0.95) < 1 && std::abs(v.bottom() - 1920 * 0.8) < 1);
+        CHECK(fromY > 600 && rightX < v.right());
+        const QRectF p = OverlayFit::safeRect(QSizeF(1080, 1350), {}, &fromY, &rightX); // 4:5: title safe, no app zones
+        CHECK(std::abs(p.bottom() - 1350 * 0.95) < 1 && fromY < 0);
+    }
+    const auto fit = [&](Timeline tl, QSizeF from, QSizeF to) {
+        const QVector<OverlayFit::Before> b = OverlayFit::collect(tl, from, {});
+        scaleTimeline(tl, from.toSize(), to.toSize());
+        OverlayFit::apply(tl, b, from, to);
+        return tl;
+    };
+    // A plate in the top right of a 16:9 frame (inside title safe) stays at the right in 9:16: the buttons' strip
+    // starts lower down
+    {
+        Timeline tl;
+        TimelineOps::ensureTracks(tl, TrackKind::Video, 2);
+        tl.video[1].clips << shapeClip(1, 300, 100, 700, 400);
+        const Timeline out = fit(tl, hd, vert);
+        const Clip& c = out.video[1].clips[0];
+        const double right = 540 + c.title.posX + 150, top = 960 - c.title.posY - 50;
+        if (!CHECK(right > 1080 * 0.9 && right <= 1080 * 0.95 + 1 && top >= 1920 * 0.08 - 1))
+            std::printf("       right %.0f top %.0f\n", right, top);
+    }
+    // A bar along the bottom edge on purpose (outside title safe): it is not pushed up out of the bottom zone
+    {
+        Timeline tl;
+        TimelineOps::ensureTracks(tl, TrackKind::Video, 2);
+        tl.video[1].clips << shapeClip(1, 1920, 40, 0, -520); // y 1020..1060 of 1080 (inside the frame)
+        tl.video[1].clips[0].title.shape.width = 1000;
+        const Timeline out = fit(tl, hd, vert);
+        const double bottom = 960 - out.video[1].clips[0].title.posY + 20;
+        if (!CHECK(bottom > 1920 * 0.9)) std::printf("       bottom %.0f\n", bottom);
+    }
+    // A frame border (1920 x 1080, no fill, a 20 px stroke): in 9:16 it is 1080 x 1920, its stroke inside the frame
+    {
+        Timeline tl;
+        TimelineOps::ensureTracks(tl, TrackKind::Video, 2);
+        Clip border = shapeClip(1, 1920, 1080, 0, 0);
+        border.title.shape.fill = ShapeFill::None;
+        border.title.outlineOn = true;
+        border.title.outlineWidth = 20;
+        tl.video[1].clips << border;
+        const Timeline out = fit(tl, hd, vert);
+        const ShapeStyle& sh = out.video[1].clips[0].title.shape;
+        if (!CHECK(std::abs(sh.width - 1080) < 0.5 && std::abs(sh.height - 1920) < 0.5))
+            std::printf("       border %.1f x %.1f\n", sh.width, sh.height);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -237,6 +334,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("duel_leftovers");
     QTemporaryDir dir;
+    testOverlayFitUnit();
     if (Check::haveFfmpeg()) {
         testBoost(dir.path());
         testSolid(dir.path());
