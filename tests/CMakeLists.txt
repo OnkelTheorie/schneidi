@@ -593,3 +593,7 @@ target_link_libraries(test_shapes PRIVATE schneidi_cli_lib)
 schneidi_test(test_idle_render) # the app at rest renders nothing: a blur shape selected in the Inspector, after an edit no repaint loop (frames, CPU)
 schneidi_test(test_drawing) # drawings (0.22): strokes at known pixels, reveal timing, file, smoothing, painting (undo per stroke, eraser, box), tracker follow, CLI op draw, check, Inspector
 target_link_libraries(test_drawing PRIVATE schneidi_cli_lib)
+schneidi_test(test_pause_cut) # 0.25: cut_pauses (common quiet of every track, own threshold per track, pad, ripple, markers move, TRACK_LOCKED, ranges, fillers), isFiller in the UI languages
+target_link_libraries(test_pause_cut PRIVATE schneidi_cli_lib)
+schneidi_test(test_slot_pick) # 0.25: core/SlotPick (length, sharpness, label/hint match, no shot twice, fallback in order) and templates fill auto:true
+target_link_libraries(test_slot_pick PRIVATE schneidi_cli_lib)
