@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QThread>
@@ -265,6 +266,8 @@ void Transcriber::runWhisper()
     // Threshold 0.35 instead of 0.5: keeps quiet or laughed words (measured: "Diese Scheiß-Pferd" instead of "Das")
     // Music: voice detection hears no speech in a song (nothing found in a whole track, the shouted title and the
     // singing without it); without the previous text as context whisper does not loop on repeated lines
+    // Verbatim: a starting text full of hesitation sounds, so whisper keeps writing them (it leaves them out otherwise)
+    if (m_request.verbatim) args << "--prompt" << verbatimPrompt(m_request.language);
     if (m_request.music) args << "-mc" << "0";
     else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
         args << "--vad" << "-vm" << narrowSafePath(vad) << "-vt" << "0.35";
@@ -280,6 +283,31 @@ void Transcriber::runDetection()
     m_process.setWorkingDirectory(m_tmp->path());
     m_process.start(Extensions::whisperProgram(), {"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t",
                                                     QString::number(threads), "-l", "auto", "-dl"});
+}
+
+QString Transcriber::verbatimPrompt(const QString& language)
+{
+    // Sounds whisper should write as it hears them, in a short natural line (core/ScriptAlign::isFiller knows them)
+    static const QHash<QString, QString> prompts{
+        {"de", QStringLiteral("Ähm, also, äh, ich hab, ähm, gedacht, hm, ja.")},
+        {"en", QStringLiteral("Um, so, uh, I was, um, thinking, hmm, yeah.")},
+        {"fr", QStringLiteral("Euh, alors, euh, je pense, hum, que oui.")},
+        {"es", QStringLiteral("Eh, bueno, mmm, yo creo, eh, que sí.")},
+        {"it", QStringLiteral("Ehm, allora, eh, io penso, ehm, di sì.")},
+        {"pt", QStringLiteral("Ahn, então, hum, eu acho, ahn, que sim.")},
+        {"nl", QStringLiteral("Eh, nou, ehm, ik denk, uh, van wel.")},
+        {"pl", QStringLiteral("Yyy, no, eee, myślę, yyy, że tak.")},
+        {"ru", QStringLiteral("Э-э, ну, эм, я думаю, ммм, что да.")},
+        {"uk", QStringLiteral("Еее, ну, гм, я думаю, ммм, що так.")},
+        {"tr", QStringLiteral("Eee, şey, ııı, bence, hmm, evet.")},
+        {"id", QStringLiteral("Eh, jadi, ehm, saya pikir, hmm, iya.")},
+        {"ja", QStringLiteral("えー、えっと、そうですね、うーん、はい。")},
+        {"ko", QStringLiteral("어, 음, 그러니까, 음, 네.")},
+        {"zh", QStringLiteral("嗯，那个，呃，我觉得，嗯，是的。")},
+        {"hi", QStringLiteral("उम्म, तो, मुझे लगता है, हम्म, हाँ।")},
+    };
+    const QString lang = language.trimmed().toLower().left(2);
+    return prompts.value(lang, QStringLiteral("Um, uh, hmm, ähm, äh, euh, eh."));
 }
 
 // Whisper's own progress or the estimate from the time, whichever is further; never backwards

@@ -673,7 +673,8 @@ bool Editor::closeGap(TrackRef on, int from, int to, QString* why)
     return true;
 }
 
-void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, const QString& text)
+void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, const QString& text,
+                          TimelineOps::MarkerCut markerCut)
 {
     const QVector<QPair<int, int>> ranges = TranscriptCut::mergeRanges(input);
     if (ranges.isEmpty()) return;
@@ -691,7 +692,7 @@ void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, co
                     TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); }, tl.frameRate);
                 }
             TimelineOps::resolvePendingLinks(tl, [p] { return p->newLinkId(); });
-            if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {});
+            if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {}, nullptr, markerCut);
         }
     });
     m_selection->clear();

@@ -33,6 +33,9 @@ struct TranscribeRequest {
     // With a chosen language: afterwards let whisper detect the language too (one more short pass over the first
     // 30 s), so a wrong choice can be told (Transcriber::detectedLanguage)
     bool checkLanguage = false;
+    // Write the hesitation sounds too (äh, um, euh …): whisper leaves them out unless its starting text (the prompt)
+    // has them (verbatimPrompt). For cutting filler words.
+    bool verbatim = false;
 };
 
 class Transcriber : public QObject {
@@ -57,6 +60,9 @@ public:
                                                                                                         : QString();
     }
     static int defaultThreads();
+    // The starting text for TranscribeRequest::verbatim: a short line with that language's hesitation sounds ("auto"
+    // or an unknown language: a mix of the common ones)
+    static QString verbatimPrompt(const QString& language);
 
     // Progress between whisper's own updates (a 30 s clip jumped from 10 % to 100 % after a minute): estimated from
     // the time whisper has run against what it is expected to take (whisperSeconds). Follows the time up to 90 % of

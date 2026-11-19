@@ -22,7 +22,9 @@ struct Word {
 // "Größe," -> "groesse", "Zwanzig" -> "20", "äh" stays "aeh" (isFiller tells): lower case, umlauts and ß folded,
 // everything but letters and digits removed, number words up to twenty (German, English) as digits
 QString normalize(const QString& word);
-bool isFiller(const QString& normalized); // äh, ähm, öh, hm, uh, um, uhm, erm …
+// A hesitation sound (äh, ähm, uh, um, euh, eee, yyy, э, えー, 음, 嗯 … of the UI languages; held letters too:
+// "ähhhm", "hmmm"), never a word with meaning ("also", "like", "e" = and)
+bool isFiller(const QString& normalized);
 // Similarity of two normalized words, 0..1 (1 = equal; by edit distance)
 double similarity(const QString& a, const QString& b);
 

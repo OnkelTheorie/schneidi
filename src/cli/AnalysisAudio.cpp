@@ -371,6 +371,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     req.language = a.contains("language") ? a["language"].toString() : "auto";
     req.threads = a["threads"].toInt();
     req.music = a["music"].toBool();
+    req.verbatim = a["verbatim"].toBool();
     // A chosen language is checked against whisper's own detection afterwards (a wrong one gives made-up words)
     req.checkLanguage = req.language != QLatin1String("auto") && !req.music;
     ProjectFormat f;
