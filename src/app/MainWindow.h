@@ -542,6 +542,7 @@ private:
     std::function<void()> m_directCancel; // the running suggestion job's cancel (empty = none)
     int m_directRun = 0;                  // counts suggestion jobs: a late reply of an older one is dropped
     int m_directStopAt = -1;              // a previewed suggestion stops at this source frame (-1 = none)
+    QString m_directStopFile;             // ... of this file (another file in the viewer: no stop)
     bool m_directSized = false;
     // The Studio page's sizes are set once (its defaults or the user's), then it keeps them: a round trip to another
     // page changes nothing (the defaults depend on the strips' widths, which settle only once the page showed). The

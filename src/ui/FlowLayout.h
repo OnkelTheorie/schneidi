@@ -3,7 +3,8 @@
 // Items side by side, wrapping into another row when the width runs out (a tool bar that must fit any language and
 // font size without widening its window). Its minimum width is the widest item; the height follows the width
 // (heightForWidth), and its minimum height is the height of the rows at the width it has (a splitter or a low window
-// that ignores heightForWidth never cuts off a wrapped row). Items keep their size hint; put widgets that belong together into one widget (a group).
+// that ignores heightForWidth never cuts off a wrapped row). Items keep their size hint; put widgets that belong together into one widget (a group). An item sits in the middle
+// of its row's height, or at its top when its alignment says Qt::AlignTop (setAlignment(widget, Qt::AlignTop)).
 
 #include <QLayout>
 #include <QVector>

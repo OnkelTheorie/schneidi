@@ -398,7 +398,7 @@ QWidget* MainWindow::buildPageBar()
             const int size = b->fontMetrics().ascent();
             b->setIcon(clapperIcon(size));
             b->setIconSize(QSize(size, size));
-            b->setText(T(pg.name));
+            b->setText(" " + T(pg.name)); // the gap the others have between symbol and name
             b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         }
         // As tall as the bar (its line at the bottom of the bar): a symbol drawn by a taller fallback font makes one

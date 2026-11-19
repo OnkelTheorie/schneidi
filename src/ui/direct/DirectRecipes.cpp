@@ -192,6 +192,7 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     bottom->addWidget(m_suggest);
     outer->addLayout(bottom);
 
+    for (QWidget* card : std::as_const(m_cards)) flow->setAlignment(card, Qt::AlignTop); // the cards' tops in a line
     // "Mehr" only where a card has more
     for (const QString& id : ids())
         if (QWidget* more = m_cardMore.value(id); more && more->layout()->count() == 0)

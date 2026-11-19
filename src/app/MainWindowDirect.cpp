@@ -102,7 +102,11 @@ void MainWindow::ensureDirectPage()
     });
     // A previewed suggestion stops at its end
     connect(m_engine, &Engine::positionChanged, m_directPage, [this](int f) {
-        if (m_directStopAt < 0 || m_engine->timelinePositions()) return;
+        if (m_directStopAt < 0) return;
+        if (m_engine->timelinePositions() || m_engine->sourcePath() != m_directStopFile) {
+            m_directStopAt = -1; // the user went on with something else
+            return;
+        }
         if (f >= m_directStopAt) {
             m_directStopAt = -1;
             m_engine->pause();
@@ -196,5 +200,6 @@ void MainWindow::directPreview(const QString& file, double from, double to)
     previewFile(file);
     m_engine->seek(in);
     m_directStopAt = std::max(in + 1, out);
+    m_directStopFile = m_engine->sourcePath();
     m_engine->play();
 }
