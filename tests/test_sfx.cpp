@@ -463,11 +463,13 @@ void testOp(const QString& dir)
     if (CHECK_EQ(clips.size(), 3)) {
         const int cuts[] = {50, 150, 250};
         for (int i = 0; i < 3; ++i) {
-            const double anchor = SfxSynth::anchorOf(SfxSynth::Kind::Whoosh, unsigned(1 + i), 0);
+            // (a whoosh without a length: the computed one at its default length, not the 0.15 s recording)
+            const double wl = SfxSynth::defaultLength(SfxSynth::Kind::Whoosh);
+            const double anchor = SfxSynth::anchorOf(SfxSynth::Kind::Whoosh, unsigned(1 + i), wl);
             const int expected = int(std::lround(cuts[i] - anchor * 25));
             if (!CHECK_EQ(clips[i].first, expected)) std::printf("       whoosh %d\n", i);
             // level mild, the recording brought to its kind's peak level
-            if (!CHECK(std::abs(clips[i].second - (-10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i)))) < 1e-6)) std::printf("       got %f want %f\n", clips[i].second, -10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i)));
+            if (!CHECK(std::abs(clips[i].second - (-10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i), wl))) < 1e-6)) std::printf("       got %f want %f\n", clips[i].second, -10.0 + SfxSynth::levelGainDb(SfxSynth::Kind::Whoosh, unsigned(1 + i), wl));
         }
     }
     // Again on the same cuts: every one is taken (the sounds on the SFX track count)
@@ -547,7 +549,7 @@ void testOp(const QString& dir)
     }
     // A built-in sound whose cache file is gone (cache cleared, another computer): made again when the project loads
     {
-        const QString file = SfxSynth::cachedFile(SfxSynth::Kind::Whoosh, 1);
+        const QString file = SfxSynth::cachedFile(SfxSynth::Kind::Whoosh, 1, SfxSynth::defaultLength(SfxSynth::Kind::Whoosh));
         CHECK(QFile::remove(file));
         ProjectData d;
         CHECK(ProjectFile::load(project, &d, nullptr));
@@ -569,6 +571,68 @@ void testOp(const QString& dir)
     const QJsonObject fx = run("effects", {{"kind", "sfx"}});
     CHECK_EQ(fx["sounds"].toArray().size(), 6);
     CHECK(run("effects", {})["sounds"].toArray().size() >= 6);
+}
+
+// Duel 17.11.: a riser bed on its own track ending on a cut that has a whoosh was left out as too_close although
+// min_gap was '0s'; a call that places nothing says why in words. The default whoosh is long enough to be heard
+// (the computed one, ~0.9 s; the 0.15 s recording only with length '0s')
+void testRiserBedAndWhoosh(const QString& dir)
+{
+    const QString video = Check::makeMedia(dir + "/bed.mp4", {"-f", "lavfi", "-i", "testsrc=size=160x90:rate=25:duration=12",
+                                                              "-c:v", "mpeg4", "-q:v", "5"});
+    if (!CHECK(!video.isEmpty())) return;
+    const QString project = dir + "/bed.schneidi";
+    run("new", {{"project", project}, {"fps", 25}});
+    CHECK(!edit(project, {QJsonObject{{"op", "place"}, {"media", video}, {"at", 0}}, QJsonObject{{"op", "split"}, {"at", "6s"}}})
+               .contains("failed"));
+    QJsonObject n = sfxNote(edit(project, {QJsonObject{{"op", "sfx"}, {"on", "cuts"}}}));
+    CHECK_EQ(n["placed"].toArray().size(), 1);
+    // The whoosh: the computed one, at least 0.6 s long (the recording is 4 frames)
+    {
+        const QJsonObject info = run("info", {{"project", project}});
+        int frames = 0;
+        for (const QJsonValue& t : info["timeline"]["tracks"].toArray())
+            if (t["name"].toString() == "SFX")
+                for (const QJsonValue& c : t["clips"].toArray()) frames = c["end"].toInt() - c["start"].toInt();
+        if (!CHECK(frames >= 15)) std::printf("       whoosh %d frames\n", frames);
+    }
+    // length '0s': the recording
+    {
+        const QString p2 = dir + "/bed2.schneidi";
+        run("new", {{"project", p2}, {"fps", 25}});
+        edit(p2, {QJsonObject{{"op", "place"}, {"media", video}, {"at", 0}}});
+        edit(p2, {QJsonObject{{"op", "sfx"}, {"at", "6s"}, {"kind", "whoosh"}, {"length", "0s"}}});
+        const QVector<QPair<int, double>> c = sfxClips(p2);
+        const QJsonObject info = run("info", {{"project", p2}});
+        bool recorded = false;
+        for (const QJsonValue& t : info["timeline"]["tracks"].toArray())
+            for (const QJsonValue& cl : t["clips"].toArray())
+                recorded |= SfxSynth::recordedOfFile(cl["media"].toString()).has_value();
+        CHECK(c.size() == 1 && recorded);
+    }
+    // A riser bed on its own track that ends on the whoosh's cut: min_gap '0s' lets it be placed
+    edit(project, {QJsonObject{{"op", "add_track"}, {"kind", "audio"}}});
+    const QJsonObject info = run("info", {{"project", project}});
+    QString bedTrack;
+    for (const QJsonValue& t : info["timeline"]["tracks"].toArray())
+        if (t["track"].toString().startsWith('A') && t["clips"].toArray().isEmpty() && t["name"].toString() != "SFX")
+            bedTrack = t["track"].toString();
+    const QJsonObject riser{{"op", "sfx"}, {"at", "6s"}, {"kind", "riser"}, {"track", bedTrack}, {"min_gap", "0s"}};
+    n = sfxNote(edit(project, {riser}));
+    if (!CHECK_EQ(n["placed"].toArray().size(), 1)) std::printf("       %s\n", QJsonDocument(n).toJson(QJsonDocument::Compact).constData());
+    // Without min_gap the default spacing still holds - and the answer says why in words
+    QJsonObject again = riser;
+    again.remove("min_gap");
+    again["track"] = "A2";
+    n = sfxNote(edit(project, {again}));
+    CHECK_EQ(n["placed"].toArray().size(), 0);
+    if (!CHECK(n["note"].toString().contains("too_close") && n["note"].toString().contains("min_gap")))
+        std::printf("       %s\n", QJsonDocument(n).toJson(QJsonDocument::Compact).constData());
+    // The same call again: nothing new, and it says so (the track is taken there)
+    n = sfxNote(edit(project, {riser}));
+    CHECK_EQ(n["placed"].toArray().size(), 0);
+    if (!CHECK(n["note"].toString().startsWith("nothing placed") && n["note"].toString().contains("overlaps")))
+        std::printf("       %s\n", QJsonDocument(n).toJson(QJsonDocument::Compact).constData());
 }
 
 // The level follows the mix where a sound lands: as heard (momentary loudness) as loud as it (mild) or 3 LU louder
@@ -783,6 +847,7 @@ int main(int argc, char** argv)
     if (Check::haveFfmpeg()) {
         testOp(tmp.path());
         testKillsDryRun(tmp.path());
+        testRiserBedAndWhoosh(tmp.path());
         testUnderMix(tmp.path());
     } else {
         std::printf("  no ffmpeg: op test skipped\n");

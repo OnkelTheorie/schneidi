@@ -1134,6 +1134,46 @@ void opSpeak(Session& s, const QJsonObject& op)
 
 // A recorded voice (the app records it; here any audio file) at `at` onto an audio track: the given one (like an armed
 // track: replaces what lies there), else the app's rule (Voiceover::recordTrack)
+// A take that runs past the picture's end (duel 17.11.: 0.2 s of black at the end): like op 'sfx' it must not make
+// black frames. Silence there (the pause a take ends with) is cut off at the picture's end; spoken words are never
+// cut - then the notes say how much runs past and what to do (the `check` reports the black frames too)
+void voiceoverEnd(Session& s, int clipId, int pictureEnd)
+{
+    const Clip* found = TimelineOps::findClip(s.project.timeline(), clipId);
+    if (!found || pictureEnd <= 0 || found->end() <= pictureEnd) return;
+    const Clip c = *found;
+    const ProjectFormat& f = s.format();
+    if (c.start >= pictureEnd) { // all of it after the picture: only black under it
+        s.notes << QString("voiceover: the take lies entirely after the picture's end (%1) - black frames under all of "
+                           "it: place it earlier or put a picture under it")
+                       .arg(tc(pictureEnd, f));
+        return;
+    }
+    const int over = c.end() - pictureEnd;
+    const auto peaks = AudioAnalysis::clipFramePeaks(f, c);
+    // Silence relative to the take (a quiet take's words are still words): 40 dB under its peak, at most -45 dBFS;
+    // from 2 frames before the picture's end on (a word ending right at the cut keeps its tail)
+    constexpr int kMargin = 2;
+    float peak = 0;
+    if (peaks)
+        for (float v : *peaks) peak = std::max(peak, v);
+    const float quiet = std::min(0.0056f, peak * 0.01f);
+    const size_t first = size_t(std::max(0, pictureEnd - kMargin - c.start));
+    bool silent = peaks.has_value() && peak > 0 && first < peaks->size();
+    if (silent)
+        for (size_t i = first; i < peaks->size(); ++i) silent = silent && (*peaks)[i] < quiet;
+    const QString seconds = QString::number(over / f.rate.fps(), 'f', 2);
+    if (silent) {
+        s.editor.trimClip(clipId, TimelineOps::Edge::End, -over);
+        s.notes << QString("voiceover: its last %1 s (silence) ran past the picture's end - cut off there (no black frames)")
+                       .arg(seconds);
+    } else {
+        s.notes << QString("voiceover: the take runs %1 s past the picture's end (%2) - black frames there: lengthen the "
+                           "last picture (trim its end, a still or a title) or place the take earlier")
+                       .arg(seconds, tc(pictureEnd, f));
+    }
+}
+
 void opVoiceover(Session& s, const QJsonObject& op)
 {
     const QString file = op.value("file").toString();
@@ -1154,13 +1194,19 @@ void opVoiceover(Session& s, const QJsonObject& op)
         track = Voiceover::recordTrack(tl, -1, -1, at, at + m.length, Voiceover::folder(s.path));
     }
     const int before = int(tl.audio.size());
+    // The picture's end before the take (a take past it would leave black frames there)
+    int pictureEnd = 0;
+    for (const Track& t : tl.video)
+        for (const Clip& c : t.clips) pictureEnd = std::max(pictureEnd, c.end());
     int placed = -1;
-    if (!s.editor.placeRecording(m.path, track, at, at, &placed)) fail("FAILED", "could not place the recording");
+    const int id = s.editor.placeRecording(m.path, track, at, at, &placed);
+    if (!id) fail("FAILED", "could not place the recording");
     s.notes << QString("voiceover %1 (%2 s) on %3%4 at %5")
                    .arg(QFileInfo(m.path).fileName())
                    .arg(m.length / s.project.frameRate(), 0, 'f', 2)
                    .arg(trackName({TrackKind::Audio, placed}), placed >= before ? QString(" (a new track)") : QString())
                    .arg(tc(at, s.format()));
+    voiceoverEnd(s, id, pictureEnd);
 }
 
 } // namespace
@@ -1322,7 +1368,9 @@ void addAudioOps(QVector<OpDef>& ops)
                  "new track. No track: the app's rule - the first track named Voiceover (earlier takes in the range "
                  "are replaced), else the first free track without a user-given name (not muted or locked), else one "
                  "new track named Voiceover. Tracks the user named (Discord, Mix …) only get it when given. One "
-                 "undo step (track and clip together); the new clip is selected. The notes name the track.",
+                 "undo step (track and clip together); the new clip is selected. The notes name the track. A take "
+                 "running past the picture's end: its silent tail is cut off there (no black frames at the end); "
+                 "spoken words past it are kept and the notes say so (lengthen the last picture or move the take).",
                  opVoiceover};
 }
 

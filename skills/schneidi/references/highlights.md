@@ -65,7 +65,9 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   (the peak on the cut), `{"op":"sfx","on":"drops"}` (a riser ending on the drop) or `at` times. It keeps them sparse by
   itself (1.5 s apart, a few per minute, one impact per video) on the track "SFX", mild by default (each sound as loud
   as the mix where it lands, as heard, so it comes across over loud game sound; `volume_db` only to set it by hand; lengths as
-  `"2s"` - a bare number is frames). Only when the user wants sounds - never on every cut unasked.
+  `"2s"` - a bare number is frames). `min_gap:"0s"` lets a sound share a moment with another one (a riser bed on its
+  own track ending on a cut that has a whoosh); when nothing is placed, the note says why. Only when the user wants
+  sounds - never on every cut unasked.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (drops from `beats`; for kills the `hit_s` of `highlights` as `{"media":"/path/clip.mkv","source":"7.67s"}`, which
   finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (mild: punch + light shake, a kill), `big` (punch + flash +

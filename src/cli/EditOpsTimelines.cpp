@@ -3,6 +3,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/ChannelLayout.h"
+#include "core/OverlayFit.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 
@@ -84,8 +85,43 @@ void opNewTimeline(Session& s, const QJsonObject& op)
             for (int i = 2; taken(label); ++i) label = QString("%1 %2").arg(base).arg(i);
         }
         s.project.renameSequence(id, label);
+        // Overlays (titles, shapes, logos) as they lie in the old frame, to fit them into the new one
+        const QSize oldSize = s.project.sequenceFormat(id).size();
+        QVector<int> animated;
+        const QVector<OverlayFit::Before> overlays =
+            s.project.sequence(id) ? OverlayFit::collect(
+                  s.project.sequence(id)->timeline, oldSize,
+                  [&s](const Clip& c) {
+                      const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+                      return c.kind == ClipKind::Media && m && m->isImage;
+                  },
+                  &animated)
+                                   : QVector<OverlayFit::Before>{};
         if (!size.isEmpty()) s.project.setSequenceSize(id, size == s.project.format().size() ? QSize() : size);
         s.selectTimeline(id, op.value("open").toBool(s.live));
+        const QSize newSize = s.format().size();
+        // Another frame shape: mattes fill it, logos keep their size to their plates, corners move into the safe area
+        if (oldSize.width() * newSize.height() != oldSize.height() * newSize.width() && !overlays.isEmpty()) {
+            Timeline fitted = s.project.timeline();
+            const QVector<int> changed = OverlayFit::apply(fitted, overlays, oldSize, newSize);
+            if (!changed.isEmpty()) {
+                s.editor.modifyClips(changed, "Fit overlays", [&](Clip& c) {
+                    if (const Clip* f = TimelineOps::findClip(fitted, c.id)) c = *f;
+                });
+                QStringList ids;
+                for (int c : changed) ids << QString::number(c);
+                s.notes << QString("overlays fitted to the new frame (mattes fill it, logos keep their size to their "
+                                   "plates, the ones in the phone apps' zones or off the frame moved into the safe area): "
+                                   "clips %1")
+                               .arg(ids.join(", "));
+            }
+            if (!animated.isEmpty()) {
+                QStringList ids;
+                for (int c : animated) ids << QString::number(c);
+                s.notes << QString("animated overlays left where the new frame put them (check their keyframes): clips %1")
+                               .arg(ids.join(", "));
+            }
+        }
         if (op.contains("reframe")) {
             QJsonObject r{{"mode", op.value("reframe")}};
             if (op.contains("smoothness")) r["smoothness"] = op.value("smoothness");
@@ -236,7 +272,12 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "width+height (even). Without: the project's resolution (and it follows a later project `format`). "
                  "from = id or name of a timeline to copy (all clips, titles, sound, markers; default name '<from> "
                  "<aspect>'); reframe: auto, center or fit as in op 'reframe' (smoothness, bars, keep and game too: game footage "
-                 "keeps its kill feed readable at the top), else the clips keep their transform (fitted in, with bars).",
+                 "keeps its kill feed readable at the top), else the clips keep their transform (fitted in, with bars). "
+                 "Into another frame shape the overlays follow: a colour matte (op 'solid', a frame-sized shape) "
+                 "fills the new frame, a logo (a still image) keeps its size to its plate, and titles, shapes and logos that land "
+                 "off the frame or in the phone apps' zones move, together with what lies under them, as little as "
+                 "needed into the safe area (animated ones stay; video overlays such as a webcam keep their place and "
+                 "size in the frame; the notes list them).",
                  opNewTimeline}
         << OpDef{"rename_timeline", "{op:'rename_timeline', timeline?, name}", {}, {}, opRenameTimeline}
         << OpDef{"duplicate_timeline", "{op:'duplicate_timeline', timeline?, name?, switch?:false}",

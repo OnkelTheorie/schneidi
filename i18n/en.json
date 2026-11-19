@@ -3452,5 +3452,6 @@
  "Lautheitsbereich %1 LU (über %2): leise und laute Stellen liegen weit auseinander – Kompressor oder Pegel der lauten Stellen senken": "Loudness range %1 LU (over %2): quiet and loud parts lie far apart – use a compressor or lower the loud parts",
  "Überblick-Timeline": "Overview Timeline",
  "Überblick": "Overview",
- "Überblick: Klick springt hin, Rechteck ziehen scrollt, Rand ziehen zoomt": "Overview: click jumps there, drag the rectangle to scroll, drag its edge to zoom"
+ "Überblick: Klick springt hin, Rechteck ziehen scrollt, Rand ziehen zoomt": "Overview: click jumps there, drag the rectangle to scroll, drag its edge to zoom",
+ "Ton auf A%1 um +%2 dB angehoben: das Rauschen der Aufnahme kommt mit hoch (Handy) – Rauschen entfernen (clean_voice) oder weniger anheben": "Sound on A%1 raised by +%2 dB: the recording's noise comes up with it (phone) – remove the noise (clean_voice) or raise it less"
 }
