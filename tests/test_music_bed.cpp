@@ -220,6 +220,29 @@ int main(int argc, char* argv[])
         for (const MusicBed::Section& sec : longBed.sections) breaks += sec.kind == MusicBed::Section::Break;
         CHECK(breaks >= 1 && !longBed.beats.drops.empty());
     }
+    // The WAV: written atomically in blocks (more than one block of 65536 frames here), 24-bit stereo, the samples
+    // as they are; writing again replaces the file and leaves nothing else in the folder
+    {
+        const MusicBed::Result r = MusicBed::make({MusicBed::Mood::Calm, 3.0});
+        QDir().mkpath(tmp.path() + "/wav");
+        const QString path = tmp.path() + "/wav/bed.wav";
+        CHECK(MusicBed::writeWav(path, r) && MusicBed::writeWav(path, r));
+        CHECK_EQ(QDir(tmp.path() + "/wav").entryList(QDir::Files), QStringList{"bed.wav"});
+        QFile f(path);
+        CHECK(f.open(QIODevice::ReadOnly));
+        const QByteArray b = f.readAll();
+        const long long frames = (long long)r.samples.size() / 2;
+        CHECK_EQ((long long)b.size(), 44 + frames * 6);
+        CHECK(b.startsWith("RIFF") && b.mid(36, 4) == "data");
+        bool same = b.size() == 44 + frames * 6;
+        for (long long i = 0; same && i < 2 * frames; i += 997) {
+            const unsigned char* p = reinterpret_cast<const unsigned char*>(b.constData()) + 44 + 3 * i;
+            std::int32_t q = p[0] | (p[1] << 8) | (p[2] << 16);
+            if (q & 0x800000) q -= 0x1000000;
+            same = std::abs(q / 8388607.0 - r.samples[size_t(i)]) < 2.0 / 8388607;
+        }
+        CHECK(same);
+    }
     // Speed: 3 minutes (well under a second on an idle PC; loose here, tests run in parallel)
     {
         QElapsedTimer t;

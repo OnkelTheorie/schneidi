@@ -6,7 +6,7 @@
 #include "core/TruePeak.h"
 
 #include <QByteArray>
-#include <QFile>
+#include <QSaveFile>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -1349,8 +1349,11 @@ bool writeWav(const QString& path, const Result& r)
     const long long frames = (long long)r.samples.size() / 2;
     const long long data = frames * 2 * 3;
     if (data > 0xFFFFFFF0LL - 36) return false;
-    QByteArray bytes(int(44 + data), Qt::Uninitialized);
-    char* b = bytes.data();
+    // Atomic (a half-written bed never lies under the final name) and in blocks (no second copy of the whole bed)
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    char head[44];
+    char* b = head;
     const auto put32 = [&b](std::uint32_t v) {
         for (int i = 0; i < 4; ++i) *b++ = char((v >> (8 * i)) & 0xFF);
     };
@@ -1370,16 +1373,25 @@ bool writeWav(const QString& path, const Result& r)
     put16(24);
     std::memcpy(b, "data", 4), b += 4;
     put32(std::uint32_t(data));
-    for (float v : r.samples) {
-        const float x = std::clamp(v, -1.0f, 1.0f) * 8388607.0f;
-        const std::int32_t q = std::int32_t(x >= 0 ? x + 0.5f : x - 0.5f);
-        *b++ = char(q & 0xFF);
-        *b++ = char((q >> 8) & 0xFF);
-        *b++ = char((q >> 16) & 0xFF);
+    if (f.write(head, 44) != 44) return false;
+    constexpr long long kBlock = 65536; // frames
+    QByteArray block(int(kBlock * 2 * 3), Qt::Uninitialized);
+    for (long long from = 0; from < frames; from += kBlock) {
+        const long long n = std::min(kBlock, frames - from);
+        char* o = block.data();
+        for (long long i = 2 * from; i < 2 * (from + n); ++i) {
+            const float x = std::clamp(r.samples[size_t(i)], -1.0f, 1.0f) * 8388607.0f;
+            const std::int32_t q = std::int32_t(x >= 0 ? x + 0.5f : x - 0.5f);
+            *o++ = char(q & 0xFF);
+            *o++ = char((q >> 8) & 0xFF);
+            *o++ = char((q >> 16) & 0xFF);
+        }
+        if (f.write(block.constData(), n * 6) != n * 6) {
+            f.cancelWriting();
+            return false;
+        }
     }
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly)) return false;
-    return f.write(bytes) == bytes.size() && f.flush();
+    return f.commit();
 }
 
 QString fileName(const Options& o)
