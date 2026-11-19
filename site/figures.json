@@ -67,19 +67,19 @@
       "source": "4 cores, column 1, 2400G"
     },
     "pi_start_s": {
-      "value": "3.7",
+      "value": "1.7",
       "source": "Window visible, column 1"
     },
     "pi_ram_mb": {
-      "value": "108",
+      "value": "102",
       "source": "Window visible, column 1"
     },
     "pi_720_fps": {
-      "value": "30",
+      "value": "29",
       "source": "Playback 720p30 original, column 1"
     },
     "pi_fps": {
-      "value": "56",
+      "value": "59",
       "source": "Playback 1080p60 from proxies, column 1"
     },
     "pi_jump_s": {
