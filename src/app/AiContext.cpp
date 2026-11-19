@@ -133,7 +133,8 @@ void textTimes(QJsonObject& p)
 // 'disable', clips}" -> "enable|disable(clips)" (the ops' text says how to read it)
 QString shortUsage(const QString& usage)
 {
-    static const QRegularExpression values(R"(\?:(\[[^\]]*\]|'[^']*'(\|'[^']*')*|[A-Za-z0-9_.]+))");
+    // a list value may hold lists itself ("ranges?:[[from, to], ...]")
+    static const QRegularExpression values(R"(\?:(\[(?:[^\[\]]|\[[^\]]*\])*\]|'[^']*'(\|'[^']*')*|[A-Za-z0-9_.]+))");
     static const QRegularExpression head(R"(\{op:'([a-z_]+)'((?:\|'[a-z_]+')*)(, )?)");
     const QString s = QString(usage).replace(values, "?");
     QString out;
@@ -247,7 +248,7 @@ const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_no
                            // repairs, multicam, special edits and generators a small model seldom reaches for
                            "still", "qualifier", "window", "hdr", "picture_aspect", "crop_bars", "route", "track_pan",
                            "fit_to_fill", "speed_ramp", "multicam", "angle", "angle_cuts", "hook_variants", "broll",
-                           "hide_jumps", "best_takes", "jl_cut", "node", "solid", "comp", "media", "room_tone", "align"};
+                           "hide_jumps", "best_takes", "jl_cut", "node", "solid", "comp", "media", "room_tone", "align", "sections", "copy", "track"};
 
 qsizetype paramTextFor(const QString& tool)
 {

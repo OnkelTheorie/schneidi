@@ -78,7 +78,8 @@ bool reading(const QString& command, const QJsonObject& args, QString* why)
         return no("transcribe with apply changes the project: not in the background");
     if (command == "index" && given("annotate"))
         return no("index with annotate writes descriptions: not in the background");
-    if (command == "direct" && (given("session") || given("apply")))
+    if (command == "direct"
+        && (given("session") || given("apply") || (given("finish") && !args.value("finish").toObject().value("prepare").toBool())))
         return no("direct with a session applies it (an edit): not in the background, run the edit for the user");
     return true;
 }

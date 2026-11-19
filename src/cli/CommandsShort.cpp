@@ -3,6 +3,7 @@
 // other commands together (probe, new, `direct` recipe short + apply, transcribe, check + its fix, render), each
 // through execute() like a caller would: live in the app with "@app"; the moments and the cut are `direct`'s
 // (cli/CommandsDirect.cpp, core/ShortPick).
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
@@ -67,6 +68,94 @@ std::optional<double> soundPeakDb(const QString& project, const QString& timelin
     return std::nullopt;
 }
 } // namespace
+
+QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
+                          QJsonArray* done, QJsonArray* notes)
+{
+    const auto run = [&ctx](const char* command, const QJsonObject& args) {
+        Context sub;
+        sub.cancel = ctx.cancel;
+        sub.progress = ctx.progress;
+        return execute(*find(command), args, sub);
+    };
+    QJsonArray ops;
+    // Word captions from the speech, when whisper is there (never installed from here)
+    if (f.captions != QLatin1String("off")) {
+        if (Extensions::whisperProgram().isEmpty() || Extensions::installedWhisperModels().isEmpty()) {
+            *notes << "no captions: speech recognition (whisper) is not installed. Ask the user, then `schneidi-cli "
+                      "extensions --install whisper,small` (190 MB; whisper,turbo 574 MB is better) and run again "
+                      "(or captions:'off')";
+        } else {
+            QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
+            if (!f.language.isEmpty()) t["language"] = f.language;
+            QJsonArray words;
+            int segments = 0;
+            try {
+                const QJsonObject tr = run("transcribe", t);
+                segments = int(tr["segments"].toArray().size());
+                // Only words that start inside the timeline (as transcribe apply did)
+                const int end = run("info", {{"project", project}, {"timeline", timeline}, {"summary", true}})["timeline"]
+                                    .toObject()["length"].toInt();
+                for (const QJsonValue& w : tr["words"].toArray())
+                    if (end <= 0 || w["from"].toInt() < end) words << w;
+            } catch (const Error& e) {
+                if (e.code != QLatin1String("NO_SPEECH")) throw;
+            }
+            if (words.isEmpty()) {
+                *notes << "no captions: no speech in the short";
+            } else {
+                ops << QJsonObject{{"op", "captions"}, {"style", f.captions}, {"words", words}};
+                *done << QString("%1 captions (%2 segments)").arg(f.captions).arg(segments);
+            }
+        }
+    }
+    // Effect sounds (sfx:'mild' only): a whoosh on the hard cuts, a hit on the kills, sparingly (op 'sfx' rules)
+    if (f.sfx == QLatin1String("mild")) {
+        // The hits first (they matter most), the whooshes in the room left (each kind has its own cap per minute)
+        if (!f.game.isEmpty()) {
+            // The hits 14 dB under the game sound's peak (without game sound: level mild)
+            QJsonObject hit{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", f.game}};
+            Context peak;
+            peak.cancel = ctx.cancel;
+            hit["volume_db"] = SfxPlace::underPeakDb(soundPeakDb(project, timeline, peak),
+                                                     SfxSynth::peakLevelDb(SfxSynth::Kind::Hit));
+            ops << hit;
+        }
+        ops << QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}};
+        // The kill feed read here (a measure the app's edit then only places): `_kills`
+        Context sub;
+        sub.cancel = ctx.cancel;
+        ops = prepareSfx({{"project", project}, {"timeline", timeline}, {"ops", ops}}, sub)["ops"].toArray();
+    }
+    failIfCanceled();
+    return ops;
+}
+
+bool shortFinishEdit(const QString& project, const QString& timeline, const QJsonArray& ops, Context& ctx,
+                     QJsonArray* done)
+{
+    if (ops.isEmpty()) return false;
+    Context sub;
+    sub.cancel = ctx.cancel;
+    const QJsonObject e = execute(*find("edit"), {{"project", project}, {"timeline", timeline}, {"ops", ops}}, sub);
+    bool captions = false, sfx = false;
+    for (const QJsonValue& op : ops) {
+        captions |= op["op"].toString() == QLatin1String("captions");
+        sfx |= op["op"].toString() == QLatin1String("sfx");
+    }
+    if (sfx) {
+        int placed = 0;
+        for (const QJsonValue& n : e["notes"].toArray()) placed += int(n["sfx"]["placed"].toArray().size());
+        *done << QString("sfx mild: %1 sound%2").arg(placed).arg(placed == 1 ? "" : "s");
+    }
+    return captions;
+}
+
+bool shortFinish(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx, QJsonArray* done,
+                 QJsonArray* notes)
+{
+    return shortFinishEdit(project, timeline, shortFinishOps(project, timeline, f, ctx, done, notes), ctx, done);
+}
 
 QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
 {
@@ -286,44 +375,10 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     }
     done << QString("timeline '%1' %2, reframe %3%4").arg(shortTimeline, aspect, reframe, feedText);
 
-    // 6. Word captions from the speech, when whisper is there (never installed from here)
-    bool burn = false;
-    if (captions != QLatin1String("off")) {
-        if (Extensions::whisperProgram().isEmpty() || Extensions::installedWhisperModels().isEmpty()) {
-            notes << "no captions: speech recognition (whisper) is not installed. Ask the user, then `schneidi-cli "
-                     "extensions --install whisper,small` (190 MB; whisper,turbo 574 MB is better) and run again "
-                     "(or captions:'off')";
-        } else {
-            QJsonObject t{{"source", project}, {"timeline", shortTimeline}, {"apply", true}, {"captions", captions}};
-            if (a.contains("language")) t["language"] = a["language"];
-            try {
-                const QJsonObject tr = run("transcribe", t, step(0.4, 0.6));
-                burn = true;
-                done << QString("%1 captions (%2 segments)").arg(captions).arg(tr["segments"].toArray().size());
-            } catch (const Error& e) {
-                if (e.code != QLatin1String("NO_SPEECH")) throw;
-                notes << "no captions: no speech in the short";
-            }
-        }
-    }
-
-    // 6b. Effect sounds (sfx:'mild' only): a whoosh on the hard cuts, a hit on the kills, sparingly (op 'sfx' rules)
-    if (sfx == QLatin1String("mild")) {
-        // The hits first (they matter most), the whooshes in the room left (each kind has its own cap per minute)
-        QJsonArray ops;
-        if (game) {
-            // The hits 14 dB under the game sound's peak (without game sound: level mild)
-            QJsonObject hit{{"op", "sfx"}, {"on", "kills"}, {"kind", "hit"}, {"level", "mild"}, {"game", game->id}};
-            hit["volume_db"] = SfxPlace::underPeakDb(soundPeakDb(project, shortTimeline, step(0.6, 0.6)),
-                                                     SfxSynth::peakLevelDb(SfxSynth::Kind::Hit));
-            ops << hit;
-        }
-        ops << QJsonObject{{"op", "sfx"}, {"on", "cuts"}, {"kind", "whoosh"}, {"level", "mild"}};
-        const QJsonObject e = run("edit", {{"project", project}, {"timeline", shortTimeline}, {"ops", ops}}, step(0.6, 0.6));
-        int placed = 0;
-        for (const QJsonValue& n : e["notes"].toArray()) placed += int(n["sfx"]["placed"].toArray().size());
-        done << QString("sfx mild: %1 sound%2").arg(placed).arg(placed == 1 ? "" : "s");
-    }
+    // 6. Word captions (whisper) and effect sounds (sfx:'mild'), one edit
+    ShortFinish finish{captions, sfx, game ? game->id : QString(), a["language"].toString()};
+    Context finishCtx = step(0.4, 0.6);
+    const bool burn = shortFinish(project, shortTimeline, finish, finishCtx, &done, &notes);
 
     // 7. Check for the platform and apply its safe fixes (master limiter, fader to the loudness target)
     const QString platformId = QString::fromLatin1(platform->alias);

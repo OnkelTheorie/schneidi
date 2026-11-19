@@ -48,6 +48,18 @@ public:
                               const Progress& onProgress, const Done& onDone, QObject* receiver) = 0;
     virtual JobHandle apply(const QJsonObject& session, const QJsonObject& choice, const Progress& onProgress,
                             const Done& onDone, QObject* receiver) = 0;
+    // The recipes it can run now (the page shows the others as coming); default: all of DirectRecipes::ids()
+    virtual QStringList recipes() const { return {"short", "highlights", "talk", "template", "script"}; }
+    // After a short's apply: captions (whisper) and the chosen effect sounds on its timeline as a second undo step.
+    // canFinish: there is something to do for this session (whisper installed and captions wanted, or sfx mild);
+    // applied = apply's result ({timeline, …}). Default: nothing (the reply says NOT_SUPPORTED).
+    virtual bool canFinish(const QJsonObject& session) const
+    {
+        Q_UNUSED(session);
+        return false;
+    }
+    virtual JobHandle finish(const QJsonObject& session, const QJsonObject& applied, const Progress& onProgress,
+                             const Done& onDone, QObject* receiver);
 };
 
 // FAKE - a stand-in until the `direct` command exists (package R1), so that the page can be clicked through and tested.

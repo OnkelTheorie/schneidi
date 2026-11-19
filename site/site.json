@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "about": "Texts and settings of the project website that change with the project's state, read by its updater at the latest release tag. texts.<key> fills <!--@<key>-->...<!--/@--> on the page (plain text, `code` and **bold**). notice: one line at the top of the page, \"\" = hidden (optional [link text] with notice_link). news: how many releases What's new shows, how many characters of each one's first paragraph, and whether patch releases (x.y.1 ...) are listed (patches, default false). checksums: show the SHA-256 of each download under it (it is always in the link's tooltip). Checked by tools/site_figures.py --check.",
+  "texts": {
+    "status": "schneidi is still in early development: project files can change between versions.",
+    "cadence": "schneidi gets regular releases.",
+    "pi_note": "There is no ARM download; the Pi build is made from source."
+  },
+  "notice": "",
+  "news": {
+    "releases": 3,
+    "chars": 300,
+    "patches": false
+  },
+  "checksums": false
+}

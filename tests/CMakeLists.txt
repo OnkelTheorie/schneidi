@@ -606,3 +606,14 @@ schneidi_test(test_music_bed) # music beds: core/MusicBed (levels, clicks, grid,
 target_link_libraries(test_music_bed PRIVATE schneidi_cli_lib)
 schneidi_test(test_direct_page) # Direct page "Regie" (0.25): lazy, material drop, recipes, suggestions (on/off, order, Delete), preview, apply = one undo step, start page, layout de/ru
 target_link_libraries(test_direct_page PRIVATE schneidi_cli_lib)
+schneidi_test(test_direct_real) # Direct page with the real backend (0.25): suggest in the background, Übernehmen = one undo step, finish, coming recipes
+target_link_libraries(test_direct_real PRIVATE schneidi_cli_lib)
+add_dependencies(test_direct_real schneidi-cli) # the chat's tools (the own wish)
+
+# site/figures.json (the website's measured figures) must match README.md: a restructured README table or a changed
+# number without tools/site_figures.py --write fails here instead of showing a wrong figure on the website
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME site_figures COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/site_figures.py --check)
+    set_tests_properties(site_figures PROPERTIES TIMEOUT 30)
+endif()

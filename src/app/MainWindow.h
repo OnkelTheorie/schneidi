@@ -208,6 +208,8 @@ public:
     void liveActivity(const LiveActivity& activity) override;
     void liveCommandRunning(bool running, bool ownChat) override;
     void livePlan(const QString& state, const QJsonObject& plan, bool ownChat) override;
+    void liveDirection(const QJsonObject& session, bool ownChat) override; // `direct` suggestions -> the Direct page
+    void liveDirectApplied(const QJsonObject& session, const QJsonObject& result, bool ownChat) override; // ... applied
     bool livePlanOnly() const override;
     bool liveReviewOnly() const override;
     // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
@@ -425,12 +427,19 @@ private:
     void ensureDirectPage();
     void directSuggest();                 // the page's recipe on its material (in the background, BackgroundJobs)
     void directApply();                   // the checked suggestions -> a timeline (one undo step)
+    void directFinish();                  // after a short's apply: captions + effect sounds (one more undo step)
+    void showDirectSession(const QJsonObject& session); // suggestions on the page (a run's or the chat's)
     void directPreview(const QString& file, double from, double to); // a suggestion in the viewer, stops at its end
     // Ends a running suggestion/apply job and empties the suggestions (the material changed, another project);
     // newProject also empties the material
     void directReset(bool material);
     void directClearPreviewStop() { m_directStopAt = -1; }
     void updateDirectTracks(); // the talk recipe's track list from the open timeline
+    // The own wish line: shown only with a chat provider set up (as the chat panel sees it, not its setup page)
+    void updateDirectWish();
+    void directWish(const QString& text); // to the AI chat with the page's context; its `direct` answers on the page
+    void directWishDone();                // the chat's turn of a wish ended: the answer or error under the line
+    void directAiApplyUndone();           // review: the AI's changes discarded - its apply is no more (no finish)
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -547,6 +556,12 @@ private:
     std::function<void()> m_directCancel; // the running suggestion job's cancel (empty = none)
     std::function<void()> m_directApplyCancel; // the running apply job's cancel (empty = none)
     int m_directApplyRun = 0;
+    QJsonObject m_directApplied; // the last apply's result and session (for the short's finish)
+    // A wish of the page runs as a chat turn: its first chat entry
+    bool m_directWishTurn = false;
+    int m_directWishFirst = 0;
+    bool m_directWishVoid = false;   // the page was reset during the AI's request: its suggestions/apply not shown
+    bool m_directAppliedByAi = false; // m_directApplied came from an AI's `direct` apply
     class QAction* m_directRemoveSuggestion = nullptr; // the page's Delete keys, registered at the start (buildActions)
     class QAction* m_directRemoveMaterial = nullptr;
     QList<int> m_directCenterSizes; // viewer | recipes while the viewer is on another page
@@ -700,7 +715,10 @@ private:
     void placeChat(bool left);
     void applyChatWidth();
     void updateChatPanel(); // setup page or chat, the provider line
-    bool sendChat(const QString& text);
+    bool sendChat(const QString& text, const QString& note = {}); // note: with this request only (AiChat::addNote)
+    bool chatReady(); // a provider is set up (the panel shows the chat, not its setup)
+    // The panel's setup page is needed (nothing chosen, a key or the address missing): the provider and why
+    bool chatSetupNeeded(QString* provider = nullptr, QString* message = nullptr);
     bool chatEndpoint(Ai::Endpoint& e, QString* problem);
     QString chatKeyHint(const QString& provider);
     void chatTurnFinished();

@@ -89,6 +89,7 @@ public:
     void stopPlans(const QString& text);
 
     bool busy() const { return m_busy; }
+    bool wasStopped() const { return m_stopped; } // the running/last turn was stopped (stop(), until the next send)
     QString request() const { return m_request; } // what the user asked for in the running/last turn
     const QVector<Entry>& entries() const { return m_entries; }
     const QVector<Ai::Message>& history() const { return m_history; }

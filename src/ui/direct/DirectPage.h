@@ -3,8 +3,8 @@
 // The Direct page "Regie" (0.25): material in, a recipe, suggestions to check, a timeline out - without a chat AI.
 // Three columns: the material on the left (DirectMaterial), in the middle the shared viewer on top (MainWindow puts
 // it into center() at index 0 when the page shows) and the recipe cards under it (DirectRecipes), the suggestions on
-// the right (DirectSuggestions; above them a slot for the own wish line of the AI chat, package R5, empty and hidden
-// for now). Along the bottom the result: the overview strip of the timeline the checked suggestions would give (only
+// the right (DirectSuggestions; above them the own wish line for the AI chat, DirectWish, shown only with a chat
+// provider). Along the bottom the result: the overview strip of the timeline the checked suggestions would give (only
 // to look at), "Übernehmen", "In Schneiden öffnen" and "Exportieren…".
 // The page itself never edits the project: MainWindow (MainWindowDirect.cpp) runs the DirectBackend on its requests.
 // Built on the page's first showing (MainWindow::ensureDirectPage), never at the start.
@@ -17,6 +17,7 @@ class DirectMaterial;
 class DirectRecipes;
 class DirectSuggestions;
 class DirectThumbs;
+class DirectWish;
 class QLabel;
 class QPushButton;
 class QSplitter;
@@ -37,7 +38,18 @@ public:
     QPushButton* applyButton() const { return m_apply; }
     QPushButton* openEditButton() const { return m_openEdit; }
     QPushButton* exportButton() const { return m_export; }
-    QWidget* wishSlot() const { return m_wish; } // R5: the own wish line (hidden until a chat provider is set up)
+    QWidget* wishSlot() const; // the own wish line (hidden until a chat provider is set up)
+    DirectWish* wish() const { return m_wish; }
+    // What the chat's AI gets with a wish (AiChat::addNote, English, at most maxChars): the material (file names as
+    // JSON strings, their folder once, lengths; or the current timeline), the recipe and its options (own budget),
+    // the session id (always) and its suggestions as listed (n, kind, file, from-to, reason key, on/off; the rest
+    // counted when they do not fit) and how to answer: by calling `direct`, a new suggestion list rather than an
+    // apply (plan = the chat is in plan mode: an apply must be a plan). No raw "]": the chat wraps notes in [ ].
+    QString wishContext(bool plan = false, int maxChars = kWishContextChars) const;
+    static constexpr int kWishContextChars = 2000;
+    static constexpr int kWishOptionsChars = 400;
+    // A wish runs in the AI chat: the line's busy row; Übernehmen and the finish wait for it
+    void setWishBusy(bool busy);
 
     // Frame rate of the result strip (the project's)
     void setFps(double fps);
@@ -45,7 +57,13 @@ public:
     void setBusy(bool busy, const QString& text = {});
     bool busy() const { return m_busy; }
     // Übernehmen runs: its button off, the text beside it
-    void setApplying(bool applying);
+    void setApplying(bool applying, const QString& text = {});
+    // After a short's Übernehmen: the second button "Untertitel + Effektklänge" (finishRequested)
+    void setFinishOffered(bool offered);
+    QPushButton* finishButton() const { return m_finish; }
+    // A template filled into a new project file: its name beside the buttons and "Öffnen" (empty = none)
+    void setMadeProject(const QString& path);
+    QPushButton* openProjectButton() const { return m_openProject; }
     bool applying() const { return m_applying; }
     // Pictures of both lists (MainWindow sets the decoder)
     DirectThumbs* thumbs() const { return m_thumbs; }
@@ -61,6 +79,8 @@ signals:
     void applyRequested();
     void openEditRequested();
     void exportRequested();
+    void finishRequested();
+    void openProjectRequested(const QString& path);
 
 private:
     QSplitter* m_root;
@@ -72,11 +92,15 @@ private:
     TimelineOverview* m_overview;
     QLabel* m_resultText;
     QPushButton* m_apply;
+    QPushButton* m_finish;
+    QPushButton* m_openProject;
+    QString m_madeProject;
     QPushButton* m_openEdit;
     QPushButton* m_export;
-    QWidget* m_wish;
+    DirectWish* m_wish;
     DirectThumbs* m_thumbs;
     double m_fps = 25;
     bool m_busy = false;
     bool m_applying = false;
+    bool m_wishBusy = false;
 };

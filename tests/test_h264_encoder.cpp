@@ -771,9 +771,102 @@ void testVbv()
     }
 }
 
+// The encoder's second build for x86-64-v3 CPUs (EncoderAlt, picked at run time where CMake built it and the CPU
+// has the instructions): the same streams, reconstructions and first-pass numbers as the build for every CPU - fixed
+// QP with B pictures, constant quality on several threads, two passes - and selectCpuBuild(false) keeps to the
+// first build; the own cpuid check agrees with the compiler's. The speed stage "fast" (EncoderConfig::speed 1) decodes bit-exact, does not depend on the thread
+// count, and is another stream than the default only with B pictures.
+void testCpuBuilds()
+{
+    gCabac = true;
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    // The own cpuid check against the compiler's (this one knows every name; older ones do not)
+    const bool builtin = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("avx") && __builtin_cpu_supports("bmi")
+        && __builtin_cpu_supports("bmi2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("lzcnt")
+        && __builtin_cpu_supports("movbe") && __builtin_cpu_supports("f16c") && __builtin_cpu_supports("popcnt")
+        && __builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("ssse3");
+    CHECK(cpuHasX86_64V3() == builtin);
+#endif
+    const bool v3 = std::strcmp(selectCpuBuild(true), "x86-64-v3") == 0;
+    CHECK(!v3 || cpuHasX86_64V3());
+    CHECK(std::strcmp(selectCpuBuild(false), "generic") == 0);
+    CHECK(std::strcmp(cpuBuild(), "generic") == 0);
+    if (v3) {
+        auto run = [](EncoderConfig c, int frames, bool twoPass, bool useV3, std::vector<double>* costs) {
+            selectCpuBuild(useV3);
+            if (twoPass) {
+                FirstPass fp(c.width, c.height, c.threads, c.bframes);
+                for (int t = 0; t < frames; ++t) {
+                    const Yuv src = synthFrame(c.width, c.height, t);
+                    fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+                }
+                c.firstPass = fp.stats();
+                *costs = c.firstPass->interSum;
+                costs->insert(costs->end(), c.firstPass->intraSum.begin(), c.firstPass->intraSum.end());
+            }
+            StreamInfo info;
+            CHECK(roundTrip(c, frames, nullptr, -1, nullptr, &info));
+            selectCpuBuild(false);
+            return info;
+        };
+        auto same = [&](const EncoderConfig& c, int frames, bool twoPass = false) {
+            std::vector<double> costsGeneric, costsV3;
+            const StreamInfo a = run(c, frames, twoPass, false, &costsGeneric), b = run(c, frames, twoPass, true, &costsV3);
+            CHECK(a.hash == b.hash);
+            CHECK(a.sizes == b.sizes);
+            CHECK(costsGeneric == costsV3);
+        };
+        EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
+        c.bframes = 3;
+        c.psyRd = 1.0;
+        c.bSharp = 1.5;
+        same(c, 40);
+        c = config(320, 192, IntraMode::Auto, 60, 4);
+        c.fps = 30;
+        c.crf = 23;
+        c.bframes = 8;
+        c.aqStrength = 1.5;
+        same(c, 50);
+        c = config(250, 142, IntraMode::Auto, 60, 3);
+        c.bitrateKbps = 300;
+        c.bframes = 2;
+        same(c, 50, true);
+        gCabac = false;
+        same(config(176, 144, IntraMode::Auto, 8, 2), 12);
+        gCabac = true;
+    } else {
+        std::printf("test_h264_encoder: no x86-64-v3 build of the encoder here (not built, or the CPU lacks it) - comparison skipped\n");
+    }
+    {
+        EncoderConfig c = config(320, 192, IntraMode::Auto, 60, 1);
+        c.bframes = 2;
+        c.bAdaptive = false;
+        StreamInfo def, fast1, fast4, noB, noBFast;
+        CHECK(roundTrip(c, 40, nullptr, -1, nullptr, &def));
+        c.speed = 1;
+        CHECK(roundTrip(c, 40, nullptr, -1, nullptr, &fast1));
+        c.threads = 4;
+        CHECK(roundTrip(c, 40, nullptr, -1, nullptr, &fast4));
+        CHECK(fast1.hash == fast4.hash);
+        CHECK(fast1.hash != def.hash);
+        c.bframes = 0;
+        CHECK(roundTrip(c, 20, nullptr, -1, nullptr, &noBFast));
+        c.speed = 0;
+        CHECK(roundTrip(c, 20, nullptr, -1, nullptr, &noB));
+        CHECK(noB.hash == noBFast.hash);
+    }
+}
+
 int main()
 {
     Check::initEnv();
+    // The cases below run the encoder's build for every CPU: the failure injection (ThreadErrors.h) and other
+    // hooks reach only that one. testCpuBuilds compares the x86-64-v3 build against it.
+    selectCpuBuild(false);
+    if (std::getenv("H264_TEST_CPU")) { // only the two builds and the speed stage (debugging)
+        testCpuBuilds();
+        return Check::result();
+    }
     if (std::getenv("H264_TEST_VBV")) { // only the VBV cases (debugging)
         testVbv();
         return Check::result();
@@ -1745,5 +1838,6 @@ int main()
         CHECK(roundTrip(config(176, 144, IntraMode::Auto, 8, 4), 8));
     }
     testVbv();
+    testCpuBuilds();
     return Check::result();
 }

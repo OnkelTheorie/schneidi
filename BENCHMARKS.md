@@ -109,6 +109,29 @@ The Pi is not a target for comfortable editing; the tests show that schneidi sta
 415 MB of RAM. All services on the Pi were stopped during the runs. Pi timings fluctuate from hour to hour (the swap state
 of the SD card changes them): the same task was 129 s at noon and 152 to 189 s in the evening.
 
+### 0.25 development build on the Pi (main 3679a4f2, 2026-11-19)
+
+Same Pi, files and tasks as the 0.21.0 run below (services stopped, offscreen, null audio). Because many numbers moved
+a lot, 0.21.0 and main were also run alternately on the same day: only that tells version from the Pi's state of the day.
+
+| Task | 0.21.0 (2026-11-12) | main 3679a4f2 | Alternating run, same day |
+|---|---|---|---|
+| Window visible, empty | 3.7 s | **1.73 s** (first start after copying 2.6 s) | 0.21.0 3.5 to 3.9 s, main 1.72 s – about twice as fast |
+| Window visible, with a 720p clip | 3.8 to 3.9 s | **1.88 s** | 0.21.0 3.5 / 4.0 s, main 1.9 / 2.4 s |
+| Peak RAM, empty / with a 720p clip | 108 / 222 MB | **102 / 198 to 259 MB** (median 232) | 0.21.0 219 / 229, main 216 / 230 – the same |
+| Playback 720p30 original | 30.5 frames/s | **28.4 frames/s** | main 29.5 / 28.6, 0.21.0 29.8 / 30.2 |
+| Playback 720p30 with a grade | 24.7 frames/s | **17.8 to 29.1** (median of 6: 26.0) | 0.21.0 17.2 to 28.1 (median of 6: 19.9) |
+| Playback 1080p30 / 1080p60 original | 1.8 / 1.2 frames/s | **3.8 / 3.1 frames/s** | 0.21.0 4.0 to 4.8 on 1080p30 – the Pi was faster that day, not the version |
+| Playback 1080p60 from proxies | 56.1 frames/s | **59.0 frames/s**, a steady 60 from the second second on | – |
+| Jump in the timeline, original → proxies | 2.4 s → 0.05 s | **2.63 s → 0.045 s** (median of 30) | – |
+| Export 5 s of 720p (x264, 4 threads) / 1080p | 55.5 s / 270.7 s, peak 206 / 255 MB | **55.8 s / 276.8 s**, peak 223 / 261 MB | – |
+| Export 5 s of 720p with the own s264 | – | **74.1 s** (1.33 times x264's time), peak 286 MB | – |
+
+With a grade the playback rate depends only on swapping, in both versions: without reading pages back from swap
+28 to 29 frames/s, with 7,000 to 10,000 pages read back 17 to 19. A graded 720p run needs about 215 MB, close to what
+the Pi has free next to the system, so whether a run swaps depends on the Pi's state, not on the version (in 6
+alternating rounds 0.21.0 dropped 4 times, main 2 times).
+
 ### 0.21.0 on the Pi (2026-11-12)
 
 Same Pi, files and script as above (services stopped during the runs). Window: median of 3 starts after the first
@@ -319,7 +342,7 @@ encode ran at 35 and at 12 frames/s on similar material minutes apart. The VMAF 
   two-pass at the target bit rate, GOP 120, 8 threads. x264: FFmpeg 7.1.5's libx264, `-preset medium`, two-pass at the same
   `-b:v`, GOP 120, 8 threads (default tune: psy and B-frames on, what users get). Both under `taskset -c 1-5,7-11 nice 19`.
   fps = frames / wall time of both passes. VMAF `vmaf_v0.6.1` (libvmaf 3.2 via PyAV), mean over all frames.
-- **Material.** CS2: a 1080p60 game recording (clipi, 2026-11-12), 600 frames. Phone: Galaxy S21 Ultra 4K30 sample
+- **Material.** CS2: a 1080p60 Counter-Strike 2 game recording (own screen capture, 2026-11-12), 600 frames. Phone: Galaxy S21 Ultra 4K30 sample
   (hand-held, much fine detail) scaled to 1080p30, 300 frames. Animation: synthetic, FFmpeg `mandelbrot` with a moving
   `testsrc2` overlay (hard edges, flat colours, fractal detail), 1080p30, 300 frames.
 

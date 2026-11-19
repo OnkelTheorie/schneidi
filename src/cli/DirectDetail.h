@@ -6,10 +6,13 @@
 #include "cli/CommandsDetail.h"
 #include "core/Direction.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+
+#include <optional>
 
 namespace Cli::detail {
 
@@ -46,5 +49,35 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
 // Applies a session as one edit (apply = {on, adjust, order, variant}); args: project?, plan?, dry_run?, and for
 // `short` the private _created (the project was made just before: its empty first timeline becomes the cut)
 QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx);
+
+// The recipes on what other commands find (DirectRecipesTalk.cpp): talk (cut_pauses), template (templates auto),
+// script (rough_cut). suggest* fill the session's material/suggestions/order/notes; apply* run the one edit
+void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx);
+void suggestTemplate(Direction::Session& s, const QStringList& files, Context& ctx);
+void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx);
+QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
+                      const QJsonObject& args, Context& ctx);
+QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
+                          const QJsonObject& args, Context& ctx);
+
+// The timeline as it is now, as a fingerprint (its clips): ranges and words measured on it fit only that state
+QString timelineStamp(const QString& project, const QString& timeline);
+
+// What `short` does after its cut, on its vertical timeline: word captions (style karaoke|word|off; whisper when
+// installed - never installed from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of
+// `game`). shortFinishOps measures everything (speech, the sound's peak, the kill feed) and answers the ops, so the app
+// gets only numbers; shortFinishEdit runs them as ONE edit (true = captions were put on: the render burns them in)
+struct ShortFinish {
+    QString captions = "karaoke";
+    QString sfx = "off";
+    QString game;     // empty = none
+    QString language; // empty = detect
+};
+QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
+                          QJsonArray* done, QJsonArray* notes);
+bool shortFinishEdit(const QString& project, const QString& timeline, const QJsonArray& ops, Context& ctx,
+                     QJsonArray* done);
+bool shortFinish(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx, QJsonArray* done,
+                 QJsonArray* notes);
 
 } // namespace Cli::detail

@@ -335,6 +335,31 @@ void testContainers(const QString& dir)
 // without B pictures). With "bframes=0": no B pictures, pts = dts. A slow zoom with grain: B pictures pay there
 // (on testsrc2 and still pictures the adaptive placement keeps P pictures). Prints the MD5 of the video stream (the
 // same input and settings must give the same stream on every run, whatever the load).
+// The option "speed=1" (the encoder's fast stage) reaches the encoder: with B pictures another stream than the default,
+// the same picture types and count, and it plays (ffmpeg decodes every picture).
+void testSpeedOption(const QString& dir)
+{
+    QByteArray sum[2];
+    for (int fast = 0; fast < 2; ++fast) {
+        const QString path = dir + (fast ? "/speed-fast.mp4" : "/speed-default.mp4");
+        Timeline tl = timeline(g_media);
+        tl.video[0].clips[0].mediaPath = g_zoom;
+        ExportSettings s = settings(path);
+        s.codecOptions << "bframes=3";
+        if (fast) s.codecOptions << "speed=1";
+        if (!CHECK(render(tl, s))) return;
+        QProcess md5;
+        md5.start("ffmpeg", {"-nostdin", "-v", "error", "-i", path, "-map", "0:v", "-c", "copy", "-f", "md5", "-"});
+        md5.waitForFinished(60000);
+        sum[fast] = md5.readAllStandardOutput().trimmed();
+        const QString types = pictureTypes(path);
+        CHECK_EQ(int(types.size()), kFrames);
+        CHECK(types.contains('B'));
+    }
+    CHECK(!sum[0].isEmpty());
+    CHECK(sum[0] != sum[1]);
+}
+
 void testBFrames(const QString& dir)
 {
     // Start of the picture minus start of the sound in the reference export per container
@@ -774,6 +799,7 @@ int main(int argc, char** argv)
         return Check::result();
     testContainers(tmp.path());
     testBFrames(tmp.path());
+    testSpeedOption(tmp.path());
     testCutFrames();
     testNoKeyStorm(tmp.path());
     testShortAndOdd(tmp.path());

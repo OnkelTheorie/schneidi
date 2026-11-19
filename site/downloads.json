@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "about": "The download list of the project website, in this order; entries of one platform form one table row, a platform without a shown entry is left out. The website's updater (update_site.py) reads this file at the latest release tag. kind 'asset': a file of that release, 'asset' = its name with {version} (and {n} for a package release number); URL, size and checksum come only from the release, and 'missing' is shown when the release lacks the file (no 'missing' = entry hidden). kind 'store': a fixed 'url' on an allowed host (Google Play, F-Droid, Flathub, Microsoft Store, AUR, Snapcraft, GitHub, ghcr.io), with its own versioning. kind 'docker': 'image' shown in 'note' at {image}. kind 'build': a text with a link. Texts are plain: `code`, **bold** and one [link text] for 'link' (building, releases, features, readme, docker, arch, download). Checked by tools/site_figures.py --check.",
+  "downloads": [
+    {
+      "id": "appimage",
+      "kind": "asset",
+      "platform": "Linux",
+      "os": "Linux",
+      "label": "AppImage",
+      "asset": "schneidi-{version}-x86_64.AppImage",
+      "note": "runs on most distributions: make it executable and start it.",
+      "missing": {
+        "text": "No AppImage in the latest release: [all releases].",
+        "link": "releases"
+      }
+    },
+    {
+      "id": "deb",
+      "kind": "asset",
+      "platform": "Linux",
+      "os": "Linux",
+      "label": "Debian package",
+      "asset": "schneidi_{version}_amd64.deb",
+      "note": "for Debian 13 (on Ubuntu use the AppImage)."
+    },
+    {
+      "id": "arch",
+      "kind": "asset",
+      "platform": "Linux",
+      "os": "Linux",
+      "label": "Arch Linux package",
+      "asset": "schneidi-{version}-{n}-x86_64.pkg.tar.zst",
+      "note": "install with `pacman -U`; after an Arch Qt update use the AppImage until the next release."
+    },
+    {
+      "id": "docker",
+      "kind": "docker",
+      "platform": "Server",
+      "image": "ghcr.io/onkeltheorie/schneidi",
+      "note": "A Docker image for the command line and the MCP server: {image} ([how to use it]).",
+      "link": "docker"
+    },
+    {
+      "id": "windows",
+      "kind": "asset",
+      "platform": "Windows",
+      "os": "Windows",
+      "label": "Installer",
+      "asset": "schneidi-setup-{version}.exe",
+      "note": "for 64-bit Windows.",
+      "missing": {
+        "text": "No ready download in the latest release. [Build it yourself] with MSYS2.",
+        "link": "building"
+      }
+    },
+    {
+      "id": "arm",
+      "kind": "asset",
+      "platform": "ARM",
+      "os": "Linux",
+      "label": "AppImage for ARM64",
+      "asset": "schneidi-{version}-aarch64.AppImage",
+      "note": "for the Raspberry Pi and other ARM64 computers.",
+      "missing": {
+        "text": "Raspberry Pi and other ARM64 computers: [build from source].",
+        "link": "building"
+      }
+    }
+  ]
+}

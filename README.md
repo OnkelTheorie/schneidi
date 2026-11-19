@@ -161,7 +161,7 @@ edges; never a default.
 | 5.1/7.1 surround | 0.23 | young | Checked with meters and test files, little real-world use yet |
 | Curves, qualifier, stills, master wheel | 0.24 | young | No curve keyframes; the qualifier has no spatial mask smoothing; with a qualifier or hue curves active a fine 65-point LUT is resampled to 33 points |
 | HDR → SDR, 10-bit export | 0.24 | young | PQ above 1000 nits goes to white; Dolby Vision only through its HLG/HDR10 base; no HDR export yet; VAAPI/Quick Sync 10-bit not checked on real hardware |
-| **s264** (own H.264 encoder) | 0.24 | experimental | Slower than x264 and never the default; x264 stays the encoder to use |
+| **s264** (own H.264 encoder) | 0.24 | experimental | In two-pass faster than x264 medium on game, calm and animation footage, slower on camera footage and in CRF mode; never the default, x264 stays the encoder to use |
 | Windows build | 0.5 | young | No download yet, build it yourself; tested less than Linux and not in CI |
 | Translations | 0.6 – 0.21 | young | Most languages beyond English and German are translated by AI |
 
@@ -174,6 +174,8 @@ combination of features looks right on your material – [issues](https://github
 with a sample file help most.
 
 ## How light is it?
+
+<!-- The figures in the tables below feed site/figures.json (the project website): after changing one, run tools/site_figures.py --write (ctest site_figures checks it). -->
 
 > **Measured with older versions:** the two tables below are from **0.11** (Ryzen 5 5600X) and **0.13** (Ryzen 5 PRO 2400G) and have not been measured again since. The picture engine was rewritten in 0.15, and features were added after that; newer numbers from the regular benchmark runs are in [BENCHMARKS.md](BENCHMARKS.md).
 
@@ -201,20 +203,20 @@ RAM in steps of 16 MB (the 2400G was measured in a Docker container, the 5600X i
 
 0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070 and the 2400G's built-in Vega 11) is on by default – with it one core is enough even on the 2400G. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space. A few seconds after playback stops or an export ends, schneidi gives the memory it no longer needs back to the system (after a 1080p export about 1450 → 590 MB).
 
-**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet; measured with 0.21.0). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
+**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet; measured with the 0.25 development build of 2026-11-19). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
 | | Raspberry Pi Zero 2 W |
 |---|---|
-| Window visible | 3.7 s, 108 MB RAM (222 MB with a 720p clip) |
-| Playback 720p30 original | 30 of 30 frames/s, sound in sync |
-| Playback 1080p60 original | 1 frame/s – the Pi cannot even decode it in real time |
-| Playback 1080p60 from proxies | 56 of 60 frames/s over 10 s – a steady 60 from the third second on, sound in sync |
-| Jumping in the timeline, original → proxies | 2.4 s → 0.05 s |
-| Export 5 s of 720p (x264) | 56 s |
+| Window visible | 1.7 s, 102 MB RAM (about 230 MB with a 720p clip) |
+| Playback 720p30 original | 29 of 30 frames/s, sound in sync |
+| Playback 1080p60 original | 2 to 3 frames/s – the Pi cannot even decode it in real time |
+| Playback 1080p60 from proxies | 59 of 60 frames/s over 10 s – a steady 60 from the second second on, sound in sync |
+| Jumping in the timeline, original → proxies | 2.6 s → 0.05 s |
+| Export 5 s of 720p (x264 / own s264) | 56 s / 74 s |
 
 ## Performance
 
-Measured, not estimated: the large 1080x1920 test project (27 clips, about 60 titles) renders in about 37 s with 1.5 GB of RAM since 0.15.0 (0.14.1: 59 s, 4.3 GB), an empty project starts in about 0.4 s, and a Raspberry Pi Zero 2 W with 415 MB of RAM opens the window in about 4 s. 8K footage is editable with proxies; 8K60 without proxies is not smooth. Every benchmark run on record, including the ones that got worse, is in [BENCHMARKS.md](BENCHMARKS.md).
+Measured, not estimated: the large 1080x1920 test project (27 clips, about 60 titles) renders in about 37 s with 1.5 GB of RAM since 0.15.0 (0.14.1: 59 s, 4.3 GB), an empty project starts in about 0.4 s, and a Raspberry Pi Zero 2 W with 415 MB of RAM opens the window in under 2 s. 8K footage is editable with proxies; 8K60 without proxies is not smooth. Every benchmark run on record, including the ones that got worse, is in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## AI chat in the app
 
