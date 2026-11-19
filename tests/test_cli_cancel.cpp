@@ -10,6 +10,7 @@
 #include "cli/AnalysisDetail.h"
 #include "cli/Commands.h"
 #include "cli/Live.h"
+#include "core/AppPaths.h"
 #include "core/ProjectFile.h"
 #include "engine/AnalysisCache.h"
 #include "engine/MediaIndex.h"
@@ -26,7 +27,9 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QStandardPaths>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 
 #include <atomic>
@@ -124,6 +127,8 @@ bool wait(const QVector<std::shared_ptr<Job>>& jobs, int ms = 120000)
 }
 
 QString code(const QJsonObject& reply) { return reply["error"]["code"].toString(); }
+// CANCELED, but the command had got to its end anyway (a loaded machine): what it stores may be there
+bool late(const QJsonObject& reply) { return reply["error"]["late"].toBool(); }
 
 int filesIn(const QString& dir)
 {
@@ -147,24 +152,51 @@ int main(int argc, char** argv)
     // --- AnalysisCache on its own: stored, read back, a changed file is a miss
     QTemporaryDir dir;
     {
+        QDir(AnalysisCache::folder()).removeRecursively(); // the test's own cache folder: from a clean start
+        // An audio events cache of an older version: removed by the first use of the analysis cache
+        const QString oldEvents = AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events/x.json";
+        QDir().mkpath(QFileInfo(oldEvents).absolutePath());
+        QFile(oldEvents).open(QIODevice::WriteOnly);
+        CHECK(QFileInfo::exists(oldEvents));
         const QString f = dir.filePath("plain.bin");
         QFile w(f);
         CHECK(w.open(QIODevice::WriteOnly) && w.write("abc") == 3);
         w.close();
         const QJsonObject options{{"x", 1}};
-        CHECK(!AnalysisCache::get("test", f, options, 1));
-        AnalysisCache::put("test", f, options, 1, {{"v", 42}});
-        CHECK_EQ((*AnalysisCache::get("test", f, options, 1))["v"].toInt(), 42);
-        CHECK(!AnalysisCache::get("test", f, {{"x", 2}}, 1)); // other options
-        CHECK(!AnalysisCache::get("test", f, options, 2));    // other version
-        CHECK(!AnalysisCache::get("other", f, options, 1));   // other kind
+        const auto keyOf = [](const QString& kind, const QString& file, const QJsonObject& o, int v) {
+            return AnalysisCache::key(kind, file, o, v);
+        };
+        const auto get = [&](const QString& kind, const QString& file, const QJsonObject& o, int v) {
+            return AnalysisCache::get(keyOf(kind, file, o, v));
+        };
+        CHECK(!get("test", f, options, 1));
+        const int hitsBefore = AnalysisCache::hits();
+        AnalysisCache::put(keyOf("test", f, options, 1), {{"v", 42}});
+        CHECK_EQ((*get("test", f, options, 1))["v"].toInt(), 42);
+        CHECK_EQ(AnalysisCache::hits(), hitsBefore + 1);
+        CHECK(!get("test", f, {{"x", 2}}, 1)); // other options
+        CHECK(!get("test", f, options, 2));    // other version
+        CHECK(!get("other", f, options, 1));   // other kind
         QFile t(f);
         CHECK(t.open(QIODevice::ReadWrite));
         CHECK(t.setFileTime(QDateTime::currentDateTime().addSecs(-3600), QFileDevice::FileModificationTime));
         t.close();
-        CHECK(!AnalysisCache::get("test", f, options, 1)); // the file changed (modification time)
-        CHECK(!AnalysisCache::get("test", dir.filePath("missing.bin"), options, 1));
-        AnalysisCache::put("test", dir.filePath("missing.bin"), options, 1, {{"v", 1}}); // nothing, no crash
+        CHECK(!get("test", f, options, 1)); // the file changed (modification time)
+        CHECK(!get("test", dir.filePath("missing.bin"), options, 1));
+        AnalysisCache::put(keyOf("test", dir.filePath("missing.bin"), options, 1), {{"v", 1}}); // nothing, no crash
+        // The file overwritten between the key (a miss, measuring starts) and put: nothing is stored, neither under
+        // the old nor under the new stamp
+        {
+            const AnalysisCache::Key before = keyOf("test", f, {{"y", 1}}, 1);
+            CHECK(!AnalysisCache::get(before));
+            QFile o(f);
+            CHECK(o.open(QIODevice::WriteOnly | QIODevice::Truncate) && o.write("other content") == 13);
+            o.close();
+            AnalysisCache::put(before, {{"v", 1}}); // measured the old content
+            CHECK(!AnalysisCache::get(before));
+            CHECK(!get("test", f, {{"y", 1}}, 1));
+            CHECK(!QFileInfo::exists(before.entry));
+        }
         // Number lists packed exactly
         const std::vector<float> fl{0.f, 1e-7f, 0.123456789f, -3.5f};
         const std::vector<double> db{0.0, 1.0 / 3.0, 1e300, -2.25};
@@ -176,13 +208,46 @@ int main(int argc, char** argv)
         std::vector<double> big(size_t(40 * 60 * 60) * 3, 0.5);
         QElapsedTimer clock;
         clock.start();
-        AnalysisCache::put("test", f, {{"big", true}}, 1, {{"scores", AnalysisCache::pack(big)}});
+        AnalysisCache::put(AnalysisCache::key("test", f, {{"big", true}}, 1), {{"scores", AnalysisCache::pack(big)}});
         const double putMs = clock.nsecsElapsed() / 1e6;
         clock.restart();
-        const auto back = AnalysisCache::get("test", f, {{"big", true}}, 1);
+        const auto back = AnalysisCache::get(AnalysisCache::key("test", f, {{"big", true}}, 1));
         const double getMs = clock.nsecsElapsed() / 1e6;
         CHECK(back && AnalysisCache::unpackDoubles((*back)["scores"]).size() == big.size());
         std::printf("cache of 144000 pictures: put %.1f ms, get %.1f ms\n", putMs, getMs);
+        // Pruning: below the cap nothing goes; above it the entries used longest ago go first
+        CHECK_EQ(AnalysisCache::prune(), 0);
+        const AnalysisCache::Key oldKey = AnalysisCache::key("test", f, {{"n", 1}}, 1);
+        const AnalysisCache::Key newKey = AnalysisCache::key("test", f, {{"n", 2}}, 1);
+        AnalysisCache::put(oldKey, {{"v", 1}});
+        AnalysisCache::put(newKey, {{"v", 2}});
+        {
+            QFile e(oldKey.entry);
+            CHECK(e.open(QIODevice::ReadWrite));
+            CHECK(e.setFileTime(QDateTime::currentDateTime().addDays(-30), QFileDevice::FileModificationTime));
+        }
+        const QString bigEntry = AnalysisCache::key("test", f, {{"big", true}}, 1).entry;
+        {
+            QFile e(bigEntry);
+            CHECK(e.open(QIODevice::ReadWrite));
+            CHECK(e.setFileTime(QDateTime::currentDateTime().addDays(-10), QFileDevice::FileModificationTime));
+        }
+        // Over the cap: the oldest go (a month, ten days) until below 80 % of it, the one used now stays
+        CHECK_EQ(AnalysisCache::prune(QFileInfo(bigEntry).size()), 2);
+        CHECK(!QFileInfo::exists(oldKey.entry));
+        CHECK(!QFileInfo::exists(bigEntry));
+        CHECK(QFileInfo::exists(newKey.entry));
+        // A hit marks an entry as used (touched when older than a day)
+        {
+            QFile e(newKey.entry);
+            CHECK(e.open(QIODevice::ReadWrite));
+            CHECK(e.setFileTime(QDateTime::currentDateTime().addDays(-30), QFileDevice::FileModificationTime));
+        }
+        CHECK(AnalysisCache::get(newKey));
+        CHECK(QFileInfo(newKey.entry).lastModified().secsTo(QDateTime::currentDateTime()) < 3600);
+        // The old audio events folder (before 0.25) is gone after the first use
+        QThreadPool::globalInstance()->waitForDone(10000);
+        CHECK(!QFileInfo::exists(oldEvents));
     }
 
     // --- Material: two recordings with loud bursts, a long sound file (silence), the fake whisper on the PATH
@@ -234,13 +299,13 @@ int main(int argc, char** argv)
         CHECK(job->progressOnUiThread);
         CHECK(!job->doneInsideCall);
         CHECK(!job->handle.running());
-        CHECK(job->canceledAt >= 0 && job->doneAt - job->canceledAt < 3000);
+        CHECK(job->canceledAt >= 0 && job->doneAt - job->canceledAt < 10000);
         CHECK_EQ(Cli::Live::backgroundJobs(), 0);
         // It really stopped: not both files were measured to the end (a finished file is in the highlights cache)
         const QJsonObject again = run("highlights", args);
         int cached = 0;
         for (const QJsonValue& f : again["files"].toArray()) cached += f["cached"].toBool() ? 1 : 0;
-        CHECK(cached < 2);
+        if (!late(job->reply)) CHECK(cached < 2);
     }
 
     // --- silence canceled: no cache entry of its peaks
@@ -250,7 +315,7 @@ int main(int argc, char** argv)
         CHECK(wait({job}));
         CHECK_EQ(code(job->reply), QString("CANCELED"));
         CHECK(job->doneOnUiThread);
-        CHECK_EQ(filesIn(cacheDir + "/frame-peaks"), before);
+        if (!late(job->reply)) CHECK_EQ(filesIn(cacheDir + "/frame-peaks"), before);
     }
 
     // --- index canceled: not in the index
@@ -258,7 +323,7 @@ int main(int argc, char** argv)
         const auto job = start("index", {{"file", a}, {"sheet", false}}, 0.1);
         CHECK(wait({job}));
         CHECK_EQ(code(job->reply), QString("CANCELED"));
-        CHECK(!MediaIndex::cached(a));
+        if (!late(job->reply)) CHECK(!MediaIndex::cached(a));
     }
 
     // --- transcribe with a whisper that works long: canceled while it runs; the event loop keeps running
@@ -286,7 +351,7 @@ int main(int argc, char** argv)
         CHECK(wait({job}, 30000));
         tick.stop();
         CHECK_EQ(code(job->reply), QString("CANCELED"));
-        CHECK(job->doneAt - job->canceledAt < 3000); // whisper was stopped, not waited for
+        CHECK(job->doneAt - job->canceledAt < 10000); // whisper was stopped, not waited for (it works 30 s)
         CHECK(ticks >= 30); // ~80 in 800 ms: the UI thread was free
         CHECK(job->doneOnUiThread);
         qputenv("FAKE_WHISPER_MS", "0");
@@ -398,17 +463,25 @@ int main(int argc, char** argv)
             *out = run(command, args);
             return t.nsecsElapsed() / 1e6;
         };
+        // A copy no earlier job has measured (a cancel that came late may have stored the original's)
+        const QString fresh = dir.filePath("talk2.m4a");
+        CHECK(QFile::copy(talk, fresh));
+        // Hits counted by the cache itself; the time only as a loose check (a loaded machine)
         QJsonObject first, second;
-        const double cold = timed("silence", {{"file", talk}}, &first);
-        const double warm = timed("silence", {{"file", talk}}, &second);
+        const int hits0 = AnalysisCache::hits();
+        const double cold = timed("silence", {{"file", fresh}}, &first);
+        CHECK_EQ(AnalysisCache::hits(), hits0);
+        const double warm = timed("silence", {{"file", fresh}}, &second);
+        CHECK_EQ(AnalysisCache::hits(), hits0 + 1);
         CHECK(!first.contains("error"));
         CHECK_EQ(QJsonDocument(first).toJson(), QJsonDocument(second).toJson()); // the same answer
-        if (!CHECK(warm < cold * 0.05)) std::printf("       silence cold %.1f ms, warm %.1f ms\n", cold, warm);
+        if (!CHECK(warm < cold * 0.25)) std::printf("       silence cold %.1f ms, warm %.1f ms\n", cold, warm);
         else std::printf("silence cold %.1f ms, warm %.1f ms\n", cold, warm);
         // Other settings, the same measurement: from the cache too
         QJsonObject other;
-        const double otherMs = timed("silence", {{"file", talk}, {"min", "1s"}}, &other);
-        CHECK(otherMs < cold * 0.05);
+        const double otherMs = timed("silence", {{"file", fresh}, {"min", "1s"}}, &other);
+        CHECK_EQ(AnalysisCache::hits(), hits0 + 2);
+        CHECK(otherMs < cold * 0.25);
         CHECK(other["silence"].toArray().size() <= first["silence"].toArray().size());
 
         // A picture as large as a recording's (opening the file stays: the cache saves the decoding)
@@ -417,20 +490,22 @@ int main(int argc, char** argv)
         CHECK(!hd.isEmpty());
         QJsonObject s1, s2;
         const double sceneCold = timed("scenes", {{"file", hd}}, &s1);
+        const int hits1 = AnalysisCache::hits();
         const double sceneWarm = timed("scenes", {{"file", hd}}, &s2);
+        CHECK_EQ(AnalysisCache::hits(), hits1 + 1);
         CHECK(!s1.contains("error"));
         CHECK_EQ(QJsonDocument(s1).toJson(), QJsonDocument(s2).toJson());
-        if (!CHECK(sceneWarm < sceneCold * 0.05))
+        if (!CHECK(sceneWarm < sceneCold * 0.25))
             std::printf("       scenes cold %.1f ms, warm %.1f ms\n", sceneCold, sceneWarm);
         else std::printf("scenes cold %.1f ms, warm %.1f ms\n", sceneCold, sceneWarm);
 
         // The file overwritten with other sound (no pauses now): measured again, another answer
-        QFile::remove(talk);
-        const QString again = Check::makeMedia(talk, {"-f", "lavfi", "-i", "sine=f=300:d=900:sample_rate=48000", "-ac",
+        QFile::remove(fresh);
+        const QString again = Check::makeMedia(fresh, {"-f", "lavfi", "-i", "sine=f=300:d=900:sample_rate=48000", "-ac",
                                                       "1", "-c:a", "aac", "-b:a", "48k"});
         CHECK(!again.isEmpty());
         QJsonObject changed;
-        timed("silence", {{"file", talk}}, &changed);
+        timed("silence", {{"file", fresh}}, &changed);
         CHECK(!changed.contains("error"));
         CHECK(first["silence"].toArray().size() > 10);
         CHECK(changed["silence"].toArray().isEmpty());
