@@ -1591,18 +1591,24 @@ static const double gTpDev = devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV
 // Two-pass: the probe's second small encode on the queued pictures that carry the bits (H264_PROBEPICK=0: none, the
 // model starts from the first two pictures as before 19.11.2026).
 static const bool gProbePick = !devEnv("H264_PROBEPICK") || std::atoi(devEnv("H264_PROBEPICK")) != 0;
-// The seed's weight in pictures of its size (H264_PROBEWEIGHT; 0 = no weight) and the probe of a P picture
-// after a run of B pictures (H264_PROBEAFTERB=0: the guess gTpAfterB until one is coded).
+// The seed's weight in pictures of its size (H264_PROBEWEIGHT; 0 = no weight), the B pictures' k before one is
+// coded as a share of the probed k after B runs (H264_PROBEBSHARE; measured over 150 pictures of twelve clips: 0.35 to
+// 0.47 on eight, 0.12 to 0.29 on stills and film) and the probe of a P picture after a run of B pictures
+// (H264_PROBEAFTERB=0: the guess gTpAfterB until one is coded).
 static const double gProbeWeight = devEnv("H264_PROBEWEIGHT") ? std::atof(devEnv("H264_PROBEWEIGHT")) : 1.0;
-static const double gProbeBShare = devEnv("H264_PROBEBSHARE") ? std::atof(devEnv("H264_PROBEBSHARE")) : 0.3;
+static const double gProbeBShare = devEnv("H264_PROBEBSHARE") ? std::atof(devEnv("H264_PROBEBSHARE")) : 0.4;
 static const bool gProbeAfterB = !devEnv("H264_PROBEAFTERB") || std::atoi(devEnv("H264_PROBEAFTERB")) != 0;
-// The probed pictures are coded with the macroblock tree's offsets they will have (H264_PROBETREE=0: without, their
-// bits scaled by the first picture's mean offset instead, as the first probe does; 2: the first probe too).
-static const int gProbeTree = devEnv("H264_PROBETREE") ? std::atoi(devEnv("H264_PROBETREE")) : 1;
-// The probe's reference picture is an I picture, coded 3 below the P QP; the references of the clip's P pictures are
-// mostly P pictures (H264_PROBEREFQP: QP added to the probe's reference picture).
-static const double gProbeRefQp = devEnv("H264_PROBEREFQP") ? std::atof(devEnv("H264_PROBEREFQP")) : 0.0;
-static const int gProbeAq = devEnv("H264_PROBEAQ") ? std::atoi(devEnv("H264_PROBEAQ")) : 1;
+// The probed pictures are coded as the clip's will be: with the macroblock tree's offsets they have in the queue
+// (H264_PROBETREE=0: without, their bits scaled by the first picture's mean offset as the first probe does - where the
+// tree brings a picture's noise above the quantiser that seed was 6 times too small), with AQ (H264_PROBEAQ=0: without -
+// an animated clip's seed was twice too large) and from a reference that is a P picture itself (H264_PROBECHAIN=0:
+// an I picture).
+static const bool gProbeTree = !devEnv("H264_PROBETREE") || std::atoi(devEnv("H264_PROBETREE")) != 0;
+static const bool gProbeChain = !devEnv("H264_PROBECHAIN") || std::atoi(devEnv("H264_PROBECHAIN")) != 0;
+static const bool gProbeAq = !devEnv("H264_PROBEAQ") || std::atoi(devEnv("H264_PROBEAQ")) != 0;
+// Measuring only (H264_FIRSTTREE=1): the first picture's own offsets from the whole tree too. They come from the tree
+// before the searches over the B runs (a clip that starts with a B run codes its first picture without any).
+static const bool gFirstTree = devEnv("H264_FIRSTTREE") && std::atoi(devEnv("H264_FIRSTTREE")) != 0;
 static const bool gTpSeedTree = !devEnv("H264_TPSEEDTREE") || std::atoi(devEnv("H264_TPSEEDTREE")) != 0;
 static const double gTpFollow = devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPFOLLOW")) : 0.25;
 // The rest of the way is gone slowly: the gap between the two QPs, averaged over about this many
@@ -2655,8 +2661,8 @@ void Encoder::applyRc(int upTo)
                 const bool pb = r.type == 1 && r.afterB && gTpAfterB > 0;
                 static const bool trace = devEnv("H264_RC_TRACE") != nullptr;
                 if (trace)
-                    std::fprintf(stderr, "rck: coded %d %c%s qp %d bits %.0f k %.3f\n", r.index, "IPB"[r.type], pb ? "b" : "", r.qp, r.bits,
-                                 r.bits * std::exp2(r.qp / 6.0) / r.cost);
+                    std::fprintf(stderr, "rck: coded %d %c%s qp %d bits %.0f k %.3f bin %d cost %.0f\n", r.index, "IPB"[r.type], pb ? "b" : "", r.qp, r.bits,
+                                 r.bits * std::exp2(r.qp / 6.0) / r.cost, r.type == 1 ? rcBin(r.cost) : r.bin, r.cost);
                 if (pb) {
                     rcKSumPb_ += r.bits * std::exp2(r.qp / 6.0);
                     rcCostSumPb_ += r.cost;
@@ -4072,7 +4078,6 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 pc.weightedPred = false;
                 pc.mbtree = false;
                 pc.aqStrength = own && gProbeAq ? cfg_.aqStrength : 0;
-                pc.weightedPred = own && gProbeAq >= 2 ? cfg_.weightedPred : false;
                 pc.qp = qp;
                 pc.gop = std::max(2, cfg_.gop);
                 pc.sceneCut = false;
@@ -4081,13 +4086,13 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             };
             // The probe codes without the macroblock tree; the real pictures have its finer QPs
             // (one-pass: folded into each picture's cost instead).
-            if (twoPass && gProbePick && gProbeTree >= 1 && bMode && cfg_.mbtree) {
+            if (twoPass && gProbePick && gProbeTree && bMode && cfg_.mbtree) {
                 // The queue's tree as the pictures after this one will find it: the searches over the B runs
                 // are due after the first picture, they run here already.
                 ensureBSearches();
                 joinBSearches();
                 la_->propagateB(queue_, cfg_.bframes, cfg_.weightedBipred);
-                if (gProbeTree >= 3 && !fc.treeOffset_.empty()) // the first picture with the whole tree too
+                if (gFirstTree && !fc.treeOffset_.empty())
                     for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
                         fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
             }
@@ -4104,7 +4109,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             std::vector<float> probeOffsets;
             double treeLevel = 0;
             auto settledAt = [&](const LookaheadFrame& g) { return size_t(g.index) + size_t(std::max(2, cfg_.lookahead / 2)) <= queue_.size(); };
-            auto encodeWithTree = [&](Encoder& probe, const LookaheadFrame& g, bool withTree, float extra = 0.0f) {
+            auto encodeWithTree = [&](Encoder& probe, const LookaheadFrame& g, bool withTree) {
                 probe.probeTree_ = nullptr;
                 if (withTree && cfg_.mbtree && g.intraCost.size() == size_t(mbW_) * mbH_ && g.propagate.size() == g.intraCost.size()) {
                     probeOffsets.resize(g.intraCost.size());
@@ -4118,7 +4123,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     // picture from none): its offsets keep their shape and move to the settled pictures' level.
                     const float shift = (g.type == 2 || !settledAt(g)) && treeLevel < mean ? float(treeLevel - mean) : 0.0f;
                     for (float& o : probeOffsets)
-                        o = std::max(-8.0f, o + shift) + extra;
+                        o = std::max(-8.0f, o + shift);
                     probe.probeTree_ = &probeOffsets;
                 }
                 const double bits = double(probe.encode(pictureOf(g, cfg_.width)).size()) * 8.0;
@@ -4131,12 +4136,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 probe.probeTree_ = nullptr;
                 return bits;
             };
-            const bool treeFirst = twoPass && gProbeTree >= 2 && !fc.treeOffset_.empty();
-            if (treeFirst)
-                tree = 1.0;
             for (int round = 0; round < 3; ++round) {
                 Encoder probe(probeConfig(probeQp));
-                const double bitsI = treeFirst ? encodeWithTree(probe, frame, true) : double(probe.encode(picture).size()) * 8.0;
+                const double bitsI = double(probe.encode(picture).size()) * 8.0;
                 const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
                 rcKSum_[0] = kI;
                 rcCostSum_[0] = 1; // seeds only: the first real pictures outweigh them
@@ -4164,22 +4166,10 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     break;
                 probeQp = std::clamp(int(std::lround(std::clamp(predicted, probeQp - 6.0, probeQp + 6.0))), 10, 51);
             }
-            // Two-pass: the P pictures' k from the queued pictures that carry the bits, not from the second
-            // picture. A clip that starts on a standing picture has a second picture that says nothing about the
-            // moving ones behind it (measured on a game clip: k 1.4 from the probe, 5 from the clip; the plan began
-            // 7 QP too fine, the first pictures took a fifth of the clip's bits, and their own k - next to no bits
-            // over next to no need - threw the plan about by 10 QP). And the P pictures after runs of B pictures
-            // are most of a clip's bits at 1 to 5 times the other P pictures' k (the fixed guess of 1.6 left the
-            // plan 3-4 QP too fine on dense footage). So two more small encodes (an I and a P picture each): the
-            // queued P picture after a B run that needs the most against its reference, and the picture behind that
-            // reference against it (the plain P pictures' k). Without such a picture in the queue: the queued picture
-            // that needs the most against the one before it. The seeds weigh as much as their pictures, and the
-            // B pictures start from a share of the k after B runs. Repeated once where the QP they predict is out
-            // of the probe's reach (k is not constant over the QP).
             // The level of the tree's offsets in the queue: the mean over the reference pictures that have at least
             // half the lookahead behind them (the first picture's where there is none).
             treeLevel = -6.0 * std::log2(tree);
-            {
+            if (twoPass && gProbePick) {
                 double sum = 0;
                 int count = 0;
                 for (const LookaheadFrame& g : queue_) {
@@ -4191,13 +4181,12 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     sum += mean / double(g.intraCost.size());
                     ++count;
                 }
-                if (count > 0 && gProbeTree >= 1)
+                if (count > 0 && gProbeTree)
                     treeLevel = sum / count;
                 if (devEnv("H264_RC_TRACE"))
                     std::fprintf(stderr, "rc: tree level %.2f over %d queued pictures\n", treeLevel, count);
             }
-            const double firstTree = tree;
-            if (devEnv("H264_PROBE_TRACE")) { // TEMP
+            if (devEnv("H264_PROBE_TRACE")) { // the queue as the probe finds it
                 for (size_t j = 0; j < queue_.size(); ++j) {
                     const LookaheadFrame& g = queue_[j];
                     double mean = 0;
@@ -4207,6 +4196,19 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     std::fprintf(stderr, "pq: %d type %d refDist %d decided %d tree %.2f\n", g.index, g.type, g.refDist, int(g.decided), mean / std::max<size_t>(1, g.intraCost.size()));
                 }
             }
+            // Two-pass: the P pictures' k from the queued pictures that carry the bits, not from the second
+            // picture. A clip that starts on a standing picture has a second picture that says nothing about the
+            // moving ones behind it (measured on a game clip: k 1.4 from the probe, 5 from the clip; the plan began
+            // 7 QP too fine, the first pictures took a fifth of the clip's bits, and their own k - next to no bits
+            // over next to no need - threw the plan about by 10 QP). And the P pictures after runs of B pictures
+            // are most of a clip's bits at 1 to 5 times the other P pictures' k (the fixed guess of 1.6 left the
+            // plan 3-4 QP too fine on dense footage). So two more small encodes (an I and one or two P pictures each): the
+            // queued P picture after a B run that needs the most against its reference, and the picture behind that
+            // reference against it (the plain P pictures' k). Without such a picture in the queue: the queued picture
+            // that needs the most against the one before it. They are coded as the clip's pictures will be - with
+            // the tree's offsets and AQ (encodeWithTree), the reference a P picture itself (encodeChain). The seeds
+            // weigh as much as their pictures, and the B pictures start from a share of the k after B runs.
+            // Repeated once where the QP they predict is out of the probe's reach (k is not constant over the QP).
             auto probeMoving = [&](int qp) {
                 const size_t n = std::min({queue_.size(), cfg_.firstPass->size(), tpType_.size()});
                 auto queued = [&](size_t j) { return queue_[j].index == int(j) && !queue_[j].coded; };
@@ -4255,36 +4257,47 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 // reference of the one after the B run - but not where the pictures between repeat it: a recording
                 // with duplicated pictures measured a k of next to nothing so). The run's last step with standing
                 // pictures before it is the picture after the B run: one encode.
+                // The probed picture's reference r: coded as a P picture from its own reference where it has one in
+                // the queue (gProbeChain), as an I picture otherwise. A P picture right behind an I picture costs a
+                // fraction of one behind a P picture (measured on an animated film at a fixed QP: the first P picture
+                // 15 kbit, the following 43, 43, 58, 57, 65 ...).
+                auto encodeChain = [&](Encoder& probe, size_t r, bool withTree) {
+                    if (gProbeChain && r > 0 && !tpKey_[r]) {
+                        const size_t r0 = r < tpRef0_.size() && tpRef0_[r] >= 0 ? size_t(tpRef0_[r]) : r - 1;
+                        if (queued(r0))
+                            encodeWithTree(probe, queue_[r0], withTree);
+                    }
+                    encodeWithTree(probe, queue_[r], withTree);
+                };
                 const double scale = std::exp2(qp / 6.0);
-                const bool own = gProbeTree >= 1 && cfg_.mbtree && gTpSeedTree; // each picture with its own offsets
-                const double tree = own ? 1.0 : firstTree;
+                const bool own = gProbeTree && cfg_.mbtree && gTpSeedTree; // each picture with its own offsets
+                const double scaled = own ? 1.0 : tree;                    // (or the bits by the first picture's)
                 double bitsAfterB = -1;
                 if (at > 0 && most > 1.0) {
                     Encoder probe(probeConfig(qp, own));
-                    encodeWithTree(probe, queue_[size_t(tpRef0_[at])], own, float(gProbeRefQp));
+                    encodeChain(probe, size_t(tpRef0_[at]), own);
                     bitsAfterB = encodeWithTree(probe, queue_[at], own);
                     rcCostSumPb_ = gProbeWeight > 0 ? gProbeWeight * most * scale : 1.0;
-                    rcKSumPb_ = bitsAfterB / most * tree * rcCostSumPb_;
-                    // B pictures until one is coded: by the P pictures between their runs (measured at the
-                    // clips' ends: 0.07 to 0.39 of their k, most around 0.3).
-                    rcKBSeed_ = gProbeBShare * bitsAfterB / most * tree;
+                    rcKSumPb_ = bitsAfterB / most * scaled * rcCostSumPb_;
+                    // B pictures until one is coded: by the P pictures between their runs (gProbeBShare).
+                    rcKBSeed_ = gProbeBShare * bitsAfterB / most * scaled;
                     if (devEnv("H264_RC_TRACE"))
                         std::fprintf(stderr, "rc: probe at %d, P picture %zu after B (from %d) bits %.0f k %.3f\n", qp, at, tpRef0_[at], bitsAfterB,
-                                     bitsAfterB / most * tree);
+                                     bitsAfterB / most * scaled);
                 }
                 double bitsP = bitsAfterB;
                 if (plain != at || bitsP < 0) {
                     Encoder probe(probeConfig(qp, own));
-                    encodeWithTree(probe, queue_[plain - 1], own, float(gProbeRefQp));
+                    encodeChain(probe, plain - 1, own);
                     bitsP = encodeWithTree(probe, queue_[plain], own);
                 }
                 const uint8_t cls = std::exchange(tpClass_[plain], uint8_t(2));
                 const double needP = std::max(1.0, tpNeed(plain, qp, true));
                 tpClass_[plain] = cls;
                 rcCostSum_[1] = gProbeWeight > 0 ? gProbeWeight * needP * scale : 1.0;
-                rcKSum_[1] = bitsP / needP * tree * rcCostSum_[1];
+                rcKSum_[1] = bitsP / needP * scaled * rcCostSum_[1];
                 if (devEnv("H264_RC_TRACE"))
-                    std::fprintf(stderr, "rc: probe at %d, P picture %zu bits %.0f k %.3f\n", qp, plain, bitsP, bitsP / needP * tree);
+                    std::fprintf(stderr, "rc: probe at %d, P picture %zu bits %.0f k %.3f\n", qp, plain, bitsP, bitsP / needP * scaled);
                 return true;
             };
             if (twoPass && gProbePick && queue_.size() > 2 && cfg_.firstPass->size() > 2) {
