@@ -19,7 +19,7 @@
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice
    track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice. Without a music file:
    `{"op":"music_bed","mood":"calm"}` makes one in the timeline's length (about -16 LUFS, already ducked under the
-   other tracks; `gain` -8 to -12 for a bed under a talk, `duck` false to leave it as it is).
+   voice and recorded sound; `gain` -8 to -12 for a bed under a talk, `duck` false to leave it as it is).
 4. **Master**: `mixer` on `"master"` with `limiter` true first, then `target_lufs` -14 - it measures the mix and
    sets the fader. The limiter keeps the peaks below -1 dBTP. With the limiter on it measures after it and steps
    until the target is reached (also on peaky game sound: shots at 0 dBFS over quiet ambience), no compressor loop

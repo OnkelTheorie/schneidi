@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: edit op `music_bed` - background music of schneidi's own (core/MusicBed: moods calm, drive, hype)
 // made in the exact length, written as a WAV next to the project ("<name>-music/", like the speech of op 'speak'),
-// placed on a new audio track "Musik" and ducked under the other sound of the timeline (op 'duck'). Its beat grid goes
+// placed on a music track (the earlier bed's, an empty "Musik" or a new one) and ducked under voice and recorded
+// sound (op 'duck'). Its beat grid goes
 // into the beats cache of the file (songBeats), so snap_to_beat, fit_music and `beats` take it without analysing.
 // The same options give the same file name and samples: a bed made before is reused. Live, schneidi-cli makes the
 // file before the edit goes to the app (prepareMusicBed), so the app does not compute.
@@ -318,8 +319,10 @@ void addMusicBedOps(QVector<OpDef>& ops)
                  "(default: from `at` to the end of the timeline); at (default 0); bpm 60-180 and key (\"A minor\", "
                  "\"F#m\", \"Eb major\") replace the mood's; seed (1 = default) picks another progression and "
                  "patterns. The bed is about -16 LUFS, true peak under -1 dBTP; gain = clip volume in dB (default 0). "
-                 "It goes onto a new audio track \"Musik\" (or `track`) and is ducked under the other audible "
-                 "tracks like op 'duck' (duck:false: not). The WAV lies next to the project (<name>-music/); the same "
+                 "It goes onto `track`, else the track of an earlier bed (which it replaces in its range), else an "
+                 "empty track named \"Musik\" (start template podcast), else a new track \"Musik\". It is ducked "
+                 "like op 'duck' under the voice and recorded sound - not under effect sounds (track SFX), other "
+                 "beds or music tracks (duck:false: not at all). The WAV lies next to the project (<name>-music/); the same "
                  "options reuse it. Its beat grid is stored with the file: snap_to_beat, fit_music and `beats` take "
                  "it without analysing. The answer's notes give music_bed {file, bpm, key, chords, sections "
                  "[{kind, from_s, to_s}], final_hit_s, beat_s, bar_s, track, clip, lufs, ducking}.",
