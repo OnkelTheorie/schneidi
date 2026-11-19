@@ -795,17 +795,24 @@ endif()
 # binutils' objcopy only; everywhere else, and with -DSCHNEIDI_S264_V3=OFF, the one build for every CPU is all there is.
 option(SCHNEIDI_S264_V3 "s264: second build of the encoder for x86-64-v3 CPUs, picked at run time" ON)
 set(SCHNEIDI_S264_V3_OBJECT "")
+# The object must not hold code that runs at load (DevEnv.h: S264_DEV) nor LTO intermediate code; the build checks
+# both after making it (cmake/S264V3Check.cmake, also the test s264_v3_object).
 if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
-   AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_OBJCOPY)
+   AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag("-march=x86-64-v3" SCHNEIDI_HAVE_MARCH_V3)
-    if(SCHNEIDI_HAVE_MARCH_V3)
+    if(NOT CMAKE_OBJCOPY OR NOT CMAKE_READELF OR NOT CMAKE_NM)
+        message(STATUS "s264: no x86-64-v3 build (objcopy, readelf or nm not found) - one build for every CPU")
+    elseif(NOT SCHNEIDI_HAVE_MARCH_V3)
+        message(STATUS "s264: no x86-64-v3 build (the compiler lacks -march=x86-64-v3) - one build for every CPU")
+    else()
         add_library(s264_v3_objects OBJECT EXCLUDE_FROM_ALL
             src/engine/encoder/h264/Cavlc.cpp src/engine/encoder/h264/H264Encoder.cpp
             src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Lookahead.cpp)
         target_include_directories(s264_v3_objects PRIVATE ${CMAKE_SOURCE_DIR}/src)
         target_compile_definitions(s264_v3_objects PRIVATE SCHNEIDI_S264_V3_BUILD)
         target_compile_options(s264_v3_objects PRIVATE -march=x86-64-v3)
+        set_target_properties(s264_v3_objects PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             # Static variables of inline functions as weak symbols (objcopy cannot make GNU "unique" ones local)
             target_compile_options(s264_v3_objects PRIVATE -fno-gnu-unique)
@@ -815,11 +822,13 @@ if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROC
         # One relocatable object without section groups (a group whose name is local would still be merged with the
         # other build's group of the same name), then every symbol but the entry points local
         add_custom_command(OUTPUT ${SCHNEIDI_S264_V3_OBJECT}
-            COMMAND ${CMAKE_CXX_COMPILER} -r -nostdlib -Wl,--force-group-allocation -o ${CMAKE_BINARY_DIR}/s264_v3_all.o
-                    $<TARGET_OBJECTS:s264_v3_objects>
+            COMMAND ${CMAKE_CXX_COMPILER} -r -nostdlib -Wl,--force-group-allocation
+                    -o ${CMAKE_BINARY_DIR}/s264_v3_all.o $<TARGET_OBJECTS:s264_v3_objects>
             COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=schneidi_s264_v3_encoder
                     --keep-global-symbol=schneidi_s264_v3_first_pass ${CMAKE_BINARY_DIR}/s264_v3_all.o ${SCHNEIDI_S264_V3_OBJECT}
-            DEPENDS s264_v3_objects $<TARGET_OBJECTS:s264_v3_objects>
+            COMMAND ${CMAKE_COMMAND} -DOBJ=${SCHNEIDI_S264_V3_OBJECT} -DREADELF=${CMAKE_READELF} -DNM=${CMAKE_NM}
+                    -DREMOVE_ON_FAIL=ON -P ${CMAKE_SOURCE_DIR}/cmake/S264V3Check.cmake
+            DEPENDS s264_v3_objects $<TARGET_OBJECTS:s264_v3_objects> ${CMAKE_SOURCE_DIR}/cmake/S264V3Check.cmake
             COMMAND_EXPAND_LISTS VERBATIM
             COMMENT "s264: x86-64-v3 build of the encoder as one object with local symbols")
         set_source_files_properties(${SCHNEIDI_S264_V3_OBJECT} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
@@ -828,6 +837,10 @@ if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROC
                      $<$<NOT:$<STREQUAL:$<TARGET_PROPERTY:NAME>,s264_v3_objects>>:SCHNEIDI_S264_HAVE_V3>)
         target_sources(h264-proto PRIVATE ${SCHNEIDI_S264_V3_OBJECT})
         target_sources(schneidi_lib PRIVATE ${SCHNEIDI_S264_V3_OBJECT})
+        if(SCHNEIDI_TESTS)
+            add_test(NAME s264_v3_object COMMAND ${CMAKE_COMMAND} -DOBJ=${SCHNEIDI_S264_V3_OBJECT}
+                     -DREADELF=${CMAKE_READELF} -DNM=${CMAKE_NM} -P ${CMAKE_SOURCE_DIR}/cmake/S264V3Check.cmake)
+        endif()
         message(STATUS "s264: second build for x86-64-v3, picked at run time")
     endif()
 endif()

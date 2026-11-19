@@ -582,7 +582,7 @@ template void FrameCoder::cabacWriteMb<CabacCounter>(CabacCounter&, FrameCoder::
 // x: real-valued levels in scan order; cat 2 (luma 4x4) or 5 (luma 8x8). Returns levels in scan order.
 // A level of 1.5 or more only rounds down or up, never to zero (-1.1 % instructions, BD-rate
 // -0.08 %); H264_TRELLIS3=1 keeps the zero candidate too (before 11.11.).
-static const bool gTrellisTwo = devEnv("H264_TRELLIS3") == nullptr;
+S264_DEV(bool, gTrellisTwo, devEnv("H264_TRELLIS3") == nullptr);
 
 // Squared pixel errors of a block at level 0, in one pass from the end (count a multiple of 4):
 // end = one past the last coefficient of half a level or more, tail = sum of the squares from end
@@ -894,5 +894,9 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         *nonZero = nz;
     return bestCost + tail;
 }
+
+
+// The values of this file's S264_DEV switches in the x86-64-v3 build (DevEnv.h).
+S264_DEV_FILL_ALL(devFillCabac);
 
 } // namespace schneidi::h264

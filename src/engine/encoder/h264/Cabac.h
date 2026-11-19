@@ -116,7 +116,7 @@ private:
     struct FastTables {
         uint8_t next[128][2];
         uint32_t cost[128][2];
-        FastTables()
+        void fill()
         {
             for (int s = 0; s < 64; ++s) {
                 const double lps = 0.5 * std::pow(0.01875 / 0.5, s / 63.0);
@@ -137,7 +137,21 @@ private:
             }
         }
     };
-    static inline const FastTables kFast{};
+#if defined(SCHNEIDI_S264_V3_BUILD)
+    // Nothing of the x86-64-v3 build may run at load (DevEnv.h): filled at its first use.
+    static inline constinit FastTables kFast{};
+
+public:
+    static void fillTables() { kFast.fill(); }
+
+private:
+#else
+    static inline const FastTables kFast = [] {
+        FastTables t;
+        t.fill();
+        return t;
+    }();
+#endif
 
     // The interval's lower end is kept with its settled bits above the nine working bits of the specification's
     // codILow (free_ = bits of the 32 still unused). Whole bytes leave from the top; a byte may still change by a
