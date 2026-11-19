@@ -467,6 +467,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/direct/DirectRecipes.h     src/ui/direct/DirectRecipes.cpp
     src/ui/direct/DirectSuggestions.h src/ui/direct/DirectSuggestions.cpp
     src/ui/direct/DirectText.h        src/ui/direct/DirectText.cpp
+    src/ui/direct/DirectThumbs.h      src/ui/direct/DirectThumbs.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/DynCurve.h             src/ui/DynCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp

@@ -398,7 +398,7 @@ QWidget* MainWindow::buildPageBar()
             const int size = b->fontMetrics().ascent();
             b->setIcon(clapperIcon(size));
             b->setIconSize(QSize(size, size));
-            b->setText(" " + T(pg.name)); // the gap the others have between symbol and name
+            b->setText("  " + T(pg.name)); // about the gap the others have between symbol and name ("▤  Medien")
             b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         }
         // As tall as the bar (its line at the bottom of the bar): a symbol drawn by a taller fallback font makes one
@@ -542,6 +542,11 @@ void MainWindow::showPage(Page page)
     // The viewer leaves the Studio page's column: its height there comes back with it
     if (before == Page::Studio && m_studioPage && m_studioPage->side()->count() == 2)
         m_studioSideSizes = m_studioPage->side()->sizes();
+    // ... and the Regie page's middle column (viewer | recipes); a preview's stop ends with the page
+    if (before == Page::Direct && m_directPage && m_directPage->center()->count() == 2) {
+        m_directCenterSizes = m_directPage->center()->sizes();
+        m_directStopAt = -1;
+    }
     m_page = page;
     if (before == Page::Comp && page != Page::Comp && m_compPage) { // the Color page's windows over the viewer again
         m_compPage->overlay()->setVisible(false);
@@ -651,16 +656,22 @@ void MainWindow::showPage(Page page)
         break;
     case Page::Direct:
         // Built on the first showing (MainWindowDirect.cpp): the viewer at the top of the middle column
+    {
         ensureDirectPage();
+        const bool back = m_directPage->center()->indexOf(m_viewer) < 0;
         m_directPage->center()->insertWidget(0, m_viewer);
         m_directPage->center()->setStretchFactor(0, 1);
         if (!m_directSized) {
             m_directSized = true;
-            applySizes(m_directPage->root(), {std::max(1, m_pages->height() - 110), 110});
+            const int result = m_directPage->root()->widget(1)->sizeHint().height();
+            applySizes(m_directPage->root(), {std::max(1, m_pages->height() - result), result});
             applySizes(m_directPage->columns(), {300, 900, 400});
             applySizes(m_directPage->center(), {420, 360});
+        } else if (back && m_directCenterSizes.size() == 2) {
+            m_directPage->center()->setSizes(m_directCenterSizes); // the columns and the result row never changed
         }
         m_pages->setCurrentWidget(m_directPage);
+    }
         break;
     }
     // Edit page: the selected shape's box (move, size, turn); the other pages their own overlay again
@@ -682,7 +693,9 @@ void MainWindow::showPage(Page page)
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
     updatePageButtons();
     // The armed track's level meter listens only where the timeline (its mic) is shown
-    if (m_voiceover) m_voiceover->setMeterShown(page != Page::Media && page != Page::Comp);
+    if (m_voiceover) m_voiceover->setMeterShown(page != Page::Media && page != Page::Comp && page != Page::Direct);
+    // On Regie the viewer shows previews (its title says so, not "Timeline")
+    m_viewer->setTimelineTitle(page == Page::Direct ? T("Vorschau") : QString());
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
     m_effectsToggle->setEnabled(edit);
@@ -849,6 +862,8 @@ void MainWindow::resetSizes()
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     SplitterMemory::resetAll(this); // the splitters inside the panels (Media Pool, Media Storage, Effects)
     m_studioSized = false;
+    m_directSized = false;
+    m_directCenterSizes.clear();
     showPage(m_page); // sets the page's defaults again
     if (m_editRight->isVisibleTo(m_editRow)) {
         fitRightColumn(m_editRow->sizes(), true); // the column's default: as wide as its content

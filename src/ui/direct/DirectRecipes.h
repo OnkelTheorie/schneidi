@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// The Direct page's recipes: five cards (Short, Highlights, Gespräch ohne Pausen, Vorlage füllen, Aus Skript), each
-// with at most five settings in view and the rest under "Mehr". A click on a card's title chooses it and asks for
-// suggestions; "Vorschläge" asks again with the changed settings. options() gives the chosen card's settings with
+// The Direct page's recipes: five (Short, Highlights, Gespräch ohne Pausen, Vorlage füllen, Aus Skript) as one row of
+// equal buttons, under it the chosen one's card: its description, at most five settings in view and the rest under
+// "Mehr". A click on a recipe's button chooses it and asks for suggestions; "Vorschläge" asks again with the changed
+// settings. options() gives the chosen card's settings with
 // the names of the `direct` command (plan-0.25 › "Vertrag `direct`"). Defaults are neutral: no effect sounds, no
 // music, no filler removal switched on by itself.
 
@@ -18,7 +19,9 @@ class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
+class QStackedWidget;
 class QToolButton;
+class FlowLayout;
 
 class DirectRecipes : public QWidget {
     Q_OBJECT
@@ -37,6 +40,10 @@ public:
     // The template card's choice (MainWindow opens TemplateBrowserDialog on templateChooseRequested)
     void setTemplate(const QString& id, const QString& name);
     QString templateId() const { return m_templateId; }
+    // Highlights' own music file (after musicFileRequested; empty = none chosen: back to "Keine")
+    void setMusicFile(const QString& path);
+    // The talk recipe's track choice: the open timeline's audio tracks by name (A1, A2 ...)
+    void setAudioTracks(const QStringList& names);
     // The script card's file instead of pasted text (empty = the text)
     void setScriptFile(const QString& path);
 
@@ -48,6 +55,7 @@ signals:
     void suggestRequested();              // "Vorschläge" with the chosen card
     void templateChooseRequested();
     void scriptFileRequested();
+    void musicFileRequested();
 
 private:
     QWidget* makeCard(const QString& id, const QString& title, const QString& text);
@@ -60,6 +68,9 @@ private:
     QHash<QString, QWidget*> m_cardMore;  // the settings under "Mehr"
     QHash<QString, QToolButton*> m_titles;
     QPushButton* m_suggest = nullptr;
+    FlowLayout* m_chips = nullptr;
+    QStackedWidget* m_stack = nullptr;
+    QString m_musicFile;
     // short
     QComboBox* m_shortFor = nullptr;
     QSpinBox* m_shortMin = nullptr;
@@ -80,6 +91,7 @@ private:
     QCheckBox* m_talkFillers = nullptr;
     QCheckBox* m_talkRoomTone = nullptr;
     QComboBox* m_talkLoudness = nullptr;
+    QComboBox* m_talkTracks = nullptr;
     // template
     QLabel* m_templateName = nullptr;
     QCheckBox* m_templateAuto = nullptr;

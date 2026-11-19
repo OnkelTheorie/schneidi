@@ -17,7 +17,9 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QJsonArray>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -46,18 +48,23 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
+    // The recipes as one row of equal buttons (they wrap as a row of their own when the width runs out), the chosen
+    // one's description and settings under them
+    auto* chips = new QWidget;
+    chips->setObjectName("direct_recipe_row");
+    m_chips = new FlowLayout(chips, 6, 6);
+    m_chips->setContentsMargins(8, 8, 8, 4);
+    outer->addWidget(chips);
     auto* scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    auto* inner = new QWidget;
-    auto* flow = new FlowLayout(inner, 8, 8);
-    flow->setContentsMargins(8, 8, 8, 8);
-    scroll->setWidget(inner);
+    m_stack = new QStackedWidget;
+    scroll->setWidget(m_stack);
     outer->addWidget(scroll, 1);
 
     // Short
-    flow->addWidget(makeCard("short", T("Short"), T("Die besten Momente als Hochformat-Video mit Untertiteln.")));
+    (makeCard("short", T("Short"), T("Die besten Momente als Hochformat-Video mit Untertiteln.")));
     m_shortFor = combo("direct_short_for", {{QString("YouTube Shorts"), "shorts"}, {QString("Instagram Reels"), "reels"},
                                             {QString("TikTok"), "tiktok"}});
     addRow("short", T("Plattform"), m_shortFor);
@@ -95,14 +102,19 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     addRow("short", T("Effektklänge"), m_shortSfx, true);
 
     // Highlights
-    flow->addWidget(makeCard("highlights", T("Highlights"),
+    (makeCard("highlights", T("Highlights"),
                              T("Die besten Momente aller Clips: Spiel, Urlaub, Sport. Mit Begründung je Moment.")));
     m_hlLength = combo("direct_hl_length", {{T("1 min"), 60}, {T("3 min"), 180}, {T("5 min"), 300}, {T("Alle"), "all"}});
     addRow("highlights", T("Ziellänge"), m_hlLength);
     m_hlAspect = combo("direct_hl_aspect", {{QString("16:9"), "16:9"}, {QString("9:16"), "9:16"}, {QString("1:1"), "1:1"}});
     addRow("highlights", T("Format"), m_hlAspect);
+    // Music: the music bed's moods (generated, fits the length), an own file, or none
     m_hlMusic = combo("direct_hl_music", {{T("Keine"), QString()}, {T("Musikbett ruhig"), "calm"},
-                                          {T("Musikbett treibend"), "driving"}, {T("Musikbett hype"), "hype"}});
+                                          {T("Musikbett treibend"), "drive"}, {T("Musikbett hype"), "hype"},
+                                          {T("Datei…"), "file"}});
+    connect(m_hlMusic, &QComboBox::activated, this, [this] {
+        if (m_hlMusic->currentData().toString() == "file" && m_musicFile.isEmpty()) emit musicFileRequested();
+    });
     addRow("highlights", T("Musik"), m_hlMusic);
     m_hlOrder = combo("direct_hl_order", {{T("Beste zuerst"), "best"}, {T("Zeitlich"), "time"}});
     addRow("highlights", T("Reihenfolge"), m_hlOrder);
@@ -110,7 +122,7 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     addRow("highlights", T("Übergänge"), m_hlTransitions);
 
     // Talk without pauses
-    flow->addWidget(makeCard("talk", T("Gespräch ohne Pausen"),
+    (makeCard("talk", T("Gespräch ohne Pausen"),
                              T("Podcast, Interview, Vlog, Tutorial: Pausen raus, alle Spuren bleiben synchron.")));
     m_talkPause = new QDoubleSpinBox;
     m_talkPause->setObjectName("direct_talk_pause");
@@ -138,9 +150,16 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     m_talkLoudness = combo("direct_talk_loudness", {{T("Unverändert"), QVariant()}, {QString("-16 LUFS"), -16.0},
                                                     {QString("-14 LUFS"), -14.0}});
     addRow("talk", T("Lautheit"), m_talkLoudness);
+    m_talkTracks = new QComboBox;
+    m_talkTracks->setObjectName("direct_talk_tracks");
+    m_talkTracks->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_talkTracks->setMinimumContentsLength(6);
+    m_talkTracks->setToolTip(T("Eine Pause zählt nur, wenn alle diese Spuren still sind"));
+    setAudioTracks({});
+    addRow("talk", T("Spuren"), m_talkTracks, true);
 
     // Template
-    flow->addWidget(makeCard("template", T("Vorlage füllen"), T("Eine Vorlage wählen, schneidi belegt ihre Felder mit Clips.")));
+    (makeCard("template", T("Vorlage füllen"), T("Eine Vorlage wählen, schneidi belegt ihre Felder mit Clips.")));
     {
         auto* box = new QWidget;
         auto* h = new QHBoxLayout(box);
@@ -161,7 +180,7 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     addRow("template", {}, m_templateAuto);
 
     // Script
-    flow->addWidget(makeCard("script", T("Aus Skript"), T("Text einfügen: schneidi sucht je Satz den besten Take.")));
+    (makeCard("script", T("Aus Skript"), T("Text einfügen: schneidi sucht je Satz den besten Take.")));
     m_script = new QPlainTextEdit;
     m_script->setObjectName("direct_script_text");
     m_script->setPlaceholderText(T("Skript hier einfügen…"));
@@ -192,40 +211,36 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     bottom->addWidget(m_suggest);
     outer->addLayout(bottom);
 
-    for (QWidget* card : std::as_const(m_cards)) flow->setAlignment(card, Qt::AlignTop); // the cards' tops in a line
-    // "Mehr" only where a card has more
-    for (const QString& id : ids())
-        if (QWidget* more = m_cardMore.value(id); more && more->layout()->count() == 0)
-            if (auto* b = m_cards.value(id)->findChild<QToolButton*>("direct_more_" + id)) b->hide();
     updateCards();
 }
 
 QWidget* DirectRecipes::makeCard(const QString& id, const QString& title, const QString& text)
 {
-    auto* card = new QFrame;
-    card->setObjectName("direct_card_" + id);
-    card->setFrameShape(QFrame::StyledPanel);
-    // As wide as about 34 letters of the font (a large font or a long language: wider cards, fewer per row)
-    card->setFixedWidth(std::max(220, fontMetrics().averageCharWidth() * 34));
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(8, 6, 8, 8);
-    lay->setSpacing(4);
-    auto* head = new QToolButton;
-    head->setObjectName("direct_recipe_" + id);
-    head->setText(title);
-    head->setCheckable(true);
-    head->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    head->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    QFont f = head->font();
-    f.setBold(true);
-    head->setFont(f);
-    head->setToolTip(T("Dieses Rezept wählen und Vorschläge holen"));
-    connect(head, &QToolButton::clicked, this, [this, id] {
+    // The button in the row
+    auto* chip = new QToolButton;
+    chip->setObjectName("direct_recipe_" + id);
+    chip->setText(title);
+    chip->setCheckable(true);
+    chip->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    chip->setToolTip(text + "\n" + T("Ein Klick wählt das Rezept und holt Vorschläge"));
+    chip->setStyleSheet(QString("QToolButton { background: %1; color: %2; padding: 4px 12px; border: none; border-radius: 3px; }"
+                                "QToolButton:checked { background: %3; color: %4; }"
+                                "QToolButton:hover:!checked { background: %5; }")
+                            .arg(Theme::control.name(), Theme::text.name(), Theme::primary.name(),
+                                 Theme::onPrimary.name(), Theme::controlLight.name()) +
+                        Theme::disabledToolButtonStyle());
+    connect(chip, &QToolButton::clicked, this, [this, id] {
         setRecipe(id);
         emit recipeChosen(id);
     });
-    m_titles.insert(id, head);
-    lay->addWidget(head);
+    m_titles.insert(id, chip);
+    m_chips->addWidget(chip);
+    // Its settings, shown while it is the chosen one
+    auto* card = new QWidget;
+    card->setObjectName("direct_card_" + id);
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 4, 10, 8);
+    lay->setSpacing(6);
     auto* desc = new QLabel(text);
     desc->setWordWrap(true);
     desc->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
@@ -235,6 +250,7 @@ QWidget* DirectRecipes::makeCard(const QString& id, const QString& title, const 
     fl->setContentsMargins(0, 0, 0, 0);
     fl->setRowWrapPolicy(QFormLayout::WrapLongRows);
     fl->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setMaximumWidth(std::max(420, fontMetrics().averageCharWidth() * 60)); // fields not stretched across a wide column
     lay->addWidget(form);
     auto* moreButton = new QToolButton;
     moreButton->setObjectName("direct_more_" + id);
@@ -244,6 +260,7 @@ QWidget* DirectRecipes::makeCard(const QString& id, const QString& title, const 
     moreButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     moreButton->setAutoRaise(true);
     auto* more = new QWidget;
+    more->setMaximumWidth(form->maximumWidth());
     auto* ml = new QFormLayout(more);
     ml->setContentsMargins(0, 0, 0, 0);
     ml->setRowWrapPolicy(QFormLayout::WrapLongRows);
@@ -256,6 +273,7 @@ QWidget* DirectRecipes::makeCard(const QString& id, const QString& title, const 
     lay->addWidget(moreButton);
     lay->addWidget(more);
     lay->addStretch(1);
+    m_stack->addWidget(card);
     m_cards.insert(id, card);
     m_cardForms.insert(id, form);
     m_cardMore.insert(id, more);
@@ -278,14 +296,12 @@ void DirectRecipes::setRecipe(const QString& id)
 
 void DirectRecipes::updateCards()
 {
-    for (const QString& id : ids()) {
-        const bool on = id == m_recipe;
-        m_titles.value(id)->setChecked(on);
-        m_cards.value(id)->setStyleSheet(QString("QFrame#direct_card_%1 { border: %2px solid %3; border-radius: 4px; }")
-                                             .arg(id)
-                                             .arg(on ? 2 : 1)
-                                             .arg((on ? Theme::primary : Theme::controlLight).name()));
-    }
+    for (const QString& id : ids()) m_titles.value(id)->setChecked(id == m_recipe);
+    m_stack->setCurrentWidget(m_cards.value(m_recipe));
+    // "Mehr" only where the card has more
+    for (const QString& id : ids())
+        if (auto* b = m_cards.value(id)->findChild<QToolButton*>("direct_more_" + id))
+            b->setVisible(m_cardMore.value(id)->layout()->count() > 0);
 }
 
 void DirectRecipes::setBusy(bool busy)
@@ -298,6 +314,25 @@ void DirectRecipes::setTemplate(const QString& id, const QString& name)
 {
     m_templateId = id;
     m_templateName->setText(id.isEmpty() ? T("Keine gewählt") : name);
+}
+
+void DirectRecipes::setMusicFile(const QString& path)
+{
+    m_musicFile = path;
+    const int at = m_hlMusic->findData("file");
+    m_hlMusic->setItemText(at, path.isEmpty() ? T("Datei…") : T("Datei: %1").arg(QFileInfo(path).fileName()));
+    m_hlMusic->setItemData(at, QDir::toNativeSeparators(path), Qt::ToolTipRole);
+    if (path.isEmpty() && m_hlMusic->currentIndex() == at) m_hlMusic->setCurrentIndex(0); // no file chosen: none
+}
+
+void DirectRecipes::setAudioTracks(const QStringList& names)
+{
+    const QString keep = m_talkTracks->currentData().toString();
+    const QSignalBlocker b(m_talkTracks);
+    m_talkTracks->clear();
+    m_talkTracks->addItem(T("Alle Tonspuren"), QString());
+    for (int i = 0; i < names.size(); ++i) m_talkTracks->addItem(names[i], QString("A%1").arg(i + 1));
+    m_talkTracks->setCurrentIndex(std::max(0, m_talkTracks->findData(keep)));
 }
 
 void DirectRecipes::setScriptFile(const QString& path)
@@ -325,8 +360,10 @@ QJsonObject DirectRecipes::options(const QString& id) const
                       {"transitions", m_hlTransitions->currentData().toString()}};
         const QVariant len = m_hlLength->currentData();
         o["length_s"] = len.typeId() == QMetaType::QString ? QJsonValue(len.toString()) : QJsonValue(len.toInt());
-        const QString mood = m_hlMusic->currentData().toString();
-        o["music"] = mood.isEmpty() ? QJsonValue() : QJsonValue(QJsonObject{{"mood", mood}});
+        const QString music = m_hlMusic->currentData().toString();
+        if (music == "file" && !m_musicFile.isEmpty()) o["music"] = QJsonObject{{"file", m_musicFile}};
+        else if (music.isEmpty() || music == "file") o["music"] = QJsonValue();
+        else o["music"] = QJsonObject{{"mood", music}};
         return o;
     }
     if (id == "talk") {
@@ -336,6 +373,7 @@ QJsonObject DirectRecipes::options(const QString& id) const
                       {"room_tone", m_talkRoomTone->isChecked()}};
         const QVariant lufs = m_talkLoudness->currentData();
         o["target_lufs"] = lufs.isValid() ? QJsonValue(lufs.toDouble()) : QJsonValue();
+        if (const QString track = m_talkTracks->currentData().toString(); !track.isEmpty()) o["tracks"] = QJsonArray{track};
         return o;
     }
     if (id == "template") return {{"template", m_templateId}, {"auto", m_templateAuto->isChecked()}};

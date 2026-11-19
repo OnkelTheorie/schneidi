@@ -684,11 +684,18 @@ void Viewer::setSource(const QString& path, const QString& name)
     if (layout()) layout()->invalidate();
 }
 
+void Viewer::setTimelineTitle(const QString& title)
+{
+    if (title == m_timelineTitle) return;
+    m_timelineTitle = title;
+    updateModeText();
+}
+
 void Viewer::updateModeText()
 {
     QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
                    : m_multicamOn         ? T("Timeline – Multicam")
-                   : !m_programAway       ? T("Timeline")
+                   : !m_programAway       ? (m_timelineTitle.isEmpty() ? T("Timeline") : m_timelineTitle)
                    : m_keptSource.isEmpty() ? T("Timeline auf dem zweiten Monitor")
                                             : T("Quelle – %1 (angehalten)").arg(m_keptSource);
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");

@@ -5,7 +5,10 @@
 // length and the analysis points of the last suggestion run (Ton ✓, Bild ✓, Ereignisse …, Sprache –). Delete removes
 // the selected clips from the list (the page's own key, shielded from the window's: never timeline clips).
 
+#include "ui/direct/DirectThumbs.h"
+
 #include <QHash>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
@@ -36,8 +39,15 @@ public:
     // Lengths and analysis points from a session's `material` (rows of other files stay as they are)
     void setMaterialState(const QJsonArray& material);
 
-    // The files a drop carries (Media Pool list or URLs; folders and other things left out)
+    // The files a drop carries (Media Pool list or URLs; folders and other things left out: looks at the disk, for
+    // the drop only); mayCarryFiles = the drag's formats alone (no disk access while it moves)
     static QStringList filesOf(const QMimeData* mime);
+    static bool mayCarryFiles(const QMimeData* mime);
+
+    // Pictures of the clips (shared with the suggestions)
+    void setThumbs(DirectThumbs* thumbs);
+    // The page's key to take clips out (registered at the start, MainWindow): replaces the list's own action
+    void setRemoveAction(QAction* action);
 
     QListWidget* list() const { return m_list; }
     QAction* removeAction() const { return m_remove; }
@@ -56,6 +66,9 @@ private:
 
     QStringList m_files;
     QHash<QString, QJsonObject> m_state; // file -> {length_s, analysis{…}}
+    QHash<QString, QImage> m_pictures;   // file -> its picture (kept across rebuilds)
+    DirectThumbs* m_thumbs = nullptr;
+    DirectThumbs::Generation m_gen;
     bool m_timeline = false;
     QLabel* m_hint;
     QListWidget* m_list;

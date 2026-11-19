@@ -8,9 +8,11 @@
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
 #include "ui/direct/DirectText.h"
+#include "ui/direct/DirectThumbs.h"
 #include "ui/timeline/TimelineOverview.h"
 
 #include <QFileInfo>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
@@ -44,6 +46,9 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
     m_material = new DirectMaterial;
     m_recipes = new DirectRecipes;
     m_suggestions = new DirectSuggestions;
+    m_thumbs = new DirectThumbs(this);
+    m_material->setThumbs(m_thumbs);
+    m_suggestions->setThumbs(m_thumbs);
 
     // Middle: the viewer comes in at index 0 (MainWindow::showPage), the recipes under it
     m_center->addWidget(panel(m_recipes));
@@ -86,7 +91,7 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
     m_resultText->setObjectName("direct_result_text");
     m_apply = new QPushButton(T("Übernehmen"));
     m_apply->setObjectName("direct_apply");
-    m_apply->setToolTip(T("Baut aus den gewählten Vorschlägen eine neue Timeline (ein Schritt zum Rückgängigmachen)"));
+
     m_openEdit = new QPushButton(T("In Schneiden öffnen"));
     m_openEdit->setObjectName("direct_open_edit");
     m_export = new QPushButton(T("Exportieren…"));
@@ -107,6 +112,7 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
         if (!m_material->isEmpty()) emit suggestRequested();
     });
     connect(m_recipes, &DirectRecipes::suggestRequested, this, &DirectPage::suggestRequested);
+    connect(m_suggestions, &DirectSuggestions::resuggestRequested, this, &DirectPage::suggestRequested);
     connect(m_suggestions, &DirectSuggestions::changed, this, &DirectPage::updateResult);
     connect(m_material, &DirectMaterial::changed, this, [this] {
         m_recipes->suggestButton()->setEnabled(!m_busy && !m_material->isEmpty());
@@ -135,29 +141,42 @@ void DirectPage::setBusy(bool busy, const QString& text)
     updateResult();
 }
 
+void DirectPage::setApplying(bool applying)
+{
+    m_applying = applying;
+    m_resultText->setText(applying ? T("Baut die Timeline …") : QString());
+    updateResult();
+}
+
 Timeline DirectPage::resultTimeline() const
 {
     Timeline tl;
     TimelineOps::ensureTracks(tl, TrackKind::Video, 1);
     TimelineOps::ensureTracks(tl, TrackKind::Audio, 1);
+    QHash<QString, bool> picture; // file -> has a picture (unknown: yes)
+    for (const QJsonValue& v : m_suggestions->session().value("material").toArray())
+        picture.insert(v.toObject().value("file").toString(), v.toObject().value("has_video").toBool(true));
     int at = 0, id = 1;
     for (int n : m_suggestions->checkedOrder()) {
         const QJsonObject s = m_suggestions->suggestion(n);
         const QString file = s.value("file").toString();
         if (file.startsWith('@')) continue; // a range of the timeline itself (pauses): nothing to lay out
-        const int in = int(std::lround(s.value("from_s").toDouble() * m_fps));
-        const int out = int(std::lround(s.value("to_s").toDouble() * m_fps)) - 1;
+        const auto [from, to] = m_suggestions->range(n);
+        const int in = int(std::lround(from * m_fps));
+        const int out = int(std::lround(to * m_fps)) - 1;
         if (out < in) continue;
-        Clip v;
-        v.id = id++;
-        v.mediaPath = file;
-        v.start = at;
-        v.in = in;
-        v.out = out;
-        v.linkId = v.id;
-        Clip a = v;
+        Clip a;
         a.id = id++;
-        tl.video[0].clips.push_back(v);
+        a.mediaPath = file;
+        a.start = at;
+        a.in = in;
+        a.out = out;
+        if (picture.value(file, true)) {
+            Clip v = a;
+            a.id = id++;
+            v.linkId = a.linkId = v.id;
+            tl.video[0].clips.push_back(v);
+        }
         tl.audio[0].clips.push_back(a);
         at += out - in + 1;
     }
@@ -168,6 +187,12 @@ void DirectPage::updateResult()
 {
     m_overview->setTimeline(resultTimeline(), m_fps);
     const bool any = !m_suggestions->checkedOrder().isEmpty();
-    m_apply->setEnabled(!m_busy && any);
-    m_resultText->setText(m_suggestions->hasSession() ? m_suggestions->sumText() : QString());
+    m_apply->setEnabled(!m_busy && !m_applying && any);
+    // What Übernehmen does for this recipe; suggestions never change the project before it
+    const QString recipe = m_suggestions->session().value("recipe").toString();
+    const QString what = recipe == "talk"
+                             ? T("Baut eine neue Timeline: eine Kopie der aktuellen ohne die gewählten Pausen")
+                         : recipe == "template" ? T("Baut eine neue Timeline aus der Vorlage mit den gewählten Clips")
+                                                : T("Baut aus den gewählten Vorschlägen eine neue Timeline");
+    m_apply->setToolTip(what + "\n" + T("Ein Schritt zum Rückgängigmachen. Vorschläge ändern das Projekt nicht, bis man übernimmt."));
 }

@@ -16,6 +16,7 @@
 class DirectMaterial;
 class DirectRecipes;
 class DirectSuggestions;
+class DirectThumbs;
 class QLabel;
 class QPushButton;
 class QSplitter;
@@ -43,10 +44,16 @@ public:
     // A suggestion run: buttons off, the busy text in the list
     void setBusy(bool busy, const QString& text = {});
     bool busy() const { return m_busy; }
+    // Übernehmen runs: its button off, the text beside it
+    void setApplying(bool applying);
+    bool applying() const { return m_applying; }
+    // Pictures of both lists (MainWindow sets the decoder)
+    DirectThumbs* thumbs() const { return m_thumbs; }
     // The result strip anew from the checked suggestions in their order
     void updateResult();
-    // The timeline the checked suggestions give: one video track (files with a picture) and one audio track, back to
-    // back in the list's order (only to look at; Übernehmen builds the real one through the backend)
+    // The timeline the checked suggestions give: back to back in the list's order with the user's In/Out, files with a
+    // picture on V1 (+ their sound on A1), sound-only files on A1 (only to look at; Übernehmen builds the real one
+    // through the backend)
     Timeline resultTimeline() const;
 
 signals:
@@ -68,6 +75,8 @@ private:
     QPushButton* m_openEdit;
     QPushButton* m_export;
     QWidget* m_wish;
+    DirectThumbs* m_thumbs;
     double m_fps = 25;
     bool m_busy = false;
+    bool m_applying = false;
 };
