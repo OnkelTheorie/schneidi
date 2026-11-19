@@ -1089,7 +1089,8 @@ const QVector<Command>& commands()
                 "open timeline) and control it. `info`, `edit` and the other commands already work on the open "
                 "project there (an edit is one undo step in the app; the user saves).",
          {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, page {page} (show a page of the "
-                                "app: media, edit, comp, color, studio = sound with the big mixer, deliver; `state` "
+                                "app: media, direct = Regie (material, recipe, suggestions), edit, comp, color, studio = "
+                                "sound with the big mixer, deliver; `state` "
                                 "tells the current one), undo, redo, save {path?}, open "
                                 "{files} (show files in the app: a .schneidi project opens there - refused while the "
                                 "open one has unsaved changes -, media files come into its media pool and are "
@@ -1105,7 +1106,7 @@ const QVector<Command>& commands()
           {"project", T::Path, "project file open in the app (default \"@app\" = the project of the running app)"},
           {"at", T::Time, "seek/play: position in the open timeline"},
           {"clips", T::Times, "select: clip ids (empty = nothing selected)"},
-          {"page", T::String, "page: media, edit, comp, color, studio or deliver"},
+          {"page", T::String, "page: media, direct, edit, comp, color, studio or deliver"},
           {"files", T::Paths, "proxies: media files (default: all video in the project); open: a .schneidi project "
                               "and/or media files"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},

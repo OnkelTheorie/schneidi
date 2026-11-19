@@ -823,6 +823,7 @@ void MainWindow::buildActions()
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Seite Medien"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
+    makeAction(workspace, "page_direct", T("Seite Regie"), QKeySequence("Shift+1"), [this] { showPage(Page::Direct); });
     makeAction(workspace, "page_edit", T("Seite Schneiden"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_comp", T("Seite Compositing"), QKeySequence("Shift+3"), [this] { showPage(Page::Comp); });
     makeAction(workspace, "page_color", T("Seite Farbe"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });

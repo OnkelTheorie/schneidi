@@ -251,12 +251,14 @@ void MainWindow::newProject()
         t = dlg.chosen();
     }
     startProject(t);
+    showStartPage(); // a new project starts on the start page (an opened one keeps the page the user is on)
 }
 
 void MainWindow::newProjectFromTemplate(const StartTemplate& t)
 {
     if (!maybeLeaveProject()) return;
     startProject(t);
+    showStartPage();
 }
 
 void MainWindow::startProject(const StartTemplate& t)

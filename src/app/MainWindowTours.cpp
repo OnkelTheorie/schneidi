@@ -53,6 +53,7 @@
 
 namespace {
 const QPair<MainWindow::Page, const char*> kPageNames[] = {{MainWindow::Page::Media, "media"},
+                                                           {MainWindow::Page::Direct, "direct"},
                                                            {MainWindow::Page::Edit, "edit"},
                                                            {MainWindow::Page::Comp, "comp"},
                                                            {MainWindow::Page::Color, "color"},

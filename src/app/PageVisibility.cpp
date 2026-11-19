@@ -34,9 +34,18 @@ QStringList PageVisibility::hidden() const
     return out;
 }
 
+bool PageVisibility::setStart(const QString& id)
+{
+    if (!m_order.contains(id) || id == m_start) return false;
+    m_start = id;
+    return true;
+}
+
 void PageVisibility::load()
 {
     m_hidden.clear();
+    const QString start = QSettings().value(kStartKey).toString();
+    m_start = m_order.contains(start) ? start : QString(kDefaultStart);
     const QStringList saved = QSettings().value(kSettingsKey).toStringList();
     for (const QString& id : saved)
         if (m_order.contains(id)) m_hidden.insert(id);
@@ -48,4 +57,6 @@ void PageVisibility::save() const
     QSettings settings;
     if (m_hidden.isEmpty()) settings.remove(kSettingsKey);
     else settings.setValue(kSettingsKey, hidden());
+    if (m_start == kDefaultStart) settings.remove(kStartKey); // the default stays the default when it changes
+    else settings.setValue(kStartKey, m_start);
 }

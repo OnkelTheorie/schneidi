@@ -47,12 +47,10 @@ QString MainWindow::livePage() const { return pageId(m_page); }
 
 bool MainWindow::liveShowPage(const QString& page)
 {
-    for (Page p : {Page::Media, Page::Edit, Page::Comp, Page::Color, Page::Studio, Page::Deliver})
-        if (pageId(p) == page) {
-            showPage(p); // a hidden page shows while it is the current one (updatePageButtons)
-            return true;
-        }
-    return false;
+    const std::optional<Page> p = pageForId(page);
+    if (!p) return false;
+    showPage(*p); // a hidden page shows while it is the current one (updatePageButtons)
+    return true;
 }
 
 void MainWindow::livePlay(bool play)
