@@ -123,9 +123,10 @@ DirectSuggestions::DirectSuggestions(QWidget* parent) : QWidget(parent)
     m_empty = new QLabel;
     m_empty->setObjectName("direct_suggestions_empty");
     m_empty->setWordWrap(true);
-    m_empty->setAlignment(Qt::AlignCenter);
+    m_empty->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_empty->setContentsMargins(8, 16, 8, 0);
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
-    lay->addWidget(m_empty);
+    lay->addWidget(m_empty, 1); // takes the list's room while there is none: the text at the top, nothing floats
     m_notes = new QLabel;
     m_notes->setObjectName("direct_notes");
     m_notes->setWordWrap(true);
@@ -179,12 +180,17 @@ void DirectSuggestions::clear()
     m_list->clear();
     m_filling = false;
     m_notes->clear();
+    m_notes->setToolTip({});
     m_notes->hide();
     m_staleRow->hide();
     m_variantBox->hide();
+    m_rangeRow->hide();
     m_empty->setText(T("Material links hineinziehen und ein Rezept wählen."));
+    m_empty->setToolTip({});
     updateSum();
 }
+
+QString DirectSuggestions::emptyText() const { return m_empty->isHidden() ? QString() : m_empty->text(); }
 
 void DirectSuggestions::setBusyText(const QString& text)
 {
@@ -193,12 +199,14 @@ void DirectSuggestions::setBusyText(const QString& text)
         return;
     }
     m_empty->setText(text);
+    m_empty->setToolTip({});
     m_empty->show();
 }
 
-void DirectSuggestions::setError(const QString& text)
+void DirectSuggestions::setError(const QString& text, const QString& details)
 {
     m_empty->setText(text);
+    m_empty->setToolTip(details);
     m_empty->show();
 }
 
@@ -250,9 +258,16 @@ void DirectSuggestions::setSession(const QJsonObject& session)
             m_list->setCurrentRow(i, QItemSelectionModel::NoUpdate);
             break;
         }
-    QStringList notes;
-    for (const QJsonValue& v : session.value("notes").toArray()) notes << DirectText::note(v.toObject());
+    // Notes in the UI language; the ones without a translation (a command's own English words) only as a tooltip
+    QStringList notes, other;
+    for (const QJsonValue& v : session.value("notes").toArray()) {
+        const QString text = DirectText::note(v.toObject());
+        if (!text.isEmpty()) notes << text;
+        else if (const QString en = v.toObject().value("text").toString(); !en.isEmpty()) other << en;
+    }
+    if (!other.isEmpty()) notes << (other.size() == 1 ? T("1 weiterer Hinweis (Maus darüber)") : T("%1 weitere Hinweise (Maus darüber)").arg(other.size()));
     m_notes->setText(notes.join("\n"));
+    m_notes->setToolTip(other.join("\n"));
     m_notes->setVisible(!notes.isEmpty());
     m_empty->setText(T("Keine Vorschläge in diesem Material. Ein anderes Rezept oder mehr Material versuchen."));
     updateSum();
@@ -291,9 +306,11 @@ QString DirectSuggestions::rowText(int n) const
     const auto [from, to] = range(n);
     const QString file = s.value("file").toString();
     const QString where = file.startsWith('@') ? T("Timeline") : QFileInfo(file).fileName();
+    // The length never breaks inside "(15 s)"
+    const QString length = "(" + DirectText::seconds(to - from).replace(' ', QChar::Nbsp) + ")";
     QString text = DirectText::reason(s.value("reason").toObject()) + "\n"
-                   + QString("%1 · %2–%3 (%4)").arg(where, DirectText::clock(from), DirectText::clock(to),
-                                                    DirectText::seconds(to - from));
+                   + QString("%1 · %2%3").arg(where, DirectText::clock(from) + QChar(0x2060) + QChar(0x2013) + QChar(0x2060)
+                                                             + DirectText::clock(to), QString(QChar::Nbsp) + length);
     if (m_adjust.contains(n)) text += " · " + T("angepasst");
     return text;
 }
@@ -433,8 +450,8 @@ void DirectSuggestions::updateSum()
 {
     m_sum->setText(sumText());
     const bool rows = m_list->count() > 0;
-    m_allOn->setEnabled(rows);
-    m_allOff->setEnabled(rows);
+    m_allOn->setVisible(rows);
+    m_allOff->setVisible(rows);
     m_list->setVisible(rows);
     m_empty->setVisible(!rows);
 }
@@ -464,8 +481,10 @@ void DirectSuggestions::loadThumbs()
     for (int i = 0; i < m_list->count(); ++i) {
         const int n = m_list->item(i)->data(kNumberRole).toInt();
         const QJsonObject s = m_byN.value(n);
-        const QString file = s.value("file").toString();
-        if (!QFileInfo(file).isFile()) continue;
+        QString file = s.value("file").toString();
+        // A range of the timeline itself (pauses): the picture of that timeline (DirectThumbs resolves it)
+        if (file == QLatin1String("@timeline")) file = "@timeline:" + m_session.value("timeline").toString();
+        else if (!QFileInfo(file).isFile()) continue;
         m_thumbs->request(file, s.value("from_s").toDouble(), size, m_gen, this, [this, n](const QImage& img) {
             for (int i = 0; i < m_list->count(); ++i)
                 if (QListWidgetItem* item = m_list->item(i); item->data(kNumberRole).toInt() == n) {

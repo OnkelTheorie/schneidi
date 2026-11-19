@@ -37,8 +37,11 @@ public:
     void clear();
     // Busy text instead of the list's empty text ("Analysiert …"); empty = not busy
     void setBusyText(const QString& text);
-    // A failed run: the message where the list is
-    void setError(const QString& text);
+    // A failed run: the message where the list is (details: the command's own words, only as a tooltip)
+    void setError(const QString& text, const QString& details = {});
+    // A hint where the list is (no session: what the recipe needs first)
+    void setHint(const QString& text) { setError(text); }
+    QString emptyText() const;
     // The session is stale/expired: the message and "Neu vorschlagen" (resuggestRequested); empty = hidden
     void setStale(const QString& text);
 

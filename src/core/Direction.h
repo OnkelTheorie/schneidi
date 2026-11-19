@@ -30,7 +30,8 @@ struct Reason {
 // The fixed reason keys: kills, loud, laughter, applause, cheering, scream, motion, scene_change, face, pause, filler,
 // slot_match, take, fallback_end
 const QStringList& reasonKeys();
-// Note keys (Session::notes): no_whisper, running, no_moments, fallback, music_missing, not_yet
+// Note keys (Session::notes): no_whisper, running, no_moments, fallback, music_missing, not_yet, few_moments,
+// fewer_variants, no_shot, not_said, no_pause, never_quiet, no_transcript_fillers, fillers_transcript, room_tone
 const QStringList& noteKeys();
 
 enum class Lang { English, Ui };
@@ -39,6 +40,9 @@ enum class Lang { English, Ui };
 QString reasonText(const Reason& r, Lang lang = Lang::English);
 // The same for a note key with values (an unknown key: empty)
 QString noteText(const QString& key, const QJsonObject& values = {}, Lang lang = Lang::English);
+struct Note;
+// A note of a fixed key: its English text and its values (the page translates it)
+Note makeNote(const QString& key, const QJsonObject& values = {});
 
 // ---------- Session ----------
 
@@ -76,7 +80,8 @@ struct Material {
 
 struct Note {
     QString key;
-    QString text; // English
+    QString text;       // English
+    QJsonObject values; // the key's placeholders (noteText), written only when set
     bool operator==(const Note&) const = default;
 };
 

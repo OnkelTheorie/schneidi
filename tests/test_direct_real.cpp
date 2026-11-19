@@ -29,6 +29,7 @@
 #include "ui/direct/DirectPage.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
+#include "ui/direct/DirectText.h"
 #include "ui/direct/DirectWish.h"
 
 #include <QApplication>
@@ -41,11 +42,13 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
 #include <QPushButton>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -298,6 +301,47 @@ int main(int argc, char** argv)
     p->undoStack()->undo();
     CHECK_EQ(int(p->sequences().size()), timelines);
 
+    // Another recipe that cannot run on this material: the short's suggestions go (Übernehmen would build them under
+    // the other recipe), the page says in the UI language what the recipe needs - before running, not as the
+    // command's English error
+    {
+        CHECK(page->suggestions()->hasSession());
+        auto* talkChip = page->findChild<QToolButton*>("direct_recipe_talk");
+        if (CHECK(talkChip)) QTest::mouseClick(talkChip, Qt::LeftButton);
+        CHECK(!page->busy());
+        CHECK(!page->suggestions()->hasSession());
+        CHECK_EQ(page->suggestions()->list()->count(), 0);
+        CHECK(!page->applyButton()->isEnabled());
+        CHECK_EQ(page->suggestions()->emptyText(), DirectText::talkNeedsTimeline());
+        page->recipes()->setRecipe("script"); // no text
+        page->recipes()->suggestButton()->click();
+        CHECK(!page->suggestions()->hasSession());
+        CHECK_EQ(page->suggestions()->emptyText(), DirectText::scriptNeedsText());
+        // A run that fails in the command (a template that does not exist): the list empty, Übernehmen off, a
+        // sentence for the user; the command's own words only in the tooltip
+        page->recipes()->setRecipe("short");
+        page->recipes()->suggestButton()->click();
+        CHECK(waitFor([&] { return page->suggestions()->hasSession() && !page->busy(); }));
+        CHECK(page->applyButton()->isEnabled());
+        page->recipes()->setRecipe("template");
+        page->recipes()->setTemplate("no-such-template", "Nichts");
+        page->recipes()->suggestButton()->click();
+        CHECK(!page->suggestions()->hasSession()); // gone at the start of the run already
+        CHECK(!page->applyButton()->isEnabled());
+        CHECK(waitFor([&] { return !page->busy(); }));
+        CHECK(!page->suggestions()->hasSession());
+        CHECK(!page->applyButton()->isEnabled());
+        const QString said = page->suggestions()->emptyText();
+        CHECK(!said.isEmpty());
+        CHECK(!said.contains("no-such-template") && !said.contains("content templates")); // no raw message
+        if (auto* empty = page->findChild<QLabel*>("direct_suggestions_empty"); CHECK(empty))
+            CHECK(empty->toolTip().contains("no-such-template")); // the details stay reachable
+        page->recipes()->setTemplate({}, {});
+        page->recipes()->setRecipe("short");
+        page->recipes()->suggestButton()->click();
+        CHECK(waitFor([&] { return page->suggestions()->hasSession() && !page->busy(); }));
+    }
+
     // With effect sounds chosen the finish is offered and is one more undo step
     {
         QJsonObject withSfx = session;
@@ -477,17 +521,25 @@ int main(int argc, char** argv)
                                    && page->suggestions()->session().value("recipe").toString() == "talk"; }));
         const QJsonArray pauses = page->suggestions()->session().value("suggestions").toArray();
         CHECK(!pauses.isEmpty());
+        // The result strip: the timeline without the checked pauses (not empty: the ranges are of the timeline)
+        const Timeline result = page->resultTimeline();
+        const int full = TimelineOps::endFrame(p->timeline());
+        CHECK(TimelineOps::endFrame(result) > 0 && TimelineOps::endFrame(result) < full);
         const int steps = p->undoStack()->count(), seqs = int(p->sequences().size());
         page->applyButton()->click();
         CHECK(waitFor([&] { return !page->applying(); }));
         CHECK_EQ(p->undoStack()->count(), steps + 1);
         CHECK_EQ(int(p->sequences().size()), seqs + 1);
+        CHECK(!page->resultNote().isEmpty()); // says which timeline it built
     }
     // Recipe template with files as material: the shots for short-hook's fields, a new project to open
     {
         page->material()->setUseTimeline(false);
         page->material()->clear();
         page->material()->addFiles({a, b});
+        // New projects go into the folder for projects (Settings), never next to the recordings
+        const QString projects = dir.filePath("projects");
+        QSettings().setValue("project/folder", projects);
         page->recipes()->setRecipe("template");
         page->recipes()->setTemplate("short-hook", "Short Hook");
         page->recipes()->suggestButton()->click();
@@ -498,6 +550,11 @@ int main(int argc, char** argv)
         CHECK(waitFor([&] { return !page->applying(); }));
         CHECK_EQ(p->undoStack()->count(), steps); // nothing changed here: a project of its own
         CHECK(page->openProjectButton()->isVisible());
+        const QStringList made = QDir(projects).entryList({"short-hook*.schneidi"});
+        CHECK_EQ(made.size(), 1);
+        CHECK(QDir(dir.path()).entryList({"short-hook*"}).isEmpty()); // (a.mp4 and b.mp4 are there)
+        CHECK(page->resultNote().contains(QDir::toNativeSeparators(projects)));
+        QSettings().remove("project/folder");
     }
     // Recipe script with a (fake) whisper on files of the material
     {

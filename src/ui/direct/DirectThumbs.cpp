@@ -4,6 +4,7 @@
 #include "engine/Background.h"
 
 #include <QThread>
+#include <tuple>
 #include <algorithm>
 
 DirectThumbs::DirectThumbs(QObject* parent) : QObject(parent)
@@ -18,10 +19,17 @@ DirectThumbs::~DirectThumbs()
     m_pool.waitForDone();
 }
 
-void DirectThumbs::request(const QString& file, double seconds, const QSize& size, const Generation& gen,
+void DirectThumbs::request(const QString& key, double at, const QSize& size, const Generation& gen,
                            QObject* context, std::function<void(const QImage&)> done)
 {
     if (!m_decode) return;
+    QString file = key;
+    double seconds = at;
+    if (key.startsWith('@')) {
+        if (!m_resolve) return;
+        std::tie(file, seconds) = m_resolve(key, at);
+        if (file.isEmpty()) return;
+    }
     const int mine = gen.now();
     const auto counter = gen.value;
     const Decode decode = m_decode;

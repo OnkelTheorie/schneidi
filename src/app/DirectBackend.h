@@ -60,6 +60,13 @@ public:
     }
     virtual JobHandle finish(const QJsonObject& session, const QJsonObject& applied, const Progress& onProgress,
                              const Done& onDone, QObject* receiver);
+    // Where a project an apply makes itself goes (a template's new project): the app's folder for projects, never
+    // silently next to the recordings (a recorder's folder)
+    void setProjectFolder(const QString& dir) { m_projectFolder = dir; }
+    QString projectFolder() const { return m_projectFolder; }
+
+private:
+    QString m_projectFolder;
 };
 
 // FAKE - a stand-in until the `direct` command exists (package R1), so that the page can be clicked through and tested.

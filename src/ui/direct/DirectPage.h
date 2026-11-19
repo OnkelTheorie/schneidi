@@ -69,6 +69,11 @@ public:
     DirectThumbs* thumbs() const { return m_thumbs; }
     // The result strip anew from the checked suggestions in their order
     void updateResult();
+    // The timeline a session on a timeline (talk) is about: the strip shows it without the checked pauses
+    void setSourceTimeline(const Timeline& tl);
+    // A line beside the buttons after Übernehmen ("Neue Timeline „…“"; empty = none)
+    void setResultNote(const QString& text);
+    QString resultNote() const;
     // The timeline the checked suggestions give: back to back in the list's order with the user's In/Out, files with a
     // picture on V1 (+ their sound on A1), sound-only files on A1 (only to look at; Übernehmen builds the real one
     // through the backend)
@@ -90,7 +95,7 @@ private:
     DirectRecipes* m_recipes;
     DirectSuggestions* m_suggestions;
     TimelineOverview* m_overview;
-    QLabel* m_resultText;
+    class ElidedLabel* m_resultText;
     QPushButton* m_apply;
     QPushButton* m_finish;
     QPushButton* m_openProject;
@@ -99,6 +104,8 @@ private:
     QPushButton* m_export;
     DirectWish* m_wish;
     DirectThumbs* m_thumbs;
+    Timeline m_source;
+    bool m_hasSource = false;
     double m_fps = 25;
     bool m_busy = false;
     bool m_applying = false;

@@ -10,6 +10,7 @@
 
 #include <QAction>
 #include <QDir>
+#include <cmath>
 #include <QDragEnterEvent>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -116,6 +117,13 @@ void DirectMaterial::setThumbs(DirectThumbs* thumbs)
 {
     m_thumbs = thumbs;
     rebuild();
+}
+
+void DirectMaterial::setTimelineLength(double seconds)
+{
+    if (std::abs(seconds - m_timelineLength) < 0.05) return;
+    m_timelineLength = seconds;
+    if (m_timeline) rebuild();
 }
 
 QStringList DirectMaterial::files() const { return m_files; }
@@ -282,7 +290,8 @@ void DirectMaterial::rebuild()
         auto* info = new QHBoxLayout;
         info->setSpacing(6);
         const QJsonObject st = m_state.value(key);
-        auto* length = new QLabel(st.isEmpty() ? QString("–") : DirectText::clock(st.value("length_s").toDouble()));
+        const double len = key.startsWith('@') ? m_timelineLength : st.value("length_s").toDouble(-1);
+        auto* length = new QLabel(len < 0 || (key.startsWith('@') && len <= 0) ? QString("–") : DirectText::clock(len));
         length->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
         info->addWidget(length);
         if (!st.isEmpty()) info->addWidget(new AnalysisDots(st.value("analysis").toObject()));
@@ -292,9 +301,13 @@ void DirectMaterial::rebuild()
         row->setToolTip(key.startsWith('@') ? name : QDir::toNativeSeparators(key));
         item->setSizeHint(row->sizeHint());
         m_list->setItemWidget(item, row);
-        if (m_thumbs && m_thumbs->hasDecoder() && QFileInfo(key).isFile() && m_pictures.value(key).isNull()) {
+        // The current timeline: its picture a third in (asked anew each time: it changes)
+        const bool timeline = key.startsWith('@');
+        if (m_thumbs && m_thumbs->hasDecoder() && (timeline || QFileInfo(key).isFile())
+            && (timeline || m_pictures.value(key).isNull())) {
             QPointer<QLabel> target(pic);
-            m_thumbs->request(key, std::max(0.0, st.value("length_s").toDouble() * 0.3), kThumb * devicePixelRatioF(), m_gen,
+            const double length = timeline ? m_timelineLength : st.value("length_s").toDouble();
+            m_thumbs->request(key, std::max(0.0, length * 0.3), kThumb * devicePixelRatioF(), m_gen,
                               this, [this, key, target](const QImage& img) {
                                   m_pictures.insert(key, img);
                                   if (target) target->setPixmap(QPixmap::fromImage(img));

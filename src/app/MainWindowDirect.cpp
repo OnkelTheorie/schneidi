@@ -9,9 +9,11 @@
 #include "app/AiChat.h"
 #include "app/DirectBackend.h"
 #include "app/InputBindings.h"
+#include "app/SettingsDialog.h"
 #include "app/TemplateDialogs.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/TemplateFill.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "ui/BackgroundJobs.h"
@@ -19,6 +21,7 @@
 #include "ui/direct/DirectPage.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
+#include "ui/direct/DirectText.h"
 #include "ui/direct/DirectThumbs.h"
 #include "ui/direct/DirectWish.h"
 
@@ -38,6 +41,29 @@
 namespace {
 constexpr const char* kJobId = "direct";
 constexpr const char* kApplyJobId = "direct_apply";
+
+// The file shown at a frame of a timeline and its time there (the top picture; none: the first one at its start)
+std::pair<QString, double> pictureAt(const Timeline& tl, int frame, double fps)
+{
+    for (int i = int(tl.video.size()) - 1; i >= 0; --i)
+        for (const Clip& c : tl.video[i].clips)
+            if (c.kind == ClipKind::Media && !c.mediaPath.isEmpty() && frame >= c.start && frame < c.end())
+                return {c.mediaPath, (c.in + (frame - c.start) * c.speed) / fps};
+    for (const Track& t : tl.video)
+        for (const Clip& c : t.clips)
+            if (c.kind == ClipKind::Media && !c.mediaPath.isEmpty()) return {c.mediaPath, c.in / fps};
+    return {};
+}
+
+// A failed run's words for the user: the known situation's sentence, else a general one (the command's own words
+// stay in the tooltip / details)
+QString friendlyError(const QString& recipe, const QJsonObject& error, bool apply)
+{
+    const QString text = DirectText::error(recipe, error, apply);
+    if (!text.isEmpty()) return text;
+    return apply ? T("Die Timeline ließ sich nicht bauen.")
+                 : T("Keine Vorschläge: Mit diesem Material und diesen Einstellungen kam das Rezept nicht weiter.");
+}
 } // namespace
 
 void MainWindow::setDirectBackend(std::unique_ptr<DirectBackend> backend)
@@ -119,8 +145,18 @@ void MainWindow::showDirectSession(const QJsonObject& session)
     }
     m_directPage->recipes()->setRecipe(session.value("recipe").toString());
     m_directPage->material()->setMaterialState(session.value("material").toArray());
+    setDirectSourceTimeline(session);
     m_directPage->suggestions()->setSession(session);
     m_directPage->updateResult();
+}
+
+void MainWindow::setDirectSourceTimeline(const QJsonObject& session)
+{
+    if (session.value("recipe").toString() != QLatin1String("talk")) return;
+    bool ok = false;
+    const int id = session.value("timeline").toString().toInt(&ok);
+    const Sequence* seq = ok ? m_project->sequence(id) : nullptr;
+    m_directPage->setSourceTimeline(seq ? seq->timeline : m_project->timeline());
 }
 
 DirectBackend* MainWindow::directBackend()
@@ -156,6 +192,17 @@ void MainWindow::ensureDirectPage()
     // Pictures of the lists: the frame at a time of the file (own low-priority threads, Engine::thumbnail is static)
     m_directPage->thumbs()->setDecoder([format = m_project->format()](const QString& file, double s, const QSize& size) {
         return Engine::thumbnail(format, file, int(std::lround(s * format.rate.fps())), size);
+    });
+    // A time of a timeline (the material "Aktuelle Timeline", a pause of talk): the picture shown there
+    m_directPage->thumbs()->setResolver([this](const QString& key, double s) -> std::pair<QString, double> {
+        const double fps = m_project->format().rate.fps();
+        const Timeline* tl = &m_project->timeline();
+        if (key.startsWith(QLatin1String("@timeline:"))) {
+            bool ok = false;
+            const int id = key.mid(10).toInt(&ok);
+            if (const Sequence* seq = ok ? m_project->sequence(id) : nullptr) tl = &seq->timeline;
+        }
+        return pictureAt(*tl, int(std::lround(s * fps)), fps);
     });
     // The Delete keys registered at the start (buildActions) act in the two lists
     m_directPage->suggestions()->setRemoveAction(m_directRemoveSuggestion);
@@ -226,6 +273,7 @@ void MainWindow::ensureDirectPage()
 void MainWindow::updateDirectTracks()
 {
     if (!m_directPage) return;
+    m_directPage->material()->setTimelineLength(TimelineOps::endFrame(m_project->timeline()) / m_project->format().rate.fps());
     QStringList names;
     const QVector<Track>& audio = m_project->timeline().audio;
     for (int i = 0; i < audio.size(); ++i)
@@ -278,7 +326,29 @@ void MainWindow::directSuggest()
         cancel();
     }
     const QString recipe = m_directPage->recipes()->recipe();
-    m_directPage->suggestions()->setStale({});
+    // The old suggestions go first: they were of another recipe or setting (Übernehmen would build them), and a
+    // failure shows its words alone
+    m_directPage->suggestions()->clear();
+    m_directPage->setFinishOffered(false);
+    m_directPage->setMadeProject({});
+    m_directApplied = {};
+    m_directPage->updateResult();
+    // What the recipe needs and the material lacks: said before running, not as the command's error
+    const QJsonObject options = m_directPage->recipes()->options();
+    QString needs;
+    if (recipe == QLatin1String("talk") && !m_directPage->material()->usesTimeline()) needs = DirectText::talkNeedsTimeline();
+    else if (recipe == QLatin1String("script") && options.value("script").toString().trimmed().isEmpty()
+             && options.value("script_file").toString().isEmpty())
+        needs = DirectText::scriptNeedsText();
+    else if (recipe == QLatin1String("template") && m_directPage->material()->usesTimeline())
+        needs = DirectText::templateNeedsFiles();
+    else if (recipe == QLatin1String("template") && options.value("template").toString().isEmpty()
+             && TemplateFill::listSlots(m_project->data()).isEmpty())
+        needs = DirectText::templateNeedsChoice();
+    if (!needs.isEmpty()) {
+        m_directPage->suggestions()->setHint(needs);
+        return;
+    }
     m_directPage->setBusy(true, T("Analysiert das Material …"));
     BackgroundJobs::Job job;
     job.text = T("Regie: Analyse");
@@ -297,7 +367,7 @@ void MainWindow::directSuggest()
         m_backgroundJobs->setJob(kJobId, job);
     };
     auto finished = std::make_shared<bool>(false);
-    const auto done = [this, run, finished](const QJsonObject& reply) {
+    const auto done = [this, run, finished, recipe](const QJsonObject& reply) {
         *finished = true;
         if (run != m_directRun) return; // an older run's late reply
         m_directCancel = {};
@@ -307,6 +377,7 @@ void MainWindow::directSuggest()
             m_directPage->setFinishOffered(false);
             m_directPage->setMadeProject({});
             m_directPage->material()->setMaterialState(session.value("material").toArray());
+            setDirectSourceTimeline(session);
             m_directPage->suggestions()->setSession(session);
             if (m_backgroundJobs)
                 m_backgroundJobs->finishJob(kJobId, T("Regie: %1 Vorschläge").arg(session.value("suggestions").toArray().size()));
@@ -318,10 +389,12 @@ void MainWindow::directSuggest()
             m_directPage->suggestions()->setError(T("Abgebrochen."));
             return;
         }
-        m_directPage->suggestions()->setError(T("Keine Vorschläge: %1").arg(error.value("message").toString()));
+        m_directPage->suggestions()->clear(); // (an AI's session may have come meanwhile: never left as if of this run)
+        m_directPage->suggestions()->setError(friendlyError(recipe, error, false), error.value("message").toString());
+        m_directPage->updateResult();
     };
-    DirectBackend::JobHandle h = directBackend()->suggest(recipe, m_directPage->material()->materialJson(),
-                                                          m_directPage->recipes()->options(), progress, done, m_directPage);
+    DirectBackend::JobHandle h = directBackend()->suggest(recipe, m_directPage->material()->materialJson(), options,
+                                                          progress, done, m_directPage);
     if (!*finished && run == m_directRun) m_directCancel = std::move(h.cancel); // a backend may answer at once
 }
 
@@ -332,6 +405,8 @@ void MainWindow::directApply()
     m_engine->pause();
     const int run = ++m_directApplyRun;
     m_directPage->setApplying(true);
+    // A project it makes itself (a template's) goes into the folder for projects, never next to the recordings
+    directBackend()->setProjectFolder(SettingsDialog::storedFolder());
     BackgroundJobs::Job job;
     job.text = T("Regie: Timeline bauen");
     job.fraction = -1;
@@ -372,6 +447,8 @@ void MainWindow::directApply()
                 return;
             }
             statusBar()->showMessage(T("Regie: neue Timeline gebaut (Rückgängig nimmt sie zurück)"), 5000);
+            if (const QString name = result.value("timeline").toString(); !name.isEmpty())
+                m_directPage->setResultNote(T("Neue Timeline „%1“: „In Schneiden öffnen“ zeigt sie").arg(name));
             return;
         }
         if (m_backgroundJobs) m_backgroundJobs->removeJob(kApplyJobId);
@@ -386,7 +463,11 @@ void MainWindow::directApply()
             m_directPage->suggestions()->setStale(T("Die Vorschläge sind abgelaufen."));
             return;
         }
-        QMessageBox::warning(this, T("Regie"), T("Nicht übernommen: %1").arg(error.value("message").toString()));
+        const QString recipe = m_directPage->suggestions()->session().value("recipe").toString();
+        QMessageBox box(QMessageBox::Warning, T("Regie"), T("Nicht übernommen: %1").arg(friendlyError(recipe, error, true)),
+                        QMessageBox::Ok, this);
+        box.setDetailedText(error.value("message").toString());
+        box.exec();
     };
     DirectBackend::JobHandle h = directBackend()->apply(m_directPage->suggestions()->session(),
                                                         m_directPage->suggestions()->choice(), progress, done, m_directPage);
@@ -441,7 +522,10 @@ void MainWindow::directFinish()
         }
         m_directPage->setFinishOffered(true);
         if (code == "CANCELED") return;
-        QMessageBox::warning(this, T("Regie"), T("Nicht eingefügt: %1").arg(error.value("message").toString()));
+        QMessageBox box(QMessageBox::Warning, T("Regie"),
+                        T("Nicht eingefügt: %1").arg(friendlyError(QStringLiteral("short"), error, true)), QMessageBox::Ok, this);
+        box.setDetailedText(error.value("message").toString());
+        box.exec();
     };
     DirectBackend::JobHandle h = directBackend()->finish(m_directApplied.value("session").toObject(),
                                                          m_directApplied.value("result").toObject(), progress, done,

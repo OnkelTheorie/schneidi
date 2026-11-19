@@ -50,18 +50,28 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     outer->setSpacing(0);
     // The recipes as one row of equal buttons (they wrap as a row of their own when the width runs out), the chosen
     // one's description and settings under them
+    // The recipe row and the card scroll together: in a small window with a big font the row wraps into several
+    // lines and would leave the card a sliver of its own
+    auto* scroll = new QScrollArea;
+    scroll->setObjectName("direct_recipe_scroll");
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* inner = new QWidget;
+    auto* innerLay = new QVBoxLayout(inner);
+    innerLay->setContentsMargins(0, 0, 0, 0);
+    innerLay->setSpacing(0);
     auto* chips = new QWidget;
     chips->setObjectName("direct_recipe_row");
     m_chips = new FlowLayout(chips, 6, 6);
     m_chips->setContentsMargins(8, 8, 8, 4);
-    outer->addWidget(chips);
-    auto* scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    innerLay->addWidget(chips);
     m_stack = new QStackedWidget;
-    scroll->setWidget(m_stack);
+    innerLay->addWidget(m_stack, 1);
+    scroll->setWidget(inner);
     outer->addWidget(scroll, 1);
+    // Room for the row, the description and a few settings: the shared viewer above gives way first
+    setMinimumHeight(fontMetrics().lineSpacing() * 8 + 24);
 
     // Short
     (makeCard("short", T("Short"), T("Die besten Momente als Hochformat-Video mit Untertiteln.")));
@@ -123,7 +133,8 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
 
     // Talk without pauses
     (makeCard("talk", T("Gespräch ohne Pausen"),
-                             T("Podcast, Interview, Vlog, Tutorial: Pausen raus, alle Spuren bleiben synchron.")));
+                             T("Podcast, Interview, Vlog, Tutorial: Pausen raus, alle Spuren bleiben synchron. Arbeitet auf einer "
+                               "Timeline: links „Aktuelle Timeline als Material“ wählen.")));
     m_talkPause = new QDoubleSpinBox;
     m_talkPause->setObjectName("direct_talk_pause");
     m_talkPause->setRange(0.2, 5);

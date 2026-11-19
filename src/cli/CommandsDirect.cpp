@@ -16,6 +16,7 @@
 #include "core/RenderJob.h"
 #include "core/ShortPick.h"
 #include "core/StreamPresets.h"
+#include "engine/Extensions.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -53,10 +54,7 @@ QString freeFile(const QString& dir, const QString& base, const QString& suffix)
     return path;
 }
 
-Direction::Note note(const QString& key, const QJsonObject& values = {})
-{
-    return {key, Direction::noteText(key, values)};
-}
+Direction::Note note(const QString& key, const QJsonObject& values = {}) { return Direction::makeNote(key, values); }
 
 // The game whose kill feed gives the moments: given (id or "none"), else from the first file's folder or name
 QString gameOf(const QJsonObject& options, const QStringList& files)
@@ -184,6 +182,7 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
     }
     const QVector<QVector<ShortPick::Moment>> picked = ShortPick::variants(asMoments(source), durations, variants, pick);
     if (source.isEmpty()) s.notes << note("no_moments");
+    else if (picked.size() < variants) s.notes << note("fewer_variants", {{"n", int(picked.size())}, {"asked", variants}});
     int n = 0;
     for (int v = 0; v < picked.size(); ++v)
         for (const ShortPick::Moment& m : picked[v]) {
@@ -221,6 +220,11 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
         if (x.variant == 1) first << x.n;
     s.order = hookOrder(s.suggestions, first, hookBest, files);
     s.target = pick.maxS;
+    // Captions asked for (the Direct page's card) without whisper: said now, not only by a missing finish button
+    const QString captions = o["captions"].toString().trimmed().toLower();
+    if (!captions.isEmpty() && captions != QLatin1String("off")
+        && (Extensions::whisperProgram().isEmpty() || Extensions::installedWhisperModels().isEmpty()))
+        s.notes << note("no_whisper");
 }
 
 void suggestHighlights(Direction::Session& s, const CollectedMoments& found, const QStringList& files)
@@ -259,6 +263,35 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
         x.n = ++n;
         s.suggestions << x;
         s.order << x.n;
+    }
+    // Far less than wanted stood out: the end of every recording offered too (switched off, the user fills up)
+    double pickedS = 0;
+    for (const ReelPick::Moment& m : picked) pickedS += m.to - m.from;
+    const bool few = !s.suggestions.isEmpty() && pick.targetS > 0 && pickedS < pick.targetS * 0.5
+                     && s.suggestions.first().reason.key != QLatin1String("fallback_end");
+    if (few) {
+        ShortPick::Options ends;
+        ends.minS = 0;
+        ends.maxS = std::max(1.0, pick.targetS - pickedS);
+        ends.fallbackS = ends.maxS;
+        int offered = 0;
+        for (ShortPick::Moment m : ShortPick::pick({}, durations, ends)) {
+            // Only the part of an end no found moment covers
+            for (const Direction::Suggestion& x : s.suggestions)
+                if (x.file == files.value(m.file) && x.from < m.to && m.from < x.to) m.from = std::max(m.from, x.to);
+            if (m.to - m.from < 1.0) continue;
+            Direction::Suggestion x;
+            x.file = files.value(m.file);
+            x.from = m.from;
+            x.to = m.to;
+            x.reason = {"fallback_end", {}};
+            x.labels << "end";
+            x.n = ++n;
+            x.on = false;
+            s.suggestions << x;
+            ++offered;
+        }
+        if (offered > 0) s.notes << note("few_moments", {{"s", std::round(pickedS * 10) / 10}, {"target", pick.targetS}});
     }
     int added = 0;
     QVector<Direction::Suggestion> taken = s.suggestions;
@@ -635,7 +668,11 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     if (project.isEmpty() || missing) {
         if (project.isEmpty()) {
             const QFileInfo first(files.first());
-            project = freeFile(first.absolutePath(), first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
+            // In project_dir when given, else next to the first recording
+            QString dir = args["project_dir"].toString().trimmed();
+            dir = dir.isEmpty() ? first.absolutePath() : absolute(dir);
+            if (!dry && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
+            project = freeFile(dir, first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
         } else if (QFileInfo(project).suffix().isEmpty()) {
             project += "." + QString(ProjectFile::Extension);
         }

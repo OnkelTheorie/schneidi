@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/direct/DirectText.h"
 
+#include "core/Direction.h"
 #include "core/I18n.h"
 
 #include <QStringList>
@@ -64,10 +65,54 @@ QString reason(const QJsonObject& r)
 QString note(const QJsonObject& note)
 {
     const QString key = note.value("key").toString();
-    if (key == "no_whisper") return T("Whisper fehlt: keine Untertitel und Füllwörter (Hilfe › Erweiterungen).");
     if (key == "fake") return T("Platzhalter-Vorschläge ohne Analyse (Vorabversion).");
-    if (key == "running") return T("Ein Teil der Analyse läuft noch.");
-    return note.value("text").toString();
+    return Direction::noteText(key, note.value("values").toObject(), Direction::Lang::Ui);
+}
+
+QString talkNeedsTimeline()
+{
+    return T("„Gespräch ohne Pausen“ arbeitet auf einer Timeline: Die Aufnahmen in Schneiden auf eine Timeline legen und "
+             "links „Aktuelle Timeline als Material“ wählen.");
+}
+
+QString scriptNeedsText() { return T("Für „Aus Skript“ erst den Text einfügen oder eine Textdatei wählen."); }
+
+QString templateNeedsChoice() { return T("Erst eine Vorlage wählen („Wählen…“)."); }
+
+QString templateNeedsFiles()
+{
+    return T("„Vorlage füllen“ wählt aus Clips: links Clips hineinziehen statt der aktuellen Timeline.");
+}
+
+QString needsMaterial() { return T("Erst Material links hineinziehen (oder „Aktuelle Timeline als Material“ wählen)."); }
+
+QString error(const QString& recipe, const QJsonObject& error, bool apply)
+{
+    const QString code = error.value("code").toString();
+    const QString m = error.value("message").toString();
+    const auto has = [&m](const char* part) { return m.contains(QLatin1String(part), Qt::CaseInsensitive); };
+    if (code == "NO_TRANSCRIPT" || has("transcript"))
+        return T("Dafür braucht schneidi eine Abschrift der Aufnahmen: Whisper nachladen (Hilfe › Erweiterungen) oder "
+                 "die Clips im Transkript-Panel transkribieren.");
+    if (has("no sentence of the script"))
+        return T("Kein Satz des Skripts kommt in den Aufnahmen vor (andere Sprache oder andere Clips?).");
+    if (has("missing 'script'") || has("script has no words") || has("needs options.script")) return scriptNeedsText();
+    if (has("cannot read script_file")) return T("Die Skript-Datei lässt sich nicht lesen.");
+    if (has("not on files") || (recipe == "talk" && code == "NO_MATERIAL")) return talkNeedsTimeline();
+    if (code == "NO_MATERIAL") return needsMaterial();
+    if (code == "TRACK_LOCKED")
+        return T("Eine gesperrte Spur hat Ton in einer Pause: die Spur entsperren oder unter „Spuren“ weglassen.");
+    if (recipe == "template" && (has("no slots") || has("no video") || has("no template") || has("slot")))
+        return T("Die Vorlage lässt sich mit diesem Material nicht füllen: eine Vorlage wählen und Clips mit Bild "
+                 "hineinziehen.");
+    if (code == "NOT_FOUND" && has("no such file")) return T("Eine Datei des Materials fehlt.");
+    if (code == "SAVE_FAILED")
+        return apply ? T("Das Projekt ließ sich nicht speichern (Ordner für Projekte in den Einstellungen prüfen).")
+                     : T("Die Vorschläge ließen sich nicht speichern.");
+    if (code == "SESSION_STALE") return T("Das Material hat sich geändert: Die Vorschläge passen nicht mehr.");
+    if (code == "SESSION_EXPIRED") return T("Die Vorschläge sind abgelaufen.");
+    if (code == "CANCELED") return T("Abgebrochen.");
+    return {};
 }
 
 QString analysis(const QJsonObject& a)

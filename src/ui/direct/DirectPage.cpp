@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/TimelineOps.h"
+#include "ui/ElidedLabel.h"
 #include "ui/direct/DirectMaterial.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
@@ -22,6 +23,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -87,8 +89,9 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
     m_overview->setToolTip(T("So wird die Timeline aus den gewählten Vorschlägen"));
     res->addWidget(m_overview);
     auto* buttons = new QHBoxLayout;
-    m_resultText = new QLabel;
+    m_resultText = new ElidedLabel(Qt::ElideMiddle); // a long path never pushes the buttons out
     m_resultText->setObjectName("direct_result_text");
+    m_resultText->setMinimumWidth(40);
     m_apply = new QPushButton(T("Übernehmen"));
     m_apply->setObjectName("direct_apply");
 
@@ -123,6 +126,7 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
 
     connect(m_recipes, &DirectRecipes::recipeChosen, this, [this] {
         if (!m_material->isEmpty()) emit suggestRequested();
+        else if (!m_suggestions->hasSession()) m_suggestions->setHint(DirectText::needsMaterial()); // say why nothing runs
     });
     connect(m_recipes, &DirectRecipes::suggestRequested, this, &DirectPage::suggestRequested);
     connect(m_suggestions, &DirectSuggestions::resuggestRequested, this, &DirectPage::suggestRequested);
@@ -153,13 +157,25 @@ void DirectPage::setBusy(bool busy, const QString& text)
     m_recipes->setBusy(busy);
     m_recipes->suggestButton()->setEnabled(!busy && !m_material->isEmpty() && m_recipes->available(m_recipes->recipe()));
     m_suggestions->setBusyText(busy ? text : QString());
+    if (busy) setResultNote({});
+    updateResult();
+}
+
+void DirectPage::setResultNote(const QString& text) { m_resultText->setFullText(text); }
+
+QString DirectPage::resultNote() const { return m_resultText->fullText(); }
+
+void DirectPage::setSourceTimeline(const Timeline& tl)
+{
+    m_source = tl;
+    m_hasSource = true;
     updateResult();
 }
 
 void DirectPage::setApplying(bool applying, const QString& text)
 {
     m_applying = applying;
-    m_resultText->setText(applying ? (text.isEmpty() ? T("Baut die Timeline …") : text) : QString());
+    m_resultText->setFullText(applying ? (text.isEmpty() ? T("Baut die Timeline …") : text) : QString());
     if (applying) m_finish->setEnabled(false);
     updateResult();
 }
@@ -169,7 +185,7 @@ void DirectPage::setMadeProject(const QString& path)
     m_madeProject = path;
     m_openProject->setVisible(!path.isEmpty());
     m_openProject->setToolTip(path.isEmpty() ? QString() : T("Das neue Projekt öffnen: %1").arg(QDir::toNativeSeparators(path)));
-    if (!path.isEmpty()) m_resultText->setText(T("Neues Projekt: %1").arg(QFileInfo(path).fileName()));
+    if (!path.isEmpty()) m_resultText->setFullText(T("Neues Projekt: %1").arg(QDir::toNativeSeparators(path)));
 }
 
 void DirectPage::setFinishOffered(bool offered)
@@ -178,8 +194,37 @@ void DirectPage::setFinishOffered(bool offered)
     m_finish->setEnabled(offered && !m_wishBusy);
 }
 
+namespace {
+// The timeline without the ranges (frames [from, to)), every track rippled: what cutting the pauses gives (to look
+// at only; the real cut is cut_pauses)
+Timeline withoutRanges(Timeline tl, QVector<QPair<int, int>> ranges, double fps)
+{
+    std::sort(ranges.begin(), ranges.end(), [](const auto& a, const auto& b) { return a.first > b.first; }); // last first
+    int next = 1 << 24;
+    const IdGen newId = [&next] { return next++; };
+    for (const auto& [from, to] : ranges) {
+        if (to <= from) continue;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (Track& t : tl.tracks(k)) {
+                TimelineOps::clearRange(t, from, to, newId, fps);
+                TimelineOps::shiftFrom(t, to, from - to);
+            }
+    }
+    return tl;
+}
+} // namespace
+
 Timeline DirectPage::resultTimeline() const
 {
+    // A session on a timeline (talk): that timeline without the checked ranges
+    if (m_hasSource && m_suggestions->session().value("recipe").toString() == QLatin1String("talk")) {
+        QVector<QPair<int, int>> ranges;
+        for (int n : m_suggestions->checkedOrder()) {
+            const auto [from, to] = m_suggestions->range(n);
+            ranges.append({int(std::lround(from * m_fps)), int(std::lround(to * m_fps))});
+        }
+        return withoutRanges(m_source, ranges, m_fps);
+    }
     Timeline tl;
     TimelineOps::ensureTracks(tl, TrackKind::Video, 1);
     TimelineOps::ensureTracks(tl, TrackKind::Audio, 1);

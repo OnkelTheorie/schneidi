@@ -53,6 +53,33 @@ const Text kNotes[] = {
      N_("Das Musikbett (Op music_bed) fehlt in dieser Version: keine Musik eingefügt."), nullptr},
     {"not_yet", "This recipe comes in a later step.", nullptr, N_("Dieses Rezept kommt in einem späteren Schritt."),
      nullptr},
+    {"few_moments",
+     "Only {s} s stood out of the {target} s wanted: the end of each recording is in the list too (switched off), to "
+     "fill up with.",
+     nullptr,
+     N_("Nur {s} s sind aufgefallen, gewünscht sind {target} s: Das Ende jeder Aufnahme steht ausgeschaltet in der "
+        "Liste, zum Auffüllen."),
+     nullptr},
+    {"fewer_variants", "Only {n} variant(s) instead of {asked}: the material has too few moments for more.", nullptr,
+     N_("Nur {n} Variante(n) statt {asked}: Für mehr hat das Material zu wenige Momente."), nullptr},
+    {"no_shot", "No shot fits the field \"{slot}\".", nullptr, N_("Für das Feld „{slot}“ passt kein Clip."), nullptr},
+    {"not_said", "Not found in what was said: \"{text}\"", nullptr, N_("Nicht im Gesagten gefunden: „{text}“"), nullptr},
+    {"no_pause", "No pause long enough where every chosen track is quiet (try a shorter minimum pause).", nullptr,
+     N_("Keine Pause lang genug, in der alle gewählten Spuren still sind (kürzere Pausen versuchen)."), nullptr},
+    {"never_quiet",
+     "Never quiet: {tracks} - its noise stays above the threshold, so no pause is common to all tracks (leave it out "
+     "under Tracks).",
+     nullptr,
+     N_("Nie still: {tracks} – das Rauschen liegt über der Schwelle, keine Pause ist allen Spuren gemeinsam (die Spur "
+        "unter „Spuren“ weglassen)."),
+     nullptr},
+    {"no_transcript_fillers", "No transcript on these tracks: only pauses were found, no filler words (transcribe first).",
+     nullptr,
+     N_("Keine Abschrift auf diesen Spuren: nur Pausen, keine Füllwörter (erst transkribieren)."), nullptr},
+    {"fillers_transcript", "Filler words: only those the transcript contains.", nullptr,
+     N_("Füllwörter: nur, was die Abschrift enthält."), nullptr},
+    {"room_tone", "Room tone is not laid under the cuts yet.", nullptr,
+     N_("Raumton unter den Schnitten kommt noch nicht."), nullptr},
 };
 
 QString number(const QJsonValue& v, Lang lang)
@@ -125,6 +152,8 @@ QString noteText(const QString& key, const QJsonObject& values, Lang lang)
     return t ? textOf(*t, values, lang) : QString();
 }
 
+Note makeNote(const QString& key, const QJsonObject& values) { return {key, noteText(key, values), values}; }
+
 const Suggestion* Session::find(int n) const
 {
     for (const Suggestion& s : suggestions)
@@ -185,7 +214,11 @@ QJsonObject toJson(const Session& s)
     for (const Material& m : s.material) material << toJson(m);
     for (const Suggestion& x : s.suggestions) suggestions << toJson(x);
     for (int n : s.order) order << n;
-    for (const Note& n : s.notes) notes << QJsonObject{{"key", n.key}, {"text", n.text}};
+    for (const Note& n : s.notes) {
+        QJsonObject note{{"key", n.key}, {"text", n.text}};
+        if (!n.values.isEmpty()) note["values"] = n.values;
+        notes << note;
+    }
     QJsonObject o{{"id", s.id},           {"recipe", s.recipe},   {"made", s.made},
                   {"options", s.options}, {"material", material}, {"suggestions", suggestions},
                   {"order", order},       {"length_s", round3(s.length())}, {"notes", notes}};
@@ -247,7 +280,8 @@ std::optional<Session> fromJson(const QJsonObject& o, QString* error)
         s.suggestions << x;
     }
     for (const QJsonValue& v : o["order"].toArray()) s.order << v.toInt();
-    for (const QJsonValue& v : o["notes"].toArray()) s.notes << Note{v["key"].toString(), v["text"].toString()};
+    for (const QJsonValue& v : o["notes"].toArray())
+        s.notes << Note{v["key"].toString(), v["text"].toString(), v["values"].toObject()};
     return s;
 }
 
