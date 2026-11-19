@@ -294,6 +294,33 @@ int main(int argc, char* argv[])
         const Clip* c = clipById(*p, n["clip"].toInt());
         CHECK(c && c->volumeDb == -6 && !Keys::animated(*c, AnimParam::Volume));
     }
+    // Ducking only under voice and recorded sound: not under the effect sounds (track "SFX"), a track named "Music",
+    // another bed or an audio-only song with analysed beats
+    {
+        const QString pj = tmp.path() + "/duck.schneidi";
+        run("new", {{"project", pj}, {"fps", 25}});
+        const QString song = tmp.path() + "/song.wav";
+        Synth::Builder b(48000, 12.0, 7);
+        Synth::music(b, 0, 12);
+        CHECK(Synth::writeWav(song, b.s, 48000));
+        Cli::detail::storeSongBeats(QFileInfo(song).absoluteFilePath(), 0, MusicBed::describe({MusicBed::Mood::Drive, 12}).beats);
+        edit(pj, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"},{"op":"place","media":"%1","at":0,"track":"A2"},)"
+                         R"({"op":"track","track":"A2","name":"SFX"},{"op":"place","media":"%1","at":0,"track":"A3"},)"
+                         R"({"op":"track","track":"A3","name":"Music"},{"op":"place","media":"%2","at":0,"track":"A4"}])")
+                     .arg(speech, song));
+        edit(pj, R"([{"op":"music_bed","mood":"hype","length":"8s","track":"A5","duck":false}])");
+        const QJsonObject d = bedNote(edit(pj, R"([{"op":"music_bed","mood":"drive","length":"8s","track":"A6"}])"));
+        if (!CHECK(d["ducking"].toString().contains(" of A1:"))) std::printf("       %s\n", qPrintable(d["ducking"].toString()));
+        // Only effect sounds besides it: not ducked
+        const QString only = tmp.path() + "/sfxonly.schneidi";
+        run("new", {{"project", only}, {"fps", 25}});
+        edit(only, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"},{"op":"track","track":"A1","name":"SFX"}])").arg(speech));
+        const QJsonObject o = bedNote(edit(only, R"([{"op":"music_bed","mood":"calm","length":"8s"}])"));
+        CHECK(o["ducking"].toString().startsWith("not ducked"));
+        const auto p = load(only);
+        const Clip* c = clipById(*p, o["clip"].toInt());
+        CHECK(c && !Keys::animated(*c, AnimParam::Volume));
+    }
     // snap_to_beat takes the bed's grid: a cut 0.2 s off a beat moves onto it
     {
         const QString pj = tmp.path() + "/snap.schneidi";

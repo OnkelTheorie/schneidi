@@ -18,6 +18,7 @@
 #include <QJsonArray>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <cmath>
 
 namespace Cli::detail {
@@ -75,6 +76,43 @@ MusicBed::Options bedOptions(Session& s, const QJsonObject& op, int* at, int* fr
                                  .arg(seconds, 0, 'f', 2));
     o.length = seconds;
     return o;
+}
+
+bool isMusicName(const QString& name)
+{
+    const QString t = name.trimmed();
+    return !t.isEmpty()
+           && (t.compare(T("Musik"), Qt::CaseInsensitive) == 0 || t.compare("Musik", Qt::CaseInsensitive) == 0
+               || t.compare("Music", Qt::CaseInsensitive) == 0);
+}
+
+bool isBedFile(const QString& path) { return QFileInfo(path).fileName().startsWith("music-bed-"); }
+
+// The audio tracks whose sound lowers the bed: voice and recorded sound. Not the bed's own track, muted ones (solo
+// wins), the effect sounds (op 'sfx'), tracks named "Musik"/"Music", nor tracks of only audio-only songs (other beds,
+// files whose beats were analysed: fit_music, snap_to_beat)
+QStringList duckUnder(Session& s, int bedTrack)
+{
+    const Timeline& tl = s.project.timeline();
+    const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    QStringList names;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const Track& t = tl.audio[i];
+        if (i == bedTrack || t.clips.isEmpty() || (solo ? !t.solo : t.muted)) continue;
+        if (t.name == kSfxTrackName || isMusicName(t.name)) continue;
+        bool any = false, songs = true;
+        for (const Clip& c : t.clips) {
+            if (c.kind != ClipKind::Media || !c.enabled) continue;
+            any = true;
+            if (s.editor.hasPartner(c.id) || !(isBedFile(c.mediaPath) || cachedSongBeats(c.mediaPath, c.audioStream))) {
+                songs = false;
+                break;
+            }
+        }
+        if (any && songs) continue;
+        names << QString("A%1").arg(i + 1);
+    }
+    return names;
 }
 
 struct Bed {
@@ -140,16 +178,20 @@ void opMusicBed(Session& s, const QJsonObject& op)
         s.editor.modifyClips({id}, T("Musikbett"), [gain](Clip& c) { c.volumeDb = gain; });
     }
 
-    // Ducking under the other sound (voice, game), as op 'duck' does by default; without any: nothing to do
+    // Ducking under the voice and recorded sound (op 'duck' with those tracks); without any: nothing to do
     QString ducked;
     if (op.value("duck").toBool(true)) {
-        try {
-            const int before = int(s.notes.size());
-            applyOp(s, QJsonObject{{"op", "duck"}, {"clips", QJsonArray{id}}});
-            if (s.notes.size() > before) ducked = s.notes.takeAt(s.notes.size() - 1).toString();
-        } catch (const Error& e) {
-            ducked = e.code == "BAD_ARGUMENT" ? QString("not ducked: no other audible track with clips")
-                                              : QString("not ducked: %1").arg(e.message);
+        const QStringList under = duckUnder(s, track);
+        if (under.isEmpty()) {
+            ducked = "not ducked: no voice or recorded sound on the other tracks (effect sounds and music do not count)";
+        } else {
+            try {
+                const int before = int(s.notes.size());
+                applyOp(s, QJsonObject{{"op", "duck"}, {"clips", QJsonArray{id}}, {"by", under.join(',')}});
+                if (s.notes.size() > before) ducked = s.notes.takeAt(s.notes.size() - 1).toString();
+            } catch (const Error& e) {
+                ducked = QString("not ducked: %1").arg(e.message);
+            }
         }
     }
 
