@@ -1596,6 +1596,13 @@ static const bool gProbePick = !devEnv("H264_PROBEPICK") || std::atoi(devEnv("H2
 static const double gProbeWeight = devEnv("H264_PROBEWEIGHT") ? std::atof(devEnv("H264_PROBEWEIGHT")) : 1.0;
 static const double gProbeBShare = devEnv("H264_PROBEBSHARE") ? std::atof(devEnv("H264_PROBEBSHARE")) : 0.3;
 static const bool gProbeAfterB = !devEnv("H264_PROBEAFTERB") || std::atoi(devEnv("H264_PROBEAFTERB")) != 0;
+// The probed pictures are coded with the macroblock tree's offsets they will have (H264_PROBETREE=0: without, their
+// bits scaled by the first picture's mean offset instead, as the first probe does; 2: the first probe too).
+static const int gProbeTree = devEnv("H264_PROBETREE") ? std::atoi(devEnv("H264_PROBETREE")) : 1;
+// The probe's reference picture is an I picture, coded 3 below the P QP; the references of the clip's P pictures are
+// mostly P pictures (H264_PROBEREFQP: QP added to the probe's reference picture).
+static const double gProbeRefQp = devEnv("H264_PROBEREFQP") ? std::atof(devEnv("H264_PROBEREFQP")) : 0.0;
+static const int gProbeAq = devEnv("H264_PROBEAQ") ? std::atoi(devEnv("H264_PROBEAQ")) : 1;
 static const bool gTpSeedTree = !devEnv("H264_TPSEEDTREE") || std::atoi(devEnv("H264_TPSEEDTREE")) != 0;
 static const double gTpFollow = devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPFOLLOW")) : 0.25;
 // The rest of the way is gone slowly: the gap between the two QPs, averaged over about this many
@@ -2646,6 +2653,10 @@ void Encoder::applyRc(int upTo)
         if (r.lookahead) {
             if (r.cost > 0) {
                 const bool pb = r.type == 1 && r.afterB && gTpAfterB > 0;
+                static const bool trace = devEnv("H264_RC_TRACE") != nullptr;
+                if (trace)
+                    std::fprintf(stderr, "rck: coded %d %c%s qp %d bits %.0f k %.3f\n", r.index, "IPB"[r.type], pb ? "b" : "", r.qp, r.bits,
+                                 r.bits * std::exp2(r.qp / 6.0) / r.cost);
                 if (pb) {
                     rcKSumPb_ += r.bits * std::exp2(r.qp / 6.0);
                     rcCostSumPb_ += r.cost;
@@ -3917,6 +3928,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         }
     } else {
         fc.treeOffset_.clear();
+        if (probeTree_ && probeTree_->size() == size_t(mbW_) * mbH_)
+            fc.treeOffset_ = *probeTree_; // a probe of the two-pass model: the offsets the picture will have
     }
     if (cfg_.bitrateKbps > 0 && lookahead) {
         // Rate control with lookahead: bits = k * cost * 2^(-qp/6) with k measured on the pictures
@@ -4050,7 +4063,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // fall off faster than 2^(-qp/6) once the QP passes the noise, so the probe moves
             // towards the predicted QP until it is within reach.
             int probeQp = baseQp;
-            auto probeConfig = [&](int qp) {
+            auto probeConfig = [&](int qp, bool own = false) {
                 EncoderConfig pc = cfg_;
                 pc.bitrateKbps = 0;
                 pc.crf = -1;
@@ -4058,7 +4071,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 pc.bframes = 0;
                 pc.weightedPred = false;
                 pc.mbtree = false;
-                pc.aqStrength = 0;
+                pc.aqStrength = own && gProbeAq ? cfg_.aqStrength : 0;
+                pc.weightedPred = own && gProbeAq >= 2 ? cfg_.weightedPred : false;
                 pc.qp = qp;
                 pc.gop = std::max(2, cfg_.gop);
                 pc.sceneCut = false;
@@ -4067,6 +4081,16 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             };
             // The probe codes without the macroblock tree; the real pictures have its finer QPs
             // (one-pass: folded into each picture's cost instead).
+            if (twoPass && gProbePick && gProbeTree >= 1 && bMode && cfg_.mbtree) {
+                // The queue's tree as the pictures after this one will find it: the searches over the B runs
+                // are due after the first picture, they run here already.
+                ensureBSearches();
+                joinBSearches();
+                la_->propagateB(queue_, cfg_.bframes, cfg_.weightedBipred);
+                if (gProbeTree >= 3 && !fc.treeOffset_.empty()) // the first picture with the whole tree too
+                    for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
+                        fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
+            }
             double tree = 1.0;
             if (twoPass && !fc.treeOffset_.empty() && gTpSeedTree) {
                 double mean = 0;
@@ -4076,9 +4100,43 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             }
             rcKSumPb_ = rcCostSumPb_ = 0;
             rcKBSeed_ = 0;
+            // The tree's offsets of a queued picture as the queue has them now, and a probe's picture coded with them.
+            std::vector<float> probeOffsets;
+            double treeLevel = 0;
+            auto settledAt = [&](const LookaheadFrame& g) { return size_t(g.index) + size_t(std::max(2, cfg_.lookahead / 2)) <= queue_.size(); };
+            auto encodeWithTree = [&](Encoder& probe, const LookaheadFrame& g, bool withTree, float extra = 0.0f) {
+                probe.probeTree_ = nullptr;
+                if (withTree && cfg_.mbtree && g.intraCost.size() == size_t(mbW_) * mbH_ && g.propagate.size() == g.intraCost.size()) {
+                    probeOffsets.resize(g.intraCost.size());
+                    double mean = 0;
+                    for (size_t m = 0; m < probeOffsets.size(); ++m) {
+                        probeOffsets[m] = Lookahead::qpOffset(g, int(m), treeStrength(g));
+                        mean += probeOffsets[m];
+                    }
+                    mean /= double(probeOffsets.size());
+                    // A picture near the queue's end has received from few pictures yet (and one planned as a B
+                    // picture from none): its offsets keep their shape and move to the settled pictures' level.
+                    const float shift = (g.type == 2 || !settledAt(g)) && treeLevel < mean ? float(treeLevel - mean) : 0.0f;
+                    for (float& o : probeOffsets)
+                        o = std::max(-8.0f, o + shift) + extra;
+                    probe.probeTree_ = &probeOffsets;
+                }
+                const double bits = double(probe.encode(pictureOf(g, cfg_.width)).size()) * 8.0;
+                if (probe.probeTree_ && devEnv("H264_RC_TRACE")) {
+                    double mean = 0;
+                    for (float o : probeOffsets)
+                        mean += o;
+                    std::fprintf(stderr, "rc: probe picture %d tree %.2f bits %.0f\n", g.index, mean / double(probeOffsets.size()), bits);
+                }
+                probe.probeTree_ = nullptr;
+                return bits;
+            };
+            const bool treeFirst = twoPass && gProbeTree >= 2 && !fc.treeOffset_.empty();
+            if (treeFirst)
+                tree = 1.0;
             for (int round = 0; round < 3; ++round) {
                 Encoder probe(probeConfig(probeQp));
-                const double bitsI = double(probe.encode(picture).size()) * 8.0;
+                const double bitsI = treeFirst ? encodeWithTree(probe, frame, true) : double(probe.encode(picture).size()) * 8.0;
                 const double kI = bitsI * std::exp2((probeQp - 3) / 6.0) / std::max(1.0, frame.intraSum);
                 rcKSum_[0] = kI;
                 rcCostSum_[0] = 1; // seeds only: the first real pictures outweigh them
@@ -4118,6 +4176,37 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // that needs the most against the one before it. The seeds weigh as much as their pictures, and the
             // B pictures start from a share of the k after B runs. Repeated once where the QP they predict is out
             // of the probe's reach (k is not constant over the QP).
+            // The level of the tree's offsets in the queue: the mean over the reference pictures that have at least
+            // half the lookahead behind them (the first picture's where there is none).
+            treeLevel = -6.0 * std::log2(tree);
+            {
+                double sum = 0;
+                int count = 0;
+                for (const LookaheadFrame& g : queue_) {
+                    if (g.type == 2 || !settledAt(g) || g.intraCost.size() != size_t(mbW_) * mbH_ || g.propagate.size() != g.intraCost.size())
+                        continue;
+                    double mean = 0;
+                    for (size_t m = 0; m < g.intraCost.size(); ++m)
+                        mean += std::max(-8.0f, Lookahead::qpOffset(g, int(m), treeStrength(g)));
+                    sum += mean / double(g.intraCost.size());
+                    ++count;
+                }
+                if (count > 0 && gProbeTree >= 1)
+                    treeLevel = sum / count;
+                if (devEnv("H264_RC_TRACE"))
+                    std::fprintf(stderr, "rc: tree level %.2f over %d queued pictures\n", treeLevel, count);
+            }
+            const double firstTree = tree;
+            if (devEnv("H264_PROBE_TRACE")) { // TEMP
+                for (size_t j = 0; j < queue_.size(); ++j) {
+                    const LookaheadFrame& g = queue_[j];
+                    double mean = 0;
+                    if (g.propagate.size() == g.intraCost.size())
+                        for (size_t m = 0; m < g.intraCost.size(); ++m)
+                            mean += std::max(-8.0f, Lookahead::qpOffset(g, int(m), treeStrength(g)));
+                    std::fprintf(stderr, "pq: %d type %d refDist %d decided %d tree %.2f\n", g.index, g.type, g.refDist, int(g.decided), mean / std::max<size_t>(1, g.intraCost.size()));
+                }
+            }
             auto probeMoving = [&](int qp) {
                 const size_t n = std::min({queue_.size(), cfg_.firstPass->size(), tpType_.size()});
                 auto queued = [&](size_t j) { return queue_[j].index == int(j) && !queue_[j].coded; };
@@ -4167,11 +4256,13 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 // with duplicated pictures measured a k of next to nothing so). The run's last step with standing
                 // pictures before it is the picture after the B run: one encode.
                 const double scale = std::exp2(qp / 6.0);
+                const bool own = gProbeTree >= 1 && cfg_.mbtree && gTpSeedTree; // each picture with its own offsets
+                const double tree = own ? 1.0 : firstTree;
                 double bitsAfterB = -1;
                 if (at > 0 && most > 1.0) {
-                    Encoder probe(probeConfig(qp));
-                    probe.encode(pictureOf(queue_[size_t(tpRef0_[at])], cfg_.width));
-                    bitsAfterB = double(probe.encode(pictureOf(queue_[at], cfg_.width)).size()) * 8.0;
+                    Encoder probe(probeConfig(qp, own));
+                    encodeWithTree(probe, queue_[size_t(tpRef0_[at])], own, float(gProbeRefQp));
+                    bitsAfterB = encodeWithTree(probe, queue_[at], own);
                     rcCostSumPb_ = gProbeWeight > 0 ? gProbeWeight * most * scale : 1.0;
                     rcKSumPb_ = bitsAfterB / most * tree * rcCostSumPb_;
                     // B pictures until one is coded: by the P pictures between their runs (measured at the
@@ -4183,9 +4274,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 }
                 double bitsP = bitsAfterB;
                 if (plain != at || bitsP < 0) {
-                    Encoder probe(probeConfig(qp));
-                    probe.encode(pictureOf(queue_[plain - 1], cfg_.width));
-                    bitsP = double(probe.encode(pictureOf(queue_[plain], cfg_.width)).size()) * 8.0;
+                    Encoder probe(probeConfig(qp, own));
+                    encodeWithTree(probe, queue_[plain - 1], own, float(gProbeRefQp));
+                    bitsP = encodeWithTree(probe, queue_[plain], own);
                 }
                 const uint8_t cls = std::exchange(tpClass_[plain], uint8_t(2));
                 const double needP = std::max(1.0, tpNeed(plain, qp, true));
