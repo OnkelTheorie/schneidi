@@ -30,6 +30,9 @@
 #include <utility>
 #include <condition_variable>
 #include <mutex>
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
+#endif
 
 
 namespace schneidi::h264 {
@@ -41,7 +44,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
                     int highFrom = 0, double* zeroCost = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
-static const bool gTiming = devEnv("H264_TIMING") != nullptr;
+S264_DEV(bool, gTiming, devEnv("H264_TIMING") != nullptr);
 struct PhaseClock {
     std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
     double ms[8] = {};
@@ -58,7 +61,7 @@ struct PhaseClock {
 namespace {
 
 // Macroblock statistics (H264_STATS=1), for comparisons with other encoders' logs.
-const bool gStats = devEnv("H264_STATS") != nullptr;
+S264_DEV(bool, gStats, devEnv("H264_STATS") != nullptr);
 std::atomic<long> gStatInter{0}, gStatInterCbp{0}, gStatT8{0};
 std::mutex gStatMutex;
 double gStatT8LossIf4[20] = {}, gStatT8LossIf8[20] = {}; // RD cost lost if only 4x4 / only 8x8 were coded
@@ -74,14 +77,14 @@ std::atomic<long> gStatB[9] = {};
 std::atomic<long> gStatCalls[10] = {}; // calls: plan 8x8, plan 4x4, motion search, SATD position, SAD position (sadPart), intra try, mbBits, P macroblocks, -, chroma
 std::atomic<long> gStatB2[6] = {}; // B macroblocks: early skip, direct-plan skip, searched, split searched, 8x8 searched, split or 8x8 coded for real
 // Experiments (H264_EXP bit mask), for A/B measurements only.
-const int gExp = devEnv("H264_EXP") ? std::atoi(devEnv("H264_EXP")) : 0;
+S264_DEV(int, gExp, devEnv("H264_EXP") ? std::atoi(devEnv("H264_EXP")) : 0);
 // Deblocking filter offsets (slice_alpha_c0_offset_div2 / slice_beta_offset_div2, -6..6), for
 // measurements only: H264_DBA / H264_DBB.
-const int gDeblockA = std::clamp(devEnv("H264_DBA") ? std::atoi(devEnv("H264_DBA")) : 0, -6, 6);
-const int gDeblockB = std::clamp(devEnv("H264_DBB") ? std::atoi(devEnv("H264_DBB")) : 0, -6, 6);
+S264_DEV(int, gDeblockA, std::clamp(devEnv("H264_DBA") ? std::atoi(devEnv("H264_DBA")) : 0, -6, 6));
+S264_DEV(int, gDeblockB, std::clamp(devEnv("H264_DBB") ? std::atoi(devEnv("H264_DBB")) : 0, -6, 6));
 // AQ texture measure (experiment, H264_AQEDGE): 0 = variance of the macroblock, 1 = mean of its
 // 8x8 quadrants' variances, 2 = mean of the two flattest quadrants.
-const int gAqEdge = devEnv("H264_AQEDGE") ? std::atoi(devEnv("H264_AQEDGE")) : 0;
+S264_DEV(int, gAqEdge, devEnv("H264_AQEDGE") ? std::atoi(devEnv("H264_AQEDGE")) : 0);
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
@@ -94,32 +97,32 @@ thread_local char tDecision[160] = {};
 // BD-rate PSNR-Y / SSIM-Y / instructions): threshold 1.2 alone +0.17 / +0.11 % / -5.9 %, all three
 // +0.30 / +0.22 % / -7.8 %; pre-selection 1.1 with limit 0.9 +0.31 / +0.53 % / -6.4 % (no).
 thread_local int tIntraEst16 = -1;
-const double gIntraSel = devEnv("H264_INTRASEL") ? std::atof(devEnv("H264_INTRASEL")) : 1.2;
+S264_DEV(double, gIntraSel, devEnv("H264_INTRASEL") ? std::atof(devEnv("H264_INTRASEL")) : 1.2);
 // With the pre-selection: an intra type is also given up once its SATD exceeds this many times the
 // inter cost (the motion search's SATD + mode bits; H264_INTRAINTER, 0 = no such limit).
 thread_local double tInterCost = -1;
-const double gIntraInter = devEnv("H264_INTRAINTER") ? std::atof(devEnv("H264_INTRAINTER")) : 1.0;
+S264_DEV(double, gIntraInter, devEnv("H264_INTRAINTER") ? std::atof(devEnv("H264_INTRAINTER")) : 1.0);
 // Set by encodeMbIntra when every intra type was given up (nothing coded).
 thread_local bool tIntraNone = false;
 // Intra try in P pictures only when its estimate is below gIntraFactor x the inter cost (2.0 before 11.11.:
 // -10 % instructions for +0.17 % BD-rate), and in the borderline case (estimate above the inter
 // cost) without Intra 8x8 / 16x16 (-8 % for +0.2 %). H264_FULLINTRA=1 restores the full search.
-const bool gFullIntra = devEnv("H264_FULLINTRA") != nullptr;
+S264_DEV(bool, gFullIntra, devEnv("H264_FULLINTRA") != nullptr);
 // 1.5 -> 1.2 (12.11., with the pre-selection below): see gIntraSel. 1.2 -> 1.1 (14.11.; two-pass,
 // 4 rates, BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation; instructions two-pass 8 Mbit/s
 // CS2): +0.14 / +0.09, +0.14 / +0.02, -0.03 / -0.08, +0.18 / +0.77 % for -1.6 %; 1.0: +0.28 / +0.20,
 // +0.44 / +0.14, +0.06 / -0.12, -0.11 / -0.84 % for -3.7 %.
-const double gIntraFactor = devEnv("H264_INTRAF") ? std::atof(devEnv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.1;
+S264_DEV(double, gIntraFactor, devEnv("H264_INTRAF") ? std::atof(devEnv("H264_INTRAF")) : gFullIntra ? 2.0 : 1.1);
 // B pictures: 16x8 and 8x16 partitions besides 16x16 (H264_BPARTS=0 turns them off, for measurements).
-const bool gBParts = !devEnv("H264_BPARTS") || std::atoi(devEnv("H264_BPARTS")) != 0;
+S264_DEV(bool, gBParts, !devEnv("H264_BPARTS") || std::atoi(devEnv("H264_BPARTS")) != 0);
 // Psycho-visual RD of the macroblock a thread is deciding (FrameCoder::psyBegin): the weight of a
 // unit of distance in its cost (0 = off) and the Hadamard coefficient magnitudes of the source's
 // four 8x8 luma blocks (hadamardMags8x8U8).
 struct PsyMb {
     double weight = 0;
-    alignas(16) int16_t src[4][128];
+    alignas(16) int16_t src[4][128] = {};
 };
-thread_local PsyMb tPsy;
+constinit thread_local PsyMb tPsy;
 // With psy, the inter candidate that won is coded once more with a finer trellis quantisation
 // (lambda times gPsyFine for its coefficient bits): fewer small coefficients dropped, so more of
 // the source's detail at more bits, and the psy cost decides between the two. The mode decision
@@ -130,34 +133,34 @@ thread_local PsyMb tPsy;
 // candidate +0.2..0.9 / +2.5..3.2 / -0.08..-0.14; with the intra one below as well +0.5..1.1 /
 // +2.9..4.0 / -0.08..-0.11; psyRd 2.0 +1.2..1.8 / +5.7..7.2 / -0.20..-0.41. H264_PSYQ overrides
 // (0 = no such candidate).
-const double gPsyFine = devEnv("H264_PSYQ") ? std::atof(devEnv("H264_PSYQ")) : 0.25;
+S264_DEV(double, gPsyFine, devEnv("H264_PSYQ") ? std::atof(devEnv("H264_PSYQ")) : 0.25);
 // The finer quantisation leaves the lowest frequencies as they are (scan positions below these, 4x4
 // and 8x8 transform): a DC or first AC level more in one block and not in its neighbour is a
 // visible step at high QP, not texture. H264_PSYQ4 / H264_PSYQ8 override.
-const int gPsyFineFrom4 = devEnv("H264_PSYQ4") ? std::atoi(devEnv("H264_PSYQ4")) : 3;
-const int gPsyFineFrom8 = devEnv("H264_PSYQ8") ? std::atoi(devEnv("H264_PSYQ8")) : 6;
+S264_DEV(int, gPsyFineFrom4, devEnv("H264_PSYQ4") ? std::atoi(devEnv("H264_PSYQ4")) : 3);
+S264_DEV(int, gPsyFineFrom8, devEnv("H264_PSYQ8") ? std::atoi(devEnv("H264_PSYQ8")) : 6);
 // The same for intra macroblocks, whose quantisation rounds down below 2/3 of a step: the chosen
 // type once more rounding to nearest (tIntraFine: offset gPsyIntraRound instead of 1/3), and the
 // psy cost decides. H264_PSYIQ overrides (0 = no such candidate).
-const double gPsyIntraRound = devEnv("H264_PSYIQ") ? std::atof(devEnv("H264_PSYIQ")) : 0.5;
+S264_DEV(double, gPsyIntraRound, devEnv("H264_PSYIQ") ? std::atof(devEnv("H264_PSYIQ")) : 0.5);
 thread_local bool tIntraFine = false;
 // B pictures: B_8x8 with direct 8x8 blocks (H264_B8X8=0 turns it off, for measurements).
-const bool gB8x8 = !devEnv("H264_B8X8") || std::atoi(devEnv("H264_B8X8")) != 0;
+S264_DEV(bool, gB8x8, !devEnv("H264_B8X8") || std::atoi(devEnv("H264_B8X8")) != 0);
 // B pictures, prediction from both lists: rounds of the joint refinement of the two vectors (0 =
 // the average of the two vectors as found), tried where the average is within this factor of the
 // better single list. In long runs only (a slow zoom: +0.06 dB at 2 Mbit/s, and most macroblocks
 // are skipped before it); in short runs it costs +16 % instructions for 0.6 % of the B pictures'
 // bits (a pan with B pictures). H264_BIREFINE sets the rounds for all runs.
-const int gBiRefineEnv = std::clamp(devEnv("H264_BIREFINE") ? std::atoi(devEnv("H264_BIREFINE")) : -1, -1, 8);
+S264_DEV(int, gBiRefineEnv, std::clamp(devEnv("H264_BIREFINE") ? std::atoi(devEnv("H264_BIREFINE")) : -1, -1, 8));
 constexpr int kBiRefineLong = 2;
 // B pictures: the splits (16x8, 8x16, 8x8) are not searched where the 16x16 estimate is below this
 // many lambda (as for P pictures, H264_SPLITSKIP). 0 = always.
-const double gBSplitSkip = devEnv("H264_BSPLITSKIP") ? std::atof(devEnv("H264_BSPLITSKIP")) : 200.0;
-const double gBiRefineNear = devEnv("H264_BIREFINE_NEAR") ? std::atof(devEnv("H264_BIREFINE_NEAR")) : 1.15;
+S264_DEV(double, gBSplitSkip, devEnv("H264_BSPLITSKIP") ? std::atof(devEnv("H264_BSPLITSKIP")) : 200.0);
+S264_DEV(double, gBiRefineNear, devEnv("H264_BIREFINE_NEAR") ? std::atof(devEnv("H264_BIREFINE_NEAR")) : 1.15);
 // B pictures: candidates coded for real (direct aside): the best 16x16, the best split and, with
 // H264_BRD, the other choices of lists of the 16x16 layout.
 constexpr int kMaxBCands = 4;
-const double gBRd = devEnv("H264_BRD") ? std::atof(devEnv("H264_BRD")) : 0.0;
+S264_DEV(double, gBRd, devEnv("H264_BRD") ? std::atof(devEnv("H264_BRD")) : 0.0);
 // B pictures keep their reference pictures' texture (EncoderConfig::bSharp, FrameCoder::encodeMbB).
 // H264_BSHARP overrides the weight (0 = off).
 // - In the search's SATD estimates (list 0, list 1 or both per partition, direct or searched per
@@ -174,17 +177,17 @@ const double gBRd = devEnv("H264_BRD") ? std::atof(devEnv("H264_BRD")) : 0.0;
 // - Not in long runs (more than four B pictures, as placed on still or slowly zooming material):
 //   their B pictures do not pulse more than x264's (sharpness step 0.018 against 0.020) and the
 //   cost would take 6 points of their gain. H264_BSHARPLONG=1 applies it there too.
-const double gBSharpEnv = devEnv("H264_BSHARP") ? std::atof(devEnv("H264_BSHARP")) : -1.0;
-const double gBSharpEst = devEnv("H264_BSHARPEST") ? std::atof(devEnv("H264_BSHARPEST")) : 1.0;
-const double gBSharpKeep = devEnv("H264_BSHARPKEEP") ? std::atof(devEnv("H264_BSHARPKEEP")) : 0.85;
-const bool gBSharpLong = devEnv("H264_BSHARPLONG") && std::atoi(devEnv("H264_BSHARPLONG")) != 0;
+S264_DEV(double, gBSharpEnv, devEnv("H264_BSHARP") ? std::atof(devEnv("H264_BSHARP")) : -1.0);
+S264_DEV(double, gBSharpEst, devEnv("H264_BSHARPEST") ? std::atof(devEnv("H264_BSHARPEST")) : 1.0);
+S264_DEV(double, gBSharpKeep, devEnv("H264_BSHARPKEEP") ? std::atof(devEnv("H264_BSHARPKEEP")) : 0.85);
+S264_DEV(bool, gBSharpLong, devEnv("H264_BSHARPLONG") && std::atoi(devEnv("H264_BSHARPLONG")) != 0);
 // Texture keepers (psy-RD, bSharp) by the source macroblock's texture (the AQ's energy, log2 of 256 x variance + 1):
 // none below gFlatLo, in full from gFlatHi. A flat or smoothly shaded macroblock has no texture to keep - there
 // both only cost: psy codes quantisation noise as "detail", bSharp refuses the average of two pictures, which on
 // a gradient is exactly the picture in between. H264_FLATLO / H264_FLATHI override; H264_FLATHI=0: off (the
 // stream before 16.11.2026).
-const double gFlatLo = devEnv("H264_FLATLO") ? std::atof(devEnv("H264_FLATLO")) : 6.0;
-const double gFlatHi = devEnv("H264_FLATHI") ? std::atof(devEnv("H264_FLATHI")) : 9.0;
+S264_DEV(double, gFlatLo, devEnv("H264_FLATLO") ? std::atof(devEnv("H264_FLATLO")) : 6.0);
+S264_DEV(double, gFlatHi, devEnv("H264_FLATHI") ? std::atof(devEnv("H264_FLATHI")) : 9.0);
 inline double textureShare(float energy)
 {
     if (!(gFlatHi > 0))
@@ -192,14 +195,14 @@ inline double textureShare(float energy)
     return std::clamp((double(energy) - gFlatLo) / std::max(1e-6, gFlatHi - gFlatLo), 0.0, 1.0);
 }
 // B pictures: transform by estimate (see encodeMbB; EncoderConfig::modeEstimate). H264_BEST=0/1 overrides.
-const int gBEstEnv = devEnv("H264_BEST") ? std::atoi(devEnv("H264_BEST")) : -1;
+S264_DEV(int, gBEstEnv, devEnv("H264_BEST") ? std::atoi(devEnv("H264_BEST")) : -1);
 // The lookahead's vectors along the planned references (Encoder::takeLookaheadVectors) as start
 // points of the motion search: 1 = B pictures, 2 = also P pictures after a run of B pictures
 // (default), 0 = none (H264_LASTART). The vectors exist where the tree or the rate control asked
 // for the searches; H264_LASTART set makes them also without (fixed QP without the tree, for
 // measurements).
-const int gLaStart = std::clamp(devEnv("H264_LASTART") ? std::atoi(devEnv("H264_LASTART")) : 2, 0, 8);
-const bool gLaStartForce = devEnv("H264_LASTART") && std::atoi(devEnv("H264_LASTART")) > 0;
+S264_DEV(int, gLaStart, std::clamp(devEnv("H264_LASTART") ? std::atoi(devEnv("H264_LASTART")) : 2, 0, 8));
+S264_DEV(bool, gLaStartForce, devEnv("H264_LASTART") && std::atoi(devEnv("H264_LASTART")) > 0);
 double gPhaseMs[8] = {};
 double gWaitMs = 0; // summed over threads
 int gPhaseFrames = 0;
@@ -351,15 +354,15 @@ inline int quantize(int coef, int mf, int qbits, int offset)
 // 8x8 group of four blocks is coded only when they together gain more than kGroupBits (see
 // planInterLuma). Fitted by fixed-QP BD-rate on our test material (0, 3, 6, 10, 15 bits tried; a
 // further macroblock-level threshold over all kept groups gained nothing). H264_DECG overrides it.
-const double kGroupBits = devEnv("H264_DECG") ? std::atof(devEnv("H264_DECG")) : 3.0;
+S264_DEV(double, kGroupBits, devEnv("H264_DECG") ? std::atof(devEnv("H264_DECG")) : 3.0);
 // Bit model of a sparse 4x4 block (every coefficient below 1.5 levels) for the paths without the
 // CABAC trellis: block overhead + bits per non-zero level, fitted by least squares to the trellis'
 // own bit counts on our test material (H264_DECLOG=1 prints the fit).
-const double kBlkBits = devEnv("H264_DECA") ? std::atof(devEnv("H264_DECA")) : 0.0;
-const double kNzBits = devEnv("H264_DECB") ? std::atof(devEnv("H264_DECB")) : 3.7;
+S264_DEV(double, kBlkBits, devEnv("H264_DECA") ? std::atof(devEnv("H264_DECA")) : 0.0);
+S264_DEV(double, kNzBits, devEnv("H264_DECB") ? std::atof(devEnv("H264_DECB")) : 3.7);
 
 // Fit data of the bit model (H264_DECLOG=1): normal equations of bits ~ 1 + nonzero.
-const bool gDecLog = devEnv("H264_DECLOG") != nullptr;
+S264_DEV(bool, gDecLog, devEnv("H264_DECLOG") != nullptr);
 std::mutex gDecLogMutex;
 struct DecFit {
     double m[2][2] = {}, v[2] = {}, sq = 0;
@@ -374,7 +377,12 @@ struct DecFit {
         std::fprintf(stderr, "declog blocks=%ld bits = %.3f + %.3f*nz (mean %.2f, rms %.2f)\n", n, a, b, mean,
                      std::sqrt(std::max(0.0, sq / double(n) - mean * mean)));
     }
-} gDecFit;
+};
+DecFit& decFit() // printed at the end of the program; a function's static, nothing to construct at load (DevEnv.h)
+{
+    static DecFit fit;
+    return fit;
+}
 
 // Squared pixel error the levels of a 4x4 block remove (transform domain; x = real-valued levels
 // in scan order, scale = pixel error per level unit). Sets sparse when every coefficient is below
@@ -423,6 +431,7 @@ void decLogSample(const int* raster, const double* x, const double* scale, doubl
         return;
     const double measured = (dd - gainJ) / lambda; // bits of the levels over the empty block
     std::lock_guard<std::mutex> lk(gDecLogMutex);
+    DecFit& gDecFit = decFit();
     gDecFit.m[0][0] += 1;
     gDecFit.m[0][1] += nz;
     gDecFit.m[1][0] += nz;
@@ -602,6 +611,146 @@ FrameCoder::FrameCoder(const EncoderConfig& config)
     nzChroma_[1].resize(nzChroma_[0].size());
 }
 
+} // namespace schneidi::h264
+
+// The x86-64-v3 build of these files (see EncoderAlt): its two entry points, the only symbols that object file
+// keeps global, and the question whether this CPU can run it.
+#if defined(SCHNEIDI_S264_V3_BUILD)
+namespace {
+using namespace schneidi::h264;
+struct V3Encoder final : EncoderAlt {
+    explicit V3Encoder(const EncoderConfig& c) : e(c) {}
+    std::vector<uint8_t> headers() const override { return e.headers(); }
+    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe) override { return e.encode(picture, forceKeyframe); }
+    std::vector<uint8_t> flush() override { return e.flush(); }
+    State state() const override
+    {
+        State s;
+        s.sceneCut = e.lastWasSceneCut();
+        s.displayIndex = e.lastDisplayIndex();
+        s.weightedPictures = e.weightedPictures();
+        s.qp = e.lastQp();
+        s.vbvUnderflows = e.vbvUnderflows();
+        s.vbvFramesSinceBp = e.vbvFramesSinceBp();
+        s.type = e.lastType();
+        s.vbvMinFill = e.vbvMinFill();
+        return s;
+    }
+    const std::vector<uint8_t>& recon(int plane) const override { return plane == 0 ? e.reconY() : plane == 1 ? e.reconU() : e.reconV(); }
+    Encoder e;
+};
+struct V3FirstPass final : FirstPassAlt {
+    V3FirstPass(int w, int h, int threads, int bframes, size_t keep) : p(w, h, threads, bframes, keep) {}
+    void add(const Picture& picture, bool forceKeyframe) override { p.add(picture, forceKeyframe); }
+    std::shared_ptr<const FirstPassStats> stats() const override { return p.stats(); }
+    FirstPass p;
+};
+// What the other build computes while the program loads (DevEnv.h): here at the first use, once.
+void fillOnce()
+{
+    static const bool filled = [] {
+        CabacEncoder::fillTables();
+        devFillCabac();
+        devFillLookahead();
+        devFillEncoder();
+        return true;
+    }();
+    (void)filled;
+}
+} // namespace
+extern "C" schneidi::h264::EncoderAlt* schneidi_s264_v3_encoder(const schneidi::h264::EncoderConfig* config)
+{
+    fillOnce();
+    return new V3Encoder(*config);
+}
+extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes)
+{
+    fillOnce();
+    return new V3FirstPass(width, height, threads, bframes, keepBytes);
+}
+#elif defined(SCHNEIDI_S264_HAVE_V3)
+extern "C" schneidi::h264::EncoderAlt* schneidi_s264_v3_encoder(const schneidi::h264::EncoderConfig* config);
+extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes);
+#endif
+
+namespace schneidi::h264 {
+
+bool cpuHasX86_64V3()
+{
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+    // Everything -march=x86-64-v3 lets the compiler use (the level's list, x86-64-v2 included), asked with cpuid
+    // itself: __builtin_cpu_supports does not know "lzcnt", "movbe" or "f16c" on every compiler version.
+    static const bool yes = [] {
+        unsigned a = 0, b = 0, c = 0, d = 0;
+        if (__get_cpuid_max(0, nullptr) < 7 || __get_cpuid_max(0x80000000u, nullptr) < 0x80000001u)
+            return false;
+        __cpuid(1, a, b, c, d);
+        const unsigned c1 = c;
+        auto has = [](unsigned reg, int bit) { return (reg >> bit & 1u) != 0; };
+        // SSE3 0, SSSE3 9, FMA 12, CMPXCHG16B 13, SSE4.1 19, SSE4.2 20, MOVBE 22, POPCNT 23, OSXSAVE 27, AVX 28, F16C 29
+        for (const int bit : {0, 9, 12, 13, 19, 20, 22, 23, 27, 28, 29})
+            if (!has(c1, bit))
+                return false;
+        // The operating system saves the SSE and AVX registers (XCR0 bits 1 and 2), else AVX faults
+        unsigned lo = 0, hi = 0;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0u));
+        if ((lo & 6u) != 6u)
+            return false;
+        __cpuid_count(7, 0, a, b, c, d);
+        if (!has(b, 3) || !has(b, 5) || !has(b, 8)) // BMI1, AVX2, BMI2
+            return false;
+        __cpuid(0x80000001u, a, b, c, d);
+        return has(c, 0) && has(c, 5); // LAHF/SAHF, LZCNT (ABM)
+    }();
+    return yes;
+#else
+    return false;
+#endif
+}
+
+namespace {
+// Decided once, before the first Encoder or FirstPass (thread-safe); SCHNEIDI_S264_CPU=generic keeps to the build
+// for every CPU, selectCpuBuild() switches for tests.
+std::atomic<bool>& v3Chosen()
+{
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    static std::atomic<bool> chosen{[] {
+        const char* e = std::getenv("SCHNEIDI_S264_CPU");
+        return cpuHasX86_64V3() && !(e && std::strcmp(e, "generic") == 0);
+    }()};
+#else
+    static std::atomic<bool> chosen{false};
+#endif
+    return chosen;
+}
+bool useV3() { return v3Chosen().load(std::memory_order_relaxed); }
+} // namespace
+
+const char* cpuBuild() { return useV3() ? "x86-64-v3" : "generic"; }
+
+const char* selectCpuBuild(bool v3)
+{
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    v3Chosen().store(v3 && cpuHasX86_64V3(), std::memory_order_relaxed);
+#else
+    (void)v3;
+#endif
+    return cpuBuild();
+}
+
+void Encoder::takeAltState()
+{
+    const EncoderAlt::State s = alt_->state();
+    lastWasSceneCut_ = s.sceneCut;
+    lastDisplayIndex_ = s.displayIndex;
+    weightedPictures_ = s.weightedPictures;
+    lastQp_ = s.qp;
+    vbvUnderflows_ = s.vbvUnderflows;
+    frameIndex_ = s.vbvFramesSinceBp; // vbvFramesSinceBp() = frameIndex_ - vbvBpFrame_ (0 here)
+    lastType_ = s.type;
+    vbvMinFill_ = s.vbvMinFill;
+}
+
 Encoder::Encoder(const EncoderConfig& config)
     : cfg_(config)
 {
@@ -617,6 +766,14 @@ Encoder::Encoder(const EncoderConfig& config)
     // (and the pictures of the run coded now be settled: the probe's answer, a keyframe behind them)
     if (useB())
         cfg_.lookahead = std::max(cfg_.lookahead, 2 * cfg_.bframes + 4);
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    // cfg_ stays as adjusted above: delay() and reorderDelay() answer from it, the same as the other build's.
+    if (useV3()) {
+        alt_.reset(schneidi_s264_v3_encoder(&config));
+        takeAltState();
+        return;
+    }
+#endif
     for (auto& c : coders_)
         c = std::make_unique<FrameCoder>(cfg_);
     idrCount_ = cfg_.idrPicIdBase;
@@ -628,9 +785,9 @@ Encoder::Encoder(const EncoderConfig& config)
     }
 }
 
-const std::vector<uint8_t>& Encoder::reconY() const { return (last_ ? last_ : coders_[0].get())->recY_; }
-const std::vector<uint8_t>& Encoder::reconU() const { return (last_ ? last_ : coders_[0].get())->recU_; }
-const std::vector<uint8_t>& Encoder::reconV() const { return (last_ ? last_ : coders_[0].get())->recV_; }
+const std::vector<uint8_t>& Encoder::reconY() const { return alt_ ? alt_->recon(0) : (last_ ? last_ : coders_[0].get())->recY_; }
+const std::vector<uint8_t>& Encoder::reconU() const { return alt_ ? alt_->recon(1) : (last_ ? last_ : coders_[0].get())->recU_; }
+const std::vector<uint8_t>& Encoder::reconV() const { return alt_ ? alt_->recon(2) : (last_ ? last_ : coders_[0].get())->recV_; }
 
 int levelIdcFor(const EncoderConfig& cfg)
 {
@@ -677,6 +834,8 @@ int levelIdcFor(const EncoderConfig& cfg)
 
 std::vector<uint8_t> Encoder::headers() const
 {
+    if (alt_)
+        return alt_->headers();
     std::vector<uint8_t> out;
     {
         BitWriter bw; // seq_parameter_set_rbsp (7.3.2.1.1)
@@ -858,19 +1017,19 @@ void FrameCoder::loadSource(const Picture& pic)
 // B probe (see BProbe): B pictures are placed where runs of two need at least this much fewer bits
 // (H264_BPROBE_GAIN; measured: slow zoom -0.3 .. -0.5, game, camera and noise -0.05 .. +0.6).
 // H264_BPROBE=0: no probe, runs of B pictures everywhere (for measurements).
-static const bool kBProbe = !devEnv("H264_BPROBE") || std::atoi(devEnv("H264_BPROBE")) != 0;
+S264_DEV(bool, kBProbe, !devEnv("H264_BPROBE") || std::atoi(devEnv("H264_BPROBE")) != 0);
 // Where B pictures pay is decided from the lookahead's costs (BPlanner) since 15.11.2026;
 // H264_BPLAN=0: by the probe's small encodes as before (the fallback, and for comparisons).
-static const bool kBPlan = !devEnv("H264_BPLAN") || std::atoi(devEnv("H264_BPLAN")) != 0;
-static const bool kBGate = kBPlan || kBProbe; // false: runs of B pictures everywhere
+S264_DEV(bool, kBPlan, !devEnv("H264_BPLAN") || std::atoi(devEnv("H264_BPLAN")) != 0);
+S264_DEV(bool, kBGate, kBPlan || kBProbe); // false: runs of B pictures everywhere
 // The probe's first question: runs of this many B pictures against none (3 = with the pyramid).
-static const int kBProbeShort = std::clamp(devEnv("H264_BPROBE_SHORT") ? std::atoi(devEnv("H264_BPROBE_SHORT")) : 3, 1, 8);
+S264_DEV(int, kBProbeShort, std::clamp(devEnv("H264_BPROBE_SHORT") ? std::atoi(devEnv("H264_BPROBE_SHORT")) : 3, 1, 8));
 // A new measurement before the interval is over when the pictures' activity (lookahead cost with
 // motion against intra) is this factor away from that of the last measurement's pictures, for two
 // pictures in a row and not sooner than the gap: a game clip goes from standing to running and back
 // within a second. 0 = only by the interval.
-static const double kBProbeChange = devEnv("H264_BPROBE_CHANGE") ? std::atof(devEnv("H264_BPROBE_CHANGE")) : 1.35;
-static const int kBProbeGap = std::clamp(devEnv("H264_BPROBE_GAP") ? std::atoi(devEnv("H264_BPROBE_GAP")) : 30, 1, 100000);
+S264_DEV(double, kBProbeChange, devEnv("H264_BPROBE_CHANGE") ? std::atof(devEnv("H264_BPROBE_CHANGE")) : 1.35);
+S264_DEV(int, kBProbeGap, std::clamp(devEnv("H264_BPROBE_GAP") ? std::atoi(devEnv("H264_BPROBE_GAP")) : 30, 1, 100000));
 // Nothing to measure (next to nothing is coded: a still picture, a desktop, the player standing):
 // runs of the short length (1, default) or no B pictures (0, as before 15.11.2026).
 // Adaptive placement in one pass: the first pictures after the clip's first one are P pictures. The rate
@@ -880,28 +1039,28 @@ static const int kBProbeGap = std::clamp(devEnv("H264_BPROBE_GAP") ? std::atoi(d
 // 39 for the rest). 0 = none. Not where the probe found B pictures a clear gain (below kBWarmGain)
 // or chose long runs: such material keeps its B pictures throughout, and twelve P pictures cost it
 // a lot (slow zoom, 300 pictures at 2 Mbit/s: 0.34 dB).
-static const int kBWarmup = std::clamp(devEnv("H264_BWARMUP") ? std::atoi(devEnv("H264_BWARMUP")) : 12, 0, 100000);
+S264_DEV(int, kBWarmup, std::clamp(devEnv("H264_BWARMUP") ? std::atoi(devEnv("H264_BWARMUP")) : 12, 0, 100000));
 // With a first pass (two-pass plan) the same count: tried without them on 16.11.2026 - detailed camera
 // footage and calm game scenes gain a little (crowd_run, 150 pictures at 10 Mbit/s: +0.04 dB PSNR-Y,
 // +0.002 SSIM-Y, +0.2 VMAF; a calm game scene +0.05 dB at 1.5 Mbit/s), but game action loses much more
 // (CS2, 600 pictures at 3 Mbit/s: -0.27 dB, VMAF -2.2 at 1.4 % more bits). H264_BWARMUP2P sets the
 // count of the two-pass plan alone (measuring).
-static const int kBWarmupPlanned = std::clamp(devEnv("H264_BWARMUP2P") ? std::atoi(devEnv("H264_BWARMUP2P")) : kBWarmup, 0, 100000);
-static const double kBWarmGain = devEnv("H264_BWARMGAIN") ? std::atof(devEnv("H264_BWARMGAIN")) : -0.2;
-static const int kBRefQpEnv = std::clamp(devEnv("H264_BREFQP") ? std::atoi(devEnv("H264_BREFQP")) : -1, -1, 12);
-static const int kPyramidMaxRun = std::clamp(devEnv("H264_PYRAMID_MAXRUN") ? std::atoi(devEnv("H264_PYRAMID_MAXRUN")) : 4, 0, 16);
-static const int kShortRun = std::clamp(devEnv("H264_SHORTRUN") ? std::atoi(devEnv("H264_SHORTRUN")) : 4, 0, 16);
-static const double kBProbeFlat = devEnv("H264_BPROBE_FLAT") ? std::atof(devEnv("H264_BPROBE_FLAT")) : 0.75;
-static const bool kBProbeOneWay = devEnv("H264_BPROBE_ONEWAY") && std::atoi(devEnv("H264_BPROBE_ONEWAY")) != 0;
-static const bool kBProbeLongClear = !devEnv("H264_BPROBE_LONGCLEAR") || std::atoi(devEnv("H264_BPROBE_LONGCLEAR")) != 0;
-static const bool kBProbeStill = !devEnv("H264_BPROBE_STILL") || std::atoi(devEnv("H264_BPROBE_STILL")) != 0;
-static const int kBProbeInterval = std::clamp(devEnv("H264_BPROBE_INTERVAL") ? std::atoi(devEnv("H264_BPROBE_INTERVAL")) : BProbe::kInterval, 1, 100000);
+S264_DEV(int, kBWarmupPlanned, std::clamp(devEnv("H264_BWARMUP2P") ? std::atoi(devEnv("H264_BWARMUP2P")) : kBWarmup, 0, 100000));
+S264_DEV(double, kBWarmGain, devEnv("H264_BWARMGAIN") ? std::atof(devEnv("H264_BWARMGAIN")) : -0.2);
+S264_DEV(int, kBRefQpEnv, std::clamp(devEnv("H264_BREFQP") ? std::atoi(devEnv("H264_BREFQP")) : -1, -1, 12));
+S264_DEV(int, kPyramidMaxRun, std::clamp(devEnv("H264_PYRAMID_MAXRUN") ? std::atoi(devEnv("H264_PYRAMID_MAXRUN")) : 4, 0, 16));
+S264_DEV(int, kShortRun, std::clamp(devEnv("H264_SHORTRUN") ? std::atoi(devEnv("H264_SHORTRUN")) : 4, 0, 16));
+S264_DEV(double, kBProbeFlat, devEnv("H264_BPROBE_FLAT") ? std::atof(devEnv("H264_BPROBE_FLAT")) : 0.75);
+S264_DEV(bool, kBProbeOneWay, devEnv("H264_BPROBE_ONEWAY") && std::atoi(devEnv("H264_BPROBE_ONEWAY")) != 0);
+S264_DEV(bool, kBProbeLongClear, !devEnv("H264_BPROBE_LONGCLEAR") || std::atoi(devEnv("H264_BPROBE_LONGCLEAR")) != 0);
+S264_DEV(bool, kBProbeStill, !devEnv("H264_BPROBE_STILL") || std::atoi(devEnv("H264_BPROBE_STILL")) != 0);
+S264_DEV(int, kBProbeInterval, std::clamp(devEnv("H264_BPROBE_INTERVAL") ? std::atoi(devEnv("H264_BPROBE_INTERVAL")) : BProbe::kInterval, 1, 100000));
 // B pictures from a gain of 4.5 % on (15 % until 15.11.2026: the B pictures did not pay on moving
 // material then). Measured gains (probe with B QP +2): slow zoom -0.3 .. -0.6, moving phases of a
 // calm game scene -0.09 .. -0.3, a pan -0.055 .. -0.25, camera footage -0.05 .. -0.06, action
 // -0.04 .. +0.5. The pan with the crosshair trail (-0.055) and the calmest start of an action clip
 // (-0.037) lie close together: the threshold sits between them.
-static const double kBProbeGain = devEnv("H264_BPROBE_GAIN") ? std::atof(devEnv("H264_BPROBE_GAIN")) : -0.045;
+S264_DEV(double, kBProbeGain, devEnv("H264_BPROBE_GAIN") ? std::atof(devEnv("H264_BPROBE_GAIN")) : -0.045);
 
 namespace {
 
@@ -969,7 +1128,7 @@ void addCostHist(FirstPassStats& st, const LookaheadFrame& f)
 } // namespace
 
 // H264_FPASYNC=0: the first pass analyses each batch on the caller's thread (as before 14.11.).
-static const bool gFirstPassAsync = !devEnv("H264_FPASYNC") || std::atoi(devEnv("H264_FPASYNC")) != 0;
+S264_DEV(bool, gFirstPassAsync, !devEnv("H264_FPASYNC") || std::atoi(devEnv("H264_FPASYNC")) != 0);
 
 // A new measurement every kInterval pictures and from each scene change or keyframe the caller asks
 // for on (also one inside the pictures being collected: they start again there).
@@ -1214,9 +1373,16 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
 
 FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)
     : width_(width), height_(height), threads_(std::max(1, threads)),
-      la_(std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16)),
-      bframes_(std::clamp(bframes, 0, 8)), keepBytes_(keepAnalysisBytes), stats_(std::make_shared<FirstPassStats>())
+      bframes_(std::clamp(bframes, 0, 8)), keepBytes_(keepAnalysisBytes)
 {
+#if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
+    if (useV3()) {
+        alt_.reset(schneidi_s264_v3_first_pass(width, height, threads, bframes, keepAnalysisBytes));
+        return;
+    }
+#endif
+    la_ = std::make_unique<Lookahead>(width, height, (width + 15) / 16, (height + 15) / 16);
+    stats_ = std::make_shared<FirstPassStats>();
     stats_->bMax = bframes_;
     // H264_KEEPANALYSIS=0: the encoder analyses every picture again (for measurements).
     if (const char* e = devEnv("H264_KEEPANALYSIS"))
@@ -1231,6 +1397,8 @@ FirstPass::~FirstPass()
 
 void FirstPass::add(const Picture& pic, bool forceKeyframe)
 {
+    if (alt_)
+        return alt_->add(pic, forceKeyframe);
     LookaheadFrame f; // the analysis reads only the luma
     f.forceKeyframe = forceKeyframe;
     f.y.resize(size_t(width_) * height_);
@@ -1378,6 +1546,8 @@ void FirstPass::analyseBatch() const
 
 std::shared_ptr<const FirstPassStats> FirstPass::stats() const
 {
+    if (alt_)
+        return alt_->stats();
     joinWorker();
     if (!batch_.empty()) {
         job_ = std::move(batch_);
@@ -1412,7 +1582,7 @@ std::vector<uint8_t> keyPlan(const FirstPassStats& st, const EncoderConfig& cfg,
 // Constant quality: log2 of the mean first-pass cost per macroblock (+ 1) over the pictures that do not repeat the
 // one before - the same measure crfQp takes around a picture.
 // A picture whose lookahead cost per macroblock is below this repeats the picture before (an exact copy costs 2).
-static const double gCrfRepeat = devEnv("H264_CRFREPEAT") ? std::atof(devEnv("H264_CRFREPEAT")) : 4.0;
+S264_DEV(double, gCrfRepeat, devEnv("H264_CRFREPEAT") ? std::atof(devEnv("H264_CRFREPEAT")) : 4.0);
 double crfClipComplexity(const FirstPassStats& st, const EncoderConfig& cfg)
 {
     const double mbs = double((cfg.width + 15) / 16) * ((cfg.height + 15) / 16);
@@ -1572,41 +1742,41 @@ std::vector<uint8_t> vbvJoinChunk(const std::vector<uint8_t>& firstAu, int frame
 }
 
 // Classes of P pictures for the first-pass rate control (H264_TPBIN=0: one k for all).
-static const bool gTpBin = !devEnv("H264_TPBIN") || std::atoi(devEnv("H264_TPBIN")) != 0;
+S264_DEV(bool, gTpBin, !devEnv("H264_TPBIN") || std::atoi(devEnv("H264_TPBIN")) != 0);
 // Two-pass: P pictures after a run of B pictures are their own kind in the bit model; until one is
 // coded their k is this factor times the other P pictures'. 0 = one kind (as before 15.11.2026).
-static const double gTpAfterB = devEnv("H264_TPAFTERB") ? std::atof(devEnv("H264_TPAFTERB")) : 1.6;
+S264_DEV(double, gTpAfterB, devEnv("H264_TPAFTERB") ? std::atof(devEnv("H264_TPAFTERB")) : 1.6);
 // Two-pass: B pictures in cost classes like the P pictures (H264_TPBINB=0: one k for all B pictures, as before
 // 16.11.2026). The B pictures of a moving stretch cost several times the bits per cost of those between
 // standing pictures; with one k the plan misjudged a clip that has both.
-static const bool gTpBinB = !devEnv("H264_TPBINB") || std::atoi(devEnv("H264_TPBINB")) != 0;
+S264_DEV(bool, gTpBinB, !devEnv("H264_TPBINB") || std::atoi(devEnv("H264_TPBINB")) != 0);
 // How far (in QP) the two-pass QP may leave the QP that fits the whole clip's budget with the model
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
-static const double gTpDev = devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV")) : 2.0;
+S264_DEV(double, gTpDev, devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV")) : 2.0);
 // How much of the way from that plan QP to the QP that spends exactly what is left the picture's QP
 // goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
 // learns; the other also swings with every stretch the model misjudged, and near the clip's end with
 // little left to spread an error over.
-static const bool gTpSeedTree = !devEnv("H264_TPSEEDTREE") || std::atoi(devEnv("H264_TPSEEDTREE")) != 0;
-static const double gTpFollow = devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPFOLLOW")) : 0.25;
+S264_DEV(bool, gTpSeedTree, !devEnv("H264_TPSEEDTREE") || std::atoi(devEnv("H264_TPSEEDTREE")) != 0);
+S264_DEV(double, gTpFollow, devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPFOLLOW")) : 0.25);
 // The rest of the way is gone slowly: the gap between the two QPs, averaged over about this many
 // seconds of pictures, is added in full less the quarter above (H264_TPLAG, default 2; 0 = not at
 // all: a model that stays wrong in one direction then misses the clip's size by what it is wrong,
 // measured up to 7 %). A stretch the model misjudges for a moment moves the QP little, a lasting
 // debt is paid. Measured on seven clips of 4 to 30 s: every target within 2 % at 2 s (within 2.5 %
 // at 4 s), for 0.2 to 0.5 % of BD-rate; H264_TPFOLLOW=0 with it is 0.5 to 1 % better and misses by up to 3.3 %.
-static const double gTpLag = devEnv("H264_TPLAG") ? std::atof(devEnv("H264_TPLAG")) : 2.0;
+S264_DEV(double, gTpLag, devEnv("H264_TPLAG") ? std::atof(devEnv("H264_TPLAG")) : 2.0);
 // The least budget the pictures left are planned with: this share of what they cost at the plan
 // QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
 // overdrawn clip coded its last pictures finer than planned).
-static const double gTpRestFloor = devEnv("H264_TPRESTFLOOR") ? std::atof(devEnv("H264_TPRESTFLOOR")) : 0.5;
+S264_DEV(double, gTpRestFloor, devEnv("H264_TPRESTFLOOR") ? std::atof(devEnv("H264_TPRESTFLOOR")) : 0.5);
 
 // Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
 // largest QP offset (H264_QCBLUR, H264_QCMAX: experiment knobs).
-static const double gQcBlur = devEnv("H264_QCBLUR") ? std::atof(devEnv("H264_QCBLUR")) : 1.5;
-static const double gQcMax = devEnv("H264_QCMAX") ? std::atof(devEnv("H264_QCMAX")) : 4.0;
+S264_DEV(double, gQcBlur, devEnv("H264_QCBLUR") ? std::atof(devEnv("H264_QCBLUR")) : 1.5);
+S264_DEV(double, gQcMax, devEnv("H264_QCMAX") ? std::atof(devEnv("H264_QCMAX")) : 4.0);
 
 // The bit model's dead zone: a block costs bits in proportion to its lookahead cost over the
 // quantiser step (cost * 2^(-qp/6)) above gTpDead; below it nothing (H264_TPDEAD; 0 = the model
@@ -1614,15 +1784,15 @@ static const double gQcMax = devEnv("H264_QCMAX") ? std::atof(devEnv("H264_QCMAX
 // phases, fixed QP 30 and 36: without it the same pictures' bits per cost differ by 2.6x between
 // the two QPs and by 3-4x between standing and moving pictures, with a dead zone of 2 by 1.2x and
 // 1.5-2x. gTpFloor: what a picture costs per macroblock whatever its content (headers, skips).
-static const double gTpDead = devEnv("H264_TPDEAD") ? std::atof(devEnv("H264_TPDEAD")) : 2.0;
-static const double gTpFloor = devEnv("H264_TPFLOOR") ? std::atof(devEnv("H264_TPFLOOR")) : 0.03;
+S264_DEV(double, gTpDead, devEnv("H264_TPDEAD") ? std::atof(devEnv("H264_TPDEAD")) : 2.0);
+S264_DEV(double, gTpFloor, devEnv("H264_TPFLOOR") ? std::atof(devEnv("H264_TPFLOOR")) : 0.03);
 
 // Two-pass: the plan's costs follow the pictures' real references (H264_TPRUN=0: every picture against the
 // one before, as the first pass measured it and as before 16.11.2026). A recording with duplicated pictures (a
 // game at 12 fps captured at 60) has its changes on single pictures and nothing between: a P picture after a
 // run of B pictures that happens to be a duplicate of the picture before looked free and cost fourteen times
 // the plan, the B picture on the change looked expensive and was a copy of the P picture after it.
-static const bool gTpRun = !devEnv("H264_TPRUN") || std::atoi(devEnv("H264_TPRUN")) != 0;
+S264_DEV(bool, gTpRun, !devEnv("H264_TPRUN") || std::atoi(devEnv("H264_TPRUN")) != 0);
 
 // What picture j needs at a quantiser scale against the picture before it (key: as an I picture), in bits per
 // k: its blocks' first-pass costs over the quantiser step, each above the dead zone (from the picture's cost
@@ -1771,7 +1941,7 @@ void Encoder::tpBuildTables()
 }
 
 // The most the clip's start may take from the rest of the clip, as a share of the clip's bits (H264_STARTSHARE).
-static const double gStartShare = devEnv("H264_STARTSHARE") ? std::atof(devEnv("H264_STARTSHARE")) : 0.025;
+S264_DEV(double, gStartShare, devEnv("H264_STARTSHARE") ? std::atof(devEnv("H264_STARTSHARE")) : 0.025);
 
 // The clip's start (EncoderConfig::startBoostQp): the first startBoostSeconds get a finer QP, fading out over as
 // long again, as far as the bits for it stay within gStartShare of the clip's (the model as the probe left it:
@@ -1851,13 +2021,13 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
 // AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
 // (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
-static const double gCrfBase = devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 5.6;
+S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 5.6);
 // QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
 // with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
-static const double gCrfSlope = devEnv("H264_CRFSLOPE") ? std::atof(devEnv("H264_CRFSLOPE")) : 0.87;
-static const double gCrfFps = devEnv("H264_CRFFPS") ? std::atof(devEnv("H264_CRFFPS")) : 2.4;
+S264_DEV(double, gCrfSlope, devEnv("H264_CRFSLOPE") ? std::atof(devEnv("H264_CRFSLOPE")) : 0.87);
+S264_DEV(double, gCrfFps, devEnv("H264_CRFFPS") ? std::atof(devEnv("H264_CRFFPS")) : 2.4);
 // H264_CRFREF: a fixed reference complexity instead of the clip's mean (the scale before 16.11.2026 used 7; measuring only).
-static const double gCrfRef = devEnv("H264_CRFREF") ? std::atof(devEnv("H264_CRFREF")) : -1.0;
+S264_DEV(double, gCrfRef, devEnv("H264_CRFREF") ? std::atof(devEnv("H264_CRFREF")) : -1.0);
 
 // The lookahead cost of each picture as it joins the queue (constant quality: the complexity around a picture).
 void Encoder::noteCost(const LookaheadFrame& f)
@@ -2041,6 +2211,8 @@ int Encoder::inFlightAt(int index) const
 
 Encoder::~Encoder()
 {
+    if (alt_)
+        return;
     if (bSearchThread_.joinable())
         bSearchThread_.join();
     if (pendingThread_.joinable())
@@ -2255,6 +2427,11 @@ bool Encoder::movingAt(int index) const
 
 std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
 {
+    if (alt_) {
+        std::vector<uint8_t> au = alt_->encode(picture, forceKeyframe);
+        takeAltState();
+        return au;
+    }
     if (broken_)
         std::rethrow_exception(broken_);
     try {
@@ -2580,6 +2757,11 @@ std::vector<uint8_t> Encoder::codeNext()
 
 std::vector<uint8_t> Encoder::flush()
 {
+    if (alt_) {
+        std::vector<uint8_t> au = alt_->flush();
+        takeAltState();
+        return au;
+    }
     if (broken_)
         std::rethrow_exception(broken_);
     try {
@@ -3527,13 +3709,13 @@ std::vector<uint8_t> FrameCoder::code(bool idr, int frameNum, int idrCount, Phas
 
 // ---- VBV (EncoderConfig::vbvMaxrateKbps / vbvBufsizeKbits) ----
 
-static const double gVbvSafe = devEnv("H264_VBV_SAFE") ? std::atof(devEnv("H264_VBV_SAFE")) : 2.0;
-static const double gVbvDecay = devEnv("H264_VBV_DECAY") ? std::atof(devEnv("H264_VBV_DECAY")) : 0.6;
-static const double gVbvTarget = devEnv("H264_VBV_TARGET") ? std::atof(devEnv("H264_VBV_TARGET")) : 0.5;
-static const bool gVbvTrace = devEnv("H264_VBV_TRACE") != nullptr;
+S264_DEV(double, gVbvSafe, devEnv("H264_VBV_SAFE") ? std::atof(devEnv("H264_VBV_SAFE")) : 2.0);
+S264_DEV(double, gVbvDecay, devEnv("H264_VBV_DECAY") ? std::atof(devEnv("H264_VBV_DECAY")) : 0.6);
+S264_DEV(double, gVbvTarget, devEnv("H264_VBV_TARGET") ? std::atof(devEnv("H264_VBV_TARGET")) : 0.5);
+S264_DEV(bool, gVbvTrace, devEnv("H264_VBV_TRACE") != nullptr);
 // VBV inside the picture (FrameCoder::vbvRowAdjust); H264_VBV_ROWS=0: frame level only (measuring).
-static const bool gVbvRows = !devEnv("H264_VBV_ROWS") || std::atoi(devEnv("H264_VBV_ROWS")) != 0;
-static const double gVbvRowMargin = devEnv("H264_VBV_ROWMARGIN") ? std::atof(devEnv("H264_VBV_ROWMARGIN")) : 0.02;
+S264_DEV(bool, gVbvRows, !devEnv("H264_VBV_ROWS") || std::atoi(devEnv("H264_VBV_ROWS")) != 0);
+S264_DEV(double, gVbvRowMargin, devEnv("H264_VBV_ROWMARGIN") ? std::atof(devEnv("H264_VBV_ROWMARGIN")) : 0.02);
 
 // The real sizes of the pictures up to upTo (coding order) go into the decision side's buffer and bit model.
 void Encoder::vbvLearn(int upTo)
@@ -3573,7 +3755,7 @@ double Encoder::vbvK(int type) const
 // grow faster than that (noise and fine texture that a coarser QP quantised away come back: measured up to 4x for
 // 4 QP), so there they double every gVbvSteep QP. It decides only where the buffer gets tight, so erring high
 // costs little.
-static const double gVbvSteep = devEnv("H264_VBV_STEEP") ? std::atof(devEnv("H264_VBV_STEEP")) : 3.0;
+S264_DEV(double, gVbvSteep, devEnv("H264_VBV_STEEP") ? std::atof(devEnv("H264_VBV_STEEP")) : 3.0);
 
 double Encoder::vbvPredict(int type, double cost, double qp) const
 {
@@ -3588,7 +3770,7 @@ double Encoder::vbvPredict(int type, double cost, double qp) const
 // A P or B picture whose motion cost is near its intra cost (a cut, a flash the scene detection let through)
 // codes like an I picture: as many bits per cost as one, far more than a P picture's (measured 2.8x on a cut
 // inside a run of B pictures), so it goes by the I pictures' k and teaches them.
-static const double gVbvCut = devEnv("H264_VBV_CUT") ? std::atof(devEnv("H264_VBV_CUT")) : 0.6;
+S264_DEV(double, gVbvCut, devEnv("H264_VBV_CUT") ? std::atof(devEnv("H264_VBV_CUT")) : 0.6);
 
 int Encoder::vbvClass(const LookaheadFrame& f, int type) const
 {
@@ -5546,7 +5728,7 @@ int interCbpCode(int cbp)
 }
 
 // Bits of se(v): 2 * floor(log2(codeNum + 1)) + 1.
-inline int seBitsCalc(int v)
+constexpr int seBitsCalc(int v)
 {
     const uint32_t k = v > 0 ? uint32_t(2 * v - 1) : uint32_t(-2 * v);
 #if defined(__GNUC__) || defined(__clang__)
@@ -5561,14 +5743,14 @@ inline int seBitsCalc(int v)
 
 // The same from a table for the vector differences the searches see (|v| < 1024).
 struct SeBitsTable {
-    uint8_t bits[2048];
-    SeBitsTable()
+    uint8_t bits[2048] = {};
+    constexpr SeBitsTable()
     {
         for (int v = -1024; v < 1024; ++v)
             bits[v + 1024] = uint8_t(seBitsCalc(v));
     }
 };
-const SeBitsTable kSeBits;
+constexpr SeBitsTable kSeBits;
 inline int seBits(int v)
 {
     return unsigned(v + 1024) < 2048u ? kSeBits.bits[v + 1024] : seBitsCalc(v);
@@ -6268,8 +6450,9 @@ void FrameCoder::rdoQuantize(int* levels, const int* residual, int qp, double la
 // +0.14, +0.12 / +0.12, +0.10 / -0.04, +0.19 / +0.56 % for -3.2 %; 11 +0.62 / +0.47, +0.57 / +0.43,
 // +0.05 / -0.20, +0.74 / +1.45 % for -4.9 % (too dear); 21 against 22 +0.31, +0.42, +0.08, +0.05 %
 // for -0.8 %.
-static const int gSubpelBoth = devEnv("H264_SUBPEL") ? std::atoi(devEnv("H264_SUBPEL")) : 22;
-static const int gSubpelHalf = gSubpelBoth / 10, gSubpelQuarter = gSubpelBoth % 10;
+S264_DEV(int, gSubpelBoth, devEnv("H264_SUBPEL") ? std::atoi(devEnv("H264_SUBPEL")) : 22);
+S264_DEV(int, gSubpelHalf, gSubpelBoth / 10);
+S264_DEV(int, gSubpelQuarter, gSubpelBoth % 10);
 
 template <typename Cost>
 static inline void subpelStep(Cost&& cost, int cx0, int cy0, int step, int range, double& best, int& bx, int& by)
@@ -8075,6 +8258,15 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         wholePlanned = true;
         noSplit = wholeR8.cbpLuma == 0;
     }
+    // Fast stage: no split search where the 16x16 plan codes all four quadrants (dense texture: the splits win
+    // little there for 16 searches). A small moving part against a calm background leaves quadrants empty and keeps
+    // its splits. Measured 19.11.2026 (fixed QP 24..36, BD-rate PSNR-Y / SSIM-Y on CS2, camera, calm, animation;
+    // instructions QP 30): +0.46 / +0.33, +0.98 / +0.71, +0.03 / +0.02, +0.91 / +1.02 % for -3.7 / -14.0 / -0.3 /
+    // -2.4 %. Without the condition (never a split search unless one quarter holds half of the error): camera
+    // -22.8 % for +1.54 / +1.24 %, but animation +3.52 / +2.15 %. The same rule in P pictures: CS2 +2.6 % for -8 %.
+    static const bool kFastBNoSplit = !devEnv("H264_FASTBNOSPLIT") || std::atoi(devEnv("H264_FASTBNOSPLIT")) != 0;
+    if (cfg_.speed >= 1 && kFastBNoSplit && wholePlanned && wholeR8.cbpLuma == 15)
+        noSplit = true;
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)
             ++gStatB2[3];
@@ -8400,7 +8592,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
 // row up to mbx and every row r - j above up to column mbx + 2j - what the wavefront has finished for certain
 // before this macroblock starts, on any number of threads. Projection: their bits, plus the planned share of the
 // rest scaled by what the seen part took against its plan (at the QPs it got) and by 2^(-rise/6).
-static const double gVbvRowStart = devEnv("H264_VBV_ROWSTART") ? std::atof(devEnv("H264_VBV_ROWSTART")) : 0.05;
+S264_DEV(double, gVbvRowStart, devEnv("H264_VBV_ROWSTART") ? std::atof(devEnv("H264_VBV_ROWSTART")) : 0.05);
 
 int FrameCoder::vbvRowAdjust(int mbx, int r)
 {
@@ -8705,9 +8897,9 @@ void FrameCoder::refHalfRows(RefPic& R, int y0, int y1) const
 // Weighted prediction, deciding (experiment knobs): the weighted block means must leave at most
 // H264_WPTHR of the unweighted difference to the reference and gain at least H264_WPMIN grey levels
 // per block on average.
-static const double gWpThr = devEnv("H264_WPTHR") ? std::atof(devEnv("H264_WPTHR")) : 0.8;
-static const double gWpMin = devEnv("H264_WPMIN") ? std::atof(devEnv("H264_WPMIN")) : 0.25;
-static const bool gWpTrace = devEnv("H264_WP_TRACE") != nullptr;
+S264_DEV(double, gWpThr, devEnv("H264_WPTHR") ? std::atof(devEnv("H264_WPTHR")) : 0.8);
+S264_DEV(double, gWpMin, devEnv("H264_WPMIN") ? std::atof(devEnv("H264_WPMIN")) : 0.25);
+S264_DEV(bool, gWpTrace, devEnv("H264_WP_TRACE") != nullptr);
 
 void FrameCoder::computeBlockMeans()
 {
@@ -9479,5 +9671,9 @@ int FrameCoder::residual(BitWriter& bw, const int* coeffs, int count, int nC) co
         total += coeffs[i] != 0;
     return total;
 }
+
+
+// The values of this file's S264_DEV switches in the x86-64-v3 build (DevEnv.h).
+S264_DEV_FILL_ALL(devFillEncoder);
 
 } // namespace schneidi::h264

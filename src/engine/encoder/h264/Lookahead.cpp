@@ -298,8 +298,8 @@ std::vector<uint8_t> Lookahead::halfPicture(const LookaheadFrame& f) const
 // calm, animation; instructions two-pass): 16 -0.01 / -0.01, -0.01 / -0.02, 0.00 / 0.00, -0.01 / -0.09 % for
 // -0.3 / -0.2 / 0.0 / -14.9 % (8 and 32 the same work, animation -0.4 and +0.5 %). Taking the zero vector without
 // trying the start points cost the animation +1.4 %. H264_LASTILL overrides, 0 = off.
-static const int gLaStill = devEnv("H264_LASTILL") ? std::max(0, std::atoi(devEnv("H264_LASTILL"))) : 16;
-static const bool gLaSubpel = !devEnv("H264_LASUBPEL") || std::atoi(devEnv("H264_LASUBPEL")) != 0;
+S264_DEV(int, gLaStill, devEnv("H264_LASTILL") ? std::max(0, std::atoi(devEnv("H264_LASTILL"))) : 16);
+S264_DEV(bool, gLaSubpel, !devEnv("H264_LASUBPEL") || std::atoi(devEnv("H264_LASUBPEL")) != 0);
 
 void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads, const LookaheadFrame* seed,
                       int seedScale, const LookaheadFrame* src, const std::atomic<int>* prevRows, std::atomic<int>* ownRows,
@@ -825,18 +825,20 @@ static double planEnv(const char* name, double def)
     return e ? std::atof(e) : def;
 }
 // Dead zone of a block's cost (SATD of the half picture's 8x8 block).
-static const int kPlanDead = int(planEnv("H264_BPLAN_DEAD", 128));
+S264_DEV(int, kPlanDead, int(planEnv("H264_BPLAN_DEAD", 128)));
 // B pictures from a cost ratio (structure with B pictures / all P pictures) below kPlanOn on,
 // until it passes kPlanOff; long runs below kPlanLong.
-static const double kPlanOn = planEnv("H264_BPLAN_ON", 1.035), kPlanOff = planEnv("H264_BPLAN_OFF", 1.065);
-static const double kPlanLong = planEnv("H264_BPLAN_LONG", 0.85);
-static const double kPlanKeep = planEnv("H264_BPLAN_KEEP", 0.5);
+S264_DEV(double, kPlanOn, planEnv("H264_BPLAN_ON", 1.035));
+S264_DEV(double, kPlanOff, planEnv("H264_BPLAN_OFF", 1.065));
+S264_DEV(double, kPlanLong, planEnv("H264_BPLAN_LONG", 0.85));
+S264_DEV(double, kPlanKeep, planEnv("H264_BPLAN_KEEP", 0.5));
 // Below this cost per block and picture there is nothing to weigh: B pictures.
-static const double kPlanStill = planEnv("H264_BPLAN_STILL", 12);
+S264_DEV(double, kPlanStill, planEnv("H264_BPLAN_STILL", 12));
 // "Patchy change" guard (off since B pictures search from the lookahead's vectors and choose
 // their transforms by estimate; H264_BPLAN_PATCHAREA=0.2 is the guard as it was).
-static const double kPlanPatchArea = planEnv("H264_BPLAN_PATCHAREA", 0), kPlanPatchCost = planEnv("H264_BPLAN_PATCHCOST", 400);
-static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
+S264_DEV(double, kPlanPatchArea, planEnv("H264_BPLAN_PATCHAREA", 0));
+S264_DEV(double, kPlanPatchCost, planEnv("H264_BPLAN_PATCHCOST", 400));
+S264_DEV(double, kPlanFree, planEnv("H264_BPLAN_FREE", 0.25));
 // A fade (the mean brightness moves the same way from picture to picture, by at least kPlanFade
 // code values over the window): the costs here know no weighted prediction, so the run's P picture
 // looks several times as expensive as the coder's (a film's fade-in: 3 - 4 times a step, the
@@ -844,7 +846,8 @@ static const double kPlanFree = planEnv("H264_BPLAN_FREE", 0.25);
 // 1.2 dB better with a quarter fewer bits). B pictures between two references follow a fade by
 // themselves: placed when they cost less than kPlanFadeB of the same pictures as P pictures.
 // H264_BPLAN_FADE=0: off.
-static const double kPlanFade = planEnv("H264_BPLAN_FADE", 1.5), kPlanFadeB = planEnv("H264_BPLAN_FADEB", 0.8);
+S264_DEV(double, kPlanFade, planEnv("H264_BPLAN_FADE", 1.5));
+S264_DEV(double, kPlanFadeB, planEnv("H264_BPLAN_FADEB", 0.8));
 // "Moving" (BPlanner::kMoving) - what tells real content changes from grain on a still picture, the
 // one case where long runs of cheap B pictures without a reference among them are right:
 // - the run's P picture, predicted over the whole run, costs at least kPlanMove times a picture
@@ -854,10 +857,11 @@ static const double kPlanFade = planEnv("H264_BPLAN_FADE", 1.5), kPlanFadeB = pl
 //   everywhere (0.78 - 0.80 on grainy camera footage with dark parts), a film's quiet scene with
 //   a moving figure 0.61, a cartoon 0.07.
 // H264_BPLAN_MOVE=0: never (long runs as before 16.11.2026).
-static const double kPlanMove = planEnv("H264_BPLAN_MOVE", 1.2), kPlanGrain = planEnv("H264_BPLAN_GRAIN", 0.7);
+S264_DEV(double, kPlanMove, planEnv("H264_BPLAN_MOVE", 1.2));
+S264_DEV(double, kPlanGrain, planEnv("H264_BPLAN_GRAIN", 0.7));
 // The planner searches every kPlanGrid-th block in both directions: its sums need no more, and
 // the searches are its whole cost.
-static const int kPlanGrid = std::max(1, int(planEnv("H264_BPLAN_GRID", 2)));
+S264_DEV(int, kPlanGrid, std::max(1, int(planEnv("H264_BPLAN_GRID", 2))));
 
 namespace {
 
@@ -1061,5 +1065,9 @@ float Lookahead::qpOffset(const LookaheadFrame& f, int mb, double strength)
         return 0.0f;
     return float(-strength * std::log2((double(intra) + double(f.propagate[size_t(mb)])) / double(intra)));
 }
+
+
+// The values of this file's S264_DEV switches in the x86-64-v3 build (DevEnv.h).
+S264_DEV_FILL_ALL(devFillLookahead);
 
 } // namespace schneidi::h264

@@ -67,6 +67,11 @@ struct EncoderConfig {
     int gop = 1;         // keyframe distance; > 1 adds P frames (quarter-pel motion, 16x16)
     int threads = 1;     // CABAC: macroblock rows in a wavefront (one slice); CAVLC: one slice per thread
     int effort = 1;      // 0 = fast (16x16 motion only), 1 = default (partitions, more RD)
+    // Speed stage: 0 = default (the stream as without this option). 1 = fast: in B pictures the split layouts
+    // (16x8, 8x16, 8x8) are not searched where the 16x16 prediction's residual is coded in all four quadrants
+    // (dense texture); a small moving part against a calm background keeps them. Camera footage: 14 % fewer
+    // instructions for about 1 % BD-rate; other material gains and loses less.
+    int speed = 0;
     int bitrateKbps = 0; // > 0: frame-level rate control towards this bitrate, qp is the start value
     double fps = 60.0;   // for the rate control and the VUI timing
     // Constant quality (>= 0; < 0 = off; ignored with bitrateKbps > 0): one pass, no size target - the file is as
@@ -299,6 +304,41 @@ struct Picture {
     int strideC = 0;
 };
 
+// The encoder exists twice in a build that has the second one (CMake: SCHNEIDI_S264_V3, x86-64 Linux): compiled
+// for every CPU, and compiled for x86-64-v3 (AVX2, BMI2, ... - the compiler then uses them everywhere, about 5 %
+// fewer cycles). Encoder and FirstPass hand all their work to the second one where the CPU has these
+// instructions (asked once per object); the streams are the same either way (no fused multiply-adds, see
+// Simd.h). The second build's symbols are all local to its object file except the two functions that make
+// these; SCHNEIDI_S264_CPU=generic in the environment keeps to the first build (for comparing the two).
+struct EncoderAlt {
+    // What Encoder's inline accessors answer from, fetched after every call that may change it.
+    struct State {
+        bool sceneCut = false;
+        int displayIndex = -1, weightedPictures = 0, qp = 0, vbvUnderflows = 0, vbvFramesSinceBp = 0;
+        char type = 'I';
+        double vbvMinFill = 0;
+    };
+    virtual ~EncoderAlt() = default;
+    virtual std::vector<uint8_t> headers() const = 0;
+    virtual std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe) = 0;
+    virtual std::vector<uint8_t> flush() = 0;
+    virtual State state() const = 0;
+    virtual const std::vector<uint8_t>& recon(int plane) const = 0;
+};
+struct FirstPassAlt {
+    virtual ~FirstPassAlt() = default;
+    virtual void add(const Picture& picture, bool forceKeyframe) = 0;
+    virtual std::shared_ptr<const FirstPassStats> stats() const = 0;
+};
+// "x86-64-v3" where new Encoder and FirstPass objects use the second build, else "generic". Decided once
+// (the CPU, SCHNEIDI_S264_CPU); selectCpuBuild switches it for tests and measurements - true takes the second
+// build only where it exists and the CPU has it - and answers cpuBuild().
+const char* cpuBuild();
+const char* selectCpuBuild(bool v3);
+// The CPU (and operating system) can run code built with -march=x86-64-v3: AVX, AVX2, BMI1/2, FMA, F16C, LZCNT,
+// MOVBE and the x86-64-v2 set, with XCR0 enabling the SSE and AVX state. False off x86 and on other compilers.
+bool cpuHasX86_64V3();
+
 // Cheap first pass for the bitrate mode: the half-resolution lookahead analysis of every
 // picture of the clip (a few ms per 1080p picture), without encoding anything.
 class FirstPass {
@@ -317,6 +357,7 @@ private:
     void analyseBatch() const;
     void startBatch() const;
     void joinWorker() const;
+    std::unique_ptr<FirstPassAlt> alt_; // does the work instead (see EncoderAlt)
     int width_, height_, threads_;
     std::unique_ptr<Lookahead> la_;
     // Pictures waiting for the next batch, the batch under analysis (on worker_ with threads > 1,
@@ -378,6 +419,8 @@ public:
 
 private:
     struct Pool;
+    std::unique_ptr<EncoderAlt> alt_; // does the work instead (see EncoderAlt)
+    void takeAltState();
     FrameCoder* startFrame(LookaheadFrame& frame);
     std::vector<uint8_t> finishFrame(FrameCoder& fc);
     std::vector<uint8_t> step(LookaheadFrame* next);
