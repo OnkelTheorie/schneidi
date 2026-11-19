@@ -3,6 +3,7 @@
 // before handing it over
 #include "cli/AnalysisDetail.h"
 
+#include "core/Automation.h"
 #include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
@@ -10,6 +11,7 @@
 #include "core/ExportCheck.h"
 #include "core/I18n.h"
 #include "core/RenderJob.h"
+#include "core/SfxSynth.h"
 #include "core/TimelineOps.h"
 #include "core/TimelineStory.h"
 #include "core/TranscriptCut.h"
@@ -21,7 +23,9 @@
 #include "engine/Snapshot.h"
 #include "engine/video/Scan.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QProcess>
 #include <QRegularExpression>
@@ -41,29 +45,53 @@ double round1(double v) { return std::round(v * 10) / 10; }
 constexpr int kMaxLoudnessRange = 15; // LU
 QString num1(double v) { return QString::number(v, 'f', 1).replace('.', I18n::decimalPoint()); }
 
-// Sound raised a lot (clip volume + track fader + compressor make-up + master, duel 17.11.: +21 dB on a phone
-// recording): its noise comes up with it. A warning per track with a suggestion, not an error - a quiet recording may
-// need it
+// Sound raised a lot (clip volume + track fader + compressor make-up + the track's volume curve, duel 17.11.: +21 dB on
+// a phone recording): its noise comes up with it. A warning per track with a suggestion, not an error - a quiet
+// recording may need it. Only recorded sound: the master fader is left out (check's own loudness fix raises it, which
+// would then warn on every track), and so are music tracks, the SFX track, built-in sounds and spoken text (TTS)
 constexpr double kBoostWarnDb = 15.0;
 
-QVector<ExportCheck::Issue> boostIssues(const Timeline& tl, int from, int to)
+bool generatedSound(const QString& path)
+{
+    if (SfxSynth::parseCachedFile(path) || SfxSynth::recordedOfFile(path)) return true;
+    const QFileInfo fi(path); // a `speak` file: "speech-….wav" in "<project>-tts" or the app's "tts" folder
+    const QString dir = fi.dir().dirName();
+    return fi.fileName().startsWith("speech-") && (dir.endsWith("-tts") || dir == "tts");
+}
+
+QVector<ExportCheck::Issue> boostIssues(const Timeline& tl, int from, int to,
+                                        const std::function<bool(const QString&)>& hasPicture)
 {
     QVector<ExportCheck::Issue> out;
     bool solo = false;
     for (const Track& t : tl.audio) solo = solo || t.solo;
     for (int k = 0; k < tl.audio.size(); ++k) {
         const Track& t = tl.audio[k];
-        if (t.muted || (solo && !t.solo)) continue;
-        const double around = t.volumeDb + (t.dynamics.on ? t.dynamics.makeupDb : 0.0) + tl.masterVolumeDb;
+        if (t.muted || (solo && !t.solo) || t.name == kSfxTrackName) continue;
+        if (ExportCheck::soundRole(tl, k, hasPicture) == ExportCheck::SoundRole::Music) continue;
+        const double around = t.volumeDb + (t.dynamics.on ? t.dynamics.makeupDb : 0.0);
         ExportCheck::Issue issue{ExportCheck::Severity::Warning, "audio_boost", {}};
         double most = 0;
         for (const Clip& c : t.clips) {
             if (!c.enabled || c.kind != ClipKind::Media || c.end() <= from || c.start >= to) continue;
-            const double gain = c.volumeDb + around;
-            if (c.volumeDb <= kMinVolumeDb || gain < kBoostWarnDb) continue;
-            if (issue.clips.isEmpty()) issue.clip = c.id, issue.from = std::max(from, c.start);
+            if (generatedSound(c.mediaPath)) continue;
+            // The clip's loudest volume (a keyframed one: its largest key) and the curve's highest point over the clip
+            double clipDb = c.volumeDb;
+            for (const Keyframe& key : c.keys.value(AnimParam::Volume)) clipDb = std::max(clipDb, key.value);
+            if (clipDb <= kMinVolumeDb) continue;
+            double curve = 0;
+            if (!t.volumeAuto.isEmpty()) {
+                curve = Automation::valueAt(t.volumeAuto, c.start);
+                curve = std::max(curve, Automation::valueAt(t.volumeAuto, c.end() - 1));
+                for (const AutoPoint& p : t.volumeAuto)
+                    if (p.frame >= c.start && p.frame < c.end()) curve = std::max(curve, p.db);
+            }
+            const double gain = clipDb + around + curve;
+            if (gain < kBoostWarnDb) continue;
+            if (issue.clips.isEmpty()) issue.clip = c.id, issue.from = std::max(from, c.start), issue.to = 0;
             issue.clips << c.id;
-            issue.to = std::min(to, c.end());
+            issue.from = std::min(issue.from, std::max(from, c.start));
+            issue.to = std::max(issue.to, std::min(to, c.end()));
             most = std::max(most, gain);
         }
         if (issue.clips.isEmpty()) continue;
@@ -445,7 +473,11 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         // Sound only on muted tracks or in disabled clips: measured it is just "no sound", this says why
         if (const QString silent = silentMixNote(tl); !silent.isEmpty())
             issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "mix_silent", silent};
-        if (withSound) issues += boostIssues(tl, from, to);
+        if (withSound)
+            issues += boostIssues(tl, from, to, [&s](const QString& p) {
+                const MediaInfo* m = s.project.mediaInfo(p);
+                return m && m->hasVideo && !m->isImage;
+            });
         issues += ExportCheck::layout(tl, from, to, f, opt);
         // The timeline as exported (render timeline: compound clips, limiter, mute/solo)
         const Timeline render = s.project.renderTimeline();

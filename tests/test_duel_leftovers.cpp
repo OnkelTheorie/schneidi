@@ -70,6 +70,31 @@ void testBoost(const QString& dir)
     // A muted track is not heard: no warning
     edit(project, {QJsonObject{{"op", "track"}, {"track", track}, {"mute", true}}});
     CHECK(issueOf(run("check", {{"source", project}}), "audio_boost").isEmpty());
+    edit(project, {QJsonObject{{"op", "track"}, {"track", track}, {"mute", false}},
+                   QJsonObject{{"op", "mixer"}, {"track", track}, {"volume_db", 0}}});
+    // The master fader does not count (check's own loudness fix raises it): +12 clip, +12 master = no warning
+    edit(project, {QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", 12}}});
+    if (!CHECK(issueOf(run("check", {{"source", project}}), "audio_boost").isEmpty())) std::printf("       master counted\n");
+    edit(project, {QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", 0}}});
+    // A keyframed volume: its largest key (0 static, +12 on a key) + 4 on the fader = +16
+    edit(project, {QJsonObject{{"op", "volume"}, {"clips", QJsonArray{id}}, {"db", 0}},
+                   QJsonObject{{"op", "keyframe"}, {"clips", QJsonArray{id}}, {"param", "volume"}, {"at", 10}, {"value", 12}},
+                   QJsonObject{{"op", "mixer"}, {"track", track}, {"volume_db", 4}}});
+    QJsonObject b = issueOf(run("check", {{"source", project}}), "audio_boost");
+    if (!CHECK(b["message"].toString().contains("16"))) std::printf("       %s\n", QJsonDocument(b).toJson(QJsonDocument::Compact).constData());
+    // The track's volume curve over the clip counts too: no key, fader +4, curve +12 = +16
+    edit(project, {QJsonObject{{"op", "keyframe"}, {"clips", QJsonArray{id}}, {"param", "volume"}, {"clear", true}},
+                   QJsonObject{{"op", "track_volume"}, {"track", track},
+                               {"points", QJsonArray{QJsonObject{{"at", 0}, {"db", 12}}, QJsonObject{{"at", 70}, {"db", 12}}}}}});
+    b = issueOf(run("check", {{"source", project}}), "audio_boost");
+    if (!CHECK(b["message"].toString().contains("16"))) std::printf("       %s\n", QJsonDocument(b).toJson(QJsonDocument::Compact).constData());
+    CHECK_EQ(b["to"].toInt(), 75);
+    edit(project, {QJsonObject{{"op", "track_volume"}, {"track", track}, {"clear", true}},
+                   QJsonObject{{"op", "mixer"}, {"track", track}, {"volume_db", 0}}});
+    // Built-in effect sounds are no recording: an SFX track at +12 with a +12 sound is left alone
+    edit(project, {QJsonObject{{"op", "sfx"}, {"at", "1.5s"}, {"kind", "hit"}, {"volume_db", 6}}});
+    edit(project, {QJsonObject{{"op", "mixer"}, {"track", "SFX"}, {"volume_db", 12}}});
+    if (!CHECK(issueOf(run("check", {{"source", project}}), "audio_boost").isEmpty())) std::printf("       sfx counted\n");
 }
 
 // The clips of the timeline by id
