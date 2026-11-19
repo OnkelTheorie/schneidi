@@ -68,7 +68,7 @@ public:
     QString livePage() const override { return page; }
     bool liveShowPage(const QString& id) override
     {
-        if (!QStringList{"media", "edit", "comp", "color", "studio", "deliver"}.contains(id)) return false;
+        if (!QStringList{"media", "direct", "edit", "comp", "color", "studio", "deliver"}.contains(id)) return false;
         page = id;
         return true;
     }
@@ -351,6 +351,10 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(r), QString("ok"));
     CHECK_EQ(fake.page, QString("studio"));
     CHECK_EQ(r["app"].toObject()["page"].toString(), QString("studio"));
+    r = cli({"app", "page", "--page", "direct"}); // the Regie page (0.25)
+    CHECK_EQ(fake.page, QString("direct"));
+    CHECK_EQ(r["app"].toObject()["page"].toString(), QString("direct"));
+    r = cli({"app", "page", "--page", "studio"});
     CHECK_EQ(code(cli({"app", "page", "--page", "fairlight"})), QString("BAD_ARGUMENT"));
     CHECK_EQ(code(cli({"app", "page"})), QString("BAD_ARGUMENT"));
     CHECK_EQ(fake.page, QString("studio"));

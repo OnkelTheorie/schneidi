@@ -56,6 +56,9 @@ public:
     static bool storedOwnFolder();
     static QString storedFolder();
     static void store(bool own, const QString& folder);
+    // The start page (General › Interface): the pages to choose from as (id, shown name) in bar order, the chosen id
+    void setStartPages(const QVector<QPair<QString, QString>>& pages, const QString& current);
+    QString startPage() const;
     AiSettingsPage* aiPage() const { return m_aiPage; }
     StartTemplatesPage* startTemplatesPage() const { return m_templatesPage; }
 
@@ -75,6 +78,7 @@ private:
     StartTemplatesPage* m_templatesPage = nullptr;
     QComboBox* m_language = nullptr;
     QComboBox* m_uiScale = nullptr;
+    QComboBox* m_startPage = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;
     QCheckBox* m_autoLink = nullptr;

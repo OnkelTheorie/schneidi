@@ -53,6 +53,7 @@
 
 namespace {
 const QPair<MainWindow::Page, const char*> kPageNames[] = {{MainWindow::Page::Media, "media"},
+                                                           {MainWindow::Page::Direct, "direct"},
                                                            {MainWindow::Page::Edit, "edit"},
                                                            {MainWindow::Page::Comp, "comp"},
                                                            {MainWindow::Page::Color, "color"},
@@ -588,6 +589,8 @@ void MainWindow::enterTourMode(const Tour& tour)
     updateLiveWaiting();
     m_project->setHistoryAside(true); // the user's undo history waits untouched; the practice project gets its own
     m_studioSized = false;            // the Studio page at its defaults (the user's sizes come back at the end)
+    m_directSized = false;            // the Regie page too
+    m_directCenterSizes.clear();
     m_tourSwap = true;
     buildPracticeProject(tour.practice);
     m_tourSwap = false;
@@ -678,6 +681,8 @@ void MainWindow::leaveTourMode()
     if (m_colorBottom) applySizes(m_colorBottom, {1100, 420});
     m_tourSwap = true; // the page as it was: no page entry moves the user's playhead or changes the Comp clip
     m_studioSized = false; // the user's sizes (saved ones, else the defaults), then the ones kept aside below
+    m_directSized = false;
+    m_directCenterSizes.clear();
     showPage(s.page);
     m_tourSwap = false;
     if (m_compPage) m_compPage->setClip(s.compClip);

@@ -122,6 +122,12 @@ QWidget* SettingsDialog::buildGeneral()
         m_uiScale->addItem(percent(saved), saved);
     m_uiScale->setCurrentIndex(std::max(0, m_uiScale->findData(UiScale::saved())));
     form->addRow(T("Größe"), m_uiScale);
+    // The page shown at the start and on New Project (MainWindow::showStartPage); filled by setStartPages
+    m_startPage = new QComboBox;
+    m_startPage->setObjectName("settings_start_page");
+    m_startPage->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_startPage->setMinimumContentsLength(8);
+    form->addRow(T("Startseite"), m_startPage);
     if (const QString own = UiScale::userFactor(); !own.isEmpty())
         form->addRow(hint(T("Wird von QT_SCALE_FACTOR=%1 überschrieben (beim Start gesetzt).").arg(own)));
     auto* buttons = new QHBoxLayout;
@@ -391,6 +397,15 @@ void SettingsDialog::showTab(Tab tab)
 }
 
 AiSettings SettingsDialog::aiSettings() const { return m_aiPage->settings(); }
+
+void SettingsDialog::setStartPages(const QVector<QPair<QString, QString>>& pages, const QString& current)
+{
+    m_startPage->clear();
+    for (const auto& [id, name] : pages) m_startPage->addItem(name, id);
+    m_startPage->setCurrentIndex(std::max(0, m_startPage->findData(current)));
+}
+
+QString SettingsDialog::startPage() const { return m_startPage->currentData().toString(); }
 
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 

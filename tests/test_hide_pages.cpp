@@ -88,7 +88,7 @@ void testWindow(Engine& engine)
         w.resize(1400, 900);
         w.show();
         CHECK(QTest::qWaitForWindowExposed(&w));
-        for (const char* id : {"media", "edit", "comp", "color", "deliver"}) {
+        for (const char* id : {"media", "direct", "edit", "comp", "color", "studio", "deliver"}) {
             QToolButton* b = button(w, id);
             if (CHECK(b != nullptr)) CHECK(b->isVisible()); // default: all shown, no question
         }
@@ -118,6 +118,7 @@ void testWindow(Engine& engine)
         w.setPageHidden(Page::Color, true);
         w.setPageHidden(Page::Comp, true);
         w.setPageHidden(Page::Studio, true);
+        w.setPageHidden(Page::Direct, true);
         CHECK(w.currentPage() == Page::Color || w.currentPage() == Page::Deliver);
         w.setPageHidden(Page::Color, true);
         CHECK(w.currentPage() == Page::Deliver);
@@ -161,13 +162,15 @@ void testWindow(Engine& engine)
             dump(bar, "media-deliver");
         }
     }
-    // A normal window saves what it hides (Edit, Comp, Color: Media and Deliver are left for the next window)
+    // A normal window saves what it hides (Direct, Edit, Comp, Color: Media, Studio and Deliver are left for the next
+    // window)
     {
         MainWindow w(&engine);
         w.show();
         CHECK(QTest::qWaitForWindowExposed(&w));
-        for (Page p : {Page::Edit, Page::Comp, Page::Color}) w.setPageHidden(p, true);
-        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList() == QStringList({"edit", "comp", "color"}));
+        for (Page p : {Page::Direct, Page::Edit, Page::Comp, Page::Color}) w.setPageHidden(p, true);
+        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList()
+              == QStringList({"direct", "edit", "comp", "color"}));
         w.disableAutosave();
     }
     // A new window reads it again and starts on the page nearest to Edit (Media)
@@ -181,8 +184,9 @@ void testWindow(Engine& engine)
         CHECK(w.currentPage() == Page::Media);
         CHECK(!button(w, "edit")->isVisible());
         w.showAllPages();
-        for (const char* id : {"media", "edit", "comp", "color", "studio", "deliver"}) CHECK(button(w, id)->isVisible());
-        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList().size() == 3); // a test run: unchanged
+        for (const char* id : {"media", "direct", "edit", "comp", "color", "studio", "deliver"})
+            CHECK(button(w, id)->isVisible());
+        CHECK(QSettings().value(PageVisibility::kSettingsKey).toStringList().size() == 4); // a test run: unchanged
         QSettings().remove(PageVisibility::kSettingsKey);
     }
 }

@@ -1,0 +1,14 @@
+{
+ "id": "direct",
+ "title": "Regie",
+ "order": 6,
+ "offerOn": "page:direct",
+ "steps": [
+  {"target": "direct_material", "page": "direct", "text": "Zieh deine Clips hierher, aus dem Medienpool oder einem Dateimanager. Für ein Gespräch nimmst du stattdessen die aktuelle Timeline als Material."},
+  {"target": "direct_recipes", "page": "direct", "text": "Wähl, was daraus werden soll: ein Short, Highlights, ein Gespräch ohne Pausen, eine gefüllte Vorlage oder ein Rohschnitt aus einem Skript. Ein Klick auf den Namen holt die Vorschläge."},
+  {"target": "direct_card_short", "page": "direct", "text": "Unter den Rezepten stehen die Einstellungen des gewählten, nur wenige, der Rest unter „Mehr“. „Vorschläge“ fragt mit geänderten Einstellungen neu, das Material wird dabei nicht noch einmal analysiert."},
+  {"target": "direct_suggestions", "page": "direct", "text": "Die Vorschläge mit ihrem Grund. Ein Klick spielt einen im Viewer, der Haken nimmt ihn dazu, Ziehen ändert die Reihenfolge, Entf nimmt ihn heraus."},
+  {"target": "direct_apply", "page": "direct", "text": "Unten siehst du die Timeline, die daraus wird. „Übernehmen“ baut sie als neue Timeline, ein Schritt zum Rückgängigmachen."},
+  {"target": "direct_open_edit|direct_export", "page": "direct", "text": "Danach geht es in Schneiden weiter, zum Feinschliff, oder gleich zum Export mit den Vorgaben der Plattform."}
+ ]
+}

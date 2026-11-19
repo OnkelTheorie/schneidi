@@ -598,3 +598,7 @@ target_link_libraries(test_pause_cut PRIVATE schneidi_cli_lib)
 add_dependencies(test_pause_cut schneidi-cli)
 schneidi_test(test_slot_pick) # 0.25: core/SlotPick (length, sharpness, label/hint match, no shot twice, fallback in order) and templates fill auto:true
 target_link_libraries(test_slot_pick PRIVATE schneidi_cli_lib)
+schneidi_test(test_music_bed) # music beds: core/MusicBed (levels, clicks, grid, determinism) and the op music_bed
+target_link_libraries(test_music_bed PRIVATE schneidi_cli_lib)
+schneidi_test(test_direct_page) # Direct page "Regie" (0.25): lazy, material drop, recipes, suggestions (on/off, order, Delete), preview, apply = one undo step, start page, layout de/ru
+target_link_libraries(test_direct_page PRIVATE schneidi_cli_lib)

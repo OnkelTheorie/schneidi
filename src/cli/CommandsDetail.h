@@ -224,6 +224,15 @@ Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, 
                         Context* ctx = nullptr);
 QString beatsKey(const QString& path, int stream);
 QJsonObject songBeatsJson(const Beats::Result& r);
+// The beats cache of songBeats by file (size and time are part of the key): what is there, and storing a known grid
+// (op 'music_bed' stores the grid of the bed it made, so nothing analyses it)
+std::optional<Beats::Result> cachedSongBeats(const QString& path, int stream);
+void storeSongBeats(const QString& path, int stream, const Beats::Result& r);
+// Op 'music_bed' (EditOpsMusicBed.cpp): the moods for `effects kind:'music'`; live, the bed is made here in
+// schneidi-cli before the edit goes to the app
+QJsonArray musicBedMoods();
+QJsonObject prepareMusicBed(const QJsonObject& editArgs, Context& ctx);
+void addMusicBedOps(QVector<OpDef>& ops);
 // The track op 'sfx' puts its sounds on (by name); music lookups leave it out
 inline const QString kSfxTrackName = QStringLiteral("SFX");
 // The drops of the music on the timeline (EditOpsMusic.cpp): timeline frames (exact) and score, sorted by time; the

@@ -256,6 +256,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/OverlayFit.h         src/core/OverlayFit.cpp
     src/core/PauseCut.h           src/core/PauseCut.cpp
     src/core/SlotPick.h           src/core/SlotPick.cpp
+    src/core/MusicBed.h           src/core/MusicBed.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/ClipFormat.h       src/engine/ClipFormat.cpp
@@ -372,6 +373,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowLayout.cpp
     src/app/MainWindowComp.cpp
     src/app/MainWindowStudio.cpp
+    src/app/MainWindowDirect.cpp
+    src/app/DirectBackend.h src/app/DirectBackend.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
@@ -464,6 +467,12 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/studio/StudioTracks.h  src/ui/studio/StudioTracks.cpp
     src/ui/studio/StudioMixer.h   src/ui/studio/StudioMixer.cpp
     src/ui/studio/StudioTools.h   src/ui/studio/StudioTools.cpp
+    src/ui/direct/DirectPage.h        src/ui/direct/DirectPage.cpp
+    src/ui/direct/DirectMaterial.h    src/ui/direct/DirectMaterial.cpp
+    src/ui/direct/DirectRecipes.h     src/ui/direct/DirectRecipes.cpp
+    src/ui/direct/DirectSuggestions.h src/ui/direct/DirectSuggestions.cpp
+    src/ui/direct/DirectText.h        src/ui/direct/DirectText.cpp
+    src/ui/direct/DirectThumbs.h      src/ui/direct/DirectThumbs.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/DynCurve.h             src/ui/DynCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
@@ -657,7 +666,8 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/Live.h     src/cli/Live.cpp
     src/cli/Guide.h    src/cli/Guide.cpp
     src/cli/Setup.h    src/cli/Setup.cpp
-    src/cli/LiveBackground.cpp)
+    src/cli/LiveBackground.cpp
+    src/cli/EditOpsMusicBed.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
 # The Claude skill of the repo is the editing guide of every AI (cli/Guide.h): `guide` tool, setup, app chat
 file(GLOB_RECURSE SCHNEIDI_SKILL RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/skills/schneidi/*.md)

@@ -68,7 +68,7 @@ void testBottomRow(Engine& engine, const QString& lang, const QString& font)
                   QString("%1: bar ends at %2 of %3").arg(where).arg(bottom).arg(w.height()));
     // Every page button whole (its text not cut), side by side without overlapping
     QRect last;
-    for (const char* id : {"media", "edit", "comp", "color", "deliver"}) {
+    for (const char* id : {"media", "direct", "edit", "comp", "color", "studio", "deliver"}) {
         auto* b = w.findChild<QToolButton*>(QString("pageButton_") + id);
         if (!CHECK(b && b->isVisible())) continue;
         Check::report(b->width() >= b->sizeHint().width() && b->height() >= b->sizeHint().height(), "page button whole",

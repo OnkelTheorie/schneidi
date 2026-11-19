@@ -54,6 +54,11 @@ void checkDialog(const QString& font, const QString& lang)
     SettingsDialog dlg(AiSettings{});
     dlg.aiPage()->setClaudeSetup([](bool) { return QJsonObject{}; });
     dlg.aiPage()->addChatSection(&keys);
+    // The start page box with every page's name (the longest one counts)
+    dlg.setStartPages({{"media", T("Medien")}, {"direct", T("Regie")}, {"edit", T("Schneiden")}, {"comp", T("Compositing")},
+                       {"color", T("Farbe")}, {"studio", T("Studio")}, {"deliver", T("Export")}},
+                      "edit");
+    CHECK_EQ(dlg.startPage(), QString("edit"));
     const int width = widthFor(lang);
     dlg.resize(640, 680); // its own size; it grows only as far as its pages need (at most `width`)
     dlg.show();
