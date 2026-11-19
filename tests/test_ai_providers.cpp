@@ -794,12 +794,12 @@ void testContext()
             "volume(clips, mode?, ripple?, ranges:[[from,to]], at?, track?)"));
         // Several names, nested braces, a second form with "or", a form without op: as calls where they are ops
         const QJsonArray ops3{QJsonObject{{"op", "enable"}, {"usage", "{op:'enable'|'disable', clips}"}},
-                              QJsonObject{{"op", "align"}, {"usage", "{op:'align', events:[times], to:[times]|{first, every}}"}},
+                              QJsonObject{{"op", "line_up"}, {"usage", "{op:'line_up', events:[times], to:[times]|{first, every}}"}},
                               QJsonObject{{"op", "clear"}, {"usage", "{op:'clear'}"}},
                               QJsonObject{{"op", "ramp"}, {"usage", "{op:'ramp', clip, points:[{at, speed}]} or {…, clear:true}"}}};
         const QJsonArray m3 = Ai::compactTools(more, ops3);
         const QString d3 = m3[4]["inputSchema"]["properties"]["ops"]["description"].toString();
-        CHECK(d3.contains("enable|disable(clips); align(events:[times], to:[times]|{first, every}); clear(); "
+        CHECK(d3.contains("enable|disable(clips); line_up(events:[times], to:[times]|{first, every}); clear(); "
                           "ramp(clip, points:[{at, speed}]) or {…, clear:true}"));
         const QString instr = "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one "
                               "(a template; see `templates`), `edit` changes a timeline (e.g. a cut). If the project is "
@@ -828,19 +828,19 @@ void testContext()
         CHECK_EQ(Ai::cappedUsage("comp(clips, graph:{nodes:[{id, type}], links:[[from, to]]})", 20),
                  QString("comp(clips, graph:{nodes:[{id, type}], links:[[from, to]]})"));
         CHECK_EQ(Ai::cappedUsage("title(text?, kind?, <style>, fill?)", 22), QString("title(text?, …)"));
-        const QString longOp = "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
+        const QString longOp = "{op:'vignette', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
                                "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?}";
         const QString coreLong = "{op:'title', text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, "
                                  "texture?, edge3d?, shadow?, glow?, text3d?, enter?, exit?}";
         const QJsonArray ops4{QJsonObject{{"op", "title"}, {"usage", coreLong}},
-                              QJsonObject{{"op", "window"}, {"usage", longOp}},
+                              QJsonObject{{"op", "vignette"}, {"usage", longOp}},
                               QJsonObject{{"op", "slot"}, {"usage", "{op:'slot', clip, id, kind?, label?}"}},
                               QJsonObject{{"op", "fill"}, {"usage", "{op:'fill', slot, value}"}},
                               QJsonObject{{"op", "split"}, {"usage", "{op:'split', at, clip?}"}}};
-        CHECK(Ai::kCoreOps.contains("title") && Ai::kRareOps.contains("slot") && !Ai::kCoreOps.contains("window"));
+        CHECK(Ai::kCoreOps.contains("title") && Ai::kRareOps.contains("slot") && !Ai::kCoreOps.contains("vignette") && !Ai::kRareOps.contains("vignette"));
         const QString o = Ai::compactOps(ops4);
         CHECK(o.startsWith("title(text?, kind?, at?, duration?, track?, clip?, <style>, fill?, gradient?, texture?, "
-                           "edge3d?, shadow?, glow?, text3d?, enter?, exit?); window(clips, "));
+                           "edge3d?, shadow?, glow?, text3d?, enter?, exit?); vignette(clips, "));
         const QString window = o.section("; ", 1, 1);
         CHECK(window.endsWith(", …)") && window.size() <= Ai::kOpChars);
         CHECK(o.contains("; split(at, clip?). Seldom needed (call `help` for their keys first): slot, fill"));
@@ -848,7 +848,7 @@ void testContext()
         QJsonArray many;
         for (char c = 'a'; c < 'u'; ++c) {
             const QString name = QString("new_op_") + c;
-            many << QJsonObject{{"op", name}, {"usage", QString(longOp).replace("'window'", "'" + name + "'")}};
+            many << QJsonObject{{"op", name}, {"usage", QString(longOp).replace("'vignette'", "'" + name + "'")}};
         }
         for (const QString& op : Ai::compactOps(many).split("; ")) CHECK(op.size() <= Ai::kOpChars);
     }
@@ -865,8 +865,9 @@ void testContext()
         for (const QJsonValue& p : r) sum += p["description"].toString().size();
         CHECK_EQ(r.size(), 12); // every parameter stays, a long text goes first
         CHECK(r["p00"].toObject().contains("description"));
-        // one of the two longest (equally long after shortening) left out, the short ones kept
-        CHECK(!r["p10"].toObject().contains("description") && r["p11"].toObject().contains("description"));
+        // the longest left out until the rest fits (equally long ones by name), the short ones kept
+        CHECK(!r["p10"].toObject().contains("description") && !r["p11"].toObject().contains("description"));
+        CHECK(r["p05"].toObject().contains("description"));
         if (!CHECK(sum <= Ai::kParamText && sum > Ai::kParamText / 2))
             std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
     }

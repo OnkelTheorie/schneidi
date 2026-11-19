@@ -1121,6 +1121,7 @@ QVector<OpDef> makeOps()
     addDrawOps(ops);
     addTemplateOps(ops);
     addMusicBedOps(ops);
+    addDirectOps(ops);
     return ops;
 }
 

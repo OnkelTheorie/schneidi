@@ -1136,6 +1136,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                                   {"grade", clipToJson(st.grade, -1, projectDir)}};
         root["stills"] = stills;
     }
+    if (!data.direction.isEmpty()) root["direction"] = data.direction; // optional, 0.25; older versions ignore it
     // Watch folders (optional, absent in old files; older versions ignore them): folder also relative to the project
     // like media, so a project moved together with its recording folder keeps watching it
     if (!data.watchFolders.isEmpty()) {
@@ -1477,6 +1478,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     if (root.value("importPresets").isObject())
         d.importPresets = StreamPresets::fromJson(root.value("importPresets").toObject());
     if (root.value("brand").isObject()) d.brand = Brand::fromJson(root.value("brand").toObject(), &projectDir);
+    d.direction = root.value("direction").toObject(); // absent: none
     for (const QJsonValue& v : root.value("stills").toArray()) {
         const QJsonObject o = v.toObject();
         GradeStill st;

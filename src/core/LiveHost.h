@@ -124,6 +124,13 @@ public:
         Q_UNUSED(plan);
         Q_UNUSED(ownChat);
     }
+    // `direct` made suggestions (the session as core/Direction.h writes it; ownChat = the app's own chat asked): for the
+    // Direct page and the chat. Nothing changed in the project
+    virtual void liveDirection(const QJsonObject& session, bool ownChat)
+    {
+        Q_UNUSED(session);
+        Q_UNUSED(ownChat);
+    }
     // Plan mode of the app's own chat (Settings › AI): its edits must be plans; the user runs them from the chat
     virtual bool livePlanOnly() const { return false; }
     // Review mode of the app's own chat (Settings › AI): the user accepts or discards its changes at the end of a

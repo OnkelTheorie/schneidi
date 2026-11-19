@@ -498,4 +498,15 @@ Result analyze(const Values& v, const Options& o)
     return r;
 }
 
+std::vector<double> snapToGrid(const std::vector<double>& times, const Result& r, double maxShift)
+{
+    std::vector<double> out = times;
+    if (!r.found || !(r.period > 0) || !(maxShift >= 0)) return out;
+    for (double& t : out) {
+        const double beat = beatTime(r, std::round((t - r.phase) / r.period));
+        if (std::abs(beat - t) <= maxShift + 1e-9) t = beat;
+    }
+    return out;
+}
+
 } // namespace Beats

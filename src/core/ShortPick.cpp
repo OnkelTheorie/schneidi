@@ -6,9 +6,6 @@
 
 namespace ShortPick {
 
-namespace {
-
-// Sorted by file and time, overlapping or close ones (gap below `gap`) of the same file joined
 QVector<Moment> joined(QVector<Moment> list, double gap)
 {
     std::sort(list.begin(), list.end(),
@@ -25,8 +22,6 @@ QVector<Moment> joined(QVector<Moment> list, double gap)
     return out;
 }
 
-// Grows [from, to) by `by` seconds, a bit more after than before (the reaction), within [0, duration); what one
-// side cannot take goes to the other
 void widen(Moment& m, double by, double duration)
 {
     double before = by * 0.45, after = by - before;
@@ -36,8 +31,6 @@ void widen(Moment& m, double by, double duration)
     m.from -= before;
     m.to += after;
 }
-
-} // namespace
 
 double total(const QVector<Moment>& moments)
 {
@@ -102,6 +95,40 @@ QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& d
     if (const double over = total(picked) - maxS; over > 0.001 && !picked.isEmpty())
         picked.last().to = std::max(picked.last().from + 0.5, picked.last().to - over);
     return picked;
+}
+
+QVector<QVector<Moment>> variants(const QVector<Moment>& candidates, const QVector<double>& durations, int count,
+                                  const Options& o)
+{
+    QVector<QVector<Moment>> out;
+    QVector<Moment> used; // moments of the variants so far
+    const auto overlaps = [&used](const Moment& c) {
+        return std::any_of(used.begin(), used.end(),
+                           [&c](const Moment& u) { return u.file == c.file && c.from < u.to && u.from < c.to; });
+    };
+    for (int v = 0; v < std::max(1, count); ++v) {
+        QVector<Moment> left;
+        for (const Moment& c : candidates)
+            if (!overlaps(c)) left << c;
+        if (v > 0 && left.isEmpty()) break;
+        QVector<Moment> one = pick(v == 0 ? candidates : left, durations, o);
+        if (v > 0) {
+            // Only the fallback (no candidate fit): no variant of its own
+            if (std::all_of(one.begin(), one.end(), [](const Moment& m) { return m.score <= 0; })) break;
+            // Grown up to the minimum length into an earlier variant's moment: back to its edge
+            for (Moment& m : one)
+                for (const Moment& u : used) {
+                    if (u.file != m.file || !(m.from < u.to && u.from < m.to)) continue;
+                    if ((m.from + m.to) / 2 < (u.from + u.to) / 2) m.to = std::min(m.to, u.from);
+                    else m.from = std::max(m.from, u.to);
+                }
+            one.erase(std::remove_if(one.begin(), one.end(), [](const Moment& m) { return m.to - m.from < 0.5; }), one.end());
+        }
+        if (one.isEmpty()) break;
+        out << one;
+        used += one;
+    }
+    return out;
 }
 
 } // namespace ShortPick

@@ -8,6 +8,11 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
 ([templates.md](templates.md)).
 
 ## Find the moments
+- **Quickest**: `direct` with `recipe` `highlights` and `files` (`options`: `length_s` seconds or `"all"`, `order`
+  `best`/`time`, `music` `{"file": …}`, `transitions` `soft`, `aspect`) suggests moments of any material - kills, loud,
+  laughter, applause, cheering, screams, lots of movement, scene changes - with a reason each, not the same scene
+  twice; then `direct` `session` + `apply` `{"on":"all"}` builds the timeline in one edit (music fitted, cuts on its
+  beat). Look at it and refine by hand as below.
 - `highlights` with all clips at once (`files`) gives candidates as source ranges with lead-in and lead-out, best
   first (`best`), and a ready `keep` list per file. Pass `project` so the frames match your project.
 - **Games with a kill feed**: CS2 and Valorant are known (`game`, by default from the folder or file name such as

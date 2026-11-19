@@ -100,4 +100,9 @@ Result analyze(const Values& values, const Options& options = {});
 // Time of beat k (seconds from the start of the signal)
 inline double beatTime(const Result& r, double k) { return r.phase + k * r.period; }
 
+// Each time moved onto the nearest beat of the grid of `r` (beat k at phase + k * period, any whole k: also before the
+// first beat and after the last), when that beat is at most `maxShift` seconds away; farther ones (and every time when
+// the grid is not found or has no period) stay. Pure, same order and count as `times`.
+std::vector<double> snapToGrid(const std::vector<double>& times, const Result& r, double maxShift);
+
 } // namespace Beats

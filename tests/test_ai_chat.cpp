@@ -1285,10 +1285,15 @@ void test(const QString& dir)
         if (CHECK_EQ(int(fake.requests.size()), sent + 5)) {
             const QString system = fake.requests[sent].body["messages"][0]["content"].toString();
             CHECK(system.contains("@app"));
+            qint64 largest = 0;
             for (int i = sent; i < sent + 5; ++i) {
                 const QJsonObject& body = fake.requests[i].body;
                 // Every request fits: its whole JSON (escaping included) at 3.5 characters per token
                 const qint64 chars = QJsonDocument(body).toJson(QJsonDocument::Compact).size();
+                largest = std::max(largest, chars);
+                if (i == sent + 4)
+                    std::printf("       16k context: largest request %lld characters of %lld (%.1f %% room)\n", largest,
+                                qint64(16384 * 3.5), 100.0 * (16384 * 3.5 - largest) / (16384 * 3.5));
                 if (!CHECK(chars / 3.5 < 16384)) std::printf("       request %d: %lld characters\n", i - sent, chars);
                 CHECK_EQ(body["messages"][0]["content"].toString(), system); // the instructions stay whole
                 CHECK_EQ(body["tools"], fake.requests[sent].body["tools"]);

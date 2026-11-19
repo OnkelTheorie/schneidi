@@ -18,6 +18,7 @@
 //   {"type":"run","command":…,"args":{…}} -> {"ok":true,"result":{…}} or {"ok":false,"error":{code,message}}
 //   {"type":"activity","id":n,"state":"start"|"progress"|"end"|"failed","tool":…,"target":…,"percent":…,
 //    "summary":{…},"error":…}         -> no answer (work outside the app, see Activity; attached client only)
+//   {"type":"direction","session":{…}}  -> no answer (`direct` made suggestions: LiveHost::liveDirection; attached only)
 //   {"type":"open","files":[…]}           -> {"ok":true,"queued":bool} (`schneidi <file>` while the app runs: the
 //                                              user's hand-over, see handOver(); no attach needed, also when AIs are
 //                                              refused; opened right after the answer, or once the app stops waiting)
@@ -301,5 +302,8 @@ private:
 };
 // One-line result of a job for the app (counts, not the details): {"count": n}, {"lufs": x} or {"file": path}
 QJsonObject activitySummary(const QString& tool, const QJsonObject& result);
+// `direct` made new suggestions: the app that would be told of the command's activity (see Activity) hears of them
+// (LiveHost::liveDirection, for the Direct page and the chat); nothing inside the app and without one
+void reportDirection(const QJsonObject& args, const QJsonObject& session);
 
 } // namespace Cli::Live

@@ -89,7 +89,7 @@ bool useCompact(Compact mode, const Endpoint& e, qint64 context)
 
 // Tools an editing chat in the app seldom needs: their parameters come from `help` when they are used
 const QStringList kRareTools{"new",  "templates", "backups", "restore", "export_timeline", "watch", "sync",
-                             "extensions", "scopes", "brand"};
+                             "extensions", "scopes", "brand", "direct", "peaks", "index"};
 
 QString firstSentence(const QString& text, int max)
 {
@@ -242,7 +242,12 @@ const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_no
                            "shape", "clip_shape", "draw",
                            "add_angle", "angle_name", "source_marker", "bin", "remove_media", "compound", "decompose",
                            "place_timeline", "rename_timeline", "remove_timeline", "duplicate_timeline",
-                           "add_subtitle_track", "copy_attributes", "flatten", "marks", "link"};
+                           "add_subtitle_track", "copy_attributes", "flatten", "marks", "link",
+                           // 0.25 (room for the music bed, cut_pauses and direct in a 16k context): grading and picture
+                           // repairs, multicam, special edits and generators a small model seldom reaches for
+                           "still", "qualifier", "window", "hdr", "picture_aspect", "crop_bars", "route", "track_pan",
+                           "fit_to_fill", "speed_ramp", "multicam", "angle", "angle_cuts", "hook_variants", "broll",
+                           "hide_jumps", "best_takes", "jl_cut", "node", "solid", "comp", "media", "room_tone", "align"};
 
 qsizetype paramTextFor(const QString& tool)
 {
@@ -357,10 +362,10 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
         if (name == "edit") {
             QJsonObject p = props["ops"].toObject();
             p["description"] = "List of operations, applied in order (nothing changes if one fails). Times: frames, "
-                               "\"4.5s\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids come from `info` or the "
-                               "answer of the edit before (they change when clips are split). Ops, each written as "
+                               "\"4.5s\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids: from `info` or the last "
+                               "edit's answer (splits change them). Ops, each written as "
                                "name(keys) for {op:'name', keys}, key? = optional, a|b = one of them, … = more keys; "
-                               "every op in detail: `help` with command 'edit' and op '<name>'. "
+                               "details: `help` with command 'edit' and op '<name>'. "
                                + compactOps(editOps);
             props["ops"] = p;
         }

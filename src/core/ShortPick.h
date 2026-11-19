@@ -29,4 +29,18 @@ struct Options {
 QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& durations, const Options& o = {});
 double total(const QVector<Moment>& moments);
 
+// Up to `count` shorts of the same candidates (the `direct` recipe short's variants): the first is pick(); each next
+// one picks among the candidates that share no time with a moment of the ones before (a candidate overlapping a used
+// moment is left out) and never grows into a moment of the ones before. A variant needs a candidate of its own: none
+// left (or only the fallback) = no more variants.
+QVector<QVector<Moment>> variants(const QVector<Moment>& candidates, const QVector<double>& durations, int count,
+                                  const Options& o = {});
+
+// Helpers of pick (also for core/ReelPick):
+// sorted by file and time, overlapping or close ones (gap below `gap`) of the same file joined (the better score kept)
+QVector<Moment> joined(QVector<Moment> list, double gap);
+// grows [from, to) by `by` seconds, a bit more after than before (the reaction), within [0, duration); what one side
+// cannot take goes to the other
+void widen(Moment& m, double by, double duration);
+
 } // namespace ShortPick

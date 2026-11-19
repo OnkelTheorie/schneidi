@@ -138,7 +138,7 @@ Read the guide that fits the task (several if it combines them):
 |---|---|
 | Highlight reel from game, sports or event footage | [references/highlights.md](references/highlights.md) |
 | Interview, podcast, vlog, talking head: remove pauses and slips | [references/talking.md](references/talking.md) |
-| Short / Reel / TikTok, 9:16, vertical (one call: `short`) | [references/social.md](references/social.md) |
+| Short / Reel / TikTok, 9:16, vertical (one call: `short`; suggestions first: `direct`) | [references/social.md](references/social.md) |
 | Ad, product or marketing clip, fixed length, several formats | [references/ad.md](references/ad.md) |
 | Subtitles and captions | [references/subtitles.md](references/subtitles.md) |
 | Color: correct, match shots, LUTs | [references/color.md](references/color.md) |
