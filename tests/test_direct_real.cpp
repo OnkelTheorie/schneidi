@@ -3,11 +3,16 @@
 // synthetic clips dropped as material -> recipe short -> suggestions from the real analysis in the background ->
 // Übernehmen = exactly one undo step with the cut and its 9:16 copy as new timelines; undo takes both back. The
 // recipes that are not there yet (talk, template, script) show as coming and ask for nothing; a session the chat's
-// `direct` made (LiveHost::liveDirection) shows on the page.
+// `direct` made (LiveHost::liveDirection) shows on the page. The own wish line (R5) with a fake AI provider in this
+// process and the real `schneidi-cli mcp` as the chat's tools: the wish goes to the chat with the page's context, the
+// model's `direct` call replaces the page's suggestions and its short answer shows under the line; an apply by the
+// model is one undo step and shows like the page's own; ✕ stops a turn that waits.
 
 #include "check.h"
 #include "synth_sounds.h"
 
+#include "app/AiChat.h"
+#include "app/AiSettings.h"
 #include "app/MainWindow.h"
 #include "app/Theme.h"
 #include "cli/Commands.h"
@@ -23,6 +28,7 @@
 #include "ui/direct/DirectPage.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
+#include "ui/direct/DirectWish.h"
 
 #include <QApplication>
 #include <QDir>
@@ -32,6 +38,12 @@
 #include <QPlainTextEdit>
 #include <QElapsedTimer>
 #include <QJsonArray>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPointer>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTimer>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTest>
@@ -65,11 +77,136 @@ bool waitFor(const std::function<bool()>& ok, int ms = 120000)
     return ok();
 }
 
+// A provider on 127.0.0.1 in the Anthropic protocol: records every request, answers with the next scripted response
+// (GETs: 404, the chat's probes)
+class FakeProvider : public QObject {
+public:
+    struct Response {
+        QByteArray body;
+        int delayMs = 0;
+    };
+    QVector<QJsonObject> requests;
+    QVector<Response> script;
+
+    FakeProvider()
+    {
+        m_server.listen(QHostAddress::LocalHost, 0);
+        connect(&m_server, &QTcpServer::newConnection, this, [this] {
+            while (QTcpSocket* s = m_server.nextPendingConnection()) {
+                connect(s, &QTcpSocket::readyRead, this, [this, s] { onData(s); });
+                connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
+            }
+        });
+    }
+    QString address() const { return QString("http://127.0.0.1:%1").arg(m_server.serverPort()); }
+
+private:
+    void onData(QTcpSocket* s)
+    {
+        QByteArray& buf = m_buffers[s];
+        buf += s->readAll();
+        const qsizetype end = buf.indexOf("\r\n\r\n");
+        if (end < 0) return;
+        const QList<QByteArray> lines = buf.left(end).split('\n');
+        int length = 0;
+        for (const QByteArray& l : lines)
+            if (l.toLower().startsWith("content-length:")) length = l.mid(15).trimmed().toInt();
+        if (buf.size() < end + 4 + length) return;
+        const bool get = lines.value(0).startsWith("GET");
+        const QJsonObject body = QJsonDocument::fromJson(buf.mid(end + 4, length)).object();
+        m_buffers.remove(s);
+        int status = 200;
+        QByteArray type = "text/event-stream", out;
+        int delay = 0;
+        if (get || lines.value(0).contains("/api/show")) {
+            status = 404;
+            type = "application/json";
+            out = R"({"error":"not found"})";
+        } else {
+            requests << body;
+            if (script.isEmpty()) {
+                status = 500;
+                type = "application/json";
+                out = R"({"error":{"message":"no script"}})";
+            } else {
+                const Response r = script.takeFirst();
+                out = r.body;
+                delay = r.delayMs;
+            }
+        }
+        QPointer<QTcpSocket> guard(s);
+        QTimer::singleShot(delay, this, [guard, status, type, out] {
+            if (!guard || guard->state() != QAbstractSocket::ConnectedState) return;
+            QByteArray head = "HTTP/1.1 " + QByteArray::number(status) + " X\r\nContent-Type: " + type + "\r\nConnection: close\r\n";
+            if (!type.contains("event-stream")) head += "Content-Length: " + QByteArray::number(out.size()) + "\r\n";
+            guard->write(head + "\r\n" + out);
+            guard->disconnectFromHost();
+        });
+    }
+
+    QTcpServer m_server;
+    QHash<QTcpSocket*, QByteArray> m_buffers;
+};
+
+QByteArray sse(const QVector<QJsonObject>& events)
+{
+    QByteArray out;
+    for (const QJsonObject& e : events)
+        out += "event: " + e["type"].toString().toUtf8() + "\ndata: " + QJsonDocument(e).toJson(QJsonDocument::Compact) + "\n\n";
+    return out;
+}
+
+const QJsonObject kStart{{"type", "message_start"},
+                         {"message", QJsonObject{{"id", "msg"}, {"usage", QJsonObject{{"input_tokens", 1000}, {"output_tokens", 1}}}}}};
+
+QJsonObject stopEvent(const QString& reason)
+{
+    return {{"type", "message_delta"}, {"delta", QJsonObject{{"stop_reason", reason}}}, {"usage", QJsonObject{{"output_tokens", 20}}}};
+}
+
+FakeProvider::Response toolCall(const QString& id, const QString& name, const QJsonObject& input)
+{
+    const QString json = QString::fromUtf8(QJsonDocument(input).toJson(QJsonDocument::Compact));
+    return {sse({kStart,
+                 {{"type", "content_block_start"}, {"index", 0}, {"content_block", QJsonObject{{"type", "tool_use"}, {"id", id}, {"name", name}, {"input", QJsonObject{}}}}},
+                 {{"type", "content_block_delta"}, {"index", 0}, {"delta", QJsonObject{{"type", "input_json_delta"}, {"partial_json", json}}}},
+                 {{"type", "content_block_stop"}, {"index", 0}}, stopEvent("tool_use"), {{"type", "message_stop"}}})};
+}
+
+FakeProvider::Response textAnswer(const QString& text, int delayMs = 0)
+{
+    return {sse({kStart,
+                 {{"type", "content_block_start"}, {"index", 0}, {"content_block", QJsonObject{{"type", "text"}, {"text", ""}}}},
+                 {{"type", "content_block_delta"}, {"index", 0}, {"delta", QJsonObject{{"type", "text_delta"}, {"text", text}}}},
+                 {{"type", "content_block_stop"}, {"index", 0}}, stopEvent("end_turn"), {{"type", "message_stop"}}}),
+            delayMs};
+}
+
+// The text of the last user message of a request
+QString lastUserText(const QJsonObject& body)
+{
+    const QJsonArray m = body["messages"].toArray();
+    for (auto it = m.end(); it != m.begin();) {
+        --it;
+        const QJsonObject msg = it->toObject();
+        if (msg["role"].toString() != "user") continue;
+        if (msg["content"].isString()) return msg["content"].toString();
+        QString t;
+        for (const QJsonValue& b : msg["content"].toArray())
+            if (b["type"].toString() == "text") t += b["text"].toString();
+        return t;
+    }
+    return {};
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
     if (QFileInfo(QString::fromLocal8Bit(argv[0])).baseName() == QLatin1String("whisper-cli")) return fakeWhisper(argc, argv);
+    // The chat's key (never a real one from the environment)
+    for (const char* var : {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"}) qunsetenv(var);
+    qputenv("SCHNEIDI_AI_KEY", "test-key");
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("direct-real");
@@ -177,6 +314,81 @@ int main(int argc, char** argv)
             CHECK_EQ(p->undoStack()->count(), before + 1);
             CHECK(!page->finishButton()->isVisible());
         }
+    }
+    // The own wish (R5): with a provider the line shows; the wish goes to the chat with the page's context, the
+    // model's `direct` replaces the suggestions (the same material), its short answer shows under the line
+    {
+        FakeProvider fake;
+        Cli::Live::Server server(&w);
+        QString serr;
+        if (!CHECK(server.start(&serr))) return Check::result();
+        w.setAiChatTools({Check::cliPath(), "mcp"}, server.chatEnvironment());
+        DirectWish* wish = page->wish();
+        CHECK(!wish->isVisible());
+        AiSettings ai = w.aiSettings();
+        ai.chatProvider = "claude";
+        ai.chatAddress = fake.address();
+        w.setAiSettings(ai);
+        CHECK(wish->isVisible());
+        const QString before = page->suggestions()->session().value("id").toString();
+        fake.script = {toolCall("toolu_1", "direct", {{"project", "@app"}, {"recipe", "short"},
+                                                      {"files", QJsonArray{a, b}}, {"options", QJsonObject{{"max_s", 15}}}}),
+                       textAnswer("Kürzer: höchstens 15 s.")};
+        wish->edit()->setText("höchstens 15 Sekunden");
+        QTest::keyClick(wish->edit(), Qt::Key_Return);
+        CHECK(wish->busy());
+        CHECK(wish->busyRow()->isVisible());
+        CHECK(waitFor([&] { return !wish->busy(); }));
+        if (CHECK(!fake.requests.isEmpty())) {
+            const QString sent = lastUserText(fake.requests.first());
+            CHECK(sent.contains("Direct page"));
+            CHECK(sent.contains("Session " + before));
+            CHECK(sent.contains("höchstens 15 Sekunden"));
+        }
+        const QJsonObject chatSession = page->suggestions()->session();
+        CHECK(!chatSession.value("id").toString().isEmpty() && chatSession.value("id").toString() != before);
+        CHECK_EQ(chatSession.value("options").toObject().value("max_s").toDouble(), 15.0);
+        CHECK_EQ(page->material()->files(), (QStringList{a, b}));
+        CHECK_EQ(wish->note(), QString("Kürzer: höchstens 15 s."));
+        CHECK(!wish->noteIsError());
+        CHECK(!p->isModified() || p->undoStack()->count() == p->undoStack()->index()); // suggesting changes nothing
+        CHECK(!w.aiChat()->busy());
+
+        // The model applies instead: one undo step, shown like the page's own Übernehmen
+        const int steps = p->undoStack()->count();
+        fake.script = {toolCall("toolu_2", "direct", {{"project", "@app"}, {"session", chatSession.value("id").toString()},
+                                                      {"apply", QJsonObject{{"on", "all"}}}}),
+                       textAnswer("Übernommen.")};
+        wish->edit()->setText("nimm alle");
+        QTest::keyClick(wish->edit(), Qt::Key_Return);
+        CHECK(waitFor([&] { return !wish->busy(); }));
+        CHECK_EQ(p->undoStack()->count(), steps + 1);
+        CHECK_EQ(p->direction().value("id").toString(), chatSession.value("id").toString());
+        CHECK_EQ(page->suggestions()->session().value("id").toString(), chatSession.value("id").toString());
+        CHECK_EQ(wish->note(), QString("Übernommen."));
+        p->undoStack()->undo();
+
+        // ✕ stops a turn that waits for the model
+        fake.script = {textAnswer("zu spät", 20000)};
+        wish->edit()->setText("lustigste Stellen zuerst");
+        QTest::keyClick(wish->edit(), Qt::Key_Return);
+        CHECK(waitFor([&] { return !fake.requests.isEmpty() && fake.script.isEmpty(); }, 10000));
+        CHECK(wish->busy());
+        wish->stopButton()->click();
+        CHECK(!wish->busy());
+        CHECK(!w.aiChat()->busy());
+        CHECK_EQ(wish->note(), T("Gestoppt."));
+        CHECK_EQ(page->suggestions()->session().value("id").toString(), chatSession.value("id").toString());
+        // DIRECT_WISH_DUMP=<file.png>: the page with the wish line and a note
+        if (const QString dump = qEnvironmentVariable("DIRECT_WISH_DUMP"); !dump.isEmpty()) {
+            wish->setNote("Kürzer: höchstens 15 s.");
+            wish->edit()->clear(); // its placeholder
+            QTest::qWait(200);
+            w.grab().save(dump);
+        }
+        ai.chatProvider.clear();
+        w.setAiSettings(ai);
+        CHECK(!wish->isVisible());
     }
     // Recipe talk on the current timeline: two microphones, their common pause found, Übernehmen = one undo step
     {

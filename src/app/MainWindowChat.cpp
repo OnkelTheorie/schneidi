@@ -185,6 +185,15 @@ void MainWindow::updateChatPanel()
         message = T("Bitte die Adresse des Servers angeben.");
     }
     m_chatPanel->showSetup(setup, c.provider.isEmpty() ? QString("claude") : c.provider, message);
+    updateDirectWish(); // the Regie page's wish line follows
+}
+
+bool MainWindow::chatReady()
+{
+    const Ai::Company company = Ai::company();
+    const Ai::Choice c = Ai::choose(m_aiSettings.chatProvider, m_aiSettings.chatAddress, m_aiSettings.chatModels, company);
+    const Ai::Preset* p = Ai::preset(c.provider);
+    return p && !c.address.isEmpty() && !(p->needsKey && chatKeyHint(c.provider).isEmpty());
 }
 
 bool MainWindow::chatEndpoint(Ai::Endpoint& e, QString* problem)
@@ -212,7 +221,7 @@ bool MainWindow::chatEndpoint(Ai::Endpoint& e, QString* problem)
     return true;
 }
 
-bool MainWindow::sendChat(const QString& text)
+bool MainWindow::sendChat(const QString& text, const QString& note)
 {
     if (m_chat->busy() || m_review.pending) return false;
     if (m_chat->offline()) return m_chat->send(text, {}); // says why nothing goes out
@@ -241,7 +250,8 @@ bool MainWindow::sendChat(const QString& text)
         known << accepted;
         if (!m_autosaveDisabled) QSettings().setValue("ai/chat/privacyAccepted", known);
     }
-    if (const QString note = chatChangesNote(); !note.isEmpty()) m_chat->addNote(note);
+    if (const QString changes = chatChangesNote(); !changes.isEmpty()) m_chat->addNote(changes);
+    if (!note.isEmpty()) m_chat->addNote(note); // last: nothing below refuses the request any more (send checked busy)
     const bool review = m_aiSettings.approval == AiSettings::Approval::Review;
     const AiChat::Mode mode = review ? AiChat::Mode::Review
                               : m_aiSettings.approval == AiSettings::Approval::Plan ? AiChat::Mode::Plan
@@ -441,6 +451,7 @@ QString MainWindow::chatChangesNote() const
 void MainWindow::chatTurnFinished()
 {
     rememberChatState();
+    if (m_directWishTurn) directWishDone();
     if (!m_review.active) return;
     if (m_tourSaved.active) { // no review in a tour's practice project: its steps are not the user's
         m_review = {};

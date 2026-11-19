@@ -608,3 +608,4 @@ schneidi_test(test_direct_page) # Direct page "Regie" (0.25): lazy, material dro
 target_link_libraries(test_direct_page PRIVATE schneidi_cli_lib)
 schneidi_test(test_direct_real) # Direct page with the real backend (0.25): suggest in the background, Übernehmen = one undo step, finish, coming recipes
 target_link_libraries(test_direct_real PRIVATE schneidi_cli_lib)
+add_dependencies(test_direct_real schneidi-cli) # the chat's tools (the own wish)

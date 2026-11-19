@@ -434,6 +434,10 @@ private:
     void directReset(bool material);
     void directClearPreviewStop() { m_directStopAt = -1; }
     void updateDirectTracks(); // the talk recipe's track list from the open timeline
+    // The own wish line: shown only with a chat provider set up (as the chat panel sees it, not its setup page)
+    void updateDirectWish();
+    void directWish(const QString& text); // to the AI chat with the page's context; its `direct` answers on the page
+    void directWishDone();                // the chat's turn of a wish ended: the answer or error under the line
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -551,6 +555,11 @@ private:
     std::function<void()> m_directApplyCancel; // the running apply job's cancel (empty = none)
     int m_directApplyRun = 0;
     QJsonObject m_directApplied; // the last apply's result and session (for the short's finish)
+    // A wish of the page runs as a chat turn: its first chat entry and the project's last session before it (an
+    // apply by the AI changes it)
+    bool m_directWishTurn = false;
+    int m_directWishFirst = 0;
+    QJsonObject m_directWishDirection;
     class QAction* m_directRemoveSuggestion = nullptr; // the page's Delete keys, registered at the start (buildActions)
     class QAction* m_directRemoveMaterial = nullptr;
     QList<int> m_directCenterSizes; // viewer | recipes while the viewer is on another page
@@ -704,7 +713,8 @@ private:
     void placeChat(bool left);
     void applyChatWidth();
     void updateChatPanel(); // setup page or chat, the provider line
-    bool sendChat(const QString& text);
+    bool sendChat(const QString& text, const QString& note = {}); // note: with this request only (AiChat::addNote)
+    bool chatReady(); // a provider is set up (the panel shows the chat, not its setup)
     bool chatEndpoint(Ai::Endpoint& e, QString* problem);
     QString chatKeyHint(const QString& provider);
     void chatTurnFinished();

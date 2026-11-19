@@ -12,10 +12,16 @@
 //   a hidden start page gives the nearest shown one; the default is Edit;
 // - layout: German and Russian, normal and 1.5x font, with a real user's settings (tests/data/tours/user-settings.conf):
 //   no button or label of the page narrower than it needs, nothing outside the page, the window does not grow.
+// - the own wish line (R5): hidden without a chat provider, shown with one; its context note for the chat (material,
+//   recipe, session, suggestions) stays within 2000 characters with many suggestions and counts what it left out;
+//   Enter on an empty line asks nothing; Delete in the line edits its text and takes no suggestion out; a wish the
+//   chat cannot send ends with its error under the line.
 // DIRECT_PAGE_DUMP=<folder>: a picture of the window per layout case.
 
 #include "check.h"
 
+#include "app/AiChat.h"
+#include "app/AiSettings.h"
 #include "app/DirectBackend.h"
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
@@ -35,6 +41,7 @@
 #include "ui/direct/DirectPage.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
+#include "ui/direct/DirectWish.h"
 #include "ui/timeline/TimelineOverview.h"
 
 #include <QAbstractButton>
@@ -45,6 +52,8 @@
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QLineEdit>
+#include <QSignalSpy>
 #include <QListWidget>
 #include <QMimeData>
 #include <QPushButton>
@@ -766,6 +775,102 @@ void testFake()
     }
 }
 
+void testWish(Engine& engine, const QString& a, const QString& b)
+{
+    QSettings().remove("ai");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    useRunner(w);
+    if (!CHECK(QTest::qWaitForWindowExposed(&w))) return;
+    loadProject(w, a);
+    CHECK(w.liveShowPage("direct"));
+    DirectPage* page = w.directPage();
+    if (!CHECK(page)) return;
+    DirectWish* wish = page->wish();
+    CHECK(wish == page->wishSlot());
+    // No provider: hidden, no hint anywhere on the page
+    CHECK(!wish->isVisible());
+    for (QLabel* l : page->findChildren<QLabel*>()) CHECK(!l->isVisible() || !l->text().contains("KI"));
+    // A provider (a local server: no key needed) shows it
+    AiSettings s = w.aiSettings();
+    s.chatProvider = "ollama";
+    s.chatAddress = "http://127.0.0.1:9/v1";
+    w.setAiSettings(s);
+    CHECK(wish->isVisible());
+    CHECK(wish->edit()->placeholderText().contains("AWP"));
+    CHECK(!wish->busyRow()->isVisible());
+
+    // The context: material, recipe, options and the suggestions as listed - within 2000 characters
+    page->material()->addFiles({a, b});
+    page->recipes()->setRecipe("short");
+    const QString empty = page->wishContext();
+    CHECK(empty.contains("`direct`"));
+    CHECK(empty.contains("f1=" + a) && empty.contains("f2=" + b));
+    CHECK(empty.contains("Recipe: short"));
+    CHECK(empty.contains("No suggestions yet"));
+    QJsonArray many;
+    for (int n = 1; n <= 150; ++n)
+        many << QJsonObject{{"n", n}, {"kind", "moment"}, {"file", n % 2 ? a : b}, {"stream", 0},
+                            {"from_s", n * 0.5}, {"to_s", n * 0.5 + 4}, {"score", 10},
+                            {"reason", QJsonObject{{"key", "loud"}, {"text", "loud"}}}, {"on", n <= 3}};
+    const QJsonObject session{{"id", "d42"}, {"recipe", "short"}, {"options", QJsonObject{{"max_s", 30}}},
+                              {"material", QJsonArray{QJsonObject{{"file", a}, {"length_s", 6.0}},
+                                                      QJsonObject{{"file", b}, {"length_s", 6.0}}}},
+                              {"suggestions", many}, {"order", QJsonArray{3, 1, 2}}, {"length_s", 12.0}, {"target_s", 30.0}};
+    page->suggestions()->setSession(session);
+    page->suggestions()->setChecked(2, false);
+    const QString note = page->wishContext();
+    CHECK(note.size() <= DirectPage::kWishContextChars);
+    CHECK(note.contains("Session d42: 150 suggestions"));
+    CHECK(note.contains("f1=" + a + " (6.0 s)"));
+    CHECK(note.contains("\"max_s\":30"));
+    CHECK(note.contains("\n3 moment f1 1.5-5.5 loud on\n"));  // the order's first row first
+    CHECK(note.contains("\n2 moment f2 1.0-5.0 loud off\n")); // switched off by the user
+    CHECK(note.contains("more suggestions not listed)"));
+    CHECK(note.contains("apply:{on:[n…]"));
+    std::printf("       wish context: %lld characters\n", qint64(note.size()));
+
+    // Enter on an empty line: nothing; Delete in the line edits the text, never a suggestion
+    QSignalSpy asked(wish, &DirectWish::wishRequested);
+    wish->edit()->setFocus();
+    wish->edit()->setText("   ");
+    QTest::keyClick(wish->edit(), Qt::Key_Return);
+    CHECK_EQ(asked.count(), 0);
+    CHECK(!wish->busy());
+    const int rows = page->suggestions()->list()->count();
+    page->suggestions()->list()->setCurrentRow(0);
+    page->suggestions()->list()->item(0)->setSelected(true);
+    wish->edit()->setFocus();
+    wish->edit()->setText("abc");
+    wish->edit()->setCursorPosition(0);
+    QTest::keyClick(wish->edit(), Qt::Key_Delete);
+    CHECK_EQ(wish->edit()->text(), QString("bc"));
+    wish->edit()->setCursorPosition(2);
+    QTest::keyClick(wish->edit(), Qt::Key_Backspace);
+    CHECK_EQ(wish->edit()->text(), QString("b"));
+    CHECK_EQ(page->suggestions()->list()->count(), rows);
+    CHECK_EQ(int(page->suggestions()->session().value("suggestions").toArray().size()), 150);
+
+    // A wish that cannot go out (test run: the chat sends nothing): its error under the line, not busy
+    w.setAiChatOffline(true);
+    wish->edit()->setText("nur Runden mit AWP");
+    QTest::keyClick(wish->edit(), Qt::Key_Return);
+    CHECK_EQ(asked.count(), 1);
+    CHECK(!wish->busy());
+    CHECK(wish->noteIsError());
+    CHECK_EQ(wish->note(), T("Testlauf: der KI-Chat sendet nichts.")); // (the layout cases left another language)
+    CHECK_EQ(wish->edit()->text(), QString("nur Runden mit AWP")); // kept to refine it
+
+    // The provider gone: hidden again
+    s.chatProvider.clear();
+    s.chatAddress.clear();
+    w.setAiSettings(s);
+    CHECK(!wish->isVisible());
+    QSettings().remove("ai");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -790,5 +895,6 @@ int main(int argc, char** argv)
     testWindow(engine, a, b);
     testStartPage(engine, a, dir.path());
     testLayout(engine, a, b);
+    testWish(engine, a, b);
     return Check::result();
 }

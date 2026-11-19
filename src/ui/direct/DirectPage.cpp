@@ -9,12 +9,14 @@
 #include "ui/direct/DirectSuggestions.h"
 #include "ui/direct/DirectText.h"
 #include "ui/direct/DirectThumbs.h"
+#include "ui/direct/DirectWish.h"
 #include "ui/timeline/TimelineOverview.h"
 
 #include <QFileInfo>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QDir>
 #include <QPushButton>
@@ -55,16 +57,13 @@ DirectPage::DirectPage(QWidget* parent) : QWidget(parent)
     m_center->addWidget(panel(m_recipes));
     m_center->setChildrenCollapsible(false);
 
-    // Right: the own wish line (R5, hidden) above the suggestions
+    // Right: the own wish line (hidden until MainWindow sees a chat provider) above the suggestions
     auto* right = new QWidget;
     right->setObjectName("Panel");
     auto* rl = new QVBoxLayout(right);
     rl->setContentsMargins(0, 0, 0, 0);
     rl->setSpacing(0);
-    m_wish = new QWidget;
-    m_wish->setObjectName("direct_wish");
-    m_wish->setLayout(new QHBoxLayout);
-    m_wish->layout()->setContentsMargins(6, 4, 6, 0);
+    m_wish = new DirectWish;
     m_wish->hide();
     rl->addWidget(m_wish);
     rl->addWidget(m_suggestions, 1);
@@ -226,4 +225,85 @@ void DirectPage::updateResult()
                          : recipe == "template" ? T("Baut eine neue Timeline aus der Vorlage mit den gewählten Clips")
                                                 : T("Baut aus den gewählten Vorschlägen eine neue Timeline");
     m_apply->setToolTip(what + "\n" + T("Ein Schritt zum Rückgängigmachen. Vorschläge ändern das Projekt nicht, bis man übernimmt."));
+}
+
+QWidget* DirectPage::wishSlot() const { return m_wish; }
+
+QString DirectPage::wishContext(int maxChars) const
+{
+    const auto num = [](double s) { return QString::number(s, 'f', 1); };
+    const QJsonObject session = m_suggestions->session();
+    const QString recipe = session.isEmpty() ? m_recipes->recipe() : session.value("recipe").toString();
+    const QJsonObject options = session.isEmpty() ? m_recipes->options() : session.value("options").toObject();
+    const QString id = session.value("id").toString();
+
+    QString head = "the user typed the wish below on the Direct page (\"Regie\"). Answer it by calling the tool `direct`, "
+                   "not with text only: best with a new suggestion list (direct project:'@app', recipe, files or "
+                   "timeline, changed options) - it replaces the page's list; or apply a choice of this session "
+                   "(direct project:'@app', session:'<id>', apply:{on:[n…], order:[n…], adjust:[{n, from_s, to_s}]"
+                   + QString(recipe == QLatin1String("short") ? ", variant" : "")
+                   + "}). Then say in one short sentence what you changed.\n";
+
+    // Material: files with their lengths (the session's), numbered for the suggestions below
+    QHash<QString, double> lengths;
+    for (const QJsonValue& v : session.value("material").toArray())
+        lengths.insert(v.toObject().value("file").toString(), v.toObject().value("length_s").toDouble(-1));
+    QHash<QString, QString> fileKey; // file -> "f1"
+    QString material;
+    if (m_material->usesTimeline() || !session.value("timeline").toString().isEmpty()) {
+        material = "Material: the current timeline (timeline:'@current')\n";
+    } else {
+        const QStringList files = m_material->isEmpty() ? QStringList() : m_material->files();
+        QStringList parts;
+        int left = 0, budget = maxChars * 2 / 5; // the material never takes the room of the suggestions
+        for (int i = 0; i < files.size(); ++i) {
+            const QString key = QString("f%1").arg(i + 1);
+            fileKey.insert(files[i], key);
+            const double len = lengths.value(files[i], -1);
+            const QString part = key + '=' + files[i] + (len >= 0 ? QString(" (%1 s)").arg(num(len)) : QString());
+            if (budget - part.size() - 2 < 0) {
+                ++left;
+                continue;
+            }
+            budget -= part.size() + 2;
+            parts << part;
+        }
+        material = "Material: " + (parts.isEmpty() ? QString("none yet") : parts.join(", "));
+        if (left > 0) material += QString(" (+%1 more files not listed)").arg(left);
+        material += '\n';
+    }
+    const QString opts = QString::fromUtf8(QJsonDocument(options).toJson(QJsonDocument::Compact));
+    QString text = head + material + QString("Recipe: %1, options %2\n").arg(recipe, opts);
+    if (id.isEmpty()) return (text + "No suggestions yet.").left(maxChars);
+
+    const QList<int> rows = m_suggestions->rowOrder();
+    const QList<int> checked = m_suggestions->checkedOrder();
+    text += QString("Session %1: %2 suggestions as the page lists them (the checked ones are the result's order):\n"
+                    "n kind file from-to s reason on/off\n")
+                .arg(id)
+                .arg(rows.size());
+    if (m_suggestions->variantCount() > 0)
+        text += QString("Variant %1 of %2 is shown (the list has only its rows)\n").arg(m_suggestions->variant()).arg(m_suggestions->variantCount());
+    int listed = 0;
+    for (int n : rows) {
+        const QJsonObject s = m_suggestions->suggestion(n);
+        const QString file = s.value("file").toString();
+        const auto [from, to] = m_suggestions->range(n);
+        QString line = QString("%1 %2 %3 %4-%5 %6 %7")
+                           .arg(n)
+                           .arg(s.value("kind").toString(), fileKey.value(file, file.startsWith('@') ? file : QFileInfo(file).fileName()),
+                                num(from), num(to), s.value("reason").toObject().value("key").toString(),
+                                checked.contains(n) ? "on" : "off");
+        if (s.contains("variant")) line += QString(" v%1").arg(s.value("variant").toInt());
+        if (const QJsonValue t = s.value("track"); !t.isUndefined())
+            line += " track " + (t.isArray() ? QString::fromUtf8(QJsonDocument(t.toArray()).toJson(QJsonDocument::Compact))
+                                             : t.toVariant().toString());
+        line += '\n';
+        // Room for the last line that counts the rest
+        if (text.size() + line.size() + 40 > maxChars) break;
+        text += line;
+        ++listed;
+    }
+    if (listed < rows.size()) text += QString("(+%1 more suggestions not listed)\n").arg(rows.size() - listed);
+    return text.left(maxChars);
 }
