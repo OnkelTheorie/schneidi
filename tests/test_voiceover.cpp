@@ -590,6 +590,17 @@ int main(int argc, char** argv)
         CHECK(c.end() >= 77 && c.end() <= 78);
         if (!CHECK(QJsonDocument(r).toJson().contains("past the picture's end")))
             std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+        // A quiet take (-54 dBFS): its words count as words (silence is relative to the take), nothing is cut
+        const QString quiet = Check::makeMedia(tmp.filePath("quiet.wav"), {"-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                                                                          "-af", "volume=0.002,apad=pad_dur=0.6"});
+        cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"delete","clips":[%1]}])").arg(c.id)}});
+        r = cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"voiceover","file":"%1","at":"1.5s"}])").arg(quiet)}});
+        CHECK(QJsonDocument(r).toJson().contains("past the picture's end"));
+        CHECK(!QJsonDocument(r).toJson().contains("cut off there"));
+        // A take wholly after the picture: said too
+        r = cli("edit", {{"project", path}, {"ops", QString(R"([{"op":"voiceover","file":"%1","at":"3s","track":"new"}])").arg(take)}});
+        if (!CHECK(QJsonDocument(r).toJson().contains("entirely after the picture's end")))
+            std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
     }
 
     // ---- File names: next to the project, never over an earlier take

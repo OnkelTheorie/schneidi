@@ -1140,15 +1140,28 @@ void opSpeak(Session& s, const QJsonObject& op)
 void voiceoverEnd(Session& s, int clipId, int pictureEnd)
 {
     const Clip* found = TimelineOps::findClip(s.project.timeline(), clipId);
-    if (!found || pictureEnd <= found->start || found->end() <= pictureEnd) return;
+    if (!found || pictureEnd <= 0 || found->end() <= pictureEnd) return;
     const Clip c = *found;
-    const int over = c.end() - pictureEnd;
     const ProjectFormat& f = s.format();
+    if (c.start >= pictureEnd) { // all of it after the picture: only black under it
+        s.notes << QString("voiceover: the take lies entirely after the picture's end (%1) - black frames under all of "
+                           "it: place it earlier or put a picture under it")
+                       .arg(tc(pictureEnd, f));
+        return;
+    }
+    const int over = c.end() - pictureEnd;
     const auto peaks = AudioAnalysis::clipFramePeaks(f, c);
-    constexpr float kSilent = 0.0056f; // -45 dBFS: room tone, no word
-    bool silent = peaks.has_value();
+    // Silence relative to the take (a quiet take's words are still words): 40 dB under its peak, at most -45 dBFS;
+    // from 2 frames before the picture's end on (a word ending right at the cut keeps its tail)
+    constexpr int kMargin = 2;
+    float peak = 0;
     if (peaks)
-        for (size_t i = size_t(pictureEnd - c.start); i < peaks->size(); ++i) silent = silent && (*peaks)[i] < kSilent;
+        for (float v : *peaks) peak = std::max(peak, v);
+    const float quiet = std::min(0.0056f, peak * 0.01f);
+    const size_t first = size_t(std::max(0, pictureEnd - kMargin - c.start));
+    bool silent = peaks.has_value() && peak > 0 && first < peaks->size();
+    if (silent)
+        for (size_t i = first; i < peaks->size(); ++i) silent = silent && (*peaks)[i] < quiet;
     const QString seconds = QString::number(over / f.rate.fps(), 'f', 2);
     if (silent) {
         s.editor.trimClip(clipId, TimelineOps::Edge::End, -over);
