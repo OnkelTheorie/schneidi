@@ -312,11 +312,12 @@ void checkFiles(Direction::Session& s)
         files << m.file;
     }
     for (Direction::Suggestion& x : s.suggestions) {
+        if (x.file.startsWith('@')) continue; // a range of the timeline itself (talk)
         x.file = absolute(x.file);
         if (!files.contains(x.file))
             fail("BAD_ARGUMENT", QString("session: suggestion %1 is of %2, which is not in its material").arg(x.n).arg(x.file));
     }
-    if (files.isEmpty()) fail("NO_MATERIAL", "session: no material");
+    if (files.isEmpty() && s.recipe != QLatin1String("talk")) fail("NO_MATERIAL", "session: no material");
 }
 
 Direction::Session load(const QJsonValue& v)
@@ -410,11 +411,9 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     Direction::Session s;
     s.recipe = a["recipe"].toString().trimmed().toLower();
     if (s.recipe.isEmpty()) fail("BAD_ARGUMENT", "give recipe (short or highlights) to suggest, or session + apply");
-    static const QStringList later{"talk", "template", "script"};
-    if (later.contains(s.recipe))
-        fail("UNKNOWN_RECIPE", QString("recipe '%1' comes in a later step of this version (now: short, highlights)").arg(s.recipe));
-    if (s.recipe != QLatin1String("short") && s.recipe != QLatin1String("highlights"))
-        fail("UNKNOWN_RECIPE", QString("no recipe '%1' (short, highlights; talk, template and script follow)").arg(s.recipe));
+    static const QStringList recipes{"short", "highlights", "talk", "template", "script"};
+    if (!recipes.contains(s.recipe))
+        fail("UNKNOWN_RECIPE", QString("no recipe '%1' (%2)").arg(s.recipe, recipes.join(", ")));
     s.options = a["options"].toObject();
     // `short`'s own settings given at the top level count as options too (one call from the command line)
     for (const char* k : {"game", "hook", "audio_stream"})
@@ -429,6 +428,25 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
         if (!QFileInfo(f).isFile()) fail("NOT_FOUND", "no such file: " + f);
         if (isProjectFile(f)) fail("BAD_ARGUMENT", "files are recordings; a project goes into 'project'");
         if (!files.contains(f)) files << f;
+    }
+    // talk works on a timeline, template and script on files or the project's media
+    if (s.recipe == QLatin1String("talk")) {
+        Context sub;
+        sub.cancel = ctx.cancel;
+        sub.progress = ctx.progress;
+        suggestTalk(s, a, sub);
+        failIfCanceled();
+        return s;
+    }
+    if (s.recipe == QLatin1String("template") || s.recipe == QLatin1String("script")) {
+        Context sub;
+        sub.cancel = ctx.cancel;
+        sub.progress = ctx.progress;
+        if (s.recipe == QLatin1String("template")) suggestTemplate(s, files, sub);
+        else suggestScript(s, files, sub);
+        failIfCanceled();
+        if (s.suggestions.isEmpty() && s.notes.isEmpty()) s.notes << note("no_moments");
+        return s;
     }
     if (files.isEmpty() && a.contains("timeline")) {
         // The Direct page: a timeline of the project open in the app (a background job reads its copy)
@@ -562,7 +580,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         Direction::Suggestion* a = nullptr;
         for (Direction::Suggestion& y : chosen.suggestions)
             if (y.n == n) a = &y;
-        if (!a->on) continue;
+        if (!a->on || a->kind == QLatin1String("slot") || a->kind == QLatin1String("pause") || a->kind == QLatin1String("filler"))
+            continue;
         for (Direction::Suggestion& b : chosen.suggestions)
             if (&b != a && b.on && b.file == a->file && b.from < a->to && a->from < b.to) {
                 a->from = std::min(a->from, b.from);
@@ -588,6 +607,12 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                                      .arg(platform->maxSeconds));
     }
 
+    if (s.recipe == QLatin1String("talk")) {
+        QJsonObject o = applyTalk(chosen, list, args, ctx);
+        madeProject->clear();
+        return o;
+    }
+    if (s.recipe == QLatin1String("template")) return applyTemplate(chosen, list, args, ctx);
     const QString game = gameOf(s.options, files);
     QJsonArray done, notes;
     for (const Direction::Note& n : s.notes) notes << n.text;
@@ -633,7 +658,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     QStringList names;
     for (const QJsonValue& v : before["timelines"].toArray()) names << v["name"].toString();
     const bool isShort = s.recipe == QLatin1String("short");
-    const QString cut = uniqueName(names, isShort ? T("Short-Schnitt") : T("Highlights"));
+    const bool isScript = s.recipe == QLatin1String("script");
+    const QString cut = uniqueName(names, isShort ? T("Short-Schnitt") : isScript ? T("Rohschnitt") : T("Highlights"));
     names << cut;
     QJsonArray ops{created ? QJsonObject{{"op", "rename_timeline"}, {"name", cut}}
                            : QJsonObject{{"op", "new_timeline"}, {"name", cut}}};
@@ -701,7 +727,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         if (game != QLatin1String("none")) copy["game"] = game;
         else if (s.options["game"].toString().trimmed().compare("none", Qt::CaseInsensitive) == 0) copy["keep"] = "none";
         ops << copy;
-    } else {
+    } else if (!isScript) {
         // Highlights: soft cuts, music (a file cut to the length, or the music bed), the cuts on its beat
         if (s.options["transitions"].toString() == QLatin1String("soft"))
             for (double at : cuts)

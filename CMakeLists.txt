@@ -660,7 +660,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/CommandsIndex.cpp
     src/cli/CommandsDirect.cpp src/cli/DirectMoments.cpp src/cli/DirectDetail.h
-    src/cli/DirectBackendReal.h src/cli/DirectBackendReal.cpp
+    src/cli/DirectBackendReal.h src/cli/DirectBackendReal.cpp src/cli/DirectRecipesTalk.cpp
     src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Sandbox.h  src/cli/Sandbox.cpp

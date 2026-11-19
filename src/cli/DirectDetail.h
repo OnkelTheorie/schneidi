@@ -50,6 +50,16 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
 // `short` the private _created (the project was made just before: its empty first timeline becomes the cut)
 QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx);
 
+// The recipes on what other commands find (DirectRecipesTalk.cpp): talk (cut_pauses), template (templates auto),
+// script (rough_cut). suggest* fill the session's material/suggestions/order/notes; apply* run the one edit
+void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx);
+void suggestTemplate(Direction::Session& s, const QStringList& files, Context& ctx);
+void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx);
+QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
+                      const QJsonObject& args, Context& ctx);
+QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
+                          const QJsonObject& args, Context& ctx);
+
 // What `short` does after its cut, on its vertical timeline, as ONE edit: word captions (style karaoke|word|off: from
 // `words` = a `transcribe` words:true answer measured elsewhere, else whisper here when installed - never installed
 // from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of `game`). done/notes get what

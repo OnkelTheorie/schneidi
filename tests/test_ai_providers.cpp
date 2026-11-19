@@ -817,6 +817,8 @@ void testContext()
     // with their required keys and the first optional ones that fit, "…" for the rest
     {
         CHECK_EQ(Ai::cappedUsage("split(at, clip?)", 40), QString("split(at, clip?)"));
+        // a list value holding lists (cut_pauses' ranges) is left out whole
+        CHECK_EQ(Ai::shortUsage("{op:'cut', pad?:'0.15s', ranges?:[[from, to], ...]}"), QString("cut(pad?, ranges?)"));
         CHECK_EQ(Ai::cappedUsage("window(clips, window?, add?, remove?, shape?, x?, y?)", 34),
                  QString("window(clips, window?, add?, …)"));
         // required keys stay even past the limit, wherever they stand

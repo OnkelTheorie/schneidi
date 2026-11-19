@@ -3598,5 +3598,7 @@
  "Untertitel + Effektklänge": "Captions + effect sounds",
  "Untertitel aus der Sprache (mit Whisper) und die gewählten Effektklänge auf den eben gebauten Short. Ein eigener Schritt zum Rückgängigmachen.": "Captions from the speech (with Whisper) and the chosen effect sounds on the short just built. A step of its own to undo.",
  "Untertitel und Effektklänge …": "Captions and effect sounds …",
- "Pausen schneiden": "Cut pauses"
+ "Pausen schneiden": "Cut pauses",
+ "%1 ohne Pausen": "%1 without pauses",
+ "%1 ohne Pausen %2": "%1 without pauses %2"
 }

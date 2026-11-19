@@ -47,7 +47,7 @@ bool whisperThere() { return !Extensions::whisperProgram().isEmpty() && !Extensi
 
 RealDirectBackend::RealDirectBackend(LiveHost* host) : m_host(host) {}
 
-QStringList RealDirectBackend::recipes() const { return {"short", "highlights"}; }
+QStringList RealDirectBackend::recipes() const { return {"short", "highlights", "talk", "template", "script"}; }
 
 DirectBackend::JobHandle RealDirectBackend::suggest(const QString& recipe, const QJsonObject& material,
                                                     const QJsonObject& options, const Progress& onProgress,

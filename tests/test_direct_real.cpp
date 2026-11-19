@@ -6,13 +6,16 @@
 // `direct` made (LiveHost::liveDirection) shows on the page.
 
 #include "check.h"
+#include "synth_sounds.h"
 
 #include "app/MainWindow.h"
 #include "app/Theme.h"
+#include "cli/Commands.h"
 #include "cli/DirectBackendReal.h"
 #include "cli/Live.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "ui/direct/DirectMaterial.h"
@@ -90,12 +93,12 @@ int main(int argc, char** argv)
     DirectPage* page = w.directPage();
     if (!CHECK(page)) return Check::result();
 
-    // Talk, template and script are not there yet: their titles off, saying so
-    for (const char* id : {"talk", "template", "script"}) {
+    // Every recipe is there with the real backend
+    for (const char* id : {"short", "highlights", "talk", "template", "script"}) {
         auto* t = page->findChild<QToolButton*>(QString("direct_recipe_") + id);
         if (CHECK(t)) {
-            CHECK(!t->isEnabled());
-            CHECK(t->text().contains("kommt gleich"));
+            CHECK(t->isEnabled());
+            CHECK(!t->text().contains("kommt gleich"));
         }
     }
     auto* shortChip = page->findChild<QToolButton*>("direct_recipe_short");
@@ -147,6 +150,46 @@ int main(int argc, char** argv)
             CHECK_EQ(p->undoStack()->count(), before + 1);
             CHECK(!page->finishButton()->isVisible());
         }
+    }
+    // Recipe talk on the current timeline: two microphones, their common pause found, Übernehmen = one undo step
+    {
+        const int rate = 48000;
+        Synth::Builder ma(rate, 11.0, 11), mb(rate, 11.0, 12);
+        ma.floor();
+        Synth::speech(ma, 0.2, 2.7);
+        Synth::speech(ma, 5.0, 1.6);
+        Synth::speech(ma, 9.0, 1.0, 120);
+        mb.floor();
+        Synth::speech(mb, 2.9, 2.5, 180);
+        const QString wa = dir.path() + "/mic-a.wav", wb = dir.path() + "/mic-b.wav", path = dir.path() + "/talk.schneidi";
+        Synth::writeWav(wa, ma.s, rate);
+        Synth::writeWav(wb, mb.s, rate);
+        const auto cli = [](const QString& name, const QJsonObject& raw) {
+            const Cli::Command* cmd = Cli::find(name);
+            Cli::Context ctx;
+            return Cli::execute(*cmd, Cli::normalize(*cmd, raw), ctx);
+        };
+        cli("new", {{"project", path}, {"width", 320}, {"height", 180}, {"fps", 25}});
+        cli("edit", {{"project", path},
+                     {"ops", QJsonArray{QJsonObject{{"op", "place"}, {"media", wa}, {"at", 0}, {"track", "A1"}},
+                                        QJsonObject{{"op", "place"}, {"media", wb}, {"at", 0}, {"track", "A2"}}}}});
+        ProjectData d;
+        QString error;
+        CHECK(ProjectFile::load(path, &d, &error));
+        p->load(d);
+        p->undoStack()->clear();
+        page->material()->setUseTimeline(true);
+        page->recipes()->setRecipe("talk");
+        page->recipes()->suggestButton()->click();
+        CHECK(waitFor([&] { return page->suggestions()->hasSession() && !page->busy()
+                                   && page->suggestions()->session().value("recipe").toString() == "talk"; }));
+        const QJsonArray pauses = page->suggestions()->session().value("suggestions").toArray();
+        CHECK(!pauses.isEmpty());
+        const int steps = p->undoStack()->count(), seqs = int(p->sequences().size());
+        page->applyButton()->click();
+        CHECK(waitFor([&] { return !page->applying(); }));
+        CHECK_EQ(p->undoStack()->count(), steps + 1);
+        CHECK_EQ(int(p->sequences().size()), seqs + 1);
     }
     return Check::result();
 }

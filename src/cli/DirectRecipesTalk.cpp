@@ -1,0 +1,307 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// `direct` recipes on what other commands find (cli/CommandsDirect.cpp has short and highlights):
+// - talk: the pauses and filler words `cut_pauses` finds on a timeline (a dry run measures them); applying cuts the
+//   chosen ranges out of a copy of that timeline (one edit: new_timeline from it + cut_pauses ranges).
+// - template: the shots `templates auto:true` chooses for a content template's clip slots (the material index is built
+//   while suggesting, never when applying); applying fills the slots with the chosen values.
+// - script: the takes `rough_cut` finds for each sentence of a script (a dry run; whisper for files without a
+//   transcript, here and not in the app); applying puts the chosen takes one after another on a new timeline.
+#include "cli/AnalysisDetail.h"
+#include "cli/DirectDetail.h"
+#include "cli/Live.h"
+
+#include "core/I18n.h"
+#include "core/LiveHost.h"
+#include "core/ProjectFile.h"
+
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+
+#include <algorithm>
+#include <cmath>
+
+namespace Cli::detail {
+
+namespace {
+
+QJsonObject runSub(const char* command, const QJsonObject& args, Context& ctx)
+{
+    Context sub;
+    sub.cancel = ctx.cancel;
+    sub.progress = ctx.progress;
+    sub.stage = ctx.stage;
+    return execute(*find(command), args, sub);
+}
+
+QString seconds3(double s) { return QString("%1s").arg(s, 0, 'f', 3); }
+
+// The project a recipe on a timeline works on: given, else the app's (inside it or a background job of it)
+QString projectOf(Direction::Session& s)
+{
+    if (s.project.isEmpty() && (Live::host() || Live::appCopy())) s.project = Live::AppProject;
+    if (s.project.isEmpty()) fail("NO_MATERIAL", QString("recipe %1 works on a project: give project").arg(s.recipe));
+    return s.project;
+}
+
+// The timeline as it is now, as a fingerprint (a talk session's ranges are times on exactly that timeline)
+QString timelineStamp(const QString& project, const QString& timeline)
+{
+    Session s(project);
+    if (!timeline.isEmpty() && timeline != QLatin1String("@current")) s.selectTimeline(timeline);
+    QByteArray bytes = QByteArray::number(s.project.currentSequence());
+    const Timeline& tl = s.project.timeline();
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : tl.tracks(k))
+            for (const Clip& c : t.clips) bytes += QJsonDocument(ProjectFile::clipJson(c)).toJson(QJsonDocument::Compact);
+    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex());
+}
+
+Direction::Material materialOf(const QString& file)
+{
+    Direction::Material m;
+    const QFileInfo fi(file);
+    m.file = fi.absoluteFilePath();
+    m.size = fi.size();
+    m.modified = fi.lastModified().toMSecsSinceEpoch();
+    m.analysis = {{"sound", "none"}, {"picture", "none"}, {"events", "none"}, {"speech", "none"}};
+    return m;
+}
+
+QJsonObject noteObject(const QJsonArray& notes, const char* key)
+{
+    for (const QJsonValue& n : notes)
+        if (n.toObject().contains(key)) return n.toObject().value(key).toObject();
+    return {};
+}
+
+} // namespace
+
+// ---------- talk ----------
+
+void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
+{
+    const QString project = projectOf(s);
+    s.timeline = a["timeline"].toString("@current").trimmed();
+    const QJsonObject& o = s.options;
+    QJsonObject op{{"op", "cut_pauses"}};
+    if (o.contains("min_pause_s")) op["min_pause"] = seconds3(o["min_pause_s"].toDouble());
+    if (o.contains("pad_s")) op["pad"] = seconds3(o["pad_s"].toDouble());
+    if (o.contains("fillers")) op["fillers"] = o["fillers"].toBool();
+    if (o.contains("threshold")) op["threshold"] = o["threshold"];
+    if (o.contains("tracks") && !o["tracks"].toString().trimmed().isEmpty()) op["tracks"] = o["tracks"];
+    QJsonObject e{{"project", project}, {"ops", QJsonArray{op}}, {"dry_run", true}};
+    if (s.timeline != QLatin1String("@current")) e["timeline"] = s.timeline;
+    // A dry run measures (on a copy of what the app shows; a background job has no app host, so it measures here)
+    const QJsonObject r = runSub("edit", e, ctx);
+    const QJsonObject note = noteObject(r["notes"].toArray(), "cut_pauses");
+    Session view(project);
+    if (s.timeline != QLatin1String("@current")) view.selectTimeline(s.timeline);
+    const double fps = view.format().rate.fps();
+    s.options["_timeline_stamp"] = timelineStamp(project, s.timeline);
+    s.options["_timeline_name"] = view.project.sequenceName(view.project.currentSequence());
+    for (const QString& f : [&] {
+             QStringList files;
+             const Timeline& tl = view.project.timeline();
+             for (const Track& t : tl.audio)
+                 for (const Clip& c : t.clips)
+                     if (!c.mediaPath.isEmpty() && !files.contains(c.mediaPath)) files << c.mediaPath;
+             return files;
+         }())
+        if (QFileInfo::exists(f)) s.material << materialOf(f);
+    for (const QJsonValue& v : note["ranges"].toArray()) {
+        Direction::Suggestion x;
+        x.n = v["n"].toInt();
+        x.kind = v["kind"].toString("pause");
+        x.file = "@timeline";
+        x.from = v["from"].toDouble() / fps;
+        x.to = v["to"].toDouble() / fps;
+        QStringList tracks;
+        for (const QJsonValue& t : v["tracks"].toArray()) tracks << t.toString();
+        x.track = tracks.join(",");
+        x.score = v["length_s"].toDouble();
+        x.labels << x.kind;
+        x.reason = x.kind == QLatin1String("filler") ? Direction::Reason{"filler", {{"word", v["text"].toString()}}}
+                                                     : Direction::Reason{"pause", {{"s", v["length_s"].toDouble()}}};
+        s.suggestions << x;
+        s.order << x.n;
+    }
+    for (const char* k : {"note", "fillers"})
+        if (note[k].isString()) s.notes << Direction::Note{"talk", note[k].toString()};
+}
+
+QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
+                      const QJsonObject& args, Context& ctx)
+{
+    QString project = args["project"].toString();
+    if (project.isEmpty()) project = s.project;
+    if (project.isEmpty() && Live::host()) project = Live::AppProject;
+    if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
+    if (project.isEmpty()) fail("NO_MATERIAL", "talk works on a project: give project");
+    if (timelineStamp(project, s.timeline) != s.options["_timeline_stamp"].toString())
+        fail("SESSION_STALE", "the timeline changed since its pauses were found: suggest again");
+    const QJsonObject before = runSub("info", {{"project", project}, {"summary", true}}, ctx);
+    QStringList names;
+    for (const QJsonValue& v : before["timelines"].toArray()) names << v["name"].toString();
+    QString name = T("%1 ohne Pausen").arg(s.options["_timeline_name"].toString());
+    for (int i = 2; names.contains(name, Qt::CaseInsensitive); ++i)
+        name = T("%1 ohne Pausen %2").arg(s.options["_timeline_name"].toString()).arg(i);
+    QJsonArray ranges, pauses;
+    double removed = 0;
+    for (const Direction::Suggestion* x : list) {
+        ranges << QJsonArray{seconds3(x->from), seconds3(x->to)};
+        pauses << QJsonObject{{"n", x->n}, {"kind", x->kind}, {"from_s", std::round(x->from * 100) / 100},
+                              {"to_s", std::round(x->to * 100) / 100}};
+        removed += x->to - x->from;
+    }
+    QJsonObject copy{{"op", "new_timeline"}, {"name", name}, {"from", s.options["_timeline_name"].toString()}};
+    QJsonArray ops{copy, QJsonObject{{"op", "cut_pauses"}, {"ranges", ranges}}};
+    QJsonArray done, notes;
+    if (s.options.contains("target_lufs") && s.options["target_lufs"].isDouble())
+        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"target_lufs", s.options["target_lufs"]}};
+    if (s.options["room_tone"].toBool())
+        notes << "room tone: not laid under the cuts yet (op room_tone on a voice track does it by hand)";
+    if (!args["plan"].toBool()) ops << QJsonObject{{"op", "_direction"}, {"session", Direction::toJson(s)}};
+    QJsonObject e{{"project", project}, {"ops", ops}};
+    if (args["plan"].toBool()) e["plan"] = true;
+    if (args["dry_run"].toBool()) e["dry_run"] = true;
+    const QJsonObject edited = runSub("edit", e, ctx);
+    if (args["plan"].toBool()) return {{"project", project}, {"plan", edited["plan"]}, {"session", s.id}};
+    done << QString("cut: %1 pause%2 and filler%2, %3 s out (timeline '%4')")
+                .arg(list.size())
+                .arg(list.size() == 1 ? "" : "s")
+                .arg(std::round(removed * 100) / 100)
+                .arg(name);
+    QJsonObject out{{"project", project}, {"timeline", name}, {"pauses", pauses}, {"removed_s", std::round(removed * 100) / 100},
+                    {"length_s", edited["timeline"]["length_s"]}, {"done", done}, {"session", s.id},
+                    {"next", QString("look at it (`frames`, play it), then `render` timeline '%1'").arg(name)}};
+    if (!notes.isEmpty()) out["notes"] = notes;
+    if (edited.contains("live")) out["live"] = true;
+    return out;
+}
+
+// ---------- template ----------
+
+void suggestTemplate(Direction::Session& s, const QStringList& files, Context& ctx)
+{
+    const QString tmpl = s.options["template"].toString().trimmed();
+    QJsonObject t{{"auto", true}, {"dry_run", true}, {"values", QJsonObject{}}};
+    if (!files.isEmpty()) t["files"] = QJsonArray::fromStringList(files);
+    if (!tmpl.isEmpty()) {
+        t["fill"] = tmpl;
+    } else {
+        // The project's own slots (it is a template, or a project made of one)
+        t["project"] = projectOf(s);
+    }
+    const QJsonObject r = runSub("templates", t, ctx);
+    QStringList used;
+    for (const QJsonValue& p : r["auto"].toArray()) {
+        if (p["file"].isString() && !used.contains(p["file"].toString())) used << p["file"].toString();
+        if (p["shot"].isNull()) {
+            s.notes << Direction::Note{"template", QString("no shot for the field '%1'").arg(p["slot"].toString())};
+            continue;
+        }
+        Direction::Suggestion x;
+        x.n = int(s.suggestions.size()) + 1;
+        x.kind = "slot";
+        x.slot = p["slot"].toString();
+        x.shot = p["shot"].toInt();
+        x.file = absolute(p["file"].toString());
+        x.from = p["from_s"].toDouble();
+        x.to = p["to_s"].toDouble();
+        x.score = p["score"].toDouble();
+        x.reason = {"slot_match", {{"slot", x.slot}}};
+        x.labels << "slot";
+        s.suggestions << x;
+        s.order << x.n;
+    }
+    for (const QString& f : files.isEmpty() ? used : files) s.material << materialOf(absolute(f));
+    for (const QJsonValue& n : r["notes"].toArray()) s.notes << Direction::Note{"template", n.toString()};
+}
+
+QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
+                          const QJsonObject& args, Context& ctx)
+{
+    QJsonObject values;
+    for (const Direction::Suggestion* x : list)
+        values[x->slot] = QJsonObject{{"file", x->file}, {"from", seconds3(x->from)}, {"to", seconds3(x->to)}};
+    const QString tmpl = s.options["template"].toString().trimmed();
+    QJsonObject t{{"values", values}};
+    if (args["dry_run"].toBool()) t["dry_run"] = true;
+    QString project = args["project"].toString();
+    if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
+    if (!tmpl.isEmpty()) {
+        // A content template: a new project of it (the app opens nothing by itself; the answer names the file)
+        if (project.isEmpty() || QFileInfo::exists(project) || Live::isAppProject(project)) {
+            const QFileInfo first(list.isEmpty() ? QString() : list.first()->file);
+            QString base = QDir(first.absolutePath()).filePath(QFileInfo(tmpl).completeBaseName());
+            project = base + "." + QString(ProjectFile::Extension);
+            for (int i = 2; QFileInfo::exists(project); ++i) project = QString("%1-%2.%3").arg(base).arg(i).arg(ProjectFile::Extension);
+        }
+        t["fill"] = tmpl;
+        t["out_project"] = project;
+    } else {
+        if (project.isEmpty()) project = s.project;
+        if (project.isEmpty() && Live::host()) project = Live::AppProject;
+        if (project.isEmpty()) fail("NO_MATERIAL", "template without a template id fills the slots of a project: give project");
+        t["project"] = project; // in place: one undo step in the app
+    }
+    const QJsonObject r = runSub("templates", t, ctx);
+    QJsonArray filled;
+    for (const Direction::Suggestion* x : list)
+        filled << QJsonObject{{"slot", x->slot}, {"file", x->file}, {"from_s", std::round(x->from * 100) / 100},
+                             {"to_s", std::round(x->to * 100) / 100}};
+    QJsonObject out{{"project", project}, {"slots", filled}, {"done", QJsonArray{QString("filled %1 field%2").arg(list.size()).arg(list.size() == 1 ? "" : "s")}},
+                    {"session", s.id}, {"result", r}};
+    if (!tmpl.isEmpty()) out["new_project"] = true;
+    out["next"] = tmpl.isEmpty() ? QString("look at it, then `render`") : QString("open %1 (app open) or `render` it").arg(project);
+    return out;
+}
+
+// ---------- script ----------
+
+void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx)
+{
+    const QString project = projectOf(s);
+    QJsonObject op{{"op", "rough_cut"}};
+    for (const char* k : {"script", "script_file", "takes", "language"})
+        if (s.options.contains(k)) op[k] = s.options[k];
+    if (!op.contains("script") && !op.contains("script_file"))
+        fail("BAD_ARGUMENT", "recipe script needs options.script (the text) or options.script_file");
+    if (!files.isEmpty()) op["media"] = QJsonArray::fromStringList(files);
+    QJsonObject e{{"project", project}, {"ops", QJsonArray{op}}, {"dry_run", true}};
+    // Files without a transcript: whisper here (a background job), the dry run reads what it made
+    e = prepareTalk(e, ctx);
+    const QJsonObject r = runSub("edit", e, ctx);
+    const QJsonObject note = noteObject(r["notes"].toArray(), "rough_cut");
+    QStringList used;
+    const QJsonArray sentences = note["sentences"].toArray();
+    for (int i = 0; i < sentences.size(); ++i) {
+        const QJsonObject sentence = sentences[i].toObject();
+        const auto add = [&](const QJsonObject& take, bool on) {
+            Direction::Suggestion x;
+            x.n = int(s.suggestions.size()) + 1;
+            x.kind = "take";
+            x.sentence = i + 1;
+            x.file = absolute(take["file"].toString());
+            x.from = take["from_s"].toDouble();
+            x.to = take["to_s"].toDouble();
+            x.score = take["coverage"].toDouble();
+            x.on = on;
+            x.reason = {"take", {{"sentence", i + 1}}};
+            x.labels << (take["good"].toBool() ? "good" : "take");
+            if (!used.contains(x.file)) used << x.file;
+            s.suggestions << x;
+            if (on) s.order << x.n;
+        };
+        if (sentence["take"].isObject()) add(sentence["take"].toObject(), true);
+        for (const QJsonValue& alt : sentence["alternatives"].toArray()) add(alt.toObject(), false);
+    }
+    for (const QJsonValue& m : note["missing"].toArray())
+        s.notes << Direction::Note{"script", "not found in what was said: " + m.toString()};
+    for (const QString& f : files.isEmpty() ? used : files) s.material << materialOf(absolute(f));
+}
+
+} // namespace Cli::detail

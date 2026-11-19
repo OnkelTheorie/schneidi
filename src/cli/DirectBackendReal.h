@@ -18,7 +18,7 @@ public:
                       const Progress& onProgress, const Done& onDone, QObject* receiver) override;
     JobHandle apply(const QJsonObject& session, const QJsonObject& choice, const Progress& onProgress,
                     const Done& onDone, QObject* receiver) override;
-    QStringList recipes() const override; // short and highlights (talk, template and script follow)
+    QStringList recipes() const override; // all five
     bool canFinish(const QJsonObject& session) const override;
     JobHandle finish(const QJsonObject& session, const QJsonObject& applied, const Progress& onProgress,
                      const Done& onDone, QObject* receiver) override;

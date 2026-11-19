@@ -86,6 +86,29 @@ public:
     bool liveOpen(const QStringList&, bool, QString*) override { return true; }
 };
 
+// Two microphones of a conversation: A talks 0.2-2.9 and 5.0-6.6 and 9.0-10.0 s, B answers 2.9-5.4 s; both quiet
+// about 6.6-9.0 s (cf. test_pause_cut)
+QString twoMics(const QString& dir)
+{
+    const int rate = 48000;
+    Synth::Builder ma(rate, 11.0, 11), mb(rate, 11.0, 12);
+    ma.floor();
+    Synth::speech(ma, 0.2, 2.7);
+    Synth::speech(ma, 5.0, 1.6);
+    Synth::speech(ma, 9.0, 1.0, 120);
+    mb.floor();
+    Synth::speech(mb, 2.9, 2.5, 180);
+    const QString a = QDir(dir).filePath("mic-a.wav"), b = QDir(dir).filePath("mic-b.wav");
+    Synth::writeWav(a, ma.s, rate);
+    Synth::writeWav(b, mb.s, rate);
+    const QString project = QDir(dir).filePath("talk.schneidi");
+    run("new", {{"project", project}, {"width", 320}, {"height", 180}, {"fps", 25}});
+    run("edit", {{"project", project},
+                 {"ops", QJsonArray{QJsonObject{{"op", "place"}, {"media", a}, {"at", 0}, {"track", "A1"}},
+                                    QJsonObject{{"op", "place"}, {"media", b}, {"at", 0}, {"track", "A2"}}}}});
+    return project;
+}
+
 QStringList labelsOf(const QJsonArray& suggestions)
 {
     QStringList all;
@@ -106,7 +129,7 @@ int main(int argc, char** argv)
     QTemporaryDir dir;
 
     // ---- Without material: the errors of the contract
-    CHECK_EQ(run("direct", {{"recipe", "talk"}, {"files", QJsonArray{}}})["error"].toString(), QString("UNKNOWN_RECIPE"));
+    CHECK_EQ(run("direct", {{"recipe", "talk"}, {"files", QJsonArray{}}})["error"].toString(), QString("NO_MATERIAL"));
     CHECK_EQ(run("direct", {{"recipe", "dance"}})["error"].toString(), QString("UNKNOWN_RECIPE"));
     CHECK_EQ(run("direct", {{"recipe", "short"}})["error"].toString(), QString("NO_MATERIAL"));
     CHECK_EQ(run("direct", {{"session", "d999"}, {"apply", QJsonObject{{"on", "all"}}}})["error"].toString(),
@@ -384,6 +407,54 @@ int main(int argc, char** argv)
                                                 {"options", QJsonObject{{"length_s", 8}}}});
         CHECK(std::abs(calm["session"]["length_s"].toDouble() - 8) < 0.2);
         Q_UNUSED(longer);
+    }
+
+    // ---- Recipe talk: the common pauses of two microphones; apply = a copy of the timeline without them
+    {
+        const QString talk = twoMics(dir.path());
+        const QJsonObject r = run("direct", {{"recipe", "talk"}, {"project", talk}, {"timeline", "@current"},
+                                             {"options", QJsonObject{{"min_pause_s", 0.6}, {"pad_s", 0.15}, {"tracks", "A1,A2"}}}});
+        const QJsonArray list = r["session"]["suggestions"].toArray();
+        bool common = false;
+        for (const QJsonValue& v : list) {
+            CHECK_EQ(v["kind"].toString(), QString("pause"));
+            CHECK_EQ(v["reason"]["key"].toString(), QString("pause"));
+            common |= v["from_s"].toDouble() > 6.4 && v["to_s"].toDouble() < 9.2;
+            CHECK(!(v["from_s"].toDouble() < 5.2 && v["to_s"].toDouble() > 3.2)); // B talks there
+        }
+        if (!CHECK(common)) std::printf("       %s\n", QJsonDocument(list).toJson().constData());
+        const double before = run("info", {{"project", talk}, {"summary", true}})["timeline"].toObject()["length_s"].toDouble();
+        const QJsonObject cut = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        CHECK(!cut.contains("error"));
+        const QJsonObject after = run("info", {{"project", talk}, {"timeline", cut["timeline"]}, {"summary", true}});
+        CHECK(after["timeline"]["length_s"].toDouble() < before - 1.5);
+        CHECK(std::abs(run("info", {{"project", talk}, {"summary", true}})["timeline"].toObject()["length_s"].toDouble() - before) < 0.05);
+        // The timeline changed since: stale
+        const QJsonObject again = run("direct", {{"recipe", "talk"}, {"project", talk}, {"options", QJsonObject{{"tracks", "A1,A2"}}}});
+        run("edit", {{"project", talk}, {"ops", QJsonArray{QJsonObject{{"op", "marker"}, {"at", "1s"}}}}});
+        run("edit", {{"project", talk}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "1s"}}}}});
+        CHECK_EQ(run("direct", {{"session", again["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}})["error"].toString(),
+                 QString("SESSION_STALE"));
+    }
+    // ---- Recipe script without a script: a clear error; template without a project or template: NO_MATERIAL
+    CHECK_EQ(run("direct", {{"recipe", "script"}, {"project", proj}})["error"].toString(), QString("BAD_ARGUMENT"));
+    CHECK_EQ(run("direct", {{"recipe", "template"}, {"files", QJsonArray{clip}}})["error"].toString(), QString("NO_MATERIAL"));
+
+    // ---- Recipe template: the built-in short-hook template, its clip fields filled with shots of the material
+    {
+        const QJsonObject r = run("direct", {{"recipe", "template"}, {"files", QJsonArray{clip, beach}},
+                                             {"options", QJsonObject{{"template", "short-hook"}}}});
+        const QJsonArray list = r["session"]["suggestions"].toArray();
+        if (CHECK(!list.isEmpty())) {
+            CHECK_EQ(list[0]["kind"].toString(), QString("slot"));
+            CHECK(!list[0]["slot"].toString().isEmpty());
+            CHECK_EQ(list[0]["reason"]["key"].toString(), QString("slot_match"));
+        }
+        const QString filled = dir.filePath("out/from-template.schneidi");
+        const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                {"project", filled}});
+        CHECK(!made.contains("error"));
+        CHECK(QFileInfo::exists(filled));
     }
 
     // ---- Cancel: a running suggest stops with CANCELED; an apply canceled before it starts leaves no project
