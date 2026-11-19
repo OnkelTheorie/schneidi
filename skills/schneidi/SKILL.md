@@ -54,6 +54,13 @@ names cost a failed call.
    `plan:true` checks every op like `dry_run`, changes nothing and answers `plan {id, steps:[{n, op, why, summary,
    changes}]}`; show the steps, then `edit` with `plan_id` and `run` (`[1,2,4]` or `"all"`: one edit, one undo step)
    or `discard:true`. A plan is void once the project changes (`PLAN_STALE`: plan again).
+   **Suggestions with reasons, then one edit**: `direct` with a `recipe` - `short`, `highlights` (moments of any
+   material), `talk` (pauses and fillers of a timeline), `template` (shots for a content template's clip fields),
+   `script` (the takes of each sentence) - changes nothing and answers a `session` (`d3`) whose `suggestions` each
+   have `from_s`/`to_s` (source seconds), a `reason` (`text`) and `on`. Show them or choose, then `direct` `session`
+   `"d3"` `apply` `{"on":"all"}` (or `on:[1,4]`, `adjust:[{n, from_s, to_s}]`, `order`) = one edit, one undo step;
+   `plan:true` makes a normal plan. Sessions last a day; `SESSION_STALE` (the material or timeline changed) or
+   `SESSION_EXPIRED` = suggest again. Every analysis is cached per file, so a second recipe is quick.
    **When schneidi lacks an effect**, don't give up and don't fake it with a pile of keyframes: write it.
    `{op:'effect', effect:'ffmpeg_filter', params:{chain:'hue=s=0,edgedetect'}}` runs an FFmpeg filter chain on the
    clip (allowed filters: `effects` `effect:'ffmpeg_filter'`), `effect:'shader'` with `params.code` a GLSL function
@@ -99,6 +106,8 @@ pool and is selected; a .schneidi project opens, never over unsaved changes).
 - `APP_WAITING`: the app waits for the user - a dialog is open there (a question, an error, the restore offer
   after a crash). Changes wait meanwhile (while an ordinary dialog is open you can still read: `info`, `check`,
   `frames`); tell the user to answer it and try again, don't retry in a loop.
+- `direct` on `@app` shows its suggestions on the app's Direct page too, where the user can switch them on and off
+  and apply them; an `apply` of yours shows up there as well.
 - The app lights up the clips you changed; mention what you changed so the user knows where to look.
 - **The user edits too.** Between your answers they trim, move, mute or delete clips by hand (in the app chat a
   "[Note from the schneidi app: the user changed …]" lists it). Build on their changes: when you rework something
@@ -137,7 +146,7 @@ Read the guide that fits the task (several if it combines them):
 | Task | Guide |
 |---|---|
 | Highlight reel from game, sports or event footage | [references/highlights.md](references/highlights.md) |
-| Interview, podcast, vlog, talking head: remove pauses and slips | [references/talking.md](references/talking.md) |
+| Interview, podcast, vlog, talking head: remove pauses (`cut_pauses`; to choose first: `direct` talk), slips, cut from a script | [references/talking.md](references/talking.md) |
 | Short / Reel / TikTok, 9:16, vertical (one call: `short`; suggestions first: `direct`) | [references/social.md](references/social.md) |
 | Ad, product or marketing clip, fixed length, several formats | [references/ad.md](references/ad.md) |
 | Subtitles and captions | [references/subtitles.md](references/subtitles.md) |

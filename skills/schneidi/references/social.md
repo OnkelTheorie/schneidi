@@ -27,7 +27,9 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
 **Choose first, then cut**: `direct` with `recipe` `short` suggests the moments (up to 3 `variants` without shared
 moments, each with a `reason` like "2 kills (multi kill)" or "laughter (2.1 s)") and changes nothing; show them or
 pick yourself, then `direct` `session` `'d3'` `apply` `{"on":"all"}` (or `on:[1,3]`, `adjust`, `order`, `variant:2`)
-builds the cut and the 9:16 copy as one edit (`plan:true` = a plan first). Captions and render after that as usual.
+builds the cut and the 9:16 copy as one edit (`plan:true` = a plan first). Then captions: `direct` with `project` and
+`finish` `{"timeline": <the answer's timeline>}` adds word captions (`captions` karaoke|word|off; whisper needed) and,
+only on request, `sfx` `"mild"` as one more edit; render after that as usual.
 
 **A template instead**: `short-hook` (hook text over the first clip, three clips, music) or a user's own short
 template - `templates` `fill` with the clips and the hook text ([templates.md](templates.md)).
