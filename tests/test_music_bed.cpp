@@ -20,6 +20,7 @@
 #include "check.h"
 #include "synth_sounds.h"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -347,6 +348,29 @@ int main(int argc, char* argv[])
         for (int i = 0; i < q->timeline().audio.size(); ++i)
             if (q->timeline().audio[i].name == T("Musik")) musik = i;
         CHECK(musik >= 0 && c["track"].toString() == QString("A%1").arg(musik + 1));
+    }
+    // Live: schneidi-cli makes the bed before the edit goes to the app - after the ops before it (here a clip that
+    // makes the timeline 40 s long), and not at all when one of those fails (the length would be unknown)
+    {
+        const QString pj = tmp.path() + "/live.schneidi";
+        run("new", {{"project", pj}, {"fps", 25}});
+        edit(pj, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"}])").arg(speech));
+        const QString dir = tmp.path() + "/live-music";
+        const auto files = [&] { return QDir(dir).entryList(QDir::Files); };
+        Cli::Context ctx;
+        const QJsonDocument ops = QJsonDocument::fromJson(
+            QString(R"([{"op":"place","media":"%1","at":"20s","track":"A1"},{"op":"music_bed","mood":"calm"}])").arg(speech).toUtf8());
+        Cli::detail::prepareMusicBed(QJsonObject{{"project", pj}, {"ops", ops.array()}}, ctx);
+        const QStringList made = files();
+        if (!CHECK(made == QStringList{MusicBed::fileName({MusicBed::Mood::Calm, 40})})) std::printf("       %s\n", qPrintable(made.join(", ")));
+        CHECK_EQ(load(pj)->timeline().audio.value(0).clips.size(), 1); // the project itself is left alone
+        const QJsonDocument bad = QJsonDocument::fromJson(R"([{"op":"no_such_op"},{"op":"music_bed","mood":"hype"}])");
+        Cli::detail::prepareMusicBed(QJsonObject{{"project", pj}, {"ops", bad.array()}}, ctx);
+        CHECK_EQ(files(), made);
+        // First op: made right away
+        const QJsonDocument first = QJsonDocument::fromJson(R"([{"op":"music_bed","mood":"drive","length":"6s"}])");
+        Cli::detail::prepareMusicBed(QJsonObject{{"project", pj}, {"ops", first.array()}}, ctx);
+        CHECK(files().contains(MusicBed::fileName({MusicBed::Mood::Drive, 6})));
     }
     // snap_to_beat takes the bed's grid: a cut 0.2 s off a beat moves onto it
     {

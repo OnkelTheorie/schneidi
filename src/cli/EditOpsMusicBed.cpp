@@ -269,20 +269,28 @@ QJsonArray musicBedMoods()
 QJsonObject prepareMusicBed(const QJsonObject& editArgs, Context&)
 {
     const QJsonArray ops = editArgs.value("ops").isObject() ? QJsonArray{editArgs.value("ops")} : editArgs.value("ops").toArray();
-    bool any = false;
-    for (const QJsonValue& v : ops) any = any || v.toObject().value("op").toString() == "music_bed";
-    if (!any) return editArgs;
+    int last = -1; // the last music_bed: nothing after it matters here
+    for (int i = 0; i < ops.size(); ++i)
+        if (ops[i].toObject().value("op").toString() == "music_bed") last = i;
+    if (last < 0) return editArgs;
+    // The ops before a bed change what it is made of (length:'timeline', the frame rate): they run first on a copy
+    // of what the app shows. When one of them fails here, the state after it is unknown and the app makes the rest
+    // itself (a bed of a wrong length must never be made)
     try {
-        Session s(editArgs.value("project").toString()); // a copy of what the app shows
+        Session s(editArgs.value("project").toString());
         s.selectTimeline(editArgs.value("timeline"));
-        for (const QJsonValue& v : ops) {
-            const QJsonObject op = v.toObject();
-            if (op.value("op").toString() != "music_bed") continue;
-            int at = 0, frames = 0;
-            ensureBed(s.path, bedOptions(s, op, &at, &frames));
+        for (int i = 0; i <= last; ++i) {
+            const QJsonObject op = ops[i].toObject();
+            if (op.value("op").toString() == "music_bed") {
+                int at = 0, frames = 0;
+                ensureBed(s.path, bedOptions(s, op, &at, &frames));
+            }
+            if (i < last) applyOp(s, op); // made already: the op only places it
         }
     } catch (const Error&) {
         // the op reports it where it runs
+    } catch (const std::exception&) {
+        // (no memory, no thread): the app tries itself
     }
     return editArgs;
 }
