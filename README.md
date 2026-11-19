@@ -175,6 +175,8 @@ with a sample file help most.
 
 ## How light is it?
 
+<!-- The figures in the tables below feed site/figures.json (the project website): after changing one, run tools/site_figures.py --write (ctest site_figures checks it). -->
+
 > **Measured with older versions:** the two tables below are from **0.11** (Ryzen 5 5600X) and **0.13** (Ryzen 5 PRO 2400G) and have not been measured again since. The picture engine was rewritten in 0.15, and features were added after that; newer numbers from the regular benchmark runs are in [BENCHMARKS.md](BENCHMARKS.md).
 
 Measured on two desktop CPUs restricted with Linux cgroups (cores, RAM, no swap) – stand-ins for old hardware, not a real old laptop: a Ryzen 5 5600X (with 0.11) and a Ryzen 5 PRO 2400G (2018, 4 cores, built-in Vega graphics; with 0.13). Each cell: **5600X / 2400G**.

@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "about": "Measured figures for the project website, generated from README.md by tools/site_figures.py --write; do not edit by hand.",
+  "figures": {
+    "start_s": {
+      "value": "0.6",
+      "source": "Window visible, one full core, column 1, 5600X"
+    },
+    "start_s_2400g": {
+      "value": "0.7",
+      "source": "Window visible, one full core, column 1, 2400G"
+    },
+    "start10_s": {
+      "value": "6",
+      "source": "Window visible, 10 % of one core, column 1, 5600X"
+    },
+    "start10_s_2400g": {
+      "value": "11",
+      "source": "Window visible, 10 % of one core, column 1, 2400G"
+    },
+    "min_ram_mb": {
+      "value": "128",
+      "source": "Least RAM it starts and keeps running with, column 1, 5600X"
+    },
+    "min_ram_mb_2400g": {
+      "value": "112",
+      "source": "Least RAM it starts and keeps running with, column 1, 2400G"
+    },
+    "clip_ram_mb": {
+      "value": "288",
+      "source": "Least RAM it starts and keeps running with, column 2, 5600X"
+    },
+    "clip_ram_mb_2400g": {
+      "value": "288",
+      "source": "Least RAM it starts and keeps running with, column 2, 2400G"
+    },
+    "orig1_fps": {
+      "value": "12",
+      "source": "1 core, column 1, 5600X"
+    },
+    "orig1_fps_2400g": {
+      "value": "11",
+      "source": "1 core, column 1, 2400G"
+    },
+    "gpu1_fps": {
+      "value": "55",
+      "source": "1 core, column 2, 5600X"
+    },
+    "gpu1_fps_2400g": {
+      "value": "53",
+      "source": "1 core, column 2, 2400G"
+    },
+    "proxy1_fps": {
+      "value": "57",
+      "source": "1 core, column 3, 5600X"
+    },
+    "proxy1_fps_2400g": {
+      "value": "53",
+      "source": "1 core, column 3, 2400G"
+    },
+    "orig4_fps": {
+      "value": "57",
+      "source": "4 cores, column 1, 5600X"
+    },
+    "orig4_fps_2400g": {
+      "value": "53",
+      "source": "4 cores, column 1, 2400G"
+    },
+    "pi_start_s": {
+      "value": "3.7",
+      "source": "Window visible, column 1"
+    },
+    "pi_ram_mb": {
+      "value": "108",
+      "source": "Window visible, column 1"
+    },
+    "pi_720_fps": {
+      "value": "30",
+      "source": "Playback 720p30 original, column 1"
+    },
+    "pi_fps": {
+      "value": "56",
+      "source": "Playback 1080p60 from proxies, column 1"
+    },
+    "pi_jump_s": {
+      "value": "0.05",
+      "source": "Jumping in the timeline, original → proxies, column 1"
+    },
+    "smooth_cores": {
+      "value": "4",
+      "source": "4 cores, column 1 (first \"smooth\" without \"stutter\")"
+    },
+    "smooth_cores_word": {
+      "value": "four",
+      "source": "4 cores, column 1 (first \"smooth\" without \"stutter\")"
+    },
+    "languages": {
+      "value": "English, German, Chinese (Simplified), Dutch, French, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish, Turkish and Ukrainian",
+      "source": "i18n/*.json + German; README \"available in 16 languages\""
+    },
+    "languages_count": {
+      "value": "16",
+      "source": "i18n/*.json + German; README \"available in 16 languages\""
+    }
+  }
+}
