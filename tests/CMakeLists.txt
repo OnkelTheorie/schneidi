@@ -186,6 +186,8 @@ schneidi_test(test_short) # `short`: moments, Shorts/Reels/TikTok presets, check
 target_link_libraries(test_short PRIVATE schneidi_cli_lib)
 schneidi_test(test_duel_fixes) # duel 18.11.: single stream not on a muted track, silent mix, whisper lines, track names, ...
 target_link_libraries(test_duel_fixes PRIVATE schneidi_cli_lib)
+schneidi_test(test_duel_leftovers) # duel 17./18.11. leftovers: check audio_boost, solid, frames guides, new_timeline format
+target_link_libraries(test_duel_leftovers PRIVATE schneidi_cli_lib)
 schneidi_test(test_review_render) # `render review`: marks burned in at their frames, sheet tiles, offsets, project untouched
 target_link_libraries(test_review_render PRIVATE schneidi_cli_lib)
 schneidi_test(test_deliver_review) # Deliver › Prüf-Render: review jobs in the queue with the marks, normal ones without

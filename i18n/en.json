@@ -3449,5 +3449,6 @@
  "Y": "Y",
  "Zieh den Punkt in einem Rad zu einer Farbe hin: Dieser Bereich wird so eingefärbt. Das Rädchen darunter macht den Bereich heller oder dunkler. Doppelklick setzt zurück.": "Drag the point in a wheel towards a colour: that range takes on the colour. The small wheel below makes the range brighter or darker. Double-click resets.",
  "Zu den Rädern: sie wirken dann nur in der Auswahl (Ebene „Q“)": "To the wheels: they then work in the selection only (layer “Q”)",
- "Lautheitsbereich %1 LU (über %2): leise und laute Stellen liegen weit auseinander – Kompressor oder Pegel der lauten Stellen senken": "Loudness range %1 LU (over %2): quiet and loud parts lie far apart – use a compressor or lower the loud parts"
+ "Lautheitsbereich %1 LU (über %2): leise und laute Stellen liegen weit auseinander – Kompressor oder Pegel der lauten Stellen senken": "Loudness range %1 LU (over %2): quiet and loud parts lie far apart – use a compressor or lower the loud parts",
+ "Ton auf A%1 um +%2 dB angehoben: das Rauschen der Aufnahme kommt mit hoch (Handy) – Rauschen entfernen (clean_voice) oder weniger anheben": "Sound on A%1 raised by +%2 dB: the recording's noise comes up with it (phone) – remove the noise (clean_voice) or raise it less"
 }

@@ -41,6 +41,41 @@ double round1(double v) { return std::round(v * 10) / 10; }
 constexpr int kMaxLoudnessRange = 15; // LU
 QString num1(double v) { return QString::number(v, 'f', 1).replace('.', I18n::decimalPoint()); }
 
+// Sound raised a lot (clip volume + track fader + compressor make-up + master, duel 17.11.: +21 dB on a phone
+// recording): its noise comes up with it. A warning per track with a suggestion, not an error - a quiet recording may
+// need it
+constexpr double kBoostWarnDb = 15.0;
+
+QVector<ExportCheck::Issue> boostIssues(const Timeline& tl, int from, int to)
+{
+    QVector<ExportCheck::Issue> out;
+    bool solo = false;
+    for (const Track& t : tl.audio) solo = solo || t.solo;
+    for (int k = 0; k < tl.audio.size(); ++k) {
+        const Track& t = tl.audio[k];
+        if (t.muted || (solo && !t.solo)) continue;
+        const double around = t.volumeDb + (t.dynamics.on ? t.dynamics.makeupDb : 0.0) + tl.masterVolumeDb;
+        ExportCheck::Issue issue{ExportCheck::Severity::Warning, "audio_boost", {}};
+        double most = 0;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.kind != ClipKind::Media || c.end() <= from || c.start >= to) continue;
+            const double gain = c.volumeDb + around;
+            if (c.volumeDb <= kMinVolumeDb || gain < kBoostWarnDb) continue;
+            if (issue.clips.isEmpty()) issue.clip = c.id, issue.from = std::max(from, c.start);
+            issue.clips << c.id;
+            issue.to = std::min(to, c.end());
+            most = std::max(most, gain);
+        }
+        if (issue.clips.isEmpty()) continue;
+        issue.message = T("Ton auf A%1 um +%2 dB angehoben: das Rauschen der Aufnahme kommt mit hoch (Handy) – "
+                          "Rauschen entfernen (clean_voice) oder weniger anheben")
+                            .arg(k + 1)
+                            .arg(num1(most));
+        out << issue;
+    }
+    return out;
+}
+
 ExportCheck::Options options(const QJsonObject& a)
 {
     ExportCheck::Options o;
@@ -410,6 +445,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         // Sound only on muted tracks or in disabled clips: measured it is just "no sound", this says why
         if (const QString silent = silentMixNote(tl); !silent.isEmpty())
             issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "mix_silent", silent};
+        if (withSound) issues += boostIssues(tl, from, to);
         issues += ExportCheck::layout(tl, from, to, f, opt);
         // The timeline as exported (render timeline: compound clips, limiter, mute/solo)
         const Timeline render = s.project.renderTimeline();
