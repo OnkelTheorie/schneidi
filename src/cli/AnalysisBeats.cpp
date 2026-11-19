@@ -78,10 +78,9 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
         fail("BAD_ARGUMENT", "min_bpm/max_bpm: 30..400, max_bpm at least 1.2 x min_bpm");
 
     Sound sound;
-    const auto progress = [&ctx](double p) {
+    const auto progress = goOn([&ctx](double p) {
         if (ctx.progress) ctx.progress(0.95 * p);
-        return true;
-    };
+    });
     const auto sink = [&sound](const float* pcm, int samples, int channels, int rate) {
         sound.add(pcm, samples, channels, rate);
     };
@@ -106,8 +105,9 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
                 tl.audio[i].solo = false;
             }
         sound.fps = f.rate.fps();
-        if (!AudioAnalysis::timelineSound(f, tl, from, to, sink, progress))
-            fail("DECODE_FAILED", "could not mix the sound");
+        const bool mixed = AudioAnalysis::timelineSound(f, tl, from, to, sink, progress);
+        failIfCanceled();
+        if (!mixed) fail("DECODE_FAILED", "could not mix the sound");
         out["project"] = s.path.isEmpty() ? absolute(file) : s.path;
     } else {
         const MediaSource m = openMedia(a);
@@ -122,8 +122,9 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
         c.in = from;
         c.out = to - 1;
         sound.fps = f.rate.fps();
-        if (!AudioAnalysis::clipSound(f, c, sink, progress))
-            fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
+        const bool decoded = AudioAnalysis::clipSound(f, c, sink, progress);
+        failIfCanceled();
+        if (!decoded) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
         out["file"] = m.info.path;
     }
     if (!sound.features) fail("NO_AUDIO", "no sound in the range");

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/AudioEvents.h"
 
-#include "core/AppPaths.h"
+#include "engine/AnalysisCache.h"
+
 #include "core/Fft.h"
 #include "core/PathKey.h"
 #include "engine/Extensions.h"
@@ -16,7 +17,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutex>
-#include <QSaveFile>
 #include <QStandardPaths>
 #include <QTextStream>
 
@@ -947,17 +947,12 @@ QHash<QString, Result>& memory()
     return cache;
 }
 
-QString cacheFile(const QString& key)
+// On disk in the analysis cache (engine/AnalysisCache: keyed by the file, its size and time, these options, kVersion)
+std::optional<Result> loadDisk(const QString& path, const QJsonObject& options)
 {
-    return AppPaths::writable(QStandardPaths::CacheLocation) + "/audio-events/" + key + ".json";
-}
-
-std::optional<Result> loadDisk(const QString& key)
-{
-    QFile f(cacheFile(key));
-    if (!f.open(QIODevice::ReadOnly)) return std::nullopt;
-    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
-    if (o["version"].toInt() != kVersion) return std::nullopt;
+    const std::optional<QJsonObject> hit = AnalysisCache::get("audio-events", path, options, kVersion);
+    if (!hit) return std::nullopt;
+    const QJsonObject& o = *hit;
     Result r;
     r.by = o["by"].toString();
     r.duration = o["duration"].toDouble();
@@ -969,13 +964,10 @@ std::optional<Result> loadDisk(const QString& key)
     return r;
 }
 
-void saveDisk(const QString& key, const Result& r)
+void saveDisk(const QString& path, const QJsonObject& options, const Result& r)
 {
-    const QJsonObject o{{"version", kVersion}, {"by", r.by}, {"duration", r.duration}, {"events", toJson(r.events)}};
-    const QString file = cacheFile(key);
-    QDir().mkpath(QFileInfo(file).absolutePath());
-    QSaveFile out(file);
-    if (out.open(QIODevice::WriteOnly) && out.write(QJsonDocument(o).toJson(QJsonDocument::Compact)) >= 0) out.commit();
+    AnalysisCache::put("audio-events", path, options, kVersion,
+                       {{"by", r.by}, {"duration", r.duration}, {"events", toJson(r.events)}});
 }
 
 // Shot times from the heuristics inside YAMNet's coarse shot windows (YAMNet decides, the heuristic says when)
@@ -1077,6 +1069,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
                            .arg(way)
                            .arg(kVersion);
     const QString key = QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex());
+    const QJsonObject diskOptions{{"stream", stream}, {"way", way}};
     if (options.useCache) {
         {
             QMutexLocker lock(&g_mutex);
@@ -1086,7 +1079,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
                 return filtered(r, options);
             }
         }
-        if (auto disk = loadDisk(key)) {
+        if (auto disk = loadDisk(path, diskOptions)) {
             QMutexLocker lock(&g_mutex);
             memory().insert(key, *disk);
             disk->cached = true;
@@ -1158,7 +1151,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
     }
     if (options.progress) options.progress(1.0);
     if (options.useCache && (result.by == "yamnet") == model && !result.incomplete) {
-        saveDisk(key, result);
+        saveDisk(path, diskOptions, result);
         QMutexLocker lock(&g_mutex);
         memory().insert(key, result);
     }

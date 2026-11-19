@@ -118,10 +118,10 @@ QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx,
             std::lock_guard lock(mutex);
             samples.push_back({fr.seconds, black, still});
         },
-        [&](double p) {
+        goOn([&](double p) {
             if (ctx.progress) ctx.progress(progressFrom + (progressTo - progressFrom) * p);
-            return true;
-        });
+        }));
+    failIfCanceled();
     if (!r.ok) fail("DECODE_FAILED", "could not read the video of " + m.info.path + ": " + r.error);
     std::sort(samples.begin(), samples.end(), [](const Sample& a, const Sample& b) { return a.seconds < b.seconds; });
 
@@ -369,10 +369,9 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     const ExportCheck::Options opt = options(a);
     const bool withSound = !a.contains("sound") || a["sound"].toBool();
     const auto progress = [&ctx](double from, double to) {
-        return [&ctx, from, to](double p) {
+        return goOn([&ctx, from, to](double p) {
             if (ctx.progress) ctx.progress(from + (to - from) * p);
-            return true;
-        };
+        });
     };
     QVector<ExportCheck::Issue> issues;
     // Loudness range: quiet and loud parts far apart (a whisper next to a 21-dB riser, t8 ad 17.11.: LRA 20.9) - on a

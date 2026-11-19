@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "cli/Commands.h"
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "cli/Guide.h"
 #include "cli/Live.h"
@@ -297,6 +298,21 @@ Session::Opened openSession(const QString& file, Session::Access access)
         o.own = std::make_unique<Project>();
         o.own->load(d);
     };
+    // A background job of the app (Live::runInBackground): the copy of the app's project made when it was queued
+    if (const Live::AppCopy* copy = Live::appCopy(); copy && copy->data) {
+        const auto sameFile = [](const QString& a, const QString& b) {
+            return !a.isEmpty() && !b.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+        };
+        if (anyApp || sameFile(o.path, copy->path)) {
+            if (access == Session::Access::Write) fail("NOT_IN_BACKGROUND", "a background job only reads the project");
+            o.own = std::make_unique<Project>();
+            o.own->load(*copy->data);
+            o.path = copy->path;
+            o.live = true;
+            o.app = copy->app;
+            return o;
+        }
+    }
     // Inside the app (a command the server runs): its project, or a copy for reading
     if (LiveHost* h = Live::host()) {
         const QString appPath = h->liveProjectPath();
@@ -1689,6 +1705,11 @@ bool runsInApp(const Command& cmd, const QJsonObject& args)
 
 QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
 {
+    // The caller's cancel flag for everything this command runs on this thread (a step of `short` with its own
+    // Context keeps the outer one: only a given flag replaces it)
+    std::optional<detail::CancelScope> cancelScope;
+    if (ctx.cancel) cancelScope.emplace(ctx.cancel);
+    detail::failIfCanceled();
     QJsonObject args = args0;
     if (cmd.name == "app" && args["project"].toString().isEmpty()) args["project"] = QString(Live::AppProject);
     if (runsInApp(cmd, args) && !Live::host())

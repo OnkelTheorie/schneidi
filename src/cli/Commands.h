@@ -61,6 +61,9 @@ struct Context {
     // `serve` worker only: name part of a render's temporary files (ExportSettings::partId), so cancelling a job
     // removes its own files and not those of another job with the same target
     QString partId;
+    // Turning true stops the command within a moment: it fails with CANCELED (execute() hands it to the analyses of
+    // the calling thread and their threads, see detail::CancelScope; Live::runInBackground sets it). nullptr = never.
+    const std::atomic<bool>* cancel = nullptr;
 };
 
 struct Command {

@@ -9,12 +9,14 @@
 
 #include <QString>
 
+#include <atomic>
 #include <optional>
 
 namespace FrameGaps {
 
-// nullopt = no video stream (sound only, still image) or the file cannot be read
-std::optional<Stutter::Scan> scan(const QString& path);
+// nullopt = no video stream (sound only, still image), the file cannot be read, or `cancel` turned true while reading
+// (then nothing is cached: the caller looks at its flag)
+std::optional<Stutter::Scan> scan(const QString& path, const std::atomic<bool>* cancel = nullptr);
 
 // For tests: forget what is cached in memory (the disk cache is keyed by size and modification time anyway)
 void clearMemoryCache();

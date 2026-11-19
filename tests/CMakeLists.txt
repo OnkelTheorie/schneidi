@@ -548,6 +548,8 @@ target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
 schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
 target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
 schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
+schneidi_test(test_cli_cancel) # 0.25: Context::cancel, Live::runInBackground (cancel, queue, UI thread), AnalysisCache
+target_link_libraries(test_cli_cancel PRIVATE schneidi_cli_lib)
 
 # Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
 file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)

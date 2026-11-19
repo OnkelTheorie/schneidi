@@ -92,12 +92,12 @@ QVector<MediaIndex::Entry> entriesOf(const Material& m, bool refresh, bool measu
             MediaIndex::Options o;
             o.refresh = refresh;
             const int n = int(m.files.size());
-            o.progress = [&ctx, i, n](double p) {
+            o.progress = goOn([&ctx, i, n](double p) {
                 if (ctx.progress) ctx.progress((i + p) / n);
-                return true;
-            };
+            });
             QString error;
             e = MediaIndex::build(file, o, &error);
+            failIfCanceled();
             if (!e) fail("DECODE_FAILED", error);
         }
         if (!e) continue;
