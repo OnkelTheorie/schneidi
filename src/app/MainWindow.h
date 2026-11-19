@@ -209,6 +209,7 @@ public:
     void liveCommandRunning(bool running, bool ownChat) override;
     void livePlan(const QString& state, const QJsonObject& plan, bool ownChat) override;
     void liveDirection(const QJsonObject& session, bool ownChat) override; // `direct` suggestions -> the Direct page
+    void liveDirectApplied(const QJsonObject& session, const QJsonObject& result, bool ownChat) override; // ... applied
     bool livePlanOnly() const override;
     bool liveReviewOnly() const override;
     // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
@@ -438,6 +439,7 @@ private:
     void updateDirectWish();
     void directWish(const QString& text); // to the AI chat with the page's context; its `direct` answers on the page
     void directWishDone();                // the chat's turn of a wish ended: the answer or error under the line
+    void directAiApplyUndone();           // review: the AI's changes discarded - its apply is no more (no finish)
     void ensureColorPage(); // the Color page's widgets (color wheels, scopes), built on the first use
     void connectColorPage(); // its connections (MainWindow.cpp, beside the other panels')
     ColorPanel* colorPanel()
@@ -555,11 +557,11 @@ private:
     std::function<void()> m_directApplyCancel; // the running apply job's cancel (empty = none)
     int m_directApplyRun = 0;
     QJsonObject m_directApplied; // the last apply's result and session (for the short's finish)
-    // A wish of the page runs as a chat turn: its first chat entry and the project's last session before it (an
-    // apply by the AI changes it)
+    // A wish of the page runs as a chat turn: its first chat entry
     bool m_directWishTurn = false;
     int m_directWishFirst = 0;
-    QJsonObject m_directWishDirection;
+    bool m_directWishVoid = false;   // the page was reset during the AI's request: its suggestions/apply not shown
+    bool m_directAppliedByAi = false; // m_directApplied came from an AI's `direct` apply
     class QAction* m_directRemoveSuggestion = nullptr; // the page's Delete keys, registered at the start (buildActions)
     class QAction* m_directRemoveMaterial = nullptr;
     QList<int> m_directCenterSizes; // viewer | recipes while the viewer is on another page
@@ -715,6 +717,8 @@ private:
     void updateChatPanel(); // setup page or chat, the provider line
     bool sendChat(const QString& text, const QString& note = {}); // note: with this request only (AiChat::addNote)
     bool chatReady(); // a provider is set up (the panel shows the chat, not its setup)
+    // The panel's setup page is needed (nothing chosen, a key or the address missing): the provider and why
+    bool chatSetupNeeded(QString* provider = nullptr, QString* message = nullptr);
     bool chatEndpoint(Ai::Endpoint& e, QString* problem);
     QString chatKeyHint(const QString& provider);
     void chatTurnFinished();

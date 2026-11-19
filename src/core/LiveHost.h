@@ -131,6 +131,14 @@ public:
         Q_UNUSED(session);
         Q_UNUSED(ownChat);
     }
+    // `direct` applied a session (one edit, done; result as `direct` apply answers it: timeline = the result, for a
+    // short its vertical copy): for the Direct page, shown like its own Übernehmen. Not for plans and dry runs
+    virtual void liveDirectApplied(const QJsonObject& session, const QJsonObject& result, bool ownChat)
+    {
+        Q_UNUSED(session);
+        Q_UNUSED(result);
+        Q_UNUSED(ownChat);
+    }
     // Plan mode of the app's own chat (Settings › AI): its edits must be plans; the user runs them from the chat
     virtual bool livePlanOnly() const { return false; }
     // Review mode of the app's own chat (Settings › AI): the user accepts or discards its changes at the end of a

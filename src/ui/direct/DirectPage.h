@@ -40,12 +40,16 @@ public:
     QPushButton* exportButton() const { return m_export; }
     QWidget* wishSlot() const; // the own wish line (hidden until a chat provider is set up)
     DirectWish* wish() const { return m_wish; }
-    // What the chat's AI gets with a wish (AiChat::addNote, English, at most maxChars): the material (files with
-    // their lengths, or the current timeline), the recipe and its options, the session id and its suggestions as
-    // listed (n, kind, file, from-to, reason key, on/off; the rest counted when they do not fit) and how to answer:
-    // by calling `direct`, a new suggestion list rather than an apply
-    QString wishContext(int maxChars = kWishContextChars) const;
+    // What the chat's AI gets with a wish (AiChat::addNote, English, at most maxChars): the material (file names as
+    // JSON strings, their folder once, lengths; or the current timeline), the recipe and its options (own budget),
+    // the session id (always) and its suggestions as listed (n, kind, file, from-to, reason key, on/off; the rest
+    // counted when they do not fit) and how to answer: by calling `direct`, a new suggestion list rather than an
+    // apply (plan = the chat is in plan mode: an apply must be a plan). No raw "]": the chat wraps notes in [ ].
+    QString wishContext(bool plan = false, int maxChars = kWishContextChars) const;
     static constexpr int kWishContextChars = 2000;
+    static constexpr int kWishOptionsChars = 400;
+    // A wish runs in the AI chat: the line's busy row; Übernehmen and the finish wait for it
+    void setWishBusy(bool busy);
 
     // Frame rate of the result strip (the project's)
     void setFps(double fps);
@@ -98,4 +102,5 @@ private:
     double m_fps = 25;
     bool m_busy = false;
     bool m_applying = false;
+    bool m_wishBusy = false;
 };

@@ -12,6 +12,7 @@
 #include "synth_sounds.h"
 
 #include "app/AiChat.h"
+#include "app/AiChatPanel.h"
 #include "app/AiSettings.h"
 #include "app/MainWindow.h"
 #include "app/Theme.h"
@@ -342,7 +343,8 @@ int main(int argc, char** argv)
         if (CHECK(!fake.requests.isEmpty())) {
             const QString sent = lastUserText(fake.requests.first());
             CHECK(sent.contains("Direct page"));
-            CHECK(sent.contains("Session " + before));
+            CHECK(sent.contains("Session \"" + before + "\""));
+            CHECK(!sent.contains(a)); // file names, the folder once
             CHECK(sent.contains("höchstens 15 Sekunden"));
         }
         const QJsonObject chatSession = page->suggestions()->session();
@@ -354,19 +356,58 @@ int main(int argc, char** argv)
         CHECK(!p->isModified() || p->undoStack()->count() == p->undoStack()->index()); // suggesting changes nothing
         CHECK(!w.aiChat()->busy());
 
-        // The model applies instead: one undo step, shown like the page's own Übernehmen
+        // The model applies instead (the session with effect sounds): one undo step, shown like the page's own
+        // Übernehmen - the finish offered for the apply's result, the vertical "Short" (finishing it is one more step)
+        QJsonObject withSfx = chatSession;
+        {
+            QJsonObject o = withSfx.value("options").toObject();
+            o["sfx"] = "mild";
+            withSfx["options"] = o;
+        }
+        const auto applyScript = [&](const QString& id) {
+            fake.script = {toolCall(id, "direct", {{"project", "@app"}, {"session", withSfx}, {"apply", QJsonObject{{"on", "all"}}}}),
+                           textAnswer("Übernommen.")};
+        };
         const int steps = p->undoStack()->count();
-        fake.script = {toolCall("toolu_2", "direct", {{"project", "@app"}, {"session", chatSession.value("id").toString()},
-                                                      {"apply", QJsonObject{{"on", "all"}}}}),
-                       textAnswer("Übernommen.")};
+        applyScript("toolu_2");
         wish->edit()->setText("nimm alle");
         QTest::keyClick(wish->edit(), Qt::Key_Return);
+        CHECK(!page->applyButton()->isEnabled()); // waits for the wish
         CHECK(waitFor([&] { return !wish->busy(); }));
         CHECK_EQ(p->undoStack()->count(), steps + 1);
         CHECK_EQ(p->direction().value("id").toString(), chatSession.value("id").toString());
         CHECK_EQ(page->suggestions()->session().value("id").toString(), chatSession.value("id").toString());
         CHECK_EQ(wish->note(), QString("Übernommen."));
+        CHECK(page->applyButton()->isEnabled());
+        if (CHECK(page->finishButton()->isVisible() && page->finishButton()->isEnabled())) {
+            page->finishButton()->click();
+            CHECK(waitFor([&] { return !page->applying(); }));
+            CHECK_EQ(p->undoStack()->count(), steps + 2); // the finish found the result timeline
+            p->undoStack()->undo();
+        }
         p->undoStack()->undo();
+        CHECK_EQ(p->undoStack()->index(), steps);
+
+        // Review mode: the AI's apply waits for the user; discarded, the page offers no finish for it any more
+        {
+            AiSettings review = w.aiSettings();
+            review.approval = AiSettings::Approval::Review;
+            w.setAiSettings(review);
+            applyScript("toolu_3");
+            wish->edit()->setText("nimm alle");
+            QTest::keyClick(wish->edit(), Qt::Key_Return);
+            CHECK(waitFor([&] { return !wish->busy(); }));
+            CHECK(page->finishButton()->isVisible());
+            // Another wish while the review waits: the note says what to do first
+            QTest::keyClick(wish->edit(), Qt::Key_Return);
+            CHECK_EQ(wish->note(), T("Erst die Änderungen der KI übernehmen oder verwerfen."));
+            auto* discard = w.aiChatPanel()->findChild<QPushButton*>("ai_discard");
+            if (CHECK(discard)) discard->click();
+            CHECK_EQ(p->undoStack()->index(), steps);
+            CHECK(!page->finishButton()->isVisible());
+            review.approval = AiSettings::Approval::Auto;
+            w.setAiSettings(review);
+        }
 
         // ✕ stops a turn that waits for the model
         fake.script = {textAnswer("zu spät", 20000)};
@@ -379,6 +420,18 @@ int main(int argc, char** argv)
         CHECK(!w.aiChat()->busy());
         CHECK_EQ(wish->note(), T("Gestoppt."));
         CHECK_EQ(page->suggestions()->session().value("id").toString(), chatSession.value("id").toString());
+        // The material changed while the AI works: its turn stops, nothing of it is shown
+        fake.script = {textAnswer("zu spät", 20000)};
+        wish->edit()->setText("lustigste Stellen zuerst");
+        QTest::keyClick(wish->edit(), Qt::Key_Return);
+        CHECK(waitFor([&] { return fake.script.isEmpty(); }, 10000));
+        CHECK(wish->busy());
+        page->material()->clear();
+        CHECK(!wish->busy());
+        CHECK(!w.aiChat()->busy());
+        CHECK(wish->note().isEmpty());
+        CHECK(!page->suggestions()->hasSession());
+        page->material()->addFiles({a, b});
         // DIRECT_WISH_DUMP=<file.png>: the page with the wish line and a note
         if (const QString dump = qEnvironmentVariable("DIRECT_WISH_DUMP"); !dump.isEmpty()) {
             wish->setNote("Kürzer: höchstens 15 s.");

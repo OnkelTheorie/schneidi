@@ -3613,5 +3613,6 @@
  "Der KI-Chat ist gerade beschäftigt.": "The AI chat is busy right now.",
  "Nicht an die KI geschickt.": "Not sent to the AI.",
  "Regie: Timeline von der KI gebaut (Rückgängig nimmt sie zurück)": "Direct: timeline built by the AI (Undo takes it back)",
- "Die KI hat nichts geändert.": "The AI changed nothing."
+ "Die KI hat nichts geändert.": "The AI changed nothing.",
+ "Erst die Änderungen der KI übernehmen oder verwerfen.": "First accept or discard the AI's changes."
 }

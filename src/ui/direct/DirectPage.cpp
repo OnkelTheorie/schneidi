@@ -175,7 +175,7 @@ void DirectPage::setMadeProject(const QString& path)
 void DirectPage::setFinishOffered(bool offered)
 {
     m_finish->setVisible(offered);
-    m_finish->setEnabled(offered);
+    m_finish->setEnabled(offered && !m_wishBusy);
 }
 
 Timeline DirectPage::resultTimeline() const
@@ -217,7 +217,7 @@ void DirectPage::updateResult()
 {
     m_overview->setTimeline(resultTimeline(), m_fps);
     const bool any = !m_suggestions->checkedOrder().isEmpty();
-    m_apply->setEnabled(!m_busy && !m_applying && any);
+    m_apply->setEnabled(!m_busy && !m_applying && !m_wishBusy && any);
     // What Übernehmen does for this recipe; suggestions never change the project before it
     const QString recipe = m_suggestions->session().value("recipe").toString();
     const QString what = recipe == "talk"
@@ -229,7 +229,47 @@ void DirectPage::updateResult()
 
 QWidget* DirectPage::wishSlot() const { return m_wish; }
 
-QString DirectPage::wishContext(int maxChars) const
+void DirectPage::setWishBusy(bool busy)
+{
+    m_wishBusy = busy;
+    m_wish->setBusy(busy);
+    m_finish->setEnabled(m_finish->isVisible() && !busy && !m_applying);
+    updateResult();
+}
+
+namespace {
+// A text as a JSON string for the AI's note: escaped, without control characters, no raw brackets (the chat wraps
+// notes in [ ])
+QString noteString(QString text)
+{
+    text.removeIf([](QChar c) { return c.category() == QChar::Other_Control || c.category() == QChar::Other_Format; });
+    QString json = QString::fromUtf8(QJsonDocument(QJsonArray{text}).toJson(QJsonDocument::Compact));
+    json = json.mid(1, json.size() - 2); // the string of ["…"]
+    return json.replace('[', "\\u005b").replace(']', "\\u005d");
+}
+
+// A JSON value for the note: strings as noteString, arrays as (a, b), objects as {k: v}
+QString noteValue(const QJsonValue& v)
+{
+    if (v.isString()) return noteString(v.toString());
+    if (v.isArray()) {
+        QStringList parts;
+        for (const QJsonValue& x : v.toArray()) parts << noteValue(x);
+        return '(' + parts.join(", ") + ')';
+    }
+    if (v.isObject()) {
+        QStringList parts;
+        const QJsonObject o = v.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it) parts << noteString(it.key()) + ": " + noteValue(it.value());
+        return '{' + parts.join(", ") + '}';
+    }
+    if (v.isNull() || v.isUndefined()) return "null";
+    if (v.isBool()) return v.toBool() ? "true" : "false";
+    return QString::number(v.toDouble(), 'g', 10);
+}
+} // namespace
+
+QString DirectPage::wishContext(bool plan, int maxChars) const
 {
     const auto num = [](double s) { return QString::number(s, 'f', 1); };
     const QJsonObject session = m_suggestions->session();
@@ -237,67 +277,96 @@ QString DirectPage::wishContext(int maxChars) const
     const QJsonObject options = session.isEmpty() ? m_recipes->options() : session.value("options").toObject();
     const QString id = session.value("id").toString();
 
-    QString head = "the user typed the wish below on the Direct page (\"Regie\"). Answer it by calling the tool `direct`, "
-                   "not with text only: best with a new suggestion list (direct project:'@app', recipe, files or "
-                   "timeline, changed options) - it replaces the page's list; or apply a choice of this session "
-                   "(direct project:'@app', session:'<id>', apply:{on:[n…], order:[n…], adjust:[{n, from_s, to_s}]"
-                   + QString(recipe == QLatin1String("short") ? ", variant" : "")
-                   + "}). Then say in one short sentence what you changed.\n";
+    // How to answer (lists written as <list of …>: no raw brackets in a note)
+    QString text = "the user typed the wish below on the Direct page (\"Regie\"). Answer it by calling the tool `direct`, "
+                   "not with text only: best with a new suggestion list (direct project:'@app', recipe, files (folder + "
+                   "name) or timeline, changed options) - it replaces the page's list; or apply a choice of this session "
+                   "(direct project:'@app', session:'<id>', apply:{on:<list of n>, order:<list of n>, adjust:<list of "
+                   "{n, from_s, to_s}>"
+                   + QString(recipe == QLatin1String("short") ? ", variant" : "") + "}"
+                   + QString(plan ? ", plan:true - the user wants every change as a plan first" : "")
+                   + "). Then say in one short sentence what you changed.\n";
+    QString opts = noteValue(options);
+    if (opts.size() > kWishOptionsChars) opts = opts.left(kWishOptionsChars - 1) + "…";
+    const QString recipeLine = QString("Recipe: %1, options %2\n").arg(noteString(recipe), opts);
+    const QList<int> rows = m_suggestions->rowOrder();
+    QString sessionLine;
+    if (!id.isEmpty()) {
+        sessionLine = QString("Session %1: %2 suggestions as the page lists them (the checked ones are the result's "
+                              "order):\n")
+                          .arg(noteString(id))
+                          .arg(rows.size());
+        if (m_suggestions->variantCount() > 0)
+            sessionLine += QString("Variant %1 of %2 is shown (the list has only its rows)\n")
+                               .arg(m_suggestions->variant())
+                               .arg(m_suggestions->variantCount());
+        sessionLine += "n kind file from-to s reason on/off\n";
+    } else {
+        sessionLine = "No suggestions yet.\n";
+    }
 
-    // Material: files with their lengths (the session's), numbered for the suggestions below
+    // Material: names (with their lengths, the session's) under their folder once, numbered for the suggestions;
+    // never more than the room the head, recipe and session lines leave (minus a few suggestion lines)
     QHash<QString, double> lengths;
     for (const QJsonValue& v : session.value("material").toArray())
         lengths.insert(v.toObject().value("file").toString(), v.toObject().value("length_s").toDouble(-1));
-    QHash<QString, QString> fileKey; // file -> "f1"
+    QHash<QString, QString> fileKey; // listed file -> "f1"
     QString material;
     if (m_material->usesTimeline() || !session.value("timeline").toString().isEmpty()) {
         material = "Material: the current timeline (timeline:'@current')\n";
     } else {
         const QStringList files = m_material->isEmpty() ? QStringList() : m_material->files();
-        QStringList parts;
-        int left = 0, budget = maxChars * 2 / 5; // the material never takes the room of the suggestions
+        int budget = std::min<int>(maxChars * 2 / 5, maxChars - int(text.size() + recipeLine.size() + sessionLine.size()) - 250);
+        QStringList groups;
+        QString folder, group;
+        int left = 0;
         for (int i = 0; i < files.size(); ++i) {
-            const QString key = QString("f%1").arg(i + 1);
-            fileKey.insert(files[i], key);
+            const QFileInfo fi(files[i]);
+            const QString dir = QDir::toNativeSeparators(fi.absolutePath());
+            const QString key = QString("f%1").arg(fileKey.size() + 1);
             const double len = lengths.value(files[i], -1);
-            const QString part = key + '=' + files[i] + (len >= 0 ? QString(" (%1 s)").arg(num(len)) : QString());
-            if (budget - part.size() - 2 < 0) {
+            QString part = key + '=' + noteString(fi.fileName()) + (len >= 0 ? QString(" (%1 s)").arg(num(len)) : QString());
+            const bool newFolder = group.isEmpty() || dir != folder;
+            const QString head = newFolder ? "folder " + noteString(dir) + ": " : QString();
+            const int cost = int(head.size() + part.size()) + 2;
+            if (budget - cost < 0) {
                 ++left;
                 continue;
             }
-            budget -= part.size() + 2;
-            parts << part;
+            budget -= cost;
+            if (newFolder) {
+                if (!group.isEmpty()) groups << group;
+                folder = dir;
+                group = head + part;
+            } else {
+                group += ", " + part;
+            }
+            fileKey.insert(files[i], key);
         }
-        material = "Material: " + (parts.isEmpty() ? QString("none yet") : parts.join(", "));
+        if (!group.isEmpty()) groups << group;
+        material = "Material: " + (groups.isEmpty() ? QString("none listed") : groups.join("; "));
         if (left > 0) material += QString(" (+%1 more files not listed)").arg(left);
         material += '\n';
     }
-    const QString opts = QString::fromUtf8(QJsonDocument(options).toJson(QJsonDocument::Compact));
-    QString text = head + material + QString("Recipe: %1, options %2\n").arg(recipe, opts);
-    if (id.isEmpty()) return (text + "No suggestions yet.").left(maxChars);
+    text += material + recipeLine + sessionLine;
+    if (id.isEmpty()) return text;
 
-    const QList<int> rows = m_suggestions->rowOrder();
     const QList<int> checked = m_suggestions->checkedOrder();
-    text += QString("Session %1: %2 suggestions as the page lists them (the checked ones are the result's order):\n"
-                    "n kind file from-to s reason on/off\n")
-                .arg(id)
-                .arg(rows.size());
-    if (m_suggestions->variantCount() > 0)
-        text += QString("Variant %1 of %2 is shown (the list has only its rows)\n").arg(m_suggestions->variant()).arg(m_suggestions->variantCount());
     int listed = 0;
     for (int n : rows) {
         const QJsonObject s = m_suggestions->suggestion(n);
         const QString file = s.value("file").toString();
         const auto [from, to] = m_suggestions->range(n);
+        const QString fileText = fileKey.contains(file) ? fileKey.value(file)
+                                 : file.startsWith('@') ? file
+                                                        : noteString(QFileInfo(file).fileName());
         QString line = QString("%1 %2 %3 %4-%5 %6 %7")
                            .arg(n)
-                           .arg(s.value("kind").toString(), fileKey.value(file, file.startsWith('@') ? file : QFileInfo(file).fileName()),
-                                num(from), num(to), s.value("reason").toObject().value("key").toString(),
+                           .arg(noteString(s.value("kind").toString()).remove('"'), fileText, num(from), num(to),
+                                noteString(s.value("reason").toObject().value("key").toString()).remove('"'),
                                 checked.contains(n) ? "on" : "off");
         if (s.contains("variant")) line += QString(" v%1").arg(s.value("variant").toInt());
-        if (const QJsonValue t = s.value("track"); !t.isUndefined())
-            line += " track " + (t.isArray() ? QString::fromUtf8(QJsonDocument(t.toArray()).toJson(QJsonDocument::Compact))
-                                             : t.toVariant().toString());
+        if (const QJsonValue t = s.value("track"); !t.isUndefined()) line += " track " + noteValue(t);
         line += '\n';
         // Room for the last line that counts the rest
         if (text.size() + line.size() + 40 > maxChars) break;
@@ -305,5 +374,5 @@ QString DirectPage::wishContext(int maxChars) const
         ++listed;
     }
     if (listed < rows.size()) text += QString("(+%1 more suggestions not listed)\n").arg(rows.size() - listed);
-    return text.left(maxChars);
+    return text;
 }

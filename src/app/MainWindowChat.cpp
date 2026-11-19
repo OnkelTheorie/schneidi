@@ -166,6 +166,28 @@ QString MainWindow::chatKeyHint(const QString& provider)
     return {};
 }
 
+bool MainWindow::chatSetupNeeded(QString* provider, QString* message)
+{
+    const Ai::Company company = Ai::company();
+    const Ai::Choice c = Ai::choose(m_aiSettings.chatProvider, m_aiSettings.chatAddress, m_aiSettings.chatModels, company);
+    const Ai::Preset* p = Ai::preset(c.provider);
+    if (provider) *provider = c.provider;
+    // Setup when nothing is chosen yet, or the provider needs a key there is none of
+    QString text;
+    bool setup = !p;
+    if (p && p->needsKey && chatKeyHint(c.provider).isEmpty()) {
+        setup = true;
+        text = T("Für %1 fehlt noch der Schlüssel.").arg(Ai::presetName(c.provider));
+    } else if (p && c.address.isEmpty()) {
+        setup = true;
+        text = T("Bitte die Adresse des Servers angeben.");
+    }
+    if (message) *message = text;
+    return setup;
+}
+
+bool MainWindow::chatReady() { return !chatSetupNeeded(); }
+
 void MainWindow::updateChatPanel()
 {
     if (!m_chatPanel) return;
@@ -174,26 +196,10 @@ void MainWindow::updateChatPanel()
     const Ai::Preset* p = Ai::preset(c.provider);
     m_chatPanel->setProviderText(p ? c.model : QString(),
                                  p ? QString("%1 · %2\n%3").arg(Ai::presetName(c.provider), c.model, c.address) : QString());
-    // Setup when nothing is chosen yet, or the provider needs a key there is none of
     QString message;
-    bool setup = !p;
-    if (p && p->needsKey && chatKeyHint(c.provider).isEmpty()) {
-        setup = true;
-        message = T("Für %1 fehlt noch der Schlüssel.").arg(Ai::presetName(c.provider));
-    } else if (p && c.address.isEmpty()) {
-        setup = true;
-        message = T("Bitte die Adresse des Servers angeben.");
-    }
+    const bool setup = chatSetupNeeded(nullptr, &message);
     m_chatPanel->showSetup(setup, c.provider.isEmpty() ? QString("claude") : c.provider, message);
     updateDirectWish(); // the Regie page's wish line follows
-}
-
-bool MainWindow::chatReady()
-{
-    const Ai::Company company = Ai::company();
-    const Ai::Choice c = Ai::choose(m_aiSettings.chatProvider, m_aiSettings.chatAddress, m_aiSettings.chatModels, company);
-    const Ai::Preset* p = Ai::preset(c.provider);
-    return p && !c.address.isEmpty() && !(p->needsKey && chatKeyHint(c.provider).isEmpty());
 }
 
 bool MainWindow::chatEndpoint(Ai::Endpoint& e, QString* problem)
@@ -224,6 +230,7 @@ bool MainWindow::chatEndpoint(Ai::Endpoint& e, QString* problem)
 bool MainWindow::sendChat(const QString& text, const QString& note)
 {
     if (m_chat->busy() || m_review.pending) return false;
+    m_directWishVoid = false; // a new request: what the AI does now counts again on the Regie page
     if (m_chat->offline()) return m_chat->send(text, {}); // says why nothing goes out
     Ai::Endpoint e;
     QString problem;
@@ -491,6 +498,7 @@ void MainWindow::discardChatChanges()
     m_project->undoStack()->setIndex(start);
     rememberChatState(); // the note below says it; the removed changes are not the user's edits
     m_chatPanel->hideApproval();
+    directAiApplyUndone(); // an apply of the AI on the Regie page is gone too: no finish offered for it
     m_chat->addNotice(T("Verworfen: das Projekt ist wieder wie vor der Anfrage."));
     m_chat->addNote("the user discarded all changes of your last request; the project is back as it was before it");
 }

@@ -63,7 +63,9 @@
 #include <QStyle>
 #include <QStyleOptionViewItem>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -803,13 +805,29 @@ void testWish(Engine& engine, const QString& a, const QString& b)
     CHECK(!wish->busyRow()->isVisible());
 
     // The context: material, recipe, options and the suggestions as listed - within 2000 characters
-    page->material()->addFiles({a, b});
+    // (a third file whose name has a bracket and a control character: quoted, escaped, no raw "]" in the note)
+    const QString dir = QFileInfo(a).absolutePath();
+    const QString odd = dir + QString("/c]d\x01.mp4");
+    {
+        QFile f(odd);
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    page->material()->addFiles({a, b, odd});
     page->recipes()->setRecipe("short");
     const QString empty = page->wishContext();
     CHECK(empty.contains("`direct`"));
-    CHECK(empty.contains("f1=" + a) && empty.contains("f2=" + b));
-    CHECK(empty.contains("Recipe: short"));
+    const QString folder = QString("folder \"%1\": ").arg(QDir::toNativeSeparators(dir));
+    CHECK(empty.contains(folder + "f1=\"a.mp4\", f2=\"b.mp4\", f3=\"c\\u005dd.mp4\""));
+    CHECK_EQ(int(empty.count(folder)), 1); // the folder once
+    CHECK(!empty.contains(a));            // names, not every full path
+    CHECK(!empty.contains(']') && !empty.contains(QChar(1)));
+    CHECK(empty.contains("Recipe: \"short\""));
     CHECK(empty.contains("No suggestions yet"));
+    CHECK(!empty.contains("plan:true"));
+    CHECK(page->wishContext(true).contains("plan:true")); // plan mode: an apply must be a plan
+    page->material()->clear();
+    page->material()->addFiles({a, b});
     QJsonArray many;
     for (int n = 1; n <= 150; ++n)
         many << QJsonObject{{"n", n}, {"kind", "moment"}, {"file", n % 2 ? a : b}, {"stream", 0},
@@ -823,13 +841,35 @@ void testWish(Engine& engine, const QString& a, const QString& b)
     page->suggestions()->setChecked(2, false);
     const QString note = page->wishContext();
     CHECK(note.size() <= DirectPage::kWishContextChars);
-    CHECK(note.contains("Session d42: 150 suggestions"));
-    CHECK(note.contains("f1=" + a + " (6.0 s)"));
-    CHECK(note.contains("\"max_s\":30"));
+    CHECK(note.contains("Session \"d42\": 150 suggestions"));
+    CHECK(note.contains("f1=\"a.mp4\" (6.0 s)"));
+    CHECK(note.contains("{\"max_s\": 30}"));
+    CHECK(!note.contains(']'));
     CHECK(note.contains("\n3 moment f1 1.5-5.5 loud on\n"));  // the order's first row first
     CHECK(note.contains("\n2 moment f2 1.0-5.0 loud off\n")); // switched off by the user
     CHECK(note.contains("more suggestions not listed)"));
-    CHECK(note.contains("apply:{on:[n…]"));
+    CHECK(note.contains("apply:{on:<list of n>"));
+    // Options have a budget of their own; the session line always stays
+    {
+        QJsonObject big = session;
+        QJsonObject o;
+        for (int i = 0; i < 80; ++i) o[QString("option_%1").arg(i)] = QString(40, 'x');
+        big["options"] = o;
+        page->suggestions()->setSession(big);
+        const QString n2 = page->wishContext();
+        CHECK(n2.size() <= DirectPage::kWishContextChars);
+        CHECK(n2.contains("Session \"d42\": 150 suggestions"));
+        CHECK(n2.contains("\n1 moment f1 "));
+        page->suggestions()->setSession(session);
+        page->suggestions()->setChecked(2, false);
+    }
+    // While a wish runs: Übernehmen waits
+    CHECK(page->applyButton()->isEnabled());
+    page->setWishBusy(true);
+    CHECK(!page->applyButton()->isEnabled());
+    CHECK(wish->busyRow()->isVisible());
+    page->setWishBusy(false);
+    CHECK(page->applyButton()->isEnabled());
     std::printf("       wish context: %lld characters\n", qint64(note.size()));
 
     // Enter on an empty line: nothing; Delete in the line edits the text, never a suggestion
