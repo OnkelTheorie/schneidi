@@ -356,6 +356,9 @@ QJsonObject fillBeats(const ProjectData& d, const TemplateFill::Values& values, 
 // Live: the beats of the songs a `templates` fill or the edit op 'fill' needs, measured here (`_beats`)
 QJsonObject prepareTemplateFill(const QString& command, const QJsonObject& args, Context& ctx);
 void addTemplateOps(QVector<OpDef>& ops); // EditOpsTemplate.cpp
+// Pauses of a conversation (0.25, EditOpsPauses.cpp): op cut_pauses; live its measuring here in schneidi-cli (`_pauses`)
+void addPauseOps(QVector<OpDef>& ops);
+QJsonObject preparePauses(const QJsonObject& editArgs, Context& ctx);
 // What `import` and `watch` say when a video arrives in a project whose timelines are all empty and whose frame rate
 // differs from the video's (the `format` op can still match it); empty = nothing to say
 QString frameRateNote(const Project& p, const QString& video);

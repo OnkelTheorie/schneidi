@@ -3587,5 +3587,6 @@
  "Das Musikbett (Op music_bed) fehlt in dieser Version: keine Musik eingefügt.": "The music bed (op music_bed) is missing in this version: no music added.",
  "Dieses Rezept kommt in einem späteren Schritt.": "This recipe comes in a later step.",
  "stellt Vorschläge zusammen": "puts suggestions together",
- "Vorschläge: %1": "Suggestions: %1"
+ "Vorschläge: %1": "Suggestions: %1",
+ "Pausen schneiden": "Cut pauses"
 }

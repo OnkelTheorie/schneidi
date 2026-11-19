@@ -258,8 +258,10 @@ public:
     // on all unlocked tracks, so they stay in sync. Refused (false, *why translated) when an unlocked track has
     // something inside that range - closing would cut it or move tracks apart (lock that track to close it anyway).
     bool closeGap(TrackRef on, int from, int to, QString* why = nullptr);
-    // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap
-    void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text);
+    // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap.
+    // markerCut: what happens to timeline markers/notes inside a range on ripple (cut_pauses: they move to the cut)
+    void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text,
+                      TimelineOps::MarkerCut markerCut = TimelineOps::MarkerCut::Delete);
     // Ctrl+A: every clip and subtitle on unlocked tracks
     void selectAll();
     // Select clips from the playhead (DaVinci Y / Ctrl+Y / Alt+Y / Ctrl+Alt+Y): forward = playhead and right of it,
