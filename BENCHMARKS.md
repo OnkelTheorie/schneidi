@@ -342,7 +342,7 @@ encode ran at 35 and at 12 frames/s on similar material minutes apart. The VMAF 
   two-pass at the target bit rate, GOP 120, 8 threads. x264: FFmpeg 7.1.5's libx264, `-preset medium`, two-pass at the same
   `-b:v`, GOP 120, 8 threads (default tune: psy and B-frames on, what users get). Both under `taskset -c 1-5,7-11 nice 19`.
   fps = frames / wall time of both passes. VMAF `vmaf_v0.6.1` (libvmaf 3.2 via PyAV), mean over all frames.
-- **Material.** CS2: a 1080p60 game recording (clipi, 2026-11-12), 600 frames. Phone: Galaxy S21 Ultra 4K30 sample
+- **Material.** CS2: a 1080p60 Counter-Strike 2 game recording (own screen capture, 2026-11-12), 600 frames. Phone: Galaxy S21 Ultra 4K30 sample
   (hand-held, much fine detail) scaled to 1080p30, 300 frames. Animation: synthetic, FFmpeg `mandelbrot` with a moving
   `testsrc2` overlay (hard edges, flat colours, fractal detail), 1080p30, 300 frames.
 
