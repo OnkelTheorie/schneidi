@@ -3,6 +3,8 @@
 //  - `check` warns when a clip's sound is raised by +15 dB or more (the noise of a phone recording comes up with it)
 //  - op 'solid': a colour matte over the whole frame (a background in a 9:16 is no safe-area finding)
 //  - `frames` guides:true draws title/action safe and in 9:16 the phone apps' UI zones
+//  - new_timeline into another frame shape: a matte fills the new frame, a logo keeps its size to its plate, both
+//    move together out of the apps' zones
 #include "check.h"
 
 #include "cli/Commands.h"
@@ -157,6 +159,51 @@ void testGuides(const QString& dir)
     }
 }
 
+// --- new_timeline 16:9 -> 9:16: overlays fitted to the new frame
+void testNewFormat(const QString& dir)
+{
+    const QString video = Check::makeMedia(dir + "/nf.mp4", {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=4", "-c:v",
+                                                             "libx264", "-pix_fmt", "yuv420p"});
+    const QString logo = Check::makeMedia(dir + "/logo.png", {"-f", "lavfi", "-i", "color=c=blue:s=400x200", "-frames:v", "1"});
+    if (!CHECK(!video.isEmpty() && !logo.isEmpty())) return;
+    const QString project = dir + "/nf.schneidi";
+    run("new", {{"project", project}, {"fps", 25}});
+    // A white matte at the end, a plate in the bottom right corner with a 2:1 logo on it (zoom 0.2: 384 x 192), a text
+    QJsonObject r = edit(project, {QJsonObject{{"op", "append"}, {"media", video}},
+                                   QJsonObject{{"op", "solid"}, {"color", "#ffffff"}, {"at", "3s"}, {"length", "1s"}, {"track", "V2"}},
+                                   QJsonObject{{"op", "shape"}, {"kind", "rect"}, {"width", 460}, {"height", 260}, {"x", 650},
+                                               {"y", -330}, {"fill", "#ffffff"}, {"at", 0}, {"duration", "3s"}, {"track", "V3"}},
+                                   QJsonObject{{"op", "place"}, {"media", logo}, {"at", 0}, {"out", "3s"}, {"track", "V4"}},
+                                   QJsonObject{{"op", "title"}, {"text", "Hello"}, {"at", 0}, {"duration", "3s"}, {"track", "V5"}}});
+    if (!CHECK(!r.contains("failed"))) return;
+    const auto clipOn = [&](const QString& timeline, const QString& track) {
+        const QJsonObject info = run("info", {{"project", project}, {"timeline", timeline}});
+        for (const QJsonValue& t : info["timeline"]["tracks"].toArray())
+            if (t["track"].toString() == track && !t["clips"].toArray().isEmpty()) return t["clips"].toArray().first().toObject();
+        return QJsonObject{};
+    };
+    const int logoId = clipOn("Timeline 1", "V4")["id"].toInt();
+    edit(project, {QJsonObject{{"op", "transform"}, {"clips", QJsonArray{logoId}}, {"zoom", 0.2}, {"x", 650}, {"y", -330}}});
+    r = edit(project, {QJsonObject{{"op", "new_timeline"}, {"from", "Timeline 1"}, {"aspect", "9:16"}, {"reframe", "auto"},
+                                   {"name", "Short"}}});
+    if (!CHECK(!r.contains("failed"))) return;
+    // The matte fills the 1080 x 1920 frame
+    const QJsonObject matte = clipOn("Short", "V2")["shape"].toObject();
+    if (!CHECK(matte["width"].toDouble() >= 1080 && matte["width"].toDouble() < 1100 && matte["height"].toDouble() >= 1920
+               && matte["height"].toDouble() < 1940 && matte["x"].toDouble() == 0 && matte["y"].toDouble() == 0))
+        std::printf("       matte %s\n", QJsonDocument(matte).toJson(QJsonDocument::Compact).constData());
+    // Plate and logo: still centred on each other; the logo as wide as before (384 px: zoom 384 / 1080)
+    const QJsonObject plate = clipOn("Short", "V3")["shape"].toObject();
+    const QJsonObject tr = clipOn("Short", "V4")["transform"].toObject();
+    CHECK(std::abs(plate["x"].toDouble() - tr["x"].toDouble()) < 1 && std::abs(plate["y"].toDouble() - tr["y"].toDouble()) < 1);
+    if (!CHECK(std::abs(tr["zoom_x"].toDouble() * 1080 - 384) < 2)) std::printf("       logo zoom %f\n", tr["zoom_x"].toDouble());
+    // ... and out of the apps' zones: the plate (460 x 260) above the bottom 20 % and left of the right 12 %
+    const double right = 540 + plate["x"].toDouble() + 230, bottom = 960 - plate["y"].toDouble() + 130;
+    if (!CHECK(right <= 1080 * 0.88 + 1 && bottom <= 1920 * 0.8 + 1)) std::printf("       plate right %.0f bottom %.0f\n", right, bottom);
+    // The text in the middle stays where it was put (no need to move)
+    CHECK(clipOn("Short", "V5").contains("id"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -169,6 +216,7 @@ int main(int argc, char** argv)
         testBoost(dir.path());
         testSolid(dir.path());
         testGuides(dir.path());
+        testNewFormat(dir.path());
     } else {
         std::printf("  no ffmpeg: skipped\n");
     }

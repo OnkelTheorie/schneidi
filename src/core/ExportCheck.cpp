@@ -794,4 +794,6 @@ int warnings(const QVector<Issue>& issues)
     return int(std::count_if(issues.begin(), issues.end(), [](const Issue& i) { return i.severity == Severity::Warning; }));
 }
 
+QRectF overlayBlock(const Clip& c, double W, double H) { return titleBlock(c, 0, W, H); }
+
 } // namespace ExportCheck

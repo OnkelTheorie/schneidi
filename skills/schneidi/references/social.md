@@ -38,7 +38,9 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
   everything plays twice). `short` keeps only the game sound of game recordings (a known game, or a Mix next to Discord/Spotify:
   no voice chat, microphone or music); `audio_stream` "all", "game" or stream names choose yourself. By hand: `keep` with `audio_streams`.
 - **The short of an existing 16:9 edit in one call**: `{"op":"new_timeline","from":"<edit>","aspect":"9:16",
-  "reframe":"auto"}` copies the edit (clips, titles, sound) into a new 9:16 timeline and reframes every video clip.
+  "reframe":"auto"}` copies the edit (clips, titles, sound) into a new 9:16 timeline and reframes every video clip;
+  mattes fill the new frame and titles, plates and logos in the apps' zones move into the safe area (check them
+  with `frames` `"guides":true`; animated ones stay where they were).
   Clips already in a 9:16 timeline: `{"op":"reframe"}` (all) or with `clips`/`track`.
 - A 16:9 clip in a 9:16 project is fitted: full width, black above and below. Choose per clip:
   - **Auto-Reframe** (people, one subject, most footage): `{"op":"reframe","clips":[…]}` zooms to fill and writes
