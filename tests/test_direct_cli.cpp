@@ -5,6 +5,7 @@
 // canceled suggest or apply fails with CANCELED and leaves no half project. Prints the suggest time of 10 clips cold
 // and warm (DIRECT_MEASURE=1 makes them 30 s long as in the plan's target).
 #include "cli/Commands.h"
+#include "engine/Extensions.h"
 #include "cli/Live.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -30,6 +31,36 @@
 #include <thread>
 
 namespace {
+
+// A fake whisper-cli (this program under that name): one word "hallo" at 0.1-0.9 s
+int fakeWhisper(int argc, char** argv)
+{
+    QString out;
+    for (int i = 1; i + 1 < argc; ++i)
+        if (QString::fromLocal8Bit(argv[i]) == "-of") out = QString::fromLocal8Bit(argv[i + 1]);
+    const QJsonObject json{{"result", QJsonObject{{"language", "de"}}},
+                           {"transcription", QJsonArray{QJsonObject{{"text", " Hallo"},
+                                                                    {"offsets", QJsonObject{{"from", 100}, {"to", 900}}}}}}};
+    QFile o(out + ".json");
+    if (!o.open(QIODevice::WriteOnly)) return 4;
+    o.write(QJsonDocument(json).toJson());
+    return 0;
+}
+
+// The fake whisper on the PATH and a (fake) model where the extensions keep it; returns how often it ran (a counter file)
+void installFakeWhisper(const QString& dir)
+{
+    const QString suffix = QFileInfo(QCoreApplication::applicationFilePath()).suffix();
+    const QString fake = QDir(dir).filePath(suffix.isEmpty() ? "bin/whisper-cli" : "bin/whisper-cli." + suffix);
+    QDir().mkpath(QDir(dir).filePath("bin"));
+    QFile::copy(QCoreApplication::applicationFilePath(), fake);
+    QFile::setPermissions(fake, QFile::permissions(fake) | QFileDevice::ExeOwner);
+    qputenv("PATH", (QDir::toNativeSeparators(QDir(dir).filePath("bin")) + QDir::listSeparator() + qEnvironmentVariable("PATH")).toUtf8());
+    const QString models = QDir(Extensions::rootDir()).filePath("whisper/models");
+    QDir().mkpath(models);
+    QFile m(QDir(models).filePath("ggml-small-q5_1.bin"));
+    if (m.open(QIODevice::WriteOnly)) m.write("model");
+}
 
 QJsonObject run(const QString& name, const QJsonObject& raw, const std::atomic<bool>* cancel = nullptr)
 {
@@ -122,6 +153,7 @@ QStringList labelsOf(const QJsonArray& suggestions)
 
 int main(int argc, char** argv)
 {
+    if (QFileInfo(QString::fromLocal8Bit(argv[0])).baseName() == QLatin1String("whisper-cli")) return fakeWhisper(argc, argv);
     Check::initEnv();
     QGuiApplication app(argc, argv);
     Check::initApp("direct_cli");
@@ -435,6 +467,73 @@ int main(int argc, char** argv)
         run("edit", {{"project", talk}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "1s"}}}}});
         CHECK_EQ(run("direct", {{"session", again["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}})["error"].toString(),
                  QString("SESSION_STALE"));
+    }
+    // ---- Review of part 3: talk on files is refused, tracks as a list, edges of a pause, two applies of one session
+    {
+        const QString talk2 = twoMics(dir.path());
+        CHECK_EQ(run("direct", {{"recipe", "talk"}, {"project", talk2}, {"files", QJsonArray{clip}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        const QJsonObject r = run("direct", {{"recipe", "talk"}, {"project", talk2},
+                                             {"options", QJsonObject{{"tracks", QJsonArray{"A1", "A2"}}}}});
+        const QJsonArray list = r["session"]["suggestions"].toArray();
+        if (CHECK(!list.isEmpty())) {
+            CHECK(list[0]["track"].toString().contains("A2")); // the page's list reached cut_pauses
+            const int n = list[0]["n"].toInt();
+            const double from = list[0]["from_s"].toDouble(), to = list[0]["to_s"].toDouble();
+            const QJsonObject one = run("direct", {{"session", r["session"]["id"]},
+                                                   {"apply", QJsonObject{{"on", QJsonArray{n}},
+                                                                         {"adjust", QJsonArray{QJsonObject{{"n", n}, {"from_s", from + 0.1}, {"to_s", to}}}}}}});
+            CHECK(!one.contains("error"));
+            CHECK(std::abs(one["removed_s"].toDouble() - (to - from - 0.1)) < 0.05);
+            // The same session again with all of them: the source timeline is the same one (by its id)
+            const QJsonObject all = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+            CHECK(!all.contains("error"));
+            CHECK(all["timeline"].toString() != one["timeline"].toString());
+        }
+    }
+    // ---- finish in two steps (as the app runs it): measured, then refused when the timeline changed meanwhile
+    {
+        const QJsonObject made = run("direct", {{"session", session["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                {"project", dir.filePath("out/finish.schneidi")}});
+        const QString fp = made["project"].toString();
+        const QJsonObject prepared = run("direct", {{"project", fp},
+                                                    {"finish", QJsonObject{{"timeline", made["timeline"]}, {"sfx", "mild"},
+                                                                           {"captions", "off"}, {"session", session}, {"prepare", true}}}});
+        CHECK(!prepared["ops"].toArray().isEmpty());
+        CHECK(!prepared["stamp"].toString().isEmpty());
+        run("edit", {{"project", fp}, {"timeline", made["timeline"]}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "2s"}}}}});
+        CHECK_EQ(run("direct", {{"project", fp}, {"finish", QJsonObject{{"timeline", made["timeline"]}, {"ops", prepared["ops"]},
+                                                                         {"stamp", prepared["stamp"]}}}})["error"].toString(),
+                 QString("FINISH_STALE"));
+    }
+    // ---- Recipe script with a (fake) whisper: the takes of the sentence, placed as rough_cut would; whisper once
+    {
+        installFakeWhisper(dir.path());
+        const QString sp = dir.filePath("out/script.schneidi");
+        run("new", {{"project", sp}});
+        const QJsonObject r = run("direct", {{"recipe", "script"}, {"project", sp}, {"files", QJsonArray{beach}},
+                                             {"options", QJsonObject{{"script", "Hallo."}}}});
+        const QJsonArray takes = r["session"]["suggestions"].toArray();
+        if (CHECK(!takes.isEmpty())) {
+            CHECK_EQ(takes[0]["kind"].toString(), QString("take"));
+            CHECK_EQ(takes[0]["sentence"].toInt(), 1);
+            CHECK(takes[0]["from_s"].toDouble() >= 0.0 && takes[0]["to_s"].toDouble() > takes[0]["from_s"].toDouble());
+        }
+        // A second suggestion takes the words kept from the first (no second whisper run: the fake is gone now)
+        QFile::remove(dir.filePath("bin/whisper-cli"));
+        const QJsonObject again = run("direct", {{"recipe", "script"}, {"project", sp}, {"files", QJsonArray{beach}},
+                                                 {"options", QJsonObject{{"script", "Hallo."}}}});
+        CHECK(!again["session"]["suggestions"].toArray().isEmpty());
+        const QJsonObject cut = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        CHECK(!cut.contains("error"));
+        CHECK(cut["timeline"].toString().startsWith("Rohschnitt"));
+        // The transcript is the project's now (the Transcript panel shows it, the next rough_cut uses it)
+        ProjectData d;
+        QString error;
+        CHECK(ProjectFile::load(sp, &d, &error));
+        bool kept = false;
+        for (const MediaInfo& m : d.media) kept |= m.path == beach && !m.transcripts.isEmpty();
+        CHECK(kept);
     }
     // ---- Recipe script without a script: a clear error; template without a project or template: NO_MATERIAL
     CHECK_EQ(run("direct", {{"recipe", "script"}, {"project", proj}})["error"].toString(), QString("BAD_ARGUMENT"));

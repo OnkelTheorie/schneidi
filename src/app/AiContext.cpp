@@ -248,7 +248,7 @@ const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_no
                            // repairs, multicam, special edits and generators a small model seldom reaches for
                            "still", "qualifier", "window", "hdr", "picture_aspect", "crop_bars", "route", "track_pan",
                            "fit_to_fill", "speed_ramp", "multicam", "angle", "angle_cuts", "hook_variants", "broll",
-                           "hide_jumps", "best_takes", "jl_cut", "node", "solid", "comp", "media", "room_tone", "align", "sections", "copy", "track", "accent"};
+                           "hide_jumps", "best_takes", "jl_cut", "node", "solid", "comp", "media", "room_tone", "align", "sections", "copy", "track"};
 
 qsizetype paramTextFor(const QString& tool)
 {

@@ -11,8 +11,10 @@
 #include "cli/Live.h"
 
 #include "core/I18n.h"
+#include "engine/AnalysisCache.h"
 #include "core/LiveHost.h"
 #include "core/ProjectFile.h"
+#include "core/TimelineOps.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -46,19 +48,6 @@ QString projectOf(Direction::Session& s)
     return s.project;
 }
 
-// The timeline as it is now, as a fingerprint (a talk session's ranges are times on exactly that timeline)
-QString timelineStamp(const QString& project, const QString& timeline)
-{
-    Session s(project);
-    if (!timeline.isEmpty() && timeline != QLatin1String("@current")) s.selectTimeline(timeline);
-    QByteArray bytes = QByteArray::number(s.project.currentSequence());
-    const Timeline& tl = s.project.timeline();
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (const Track& t : tl.tracks(k))
-            for (const Clip& c : t.clips) bytes += QJsonDocument(ProjectFile::clipJson(c)).toJson(QJsonDocument::Compact);
-    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex());
-}
-
 Direction::Material materialOf(const QString& file)
 {
     Direction::Material m;
@@ -67,6 +56,15 @@ Direction::Material materialOf(const QString& file)
     m.size = fi.size();
     m.modified = fi.lastModified().toMSecsSinceEpoch();
     m.analysis = {{"sound", "none"}, {"picture", "none"}, {"events", "none"}, {"speech", "none"}};
+    // Its length (adjust keeps moved edges inside it)
+    try {
+        const MediaSource src = openMedia({{"file", m.file}});
+        m.length = seconds(src.info.length, src.format);
+        m.hasVideo = src.info.hasVideo && !src.info.isImage;
+        m.hasAudio = src.info.hasAudio;
+    } catch (const Error&) {
+        // unreadable: length unknown (0)
+    }
     return m;
 }
 
@@ -79,29 +77,70 @@ QJsonObject noteObject(const QJsonArray& notes, const char* key)
 
 } // namespace
 
+QString timelineStamp(const QString& project, const QString& timeline)
+{
+    Session s(project);
+    if (!timeline.isEmpty() && timeline != QLatin1String("@current")) s.selectTimeline(timeline);
+    QByteArray bytes = QByteArray::number(s.project.currentSequence());
+    const Timeline& tl = s.project.timeline();
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : tl.tracks(k))
+            for (const Clip& c : t.clips) bytes += QJsonDocument(ProjectFile::clipJson(c)).toJson(QJsonDocument::Compact);
+    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex());
+}
+
 // ---------- talk ----------
 
 void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
 {
     const QString project = projectOf(s);
-    s.timeline = a["timeline"].toString("@current").trimmed();
+    if (!a.contains("timeline") && !a["files"].toArray().isEmpty())
+        fail("BAD_ARGUMENT", "talk works on a timeline (timeline:'@current' or its name), not on files: put the "
+                             "recordings on a timeline first");
+    // The timeline by its id from now on: another one opened later (the result of an apply) changes nothing
+    {
+        Session view(project);
+        const QString given = a["timeline"].toString("@current").trimmed();
+        if (given != QLatin1String("@current")) view.selectTimeline(given);
+        s.timeline = QString::number(view.project.currentSequence());
+    }
     const QJsonObject& o = s.options;
     QJsonObject op{{"op", "cut_pauses"}};
     if (o.contains("min_pause_s")) op["min_pause"] = seconds3(o["min_pause_s"].toDouble());
     if (o.contains("pad_s")) op["pad"] = seconds3(o["pad_s"].toDouble());
     if (o.contains("fillers")) op["fillers"] = o["fillers"].toBool();
     if (o.contains("threshold")) op["threshold"] = o["threshold"];
-    if (o.contains("tracks") && !o["tracks"].toString().trimmed().isEmpty()) op["tracks"] = o["tracks"];
-    QJsonObject e{{"project", project}, {"ops", QJsonArray{op}}, {"dry_run", true}};
-    if (s.timeline != QLatin1String("@current")) e["timeline"] = s.timeline;
+    // tracks as the page sends them (a list) or as text ("A1,A2")
+    if (const QJsonValue t = o["tracks"]; (t.isArray() && !t.toArray().isEmpty()) || (t.isString() && !t.toString().trimmed().isEmpty()))
+        op["tracks"] = t.isArray() ? QJsonValue(QStringList([&] {
+                                         QStringList l;
+                                         for (const QJsonValue& v : t.toArray()) l << v.toVariant().toString();
+                                         return l;
+                                     }()).join(","))
+                                   : t;
+    QJsonObject e{{"project", project}, {"ops", QJsonArray{op}}, {"dry_run", true}, {"timeline", s.timeline.toInt()}};
     // A dry run measures (on a copy of what the app shows; a background job has no app host, so it measures here)
     const QJsonObject r = runSub("edit", e, ctx);
     const QJsonObject note = noteObject(r["notes"].toArray(), "cut_pauses");
     Session view(project);
-    if (s.timeline != QLatin1String("@current")) view.selectTimeline(s.timeline);
+    view.selectTimeline(s.timeline.toInt());
     const double fps = view.format().rate.fps();
     s.options["_timeline_stamp"] = timelineStamp(project, s.timeline);
     s.options["_timeline_name"] = view.project.sequenceName(view.project.currentSequence());
+    s.options["_timeline_length_s"] = seconds(TimelineOps::endFrame(view.project.timeline()), view.format());
+    // target_lufs: the master's gain measured here (the app's edit only sets it; cutting pauses barely changes the
+    // gated loudness)
+    if (o.contains("target_lufs") && o["target_lufs"].isDouble()) {
+        try {
+            const QJsonObject l = runSub("loudness", {{"source", project}, {"timeline", s.timeline.toInt()}}, ctx);
+            const QJsonValue lufs = l["loudness"]["integrated_lufs"];
+            const double master = view.project.timeline().masterVolumeDb;
+            if (lufs.isDouble())
+                s.options["_master_db"] = std::round((master + o["target_lufs"].toDouble() - lufs.toDouble()) * 10) / 10;
+        } catch (const Error& e) {
+            if (e.code == QLatin1String("CANCELED")) throw;
+        }
+    }
     for (const QString& f : [&] {
              QStringList files;
              const Timeline& tl = view.project.timeline();
@@ -156,11 +195,11 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
                               {"to_s", std::round(x->to * 100) / 100}};
         removed += x->to - x->from;
     }
-    QJsonObject copy{{"op", "new_timeline"}, {"name", name}, {"from", s.options["_timeline_name"].toString()}};
+    QJsonObject copy{{"op", "new_timeline"}, {"name", name}, {"from", s.timeline.toInt()}};
     QJsonArray ops{copy, QJsonObject{{"op", "cut_pauses"}, {"ranges", ranges}}};
     QJsonArray done, notes;
-    if (s.options.contains("target_lufs") && s.options["target_lufs"].isDouble())
-        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"target_lufs", s.options["target_lufs"]}};
+    if (s.options["_master_db"].isDouble()) // measured when suggesting (never on the app's UI thread)
+        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", s.options["_master_db"]}};
     if (s.options["room_tone"].toBool())
         notes << "room tone: not laid under the cuts yet (op room_tone on a voice track does it by hand)";
     if (!args["plan"].toBool()) ops << QJsonObject{{"op", "_direction"}, {"session", Direction::toJson(s)}};
@@ -272,8 +311,35 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
         fail("BAD_ARGUMENT", "recipe script needs options.script (the text) or options.script_file");
     if (!files.isEmpty()) op["media"] = QJsonArray::fromStringList(files);
     QJsonObject e{{"project", project}, {"ops", QJsonArray{op}}, {"dry_run", true}};
-    // Files without a transcript: whisper here (a background job), the dry run reads what it made
-    e = prepareTalk(e, ctx);
+    // Files without a transcript: whisper here (a background job), once per file and language - what it made is kept
+    // (AnalysisCache "speech-words") for the next suggestion and goes into the project with the apply
+    if (!files.isEmpty()) {
+        const QJsonObject keyOptions{{"language", s.options["language"].toString()}};
+        QJsonObject prepared;
+        QStringList missing;
+        for (const QString& f : files) {
+            if (const auto hit = AnalysisCache::get(AnalysisCache::key("speech-words", f, keyOptions, 1)))
+                prepared[f] = *hit;
+            else
+                missing << f;
+        }
+        if (!missing.isEmpty()) {
+            QJsonObject only = op;
+            only["media"] = QJsonArray::fromStringList(missing);
+            const QJsonObject made = prepareTalk({{"project", project}, {"ops", QJsonArray{only}}}, ctx);
+            const QJsonObject t = made["ops"].toArray().first().toObject()["_transcripts"].toObject();
+            for (auto it = t.begin(); it != t.end(); ++it) {
+                prepared[it.key()] = it.value();
+                AnalysisCache::put(AnalysisCache::key("speech-words", it.key(), keyOptions, 1), it.value().toObject());
+            }
+        }
+        failIfCanceled();
+        if (!prepared.isEmpty()) {
+            op["_transcripts"] = prepared;
+            e["ops"] = QJsonArray{op};
+            s.options["_transcripts"] = prepared;
+        }
+    }
     const QJsonObject r = runSub("edit", e, ctx);
     const QJsonObject note = noteObject(r["notes"].toArray(), "rough_cut");
     QStringList used;
@@ -286,8 +352,9 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
             x.kind = "take";
             x.sentence = i + 1;
             x.file = absolute(take["file"].toString());
-            x.from = take["from_s"].toDouble();
-            x.to = take["to_s"].toDouble();
+            // What rough_cut would place (just before the first word to the end of the last one)
+            x.from = take["cut_from_s"].toDouble(take["from_s"].toDouble());
+            x.to = take["cut_to_s"].toDouble(take["to_s"].toDouble());
             x.score = take["coverage"].toDouble();
             x.on = on;
             x.reason = {"take", {{"sentence", i + 1}}};

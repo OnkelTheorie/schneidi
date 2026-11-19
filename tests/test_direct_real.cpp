@@ -18,12 +18,18 @@
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/Extensions.h"
 #include "ui/direct/DirectMaterial.h"
 #include "ui/direct/DirectPage.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QPlainTextEdit>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QPushButton>
@@ -35,6 +41,21 @@
 #include <functional>
 
 namespace {
+
+// A fake whisper-cli (this program under that name): one word "Hallo" at 0.1-0.9 s
+int fakeWhisper(int argc, char** argv)
+{
+    QString out;
+    for (int i = 1; i + 1 < argc; ++i)
+        if (QString::fromLocal8Bit(argv[i]) == "-of") out = QString::fromLocal8Bit(argv[i + 1]);
+    const QJsonObject json{{"result", QJsonObject{{"language", "de"}}},
+                           {"transcription", QJsonArray{QJsonObject{{"text", " Hallo"},
+                                                                    {"offsets", QJsonObject{{"from", 100}, {"to", 900}}}}}}};
+    QFile o(out + ".json");
+    if (!o.open(QIODevice::WriteOnly)) return 4;
+    o.write(QJsonDocument(json).toJson());
+    return 0;
+}
 
 bool waitFor(const std::function<bool()>& ok, int ms = 120000)
 {
@@ -48,12 +69,18 @@ bool waitFor(const std::function<bool()>& ok, int ms = 120000)
 
 int main(int argc, char** argv)
 {
+    if (QFileInfo(QString::fromLocal8Bit(argv[0])).baseName() == QLatin1String("whisper-cli")) return fakeWhisper(argc, argv);
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("direct-real");
     Theme::apply(app);
     std::setlocale(LC_NUMERIC, "C");
-    I18n::install("de");
+    I18n::install(qEnvironmentVariable("DIRECT_REAL_LANG", "de"));
+    if (const double scale = qEnvironmentVariable("DIRECT_REAL_FONT", "1").toDouble(); scale > 1) {
+        QFont f = QApplication::font();
+        f.setPointSizeF(f.pointSizeF() * scale);
+        QApplication::setFont(f);
+    }
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir dir;
     // Two "recordings", each with a loud moment
@@ -125,7 +152,7 @@ int main(int argc, char** argv)
     CHECK_EQ(p->undoStack()->count(), undo + 1);
     CHECK_EQ(int(p->sequences().size()), timelines + 2);
     bool tall = false;
-    for (const Sequence& s : p->sequences()) tall |= s.name == "Short";
+    for (const Sequence& s : p->sequences()) tall |= s.name == T("Short");
     CHECK(tall);
     CHECK_EQ(p->direction().value("id").toString(), session.value("id").toString());
     // No whisper here and no effect sounds chosen: nothing to finish, the second button stays away
@@ -190,6 +217,53 @@ int main(int argc, char** argv)
         CHECK(waitFor([&] { return !page->applying(); }));
         CHECK_EQ(p->undoStack()->count(), steps + 1);
         CHECK_EQ(int(p->sequences().size()), seqs + 1);
+    }
+    // Recipe template with files as material: the shots for short-hook's fields, a new project to open
+    {
+        page->material()->setUseTimeline(false);
+        page->material()->clear();
+        page->material()->addFiles({a, b});
+        page->recipes()->setRecipe("template");
+        page->recipes()->setTemplate("short-hook", "Short Hook");
+        page->recipes()->suggestButton()->click();
+        CHECK(waitFor([&] { return !page->busy() && page->suggestions()->session().value("recipe").toString() == "template"; }));
+        CHECK(!page->suggestions()->session().value("suggestions").toArray().isEmpty());
+        const int steps = p->undoStack()->count();
+        page->applyButton()->click();
+        CHECK(waitFor([&] { return !page->applying(); }));
+        CHECK_EQ(p->undoStack()->count(), steps); // nothing changed here: a project of its own
+        CHECK(page->openProjectButton()->isVisible());
+    }
+    // Recipe script with a (fake) whisper on files of the material
+    {
+        const QString suffix = QFileInfo(QCoreApplication::applicationFilePath()).suffix();
+        const QString fake = dir.filePath(suffix.isEmpty() ? "bin/whisper-cli" : "bin/whisper-cli." + suffix);
+        QDir().mkpath(dir.filePath("bin"));
+        QFile::copy(QCoreApplication::applicationFilePath(), fake);
+        QFile::setPermissions(fake, QFile::permissions(fake) | QFileDevice::ExeOwner);
+        qputenv("PATH", (QDir::toNativeSeparators(dir.filePath("bin")) + QDir::listSeparator() + qEnvironmentVariable("PATH")).toUtf8());
+        const QString models = QDir(Extensions::rootDir()).filePath("whisper/models");
+        QDir().mkpath(models);
+        QFile m(QDir(models).filePath("ggml-small-q5_1.bin"));
+        if (m.open(QIODevice::WriteOnly)) m.write("model");
+        m.close();
+        page->recipes()->setRecipe("script");
+        if (auto* text = page->recipes()->card("script")->findChild<QPlainTextEdit*>(); CHECK(text)) text->setPlainText("Hallo.");
+        page->recipes()->suggestButton()->click();
+        CHECK(waitFor([&] { return !page->busy() && page->suggestions()->session().value("recipe").toString() == "script"; }));
+        const QJsonArray takes = page->suggestions()->session().value("suggestions").toArray();
+        if (CHECK(!takes.isEmpty())) CHECK_EQ(takes[0].toObject().value("kind").toString(), QString("take"));
+        const int steps = p->undoStack()->count();
+        page->applyButton()->click();
+        CHECK(waitFor([&] { return !page->applying(); }));
+        CHECK_EQ(p->undoStack()->count(), steps + 1);
+    }
+    // DIRECT_REAL_DUMP=<file.png>: the window with the page after its runs (layout check by eye)
+    if (const QString dump = qEnvironmentVariable("DIRECT_REAL_DUMP"); !dump.isEmpty()) {
+        page->setFinishOffered(true);
+        page->setMadeProject(dir.filePath("Short Hook.schneidi"));
+        QTest::qWait(200);
+        w.grab().save(dump);
     }
     return Check::result();
 }

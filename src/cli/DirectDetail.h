@@ -60,17 +60,23 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
 QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
                           const QJsonObject& args, Context& ctx);
 
-// What `short` does after its cut, on its vertical timeline, as ONE edit: word captions (style karaoke|word|off: from
-// `words` = a `transcribe` words:true answer measured elsewhere, else whisper here when installed - never installed
-// from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of `game`). done/notes get what
-// happened; true = captions were put on (the render burns them in)
+// The timeline as it is now, as a fingerprint (its clips): ranges and words measured on it fit only that state
+QString timelineStamp(const QString& project, const QString& timeline);
+
+// What `short` does after its cut, on its vertical timeline: word captions (style karaoke|word|off; whisper when
+// installed - never installed from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of
+// `game`). shortFinishOps measures everything (speech, the sound's peak, the kill feed) and answers the ops, so the app
+// gets only numbers; shortFinishEdit runs them as ONE edit (true = captions were put on: the render burns them in)
 struct ShortFinish {
     QString captions = "karaoke";
     QString sfx = "off";
     QString game;     // empty = none
     QString language; // empty = detect
-    std::optional<QJsonArray> words;
 };
+QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
+                          QJsonArray* done, QJsonArray* notes);
+bool shortFinishEdit(const QString& project, const QString& timeline, const QJsonArray& ops, Context& ctx,
+                     QJsonArray* done);
 bool shortFinish(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx, QJsonArray* done,
                  QJsonArray* notes);
 

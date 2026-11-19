@@ -55,10 +55,11 @@ DirectBackend::JobHandle RealDirectBackend::suggest(const QString& recipe, const
 {
     QJsonObject args{{"recipe", recipe}, {"options", options}};
     if (material.contains("files")) args["files"] = material["files"];
-    if (material.contains("timeline")) {
-        args["timeline"] = material["timeline"];
+    if (material.contains("timeline")) args["timeline"] = material["timeline"];
+    // A timeline, the project's media or its slots: the background job's copy of the app's project
+    if (material.contains("timeline") || recipe == QLatin1String("talk") || recipe == QLatin1String("template")
+        || recipe == QLatin1String("script"))
         args["project"] = Cli::Live::AppProject;
-    }
     const Cli::Live::JobHandle h = Cli::Live::runInBackground("direct", args, onProgress, onDone, m_host, receiver);
     return {[h] { h.cancel(); }};
 }
@@ -82,48 +83,52 @@ DirectBackend::JobHandle RealDirectBackend::finish(const QJsonObject& session, c
                                                    const Progress& onProgress, const Done& onDone, QObject* receiver)
 {
     const QJsonObject o = session.value("options").toObject();
-    QJsonObject f{{"timeline", applied.value("timeline")},
+    const QString timeline = applied.value("timeline").toString();
+    QJsonObject f{{"timeline", timeline},
                   {"captions", whisperThere() ? o.value("captions").toString("karaoke") : QString("off")},
-                  {"sfx", o.value("sfx").toString("off")}};
-    for (const char* k : {"game", "language"})
-        if (o.contains(k)) f[k] = o.value(k);
-    // The speech is read in the background (whisper takes a while), the captions and sounds go on as one undo step
-    auto handle = std::make_shared<DirectBackend::JobHandle>();
-    auto stopped = std::make_shared<bool>(false);
-    LiveHost* host = m_host;
-    const auto edit = [=](QJsonObject finishArgs) {
-        if (*stopped) {
-            onDone(canceledReply());
-            return;
-        }
-        *handle = runLater(host, "direct", {{"finish", finishArgs}}, T("Regie: Untertitel und Effektklänge"), onProgress,
-                           onDone, receiver);
+                  {"sfx", o.value("sfx").toString("off")},
+                  {"session", session},
+                  {"prepare", true}};
+    if (o.contains("language")) f["language"] = o.value("language");
+    // 1. In the background: speech (whisper), the sound's peak, the kill feed - the ops with their numbers
+    // 2. On the UI thread, one undo step: only those ops, refused when the timeline changed meanwhile
+    struct State {
+        DirectBackend::JobHandle step;
+        bool stopped = false;
     };
-    if (f.value("captions").toString() == QLatin1String("off")) {
-        edit(f);
-    } else {
-        QJsonObject t{{"source", Cli::Live::AppProject}, {"timeline", f.value("timeline")}, {"words", true}};
-        if (o.contains("language")) t["language"] = o.value("language");
-        const Cli::Live::JobHandle h = Cli::Live::runInBackground(
-            "transcribe", t, onProgress,
-            [=](const QJsonObject& reply) mutable {
-                if (!reply.value("ok").toBool()) {
-                    const QString code = reply.value("error").toObject().value("code").toString();
-                    if (code != QLatin1String("NO_SPEECH")) {
-                        onDone(reply);
-                        return;
-                    }
-                    f["words"] = QJsonArray{};
-                } else {
-                    f["words"] = reply.value("result").toObject().value("words").toArray();
-                }
-                edit(f);
-            },
-            m_host, receiver);
-        *handle = {[h] { h.cancel(); }};
-    }
-    return {[handle, stopped] {
-        *stopped = true;
-        if (handle->cancel) handle->cancel();
+    auto state = std::make_shared<State>();
+    std::weak_ptr<State> weak = state;
+    LiveHost* host = m_host;
+    const Cli::Live::JobHandle measure = Cli::Live::runInBackground(
+        "direct", {{"project", Cli::Live::AppProject}, {"finish", f}}, onProgress,
+        [weak, host, timeline, onProgress, onDone, receiver](const QJsonObject& reply) {
+            const std::shared_ptr<State> st = weak.lock();
+            if (!reply.value("ok").toBool() || !st || st->stopped) {
+                onDone(reply.value("ok").toBool() ? canceledReply() : reply);
+                return;
+            }
+            const QJsonObject r = reply.value("result").toObject();
+            QJsonArray notes = r.value("notes").toArray();
+            if (r.value("ops").toArray().isEmpty()) { // nothing to add (no speech, nothing chosen)
+                onDone({{"ok", true}, {"result", QJsonObject{{"timeline", timeline}, {"notes", notes}, {"done", QJsonArray{}}}}});
+                return;
+            }
+            st->step = runLater(host, "direct",
+                                {{"finish", QJsonObject{{"timeline", timeline}, {"ops", r.value("ops")}, {"stamp", r.value("stamp")}}}},
+                                T("Regie: Untertitel und Effektklänge"), onProgress,
+                                [onDone, notes](const QJsonObject& edited) {
+                                    if (!edited.value("ok").toBool()) return onDone(edited);
+                                    QJsonObject res = edited.value("result").toObject();
+                                    if (!notes.isEmpty()) res["notes"] = notes;
+                                    onDone({{"ok", true}, {"result", res}});
+                                },
+                                receiver);
+        },
+        m_host, receiver);
+    // The caller keeps the handle: it holds the state (the callbacks only see it weakly, no cycle)
+    return {[state, measure] {
+        state->stopped = true;
+        measure.cancel();
+        if (state->step.cancel) state->step.cancel();
     }};
 }

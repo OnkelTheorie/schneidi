@@ -3600,5 +3600,10 @@
  "Untertitel und Effektklänge …": "Captions and effect sounds …",
  "Pausen schneiden": "Cut pauses",
  "%1 ohne Pausen": "%1 without pauses",
- "%1 ohne Pausen %2": "%1 without pauses %2"
+ "%1 ohne Pausen %2": "%1 without pauses %2",
+ "Das neue Projekt öffnen: %1": "Open the new project: %1",
+ "Neues Projekt: %1": "New project: %1",
+ "Regie: Der Short hat sich geändert, Untertitel und Effektklänge wurden nicht eingefügt.": "Direct: the short changed, captions and effect sounds were not added.",
+ "Regie: Projekt gebaut": "Direct: project built",
+ "Regie: neues Projekt gespeichert: %1": "Direct: new project saved: %1"
 }

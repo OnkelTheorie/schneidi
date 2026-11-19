@@ -19,6 +19,7 @@
 #include "ui/direct/DirectSuggestions.h"
 #include "ui/direct/DirectThumbs.h"
 
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -53,9 +54,24 @@ void MainWindow::liveDirection(const QJsonObject& session, bool ownChat)
 void MainWindow::showDirectSession(const QJsonObject& session)
 {
     ensureDirectPage();
-    // A session from elsewhere (the chat) takes the place of the page's own run
-    m_directPage->setBusy(false);
+    // A session from elsewhere (the chat) takes the place of the page's own runs: theirs end (late replies dropped),
+    // a running Übernehmen/finish too (one that already runs on the UI thread still makes its step)
+    ++m_directRun;
+    ++m_directApplyRun;
+    for (std::function<void()>* cancel : {&m_directCancel, &m_directApplyCancel})
+        if (*cancel) {
+            auto c = std::move(*cancel);
+            *cancel = {};
+            c();
+        }
+    if (m_backgroundJobs) {
+        m_backgroundJobs->removeJob(kJobId);
+        m_backgroundJobs->removeJob(kApplyJobId);
+    }
+    m_directPage->setBusy(false); // also the Suggest button anew
+    m_directPage->setApplying(false);
     m_directPage->setFinishOffered(false);
+    m_directPage->setMadeProject({});
     m_directApplied = {};
     QStringList files;
     for (const QJsonValue& v : session.value("material").toArray()) files << v.toObject().value("file").toString();
@@ -121,6 +137,11 @@ void MainWindow::ensureDirectPage()
     connect(m_directPage, &DirectPage::suggestRequested, this, &MainWindow::directSuggest);
     connect(m_directPage, &DirectPage::applyRequested, this, &MainWindow::directApply);
     connect(m_directPage, &DirectPage::finishRequested, this, &MainWindow::directFinish);
+    // A template's new project: opened like File › Open (the question about unsaved changes first)
+    connect(m_directPage, &DirectPage::openProjectRequested, this, [this](const QString& path) {
+        if (path.isEmpty() || !maybeLeaveProject()) return;
+        openProject(path);
+    });
     m_directPage->recipes()->setAvailable(directBackend()->recipes());
     connect(m_directPage, &DirectPage::openEditRequested, this, [this] { showPage(Page::Edit); });
     // Export: the Deliver page (its platform presets; `check` before the render runs there)
@@ -195,6 +216,7 @@ void MainWindow::directReset(bool material)
     m_directPage->setBusy(false);
     m_directPage->setApplying(false);
     m_directPage->setFinishOffered(false);
+    m_directPage->setMadeProject({});
     m_directApplied = {};
     if (material) {
         const QSignalBlocker b(m_directPage->material()); // its changed() would come back here
@@ -241,6 +263,7 @@ void MainWindow::directSuggest()
         if (reply.value("ok").toBool()) {
             const QJsonObject session = reply.value("result").toObject().value("session").toObject();
             m_directPage->setFinishOffered(false);
+            m_directPage->setMadeProject({});
             m_directPage->material()->setMaterialState(session.value("material").toArray());
             m_directPage->suggestions()->setSession(session);
             if (m_backgroundJobs)
@@ -290,11 +313,21 @@ void MainWindow::directApply()
         m_directApplyCancel = {};
         m_directPage->setApplying(false);
         if (reply.value("ok").toBool()) {
-            if (m_backgroundJobs) m_backgroundJobs->finishJob(kApplyJobId, T("Regie: Timeline gebaut"));
+            const bool newProject = reply.value("result").toObject().value("new_project").toBool();
+            if (m_backgroundJobs)
+                m_backgroundJobs->finishJob(kApplyJobId, newProject ? T("Regie: Projekt gebaut") : T("Regie: Timeline gebaut"));
             // A short: its captions and effect sounds are offered as the next step
             const QJsonObject session = m_directPage->suggestions()->session();
             m_directApplied = {{"session", session}, {"result", reply.value("result")}};
             m_directPage->setFinishOffered(directBackend()->canFinish(session));
+            // A template filled into a new project file: nothing changed here (no undo step), the page offers it
+            const QJsonObject result = reply.value("result").toObject();
+            if (result.value("new_project").toBool()) {
+                const QString path = result.value("project").toString();
+                m_directPage->setMadeProject(path);
+                statusBar()->showMessage(T("Regie: neues Projekt gespeichert: %1").arg(QDir::toNativeSeparators(path)), 8000);
+                return;
+            }
             statusBar()->showMessage(T("Regie: neue Timeline gebaut (Rückgängig nimmt sie zurück)"), 5000);
             return;
         }
@@ -354,9 +387,17 @@ void MainWindow::directFinish()
             return;
         }
         if (m_backgroundJobs) m_backgroundJobs->removeJob(kApplyJobId);
-        m_directPage->setFinishOffered(true);
         const QJsonObject error = reply.value("error").toObject();
-        if (error.value("code").toString() == "CANCELED") return;
+        const QString code = error.value("code").toString();
+        // The short changed since: captions would land on the wrong times; offered again only after a new Übernehmen
+        if (code == "FINISH_STALE" || code == "NOT_FOUND") {
+            m_directPage->setFinishOffered(false);
+            m_directApplied = {};
+            statusBar()->showMessage(T("Regie: Der Short hat sich geändert, Untertitel und Effektklänge wurden nicht eingefügt."), 8000);
+            return;
+        }
+        m_directPage->setFinishOffered(true);
+        if (code == "CANCELED") return;
         QMessageBox::warning(this, T("Regie"), T("Nicht eingefügt: %1").arg(error.value("message").toString()));
     };
     DirectBackend::JobHandle h = directBackend()->finish(m_directApplied.value("session").toObject(),
