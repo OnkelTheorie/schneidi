@@ -252,6 +252,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
     src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
+    src/core/SafeGuides.h         src/core/SafeGuides.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/ClipFormat.h       src/engine/ClipFormat.cpp

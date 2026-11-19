@@ -1665,7 +1665,11 @@ const QVector<Command>& commands()
           {"node", T::Integer, "with clip: the picture at this node of its graph (default: the output); a mask shows "
                                "as gray (white = inside)"},
           {"view", T::String, "with clip: 'matte' = the alpha of the picture as gray (white = solid, black = "
-                              "transparent): is a key clean?"}},
+                              "transparent): is a key clean?"},
+          {"guides", T::Boolean, "draw safe-area guides on the frames: action safe (93 %, cyan) and title safe (90 %, "
+                                 "yellow); in a vertical (9:16) picture also the zones TikTok, Reels and Shorts cover "
+                                 "with their UI (red: caption and buttons at the bottom, the top row, the buttons on the "
+                                 "right - the zones `check` warns about). Only on the images, never in a render"}},
          cmdFrames},
     };
     return list;

@@ -2,6 +2,7 @@
 // What was left of the editing duels of 17./18.11.2026 (docs/testdaten/opus-duell-2026-11-17, plan 0.25 › F):
 //  - `check` warns when a clip's sound is raised by +15 dB or more (the noise of a phone recording comes up with it)
 //  - op 'solid': a colour matte over the whole frame (a background in a 9:16 is no safe-area finding)
+//  - `frames` guides:true draws title/action safe and in 9:16 the phone apps' UI zones
 #include "check.h"
 
 #include "cli/Commands.h"
@@ -128,6 +129,34 @@ void testSolid(const QString& dir)
     CHECK(edit(project, {QJsonObject{{"op", "solid"}, {"color", "#000000"}}}).contains("failed"));
 }
 
+// --- frames guides:true: the title-safe line (yellow) at 5 % of the width; in 9:16 the bottom app zone tinted red;
+// without guides the picture is untouched
+void testGuides(const QString& dir)
+{
+    for (const bool vertical : {false, true}) {
+        const QString project = dir + (vertical ? "/guides-v.schneidi" : "/guides-h.schneidi");
+        run("new", {{"project", project}, {"fps", 25}, {"width", vertical ? 1080 : 1920}, {"height", vertical ? 1920 : 1080}});
+        edit(project, {QJsonObject{{"op", "solid"}, {"color", "#000000"}, {"at", 0}, {"length", "2s"}}});
+        const QString out = dir + (vertical ? "/guides-v" : "/guides-h");
+        const QImage plain = still(project, "1s", out + "-plain", {{"width", 960}});
+        const QImage img = still(project, "1s", out, {{"guides", true}, {"width", 960}});
+        if (!CHECK(!img.isNull() && !plain.isNull())) continue;
+        const int x = int(std::lround(img.width() * 0.05)), y = img.height() / 2;
+        QColor line;
+        for (int dx = -1; dx <= 1; ++dx) // the line is 1-3 px wide, JPEG blurs it a little
+            if (img.pixelColor(x + dx, y).red() > line.red()) line = img.pixelColor(x + dx, y);
+        if (!CHECK(line.red() > 150 && line.green() > 120 && line.blue() < 140)) std::printf("       title safe: %s\n", qPrintable(line.name()));
+        CHECK(near(plain.pixelColor(x, y), Qt::black));
+        CHECK(near(plain.pixelColor(img.width() / 2, int(img.height() * 0.9)), Qt::black));
+        const QColor bottom = img.pixelColor(img.width() / 2, int(img.height() * 0.9));
+        if (vertical) {
+            if (!CHECK(bottom.red() > bottom.green() + 20)) std::printf("       bottom zone: %s\n", qPrintable(bottom.name()));
+        } else {
+            CHECK(near(bottom, Qt::black)); // no app zones in 16:9
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -139,6 +168,7 @@ int main(int argc, char** argv)
     if (Check::haveFfmpeg()) {
         testBoost(dir.path());
         testSolid(dir.path());
+        testGuides(dir.path());
     } else {
         std::printf("  no ffmpeg: skipped\n");
     }

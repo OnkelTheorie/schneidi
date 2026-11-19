@@ -85,7 +85,8 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
     each new recording of the folder (default: the file's shape).
 - Keep text and faces inside the safe area: platforms cover roughly the bottom 20 % (caption, buttons), a strip
   on the right and a bar at the top. Titles and subtitles about 25-35 % up from the bottom, or in the upper third.
-  `check` on the project lists text in those zones (`safe_area`, `subtitle_safe_area`).
+  `check` on the project lists text in those zones (`safe_area`, `subtitle_safe_area`); `frames` with
+  `"guides":true` draws them (red) with title/action safe on the stills, to see where things sit.
 
 ## Content
 - **Hook in the first 1-2 s**: start with the strongest moment or a bold question/claim as a `title` (pop-in:
