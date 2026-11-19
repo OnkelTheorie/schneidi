@@ -17,9 +17,10 @@
 
 namespace Cli::detail {
 
-// Stopping a long analysis from outside (the app's review render, Cli::reviewOverlay): a CancelScope sets the flag for
-// the calling thread; the decoding loops (pictureSamples, loudPeaks, the review's sound mixes) read it once at their
-// start and stop when it turns true, then fail with CANCELED. nullptr = cannot be canceled (the CLI).
+// Stopping a long analysis from outside (Context::cancel through execute(), Live::runInBackground, the app's review
+// render Cli::reviewOverlay): a CancelScope sets the flag for the calling thread; the decoding loops (pictureSamples,
+// loudPeaks, the sound mixes …) read it once at their start and stop when it turns true, then fail with CANCELED.
+// perFile hands it on to its threads. nullptr = cannot be canceled (the CLI).
 const std::atomic<bool>* cancelFlag();
 bool canceled(); // the calling thread's flag is set and true
 struct CancelScope {
@@ -31,6 +32,11 @@ struct CancelScope {
 private:
     const std::atomic<bool>* m_old;
 };
+// The engine's progress callback (true = go on) for an analysis: reports to `report` (may be empty) and says stop once
+// the cancel flag of the thread that made it is set (taken here: the callback may run on decoding threads)
+std::function<bool(double)> goOn(std::function<void(double)> report = {});
+// After an engine call that may have stopped early: CANCELED when the calling thread's flag is set
+void failIfCanceled();
 
 // Media file + the frame rate frames count in (project format, or the file's own rate)
 struct MediaSource {

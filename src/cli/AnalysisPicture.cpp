@@ -3,9 +3,11 @@
 // with an ffmpeg process as before 0.15 (SCHNEIDI_ANALYSIS=ffmpeg)
 #include "cli/AnalysisDetail.h"
 
+#include "engine/AnalysisCache.h"
 #include "engine/Bundle.h"
 #include "engine/video/Scan.h"
 
+#include <QJsonArray>
 #include <QProcess>
 #include <QRegularExpression>
 
@@ -81,7 +83,13 @@ std::vector<PictureScore> scoresFfmpeg(const MediaSource& m, int width, const st
         }
         pending.remove(0, end + 1);
     };
+    const std::atomic<bool>* stop = cancelFlag();
     while (ff.state() != QProcess::NotRunning) {
+        if (stop && stop->load()) {
+            ff.kill();
+            ff.waitForFinished(5000);
+            fail("CANCELED", "canceled");
+        }
         ff.waitForReadyRead(200);
         parse(ff.readAllStandardError());
         for (const QByteArray& line : ff.readAllStandardOutput().split('\n'))
@@ -101,7 +109,12 @@ bool ffmpegAnalysis()
     return qEnvironmentVariable("SCHNEIDI_ANALYSIS") == QLatin1String("ffmpeg");
 }
 
-std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const std::function<void(double)>& progress)
+namespace {
+
+// Raise when the scores of the same file come out differently (old cache entries are then ignored)
+constexpr int kScoresVersion = 1;
+
+std::vector<PictureScore> measureScores(const MediaSource& m, int width, const std::function<void(double)>& progress)
 {
     const std::atomic<bool>* stop = cancelFlag(); // stops with the review render too (the callbacks may run elsewhere)
     if (ffmpegAnalysis()) return scoresFfmpeg(m, width, progress);
@@ -140,6 +153,32 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
     return out;
 }
 
+} // namespace
+
+std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const std::function<void(double)>& progress)
+{
+    // Per file in the analysis cache: `scenes` with other thresholds, highlights and the moments of a second recipe
+    // read the same scores (the way of reading is part of the key: ffmpeg's are the comparison)
+    const QJsonObject options{{"width", width}, {"way", ffmpegAnalysis() ? "ffmpeg" : "own"}};
+    const AnalysisCache::Key key = AnalysisCache::key("picture-scores", m.info.path, options, kScoresVersion);
+    if (const auto hit = AnalysisCache::get(key)) {
+        // seconds, score, luma of each picture in a row
+        const std::vector<double> v = AnalysisCache::unpackDoubles((*hit)["scores"]);
+        if (v.size() % 3 == 0 && (*hit)["count"].toInteger(-1) == qint64(v.size() / 3)) {
+            std::vector<PictureScore> out(v.size() / 3);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = {v[3 * i], v[3 * i + 1], v[3 * i + 2]};
+            if (progress) progress(1.0);
+            return out;
+        }
+    }
+    std::vector<PictureScore> out = measureScores(m, width, progress);
+    std::vector<double> v;
+    v.reserve(out.size() * 3);
+    for (const PictureScore& p : out) v.insert(v.end(), {p.seconds, p.score, p.luma});
+    AnalysisCache::put(key, {{"count", qint64(out.size())}, {"scores", AnalysisCache::pack(v)}});
+    return out;
+}
+
 namespace {
 thread_local const std::atomic<bool>* t_cancel = nullptr;
 }
@@ -148,6 +187,19 @@ const std::atomic<bool>* cancelFlag() { return t_cancel; }
 bool canceled() { return t_cancel && t_cancel->load(); }
 CancelScope::CancelScope(const std::atomic<bool>* flag) : m_old(t_cancel) { t_cancel = flag; }
 CancelScope::~CancelScope() { t_cancel = m_old; }
+
+std::function<bool(double)> goOn(std::function<void(double)> report)
+{
+    return [report = std::move(report), stop = cancelFlag()](double p) {
+        if (report) report(p);
+        return !(stop && stop->load());
+    };
+}
+
+void failIfCanceled()
+{
+    if (canceled()) fail("CANCELED", "canceled");
+}
 
 void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int rate, const QString& ffmpegFilter,
                     const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress,

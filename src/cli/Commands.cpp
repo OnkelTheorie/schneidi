@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "cli/Commands.h"
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "cli/Guide.h"
 #include "cli/Live.h"
@@ -297,6 +298,21 @@ Session::Opened openSession(const QString& file, Session::Access access)
         o.own = std::make_unique<Project>();
         o.own->load(d);
     };
+    // A background job of the app (Live::runInBackground): the copy of the app's project made when it was queued
+    if (const Live::AppCopy* copy = Live::appCopy(); copy && copy->data) {
+        const auto sameFile = [](const QString& a, const QString& b) {
+            return !a.isEmpty() && !b.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+        };
+        if (anyApp || sameFile(o.path, copy->path)) {
+            if (access == Session::Access::Write) fail("NOT_IN_BACKGROUND", "a background job only reads the project");
+            o.own = std::make_unique<Project>();
+            o.own->load(*copy->data);
+            o.path = copy->path;
+            o.live = true;
+            o.app = copy->app;
+            return o;
+        }
+    }
     // Inside the app (a command the server runs): its project, or a copy for reading
     if (LiveHost* h = Live::host()) {
         const QString appPath = h->liveProjectPath();
@@ -1276,7 +1292,8 @@ const QVector<Command>& commands()
                                  "the whole picture stays visible)"},
           {"captions", T::String, "karaoke (default: the spoken word lights up), word (one word at a time) or off"},
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
-          {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts, hits on kills"},
+          {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts (the computed whoosh, about 0.9 s; "
+                                 "op sfx length '0s' takes the short recorded one), hits on kills"},
           {"audio_stream", T::String, "sound of recordings with several audio streams: game (only the game sound - "
                                       "no Mix, voice chat like Discord, microphone, music like Spotify, guests or "
                                       "cameras - when such a stream is there; the default for game material: a known "
@@ -1667,7 +1684,11 @@ const QVector<Command>& commands()
           {"node", T::Integer, "with clip: the picture at this node of its graph (default: the output); a mask shows "
                                "as gray (white = inside)"},
           {"view", T::String, "with clip: 'matte' = the alpha of the picture as gray (white = solid, black = "
-                              "transparent): is a key clean?"}},
+                              "transparent): is a key clean?"},
+          {"guides", T::Boolean, "draw safe-area guides on the frames: action safe (93 %, cyan) and title safe (90 %, "
+                                 "yellow); in a vertical (9:16) picture also the zones TikTok, Reels and Shorts cover "
+                                 "with their UI (red: caption and buttons at the bottom, the top row, the buttons on the "
+                                 "right - the zones `check` warns about). Only on the images, never in a render"}},
          cmdFrames},
     };
     return list;
@@ -1691,6 +1712,11 @@ bool runsInApp(const Command& cmd, const QJsonObject& args)
 
 QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
 {
+    // The caller's cancel flag for everything this command runs on this thread (a step of `short` with its own
+    // Context keeps the outer one: only a given flag replaces it)
+    std::optional<detail::CancelScope> cancelScope;
+    if (ctx.cancel) cancelScope.emplace(ctx.cancel);
+    detail::failIfCanceled();
     QJsonObject args = args0;
     if (cmd.name == "app" && args["project"].toString().isEmpty()) args["project"] = QString(Live::AppProject);
     if (runsInApp(cmd, args) && !Live::host())

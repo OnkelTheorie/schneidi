@@ -3,6 +3,7 @@
 // `snap_to_beat` (cuts, hits or markers onto the beat grid of the music on the timeline). Both read the beats of the
 // song files (core/Beats), analysed once per file and kept in the cache (CacheLocation/beats); live, schneidi-cli
 // analyses before it sends the edit to the app (prepareMusic), so the app does not decode.
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 
 #include "core/AppPaths.h"
@@ -146,17 +147,17 @@ Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, 
             }
             features->add(mono.data(), int(mono.size()));
         };
-        const auto progress = [ctx](double p) {
+        const auto progress = goOn([ctx](double p) {
             if (ctx && ctx->progress) ctx->progress(p);
-            return true;
-        };
+        });
         Clip c;
         c.mediaPath = m.path;
         c.audioStream = stream;
         c.in = 0;
         c.out = m.length - 1;
-        if (!AudioAnalysis::clipSound(f, c, sink, progress) || !features)
-            fail("NO_AUDIO", "could not decode the audio of " + m.path);
+        const bool decoded = AudioAnalysis::clipSound(f, c, sink, progress);
+        failIfCanceled(); // nothing cached
+        if (!decoded || !features) fail("NO_AUDIO", "could not decode the audio of " + m.path);
         r = Beats::analyze(features->take());
         storeSongBeats(m.path, stream, *r);
     }

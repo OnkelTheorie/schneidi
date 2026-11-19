@@ -186,6 +186,8 @@ schneidi_test(test_short) # `short`: moments, Shorts/Reels/TikTok presets, check
 target_link_libraries(test_short PRIVATE schneidi_cli_lib)
 schneidi_test(test_duel_fixes) # duel 18.11.: single stream not on a muted track, silent mix, whisper lines, track names, ...
 target_link_libraries(test_duel_fixes PRIVATE schneidi_cli_lib)
+schneidi_test(test_duel_leftovers) # duel 17./18.11. leftovers: check audio_boost, solid, frames guides, new_timeline format
+target_link_libraries(test_duel_leftovers PRIVATE schneidi_cli_lib)
 schneidi_test(test_review_render) # `render review`: marks burned in at their frames, sheet tiles, offsets, project untouched
 target_link_libraries(test_review_render PRIVATE schneidi_cli_lib)
 schneidi_test(test_deliver_review) # Deliver › Prüf-Render: review jobs in the queue with the marks, normal ones without
@@ -548,6 +550,8 @@ target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
 schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
 target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
 schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
+schneidi_test(test_cli_cancel) # 0.25: Context::cancel, Live::runInBackground (cancel, queue, UI thread), AnalysisCache
+target_link_libraries(test_cli_cancel PRIVATE schneidi_cli_lib)
 
 # Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
 file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)

@@ -2,6 +2,7 @@
 // Live connection app <-> schneidi-cli, see Live.h
 #include "cli/Live.h"
 
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "core/AppPaths.h"
 #include "core/I18n.h"
@@ -33,6 +34,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -47,7 +49,10 @@ namespace Cli::Live {
 
 namespace {
 
-LiveHost* g_host = nullptr;
+// Per thread: the server and runForUser set it on the UI thread; a background job's thread (runInBackground) never sees
+// the app's objects, it reads its own copy (appCopy)
+thread_local LiveHost* g_host = nullptr;
+thread_local const AppCopy* t_appCopy = nullptr;
 // While a command of the user's own runs (g_host set by runForUser) the AIs wait
 const char* const userBusy = "the user runs a command in the schneidi app (it measures, a progress dialog is open); "
                              "try again in a moment";
@@ -216,6 +221,11 @@ QString registryDir()
 }
 
 LiveHost* host() { return g_host; }
+
+const AppCopy* appCopy() { return t_appCopy; }
+
+AppCopyScope::AppCopyScope(const AppCopy* copy) : m_old(t_appCopy) { t_appCopy = copy; }
+AppCopyScope::~AppCopyScope() { t_appCopy = m_old; }
 
 QJsonObject appState(LiveHost* h)
 {
@@ -742,12 +752,15 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     return {{"ok", true}, {"result", result}};
 }
 
-QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject& args, const QString& undoText)
+QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject& args, const QString& undoText,
+                       const std::atomic<bool>* cancel)
 {
     if (g_host) return errorReply("APP_BUSY", "another command runs in the app");
     const Command* cmd = find(command);
     if (!cmd) return errorReply("BAD_REQUEST", "no command " + command);
     HostScope scope(host);
+    std::optional<detail::CancelScope> cancelScope; // the analyses inside the op stop with the caller's flag
+    if (cancel) cancelScope.emplace(cancel);
     Project* p = host->liveProject();
     QUndoStack* undo = p->undoStack();
     const int index = undo->index();
@@ -756,6 +769,7 @@ QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject
     undo->beginMacro(undoText);
     try {
         Context ctx;
+        ctx.cancel = cancel;
         const QJsonObject result = cmd->run(normalize(*cmd, args), ctx);
         undo->endMacro();
         if (undo->index() == index + 1 && undo->command(index)->childCount() == 0) dropStep(undo, index); // no-op
@@ -919,7 +933,8 @@ void release()
 
 Connection* connectionFor(const QString& project)
 {
-    if (g_isApp || project.isEmpty()) return nullptr;
+    // A background job (its own copy of the app's project) never talks to an app: its sockets belong to the main thread
+    if (g_isApp || t_appCopy || project.isEmpty()) return nullptr;
     const bool any = isAppProject(project);
     const QString key = any ? QString(AppProject) : canonical(project);
     auto& map = connections();
@@ -1163,7 +1178,7 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
 
 Activity::Activity(const QString& command, const QJsonObject& args, Context& ctx) : m_ctx(ctx), m_tool(command)
 {
-    if (g_isApp || g_host || !isJob(command)) return;
+    if (g_isApp || g_host || t_appCopy || !isJob(command)) return;
     m_conn = reportingConnection(args);
     if (!m_conn) return;
     static int jobs = 0;

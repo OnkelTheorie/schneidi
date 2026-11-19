@@ -33,8 +33,9 @@ namespace Cli::detail {
 
 namespace {
 // Project format read once for several files looked at in parallel (perFile), instead of each thread opening
-// the project (or the running app's)
-const ProjectFormat* g_projectFormat = nullptr;
+// the project (or the running app's). Per thread: perFile sets it in each of its threads, so two commands running at
+// the same time (background jobs of the app) never see each other's
+thread_local const ProjectFormat* t_projectFormat = nullptr;
 } // namespace
 
 MediaSource openMedia(const QJsonObject& a)
@@ -42,8 +43,8 @@ MediaSource openMedia(const QJsonObject& a)
     const QString path = a["file"].toString();
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "file not found: " + path);
     MediaSource m;
-    if (a.contains("project") && g_projectFormat) {
-        m.format = *g_projectFormat;
+    if (a.contains("project") && t_projectFormat) {
+        m.format = *t_projectFormat;
     } else if (a.contains("project")) {
         Session s(a["project"].toString());
         m.format = s.format();
@@ -225,8 +226,13 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
     std::vector<QJsonObject> results(n);
     std::vector<std::atomic<double>> progress(n);
     std::atomic<int> next{0};
+    // The caller's cancel flag reaches every thread (a canceled job takes no further file)
+    const std::atomic<bool>* stop = cancelFlag();
+    const ProjectFormat* projectFormat = format ? &*format : nullptr;
     auto work = [&] {
-        for (int i; (i = next++) < n;) {
+        const CancelScope scope(stop);
+        t_projectFormat = projectFormat;
+        for (int i; !(stop && stop->load()) && (i = next++) < n;) {
             QJsonObject args = a;
             args.remove("files");
             args["file"] = files[i];
@@ -241,8 +247,8 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
             }
             progress[i] = 1.0;
         }
+        t_projectFormat = nullptr;
     };
-    g_projectFormat = format ? &*format : nullptr;
     const int threads = std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, std::min(n, parallel));
     std::atomic<int> running{threads};
     std::vector<std::thread> pool;
@@ -261,7 +267,7 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
         }
     }
     for (std::thread& t : pool) t.join();
-    g_projectFormat = nullptr;
+    failIfCanceled(); // not a list of files that each failed with CANCELED
     QJsonArray list;
     for (QJsonObject& r : results) list << r;
     return {{"files", list}};
@@ -289,7 +295,8 @@ namespace {
 // Jumps in the picture's time stamps (stutter): the list (at most 50) and the stretches they form
 QJsonObject gapsJson(const QString& path, const ProjectFormat& f)
 {
-    const std::optional<Stutter::Scan> s = FrameGaps::scan(path);
+    const std::optional<Stutter::Scan> s = FrameGaps::scan(path, cancelFlag());
+    failIfCanceled();
     if (!s) return {{"checked", false}};
     int missing = 0;
     QJsonArray jumps;

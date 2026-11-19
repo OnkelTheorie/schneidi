@@ -537,12 +537,7 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
 void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
                             const QVector<TimelineOps::TransitionSpan>& spans, const QColor& color)
 {
-    QColor base = color.isValid() ? color
-                  : c.isTitle()   ? Theme::titleClip
-                  : c.isCompound() ? Theme::compoundClip
-                  : kind == TrackKind::Video ? Theme::videoClip
-                                             : Theme::audioClip;
-    if (!c.enabled) base = Theme::controlOff; // disabled (D) like DaVinci: gray
+    QColor base = TimelineColors::clipBaseColor(c, kind, color); // disabled (D): gray
     if (ghost) base.setAlpha(200);
     const QColor body = base.darker(135);
 

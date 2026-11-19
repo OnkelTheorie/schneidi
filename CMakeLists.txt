@@ -252,6 +252,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
     src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
+    src/core/SafeGuides.h         src/core/SafeGuides.cpp
+    src/core/OverlayFit.h         src/core/OverlayFit.cpp
     src/core/MusicBed.h           src/core/MusicBed.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
@@ -499,6 +501,9 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelineRetime.cpp
     src/ui/timeline/TimelineViewDetail.h
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
+    src/ui/timeline/TimelineColors.h
+    src/ui/timeline/TimelineOverview.h src/ui/timeline/TimelineOverview.cpp
+    src/engine/AnalysisCache.h    src/engine/AnalysisCache.cpp
 )
 
 # Per-pixel loops run on every exported frame: full vectorization (GCC/Clang -O2 only vectorizes loops whose length
@@ -651,6 +656,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/Live.h     src/cli/Live.cpp
     src/cli/Guide.h    src/cli/Guide.cpp
     src/cli/Setup.h    src/cli/Setup.cpp
+    src/cli/LiveBackground.cpp
     src/cli/EditOpsMusicBed.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
 # The Claude skill of the repo is the editing guide of every AI (cli/Guide.h): `guide` tool, setup, app chat

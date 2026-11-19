@@ -159,6 +159,8 @@ signals:
     // The ruler menu's "loop in the range" entry was switched
     void loopInOutRequested(bool on);
     void viewChanged();
+    // setPlayhead moved the playhead (the overview strip follows it)
+    void playheadChanged(int frame);
     void toolChanged(TimelineView::Tool tool);
     void snappingChanged(bool on);
     // Files (from Media Pool or file manager) were dropped onto track index `track`

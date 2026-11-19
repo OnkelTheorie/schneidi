@@ -18,7 +18,8 @@ the same ad for 20 products: one row per product in a CSV, `templates` `fill` wi
 - Images (logo, product photo) are media like video: `append`/`place` them; they last 5 s unless you set `in`/`out`.
 - B-roll whose sound is not wanted: `place`/`append` with `video_only:true` (picture only; `audio_only:true` the other way round).
 - Logo over a background: logo on V2, `transform` `zoom` to size it (an image is fitted to the frame first), a
-  short `fade` in. Transparent PNGs keep their transparency.
+  short `fade` in. Transparent PNGs keep their transparency. A plain colour background or plate:
+  `{"op":"solid","color":"#ffffff","at":"11s","length":"4s","track":"V1"}` (a colour matte over the whole frame).
 - The user's brand kit (`brand`: logo, colors, fonts, intro/outro) when they have one: titles with `color`
   `"brand1"` follow it, `brand` `action` `"logo"` places the logo ([brand.md](brand.md)).
 - Text: `title` with a clear style - big `size`, `bold`, `outline` or `box` for contrast. Check placement with

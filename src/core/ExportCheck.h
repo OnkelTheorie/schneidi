@@ -9,6 +9,7 @@
 #include "core/Stutter.h"
 #include "core/Types.h"
 
+#include <QRectF>
 #include <QSize>
 #include <cstdint>
 #include <QString>
@@ -111,6 +112,9 @@ QVector<QPair<int, int>> silentStretches(const std::vector<float>& framePeaks, i
 // ---- Layout and hook of vertical videos (9:16 and narrower: what phones show full screen)
 
 bool isVertical(const ProjectFormat& f);
+// The block a title clip (text, counter, shape, drawing) covers at its first frame in a W x H frame, in pixels (y down),
+// as `check` measures it for the safe areas
+QRectF overlayBlock(const Clip& c, double W, double H);
 // Titles and subtitles in [from, to) that TikTok, Reels and Shorts would cover (Options::safe*) or that stick out of
 // the picture, one issue per title clip / subtitle track. Nothing for other formats.
 QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o = {});

@@ -628,6 +628,7 @@ void TimelineView::setPlayhead(int frame)
     if (frame == m_playhead) return;
     m_playhead = frame;
     update(); // deliberately NO automatic scrolling along
+    emit playheadChanged(frame);
 }
 
 void TimelineView::setTool(Tool tool)

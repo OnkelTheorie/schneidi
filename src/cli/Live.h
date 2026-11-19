@@ -45,9 +45,12 @@
 #include <QPointer>
 #include <QString>
 
+#include <atomic>
+#include <functional>
 #include <memory>
 
 class LiveHost;
+struct ProjectData;
 class QLocalServer;
 class QLockFile;
 class QTimer;
@@ -63,7 +66,8 @@ bool isAppProject(const QString& project);
 
 QString registryDir();
 
-// The app the current command runs in (set by the server while it runs a command), nullptr in schneidi-cli
+// The app the current command runs in (set by the server while it runs a command), nullptr in schneidi-cli. Per thread:
+// only the thread that runs the command sees it (a background job's thread never does, see AppCopy)
 LiveHost* host();
 // State the AI sees: playhead, selection, open timeline, playing, marks
 QJsonObject appState(LiveHost* host);
@@ -162,7 +166,75 @@ std::unique_ptr<QLockFile> lockLaunch(int timeoutMs = 60000);
 // Länge…" = op fit_music) on the host's project (also without a running Server): one undo step named `undoText`, all
 // or nothing, but the user's own: not in the AI log, not lit up as the AI's, plan mode does not apply. The reply as
 // for Server::runForChat ({"ok":true,"result"} or {"ok":false,"error":{code,message}}); APP_BUSY while a command runs.
-QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject& args, const QString& undoText);
+// `cancel` turning true stops the analyses inside (the op fails with CANCELED, the step is taken back).
+QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject& args, const QString& undoText,
+                       const std::atomic<bool>* cancel = nullptr);
+
+// ---------- Background jobs (app side, also any process with an event loop) ----------
+
+// Reading commands that take a while (analyses, transcribe, frames) on a thread of their own, so the app stays usable
+// and the user can cancel them. Only these commands, and only their reading forms: probe, peaks, scenes, highlights,
+// silence, loudness, beats (without apply), overview, index (without annotate), transcribe (without apply), frames.
+// Everything else (and a command that would change something) -> onDone with NOT_IN_BACKGROUND.
+//
+// - Call on the UI thread (the thread of QCoreApplication). onProgress and onDone are called there too (queued),
+//   never from inside runInBackground. onDone comes exactly once per call (also for a refusal, a canceled or queued
+//   job), with the reply of runForUser: {"ok":true,"result":{…}} or {"ok":false,"error":{"code","message"}}
+//   (code CANCELED whenever cancel() came before onDone; its error has "late":true when the command had got to its end
+//   anyway, so what it caches may be there). onProgress(fraction 0..1, stage) may be dropped/merged when the job is fast.
+// - "@app" as project/file/source (or the path of the project open in `host`): the project and the app state are copied
+//   here when the job is queued; the job reads that copy (openSession(@app, Read) on its thread), never the app's
+//   objects. Without `host` "@app" fails with NO_APP.
+// - A queue: at most one job per material file (or project) at a time, at most backgroundLimit() jobs at once (each
+//   analysis uses several threads itself). The threads run at low priority (Background::lowerThisThread).
+// - `receiver` (optional): when it is destroyed before the job ends, the callbacks are not called (a closed page).
+// - Quitting: the jobs left are canceled and waited for at QCoreApplication::aboutToQuit (when the application goes at
+//   the latest; or cancelAllBackground()).
+class BackgroundJob;
+class JobHandle {
+public:
+    JobHandle() = default;
+    void cancel() const;  // stops it (queued: at once; running: within a moment); onDone still comes, with CANCELED
+    bool running() const; // queued or running (onDone not called yet)
+    int id() const;       // 0 = refused at once (onDone brings why)
+    explicit operator bool() const { return m_job != nullptr; }
+
+private:
+    friend JobHandle runInBackground(const QString&, const QJsonObject&, std::function<void(double, const QString&)>,
+                                     std::function<void(const QJsonObject&)>, LiveHost*, QObject*);
+    std::shared_ptr<BackgroundJob> m_job;
+};
+JobHandle runInBackground(const QString& command, const QJsonObject& args,
+                          std::function<void(double fraction, const QString& stage)> onProgress,
+                          std::function<void(const QJsonObject& reply)> onDone, LiveHost* host = nullptr,
+                          QObject* receiver = nullptr);
+// May `command` with `args` run as a background job? (*why: for the refusal)
+bool runsInBackground(const QString& command, const QJsonObject& args, QString* why = nullptr);
+// Jobs at once (0 = automatic: Background::threads, half the processors, halved again, 1..4)
+int backgroundLimit();
+void setBackgroundLimit(int jobs);
+// Queued + running jobs
+int backgroundJobs();
+// Cancels every job and waits until their threads are gone (their onDone calls still come, queued)
+void cancelAllBackground();
+
+// A background job's thread: the app's project as it was when the job was queued (data empty = the job reads no
+// project of the app). openSession serves "@app" and the app's project path from it, read only.
+struct AppCopy {
+    QString path; // the app's project file (empty = never saved)
+    std::shared_ptr<const ProjectData> data;
+    QJsonObject app; // appState() at that time
+};
+const AppCopy* appCopy(); // the calling thread's, nullptr = not a background job
+struct AppCopyScope {
+    explicit AppCopyScope(const AppCopy* copy);
+    ~AppCopyScope();
+    AppCopyScope(const AppCopyScope&) = delete;
+    AppCopyScope& operator=(const AppCopyScope&) = delete;
+
+private:
+    const AppCopy* m_old;
+};
 
 // ---------- schneidi-cli side ----------
 

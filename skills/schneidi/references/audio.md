@@ -51,7 +51,8 @@ audio is silent instead of suggesting `music:true`.
 
 ## Voice-over
 You cannot speak: a voice-over comes from a file the user gives (`{"op":"voiceover","file":"…","at":"2s"}`; with
-`track` it goes there and replaces what lies in its range, like an armed track) or the user records it in the app - the
+`track` it goes there and replaces what lies in its range, like an armed track; a silent tail past the picture's end is
+cut off, words past it are kept and the notes say so - then lengthen the last picture) or the user records it in the app - the
 mic in an audio track's header arms it, Shift+R (or the mic in the timeline toolbar) plays the timeline from the
 playhead and records, the take grows live in the timeline. It lands on the armed track (punch-in), else the selected
 clips' free track, else the track named Voiceover, else a free track without a name, else one new "Voiceover" track -
