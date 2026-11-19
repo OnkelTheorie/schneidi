@@ -43,6 +43,8 @@ int gFadeFrames = 0;
 int gSynthKind = 0;
 // > 1: every picture of the synthetic clip is shown this many times (a recording at a higher frame rate than the game's).
 int gSynthHold = 0;
+// > 0: the synthetic clip stands for this many pictures (only a faint noise changes) before it starts to move.
+int gSynthStart = 0;
 
 // Moving gradient, a moving textured square and a little noise: exercises intra modes, motion and skip.
 // A texture under a slow zoom with a little noise (gSynthKind 2): the material B pictures pay on.
@@ -68,7 +70,8 @@ Yuv synthFrame(int w, int h, int t)
 {
     if (gSynthHold > 1)
         t -= t % gSynthHold;
-    const int tm = gSynthKind != 0 ? 0 : t;
+    const int moved = std::max(0, t - gSynthStart);
+    const int tm = gSynthKind != 0 ? 0 : moved;
     Yuv f;
     f.w = w;
     f.h = h;
@@ -82,7 +85,7 @@ Yuv synthFrame(int w, int h, int t)
             int v = (x * 255) / w / 2 + (y * 255) / h / 3 + int(seed >> 29);
             const int sx = (tm * 3) % w, sy = (tm * 2) % h;
             if (gSynthKind == 2)
-                v = 16 + zoomSample(x, y, w, h, t) * 7 / 8 + int(seed >> 30);
+                v = 16 + zoomSample(x, y, w, h, moved) * 7 / 8 + int(seed >> (t < gSynthStart ? 31 : 30)); // (standing: the faintest noise)
             else if (x >= sx && x < sx + 48 && y >= sy && y < sy + 40)
                 v = ((x / 4 + y / 4) & 1) ? 220 : 40;
             f.y[size_t(y) * w + x] = uint8_t(std::clamp(v, 0, 255));
@@ -1439,6 +1442,48 @@ int main()
             if (!(held < moving))
                 std::fprintf(stderr, "duplicated pictures, crf: %zu bytes held, %zu moving\n", held, moving);
             CHECK(held < moving);
+        }
+        {
+            // A clip that stands for its first pictures and then moves (a game's menu or a held shot before the
+            // action): the probe that starts the two-pass model takes the queued picture that needs the most as its
+            // P picture, not the second one - a picture that repeats the first says nothing about the moving ones,
+            // the plan began several QP too fine and the first pictures took the bits of the rest.
+            gSynthKind = 2;
+            gSynthStart = 20;
+            EncoderConfig c = config(320, 192, IntraMode::Auto, 120, 2);
+            c.bframes = 3;
+            c.bitrateKbps = 600;
+            c.fps = 60;
+            FirstPass fp(c.width, c.height, 2, c.bframes);
+            for (int t = 0; t < 120; ++t) {
+                const Yuv src = synthFrame(c.width, c.height, t);
+                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+            }
+            c.firstPass = fp.stats();
+            size_t bytes = 0;
+            StreamInfo info;
+            CHECK(roundTrip(c, 120, &bytes, -1, nullptr, &info));
+            gSynthKind = 0;
+            gSynthStart = 0;
+            const double kbps = bytes * 8.0 / 2.0 / 1000.0;
+            std::vector<int> late;
+            size_t startBytes = 0;
+            for (size_t i = 0; i < info.types.size(); ++i) {
+                if (info.types[i] == 'P' && info.order[i] >= 60)
+                    late.push_back(info.qps[i]);
+                if (info.order[i] < 20)
+                    startBytes += info.sizes[i];
+            }
+            CHECK(!late.empty());
+            std::sort(late.begin(), late.end());
+            const int lateQp = late.empty() ? 0 : late[late.size() / 2];
+            // (the I picture is coded 3 below the P QP; the plan's first QP within 4 of where it settles)
+            if (info.qps[0] < lateQp - 7 || startBytes * 4 > bytes || std::abs(kbps - 600.0) >= 60.0)
+                std::fprintf(stderr, "standing start, two-pass: I QP %d, P QP later %d, %zu of %zu bytes in the standing pictures, %.0f kbit/s\n",
+                             info.qps[0], lateQp, startBytes, bytes, kbps);
+            CHECK(info.qps[0] >= lateQp - 7);
+            CHECK(startBytes * 4 <= bytes);
+            CHECK(std::abs(kbps - 600.0) < 60.0);
         }
         {
             // Rate control with B pictures: one pass, with a first pass, and in chunks

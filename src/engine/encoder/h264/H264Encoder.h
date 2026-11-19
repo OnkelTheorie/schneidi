@@ -537,6 +537,7 @@ private:
     double rcKBin_[3][kRcBins] = {}, rcCostBin_[3][kRcBins] = {}; // [2]: the B pictures (two-pass)
     static constexpr int kTpClasses = 2 + 3 * kRcBins;
     double rcKSumPb_ = 0, rcCostSumPb_ = 0; // all P pictures after B runs coded so far
+    double rcKBSeed_ = 0;                   // the B pictures' k until one is coded, from the probe (0 = by the P pictures' k)
     std::vector<uint8_t> tpAfterB_;         // per picture of the plan: a P picture after a run of B pictures
     // Per picture QP offset from its (time-smoothed) complexity against the clip's (two-pass
     // complexity compression) and the cost weight 2^(-offset/6) the bit model applies with it.
