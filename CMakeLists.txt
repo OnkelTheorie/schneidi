@@ -252,6 +252,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
     src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
+    src/core/MusicBed.h           src/core/MusicBed.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/ClipFormat.h       src/engine/ClipFormat.cpp
@@ -649,7 +650,8 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/ServeJobs.h src/cli/ServeJobs.cpp
     src/cli/Live.h     src/cli/Live.cpp
     src/cli/Guide.h    src/cli/Guide.cpp
-    src/cli/Setup.h    src/cli/Setup.cpp)
+    src/cli/Setup.h    src/cli/Setup.cpp
+    src/cli/EditOpsMusicBed.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
 # The Claude skill of the repo is the editing guide of every AI (cli/Guide.h): `guide` tool, setup, app chat
 file(GLOB_RECURSE SCHNEIDI_SKILL RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/skills/schneidi/*.md)

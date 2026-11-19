@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// schneidi-cli: edit op `music_bed` - background music of schneidi's own (core/MusicBed: moods calm, drive, hype)
+// made in the exact length, written as a WAV next to the project ("<name>-music/", like the speech of op 'speak'),
+// placed on a new audio track "Musik" and ducked under the other sound of the timeline (op 'duck'). Its beat grid goes
+// into the beats cache of the file (songBeats), so snap_to_beat, fit_music and `beats` take it without analysing.
+// The same options give the same file name and samples: a bed made before is reused. Live, schneidi-cli makes the
+// file before the edit goes to the app (prepareMusicBed), so the app does not compute.
+#include "cli/CommandsDetail.h"
+
+#include "core/AppPaths.h"
+#include "core/I18n.h"
+#include "core/MusicBed.h"
+#include "core/TimelineOps.h"
+
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QStandardPaths>
+
+#include <cmath>
+
+namespace Cli::detail {
+
+namespace {
+
+double round3(double v) { return std::round(v * 1000) / 1000; }
+
+// Folder for the beds of a project: "<project folder>/<project name>-music" next to a saved project, else "music" in
+// the app's data folder (an unsaved project has no folder; the files must outlive any cache)
+QString bedFolder(const QString& projectPath)
+{
+    if (projectPath.isEmpty() || projectPath.startsWith('@'))
+        return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("music");
+    const QFileInfo fi(projectPath);
+    return fi.absoluteDir().filePath(fi.completeBaseName() + "-music");
+}
+
+QString moodList()
+{
+    return MusicBed::moodIds().join(", ");
+}
+
+// The options of the op (length in timeline frames from `at`: *at, *frames)
+MusicBed::Options bedOptions(Session& s, const QJsonObject& op, int* at, int* frames)
+{
+    MusicBed::Options o;
+    if (!op.contains("mood")) fail("BAD_ARGUMENT", "missing 'mood': " + moodList() + " (`effects` kind:'music' lists them)");
+    const std::optional<MusicBed::Mood> mood = MusicBed::moodFrom(op.value("mood").toString());
+    if (!mood) fail("BAD_ARGUMENT", "mood: " + moodList() + ", got '" + op.value("mood").toVariant().toString() + "'");
+    o.mood = *mood;
+    if (op.contains("bpm")) o.bpm = numberOf(op, "bpm", MusicBed::kMinBpm, MusicBed::kMaxBpm);
+    if (op.contains("key")) {
+        o.key = MusicBed::keyFrom(op.value("key").toString());
+        if (!o.key) fail("BAD_ARGUMENT", "key: a note and a mode like \"A minor\", \"F#m\", \"Eb major\" or \"C\"");
+    }
+    if (op.contains("seed")) o.seed = unsigned(numberOf(op, "seed", 1, 1000000));
+    const double fps = s.format().rate.fps();
+    *at = op.contains("at") ? timeOf(s, op, "at") : 0;
+    if (*at < 0) fail("BAD_ARGUMENT", "'at' must not be before 0");
+    const QJsonValue length = op.value("length");
+    if (length.isUndefined() || length.toString() == "timeline") {
+        *frames = TimelineOps::endFrame(s.project.timeline()) - *at;
+        if (*frames <= 0)
+            fail("EMPTY", "length:'timeline' (the default): the timeline has nothing after 'at' to take the length "
+                          "from - give a length (\"30s\")");
+    } else {
+        *frames = timeOf(s, op, "length");
+    }
+    const double seconds = *frames / fps;
+    if (seconds < MusicBed::kMinLength - 1e-9 || seconds > MusicBed::kMaxLength + 1e-9)
+        fail("BAD_ARGUMENT", QString("length: %1 to %2 s, got %3 s")
+                                 .arg(MusicBed::kMinLength)
+                                 .arg(MusicBed::kMaxLength)
+                                 .arg(seconds, 0, 'f', 2));
+    o.length = seconds;
+    return o;
+}
+
+struct Bed {
+    QString path;
+    MusicBed::Result info; // without samples when it was made before
+    bool made = false;
+    double ms = 0; // time to make it
+};
+
+// The bed's file, made unless it is there with its grid in the cache
+Bed ensureBed(const QString& projectPath, const MusicBed::Options& o)
+{
+    Bed b;
+    const QString dir = bedFolder(projectPath);
+    if (!QDir().mkpath(dir)) fail("FAILED", "cannot create the folder " + QDir::toNativeSeparators(dir));
+    b.path = QDir(dir).absoluteFilePath(MusicBed::fileName(o));
+    if (QFileInfo::exists(b.path)) {
+        if (const std::optional<Beats::Result> beats = cachedSongBeats(b.path, 0)) {
+            b.info = MusicBed::describe(o);
+            b.info.beats = *beats;
+            return b;
+        }
+    }
+    QElapsedTimer t;
+    t.start();
+    b.info = MusicBed::make(o);
+    if (!MusicBed::writeWav(b.path, b.info)) fail("FAILED", "cannot write " + QDir::toNativeSeparators(b.path));
+    b.info.samples = {};
+    storeSongBeats(b.path, 0, b.info.beats);
+    b.made = true;
+    b.ms = t.nsecsElapsed() / 1e6;
+    return b;
+}
+
+void opMusicBed(Session& s, const QJsonObject& op)
+{
+    const ProjectFormat& f = s.format();
+    const double fps = f.rate.fps();
+    int at = 0, frames = 0;
+    const MusicBed::Options o = bedOptions(s, op, &at, &frames);
+    const Timeline& tl = s.project.timeline();
+    int track = int(tl.audio.size()); // a new track
+    if (op.contains("track")) {
+        TrackKind k = TrackKind::Audio;
+        track = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …)");
+        if (track < tl.audio.size() && tl.audio[track].locked) fail("FAILED", trackName({TrackKind::Audio, track}) + " is locked");
+    }
+    const bool newTrack = track >= tl.audio.size();
+    const Bed bed = ensureBed(s.path, o);
+    const MediaInfo& m = s.media(bed.path);
+    if (m.length <= 0 || !m.hasAudio) fail("FAILED", "cannot read the bed " + QDir::toNativeSeparators(bed.path));
+    // The file's length in frames is the asked one (within the rounding of its samples to frames)
+    const int len = s.editor.placeSourceRange(m.path, 0, std::min(frames, m.length) - 1, at, track);
+    if (len <= 0) fail("FAILED", QString("could not place the music bed on A%1 (locked?)").arg(track + 1));
+    if (newTrack) s.editor.renameTrack(TrackRef{TrackKind::Audio, track}, T("Musik"));
+    int id = 0;
+    for (const Clip& c : s.project.timeline().audio.value(track).clips)
+        if (c.start == at && c.mediaPath == m.path) id = c.id;
+    if (!id) fail("FAILED", "the placed music bed is not on the timeline");
+    if (op.contains("gain")) {
+        const double gain = numberOf(op, "gain", -60, 12);
+        s.editor.modifyClips({id}, T("Musikbett"), [gain](Clip& c) { c.volumeDb = gain; });
+    }
+
+    // Ducking under the other sound (voice, game), as op 'duck' does by default; without any: nothing to do
+    QString ducked;
+    if (op.value("duck").toBool(true)) {
+        try {
+            const int before = int(s.notes.size());
+            applyOp(s, QJsonObject{{"op", "duck"}, {"clips", QJsonArray{id}}});
+            if (s.notes.size() > before) ducked = s.notes.takeAt(s.notes.size() - 1).toString();
+        } catch (const Error& e) {
+            ducked = e.code == "BAD_ARGUMENT" ? QString("not ducked: no other audible track with clips")
+                                              : QString("not ducked: %1").arg(e.message);
+        }
+    }
+
+    const MusicBed::Result& r = bed.info;
+    QJsonArray sections;
+    for (const MusicBed::Section& sec : r.sections) {
+        const double from = sec.fromBar * 4 * r.beats.period, to = sec.kind == MusicBed::Section::Ending
+                                                                       ? r.length
+                                                                       : std::min(r.length, sec.toBar * 4 * r.beats.period);
+        sections << QJsonObject{{"kind", MusicBed::sectionName(sec.kind)}, {"from_s", round3(from)}, {"to_s", round3(to)}};
+    }
+    QJsonObject n{{"file", QDir::toNativeSeparators(bed.path)},
+                  {"mood", MusicBed::moodId(r.mood)},
+                  {"bpm", r.bpm},
+                  {"key", MusicBed::keyName(r.key)},
+                  {"chords", QJsonArray::fromStringList(r.chords)},
+                  {"seed", int(r.seed)},
+                  {"length_s", round3(len / fps)},
+                  {"sections", sections},
+                  {"beat_s", round3(r.beats.period)},
+                  {"bar_s", round3(4 * r.beats.period)},
+                  {"track", trackName({TrackKind::Audio, track})},
+                  {"clip", id},
+                  {"made", bed.made}};
+    n["final_hit_s"] = r.endBar >= 0 ? QJsonValue(round3(r.endBar * 4 * r.beats.period)) : QJsonValue();
+    if (bed.made) {
+        n["lufs"] = std::round(r.lufs * 10) / 10;
+        n["true_peak_db"] = std::round(r.truePeakDb * 10) / 10;
+        n["made_ms"] = int(std::lround(bed.ms));
+    }
+    if (!ducked.isEmpty()) n["ducking"] = ducked;
+    s.notes << QJsonObject{{"music_bed", n}};
+}
+
+} // namespace
+
+QJsonArray musicBedMoods()
+{
+    QJsonArray out;
+    for (const MusicBed::Mood m : MusicBed::kMoods) {
+        const MusicBed::Result d = MusicBed::describe({m, 30});
+        out << QJsonObject{{"mood", MusicBed::moodId(m)},
+                           {"name", T(MusicBed::moodLabel(m))},
+                           {"bpm", MusicBed::defaultBpm(m)},
+                           {"key", MusicBed::keyName(MusicBed::defaultKey(m))},
+                           {"chords", QJsonArray::fromStringList(d.chords)},
+                           {"description", MusicBed::description(m)}};
+    }
+    return out;
+}
+
+QJsonObject prepareMusicBed(const QJsonObject& editArgs, Context&)
+{
+    const QJsonArray ops = editArgs.value("ops").isObject() ? QJsonArray{editArgs.value("ops")} : editArgs.value("ops").toArray();
+    bool any = false;
+    for (const QJsonValue& v : ops) any = any || v.toObject().value("op").toString() == "music_bed";
+    if (!any) return editArgs;
+    try {
+        Session s(editArgs.value("project").toString()); // a copy of what the app shows
+        s.selectTimeline(editArgs.value("timeline"));
+        for (const QJsonValue& v : ops) {
+            const QJsonObject op = v.toObject();
+            if (op.value("op").toString() != "music_bed") continue;
+            int at = 0, frames = 0;
+            ensureBed(s.path, bedOptions(s, op, &at, &frames));
+        }
+    } catch (const Error&) {
+        // the op reports it where it runs
+    }
+    return editArgs;
+}
+
+void addMusicBedOps(QVector<OpDef>& ops)
+{
+    ops << OpDef{"music_bed",
+                 "{op:'music_bed', mood:'calm'|'drive'|'hype', length?:'timeline'|time, at?, bpm?, key?, seed?, track?, "
+                 "gain?, duck?}",
+                 "background music of schneidi's own in the exact length (no file needed, free to use, its beats known)",
+                 "Computed from synth voices (pad, bass, drums; keys in calm, plucked stabs in drive, an arp and "
+                 "risers in hype), one chord per bar, intro, main parts with a lift, breaks in long beds and a final "
+                 "hit on a bar one that rings out exactly to the end. mood: calm (84 BPM, F major: vlog, tutorial, "
+                 "under speech), drive (112 BPM, A minor: travel, sport, montage) or hype (128 BPM, E minor: gaming "
+                 "highlights, shorts) - `effects` kind:'music' lists them. length: a time (\"30s\") or 'timeline' "
+                 "(default: from `at` to the end of the timeline); at (default 0); bpm 60-180 and key (\"A minor\", "
+                 "\"F#m\", \"Eb major\") replace the mood's; seed (1 = default) picks another progression and "
+                 "patterns. The bed is about -16 LUFS, true peak under -1 dBTP; gain = clip volume in dB (default 0). "
+                 "It goes onto a new audio track \"Musik\" (or `track`) and is ducked under the other audible "
+                 "tracks like op 'duck' (duck:false: not). The WAV lies next to the project (<name>-music/); the same "
+                 "options reuse it. Its beat grid is stored with the file: snap_to_beat, fit_music and `beats` take "
+                 "it without analysing. The answer's notes give music_bed {file, bpm, key, chords, sections "
+                 "[{kind, from_s, to_s}], final_hit_s, beat_s, bar_s, track, clip, lufs, ducking}.",
+                 opMusicBed};
+}
+
+} // namespace Cli::detail

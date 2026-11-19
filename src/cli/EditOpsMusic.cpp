@@ -104,19 +104,32 @@ QString cacheFile(const QString& key)
 
 } // namespace
 
+std::optional<Beats::Result> cachedSongBeats(const QString& path, int stream)
+{
+    QFile file(cacheFile(beatsKey(path, stream)));
+    if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
+    const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
+    if (o["version"].toInt() != kCacheVersion) return std::nullopt;
+    return beatsFrom(o["beats"].toObject());
+}
+
+void storeSongBeats(const QString& path, int stream, const Beats::Result& r)
+{
+    const QString to = cacheFile(beatsKey(path, stream));
+    QDir().mkpath(QFileInfo(to).absolutePath());
+    QFile file(to);
+    if (file.open(QIODevice::WriteOnly))
+        file.write(QJsonDocument(QJsonObject{{"version", kCacheVersion}, {"file", path}, {"beats", beatsJson(r)}})
+                       .toJson(QJsonDocument::Compact));
+}
+
 Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, const QJsonObject& given, Context* ctx)
 {
     if (!m.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.path);
     const QString key = beatsKey(m.path, stream);
     std::optional<Beats::Result> r;
     if (given.contains(key)) r = beatsFrom(given[key].toObject());
-    if (!r) {
-        QFile file(cacheFile(key));
-        if (file.open(QIODevice::ReadOnly)) {
-            const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
-            if (o["version"].toInt() == kCacheVersion) r = beatsFrom(o["beats"].toObject());
-        }
-    }
+    if (!r) r = cachedSongBeats(m.path, stream);
     if (!r) {
         std::optional<Beats::Features> features;
         std::vector<float> mono;
@@ -145,11 +158,7 @@ Beats::Result songBeats(const ProjectFormat& f, const MediaInfo& m, int stream, 
         if (!AudioAnalysis::clipSound(f, c, sink, progress) || !features)
             fail("NO_AUDIO", "could not decode the audio of " + m.path);
         r = Beats::analyze(features->take());
-        QDir().mkpath(QFileInfo(cacheFile(key)).absolutePath());
-        QFile file(cacheFile(key));
-        if (file.open(QIODevice::WriteOnly))
-            file.write(QJsonDocument(QJsonObject{{"version", kCacheVersion}, {"file", m.path}, {"beats", beatsJson(*r)}})
-                           .toJson(QJsonDocument::Compact));
+        storeSongBeats(m.path, stream, *r);
     }
     if (!r->found || r->period <= 0)
         fail("NO_BEAT", QString("no beat found in %1 (silence, or shorter than four beats)").arg(QFileInfo(m.path).fileName()));

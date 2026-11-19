@@ -88,6 +88,7 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
     ProjectFormat f;
     int from = 0, to = 0;
     QJsonObject out;
+    std::optional<Beats::Result> known; // a whole file whose beats are cached (op 'music_bed' stores its grid there)
     if (isProject) {
         // The timeline's sound as exported (optionally some tracks); times in timeline frames
         Session s(file);
@@ -122,12 +123,14 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
         c.in = from;
         c.out = to - 1;
         sound.fps = f.rate.fps();
-        if (!AudioAnalysis::clipSound(f, c, sink, progress))
+        if (!a.contains("from") && !a.contains("to") && !a.contains("min_bpm") && !a.contains("max_bpm"))
+            known = cachedSongBeats(m.info.path, c.audioStream);
+        if (!known && !AudioAnalysis::clipSound(f, c, sink, progress))
             fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
         out["file"] = m.info.path;
     }
-    if (!sound.features) fail("NO_AUDIO", "no sound in the range");
-    const Beats::Result r = Beats::analyze(sound.features->take(), options);
+    if (!known && !sound.features) fail("NO_AUDIO", "no sound in the range");
+    const Beats::Result r = known ? *known : Beats::analyze(sound.features->take(), options);
     if (!r.found) fail("NO_BEAT", "no beat found (silence, or shorter than four beats)");
 
     // Times of the range start on: seconds and frames in the frame rate of the answer
