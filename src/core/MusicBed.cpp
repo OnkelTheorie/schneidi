@@ -309,7 +309,7 @@ Plan makePlan(const Options& o)
     p.bpm = o.bpm > 0 ? std::clamp(o.bpm, kMinBpm, kMaxBpm) : defaultBpm(o.mood);
     p.beat = 60.0 / p.bpm;
     p.bar = 4 * p.beat;
-    p.frames = frameCount(std::clamp(o.length, kMinLength, kMaxLength));
+    p.frames = frameCount(std::clamp(o.length, kMinLength - kLengthSlack, kMaxLength + kLengthSlack));
     p.length = double(p.frames) / SR;
     p.key = o.key ? *o.key : defaultKey(o.mood);
     p.seed = std::max(1u, o.seed);

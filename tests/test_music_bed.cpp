@@ -254,9 +254,9 @@ int main(int argc, char* argv[])
     }
 
     // ---------- The op ----------
-    for (const int fps : {25, 30, 60}) {
-        const QString project = tmp.path() + QString("/fps%1.schneidi").arg(fps);
-        run("new", {{"project", project}, {"fps", fps}});
+    for (const double fps : {25.0, 30.0, 60.0, 24000 / 1001.0, 30000 / 1001.0, 60000 / 1001.0}) {
+        const QString project = tmp.path() + QString("/fps%1.schneidi").arg(int(fps * 1000));
+        run("new", {{"project", project}, {"fps", std::round(fps * 1000) / 1000}});
         // 17.3 s: not a whole number of frames at every rate before rounding; the clip and the file are that long
         const QJsonObject r = edit(project, R"([{"op":"music_bed","mood":"drive","length":"17.3s"}])");
         const QJsonObject n = bedNote(r);
@@ -264,15 +264,25 @@ int main(int argc, char* argv[])
         const auto p = load(project);
         const Clip* c = clipById(*p, n["clip"].toInt());
         if (!CHECK(c && c->length() == want && c->start == 0))
-            std::printf("       %d fps: %s\n", fps, QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+            std::printf("       %.3f fps: %s\n", fps, QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
         // The file as the project reads it (frames at its rate)
         const MediaInfo* m = p->mediaInfo(n["file"].toString());
-        if (!CHECK(m && std::abs(m->length - want) <= 1)) std::printf("       %d fps: file %d frames\n", fps, m ? m->length : -1);
+        if (!CHECK(m && std::abs(m->length - want) <= 1)) std::printf("       %.3f fps: file %d frames\n", fps, m ? m->length : -1);
         CHECK(n["made"].toBool());
         // Nothing else on the timeline: not ducked
         CHECK(c && !Keys::animated(*c, AnimParam::Volume));
     }
 
+    // The longest bed at 23.976 fps: 600 s are 14386 frames (600.008 s), taken - a frame more is refused
+    {
+        const QString pj = tmp.path() + "/long.schneidi";
+        run("new", {{"project", pj}, {"fps", 23.976}});
+        const QJsonObject n = bedNote(edit(pj, R"([{"op":"music_bed","mood":"calm","length":"600s"}])"));
+        const auto p = load(pj);
+        const Clip* c = clipById(*p, n["clip"].toInt());
+        CHECK(c && c->length() == 14386);
+        CHECK_EQ(edit(pj, R"([{"op":"music_bed","mood":"calm","length":14387}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+    }
     // length:'timeline' over a speech clip: a new track "Musik", ducked under the speech
     const QString speech = tmp.path() + "/speech.wav";
     {

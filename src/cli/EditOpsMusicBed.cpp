@@ -70,7 +70,8 @@ MusicBed::Options bedOptions(Session& s, const QJsonObject& op, int* at, int* fr
         *frames = timeOf(s, op, "length");
     }
     const double seconds = *frames / fps;
-    if (seconds < MusicBed::kMinLength - 1e-9 || seconds > MusicBed::kMaxLength + 1e-9)
+    const double halfFrame = 0.5 / fps; // the limits in whole frames (600 s at 23.976 fps: 14386 frames)
+    if (seconds < MusicBed::kMinLength - halfFrame || seconds > MusicBed::kMaxLength + halfFrame)
         fail("BAD_ARGUMENT", QString("length: %1 to %2 s, got %3 s")
                                  .arg(MusicBed::kMinLength)
                                  .arg(MusicBed::kMaxLength)

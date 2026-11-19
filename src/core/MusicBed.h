@@ -30,6 +30,9 @@ constexpr int kChannels = 2;
 // Bumped when the sound changes: part of the file names (a bed made by an older version is made again)
 constexpr int kVersion = 1;
 constexpr double kMinLength = 1.0, kMaxLength = 600.0; // seconds
+// Lengths this far outside are taken as they are: a timeline length in frames is up to half a frame off whole
+// seconds (600 s at 23.976 fps are 14386 frames = 600.008 s)
+constexpr double kLengthSlack = 0.05;
 constexpr double kMinBpm = 60, kMaxBpm = 180;
 constexpr double kTargetLufs = -16.0;  // integrated loudness of the bed alone
 constexpr double kCeilingDbtp = -1.0;  // true peak at most
@@ -57,7 +60,7 @@ Key defaultKey(Mood m);
 
 struct Options {
     Mood mood = Mood::Drive;
-    double length = 30;          // seconds (clamped to kMinLength..kMaxLength)
+    double length = 30;          // seconds (clamped to kMinLength..kMaxLength, kLengthSlack beyond)
     double bpm = 0;              // 0 = the mood's tempo (else clamped to kMinBpm..kMaxBpm)
     std::optional<Key> key;      // none = the mood's key
     unsigned seed = 1;           // 1 = the mood's first progression and patterns; others vary them
