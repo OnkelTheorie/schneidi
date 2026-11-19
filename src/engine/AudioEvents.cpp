@@ -948,9 +948,9 @@ QHash<QString, Result>& memory()
 }
 
 // On disk in the analysis cache (engine/AnalysisCache: keyed by the file, its size and time, these options, kVersion)
-std::optional<Result> loadDisk(const QString& path, const QJsonObject& options)
+std::optional<Result> loadDisk(const AnalysisCache::Key& key)
 {
-    const std::optional<QJsonObject> hit = AnalysisCache::get("audio-events", path, options, kVersion);
+    const std::optional<QJsonObject> hit = AnalysisCache::get(key);
     if (!hit) return std::nullopt;
     const QJsonObject& o = *hit;
     Result r;
@@ -964,10 +964,9 @@ std::optional<Result> loadDisk(const QString& path, const QJsonObject& options)
     return r;
 }
 
-void saveDisk(const QString& path, const QJsonObject& options, const Result& r)
+void saveDisk(const AnalysisCache::Key& key, const Result& r)
 {
-    AnalysisCache::put("audio-events", path, options, kVersion,
-                       {{"by", r.by}, {"duration", r.duration}, {"events", toJson(r.events)}});
+    AnalysisCache::put(key, {{"by", r.by}, {"duration", r.duration}, {"events", toJson(r.events)}});
 }
 
 // Shot times from the heuristics inside YAMNet's coarse shot windows (YAMNet decides, the heuristic says when)
@@ -1069,7 +1068,9 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
                            .arg(way)
                            .arg(kVersion);
     const QString key = QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex());
-    const QJsonObject diskOptions{{"stream", stream}, {"way", way}};
+    // Taken before measuring: a file overwritten meanwhile is not stored under its new stamp
+    const AnalysisCache::Key diskKey =
+        AnalysisCache::key("audio-events", path, {{"stream", stream}, {"way", way}}, kVersion);
     if (options.useCache) {
         {
             QMutexLocker lock(&g_mutex);
@@ -1079,7 +1080,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
                 return filtered(r, options);
             }
         }
-        if (auto disk = loadDisk(path, diskOptions)) {
+        if (auto disk = loadDisk(diskKey)) {
             QMutexLocker lock(&g_mutex);
             memory().insert(key, *disk);
             disk->cached = true;
@@ -1151,7 +1152,7 @@ Result analyzeFile(const QString& path, int stream, const Options& options)
     }
     if (options.progress) options.progress(1.0);
     if (options.useCache && (result.by == "yamnet") == model && !result.incomplete) {
-        saveDisk(path, diskOptions, result);
+        saveDisk(diskKey, result);
         QMutexLocker lock(&g_mutex);
         memory().insert(key, result);
     }

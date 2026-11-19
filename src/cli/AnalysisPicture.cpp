@@ -160,7 +160,8 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
     // Per file in the analysis cache: `scenes` with other thresholds, highlights and the moments of a second recipe
     // read the same scores (the way of reading is part of the key: ffmpeg's are the comparison)
     const QJsonObject options{{"width", width}, {"way", ffmpegAnalysis() ? "ffmpeg" : "own"}};
-    if (const auto hit = AnalysisCache::get("picture-scores", m.info.path, options, kScoresVersion)) {
+    const AnalysisCache::Key key = AnalysisCache::key("picture-scores", m.info.path, options, kScoresVersion);
+    if (const auto hit = AnalysisCache::get(key)) {
         // seconds, score, luma of each picture in a row
         const std::vector<double> v = AnalysisCache::unpackDoubles((*hit)["scores"]);
         if (v.size() % 3 == 0 && (*hit)["count"].toInteger(-1) == qint64(v.size() / 3)) {
@@ -174,8 +175,7 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
     std::vector<double> v;
     v.reserve(out.size() * 3);
     for (const PictureScore& p : out) v.insert(v.end(), {p.seconds, p.score, p.luma});
-    AnalysisCache::put("picture-scores", m.info.path, options, kScoresVersion,
-                       {{"count", qint64(out.size())}, {"scores", AnalysisCache::pack(v)}});
+    AnalysisCache::put(key, {{"count", qint64(out.size())}, {"scores", AnalysisCache::pack(v)}});
     return out;
 }
 

@@ -21,10 +21,32 @@
 
 namespace AnalysisCache {
 
+// Where one result of one file is stored, and the file as it was when the key was taken
+struct Key {
+    QString entry;    // the cache file; empty = nothing to key on (the media file is gone)
+    QString file;     // the media file (absolute)
+    qint64 size = -1; // its size and modification time (ms) at key()
+    qint64 modified = 0;
+    int version = 0;
+    bool valid() const { return !entry.isEmpty(); }
+};
+// Take the key BEFORE measuring and store with it: put() leaves out a result of a file that changed meanwhile
+// (overwritten while it was read: the old content must not be stored under the new size and time)
+Key key(const QString& kind, const QString& file, const QJsonObject& options, int version);
 // The stored result, nullopt = none (never stored, the file changed, another version, unreadable entry)
-std::optional<QJsonObject> get(const QString& kind, const QString& file, const QJsonObject& options, int version);
-// Stores `result` (nothing happens when the file is gone or the folder cannot be written: a cache never fails a command)
-void put(const QString& kind, const QString& file, const QJsonObject& options, int version, const QJsonObject& result);
+std::optional<QJsonObject> get(const Key& key);
+// Stores `result`; nothing happens when the file changed since key(), is gone, or the folder cannot be written (a
+// cache never fails a command)
+void put(const Key& key, const QJsonObject& result);
+
+// How many get() calls found a result (this process; for tests and measurements)
+int hits();
+
+// Keeps the folder below `capBytes`: the entries used longest ago go first, down to 80 % of the cap. Runs once per
+// process by itself on a low-priority pool thread at the first key() (cap kDefaultCap), and also removes the folder of
+// the old audio events cache (before 0.25). Returns the number of files removed.
+inline constexpr qint64 kDefaultCap = 2LL * 1024 * 1024 * 1024;
+int prune(qint64 capBytes = kDefaultCap);
 
 // The folder of all kinds (CacheLocation/analysis)
 QString folder();
