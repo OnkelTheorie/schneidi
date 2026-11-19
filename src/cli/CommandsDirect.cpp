@@ -389,6 +389,8 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
         if (!files.contains(f)) files << f;
     }
     if (files.isEmpty() && a.contains("timeline")) {
+        // The Direct page: a timeline of the project open in the app (a background job reads its copy)
+        if (s.project.isEmpty() && (Live::host() || Live::appCopy())) s.project = Live::AppProject;
         if (s.project.isEmpty()) fail("BAD_ARGUMENT", "timeline needs the project it is in");
         s.timeline = a["timeline"].toString().trimmed();
         files = timelineFiles(s.project, s.timeline);
@@ -488,6 +490,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     // The project: given, the session's, else a new one next to the first recording
     QString project = args["project"].toString();
     if (project.isEmpty()) project = s.project;
+    // Run in the app for the user (the Direct page, Live::runForUser): its project, one undo step around it all
+    if (project.isEmpty() && Live::host()) project = Live::AppProject;
     if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
     const bool dry = args["dry_run"].toBool() || args["plan"].toBool();
     bool created = args["_created"].toBool();
@@ -642,7 +646,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     }
     if (args["dry_run"].toBool()) o["dry_run"] = true;
     if (edited.contains("live")) o["live"] = true;
-    if (!dry && !args["_no_check"].toBool()) {
+    // In the app (the page's Übernehmen) no check here: it runs on the UI thread, the page checks before exporting
+    if (!dry && !args["_no_check"].toBool() && !Live::host()) {
         // What to look at before exporting (nothing fixed here: the export does that with the platform's preset)
         QJsonObject c{{"source", project}, {"timeline", result}};
         if (isShort) {

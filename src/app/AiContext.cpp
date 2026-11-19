@@ -89,7 +89,7 @@ bool useCompact(Compact mode, const Endpoint& e, qint64 context)
 
 // Tools an editing chat in the app seldom needs: their parameters come from `help` when they are used
 const QStringList kRareTools{"new",  "templates", "backups", "restore", "export_timeline", "watch", "sync",
-                             "extensions", "scopes", "brand"};
+                             "extensions", "scopes", "brand", "direct"};
 
 QString firstSentence(const QString& text, int max)
 {
@@ -246,7 +246,7 @@ const QStringList kRareOps{"slot", "fill", "comp_from", "track_node", "cutout_no
 
 qsizetype paramTextFor(const QString& tool)
 {
-    static const QHash<QString, qsizetype> more{{"render", 540}, {"direct", 160}};
+    static const QHash<QString, qsizetype> more{{"render", 540}};
     return more.value(tool, kParamText);
 }
 

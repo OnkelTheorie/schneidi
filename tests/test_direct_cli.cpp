@@ -5,7 +5,11 @@
 // canceled suggest or apply fails with CANCELED and leaves no half project. Prints the suggest time of 10 clips cold
 // and warm (DIRECT_MEASURE=1 makes them 30 s long as in the plan's target).
 #include "cli/Commands.h"
+#include "cli/Live.h"
+#include "core/LiveHost.h"
+#include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/Selection.h"
 
 #include "check.h"
 #include "synth_sounds.h"
@@ -13,6 +17,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
+#include <QTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -53,6 +59,32 @@ QString holiday(const QString& dir, const QString& name, double length, unsigned
                             {"-f", "lavfi", "-i", QString("testsrc2=s=640x360:r=30:d=%1").arg(length), "-i", wav,
                              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
 }
+
+// The app as the Direct page sees it: its project, nothing else (cf. test_fit_music)
+class FakeApp : public LiveHost {
+public:
+    Project project;
+    Selection selection;
+    QString path;
+    Project* liveProject() override { return &project; }
+    QString liveProjectPath() const override { return path; }
+    Selection* liveSelection() override { return &selection; }
+    int livePlayhead() const override { return 0; }
+    bool livePlaying() const override { return false; }
+    void liveSeek(int) override {}
+    void livePlay(bool) override {}
+    bool liveSave(const QString& to, QString* error) override
+    {
+        if (!to.isEmpty()) path = to;
+        return ProjectFile::save(project.data(), path, error);
+    }
+    void liveGenerateProxies(const QStringList&) override {}
+    QJsonObject liveProxyState(const QString&) const override { return {}; }
+    void liveConnectionChanged(bool, const QString&) override {}
+    void liveChanged(const LiveChange&) override {}
+    void liveActivity(const LiveActivity&) override {}
+    bool liveOpen(const QStringList&, bool, QString*) override { return true; }
+};
 
 QStringList labelsOf(const QJsonArray& suggestions)
 {
@@ -171,6 +203,60 @@ int main(int argc, char** argv)
         f.close();
         CHECK_EQ(run("direct", {{"session", s["id"]}, {"apply", QJsonObject{{"on", "all"}}}, {"project", proj}})["error"].toString(),
                  QString("SESSION_STALE"));
+    }
+
+    // ---- In the app, as the Direct page calls it: suggest as a background job, apply through runForUser = ONE undo
+    // step (the cut and the 9:16 copy), undo takes it all back, a failure leaves nothing
+    {
+        FakeApp w;
+        w.path = dir.filePath("out/app.schneidi");
+        run("new", {{"project", w.path}, {"media", QJsonArray{clip}}});
+        ProjectData d;
+        QString error;
+        CHECK(ProjectFile::load(w.path, &d, &error));
+        w.project.load(d);
+        QJsonObject reply;
+        QEventLoop loop;
+        Cli::Live::runInBackground("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}},
+                                              {"options", QJsonObject{{"game", "none"}}}},
+                                   {}, [&](const QJsonObject& r) { reply = r; loop.quit(); }, &w);
+        QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+        loop.exec();
+        CHECK(reply["ok"].toBool());
+        const QJsonObject s = reply["result"].toObject()["session"].toObject();
+        CHECK(!s["suggestions"].toArray().isEmpty());
+        CHECK(!w.project.isModified()); // suggesting changes nothing, not even "modified"
+        // Applying in the background is refused (it edits)
+        QJsonObject refused;
+        QEventLoop loop2;
+        Cli::Live::runInBackground("direct", {{"session", s}, {"apply", QJsonObject{{"on", "all"}}}}, {},
+                                   [&](const QJsonObject& r) { refused = r; loop2.quit(); }, &w);
+        loop2.exec();
+        CHECK_EQ(refused["error"].toObject()["code"].toString(), QString("NOT_IN_BACKGROUND"));
+
+        const int steps = w.project.undoStack()->count();
+        const int timelines = int(w.project.sequences().size());
+        const QJsonObject r = Cli::Live::runForUser(&w, "direct", {{"session", s}, {"apply", QJsonObject{{"on", "all"}}}},
+                                                    "Regie: Übernehmen");
+        if (!CHECK(r["ok"].toBool())) std::printf("       %s\n", QJsonDocument(r).toJson().constData());
+        CHECK_EQ(w.project.undoStack()->count(), steps + 1);
+        CHECK_EQ(int(w.project.sequences().size()), timelines + 2); // Short-Schnitt and Short
+        CHECK_EQ(r["result"]["timeline"].toString(), QString("Short"));
+        CHECK_EQ(w.project.direction()["id"].toString(), s["id"].toString());
+        CHECK(w.project.isModified());
+        w.project.undoStack()->undo();
+        CHECK_EQ(int(w.project.sequences().size()), timelines);
+        // A session that fails while it is applied: nothing changed, no step
+        QJsonObject bad = s;
+        QJsonObject options = bad["options"].toObject();
+        options["aspect"] = "16:9";
+        bad["options"] = options;
+        const int before = w.project.undoStack()->index();
+        const QJsonObject f = Cli::Live::runForUser(&w, "direct", {{"session", bad}, {"apply", QJsonObject{{"on", "all"}}}},
+                                                    "Regie: Übernehmen");
+        CHECK(!f["ok"].toBool());
+        CHECK_EQ(w.project.undoStack()->index(), before);
+        CHECK_EQ(int(w.project.sequences().size()), timelines);
     }
 
     // ---- Recipe highlights on material that is no game: laughter, cheering and movement give moments
