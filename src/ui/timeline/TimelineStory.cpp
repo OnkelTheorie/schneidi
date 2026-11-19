@@ -11,6 +11,7 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "core/TimelineStory.h"
+#include "ui/timeline/TimelineColors.h"
 #include "ui/timeline/TimelineView.h"
 
 #include "ui/SlotText.h"
@@ -29,20 +30,6 @@ namespace {
 
 constexpr int kEdgePx = 4;  // grab distance of a section edge
 constexpr int kNotePx = 5;  // half width of a note mark
-
-QColor kindColor(StoryKind k)
-{
-    switch (k) {
-    case StoryKind::Hook: return Theme::primary;
-    case StoryKind::Build: return Theme::videoClip;
-    case StoryKind::Question: return Theme::meterMid;
-    case StoryKind::Turn: return Theme::titleClip;
-    case StoryKind::Resolution: return Theme::audioClip;
-    case StoryKind::Cta: return Theme::secondary;
-    case StoryKind::Free: break;
-    }
-    return Theme::controlOff;
-}
 
 const char* kindLabel(StoryKind k)
 {
@@ -66,7 +53,7 @@ void TimelineView::drawStory(QPainter& p)
     for (const StorySection& s : tl.sections) {
         const double x0 = std::max<double>(kHeaderW, frameToX(s.from)), x1 = std::min<double>(width(), frameToX(s.to));
         if (x1 <= x0) continue;
-        const QColor c = kindColor(s.kind);
+        const QColor c = TimelineColors::kindColor(s.kind);
         p.fillRect(QRectF(x0, kSectionTop, x1 - x0, kSectionBottom - kSectionTop), Theme::alpha(c, 55));
         p.fillRect(QRectF(x0, kSectionBottom - 2, x1 - x0, 2), c);
         p.fillRect(QRectF(frameToX(s.from), kSectionTop, 1, kSectionBottom - kSectionTop), c);

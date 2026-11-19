@@ -4,6 +4,7 @@
 #include <QWidget>
 
 class Editor;
+class TimelineOverview;
 class TimelineView;
 class QAction;
 class QComboBox;
@@ -29,8 +30,19 @@ public:
     void back();
     bool canGoBack() const;
 
+    // Overview strip above the lanes (TimelineOverview), shown only when the user switched it on (Timeline ›
+    // Timeline view) AND the page allows it (only Edit; the panel also sits on Deliver and Color). Neither switch
+    // touches the ViewState.
+    TimelineOverview* overview() const { return m_overview; }
+    void setOverviewEnabled(bool on);
+    void setOverviewOnPage(bool on);
+    bool overviewShown() const { return m_overviewEnabled && m_overviewOnPage; }
+
 private:
     void syncScrollbars();
+    void syncOverview();      // shown or not; when shown, the current timeline/view/playhead into it
+    void feedOverview();      // the project's current timeline into the strip (only while shown)
+    void syncOverviewRange(); // the view's visible frames as the strip's rectangle (only mirrors, never sets)
     void rebuildTimelines(); // selection list of the timelines
 
     Editor* m_editor;
@@ -39,6 +51,9 @@ private:
     QVector<int> m_history; // timelines from which compound clips were opened
 
     TimelineView* m_view;
+    TimelineOverview* m_overview = nullptr;
+    bool m_overviewEnabled = false;
+    bool m_overviewOnPage = true;
     QScrollBar* m_hbar;
     QScrollBar* m_vbar;
     QHBoxLayout* m_bar = nullptr;
