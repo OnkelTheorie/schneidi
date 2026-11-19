@@ -312,11 +312,12 @@ void checkFiles(Direction::Session& s)
         files << m.file;
     }
     for (Direction::Suggestion& x : s.suggestions) {
+        if (x.file.startsWith('@')) continue; // a range of the timeline itself (talk)
         x.file = absolute(x.file);
         if (!files.contains(x.file))
             fail("BAD_ARGUMENT", QString("session: suggestion %1 is of %2, which is not in its material").arg(x.n).arg(x.file));
     }
-    if (files.isEmpty()) fail("NO_MATERIAL", "session: no material");
+    if (files.isEmpty() && s.recipe != QLatin1String("talk")) fail("NO_MATERIAL", "session: no material");
 }
 
 Direction::Session load(const QJsonValue& v)
@@ -410,11 +411,9 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     Direction::Session s;
     s.recipe = a["recipe"].toString().trimmed().toLower();
     if (s.recipe.isEmpty()) fail("BAD_ARGUMENT", "give recipe (short or highlights) to suggest, or session + apply");
-    static const QStringList later{"talk", "template", "script"};
-    if (later.contains(s.recipe))
-        fail("UNKNOWN_RECIPE", QString("recipe '%1' comes in a later step of this version (now: short, highlights)").arg(s.recipe));
-    if (s.recipe != QLatin1String("short") && s.recipe != QLatin1String("highlights"))
-        fail("UNKNOWN_RECIPE", QString("no recipe '%1' (short, highlights; talk, template and script follow)").arg(s.recipe));
+    static const QStringList recipes{"short", "highlights", "talk", "template", "script"};
+    if (!recipes.contains(s.recipe))
+        fail("UNKNOWN_RECIPE", QString("no recipe '%1' (%2)").arg(s.recipe, recipes.join(", ")));
     s.options = a["options"].toObject();
     // `short`'s own settings given at the top level count as options too (one call from the command line)
     for (const char* k : {"game", "hook", "audio_stream"})
@@ -429,6 +428,25 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
         if (!QFileInfo(f).isFile()) fail("NOT_FOUND", "no such file: " + f);
         if (isProjectFile(f)) fail("BAD_ARGUMENT", "files are recordings; a project goes into 'project'");
         if (!files.contains(f)) files << f;
+    }
+    // talk works on a timeline, template and script on files or the project's media
+    if (s.recipe == QLatin1String("talk")) {
+        Context sub;
+        sub.cancel = ctx.cancel;
+        sub.progress = ctx.progress;
+        suggestTalk(s, a, sub);
+        failIfCanceled();
+        return s;
+    }
+    if (s.recipe == QLatin1String("template") || s.recipe == QLatin1String("script")) {
+        Context sub;
+        sub.cancel = ctx.cancel;
+        sub.progress = ctx.progress;
+        if (s.recipe == QLatin1String("template")) suggestTemplate(s, files, sub);
+        else suggestScript(s, files, sub);
+        failIfCanceled();
+        if (s.suggestions.isEmpty() && s.notes.isEmpty()) s.notes << note("no_moments");
+        return s;
     }
     if (files.isEmpty() && a.contains("timeline")) {
         // The Direct page: a timeline of the project open in the app (a background job reads its copy)
@@ -529,9 +547,11 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         for (const char* k : {"from_s", "to_s"})
             if (v.toObject().contains(k) && !v[k].isDouble())
                 fail("BAD_ARGUMENT", QString("adjust: %1 of suggestion %2 is seconds (a number)").arg(k).arg(x->n));
-        const double length = s.material.value(int(files.indexOf(x->file))).length;
-        const double from = std::clamp(v["from_s"].toDouble(x->from), 0.0, length);
-        const double to = std::clamp(v["to_s"].toDouble(x->to), 0.0, length);
+        // Inside the recording (or the timeline of talk); a length truly unknown keeps only from < to
+        const double length = x->file == QLatin1String("@timeline") ? s.options["_timeline_length_s"].toDouble()
+                                                                     : s.material.value(int(files.indexOf(x->file))).length;
+        const double from = std::clamp(v["from_s"].toDouble(x->from), 0.0, length > 0 ? length : 1e9);
+        const double to = std::clamp(v["to_s"].toDouble(x->to), 0.0, length > 0 ? length : 1e9);
         if (to - from < 0.1) fail("BAD_ARGUMENT", QString("adjust: suggestion %1 would be empty").arg(x->n));
         x->from = from;
         x->to = to;
@@ -562,7 +582,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         Direction::Suggestion* a = nullptr;
         for (Direction::Suggestion& y : chosen.suggestions)
             if (y.n == n) a = &y;
-        if (!a->on) continue;
+        if (!a->on || a->kind == QLatin1String("slot") || a->kind == QLatin1String("pause") || a->kind == QLatin1String("filler"))
+            continue;
         for (Direction::Suggestion& b : chosen.suggestions)
             if (&b != a && b.on && b.file == a->file && b.from < a->to && a->from < b.to) {
                 a->from = std::min(a->from, b.from);
@@ -588,6 +609,12 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                                      .arg(platform->maxSeconds));
     }
 
+    if (s.recipe == QLatin1String("talk")) {
+        QJsonObject o = applyTalk(chosen, list, args, ctx);
+        madeProject->clear();
+        return o;
+    }
+    if (s.recipe == QLatin1String("template")) return applyTemplate(chosen, list, args, ctx);
     const QString game = gameOf(s.options, files);
     QJsonArray done, notes;
     for (const Direction::Note& n : s.notes) notes << n.text;
@@ -633,7 +660,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     QStringList names;
     for (const QJsonValue& v : before["timelines"].toArray()) names << v["name"].toString();
     const bool isShort = s.recipe == QLatin1String("short");
-    const QString cut = uniqueName(names, isShort ? T("Short-Schnitt") : T("Highlights"));
+    const bool isScript = s.recipe == QLatin1String("script");
+    const QString cut = uniqueName(names, isShort ? T("Short-Schnitt") : isScript ? T("Rohschnitt") : T("Highlights"));
     names << cut;
     QJsonArray ops{created ? QJsonObject{{"op", "rename_timeline"}, {"name", cut}}
                            : QJsonObject{{"op", "new_timeline"}, {"name", cut}}};
@@ -701,7 +729,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         if (game != QLatin1String("none")) copy["game"] = game;
         else if (s.options["game"].toString().trimmed().compare("none", Qt::CaseInsensitive) == 0) copy["keep"] = "none";
         ops << copy;
-    } else {
+    } else if (!isScript) {
         // Highlights: soft cuts, music (a file cut to the length, or the music bed), the cuts on its beat
         if (s.options["transitions"].toString() == QLatin1String("soft"))
             for (double at : cuts)
@@ -728,6 +756,9 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         }
     }
     // The project remembers the session as it was applied (the Direct page shows it again; no undo step)
+    // Transcripts whisper made while suggesting (script) go into the project with the cut
+    if (s.options["_transcripts"].isObject() && !args["plan"].toBool())
+        ops << QJsonObject{{"op", "_transcripts"}, {"files", s.options["_transcripts"]}};
     if (!args["_no_direction"].toBool() && !args["plan"].toBool()) { // a plan lists only what the user chose
         QJsonObject kept = Direction::toJson(chosen);
         ops << QJsonObject{{"op", "_direction"}, {"session", kept}};
@@ -790,6 +821,52 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
 
 QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
 {
+    // After a short's apply: its captions and effect sounds, one more edit (the Direct page's second button). In the
+    // app in two steps: prepare (a background job measures speech, peak and kill feed and answers the ops and the
+    // timeline's stamp), then ops (the edit alone, refused when the timeline changed meanwhile)
+    if (a.contains("finish")) {
+        const QJsonObject f = a["finish"].toObject();
+        QString project = a["project"].toString();
+        if (project.isEmpty() && (Live::host() || Live::appCopy())) project = Live::AppProject;
+        if (project.isEmpty()) fail("BAD_ARGUMENT", "finish needs the project of the short");
+        const QString timeline = f["timeline"].toString();
+        if (timeline.isEmpty()) fail("BAD_ARGUMENT", "finish needs the short's timeline (the answer's timeline)");
+        QJsonArray done, notes;
+        if (f.contains("ops")) {
+            if (timelineStamp(project, timeline) != f["stamp"].toString())
+                fail("FINISH_STALE", QString("the timeline '%1' changed since its speech and sound were measured: "
+                                             "captions would land on the wrong times - nothing was added").arg(timeline));
+            for (const QJsonValue& op : f["ops"].toArray())
+                if (op["op"].toString() != QLatin1String("captions") && op["op"].toString() != QLatin1String("sfx"))
+                    fail("BAD_ARGUMENT", "finish ops are captions and sfx only");
+            const bool captions = shortFinishEdit(project, timeline, f["ops"].toArray(), ctx, &done);
+            return {{"project", project}, {"timeline", timeline}, {"captions", captions}, {"done", done}};
+        }
+        ShortFinish sf;
+        sf.captions = f["captions"].toString("karaoke").trimmed().toLower();
+        sf.sfx = f["sfx"].toString("off").trimmed().toLower();
+        if (!QStringList{"karaoke", "word", "off"}.contains(sf.captions)) fail("BAD_ARGUMENT", "captions must be karaoke, word or off");
+        if (!QStringList{"off", "mild"}.contains(sf.sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
+        // The game as the short's session saw it (given, or from the recordings' folder/name): hits on its kills
+        QString game = f["game"].toString();
+        if (f["session"].isObject())
+            if (const auto session = Direction::fromJson(f["session"].toObject())) {
+                QStringList files;
+                for (const Direction::Material& m : session->material) files << m.file;
+                game = gameOf(session->options, files);
+            }
+        if (!game.isEmpty() && game != QLatin1String("none")) sf.game = game;
+        sf.language = f["language"].toString();
+        if (f["prepare"].toBool()) {
+            const QJsonArray ops = shortFinishOps(project, timeline, sf, ctx, &done, &notes);
+            return {{"project", project}, {"timeline", timeline}, {"ops", ops}, {"done", done}, {"notes", notes},
+                    {"stamp", timelineStamp(project, timeline)}};
+        }
+        const bool captions = shortFinish(project, timeline, sf, ctx, &done, &notes);
+        QJsonObject o{{"project", project}, {"timeline", timeline}, {"captions", captions}, {"done", done}};
+        if (!notes.isEmpty()) o["notes"] = notes;
+        return o;
+    }
     if (a.contains("session") || a.contains("apply")) {
         if (!a.contains("session")) fail("BAD_ARGUMENT", "apply needs the session (its id like 'd3', or the session itself)");
         if (a.contains("recipe")) fail("BAD_ARGUMENT", "recipe makes a new session; session + apply uses one: not both");
@@ -816,6 +893,24 @@ void addDirectOps(QVector<OpDef>& ops)
                      s.project.setDirection(session);
                  },
                  {"session"}};
+    // Hidden too: transcripts measured before the edit ({file: {language, words:[[from_ms, to_ms, text], …]}}) as the
+    // files' transcripts (what rough_cut keeps when it transcribes)
+    ops << OpDef{"_transcripts", {}, {}, {},
+                 [](Session& s, const QJsonObject& op) {
+                     const QJsonObject files = op.value("files").toObject();
+                     for (auto it = files.begin(); it != files.end(); ++it) {
+                         const QString file = absolute(it.key());
+                         const MediaInfo* m = s.project.mediaInfo(file);
+                         if (m && !m->transcripts.isEmpty()) continue; // the user's own stays
+                         if (!m) s.media(file);
+                         MediaTranscript t;
+                         t.language = it.value().toObject()["language"].toString();
+                         for (const QJsonValue& w : it.value().toObject()["words"].toArray())
+                             t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+                         s.project.setTranscript(file, t);
+                     }
+                 },
+                 {"files"}};
 }
 
 } // namespace Cli::detail

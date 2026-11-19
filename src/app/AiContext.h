@@ -42,7 +42,7 @@ constexpr int kSharedParam = 3;
 // A tool's description in short: its first sentence, at most this long
 constexpr int kToolText = 130;
 // At most this many characters of parameter texts per tool (the longest are left out first)
-constexpr qsizetype kParamText = 300;
+constexpr qsizetype kParamText = 280;
 // Tools the chat uses for nearly every task: more room for their parameter texts (render: quality, subtitles)
 qsizetype paramTextFor(const QString& tool);
 // The tool server's instructions in short: without the list of what each tool is for (the tool descriptions say it)

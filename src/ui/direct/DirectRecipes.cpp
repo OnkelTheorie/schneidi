@@ -306,8 +306,25 @@ void DirectRecipes::updateCards()
 
 void DirectRecipes::setBusy(bool busy)
 {
-    m_suggest->setEnabled(!busy);
-    for (QToolButton* t : std::as_const(m_titles)) t->setEnabled(!busy);
+    m_busy = busy;
+    m_suggest->setEnabled(!busy && available(m_recipe));
+    for (auto it = m_titles.begin(); it != m_titles.end(); ++it) it.value()->setEnabled(!busy && available(it.key()));
+}
+
+void DirectRecipes::setAvailable(const QStringList& ids)
+{
+    m_coming.clear();
+    for (const QString& id : DirectRecipes::ids())
+        if (!ids.contains(id)) m_coming << id;
+    for (auto it = m_titles.begin(); it != m_titles.end(); ++it) {
+        QToolButton* t = it.value();
+        const QString base = t->property("baseText").isValid() ? t->property("baseText").toString() : t->text();
+        t->setProperty("baseText", base);
+        t->setText(available(it.key()) ? base : T("%1 (kommt gleich)").arg(base));
+    }
+    if (!available(m_recipe) && !ids.isEmpty()) setRecipe(ids.first());
+    for (auto it = m_titles.begin(); it != m_titles.end(); ++it) it.value()->setEnabled(!m_busy && available(it.key()));
+    if (!available(m_recipe)) m_suggest->setEnabled(false); // the page enables it when there is material
 }
 
 void DirectRecipes::setTemplate(const QString& id, const QString& name)

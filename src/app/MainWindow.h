@@ -208,6 +208,7 @@ public:
     void liveActivity(const LiveActivity& activity) override;
     void liveCommandRunning(bool running, bool ownChat) override;
     void livePlan(const QString& state, const QJsonObject& plan, bool ownChat) override;
+    void liveDirection(const QJsonObject& session, bool ownChat) override; // `direct` suggestions -> the Direct page
     bool livePlanOnly() const override;
     bool liveReviewOnly() const override;
     // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
@@ -425,6 +426,8 @@ private:
     void ensureDirectPage();
     void directSuggest();                 // the page's recipe on its material (in the background, BackgroundJobs)
     void directApply();                   // the checked suggestions -> a timeline (one undo step)
+    void directFinish();                  // after a short's apply: captions + effect sounds (one more undo step)
+    void showDirectSession(const QJsonObject& session); // suggestions on the page (a run's or the chat's)
     void directPreview(const QString& file, double from, double to); // a suggestion in the viewer, stops at its end
     // Ends a running suggestion/apply job and empties the suggestions (the material changed, another project);
     // newProject also empties the material
@@ -547,6 +550,7 @@ private:
     std::function<void()> m_directCancel; // the running suggestion job's cancel (empty = none)
     std::function<void()> m_directApplyCancel; // the running apply job's cancel (empty = none)
     int m_directApplyRun = 0;
+    QJsonObject m_directApplied; // the last apply's result and session (for the short's finish)
     class QAction* m_directRemoveSuggestion = nullptr; // the page's Delete keys, registered at the start (buildActions)
     class QAction* m_directRemoveMaterial = nullptr;
     QList<int> m_directCenterSizes; // viewer | recipes while the viewer is on another page

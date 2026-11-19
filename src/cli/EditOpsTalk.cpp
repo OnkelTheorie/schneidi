@@ -432,8 +432,21 @@ void opRoughCut(Session& s, const QJsonObject& op)
     for (int n = 2; names.contains(name); ++n) name = QString("%1 %2").arg(wanted).arg(n);
     applyOp(s, QJsonObject{{"op", "new_timeline"}, {"name", name}});
     QJsonArray sentencesOut, missing;
+    // What of a take goes on the timeline: from just before its first word to the end of the last one spoken (not
+    // into the next word)
+    const auto placed = [&](const ScriptAlign::Take& t) {
+        const QVector<ScriptAlign::Word>& words = sources[t.source];
+        double from = std::max(0.0, t.from - 0.08);
+        if (t.first > 0) from = std::max(from, words[t.first - 1].to);
+        double to = std::min(t.to, words[t.last].from + 0.25 + 0.07 * words[t.last].text.size()) + 0.12;
+        if (t.last + 1 < words.size()) to = std::min(to, words[t.last + 1].from);
+        if (to - from < 1.0 / fps) to = from + 1.0 / fps;
+        return qMakePair(from, to);
+    };
     const auto takeJson = [&](const ScriptAlign::Take& t) {
+        const auto [from, to] = placed(t);
         return QJsonObject{{"file", files[t.source]}, {"from_s", round2(t.from)}, {"to_s", round2(t.to)},
+                           {"cut_from_s", std::round(from * 1000) / 1000}, {"cut_to_s", std::round(to * 1000) / 1000},
                            {"coverage", round2(t.coverage)}, {"good", t.good}};
     };
     for (const ScriptAlign::Choice& c : choices) {
@@ -444,13 +457,7 @@ void opRoughCut(Session& s, const QJsonObject& op)
             continue;
         }
         const ScriptAlign::Take& t = c.takes[c.chosen];
-        const QVector<ScriptAlign::Word>& words = sources[t.source];
-        // From just before the first word to the end of the last one spoken (not into the next word)
-        double from = std::max(0.0, t.from - 0.08);
-        if (t.first > 0) from = std::max(from, words[t.first - 1].to);
-        double to = std::min(t.to, words[t.last].from + 0.25 + 0.07 * words[t.last].text.size()) + 0.12;
-        if (t.last + 1 < words.size()) to = std::min(to, words[t.last + 1].from);
-        if (to - from < 1.0 / fps) to = from + 1.0 / fps;
+        const auto [from, to] = placed(t);
         applyOp(s, QJsonObject{{"op", "keep"}, {"media", files[t.source]},
                                {"ranges", QJsonArray{QJsonArray{QString("%1s").arg(from, 0, 'f', 3), QString("%1s").arg(to, 0, 'f', 3)}}}});
         o["take"] = takeJson(t);
@@ -863,7 +870,8 @@ void addTalkOps(QVector<OpDef>& ops)
                  "has takes: last_good (default) = the last complete one without extra words (people repeat until it "
                  "is right), best = the highest rated (complete, no slip, few fillers and pauses). A file without a "
                  "transcript is transcribed with whisper when it is installed (language) and keeps it. The answer's "
-                 "notes give rough_cut {timeline, sentences:[{sentence, take:{file, from_s, to_s, coverage, good}, "
+                 "notes give rough_cut {timeline, sentences:[{sentence, take:{file, from_s, to_s, cut_from_s, cut_to_s (what is "
+                 "placed), coverage, good}, "
                  "alternatives, why}], missing:[sentences not found], transcribed}. With plan:true it is a plan.",
                  opRoughCut, {"_transcripts"}}
         << OpDef{"best_takes", "{op:'best_takes', clips?, track?}",
