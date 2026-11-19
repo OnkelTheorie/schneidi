@@ -1,19 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Music beds of schneidi's own (edit op 'music_bed'): background music computed from simple synth voices, no samples,
+// Music beds of schneidi's own (edit op 'music_bed'): background music computed from synthesized voices, no samples,
 // no recordings, so it is free to use and its beat grid is known exactly (cuts snap to it without an analysis).
 //
-// Three moods: calm (pad, soft keys, round bass, a gentle half-time groove), drive (pad, pulsing eighth-note bass,
-// plucked stabs, a pop/rock beat) and hype (pumping supersaw pad, off-beat bass, a 16th arp with echoes, four on the
-// floor, risers before the drops). A chord progression per mood (one chord per bar, phrases of four bars), the
-// arrangement on bar boundaries: intro, main parts (a lift in every second eight bars), short breaks in long beds, a
-// final hit on the tonic at a bar one and its ring-out, faded so the bed ends exactly at the asked length.
+// Nine moods, each its own tempo, key, harmony (chord colours and how often they change), instruments, groove (drum
+// pattern, swing), bass rhythm, space (reverb, width) and arrangement:
+//   calm  - a fingerpicked nylon guitar, a soft pad, brushes and a shaker (no kick), two bars a chord
+//   drive - distorted power chords (palm-muted eighths), eighth-note bass, a rock beat
+//   hype  - pumping supersaw, off-beat bass, a 16th arp, four on the floor, risers into drops
+//   lofi  - a wobbly electric piano on jazz ninths, swung boom-bap, vinyl crackle, a dark master
+//   epic  - string ensemble and ostinato, taiko drums, a horn theme, a huge hall
+//   tense - a low drone, a 16th pulse, string tremolo on a minor second, metallic pings, a heartbeat kick
+//   funk  - slap bass, clavinet and horn stabs, a scratching guitar, ghost-note drums on swung 16ths, dry
+//   retro - 80s: octave bass, a square-wave arp and lead with echoes, a half-time gated snare, a lush pad
+//   happy - marimba, bouncy bass, claps and tambourine, a glockenspiel tune, two chords a bar, a shuffle
+// The arrangement lies on bar boundaries: intro, main parts (a lift in every second eight bars), short breaks in long
+// beds, a final hit on the tonic at a bar one and its ring-out, faded so the bed ends exactly at the asked length.
 //
-// Voices: wavetable oscillators (band-limited harmonics, a bright and a dark table blended, two detuned copies for the
-// stereo width), raised-cosine attacks and releases (no clicks at note boundaries), drums from pitched sines and
-// filtered noise, a small reverb, side-chain pumping on the beat. The master is DC-free, normalized to kTargetLufs
-// (BS.1770) and held under kCeilingDbtp true peak. Deterministic: the same options give the same samples; `seed` picks
-// another progression and patterns.
+// Voices: wavetable oscillators (band-limited harmonics, a bright and a dark table blended), FM (electric piano,
+// glockenspiel, metal), plucked strings (Karplus-Strong: the nylon guitar, the double-tracked power chords), raised-
+// cosine attacks and releases (no clicks at note boundaries), drums from pitched sines and filtered noise, a reverb
+// per mood, side-chain pumping on the beat. The master is DC-free, a look-ahead limiter catches single drum peaks, the
+// bed is normalized to kTargetLufs (BS.1770) and held under kCeilingDbtp true peak. Deterministic: the same options
+// give the same samples; `seed` picks another progression, patterns and tune.
 
 #include "core/Beats.h"
 
@@ -28,7 +37,7 @@ namespace MusicBed {
 constexpr int kRate = 48000;
 constexpr int kChannels = 2;
 // Bumped when the sound changes: part of the file names (a bed made by an older version is made again)
-constexpr int kVersion = 1;
+constexpr int kVersion = 2;
 constexpr double kMinLength = 1.0, kMaxLength = 600.0; // seconds
 // Lengths this far outside are taken as they are: a timeline length in frames is up to half a frame off whole
 // seconds (600 s at 23.976 fps are 14386 frames = 600.008 s)
@@ -37,13 +46,16 @@ constexpr double kMinBpm = 60, kMaxBpm = 180;
 constexpr double kTargetLufs = -16.0;  // integrated loudness of the bed alone
 constexpr double kCeilingDbtp = -1.0;  // true peak at most
 
-enum class Mood { Calm, Drive, Hype };
-constexpr Mood kMoods[] = {Mood::Calm, Mood::Drive, Mood::Hype};
+enum class Mood { Calm, Drive, Hype, Lofi, Epic, Tense, Funk, Retro, Happy };
+constexpr Mood kMoods[] = {Mood::Calm,  Mood::Drive, Mood::Hype,  Mood::Lofi, Mood::Epic,
+                           Mood::Tense, Mood::Funk,  Mood::Retro, Mood::Happy};
 
-QString moodId(Mood m);                         // "calm", "drive", "hype"
-std::optional<Mood> moodFrom(const QString& s); // the ids, also "ruhig", "treibend" (case does not matter)
+QString moodId(Mood m);                         // "calm", "drive", "hype", "lofi", "epic", "tense", "funk", "retro", "happy"
+// The ids, also some other words ("ruhig", "treibend", "chill", "cinematic", "dark", "groove", "synthwave",
+// "upbeat" …; case does not matter)
+std::optional<Mood> moodFrom(const QString& s);
 QStringList moodIds();
-const char* moodLabel(Mood m);   // German UI key for T(): "Ruhig", "Treibend", "Hype"
+const char* moodLabel(Mood m);   // German UI key for T(): "Ruhig", "Treibend", "Hype", "Lo-Fi", "Episch" …
 QString description(Mood m);     // one line, English (CLI/MCP)
 double defaultBpm(Mood m);
 
@@ -80,7 +92,8 @@ struct Result {
     double bpm = 0;
     Key key;
     unsigned seed = 1;
-    QStringList chords;          // the progression ("Am", "F", "C", "G")
+    QStringList chords;          // the progression ("Am", "F", "C", "G"; one chord each chordBeats)
+    int chordBeats = 4;          // how long a chord lasts (2, 4 or 8 beats)
     std::vector<Section> sections;
     int endBar = -1;             // bar of the final hit (-1: too short for one, the bed fades out)
     Beats::Result beats;         // the known grid: beat k at phase + k * period, bar ones at k % 4 == 0

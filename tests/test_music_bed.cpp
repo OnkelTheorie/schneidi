@@ -5,11 +5,14 @@
 // (core/Beats on the bed), the final hit on a bar one. The op: lengths at 25/30/60 fps exact to a frame (clip and file),
 // length:'timeline' over a speech clip with ducking (volume keyframes) on a new track "Musik", the grid in the beats
 // cache (no analysis), a second call reuses the file, duck:false, gain, errors, `effects kind:'music'`. Speed: a
-// 3-minute bed (printed; checked loosely, the number that counts is measured idle).
+// 3-minute bed (printed; checked loosely, the number that counts is measured idle). Distinct moods: per mood a few
+// measured features (tempo, spectral centroid, onsets per second, low/high energy, the key heard in the chroma), and
+// every two moods differ clearly in at least two of them.
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/AppPaths.h"
 #include "core/Beats.h"
+#include "core/Fft.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/MusicBed.h"
@@ -28,8 +31,10 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <numbers>
 #include <vector>
 
 namespace {
@@ -92,13 +97,133 @@ double lufs(const std::vector<float>& s)
     return m.integrated();
 }
 
-// The core checks of one bed
-void checkBed(MusicBed::Mood mood)
+
+// ---------- Features of a bed (the distinctness check) ----------
+
+struct Features {
+    double bpm = 0;       // the bed's tempo
+    double centroid = 0;  // spectral centroid, Hz (magnitude-weighted over the whole bed)
+    double onsets = 0;    // onsets per second (peaks of the spectral flux)
+    double lowHighDb = 0; // energy below 250 Hz over energy above 2.5 kHz, dB
+    int keyRoot = 0;      // the key that fits the chroma best (Krumhansl-Kessler profiles)
+    bool keyMinor = false;
+};
+
+Features featuresOf(const MusicBed::Result& r)
+{
+    Features out;
+    out.bpm = r.bpm;
+    const long long frames = (long long)r.samples.size() / 2;
+    std::vector<double> mono(static_cast<size_t>(frames));
+    for (long long f = 0; f < frames; ++f) mono[size_t(f)] = 0.5 * (r.samples[size_t(2 * f)] + r.samples[size_t(2 * f + 1)]);
+    const double rate = MusicBed::kRate;
+    // Spectrum: centroid (magnitude-weighted), bands, chroma from 100 Hz to 2.5 kHz (16384-point frames: bins of 3 Hz,
+    // finer than a semitone there; half overlap, Hann)
+    {
+        const int n = 16384;
+        std::vector<double> win(n);
+        for (int i = 0; i < n; ++i) win[size_t(i)] = 0.5 - 0.5 * std::cos(2 * std::numbers::pi * i / n);
+        double sumP = 0, sumFP = 0, low = 0, high = 0;
+        std::array<double, 12> chroma{};
+        std::vector<double> re(n), im(n);
+        for (long long at = 0; at + n <= frames; at += n / 2) {
+            for (int i = 0; i < n; ++i) re[size_t(i)] = mono[size_t(at + i)] * win[size_t(i)], im[size_t(i)] = 0;
+            Fft::transform(re, im, false);
+            for (int k = 1; k < n / 2; ++k) {
+                const double f = k * rate / n, pw = re[size_t(k)] * re[size_t(k)] + im[size_t(k)] * im[size_t(k)];
+                const double mag = std::sqrt(pw);
+                sumP += mag, sumFP += f * mag;
+                if (f < 250) low += pw;
+                if (f > 2500) high += pw;
+                if (f > 100 && f < 2500) {
+                    const int pc = ((int(std::lround(12 * std::log2(f / 440.0) + 69)) % 12) + 12) % 12;
+                    chroma[size_t(pc)] += mag;
+                }
+            }
+        }
+        out.centroid = sumFP / std::max(1e-12, sumP);
+        out.lowHighDb = 10 * std::log10((low + 1e-12) / (high + 1e-12));
+        static const double major[12] = {6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88};
+        static const double minor[12] = {6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17};
+        const auto corr = [&](const double* prof, int root) {
+            double mx = 0, my = 0;
+            for (int i = 0; i < 12; ++i) mx += chroma[size_t((i + root) % 12)], my += prof[i];
+            mx /= 12, my /= 12;
+            double sxy = 0, sxx = 0, syy = 0;
+            for (int i = 0; i < 12; ++i) {
+                const double x = chroma[size_t((i + root) % 12)] - mx, y = prof[i] - my;
+                sxy += x * y, sxx += x * x, syy += y * y;
+            }
+            return sxy / std::sqrt(sxx * syy + 1e-12);
+        };
+        double best = -2;
+        for (int root = 0; root < 12; ++root)
+            for (const bool m : {false, true}) {
+                const double c = corr(m ? minor : major, root);
+                if (c > best) best = c, out.keyRoot = root, out.keyMinor = m;
+            }
+    }
+    // Onsets: rises of the log spectrum (1024-point frames, hop 512), peaks above the local mean
+    {
+        const int n = 1024, hop = 512;
+        std::vector<double> win(n);
+        for (int i = 0; i < n; ++i) win[size_t(i)] = 0.5 - 0.5 * std::cos(2 * std::numbers::pi * i / n);
+        std::vector<double> re(n), im(n), prev(n / 2, 0.0), flux;
+        for (long long at = 0; at + n <= frames; at += hop) {
+            for (int i = 0; i < n; ++i) re[size_t(i)] = mono[size_t(at + i)] * win[size_t(i)], im[size_t(i)] = 0;
+            Fft::transform(re, im, false);
+            double sum = 0;
+            for (int k = 1; k < n / 2; ++k) {
+                const double m = std::log1p(1000 * std::sqrt(re[size_t(k)] * re[size_t(k)] + im[size_t(k)] * im[size_t(k)]));
+                sum += std::max(0.0, m - prev[size_t(k)]);
+                prev[size_t(k)] = m;
+            }
+            flux.push_back(sum);
+        }
+        int count = 0;
+        const int w = 8; // about 85 ms each side
+        for (int i = w; i + w < int(flux.size()); ++i) {
+            double mean = 0, peak = 0;
+            for (int j = i - w; j <= i + w; ++j) mean += flux[size_t(j)], peak = std::max(peak, flux[size_t(j)]);
+            mean /= 2 * w + 1;
+            if (flux[size_t(i)] == peak && flux[size_t(i)] > 1.4 * mean + 2) ++count;
+        }
+        out.onsets = count / (double(frames) / rate);
+    }
+    return out;
+}
+
+// How many features of two beds differ clearly
+int differences(const Features& a, const Features& b, QStringList* which = nullptr)
+{
+    int n = 0;
+    const auto ratio = [](double x, double y) { return std::max(x, y) / std::max(1e-9, std::min(x, y)); };
+    const auto add = [&](bool differ, const char* name) {
+        if (!differ) return;
+        ++n;
+        if (which) *which << name;
+    };
+    add(ratio(a.bpm, b.bpm) > 1.05, "tempo");
+    add(ratio(a.centroid, b.centroid) > 1.2, "centroid");
+    add(ratio(a.onsets, b.onsets) > 1.25, "onsets");
+    add(std::abs(a.lowHighDb - b.lowHighDb) > 3, "low/high");
+    add(a.keyRoot != b.keyRoot || a.keyMinor != b.keyMinor, "key");
+    return n;
+}
+
+// The core checks of one bed (its features for the distinctness check into *features)
+void checkBed(MusicBed::Mood mood, Features* features)
 {
     const QString name = MusicBed::moodId(mood);
+    QElapsedTimer timer;
+    timer.start();
     const MusicBed::Result r = MusicBed::make({mood, 30});
+    const double ms = timer.nsecsElapsed() / 1e6;
     const long long frames = (long long)r.samples.size() / 2;
     CHECK_EQ(frames, 30LL * MusicBed::kRate);
+    *features = featuresOf(r);
+    std::printf("       %-6s %3.0f BPM %-9s chords %-38s %5.0f ms, %.1f LUFS, %.1f dBTP\n", qPrintable(name), r.bpm,
+                qPrintable(MusicBed::keyName(r.key)), qPrintable(r.chords.join(' ')), ms, r.lufs, r.truePeakDb);
     CHECK_EQ(r.samples.size() % 2, size_t(0));
     // Levels
     const double tp = truePeak(r.samples), l = lufs(r.samples);
@@ -188,7 +313,30 @@ int main(int argc, char* argv[])
     AppPaths::setProgramNames();
 
     // ---------- Core ----------
-    for (const MusicBed::Mood m : MusicBed::kMoods) checkBed(m);
+    std::vector<Features> features;
+    for (const MusicBed::Mood m : MusicBed::kMoods) {
+        features.emplace_back();
+        checkBed(m, &features.back());
+    }
+    // Distinct: every two moods differ clearly in at least two features
+    {
+        static const char* const keys[] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
+        std::printf("       mood     tempo  centroid  onsets/s  low/high  key\n");
+        const int count = int(features.size());
+        for (int i = 0; i < count; ++i) {
+            const Features& f = features[size_t(i)];
+            std::printf("       %-7s %6.0f %7.0f Hz %8.2f %7.1f dB  %s%s\n", qPrintable(MusicBed::moodId(MusicBed::kMoods[i])), f.bpm,
+                        f.centroid, f.onsets, f.lowHighDb, keys[f.keyRoot], f.keyMinor ? "m" : "");
+        }
+        for (int i = 0; i < count; ++i)
+            for (int j = i + 1; j < count; ++j) {
+                QStringList which;
+                const int d = differences(features[size_t(i)], features[size_t(j)], &which);
+                if (!CHECK(d >= 2))
+                    std::printf("       %s and %s differ only in %s\n", qPrintable(MusicBed::moodId(MusicBed::kMoods[i])),
+                                qPrintable(MusicBed::moodId(MusicBed::kMoods[j])), qPrintable(which.join(", ")));
+            }
+    }
     // Keys, moods, names
     {
         const auto k = [](const char* s) { return MusicBed::keyFrom(QString::fromUtf8(s)); };
@@ -201,12 +349,23 @@ int main(int argc, char* argv[])
         CHECK(!k("H minor") && !k("") && !k("A lydian"));
         CHECK_EQ(MusicBed::keyName({10, true}), QString("Bb minor"));
         CHECK(MusicBed::moodFrom("treibend") == MusicBed::Mood::Drive && MusicBed::moodFrom("Ruhig") == MusicBed::Mood::Calm);
+        CHECK(MusicBed::moodFrom("Lo-Fi") == MusicBed::Mood::Lofi && MusicBed::moodFrom("synthwave") == MusicBed::Mood::Retro
+              && MusicBed::moodFrom("cinematic") == MusicBed::Mood::Epic && MusicBed::moodFrom("dark") == MusicBed::Mood::Tense);
         CHECK(!MusicBed::moodFrom("sad"));
-        // Short beds: no final hit, faded; still the exact length and silence at the end
-        const MusicBed::Result s = MusicBed::make({MusicBed::Mood::Hype, 3.3});
-        CHECK_EQ((long long)s.samples.size(), 2 * MusicBed::frameCount(3.3));
-        CHECK(s.endBar < 0 && s.samples.back() == 0.f);
-        CHECK(truePeak(s.samples) <= MusicBed::kCeilingDbtp + 0.05);
+        // Every id reads back; ids are distinct and the labels are there
+        CHECK_EQ(MusicBed::moodIds().size(), int(std::size(MusicBed::kMoods)));
+        for (const MusicBed::Mood m : MusicBed::kMoods)
+            CHECK(MusicBed::moodFrom(MusicBed::moodId(m)) == m && std::strlen(MusicBed::moodLabel(m)) > 0
+                  && !MusicBed::description(m).isEmpty());
+        // Harmonic rhythm: calm two bars a chord, happy two chords a bar
+        CHECK(MusicBed::describe({MusicBed::Mood::Calm, 30}).chordBeats == 8 && MusicBed::describe({MusicBed::Mood::Happy, 30}).chordBeats == 2);
+        // Short beds: no final hit, faded; still the exact length and silence at the end (every mood)
+        for (const MusicBed::Mood m : MusicBed::kMoods) {
+            const MusicBed::Result s = MusicBed::make({m, 3.3});
+            CHECK_EQ((long long)s.samples.size(), 2 * MusicBed::frameCount(3.3));
+            CHECK(s.endBar < 0 && s.samples.back() == 0.f);
+            if (!CHECK(truePeak(s.samples) <= MusicBed::kCeilingDbtp + 0.05)) std::printf("       %s short: true peak\n", qPrintable(MusicBed::moodId(m)));
+        }
         // A given tempo and key
         MusicBed::Options o{MusicBed::Mood::Drive, 20};
         o.bpm = 95;
@@ -292,6 +451,18 @@ int main(int argc, char* argv[])
         CHECK(c && !Keys::animated(*c, AnimParam::Volume));
     }
 
+    // Every mood through the op: 7.3 s exact to a frame at 29.97 fps
+    {
+        const QString pj = tmp.path() + "/moods.schneidi";
+        run("new", {{"project", pj}, {"fps", 29.97}});
+        for (const QString& mood : MusicBed::moodIds()) {
+            const QJsonObject n = bedNote(edit(pj, QString(R"([{"op":"music_bed","mood":"%1","length":"7.3s","track":"A1"}])").arg(mood)));
+            const auto p = load(pj);
+            const Clip* c = clipById(*p, n["clip"].toInt());
+            const int want = int(std::lround(7.3 * 30000 / 1001.0));
+            if (!CHECK(c && c->length() == want && n["mood"].toString() == mood)) std::printf("       %s via the op\n", qPrintable(mood));
+        }
+    }
     // The longest bed at 23.976 fps: 600 s are 14386 frames (600.008 s), taken - a frame more is refused
     {
         const QString pj = tmp.path() + "/long.schneidi";
@@ -332,9 +503,9 @@ int main(int argc, char* argv[])
         const QString file = n["file"].toString();
         CHECK_EQ(QFileInfo(file).absolutePath(), QFileInfo(tmp.path() + "/talk-music").absoluteFilePath());
         const std::optional<Beats::Result> cached = Cli::detail::cachedSongBeats(file, 0);
-        CHECK(cached && std::abs(cached->bpm - 84) < 1e-9 && cached->phase == 0 && !cached->barEnergyDb.empty());
+        CHECK(cached && std::abs(cached->bpm - MusicBed::defaultBpm(MusicBed::Mood::Calm)) < 1e-9 && cached->phase == 0 && !cached->barEnergyDb.empty());
         const QJsonObject beats = run("beats", {{"file", file}});
-        CHECK(beats["bpm"].toDouble() == 84 && beats["confidence"].toDouble() == 1); // the stored grid, not analysed
+        CHECK(beats["bpm"].toDouble() == MusicBed::defaultBpm(MusicBed::Mood::Calm) && beats["confidence"].toDouble() == 1); // the stored grid, not analysed
         CHECK(n["sections"].toArray().size() >= 2 && n["final_hit_s"].toDouble() > 0);
         CHECK(n["lufs"].toDouble() < -15 && n["lufs"].toDouble() > -17.5);
     }
@@ -457,7 +628,7 @@ int main(int argc, char* argv[])
     {
         const QJsonObject e = run("effects", {{"kind", "music"}});
         const QJsonArray moods = e["moods"].toArray();
-        CHECK_EQ(moods.size(), 3);
+        CHECK_EQ(moods.size(), int(std::size(MusicBed::kMoods)));
         CHECK_EQ(moods.at(0).toObject()["mood"].toString(), QString("calm"));
         CHECK_EQ(moods.at(2).toObject()["chords"].toArray().size(), 4);
     }

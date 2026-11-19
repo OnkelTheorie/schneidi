@@ -1265,7 +1265,8 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         return {{"moods", musicBedMoods()},
                 {"note", "music beds of schneidi's own (edit op 'music_bed'): computed, no samples, free to use; "
                          "the beat grid is known (snap_to_beat, beats need no analysis). bpm and key are the mood's "
-                         "defaults; seed picks another progression and patterns"}};
+                         "defaults (chord_beats: how long a chord lasts); seed picks another progression, patterns and "
+                         "tune"}};
     if (kind == "nodes")
         return {{"nodes", compNodeKindsJson()},
                 {"note", "node kinds of the compositing graph (edit ops 'comp', 'node'): inputs take the picture of "
