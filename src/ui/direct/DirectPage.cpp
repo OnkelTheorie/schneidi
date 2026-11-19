@@ -165,9 +165,10 @@ void DirectPage::setResultNote(const QString& text) { m_resultText->setFullText(
 
 QString DirectPage::resultNote() const { return m_resultText->fullText(); }
 
-void DirectPage::setSourceTimeline(const Timeline& tl)
+void DirectPage::setSourceTimeline(const Timeline& tl, double fps)
 {
     m_source = tl;
+    if (fps > 0) m_sourceFps = fps;
     m_hasSource = true;
     updateResult();
 }
@@ -221,9 +222,9 @@ Timeline DirectPage::resultTimeline() const
         QVector<QPair<int, int>> ranges;
         for (int n : m_suggestions->checkedOrder()) {
             const auto [from, to] = m_suggestions->range(n);
-            ranges.append({int(std::lround(from * m_fps)), int(std::lround(to * m_fps))});
+            ranges.append({int(std::lround(from * m_sourceFps)), int(std::lround(to * m_sourceFps))});
         }
-        return withoutRanges(m_source, ranges, m_fps);
+        return withoutRanges(m_source, ranges, m_sourceFps);
     }
     Timeline tl;
     TimelineOps::ensureTracks(tl, TrackKind::Video, 1);

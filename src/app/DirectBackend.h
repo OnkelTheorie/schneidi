@@ -60,8 +60,8 @@ public:
     }
     virtual JobHandle finish(const QJsonObject& session, const QJsonObject& applied, const Progress& onProgress,
                              const Done& onDone, QObject* receiver);
-    // Where a project an apply makes itself goes (a template's new project): the app's folder for projects, never
-    // silently next to the recordings (a recorder's folder)
+    // Where a project an apply makes itself goes (a template's new project): the app's folder for projects when the
+    // user chose one, empty = the command's default (next to the first clip)
     void setProjectFolder(const QString& dir) { m_projectFolder = dir; }
     QString projectFolder() const { return m_projectFolder; }
 

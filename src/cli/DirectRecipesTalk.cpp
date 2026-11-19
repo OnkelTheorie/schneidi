@@ -290,7 +290,7 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
             QString dir = args["project_dir"].toString().trimmed();
             if (dir.isEmpty()) dir = first.absolutePath();
             else dir = absolute(dir);
-            if (!QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
+            if (!args["dry_run"].toBool() && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             QString base = QDir(dir).filePath(QFileInfo(tmpl).completeBaseName());
             project = base + "." + QString(ProjectFile::Extension);
             for (int i = 2; QFileInfo::exists(project); ++i) project = QString("%1-%2.%3").arg(base).arg(i).arg(ProjectFile::Extension);

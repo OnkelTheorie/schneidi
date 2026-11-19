@@ -1123,6 +1123,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         const QJsonObject numbers = reviewNumbers(*marks);
         for (auto it = numbers.begin(); it != numbers.end(); ++it) o[it.key()] = it.value();
     }
+    if (ex.ownSpeed() >= 0) o["s264_speed"] = ex.ownSpeed() > 0 ? "fast" : "default"; // the stage the encoder ran with
     if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc ("copy": smart render)
     if (job.settings.kind() == RenderKind::ImageSequence) {
         o["frames_dir"] = imageSequenceDir(out);

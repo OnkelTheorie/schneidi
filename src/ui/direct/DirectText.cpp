@@ -107,7 +107,8 @@ QString error(const QString& recipe, const QJsonObject& error, bool apply)
                  "hineinziehen.");
     if (code == "NOT_FOUND" && has("no such file")) return T("Eine Datei des Materials fehlt.");
     if (code == "SAVE_FAILED")
-        return apply ? T("Das Projekt ließ sich nicht speichern (Ordner für Projekte in den Einstellungen prüfen).")
+        return apply ? T("Das Projekt ließ sich nicht speichern: Ist der Zielordner beschreibbar? Einen eigenen Ordner für Projekte "
+                       "gibt es unter Einstellungen › Projekte.")
                      : T("Die Vorschläge ließen sich nicht speichern.");
     if (code == "SESSION_STALE") return T("Das Material hat sich geändert: Die Vorschläge passen nicht mehr.");
     if (code == "SESSION_EXPIRED") return T("Die Vorschläge sind abgelaufen.");

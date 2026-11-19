@@ -64,11 +64,14 @@ const Text kNotes[] = {
      N_("Nur {n} Variante(n) statt {asked}: Für mehr hat das Material zu wenige Momente."), nullptr},
     {"no_shot", "No shot fits the field \"{slot}\".", nullptr, N_("Für das Feld „{slot}“ passt kein Clip."), nullptr},
     {"not_said", "Not found in what was said: \"{text}\"", nullptr, N_("Nicht im Gesagten gefunden: „{text}“"), nullptr},
-    {"no_pause", "No pause long enough where every chosen track is quiet (try a shorter minimum pause).", nullptr,
+    {"no_pause",
+     "No pause long enough where every chosen track is quiet (try a shorter min_pause_s, a threshold in dBFS, or fewer "
+     "tracks).",
+     nullptr,
      N_("Keine Pause lang genug, in der alle gewählten Spuren still sind (kürzere Pausen versuchen)."), nullptr},
     {"never_quiet",
-     "Never quiet: {tracks} - its noise stays above the threshold, so no pause is common to all tracks (leave it out "
-     "under Tracks).",
+     "Never quiet: {tracks} - its noise stays above the threshold, so no pause is common to all tracks; give threshold "
+     "(dBFS, above that floor) or leave the track out with tracks.",
      nullptr,
      N_("Nie still: {tracks} – das Rauschen liegt über der Schwelle, keine Pause ist allen Spuren gemeinsam (die Spur "
         "unter „Spuren“ weglassen)."),

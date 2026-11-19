@@ -2190,6 +2190,8 @@ bool ExportWriter::encoderFailed() const
     return d->encoderBroke;
 }
 
+int ExportWriter::ownSpeed() const { return d->own ? d->ownSpeed : -1; }
+
 QString ExportWriter::error() const
 {
     std::lock_guard<std::mutex> lock(d->errorMutex);

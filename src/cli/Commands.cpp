@@ -1230,7 +1230,7 @@ const QVector<Command>& commands()
                                  "72 MB download, GPL)"},
           {"speed", T::String, "only format s264: its speed stage - default, or fast (B pictures search fewer "
                                "partition layouts in dense texture: camera footage ~14 % less work for ~1 % larger "
-                               "files at the same quality)"},
+                               "files at the same quality); the answer's s264_speed is the stage the encoder ran with"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
                                   "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "

@@ -70,7 +70,7 @@ public:
     // The result strip anew from the checked suggestions in their order
     void updateResult();
     // The timeline a session on a timeline (talk) is about: the strip shows it without the checked pauses
-    void setSourceTimeline(const Timeline& tl);
+    void setSourceTimeline(const Timeline& tl, double fps);
     // A line beside the buttons after Übernehmen ("Neue Timeline „…“"; empty = none)
     void setResultNote(const QString& text);
     QString resultNote() const;
@@ -106,6 +106,7 @@ private:
     DirectThumbs* m_thumbs;
     Timeline m_source;
     bool m_hasSource = false;
+    double m_sourceFps = 25; // the talk timeline's rate (its pauses are seconds of it)
     double m_fps = 25;
     bool m_busy = false;
     bool m_applying = false;

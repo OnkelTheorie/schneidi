@@ -588,6 +588,30 @@ int main(int argc, char** argv)
                 CHECK(x["to_s"].toDouble() > x["from_s"].toDouble() + 0.9);
             }
         if (!CHECK(ends >= 1)) std::printf("       %s\n", QJsonDocument(s).toJson().constData());
+        // One 30 s recording, two loud moments too close for the spacing: the one not picked stays offered (switched
+        // off), and the fallback is only the tail nothing covers - never in its way
+        const QString one = Check::makeMedia(
+            dir.filePath("tail.mp4"),
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=30", "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,7,7.6),0.5*sin(2*PI*440*t),0)+if(between(t,13,13.6),0.9*sin(2*PI*440*t),0)':d=30:s=48000",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!one.isEmpty())) {
+            const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{one}},
+                                                 {"options", QJsonObject{{"length_s", 300}, {"game", "none"}}}});
+            const QJsonArray list = r["session"].toObject()["suggestions"].toArray();
+            bool extraAfter = false, tail = false;
+            for (const QJsonValue& x : list) {
+                const bool end = x["reason"]["key"].toString() == "fallback_end";
+                if (!end && !x["on"].toBool()) extraAfter = true; // the other moment, offered
+                if (!end) continue;
+                tail = true;
+                CHECK(!x["on"].toBool());
+                CHECK(x["to_s"].toDouble() > 29.9);
+                for (const QJsonValue& y : list) // never over another suggestion
+                    if (y != x) CHECK(!(y["from_s"].toDouble() < x["to_s"].toDouble() - 0.01 && x["from_s"].toDouble() < y["to_s"].toDouble() - 0.01));
+            }
+            if (!CHECK(extraAfter && tail)) std::printf("       %s\n", QJsonDocument(list).toJson().constData());
+        }
         // Translated on the page: the key's German text with the values
         CHECK(Direction::noteText("few_moments", {{"s", 4}, {"target", 60}}, Direction::Lang::Ui).contains("60"));
     }
@@ -604,6 +628,12 @@ int main(int argc, char** argv)
                                                 {"speed", "fast"}, {"from", "0s"}, {"to", "1s"}});
         CHECK(!fast.contains("error"));
         CHECK(QFileInfo(dir.filePath("fast.mp4")).size() > 0);
+        CHECK_EQ(fast["s264_speed"].toString(), QString("fast")); // reached the encoder's configuration
+        const QJsonObject plain = run("render", {{"project", sp}, {"out", dir.filePath("plain.mp4")}, {"format", "s264"},
+                                                 {"from", "0s"}, {"to", "1s"}});
+        CHECK_EQ(plain["s264_speed"].toString(), QString("default"));
+        CHECK(!run("render", {{"project", sp}, {"out", dir.filePath("h.mp4")}, {"format", "h264"}, {"from", "0s"}, {"to", "1s"}})
+                   .contains("s264_speed"));
     }
 
     // ---- Cancel: a running suggest stops with CANCELED; an apply canceled before it starts leaves no project

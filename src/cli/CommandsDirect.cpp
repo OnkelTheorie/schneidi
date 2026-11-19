@@ -264,35 +264,6 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
         s.suggestions << x;
         s.order << x.n;
     }
-    // Far less than wanted stood out: the end of every recording offered too (switched off, the user fills up)
-    double pickedS = 0;
-    for (const ReelPick::Moment& m : picked) pickedS += m.to - m.from;
-    const bool few = !s.suggestions.isEmpty() && pick.targetS > 0 && pickedS < pick.targetS * 0.5
-                     && s.suggestions.first().reason.key != QLatin1String("fallback_end");
-    if (few) {
-        ShortPick::Options ends;
-        ends.minS = 0;
-        ends.maxS = std::max(1.0, pick.targetS - pickedS);
-        ends.fallbackS = ends.maxS;
-        int offered = 0;
-        for (ShortPick::Moment m : ShortPick::pick({}, durations, ends)) {
-            // Only the part of an end no found moment covers
-            for (const Direction::Suggestion& x : s.suggestions)
-                if (x.file == files.value(m.file) && x.from < m.to && m.from < x.to) m.from = std::max(m.from, x.to);
-            if (m.to - m.from < 1.0) continue;
-            Direction::Suggestion x;
-            x.file = files.value(m.file);
-            x.from = m.from;
-            x.to = m.to;
-            x.reason = {"fallback_end", {}};
-            x.labels << "end";
-            x.n = ++n;
-            x.on = false;
-            s.suggestions << x;
-            ++offered;
-        }
-        if (offered > 0) s.notes << note("few_moments", {{"s", std::round(pickedS * 10) / 10}, {"target", pick.targetS}});
-    }
     int added = 0;
     QVector<Direction::Suggestion> taken = s.suggestions;
     for (const DirectMoment& c : all) {
@@ -306,6 +277,40 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
         s.suggestions << x;
         taken << x;
         ++added;
+    }
+    // Far less than wanted stood out: the uncovered end of every recording offered too (switched off, the user fills
+    // up); after the other candidates, never in their way
+    double pickedS = 0;
+    for (const ReelPick::Moment& m : picked) pickedS += m.to - m.from;
+    const bool few = !s.suggestions.isEmpty() && pick.targetS > 0 && pickedS < pick.targetS * 0.5
+                     && s.suggestions.first().reason.key != QLatin1String("fallback_end");
+    if (few) {
+        ShortPick::Options ends;
+        ends.minS = 0;
+        ends.maxS = std::max(1.0, pick.targetS - pickedS);
+        ends.fallbackS = ends.maxS;
+        int offered = 0;
+        for (ShortPick::Moment m : ShortPick::pick({}, durations, ends)) {
+            // Only the tail of an end no suggestion (found, picked or offered) covers
+            QVector<const Direction::Suggestion*> same;
+            for (const Direction::Suggestion& x : s.suggestions)
+                if (x.file == files.value(m.file)) same << &x;
+            std::sort(same.begin(), same.end(), [](auto* p, auto* q) { return p->from < q->from; });
+            for (const Direction::Suggestion* x : same)
+                if (x->from < m.to && m.from < x->to) m.from = std::max(m.from, x->to);
+            if (m.to - m.from < 1.0) continue;
+            Direction::Suggestion x;
+            x.file = files.value(m.file);
+            x.from = m.from;
+            x.to = m.to;
+            x.reason = {"fallback_end", {}};
+            x.labels << "end";
+            x.n = ++n;
+            x.on = false;
+            s.suggestions << x;
+            ++offered;
+        }
+        if (offered > 0) s.notes << note("few_moments", {{"s", std::round(pickedS * 10) / 10}, {"target", pick.targetS}});
     }
     s.target = pick.targetS;
 }

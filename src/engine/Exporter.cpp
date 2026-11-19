@@ -564,6 +564,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         }
     }
     m_usedCodec.clear();
+    m_ownSpeed = -1;
     m_copiedPercent = 0;
     // Effects this engine does not have (frei0r/LADSPA plugins, ids of newer versions) stay in the project but are
     // skipped: said in the log and to the caller (skippedEffects())
@@ -932,6 +933,7 @@ void Exporter::pollWriter()
         return;
     }
     case ExportWriter::State::Done: {
+        m_ownSpeed = m_writer->ownSpeed();
         if (const int copied = m_writer->framesCopied(); copied > 0) {
             m_copiedPercent = std::clamp(int(std::lround(copied * 100.0 / std::max(1, m_length))), 1, 100);
             qInfo("Export: smart render copied %d of %d frames", copied, m_length);

@@ -156,7 +156,8 @@ void MainWindow::setDirectSourceTimeline(const QJsonObject& session)
     bool ok = false;
     const int id = session.value("timeline").toString().toInt(&ok);
     const Sequence* seq = ok ? m_project->sequence(id) : nullptr;
-    m_directPage->setSourceTimeline(seq ? seq->timeline : m_project->timeline());
+    m_directPage->setSourceTimeline(seq ? seq->timeline : m_project->timeline(),
+                                    m_project->sequenceFormat(seq ? id : 0).rate.fps());
 }
 
 DirectBackend* MainWindow::directBackend()
@@ -195,12 +196,16 @@ void MainWindow::ensureDirectPage()
     });
     // A time of a timeline (the material "Aktuelle Timeline", a pause of talk): the picture shown there
     m_directPage->thumbs()->setResolver([this](const QString& key, double s) -> std::pair<QString, double> {
-        const double fps = m_project->format().rate.fps();
+        // (times of that timeline: its own rate)
+        double fps = m_project->sequenceFormat(0).rate.fps();
         const Timeline* tl = &m_project->timeline();
         if (key.startsWith(QLatin1String("@timeline:"))) {
             bool ok = false;
             const int id = key.mid(10).toInt(&ok);
-            if (const Sequence* seq = ok ? m_project->sequence(id) : nullptr) tl = &seq->timeline;
+            if (const Sequence* seq = ok ? m_project->sequence(id) : nullptr) {
+                tl = &seq->timeline;
+                fps = m_project->sequenceFormat(id).rate.fps();
+            }
         }
         return pictureAt(*tl, int(std::lround(s * fps)), fps);
     });
@@ -346,6 +351,10 @@ void MainWindow::directSuggest()
              && TemplateFill::listSlots(m_project->data()).isEmpty())
         needs = DirectText::templateNeedsChoice();
     if (!needs.isEmpty()) {
+        // Nothing runs: no busy state, no job, no line of an earlier run left
+        if (m_backgroundJobs) m_backgroundJobs->removeJob(kJobId);
+        m_directPage->setBusy(false);
+        m_directPage->setResultNote({});
         m_directPage->suggestions()->setHint(needs);
         return;
     }
@@ -405,8 +414,9 @@ void MainWindow::directApply()
     m_engine->pause();
     const int run = ++m_directApplyRun;
     m_directPage->setApplying(true);
-    // A project it makes itself (a template's) goes into the folder for projects, never next to the recordings
-    directBackend()->setProjectFolder(SettingsDialog::storedFolder());
+    // A project it makes itself (a template's) goes where "Save as" suggests a new project: the folder for projects
+    // when the user chose one (Settings), else next to the first clip; the page shows the path beside the buttons
+    directBackend()->setProjectFolder(SettingsDialog::storedOwnFolder() ? SettingsDialog::storedFolder() : QString());
     BackgroundJobs::Job job;
     job.text = T("Regie: Timeline bauen");
     job.fraction = -1;

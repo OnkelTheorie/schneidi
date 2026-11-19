@@ -537,8 +537,9 @@ int main(int argc, char** argv)
         page->material()->setUseTimeline(false);
         page->material()->clear();
         page->material()->addFiles({a, b});
-        // New projects go into the folder for projects (Settings), never next to the recordings
+        // New projects go where "Save as" suggests one: the folder for projects when the user chose one (Settings)
         const QString projects = dir.filePath("projects");
+        QSettings().setValue("project/ownFolder", true);
         QSettings().setValue("project/folder", projects);
         page->recipes()->setRecipe("template");
         page->recipes()->setTemplate("short-hook", "Short Hook");
@@ -554,7 +555,15 @@ int main(int argc, char** argv)
         CHECK_EQ(made.size(), 1);
         CHECK(QDir(dir.path()).entryList({"short-hook*"}).isEmpty()); // (a.mp4 and b.mp4 are there)
         CHECK(page->resultNote().contains(QDir::toNativeSeparators(projects)));
-        QSettings().remove("project/folder");
+        // Without an own folder: next to the first clip (a temporary folder here), the path shown beside the buttons
+        QSettings().setValue("project/ownFolder", false);
+        page->applyButton()->click();
+        CHECK(waitFor([&] { return !page->applying(); }));
+        const QStringList beside = QDir(dir.path()).entryList({"short-hook*.schneidi"});
+        CHECK_EQ(beside.size(), 1);
+        CHECK_EQ(QDir(projects).entryList({"short-hook*.schneidi"}).size(), 1); // nothing more there
+        CHECK(page->resultNote().contains(QDir::toNativeSeparators(dir.path())));
+        QSettings().remove("project");
     }
     // Recipe script with a (fake) whisper on files of the material
     {

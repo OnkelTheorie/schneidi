@@ -655,7 +655,7 @@
  "Das Programm läuft auf dem zweiten Monitor.": "The program is playing on the second monitor.",
  "Das Projekt hat keine Platzhalter (Clip › Als Platzhalter markieren…).": "The project has no placeholders (Clip › Mark as Placeholder…).",
  "Das Projekt hat nur %1: größer wird die Vorschau nie.": "The project is only %1: the preview never gets larger.",
- "Das Projekt ließ sich nicht speichern (Ordner für Projekte in den Einstellungen prüfen).": "The project could not be saved (check the folder for projects in the settings).",
+ "Das Projekt ließ sich nicht speichern: Ist der Zielordner beschreibbar? Einen eigenen Ordner für Projekte gibt es unter Einstellungen › Projekte.": "The project could not be saved: is the target folder writable? A folder of its own for projects is under Settings › Projects.",
  "Das Projekt wurde außerhalb von schneidi geändert (z. B. mit schneidi-cli).": "The project was changed outside of schneidi (e.g. with schneidi-cli).",
  "Das Protokoll ist aus (Einstellungen › KI).": "The log is off (Settings › AI).",
  "Das Rezept lässt sich nicht anwenden: %1": "The recipe cannot be applied: %1",
