@@ -336,8 +336,15 @@ void testTempo()
     Project project;
     Selection sel;
     Editor editor{&project, &sel};
-    project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 200000, true, false, false});
-    project.addMedia(MediaInfo{"/x/b.mp4", "b.mp4", 200000, true, false, false});
+    // A few hundred files in the pool (the clip color lookup must not scan the pool per clip), some with a clip color
+    constexpr int kMedia = 400;
+    QVector<MediaInfo> media;
+    for (int m = 0; m < kMedia; ++m) {
+        MediaInfo info{QString("/x/m%1.mp4").arg(m), QString("m%1.mp4").arg(m), 200000, true, false, false};
+        if (m % 5 == 0) info.clipColor = QString::fromLatin1(kTrackColors[m % 3].id);
+        media << info;
+    }
+    for (const MediaInfo& m : media) project.addMedia(m);
     Timeline tl;
     tl.video.resize(2);
     tl.audio.resize(2);
@@ -346,7 +353,7 @@ void testTempo()
     int id = 1;
     for (int t = 0; t < 4; ++t)
         for (int i = 0; i < 500; ++i) {
-            Clip c = clip(id++, i * len, len - (i % 3 ? 0 : 7), i % 2 ? "/x/a.mp4" : "/x/b.mp4");
+            Clip c = clip(id++, i * len, len - (i % 3 ? 0 : 7), QString("/x/m%1.mp4").arg((i * 7 + t) % kMedia));
             c.enabled = i % 17 != 0;
             (t < 2 ? tl.video[t] : tl.audio[t - 2]).clips << c;
         }
@@ -377,7 +384,7 @@ void testTempo()
         ov.render(&img);
     }
     const double playheadMs = t.nsecsElapsed() / 1e6 / kRuns;
-    std::printf("overview 2 h / 2000 clips / 1920 px: rebuild %.2f ms, playhead step %.2f ms\n", rebuildMs, playheadMs);
+    std::printf("overview 2 h / 2000 clips / 400 media / 1920 px: rebuild %.2f ms, playhead step %.2f ms\n", rebuildMs, playheadMs);
     CHECK(rebuildMs < 25);  // a model change
     CHECK(playheadMs < 5);  // while playing
     CHECK(playheadMs < rebuildMs); // the clips are not drawn again for the playhead
@@ -387,6 +394,10 @@ void testTempo()
     const int px = int(std::floor(ov.frameToX(ov.playhead())));
     CHECK(pic.pixelColor(px, 10) == Theme::playhead);
     CHECK(pic.pixelColor(int(ov.frameToX(len * 10 + len / 2)), 13) != Theme::timelineBg);
+    // Pool clip colors still win over the default: V1 clip 10 (file m70, 70 % 5 == 0 -> its color), clip 11 (m77: none)
+    const QColor want = QColor::fromRgba(kTrackColors[70 % 3].rgb);
+    CHECK(pic.pixelColor(int(ov.frameToX(len * 10 + len / 2)), 13) == want);
+    CHECK(pic.pixelColor(int(ov.frameToX(len * 11 + len / 2)), 13) == Theme::videoClip);
 }
 
 } // namespace

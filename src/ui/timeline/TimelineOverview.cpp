@@ -7,6 +7,7 @@
 #include "ui/timeline/TimelineColors.h"
 
 #include <QGuiApplication>
+#include <QHash>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -144,6 +145,17 @@ void TimelineOverview::rebuildCache()
     const int nv = m_timeline.video.size(), na = m_timeline.audio.size();
     const int top = kBandH, bottom = h - 1;
     const int split = nv && na ? top + (bottom - top) / 2 : nv ? bottom : top;
+    // Media Pool clip colors once per file (Project::mediaInfo scans the pool; 2000 clips x 400 files add up)
+    QHash<QString, QColor> poolColors;
+    auto colorOf = [&](const Clip& c, const Track& track) {
+        if (m_project && !c.isTitle()) {
+            auto it = poolColors.constFind(c.mediaPath);
+            if (it == poolColors.constEnd())
+                it = poolColors.insert(c.mediaPath, TimelineColors::clipColor(m_project, c, nullptr));
+            if (it->isValid()) return *it;
+        }
+        return TimelineColors::trackColor(track);
+    };
     auto drawRow = [&](const Track& track, TrackKind kind, double y0, double y1) {
         const int iy0 = int(std::lround(y0)), iy1 = std::max(iy0 + 1, int(std::lround(y1)) - (y1 - y0 >= 3 ? 1 : 0));
         // Clips narrower than a few pixels are merged into runs of the same color (2000 clips on 1500 px)
@@ -154,7 +166,7 @@ void TimelineOverview::rebuildCache()
             runX1 = -1;
         };
         for (const Clip& c : track.clips) {
-            const QColor col = TimelineColors::clipBaseColor(c, kind, TimelineColors::clipColor(m_project, c, &track));
+            const QColor col = TimelineColors::clipBaseColor(c, kind, colorOf(c, track));
             const double fx0 = frameToX(c.start), fx1 = frameToX(c.end());
             const int x0 = int(std::floor(fx0)), x1 = std::max(x0 + 1, int(std::ceil(fx1)));
             if (x1 - x0 >= 4) { // wide enough to show where it starts
