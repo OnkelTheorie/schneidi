@@ -332,6 +332,9 @@ struct FirstPassAlt {
 };
 // "x86-64-v3" where new Encoder and FirstPass objects use the second build, else "generic".
 const char* cpuBuild();
+// The CPU (and operating system) can run code built with -march=x86-64-v3: AVX, AVX2, BMI1/2, FMA, F16C, LZCNT,
+// MOVBE and the x86-64-v2 set, with XCR0 enabling the SSE and AVX state. False off x86 and on other compilers.
+bool cpuHasX86_64V3();
 
 // Cheap first pass for the bitrate mode: the half-resolution lookahead analysis of every
 // picture of the clip (a few ms per 1080p picture), without encoding anything.

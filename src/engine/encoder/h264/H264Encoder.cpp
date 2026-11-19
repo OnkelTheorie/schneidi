@@ -30,6 +30,9 @@
 #include <utility>
 #include <condition_variable>
 #include <mutex>
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
+#endif
 
 
 namespace schneidi::h264 {
@@ -672,18 +675,45 @@ extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, 
 
 namespace schneidi::h264 {
 
+bool cpuHasX86_64V3()
+{
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+    // Everything -march=x86-64-v3 lets the compiler use (the level's list, x86-64-v2 included), asked with cpuid
+    // itself: __builtin_cpu_supports does not know "lzcnt", "movbe" or "f16c" on every compiler version.
+    static const bool yes = [] {
+        unsigned a = 0, b = 0, c = 0, d = 0;
+        if (__get_cpuid_max(0, nullptr) < 7 || __get_cpuid_max(0x80000000u, nullptr) < 0x80000001u)
+            return false;
+        __cpuid(1, a, b, c, d);
+        const unsigned c1 = c;
+        auto has = [](unsigned reg, int bit) { return (reg >> bit & 1u) != 0; };
+        // SSE3 0, SSSE3 9, FMA 12, CMPXCHG16B 13, SSE4.1 19, SSE4.2 20, MOVBE 22, POPCNT 23, OSXSAVE 27, AVX 28, F16C 29
+        for (const int bit : {0, 9, 12, 13, 19, 20, 22, 23, 27, 28, 29})
+            if (!has(c1, bit))
+                return false;
+        // The operating system saves the SSE and AVX registers (XCR0 bits 1 and 2), else AVX faults
+        unsigned lo = 0, hi = 0;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0u));
+        if ((lo & 6u) != 6u)
+            return false;
+        __cpuid_count(7, 0, a, b, c, d);
+        if (!has(b, 3) || !has(b, 5) || !has(b, 8)) // BMI1, AVX2, BMI2
+            return false;
+        __cpuid(0x80000001u, a, b, c, d);
+        return has(c, 0) && has(c, 5); // LAHF/SAHF, LZCNT (ABM)
+    }();
+    return yes;
+#else
+    return false;
+#endif
+}
+
 namespace {
 // Asked for every new object (cheap), so a test can switch between the two builds.
 bool useV3()
 {
 #if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
-    // Everything -march=x86-64-v3 lets the compiler use (the level's list; AVX2 includes the operating system's
-    // support for the wide registers).
-    static const bool cpu = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("avx") && __builtin_cpu_supports("bmi")
-        && __builtin_cpu_supports("bmi2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("lzcnt")
-        && __builtin_cpu_supports("movbe") && __builtin_cpu_supports("f16c") && __builtin_cpu_supports("popcnt")
-        && __builtin_cpu_supports("sse4.2");
-    if (!cpu)
+    if (!cpuHasX86_64V3())
         return false;
     const char* e = std::getenv("SCHNEIDI_S264_CPU");
     return !(e && std::strcmp(e, "generic") == 0);

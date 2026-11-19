@@ -771,11 +771,19 @@ void testVbv()
 // The encoder's second build for x86-64-v3 CPUs (EncoderAlt, picked at run time where CMake built it and the CPU
 // has the instructions): the same streams, reconstructions and first-pass numbers as the build for every CPU - fixed
 // QP with B pictures, constant quality on several threads, two passes - and SCHNEIDI_S264_CPU=generic keeps to the
-// first build. The speed stage "fast" (EncoderConfig::speed 1) decodes bit-exact, does not depend on the thread
+// first build; the own cpuid check agrees with the compiler's. The speed stage "fast" (EncoderConfig::speed 1) decodes bit-exact, does not depend on the thread
 // count, and is another stream than the default only with B pictures.
 void testCpuBuilds()
 {
     gCabac = true;
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    // The own cpuid check against the compiler's (this one knows every name; older ones do not)
+    const bool builtin = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("avx") && __builtin_cpu_supports("bmi")
+        && __builtin_cpu_supports("bmi2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("lzcnt")
+        && __builtin_cpu_supports("movbe") && __builtin_cpu_supports("f16c") && __builtin_cpu_supports("popcnt")
+        && __builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("ssse3");
+    CHECK(cpuHasX86_64V3() == builtin);
+#endif
     qunsetenv("SCHNEIDI_S264_CPU");
     const bool v3 = std::strcmp(cpuBuild(), "x86-64-v3") == 0;
     qputenv("SCHNEIDI_S264_CPU", "generic");
