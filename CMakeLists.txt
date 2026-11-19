@@ -811,8 +811,10 @@ if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROC
             src/engine/encoder/h264/H264Cabac.cpp src/engine/encoder/h264/Lookahead.cpp)
         target_include_directories(s264_v3_objects PRIVATE ${CMAKE_SOURCE_DIR}/src)
         target_compile_definitions(s264_v3_objects PRIVATE SCHNEIDI_S264_V3_BUILD)
-        target_compile_options(s264_v3_objects PRIVATE -march=x86-64-v3)
-        set_target_properties(s264_v3_objects PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+        # Real machine code in the object, also where a distribution builds with -flto: LTO would leave compiler IR
+        # whose code the final link generates without -march=x86-64-v3, and with symbols objcopy cannot localise
+        target_compile_options(s264_v3_objects PRIVATE -march=x86-64-v3 -fno-lto)
+        set_target_properties(s264_v3_objects PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             # Static variables of inline functions as weak symbols (objcopy cannot make GNU "unique" ones local)
             target_compile_options(s264_v3_objects PRIVATE -fno-gnu-unique)
@@ -822,7 +824,7 @@ if(SCHNEIDI_S264_V3 AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROC
         # One relocatable object without section groups (a group whose name is local would still be merged with the
         # other build's group of the same name), then every symbol but the entry points local
         add_custom_command(OUTPUT ${SCHNEIDI_S264_V3_OBJECT}
-            COMMAND ${CMAKE_CXX_COMPILER} -r -nostdlib -Wl,--force-group-allocation
+            COMMAND ${CMAKE_CXX_COMPILER} -fno-lto -r -nostdlib -Wl,--force-group-allocation
                     -o ${CMAKE_BINARY_DIR}/s264_v3_all.o $<TARGET_OBJECTS:s264_v3_objects>
             COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=schneidi_s264_v3_encoder
                     --keep-global-symbol=schneidi_s264_v3_first_pass ${CMAKE_BINARY_DIR}/s264_v3_all.o ${SCHNEIDI_S264_V3_OBJECT}
