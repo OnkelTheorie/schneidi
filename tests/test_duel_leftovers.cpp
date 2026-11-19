@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What was left of the editing duels of 17./18.11.2026 (docs/testdaten/opus-duell-2026-11-17, plan 0.25 › F):
 //  - `check` warns when a clip's sound is raised by +15 dB or more (the noise of a phone recording comes up with it)
+//  - op 'solid': a colour matte over the whole frame (a background in a 9:16 is no safe-area finding)
 #include "check.h"
 
 #include "cli/Commands.h"
 
 #include <QGuiApplication>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
@@ -67,6 +69,65 @@ void testBoost(const QString& dir)
     CHECK(issueOf(run("check", {{"source", project}}), "audio_boost").isEmpty());
 }
 
+// The clips of the timeline by id
+QJsonObject clipById(const QString& project, int id)
+{
+    const QJsonObject info = run("info", {{"project", project}});
+    for (const QJsonValue& t : info["timeline"]["tracks"].toArray())
+        for (const QJsonValue& c : t["clips"].toArray())
+            if (c["id"].toInt() == id) return c.toObject();
+    return {};
+}
+
+// One still of a project at `at` (frames command, full size)
+QImage still(const QString& project, const QString& at, const QString& dir, const QJsonObject& extra = {})
+{
+    QJsonObject args{{"source", project}, {"at", QJsonArray{at}}, {"out", dir}};
+    for (auto it = extra.begin(); it != extra.end(); ++it) args[it.key()] = it.value();
+    const QJsonObject r = run("frames", args);
+    const QJsonArray frames = r["frames"].toArray();
+    if (frames.isEmpty()) {
+        std::printf("       frames: %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+        return {};
+    }
+    return QImage(frames.first()["file"].toString());
+}
+
+bool near(QColor a, QColor b, int tol = 12)
+{
+    return std::abs(a.red() - b.red()) <= tol && std::abs(a.green() - b.green()) <= tol && std::abs(a.blue() - b.blue()) <= tol;
+}
+
+// --- op 'solid': a colour over the whole frame, corners included; in a 9:16 timeline no safe-area finding
+void testSolid(const QString& dir)
+{
+    const QString video = Check::makeMedia(dir + "/v.mp4", {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=4", "-c:v",
+                                                            "libx264", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!video.isEmpty())) return;
+    const QString project = dir + "/solid.schneidi";
+    run("new", {{"project", project}, {"fps", 25}, {"width", 1080}, {"height", 1920}});
+    QJsonObject r = edit(project, {QJsonObject{{"op", "append"}, {"media", video}},
+                                   QJsonObject{{"op", "solid"}, {"color", "#ff8000"}, {"at", "1s"}, {"length", "2s"}}});
+    int id = 0;
+    for (const QJsonValue& n : r["notes"].toArray()) id = std::max(id, n["solid"].toInt());
+    if (!CHECK(id > 0)) std::printf("       %s\n", QJsonDocument(r).toJson(QJsonDocument::Compact).constData());
+    const QJsonObject c = clipById(project, id);
+    CHECK_EQ(c["start"].toInt(), 25);
+    CHECK_EQ(c["end"].toInt(), 75);
+    CHECK_EQ(c["shape"]["kind"].toString(), QString("rect"));
+    const QImage img = still(project, "2s", dir + "/solid-frames");
+    if (CHECK(!img.isNull())) {
+        for (const QPoint p : {QPoint(0, 0), QPoint(img.width() - 1, img.height() - 1), QPoint(img.width() / 2, img.height() / 2)})
+            if (!CHECK(near(img.pixelColor(p), QColor("#ff8000")))) std::printf("       %d,%d: %s\n", p.x(), p.y(), qPrintable(img.pixelColor(p).name()));
+    }
+    r = run("check", {{"source", project}, {"sound", false}});
+    for (const QJsonValue& v : r["issues"].toArray())
+        if (!CHECK(v["check"].toString() != "safe_area")) std::printf("       %s\n", qPrintable(v["message"].toString()));
+    // color and length are needed
+    CHECK(edit(project, {QJsonObject{{"op", "solid"}, {"length", "1s"}}}).contains("failed"));
+    CHECK(edit(project, {QJsonObject{{"op", "solid"}, {"color", "#000000"}}}).contains("failed"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -77,6 +138,7 @@ int main(int argc, char** argv)
     QTemporaryDir dir;
     if (Check::haveFfmpeg()) {
         testBoost(dir.path());
+        testSolid(dir.path());
     } else {
         std::printf("  no ffmpeg: skipped\n");
     }

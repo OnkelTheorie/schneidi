@@ -233,6 +233,28 @@ void opShape(Session& s, const QJsonObject& op)
     if (created) s.notes << QJsonObject{{"shape", id}};
 }
 
+// A colour matte (a plain colour over the whole frame: a background, an end card's plate, a flash frame): a
+// rectangle shape as large as the timeline's frame (2 px over each edge: no soft rim), so `info`, the Inspector, the
+// keyframes and new_timeline treat it as the shape it is
+void opSolid(Session& s, const QJsonObject& op)
+{
+    if (!op.contains("color")) fail("BAD_ARGUMENT", "missing 'color' (\"#rrggbb\", \"#aarrggbb\" or a colour name)");
+    if (!op.contains("length")) fail("BAD_ARGUMENT", "missing 'length' (e.g. '3s')");
+    const ProjectFormat f = s.project.timelineFormat();
+    const QColor color = colorOf(op.value("color"), "color");
+    QJsonObject shape{{"op", "shape"},     {"kind", "rect"},  {"width", f.width + 4}, {"height", f.height + 4},
+                      {"x", 0},            {"y", 0},          {"fill", color.alpha() == 255 ? color.name() : color.name(QColor::HexArgb)},
+                      {"duration", op.value("length")}};
+    for (const char* key : {"at", "track"})
+        if (op.contains(key)) shape[key] = op.value(key);
+    const qsizetype notes = s.notes.size();
+    opShape(s, shape);
+    // The new clip's id under the op's own name
+    for (qsizetype i = notes; i < s.notes.size(); ++i)
+        if (s.notes[i].isObject() && s.notes[i].toObject().contains("shape"))
+            s.notes[i] = QJsonObject{{"solid", s.notes[i].toObject().value("shape")}};
+}
+
 // The effect's values: given keys onto the instance
 void opClipShape(Session& s, const QJsonObject& op)
 {
@@ -328,6 +350,13 @@ void addShapeOps(QVector<OpDef>& ops)
                  "place (the clip transform's zoom/position/rotation apply, crop and effects not). `info` lists the "
                  "shape under clip.shape, `check` treats it like a title (safe areas).",
                  opShape}
+        << OpDef{"solid", "{op:'solid', color, at?, length, track?}",
+                 "a colour matte: a plain colour over the whole frame (a background, a plate behind a logo, an end card)",
+                 "color \"#rrggbb\" or \"#aarrggbb\" (see-through), length e.g. '3s', at (default 0), track (default: a "
+                 "free video track above, like a title; track:'V1' for a background under the picture on V2). It is a "
+                 "rectangle shape as large as the frame (op 'shape' with clip changes it, `info` shows it under "
+                 "clip.shape; the notes give its id as {solid: id}); new_timeline in another format keeps it filling the frame.",
+                 opSolid}
         << OpDef{"clip_shape",
                  "{op:'clip_shape', clips, shape?, size?, aspect?, x?, y?, corner?, points?, feather?, stroke_width?, "
                  "stroke_color?, shadow?, shadow_soft?, shadow_opacity?}",

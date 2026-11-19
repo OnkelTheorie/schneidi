@@ -525,6 +525,8 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             if (c.title.isShape() && c.title.shape.kind != ShapeKind::Line && c.title.shape.fill != ShapeFill::Color
                 && !c.title.outlineOn)
                 continue;
+            // A shape over the whole frame is a background (a colour matte, op 'solid'): nothing on it to cover
+            if (c.title.isShape() && titleBlock(c, 0, W, H).contains(QRectF(0, 0, W, H))) continue;
             if (Keys::hasOpacity(c) && !Keys::animated(c, AnimParam::Opacity) && c.transform.opacity <= 0) continue;
             if (c.title.isProgress()) {
                 // A thin bar along the top edge is the usual place (the apps' top row is text over the picture);
