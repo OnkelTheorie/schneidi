@@ -16,6 +16,7 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -154,14 +155,36 @@ void opMusicBed(Session& s, const QJsonObject& op)
     int at = 0, frames = 0;
     const MusicBed::Options o = bedOptions(s, op, &at, &frames);
     const Timeline& tl = s.project.timeline();
-    int track = int(tl.audio.size()); // a new track
+    int track = -1;
     if (op.contains("track")) {
         TrackKind k = TrackKind::Audio;
         track = parseTrack(op.value("track"), &k);
         if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …)");
         if (track < tl.audio.size() && tl.audio[track].locked) fail("FAILED", trackName({TrackKind::Audio, track}) + " is locked");
+    } else {
+        // The track of an earlier bed (the new one replaces it), else an empty "Musik" track (a start template's),
+        // else a new one
+        for (int i = 0; i < tl.audio.size() && track < 0; ++i)
+            if (!tl.audio[i].locked)
+                for (const Clip& c : tl.audio[i].clips)
+                    if (isBedFile(c.mediaPath)) track = i;
+        for (int i = 0; i < tl.audio.size() && track < 0; ++i)
+            if (!tl.audio[i].locked && tl.audio[i].clips.isEmpty() && isMusicName(tl.audio[i].name)) track = i;
+        if (track < 0) track = int(tl.audio.size());
     }
     const bool newTrack = track >= tl.audio.size();
+    // Beds on the track within the new one's range go (replaced whole, not cut into pieces)
+    if (!newTrack) {
+        QJsonArray old;
+        for (const Clip& c : tl.audio[track].clips)
+            if (isBedFile(c.mediaPath) && c.start < at + frames && c.end() > at) old << c.id;
+        if (!old.isEmpty()) {
+            applyOp(s, QJsonObject{{"op", "delete"}, {"clips", old}});
+            s.notes << QString("music_bed: replaced the bed(s) %1 on %2")
+                           .arg(QString::fromUtf8(QJsonDocument(old).toJson(QJsonDocument::Compact)),
+                                trackName({TrackKind::Audio, track}));
+        }
+    }
     const Bed bed = ensureBed(s.path, o);
     const MediaInfo& m = s.media(bed.path);
     if (m.length <= 0 || !m.hasAudio) fail("FAILED", "cannot read the bed " + QDir::toNativeSeparators(bed.path));

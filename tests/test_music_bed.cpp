@@ -321,6 +321,33 @@ int main(int argc, char* argv[])
         const Clip* c = clipById(*p, o["clip"].toInt());
         CHECK(c && !Keys::animated(*c, AnimParam::Volume));
     }
+    // Without a track: a second bed replaces the first on its track; a start template's empty "Musik" track is taken
+    {
+        const QString pj = tmp.path() + "/again.schneidi";
+        run("new", {{"project", pj}, {"fps", 25}});
+        edit(pj, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"}])").arg(speech));
+        const QJsonObject a = bedNote(edit(pj, R"([{"op":"music_bed","mood":"calm"}])"));
+        const int tracks = load(pj)->timeline().audio.size();
+        const QJsonObject b = bedNote(edit(pj, R"([{"op":"music_bed","mood":"hype"}])"));
+        const auto p = load(pj);
+        CHECK_EQ(p->timeline().audio.size(), tracks);
+        CHECK_EQ(a["track"].toString(), b["track"].toString());
+        int track = -1;
+        CHECK(clipById(*p, b["clip"].toInt(), &track) && !clipById(*p, a["clip"].toInt()));
+        CHECK(track >= 0 && p->timeline().audio[track].clips.size() == 1);
+
+        const QString pod = tmp.path() + "/pod.schneidi";
+        run("new", {{"project", pod}, {"fps", 25}, {"template", "podcast"}});
+        edit(pod, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"}])").arg(speech));
+        const int podTracks = load(pod)->timeline().audio.size();
+        const QJsonObject c = bedNote(edit(pod, R"([{"op":"music_bed","mood":"calm"}])"));
+        const auto q = load(pod);
+        CHECK_EQ(q->timeline().audio.size(), podTracks);
+        int musik = -1;
+        for (int i = 0; i < q->timeline().audio.size(); ++i)
+            if (q->timeline().audio[i].name == T("Musik")) musik = i;
+        CHECK(musik >= 0 && c["track"].toString() == QString("A%1").arg(musik + 1));
+    }
     // snap_to_beat takes the bed's grid: a cut 0.2 s off a beat moves onto it
     {
         const QString pj = tmp.path() + "/snap.schneidi";
