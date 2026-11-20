@@ -593,7 +593,7 @@ void testWindow(Engine& engine, const QString& audioFile)
 
     // Hidden like the others: away from it to the nearest shown page
     w.setPageHidden(Page::Studio, true);
-    CHECK(w.currentPage() == Page::Deliver || w.currentPage() == Page::Color);
+    CHECK(w.currentPage() == Page::Direct); // its right neighbour first on a tie
     CHECK(!studio->isVisible());
     w.showAllPages();
     CHECK(studio->isVisible());
