@@ -29,6 +29,15 @@ Params defaults(double fps);
 // hold + attack + release are bridged
 Ranges soundRanges(const std::vector<float>& peaks, int first, const Params& p);
 
+// The threshold for game sound (the default of op 'duck' on tracks of game recordings): a game's sound never goes
+// quiet (steps, wind, the round's ambience reach -35 dBFS nearly all the time, so the music sat 12 dB lower for good);
+// it counts from 2 dB under the level its loudest tenth of the frames reaches (shots, explosions, a shout), at least
+// -35 and at most -6 dBFS. Frames below -70 dBFS (gaps, silence) are no sound. No sound at all: -35.
+double gameThreshold(const std::vector<float>& peaks);
+
+// Both lists of ranges as one, sorted, overlapping ones and those less than `bridge` frames apart joined
+Ranges unite(const Ranges& a, const Ranges& b, int bridge);
+
 // Replaces the clip's volume keyframes by the ducking for `ranges` (ramp of `attack` before and `release` after each
 // sound, from the clip volume to clip volume + amount, never below -∞). false = no sound on the clip (no keyframes
 // left, the clip volume stays).

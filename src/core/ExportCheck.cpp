@@ -740,6 +740,23 @@ QVector<Issue> mix(const Timeline& tl, const QVector<TrackSound>& sounds, int fr
                                  .arg(label, num(under), musicNames.join(", ")),
                              from + int(std::lround(both[i] * 0.1 * fps)),
                              from + int(std::lround((both[j] * 0.1 + 0.4) * fps)));
+            } else if (events && (both[j] - both[i]) * 0.1 + 0.4 >= o.musicLoudS) {
+                // The music louder than the track as a whole (its quiet parts too) for a long stretch: no background
+                double all = 0, mus = 0;
+                for (size_t x = i; x <= j; ++x) {
+                    all += e[both[x]];
+                    mus += music[both[x]];
+                }
+                const double over = db(mus) - db(all);
+                if (over > o.musicLoudLu) {
+                    const QString label = audioTrackLabel(tl, s.track);
+                    out << issue(Severity::Warning, "music_loud",
+                                 T("Die Musik ist lauter als %1: %2 LU darüber – %3 um etwa %4 dB absenken (Hintergrund: "
+                                   "rund 7 LU unter %1) oder unter %1 ducken")
+                                     .arg(label, num(over), musicNames.join(", "), num(std::ceil(over + 7), 0)),
+                                 from + int(std::lround(both[i] * 0.1 * fps)),
+                                 from + int(std::lround((both[j] * 0.1 + 0.4) * fps)));
+                }
             }
             i = j + 1;
         }

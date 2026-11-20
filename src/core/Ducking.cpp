@@ -31,6 +31,32 @@ Ranges soundRanges(const std::vector<float>& peaks, int first, const Params& p)
     return out;
 }
 
+double gameThreshold(const std::vector<float>& peaks)
+{
+    const float floor = float(std::pow(10.0, -70 / 20.0));
+    std::vector<float> sound;
+    sound.reserve(peaks.size());
+    for (float v : peaks)
+        if (v >= floor) sound.push_back(v);
+    if (sound.empty()) return -35;
+    const size_t k = std::min(sound.size() - 1, size_t(0.9 * double(sound.size())));
+    std::nth_element(sound.begin(), sound.begin() + std::ptrdiff_t(k), sound.end());
+    const double p90 = 20 * std::log10(std::max(1e-10, double(sound[k])));
+    return std::clamp(std::round((p90 - 2) * 10) / 10, -35.0, -6.0);
+}
+
+Ranges unite(const Ranges& a, const Ranges& b, int bridge)
+{
+    Ranges all = a + b;
+    std::sort(all.begin(), all.end());
+    Ranges out;
+    for (const auto& r : all) {
+        if (!out.isEmpty() && r.first - out.last().second <= bridge) out.last().second = std::max(out.last().second, r.second);
+        else out << r;
+    }
+    return out;
+}
+
 bool apply(Clip& c, const Ranges& ranges, const Params& p)
 {
     Keys::clear(c, AnimParam::Volume);

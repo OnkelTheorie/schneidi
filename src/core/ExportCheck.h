@@ -28,7 +28,7 @@ struct Issue {
     Severity severity = Severity::Warning;
     QString check;   // stable id: "offline", "black", "subtitle_end", "subtitle_short", "subtitle_fast", "no_sound",
                      // "clipping", "true_peak", "loudness", "silence_end", "silence_start", "silence", "black_file",
-                     // "frozen", "no_video", "no_audio", "under_music", "safe_area", "subtitle_safe_area",
+                     // "frozen", "no_video", "no_audio", "under_music", "music_loud", "safe_area", "subtitle_safe_area",
                      // "slow_hook", "stutter", "missing_effect", "encoder_quality", "black_bars", "too_long",
                      // "pace_slow", "story_no_hook", "story_hook_late", "story_resolution_late",
                      // "story_open_question", "story_no_cta", "story_gap", "retention_drop", "comp_unused_input",
@@ -53,6 +53,10 @@ struct Options {
     double subtitleMaxCps = 21; // characters per second above this = too fast to read
     // Mix: a track with events (game sound, speech) further below the music than this, while its events play = buried
     double underMusicLu = 15;
+    // ... and the other way: the music louder than such a track (its mean loudness) for at least musicLoudS while
+    // they play together = the music is no background (a music bed as loud as the game sound)
+    double musicLoudLu = 0;
+    double musicLoudS = 8;
     // Vertical video: what TikTok, Reels and Shorts cover, as parts of the picture (bottom: caption and buttons, a
     // column of buttons on the right from rightFrom of the height down, the bar at the top)
     double safeBottom = 0.20, safeTop = 0.08, safeRight = 0.12, safeRightFrom = 0.35;
@@ -146,6 +150,9 @@ struct TrackSound {
 // events (its blocks within 10 LU of its 95th percentile: shots, words) against the track's there. More than
 // underMusicLu = warning per stretch of playing together (pauses up to 2 s bridged). Tracks without events there
 // (flat noise: the 95th percentile less than 6 LU above the median; silence: below -70 LUFS) are left out.
+// "music_loud" (warning): a stretch of at least musicLoudS where the music's mean loudness is more than musicLoudLu
+// above the track's (all its blocks there, not only the events): the message says by how much to lower the music
+// to sit 7 LU under it.
 QVector<Issue> mix(const Timeline& tl, const QVector<TrackSound>& sounds, int from, const ProjectFormat& f,
                    const Options& o = {});
 

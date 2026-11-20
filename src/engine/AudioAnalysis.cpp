@@ -304,19 +304,41 @@ bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int fr
     return to > from && mix(format, timeline, from, to, progress, silent, channels);
 }
 
-std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,
-                                           const Ducking::Params& params, const std::function<bool(double)>& progress)
+namespace {
+// The timeline with only `tracks` audible (solo ignored); false = none of them has clips
+bool onlyTracks(Timeline& tl, const QVector<int>& tracks)
 {
-    Timeline tl = timeline;
     bool any = false;
     for (int i = 0; i < tl.audio.size(); ++i) {
-        tl.audio[i].muted = !under.contains(i);
+        tl.audio[i].muted = !tracks.contains(i);
         tl.audio[i].solo = false;
         any = any || (!tl.audio[i].muted && !tl.audio[i].clips.isEmpty());
     }
+    return any;
+}
+} // namespace
+
+std::optional<std::vector<float>> tracksFramePeaks(const ProjectFormat& format, const Timeline& timeline,
+                                                   const QVector<int>& tracks, const std::function<bool(double)>& progress)
+{
+    Timeline tl = timeline;
     const int end = TimelineOps::endFrame(tl);
-    if (!any || end <= 0) return Ducking::Ranges{};
-    const auto peaks = timelineFramePeaks(format, tl, 0, end, progress);
+    if (!onlyTracks(tl, tracks) || end <= 0) return std::vector<float>{};
+    return timelineFramePeaks(format, tl, 0, end, progress);
+}
+
+std::optional<Loudness> tracksLoudness(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& tracks,
+                                       int from, int to, const std::function<bool(double)>& progress)
+{
+    Timeline tl = timeline;
+    if (!onlyTracks(tl, tracks) || to <= from) return Loudness{};
+    return timelineLoudness(format, tl, from, to, progress);
+}
+
+std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,
+                                           const Ducking::Params& params, const std::function<bool(double)>& progress)
+{
+    const auto peaks = tracksFramePeaks(format, timeline, under, progress);
     if (!peaks) return std::nullopt;
     return Ducking::soundRanges(*peaks, 0, params);
 }

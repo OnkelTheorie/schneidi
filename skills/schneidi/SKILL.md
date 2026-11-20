@@ -16,7 +16,10 @@ schneidi is a video editor whose every function also works without a window. You
   Lists and objects are passed as JSON (`--ops '[{"op":"split","at":"4s"}]'`). Progress of long commands goes to
   **stderr** as lines like `{"progress":42,"stage":"transcribe","eta_s":30}` (step running now, rough seconds left);
   **stdout** carries only the JSON answer, and its **last line** is the
-  result (exit code 0 ok, 1 error with `{"error":…}`, 2 usage error). Read the answer from stdout's last line.
+  result (exit code 0 ok, 1 error with `{"error":…}`, 2 usage error). Read the answer from stdout's last line. A
+  shell tool that shows both streams in one output mixes the progress lines in: add `2>/dev/null` (Windows `2>NUL`)
+  to see only the answer. Plain numbers as times in edit ops are frames in the project's rate (`"hold":0.3` is
+  refused) - seconds are written `"0.3s"`.
 
 Both take the same parameters. When you are unsure how a command or edit op works, ask schneidi instead of guessing:
 `help` (command `edit`, op `title`) or `schneidi-cli help edit --op title`. `effects` lists effect ids, LUTs and

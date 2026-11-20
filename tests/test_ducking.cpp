@@ -17,6 +17,9 @@
 #include "engine/AudioAnalysis.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QRegularExpression>
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QJsonArray>
@@ -392,6 +395,78 @@ void testDialogDefaultsAndTracks()
 
 } // namespace
 
+// Game sound never goes quiet: its threshold comes from its own loud moments (2 dB under the 90th percentile of the
+// frames with sound, -35..-6 dBFS); silence (below -70) does not count; both range lists as one
+void testGameThreshold()
+{
+    std::vector<float> v(1000, float(std::pow(10.0, -25 / 20.0))); // steps, ambience: -25 dBFS
+    for (int i = 0; i < 1000; i += 10) v[size_t(i)] = float(std::pow(10.0, -6 / 20.0)); // a shot every 10th frame
+    for (int i = 1; i < 1000; i += 10) v[size_t(i)] = float(std::pow(10.0, -6 / 20.0));
+    CHECK(near(Ducking::gameThreshold(v), -8, 0.05)); // the loudest tenth at -6: from -8
+    std::vector<float> withGaps = v;
+    withGaps.resize(3000, 0.f); // two thirds silence: the same
+    CHECK(near(Ducking::gameThreshold(withGaps), -8, 0.05));
+    CHECK_EQ(Ducking::gameThreshold(std::vector<float>(100, 0.f)), -35.0);           // no sound
+    CHECK_EQ(Ducking::gameThreshold(std::vector<float>(100, 0.001f)), -35.0);        // quiet: never under -35
+    CHECK_EQ(Ducking::gameThreshold(std::vector<float>(100, 1.f)), -6.0);            // never above -6
+    CHECK_EQ(Ducking::unite({{0, 10}, {50, 60}}, {{12, 20}, {100, 110}}, 5), Ranges({{0, 20}, {50, 60}, {100, 110}}));
+    CHECK_EQ(Ducking::unite({}, {{5, 9}}, 5), Ranges({{5, 9}}));
+}
+
+// op duck's default threshold 'auto': the same sound - ambience at about -24 dBFS all the time, four shots - is game
+// sound in a game's folder (cs2/…: ducked only under the shots) and talk elsewhere (-35 dBFS: every sound counts, as
+// for speech); a given threshold_db applies as before. (CS2 highlights: -35 counted 43 of 51 s as loud.)
+void testDuckGameSound(const QString& dir)
+{
+    QDir().mkpath(dir + "/cs2");
+    const QStringList sound{"-f", "lavfi", "-i",
+                            "aevalsrc=0.06*(random(0)*2-1)+(between(t\\,1\\,1.4)+between(t\\,3\\,3.4)+between(t\\,5\\,5.4)+"
+                            "between(t\\,7\\,7.4))*0.9*sin(2*PI*150*t)"
+                            ":s=48000:d=10",
+                            "-ac", "2"};
+    const QString game = Check::makeMedia(dir + "/cs2/cs2_clip_round.wav", sound);
+    const QString talk = Check::makeMedia(dir + "/room.wav", sound);
+    if (!CHECK(!game.isEmpty() && !talk.isEmpty())) return;
+    const auto covered = [&](const QString& file, const char* ops) {
+        int id = 0;
+        Timeline tl = voiceAndMusic(&id);
+        tl.audio[0].clips[0].mediaPath = file;
+        ProjectData d;
+        d.timeline = tl;
+        d.lastClipId = 2;
+        Project q;
+        q.load(d);
+        q.addMedia({file, QFileInfo(file).fileName(), 250, false, true, false});
+        q.addMedia({g_music, "music.wav", 250, false, true, false});
+        const QString path = dir + "/game-duck.schneidi";
+        QString error;
+        CHECK(ProjectFile::save(q.data(), path, &error));
+        Cli::Context ctx;
+        try {
+            const Cli::Command* cmd = Cli::find("edit");
+            const QJsonObject r = cmd->run(Cli::normalize(*cmd, {{"project", path}, {"ops", ops}}), ctx);
+            const QString note = r["notes"].toArray().at(0).toString();
+            static const QRegularExpression s(R"(: ([0-9.]+) s of)");
+            const auto m = s.match(note);
+            std::printf("       %s\n", qPrintable(note));
+            return std::make_pair(m.hasMatch() ? m.captured(1).toDouble() : -1.0, note);
+        } catch (const Cli::Error& e) {
+            CHECK(false);
+            qWarning().noquote() << e.code << e.message;
+            return std::make_pair(-1.0, QString());
+        }
+    };
+    const auto [gameS, gameNote] = covered(game, R"([{"op":"duck","track":"A2","under":"A1"}])");
+    CHECK(gameNote.contains("auto: the loud moments of the game sound A1"));
+    CHECK(gameS > 1 && gameS < 3.5); // the four shots (0.4 s each), not the ambience
+    const auto [talkS, talkNote] = covered(talk, R"([{"op":"duck","track":"A2","under":"A1"}])");
+    CHECK(talkNote.contains("threshold_db -35") && !talkNote.contains("auto"));
+    CHECK(talkS > 9);
+    const auto [fixedS, fixedNote] = covered(game, R"([{"op":"duck","track":"A2","under":"A1","threshold_db":-35}])");
+    CHECK(fixedS > 9);
+    CHECK(covered(game, R"([{"op":"duck","track":"A2","under":"A1","threshold_db":"auto"}])").first == gameS);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -405,6 +480,7 @@ int main(int argc, char** argv)
     testEditorDuckOneUndoStep();
     testVolumeOfDuckedClip(dir.path());
     testDialogDefaultsAndTracks();
+    testGameThreshold();
 
     if (!Check::haveFfmpeg()) return Check::result();
     // Voice: noise bursts at 2–3 s and 6–7 s; music: a quiet tone all the time
@@ -418,5 +494,6 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     testAnalyzeRealSound();
     testCliDuckMatchesEditor(dir.path());
+    testDuckGameSound(dir.path());
     return Check::result();
 }

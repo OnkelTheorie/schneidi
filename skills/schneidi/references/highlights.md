@@ -107,8 +107,9 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
 - No music file? `{"op":"music_bed","mood":"hype"}` makes background music of schneidi's own in exactly the
   timeline's length (`calm`, `hype`, `lofi`, `epic` or `funk`; `effects` with kind `music` lists them with what
   each suits; computed, free to use) on a
-  music track (a second call replaces the bed), ducked under voice and game sound (not under effect sounds),
-  ending with a final hit; its beat grid is known, so
+  music track (a second call replaces the bed), 7 LU under the voice and game sound (measured; `gain` sets it
+  yourself) and ducked under them (not under effect sounds): under game sound only at its loud moments (shots,
+  explosions), under speech at every word; ending with a final hit; its beat grid is known, so
   `snap_to_beat` puts the cuts on it right away. `seed` (2, 3 …) gives another piece in the same mood (progression,
   patterns, tune), `bpm`/`key` other ones.
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
@@ -120,8 +121,12 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`
   of the song and of the game clips (a mastered song is often -4 to -8 LUFS, game sound -15 to -20). Then lower the
   music until it sits a few LU under the game sound at the moments, or let the sound lower it (`duck` with the
-  music as `track`/`clips` and the game track as `under`). Never only turn the game sound down. `check` warns
-  (`under_music`) when the game sound ends up more than 15 LU under the music.
+  music as `track`/`clips` and the game track as `under`; on game recordings its default `threshold_db` 'auto' dips only
+  under the loud moments - -35 would count the game's ambience as sound all the time). Never turn the game sound
+  down only. `check` warns (`under_music`) when the game sound ends up more than 15 LU under the music, and
+  (`music_loud`) when the music is louder than it for 8 s or more.
+- Fewer kills than `length_s`? `direct` highlights lets each moment grow (up to 6 s build-up before, 4 s after,
+  note `moments_grown`) before it offers the switched-off ends of the recordings.
 - A title on the moment the song sings or shouts it: `transcribe` the song with `music` true and `words` true (only
   the part you use, with `from`/`to` on a project, it is slow); whisper may hear it a bit wrong.
 - See [audio.md](audio.md) for loudness: master limiter on, about -14 LUFS.
