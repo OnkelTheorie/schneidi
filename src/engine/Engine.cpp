@@ -824,8 +824,10 @@ void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
     if (speed == 0.0) {
         // An edit while paused whose picture took long (the viewer kept the old one meanwhile): logged, now and then
         if (const qint64 at = m_editAt.exchange(0); at > 0) {
-            emit editShown(); // after frameReady below too: both queued, in this order
             const qint64 now = steadyNs(), waited = (now - at) / 1'000'000;
+            m_editShownEdit = at;
+            m_editShownAt = now;
+            emit editShown(); // after frameReady below too: both queued, in this order
             static std::atomic<qint64> lastLog{0};
             if (waited > 150 && now - lastLog.load() > 5'000'000'000LL) {
                 lastLog = now;
@@ -836,6 +838,14 @@ void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
     if (!image.isNull()) emit frameReady(image);       // queued -> UI thread
     if (speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
     if (speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
+}
+
+Engine::EditShown Engine::takeEditShown()
+{
+    EditShown e;
+    e.shownAt = m_editShownAt.exchange(0);
+    e.editAt = m_editShownEdit.exchange(0);
+    return e;
 }
 
 void Engine::applyAudioState()

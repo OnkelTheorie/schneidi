@@ -482,6 +482,7 @@ void FrameViewRhiSurface::uploadFrame(QRhiResourceUpdateBatch* batch)
     // The batch keeps a reference to the image data (implicitly shared): no copy on the CPU side
     batch->uploadTexture(m_texture.get(), upload);
     m_uploadedKey = img.cacheKey();
+    m_view->noteDrawn();
     // A picture that waited long for its draw (the screen kept an old one meanwhile): logged, once in a while
     const qint64 now = std::chrono::duration_cast<std::chrono::nanoseconds>(
                            std::chrono::steady_clock::now().time_since_epoch()).count();

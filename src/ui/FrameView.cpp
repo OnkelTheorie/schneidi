@@ -423,6 +423,7 @@ void FrameView::setFrame(const QImage& image)
 {
     const bool sizeChanged = image.size() != m_image.size();
     m_image = image;
+    m_editFrame = false; // noteEditFrame() follows for an edit's frame
     m_frameArrived = std::chrono::duration_cast<std::chrono::nanoseconds>(
                          std::chrono::steady_clock::now().time_since_epoch()).count();
     if (sizeChanged && m_frameSize.isEmpty()) m_pan = clampedPan(m_pan);
@@ -431,6 +432,53 @@ void FrameView::setFrame(const QImage& image)
     // overlay box belongs to the picture shown (an animated shape at the playhead): drawn again with each new one -
     // over the GPU surface it is a layer of its own, a picture alone does not repaint it
     if (sizeChanged || m_overlay) repaintOverlay();
+}
+
+namespace {
+
+qint64 steadyNowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+QString medianMax(std::vector<double> v)
+{
+    if (v.empty()) return QStringLiteral("-");
+    std::sort(v.begin(), v.end());
+    return QString("%1/%2").arg(v[v.size() / 2], 0, 'f', 1).arg(v.back(), 0, 'f', 1);
+}
+
+} // namespace
+
+void FrameView::noteEditFrame(qint64 editAt, qint64 shownAt)
+{
+    const qint64 now = steadyNowNs();
+    if (editAt > 0) m_latRender.push_back((shownAt - editAt) / 1e6);
+    m_latQueue.push_back((now - shownAt) / 1e6);
+    m_editFrame = true;
+    if (!m_latReport) {
+        m_latReport = new QTimer(this);
+        m_latReport->setSingleShot(true);
+        m_latReport->setInterval(800);
+        connect(m_latReport, &QTimer::timeout, this, [this] {
+            // Only a series (a drag): single edits say little
+            if (m_latQueue.size() >= 8)
+                qInfo("Preview while editing: %d pictures, ms median/max: render %s, to the viewer %s, drawn %s",
+                      int(m_latQueue.size()), qPrintable(medianMax(m_latRender)), qPrintable(medianMax(m_latQueue)),
+                      qPrintable(medianMax(m_latDraw)));
+            m_latRender.clear();
+            m_latQueue.clear();
+            m_latDraw.clear();
+        });
+    }
+    m_latReport->start();
+}
+
+void FrameView::noteDrawn()
+{
+    if (!m_editFrame) return;
+    m_editFrame = false;
+    m_latDraw.push_back((steadyNowNs() - m_frameArrived) / 1e6);
 }
 
 void FrameView::setFrameSize(const QSize& size)
@@ -564,6 +612,7 @@ void FrameView::paintOverlay(QPainter& p)
 void FrameView::paintEvent(QPaintEvent*)
 {
     if (m_surface) return; // the surface and the overlay layer cover the widget
+    noteDrawn();
     QPainter p(this);
     const QRectF r = frameRect();
     // Bars only where the picture is not (no overdraw of the whole widget per frame)

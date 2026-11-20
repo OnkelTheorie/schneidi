@@ -175,6 +175,7 @@ int main(int argc, char** argv)
         }
         QMouseEvent release(QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         shape->mouseRelease(&release, frame);
+        settle(1000); // the viewer's latency report (log)
         std::sort(lat.begin(), lat.end());
         std::sort(ui.begin(), ui.end());
         std::printf("latency move -> picture: median %.1f ms, max %.1f ms; the move itself on the UI thread: median %.1f "

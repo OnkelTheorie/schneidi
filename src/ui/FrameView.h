@@ -17,6 +17,7 @@
 #include <QImage>
 #include <QPointer>
 #include <QWidget>
+#include <vector>
 #include <functional>
 
 class QMimeData;
@@ -90,6 +91,10 @@ public:
     void setFrame(const QImage& image);
     const QImage& frame() const { return m_image; }
     qint64 frameArrivedNs() const { return m_frameArrived; } // steady clock (ns) when setFrame() took it
+    // The frame just set shows an edit (steady ns: when the edit reached the engine, when its picture was done): the
+    // time to render, to reach this widget and to be drawn go into a log line a moment after the last such frame
+    void noteEditFrame(qint64 editAt, qint64 shownAt);
+    void noteDrawn(); // the frame set is on the screen (drawn into the window)
     // Project frame size the zoom steps refer to; empty = the image's size
     void setFrameSize(const QSize& size);
     QSize frameSize() const;
@@ -149,6 +154,9 @@ private:
     QString m_backendInfo;
     QWidget* m_surface = nullptr;      // GPU: the QRhiWidget
     qint64 m_frameArrived = 0;
+    bool m_editFrame = false; // the frame set shows an edit: its draw time is still to be noted
+    std::vector<double> m_latRender, m_latQueue, m_latDraw; // ms, since the last report
+    class QTimer* m_latReport = nullptr;
     QWidget* m_overlayLayer = nullptr; // GPU: transparent widget above it that paints the overlay
     bool m_gpuPending = false;         // backend from the stored GPU check, the real one comes later
     QImage m_image;

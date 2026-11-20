@@ -179,6 +179,12 @@ public:
     double speed() const { return m_speed; }
     // Paused: an edit handed over whose picture is not shown yet (editShown() follows)
     bool editPending() const { return m_editAt.load() != 0; }
+    // The picture of an edit while paused was just shown: when the edit reached the engine and when its picture was
+    // done (steady ns; zeros = none since the last call). For the viewer's latency report
+    struct EditShown {
+        qint64 editAt = 0, shownAt = 0;
+    };
+    EditShown takeEditShown();
     // Seeks in quick succession while stopped (dragging the playhead, holding an arrow key) scrub: a close picture
     // is shown at once, the exact one follows (own picture engine)
     void seek(int frame);
@@ -302,7 +308,8 @@ private:
     std::atomic<int> m_position{0};
     // Jump during playback: no longer report positions from before the jump
     std::atomic<int> m_seekEpoch{0};
-    std::atomic<qint64> m_editAt{0}; // steady ns of the last edit while paused, until its picture is shown (0 = none)
+    std::atomic<qint64> m_editAt{0};
+    std::atomic<qint64> m_editShownEdit{0}, m_editShownAt{0}; // steady ns of the last edit while paused, until its picture is shown (0 = none)
     QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (muted until it rests)
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960), or full (m_previewFull)

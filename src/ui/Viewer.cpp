@@ -364,6 +364,10 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         if (program && m_programAway) return; // the program goes to the other monitor only
         m_screen->setFrameSize(m_engine->frameSize()); // the zoom steps refer to the project frame
         m_screen->setFrame(img);
+        if (program) {
+            const Engine::EditShown e = m_engine->takeEditShown();
+            if (e.shownAt > 0) m_screen->noteEditFrame(e.editAt, e.shownAt);
+        }
     });
     connect(m_screen, &FrameView::zoomChanged, this, [this](double z) {
         emit zoomChanged(z);
