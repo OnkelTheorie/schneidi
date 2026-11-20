@@ -247,12 +247,14 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
     QVector<DirectMoment> all = found.highlights + found.extra;
     std::stable_sort(all.begin(), all.end(), [](const DirectMoment& x, const DirectMoment& y) { return x.score > y.score; });
     QVector<ReelPick::Moment> picked = ReelPick::pick(asMoments(all), durations, pick);
+    // The same pick without growing: which candidates it took (the others stay offered, see below)
+    ReelPick::Options plain = pick;
+    plain.growBeforeS = plain.growAfterS = 0;
+    const QVector<ReelPick::Moment> ungrown = pick.targetS > 0 ? ReelPick::pick(asMoments(all), durations, plain) : picked;
     // Fewer moments than the target: ReelPick grew them (more build-up and reaction); the note says from how much
     if (pick.targetS > 0 && !picked.isEmpty()) {
-        ReelPick::Options plain = pick;
-        plain.growBeforeS = plain.growAfterS = 0;
         double found = 0, grown = 0;
-        for (const ReelPick::Moment& m : ReelPick::pick(asMoments(all), durations, plain)) found += m.to - m.from;
+        for (const ReelPick::Moment& m : ungrown) found += m.to - m.from;
         for (const ReelPick::Moment& m : picked) grown += m.to - m.from;
         if (grown > found + 0.5)
             s.notes << note("moments_grown", {{"found", std::round(found * 10) / 10},
@@ -276,13 +278,32 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
         s.suggestions << x;
         s.order << x.n;
     }
+    // The other candidates, switched off: those the pick did not take (the ungrown pick decides - a moment that
+    // grew into a candidate's surroundings must not hide it), cut to what the grown picks leave free; a candidate whose
+    // own sound is inside a grown pick is in the video already
     int added = 0;
-    QVector<Direction::Suggestion> taken = s.suggestions;
+    QVector<Direction::Suggestion> taken;
+    for (const ReelPick::Moment& m : ungrown) {
+        Direction::Suggestion x;
+        x.file = files.value(m.file);
+        x.from = m.from;
+        x.to = m.to;
+        taken << x;
+    }
+    if (picked.size() != ungrown.size()) taken = s.suggestions; // the end fallback (nothing stood out)
     for (const DirectMoment& c : all) {
         if (added >= 20) break;
         if (overlapsAny(c, taken, files)) continue;
         ShortPick::Moment m{c.file, c.from, c.to, c.score};
         if (m.to - m.from < pick.minMomentS) ShortPick::widen(m, std::min(pick.minMomentS, durations.value(c.file)) - (m.to - m.from), durations.value(c.file));
+        for (const Direction::Suggestion& g : s.suggestions) {
+            if (!g.on || g.file != files.value(m.file) || g.to <= m.from || g.from >= m.to) continue;
+            if (g.from <= m.from) m.from = std::max(m.from, g.to);
+            else if (g.to >= m.to) m.to = std::min(m.to, g.from);
+            else if (g.from - m.from >= m.to - g.to) m.to = g.from; // the pick inside it: the longer side
+            else m.from = g.to;
+        }
+        if (m.to - m.from < 1.0 || c.to <= m.from || c.from >= m.to) continue;
         Direction::Suggestion x = suggestionOf(m, {c}, files);
         x.n = ++n;
         x.on = false;

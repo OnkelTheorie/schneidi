@@ -921,8 +921,10 @@ void opNormalize(Session& s, const QJsonObject& op)
 }
 
 // Game sound: a track whose clips all play the game of a recording - a game stream of a recording with several
-// (OBS, Clipi: "System Output", not "Mikrofon", "Discord", "Spotify"), or any stream but voice, chat and music of a
-// file in a game's folder or named after it (cs2_clip_…). Voice, talk and everything else are not.
+// (OBS, Clipi: "System Output", not "Mikrofon", "Discord", "Spotify"), or of a file in a game's folder or named after
+// it (cs2_clip_…): its only stream, a titled stream but voice, chat and music ("Mix"), and with several streams
+// without telling titles (none, "Track 1", "Track 2") only the first - the others may be the microphone, and speech
+// with the game's threshold would be buried. Voice, talk and everything else are not.
 bool gameSoundTrack(Session& s, const Track& t)
 {
     bool any = false;
@@ -933,9 +935,14 @@ bool gameSoundTrack(Session& s, const Track& t)
         if (m)
             for (const AudioStreamInfo& a : m->audioStreams) titles << a.title;
         const QString title = titles.value(c.audioStream);
-        const bool game = StreamPresets::gameStreams(titles).contains(c.audioStream)
-                          || (GameHud::guess(c.mediaPath) && !Transcript::isVoiceName(title)
-                              && !StreamPresets::isChatOrMusicTitle(title));
+        const QVector<int> gameStreams = StreamPresets::gameStreams(titles);
+        bool game = gameStreams.contains(c.audioStream);
+        if (!game && GameHud::guess(c.mediaPath)) {
+            const int streams = m ? m->audioStreamCount() : 1;
+            if (streams <= 1) game = true;
+            else if (gameStreams.isEmpty()) game = c.audioStream == 0; // no titles to go by
+            else game = !Transcript::isVoiceName(title) && !StreamPresets::isChatOrMusicTitle(title);
+        }
         if (!game) return false;
         any = true;
     }
@@ -1018,6 +1025,9 @@ void opDuck(Session& s, const QJsonObject& op)
     };
     std::optional<Ducking::Ranges> ranges = Ducking::Ranges{};
     if (!rest.isEmpty()) ranges = AudioAnalysis::soundRanges(f, tl, rest, params);
+    int restCovered = 0; // the voice and recorded sound alone (the hint about a higher threshold is about them)
+    if (ranges)
+        for (const auto& [from, to] : *ranges) restCovered += to - from;
     double gameDb = params.thresholdDb;
     if (ranges && !game.isEmpty()) {
         const auto peaks = AudioAnalysis::tracksFramePeaks(f, tl, game);
@@ -1059,9 +1069,12 @@ void opDuck(Session& s, const QJsonObject& op)
                        .arg(covered / fps, 0, 'f', 1)
                        .arg(length / fps, 0, 'f', 1)
                        .arg(threshold);
-    if (length > 0 && covered > 0.6 * length && game.isEmpty())
-        note += " - the sound is above it most of the time; a higher threshold_db (e.g. -20) ducks only the loud "
-                "moments (shots, words)";
+    if (length > 0 && restCovered > 0.6 * length)
+        note += game.isEmpty() ? QString(" - the sound is above it most of the time; a higher threshold_db (e.g. -20) "
+                                         "ducks only the loud moments (shots, words)")
+                               : QString(" - %1 is above -35 dBFS most of the time; a higher threshold_db (e.g. -20) "
+                                         "ducks only its loud moments (it then applies to the game sound too)")
+                                     .arg(names(rest));
     s.notes << note;
 }
 
@@ -1388,7 +1401,9 @@ void addAudioOps(QVector<OpDef>& ops)
                  "sound on 'under' (sample peak in dBFS, or 'auto' = the default: -35 dBFS for voice and recorded "
                  "sound - every word ducks; for the game sound of game recordings (a game's folder or name, their "
                  "game stream) only its loud moments: 2 dB under the level its loudest tenth reaches, -35..-6 - "
-                 "shots, explosions, shouts; a number applies to all of 'under'), attack/release: ramp before/after "
+                 "shots, explosions, shouts - so commentary mixed into a game's only stream ducks the music only at its "
+                 "loud moments: give threshold_db -35 then; of a recording with several untitled streams only the "
+                 "first counts as game sound; a number applies to all of 'under'), attack/release: ramp before/after "
                  "a sound, hold: pauses shorter than this stay ducked - these three are times: a plain number is "
                  "frames (project rate), seconds are written \"0.3s\" (defaults 0.15s / 0.4s / 0.5s). "
                  "Replaces the clips' volume "

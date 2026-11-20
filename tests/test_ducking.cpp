@@ -427,16 +427,20 @@ void testDuckGameSound(const QString& dir)
     const QString game = Check::makeMedia(dir + "/cs2/cs2_clip_round.wav", sound);
     const QString talk = Check::makeMedia(dir + "/room.wav", sound);
     if (!CHECK(!game.isEmpty() && !talk.isEmpty())) return;
-    const auto covered = [&](const QString& file, const char* ops) {
+    // streams > 0: the file has that many untitled audio streams, the clip plays `stream`
+    const auto covered = [&](const QString& file, const char* ops, int stream = 0, int streams = 0) {
         int id = 0;
         Timeline tl = voiceAndMusic(&id);
         tl.audio[0].clips[0].mediaPath = file;
+        tl.audio[0].clips[0].audioStream = stream;
         ProjectData d;
         d.timeline = tl;
         d.lastClipId = 2;
         Project q;
         q.load(d);
-        q.addMedia({file, QFileInfo(file).fileName(), 250, false, true, false});
+        MediaInfo media{file, QFileInfo(file).fileName(), 250, false, true, false};
+        media.audioStreams.resize(streams);
+        q.addMedia(media);
         q.addMedia({g_music, "music.wav", 250, false, true, false});
         const QString path = dir + "/game-duck.schneidi";
         QString error;
@@ -465,6 +469,65 @@ void testDuckGameSound(const QString& dir)
     const auto [fixedS, fixedNote] = covered(game, R"([{"op":"duck","track":"A2","under":"A1","threshold_db":-35}])");
     CHECK(fixedS > 9);
     CHECK(covered(game, R"([{"op":"duck","track":"A2","under":"A1","threshold_db":"auto"}])").first == gameS);
+
+    // A game recording with two untitled streams: the first is the game, the second may be the microphone - its
+    // speech must duck the music at every word (-35 dBFS), not only at loud moments
+    const QString two = Check::makeMedia(
+        dir + "/cs2/cs2_clip_two.mkv",
+        QStringList{"-f", "lavfi", "-i",
+                    "aevalsrc=0.06*(random(0)*2-1)+(between(t\\,1\\,1.4)+between(t\\,5\\,5.4))*0.9*sin(2*PI*150*t):s=48000:d=10",
+                    "-f", "lavfi", "-i",
+                    "aevalsrc=(between(t\\,2\\,3)+between(t\\,6\\,7))*0.05*sin(2*PI*300*t):s=48000:d=10",
+                    "-map", "0:a", "-map", "1:a", "-ac", "2", "-c:a", "pcm_s16le"});
+    if (CHECK(!two.isEmpty())) {
+        const auto [micS, micNote] = covered(two, R"([{"op":"duck","track":"A2","under":"A1"}])", 1, 2);
+        CHECK(micNote.contains("threshold_db -35") && !micNote.contains("auto"));
+        CHECK(micS > 1.5 && micS < 4); // the words at 2-3 and 6-7 s (quiet: -26 dBFS), not missed
+        const auto [firstS, firstNote] = covered(two, R"([{"op":"duck","track":"A2","under":"A1"}])", 0, 2);
+        CHECK(firstNote.contains("auto: the loud moments"));
+    }
+    // Talk next to the game sound that is above -35 nearly all the time: the hint about a higher threshold_db is
+    // about the talk track alone; the game sound alone never shows it
+    CHECK(!gameNote.contains("higher threshold_db"));
+    const auto mixed = [&](const QString& talkFile) {
+        int id = 0;
+        Timeline tl = voiceAndMusic(&id);
+        tl.audio[0].clips[0].mediaPath = talkFile;
+        while (tl.audio.size() < 3) tl.audio << Track{};
+        Clip g = tl.audio[0].clips[0];
+        g.id = 3;
+        g.mediaPath = game;
+        tl.audio[2].clips = {g};
+        ProjectData d;
+        d.timeline = tl;
+        d.lastClipId = 3;
+        Project q;
+        q.load(d);
+        q.addMedia({talkFile, QFileInfo(talkFile).fileName(), 250, false, true, false});
+        q.addMedia({game, QFileInfo(game).fileName(), 250, false, true, false});
+        q.addMedia({g_music, "music.wav", 250, false, true, false});
+        const QString path = dir + "/mixed-duck.schneidi";
+        QString error;
+        CHECK(ProjectFile::save(q.data(), path, &error));
+        Cli::Context ctx;
+        try {
+            const Cli::Command* cmd = Cli::find("edit");
+            const QJsonObject r = cmd->run(
+                Cli::normalize(*cmd, {{"project", path}, {"ops", R"([{"op":"duck","track":"A2","under":"A1,A3"}])"}}), ctx);
+            const QString note = r["notes"].toArray().at(0).toString();
+            std::printf("       %s\n", qPrintable(note));
+            return note;
+        } catch (const Cli::Error& e) {
+            CHECK(false);
+            qWarning().noquote() << e.code << e.message;
+            return QString();
+        }
+    };
+    const QString noisyTalk = mixed(talk); // the room's noise above -35 all the time
+    CHECK(noisyTalk.contains("threshold_db -35 for A1") && noisyTalk.contains("for the game sound A3"));
+    CHECK(noisyTalk.contains("A1 is above -35 dBFS most of the time"));
+    const QString words = mixed(g_voice); // two words: no hint
+    CHECK(words.contains("for the game sound A3") && !words.contains("higher threshold_db"));
 }
 
 int main(int argc, char** argv)
