@@ -309,7 +309,13 @@ private:
     // Jump during playback: no longer report positions from before the jump
     std::atomic<int> m_seekEpoch{0};
     std::atomic<qint64> m_editAt{0};
-    std::atomic<qint64> m_editShownEdit{0}, m_editShownAt{0}; // steady ns of the last edit while paused, until its picture is shown (0 = none)
+    std::atomic<qint64> m_editShownEdit{0}, m_editShownAt{0};
+    std::atomic<qint64> m_playingShownAt{0}; // steady ns of the last frame shown while playing
+    qint64 m_prevEditAt = 0;                 // UI thread: steady ns of the edit before (paused)
+    std::atomic<bool> m_editSeries{false};   // the pending edit came right after another one (a drag)
+protected:
+    bool event(QEvent* e) override; // an edit's still, posted ahead of the UI's own work (onPumpShown)
+private: // steady ns of the last edit while paused, until its picture is shown (0 = none)
     QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (muted until it rests)
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960), or full (m_previewFull)

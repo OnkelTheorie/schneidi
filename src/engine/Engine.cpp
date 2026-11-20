@@ -29,6 +29,7 @@
 #include "ui/MulticamGrid.h"
 
 #include <QCoreApplication>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QDir>
@@ -80,6 +81,13 @@ bool samePicture(const Timeline& a, const Timeline& b)
     return pictureOnly(a) == pictureOnly(b) && TimelineOps::endFrame(a) == TimelineOps::endFrame(b)
            && TimelineOps::sameNested(a, b);
 }
+
+// An edit's still on its way to the UI thread (Engine::onPumpShown -> Engine::event)
+struct EditStillEvent : QEvent {
+    static inline const QEvent::Type kType = QEvent::Type(QEvent::registerEventType());
+    explicit EditStillEvent(QImage i) : QEvent(kType), image(std::move(i)) {}
+    QImage image;
+};
 
 qint64 steadyNs()
 {
@@ -635,7 +643,12 @@ void Engine::applyTimeline(const Timeline& tl)
     }
     m_renderer->update(pictureOnly(tl));
     if (m_mode == Mode::Timeline) {
-        if (m_speed == 0.0) m_editAt = steadyNs();
+        if (m_speed == 0.0) {
+            const qint64 now = steadyNs();
+            m_editSeries = now - m_prevEditAt < 150'000'000LL;
+            m_prevEditAt = now;
+            m_editAt = now;
+        }
         m_pump->refresh();
     }
 }
@@ -821,13 +834,14 @@ void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
         if (!m_loopWrap.exchange(true)) emit loopWrapDue(m_seekEpoch);
         return;
     }
+    bool editFrame = false;
     if (speed == 0.0) {
         // An edit while paused whose picture took long (the viewer kept the old one meanwhile): logged, now and then
         if (const qint64 at = m_editAt.exchange(0); at > 0) {
             const qint64 now = steadyNs(), waited = (now - at) / 1'000'000;
             m_editShownEdit = at;
             m_editShownAt = now;
-            emit editShown(); // after frameReady below too: both queued, in this order
+            editFrame = true;
             static std::atomic<qint64> lastLog{0};
             if (waited > 150 && now - lastLog.load() > 5'000'000'000LL) {
                 lastLog = now;
@@ -835,9 +849,29 @@ void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
             }
         }
     }
+    // An edit's picture while paused in a series of edits (a shape dragged): to the UI thread ahead of its queue - behind the repaints
+    // every mouse move asks for (timeline, Inspector) it waited about as long as it took to render (7-10 ms, user's
+    // log). Not right after playing: a frame of playback still queued would come after it and replace it
+    if (editFrame && m_editSeries.load() && steadyNs() - m_playingShownAt.load() > 300'000'000LL) {
+        QCoreApplication::postEvent(this, new EditStillEvent(image), Qt::HighEventPriority);
+        return;
+    }
+    if (speed != 0.0) m_playingShownAt = steadyNs();
     if (!image.isNull()) emit frameReady(image);       // queued -> UI thread
+    if (editFrame) emit editShown();                   // after it, both queued
     if (speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
     if (speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
+}
+
+bool Engine::event(QEvent* e)
+{
+    if (e->type() == EditStillEvent::kType) {
+        const QImage image = static_cast<EditStillEvent*>(e)->image;
+        if (!image.isNull()) emit frameReady(image);
+        emit editShown();
+        return true;
+    }
+    return QObject::event(e);
 }
 
 Engine::EditShown Engine::takeEditShown()

@@ -155,6 +155,7 @@ int main(int argc, char** argv)
         CHECK(shape->mousePress(&press, frame));
         QPointF at = corner;
         std::vector<double> lat, ui;
+        double stall = 0; // the longest the UI thread was busy in one go (a mouse move waits that long)
         for (int i = 0; i < 40; ++i) {
             at += QPointF(2, 0);
             QMouseEvent move(QEvent::MouseMove, at, at, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
@@ -164,7 +165,9 @@ int main(int argc, char** argv)
             // The box's right edge as a fraction of the frame; wait for a picture whose edge is there
             const double want = (shape->handlePos(3, frame).x() - frame.left()) / frame.width();
             while (clock.nsecsElapsed() - t0 < 1'000'000'000LL) {
+                const qint64 p0 = clock.nsecsElapsed();
                 QApplication::processEvents(QEventLoop::AllEvents, 1);
+                stall = std::max(stall, (clock.nsecsElapsed() - p0) / 1e6);
                 if (latest.isNull() || latestAt < t0) continue;
                 const int y = latest.height() / 2;
                 int x = latest.width() - 1;
@@ -179,7 +182,7 @@ int main(int argc, char** argv)
         std::sort(lat.begin(), lat.end());
         std::sort(ui.begin(), ui.end());
         std::printf("latency move -> picture: median %.1f ms, max %.1f ms; the move itself on the UI thread: median %.1f "
-                    "ms, max %.1f ms\n", lat[lat.size() / 2], lat.back(), ui[ui.size() / 2], ui.back());
+                    "ms, max %.1f ms; longest UI stall %.1f ms\n", lat[lat.size() / 2], lat.back(), ui[ui.size() / 2], ui.back(), stall);
     }
     return Check::result();
 }
