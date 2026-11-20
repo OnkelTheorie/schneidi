@@ -38,7 +38,7 @@ namespace MusicBed {
 constexpr int kRate = 48000;
 constexpr int kChannels = 2;
 // Bumped when the sound changes: part of the file names (a bed made by an older version is made again)
-constexpr int kVersion = 2;
+constexpr int kVersion = 3;
 constexpr double kMinLength = 1.0, kMaxLength = 600.0; // seconds
 // Lengths this far outside are taken as they are: a timeline length in frames is up to half a frame off whole
 // seconds (600 s at 23.976 fps are 14386 frames = 600.008 s)

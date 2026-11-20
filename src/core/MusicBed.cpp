@@ -491,6 +491,7 @@ struct Plan {
     Chord tonic;      // the final chord
     int bars = 0;     // bars that start before the end
     int intro = 0;    // bars
+    int phraseBars = 4; // the phrase grid: one progression cycle when it lasts eight bars, else four bars
     int endBar = -1;  // the final hit
     std::vector<Section> sections;
     std::vector<Section::Kind> kind; // per bar (bars + 1 entries)
@@ -603,6 +604,15 @@ void makeLead(Plan& p)
                     m = prev - steps;
                     while (!inScale(m)) m -= steps;
                 }
+                // prev can sit at the edge (a chord tone found next to it), so the reversed step may leave the range
+                // too: back into it, to the nearest note of the scale inside
+                if (m < lo) {
+                    m = lo;
+                    while (!inScale(m)) ++m;
+                } else if (m > hi) {
+                    m = hi;
+                    while (!inScale(m)) --m;
+                }
             }
             prev = m;
             const double vel = (strong ? 1.0 : 0.82) * (0.92 + 0.08 * rng.unit());
@@ -642,8 +652,13 @@ Plan makePlan(const Options& o)
     // its groove within a few seconds)
     p.intro = p.endBar < 0 ? 0 : body >= 12 && 4 * p.bar <= 0.18 * p.length ? 4 : body >= 6 ? 2 : 0;
     if (p.intro > 0) p.sections.push_back({Section::Intro, 0, p.intro});
-    // Main parts of 16 bars with a break of 4 between them, as long as a main part of 8 still follows the break
-    constexpr int kMain = 16, kBreak = 4;
+    // Main parts of 16 bars with a break of one phrase between them (4 bars, 8 when the progression takes 8), as long
+    // as a main part of 8 still follows the break: every main part and break starts on a phrase and (the chords keep
+    // counting through breaks) on the progression's first chord
+    const int cycleBars = int(p.prog.size()) * p.style.chordBeats / 4;
+    p.phraseBars = cycleBars == 8 ? 8 : 4;
+    constexpr int kMain = 16;
+    const int kBreak = p.phraseBars;
     int cur = p.intro;
     while (cur < body) {
         if (body - cur >= kMain + kBreak + 8) {
@@ -1582,9 +1597,9 @@ void renderDrums(Context& c)
         const bool newPart = b > 0 && p.kindAt(b - 1) != k && k == Section::Main;
         switch (p.mood) {
         case Mood::Calm: {
-            // Brushed half time: a soft kick on one, a rim click on three, a quiet shaker
+            // Brushes: a swish on two and four, a quiet shaker in eighths, no kick (a soft floor tom on one in lift
+            // bars); nothing in the intro and the breaks
             if (k == Section::Intro || k == Section::Break) break;
-            // Brushes: a swish on two and four, a shaker (no kick)
             const SnareP brush{3800, 0.11, 0.0, 200, 0.6, 7000};
             if (lift) tom(c, at(0), human(0.25), 70, 0.25, 0, 0.3); // a soft floor tom on one in lift bars
             snare(c, at(1), human(0.11), brush);
@@ -1823,8 +1838,10 @@ std::optional<Mood> moodFrom(const QString& s)
         {"drive", Mood::Hype},       {"driving", Mood::Hype},    {"treibend", Mood::Hype},   {"rock", Mood::Hype},
         {"ruhig", Mood::Calm},
         {"edm", Mood::Hype},         {"lo-fi", Mood::Lofi},      {"chill", Mood::Lofi},      {"chillhop", Mood::Lofi},
-        {"cinematic", Mood::Epic},   {"episch", Mood::Epic},     {"dark", Mood::Epic},       {"düster", Mood::Epic},
-        {"funky", Mood::Funk},       {"groove", Mood::Funk},     {"upbeat", Mood::Funk},     {"fröhlich", Mood::Funk}};
+        {"cinematic", Mood::Epic},   {"episch", Mood::Epic},     {"dark", Mood::Epic},
+        {"funky", Mood::Funk},       {"groove", Mood::Funk},     {"upbeat", Mood::Funk},
+        // umlauts as UTF-16 escapes: the same keys whatever encoding the source is read in
+        {QStringLiteral(u"d\u00fcster"), Mood::Epic}, {QStringLiteral(u"fr\u00f6hlich"), Mood::Funk}};
     const auto it = other.find(t);
     if (it != other.end()) return it->second;
     return std::nullopt;
@@ -1943,8 +1960,7 @@ Result describe(const Plan& p)
     b.beats = std::max(0, int(std::floor((p.length - 1e-6) / p.beat)));
     b.downbeat = 0;
     b.downbeatConfidence = 1;
-    const int cycleBars = int(p.prog.size()) * p.style.chordBeats / 4;
-    b.phraseBars = cycleBars == 8 ? 8 : 4;
+    b.phraseBars = p.phraseBars;
     b.phraseOffset = p.intro % b.phraseBars;
     b.phraseConfidence = 1;
     return r;

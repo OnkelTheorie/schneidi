@@ -385,22 +385,69 @@ int main(int argc, char* argv[])
         for (const MusicBed::Section& sec : longBed.sections) breaks += sec.kind == MusicBed::Section::Break;
         CHECK(breaks >= 1 && !longBed.beats.drops.empty());
     }
-    // Threads: 1, 3, 8 threads and every thread start failing (all on this thread) give the same samples
+    // Threads: 1, 3, 8 threads and every thread start failing (all on this thread) give the same samples, in every
+    // mood (short beds, cheap) and in a longer hype one
     {
-        const MusicBed::Options o{MusicBed::Mood::Hype, 41.3};
-        MusicBed::setThreadsForTests(1);
-        const MusicBed::Result one = MusicBed::make(o);
-        bool same = true;
-        for (const auto& [count, failing] : {std::pair{3, false}, std::pair{8, false}, std::pair{8, true}}) {
-            MusicBed::setThreadsForTests(count, failing);
-            const MusicBed::Result many = MusicBed::make(o);
-            const bool equal = many.samples.size() == one.samples.size()
-                               && std::memcmp(many.samples.data(), one.samples.data(), one.samples.size() * sizeof(float)) == 0
-                               && many.lufs == one.lufs && many.beats.barEnergyDb == one.beats.barEnergyDb;
-            if (!CHECK(equal)) std::printf("       %d threads%s differ from one\n", count, failing ? " (starts failing)" : "");
-            same = same && equal;
+        std::vector<MusicBed::Options> beds;
+        for (const MusicBed::Mood m : MusicBed::kMoods) beds.push_back({m, 12.7});
+        beds.push_back({MusicBed::Mood::Hype, 41.3});
+        for (const MusicBed::Options& o : beds) {
+            MusicBed::setThreadsForTests(1);
+            const MusicBed::Result one = MusicBed::make(o);
+            for (const auto& [count, failing] : {std::pair{3, false}, std::pair{8, false}, std::pair{8, true}}) {
+                MusicBed::setThreadsForTests(count, failing);
+                const MusicBed::Result many = MusicBed::make(o);
+                const bool equal = many.samples.size() == one.samples.size()
+                                   && std::memcmp(many.samples.data(), one.samples.data(), one.samples.size() * sizeof(float)) == 0
+                                   && many.lufs == one.lufs && many.beats.barEnergyDb == one.beats.barEnergyDb;
+                if (!CHECK(equal))
+                    std::printf("       %s %.1f s: %d threads%s differ from one\n", qPrintable(MusicBed::moodId(o.mood)),
+                                o.length, count, failing ? " (starts failing)" : "");
+            }
         }
         MusicBed::setThreadsForTests(0);
+    }
+    // Sections on the phrase grid: in every mood and seed (also the 8-bar progressions of calm, epic and funk seed 2)
+    // each main part and break starts on a phrase start as the beat grid reports it, and each main part on the
+    // progression's first chord (the tonic for seed 1); the chords run from the first main bar on, one each
+    // chordBeats, through breaks
+    {
+        bool sawLongBreak = false;
+        for (const MusicBed::Mood m : MusicBed::kMoods)
+            for (const unsigned seed : {1u, 2u, 3u})
+                for (const double length : {60.0, 90.0, 150.0, 300.0}) {
+                    MusicBed::Options o{m, length};
+                    o.seed = seed;
+                    const MusicBed::Result r = MusicBed::describe(o);
+                    const int pb = r.beats.phraseBars, off = r.beats.phraseOffset;
+                    const int cycleBars = int(r.chords.size()) * r.chordBeats / 4;
+                    CHECK_EQ(pb, cycleBars == 8 ? 8 : 4);
+                    const int intro = !r.sections.empty() && r.sections.front().kind == MusicBed::Section::Intro
+                                          ? r.sections.front().toBar
+                                          : 0;
+                    for (const MusicBed::Section& sec : r.sections) {
+                        if (sec.kind != MusicBed::Section::Main && sec.kind != MusicBed::Section::Break) continue;
+                        const QString where = QString("%1 s%2 %3 s: %4 at bar %5")
+                                                  .arg(MusicBed::moodId(m)).arg(seed).arg(length)
+                                                  .arg(MusicBed::sectionName(sec.kind)).arg(sec.fromBar);
+                        if (!CHECK(((sec.fromBar - off) % pb + pb) % pb == 0))
+                            std::printf("       %s is no phrase start (phrases of %d from %d)\n", qPrintable(where), pb, off);
+                        if (sec.kind == MusicBed::Section::Break) {
+                            CHECK_EQ(sec.toBar - sec.fromBar, pb);
+                            sawLongBreak = sawLongBreak || pb == 8;
+                            continue;
+                        }
+                        const int slot = (sec.fromBar - intro) * 4 / r.chordBeats;
+                        if (!CHECK((sec.fromBar - intro) * 4 % r.chordBeats == 0 && slot % int(r.chords.size()) == 0))
+                            std::printf("       %s starts on chord %d of %lld\n", qPrintable(where),
+                                        slot % int(r.chords.size()) + 1, (long long)r.chords.size());
+                    }
+                    if (seed == 1 && (m == MusicBed::Mood::Calm || m == MusicBed::Mood::Epic)) {
+                        CHECK_EQ(pb, 8);
+                        CHECK(r.chords.value(0).startsWith(MusicBed::keyName(r.key).section(' ', 0, 0)));
+                    }
+                }
+        CHECK(sawLongBreak); // the 8-bar breaks were tested at all
     }
     // The WAV: written atomically in blocks (more than one block of 65536 frames here), 24-bit stereo, the samples
     // as they are; writing again replaces the file and leaves nothing else in the folder
