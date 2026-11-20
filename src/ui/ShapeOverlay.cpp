@@ -179,6 +179,19 @@ void ShapeOverlay::set(const QVector<QPair<int, double>>& values)
     }, QString("shape:overlay:%1").arg(c->id));
 }
 
+std::optional<QRectF> ShapeOverlay::paintedBounds(const QRectF& frame) const
+{
+    QTransform w, l;
+    double hw = 0, hh = 0;
+    if (!transforms(frame, &w, &l, &hw, &hh)) return QRectF(); // nothing drawn
+    QRectF r = (l * w).mapRect(QRectF(-hw, -hh, 2 * hw, 2 * hh));
+    const QPointF knob = handlePos(kRotate, frame);
+    r = r.united(QRectF(knob, knob));
+    // Handles, the knob and the outline's width around it; clipped like paint()
+    return r.adjusted(-kHandle - 3, -kHandle - 3, kHandle + 3, kHandle + 3)
+        .intersected(frame.adjusted(-kKnob - 10, -kKnob - 10, kKnob + 10, kKnob + 10));
+}
+
 bool ShapeOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
 {
     if (e->button() != Qt::LeftButton) return false;

@@ -171,6 +171,7 @@ private:
     // Sort effect sections into the render order of the shown clip: fixed stages first, then the clip's order
     void arrangeEffectSections();
     void refresh();
+    class QTimer* m_seriesRefresh = nullptr; // a refresh due while edits come in a series (a drag)
     // Title, transition and subtitle pages are built on first use (the start does not need them): every path that shows
     // or fills one calls this first. finishPage: the size rules for boxes, number fields and check boxes of a new page
     void ensurePage(int page);

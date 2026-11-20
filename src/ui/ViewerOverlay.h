@@ -6,6 +6,7 @@
 
 #include <QObject>
 #include <QRectF>
+#include <optional>
 
 class QMouseEvent;
 class QTabletEvent;
@@ -16,6 +17,9 @@ class ViewerOverlay : public QObject {
 public:
     using QObject::QObject;
     virtual void paint(QPainter& p, const QRectF& frame) = 0;
+    // Where paint() draws now (widget pixels; empty = nothing): the view repaints only the old and the new place. None
+    // = unknown, the whole view (the default)
+    virtual std::optional<QRectF> paintedBounds(const QRectF& /*frame*/) const { return std::nullopt; }
     // true = the overlay took the event (no drag of the picture into the timeline)
     virtual bool mousePress(QMouseEvent*, const QRectF&) { return false; }
     virtual bool mouseMove(QMouseEvent*, const QRectF&) { return false; }

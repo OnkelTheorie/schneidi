@@ -63,6 +63,7 @@ public:
         m_after = o->m_after;
         return true;
     }
+    bool continuedBy(const QString& key, int sequence) const { return !key.isEmpty() && key == m_mergeKey && sequence == m_sequence; }
 
 private:
     Project* m_project;
@@ -463,7 +464,12 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
         return;
     }
     const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
+    // Continues the step on top (a drag): listeners may take it at their own pace (inEditSeries)
+    const QUndoCommand* top = m_undo->index() == m_undo->count() && m_undo->count() > 0 ? m_undo->command(m_undo->count() - 1) : nullptr;
+    const auto* snap = dynamic_cast<const SnapshotCommand*>(top);
+    m_editSeries = snap && snap->continuedBy(key, m_current);
     m_undo->push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push calls redo()
+    m_editSeries = false;
 }
 
 void Project::combineSteps(int fromIndex, const QString& text)

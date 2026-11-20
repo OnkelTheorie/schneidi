@@ -67,6 +67,7 @@ public:
     bool active() const { return m_active; }
 
     void paint(QPainter& p, const QRectF& frame) override;
+    std::optional<QRectF> paintedBounds(const QRectF& frame) const override;
     bool mousePress(QMouseEvent* e, const QRectF& frame) override;
     bool mouseMove(QMouseEvent* e, const QRectF& frame) override;
     bool mouseRelease(QMouseEvent* e, const QRectF& frame) override;

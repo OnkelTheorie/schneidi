@@ -82,6 +82,8 @@ public:
     // (e.g. dragging a slider in the Inspector). closeMerge() ends the series.
     void edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey = {});
     void closeMerge() { ++m_mergeSession; }
+    // During timelineChanged: this edit continues the undo step before it (a handle or slider dragged, many per second)
+    bool inEditSeries() const { return m_editSeries; }
     // The undo steps after `fromIndex` (QUndoStack::index()) become one step called `text`, e.g. an AI chat turn the
     // user accepted: the state before them and the state now, everything the history covers (timelines, the open
     // one, project settings, Media Pool organization, files removed from or brought into the pool by those steps).
@@ -300,6 +302,7 @@ private:
     int m_lastClipId = 0;
     int m_lastLinkId = 0;
     int m_mergeSession = 0;
+    bool m_editSeries = false;
     void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
     void sanitizePool(); // references to missing bins -> Master, resolve parent cycles
     bool m_mediaDirty = false;

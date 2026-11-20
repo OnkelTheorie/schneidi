@@ -579,6 +579,7 @@ void FrameView::setOverlay(ViewerOverlay* o)
     if (m_overlay) disconnect(m_overlay, nullptr, this, nullptr);
     m_overlay = o;
     if (o) connect(o, &ViewerOverlay::changed, this, &FrameView::repaintOverlay);
+    m_overlayPainted.reset(); // another overlay: the whole layer (what the old one drew goes)
     repaintOverlay();
 }
 
@@ -600,8 +601,20 @@ void FrameView::repaintPicture()
 
 void FrameView::repaintOverlay()
 {
-    if (m_overlayLayer) m_overlayLayer->update();
-    else update();
+    if (!m_overlayLayer) {
+        update();
+        return;
+    }
+    // Only where the overlay was and is now (a dragged shape's box: a small part of the view, every mouse move and
+    // picture - the whole layer each time went into every window flush)
+    const std::optional<QRectF> now = m_overlay ? m_overlay->paintedBounds(frameRect()) : std::nullopt;
+    if (!now || !m_overlayPainted) {
+        m_overlayLayer->update();
+    } else {
+        const QRect r = now->united(*m_overlayPainted).toAlignedRect().adjusted(-2, -2, 2, 2);
+        if (!r.isEmpty()) m_overlayLayer->update(r);
+    }
+    m_overlayPainted = now;
 }
 
 void FrameView::paintOverlay(QPainter& p)

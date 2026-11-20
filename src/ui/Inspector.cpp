@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/Inspector.h"
 
+#include <QTimer>
+
 #include "app/Theme.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -613,7 +615,16 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         }
         refresh();
     });
-    connect(editor->project(), &Project::timelineChanged, this, &Inspector::refresh);
+    // A drag (a shape's handle, a slider: edits merged into one step, one per mouse move) refreshes at most every
+    // kSeriesRefresh: rebuilding every row per mouse move held the UI thread, the shape's box trailed the mouse
+    m_seriesRefresh = new QTimer(this);
+    m_seriesRefresh->setSingleShot(true);
+    m_seriesRefresh->setInterval(40);
+    connect(m_seriesRefresh, &QTimer::timeout, this, &Inspector::refresh);
+    connect(editor->project(), &Project::timelineChanged, this, [this] {
+        if (!m_editor->project()->inEditSeries()) refresh();
+        else if (!m_seriesRefresh->isActive()) m_seriesRefresh->start();
+    });
     connect(editor->project(), &Project::mediaChanged, this, &Inspector::refresh); // e.g. an HDR file found (HdrScan)
     // Another project (new/opened): its clip ids are not the old one's, a remembered shape height would go to a
     // stranger
@@ -754,6 +765,7 @@ void Inspector::apply(TrackKind kind, const QString& key, const QString& text, c
 
 void Inspector::refresh()
 {
+    if (m_seriesRefresh) m_seriesRefresh->stop(); // this one shows the newest state
     // The rows shown or hidden below change the width the panel needs, also on the pages not shown (the stack is as
     // wide as its widest page). Rows hidden there, or while the content was hidden, tell nobody: the layouts kept the
     // old minimum (the template placeholder rows of the first build, 325 px in Russian) and a splitter took it at

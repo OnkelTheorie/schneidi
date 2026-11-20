@@ -17,6 +17,7 @@
 #include <QImage>
 #include <QPointer>
 #include <QWidget>
+#include <optional>
 #include <vector>
 #include <functional>
 
@@ -154,6 +155,7 @@ private:
     QString m_backendInfo;
     QWidget* m_surface = nullptr;      // GPU: the QRhiWidget
     qint64 m_frameArrived = 0;
+    std::optional<QRectF> m_overlayPainted; // where the overlay drew at the last repaint (none: the whole layer)
     bool m_editFrame = false; // the frame set shows an edit: its draw time is still to be noted
     std::vector<double> m_latRender, m_latQueue, m_latDraw; // ms, since the last report
     class QTimer* m_latReport = nullptr;

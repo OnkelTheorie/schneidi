@@ -215,6 +215,23 @@ int DrawOverlay::partAt(const QPointF& pos, const QRectF& frame) const
     return ok && b.contains(q) ? Inside : None;
 }
 
+std::optional<QRectF> DrawOverlay::paintedBounds(const QRectF& frame) const
+{
+    if (m_active) return std::nullopt; // the brush, a stroke: anywhere
+    QRectF r;
+    if (m_below) {
+        const std::optional<QRectF> below = m_below->paintedBounds(frame);
+        if (!below) return std::nullopt;
+        r = *below;
+    }
+    if (const Clip* c = drawingAt(); c && c->title.shape.followClip <= 0) {
+        const QRectF b = localBox(*c);
+        if (!b.isEmpty())
+            r = r.united(toWidget(c, frame).mapRect(b).adjusted(-kHandle - 3, -kHandle - 3, kHandle + 3, kHandle + 3));
+    }
+    return r;
+}
+
 void DrawOverlay::paint(QPainter& p, const QRectF& frame)
 {
     if (m_below) m_below->paint(p, frame);

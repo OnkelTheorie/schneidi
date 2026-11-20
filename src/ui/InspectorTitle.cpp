@@ -21,6 +21,7 @@
 #include "ui/DrawOverlay.h"
 #include "ui/ScrubField.h"
 
+#include <algorithm>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QColorDialog>
@@ -363,13 +364,22 @@ void Inspector::buildLookSections(QVBoxLayout* page)
         kind->setCurrentIndex(kind->findData(int(l.fill)));
         for (QWidget* w : gradWidgets) w->setVisible(l.fill == TitleFill::Gradient);
         for (QWidget* w : texWidgets) w->setVisible(l.fill == TitleFill::Texture);
-        // Pictures of the media pool (and the title's own, also when it is not in the pool any more)
-        picture->clear();
-        picture->addItem(T("Kein Bild"), QString());
+        // Pictures of the media pool (and the title's own, also when it is not in the pool any more). Built again only
+        // when they differ: this runs on every edit, a drag included
+        QVector<QPair<QString, QString>> items{{T("Kein Bild"), QString()}};
         for (const MediaInfo& m : m_editor->project()->media())
-            if (m.isImage) picture->addItem(m.name.isEmpty() ? QFileInfo(m.path).fileName() : m.name, m.path);
-        if (!l.texture.isEmpty() && picture->findData(l.texture) < 0)
-            picture->addItem(QFileInfo(l.texture).fileName(), l.texture);
+            if (m.isImage) items.append({m.name.isEmpty() ? QFileInfo(m.path).fileName() : m.name, m.path});
+        const auto listed = [&items](const QString& path) {
+            return std::any_of(items.begin(), items.end(), [&path](const auto& i) { return i.second == path; });
+        };
+        if (!l.texture.isEmpty() && !listed(l.texture)) items.append({QFileInfo(l.texture).fileName(), l.texture});
+        bool same = picture->count() == items.size();
+        for (int i = 0; same && i < items.size(); ++i)
+            same = picture->itemText(i) == items[i].first && picture->itemData(i).toString() == items[i].second;
+        if (!same) {
+            picture->clear();
+            for (const auto& [name, path] : items) picture->addItem(name, path);
+        }
         picture->setCurrentIndex(std::max(0, picture->findData(l.texture)));
     };
     shown.append({fill, [](const TitleStyle& t) { return !t.isProgress() && !t.isShape() && !t.isDrawing(); }});
