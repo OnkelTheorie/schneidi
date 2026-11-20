@@ -165,7 +165,9 @@ void MainWindow::placeOnScreen(const QRect& wanted)
 }
 
 namespace {
-constexpr int kEngineEvery = 16; // ms between two timelines handed to the engine (one 60 Hz frame)
+constexpr int kEngineEvery = 16;  // playing: ms between two timelines handed to the engine (one 60 Hz frame)
+constexpr int kEngineGap = 8;      // paused, no picture on its way: still not more than one per this (sound-only drags)
+constexpr int kEngineAtMost = 100; // paused: a change waits this long at most for the picture of the one before
 } // namespace
 
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
@@ -198,10 +200,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     // model -> engine
     // Bundled: while dragging (fade handle, volume line, Inspector, a shape's handle …) every mouse move changes the
-    // model; rebuilding the preview for each one blocked the timeline (handle lagged behind). At most one timeline per
-    // kEngineEvery: a change after a quiet moment goes out with the next event loop pass (it waited the whole 30 ms
-    // before, the picture trailed a dragged shape's box), changes in quick succession wait for the rest of the
-    // interval and go out together. Mixer changes are cheap (set live) and still go through immediately.
+    // model; rebuilding the preview for each one blocked the timeline (handle lagged behind). Paused, the next
+    // timeline goes out as soon as the picture of the one before is shown (Engine::editShown): as fast as this computer
+    // renders, never piling up - a fixed 30 ms (then 16 ms) wait doubled how far the picture trailed a dragged shape's
+    // box. kEngineAtMost if no picture comes (an edit that changes no picture). Playing, at most one per
+    // kEngineEvery. Mixer changes are cheap (set live) and still go through immediately.
     m_engineTimer.setSingleShot(true);
     m_engineSent.start();
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
@@ -209,6 +212,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_engine->updateTimeline(previewTimeline()); // the Comp page may show one node of a graph
         OpenTrace::timelineSent();
         updateRenderCacheBar();
+    });
+    connect(m_engine, &Engine::editShown, this, [this] {
+        if (m_engineTimer.isActive() && m_engine->speed() == 0.0) m_engineTimer.start(0); // a change waits: now
     });
     connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
     // The sound is mixed with the project's media lengths, like in the export (RenderQueue::exportSettings)
@@ -246,8 +252,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(previewTimeline());
-        else if (!m_engineTimer.isActive())
+        else if (m_engineTimer.isActive()) return; // goes out with the next one
+        else if (m_engine->speed() != 0.0)
             m_engineTimer.start(int(std::max<qint64>(0, kEngineEvery - m_engineSent.elapsed())));
+        else
+            m_engineTimer.start(m_engine->editPending() ? kEngineAtMost
+                                                        : int(std::max<qint64>(0, kEngineGap - m_engineSent.elapsed())));
     });
     m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview

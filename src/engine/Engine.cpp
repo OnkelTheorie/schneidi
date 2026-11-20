@@ -824,6 +824,7 @@ void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
     if (speed == 0.0) {
         // An edit while paused whose picture took long (the viewer kept the old one meanwhile): logged, now and then
         if (const qint64 at = m_editAt.exchange(0); at > 0) {
+            emit editShown(); // after frameReady below too: both queued, in this order
             const qint64 now = steadyNs(), waited = (now - at) / 1'000'000;
             static std::atomic<qint64> lastLog{0};
             if (waited > 150 && now - lastLog.load() > 5'000'000'000LL) {

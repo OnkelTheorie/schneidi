@@ -9,6 +9,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "ui/ViewerOverlay.h"
 #include "ui/FrameView.h"
 #include "ui/ShapeOverlay.h"
 #include "ui/Viewer.h"
@@ -20,7 +21,9 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QTest>
+#include <algorithm>
 #include <clocale>
+#include <vector>
 #include <cmath>
 #include <cstdio>
 
@@ -136,5 +139,46 @@ int main(int argc, char** argv)
         std::printf("while dragging: the picture trails the box by %.1f px on average (1 px per 7 ms)\n", sum / n);
     }
     CHECK(worst < 150);
+    // Latency in ms (SHAPE_LATENCY): each step of a drag, from the mouse move until a picture with the new right
+    // edge reaches the engine's consumers, and how long the move itself kept the UI thread
+    if (qEnvironmentVariableIsSet("SHAPE_LATENCY")) {
+        QImage latest;
+        QElapsedTimer clock;
+        clock.start();
+        qint64 latestAt = 0;
+        QObject::connect(&engine, &Engine::frameReady, &w, [&](const QImage& img) {
+            latest = img;
+            latestAt = clock.nsecsElapsed();
+        });
+        const QPointF corner = shape->handlePos(4, frame);
+        QMouseEvent press(QEvent::MouseButtonPress, corner, corner, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        CHECK(shape->mousePress(&press, frame));
+        QPointF at = corner;
+        std::vector<double> lat, ui;
+        for (int i = 0; i < 40; ++i) {
+            at += QPointF(2, 0);
+            QMouseEvent move(QEvent::MouseMove, at, at, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            const qint64 t0 = clock.nsecsElapsed();
+            shape->mouseMove(&move, frame);
+            ui.push_back((clock.nsecsElapsed() - t0) / 1e6);
+            // The box's right edge as a fraction of the frame; wait for a picture whose edge is there
+            const double want = (shape->handlePos(3, frame).x() - frame.left()) / frame.width();
+            while (clock.nsecsElapsed() - t0 < 1'000'000'000LL) {
+                QApplication::processEvents(QEventLoop::AllEvents, 1);
+                if (latest.isNull() || latestAt < t0) continue;
+                const int y = latest.height() / 2;
+                int x = latest.width() - 1;
+                while (x > 0 && qGray(latest.pixel(x, y)) < 100) --x;
+                if (std::abs(double(x + 1) / latest.width() - want) < 2.5 / frame.width()) break;
+            }
+            lat.push_back((latestAt - t0) / 1e6);
+        }
+        QMouseEvent release(QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        shape->mouseRelease(&release, frame);
+        std::sort(lat.begin(), lat.end());
+        std::sort(ui.begin(), ui.end());
+        std::printf("latency move -> picture: median %.1f ms, max %.1f ms; the move itself on the UI thread: median %.1f "
+                    "ms, max %.1f ms\n", lat[lat.size() / 2], lat.back(), ui[ui.size() / 2], ui.back());
+    }
     return Check::result();
 }

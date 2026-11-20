@@ -177,6 +177,8 @@ public:
     void togglePlay();
     void setSpeed(double speed);
     double speed() const { return m_speed; }
+    // Paused: an edit handed over whose picture is not shown yet (editShown() follows)
+    bool editPending() const { return m_editAt.load() != 0; }
     // Seeks in quick succession while stopped (dragging the playhead, holding an arrow key) scrub: a close picture
     // is shown at once, the exact one follows (own picture engine)
     void seek(int frame);
@@ -212,6 +214,7 @@ public:
 
 signals:
     void frameReady(const QImage& image);
+    void editShown(); // the picture of the last edit while paused is shown (queued to the UI thread)
     void positionChanged(int frame);
     void speedChanged(double speed);
     void seeked(int frame); // the playhead was moved (seek), not by playing
