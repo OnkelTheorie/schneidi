@@ -26,6 +26,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProcess>
 #include <QTemporaryDir>
 
 #include <atomic>
@@ -141,6 +142,20 @@ QString twoMics(const QString& dir)
     return project;
 }
 
+// schneidi-cli as a process: {stdout lines, stderr lines}
+std::pair<QStringList, QStringList> cli(const QStringList& args)
+{
+    QProcess p;
+    p.start(Check::cliPath(), args);
+    p.closeWriteChannel();
+    if (!p.waitForFinished(120000)) {
+        p.kill();
+        p.waitForFinished(1000);
+    }
+    const auto lines = [](const QByteArray& b) { return QString::fromUtf8(b).split('\n', Qt::SkipEmptyParts); };
+    return {lines(p.readAllStandardOutput()), lines(p.readAllStandardError())};
+}
+
 QStringList labelsOf(const QJsonArray& suggestions)
 {
     QStringList all;
@@ -167,6 +182,22 @@ int main(int argc, char** argv)
     CHECK_EQ(run("direct", {{"recipe", "short"}})["error"].toString(), QString("NO_MATERIAL"));
     CHECK_EQ(run("direct", {{"session", "d999"}, {"apply", QJsonObject{{"on", "all"}}}})["error"].toString(),
              QString("SESSION_EXPIRED"));
+    // ---- The command line: --session reaches the command (QGuiApplication took -session/--session and its value
+    // out of the arguments as its own session-management option: "apply needs the session"), as an id and as JSON;
+    // so do the other names Qt knows (--title, --name, --display, --reverse)
+    {
+        const auto [out, err] = cli({"direct", "--session", "d999", "--apply", R"({"on":[1,2]})"});
+        if (CHECK_EQ(out.size(), 1))
+            CHECK_EQ(QJsonDocument::fromJson(out.last().toUtf8())["error"]["code"].toString(), QString("SESSION_EXPIRED"));
+        const auto [out2, err2] = cli({"direct", "--session", R"({"id":"d1"})", "--apply", R"({"on":"all"})"});
+        if (CHECK_EQ(out2.size(), 1)) {
+            const QString message = QJsonDocument::fromJson(out2.last().toUtf8())["error"]["message"].toString();
+            CHECK(message.startsWith("session:"));
+            if (!CHECK(!message.contains("apply needs the session"))) std::printf("       %s\n", qPrintable(message));
+        }
+        const auto [out3, err3] = cli({"help", "edit", "--op", "title", "--reverse"});
+        if (CHECK(!out3.isEmpty())) CHECK(out3.last().contains("reverse")); // refused as unknown: it got here
+    }
     if (!Check::haveFfmpeg()) return Check::result();
 
     // ---- Recipe short on a "game" recording with two loud moments (folder named like a game's, game none)
@@ -177,6 +208,14 @@ int main(int argc, char** argv)
          "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,9,9.6),0.4*sin(2*PI*440*t),0)+if(between(t,29,29.6),0.9*sin(2*PI*440*t),0)':d=40:s=48000",
          "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
     if (!CHECK(!clip.isEmpty())) return Check::result();
+    // stdout carries only the answer, progress lines go to stderr (loudness, highlights): a tool that shows both
+    // streams together mixes them, the streams themselves never
+    for (const QStringList& args : {QStringList{"loudness", clip}, QStringList{"highlights", clip, "--game", "none"}}) {
+        const auto [out, err] = cli(args);
+        if (CHECK_EQ(out.size(), 1)) CHECK(QJsonDocument::fromJson(out[0].toUtf8())["ok"].toBool());
+        else std::printf("       %s\n", qPrintable(out.join('\n')));
+        CHECK(std::any_of(err.begin(), err.end(), [](const QString& l) { return l.startsWith("{\"progress\""); }));
+    }
     const QJsonObject suggested = run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}},
                                                  {"options", QJsonObject{{"game", "none"}, {"variants", 2}}}});
     const QJsonObject session = suggested["session"].toObject();
@@ -580,6 +619,15 @@ int main(int argc, char** argv)
                 CHECK(n["values"]["s"].toDouble() > 0 && n["values"]["s"].toDouble() < 150);
             }
         CHECK(few);
+        // Before the fillers the moments themselves grew (more of their scene: up to 6 s before, 4 s after)
+        bool grown = false;
+        for (const QJsonValue& n : s["notes"].toArray())
+            if (n["key"].toString() == "moments_grown") {
+                grown = true;
+                CHECK(n["values"]["s"].toDouble() > n["values"]["found"].toDouble());
+                CHECK_EQ(n["values"]["target"].toDouble(), 300.0);
+            }
+        if (!CHECK(grown)) std::printf("       %s\n", QJsonDocument(s["notes"].toArray()).toJson().constData());
         int ends = 0;
         for (const QJsonValue& x : s["suggestions"].toArray())
             if (x["reason"]["key"].toString() == "fallback_end") {
@@ -589,7 +637,7 @@ int main(int argc, char** argv)
             }
         if (!CHECK(ends >= 1)) std::printf("       %s\n", QJsonDocument(s).toJson().constData());
         // One 30 s recording, two loud moments too close for the spacing: the one not picked stays offered (switched
-        // off), and the fallback is only the tail nothing covers - never in its way
+        // off) or lies inside the grown pick, and the fallback is only the tail nothing covers - never in its way
         const QString one = Check::makeMedia(
             dir.filePath("tail.mp4"),
             {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=30", "-f", "lavfi", "-i",
@@ -603,6 +651,8 @@ int main(int argc, char** argv)
             for (const QJsonValue& x : list) {
                 const bool end = x["reason"]["key"].toString() == "fallback_end";
                 if (!end && !x["on"].toBool()) extraAfter = true; // the other moment, offered
+                // ... or inside the picked one: it grew (300 s wanted, 4 s found) and took in the scene at 7 s
+                if (!end && x["on"].toBool() && x["from_s"].toDouble() <= 7 && x["to_s"].toDouble() >= 7.6) extraAfter = true;
                 if (!end) continue;
                 tail = true;
                 CHECK(!x["on"].toBool());

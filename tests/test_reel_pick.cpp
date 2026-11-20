@@ -54,6 +54,7 @@ int main(int argc, char** argv)
     {
         ReelPick::Options o;
         o.targetS = 14;
+        o.growBeforeS = o.growAfterS = 0; // the pick alone (growing: below)
         const QVector<Moment> p = ReelPick::pick(c, durations, o);
         CHECK(sum(p) <= 14 + 1e-6);
         // 10-14 and 13-15 (grown to 4 s: 12.1-16.1) are one moment with the better score, first
@@ -106,6 +107,34 @@ int main(int argc, char** argv)
         o.beats.reset();
         const QVector<Moment> plain = ReelPick::pick(c, durations, o);
         CHECK(std::abs(plain[0].to - 16.1) < 1e-6);
+    }
+    // ---- Fewer moments than the target: they grow (up to 6 s before, 4 s after), never past a recording's ends or
+    // into each other, just to the target; plenty of moments: nothing grows. (Highlights of 4 kills of 4 s on 60 s:
+    // 16 s of moments and switched-off "end of recording" fillers before.)
+    {
+        const QVector<double> d{30, 30, 30};
+        const QVector<Moment> kills{{0, 14, 18, 27}, {1, 1, 5, 26}, {2, 24, 28, 11}, {0, 26, 30, 10}};
+        ReelPick::Options o;
+        o.targetS = 60;
+        const QVector<Moment> p = ReelPick::pick(kills, d, o);
+        CHECK_EQ(p.size(), 4);
+        // Room: file 0 at 14-18: 6 before, 4 after (gap to 26-30 is 8: half = 4); file 0 at 26-30: 4 before, 0 after;
+        // file 1 at 1-5: 1 before, 4 after; file 2 at 24-28: 6 before, 2 after = 27 s of room, 44 s missing: all of it
+        CHECK(std::abs(sum(p) - 43) < 1e-6);
+        for (const Moment& m : p) CHECK(m.from >= -1e-9 && m.to <= d[m.file] + 1e-9);
+        for (int i = 0; i < p.size(); ++i)
+            for (int j = i + 1; j < p.size(); ++j)
+                CHECK(!(p[i].file == p[j].file && p[i].from < p[j].to - 1e-9 && p[j].from < p[i].to - 1e-9));
+        for (const Moment& m : p)
+            if (m.file == 0 && m.score == 27) CHECK(std::abs(m.from - 8) < 1e-6 && std::abs(m.to - 22) < 1e-6);
+        // Only what is missing: target 24 = 16 s of moments + 8 s, each grows by 8/27 of its room
+        o.targetS = 24;
+        CHECK(std::abs(sum(ReelPick::pick(kills, d, o)) - 24) < 1e-6);
+        // Enough moments for the target, or 'all': unchanged
+        o.targetS = 16;
+        CHECK(std::abs(sum(ReelPick::pick(kills, d, o)) - 16) < 1e-6);
+        o.targetS = 0;
+        CHECK(std::abs(sum(ReelPick::pick(kills, d, o)) - 16) < 1e-6);
     }
     // ---- Short variants: the second shares no moment with the first; none left = no third
     {

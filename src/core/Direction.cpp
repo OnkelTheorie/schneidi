@@ -60,6 +60,13 @@ const Text kNotes[] = {
      N_("Nur {s} s sind aufgefallen, gewünscht sind {target} s: Das Ende jeder Aufnahme steht ausgeschaltet in der "
         "Liste, zum Auffüllen."),
      nullptr},
+    {"moments_grown",
+     "Only {found} s stood out of the {target} s wanted: each moment shows more of its scene (up to 6 s before, 4 s "
+     "after), {s} s in all.",
+     nullptr,
+     N_("Nur {found} s sind aufgefallen, gewünscht sind {target} s: Jeder Moment zeigt mehr von seiner Szene (bis 6 s "
+        "davor, 4 s danach), zusammen {s} s."),
+     nullptr},
     {"fewer_variants", "Only {n} variant(s) instead of {asked}: the material has too few moments for more.", nullptr,
      N_("Nur {n} Variante(n) statt {asked}: Für mehr hat das Material zu wenige Momente."), nullptr},
     {"no_shot", "No shot fits the field \"{slot}\".", nullptr, N_("Für das Feld „{slot}“ passt kein Clip."), nullptr},
