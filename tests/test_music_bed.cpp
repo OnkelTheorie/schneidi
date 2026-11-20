@@ -348,9 +348,10 @@ int main(int argc, char* argv[])
         CHECK(k("D-Dur") == (MusicBed::Key{2, false}));
         CHECK(!k("H minor") && !k("") && !k("A lydian"));
         CHECK_EQ(MusicBed::keyName({10, true}), QString("Bb minor"));
-        // "drive" was public before 0.25 (guide, projects): it reads as hype now
-        CHECK(MusicBed::moodFrom("drive") == MusicBed::Mood::Hype && MusicBed::moodFrom("treibend") == MusicBed::Mood::Hype
-              && MusicBed::moodFrom("Ruhig") == MusicBed::Mood::Calm);
+        // "drive" was public before 0.25 (guide, projects): it reads as hype now; calm (dropped in 0.25) as lofi
+        CHECK(MusicBed::moodFrom("drive") == MusicBed::Mood::Hype && MusicBed::moodFrom("treibend") == MusicBed::Mood::Hype);
+        CHECK(MusicBed::moodFrom("calm") == MusicBed::Mood::Lofi && MusicBed::moodFrom("Ruhig") == MusicBed::Mood::Lofi);
+        CHECK(!MusicBed::moodIds().contains("calm"));
         CHECK(MusicBed::moodFrom("Lo-Fi") == MusicBed::Mood::Lofi && MusicBed::moodFrom("cinematic") == MusicBed::Mood::Epic
               && MusicBed::moodFrom("groove") == MusicBed::Mood::Funk);
         CHECK(!MusicBed::moodFrom("synthwave") && !MusicBed::moodFrom("tense") && !MusicBed::moodFrom("retro")
@@ -361,8 +362,8 @@ int main(int argc, char* argv[])
         for (const MusicBed::Mood m : MusicBed::kMoods)
             CHECK(MusicBed::moodFrom(MusicBed::moodId(m)) == m && std::strlen(MusicBed::moodLabel(m)) > 0
                   && !MusicBed::description(m).isEmpty());
-        // Harmonic rhythm: calm two bars a chord, lofi one bar
-        CHECK(MusicBed::describe({MusicBed::Mood::Calm, 30}).chordBeats == 8 && MusicBed::describe({MusicBed::Mood::Lofi, 30}).chordBeats == 4);
+        // Harmonic rhythm: epic two bars a chord, lofi one bar
+        CHECK(MusicBed::describe({MusicBed::Mood::Epic, 30}).chordBeats == 8 && MusicBed::describe({MusicBed::Mood::Lofi, 30}).chordBeats == 4);
         // Short beds: no final hit, faded; still the exact length and silence at the end (every mood)
         for (const MusicBed::Mood m : MusicBed::kMoods) {
             const MusicBed::Result s = MusicBed::make({m, 3.3});
@@ -378,7 +379,7 @@ int main(int argc, char* argv[])
         CHECK(g.bpm == 95 && g.key == (MusicBed::Key{2, false}) && g.chords.value(0) == "D");
         CHECK(MusicBed::fileName(o).startsWith("music-bed-epic-95bpm-d-major-s1-960000smp-v"));
         // The exact length is in the name: lengths less than a millisecond apart are different files
-        CHECK(MusicBed::fileName({MusicBed::Mood::Calm, 10.0}) != MusicBed::fileName({MusicBed::Mood::Calm, 10.0004}));
+        CHECK(MusicBed::fileName({MusicBed::Mood::Lofi, 10.0}) != MusicBed::fileName({MusicBed::Mood::Lofi, 10.0004}));
         // A long bed has breaks (with a drop after each)
         const MusicBed::Result longBed = MusicBed::make({MusicBed::Mood::Hype, 90});
         int breaks = 0;
@@ -407,7 +408,7 @@ int main(int argc, char* argv[])
         }
         MusicBed::setThreadsForTests(0);
     }
-    // Sections on the phrase grid: in every mood and seed (also the 8-bar progressions of calm, epic and funk seed 2)
+    // Sections on the phrase grid: in every mood and seed (also the 8-bar progressions of epic and funk seed 2)
     // each main part and break starts on a phrase start as the beat grid reports it, and each main part on the
     // progression's first chord (the tonic for seed 1); the chords run from the first main bar on, one each
     // chordBeats, through breaks
@@ -442,7 +443,7 @@ int main(int argc, char* argv[])
                             std::printf("       %s starts on chord %d of %lld\n", qPrintable(where),
                                         slot % int(r.chords.size()) + 1, (long long)r.chords.size());
                     }
-                    if (seed == 1 && (m == MusicBed::Mood::Calm || m == MusicBed::Mood::Epic)) {
+                    if (seed == 1 && m == MusicBed::Mood::Epic) {
                         CHECK_EQ(pb, 8);
                         CHECK(r.chords.value(0).startsWith(MusicBed::keyName(r.key).section(' ', 0, 0)));
                     }
@@ -452,7 +453,7 @@ int main(int argc, char* argv[])
     // The WAV: written atomically in blocks (more than one block of 65536 frames here), 24-bit stereo, the samples
     // as they are; writing again replaces the file and leaves nothing else in the folder
     {
-        const MusicBed::Result r = MusicBed::make({MusicBed::Mood::Calm, 3.0});
+        const MusicBed::Result r = MusicBed::make({MusicBed::Mood::Lofi, 3.0});
         QDir().mkpath(tmp.path() + "/wav");
         const QString path = tmp.path() + "/wav/bed.wav";
         CHECK(MusicBed::writeWav(path, r) && MusicBed::writeWav(path, r));
@@ -519,11 +520,11 @@ int main(int argc, char* argv[])
     {
         const QString pj = tmp.path() + "/long.schneidi";
         run("new", {{"project", pj}, {"fps", 23.976}});
-        const QJsonObject n = bedNote(edit(pj, R"([{"op":"music_bed","mood":"calm","length":"600s"}])"));
+        const QJsonObject n = bedNote(edit(pj, R"([{"op":"music_bed","mood":"lofi","length":"600s"}])"));
         const auto p = load(pj);
         const Clip* c = clipById(*p, n["clip"].toInt());
         CHECK(c && c->length() == 14386);
-        CHECK_EQ(edit(pj, R"([{"op":"music_bed","mood":"calm","length":14387}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+        CHECK_EQ(edit(pj, R"([{"op":"music_bed","mood":"lofi","length":14387}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
     }
     // length:'timeline' over a speech clip: a new track "Musik", ducked under the speech
     const QString speech = tmp.path() + "/speech.wav";
@@ -538,7 +539,7 @@ int main(int argc, char* argv[])
     edit(project, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"}])").arg(speech));
     const auto before = load(project);
     const int audioTracks = before->timeline().audio.size();
-    QJsonObject r = edit(project, R"([{"op":"music_bed","mood":"calm"}])");
+    QJsonObject r = edit(project, R"([{"op":"music_bed","mood":"lofi"}])");
     QJsonObject n = bedNote(r);
     {
         const auto p = load(project);
@@ -555,9 +556,9 @@ int main(int argc, char* argv[])
         const QString file = n["file"].toString();
         CHECK_EQ(QFileInfo(file).absolutePath(), QFileInfo(tmp.path() + "/talk-music").absoluteFilePath());
         const std::optional<Beats::Result> cached = Cli::detail::cachedSongBeats(file, 0);
-        CHECK(cached && std::abs(cached->bpm - MusicBed::defaultBpm(MusicBed::Mood::Calm)) < 1e-9 && cached->phase == 0 && !cached->barEnergyDb.empty());
+        CHECK(cached && std::abs(cached->bpm - MusicBed::defaultBpm(MusicBed::Mood::Lofi)) < 1e-9 && cached->phase == 0 && !cached->barEnergyDb.empty());
         const QJsonObject beats = run("beats", {{"file", file}});
-        CHECK(beats["bpm"].toDouble() == MusicBed::defaultBpm(MusicBed::Mood::Calm) && beats["confidence"].toDouble() == 1); // the stored grid, not analysed
+        CHECK(beats["bpm"].toDouble() == MusicBed::defaultBpm(MusicBed::Mood::Lofi) && beats["confidence"].toDouble() == 1); // the stored grid, not analysed
         CHECK(n["sections"].toArray().size() >= 2 && n["final_hit_s"].toDouble() > 0);
         CHECK(n["lufs"].toDouble() < -15 && n["lufs"].toDouble() > -17.5);
         // Its level: 7 LU under the speech (both as the mix plays them), the clip volume says so - not as loud as
@@ -571,7 +572,7 @@ int main(int argc, char* argv[])
         CHECK(std::abs(voice["loudness"]["integrated_lufs"].toDouble() - level["program_lufs"].toDouble()) < 0.2);
     }
     // The same bed again (onto another track, not ducked): the file is reused, a volume given
-    r = edit(project, R"([{"op":"music_bed","mood":"calm","length":"timeline","duck":false,"gain":-6,"track":"A9"}])");
+    r = edit(project, R"([{"op":"music_bed","mood":"lofi","length":"timeline","duck":false,"gain":-6,"track":"A9"}])");
     n = bedNote(r);
     {
         CHECK(!n["made"].toBool(true)); // reused
@@ -600,7 +601,7 @@ int main(int argc, char* argv[])
         const QString only = tmp.path() + "/sfxonly.schneidi";
         run("new", {{"project", only}, {"fps", 25}});
         edit(only, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"},{"op":"track","track":"A1","name":"SFX"}])").arg(speech));
-        const QJsonObject o = bedNote(edit(only, R"([{"op":"music_bed","mood":"calm","length":"8s"}])"));
+        const QJsonObject o = bedNote(edit(only, R"([{"op":"music_bed","mood":"lofi","length":"8s"}])"));
         CHECK(o["ducking"].toString().startsWith("not ducked"));
         const auto p = load(only);
         const Clip* c = clipById(*p, o["clip"].toInt());
@@ -611,7 +612,7 @@ int main(int argc, char* argv[])
         const QString pj = tmp.path() + "/again.schneidi";
         run("new", {{"project", pj}, {"fps", 25}});
         edit(pj, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"}])").arg(speech));
-        const QJsonObject a = bedNote(edit(pj, R"([{"op":"music_bed","mood":"calm"}])"));
+        const QJsonObject a = bedNote(edit(pj, R"([{"op":"music_bed","mood":"lofi"}])"));
         const int tracks = load(pj)->timeline().audio.size();
         const QJsonObject b = bedNote(edit(pj, R"([{"op":"music_bed","mood":"hype"}])"));
         const auto p = load(pj);
@@ -625,7 +626,7 @@ int main(int argc, char* argv[])
         run("new", {{"project", pod}, {"fps", 25}, {"template", "podcast"}});
         edit(pod, QString(R"([{"op":"place","media":"%1","at":0,"track":"A1"}])").arg(speech));
         const int podTracks = load(pod)->timeline().audio.size();
-        const QJsonObject c = bedNote(edit(pod, R"([{"op":"music_bed","mood":"calm"}])"));
+        const QJsonObject c = bedNote(edit(pod, R"([{"op":"music_bed","mood":"lofi"}])"));
         const auto q = load(pod);
         CHECK_EQ(q->timeline().audio.size(), podTracks);
         int musik = -1;
@@ -642,11 +643,11 @@ int main(int argc, char* argv[])
         const QString dir = tmp.path() + "/live-music";
         const auto files = [&] { return QDir(dir).entryList(QDir::Files); };
         Cli::Context ctx;
-        const QJsonDocument ops = QJsonDocument::fromJson(
+        const QJsonDocument ops = QJsonDocument::fromJson( // "calm" (dropped in 0.25) is made as lofi
             QString(R"([{"op":"place","media":"%1","at":"20s","track":"A1"},{"op":"music_bed","mood":"calm"}])").arg(speech).toUtf8());
         Cli::detail::prepareMusicBed(QJsonObject{{"project", pj}, {"ops", ops.array()}}, ctx);
         const QStringList made = files();
-        if (!CHECK(made == QStringList{MusicBed::fileName({MusicBed::Mood::Calm, 40})})) std::printf("       %s\n", qPrintable(made.join(", ")));
+        if (!CHECK(made == QStringList{MusicBed::fileName({MusicBed::Mood::Lofi, 40})})) std::printf("       %s\n", qPrintable(made.join(", ")));
         CHECK_EQ(load(pj)->timeline().audio.value(0).clips.size(), 1); // the project itself is left alone
         const QJsonDocument bad = QJsonDocument::fromJson(R"([{"op":"no_such_op"},{"op":"music_bed","mood":"hype"}])");
         Cli::detail::prepareMusicBed(QJsonObject{{"project", pj}, {"ops", bad.array()}}, ctx);
@@ -678,20 +679,20 @@ int main(int argc, char* argv[])
     // Errors
     CHECK_EQ(edit(project, R"([{"op":"music_bed"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
     CHECK_EQ(edit(project, R"([{"op":"music_bed","mood":"sad","length":"5s"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
-    CHECK_EQ(edit(project, R"([{"op":"music_bed","mood":"calm","length":"5s","key":"X"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
-    CHECK_EQ(edit(project, R"([{"op":"music_bed","mood":"calm","length":"5s","bpm":300}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+    CHECK_EQ(edit(project, R"([{"op":"music_bed","mood":"lofi","length":"5s","key":"X"}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
+    CHECK_EQ(edit(project, R"([{"op":"music_bed","mood":"lofi","length":"5s","bpm":300}])", true)["failed"].toString(), QString("BAD_ARGUMENT"));
     {
         const QString empty = tmp.path() + "/empty.schneidi";
         run("new", {{"project", empty}});
-        CHECK_EQ(edit(empty, R"([{"op":"music_bed","mood":"calm"}])", true)["failed"].toString(), QString("EMPTY"));
+        CHECK_EQ(edit(empty, R"([{"op":"music_bed","mood":"lofi"}])", true)["failed"].toString(), QString("EMPTY"));
     }
     // effects kind:'music'
     {
         const QJsonObject e = run("effects", {{"kind", "music"}});
         const QJsonArray moods = e["moods"].toArray();
         CHECK_EQ(moods.size(), int(std::size(MusicBed::kMoods)));
-        CHECK_EQ(moods.at(0).toObject()["mood"].toString(), QString("calm"));
-        CHECK_EQ(moods.at(2).toObject()["chords"].toArray().size(), 4);
+        CHECK_EQ(moods.at(0).toObject()["mood"].toString(), QString("hype"));
+        CHECK_EQ(moods.at(1).toObject()["chords"].toArray().size(), 4);
     }
     return Check::result();
 }

@@ -18,11 +18,11 @@
    `compressor` for uneven speakers or shouting in games.
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice
    track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice. Without a music file:
-   `{"op":"music_bed","mood":"calm"}` makes one in the timeline's length, set 7 LU under the
+   `{"op":"music_bed","mood":"lofi"}` makes one in the timeline's length, set 7 LU under the
    voice and recorded sound of the other tracks (measured; alone about -16 LUFS; `gain` = your own clip volume) and
    already ducked under them (`duck` false to leave it; game sound ducks it only at its loud moments). Pick the
-   mood by the video: `calm` (nylon guitar, brushes: vlog, tutorial, under speech), `lofi` (electric piano, swung
-   beat, vinyl: study, chill, cooking), `funk` (slap bass, clavinet: fashion, food, dance, playful product), `hype`
+   mood by the video: `lofi` (electric piano, swung beat, vinyl: vlog, tutorial, podcast, study, chill,
+   cooking), `funk` (slap bass, clavinet: fashion, food, dance, playful product), `hype`
    (EDM drops: gaming highlights, shorts, sport), `epic` (strings, taiko, horns: trailer, intro, reveal). `effects`
    kind `music` lists them; `seed` 2, 3 … gives another piece in the same mood.
 4. **Master**: `mixer` on `"master"` with `limiter` true first, then `target_lufs` -14 - it measures the mix and

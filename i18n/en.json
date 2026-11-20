@@ -1108,7 +1108,6 @@
  "Nur {s} s sind aufgefallen, gewünscht sind {target} s: Das Ende jeder Aufnahme steht ausgeschaltet in der Liste, zum Auffüllen.": "Only {s} s stood out, {target} s are wanted: the end of each recording is in the list, switched off, to fill up with.",
  "Podcast, Interview, Vlog, Tutorial: Pausen raus, alle Spuren bleiben synchron. Arbeitet auf einer Timeline: links „Aktuelle Timeline als Material“ wählen.": "Podcast, interview, vlog, tutorial: pauses out, all tracks stay in sync. Works on a timeline: choose “Current timeline as material” on the left.",
  "Raumton unter den Schnitten kommt noch nicht.": "Room tone under the cuts is not there yet.",
- "Ruhig": "Calm",
  "Export": "Deliver",
  "Export abgebrochen.": "Render cancelled.",
  "Export fehlgeschlagen: %1": "Export failed: %1",
