@@ -33,6 +33,9 @@ ShapeOverlay::ShapeOverlay(Editor* editor, Selection* selection, std::function<i
       m_timelineShown(std::move(timelineShown))
 {
     connect(selection, &Selection::changed, this, &ViewerOverlay::changed);
+    // The box follows every change of the shape (a drag here, the Inspector, undo): over the GPU viewer the box is a
+    // layer of its own that a new picture does not repaint - it stayed at an older size until the window was redrawn
+    connect(editor->project(), &Project::timelineChanged, this, &ViewerOverlay::changed);
 }
 
 const Clip* ShapeOverlay::clip() const

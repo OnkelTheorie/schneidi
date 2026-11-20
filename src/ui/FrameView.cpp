@@ -427,8 +427,10 @@ void FrameView::setFrame(const QImage& image)
                          std::chrono::steady_clock::now().time_since_epoch()).count();
     if (sizeChanged && m_frameSize.isEmpty()) m_pan = clampedPan(m_pan);
     repaintPicture();
-    // The overlay is drawn relative to the frame: it moves along when the size changes (also while it is hidden)
-    if (sizeChanged) repaintOverlay();
+    // The overlay is drawn relative to the frame: it moves along when the size changes (also while it is hidden). An
+    // overlay box belongs to the picture shown (an animated shape at the playhead): drawn again with each new one -
+    // over the GPU surface it is a layer of its own, a picture alone does not repaint it
+    if (sizeChanged || m_overlay) repaintOverlay();
 }
 
 void FrameView::setFrameSize(const QSize& size)

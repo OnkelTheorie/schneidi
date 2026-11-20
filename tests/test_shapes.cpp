@@ -913,7 +913,10 @@ void testOverlay()
     CHECK(drag(right, right + QPointF(15, 0), Qt::AltModifier)); // Alt: around the centre, both sides move
     s = TimelineOps::findClip(p.timeline(), id);
     CHECK(s && std::abs(s->title.shape.width - (w + 30)) < 1.01 && s->title.posX == 20);
-    // A corner without Alt: the opposite corner stays where it was, only the dragged one moves
+    // A corner without Alt: the opposite corner stays where it was, only the dragged one moves. The box says it
+    // changed (over the GPU viewer it is a layer of its own: nothing else repaints it)
+    int boxChanged = 0;
+    QObject::connect(&ov, &ViewerOverlay::changed, [&] { ++boxChanged; });
     {
         const double w0 = s->title.shape.width, h0 = s->title.shape.height;
         const QPointF topLeft = ov.handlePos(0, frame), corner = ov.handlePos(4, frame);
@@ -924,6 +927,7 @@ void testOverlay()
         std::printf("corner: top left %.1f,%.1f -> %.1f,%.1f\n", topLeft.x(), topLeft.y(), after.x(), after.y());
         CHECK(std::hypot(after.x() - topLeft.x(), after.y() - topLeft.y()) < 1.01);
         CHECK(std::hypot(dragged.x() - corner.x() - 16, dragged.y() - corner.y() - 10) < 1.01);
+        CHECK(boxChanged > 0);
     }
     const QPointF knob = ov.handlePos(8, frame), centre = ov.centerPos(frame);
     CHECK(drag(knob, centre + QPointF(100, 0))); // to the right of the centre: a quarter turn clockwise
