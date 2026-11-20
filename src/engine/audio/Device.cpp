@@ -86,6 +86,17 @@ private:
 
 } // namespace
 
+void setBuffer(ma_device_config* config, const ma_context* context, int buffer)
+{
+    if (context->backend == ma_backend_pulseaudio) {
+        config->periodSizeInFrames = ma_uint32(std::max(2048, buffer));
+        config->periods = 1;
+        return;
+    }
+    config->periodSizeInFrames = ma_uint32(std::max(64, buffer / 2));
+    config->periods = 2;
+}
+
 // A miniaudio context of the chosen backend ("" = miniaudio's order)
 bool initContext(const QString& backend, ma_context* context)
 {
@@ -191,8 +202,7 @@ public:
         c.playback.format = ma_format_f32;
         c.playback.channels = ma_uint32(config.channels);
         c.sampleRate = ma_uint32(config.rate);
-        c.periodSizeInFrames = ma_uint32(std::max(64, config.buffer / 2));
-        c.periods = 2;
+        setBuffer(&c, &m_maContext, config.buffer);
         c.dataCallback = [](ma_device* device, void* out, const void*, ma_uint32 frames) {
             auto* self = static_cast<SoundCard*>(device->pUserData);
             self->m_inCallback.store(true); // seq_cst with detach(): one of both sees the other
@@ -328,8 +338,7 @@ bool Device::available(const Config& config)
         c.playback.format = ma_format_f32;
         c.playback.channels = ma_uint32(config.channels);
         c.sampleRate = ma_uint32(config.rate);
-        c.periodSizeInFrames = ma_uint32(std::max(64, config.buffer / 2));
-        c.periods = 2;
+        setBuffer(&c, &context, config.buffer);
         c.dataCallback = [](ma_device* device, void* out, const void*, ma_uint32 frames) {
             std::fill_n(static_cast<float*>(out), size_t(frames) * device->playback.channels, 0.f); // never started
         };

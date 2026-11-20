@@ -245,8 +245,7 @@ struct Capture::Impl {
         c.capture.format = ma_format_f32;
         c.capture.channels = ma_uint32(config.channels);
         c.sampleRate = ma_uint32(config.rate);
-        c.periodSizeInFrames = ma_uint32(std::max(64, config.buffer / 2));
-        c.periods = 2;
+        setBuffer(&c, &maContext, config.buffer);
         c.dataCallback = [](ma_device* dev, void*, const void* in, ma_uint32 count) {
             auto* self = static_cast<Impl*>(dev->pUserData);
             self->inCallback.store(true);
