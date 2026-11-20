@@ -25,6 +25,7 @@
 #include <QHash>
 #include <QString>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -39,7 +40,11 @@ public:
         int buffer = 1024; // samples the device buffers
         QString backend;   // Device::Config::backend
         QString output;    // Device::Config::output ("" = system default)
+        // The device ran dry while playing (late callbacks): pause() doubles the buffer up to kMaxAutoBuffer, reopens
+        // the device with it and calls this with the new size (GUI thread, no lock held) so it can be kept
+        std::function<void(int)> bufferGrown;
     };
+    static constexpr int kMaxAutoBuffer = 4096;
     explicit Player(const Options& options);
     Player() : Player(Options{}) {}
     ~Player();
@@ -89,10 +94,13 @@ public:
         int fadeOuts = 0;   // generations faded out (jumps, stops, speed changes)
         int reopens = 0;    // device reopened because it went silent or the chosen output came back
         int reroutes = 0;   // the system moved the sound to another output by itself
+        int buffer = 0;     // samples the device is asked to buffer now (grows after dropouts)
     };
     Stats stats() const;
     // Tests: the feeder makes no sound for `ms` (a starved computer); the sound runs dry and must not click
     void stallFeedForTest(int ms);
+    // Tests: count a late device callback as if the sound server had starved
+    void lateCallbackForTest();
 
 private:
     struct Impl;

@@ -762,8 +762,13 @@ void MainWindow::buildActions()
         a->setCheckable(true);
         a->setChecked(Engine::audioBuffer() == samples);
         bufferGroup->addAction(a);
+        a->setData(samples);
         connect(a, &QAction::triggered, this, [this, n = samples] { m_engine->setAudioBuffer(n); });
     }
+    // The player grows the buffer by itself after a dropout: the menu shows what is set when it opens
+    connect(audioMenu, &QMenu::aboutToShow, this, [bufferGroup] {
+        for (QAction* a : bufferGroup->actions()) a->setChecked(a->data().toInt() == Engine::audioBuffer());
+    });
     // Output device like DaVinci (Video and Audio I/O → Speaker Setup); only the own sound engine can choose one. The
     // list is read when the menu opens: devices come and go.
     {

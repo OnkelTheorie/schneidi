@@ -179,7 +179,8 @@ struct Player::Impl {
     explicit Impl(const Options& o) : opt(o) {}
 
     void process(float* out, int frames);
-    void reportDropouts(); // under `mutex`: a log line when sound broke off since the last report
+    // under `mutex`: a log line when sound broke off since the last report; true when the device itself ran dry
+    bool reportDropouts();
     void publishClock(int64_t now);
     double positionLocked();
     Device::Config deviceConfig();
@@ -871,6 +872,7 @@ void Player::play(double position, double speed)
 
 void Player::pause()
 {
+    int grown = 0;
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         if (!d->cmd.playing) return;
@@ -878,24 +880,35 @@ void Player::pause()
         d->cmd.playing = false;
         ++d->cmd.gen;
         d->gen.store(d->cmd.gen, std::memory_order_release);
-        d->reportDropouts();
+        // The sound server did not take the sound in time (the device played silence: a click). A bigger buffer
+        // bridges such gaps; it is reopened now, while paused, where the short break is not heard. Only up to
+        // kMaxAutoBuffer (85 ms at 48 kHz): more lags behind the picture when scrubbing.
+        if (d->reportDropouts() && d->opt.buffer < kMaxAutoBuffer) {
+            d->opt.buffer = std::min(d->opt.buffer * 2, kMaxAutoBuffer);
+            d->deviceDirty = true; // the watchdog reopens with it
+            grown = d->opt.buffer;
+            qInfo("Audio: buffer grown to %d samples after the dropout", grown);
+        }
     }
     d->wake.notify_all();
+    if (grown && d->opt.bufferGrown) d->opt.bufferGrown(grown);
 }
 
-void Player::Impl::reportDropouts()
+bool Player::Impl::reportDropouts()
 {
     const int under = underruns.load(std::memory_order_relaxed);
     const int late = lateCallbacks.load(std::memory_order_relaxed);
-    if (under == reportedUnderruns && late == reportedLate) return;
+    if (under == reportedUnderruns && late == reportedLate) return false;
     const int64_t maxNs = lateMaxNs.exchange(0, std::memory_order_relaxed);
     const int lat = latency.load(std::memory_order_relaxed);
     qInfo("Audio dropouts while playing: %d feeder underruns, %d late device callbacks (longest gap %lld ms, "
           "device buffer %d ms)",
           under - reportedUnderruns, late - reportedLate, static_cast<long long>(maxNs / 1'000'000),
           opt.rate > 0 ? lat * 1000 / opt.rate : 0);
+    const bool deviceRanDry = late != reportedLate;
     reportedUnderruns = under;
     reportedLate = late;
+    return deviceRanDry;
 }
 
 bool Player::playing() const
@@ -967,6 +980,8 @@ QString Player::deviceError() const
 
 void Player::stallFeedForTest(int ms) { d->feedStallUntil.store(nowNs() + int64_t(ms) * 1000000); }
 
+void Player::lateCallbackForTest() { d->lateCallbacks.fetch_add(1, std::memory_order_relaxed); }
+
 Player::Stats Player::stats() const
 {
     Stats s;
@@ -977,6 +992,10 @@ Player::Stats Player::stats() const
     s.fadeOuts = d->fadeOuts.load();
     s.reopens = d->reopens.load();
     s.reroutes = d->reroutes.load();
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
+        s.buffer = d->opt.buffer;
+    }
     return s;
 }
 

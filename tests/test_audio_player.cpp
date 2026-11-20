@@ -443,5 +443,32 @@ int main(int argc, char** argv)
     std::printf("Neue Dateilänge: %d Mischer vorher, %d nachher\n", builtBefore, back->stats().mixers);
     CHECK_EQ(back->stats().mixers, builtBefore + 1);
     back.reset();
+
+    // 14. The device ran dry while playing (the sound server starved): pause() doubles the buffer up to
+    // kMaxAutoBuffer and hands the new size on; dropouts of the feeder alone change nothing
+    {
+        std::vector<int> grown;
+        Audio::Player::Options o;
+        o.buffer = 1024;
+        o.bufferGrown = [&grown](int samples) { grown.push_back(samples); };
+        Audio::Player grow(o);
+        grow.setTimeline(tl, kFps);
+        auto playLate = [&](bool late) {
+            grow.play(double(frameStart(10)), 1.0);
+            sleepMs(60);
+            if (late) grow.lateCallbackForTest();
+            grow.pause();
+            sleepMs(150); // the watchdog reopens the device
+        };
+        playLate(false);
+        CHECK_EQ(grow.stats().buffer, 1024);
+        playLate(true);
+        CHECK_EQ(grow.stats().buffer, 2048);
+        playLate(true);
+        playLate(true);
+        CHECK_EQ(grow.stats().buffer, Audio::Player::kMaxAutoBuffer);
+        CHECK(grown == (std::vector<int>{2048, 4096}));
+        std::printf("Puffer nach Aussetzern: %d Samples\n", grow.stats().buffer);
+    }
     return Check::result();
 }
