@@ -83,6 +83,7 @@ public:
 
     struct Stats {
         int underruns = 0;  // the sound ran dry while playing (device callbacks)
+        int lateCallbacks = 0; // the device called back later than its buffer lasts while sound ran (it ran dry)
         int mixers = 0;     // mixers built (timeline changes that needed more than updateMix)
         int liveUpdates = 0; // timeline changes taken over by Mixer::updateMix
         int fadeOuts = 0;   // generations faded out (jumps, stops, speed changes)

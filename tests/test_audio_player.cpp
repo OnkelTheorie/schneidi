@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QStringList>
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -371,9 +372,14 @@ int main(int argc, char** argv)
         starved->stallFeedForTest(150 + 37 * n);
         sleepMs(450);
     }
+    static QStringList starvedLog; // pause() reports the dropouts in the log (the user's only trace of a click)
+    const QtMessageHandler previousHandler = qInstallMessageHandler(
+        [](QtMsgType, const QMessageLogContext&, const QString& m) { starvedLog << m; });
     starved->pause();
+    qInstallMessageHandler(previousHandler);
     sleepMs(100);
     const Audio::Player::Stats starvedStats = starved->stats();
+    CHECK(starvedLog.filter("Audio dropouts while playing").size() == 1);
     starved.reset();
     QFile sf(starvedPath);
     if (!CHECK(sf.open(QIODevice::ReadOnly))) return Check::result();

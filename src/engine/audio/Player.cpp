@@ -119,6 +119,12 @@ struct Player::Impl {
     } cb;
     std::atomic<int64_t> feedStallUntil{0}; // tests: the feeder makes nothing before this (ns)
     std::atomic<int> underruns{0}, fadeOuts{0}, mixersBuilt{0}, liveUpdates{0}, reopens{0}, reroutes{0};
+    // The device called back later than its buffer lasts while sound ran: it most likely played silence in between
+    // (the sound server starved, not schneidi's feeder). lateMaxNs: the longest such gap since the last report
+    std::atomic<int> lateCallbacks{0};
+    std::atomic<int64_t> lateMaxNs{0};
+    // What the log already reported (GUI thread, under `mutex`): pause() reports only what is new
+    int reportedUnderruns = 0, reportedLate = 0;
     std::atomic<int64_t> lastCallback{0}; // when the device last took samples (ns)
     std::atomic<int64_t> silentLimit{kSilentNs}; // took nothing for this long: vanished (ns, from the buffer)
 
@@ -172,6 +178,7 @@ struct Player::Impl {
     explicit Impl(const Options& o) : opt(o) {}
 
     void process(float* out, int frames);
+    void reportDropouts(); // under `mutex`: a log line when sound broke off since the last report
     void publishClock(int64_t now);
     double positionLocked();
     Device::Config deviceConfig();
@@ -227,6 +234,16 @@ void Player::Impl::process(float* out, int frames)
     // is sounding (a hard cut without the fade)
     const int64_t until = holdUntil.load(std::memory_order_acquire);
     const int64_t now = nowNs();
+    if (s.sounding && s.prevNow != 0) {
+        // Sound ran in the callback before: a gap longer than the device's buffer (+ 5 ms of scheduling slack) means
+        // the device ran dry in between - a click the feeder never sees
+        const int lat = latency.load(std::memory_order_relaxed);
+        const int64_t gap = now - s.prevNow;
+        if (lat > 0 && gap > int64_t(lat) * 1'000'000'000 / opt.rate + 5'000'000) {
+            lateCallbacks.fetch_add(1, std::memory_order_relaxed);
+            if (gap > lateMaxNs.load(std::memory_order_relaxed)) lateMaxNs.store(gap, std::memory_order_relaxed);
+        }
+    }
     const bool hold = until != 0 && now < until && holdGen.load(std::memory_order_relaxed) == g;
     const float muteTarget = muted.load(std::memory_order_relaxed) ? 0.f : 1.f;
     int i = 0;
@@ -659,6 +676,7 @@ void Player::Impl::openDevice(bool silent)
     if (silent) c.backend = "null";
     forcedSilence = silent;
     closeDevice(); // the old callback stops first
+    cb.prevNow = 0; // the gap to the old device's last callback is no late callback (reopens are logged apart)
     silentLimit = std::max<int64_t>(kSilentNs, int64_t(c.buffer) * 6 * 1'000'000'000 / c.rate);
     openedAt = nowNs();
     ++opened;
@@ -773,6 +791,7 @@ Player::~Player()
     d->watchdog.join();
     {
         std::lock_guard<std::mutex> lock(d->mutex);
+        d->reportDropouts(); // closed while playing
         d->quit = true;
     }
     d->wake.notify_all();
@@ -855,8 +874,24 @@ void Player::pause()
         d->cmd.playing = false;
         ++d->cmd.gen;
         d->gen.store(d->cmd.gen, std::memory_order_release);
+        d->reportDropouts();
     }
     d->wake.notify_all();
+}
+
+void Player::Impl::reportDropouts()
+{
+    const int under = underruns.load(std::memory_order_relaxed);
+    const int late = lateCallbacks.load(std::memory_order_relaxed);
+    if (under == reportedUnderruns && late == reportedLate) return;
+    const int64_t maxNs = lateMaxNs.exchange(0, std::memory_order_relaxed);
+    const int lat = latency.load(std::memory_order_relaxed);
+    qInfo("Audio dropouts while playing: %d feeder underruns, %d late device callbacks (longest gap %lld ms, "
+          "device buffer %d ms)",
+          under - reportedUnderruns, late - reportedLate, static_cast<long long>(maxNs / 1'000'000),
+          opt.rate > 0 ? lat * 1000 / opt.rate : 0);
+    reportedUnderruns = under;
+    reportedLate = late;
 }
 
 bool Player::playing() const
@@ -932,6 +967,7 @@ Player::Stats Player::stats() const
 {
     Stats s;
     s.underruns = d->underruns.load();
+    s.lateCallbacks = d->lateCallbacks.load();
     s.mixers = d->mixersBuilt.load();
     s.liveUpdates = d->liveUpdates.load();
     s.fadeOuts = d->fadeOuts.load();
