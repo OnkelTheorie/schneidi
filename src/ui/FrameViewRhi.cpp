@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QThread>
 #include <QTimer>
+#include <chrono>
 #include <QWindow>
 #include <rhi/qrhi.h>
 #if defined(SCHNEIDI_VIEWER_VULKAN)
@@ -481,6 +482,16 @@ void FrameViewRhiSurface::uploadFrame(QRhiResourceUpdateBatch* batch)
     // The batch keeps a reference to the image data (implicitly shared): no copy on the CPU side
     batch->uploadTexture(m_texture.get(), upload);
     m_uploadedKey = img.cacheKey();
+    // A picture that waited long for its draw (the screen kept an old one meanwhile): logged, once in a while
+    const qint64 now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (const qint64 waited = (now - m_view->frameArrivedNs()) / 1'000'000; m_view->frameArrivedNs() > 0 && waited > 150) {
+        static qint64 lastLog = 0;
+        if (now - lastLog > 5'000'000'000LL) {
+            lastLog = now;
+            qInfo("Viewer: picture drawn %lld ms after it arrived", static_cast<long long>(waited));
+        }
+    }
 }
 
 void FrameViewRhiSurface::render(QRhiCommandBuffer* cb)

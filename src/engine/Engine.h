@@ -299,6 +299,7 @@ private:
     std::atomic<int> m_position{0};
     // Jump during playback: no longer report positions from before the jump
     std::atomic<int> m_seekEpoch{0};
+    std::atomic<qint64> m_editAt{0}; // steady ns of the last edit while paused, until its picture is shown (0 = none)
     QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (muted until it rests)
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960), or full (m_previewFull)

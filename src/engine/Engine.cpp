@@ -36,6 +36,7 @@
 #include <QPainter>
 #include <QSet>
 #include <QSettings>
+#include <chrono>
 #include <QThread>
 #include <algorithm>
 #include <climits>
@@ -78,6 +79,11 @@ bool samePicture(const Timeline& a, const Timeline& b)
 {
     return pictureOnly(a) == pictureOnly(b) && TimelineOps::endFrame(a) == TimelineOps::endFrame(b)
            && TimelineOps::sameNested(a, b);
+}
+
+qint64 steadyNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 // A rendered frame as QImage without copying: the image keeps the pooled buffer until it goes away
@@ -628,7 +634,10 @@ void Engine::applyTimeline(const Timeline& tl)
         return;
     }
     m_renderer->update(pictureOnly(tl));
-    if (m_mode == Mode::Timeline) m_pump->refresh();
+    if (m_mode == Mode::Timeline) {
+        if (m_speed == 0.0) m_editAt = steadyNs();
+        m_pump->refresh();
+    }
 }
 
 void Engine::setMediaLengths(const QHash<QString, int>& lengths)
@@ -811,6 +820,17 @@ void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
     if (speed > 0 && loopCrossed(shown)) {
         if (!m_loopWrap.exchange(true)) emit loopWrapDue(m_seekEpoch);
         return;
+    }
+    if (speed == 0.0) {
+        // An edit while paused whose picture took long (the viewer kept the old one meanwhile): logged, now and then
+        if (const qint64 at = m_editAt.exchange(0); at > 0) {
+            const qint64 now = steadyNs(), waited = (now - at) / 1'000'000;
+            static std::atomic<qint64> lastLog{0};
+            if (waited > 150 && now - lastLog.load() > 5'000'000'000LL) {
+                lastLog = now;
+                qInfo("Preview: picture of an edit shown %lld ms after it", static_cast<long long>(waited));
+            }
+        }
     }
     if (!image.isNull()) emit frameReady(image);       // queued -> UI thread
     if (speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);

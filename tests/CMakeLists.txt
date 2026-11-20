@@ -297,6 +297,8 @@ if(TARGET Qt6::DBus)
     target_compile_definitions(test_screen_awake PRIVATE SCHNEIDI_HAVE_DBUS)
 endif()
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
+schneidi_test(test_still_refresh) # paused: an edit is shown at once (shape handle drag)
+schneidi_test(test_shape_drag_app) # the whole app: a shape corner drag, the picture follows the box
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
 schneidi_test(test_play_loop) # loop playback in the In/Out range: wraps Out -> In, no click, off/removed plays to the end
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing

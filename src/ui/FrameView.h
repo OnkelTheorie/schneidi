@@ -89,6 +89,7 @@ public:
     // scale): the zoom refers to frameSize()
     void setFrame(const QImage& image);
     const QImage& frame() const { return m_image; }
+    qint64 frameArrivedNs() const { return m_frameArrived; } // steady clock (ns) when setFrame() took it
     // Project frame size the zoom steps refer to; empty = the image's size
     void setFrameSize(const QSize& size);
     QSize frameSize() const;
@@ -147,6 +148,7 @@ private:
     Backend m_backend = Backend::Painter;
     QString m_backendInfo;
     QWidget* m_surface = nullptr;      // GPU: the QRhiWidget
+    qint64 m_frameArrived = 0;
     QWidget* m_overlayLayer = nullptr; // GPU: transparent widget above it that paints the overlay
     bool m_gpuPending = false;         // backend from the stored GPU check, the real one comes later
     QImage m_image;

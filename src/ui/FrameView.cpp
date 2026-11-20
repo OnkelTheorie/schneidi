@@ -17,6 +17,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <chrono>
 #include <QPixmap>
 #include <QSettings>
 #include <QTimer>
@@ -422,6 +423,8 @@ void FrameView::setFrame(const QImage& image)
 {
     const bool sizeChanged = image.size() != m_image.size();
     m_image = image;
+    m_frameArrived = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch()).count();
     if (sizeChanged && m_frameSize.isEmpty()) m_pan = clampedPan(m_pan);
     repaintPicture();
     // The overlay is drawn relative to the frame: it moves along when the size changes (also while it is hidden)
