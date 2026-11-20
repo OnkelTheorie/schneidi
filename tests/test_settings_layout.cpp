@@ -55,8 +55,8 @@ void checkDialog(const QString& font, const QString& lang)
     dlg.aiPage()->setClaudeSetup([](bool) { return QJsonObject{}; });
     dlg.aiPage()->addChatSection(&keys);
     // The start page box with every page's name (the longest one counts)
-    dlg.setStartPages({{"media", T("Medien")}, {"direct", T("Regie")}, {"edit", T("Schneiden")}, {"comp", T("Compositing")},
-                       {"color", T("Farbe")}, {"studio", T("Studio")}, {"deliver", T("Export")}},
+    dlg.setStartPages({{"media", T("Medien")}, {"edit", T("Schneiden")}, {"comp", T("Compositing")}, {"color", T("Farbe")},
+                       {"studio", T("Studio")}, {"direct", T("Regie")}, {"deliver", T("Export")}},
                       "edit");
     CHECK_EQ(dlg.startPage(), QString("edit"));
     const int width = widthFor(lang);

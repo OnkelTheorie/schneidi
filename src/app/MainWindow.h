@@ -596,7 +596,7 @@ private:
     QButtonGroup* m_pageButtons = nullptr;
     class ElidedLabel* m_statusText = nullptr; // left in the page bar: status messages (the status bar is hidden)
     class QHBoxLayout* m_pageBarRight = nullptr; // right in the page bar: background work
-    PageVisibility m_pageVisibility{{"media", "direct", "edit", "comp", "color", "studio", "deliver"}}; // bar order
+    PageVisibility m_pageVisibility{{"media", "edit", "comp", "color", "studio", "direct", "deliver"}}; // bar order
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
     QToolButton* m_storageToggle = nullptr;

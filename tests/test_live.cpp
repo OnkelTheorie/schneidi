@@ -68,7 +68,7 @@ public:
     QString livePage() const override { return page; }
     bool liveShowPage(const QString& id) override
     {
-        if (!QStringList{"media", "direct", "edit", "comp", "color", "studio", "deliver"}.contains(id)) return false;
+        if (!QStringList{"media", "edit", "comp", "color", "studio", "direct", "deliver"}.contains(id)) return false;
         page = id;
         return true;
     }

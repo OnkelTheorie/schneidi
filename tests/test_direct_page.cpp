@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Direct page "Regie" (0.25), with the fake backend (app/DirectBackend.h) until the `direct` command exists:
-// - built lazily: a new window has none of its widgets, the first showing builds it; its button sits right of Media,
+// - built lazily: a new window has none of its widgets, the first showing builds it; its button sits right of Studio,
 //   the key (Shift+1, page_direct) and `app page` show it, it hides like the other pages;
 // - the viewer moves into its middle column; material comes in by a Media Pool drop (its list MIME), by file URLs and
 //   as "the current timeline"; a recipe card's title asks for suggestions (progress in BackgroundJobs, ✕ cancels);
@@ -181,16 +181,16 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
     loadProject(w, a);
     Project* p = w.liveProject();
 
-    // Lazy, the button right of Media, the default start page is Edit; the page's keys are registered already
+    // Lazy, the button right of Studio, the default start page is Edit; the page's keys are registered already
     CHECK(!w.directPage());
     CHECK(action("direct_remove_suggestion") && action("direct_remove_material"));
     CHECK(!w.findChild<DirectPage*>());
     CHECK(w.currentPage() == Page::Edit);
-    auto* media = w.findChild<QToolButton*>("pageButton_media");
+    auto* studio = w.findChild<QToolButton*>("pageButton_studio");
     auto* direct = w.findChild<QToolButton*>("pageButton_direct");
-    auto* edit = w.findChild<QToolButton*>("pageButton_edit");
-    if (!CHECK(media && direct && edit)) return;
-    CHECK(media->x() < direct->x() && direct->x() < edit->x());
+    auto* deliver = w.findChild<QToolButton*>("pageButton_deliver");
+    if (!CHECK(studio && direct && deliver)) return;
+    CHECK(studio->x() < direct->x() && direct->x() < deliver->x());
     CHECK(!direct->icon().isNull()); // the drawn clapperboard
     // The key shows it
     QAction* key = action("page_direct");
@@ -497,7 +497,7 @@ void testWindow(Engine& engine, const QString& a, const QString& b)
     w.showAllPages();
     CHECK(w.currentPage() == Page::Direct);
     w.setPageHidden(Page::Direct, true); // the current one goes: the nearest shown page (the right one on a tie)
-    CHECK(w.currentPage() == Page::Edit);
+    CHECK(w.currentPage() == Page::Deliver);
     w.showAllPages();
     CHECK(direct->isVisible());
     CHECK(!QSettings().contains(PageVisibility::kSettingsKey)); // a test run: never saved
@@ -549,14 +549,14 @@ void testStartPage(Engine& engine, const QString& a, const QString& projectDir)
         w.setStartPage("nope"); // unknown: unchanged
         CHECK_EQ(w.startPage(), QString("media"));
     }
-    // A hidden start page: the nearest shown one (Direct sits between Media and Edit)
+    // A hidden start page: the nearest shown one (Direct sits between Studio and Deliver)
     QSettings().setValue(PageVisibility::kSettingsKey, QStringList{"direct"});
     {
         MainWindow w(&engine);
         w.disableAutosave();
         w.show();
-        CHECK(w.currentPage() == Page::Edit || w.currentPage() == Page::Media);
-        CHECK(w.currentPage() == Page::Edit); // the right one first on a tie
+        CHECK(w.currentPage() == Page::Deliver || w.currentPage() == Page::Studio);
+        CHECK(w.currentPage() == Page::Deliver); // the right one first on a tie
         CHECK(!w.directPage()); // not built for nothing
     }
     // Unknown saved id = Edit

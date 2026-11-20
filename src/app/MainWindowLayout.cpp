@@ -382,11 +382,11 @@ QWidget* MainWindow::buildPageBar()
     m_pageButtons = new QButtonGroup(this);
     const struct { const char* icon; const char* name; Page page; } pages[] = {
         {"▤", N_("Medien"), Page::Media},
-        {"", N_("Regie"), Page::Direct}, // a clapperboard, drawn (clapperIcon): no font has one besides the emoji
         {"✂", N_("Schneiden"), Page::Edit},
         {"◇", N_("Compositing"), Page::Comp},
         {"◐", N_("Farbe"), Page::Color},
         {"◉", N_("Studio"), Page::Studio}, // ♪ comes from Noto Sans Symbols on Noto-only systems: a taller line, a taller bar
+        {"", N_("Regie"), Page::Direct}, // a clapperboard, drawn (clapperIcon): no font has one besides the emoji
         {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
@@ -465,8 +465,8 @@ QString MainWindow::pageTitle(Page page)
 
 const QVector<MainWindow::Page>& MainWindow::allPages()
 {
-    static const QVector<Page> pages{Page::Media,  Page::Direct, Page::Edit,   Page::Comp,
-                                     Page::Color,  Page::Studio, Page::Deliver};
+    static const QVector<Page> pages{Page::Media,  Page::Edit,   Page::Comp,   Page::Color,
+                                     Page::Studio, Page::Direct, Page::Deliver};
     return pages;
 }
 

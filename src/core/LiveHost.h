@@ -58,7 +58,7 @@ public:
     virtual bool livePlaying() const = 0;
     virtual void liveSeek(int frame) = 0;
     virtual void livePlay(bool play) = 0;
-    // The page the app shows ("media", "direct", "edit", "comp", "color", "studio", "deliver"; empty = the host has none) and
+    // The page the app shows ("media", "edit", "comp", "color", "studio", "direct", "deliver"; empty = the host has none) and
     // switching to one (false = no such page)
     virtual QString livePage() const { return {}; }
     virtual bool liveShowPage(const QString& page)
