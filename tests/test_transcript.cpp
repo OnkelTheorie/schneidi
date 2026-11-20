@@ -8,6 +8,7 @@
 #include "app/TranscribeDialog.h"
 #include "core/Transcript.h"
 #include "engine/Extensions.h"
+#include "engine/Transcriber.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -57,6 +58,125 @@ const char* kJson = R"({"result":{"language":"de"},"transcription":[
  {"offsets":{"from":5600,"to":5900},"text":" [Musik]"}]})";
 
 } // namespace
+
+// Transcribing in speech pieces (20.11.): DTW word times, packed pieces and their times, the prompt's echo
+void testPieces()
+{
+    using Transcript::Piece;
+    using Transcript::PieceSpan;
+    // DTW: a word starts at its first token's t_dtw (10 ms steps), not at whisper's segment start (a laugh before it)
+    {
+        const QByteArray json = R"({"result":{"language":"de"},"transcription":[
+            {"text":" Was","offsets":{"from":210,"to":730},"tokens":[{"text":"[_BEG_]","t_dtw":-1},{"text":" Was","t_dtw":282}]},
+            {"text":" bist","offsets":{"from":1000,"to":1880},"tokens":[{"text":" bist","t_dtw":298}]},
+            {"text":" du","offsets":{"from":1890,"to":2280},"tokens":[{"text":" du","t_dtw":322}]},
+            {"text":"?","offsets":{"from":2680,"to":3260},"tokens":[{"text":"?","t_dtw":322}]}]})";
+        Transcript::Result r;
+        CHECK(Transcript::parseWhisperJson(json, &r));
+        CHECK_EQ(r.words.size(), 3);
+        CHECK_EQ(r.words.value(0).from, 2820);
+        CHECK_EQ(r.words.value(1).from, 2980);
+        CHECK_EQ(r.words.value(2).text, QString("du?"));
+        CHECK_EQ(r.words.value(2).from, 3220);
+        // a word ends where the next starts at the latest, never before its own start
+        for (int i = 0; i + 1 < r.words.size(); ++i) {
+            CHECK(r.words[i].to >= r.words[i].from);
+            CHECK(r.words[i].to <= r.words[i + 1].from);
+        }
+        // Appending a second piece through a map (+10 s): times shifted, order kept, the language stays
+        CHECK(Transcript::appendWhisperJson(json, [](qint64 t, bool) { return t + 10000; }, &r));
+        CHECK_EQ(r.words.size(), 6);
+        CHECK_EQ(r.words.value(3).from, 12820);
+        CHECK_EQ(r.language, QString("de"));
+        // Without DTW times: whisper's own
+        Transcript::Result plain;
+        CHECK(Transcript::parseWhisperJson(R"({"transcription":[{"text":" Hallo","offsets":{"from":500,"to":900}}]})", &plain));
+        CHECK_EQ(plain.words.value(0).from, 500);
+    }
+    // Packing: short pauses stay, long ones shrink to 400 ms of silence, a piece stays within 28 s
+    {
+        const QVector<QPair<qint64, qint64>> segs{{1000, 3000}, {3500, 5000}, {20000, 22000}, {60000, 61000}};
+        const QVector<Piece> pieces = Transcript::speechPieces(segs, 90000);
+        CHECK_EQ(pieces.size(), 1);
+        const Piece p = pieces.value(0);
+        CHECK_EQ(p.size(), 3);                  // [1-5 s], [20-22 s], [60-61 s], padded by 200 ms
+        CHECK_EQ(p.value(0).from, 800);         // 1000 - 200
+        CHECK_EQ(p.value(0).length, 5200 - 800); // to 5000 + 200, the 500 ms pause kept
+        CHECK_EQ(p.value(1).at, p.value(0).length + 400);
+        CHECK_EQ(p.value(1).from, 19800);
+        // Times: in a stretch -> the sound's; in the silence between -> the next stretch's start
+        CHECK_EQ(Transcript::pieceTime(p, 100), 900);
+        CHECK_EQ(Transcript::pieceTime(p, p.value(1).at + 1000), 20800);
+        CHECK_EQ(Transcript::pieceTime(p, p.value(0).length + 200), 19800);
+        // ... but an end in that silence stays at the end of the stretch before (not over the whole real pause)
+        CHECK_EQ(Transcript::pieceTime(p, p.value(0).length + 200, true), 5200);
+        CHECK(Transcript::pieceLength(p) <= 28000);
+        // Neighbours: the padding never passes the middle of the pause
+        const QVector<Piece> tight = Transcript::speechPieces({{1000, 2000}, {2100, 3000}}, 10000);
+        CHECK_EQ(tight.value(0).size(), 1);
+        CHECK_EQ(tight.value(0).value(0).from, 800);
+        // 70 s of speech in 3 s bursts with 2 s pauses: several pieces, none over 28 s, every second in one
+        QVector<QPair<qint64, qint64>> many;
+        for (qint64 t = 0; t < 70000; t += 5000) many << qMakePair(t, t + 3000);
+        const QVector<Piece> packed = Transcript::speechPieces(many, 70000);
+        CHECK(packed.size() >= 2);
+        qint64 covered = 0;
+        for (const Piece& q : packed) {
+            CHECK(Transcript::pieceLength(q) <= 28000);
+            for (const PieceSpan& sp : q) covered += sp.length;
+        }
+        CHECK(covered >= 14 * 3000);
+        // Dense talk (2.5 s segments, 200 ms pauses) for 70 s: pieces are cut between segments, never inside one
+        QVector<QPair<qint64, qint64>> dense;
+        for (qint64 t = 0; t < 70000; t += 2700) dense << qMakePair(t, t + 2500);
+        const QVector<Piece> densePieces = Transcript::speechPieces(dense, 72000);
+        CHECK(densePieces.size() >= 3);
+        for (const auto& [from, to] : dense) {
+            bool inOne = false;
+            for (const Piece& q : densePieces)
+                for (const PieceSpan& sp : q) inOne = inOne || (sp.from <= from && to <= sp.from + sp.length);
+            if (!CHECK(inOne)) std::printf("       segment %lld-%lld cut\n", from, to);
+        }
+        for (const Piece& q : densePieces) CHECK(Transcript::pieceLength(q) <= 28000);
+        // Full: cut at the longest pause in the second half (2 s before 22 s), not where it happens to be full
+        const QVector<Piece> cutAt = Transcript::speechPieces({{0, 10000}, {10500, 20000}, {22000, 24000}, {24300, 30000}},
+                                                              30000);
+        CHECK_EQ(cutAt.size(), 2);
+        CHECK_EQ(cutAt.value(1).value(0).from, 21800); // the second piece starts with the 22 s segment (padded)
+        // Speech without a pause longer than a piece is split
+        const QVector<Piece> longSpeech = Transcript::speechPieces({{0, 65000}}, 65000);
+        CHECK_EQ(longSpeech.size(), 3);
+        // Nothing / out of range
+        CHECK(Transcript::speechPieces({}, 1000).isEmpty());
+        CHECK(Transcript::speechPieces({{5000, 6000}}, 1000).isEmpty());
+    }
+    // The starting text whisper echoed in silence goes; the same words in another order stay
+    {
+        QVector<Transcript::Word> w{{0, 100, "Hallo,"}, {100, 200, "wie"}, {200, 300, "geht's?"}, {300, 400, "Gut,"},
+                                    {400, 500, "und"}, {500, 600, "dir?"}, {600, 700, "Ja,"}, {700, 800, "passt."},
+                                    {900, 1000, "Echt"}, {1000, 1100, "jetzt?"}};
+        CHECK_EQ(Transcript::dropPromptEcho(w, "Hallo, wie geht's? Gut, und dir? Ja, passt."), 8);
+        CHECK_EQ(w.size(), 2);
+        QVector<Transcript::Word> kept{{0, 100, "Wie"}, {100, 200, "geht's?"}};
+        CHECK_EQ(Transcript::dropPromptEcho(kept, "Hallo, wie geht's? Gut, und dir? Ja, passt."), 0);
+    }
+    // DTW presets by model file, speech segments of the voice detection program
+    CHECK_EQ(Transcriber::dtwPreset("/x/ggml-large-v3-q5_0.bin"), QString("large.v3"));
+    CHECK_EQ(Transcriber::dtwPreset("ggml-large-v3-turbo-q5_0.bin"), QString("large.v3.turbo"));
+    CHECK_EQ(Transcriber::dtwPreset("ggml-small-q5_1.bin"), QString("small"));
+    CHECK_EQ(Transcriber::dtwPreset("ggml-base.en.bin"), QString("base.en"));
+    CHECK_EQ(Transcriber::dtwPreset("ggml-tiny-q5_1.bin"), QString("tiny"));
+    CHECK(Transcriber::dtwPreset("my-model.bin").isEmpty());
+    CHECK(Transcriber::dtwPreset("ggml-distil-large-v3.bin").isEmpty());
+    const auto segs = Transcriber::parseSpeechSegments(
+        "Detected 2 speech segments:\nSpeech segment 0: start = 0.00, end = 118.00\nSpeech segment 1: start = 151.00, "
+        "end = 195.50\n");
+    CHECK_EQ(segs.size(), 2);
+    CHECK_EQ(segs.value(1).first, 1510);
+    CHECK_EQ(segs.value(1).second, 1955);
+    CHECK_EQ(Transcriber::punctuationPrompt("de").isEmpty(), false);
+    CHECK(Transcriber::punctuationPrompt("auto").isEmpty());
+}
 
 int main(int argc, char** argv)
 {
@@ -225,5 +345,6 @@ int main(int argc, char** argv)
         CHECK(Extensions::parseList("large", &unknown).value(0) == Extensions::find("whisper-model-large"));
         CHECK_EQ(Extensions::find("whisper-model-large")->sha256.size(), 64);
     }
+    testPieces();
     return Check::result();
 }

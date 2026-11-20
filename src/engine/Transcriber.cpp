@@ -101,7 +101,23 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         int percent = -1;
         while (it.hasNext()) percent = it.next().captured(1).toInt();
         if (percent < 0) return;
-        m_whisper = std::max(m_whisper, percent / 100.0);
+        if (m_pieces.size() > 1) {
+            // One run over all pieces: whisper's progress starts again at each file
+            // whisper prints from 5 % on and often only 100 % for a short piece: a lower value or a 100 % before
+            // it means the next file
+            if ((percent < m_lastPercent || m_lastPercent >= 100) && m_piece + 1 < m_pieces.size()) ++m_piece;
+            m_lastPercent = percent;
+            qint64 total = 0, before = 0;
+            for (int i = 0; i < m_pieces.size(); ++i) {
+                const qint64 len = Transcript::pieceLength(m_pieces[i]);
+                total += len;
+                if (i < m_piece) before += len;
+            }
+            const qint64 now = Transcript::pieceLength(m_pieces[m_piece]);
+            m_whisper = std::max(m_whisper, total > 0 ? (before + now * percent / 100.0) / double(total) : 0.0);
+        } else {
+            m_whisper = std::max(m_whisper, percent / 100.0);
+        }
         beat();
     });
     m_beat.setInterval(250);
@@ -109,6 +125,28 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         if (!m_running) return;
         if (m_cancelled) return done(false, T("Abgebrochen"));
+        if (m_stage == 3) {
+            // Voice detection: speech segments -> pieces; anything wrong with it -> the whole sound at once
+            const QString out = QString::fromUtf8(m_process.readAllStandardOutput());
+            const QVector<QPair<qint64, qint64>> segments =
+                status == QProcess::NormalExit && code == 0 ? parseSpeechSegments(out) : QVector<QPair<qint64, qint64>>{};
+            const qint64 lengthMs = qint64(m_audioSeconds * 1000);
+            m_pieces = segments.isEmpty() ? QVector<Transcript::Piece>{} : Transcript::speechPieces(segments, lengthMs);
+            QString error;
+            if (!m_pieces.isEmpty() && !writePieces(&error)) {
+                qInfo("Whisper: pieces not written (%s), the whole sound at once", qPrintable(error));
+                m_pieces.clear();
+            }
+            // Automatic language with pieces: whisper would detect it again on every short piece (a laugh heard as
+            // another language): once first, on the longest piece
+            if (!m_pieces.isEmpty() && m_language == QLatin1String("auto")) return detectLanguageFirst();
+            return runWhisper();
+        }
+        if (m_stage == 4) {
+            static const QRegularExpression re("auto-detected language:\\s*([a-z]+)");
+            if (const auto m = re.match(QString::fromUtf8(m_log)); m.hasMatch()) m_language = m.captured(1);
+            return runWhisper(); // nothing detected: auto as before
+        }
         if (m_stage == 2) {
             // "auto-detected language: en (p = 0.976562)"; a failed check never fails the transcript
             static const QRegularExpression re("auto-detected language:\\s*([a-z]+)\\s*\\(p\\s*=\\s*([0-9.]+)\\)");
@@ -129,16 +167,21 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
                 m_log.clear();
                 return runWhisper();
             }
+            // With DTW word times (a model file named like one whose alignment heads it lacks): once more without
+            if (m_stage == 1 && m_usedDtw && !m_noDtw) {
+                qInfo("Whisper failed with DTW word times (exit %d), again without: %s", code, qPrintable(tail.right(200)));
+                m_noDtw = true;
+                m_log.clear();
+                return runWhisper();
+            }
             return done(false, m_stage == 0 ? T("Ton konnte nicht gelesen werden: %1").arg(tail)
                                             : T("Whisper ist fehlgeschlagen: %1").arg(tail));
         }
-        if (m_stage == 0) return runWhisper();
+        if (m_stage == 0) return detectSpeech();
         m_beat.stop();
-        if (m_clock.isValid() && m_audioSeconds > 0) measured(m_speedModel, m_audioSeconds, m_clock.elapsed() / 1000.0);
-        QFile json(m_tmp->filePath("out.json"));
-        if (!json.open(QIODevice::ReadOnly)) return done(false, T("Whisper hat kein Ergebnis geschrieben: %1").arg(tail));
+        if (m_clock.isValid() && m_audioSeconds > 0) measured(m_speedModel, whisperWork(), m_clock.elapsed() / 1000.0);
         QString error;
-        if (!Transcript::parseWhisperJson(json.readAll(), &m_result, &error)) return done(false, error);
+        if (!readResult(&error)) return done(false, error.isEmpty() ? T("Whisper hat kein Ergebnis geschrieben: %1").arg(tail) : error);
         m_result.levels = wavLevels(m_tmp->filePath("audio.wav"));
         // Silence: whatever whisper wrote is made up; else its well-known made-up lines go
         if (Transcript::isSilent(m_result.levels)) {
@@ -147,6 +190,7 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         } else {
             m_result.dropped = Transcript::dropHallucinations(m_result.words, m_result.levels);
         }
+        if (!m_prompt.isEmpty() && !m_request.verbatim) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_prompt);
         Transcript::fitToSpeech(m_result.words, m_result.levels);
         const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
         // A chosen language is what whisper wrote in; it reports "en" when it heard nothing
@@ -159,8 +203,15 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         // directory that is gone). Before Transcriber::start returned, that was swallowed (m_running still false)
         // and the caller waited for finished() forever; from there finished() came before start() returned true.
         if (e == QProcess::FailedToStart && m_running)
-            QTimer::singleShot(0, this, [this, program = m_process.program()] {
-                if (m_running) done(false, T("%1 konnte nicht gestartet werden.").arg(program));
+            QTimer::singleShot(0, this, [this, program = m_process.program(), stage = m_stage] {
+                if (!m_running) return;
+                // The voice detection or the first language detection are helpers: without them, as before
+                if (stage == 3) {
+                    m_pieces.clear();
+                    return runWhisper();
+                }
+                if (stage == 4) return runWhisper();
+                done(false, T("%1 konnte nicht gestartet werden.").arg(program));
             });
     });
 }
@@ -198,6 +249,9 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     m_cancelled = false;
     m_stage = 0;
     m_cpuOnly = false;
+    m_noDtw = false;
+    m_pieces.clear();
+    m_language = request.language.isEmpty() ? QString("auto") : request.language;
     m_running = true; // a failed start below is reported through finished() (see errorOccurred)
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
@@ -240,7 +294,7 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
             if (!m_running) return;
             if (m_cancelled) return done(false, T("Abgebrochen"));
             if (!ok) return done(false, T("Ton der Timeline konnte nicht erzeugt werden: %1").arg(message));
-            runWhisper();
+            detectSpeech();
         });
         QString exportError;
         if (!m_exporter->start(tl, s, &exportError)) {
@@ -252,16 +306,116 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     return true;
 }
 
+void Transcriber::detectSpeech()
+{
+    // 16 kHz mono 16 bit: 32000 bytes a second after the 44-byte header
+    m_audioSeconds = std::max<qint64>(0, QFileInfo(m_tmp->filePath("audio.wav")).size() - 44) / 32000.0;
+    m_pieces.clear();
+    const QString program = Extensions::whisperVadProgram(), vad = Extensions::whisperVadModel();
+    // Music: voice detection hears no speech in a song (see runWhisper); without the program or its model: at once
+    if (m_request.music || program.isEmpty() || vad.isEmpty() || !QFile::exists(vad)) return runWhisper();
+    m_stage = 3;
+    m_log.clear();
+    m_process.setWorkingDirectory(m_tmp->path());
+    Extensions::provideRuntime(program);
+    // Threshold 0.35 instead of 0.5: keeps quiet or laughed words (measured: "Diese Scheiß-Pferd" instead of "Das");
+    // a segment longer than 25 s is split (a piece stays within whisper's 30 s window)
+    const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
+    m_process.start(program, {"-vm", narrowSafePath(vad), "-f", "audio.wav", "-vt", "0.35", "-vmsd", "25", "-t",
+                              QString::number(std::min(threads, 4)), "-np"});
+}
+
+bool Transcriber::writePieces(QString* error)
+{
+    QFile in(m_tmp->filePath("audio.wav"));
+    if (!in.open(QIODevice::ReadOnly)) {
+        *error = in.errorString();
+        return false;
+    }
+    const QByteArray d = in.readAll();
+    // The data chunk of the 16 kHz mono 16-bit WAV (ffmpeg or the Exporter wrote it)
+    qsizetype data = -1, size = 0;
+    for (qsizetype at = 12; at + 8 <= d.size();) {
+        const qsizetype len = qsizetype(quint32(uchar(d[at + 4]) | uchar(d[at + 5]) << 8 | uchar(d[at + 6]) << 16
+                                                | quint32(uchar(d[at + 7])) << 24));
+        if (d.mid(at, 4) == "data") {
+            data = at + 8;
+            size = std::min(len, d.size() - data);
+            break;
+        }
+        at += 8 + len + (len & 1);
+    }
+    if (data < 0 || !d.startsWith("RIFF")) {
+        *error = "no PCM data";
+        return false;
+    }
+    constexpr qint64 kBytesPerMs = 32; // 16000 samples/s, 2 bytes
+    for (int i = 0; i < m_pieces.size(); ++i) {
+        // The stretches one after the other, silence (zeros) for the cut-short pauses between them
+        QByteArray pcm(qsizetype(Transcript::pieceLength(m_pieces[i]) * kBytesPerMs), '\0');
+        for (const Transcript::PieceSpan& s : m_pieces[i]) {
+            const qint64 from = std::min<qint64>(s.from * kBytesPerMs, size);
+            const qint64 to = std::min<qint64>((s.from + s.length) * kBytesPerMs, size);
+            if (to > from) pcm.replace(qsizetype(s.at * kBytesPerMs), qsizetype(to - from), d.mid(data + from, to - from));
+        }
+        QByteArray header("RIFF");
+        const auto u32 = [&header](quint32 v) { for (int k = 0; k < 4; ++k) header += char((v >> (8 * k)) & 0xff); };
+        const auto u16 = [&header](quint16 v) { header += char(v & 0xff); header += char(v >> 8); };
+        u32(quint32(36 + pcm.size()));
+        header += "WAVEfmt ";
+        u32(16);
+        u16(1);     // PCM
+        u16(1);     // mono
+        u32(16000); // rate
+        u32(32000); // bytes per second
+        u16(2);     // block align
+        u16(16);    // bits
+        header += "data";
+        u32(quint32(pcm.size()));
+        QFile out(m_tmp->filePath(QString("piece_%1.wav").arg(i, 3, 10, QChar('0'))));
+        if (!out.open(QIODevice::WriteOnly) || out.write(header + pcm) != header.size() + pcm.size()) {
+            *error = out.errorString();
+            return false;
+        }
+    }
+    return true;
+}
+
+double Transcriber::whisperWork() const
+{
+    if (m_pieces.size() <= 1) return m_audioSeconds;
+    // Every piece costs about one 30 s window, however short
+    double work = 0;
+    for (const auto& p : m_pieces) work += std::max(Transcript::pieceLength(p) / 1000.0, kWindow);
+    return work;
+}
+
+void Transcriber::detectLanguageFirst()
+{
+    m_stage = 4;
+    m_log.clear();
+    int longest = 0;
+    for (int i = 1; i < m_pieces.size(); ++i)
+        if (Transcript::pieceLength(m_pieces[i]) > Transcript::pieceLength(m_pieces[longest])) longest = i;
+    const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
+    QStringList args{"-m", narrowSafePath(m_request.model), "-f", QString("piece_%1.wav").arg(longest, 3, 10, QChar('0')),
+                     "-t", QString::number(threads), "-l", "auto", "-dl"};
+    if (m_cpuOnly) args << "-ng";
+    m_process.setWorkingDirectory(m_tmp->path());
+    Extensions::provideRuntime(Extensions::whisperProgram());
+    m_process.start(Extensions::whisperProgram(), args);
+}
+
 void Transcriber::runWhisper()
 {
     m_stage = 1;
     emit progress(kAudioShare);
-    // 16 kHz mono 16 bit: 32000 bytes a second after the 44-byte header
     m_audioSeconds = std::max<qint64>(0, QFileInfo(m_tmp->filePath("audio.wav")).size() - 44) / 32000.0;
     // The speed is remembered apart for the graphics card (about 10x faster than the CPU)
     m_speedModel = m_request.model + (!m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty() ? "@gpu" : "");
-    m_expected = whisperSeconds(m_speedModel, m_audioSeconds);
+    m_expected = whisperSeconds(m_speedModel, whisperWork());
     m_whisper = m_shown = 0;
+    m_piece = m_lastPercent = 0;
     m_clock.start();
     m_beat.start();
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
@@ -269,27 +423,103 @@ void Transcriber::runWhisper()
     // Files by name in whisper's working directory (the temporary folder): whisper-cli reads its arguments in the
     // ANSI code page on Windows, a temp folder under a user name with other letters became '?'
     m_process.setWorkingDirectory(m_tmp->path());
-    QStringList args{"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t", QString::number(threads), "-l",
-                     m_request.language.isEmpty() ? QString("auto") : m_request.language, "-ml", "1", "-sow", "-oj",
-                     "-of", "out", "-np", "-pp"};
-    // Without voice detection whisper puts the first words of a passage at the start of a pause before it
-    // Threshold 0.35 instead of 0.5: keeps quiet or laughed words (measured: "Diese Scheiß-Pferd" instead of "Das")
-    // Music: voice detection hears no speech in a song (nothing found in a whole track, the shouted title and the
-    // singing without it); without the previous text as context whisper does not loop on repeated lines
+    QStringList args{"-m", narrowSafePath(m_request.model), "-t", QString::number(threads), "-l", m_language, "-ml", "1",
+                     "-sow", "-np", "-pp"};
+    // Word times from DTW (the attention of the model's alignment heads; needs flash attention off): whisper's own
+    // times hand a laugh or pause before a sentence to its first word ("Was bist du?" 2.4 s early, measured 20.11.)
+    // Not with whisper's own voice detection (the whole sound at once): its DTW times count in the sound with the pauses
+    // cut out and are not mapped back (a 6 min track came out squeezed to two thirds, measured 20.11.)
+    const QString vadModel = Extensions::whisperVadModel();
+    const bool ownVad = m_pieces.isEmpty() && !m_request.music && !vadModel.isEmpty();
+    const QString dtw = m_noDtw || ownVad ? QString() : dtwPreset(m_request.model);
+    m_usedDtw = !dtw.isEmpty();
+    if (m_usedDtw) args << "-ojf" << "-nfa" << "-dtw" << dtw;
+    else args << "-oj";
     // Verbatim: a starting text full of hesitation sounds, so whisper keeps writing them (it leaves them out otherwise)
     m_promptNote.clear();
-    if (m_request.verbatim)
-        if (const QString prompt = verbatimPromptFor(m_request.language, fitsCodePage, &m_promptNote); !prompt.isEmpty())
-            args << "--prompt" << prompt;
+    m_prompt.clear();
+    if (m_request.verbatim) m_prompt = verbatimPromptFor(m_language, fitsCodePage, &m_promptNote);
+    else if (const QString p = punctuationPrompt(m_language); !p.isEmpty() && fitsCodePage(p)) m_prompt = p;
+    if (!m_prompt.isEmpty()) args << "--prompt" << m_prompt;
     if (m_cpuOnly) args << "-ng";
     const QString gpu = m_cpuOnly ? QString() : Extensions::whisperGpuBackend();
-    qInfo("Whisper: %s, %s", qPrintable(QFileInfo(m_request.model).fileName()),
-          gpu.isEmpty() ? "CPU" : qPrintable("GPU (" + QFileInfo(gpu).fileName() + ")"));
-    if (m_request.music) args << "-mc" << "0";
-    else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
-        args << "--vad" << "-vm" << narrowSafePath(vad) << "-vt" << "0.35";
+    qInfo("Whisper: %s, %s, %s", qPrintable(QFileInfo(m_request.model).fileName()),
+          gpu.isEmpty() ? "CPU" : qPrintable("GPU (" + QFileInfo(gpu).fileName() + ")"),
+          m_pieces.isEmpty() ? "the whole sound" : qPrintable(QString("%1 pieces of speech").arg(m_pieces.size())));
+    if (!m_pieces.isEmpty()) {
+        // Speech pieces, each within whisper's 30 s window (the whole sound at once skipped a sentence now and then,
+        // and its voice detection glued the speech together: times mapped back across the cut-out pauses drifted);
+        // one run, the model loaded once; whisper writes piece_000.wav.json …
+        for (int i = 0; i < m_pieces.size(); ++i) args << QString("piece_%1.wav").arg(i, 3, 10, QChar('0'));
+    } else {
+        args << "-f" << "audio.wav" << "-of" << "out";
+        // Without voice detection whisper puts the first words of a passage at the start of a pause before it
+        // Music: voice detection hears no speech in a song (nothing found in a whole track, the shouted title and the
+        // singing without it); without the previous text as context whisper does not loop on repeated lines
+        if (m_request.music) args << "-mc" << "0";
+        else if (ownVad) args << "--vad" << "-vm" << narrowSafePath(vadModel) << "-vt" << "0.35";
+    }
     Extensions::provideRuntime(Extensions::whisperProgram()); // installed before the package carried it
     m_process.start(Extensions::whisperProgram(), args);
+}
+
+bool Transcriber::readResult(QString* error)
+{
+    m_result.words.clear();
+    m_result.language.clear();
+    if (m_pieces.isEmpty()) {
+        QFile json(m_tmp->filePath("out.json"));
+        if (!json.open(QIODevice::ReadOnly)) return false;
+        return Transcript::parseWhisperJson(json.readAll(), &m_result, error);
+    }
+    for (int i = 0; i < m_pieces.size(); ++i) {
+        QFile json(m_tmp->filePath(QString("piece_%1.wav.json").arg(i, 3, 10, QChar('0'))));
+        if (!json.open(QIODevice::ReadOnly)) return false;
+        const Transcript::Piece& piece = m_pieces[i];
+        if (!Transcript::appendWhisperJson(json.readAll(),
+                                           [&piece](qint64 t, bool end) { return Transcript::pieceTime(piece, t, end); },
+                                           &m_result, error))
+            return false;
+    }
+    return true;
+}
+
+QString Transcriber::dtwPreset(const QString& model)
+{
+    // ggml-<name>[-q5_0].bin; whisper.cpp's presets: tiny(.en), base(.en), small(.en), medium(.en), large.v1/v2/v3,
+    // large.v3.turbo
+    const QString n = QFileInfo(model).fileName().toLower();
+    // Distilled models have fewer decoder layers than the preset's alignment heads name: whisper would not start
+    if (n.contains("distil")) return {};
+    if (n.contains("large-v3-turbo")) return "large.v3.turbo";
+    if (n.contains("large-v3")) return "large.v3";
+    if (n.contains("large-v2")) return "large.v2";
+    if (n.contains("large-v1") || n.contains("ggml-large.") || n.contains("ggml-large-q")) return "large.v1";
+    for (const char* size : {"medium", "small", "base", "tiny"}) {
+        if (n.contains(QString("ggml-%1.en").arg(size))) return QString("%1.en").arg(size);
+        if (n.contains(QString("ggml-%1.").arg(size)) || n.contains(QString("ggml-%1-").arg(size))) return size;
+    }
+    return {};
+}
+
+QString Transcriber::punctuationPrompt(const QString& language)
+{
+    const QString lang = language.trimmed().toLower().left(2);
+    if (lang == QLatin1String("de")) return QStringLiteral("Hallo, wie geht's? Gut, und dir? Ja, passt.");
+    if (lang == QLatin1String("en")) return QStringLiteral("Hello, how are you? Good, and you? Yeah, fine.");
+    return {};
+}
+
+QVector<QPair<qint64, qint64>> Transcriber::parseSpeechSegments(const QString& output)
+{
+    static const QRegularExpression re("start\\s*=\\s*([0-9.]+)\\s*,\\s*end\\s*=\\s*([0-9.]+)");
+    QVector<QPair<qint64, qint64>> segments;
+    for (auto it = re.globalMatch(output); it.hasNext();) {
+        const auto m = it.next();
+        const qint64 from = qint64(std::llround(m.captured(1).toDouble() * 10)), to = qint64(std::llround(m.captured(2).toDouble() * 10));
+        if (to > from) segments << qMakePair(from, to);
+    }
+    return segments;
 }
 
 void Transcriber::runDetection()

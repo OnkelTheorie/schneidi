@@ -29,7 +29,43 @@ struct Result {
 };
 
 // whisper-cli JSON output (-oj) of a run with one word per segment (-ml 1 -sow). false = not readable.
+// With the full output (-ojf) of a run with DTW token times (-dtw), a word starts at its first token's DTW time: far
+// closer to the sound than whisper's own segment times (which hand a pause or a laugh before a sentence to its first
+// word).
 bool parseWhisperJson(const QByteArray& json, Result* out, QString* error = nullptr);
+// The same, appended to out->words; `map` turns whisper's times (ms in the piece of sound it heard) into times of the
+// whole sound (speechPieces). The words stay in time order (pieces in order). out->language is set by the first
+// piece that names one.
+// map(t, end): `end` = the time is a word's end (a cut-short pause maps to the stretch before it, a start to the one
+// after it).
+bool appendWhisperJson(const QByteArray& json, const std::function<qint64(qint64, bool)>& map, Result* out,
+                       QString* error = nullptr);
+
+// A piece of sound for whisper: stretches of the whole sound (ms) one after the other, `at` = where a stretch starts
+// in the piece; between two stretches the piece is silent (a long pause cut short).
+struct PieceSpan {
+    qint64 at = 0, from = 0, length = 0;
+};
+using Piece = QVector<PieceSpan>;
+qint64 pieceLength(const Piece& piece);
+// Time in the piece -> time in the whole sound; in a cut-short pause: the start of the stretch after it, or for an
+// end (`end`) the end of the stretch before it (a word's end there would else last over the whole real pause)
+qint64 pieceTime(const Piece& piece, qint64 t, bool end = false);
+
+// The pieces whisper works on one at a time: the speech segments (ms, from voice detection), each padded by up to
+// `padMs` (never past the middle of the pause to its neighbour); a pause up to `maxGapMs` stays as it is, a longer one
+// shrinks to `silenceMs` of silence; a piece is filled with whole segments up to `maxMs` (never cut inside a segment:
+// a word across the cut was lost). Within whisper's 30 s window: a longer sound it transcribes in several windows and
+// skipped a sentence at a window's end now and then, and every piece costs a whole window however short (packing
+// them: 3 min of chat in 5 pieces instead of 33). Only a single segment longer than `maxMs` is split (the voice
+// detection already splits at 25 s).
+QVector<Piece> speechPieces(const QVector<QPair<qint64, qint64>>& segments, qint64 lengthMs, qint64 maxGapMs = 1000,
+                            qint64 maxMs = 28000, qint64 padMs = 200, qint64 silenceMs = 400);
+
+// Words that only repeat whisper's starting text (`prompt`, e.g. "Hallo, wie geht's?" in silence): removed; returns
+// how many
+int dropPromptEcho(QVector<Word>& words, const QString& prompt);
+
 
 // Words -> subtitle cues (timeline frames, `offset` added): a cue ends after a sentence, before a pause longer than
 // `maxGapMs` or before it would get longer than `maxChars`; long pauses are not shown (a word lasts at most

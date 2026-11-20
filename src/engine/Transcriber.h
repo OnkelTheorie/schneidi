@@ -84,14 +84,26 @@ public:
     static double whisperSeconds(const QString& model, double audioSeconds);
     // A run took `seconds` for `audioSeconds`: remembered for whisperSeconds (mixed with the earlier measurements)
     static void measured(const QString& model, double audioSeconds, double seconds);
+    // whisper's DTW preset for word times of a model file ("ggml-large-v3-q5_0.bin" -> "large.v3"); empty = unknown
+    static QString dtwPreset(const QString& model);
+    // Speech segments (ms) in the output of whisper-vad-speech-segments ("start = 151.00, end = 195.00", 1/100 s)
+    static QVector<QPair<qint64, qint64>> parseSpeechSegments(const QString& output);
+    // A short starting text with punctuation in the language (de, en; empty otherwise): without it whisper wrote whole
+    // pieces of fast chat in lower case without a comma (measured 20.11.)
+    static QString punctuationPrompt(const QString& language);
 
 signals:
     void progress(double fraction); // 0..1
     void finished(bool ok, const QString& error); // ok: result() holds the words (times from the start of the source)
 
 private:
+    void detectSpeech();     // stage 3: voice detection -> pieces (or straight to runWhisper without it)
+    bool writePieces(QString* error);
+    void detectLanguageFirst(); // stage 4
     void runWhisper();
     void runDetection();
+    bool readResult(QString* error); // whisper's output files -> m_result.words
+    double whisperWork() const; // seconds of sound whisper works through (pieces: a window each)
     void done(bool ok, const QString& error);
     void beat();
 
@@ -102,7 +114,16 @@ private:
     QByteArray m_log;
     bool m_running = false;
     bool m_cancelled = false;
-    int m_stage = 0; // 0 = audio, 1 = whisper, 2 = language detection
+    // 0 = audio, 3 = voice detection, 4 = language first (auto, pieces), 1 = whisper, 2 = language check
+    int m_stage = 0;
+    QString m_language;    // the language whisper is told: the request's, or the one detected first (auto + pieces)
+    bool m_noDtw = false;  // a run with DTW word times failed (a model whose alignment heads do not fit): without
+    bool m_usedDtw = false; // the whisper run under way has DTW times
+    // The speech in pieces (Transcript::speechPieces, ms of audio.wav) whisper transcribes one by one in one run
+    // (piece_000.wav …); empty = the whole sound at once.
+    QVector<Transcript::Piece> m_pieces;
+    QString m_prompt; // the starting text whisper got (its echo is removed)
+    int m_piece = 0, m_lastPercent = 0; // piece whisper works on now (its progress restarts per file)
     QString m_speedModel; // model file (+ "@gpu"): the key of its measured speed (whisperSeconds)
     bool m_cpuOnly = false; // whisper failed on the graphics card: this request runs on the CPU (-ng)
     Transcript::Result m_result;

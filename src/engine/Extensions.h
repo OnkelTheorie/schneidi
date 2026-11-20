@@ -74,6 +74,9 @@ QString whisperVadModel(); // empty = not installed (transcribing works without,
 // A GPU backend of ggml beside whisper's program (Vulkan, CUDA): whisper-cli loads it by itself and computes on the
 // graphics card; empty = none (CPU only)
 QString whisperGpuBackend();
+// whisper.cpp's voice detection program beside whisper-cli (whisper-vad-speech-segments): the speech segments of a
+// sound, for transcribing it piece by piece; empty = not there (older or other builds)
+QString whisperVadProgram();
 // Installed models, best first (ids)
 QStringList installedWhisperModels();
 // Model file for an id or a path; empty id = best installed. Empty result = not installed.

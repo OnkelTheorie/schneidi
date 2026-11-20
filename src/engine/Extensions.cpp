@@ -488,6 +488,14 @@ QString whisperGpuBackend()
     return {};
 }
 
+QString whisperVadProgram()
+{
+    const QString program = whisperProgram();
+    if (program.isEmpty()) return {};
+    // findExecutable adds ".exe" on Windows
+    return QStandardPaths::findExecutable("whisper-vad-speech-segments", {QFileInfo(program).absolutePath()});
+}
+
 QString whisperVadModel()
 {
     const Item* i = find("whisper-vad");

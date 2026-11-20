@@ -14,7 +14,19 @@
 
 namespace Transcript {
 
+namespace {
+qint64 spokenLength(const Word& w) { return 250 + 70 * qint64(w.text.size()); }
+}
+
 bool parseWhisperJson(const QByteArray& json, Result* out, QString* error)
+{
+    out->language.clear();
+    out->words.clear();
+    return appendWhisperJson(json, [](qint64 t, bool) { return t; }, out, error);
+}
+
+bool appendWhisperJson(const QByteArray& json, const std::function<qint64(qint64, bool)>& map, Result* out,
+                       QString* error)
 {
     QJsonParseError err;
     const QJsonDocument doc = QJsonDocument::fromJson(json, &err);
@@ -23,24 +35,144 @@ bool parseWhisperJson(const QByteArray& json, Result* out, QString* error)
         return false;
     }
     const QJsonObject root = doc.object();
-    out->language = root["result"].toObject()["language"].toString();
-    out->words.clear();
+    if (out->language.isEmpty()) out->language = root["result"].toObject()["language"].toString();
+    const qsizetype first = out->words.size();
     for (const QJsonValue& v : root["transcription"].toArray()) {
         const QJsonObject seg = v.toObject();
         const QString text = seg["text"].toString().trimmed();
         if (text.isEmpty() || (text.startsWith('[') && text.endsWith(']'))) continue; // pause, [_BEG_], [Music]
         const QJsonObject off = seg["offsets"].toObject();
-        Word w{qint64(off["from"].toDouble()), qint64(off["to"].toDouble()), text};
+        qint64 from = qint64(off["from"].toDouble());
+        const qint64 to = qint64(off["to"].toDouble());
+        // DTW (-dtw, full output -ojf): the first real token's time, in 10 ms steps; -1 = none
+        for (const QJsonValue& t : seg["tokens"].toArray()) {
+            const QJsonObject token = t.toObject();
+            if (token["text"].toString().startsWith('[')) continue; // [_BEG_], [_TT_123]
+            const double dtw = token["t_dtw"].toDouble(-1);
+            if (dtw >= 0) from = qint64(dtw * 10);
+            break;
+        }
+        Word w{map(from, false), map(std::max(from, to), true), text};
         if (w.to < w.from) w.to = w.from;
         // Punctuation that whisper split off ("," as its own word) belongs to the word before
-        if (!out->words.isEmpty() && text.size() <= 2 && !text.at(0).isLetterOrNumber()) {
+        if (out->words.size() > first && text.size() <= 2 && !text.at(0).isLetterOrNumber()) {
             out->words.last().text += text;
             out->words.last().to = std::max(out->words.last().to, w.to);
             continue;
         }
         out->words << w;
     }
+    // DTW starts can pass whisper's own ends: a word lasts at least until the next one starts, never past it
+    for (qsizetype i = first; i + 1 < out->words.size(); ++i) {
+        Word& w = out->words[i];
+        const qint64 next = out->words[i + 1].from;
+        if (next < w.from) out->words[i + 1].from = w.from; // DTW is monotonic in practice; keep the order anyway
+        w.to = std::clamp(w.to, w.from, std::max(w.from, out->words[i + 1].from));
+    }
+    if (out->words.size() > first) out->words.last().to = std::max(out->words.last().to, out->words.last().from);
     return true;
+}
+
+qint64 pieceLength(const Piece& piece)
+{
+    return piece.isEmpty() ? 0 : piece.last().at + piece.last().length;
+}
+
+qint64 pieceTime(const Piece& piece, qint64 t, bool end)
+{
+    for (qsizetype i = 0; i < piece.size(); ++i) {
+        const PieceSpan& s = piece[i];
+        if (t < s.at) { // in the silence before this stretch
+            if (end && i > 0) return piece[i - 1].from + piece[i - 1].length;
+            return s.from;
+        }
+        if (t <= s.at + s.length) return s.from + (t - s.at);
+    }
+    return piece.isEmpty() ? t : piece.last().from + piece.last().length;
+}
+
+QVector<Piece> speechPieces(const QVector<QPair<qint64, qint64>>& segments, qint64 lengthMs, qint64 maxGapMs,
+                            qint64 maxMs, qint64 padMs, qint64 silenceMs)
+{
+    QVector<QPair<qint64, qint64>> segs;
+    for (auto [from, to] : segments) {
+        from = std::clamp<qint64>(from, 0, lengthMs);
+        to = std::clamp<qint64>(to, from, lengthMs);
+        if (to > from) segs << qMakePair(from, to);
+    }
+    // Padded segments, never past the middle of the pause to a neighbour; one longer than a piece is split (the voice
+    // detection already splits at 25 s)
+    QVector<QPair<qint64, qint64>> padded;
+    QVector<qint64> gapBefore; // the real pause before each padded segment (0 inside a split one)
+    for (qsizetype i = 0; i < segs.size(); ++i) {
+        qint64 from = std::max<qint64>(0, segs[i].first - padMs);
+        qint64 to = std::min(lengthMs, segs[i].second + padMs);
+        if (i > 0) from = std::max(from, (segs[i - 1].second + segs[i].first) / 2);
+        if (i + 1 < segs.size()) to = std::min(to, (segs[i].second + segs[i + 1].first) / 2);
+        qint64 gap = i > 0 ? segs[i].first - segs[i - 1].second : 0;
+        while (to - from > maxMs) {
+            padded << qMakePair(from, from + maxMs);
+            gapBefore << gap;
+            from += maxMs;
+            gap = 0;
+        }
+        padded << qMakePair(from, to);
+        gapBefore << gap;
+    }
+    // The spans of padded[a, b): a short pause stays, a long one shrinks to silenceMs
+    const auto build = [&](qsizetype a, qsizetype b) {
+        Piece p;
+        for (qsizetype k = a; k < b; ++k) {
+            const auto [from, to] = padded[k];
+            if (!p.isEmpty() && from - (p.last().from + p.last().length) <= maxGapMs)
+                p.last().length = to - p.last().from;
+            else
+                p << PieceSpan{p.isEmpty() ? 0 : pieceLength(p) + silenceMs, from, to - from};
+        }
+        return p;
+    };
+    QVector<Piece> pieces;
+    for (qsizetype start = 0; start < padded.size();) {
+        // As many whole segments as fit
+        qsizetype end = start + 1;
+        while (end < padded.size() && pieceLength(build(start, end + 1)) <= maxMs) ++end;
+        if (end < padded.size()) {
+            // Full: cut at the longest pause in its second half (between two sentences rather than inside one -
+            // "Was" | "bist du?" heard in two pieces lost its place)
+            qsizetype cut = end;
+            for (qsizetype c = start + 1; c <= end; ++c)
+                if (pieceLength(build(start, c)) >= maxMs / 2 && gapBefore[c] > gapBefore[cut]) cut = c;
+            end = cut;
+        }
+        pieces << build(start, end);
+        start = end;
+    }
+    return pieces;
+}
+
+int dropPromptEcho(QVector<Word>& words, const QString& prompt)
+{
+    const auto plain = [](QString t) {
+        t = t.toLower();
+        t.removeIf([](QChar c) { return !c.isLetterOrNumber(); });
+        return t;
+    };
+    QStringList echo;
+    for (const QString& w : prompt.split(' ', Qt::SkipEmptyParts))
+        if (const QString p = plain(w); !p.isEmpty()) echo << p;
+    if (echo.size() < 2) return 0;
+    int dropped = 0;
+    for (qsizetype i = 0; i + echo.size() <= words.size();) {
+        bool same = true;
+        for (qsizetype k = 0; k < echo.size() && same; ++k) same = plain(words[i + k].text) == echo[k];
+        if (!same) {
+            ++i;
+            continue;
+        }
+        words.remove(i, echo.size());
+        dropped += int(echo.size());
+    }
+    return dropped;
 }
 
 qint64 spokenEnd(const Word& w)
@@ -49,9 +181,6 @@ qint64 spokenEnd(const Word& w)
     return std::min(w.to, w.from + 250 + 70 * qint64(w.text.size()));
 }
 
-namespace {
-qint64 spokenLength(const Word& w) { return 250 + 70 * qint64(w.text.size()); }
-}
 
 Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs)
 {
