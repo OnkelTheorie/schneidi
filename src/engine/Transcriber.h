@@ -103,6 +103,7 @@ private:
     bool m_running = false;
     bool m_cancelled = false;
     int m_stage = 0; // 0 = audio, 1 = whisper, 2 = language detection
+    bool m_cpuOnly = false; // whisper failed on the graphics card: this request runs on the CPU (-ng)
     Transcript::Result m_result;
     QString m_promptNote;
     QString m_detected;

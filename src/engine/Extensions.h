@@ -71,6 +71,9 @@ QString missingRuntimeHint(int exitCode);
 // whisper-cli to use: the installed one, else one on PATH; empty = none
 QString whisperProgram();
 QString whisperVadModel(); // empty = not installed (transcribing works without, word times are worse)
+// A GPU backend of ggml beside whisper's program (Vulkan, CUDA): whisper-cli loads it by itself and computes on the
+// graphics card; empty = none (CPU only)
+QString whisperGpuBackend();
 // Installed models, best first (ids)
 QStringList installedWhisperModels();
 // Model file for an id or a path; empty id = best installed. Empty result = not installed.

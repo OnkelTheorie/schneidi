@@ -473,6 +473,21 @@ QString whisperProgram()
     return QStandardPaths::findExecutable("whisper-cli");
 }
 
+QString whisperGpuBackend()
+{
+    const QString program = whisperProgram();
+    if (program.isEmpty()) return {};
+    const QDir dir = QFileInfo(program).absoluteDir();
+#ifdef Q_OS_WIN
+    const QStringList names{"ggml-vulkan.dll", "ggml-cuda.dll"};
+#else
+    const QStringList names{"libggml-vulkan.so", "libggml-cuda.so"};
+#endif
+    for (const QString& name : names)
+        if (dir.exists(name)) return dir.filePath(name);
+    return {};
+}
+
 QString whisperVadModel()
 {
     const Item* i = find("whisper-vad");

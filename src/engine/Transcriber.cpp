@@ -122,6 +122,13 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         if (status != QProcess::NormalExit || code != 0) {
             if (const QString hint = Extensions::missingRuntimeHint(code); m_stage > 0 && !hint.isEmpty())
                 return done(false, hint);
+            // On the graphics card (a driver that crashes, too little video memory): once more on the CPU
+            if (m_stage == 1 && !m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty()) {
+                qInfo("Whisper failed on the GPU (exit %d), again on the CPU: %s", code, qPrintable(tail.right(200)));
+                m_cpuOnly = true;
+                m_log.clear();
+                return runWhisper();
+            }
             return done(false, m_stage == 0 ? T("Ton konnte nicht gelesen werden: %1").arg(tail)
                                             : T("Whisper ist fehlgeschlagen: %1").arg(tail));
         }
@@ -190,6 +197,7 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     m_log.clear();
     m_cancelled = false;
     m_stage = 0;
+    m_cpuOnly = false;
     m_running = true; // a failed start below is reported through finished() (see errorOccurred)
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
@@ -271,6 +279,10 @@ void Transcriber::runWhisper()
     if (m_request.verbatim)
         if (const QString prompt = verbatimPromptFor(m_request.language, fitsCodePage, &m_promptNote); !prompt.isEmpty())
             args << "--prompt" << prompt;
+    if (m_cpuOnly) args << "-ng";
+    const QString gpu = m_cpuOnly ? QString() : Extensions::whisperGpuBackend();
+    qInfo("Whisper: %s, %s", qPrintable(QFileInfo(m_request.model).fileName()),
+          gpu.isEmpty() ? "CPU" : qPrintable("GPU (" + QFileInfo(gpu).fileName() + ")"));
     if (m_request.music) args << "-mc" << "0";
     else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
         args << "--vad" << "-vm" << narrowSafePath(vad) << "-vt" << "0.35";
@@ -284,8 +296,10 @@ void Transcriber::runDetection()
     m_log.clear(); // the detected language is a log line of whisper (not with -np)
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
     m_process.setWorkingDirectory(m_tmp->path());
-    m_process.start(Extensions::whisperProgram(), {"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t",
-                                                    QString::number(threads), "-l", "auto", "-dl"});
+    QStringList args{"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t", QString::number(threads), "-l",
+                     "auto", "-dl"};
+    if (m_cpuOnly) args << "-ng";
+    m_process.start(Extensions::whisperProgram(), args);
 }
 
 QString Transcriber::verbatimPrompt(const QString& language)
