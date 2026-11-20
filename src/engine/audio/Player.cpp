@@ -122,6 +122,7 @@ struct Player::Impl {
     // The device called back later than its buffer lasts while sound ran: it most likely played silence in between
     // (the sound server starved, not schneidi's feeder). lateMaxNs: the longest such gap since the last report
     std::atomic<int> lateCallbacks{0};
+    std::atomic<bool> steady{false}; // the open device calls back steadily (Device::steadyCallbacks)
     std::atomic<int64_t> lateMaxNs{0};
     // What the log already reported (GUI thread, under `mutex`): pause() reports only what is new
     int reportedUnderruns = 0, reportedLate = 0;
@@ -234,7 +235,7 @@ void Player::Impl::process(float* out, int frames)
     // is sounding (a hard cut without the fade)
     const int64_t until = holdUntil.load(std::memory_order_acquire);
     const int64_t now = nowNs();
-    if (s.sounding && s.prevNow != 0) {
+    if (s.sounding && s.prevNow != 0 && steady.load(std::memory_order_relaxed)) {
         // Sound ran in the callback before: a gap longer than the device's buffer (+ 5 ms of scheduling slack) means
         // the device ran dry in between - a click the feeder never sees
         const int lat = latency.load(std::memory_order_relaxed);
@@ -677,6 +678,8 @@ void Player::Impl::openDevice(bool silent)
     forcedSilence = silent;
     closeDevice(); // the old callback stops first
     cb.prevNow = 0; // the gap to the old device's last callback is no late callback (reopens are logged apart)
+    // Until the new device's own values are known its callbacks are not judged (the old latency would be compared)
+    steady = false;
     silentLimit = std::max<int64_t>(kSilentNs, int64_t(c.buffer) * 6 * 1'000'000'000 / c.rate);
     openedAt = nowNs();
     ++opened;
@@ -685,6 +688,7 @@ void Player::Impl::openDevice(bool silent)
     device = Device::open(c, [this](float* out, int frames) { process(out, frames); }, &error);
     deviceOpened.store(true);
     latency = device->latency();
+    steady = device->steadyCallbacks();
     qInfo("Audio: %s, Latenz %d Samples", qPrintable(device->name()), latency.load());
     std::lock_guard<std::mutex> lock(mutex);
     deviceName = device->name();

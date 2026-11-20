@@ -243,6 +243,10 @@ public:
     int latency() const override { return m_latency; }
     QString name() const override { return m_name; }
     bool fallback() const override { return m_fallback; }
+    bool steadyCallbacks() const override
+    {
+        return m_device && m_maContext.backend != ma_backend_dsound && m_maContext.backend != ma_backend_winmm;
+    }
     void setFallback() { m_fallback = true; }
     int reroutes() const override { return m_reroutes.load(std::memory_order_relaxed); }
     void detach() override

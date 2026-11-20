@@ -134,7 +134,7 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         }
         if (m_stage == 0) return runWhisper();
         m_beat.stop();
-        if (m_clock.isValid() && m_audioSeconds > 0) measured(m_request.model, m_audioSeconds, m_clock.elapsed() / 1000.0);
+        if (m_clock.isValid() && m_audioSeconds > 0) measured(m_speedModel, m_audioSeconds, m_clock.elapsed() / 1000.0);
         QFile json(m_tmp->filePath("out.json"));
         if (!json.open(QIODevice::ReadOnly)) return done(false, T("Whisper hat kein Ergebnis geschrieben: %1").arg(tail));
         QString error;
@@ -258,7 +258,9 @@ void Transcriber::runWhisper()
     emit progress(kAudioShare);
     // 16 kHz mono 16 bit: 32000 bytes a second after the 44-byte header
     m_audioSeconds = std::max<qint64>(0, QFileInfo(m_tmp->filePath("audio.wav")).size() - 44) / 32000.0;
-    m_expected = whisperSeconds(m_request.model, m_audioSeconds);
+    // The speed is remembered apart for the graphics card (about 10x faster than the CPU)
+    m_speedModel = m_request.model + (!m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty() ? "@gpu" : "");
+    m_expected = whisperSeconds(m_speedModel, m_audioSeconds);
     m_whisper = m_shown = 0;
     m_clock.start();
     m_beat.start();
@@ -393,7 +395,12 @@ double Transcriber::whisperSeconds(const QString& model, double audioSeconds)
 {
     double perSecond = QSettings().value(speedKey(model)).toDouble();
     // Guess from the model file: tiny ~0.7, small ~1.8, large-v3-turbo ~4.3 s per second of sound
-    if (perSecond <= 0) perSecond = 0.5 + QFileInfo(model).size() / (150.0 * 1024 * 1024);
+    // (on the graphics card about a tenth: large-v3 0.12 s on a GTX 1070)
+    if (perSecond <= 0) {
+        const bool gpu = model.endsWith(QLatin1String("@gpu"));
+        const QString file = gpu ? model.chopped(4) : model;
+        perSecond = (0.5 + QFileInfo(file).size() / (150.0 * 1024 * 1024)) / (gpu ? 10 : 1);
+    }
     return perSecond * std::max(audioSeconds, kWindow);
 }
 

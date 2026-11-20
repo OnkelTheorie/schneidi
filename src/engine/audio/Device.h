@@ -46,6 +46,10 @@ public:
     // Not what the config asked for: the chosen output is missing (system default instead) or no sound card opened
     // (silence). The player tries to get the asked one back now and then.
     virtual bool fallback() const { return false; }
+    // The device calls back steadily, once a period: a gap longer than its buffer means it played silence. Not so the
+    // timer device (no sound card; Windows wakes it in a ~16 ms grid) and DirectSound/WinMM, which miniaudio polls
+    // (gaps up to 100 ms against 60 ms of buffer without a click, docs/dev/ton.md). Player's dropout log uses it.
+    virtual bool steadyCallbacks() const { return false; }
     // How often the system moved the stream to another output by itself (PipeWire, WASAPI default device)
     virtual int reroutes() const { return 0; }
     // Never call the callback again (at once, from any thread). Closing a vanished device can take long or hang in

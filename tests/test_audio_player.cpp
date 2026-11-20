@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -372,9 +373,15 @@ int main(int argc, char** argv)
         starved->stallFeedForTest(150 + 37 * n);
         sleepMs(450);
     }
-    static QStringList starvedLog; // pause() reports the dropouts in the log (the user's only trace of a click)
-    const QtMessageHandler previousHandler = qInstallMessageHandler(
-        [](QtMsgType, const QMessageLogContext&, const QString& m) { starvedLog << m; });
+    // pause() reports the dropouts in the log (the user's only trace of a click); the feeder and watchdog threads
+    // may log at the same time
+    static QStringList starvedLog;
+    static std::mutex starvedLogMutex;
+    const QtMessageHandler previousHandler =
+        qInstallMessageHandler([](QtMsgType, const QMessageLogContext&, const QString& m) {
+            std::lock_guard<std::mutex> lock(starvedLogMutex);
+            starvedLog << m;
+        });
     starved->pause();
     qInstallMessageHandler(previousHandler);
     sleepMs(100);
