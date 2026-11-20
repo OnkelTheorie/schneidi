@@ -1536,7 +1536,7 @@ const QVector<Command>& commands()
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"language", T::String, "spoken language: de, en, fr, … (default auto = detect; a chosen one is checked "
                                   "against whisper's detection: detected_language + a note when it hears another)"},
-          {"model", T::String, "turbo, small, base, tiny or a model file (default: best installed)"},
+          {"model", T::String, "large, turbo, small, base, tiny or a model file (default: best installed)"},
           {"words", T::Boolean, "also return every word with its time"},
           {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
                                 "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},
@@ -1671,7 +1671,7 @@ const QVector<Command>& commands()
                        "op 'speak'), faces (YuNet face detection for `index`, brings onnxruntime) and cutout (person "
                        "segmentation for the compositing node 'cutout', offered once its download is verified). Without "
                        "arguments: list with sizes and what is installed.",
-         {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
+         {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: large 1.1 GB, turbo 574 MB, "
                                  "small 190 MB, base 60 MB, tiny 32 MB), x264 (72 MB, Windows 90 MB) or "
                                  "piper,de_DE-ramona (piper 26 MB, each voice 63 MB; en_US-ljspeech = English, "
                                  "de_DE-thorsten = clearer German voice, see its licence note) or faces (0.2 MB + "

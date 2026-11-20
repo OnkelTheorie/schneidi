@@ -214,5 +214,16 @@ int main(int argc, char** argv)
         CHECK_EQ(deps[1]->id, QString("whisper-vad"));
     }
     CHECK(Extensions::find("whisper-model-small") != nullptr);
+    // large-v3 (most accurate) is offered first, so the best installed model is picked by default; "large" names it
+    {
+        QStringList models;
+        for (const Extensions::Item& i : Extensions::catalog())
+            if (i.kind == Extensions::Kind::WhisperModel) models << i.id;
+        CHECK_EQ(models.value(0), QString("whisper-model-large"));
+        CHECK_EQ(models.value(1), QString("whisper-model-turbo"));
+        QString unknown;
+        CHECK(Extensions::parseList("large", &unknown).value(0) == Extensions::find("whisper-model-large"));
+        CHECK_EQ(Extensions::find("whisper-model-large")->sha256.size(), 64);
+    }
     return Check::result();
 }
