@@ -878,7 +878,7 @@ void testInspector()
     CHECK(!kinds->isVisibleTo(&insp));
 }
 
-// ---- the box over the viewer: drag inside moves, a side handle sizes around the centre, the knob turns ----
+// ---- the box over the viewer: drag inside moves, a handle sizes from the opposite side (Alt: around the centre), the knob turns ----
 void testOverlay()
 {
     std::printf("overlay\n");
@@ -896,10 +896,10 @@ void testOverlay()
     const QRectF frame(0, 0, 320, 180); // one widget pixel = one project pixel
     const QPointF c = ov.centerPos(frame);
     CHECK(std::abs(c.x() - 160) < 0.01 && std::abs(c.y() - 90) < 0.01);
-    auto drag = [&](QPointF from, QPointF to) {
-        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    auto drag = [&](QPointF from, QPointF to, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, mods);
+        QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, mods);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, mods);
         const bool took = ov.mousePress(&press, frame);
         ov.mouseMove(&move, frame);
         ov.mouseRelease(&release, frame);
@@ -910,9 +910,21 @@ void testOverlay()
     CHECK(s && s->title.posX == 20 && s->title.posY == 10);
     const double w = s->title.shape.width;
     const QPointF right = ov.handlePos(3, frame);
-    CHECK(drag(right, right + QPointF(15, 0)));
+    CHECK(drag(right, right + QPointF(15, 0), Qt::AltModifier)); // Alt: around the centre, both sides move
     s = TimelineOps::findClip(p.timeline(), id);
-    CHECK(s && std::abs(s->title.shape.width - (w + 30)) < 1.01);
+    CHECK(s && std::abs(s->title.shape.width - (w + 30)) < 1.01 && s->title.posX == 20);
+    // A corner without Alt: the opposite corner stays where it was, only the dragged one moves
+    {
+        const double w0 = s->title.shape.width, h0 = s->title.shape.height;
+        const QPointF topLeft = ov.handlePos(0, frame), corner = ov.handlePos(4, frame);
+        CHECK(drag(corner, corner + QPointF(16, 10)));
+        s = TimelineOps::findClip(p.timeline(), id);
+        CHECK(s && std::abs(s->title.shape.width - (w0 + 16)) < 1.01 && std::abs(s->title.shape.height - (h0 + 10)) < 1.01);
+        const QPointF after = ov.handlePos(0, frame), dragged = ov.handlePos(4, frame);
+        std::printf("corner: top left %.1f,%.1f -> %.1f,%.1f\n", topLeft.x(), topLeft.y(), after.x(), after.y());
+        CHECK(std::hypot(after.x() - topLeft.x(), after.y() - topLeft.y()) < 1.01);
+        CHECK(std::hypot(dragged.x() - corner.x() - 16, dragged.y() - corner.y() - 10) < 1.01);
+    }
     const QPointF knob = ov.handlePos(8, frame), centre = ov.centerPos(frame);
     CHECK(drag(knob, centre + QPointF(100, 0))); // to the right of the centre: a quarter turn clockwise
     s = TimelineOps::findClip(p.timeline(), id);

@@ -50,4 +50,5 @@ private:
     int m_clipId = 0;
     QPointF m_press; // project pixels
     double m_startX = 0, m_startY = 0, m_startW = 0, m_startH = 0;
+    QTransform m_startLocal; // the shape's centre and rotation at the press (project pixels)
 };

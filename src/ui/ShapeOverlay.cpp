@@ -182,7 +182,7 @@ bool ShapeOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
     const int part = partAt(e->position(), frame);
     if (part == None) return false;
     QTransform w;
-    if (!transforms(frame, &w, nullptr, nullptr, nullptr)) return false;
+    if (!transforms(frame, &w, &m_startLocal, nullptr, nullptr)) return false;
     const Clip* c = clip();
     const int t = localFrame(*c);
     m_part = part;
@@ -223,17 +223,36 @@ bool ShapeOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         angle += std::round((now - angle) / 360) * 360;
         set({{int(AnimParam::ShapeWidth), std::round(std::hypot(v.x(), v.y()) * 2)}, {int(AnimParam::ShapeRotation), angle}});
     } else {
-        const QPointF q = l.inverted().map(pos); // around the centre
-        const bool sx = kHandles[m_part][0] != 0, sy = kHandles[m_part][1] != 0;
-        double nw = sx ? std::abs(q.x()) * 2 : m_startW, nh = sy ? std::abs(q.y()) * 2 : m_startH;
+        // The opposite side stays where it was (the centre moves by half the change); Alt sizes around the centre.
+        // In the shape's own axes at the press: a turned shape grows along its sides.
+        const QPointF q = m_startLocal.inverted().map(pos);
+        const double gx = kHandles[m_part][0], gy = kHandles[m_part][1];
+        const bool sx = gx != 0, sy = gy != 0;
+        const bool centred = e->modifiers() & Qt::AltModifier;
+        const double ax = centred ? 0.0 : -gx * m_startW / 2, ay = centred ? 0.0 : -gy * m_startH / 2; // the anchor
+        const double fx = centred ? 2.0 : 1.0, fy = fx; // centred: both sides move
+        double nw = sx ? std::abs(q.x() - ax) * fx : m_startW, nh = sy ? std::abs(q.y() - ay) * fy : m_startH;
         if (sx && sy && (e->modifiers() & Qt::ShiftModifier) && m_startW > 0 && m_startH > 0) {
             const double k = std::max(nw / m_startW, nh / m_startH); // keeps its proportions
             nw = m_startW * k;
             nh = m_startH * k;
         }
+        nw = std::round(nw);
+        nh = std::round(nh);
+        // The new centre: half the size from the anchor towards the mouse (dragged past the anchor: the other side)
+        double cx = 0, cy = 0;
+        if (!centred) {
+            if (sx) cx = ax + (q.x() >= ax ? 1 : -1) * nw / 2;
+            if (sy) cy = ay + (q.y() >= ay ? 1 : -1) * nh / 2;
+        }
+        const QPointF d = m_startLocal.map(QPointF(cx, cy)) - m_startLocal.map(QPointF(0, 0));
         QVector<QPair<int, double>> values;
-        if (sx) values.append({int(AnimParam::ShapeWidth), std::round(nw)});
-        if (sy) values.append({int(AnimParam::ShapeHeight), std::round(nh)});
+        if (sx) values.append({int(AnimParam::ShapeWidth), nw});
+        if (sy) values.append({int(AnimParam::ShapeHeight), nh});
+        if (!centred) {
+            values.append({int(AnimParam::TitlePosX), std::round(m_startX + d.x())});
+            values.append({int(AnimParam::TitlePosY), std::round(m_startY - d.y())});
+        }
         set(values);
     }
     return true;
