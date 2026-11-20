@@ -662,6 +662,26 @@ int main(int argc, char** argv)
             }
             if (!CHECK(extraAfter && tail)) std::printf("       %s\n", QJsonDocument(list).toJson().constData());
         }
+        // A weaker loud moment just after the picked one (too close for the spacing): the pick grows towards it, the
+        // weaker one stays offered (switched off), cut to what the grown pick leaves free - never the same footage twice
+        const QString near = Check::makeMedia(
+            dir.filePath("near.mp4"),
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=30", "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,13,13.6),0.9*sin(2*PI*440*t),0)+if(between(t,19.5,20.1),0.5*sin(2*PI*440*t),0)':d=30:s=48000",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!near.isEmpty())) {
+            const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{near}},
+                                                 {"options", QJsonObject{{"length_s", 300}, {"game", "none"}}}});
+            const QJsonArray list = r["session"].toObject()["suggestions"].toArray();
+            bool offered = false;
+            for (const QJsonValue& x : list) {
+                if (x["reason"]["key"].toString() == "fallback_end") continue;
+                if (!x["on"].toBool() && x["from_s"].toDouble() <= 19.6 && x["to_s"].toDouble() >= 19.6) offered = true;
+                for (const QJsonValue& y : list) // no two suggestions share footage
+                    if (y != x) CHECK(!(y["from_s"].toDouble() < x["to_s"].toDouble() - 0.01 && x["from_s"].toDouble() < y["to_s"].toDouble() - 0.01));
+            }
+            if (!CHECK(offered)) std::printf("       %s\n", QJsonDocument(list).toJson().constData());
+        }
         // Translated on the page: the key's German text with the values
         CHECK(Direction::noteText("few_moments", {{"s", 4}, {"target", 60}}, Direction::Lang::Ui).contains("60"));
     }

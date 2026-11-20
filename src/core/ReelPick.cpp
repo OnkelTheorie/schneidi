@@ -83,13 +83,19 @@ QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& d
         std::stable_sort(picked.begin(), picked.end(), [](const Moment& a, const Moment& b) {
             return a.file != b.file ? a.file < b.file : a.from < b.from;
         });
-    // Cuts on the beat: each moment's end moves so the cut after it lands on the nearest beat (within snapS)
+    // Cuts on the beat: each moment's end moves so the cut after it lands on the nearest beat (within snapS), never
+    // past the recording's end nor into a later moment of the same recording (grown moments meet: the footage would
+    // be in the video twice)
     if (o.beats && o.beats->found && o.beats->period > 0) {
         double at = 0;
-        for (Moment& m : picked) {
+        for (int i = 0; i < picked.size(); ++i) {
+            Moment& m = picked[i];
+            double hi = duration(m.file);
+            for (int j = 0; j < picked.size(); ++j)
+                if (j != i && picked[j].file == m.file && picked[j].from >= m.from) hi = std::min(hi, picked[j].from);
             const double end = at + (m.to - m.from);
             const double snapped = Beats::snapToGrid({end}, *o.beats, o.snapS).front();
-            const double to = std::clamp(m.to + snapped - end, m.from + 0.5, duration(m.file));
+            const double to = std::clamp(m.to + snapped - end, std::min(m.from + 0.5, hi), hi);
             m.to = to; // no room in the recording: as close as it gets
             at += m.to - m.from;
         }

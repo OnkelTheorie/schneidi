@@ -136,6 +136,31 @@ int main(int argc, char** argv)
         o.targetS = 0;
         CHECK(std::abs(sum(ReelPick::pick(kills, d, o)) - 16) < 1e-6);
     }
+    // ---- Grown moments of one recording meet halfway; a cut moved onto the beat never runs into the next one
+    // (kills at 10-14 and 20-24 s grow to 4-17 and 17-28: A's end at 13 s of the video would snap to 13.2 = 17.2 s
+    // in the recording, 0.2 s into B - that footage twice)
+    {
+        const QVector<double> d{60};
+        Beats::Result beats;
+        beats.found = true;
+        beats.period = 0.6;
+        beats.phase = 0;
+        ReelPick::Options o;
+        o.targetS = 300;
+        o.beats = beats;
+        const QVector<Moment> p = ReelPick::pick({{0, 10, 14, 30}, {0, 20, 24, 20}}, d, o);
+        if (CHECK_EQ(p.size(), 2)) {
+            CHECK(std::abs(p[0].from - 4) < 1e-6);
+            CHECK(std::abs(p[1].from - 17) < 1e-6);
+            if (!CHECK(p[0].to <= p[1].from + 1e-9)) std::printf("       A ends %.3f, B starts %.3f\n", p[0].to, p[1].from);
+            CHECK(p[1].to <= 60 + 1e-9);
+        }
+        // Order by time and the other way round (B snapped first): no overlap either
+        o.order = ReelPick::Order::Time;
+        const QVector<Moment> t = ReelPick::pick({{0, 10, 14, 20}, {0, 20, 24, 30}}, d, o);
+        for (int i = 0; i < t.size(); ++i)
+            for (int j = i + 1; j < t.size(); ++j) CHECK(!(t[i].from < t[j].to - 1e-9 && t[j].from < t[i].to - 1e-9));
+    }
     // ---- Short variants: the second shares no moment with the first; none left = no third
     {
         ShortPick::Options o;

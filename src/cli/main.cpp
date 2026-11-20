@@ -164,7 +164,7 @@ int main(int argc, char* argv[])
     GpuAdapter::applyToQt(); // Windows: the high performance card for the picture engine and the decoder
     GpuAdapter::logChoice();
     const QStringList given = commandLine(argc, argv);
-    int qtArgc = 1; // Qt sees no options of ours (see commandLine)
+    int qtArgc = argc > 0 ? 1 : 0; // Qt sees no options of ours (see commandLine)
     QGuiApplication app(qtArgc, argv);
     AppPaths::setProgramNames(); // same backups, effects and settings as the app
     QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));
