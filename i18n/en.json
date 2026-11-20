@@ -1107,7 +1107,6 @@
  "Podcast, Interview, Vlog, Tutorial: Pausen raus, alle Spuren bleiben synchron. Arbeitet auf einer Timeline: links „Aktuelle Timeline als Material“ wählen.": "Podcast, interview, vlog, tutorial: pauses out, all tracks stay in sync. Works on a timeline: choose “Current timeline as material” on the left.",
  "Raumton unter den Schnitten kommt noch nicht.": "Room tone under the cuts is not there yet.",
  "Ruhig": "Calm",
- "Treibend": "Driving",
  "Export": "Deliver",
  "Export abgebrochen.": "Render cancelled.",
  "Export fehlgeschlagen: %1": "Export failed: %1",
@@ -3534,9 +3533,6 @@
  "Material": "Material",
  "Material links hineinziehen und ein Rezept wählen.": "Drag material in on the left and choose a recipe.",
  "Mild": "Mild",
- "Musikbett hype": "Music bed hype",
- "Musikbett ruhig": "Music bed calm",
- "Musikbett treibend": "Music bed driving",
  "Passt zum Feld": "Fits the slot",
  "Passt zum Feld „%1“": "Fits the slot “%1”",
  "Pause (%1)": "Pause (%1)",
@@ -3640,5 +3636,9 @@
  "Nicht an die KI geschickt.": "Not sent to the AI.",
  "Regie: Timeline von der KI gebaut (Rückgängig nimmt sie zurück)": "Direct: timeline built by the AI (Undo takes it back)",
  "Die KI hat nichts geändert.": "The AI changed nothing.",
- "Erst die Änderungen der KI übernehmen oder verwerfen.": "First accept or discard the AI's changes."
+ "Erst die Änderungen der KI übernehmen oder verwerfen.": "First accept or discard the AI's changes.",
+ "Episch": "Epic",
+ "Funky": "Funky",
+ "Lo-Fi": "Lo-fi",
+ "Musikbett: %1": "Music bed: %1"
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// schneidi-cli: edit op `music_bed` - background music of schneidi's own (core/MusicBed: moods calm, drive, hype)
+// schneidi-cli: edit op `music_bed` - background music of schneidi's own (core/MusicBed: moods calm, hype, lofi, epic, funk)
 // made in the exact length, written as a WAV next to the project ("<name>-music/", like the speech of op 'speak'),
 // placed on a music track (the earlier bed's, an empty "Musik" or a new one) and ducked under voice and recorded
 // sound (op 'duck'). Its beat grid goes
@@ -271,6 +271,7 @@ QJsonArray musicBedMoods()
                            {"bpm", MusicBed::defaultBpm(m)},
                            {"key", MusicBed::keyName(MusicBed::defaultKey(m))},
                            {"chords", QJsonArray::fromStringList(d.chords)},
+                           {"chord_beats", d.chordBeats},
                            {"description", MusicBed::description(m)}};
     }
     return out;
@@ -308,17 +309,23 @@ QJsonObject prepareMusicBed(const QJsonObject& editArgs, Context&)
 void addMusicBedOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"music_bed",
-                 "{op:'music_bed', mood:'calm'|'drive'|'hype', length?:'timeline'|time, at?, bpm?, key?, seed?, track?, "
-                 "gain?, duck?}",
+                 "{op:'music_bed', mood:'calm'|'hype'|'lofi'|'epic'|'funk', "
+                 "length?:'timeline'|time, at?, bpm?, key?, seed?, track?, gain?, duck?}",
                  "background music of schneidi's own in the exact length (no file needed, free to use, its beats known)",
-                 "Computed from synth voices (pad, bass, drums; keys in calm, plucked stabs in drive, an arp and "
-                 "risers in hype), one chord per bar, intro, main parts with a lift, breaks in long beds and a final "
-                 "hit on a bar one that rings out exactly to the end. mood: calm (84 BPM, F major: vlog, tutorial, "
-                 "under speech), drive (112 BPM, A minor: travel, sport, montage) or hype (128 BPM, E minor: gaming "
-                 "highlights, shorts) - `effects` kind:'music' lists them. length: a time (\"30s\") or 'timeline' "
+                 "Computed from synthesized instruments (no samples); each mood has its own tempo, key, chords and "
+                 "how often they change, instruments, drum groove, bass line, space and arrangement: intro, main "
+                 "parts with a lift, breaks in long beds and a final hit on a bar one that rings out exactly to the "
+                 "end. mood: calm (72 BPM, F major: nylon guitar, brushes - vlog, tutorial, under speech), hype "
+                 "(128 BPM, E minor: supersaw, four on the floor, drops - gaming highlights, shorts, sport, action), "
+                 "lofi (84 BPM, Eb major: electric piano, swung boom-bap, vinyl - study, chill, cooking), epic "
+                 "(90 BPM, D minor: strings, taiko, horns - trailer, intro, reveal) or funk (104 BPM, E minor: slap "
+                 "bass, clavinet, horn stabs - fashion, food, dance, playful product); 'drive' (older projects) is "
+                 "hype, also 'chill', 'cinematic', 'dark', 'groove', 'upbeat' … - `effects` kind:'music' lists "
+                 "them. length: a time "
+                 "(\"30s\") or 'timeline' "
                  "(default: from `at` to the end of the timeline); at (default 0); bpm 60-180 and key (\"A minor\", "
-                 "\"F#m\", \"Eb major\") replace the mood's; seed (1 = default) picks another progression and "
-                 "patterns. The bed is about -16 LUFS, true peak under -1 dBTP; gain = clip volume in dB (default 0). "
+                 "\"F#m\", \"Eb major\") replace the mood's; seed (1 = default) picks another progression, "
+                 "patterns and tune (2, 3 …: the same mood, another piece). The bed is about -16 LUFS, true peak under -1 dBTP; gain = clip volume in dB (default 0). "
                  "It goes onto `track`, else the track of an earlier bed (which it replaces in its range), else an "
                  "empty track named \"Musik\" (start template podcast), else a new track \"Musik\". It is ducked "
                  "like op 'duck' under the voice and recorded sound - not under effect sounds (track SFX), other "

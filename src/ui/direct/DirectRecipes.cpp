@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "core/MusicBed.h"
 #include "ui/FlowLayout.h"
 
 #include <QCheckBox>
@@ -119,9 +120,10 @@ DirectRecipes::DirectRecipes(QWidget* parent) : QWidget(parent)
     m_hlAspect = combo("direct_hl_aspect", {{QString("16:9"), "16:9"}, {QString("9:16"), "9:16"}, {QString("1:1"), "1:1"}});
     addRow("highlights", T("Format"), m_hlAspect);
     // Music: the music bed's moods (generated, fits the length), an own file, or none
-    m_hlMusic = combo("direct_hl_music", {{T("Keine"), QString()}, {T("Musikbett ruhig"), "calm"},
-                                          {T("Musikbett treibend"), "drive"}, {T("Musikbett hype"), "hype"},
-                                          {T("Datei…"), "file"}});
+    m_hlMusic = combo("direct_hl_music", {{T("Keine"), QString()}});
+    for (const MusicBed::Mood m : MusicBed::kMoods)
+        m_hlMusic->addItem(T("Musikbett: %1").arg(T(MusicBed::moodLabel(m))), MusicBed::moodId(m));
+    m_hlMusic->addItem(T("Datei…"), "file");
     connect(m_hlMusic, &QComboBox::activated, this, [this] {
         if (m_hlMusic->currentData().toString() == "file" && m_musicFile.isEmpty()) emit musicFileRequested();
     });

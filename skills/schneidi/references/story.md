@@ -37,7 +37,7 @@ in ms) and `cuts_off_beat`. It changes nothing; check, fix, then render for real
 - Talking: `cut_pauses` (pauses of a conversation), `rough_cut` (script → timeline from the best takes),
   `best_takes`, `hide_jumps`, `broll`, `jl_cut`, `room_tone` - see [talking.md](talking.md).
 - Music: `fit_music` (song to the length, whole phrases out, the end kept), then `snap_to_beat` (cuts or hits on
-  the beat) - see [highlights.md](highlights.md). No song: `music_bed` (mood `calm`, `drive` or `hype`, the exact
-  length, its beats known).
+  the beat) - see [highlights.md](highlights.md). No song: `music_bed` (mood `calm`, `hype`, `lofi`, `epic` or
+  `funk`; the exact length, its beats known).
 - Sounds: `sfx` (whoosh on a cut, riser into a drop, hit on a kill) only when the user asks for sounds, mild and
   sparse: never on every cut. `effects` with kind `sfx` lists them.
