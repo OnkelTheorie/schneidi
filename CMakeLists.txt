@@ -447,6 +447,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/ElidedLabel.h
     src/ui/SplitterMemory.h
     src/ui/FileManager.h          src/ui/FileManager.cpp
+    src/ui/ScreenAwake.h          src/ui/ScreenAwake.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/FullScreenViewer.h     src/ui/FullScreenViewer.cpp

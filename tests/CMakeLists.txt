@@ -290,6 +290,10 @@ schneidi_test(test_stretch) # own time stretcher (keep pitch)
 schneidi_test(test_export_audio)
 schneidi_test(test_audio_analysis)
 schneidi_test(test_audio_player)
+schneidi_test(test_screen_awake)
+if(TARGET Qt6::DBus)
+    target_compile_definitions(test_screen_awake PRIVATE SCHNEIDI_HAVE_DBUS)
+endif()
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
 schneidi_test(test_play_loop) # loop playback in the In/Out range: wraps Out -> In, no click, off/removed plays to the end

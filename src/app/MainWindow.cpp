@@ -4,6 +4,7 @@
 #include "core/Shapes.h"
 #include "core/StartupTrace.h"
 #include "app/TourManager.h"
+#include "ui/ScreenAwake.h"
 #include "ui/TourOverlay.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
@@ -1453,6 +1454,9 @@ void MainWindow::setupProxyHint()
         if (speed == 1.0) m_playMeter.start(m_project->frameRate(), m_playClock.elapsed());
         else m_playMeter.stop();
     });
+    // Watching the cut without touching mouse or keyboard: the monitor stays on while it plays
+    auto* awake = new ScreenAwake(this);
+    connect(m_engine, &Engine::speedChanged, awake, [awake](double speed) { awake->setActive(speed != 0.0); });
     ProxyManager* proxies = m_engine->proxies();
     RenderCache* cache = m_engine->renderCache();
     connect(m_engine, &Engine::positionChanged, this, [this, proxies] {
