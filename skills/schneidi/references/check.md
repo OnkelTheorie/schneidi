@@ -19,6 +19,9 @@ It also finds:
   A warning, not an error: a very quiet recording may need it.
 - `under_music`: a track with events (game sound, speech) more than 15 LU under the music while its events play -
   raise that track or `duck` the music under it. Name the music track "Music" if it is not a plain sound file.
+- `music_loud`: the other way round - the music louder than such a track (its mean loudness) for 8 s or more: it
+  is no background. Lower the music by what the message says (clip `volume`/bed `gain`, `track_volume`: about 7 LU
+  under the voice or game sound) or `duck` it.
 - `missing_effect`: an effect this schneidi does not have (frei0r plugins of old projects) - it stays in the project
   but is skipped when rendering; remove it or use an own effect instead (`effects` lists them).
 - `black_bars`: a recording has black bars (a 4:3 game in a 16:9 video) that show in a timeline of another shape

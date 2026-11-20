@@ -42,11 +42,35 @@
 
 #ifdef Q_OS_WIN
 #include <io.h> // _isatty
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h> // CommandLineToArgvW
 #else
 #include <unistd.h> // isatty
 #endif
 
 namespace {
+
+// The command line as given, read before QGuiApplication sees it: Qt takes its own options out of argv (-session,
+// -title, -name, -display, -platform, -reverse, -style …, also with two dashes), so `direct --session d3` reached
+// the command without its session and `--title …` would vanish the same way. Qt gets only the program name.
+QStringList commandLine(int argc, char* argv[])
+{
+    QStringList out;
+#ifdef Q_OS_WIN
+    // The wide command line: file names outside the ANSI code page stay intact
+    int n = 0;
+    if (LPWSTR* w = CommandLineToArgvW(GetCommandLineW(), &n)) {
+        for (int i = 0; i < n; ++i) out << QString::fromWCharArray(w[i]);
+        LocalFree(w);
+        return out;
+    }
+#endif
+    for (int i = 0; i < argc; ++i) out << QString::fromLocal8Bit(argv[i]);
+    return out;
+}
 
 void print(const QJsonObject& o, bool pretty)
 {
@@ -139,14 +163,16 @@ int main(int argc, char* argv[])
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
     GpuAdapter::applyToQt(); // Windows: the high performance card for the picture engine and the decoder
     GpuAdapter::logChoice();
-    QGuiApplication app(argc, argv);
+    const QStringList given = commandLine(argc, argv);
+    int qtArgc = 1; // Qt sees no options of ours (see commandLine)
+    QGuiApplication app(qtArgc, argv);
     AppPaths::setProgramNames(); // same backups, effects and settings as the app
     QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));
     I18n::install("en");
     std::setlocale(LC_NUMERIC, "C"); // C libraries (FFmpeg option parsing) read numbers with a dot
     CodeTrust::prune(); // trust records of deleted files (at most once a day)
 
-    QStringList args = app.arguments().mid(1);
+    QStringList args = given.mid(1);
     bool pretty = false;
     if (args.removeAll("--pretty")) pretty = true;
     // Progress notes ("Export: libx264, 12 threads ...") only with --verbose; warnings and errors always go to stderr

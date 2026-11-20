@@ -154,9 +154,12 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
 {
     constexpr double kMax = 2e9; // as Timecode::parse: beyond that the cast to int would be undefined
     // A number with a fraction is no frame count; small models mean seconds there - the error says how to write them
-    const auto fraction = [&what](double d) {
-        fail("BAD_ARGUMENT", QString("%1: %2 is not a frame count (frames are whole numbers); for seconds write \"%2s\"")
-                                 .arg(what).arg(d));
+    const auto fraction = [&what, &fmt](double d) {
+        fail("BAD_ARGUMENT", QString("%1: %2 is not a frame count (a plain number is frames at the project's %3 fps, "
+                                     "whole numbers only); for seconds write \"%2s\"")
+                                 .arg(what)
+                                 .arg(d)
+                                 .arg(fmt.rate.fps(), 0, 'g', 4));
     };
     if (v.isDouble()) {
         const double d = v.toDouble();
@@ -1602,7 +1605,9 @@ const QVector<Command>& commands()
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "
                   "sound of a video recording, or a track named voice/mic/game; fix: raise that track or `duck` the "
-                  "music). Vertical videos (9:16): safe_area / subtitle_safe_area = text where TikTok, Reels and "
+                  "music), music_loud: the other way, the music louder than such a track (its mean loudness) for 8 s "
+                  "or more - no background; fix: lower the music by what the message says (clip gain, track_volume; "
+                  "about 7 LU under the voice or game sound) or `duck` it). Vertical videos (9:16): safe_area / subtitle_safe_area = text where TikTok, Reels and "
                   "Shorts put their caption and buttons (bottom 20 %), their button column (right 12 %, from 35 % of "
                   "the height down) or their top bar (top 8 %), or outside the picture; slow_hook (info, videos up to "
                   "3 min) = hardly any motion in the first second; encoder_quality (info) = H.264/H.265 would be encoded "

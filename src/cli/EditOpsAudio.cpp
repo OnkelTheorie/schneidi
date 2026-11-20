@@ -6,11 +6,14 @@
 #include "core/Automation.h"
 #include "core/Dynamics.h"
 #include "core/Equalizer.h"
+#include "core/GameHud.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/Speech.h"
+#include "core/StreamPresets.h"
 #include "core/TaskProgress.h"
 #include "core/TimelineOps.h"
+#include "core/Transcript.h"
 #include "core/Voiceover.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
@@ -917,6 +920,28 @@ void opNormalize(Session& s, const QJsonObject& op)
     }
 }
 
+// Game sound: a track whose clips all play the game of a recording - a game stream of a recording with several
+// (OBS, Clipi: "System Output", not "Mikrofon", "Discord", "Spotify"), or any stream but voice, chat and music of a
+// file in a game's folder or named after it (cs2_clip_…). Voice, talk and everything else are not.
+bool gameSoundTrack(Session& s, const Track& t)
+{
+    bool any = false;
+    for (const Clip& c : t.clips) {
+        if (c.kind != ClipKind::Media || !c.enabled || c.mediaPath.isEmpty()) continue;
+        const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+        QStringList titles;
+        if (m)
+            for (const AudioStreamInfo& a : m->audioStreams) titles << a.title;
+        const QString title = titles.value(c.audioStream);
+        const bool game = StreamPresets::gameStreams(titles).contains(c.audioStream)
+                          || (GameHud::guess(c.mediaPath) && !Transcript::isVoiceName(title)
+                              && !StreamPresets::isChatOrMusicTitle(title));
+        if (!game) return false;
+        any = true;
+    }
+    return any;
+}
+
 // Ducking: lower the music (target clips) while the voice/game tracks (`under`) have sound, with volume keyframes
 // (ramps of `attack` before and `release` after each sound; pauses shorter than `hold` stay ducked)
 void opDuck(Session& s, const QJsonObject& op)
@@ -971,12 +996,38 @@ void opDuck(Session& s, const QJsonObject& op)
                 if (c.id == id) fail("BAD_ARGUMENT", QString("clip %1 is on a track in 'under' itself").arg(id));
     Ducking::Params params = Ducking::defaults(f.rate.fps());
     if (op.contains("amount_db")) params.amountDb = numberOf(op, "amount_db", -60, 0);
-    if (op.contains("threshold_db")) params.thresholdDb = numberOf(op, "threshold_db", -80, 0);
+    // threshold_db: a number for all of 'under', or 'auto' (default): -35 dBFS for voice and recorded sound, for game
+    // sound its own loud moments (Ducking::gameThreshold)
+    const QJsonValue given = op.value("threshold_db");
+    const bool autoThreshold = given.isUndefined() || given.isNull()
+                               || (given.isString() && given.toString().trimmed().compare("auto", Qt::CaseInsensitive) == 0);
+    if (!autoThreshold) params.thresholdDb = numberOf(op, "threshold_db", -80, 0);
     if (op.contains("attack")) params.attack = timeOf(s, op, "attack");
     if (op.contains("release")) params.release = timeOf(s, op, "release");
     if (op.contains("hold")) params.hold = timeOf(s, op, "hold");
     if (TimelineOps::endFrame(tl) <= 0) s.failEmpty();
-    const auto ranges = AudioAnalysis::soundRanges(f, tl, voice, params);
+    QVector<int> game, rest = voice;
+    if (autoThreshold)
+        for (const int v : voice)
+            if (gameSoundTrack(s, cur.audio.value(v))) game << v;
+    for (const int g : game) rest.removeAll(g);
+    const auto names = [](const QVector<int>& l) {
+        QStringList n;
+        for (const int i : l) n << QString("A%1").arg(i + 1);
+        return n.join(',');
+    };
+    std::optional<Ducking::Ranges> ranges = Ducking::Ranges{};
+    if (!rest.isEmpty()) ranges = AudioAnalysis::soundRanges(f, tl, rest, params);
+    double gameDb = params.thresholdDb;
+    if (ranges && !game.isEmpty()) {
+        const auto peaks = AudioAnalysis::tracksFramePeaks(f, tl, game);
+        if (!peaks) ranges.reset();
+        else {
+            Ducking::Params gp = params;
+            gp.thresholdDb = gameDb = Ducking::gameThreshold(*peaks);
+            ranges = Ducking::unite(*ranges, Ducking::soundRanges(*peaks, 0, gp), params.hold + params.attack + params.release);
+        }
+    }
     if (!ranges) fail("DECODE_FAILED", "could not mix the sound");
     if (!op.value("replace").toBool(true)) // keep clips that already have volume keyframes
         ids.removeIf([&](int id) {
@@ -989,8 +1040,17 @@ void opDuck(Session& s, const QJsonObject& op)
     for (const auto& [from, to] : *ranges) covered += to - from;
     const int length = TimelineOps::endFrame(tl);
     const double fps = f.rate.fps();
-    QString note = QString("ducked %1 of %2 clip(s) by %3 dB during %4 sound range(s) of %5: %6 s of %7 s above "
-                           "threshold_db %8")
+    QString threshold = QString("threshold_db %1").arg(params.thresholdDb, 0, 'f', 0);
+    if (!game.isEmpty())
+        threshold = rest.isEmpty() ? QString("threshold_db %1 (auto: the loud moments of the game sound %2)")
+                                         .arg(gameDb, 0, 'f', 1)
+                                         .arg(names(game))
+                                   : QString("threshold_db %1 for %2, %3 (auto: the loud moments) for the game sound %4")
+                                         .arg(params.thresholdDb, 0, 'f', 0)
+                                         .arg(names(rest))
+                                         .arg(gameDb, 0, 'f', 1)
+                                         .arg(names(game));
+    QString note = QString("ducked %1 of %2 clip(s) by %3 dB during %4 sound range(s) of %5: %6 s of %7 s above %8")
                        .arg(ducked)
                        .arg(ids.size())
                        .arg(params.amountDb, 0, 'f', 1)
@@ -998,8 +1058,8 @@ void opDuck(Session& s, const QJsonObject& op)
                        .arg(by.toString())
                        .arg(covered / fps, 0, 'f', 1)
                        .arg(length / fps, 0, 'f', 1)
-                       .arg(params.thresholdDb, 0, 'f', 0);
-    if (length > 0 && covered > 0.6 * length)
+                       .arg(threshold);
+    if (length > 0 && covered > 0.6 * length && game.isEmpty())
         note += " - the sound is above it most of the time; a higher threshold_db (e.g. -20) ducks only the loud "
                 "moments (shots, words)";
     s.notes << note;
@@ -1320,13 +1380,18 @@ void addAudioOps(QVector<OpDef>& ops)
                  "limiter; relative: all together) and corrected toward the target (never the master); the notes "
                  "say what was reached and why when not. Measures the files (takes a while).",
                  opNormalize, kClipKeys}
-        << OpDef{"duck", "{op:'duck', clips|track, by?, under?, amount_db?, threshold_db?, attack?, release?, hold?, remove?}",
+        << OpDef{"duck", "{op:'duck', clips|track, by?, under?, amount_db?, threshold_db?|'auto', attack?, release?, hold?, remove?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
                  "clips or track = the music; by = the tracks that duck it ([\"A1\",\"A3\"], \"A1,A3\" or stream/"
                  "track names like \"Mikrofon\"; 'under' is the same), default all other audible tracks with clips "
                  "(solo wins). amount_db: how far down (default -12), threshold_db: what counts as "
-                 "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
-                 "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
+                 "sound on 'under' (sample peak in dBFS, or 'auto' = the default: -35 dBFS for voice and recorded "
+                 "sound - every word ducks; for the game sound of game recordings (a game's folder or name, their "
+                 "game stream) only its loud moments: 2 dB under the level its loudest tenth reaches, -35..-6 - "
+                 "shots, explosions, shouts; a number applies to all of 'under'), attack/release: ramp before/after "
+                 "a sound, hold: pauses shorter than this stay ducked - these three are times: a plain number is "
+                 "frames (project rate), seconds are written \"0.3s\" (defaults 0.15s / 0.4s / 0.5s). "
+                 "Replaces the clips' volume "
                  "keyframes; run it again after editing. remove:true takes the ducking off again (the clips' volume "
                  "keyframes go, their volume stays; no 'by' needed).",
                  opDuck, {"clip", "linked", "replace"}} // replace:false keeps clips that have volume keyframes

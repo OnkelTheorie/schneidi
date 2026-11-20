@@ -97,6 +97,15 @@ bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int fr
 std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,
                                            const Ducking::Params& params,
                                            const std::function<bool(double)>& progress = {});
+// Sample peak (linear) of every frame [0, end) of the mix of only the audio tracks `tracks` (others muted, solo ignored);
+// empty = none of them has clips. nullopt = could not mix or canceled.
+std::optional<std::vector<float>> tracksFramePeaks(const ProjectFormat& format, const Timeline& timeline,
+                                                   const QVector<int>& tracks,
+                                                   const std::function<bool(double)>& progress = {});
+// Loudness of the mix [from, to) of only the audio tracks `tracks` as exported (a Loudness of silence, -200 LUFS,
+// when none of them has clips). The music bed's level under the program sound.
+std::optional<Loudness> tracksLoudness(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& tracks,
+                                       int from, int to, const std::function<bool(double)>& progress = {});
 
 // RMS level (dBFS, power over all channels; silence -200) of each block of `blockSeconds` of a file's audio stream
 // from `from` to `to` seconds (file time as Audio::Reader counts it: 0 = the picture's first frame). Room tone looks

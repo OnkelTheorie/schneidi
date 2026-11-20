@@ -50,6 +50,35 @@ QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& d
             total += len;
         }
     }
+    // Short of the target: every moment grows into its room (up to growBeforeS before, growAfterS after, within its
+    // recording, half the gap to a neighbour of the same recording), all by the same share of that room, just enough
+    if (o.targetS > 0 && !picked.isEmpty()) {
+        double total = 0;
+        for (const Moment& m : picked) total += m.to - m.from;
+        QVector<double> before(picked.size()), after(picked.size());
+        double room = 0;
+        for (int i = 0; i < picked.size(); ++i) {
+            const Moment& m = picked[i];
+            double lo = 0, hi = duration(m.file);
+            for (int j = 0; j < picked.size(); ++j) {
+                const Moment& n = picked[j];
+                if (j == i || n.file != m.file) continue;
+                if (n.to <= m.from) lo = std::max(lo, (n.to + m.from) / 2);
+                if (n.from >= m.to) hi = std::min(hi, (m.to + n.from) / 2);
+            }
+            before[i] = std::clamp(m.from - lo, 0.0, std::max(0.0, o.growBeforeS));
+            after[i] = std::clamp(hi - m.to, 0.0, std::max(0.0, o.growAfterS));
+            room += before[i] + after[i];
+        }
+        const double missing = o.targetS - total;
+        if (missing > 1e-6 && room > 1e-6) {
+            const double share = std::min(1.0, missing / room);
+            for (int i = 0; i < picked.size(); ++i) {
+                picked[i].from -= before[i] * share;
+                picked[i].to += after[i] * share;
+            }
+        }
+    }
     if (o.order == Order::Time)
         std::stable_sort(picked.begin(), picked.end(), [](const Moment& a, const Moment& b) {
             return a.file != b.file ? a.file < b.file : a.from < b.from;

@@ -682,6 +682,9 @@ add_executable(schneidi-cli src/cli/main.cpp)
 target_include_directories(schneidi-cli PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi-cli schneidi_buildinfo)
 target_link_libraries(schneidi-cli PRIVATE schneidi_cli_lib)
+if(WIN32)
+    target_link_libraries(schneidi-cli PRIVATE shell32) # main.cpp: CommandLineToArgvW
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # engine/video/Hardware.cpp: its setpriority() must also be the one the GPU driver's decoder library calls
     foreach(exe schneidi schneidi-cli)

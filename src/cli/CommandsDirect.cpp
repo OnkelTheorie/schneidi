@@ -247,6 +247,18 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
     QVector<DirectMoment> all = found.highlights + found.extra;
     std::stable_sort(all.begin(), all.end(), [](const DirectMoment& x, const DirectMoment& y) { return x.score > y.score; });
     QVector<ReelPick::Moment> picked = ReelPick::pick(asMoments(all), durations, pick);
+    // Fewer moments than the target: ReelPick grew them (more build-up and reaction); the note says from how much
+    if (pick.targetS > 0 && !picked.isEmpty()) {
+        ReelPick::Options plain = pick;
+        plain.growBeforeS = plain.growAfterS = 0;
+        double found = 0, grown = 0;
+        for (const ReelPick::Moment& m : ReelPick::pick(asMoments(all), durations, plain)) found += m.to - m.from;
+        for (const ReelPick::Moment& m : picked) grown += m.to - m.from;
+        if (grown > found + 0.5)
+            s.notes << note("moments_grown", {{"found", std::round(found * 10) / 10},
+                                              {"s", std::round(grown * 10) / 10},
+                                              {"target", pick.targetS}});
+    }
     if (picked.isEmpty()) {
         // Nothing stood out: the end of every recording (a clip tool saves the moment that just happened)
         ShortPick::Options ends; // as long as asked for ('all': the last 10 s of each)

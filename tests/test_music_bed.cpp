@@ -512,6 +512,7 @@ int main(int argc, char* argv[])
             const Clip* c = clipById(*p, n["clip"].toInt());
             const int want = int(std::lround(7.3 * 30000 / 1001.0));
             if (!CHECK(c && c->length() == want && n["mood"].toString() == mood)) std::printf("       %s via the op\n", qPrintable(mood));
+            CHECK(c && c->volumeDb == 0 && !n.contains("level")); // nothing else to hear: its own level
         }
     }
     // The longest bed at 23.976 fps: 600 s are 14386 frames (600.008 s), taken - a frame more is refused
@@ -559,6 +560,15 @@ int main(int argc, char* argv[])
         CHECK(beats["bpm"].toDouble() == MusicBed::defaultBpm(MusicBed::Mood::Calm) && beats["confidence"].toDouble() == 1); // the stored grid, not analysed
         CHECK(n["sections"].toArray().size() >= 2 && n["final_hit_s"].toDouble() > 0);
         CHECK(n["lufs"].toDouble() < -15 && n["lufs"].toDouble() > -17.5);
+        // Its level: 7 LU under the speech (both as the mix plays them), the clip volume says so - not as loud as
+        // the voice (a -16 LUFS bed sat as loud as -15.5 LUFS game sound)
+        const QJsonObject level = n["level"].toObject();
+        CHECK_EQ(level["by"].toString(), QString("program"));
+        CHECK(c && std::abs(c->volumeDb - level["gain_db"].toDouble()) < 1e-9 && c->volumeDb < 0);
+        if (!CHECK(std::abs(level["music_lufs"].toDouble() - (level["program_lufs"].toDouble() - 7)) < 0.3))
+            std::printf("       %s\n", QJsonDocument(level).toJson(QJsonDocument::Compact).constData());
+        const QJsonObject voice = run("loudness", {{"source", project}, {"tracks", "A1"}});
+        CHECK(std::abs(voice["loudness"]["integrated_lufs"].toDouble() - level["program_lufs"].toDouble()) < 0.2);
     }
     // The same bed again (onto another track, not ducked): the file is reused, a volume given
     r = edit(project, R"([{"op":"music_bed","mood":"calm","length":"timeline","duck":false,"gain":-6,"track":"A9"}])");

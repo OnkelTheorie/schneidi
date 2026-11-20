@@ -31,7 +31,7 @@ struct Reason {
 // slot_match, take, fallback_end
 const QStringList& reasonKeys();
 // Note keys (Session::notes): no_whisper, running, no_moments, fallback, music_missing, not_yet, few_moments,
-// fewer_variants, no_shot, not_said, no_pause, never_quiet, no_transcript_fillers, fillers_transcript, room_tone
+// moments_grown, fewer_variants, no_shot, not_said, no_pause, never_quiet, no_transcript_fillers, fillers_transcript, room_tone
 const QStringList& noteKeys();
 
 enum class Lang { English, Ui };

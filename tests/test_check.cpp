@@ -480,13 +480,30 @@ int main(int argc, char** argv)
             CHECK(issues[0].message.contains("A1"));
             CHECK(issues[0].message.contains("A2 (Musik)"));
         }
-        CHECK(ExportCheck::mix(tl, {{0, false, loud}, song0}, 0, f).isEmpty());  // 6 LU under: audible
+        // 6 LU under: audible, not buried - but the music (-10) is far louder than the game sound as a whole (shots
+        // at -16, steps at -30: about -22.6): music_loud, with how much to lower it (12.6 + 7 -> about 20 dB)
+        issues = ExportCheck::mix(tl, {{0, false, loud}, song0}, 0, f);
+        if (CHECK_EQ(checks(issues), QStringList({"music_loud"}))) {
+            CHECK(issues[0].message.contains("12"));
+            CHECK(issues[0].message.contains("20"));
+            CHECK(issues[0].message.contains("A2 (Musik)"));
+            CHECK_EQ(issues[0].from, 0);
+        }
+        // The music 7 LU under the game sound: background, nothing to say; a stretch shorter than musicLoudS neither
+        {
+            std::vector<double> soft(blocks);
+            for (size_t k = 0; k < blocks; ++k) soft[k] = power(-29.6);
+            CHECK(ExportCheck::mix(tl, {{0, false, loud}, {1, true, soft}}, 0, f).isEmpty());
+            ExportCheck::Options o;
+            o.musicLoudS = 12;
+            CHECK(ExportCheck::mix(tl, {{0, false, loud}, song0}, 0, f, o).isEmpty());
+        }
         CHECK(ExportCheck::mix(tl, {{0, false, noise}, song0}, 0, f).isEmpty()); // no events
         CHECK(ExportCheck::mix(tl, {{0, false, game}, {1, false, music}}, 0, f).isEmpty()); // no music at all
         // The music ducked under the shots: fine, although it is loud in between
         std::vector<double> ducked = music;
         for (size_t k = 0; k < blocks; k += 5) ducked[k] = power(-40);
-        CHECK(ExportCheck::mix(tl, {{0, false, game}, {1, true, ducked}}, 0, f).isEmpty());
+        CHECK(!checks(ExportCheck::mix(tl, {{0, false, game}, {1, true, ducked}}, 0, f)).contains("under_music"));
         // Music only in the first 4 s: the finding covers only that part
         tl.audio[1].clips[0].out = 99;
         issues = ExportCheck::mix(tl, {{0, false, game}, song0}, 0, f);

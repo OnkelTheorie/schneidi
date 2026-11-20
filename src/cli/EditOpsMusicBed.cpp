@@ -12,6 +12,7 @@
 #include "core/I18n.h"
 #include "core/MusicBed.h"
 #include "core/TimelineOps.h"
+#include "engine/AudioAnalysis.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -92,6 +93,9 @@ bool isMusicName(const QString& name)
 }
 
 bool isBedFile(const QString& path) { return QFileInfo(path).fileName().startsWith("music-bed-"); }
+
+// How far a new bed sits under the program sound (LU): background, not a second foreground
+constexpr double kLevelBelowLu = 7;
 
 // The audio tracks whose sound lowers the bed: voice and recorded sound. Not the bed's own track, muted ones (solo
 // wins), the effect sounds (op 'sfx'), tracks named "Musik"/"Music", nor tracks of only audio-only songs (other beds,
@@ -206,15 +210,41 @@ void opMusicBed(Session& s, const QJsonObject& op)
     for (const Clip& c : s.project.timeline().audio.value(track).clips)
         if (c.start == at && c.mediaPath == m.path) id = c.id;
     if (!id) fail("FAILED", "the placed music bed is not on the timeline");
+    // The level: gain as given, else under the program sound - kLevelBelowLu below the loudness of the voice and
+    // recorded sound in the bed's range (both measured in the mix as exported: track faders, master), so the
+    // music never sits as loud as the game or the voice (it did: a -16 LUFS bed on -15.5 LUFS game sound). Alone
+    // (nothing else to hear) it stays at its own level, about -16 LUFS.
+    const QStringList under = duckUnder(s, track);
+    QJsonObject level;
     if (op.contains("gain")) {
         const double gain = numberOf(op, "gain", -60, 12);
         s.editor.modifyClips({id}, T("Musikbett"), [gain](Clip& c) { c.volumeDb = gain; });
+        level = QJsonObject{{"gain_db", gain}, {"by", "gain"}};
+    } else if (!under.isEmpty()) {
+        QVector<int> tracks;
+        for (const QString& n : under) tracks << n.mid(1).toInt() - 1;
+        const Timeline rt = s.project.renderTimeline();
+        const auto program = AudioAnalysis::tracksLoudness(f, rt, tracks, at, at + len);
+        const auto music = AudioAnalysis::tracksLoudness(f, rt, {track}, at, at + len);
+        if (program && music && program->integrated > -70 && music->integrated > -70) {
+            const double gain = std::clamp(std::round((program->integrated - kLevelBelowLu - music->integrated) * 10) / 10,
+                                           -30.0, 6.0);
+            s.editor.modifyClips({id}, T("Musikbett"), [gain](Clip& c) { c.volumeDb = gain; });
+            level = QJsonObject{{"gain_db", gain},
+                                {"by", "program"},
+                                {"program_lufs", std::round(program->integrated * 10) / 10},
+                                {"music_lufs", std::round((music->integrated + gain) * 10) / 10},
+                                {"text", QString("%1 LU under the sound of %2 (%3 LUFS): gain %4 dB")
+                                             .arg(kLevelBelowLu, 0, 'f', 0)
+                                             .arg(under.join(','))
+                                             .arg(program->integrated, 0, 'f', 1)
+                                             .arg(gain, 0, 'f', 1)}};
+        }
     }
 
     // Ducking under the voice and recorded sound (op 'duck' with those tracks); without any: nothing to do
     QString ducked;
     if (op.value("duck").toBool(true)) {
-        const QStringList under = duckUnder(s, track);
         if (under.isEmpty()) {
             ducked = "not ducked: no voice or recorded sound on the other tracks (effect sounds and music do not count)";
         } else {
@@ -255,6 +285,7 @@ void opMusicBed(Session& s, const QJsonObject& op)
         n["true_peak_db"] = std::round(r.truePeakDb * 10) / 10;
         n["made_ms"] = int(std::lround(bed.ms));
     }
+    if (!level.isEmpty()) n["level"] = level;
     if (!ducked.isEmpty()) n["ducking"] = ducked;
     s.notes << QJsonObject{{"music_bed", n}};
 }
@@ -325,14 +356,17 @@ void addMusicBedOps(QVector<OpDef>& ops)
                  "(\"30s\") or 'timeline' "
                  "(default: from `at` to the end of the timeline); at (default 0); bpm 60-180 and key (\"A minor\", "
                  "\"F#m\", \"Eb major\") replace the mood's; seed (1 = default) picks another progression, "
-                 "patterns and tune (2, 3 …: the same mood, another piece). The bed is about -16 LUFS, true peak under -1 dBTP; gain = clip volume in dB (default 0). "
+                 "patterns and tune (2, 3 …: the same mood, another piece). The bed file is about -16 LUFS, true peak under -1 dBTP; "
+                 "gain = clip volume in dB; without gain it sits 7 LU under the voice and recorded sound of the "
+                 "other tracks in its range (measured in the mix; alone: gain 0). "
                  "It goes onto `track`, else the track of an earlier bed (which it replaces in its range), else an "
                  "empty track named \"Musik\" (start template podcast), else a new track \"Musik\". It is ducked "
                  "like op 'duck' under the voice and recorded sound - not under effect sounds (track SFX), other "
                  "beds or music tracks (duck:false: not at all). The WAV lies next to the project (<name>-music/); the same "
                  "options reuse it. Its beat grid is stored with the file: snap_to_beat, fit_music and `beats` take "
                  "it without analysing. The answer's notes give music_bed {file, bpm, key, chords, sections "
-                 "[{kind, from_s, to_s}], final_hit_s, beat_s, bar_s, track, clip, lufs, ducking}.",
+                 "[{kind, from_s, to_s}], final_hit_s, beat_s, bar_s, track, clip, lufs, level {gain_db, by, program_lufs, "
+                 "music_lufs}, ducking}.",
                  opMusicBed};
 }
 

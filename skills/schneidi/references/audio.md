@@ -18,8 +18,9 @@
    `compressor` for uneven speakers or shouting in games.
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice
    track) so it dips while someone talks; a music bed sits ~15-20 dB below the voice. Without a music file:
-   `{"op":"music_bed","mood":"calm"}` makes one in the timeline's length (about -16 LUFS, already ducked under the
-   voice and recorded sound; `gain` -8 to -12 for a bed under a talk, `duck` false to leave it as it is). Pick the
+   `{"op":"music_bed","mood":"calm"}` makes one in the timeline's length, set 7 LU under the
+   voice and recorded sound of the other tracks (measured; alone about -16 LUFS; `gain` = your own clip volume) and
+   already ducked under them (`duck` false to leave it; game sound ducks it only at its loud moments). Pick the
    mood by the video: `calm` (nylon guitar, brushes: vlog, tutorial, under speech), `lofi` (electric piano, swung
    beat, vinyl: study, chill, cooking), `funk` (slap bass, clavinet: fashion, food, dance, playful product), `hype`
    (EDM drops: gaming highlights, shorts, sport), `epic` (strings, taiko, horns: trailer, intro, reveal). `effects`
