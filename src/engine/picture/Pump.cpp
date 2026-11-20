@@ -67,6 +67,10 @@ struct Pump::Impl {
         QImage image;
         bool exact = true;  // false: a close picture (scrubbing), the exact one follows
         uint64_t epoch = 0; // recentEpoch when its render began (forgetRecent: not kept among the recent ones)
+        // Stopped: the still of an earlier generation, finished after the content changed. Shown meanwhile, the still
+        // of the current generation stays pending (an edit while dragging: the picture follows step by step)
+        bool interim = false;
+        uint64_t gen = 0;
     };
     std::map<int64_t, Rendered> frames; // rendered for `generation`
     std::set<int64_t> inflight;         // being rendered for `generation`
@@ -83,6 +87,7 @@ struct Pump::Impl {
     int64_t recentBytes = 0, recentBudget = kRecentBudget;
     uint64_t recentEpoch = 0; // +1 at forgetRecent: frames drawn before are shown but not kept
     uint64_t stamp = 0;
+    uint64_t stillShownGen = 0; // generation of the last still shown (an interim one of an older one is not shown)
     bool preparing = false;
     SteadyClock::time_point lastPrepare, lastTrim = SteadyClock::now();
 
@@ -197,7 +202,20 @@ struct Pump::Impl {
                 auto it = cancels.find(p);
                 if (it != cancels.end() && it->second == cancel) cancels.erase(it);
             }
-            if (gen != generation) continue; // content changed meanwhile
+            if (gen != generation) { // content changed meanwhile
+                // Stopped at the same place: shown until the new picture is there. Edits in quick succession (a
+                // handle dragged) refresh faster than a slow computer renders: each still was dropped unfinished and
+                // the picture stood still until the mouse did
+                if (speed == 0 && c == content && p == next && pendingStill && (!cancel || (!cancel->load() && want.exact))
+                    && gen > stillShownGen && !frames.count(p)) {
+                    Rendered r{std::move(img), false, epoch};
+                    r.interim = true;
+                    r.gen = gen;
+                    frames[p] = std::move(r);
+                    ready.notify_all();
+                }
+                continue;
+            }
             inflight.erase(p);
             if (cancel && cancel->load()) { // the position moved on
                 ++stats.cancelled;
@@ -278,8 +296,12 @@ struct Pump::Impl {
                 }
                 Rendered r = std::move(it->second);
                 frames.erase(it);
-                if (r.exact) {
+                if (r.interim) {
+                    stillShownGen = r.gen; // the current generation's still is still to come
+                    wake.notify_all();
+                } else if (r.exact) {
                     pendingStill = false;
+                    stillShownGen = generation;
                 } else {
                     scrub = false; // the exact picture next (still pending)
                     ++stats.nearest;
@@ -416,11 +438,12 @@ struct Pump::Impl {
     }
 
     // Under m: the content changed - recent frames and still renders in flight are of before
-    void forgetRendered()
+    void forgetRendered(int64_t keep = -1)
     {
         recent.clear();
         recentBytes = 0;
-        for (auto& [p, c] : cancels) c->store(true);
+        for (auto& [p, c] : cancels)
+            if (p != keep) c->store(true);
     }
 
     void resetKeepUp()
@@ -543,7 +566,8 @@ void Pump::refresh()
     {
         std::lock_guard lock(d->m);
         ++d->generation;
-        d->forgetRendered();
+        // Stopped: the still under way for the shown place finishes (an interim picture), the others stop
+        d->forgetRendered(d->speed == 0 ? d->next : -1);
         d->frames.clear();
         d->inflight.clear();
         if (d->speed == 0) d->pendingStill = true;

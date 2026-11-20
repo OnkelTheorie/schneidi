@@ -164,6 +164,10 @@ void MainWindow::placeOnScreen(const QRect& wanted)
     setGeometry(r);
 }
 
+namespace {
+constexpr int kEngineEvery = 16; // ms between two timelines handed to the engine (one 60 Hz frame)
+} // namespace
+
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
 {
     setWindowTitle(appName());
@@ -193,12 +197,15 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
     // model -> engine
-    // Bundled: while dragging (fade handle, volume line, Inspector …) every mouse move changes the model;
-    // rebuilding the preview immediately each time blocked the timeline (handle lagged behind).
-    // Mixer changes are cheap (set live) and still go through immediately.
+    // Bundled: while dragging (fade handle, volume line, Inspector, a shape's handle …) every mouse move changes the
+    // model; rebuilding the preview for each one blocked the timeline (handle lagged behind). At most one timeline per
+    // kEngineEvery: a change after a quiet moment goes out with the next event loop pass (it waited the whole 30 ms
+    // before, the picture trailed a dragged shape's box), changes in quick succession wait for the rest of the
+    // interval and go out together. Mixer changes are cheap (set live) and still go through immediately.
     m_engineTimer.setSingleShot(true);
-    m_engineTimer.setInterval(30);
+    m_engineSent.start();
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
+        m_engineSent.restart();
         m_engine->updateTimeline(previewTimeline()); // the Comp page may show one node of a graph
         OpenTrace::timelineSent();
         updateRenderCacheBar();
@@ -239,7 +246,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(previewTimeline());
-        else if (!m_engineTimer.isActive()) m_engineTimer.start();
+        else if (!m_engineTimer.isActive())
+            m_engineTimer.start(int(std::max<qint64>(0, kEngineEvery - m_engineSent.elapsed())));
     });
     m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview

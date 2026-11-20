@@ -512,6 +512,7 @@ private:
     bool m_multicamMode = false;
     bool m_multicamSyncing = false, m_multicamSyncAgain = false;
     QTimer m_engineTimer; // bundles model changes -> engine
+    QElapsedTimer m_engineSent; // since the last timeline handed to the engine
     PlaybackMeter m_playMeter;
     QElapsedTimer m_playClock;
     bool m_slow = false;     // the last measurement found playback too slow (the hint decides what to offer)

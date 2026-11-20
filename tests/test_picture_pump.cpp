@@ -18,6 +18,7 @@
 #include <QTemporaryDir>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -600,6 +601,64 @@ void testRecentTooBig()
     CHECK(pump.stats().recent > before);
 }
 
+
+// Stopped, the content changes faster than a still renders (a shape's handle dragged on a slow computer): each still
+// under way finishes and is shown in between, the picture follows step by step - it was dropped at every change and
+// the picture stood still until the edits did. The last change's picture comes last; an older one never after it
+void testRefreshFasterThanRender()
+{
+    std::mutex m;
+    std::vector<int> shown; // the version each shown picture was rendered for
+    std::atomic<int> version{0};
+    Picture::Pump pump([] { return NAN; }, [&](const QImage& img, int64_t, double) {
+        std::lock_guard l(m);
+        shown.push_back(img.isNull() ? -1 : qRed(img.pixel(0, 0)));
+    }, 1); // one worker, like a Raspberry Pi
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->renderWant = [&](int64_t, Picture::Pump::Want& w) {
+        const int v = version.load();
+        for (int i = 0; i < 40 && !(w.cancel && w.cancel->load()); ++i) // 40 ms, stops when cancelled
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        QImage img(4, 4, QImage::Format_RGBA8888);
+        img.fill(QColor(v, 0, 0));
+        return img;
+    };
+    c->render = [&](int64_t f) {
+        Picture::Pump::Want w;
+        return c->renderWant(f, w);
+    };
+    c->last = [] { return int64_t(100); };
+    c->fps = 25;
+    pump.setContent(c, 10, 0);
+    CHECK(waitFor([&] {
+        std::lock_guard l(m);
+        return !shown.empty();
+    }, 1000));
+    size_t before;
+    {
+        std::lock_guard l(m);
+        before = shown.size();
+    }
+    for (int i = 1; i <= 50; ++i) { // a change every 10 ms for half a second
+        version = i;
+        pump.refresh();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::vector<int> during;
+    {
+        std::lock_guard l(m);
+        during.assign(shown.begin() + long(before), shown.end());
+    }
+    CHECK(waitFor([&] {
+        std::lock_guard l(m);
+        return !shown.empty() && shown.back() == 50;
+    }, 1000));
+    std::printf("  %zu pictures shown while the content changed every 10 ms (40 ms each)\n", during.size());
+    CHECK(during.size() >= 6);
+    std::lock_guard l(m);
+    CHECK(std::is_sorted(shown.begin(), shown.end())); // never an older picture after a newer one
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -616,6 +675,8 @@ int main(int argc, char** argv)
     testForgetRecent();
     std::printf("recent frame larger than the budget\n");
     testRecentTooBig();
+    std::printf("refresh faster than a still renders\n");
+    testRefreshFasterThanRender();
     std::printf("shuttle to the end\n");
     testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {

@@ -109,6 +109,32 @@ int main(int argc, char** argv)
         CHECK(ok);
     }
     std::printf("slowest %d ms, %d of 6 late\n", worst, stale);
+    // While dragging (a mouse move every 7 ms, a 144 Hz mouse): how far the picture's right edge trails the box
+    {
+        const QPointF corner = shape->handlePos(4, frame);
+        QMouseEvent press(QEvent::MouseButtonPress, corner, corner, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        CHECK(shape->mousePress(&press, frame));
+        QPointF at = corner;
+        double sum = 0;
+        int n = 0;
+        for (int i = 0; i < 60; ++i) {
+            at += QPointF(1, 0);
+            QMouseEvent move(QEvent::MouseMove, at, at, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            shape->mouseMove(&move, frame);
+            settle(7);
+            if (i < 10) continue; // under way
+            const QPointF right = shape->handlePos(3, frame);
+            const QImage g = screen->grab().toImage();
+            const int y = int(std::lround(right.y())) + 12;
+            int edge = int(right.x()) - 2; // left of the box's dashed line (growing: the picture is inside the box)
+            while (edge > 0 && qGray(g.pixel(edge, y)) < 100) --edge;
+            sum += right.x() - edge;
+            ++n;
+        }
+        QMouseEvent release(QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        shape->mouseRelease(&release, frame);
+        std::printf("while dragging: the picture trails the box by %.1f px on average (1 px per 7 ms)\n", sum / n);
+    }
     CHECK(worst < 150);
     return Check::result();
 }
