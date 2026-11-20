@@ -59,8 +59,9 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   every moment feels mechanical. `beats` tells you where those are (see Music).
 - **Effects (zoom punch, flash, shake) only when the user asks for them.** "Cut out the kills", "make a TikTok" is
   no request for effects: put none and offer them in one line at the end. Users find flash and shake on every kill
-  too much - when asked for effects on the kills: the mild `hit` (punch + light shake, no flash) on the kills, at most
-  one `big` (with flash) on the one best moment of the video, never `big`/`flash`/`shake` on several kills in a row.
+  too much, even mild ones, and short-video edits do not use them - when asked for effects on the kills: `hit` (a
+  small zoom punch) on the kills, at most one `big` (a stronger punch) on the best moment; `flash` and `shake` only when
+  the user names them.
 - A sound on every kill (or hit, beat): all copies on **one** track, each starting on its moment (cut off silence at
   the file's start first, `silence` shows it). When a kill comes before the previous sound has ended, end the
   previous copy there (`trim`), like a sampler starting the sound again - copies on separate tracks pile up, get
@@ -75,10 +76,9 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   sounds - never on every cut unasked.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (drops from `beats`; for kills the `hit_s` of `highlights` as `{"media":"/path/clip.mkv","source":"7.67s"}`, which
-  finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (mild: punch + light shake, a kill), `big` (punch + flash +
-  shake, the one big moment),
-  `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them.
-  Flashes keep 0.5 s apart by themselves (a burst of kills would strobe); the quiet choice is `shake` alone. Don't
+  finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (a small zoom punch, a kill), `big` (a stronger
+  punch, the one big moment), `drop` (a big punch on a music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them.
+  Flashes keep 0.5 s apart by themselves (a burst of kills would strobe); the quiet choice is a punch alone. Don't
   write punches and flashes as single `keyframe` ops. A `transform` `zoom`/`x`/`y` without `at` afterwards moves
   the accents along (no need to clear and redo them).
 - Vertical (9:16) from 16:9 gameplay: one track with `transform` `fit` `"blur"` on every clip (see
