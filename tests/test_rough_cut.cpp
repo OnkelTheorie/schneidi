@@ -44,6 +44,13 @@ void testWords()
     CHECK_EQ(normalize("Zwanzig!"), QString("20"));
     CHECK_EQ(normalize("three"), QString("3"));
     CHECK_EQ(normalize("Café"), QString("cafe"));
+    // Numbers past twenty and the German "-er" form ("Neuner" = "9er", whisper writes either)
+    CHECK_EQ(normalize("einundzwanzig"), QString("21"));
+    CHECK_EQ(normalize("twenty-one"), QString("21"));
+    CHECK_EQ(normalize("Neuner"), normalize("9er"));
+    CHECK_EQ(normalize("Zwanziger."), QString("20er"));
+    CHECK_EQ(normalize("einer"), QString("einer")); // a word of its own, not "1er"
+    CHECK_EQ(normalize("aber"), QString("aber"));
     CHECK(isFiller(normalize("Ähm")));
     CHECK(!isFiller(normalize("Kamera")));
     CHECK(similarity("kameras", "kamera") > 0.8);
@@ -92,6 +99,16 @@ void testTakes()
     // Several sources: found in the second
     c = roughCut({script[1]}, {say("Hallo zusammen.", 0), say("Es hat drei Kameras.", 0)}, Pick::Best);
     if (CHECK(c[0].chosen >= 0)) CHECK_EQ(c[0].takes[c[0].chosen].source, 1);
+
+    // The sentence's last word written another way: the take still ends after it (videotest 21.11.: "Neuner" vs
+    // whisper's "9er" cut the take before the last word)
+    const QVector<Sentence> nine = sentences("Ey, er hat den Neuner.");
+    c = roughCut(nine, {say("Ey er hat den 9er. Und dann", 0)}, Pick::LastGood);
+    if (CHECK(c[0].chosen >= 0)) CHECK_EQ(c[0].takes[c[0].chosen].last, 4);
+    c = roughCut(nine, {say("Ey er hat den Nüner. Und dann", 0)}, Pick::LastGood); // not recognised: joined anyway
+    if (CHECK(c[0].chosen >= 0)) CHECK_EQ(c[0].takes[c[0].chosen].last, 4);
+    c = roughCut(nine, {say("Ey er hat den Nüner und dann weiter.", 0)}, Pick::LastGood); // no stop after it: not
+    if (CHECK(c[0].chosen >= 0)) CHECK_EQ(c[0].takes[c[0].chosen].last, 3);
 
     // Repeats without a script: a false start and its full take; a sentence said once is no repeat
     // A longer take with a slip before the right one: the right (last) one stays

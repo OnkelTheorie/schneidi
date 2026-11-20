@@ -20,7 +20,7 @@ struct Word {
 };
 
 // "Größe," -> "groesse", "Zwanzig" -> "20", "äh" stays "aeh" (isFiller tells): lower case, umlauts and ß folded,
-// everything but letters and digits removed, number words up to twenty (German, English) as digits
+// everything but letters and digits removed, number words up to 100 (German, English) as digits, "Neuner" as "9er"
 QString normalize(const QString& word);
 // The fillers rough_cut leaves out of its alignment and counts against a take: äh, ähm, öh, hm, uh, um, uhm, erm …
 bool isFiller(const QString& normalized);

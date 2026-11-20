@@ -13,6 +13,8 @@ namespace {
 
 constexpr double kMatch = 0.75;   // words this similar are the same word (whisper hears "Schnitt" as "Schnit")
 constexpr double kPauseS = 1.0;   // a pause inside a take longer than this counts against it
+constexpr double kJoinS = 0.35;   // a word this close to the take's end is still said in one go
+constexpr double kStopS = 0.3;    // a pause this long after a word: the speaker stopped there
 
 const QHash<QString, QString>& numberWords()
 {
@@ -30,6 +32,21 @@ const QHash<QString, QString>& numberWords()
         }
         m.insert("ein", "1");
         m.insert("eine", "1");
+        // Tens and their compounds up to 99 ("einundzwanzig", "twenty-one" = "twentyone"), and a hundred
+        const char* deTens[] = {"zwanzig", "dreissig", "vierzig", "fuenfzig", "sechzig", "siebzig", "achtzig", "neunzig"};
+        const char* enTens[] = {"twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"};
+        for (int t = 0; t < 8; ++t) {
+            const int tens = (t + 2) * 10;
+            m.insert(QString::fromLatin1(deTens[t]), QString::number(tens));
+            m.insert(QString::fromLatin1(enTens[t]), QString::number(tens));
+            for (int u = 1; u <= 9; ++u) {
+                const QString deUnit = u == 1 ? QString("ein") : QString::fromLatin1(de[u]);
+                m.insert(deUnit + "und" + QString::fromLatin1(deTens[t]), QString::number(tens + u));
+                m.insert(QString::fromLatin1(enTens[t]) + QString::fromLatin1(en[u]), QString::number(tens + u));
+            }
+        }
+        m.insert("hundert", "100");
+        m.insert("hundred", "100");
         return m;
     }();
     return map;
@@ -61,6 +78,7 @@ struct Hit {
     double score = 0;
     int first = -1, last = -1; // into norm
     int matched = 0, extra = 0;
+    int missingEnd = 0; // sentence words after the last one aligned (not heard as written: "9er" for "Neuner")
 };
 
 Hit align(const QStringList& sentence, const QStringList& norm, int lo, int hi)
@@ -89,7 +107,7 @@ Hit align(const QStringList& sentence, const QStringList& norm, int lo, int hi)
             if (left.h - 1 > c.h) c = Cell{left.h - 1, left.start, left.matched, left.extra + 1};
             if (c.h <= 0) c = Cell{};
             cur[j] = c;
-            if (c.h > best.score && c.start >= 0) best = Hit{c.h, c.start, lo + j - 1, c.matched, c.extra};
+            if (c.h > best.score && c.start >= 0) best = Hit{c.h, c.start, lo + j - 1, c.matched, c.extra, n - i};
         }
         std::swap(prev, cur);
     }
@@ -170,7 +188,14 @@ QString normalize(const QString& word)
     QString plain; // accents off (é -> e)
     for (const QChar c : out)
         if (c.category() != QChar::Mark_NonSpacing) plain += c;
-    return numberWords().value(plain, plain);
+    if (const auto it = numberWords().constFind(plain); it != numberWords().constEnd()) return it.value();
+    // A number with the German "-er" ("Neuner", "Zwanziger") is written "9er" just as often: both the same word
+    if (plain.size() > 2 && plain.endsWith(QLatin1String("er"))) {
+        const QString base = plain.chopped(2);
+        if (const auto it = numberWords().constFind(base); it != numberWords().constEnd() && base != QLatin1String("ein"))
+            return it.value() + "er";
+    }
+    return plain;
 }
 
 bool isFiller(const QString& w)
@@ -307,6 +332,23 @@ QVector<Take> findTakes(const QStringList& sentence, const QVector<Word>& words,
         if (best.first < 0) break;
         const double coverage = double(best.matched) / sentence.size();
         if (coverage < minCoverage) break;
+        // The sentence's last words not recognised: the take must not end before them. As many spoken words as are
+        // missing join it when they follow without a pause and the speaker stops after them (a pause, the sentence's
+        // end in the transcript, or the end) - else the take keeps its matched end
+        if (best.missingEnd > 0) {
+            int last = best.last;
+            for (int k = 0; k < best.missingEnd && last + 1 < norm.size() && !used[last + 1]; ++k) {
+                if (words[index[last + 1]].from - words[index[last]].to > kJoinS) break;
+                ++last;
+                const int w = index[last];
+                const bool stops = w + 1 >= words.size() || words[w + 1].from - words[w].to >= kStopS
+                                   || endsSentence(words[w].text);
+                if (stops) { // not counted as extra: they stand for the sentence's own words
+                    best.last = last;
+                    break;
+                }
+            }
+        }
         for (int i = best.first; i <= best.last; ++i) used[i] = true;
         out << takeOf(words, source, index[best.first], index[best.last], coverage, best.extra);
     }
