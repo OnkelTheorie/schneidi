@@ -5,6 +5,8 @@
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/RenderJob.h"
 #include "core/SourceBitrate.h"
 #include "core/Subtitles.h"
@@ -617,6 +619,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
     m_keyframes = ExportWriter::isOwnH264(s.videoCodec) ? cutFrames(tl, m_from, m_length, s.format.rate, rate) : QVector<int>();
+    m_hints.clear();
+    if (ExportWriter::isOwnH264(s.videoCodec))
+        m_hints = encodeHints(tl, m_from, m_length, s.format.size(), out.size(), s.format.rate, rate);
 
     // Renderer and mixer are made in a thread (smart render looks at the files to copy), so the window stays
     // responsive. launch() continues in this thread. Sources open with their first frame.
@@ -751,6 +756,92 @@ QVector<int> Exporter::cutFrames(const Timeline& tl, int from, int length, Frame
     return cuts;
 }
 
+QVector<ExportHintSpan> Exporter::encodeHints(const Timeline& tl, int from, int length, QSize format, QSize out,
+                                                                 FrameRate timelineRate, FrameRate outputRate)
+{
+    QVector<ExportHintSpan> spans;
+    if (length <= 0 || format.isEmpty() || out.isEmpty()) return spans;
+    const int end = from + length;
+    // Between two clip edges the same clips show
+    QVector<int> edges{from, end};
+    QVector<const Clip*> clips;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.start >= end || c.end() <= from) continue;
+            clips << &c;
+            edges << std::clamp(c.start, from, end) << std::clamp(c.end(), from, end);
+        }
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    // First output frame showing timeline frame f or a later one (output frame k shows from + floor(k * tl / out))
+    auto outputFrame = [&](int f) {
+        const int64_t a = int64_t(f - from) * outputRate.num * timelineRate.den;
+        const int64_t b = int64_t(outputRate.den) * timelineRate.num;
+        return int(b > 0 ? (a + b - 1) / b : 0);
+    };
+    static const QSet<QString> kStills{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("webp"), QStringLiteral("bmp"),
+                                       QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg"), QStringLiteral("heic"), QStringLiteral("avif")};
+    const double sx = double(out.width()) / format.width(), sy = double(out.height()) / format.height();
+    for (qsizetype i = 0; i + 1 < edges.size(); ++i) {
+        const int a = edges[i], b = edges[i + 1];
+        ExportHintSpan span;
+        span.from = outputFrame(a);
+        span.to = outputFrame(b);
+        if (span.to <= span.from) continue;
+        span.still = true;
+        bool fills = true;  // every media clip showing has the blurred fill at the same place
+        QRectF sharp;       // that place: the fitted picture (project pixels)
+        for (const Clip* c : clips) {
+            if (c->start >= b || c->end() <= a) continue;
+            if (c->isTitle()) continue;
+            const bool image = c->kind == ClipKind::Media && kStills.contains(QFileInfo(c->mediaPath).suffix().toLower());
+            if (!(c->kind == ClipKind::Media && (c->freeze || image))) span.still = false;
+            const ClipTransform& t = c->transform;
+            bool moves = false;
+            for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::CropLeft,
+                                AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
+                moves = moves || Keys::animated(*c, p);
+            if (c->kind != ClipKind::Media || !t.hasBlurFill() || t.rotation != 0 || t.hasTilt() || moves) {
+                fills = false;
+                continue;
+            }
+            const QSizeF frame(format);
+            const QSizeF fit = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
+            QRectF r((frame.width() - fit.width()) / 2, (frame.height() - fit.height()) / 2, fit.width(), fit.height());
+            if (t.hasCrop()) r.adjust(t.cropLeft, t.cropTop, -t.cropRight, -t.cropBottom);
+            // Zoom about the frame's centre, then the position (Y up)
+            const QPointF centre(frame.width() / 2, frame.height() / 2);
+            r = QRectF(centre.x() + (r.left() - centre.x()) * t.zoomX + t.posX, centre.y() + (r.top() - centre.y()) * t.zoomY - t.posY,
+                       r.width() * t.zoomX, r.height() * t.zoomY);
+            if (sharp.isNull()) sharp = r;
+            else if (std::abs(sharp.left() - r.left()) > 0.5 || std::abs(sharp.top() - r.top()) > 0.5
+                     || std::abs(sharp.width() - r.width()) > 0.5 || std::abs(sharp.height() - r.height()) > 0.5)
+                fills = false;
+        }
+        if (fills && !sharp.isNull()) {
+            // A pixel of margin: the picture's edge is resampled
+            const int l = std::clamp(int(std::floor(sharp.left() * sx)) - 1, 0, out.width());
+            const int r = std::clamp(int(std::ceil(sharp.right() * sx)) + 1, 0, out.width());
+            const int top = std::clamp(int(std::floor(sharp.top() * sy)) - 1, 0, out.height());
+            const int bottom = std::clamp(int(std::ceil(sharp.bottom() * sy)) + 1, 0, out.height());
+            if (top > 0) span.background << QRect(0, 0, out.width(), top);
+            if (bottom < out.height()) span.background << QRect(0, bottom, out.width(), out.height() - bottom);
+            if (l > 0) span.background << QRect(0, top, l, bottom - top);
+            if (r < out.width()) span.background << QRect(r, top, out.width() - r, bottom - top);
+        }
+        if (!span.still && span.background.isEmpty()) continue;
+        // Joins the span before when it says the same
+        if (!spans.isEmpty() && spans.last().to == span.from && spans.last().still == span.still
+            && spans.last().background == span.background)
+            spans.last().to = span.to;
+        else
+            spans << span;
+    }
+    return spans;
+}
+
 QString Exporter::fallbackCodec(const QString& failed) const
 {
     // A hardware encoder: the software one chosen with it; x264/x265 of the extension (a separate program): the free one
@@ -883,6 +974,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
     w.keyframes = m_keyframes;
+    w.hints = m_hints;
     w.subtitles = m_textTracks;
     if (!s.videoCodec.isEmpty()) w.externalProgram = HardwareEncoders::externalProgram(codec);
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;

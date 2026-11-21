@@ -419,6 +419,45 @@ struct ExportWriter::Impl {
     int64_t ownPackets = 0;
     int ownThreads() const { return s.threads > 0 ? s.threads : std::max(1, int(std::thread::hardware_concurrency())); }
     bool ownKeyAt(int64_t i) const { return i >= 0 && i < int64_t(ownKey.size()) && ownKey[size_t(i)]; }
+    // The timeline's hints for output frame i (Settings::hints) as the encoder takes them; false = none
+    bool ownHints = true; // option "hints"
+    size_t ownHintSpan = 0; // the span the last picture was in (pictures come in order)
+    bool ownHintAt(int64_t i, schneidi::h264::EncodeHints& h)
+    {
+        h = {};
+        if (!ownHints || s.hints.isEmpty()) return false;
+        const size_t n = size_t(s.hints.size());
+        if (ownHintSpan >= n || s.hints[qsizetype(ownHintSpan)].from > i) ownHintSpan = 0;
+        while (ownHintSpan < n && s.hints[qsizetype(ownHintSpan)].to <= i) ++ownHintSpan;
+        if (ownHintSpan >= n) return false;
+        const ExportHintSpan& span = s.hints[qsizetype(ownHintSpan)];
+        if (i < span.from) return false;
+        h.repeat = span.still;
+        for (const QRect& r : span.background) h.background.push_back({r.x(), r.y(), r.width(), r.height()});
+        return !h.empty();
+    }
+    // SCHNEIDI_S264_DUMP=<path prefix> (development): the pictures the own encoder gets as raw yuv420p in
+    // <prefix>.yuv and their cuts and hints in <prefix>.hints (h264-proto --hints), to measure the encoder on what
+    // the export really gives it
+    QFile ownDumpYuv, ownDumpHints;
+    void ownDump(const AVFrame* f, bool key, const schneidi::h264::EncodeHints* h)
+    {
+        if (!ownDumpYuv.isOpen()) return;
+        for (int p = 0; p < 3; ++p) {
+            const int w = p ? width / 2 : width, rows = p ? height / 2 : height;
+            for (int y = 0; y < rows; ++y)
+                ownDumpYuv.write(reinterpret_cast<const char*>(f->data[p]) + qsizetype(y) * f->linesize[p], w);
+        }
+        if (!key && !h) return;
+        QByteArray line = QByteArray::number(qlonglong(f->pts));
+        if (key) line += " key";
+        if (h && h->repeat) line += " repeat";
+        if (h)
+            for (const auto& r : h->background)
+                line += " bg " + QByteArray::number(r.x) + ' ' + QByteArray::number(r.y) + ' ' + QByteArray::number(r.w) + ' '
+                        + QByteArray::number(r.h);
+        ownDumpHints.write(line + '\n');
+    }
     static schneidi::h264::Picture ownPicture(const AVFrame* f)
     {
         schneidi::h264::Picture p;
@@ -1374,7 +1413,10 @@ struct ExportWriter::Impl {
     {
         std::vector<uint8_t> au;
         try {
-            au = ownEnc->encode(ownPicture(f), ownKeyAt(f->pts));
+            schneidi::h264::EncodeHints hints;
+            const bool hinted = ownHintAt(f->pts, hints);
+            ownDump(f, ownKeyAt(f->pts), hinted ? &hints : nullptr);
+            au = ownEnc->encode(ownPicture(f), ownKeyAt(f->pts), hinted ? &hints : nullptr);
         } catch (const std::exception& e) {
             fail(QStringLiteral("s264: %1").arg(e.what()), true);
             return false;
@@ -2131,6 +2173,15 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
             if (key == "bframes") d->ownBframes = std::clamp(value.toInt(), 0, 8);
             if (key == "analysis_mb") d->ownAnalysisMb = std::clamp(value.toInt(), 0, 1024);
             if (key == "speed") d->ownSpeed = std::clamp(value.toInt(), 0, 1);
+            if (key == "hints") d->ownHints = value.toInt() != 0;
+        }
+        if (const QString dump = qEnvironmentVariable("SCHNEIDI_S264_DUMP"); !dump.isEmpty()) {
+            d->ownDumpYuv.setFileName(dump + QStringLiteral(".yuv"));
+            d->ownDumpHints.setFileName(dump + QStringLiteral(".hints"));
+            if (!d->ownDumpYuv.open(QIODevice::WriteOnly) || !d->ownDumpHints.open(QIODevice::WriteOnly)) {
+                qWarning("Export: SCHNEIDI_S264_DUMP cannot write %s", qPrintable(dump));
+                d->ownDumpYuv.close();
+            }
         }
         d->ownKey.assign(size_t(std::max(0, s.length)), 0);
         for (int k : s.keyframes)

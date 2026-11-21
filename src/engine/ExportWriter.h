@@ -18,6 +18,7 @@
 // mixer (always encoded). Problems with one GOP only mean encoding it; problems with the whole stream
 // end the export with smartFailed() (the Exporter renders again without).
 
+#include "engine/ExportHints.h"
 #include "core/ProjectFormat.h"
 #include "core/Subtitles.h"
 #include "engine/SmartRender.h"
@@ -66,6 +67,9 @@ public:
         // Own H.264 encoder (videoCodec kOwnH264): output frames that start with a key frame (hard cuts of the
         // timeline; sorted). The encoder also finds scene changes itself.
         QVector<int> keyframes;
+        // Own H.264 encoder: what the timeline knows about the pictures (Exporter::encodeHints, engine/ExportHints.h),
+        // sorted, not overlapping. Empty = no hints. Option "hints" = 0 switches them off.
+        QVector<ExportHintSpan> hints;
     };
     // schneidi's own H.264 encoder (engine/encoder/h264, experimental): not an FFmpeg encoder, written by the writer
     // itself (Annex B packets into the muxer, parameter sets as the stream's extradata). 8-bit 4:2:0 only, with

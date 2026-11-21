@@ -17,6 +17,12 @@
 // --chunks N: N independent encoders side by side on parts of the clip (planChunks), --threads split
 // between them; implies the first pass. Input must be a file. --chunk-min F: shortest chunk in
 // pictures (default 15 s).
+// --hints file: what an editor knows about the pictures (EncodeHints), one line per picture that has any:
+// "<picture> [key] [repeat] [still x y w h]... [bg x y w h]..." (key = forced keyframe: a cut; repeat = the picture
+// before once more; still = same content as before in that rectangle; bg = blurred background). schneidi's export
+// writes such a file next to the raw pictures with SCHNEIDI_S264_DUMP. --hint-bg-qp N (4) / --hint-bg-energy E (10):
+// EncoderConfig::hintBackgroundQp / hintBackgroundEnergy. --hints-keys-only: take only the cuts from the file.
+// Not with --chunks; with --2pass the first pass does not see the hints.
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -160,6 +166,8 @@ int main(int argc, char** argv)
     int maxFrames = 1 << 30;
     const char* reconPath = nullptr;
     const char* orderPath = nullptr; // --order file: per access unit "display index, bytes" (for a muxer: pts with B pictures)
+    const char* hintsPath = nullptr; // --hints file
+    bool hintsKeysOnly = false;
     bool twoPass = false;
     int chunks = 1, chunkMin = 0;
     for (int i = 6; i < argc; ++i) {
@@ -260,8 +268,53 @@ int main(int argc, char** argv)
             reconPath = argv[++i];
         else if (a == "--order" && i + 1 < argc)
             orderPath = argv[++i];
+        else if (a == "--hints" && i + 1 < argc)
+            hintsPath = argv[++i];
+        else if (a == "--hints-keys-only")
+            hintsKeysOnly = true;
+        else if (a == "--hint-bg-qp" && i + 1 < argc)
+            cfg.hintBackgroundQp = std::atoi(argv[++i]);
+        else if (a == "--hint-bg-energy" && i + 1 < argc)
+            cfg.hintBackgroundEnergy = std::atof(argv[++i]);
     }
 
+    // Hints per picture (see the top of the file).
+    std::map<int, EncodeHints> hints;
+    std::map<int, bool> hintKeys;
+    if (hintsPath) {
+        FILE* hf = std::fopen(hintsPath, "r");
+        if (!hf) {
+            std::fprintf(stderr, "cannot open %s\n", hintsPath);
+            return 1;
+        }
+        char line[4096];
+        while (std::fgets(line, sizeof line, hf)) {
+            char* tok = std::strtok(line, " \t\r\n");
+            if (!tok)
+                continue;
+            const int n = std::atoi(tok);
+            EncodeHints hn;
+            while ((tok = std::strtok(nullptr, " \t\r\n"))) {
+                const std::string t = tok;
+                if (t == "key")
+                    hintKeys[n] = true;
+                else if (t == "repeat")
+                    hn.repeat = true;
+                else if (t == "still" || t == "bg") {
+                    EncodeHints::Rect r;
+                    int* v[4] = {&r.x, &r.y, &r.w, &r.h};
+                    for (int* p : v) {
+                        tok = std::strtok(nullptr, " \t\r\n");
+                        *p = tok ? std::atoi(tok) : 0;
+                    }
+                    (t == "still" ? hn.still : hn.background).push_back(r);
+                }
+            }
+            if (!hn.empty() && !hintsKeysOnly)
+                hints[n] = std::move(hn);
+        }
+        std::fclose(hf);
+    }
     FILE* in = std::strcmp(inPath, "-") == 0 ? stdin : std::fopen(inPath, "rb"); // "-" = stdin
     FILE* out = std::fopen(outPath, "wb");
     FILE* recon = reconPath ? std::fopen(reconPath, "wb") : nullptr;
@@ -344,7 +397,7 @@ int main(int argc, char** argv)
             Picture pic;
             pic.y = frame.data();
             pic.strideY = w;
-            fp.add(pic);
+            fp.add(pic, hintKeys.count(n) > 0);
         }
         cfg.firstPass = fp.stats();
         std::rewind(in);
@@ -407,7 +460,8 @@ int main(int argc, char** argv)
         pic.strideY = w;
         pic.strideC = cw;
         const auto t0 = std::chrono::steady_clock::now();
-        const auto au = enc.encode(pic); // copies the picture
+        const auto hint = hints.find(fed);
+        const auto au = enc.encode(pic, hintKeys.count(fed) > 0, hint != hints.end() ? &hint->second : nullptr); // copies the picture
         seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         pending[fed] = std::move(frame);
         ++fed;
@@ -446,6 +500,11 @@ int main(int argc, char** argv)
                     typeBytes[2] / 1024.0 / typeCount[2], typePsnr[2] / typeCount[2]);
     if (cfg.vbvMaxrateKbps > 0 && cfg.vbvBufsizeKbits > 0)
         std::printf("vbv underflows %d min fill %.1f %%  ", enc.vbvUnderflows(), 100.0 * enc.vbvMinFill() / (cfg.vbvBufsizeKbits * 1000.0));
+    if (!hints.empty()) {
+        const Encoder::HintStats hs = enc.hintStats();
+        std::printf("hints: %lld repeats, %lld still MBs, %lld background MBs  ", static_cast<long long>(hs.repeats),
+                    static_cast<long long>(hs.stillMbs), static_cast<long long>(hs.backgroundMbs));
+    }
     std::printf("peak %ld MB  last qp %d  ", peakMb(), enc.lastQp());
     std::printf("frames %d  bytes %zu (%.1f KB/frame)  %.2f fps  PSNR Y %.2f U %.2f V %.2f\n", frames, totalBytes,
                 totalBytes / 1024.0 / frames, frames / seconds, psnrY / frames, psnrU / frames, psnrV / frames);

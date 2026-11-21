@@ -34,6 +34,8 @@ struct RefPic {
     std::vector<int16_t> mvx, mvy;
     std::vector<int8_t> ref;
     int gopPos = 0; // display distance from the IDR picture
+    int displayIndex = -1;          // the picture's place in input order
+    std::vector<int32_t> stillFrom; // LookaheadFrame::stillFrom of the picture (hints), empty = none
     int refGopPos = 0; // gopPos of the picture its vectors point to (list 0)
     int frameNum = 0;  // reference pictures since the IDR picture before this one (frame_num, not wrapped)
     // Means of the source picture's 16x16 luma blocks and 8x8 chroma blocks (weighted prediction:
@@ -442,6 +444,10 @@ public:
     bool deblockedInline_ = false; // the wavefront filtered the picture already
     bool detectSceneCut(std::vector<uint8_t>& prevThumb);
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
+    // Hints per macroblock (Encoder::startFrame), empty = none: bit 0 the samples equal the list 0 reference
+    // picture's, bit 1 background, bit 2 the samples equal the list 1 reference picture's.
+    std::vector<uint8_t> hint_;
+    std::atomic<int> hintStill_{0}, hintBackground_{0}; // macroblocks coded by a hint in this picture
     float qpFrac_ = 0;              // the picture's QP is cfg_.qp + qpFrac_ (constant quality), spread by planMacroblockQp
 };
 

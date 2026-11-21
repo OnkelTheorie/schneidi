@@ -62,6 +62,12 @@ struct LookaheadFrame {
     int nearRun = 0;                           // nearB: the longer of the B runs before and after it
     bool nearB = false;                        // a reference picture with B pictures before or after it
     int refDist = 1, nextDist = 1;             // planned distance to the reference before (P, B) / after (B)
+    // The caller's hints (EncodeHints), empty = none. hint: per macroblock, bit 1 = background. stillFrom: per
+    // macroblock the display index of the first picture of the run of equal macroblocks this one ends (its own
+    // index = it differs from the picture before). repeat: the whole picture equals the one before.
+    std::vector<uint8_t> hint;
+    std::vector<int32_t> stillFrom;
+    bool repeat = false;
 };
 
 class Lookahead {
@@ -73,6 +79,8 @@ public:
     // The two halves of analyse: the half-resolution picture and thumbnail (independent of other
     // pictures), then the costs against prev (which must be prepared).
     void prepare(LookaheadFrame& f) const;
+    // analyse for a picture that equals prev (analysed) sample for sample: the same numbers without the work.
+    void repeat(LookaheadFrame& f, const LookaheadFrame& prev) const;
     void search(LookaheadFrame& f, const LookaheadFrame* prev) const;
     // search = sceneCut (needs only prev's thumbnail) + costs (starts from prev's vectors, so
     // pictures go one after another).

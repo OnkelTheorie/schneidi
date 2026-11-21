@@ -51,6 +51,28 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
     search(f, prev);
 }
 
+// A picture known to equal prev sample for sample (EncodeHints::repeat, checked by the encoder): what analyse
+// would find, without looking - the same half picture, thumbnail and intra costs, and the motion search's answer
+// for an exact match at the same place (vector 0, no error, the bits of a zero vector difference).
+void Lookahead::repeat(LookaheadFrame& f, const LookaheadFrame& prev) const
+{
+    const size_t n = size_t(mbW_) * mbH_;
+    f.half = prev.half;
+    f.thumb = prev.thumb;
+    f.intraCost = prev.intraCost;
+    const int still = 2 * seBits(0);
+    f.interCost.assign(n, still);
+    f.mvx.assign(n, 0);
+    f.mvy.assign(n, 0);
+    f.propagate.assign(n, 0.0f);
+    f.treeLinks.ready = false;
+    f.intraSum = prev.intraSum;
+    f.interSum = 0;
+    for (size_t m = 0; m < n; ++m)
+        f.interSum += std::min(still, int(f.intraCost[m]));
+    f.sceneChange = false;
+}
+
 void Lookahead::prepare(LookaheadFrame& f) const
 {
     const int stride = halfW_ + 2 * kMargin;

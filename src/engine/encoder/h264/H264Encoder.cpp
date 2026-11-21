@@ -85,6 +85,16 @@ S264_DEV(int, gDeblockB, std::clamp(devEnv("H264_DBB") ? std::atoi(devEnv("H264_
 // AQ texture measure (experiment, H264_AQEDGE): 0 = variance of the macroblock, 1 = mean of its
 // 8x8 quadrants' variances, 2 = mean of the two flattest quadrants.
 S264_DEV(int, gAqEdge, devEnv("H264_AQEDGE") ? std::atoi(devEnv("H264_AQEDGE")) : 0);
+// Hints (EncodeHints), for measuring: H264_HINTLA=0 analyses repeated pictures in the lookahead like any other,
+// H264_HINTSKIP=0 takes no skip on the hint's word (still macroblocks go through the normal decision),
+// H264_HINTBG=0 leaves background macroblocks all their choices (only the QP rule stays).
+S264_DEV(bool, gHintLa, !devEnv("H264_HINTLA") || std::atoi(devEnv("H264_HINTLA")) != 0);
+S264_DEV(bool, gHintSkip, !devEnv("H264_HINTSKIP") || std::atoi(devEnv("H264_HINTSKIP")) != 0);
+S264_DEV(bool, gHintBg, !devEnv("H264_HINTBG") || std::atoi(devEnv("H264_HINTBG")) != 0);
+// H264_HINTSTAT=1: the hints change nothing; the bits of the macroblocks inside and outside the background
+// rectangles (and of those the texture rule takes out again) are counted and printed when an encoder ends.
+S264_DEV(bool, gHintStat, devEnv("H264_HINTSTAT") && std::atoi(devEnv("H264_HINTSTAT")) != 0);
+std::atomic<int64_t> gHintStatBits[3] = {}, gHintStatMbs[3] = {}; // [0] not background, [1] background, [2] textured inside
 // Per thread (rows of a picture run on several threads): intra try in a P picture without Intra
 // 8x8 / 16x16 (experiments).
 thread_local bool tIntraSkip8 = false, tIntraSkip16 = false;
@@ -621,7 +631,10 @@ using namespace schneidi::h264;
 struct V3Encoder final : EncoderAlt {
     explicit V3Encoder(const EncoderConfig& c) : e(c) {}
     std::vector<uint8_t> headers() const override { return e.headers(); }
-    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe) override { return e.encode(picture, forceKeyframe); }
+    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe, const EncodeHints* hints) override
+    {
+        return e.encode(picture, forceKeyframe, hints);
+    }
     std::vector<uint8_t> flush() override { return e.flush(); }
     State state() const override
     {
@@ -634,6 +647,10 @@ struct V3Encoder final : EncoderAlt {
         s.vbvFramesSinceBp = e.vbvFramesSinceBp();
         s.type = e.lastType();
         s.vbvMinFill = e.vbvMinFill();
+        const Encoder::HintStats h = e.hintStats();
+        s.hintRepeats = h.repeats;
+        s.hintStillMbs = h.stillMbs;
+        s.hintBackgroundMbs = h.backgroundMbs;
         return s;
     }
     const std::vector<uint8_t>& recon(int plane) const override { return plane == 0 ? e.reconY() : plane == 1 ? e.reconU() : e.reconV(); }
@@ -749,6 +766,9 @@ void Encoder::takeAltState()
     frameIndex_ = s.vbvFramesSinceBp; // vbvFramesSinceBp() = frameIndex_ - vbvBpFrame_ (0 here)
     lastType_ = s.type;
     vbvMinFill_ = s.vbvMinFill;
+    hintStats_.repeats = s.hintRepeats;
+    hintStats_.stillMbs = s.hintStillMbs;
+    hintStats_.backgroundMbs = s.hintBackgroundMbs;
 }
 
 Encoder::Encoder(const EncoderConfig& config)
@@ -1772,7 +1792,8 @@ S264_DEV(bool, gProbeAfterB, !devEnv("H264_PROBEAFTERB") || std::atoi(devEnv("H2
 // (H264_PROBETREE=0: without, their bits scaled by the first picture's mean offset as the first probe does - where the
 // tree brings a picture's noise above the quantiser that seed was 6 times too small), with AQ (H264_PROBEAQ=0: without -
 // an animated clip's seed was twice too large) and from a reference that is a P picture itself (H264_PROBECHAIN=0:
-// an I picture).
+// an I picture). The AQ belongs to the pictures' own offsets: H264_PROBETREE=0 codes the probe without AQ too,
+// whatever H264_PROBEAQ says (the probe as it was before both).
 S264_DEV(bool, gProbeTree, !devEnv("H264_PROBETREE") || std::atoi(devEnv("H264_PROBETREE")) != 0);
 S264_DEV(bool, gProbeChain, !devEnv("H264_PROBECHAIN") || std::atoi(devEnv("H264_PROBECHAIN")) != 0);
 S264_DEV(bool, gProbeAq, !devEnv("H264_PROBEAQ") || std::atoi(devEnv("H264_PROBEAQ")) != 0);
@@ -2234,6 +2255,11 @@ Encoder::~Encoder()
 {
     if (alt_)
         return;
+    if (gHintStat && hintsSeen_)
+        std::fprintf(stderr, "hintstat: rest %lld MBs %lld bits, background %lld MBs %lld bits, textured in background %lld MBs %lld bits\n",
+                     static_cast<long long>(gHintStatMbs[0].load()), static_cast<long long>(gHintStatBits[0].load()),
+                     static_cast<long long>(gHintStatMbs[1].load()), static_cast<long long>(gHintStatBits[1].load()),
+                     static_cast<long long>(gHintStatMbs[2].load()), static_cast<long long>(gHintStatBits[2].load()));
     if (bSearchThread_.joinable())
         bSearchThread_.join();
     if (pendingThread_.joinable())
@@ -2446,17 +2472,19 @@ bool Encoder::movingAt(int index) const
     return false;
 }
 
-std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe)
+std::vector<uint8_t> Encoder::encode(const Picture& picture, bool forceKeyframe, const EncodeHints* hints)
 {
+    if (hints && hints->empty() && !hintsSeen_)
+        hints = nullptr;
     if (alt_) {
-        std::vector<uint8_t> au = alt_->encode(picture, forceKeyframe);
+        std::vector<uint8_t> au = alt_->encode(picture, forceKeyframe, hints);
         takeAltState();
         return au;
     }
     if (broken_)
         std::rethrow_exception(broken_);
     try {
-        return encodeImpl(picture, forceKeyframe);
+        return encodeImpl(picture, forceKeyframe, hints);
     } catch (...) {
         broken_ = std::current_exception();
         throw;
@@ -2467,7 +2495,11 @@ void Encoder::analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const
 {
     const FirstPassStats* st = cfg_.firstPass.get();
     if (!st || size_t(f.index) >= st->analysis.size() || !st->analysis[size_t(f.index)]) {
-        la_->analyse(f, prev);
+        // A repeated picture (hints): its analysis is known. H264_HINTLA=0 analyses it all the same (the same numbers).
+        if (f.repeat && prev && gHintLa && prev->intraCost.size() == size_t(mbW_) * mbH_ && !prev->half.empty())
+            la_->repeat(f, *prev);
+        else
+            la_->analyse(f, prev);
         return;
     }
     // The same picture with the same predecessor as in the first pass: same numbers. The half
@@ -2485,15 +2517,71 @@ void Encoder::analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const
     f.sceneChange = a.sceneChange;
 }
 
-std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyframe)
+// The caller's hints as the encoder uses them. Background rectangles become a macroblock map. Still content is
+// checked against the picture before (the hint only says where to look): a macroblock whose samples are the same
+// keeps the start of its run in stillFrom_, any other starts a new run at this picture - so a picture knows for
+// each macroblock whether it equals a reference picture's (startFrame), however far that one is.
+void Encoder::takeHints(LookaheadFrame& f, const EncodeHints* hints, const LookaheadFrame* prev)
+{
+    if (!hints && !hintsSeen_)
+        return;
+    hintsSeen_ = true;
+    const int w = cfg_.width, h = cfg_.height, cw = w / 2;
+    const size_t n = size_t(mbW_) * mbH_;
+    auto inside = [&](const std::vector<EncodeHints::Rect>& rects, int mbx, int mby) {
+        const int x0 = mbx * 16, y0 = mby * 16, x1 = std::min(x0 + 16, w), y1 = std::min(y0 + 16, h);
+        for (const EncodeHints::Rect& r : rects)
+            if (r.x <= x0 && r.y <= y0 && r.x + r.w >= x1 && r.y + r.h >= y1)
+                return true;
+        return false;
+    };
+    if (hints && !hints->background.empty()) {
+        f.hint.assign(n, 0);
+        for (int mby = 0; mby < mbH_; ++mby)
+            for (int mbx = 0; mbx < mbW_; ++mbx)
+                if (inside(hints->background, mbx, mby))
+                    f.hint[size_t(mby) * mbW_ + mbx] = 2;
+    }
+    stillFrom_.resize(n, f.index);
+    const bool look = hints && prev && prev->y.size() == f.y.size() && (hints->repeat || !hints->still.empty());
+    size_t same = 0;
+    for (int mby = 0; mby < mbH_; ++mby)
+        for (int mbx = 0; mbx < mbW_; ++mbx) {
+            const size_t m = size_t(mby) * mbW_ + mbx;
+            bool equal = look && (hints->repeat || inside(hints->still, mbx, mby));
+            if (equal) {
+                const int x0 = mbx * 16, y0 = mby * 16, bw = std::min(16, w - x0), bh = std::min(16, h - y0);
+                for (int y = 0; y < bh && equal; ++y)
+                    equal = std::memcmp(&f.y[size_t(y0 + y) * w + x0], &prev->y[size_t(y0 + y) * w + x0], size_t(bw)) == 0;
+                const int cx = x0 / 2, cy = y0 / 2, cbw = (bw + 1) / 2, cbh = (bh + 1) / 2;
+                for (int y = 0; y < cbh && equal; ++y)
+                    equal = std::memcmp(&f.u[size_t(cy + y) * cw + cx], &prev->u[size_t(cy + y) * cw + cx], size_t(cbw)) == 0 &&
+                            std::memcmp(&f.v[size_t(cy + y) * cw + cx], &prev->v[size_t(cy + y) * cw + cx], size_t(cbw)) == 0;
+            }
+            if (equal)
+                ++same;
+            else
+                stillFrom_[m] = f.index;
+        }
+    if (same > 0)
+        f.stillFrom = stillFrom_;
+    f.repeat = same == n;
+    if (f.repeat)
+        ++hintStats_.repeats;
+}
+
+std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyframe, const EncodeHints* hints)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
     f.index = inCount_++;
-    if (!useLookahead())
+    if (!useLookahead()) {
+        takeHints(f, hints, nullptr);
         return step(&f);
+    }
     if (!la_)
         la_ = std::make_unique<Lookahead>(cfg_.width, cfg_.height, mbW_, mbH_);
     joinPending();
+    takeHints(f, hints, queue_.empty() ? nullptr : &queue_.back());
     const bool full = int(queue_.size()) + 1 >= cfg_.lookahead;
     // Once the queue is full the newest picture joins it only at the next call (analysed in the
     // background with several threads), so the encoded picture sees the same queue with any
@@ -2883,6 +2971,8 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     }
     fc.refs_.clear(); // its reference pictures can be reused once nothing else holds them
     fc.refs1_.clear();
+    hintStats_.stillMbs += fc.hintStill_.load(std::memory_order_relaxed);
+    hintStats_.backgroundMbs += fc.hintBackground_.load(std::memory_order_relaxed);
     std::vector<uint8_t> out = std::move(fc.done_);
     fc.done_.clear();
     last_ = &fc;
@@ -3603,8 +3693,14 @@ void FrameCoder::waveWrite()
                 pred = mbQp_[m];
             }
             mbQpFinal_[m] = int8_t(pred);
+            const size_t statBits = gHintStat ? bw.bitCount() : 0;
             cabacWriteMb(eng, cabWrite_, mbx, r, syn, prevNz);
             eng.terminate(m + 1 == count); // end_of_slice_flag
+            if (gHintStat && hint_.size() == count) {
+                const int k = hint_[m] & 2 ? 1 : hint_[m] & 8 ? 2 : 0;
+                gHintStatBits[k] += int64_t(bw.bitCount() - statBits);
+                ++gHintStatMbs[k];
+            }
         }
         raiseTo(w.written, r + 1);
         wakeRow(r + 1); // it may filter row r now
@@ -4392,6 +4488,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // weigh as much as their pictures, and the B pictures start from a share of the k after B runs.
             // Repeated once where the QP they predict is out of the probe's reach (k is not constant over the QP).
             auto probeMoving = [&](int qp) {
+                // A second round starts clean: where it finds no P picture after a B run worth probing at its QP,
+                // the first round's seeds (measured at another QP) must not stay.
+                rcKSumPb_ = rcCostSumPb_ = rcKBSeed_ = 0;
                 const size_t n = std::min({queue_.size(), cfg_.firstPass->size(), tpType_.size()});
                 auto queued = [&](size_t j) { return queue_[j].index == int(j) && !queue_[j].coded; };
                 size_t at = 0, plain = 0;
@@ -4667,6 +4766,30 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     ? tpClass_[size_t(frame.index)] - (2 + 2 * kRcBins)
                     : -1;
 
+    // Hints: bit 0 = the macroblock's samples equal those of the list 0 reference picture's (its run of equal
+    // pictures began at or before that one), bit 2 = the same for list 1 of a B picture (the later picture's run
+    // reaches back to this one), bit 1 = background (planMacroblockQp drops it where there is texture).
+    fc.hint_.clear();
+    fc.hintStill_ = fc.hintBackground_ = 0;
+    if (!frame.hint.empty() || !frame.stillFrom.empty() || (type == 2 && !fc.refs1_.empty() && !fc.refs1_[0]->stillFrom.empty())) {
+        const size_t n = size_t(mbW_) * mbH_;
+        fc.hint_.assign(n, 0);
+        if (frame.hint.size() == n)
+            fc.hint_ = frame.hint;
+        if (type != 0 && !fc.refs_.empty() && frame.stillFrom.size() == n) {
+            const int r = fc.refs_[0]->displayIndex;
+            if (r >= 0 && r < frame.index)
+                for (size_t m = 0; m < n; ++m)
+                    if (frame.stillFrom[m] <= r)
+                        fc.hint_[m] |= 1;
+        }
+        if (type == 2 && !fc.refs1_.empty() && fc.refs1_[0]->stillFrom.size() == n && fc.refs1_[0]->displayIndex > frame.index) {
+            const std::vector<int32_t>& from = fc.refs1_[0]->stillFrom;
+            for (size_t m = 0; m < n; ++m)
+                if (from[m] <= frame.index)
+                    fc.hint_[m] |= 4;
+        }
+    }
     clock.lap(2); // keyframe decision, macroblock tree, rate control (probe on the first picture)
     fc.planMacroblockQp();
     fc.vbvRowCap_ = 0;
@@ -4719,6 +4842,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         if (!pic)
             pic = std::make_shared<RefPic>();
         pic->gopPos = frame.gopPos;
+        pic->displayIndex = frame.index;
+        pic->stillFrom = frame.stillFrom;
         pic->refGopPos = fc.refs_.empty() ? frame.gopPos : fc.refs_[0]->gopPos;
         pic->frameNum = frameNum;
         if (useWeightedPred() && !bRef) {
@@ -7321,6 +7446,16 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // H264_EARLYSKIPLIGHT: what a refused skip does without (bit 0: the split search, bit 1: the intra try).
     static const int kEarlySkipLight = devEnv("H264_EARLYSKIPLIGHT") ? std::atoi(devEnv("H264_EARLYSKIPLIGHT")) : 3;
     int offSkip = 0; // the skip's residual quantises to nothing, but the skip is far from the source
+    // Hints. The macroblock's samples equal the reference picture's (a still, a title that stands) and the skip
+    // copies that very place: nothing to search or to weigh, what the reference picture shows there is what a
+    // skip of an unchanged block always shows. Background: only the cheap choices below.
+    const uint8_t hint = hint_.empty() ? uint8_t(0) : hint_[mbIndex];
+    if ((hint & 1) && gHintSkip && !gHintStat && skipX == 0 && skipY == 0 && !wpAny_) {
+        result.syn.kind = MbSyntax::Kind::Skip;
+        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+        hintStill_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         if (kEarlySkipSsd <= 0 || double(mbSsd(mbx, mby)) <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
             result.syn.kind = MbSyntax::Kind::Skip;
@@ -7328,6 +7463,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             return false;
         }
         offSkip = kEarlySkipLight;
+    }
+    if ((hint & 2) && gHintBg && !gHintStat) {
+        offSkip = 3; // no split search, no intra try
+        hintBackground_.fetch_add(1, std::memory_order_relaxed);
     }
     ssdSkip = double(mbSsd(mbx, mby));
     costSkip = ssdSkip + psyCost(mbx, mby) + lambda * skipBits(mbx, mby);
@@ -8167,6 +8306,25 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         lostDirect = lostOf(e / 2, detail(dlp, 16, 16), std::min(satd[0], satd[1]), gBSharpKeep > 0 ? satd16(dlp) : 0);
     }
     const double sharpDirect = sharp * lambdaSad * lostDirect;
+    // Hints (see encodeMbP): the samples equal those of every reference picture the direct prediction uses, and it
+    // copies from the same place.
+    const uint8_t hint = hint_.empty() ? uint8_t(0) : hint_[mbIndex];
+    if ((hint & 5) && gHintSkip && !gHintStat) {
+        bool still = dUse != 0 && (!(dUse & 1) || (hint & 1)) && (!(dUse & 2) || (hint & 4));
+        for (int q = 0; q < 4 && still; ++q)
+            for (int list = 0; list < 2; ++list)
+                if (dUse & (1 << list))
+                    still = still && d.mv[list][q][0] == 0 && d.mv[list][q][1] == 0;
+        if (still) {
+            result.syn.kind = MbSyntax::Kind::Skip;
+            mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+            hintStill_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+    const bool hintBackground = (hint & 2) && gHintBg && !gHintStat;
+    if (hintBackground)
+        hintBackground_.fetch_add(1, std::memory_order_relaxed);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
     // type and vector of a copy from one picture would cost (about six bits).
     static const double kEarlySkipFloorB = devEnv("H264_EARLYSKIPFLOOR") ? std::atof(devEnv("H264_EARLYSKIPFLOOR")) : 0.0;
@@ -8486,6 +8644,8 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     static const bool kFastBNoSplit = !devEnv("H264_FASTBNOSPLIT") || std::atoi(devEnv("H264_FASTBNOSPLIT")) != 0;
     if (cfg_.speed >= 1 && kFastBNoSplit && wholePlanned && wholeR8.cbpLuma == 15)
         noSplit = true;
+    if (hintBackground)
+        noSplit = true;
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)
             ++gStatB2[3];
@@ -8760,7 +8920,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             est = std::min(est, satd16(cand));
         }
         const double estInter = std::min(estSearch, estDirect);
-        if (double(est) < estInter * gIntraFactor) {
+        if (double(est) < estInter * gIntraFactor && !hintBackground) {
             const bool borderline = double(est) >= estInter;
             tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
             tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
@@ -9612,7 +9772,12 @@ void FrameCoder::planMacroblockQp()
 {
     const int n = mbW_ * mbH_;
     const bool tree = treeOffset_.size() == size_t(n);
+    const bool hinted = hint_.size() == size_t(n);
+    int background = 0;
     if (cfg_.aqStrength <= 0 || cfg_.mode == IntraMode::Pcm) {
+        if (hinted) // the texture is not measured: no background treatment
+            for (uint8_t& b : hint_)
+                b &= uint8_t(~2);
         std::fill(mbEnergy_.begin(), mbEnergy_.end(), 99.0f); // not measured: every macroblock counts as textured
         if (!tree) {
             std::fill(mbQp_.begin(), mbQp_.end(), int8_t(cfg_.qp));
@@ -9680,9 +9845,19 @@ void FrameCoder::planMacroblockQp()
             static const double kAqFloor = devEnv("H264_AQFLOOR") ? std::atof(devEnv("H264_AQFLOOR")) : 3.0;
             const double e = std::log2(variance + 1.0);
             mbEnergy_[size_t(mby) * mbW_ + mbx] = float(e);
+            // Hints: a background macroblock with texture is something laid over the blur (a caption) - the hint
+            // does not hold there; the others stay out of the mean.
+            if (hinted && (hint_[size_t(mby) * mbW_ + mbx] & 2)) {
+                if (e >= cfg_.hintBackgroundEnergy)
+                    hint_[size_t(mby) * mbW_ + mbx] = uint8_t((hint_[size_t(mby) * mbW_ + mbx] & ~2) | 8);
+                else if (!gHintStat) {
+                    ++background;
+                    continue;
+                }
+            }
             mean += std::max(e, kAqFloor);
         }
-    mean /= n;
+    mean /= std::max(1, n - background);
     // Constant quality: the offsets centre on a fixed energy instead of the picture's mean, so a picture's level
     // follows its texture as well. Centred on the mean, a cartoon (mostly flat, mean energy ~2) had its few
     // busy macroblocks - where its bits go - pushed up to 8 QP coarser and the cartoon came out
@@ -9703,6 +9878,8 @@ void FrameCoder::planMacroblockQp()
     for (int m = 0; m < n; ++m) {
         static const double kAqFloor2 = devEnv("H264_AQFLOOR") ? std::atof(devEnv("H264_AQFLOOR")) : 3.0;
         double offset = std::clamp(cfg_.aqStrength * (std::max(double(mbEnergy_[size_t(m)]), kAqFloor2) - mean) * 0.5, -8.0, 8.0);
+        if (hinted && (hint_[size_t(m)] & 2) && !gHintStat)
+            offset = cfg_.hintBackgroundQp;
         if (tree)
             offset += treeOffset_[size_t(m)];
         mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + offset)), 0, 51));

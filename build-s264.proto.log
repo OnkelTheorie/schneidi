@@ -1,0 +1,15 @@
+[0/2] Re-checking globbed directories...
+[1/14] Building CXX object CMakeFiles/s264_v3_objects.dir/src/engine/encoder/h264/Cavlc.cpp.o
+[2/14] Building CXX object CMakeFiles/s264_v3_objects.dir/src/engine/encoder/h264/Lookahead.cpp.o
+[3/14] Building CXX object CMakeFiles/s264_v3_objects.dir/src/engine/encoder/h264/H264Cabac.cpp.o
+[4/14] Building CXX object CMakeFiles/s264_v3_objects.dir/src/engine/encoder/h264/H264Encoder.cpp.o
+[5/14] Automatic MOC for target h264-proto
+[6/14] s264: x86-64-v3 build of the encoder as one object with local symbols
+-- s264: x86-64-v3 object checked (no load-time code, no LTO, two global symbols)
+[7/14] Building CXX object CMakeFiles/h264-proto.dir/h264-proto_autogen/mocs_compilation.cpp.o
+[8/14] Building CXX object CMakeFiles/h264-proto.dir/src/engine/encoder/h264/Cavlc.cpp.o
+[9/14] Building CXX object CMakeFiles/h264-proto.dir/src/engine/encoder/h264/Lookahead.cpp.o
+[10/14] Building CXX object CMakeFiles/h264-proto.dir/tools/h264proto/main.cpp.o
+[11/14] Building CXX object CMakeFiles/h264-proto.dir/src/engine/encoder/h264/H264Cabac.cpp.o
+[12/14] Building CXX object CMakeFiles/h264-proto.dir/src/engine/encoder/h264/H264Encoder.cpp.o
+[13/14] Linking CXX executable h264-proto
