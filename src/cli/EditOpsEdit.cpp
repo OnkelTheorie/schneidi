@@ -476,6 +476,8 @@ void opTransition(Session& s, const QJsonObject& op)
         if (k != "video" && k != "audio") fail("BAD_ARGUMENT", "kind must be 'video' or 'audio'");
         only = k == "audio" ? TrackKind::Audio : TrackKind::Video;
     }
+    // The style first: a bad type at a cut without spare material was answered "no spare material" (12-B7)
+    if (!op.value("remove").toBool()) parseTransitionStyle(op, TransitionStyle{});
     // Which transitions: both edges of the clips, or the cut nearest to `at` (on every track)
     QSet<int> clips;
     int cut = -1;
@@ -484,12 +486,29 @@ void opTransition(Session& s, const QJsonObject& op)
         clips = QSet<int>(ids.begin(), ids.end());
     } else {
         const int at = timeOf(s, op, "at");
+        // A cut (a clip ends where the next starts) within half a second of `at`; a lone clip edge (fade from or to
+        // black: the timeline start, before a gap) only exactly there - at:5 faded the timeline start in (12-B7)
+        const int near = std::max(1, int(std::lround(s.format().rate.fps() / 2)));
+        int edge = -1;
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& t : cur.tracks(k))
-                for (const Clip& c : t.clips)
+            for (const Track& t : cur.tracks(k)) {
+                if (t.locked || (only && k != *only)) continue;
+                QSet<int> starts;
+                for (const Clip& c : t.clips) starts.insert(c.start);
+                for (const Clip& c : t.clips) {
+                    if (starts.contains(c.end()) && std::abs(c.end() - at) <= near
+                        && (cut < 0 || std::abs(c.end() - at) < std::abs(cut - at)))
+                        cut = c.end();
                     for (int f : {c.start, c.end()})
-                        if (!t.locked && (!only || k == *only) && (cut < 0 || std::abs(f - at) < std::abs(cut - at))) cut = f;
-        if (cut < 0) fail("FAILED", "no cut there (empty timeline?)");
+                        if (edge < 0 || std::abs(f - at) < std::abs(edge - at)) edge = f;
+                }
+            }
+        if (cut < 0 && edge == at) cut = edge;
+        if (cut < 0 && edge < 0) fail("FAILED", "no cut there (empty timeline?)");
+        if (cut < 0)
+            fail("BAD_ARGUMENT", QString("no cut at %1 (the nearest clip edge is %2; at finds a cut within half a "
+                                         "second, a clip's lone edge - a fade from or to black - only exactly)")
+                                     .arg(tc(at, s.format()), tc(edge, s.format())));
     }
     // Clips ending/starting at the cut (trim:true may move it)
     QSet<int> endsAt, startsAt;
@@ -519,6 +538,21 @@ void opTransition(Session& s, const QJsonObject& op)
     const bool trim = op.value("trim").toBool();
     // The wanted length and alignment go in right away: trim:true takes off only the frames missing for them
     const int length = op.contains("length") ? timeOf(s, op, "length") : 0;
+    if (op.contains("length") && length <= 0)
+        fail("BAD_ARGUMENT", "length must be at least 1 frame (remove:true takes a transition off)");
+    // Longer than a clip it joins: it cannot fit (12-B7: 10 s on two 4 s clips was accepted with trim:true)
+    if (length > 0)
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+            if (only && k != *only) continue;
+            for (const Track& t : cur.tracks(k))
+                for (const Clip& c : t.clips)
+                    if ((clips.isEmpty() ? endsAt.contains(c.id) || startsAt.contains(c.id) : clips.contains(c.id))
+                        && length > c.length())
+                        fail("BAD_ARGUMENT", QString("length %1 frames is longer than clip %2 (%3 frames)")
+                                                 .arg(length).arg(c.id).arg(c.length()));
+        }
+    QSet<QPair<int, int>> had;
+    for (const auto& sp : spans()) had.insert({sp.leftId, sp.rightId});
     std::optional<TransitionAlign> align;
     if (op.contains("align")) {
         const int a = QStringList{"center", "start", "end"}.indexOf(op.value("align").toString());
@@ -532,10 +566,20 @@ void opTransition(Session& s, const QJsonObject& op)
         lacking = ed.addTransitions(0, std::nullopt, only, trim, length, align);
         s.selection.clear();
     }
-    const auto found = spans();
+    QVector<TimelineOps::TransitionSpan> found = spans();
     if (found.isEmpty())
         fail("FAILED", lacking.isEmpty() || trim ? "no transition possible there"
                                                  : "no spare material at the cut ('trim':true shortens the clips so it fits)");
+    // At a cut: the tracks that cut there get the dissolve; a track whose clip only ends or starts there (a title
+    // ending at the same moment) does not also fade to black (12-B7, transition at:24s faded the V2 title out)
+    if (clips.isEmpty() && std::any_of(found.begin(), found.end(), [](const auto& sp) { return sp.isDissolve(); })) {
+        QVector<TimelineOps::TransitionSpan> kept;
+        for (const auto& sp : found) {
+            if (!sp.isDissolve() && !had.contains({sp.leftId, sp.rightId})) ed.removeTransition(sp.leftId, sp.rightId);
+            else kept << sp;
+        }
+        found = kept;
+    }
     for (const auto& sp : found) {
         const TransitionStyle st = parseTransitionStyle(op, sp.style);
         if (st != sp.style) ed.setTransitionStyle(sp.leftId, sp.rightId, st);

@@ -1379,8 +1379,13 @@ void applyOp(Session& s, const QJsonObject& given)
             for (const char* k : {"op", "file", "path", "why"}) shown.removeAll(k); // why: every op (editHelp)
             shown.erase(std::remove_if(shown.begin(), shown.end(), [](const QString& k) { return k.startsWith('_'); }),
                         shown.end());
-            fail("BAD_ARGUMENT", QString("unknown key '%1' (keys: %2; `help` with command 'edit' and op '%3')")
-                                     .arg(it.key(), shown.isEmpty() ? "none" : shown.join(", "), name));
+            // The other usual name of a key this op has under its own name (transition duration -> length)
+            static const QHash<QString, QString> usual{{"duration", "length"}, {"length", "duration"}};
+            const QString hint = usual.contains(it.key()) && keys.contains(usual.value(it.key()))
+                                     ? QString("use '%1'; ").arg(usual.value(it.key()))
+                                     : QString();
+            fail("BAD_ARGUMENT", QString("unknown key '%1' (%2keys: %3; `help` with command 'edit' and op '%4')")
+                                     .arg(it.key(), hint, shown.isEmpty() ? "none" : shown.join(", "), name));
         }
     // The reason for the op (any op, free text): not evaluated, echoed in the edit's answer; the op never sees it
     if (op.contains("why")) {

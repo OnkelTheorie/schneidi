@@ -895,6 +895,29 @@ int runTests(int argc, char** argv)
         r = ed(R"([{"op":"transition","at":10,"remove":true}])");
         CHECK(!std::as_const(r)["timeline"]["tracks"][0]["clips"][0].toObject().contains("transition_out"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"type":"zoom"}])"}}), QString("BAD_ARGUMENT"));
+        // Validation (12-B7): the type before the material, length 0 or longer than a clip, `at` far from a cut
+        // (it faded the timeline start in), duration for length; a title ending at the cut does not fade out
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"type":"zoom","length":2}])"}})
+                  .contains("type must be cross_dissolve"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"length":0}])"}})
+                  .contains("length must be at least 1 frame"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"length":500,"trim":true}])"}})
+                  .contains("length 500 frames is longer than clip"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":30}])"}}).contains("no cut at"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"duration":4}])"}})
+                  .contains("use 'length'"));
+        {
+            const QJsonObject d = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", R"([{"op":"title","text":"T","at":0,"duration":10,"track":"V2"},
+                                                           {"op":"transition","at":10,"length":4,"trim":true}])"}});
+            bool dissolve = false, titleFade = false;
+            for (const QJsonValue& t : d["timeline"]["tracks"].toArray())
+                for (const QJsonValue& x : t["clips"].toArray()) {
+                    if (t["track"] == "V1" && x["transition_out"].toInt() == 4) dissolve = true;
+                    if (t["track"] == "V2" && x.toObject().contains("transition_out")) titleFade = true;
+                }
+            CHECK(dissolve && !titleFade);
+        }
         // Title with style, then change it
         r = ed(R"([{"op":"title","text":"Hello
 World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":true,"y":-300,"align":"left"}])");
