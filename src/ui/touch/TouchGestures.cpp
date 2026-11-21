@@ -175,7 +175,7 @@ void TouchGestures::longPress()
     m_state = State::Done; // the rest of this touch does nothing
     m_lastTap.invalidate();
     if (onLongPress && onLongPress(m_pressPos)) return;
-    QContextMenuEvent ce(QContextMenuEvent::Mouse, m_pressPos.toPoint(), m_target->mapToGlobal(m_pressPos).toPoint(),
+    QContextMenuEvent ce(QContextMenuEvent::Other, m_pressPos.toPoint(), m_target->mapToGlobal(m_pressPos).toPoint(),
                          Qt::KeyboardModifiers(m_mods));
     QApplication::sendEvent(m_target, &ce);
 }

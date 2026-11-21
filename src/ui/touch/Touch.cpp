@@ -87,7 +87,7 @@ void sendMouse(QWidget* to, QEvent::Type type, const QPointF& global, bool down,
 void contextMenu(QWidget* to, const QPointF& global, Qt::KeyboardModifiers mods)
 {
     if (!to) return;
-    QContextMenuEvent ce(QContextMenuEvent::Mouse, to->mapFromGlobal(global.toPoint()), global.toPoint(), mods);
+    QContextMenuEvent ce(QContextMenuEvent::Other, to->mapFromGlobal(global.toPoint()), global.toPoint(), mods);
     QApplication::sendEvent(to, &ce);
 }
 

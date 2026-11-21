@@ -21,6 +21,8 @@
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QListWidget>
+#include <QMenu>
+#include <QTimer>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -178,6 +180,22 @@ void testTimelineLongPress()
     CHECK_EQ(menus, 1);
     CHECK(f.sel.contains(1)); // the clip pressed is the one the menu is for
     CHECK_EQ(f.project.timeline().video[0].clips[0].start, 0);
+
+    // On the ruler (its mouse menu opens on the right button's release): the ruler menu opens
+    pauseTaps();
+    QString menuTitle;
+    QTimer closer;
+    QObject::connect(&closer, &QTimer::timeout, [&] {
+        if (auto* m = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+            if (!m->actions().isEmpty()) menuTitle = m->actions().first()->text();
+            m->close();
+        }
+    });
+    closer.start(50);
+    QTest::touchEvent(f.tv, g_touch).press(0, {f.x(300), 15}, f.tv);
+    QTest::qWait(Touch::longPressMs() + 150);
+    QTest::touchEvent(f.tv, g_touch).release(0, {f.x(300), 15}, f.tv);
+    CHECK(!menuTitle.isEmpty());
 }
 
 void testTimelinePinchAndScroll()

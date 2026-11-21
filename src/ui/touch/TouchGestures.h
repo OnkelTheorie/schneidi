@@ -5,7 +5,8 @@
 //  - one finger: nothing happens until it moves past Touch::slopPx() (then press + moves + release at the widget, as
 //    mouse events with the touch device: the widget's mouse code runs unchanged, Touch::isTouch() tells it a finger)
 //    or lifts (a tap = press + release; two taps close together = a double click, or onDoubleTap)
-//  - held still for Touch::longPressMs(): onLongPress, default a QContextMenuEvent at the finger (like a right click)
+//  - held still for Touch::longPressMs(): onLongPress, default a QContextMenuEvent at the finger (like a right click;
+//    reason Other, so a widget that opens some menus on the mouse release instead still opens them for a finger)
 //  - a second finger before the first one moved: pinch. onPinch gets the previous and the new centre of the two
 //    fingers and the scale since the last update (distance ratio): zoom around the fingers and pan in one
 //  - a running TouchDrag (started by the widget's mouse code for a touch press) gets the finger's moves and drop
