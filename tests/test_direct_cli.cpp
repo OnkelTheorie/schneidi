@@ -621,18 +621,40 @@ int main(int argc, char** argv)
     // ---- Recipe template: the built-in short-hook template, its clip fields filled with shots of the material
     {
         const QJsonObject r = run("direct", {{"recipe", "template"}, {"files", QJsonArray{clip, beach}},
-                                             {"options", QJsonObject{{"template", "short-hook"}}}});
+                                             {"options", QJsonObject{{"template", "short-hook"}, {"game", "none"}}}});
         const QJsonArray list = r["session"]["suggestions"].toArray();
         if (CHECK(!list.isEmpty())) {
             CHECK_EQ(list[0]["kind"].toString(), QString("slot"));
-            CHECK(!list[0]["slot"].toString().isEmpty());
-            CHECK_EQ(list[0]["reason"]["key"].toString(), QString("slot_match"));
+            CHECK_EQ(list[0]["slot"].toString(), QString("clip1"));
+            // The fields get the material's moments, not the first seconds of a recording (videotest 21.11.): the
+            // strongest moment ("the strongest moment first") the best one found, as long as the field (4 s)
+            CHECK_EQ(list[0]["reason"]["key"].toString(), QString("loud"));
+            bool burst = false; // the clip's loud burst at 29 s is in a field
+            for (const QJsonValue& x : list) {
+                CHECK(x["score"].toDouble() <= list[0]["score"].toDouble());
+                burst |= x["file"].toString() == clip && x["from_s"].toDouble() <= 29.0 && x["to_s"].toDouble() >= 29.6;
+            }
+            CHECK(burst);
+            for (const QJsonValue& x : list) {
+                CHECK(x["to_s"].toDouble() - x["from_s"].toDouble() <= 4.05);
+                CHECK(!x["reason"]["text"].toString().isEmpty());
+                for (const QJsonValue& y : list) // never the same part of a recording twice
+                    if (x["n"] != y["n"] && x["file"] == y["file"])
+                        CHECK(x["to_s"].toDouble() <= y["from_s"].toDouble() || y["to_s"].toDouble() <= x["from_s"].toDouble());
+            }
         }
+        // The text field is named, not silently left (filled on apply with values)
+        bool kept = false;
+        for (const QJsonValue& n : r["session"]["notes"].toArray())
+            kept |= n["key"].toString() == "fields_kept" && n["text"].toString().contains("hook");
+        CHECK(kept);
         const QString filled = dir.filePath("out/from-template.schneidi");
-        const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+        const QJsonObject made = run("direct", {{"session", r["session"]["id"]},
+                                                {"apply", QJsonObject{{"on", "all"}, {"values", QJsonObject{{"hook", "Watch this"}}}}},
                                                 {"project", filled}});
         CHECK(!made.contains("error"));
         CHECK(QFileInfo::exists(filled));
+        CHECK(!made["result"]["unfilled"].toArray().contains("hook"));
         // project_dir (the app: its folder for projects): the new project and its media folder go there, never next
         // to the recordings (a recorder's folder)
         const QString folder = dir.filePath("my projects");

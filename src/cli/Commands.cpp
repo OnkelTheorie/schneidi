@@ -1356,7 +1356,7 @@ const QVector<Command>& commands()
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
                                  "min_pause_s, pad_s, fillers, tracks, threshold, target_lufs, room_tone; template: template (id; "
-                                 "none = the project's own fields); script: script|script_file, takes, language. short, highlights "
+                                 "none = the project's own fields), game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
                                  "and script also: target_lufs (the result's loudness when applied, default -14, behind "
                                  "the master limiter; false = leave the sound as recorded)"},
           {"session", T::Object, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},

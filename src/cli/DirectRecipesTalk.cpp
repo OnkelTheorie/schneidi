@@ -11,6 +11,7 @@
 #include "cli/Live.h"
 
 #include "core/AppPaths.h"
+#include "core/GameHud.h"
 #include "core/I18n.h"
 #include "engine/AnalysisCache.h"
 #include "core/LiveHost.h"
@@ -26,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace Cli::detail {
 
@@ -47,9 +49,10 @@ QString projectOf(Direction::Session& s)
 {
     if (s.project.isEmpty() && (Live::host() || Live::appCopy())) s.project = Live::AppProject;
     if (s.project.isEmpty())
-        fail("NO_MATERIAL", s.recipe == QLatin1String("script")
-                                ? QString("recipe script needs material: give files (recordings) or a project")
-                                : QString("recipe %1 works on a project: give project (and its timeline)").arg(s.recipe));
+        fail("NO_MATERIAL", s.recipe == QLatin1String("script")     ? QString("recipe script needs material: give files (recordings) or a project")
+                            : s.recipe == QLatin1String("template") ? QString("recipe template needs options.template (a template id) "
+                                                                              "or a project with its own fields")
+                                                                    : QString("recipe %1 works on a project: give project (and its timeline)").arg(s.recipe));
     return s.project;
 }
 
@@ -239,6 +242,35 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
 
 // ---------- template ----------
 
+namespace {
+
+// How strongly a slot asks for a highlight (its hint or label): the best moment, a strong opener, the ending, any
+int slotWish(const QJsonObject& slot)
+{
+    const QString t = (slot["hint"].toString() + " " + slot["label"].toString()).toLower();
+    const auto has = [&](std::initializer_list<const char*> words) {
+        return std::any_of(words.begin(), words.end(), [&](const char* w) { return t.contains(QLatin1String(w)); });
+    };
+    if (has({"best", "beste", "drop", "climax", "höhepunkt", "hoehepunkt"})) return 3;
+    if (has({"strong", "stark", "opener", "hook", "opening"})) return 2;
+    if (has({"ending", "end", "finale", "schluss", "outro"})) return 1;
+    return 0;
+}
+
+// The length a moment gets in a slot: a fixed slot its own length, a flexible one the moment's within min_s/max_s
+double slotSeconds(const QJsonObject& slot, double momentS)
+{
+    double fixed = 0;
+    for (const QJsonValue& i : slot["instances"].toArray()) fixed = std::max(fixed, i["length_s"].toDouble());
+    if (slot["length"].toString() == QLatin1String("fixed") && fixed > 0) return fixed;
+    double l = momentS;
+    if (slot["max_s"].toDouble() > 0) l = std::min(l, slot["max_s"].toDouble());
+    if (slot["min_s"].toDouble() > 0) l = std::max(l, slot["min_s"].toDouble());
+    return l > 0 ? l : fixed;
+}
+
+} // namespace
+
 void suggestTemplate(Direction::Session& s, const QStringList& files, Context& ctx)
 {
     const QString tmpl = s.options["template"].toString().trimmed();
@@ -252,34 +284,134 @@ void suggestTemplate(Direction::Session& s, const QStringList& files, Context& c
     }
     const QJsonObject r = runSub("templates", t, ctx);
     QStringList used;
-    for (const QJsonValue& p : r["auto"].toArray()) {
+    for (const QJsonValue& p : r["auto"].toArray())
         if (p["file"].isString() && !used.contains(p["file"].toString())) used << p["file"].toString();
-        if (p["shot"].isNull()) {
-            s.notes << Direction::makeNote("no_shot", {{"slot", p["slot"].toString()}});
-            continue;
+    const QStringList material = files.isEmpty() ? used : files;
+    for (const QString& f : material) s.material << materialOf(absolute(f));
+    // The slots as the template defines them (length, hint)
+    QHash<QString, QJsonObject> slotInfo;
+    for (const QJsonValue& v : runSub("templates", {{"info", tmpl.isEmpty() ? s.project : tmpl}}, ctx)["slots"].toArray())
+        slotInfo.insert(v["id"].toString(), v.toObject());
+
+    // The moments of the material (kills, loud, laughter … as `direct` highlights finds them): a clip field gets a
+    // moment, not the first seconds of a recording. The best moments, each recording once while there are others
+    QVector<DirectMoment> moments;
+    if (!material.isEmpty()) {
+        QString game = s.options["game"].toString().trimmed();
+        if (game.isEmpty()) game = GameHud::guess(material.first()) ? GameHud::guess(material.first())->id : QString("none");
+        else if (game.compare("none", Qt::CaseInsensitive) != 0 && !GameHud::find(game))
+            fail("BAD_ARGUMENT", "game must be cs2, valorant or none");
+        Context sub;
+        sub.cancel = ctx.cancel;
+        const CollectedMoments found = collectMoments(material, {}, game, true, sub);
+        failIfCanceled();
+        moments = found.highlights.isEmpty() ? found.extra : found.highlights;
+        std::stable_sort(moments.begin(), moments.end(),
+                         [](const DirectMoment& a, const DirectMoment& b) { return a.score > b.score; });
+    }
+    QVector<QJsonObject> picks;
+    for (const QJsonValue& p : r["auto"].toArray()) picks << p.toObject();
+    // The slots in the order they want a highlight (the best moment first), else in their own order
+    QVector<int> byWish(picks.size());
+    std::iota(byWish.begin(), byWish.end(), 0);
+    std::stable_sort(byWish.begin(), byWish.end(), [&](int a, int b) {
+        return slotWish(slotInfo.value(picks[a]["slot"].toString())) > slotWish(slotInfo.value(picks[b]["slot"].toString()));
+    });
+    struct Range {
+        QString file;
+        double from, to;
+    };
+    QVector<Range> taken;
+    QVector<int> momentOf(picks.size(), -1);
+    QVector<Range> rangeOf(picks.size());
+    const auto place = [&](int slot, int k) { // the slot's window around the moment's action, inside the recording
+        const DirectMoment& m = moments[k];
+        const QString file = s.material.value(m.file).file;
+        const double length = s.material.value(m.file).length;
+        const double want = slotSeconds(slotInfo.value(picks[slot]["slot"].toString()), m.to - m.from);
+        const double action = m.first >= 0 ? m.first : m.from;
+        const double lead = std::min(1.0, want * 0.3);
+        double from = std::max(0.0, std::max(m.from, action - lead));
+        if (from + want > m.to) from = std::max(0.0, std::min(from, m.to - want)); // more of the moment, less after it
+        double to = from + want;
+        if (length > 0 && to > length) {
+            to = length;
+            from = std::max(0.0, to - want);
         }
+        return Range{file, from, to};
+    };
+    for (bool again : {false, true}) // first each recording once, then a second moment of one where it does not overlap
+        for (int slot : byWish) {
+            if (momentOf[slot] >= 0) continue;
+            for (int k = 0; k < moments.size(); ++k) {
+                if (std::find(momentOf.begin(), momentOf.end(), k) != momentOf.end()) continue;
+                const Range w = place(slot, k);
+                const bool sameFile = std::any_of(taken.begin(), taken.end(), [&](const Range& x) { return x.file == w.file; });
+                const bool overlaps = std::any_of(taken.begin(), taken.end(), [&](const Range& x) {
+                    return x.file == w.file && w.from < x.to + 1.0 && x.from < w.to + 1.0;
+                });
+                if (overlaps || (sameFile && !again)) continue;
+                momentOf[slot] = k;
+                rangeOf[slot] = w;
+                taken << w;
+                break;
+            }
+        }
+
+    int fromShots = 0;
+    for (int i = 0; i < picks.size(); ++i) {
+        const QJsonObject& p = picks[i];
         Direction::Suggestion x;
-        x.n = int(s.suggestions.size()) + 1;
         x.kind = "slot";
         x.slot = p["slot"].toString();
-        x.shot = p["shot"].toInt();
-        x.file = absolute(p["file"].toString());
-        x.from = p["from_s"].toDouble();
-        x.to = p["to_s"].toDouble();
-        x.score = p["score"].toDouble();
-        x.reason = {"slot_match", {{"slot", x.slot}}};
         x.labels << "slot";
+        if (momentOf[i] >= 0) {
+            const DirectMoment& m = moments[momentOf[i]];
+            x.file = rangeOf[i].file;
+            x.from = rangeOf[i].from;
+            x.to = rangeOf[i].to;
+            x.score = m.score;
+            x.reason = m.reason;
+            for (const QString& l : m.labels)
+                if (!x.labels.contains(l)) x.labels << l;
+        } else if (p["shot"].isNull()) {
+            s.notes << Direction::makeNote("no_shot", {{"slot", x.slot}});
+            continue;
+        } else {
+            // No moment left: the index's shot for the field (sharp, well exposed …), as long as the field
+            ++fromShots;
+            x.shot = p["shot"].toInt();
+            x.file = absolute(p["file"].toString());
+            x.from = p["from_s"].toDouble();
+            const double want = slotSeconds(slotInfo.value(x.slot), p["to_s"].toDouble() - x.from);
+            x.to = want > 0 ? std::min(p["to_s"].toDouble(), x.from + want) : p["to_s"].toDouble();
+            x.score = p["score"].toDouble();
+            x.reason = {"slot_match", {{"slot", x.slot}}};
+            if (const QString why = p["reason"]["text"].toString(); !why.isEmpty()) x.reason.values["why"] = why;
+        }
+        x.n = int(s.suggestions.size()) + 1;
         s.suggestions << x;
         s.order << x.n;
     }
-    for (const QString& f : files.isEmpty() ? used : files) s.material << materialOf(absolute(f));
+    if (!moments.isEmpty() && fromShots > 0)
+        s.notes << Direction::makeNote("few_slot_moments", {{"n", fromShots}});
+    // Text and music fields are not chosen here: they keep the template's content unless apply gives values
+    QStringList texts;
+    for (const QJsonValue& u : r["unfilled"].toArray()) {
+        const QJsonObject slot = slotInfo.value(u.toString());
+        if (slot["kind"].toString() == QLatin1String("clip")) continue;
+        const QString now = slot["instances"][0]["text"].toString();
+        texts << (now.isEmpty() ? u.toString() : QString("%1 (\"%2\")").arg(u.toString(), now));
+    }
+    if (!texts.isEmpty()) s.notes << Direction::makeNote("fields_kept", {{"fields", texts.join(", ")}});
     for (const QJsonValue& n : r["notes"].toArray()) s.notes << Direction::Note{"template", n.toString()};
 }
 
 QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direction::Suggestion*>& list,
                           const QJsonObject& args, Context& ctx)
 {
-    QJsonObject values;
+    // The text and music fields the caller fills (apply values {slot: value}), then the chosen clips
+    QJsonObject values = args["apply"].toObject()["values"].toObject();
     for (const Direction::Suggestion* x : list)
         values[x->slot] = QJsonObject{{"file", x->file}, {"from", seconds3(x->from)}, {"to", seconds3(x->to)}};
     const QString tmpl = s.options["template"].toString().trimmed();

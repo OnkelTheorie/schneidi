@@ -71,6 +71,13 @@ const Text kNotes[] = {
     {"fewer_variants", "Only {n} variant(s) instead of {asked}: the material has too few moments for more.", nullptr,
      N_("Nur {n} Variante(n) statt {asked}: Für mehr hat das Material zu wenige Momente."), nullptr},
     {"no_shot", "No shot fits the field \"{slot}\".", nullptr, N_("Für das Feld „{slot}“ passt kein Clip."), nullptr},
+    {"few_slot_moments",
+     "Fewer moments than clip fields: {n} field(s) get the best other shot of the material (sharp, well exposed).",
+     nullptr, N_("Weniger Momente als Clip-Felder: {n} Feld(er) bekommen die beste andere Einstellung des Materials."),
+     nullptr},
+    {"fields_kept",
+     "Not filled here, the template's content stays: {fields} - give them with apply values {field: text or file}.",
+     nullptr, N_("Hier nicht gefüllt, der Inhalt der Vorlage bleibt: {fields}"), nullptr},
     {"not_said", "Not found in what was said: \"{text}\"", nullptr, N_("Nicht im Gesagten gefunden: „{text}“"), nullptr},
     {"no_pause",
      "No pause long enough where every chosen track is quiet (try a shorter min_pause_s, a threshold in dBFS, or fewer "
@@ -154,6 +161,9 @@ QString reasonText(const Reason& r, Lang lang)
     QString s = textOf(*t, r.values, lang);
     if (r.key == QLatin1String("kills") && r.values["extra"].toString() == QLatin1String("multi"))
         s += lang == Lang::Ui ? " (" + T("Mehrfach-Abschuss") + ")" : QString(" (multi kill)");
+    // What made the material index choose the shot (English, for the AI): "sharp, well exposed, face"
+    if (r.key == QLatin1String("slot_match") && lang == Lang::English && !r.values["why"].toString().isEmpty())
+        s += " (" + r.values["why"].toString() + ")";
     return s;
 }
 

@@ -1093,6 +1093,8 @@
  "Esc beendet auch die große Vorschau und eine Sprachaufnahme: solange eine davon läuft, wirkt Esc dort und nicht für diese Funktion": "Esc also ends the large viewer and a voice-over take: while one of them is on, Esc does that and not this function",
  "Etwas, worauf sich der Schritt bezieht, gibt es nicht (mehr). Meldung: „%1“": "Something the step refers to does not exist (any more). Message: “%1”",
  "Für das Feld „{slot}“ passt kein Clip.": "No clip fits the field “{slot}”.",
+ "Weniger Momente als Clip-Felder: {n} Feld(er) bekommen die beste andere Einstellung des Materials.": "Fewer moments than clip fields: {n} field(s) get the best other shot of the material.",
+ "Hier nicht gefüllt, der Inhalt der Vorlage bleibt: {fields}": "Not filled here, the template keeps its content: {fields}",
  "Für „Aus Skript“ erst den Text einfügen oder eine Textdatei wählen.": "For “From a script”, first paste the text or choose a text file.",
  "Hype": "Hype",
  "Kein Satz des Skripts kommt in den Aufnahmen vor (andere Sprache oder andere Clips?).": "No sentence of the script is in the recordings (another language or other clips?).",
