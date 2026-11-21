@@ -481,7 +481,10 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
     // Not for music: its "loud" is measured against the file, a quieter intro of a song counts as silence (the first
     // shouted line was dropped while its words were there)
-    if (!req.music) Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
+    if (!req.music) {
+        Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
+        Transcript::endAtSound(cues, r.levels, f.rate.fps(), offset);
+    }
     // Readable subtitles: the words regrouped into 1-2 line cues (word times kept, edit op 'subtitles' takes them)
     const bool readable = a["readable"].toBool() && !a.contains("captions");
     if (readable) cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music);

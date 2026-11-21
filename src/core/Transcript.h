@@ -114,6 +114,14 @@ QVector<SubtitleCue> mergeCues(const QVector<QVector<SubtitleCue>>& tracks);
 // timeline frame of the audio start, as in toCues
 void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset = 0);
 
+// A cue that lasts on into silence (the reading minimum of toCues/readable, whisper's last word stretched over the
+// pause: "Und ich hasse Mathe." shown 0.5-0.9 s after the voice stopped) ends `holdMs` after its sound: the last
+// 30 ms of sound within 30 dB of the cue's own loud part (a soft ending stays). Never shorter than `minMs`, never
+// longer than before; a cue whose sound runs to its end (the next speaker, laughter) keeps it. Same frames as
+// startAtSound.
+void endAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset = 0, int holdMs = 200,
+                int minMs = 600);
+
 // Which sound to transcribe when the user chose none. Game recordings (OBS, Clipi) keep game, voice chat, music and
 // the microphone in streams of their own; whisper on the mix writes song lyrics into the captions.
 // A stream or track name that says "own voice": microphone, voice, narration … ("Mikrofon", "Mic/Aux", "Voice");

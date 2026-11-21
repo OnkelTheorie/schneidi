@@ -138,15 +138,21 @@ QVector<Item> makeCatalog()
                            const char* sha, qint64 size) {
         list << Item{id, Kind::WhisperModel, name, description, QString(kModels) + file, sha, size, file};
     };
-    // Best first (installedWhisperModels keeps this order); all multilingual, quantized (small download)
-    // large-v3: measured 20.11. on mumbled Discord/mic tracks against turbo: fewer wrong words (≈ every second or third
-    // faulty line fixed), ~1.8x its time on the CPU; the full f16 model (3.1 GB) was no better than this q5_0
-    model("whisper-model-large", N_("Whisper-Modell „Am genauesten“ (large-v3)"),
-          N_("genaueste Erkennung, auch bei undeutlicher Sprache; braucht fast doppelt so lange wie „Sehr gut“"),
-          "ggml-large-v3-q5_0.bin", "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1", 1081140203);
+    // Best first (installedWhisperModels keeps this order, the first installed one is the default); all multilingual,
+    // quantized (small download)
+    // turbo first (21.11.): on Discord/mic chat with English in German talk large-v3 wrote the English in German ("She
+    // asked, like, which is our favorite ..." -> "Sie fragt, welches unser Lieblingsvokal ist", "I'm Asian" -> "Ich bin
+    // Asien"), with or without a starting text, and wrote words into laughter ("Hahaha.", "Ich bin live." x3) at
+    // 1.5-2x the time; it got some mumbled German words right that turbo missed
     model("whisper-model-turbo", N_("Whisper-Modell „Sehr gut“ (large-v3-turbo)"),
           N_("sehr gute Erkennung, braucht deutlich mehr Rechenzeit"), "ggml-large-v3-turbo-q5_0.bin",
           "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", 574041195);
+    // large-v3: measured 20.11. on mumbled Discord/mic tracks against turbo: fewer wrong words (≈ every second or third
+    // faulty line fixed), ~1.8x its time on the CPU; the full f16 model (3.1 GB) was no better than this q5_0
+    model("whisper-model-large", N_("Whisper-Modell „Gründlich“ (large-v3)"),
+          N_("erkennt undeutliche Sprache manchmal besser, übersetzt aber eingestreutes Englisch oft mit; braucht fast "
+             "doppelt so lange wie „Sehr gut“"),
+          "ggml-large-v3-q5_0.bin", "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1", 1081140203);
     model("whisper-model-small", N_("Whisper-Modell „Gut“ (small)"), N_("empfohlen für Deutsch"),
           "ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb", 190085487);
     model("whisper-model-base", N_("Whisper-Modell „Ausgewogen“ (base)"), N_("schnell, für klare Sprache"),

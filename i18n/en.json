@@ -1264,6 +1264,7 @@
  "Favoriten": "Favorites",
  "Fehler": "Failed",
  "Fehler beim Anbieter (HTTP %1).": "Error at the provider (HTTP %1).",
+ "Fehler melden…": "Report a Bug…",
  "Fehler: %1": "Failed: %1",
  "Feld": "Field",
  "Felder automatisch belegen": "Fill the slots automatically",
@@ -1721,8 +1722,6 @@
  "Keine Tastenbelegung in der Datei": "No key set in the file",
  "Keine Tonspur": "No audio track",
  "Keine Tonspuren: leg Clips mit Ton auf die Timeline": "No audio tracks: put clips with sound on the timeline",
- "Keine Untertitel: Im Short ist keine Sprache zu hören.": "No captions: there is no speech in the short.",
- "Keine Untertitel: Whisper ist nicht installiert (unter Hilfe › Erweiterungen nachladen).": "No captions: Whisper is not installed (load it under Help › Extensions).",
  "Keine Verbindung zu %1 – läuft der Dienst?": "No connection to %1 – is the service running?",
  "Keine Vorschläge in diesem Material. Ein anderes Rezept oder mehr Material versuchen.": "No suggestions in this material. Try another recipe or more material.",
  "Keine Vorschläge: Mit diesem Material und diesen Einstellungen kam das Rezept nicht weiter.": "No suggestions: the recipe got nowhere with this material and these settings.",
@@ -3318,7 +3317,7 @@
  "Whisper ist fehlgeschlagen: %1": "Whisper failed: %1",
  "Whisper ist nicht installiert (Arbeitsbereich → Erweiterungen).": "Whisper is not installed (Workspace → Extensions).",
  "Whisper ist nicht installiert: keine Untertitel und keine Füllwörter (unter Hilfe › Erweiterungen nachladen).": "Whisper is not installed: no captions and no filler words (load it under Help › Extensions).",
- "Whisper-Modell „Am genauesten“ (large-v3)": "Whisper model “Most accurate” (large-v3)",
+ "Whisper-Modell „Gründlich“ (large-v3)": "Whisper model “Thorough” (large-v3)",
  "Whisper-Modell „Ausgewogen“ (base)": "Whisper model “Balanced” (base)",
  "Whisper-Modell „Gut“ (small)": "Whisper model “Good” (small)",
  "Whisper-Modell „Schnell“ (tiny)": "Whisper model “Fast” (tiny)",
@@ -3499,7 +3498,7 @@
  "für ausgewählte Clips": "for selected clips",
  "gekürzt %1 → %2": "trimmed %1 → %2",
  "gelöscht: %1": "deleted: %1",
- "genaueste Erkennung, auch bei undeutlicher Sprache; braucht fast doppelt so lange wie „Sehr gut“": "most accurate recognition, also of unclear speech; takes almost twice as long as “Very good”",
+ "erkennt undeutliche Sprache manchmal besser, übersetzt aber eingestreutes Englisch oft mit; braucht fast doppelt so lange wie „Sehr gut“": "sometimes recognises unclear speech better, but often translates English mixed into it as well; takes almost twice as long as “Very good”",
  "gerade erst geschrieben": "written just now",
  "gespeichert – zum Ändern neu eingeben": "stored – type a new one to change it",
  "gesperrt": "locked",
@@ -3678,5 +3677,6 @@
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
  "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
- "Fehler melden…": "Report a Bug…"
+ "Keine Untertitel: Im Short ist keine Sprache zu hören.": "No captions: there is no speech in the short.",
+ "Keine Untertitel: Whisper ist nicht installiert (unter Hilfe › Erweiterungen nachladen).": "No captions: Whisper is not installed (load it under Help › Extensions)."
 }

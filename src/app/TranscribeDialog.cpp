@@ -146,6 +146,7 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
         QVector<SubtitleCue> cues =
             Transcript::toCues(m_transcriber.result().words, m_format.rate.fps(), m_chars->value(), 700, m_from);
         Transcript::startAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
+        Transcript::endAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
         for (SubtitleCue& c : cues) c.end = std::min(c.end, m_to);
         if (!cues.isEmpty()) m_results << Result{m_jobs[m_job].name, cues};
         if (++m_job < m_jobs.size()) return startJob();
