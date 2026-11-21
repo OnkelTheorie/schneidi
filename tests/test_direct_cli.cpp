@@ -521,6 +521,10 @@ int main(int argc, char** argv)
             CHECK_EQ(v["kind"].toString(), QString("pause"));
             CHECK_EQ(v["reason"]["key"].toString(), QString("pause"));
             common |= v["from_s"].toDouble() > 6.4 && v["to_s"].toDouble() < 9.2;
+            // The reason names the pause as long as it is (with its pads), the cut part separately (videotest 21.11.)
+            const double len = v["to_s"].toDouble() - v["from_s"].toDouble();
+            CHECK(v["reason"]["values"]["s"].toDouble() >= len + 0.15 - 0.02);
+            CHECK(std::abs(v["reason"]["values"]["cut"].toDouble() - len) < 0.02);
             CHECK(!(v["from_s"].toDouble() < 5.2 && v["to_s"].toDouble() > 3.2)); // B talks there
         }
         if (!CHECK(common)) std::printf("       %s\n", QJsonDocument(list).toJson().constData());
@@ -587,6 +591,27 @@ int main(int argc, char** argv)
             CHECK_EQ(takes[0]["kind"].toString(), QString("take"));
             CHECK_EQ(takes[0]["sentence"].toInt(), 1);
             CHECK(takes[0]["from_s"].toDouble() >= 0.0 && takes[0]["to_s"].toDouble() > takes[0]["from_s"].toDouble());
+        }
+        // talk with fillers on recordings without a transcript: whisper writes one (verbatim) while suggesting, the
+        // apply keeps it in the project (videotest 21.11.: "no transcript" after a `transcribe` of the project)
+        {
+            const QString talk3 = twoMics(dir.path());
+            const QJsonObject f = run("direct", {{"recipe", "talk"}, {"project", talk3},
+                                                 {"options", QJsonObject{{"fillers", true}, {"tracks", "A1,A2"}}}});
+            bool none = false, some = false;
+            for (const QJsonValue& n : f["session"]["notes"].toArray()) {
+                none |= n["key"].toString() == "no_transcript_fillers";
+                some |= n["key"].toString() == "fillers_transcript";
+            }
+            CHECK(!none && some);
+            const QJsonObject applied = run("direct", {{"session", f["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+            CHECK(!applied.contains("error"));
+            ProjectData d;
+            QString error;
+            CHECK(ProjectFile::load(talk3, &d, &error));
+            bool kept = false;
+            for (const MediaInfo& m : d.media) kept |= !m.transcripts.isEmpty();
+            CHECK(kept);
         }
         // A second suggestion takes the words kept from the first (no second whisper run: the fake is gone now)
         QFile::remove(dir.filePath("bin/whisper-cli"));

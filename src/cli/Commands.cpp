@@ -1355,7 +1355,8 @@ const QVector<Command>& commands()
                                  "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
-                                 "min_pause_s, pad_s, fillers, tracks, threshold, target_lufs, room_tone; template: template (id; "
+                                 "min_pause_s, pad_s, fillers (whisper transcribes recordings without a transcript, "
+                                 "verbatim), language, tracks, threshold, target_lufs, room_tone; template: template (id; "
                                  "none = the project's own fields), game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
                                  "and script also: target_lufs (the result's loudness when applied, default -14, behind "
                                  "the master limiter; false = leave the sound as recorded)"},

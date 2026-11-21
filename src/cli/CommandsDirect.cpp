@@ -1044,21 +1044,27 @@ void addDirectOps(QVector<OpDef>& ops)
                      s.project.setDirection(session);
                  },
                  {"session"}};
-    // Hidden too: transcripts measured before the edit ({file: {language, words:[[from_ms, to_ms, text], …]}}) as the
-    // files' transcripts (what rough_cut keeps when it transcribes)
+    // Hidden too: transcripts measured before the edit ({file: {language, stream?, words:[[from_ms, to_ms, text], …]}}
+    // or a list of those per audio stream) as the files' transcripts (what rough_cut keeps when it transcribes)
     ops << OpDef{"_transcripts", {}, {}, {},
                  [](Session& s, const QJsonObject& op) {
                      const QJsonObject files = op.value("files").toObject();
                      for (auto it = files.begin(); it != files.end(); ++it) {
                          const QString file = absolute(it.key());
-                         const MediaInfo* m = s.project.mediaInfo(file);
-                         if (m && !m->transcripts.isEmpty()) continue; // the user's own stays
-                         if (!m) s.media(file);
-                         MediaTranscript t;
-                         t.language = it.value().toObject()["language"].toString();
-                         for (const QJsonValue& w : it.value().toObject()["words"].toArray())
-                             t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
-                         s.project.setTranscript(file, t);
+                         const QJsonArray list = it.value().isArray() ? it.value().toArray() : QJsonArray{it.value()};
+                         for (const QJsonValue& one : list) {
+                             const int stream = one["stream"].toInt(0);
+                             const MediaInfo* m = s.project.mediaInfo(file);
+                             if (m && (it.value().isArray() ? m->transcript(stream) != nullptr : !m->transcripts.isEmpty()))
+                                 continue; // the user's own stays
+                             if (!m) s.media(file);
+                             MediaTranscript t;
+                             t.audioStream = stream;
+                             t.language = one["language"].toString();
+                             for (const QJsonValue& w : one["words"].toArray())
+                                 t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+                             s.project.setTranscript(file, t);
+                         }
                      }
                  },
                  {"files"}};

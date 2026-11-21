@@ -91,9 +91,11 @@ const Text kNotes[] = {
      N_("Nie still: {tracks} – das Rauschen liegt über der Schwelle, keine Pause ist allen Spuren gemeinsam (die Spur "
         "unter „Spuren“ weglassen)."),
      nullptr},
-    {"no_transcript_fillers", "No transcript on these tracks: only pauses were found, no filler words (transcribe first).",
+    {"no_transcript_fillers",
+     "No transcript on these tracks and none could be made (whisper missing, or no speech heard): only pauses were "
+     "found, no filler words.",
      nullptr,
-     N_("Keine Abschrift auf diesen Spuren: nur Pausen, keine Füllwörter (erst transkribieren)."), nullptr},
+     N_("Keine Abschrift auf diesen Spuren (Whisper fehlt oder hört keine Sprache): nur Pausen, keine Füllwörter."), nullptr},
     {"fillers_transcript", "Filler words: only those the transcript contains.", nullptr,
      N_("Füllwörter: nur, was die Abschrift enthält."), nullptr},
     {"room_tone", "Room tone is not laid under the cuts yet.", nullptr,

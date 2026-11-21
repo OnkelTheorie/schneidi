@@ -17,6 +17,8 @@
 #include "core/LiveHost.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
+#include "engine/Extensions.h"
+#include "core/TranscriptCut.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -83,6 +85,47 @@ QJsonObject noteObject(const QJsonArray& notes, const char* key)
     return {};
 }
 
+// Verbatim word transcripts (fillers written) of the recordings on a timeline that have none, per file and sound
+// stream: {file: [{stream, language, words:[[from_ms, to_ms, text]…]}]} for the _transcripts op. Each through the
+// analysis cache ("speech-words"), whisper only for what is not there. Empty without whisper.
+QJsonObject verbatimTranscripts(const QString& project, int timeline, const QString& language, Context& ctx)
+{
+    QJsonObject out;
+    if (Extensions::whisperProgram().isEmpty() || Extensions::installedWhisperModels().isEmpty()) return out;
+    Session view(project);
+    view.selectTimeline(timeline);
+    for (const auto& [file, stream] : TranscriptCut::missingTranscripts(view.project.timeline(), view.project.media())) {
+        if (!QFileInfo::exists(file)) continue;
+        const QJsonObject keyOptions{{"language", language}, {"verbatim", true}, {"stream", stream}};
+        const AnalysisCache::Key key = AnalysisCache::key("speech-words", file, keyOptions, 1);
+        QJsonObject one;
+        if (const auto hit = AnalysisCache::get(key)) {
+            one = *hit;
+        } else {
+            QJsonObject t{{"source", file}, {"words", true}, {"verbatim", true}, {"audio_stream", QString::number(stream)}};
+            if (!language.isEmpty()) t["language"] = language;
+            QJsonObject r;
+            try {
+                r = runSub("transcribe", t, ctx);
+            } catch (const Error& e) {
+                if (e.code == QLatin1String("CANCELED")) throw;
+                continue; // no speech, an unreadable stream: no fillers from it
+            }
+            const double fps = r["fps"].toDouble(25);
+            QJsonArray words;
+            for (const QJsonValue& w : r["words"].toArray())
+                words << QJsonArray{std::round(w["from"].toDouble() / fps * 1000), std::round(w["to"].toDouble() / fps * 1000),
+                                    w["text"].toString()};
+            one = {{"stream", stream}, {"language", r["language"].toString()}, {"words", words}};
+            AnalysisCache::put(key, one);
+        }
+        QJsonArray list = out[file].toArray();
+        list << one;
+        out[file] = list;
+    }
+    return out;
+}
+
 } // namespace
 
 QString timelineStamp(const QString& project, const QString& timeline)
@@ -128,8 +171,21 @@ void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
                                    : t;
     QJsonObject e{{"project", project}, {"ops", QJsonArray{op}}, {"dry_run", true}, {"timeline", s.timeline.toInt()}};
     // A dry run measures (on a copy of what the app shows; a background job has no app host, so it measures here)
-    const QJsonObject r = runSub("edit", e, ctx);
-    const QJsonObject note = noteObject(r["notes"].toArray(), "cut_pauses");
+    QJsonObject r = runSub("edit", e, ctx);
+    QJsonObject note = noteObject(r["notes"].toArray(), "cut_pauses");
+    // Fillers asked for, but the recordings have no transcript yet (`transcribe` of a project only answers, it keeps
+    // nothing): whisper writes them here, verbatim, per recording and sound stream (kept for the next suggestion and
+    // put into the project with the apply), then the measuring again
+    if (o["fillers"].toBool() && note["filler_words"].toInt(-1) == 0 && !Live::host()) {
+        const QJsonObject made = verbatimTranscripts(project, s.timeline.toInt(), o["language"].toString(), ctx);
+        failIfCanceled();
+        if (!made.isEmpty()) {
+            s.options["_transcripts"] = made;
+            e["ops"] = QJsonArray{QJsonObject{{"op", "_transcripts"}, {"files", made}}, op};
+            r = runSub("edit", e, ctx);
+            note = noteObject(r["notes"].toArray(), "cut_pauses");
+        }
+    }
     Session view(project);
     view.selectTimeline(s.timeline.toInt());
     const double fps = view.format().rate.fps();
@@ -158,6 +214,8 @@ void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
              return files;
          }())
         if (QFileInfo::exists(f)) s.material << materialOf(f);
+    const double pad = o.contains("pad_s") ? o["pad_s"].toDouble() : 0.15; // cut_pauses' default pad
+    const double timelineEnd = s.options["_timeline_length_s"].toDouble();
     for (const QJsonValue& v : note["ranges"].toArray()) {
         Direction::Suggestion x;
         x.n = v["n"].toInt();
@@ -170,8 +228,13 @@ void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
         x.track = tracks.join(",");
         x.score = v["length_s"].toDouble();
         x.labels << x.kind;
-        x.reason = x.kind == QLatin1String("filler") ? Direction::Reason{"filler", {{"word", v["text"].toString()}}}
-                                                     : Direction::Reason{"pause", {{"s", v["length_s"].toDouble()}}};
+        // A pause as long as it is (the quiet, its pads kept at both ends - at the end of the timeline none), the
+        // part cut out as 'cut': "pause of 0.3 s" with min_pause_s 0.7 read like a mistake (videotest 21.11.)
+        const double cut = v["length_s"].toDouble();
+        const double pause = cut + pad * (x.to >= timelineEnd - 1e-3 ? 1 : 2);
+        x.reason = x.kind == QLatin1String("filler")
+                       ? Direction::Reason{"filler", {{"word", v["text"].toString()}}}
+                       : Direction::Reason{"pause", {{"s", std::round(pause * 100) / 100}, {"cut", cut}}};
         s.suggestions << x;
         s.order << x.n;
     }
@@ -216,6 +279,9 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
     }
     QJsonObject copy{{"op", "new_timeline"}, {"name", name}, {"from", s.timeline.toInt()}};
     QJsonArray ops{copy, QJsonObject{{"op", "cut_pauses"}, {"ranges", ranges}}};
+    // The transcripts whisper wrote while suggesting (fillers) are the recordings' from now on
+    if (s.options["_transcripts"].isObject() && !args["plan"].toBool())
+        ops << QJsonObject{{"op", "_transcripts"}, {"files", s.options["_transcripts"]}};
     QJsonArray done, notes;
     if (s.options["_master_db"].isDouble()) // measured when suggesting (never on the app's UI thread)
         ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", s.options["_master_db"]}};

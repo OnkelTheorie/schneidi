@@ -23,8 +23,11 @@ A vertical podcast clip (speaker, topic on top, word captions, logo): the `podca
   `verbatim:true` first, whisper leaves most of them out otherwise.
 - **Let the user pick the pauses** (also on the app's Direct page): `direct` `recipe` `talk` with `project` and
   `timeline` (default `@current`; it works on a timeline, not on files) suggests each pause and filler (`kind`
-  pause|filler, `track`, a reason with its length or word); `options` `min_pause_s`, `pad_s`, `fillers`, `tracks`,
-  `target_lufs` (sets the master fader). `apply` cuts the chosen ones out of a copy - a new timeline next to the
+  pause|filler, `track`, a reason with the pause's whole length - `cut` is the part cut out, the pads stay - or the
+  word); `options` `min_pause_s`, `pad_s`, `fillers`, `tracks`, `language`, `target_lufs` (sets the master fader).
+  `fillers` on recordings without a transcript: whisper writes one (verbatim) while suggesting, the apply keeps it in
+  the project (a `transcribe` of the project only answers, it keeps nothing). A pause at the timeline's end is cut
+  to the end (no pad left behind). `apply` cuts the chosen ones out of a copy - a new timeline next to the
   original, which stays as it was; the answer's `timeline` names it. The timeline changed after suggesting =
   `SESSION_STALE`. Room tone is not added: offer `room_tone` (below).
 - **From a media file** (new project; `template` "podcast" names the tracks Voice 1, Voice 2, Music, so `check` and

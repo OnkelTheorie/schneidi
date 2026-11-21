@@ -1098,7 +1098,7 @@
  "Für „Aus Skript“ erst den Text einfügen oder eine Textdatei wählen.": "For “From a script”, first paste the text or choose a text file.",
  "Hype": "Hype",
  "Kein Satz des Skripts kommt in den Aufnahmen vor (andere Sprache oder andere Clips?).": "No sentence of the script is in the recordings (another language or other clips?).",
- "Keine Abschrift auf diesen Spuren: nur Pausen, keine Füllwörter (erst transkribieren).": "No transcript on these tracks: only pauses, no filler words (transcribe first).",
+ "Keine Abschrift auf diesen Spuren (Whisper fehlt oder hört keine Sprache): nur Pausen, keine Füllwörter.": "No transcript on these tracks (whisper missing or no speech heard): only pauses, no filler words.",
  "Keine Pause lang genug, in der alle gewählten Spuren still sind (kürzere Pausen versuchen).": "No pause long enough where all chosen tracks are quiet (try shorter pauses).",
  "Keine Vorschläge: Mit diesem Material und diesen Einstellungen kam das Rezept nicht weiter.": "No suggestions: the recipe got nowhere with this material and these settings.",
  "Musikbett": "Music bed",
