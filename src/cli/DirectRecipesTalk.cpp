@@ -10,6 +10,7 @@
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
 
+#include "core/AppPaths.h"
 #include "core/I18n.h"
 #include "engine/AnalysisCache.h"
 #include "core/LiveHost.h"
@@ -21,6 +22,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <cmath>
@@ -44,7 +46,10 @@ QString seconds3(double s) { return QString("%1s").arg(s, 0, 'f', 3); }
 QString projectOf(Direction::Session& s)
 {
     if (s.project.isEmpty() && (Live::host() || Live::appCopy())) s.project = Live::AppProject;
-    if (s.project.isEmpty()) fail("NO_MATERIAL", QString("recipe %1 works on a project: give project").arg(s.recipe));
+    if (s.project.isEmpty())
+        fail("NO_MATERIAL", s.recipe == QLatin1String("script")
+                                ? QString("recipe script needs material: give files (recordings) or a project")
+                                : QString("recipe %1 works on a project: give project (and its timeline)").arg(s.recipe));
     return s.project;
 }
 
@@ -285,11 +290,11 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
     if (!tmpl.isEmpty()) {
         // A content template: a new project of it (the app opens nothing by itself; the answer names the file)
         if (project.isEmpty() || QFileInfo::exists(project) || Live::isAppProject(project)) {
-            // In project_dir (the app: the folder for projects), else next to the first clip
+            // In project_dir (the app: its own folder for projects), else the folder for projects (Settings >
+            // Project); the app's page without an own folder: next to the first clip
             const QFileInfo first(list.isEmpty() ? QString() : list.first()->file);
             QString dir = args["project_dir"].toString().trimmed();
-            if (dir.isEmpty()) dir = first.absolutePath();
-            else dir = absolute(dir);
+            dir = !dir.isEmpty() ? absolute(dir) : Live::host() ? first.absolutePath() : AppPaths::projectFolder();
             if (!args["dry_run"].toBool() && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             QString base = QDir(dir).filePath(QFileInfo(tmpl).completeBaseName());
             project = base + "." + QString(ProjectFile::Extension);
@@ -319,7 +324,17 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
 
 void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx)
 {
-    const QString project = projectOf(s);
+    // Files alone (no project): the takes are found in a scratch project of them; applying makes the real one (in the
+    // folder for projects, like the other recipes)
+    QTemporaryDir scratch;
+    QString project;
+    if (s.project.isEmpty() && !files.isEmpty() && !Live::host() && !Live::appCopy()) {
+        if (!scratch.isValid()) fail("SAVE_FAILED", "cannot make a temporary folder");
+        project = scratch.filePath("script." + QString(ProjectFile::Extension));
+        runSub("new", {{"project", project}, {"media", QJsonArray::fromStringList(files)}}, ctx);
+    } else {
+        project = projectOf(s);
+    }
     QJsonObject op{{"op", "rough_cut"}};
     for (const char* k : {"script", "script_file", "takes", "language"})
         if (s.options.contains(k)) op[k] = s.options[k];
@@ -373,7 +388,7 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
             x.to = take["cut_to_s"].toDouble(take["to_s"].toDouble());
             x.score = take["coverage"].toDouble();
             x.on = on;
-            x.reason = {"take", {{"sentence", i + 1}}};
+            x.reason = {on ? "take" : "alt_take", {{"sentence", i + 1}}};
             x.labels << (take["good"].toBool() ? "good" : "take");
             if (!used.contains(x.file)) used << x.file;
             s.suggestions << x;

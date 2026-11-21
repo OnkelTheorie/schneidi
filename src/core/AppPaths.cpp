@@ -5,6 +5,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QSettings>
 
 namespace AppPaths {
 
@@ -38,6 +39,17 @@ QString writable(QStandardPaths::StandardLocation type)
     }
 #endif
     return QStandardPaths::writableLocation(type);
+}
+
+QString projectFolder()
+{
+    const QString stored = QSettings().value("project/folder").toString();
+    if (!stored.isEmpty()) return stored;
+    // A test run (also an isolated app run) never writes into the user's videos (the Direct page puts new projects here)
+    if (QStandardPaths::isTestModeEnabled() || qEnvironmentVariableIsSet(SettingsIsolation::kVariable))
+        return QDir(writable(QStandardPaths::AppDataLocation)).filePath("videos/schneidi"); // (named like the real one)
+    const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    return QDir(movies.isEmpty() ? QDir::homePath() : movies).filePath("schneidi");
 }
 
 void setProgramNames()

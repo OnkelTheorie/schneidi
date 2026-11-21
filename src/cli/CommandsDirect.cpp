@@ -8,6 +8,7 @@
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
 
+#include "core/AppPaths.h"
 #include "core/GameHud.h"
 #include "core/I18n.h"
 #include "core/LiveHost.h"
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Cli::detail {
 
@@ -129,6 +131,20 @@ bool overlapsAny(const DirectMoment& c, const QVector<Direction::Suggestion>& li
     return std::any_of(list.begin(), list.end(), [&](const Direction::Suggestion& s) {
         return s.file == files.value(c.file) && c.from < s.to && s.from < c.to;
     });
+}
+
+// The loudness a cut is leveled to when applied: options.target_lufs (default -14 LUFS, web and phone platforms), NaN
+// when it says false/'off' (the sound stays as recorded)
+constexpr double kLevelCeilingDb = -1.2; // the master limiter's ceiling (under check's -1 dBTP with room for codecs)
+
+double levelTarget(const QJsonObject& options)
+{
+    const QJsonValue v = options["target_lufs"];
+    if (v.isUndefined() || v.isNull()) return -14;
+    if (v.isDouble()) return std::clamp(v.toDouble(), -40.0, -5.0);
+    if (v.isBool() ? !v.toBool() : v.toString().trimmed().compare("off", Qt::CaseInsensitive) == 0)
+        return std::numeric_limits<double>::quiet_NaN();
+    fail("BAD_ARGUMENT", "target_lufs is the loudness in LUFS (e.g. -14) or false (leave the sound as it is)");
 }
 
 // The best moment first (hook), then the others by file and time
@@ -536,6 +552,7 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     const QString reframe = s.options["reframe"].toString().trimmed().toLower();
     if (!reframe.isEmpty() && !QStringList{"auto", "center", "fit"}.contains(reframe))
         fail("BAD_ARGUMENT", "reframe must be auto, center or fit");
+    levelTarget(s.options); // checked now, not only when applying
     const QString game = gameOf(s.options, files);
     Context sub;
     sub.cancel = ctx.cancel;
@@ -689,7 +706,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     const QString game = gameOf(s.options, files);
     QJsonArray done, notes;
     for (const Direction::Note& n : s.notes) notes << n.text;
-    // The project: given, the session's, else a new one next to the first recording
+    // The project: given, the session's, else a new one in the folder for projects
     QString project = args["project"].toString();
     if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
     // A session made for one project is applied to that one (its timeline material, its frame rate)
@@ -706,9 +723,10 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     if (project.isEmpty() || missing) {
         if (project.isEmpty()) {
             const QFileInfo first(files.first());
-            // In project_dir when given, else next to the first recording
+            // In project_dir when given, else the folder for projects (Settings > Project; never the recordings'
+            // folder, a clip tool's output an unattended run must not fill); the app's own page: next to the first one
             QString dir = args["project_dir"].toString().trimmed();
-            dir = dir.isEmpty() ? first.absolutePath() : absolute(dir);
+            dir = !dir.isEmpty() ? absolute(dir) : Live::host() ? first.absolutePath() : AppPaths::projectFolder();
             if (!dry && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             project = freeFile(dir, first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
         } else if (QFileInfo(project).suffix().isEmpty()) {
@@ -830,6 +848,16 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             ops << copy;
         }
     }
+    // A project file opens on the result (the app's own project: the page shows it), not on an older empty timeline
+    const bool appProject = Live::isAppProject(project) || Live::host();
+    if (!appProject) ops << QJsonObject{{"op", "timeline"}, {"timeline", result}, {"open", true}};
+    // The result as loud as a platform wants it (like `short`): the master to target_lufs (default -14) behind its
+    // limiter, measured (mixer target_lufs). Not in the app: measuring there would hold its window (the page's export
+    // check does it)
+    const double targetLufs = levelTarget(s.options);
+    if (!appProject && !std::isnan(targetLufs))
+        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", kLevelCeilingDb},
+                           {"target_lufs", targetLufs}};
     // The project remembers the session as it was applied (the Direct page shows it again; no undo step)
     // Transcripts whisper made while suggesting (script) go into the project with the cut
     if (s.options["_transcripts"].isObject() && !args["plan"].toBool())
@@ -852,6 +880,13 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                 .arg(list.size() == 1 ? "" : "s")
                 .arg(secondsOf(total))
                 .arg(cut);
+    for (const QJsonValue& n : edited["notes"].toArray())
+        if (const QJsonObject l = n.toObject()["loudness"].toObject(); !l.isEmpty())
+            done << QString("sound: '%1' leveled to %2 LUFS (target %3, master limiter %4 dBTP)")
+                        .arg(result)
+                        .arg(std::round(l["after_lufs"].toDouble() * 10) / 10)
+                        .arg(l["target_lufs"].toDouble())
+                        .arg(kLevelCeilingDb);
     QJsonObject o{{"project", project},
                   {"timeline", result},
                   {"cut_timeline", cut},

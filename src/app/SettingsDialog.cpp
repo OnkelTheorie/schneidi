@@ -373,16 +373,7 @@ QString SettingsDialog::projectFolder() const { return QDir::fromNativeSeparator
 
 bool SettingsDialog::storedOwnFolder() { return QSettings().value("project/ownFolder", false).toBool(); }
 
-QString SettingsDialog::storedFolder()
-{
-    const QString stored = QSettings().value("project/folder").toString();
-    if (!stored.isEmpty()) return stored;
-    // A test run (also an isolated app run) never writes into the user's videos (the Direct page puts new projects here)
-    if (QStandardPaths::isTestModeEnabled() || qEnvironmentVariableIsSet(SettingsIsolation::kVariable))
-        return QDir(AppPaths::writable(QStandardPaths::AppDataLocation)).filePath("videos/schneidi"); // (named like the real one)
-    const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
-    return QDir(movies.isEmpty() ? QDir::homePath() : movies).filePath("schneidi");
-}
+QString SettingsDialog::storedFolder() { return AppPaths::projectFolder(); }
 
 void SettingsDialog::store(bool own, const QString& folder)
 {

@@ -5,6 +5,7 @@
 // canceled suggest or apply fails with CANCELED and leaves no half project. Prints the suggest time of 10 clips cold
 // and warm (DIRECT_MEASURE=1 makes them 30 s long as in the plan's target).
 #include "cli/Commands.h"
+#include "core/AppPaths.h"
 #include "core/Direction.h"
 #include "engine/Extensions.h"
 #include "cli/Live.h"
@@ -269,6 +270,12 @@ int main(int argc, char** argv)
         CHECK(ProjectFile::load(proj, &d, &error));
         CHECK_EQ(d.direction["id"].toString(), session["id"].toString());
         CHECK_EQ(d.direction["recipe"].toString(), QString("short"));
+        // The project opens on the result, not on its empty Timeline 1 (videotest 21.11.)
+        CHECK_EQ(run("info", {{"project", proj}, {"summary", true}})["timeline"].toObject()["name"].toString(), QString("Short"));
+        // Its sound leveled like `short` does: the master to -14 LUFS behind the limiter
+        CHECK(QJsonDocument(applied["done"].toArray()).toJson().contains("leveled to"));
+        const QJsonObject l = run("loudness", {{"source", proj}, {"timeline", "Short"}});
+        CHECK(std::abs(l["loudness"]["integrated_lufs"].toDouble() + 14) < 1.0);
     }
     // A choice of its own: only the first suggestion, moved edges, as an object (the page sends what it shows)
     {
@@ -377,7 +384,10 @@ int main(int argc, char** argv)
         const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
         CHECK(!made.contains("error"));
         CHECK_EQ(made["timeline"].toString(), QString("Highlights"));
-        CHECK(QFileInfo::exists(made["project"].toString())); // a new project next to the recording
+        CHECK(QFileInfo::exists(made["project"].toString()));
+        // in the folder for projects, never next to the recording (a recorder's folder; videotest 21.11.)
+        CHECK_EQ(QFileInfo(made["project"].toString()).absolutePath(), QFileInfo(AppPaths::projectFolder()).absoluteFilePath());
+        CHECK(QFileInfo(made["project"].toString()).absolutePath() != QFileInfo(beach).absolutePath());
         // A second recipe on the same material reads the caches
         QElapsedTimer t;
         t.start();
@@ -564,6 +574,16 @@ int main(int argc, char** argv)
         const QJsonObject again = run("direct", {{"recipe", "script"}, {"project", sp}, {"files", QJsonArray{beach}},
                                                  {"options", QJsonObject{{"script", "Hallo."}}}});
         CHECK(!again["session"]["suggestions"].toArray().isEmpty());
+        // Files alone (no project): the takes are found as well, the apply makes a project in the folder for projects
+        // (videotest 21.11.: NO_MATERIAL although the help said files work)
+        const QJsonObject alone = run("direct", {{"recipe", "script"}, {"files", QJsonArray{beach}},
+                                                 {"options", QJsonObject{{"script", "Hallo."}}}});
+        CHECK(!alone.contains("error"));
+        CHECK(!alone["session"]["suggestions"].toArray().isEmpty());
+        const QJsonObject aloneCut = run("direct", {{"session", alone["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        CHECK(!aloneCut.contains("error"));
+        CHECK_EQ(QFileInfo(aloneCut["project"].toString()).absolutePath(), QFileInfo(AppPaths::projectFolder()).absoluteFilePath());
+        CHECK(aloneCut["timeline"].toString().startsWith("Rohschnitt"));
         const QJsonObject cut = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
         CHECK(!cut.contains("error"));
         CHECK(cut["timeline"].toString().startsWith("Rohschnitt"));
@@ -722,7 +742,7 @@ int main(int argc, char** argv)
         const QString target = dir.filePath("out/never.schneidi");
         const QJsonObject a = run("direct", {{"session", s["id"]}, {"apply", QJsonObject{{"on", "all"}}}}, &already);
         CHECK_EQ(a["error"].toString(), QString("CANCELED"));
-        CHECK(!QFileInfo::exists(QFileInfo(beach).absolutePath() + "/beach-short.schneidi"));
+        CHECK(!QFileInfo::exists(AppPaths::projectFolder() + "/beach-short.schneidi"));
         Q_UNUSED(target);
     }
 

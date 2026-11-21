@@ -58,6 +58,7 @@ QString reason(const QJsonObject& r)
         return slot.isEmpty() ? T("Passt zum Feld") : T("Passt zum Feld „%1“").arg(slot);
     }
     if (key == "take") return T("Bester Take");
+    if (key == "alt_take") return T("Anderer Take");
     if (key == "fallback_end") return T("Ende der Aufnahme");
     return r.value("text").toString();
 }

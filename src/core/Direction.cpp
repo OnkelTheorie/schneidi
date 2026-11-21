@@ -35,6 +35,7 @@ const Text kReasons[] = {
     {"filler", "filler word \"{word}\"", nullptr, N_("Füllwort „{word}“"), nullptr},
     {"slot_match", "fits the field \"{slot}\"", nullptr, N_("passt ins Feld „{slot}“"), nullptr},
     {"take", "best take of sentence {sentence}", nullptr, N_("bester Take von Satz {sentence}"), nullptr},
+    {"alt_take", "another take of sentence {sentence}", nullptr, N_("anderer Take von Satz {sentence}"), nullptr},
     {"fallback_end", "end of the recording (nothing found)", nullptr, N_("Ende der Aufnahme (nichts gefunden)"), nullptr},
 };
 
@@ -304,7 +305,20 @@ QVector<int> resolvedOrder(const Session& s)
     for (const Suggestion& x : s.suggestions)
         if (x.on && !out.contains(x.n)) rest << x.n;
     std::sort(rest.begin(), rest.end());
-    return out + rest;
+    // A take of a script sentence switched on (another take than the suggested one) goes to its sentence's place:
+    // after the takes of its own sentence, before those of later sentences - not to the end
+    for (int n : rest) {
+        const Suggestion* x = s.find(n);
+        int at = int(out.size());
+        if (x->kind == QLatin1String("take") && x->sentence > 0)
+            for (int k = 0; k < out.size(); ++k)
+                if (const Suggestion* y = s.find(out[k]); y->kind == QLatin1String("take") && y->sentence > x->sentence) {
+                    at = k;
+                    break;
+                }
+        out.insert(at, n);
+    }
+    return out;
 }
 
 } // namespace Direction
