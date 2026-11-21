@@ -3,6 +3,13 @@
   "about": "The feature cards of the project website, in this order (the first is the large one), read by its updater at the latest release tag. image: site/img/<image>-960.webp (and -1920.webp), made from screenshots/<image>.png by tools/site_images.py --write. title and alt are plain text; text may use `code` and **bold**; more is the line under the cards with one [link text]. Checked by tools/site_figures.py --check.",
   "features": [
     {
+      "image": "direct",
+      "tab": "Direct",
+      "title": "Clips in, a cut out, without a chat AI",
+      "text": "Drop your clips and pick a recipe: a short, a highlight video, a talk without pauses, a filled template or a rough cut from a script. Every suggestion comes with its reason; check the ones you want, and **Accept** builds the timeline as one undo step, with background music of its own if you like.",
+      "alt": "The Direct page: five clips as the material, the recipe Short and a list of suggestions with their reasons"
+    },
+    {
       "image": "short",
       "tab": "Shorts",
       "title": "The 16:9 edit and its 9:16 short in one project",
