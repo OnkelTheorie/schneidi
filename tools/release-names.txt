@@ -16,3 +16,4 @@
 0.22.0 Tracking Update
 0.23.0 Studio Update
 0.24.0 Color Update 2
+0.25.0 Direct Update
