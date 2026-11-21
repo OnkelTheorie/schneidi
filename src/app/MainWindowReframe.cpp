@@ -76,7 +76,8 @@ bool MainWindow::measureReframe(const QVector<Clip>& clips, const ProjectFormat&
     auto bars = std::make_shared<QHash<QString, QRectF>>(); // black bars are never wanted in a reframed picture
     QThread* thread = QThread::create([=] {
         const auto lengthOf = [lengths](const QString& p) { return lengths.value(p); };
-        *result = ReframeAnalysis::paths(clips, format, 0.5, lengthOf, errors.get(), cancel.get(), progress.get(), bars.get());
+        *result = ReframeAnalysis::paths(clips, format, 0.5, lengthOf, errors.get(), cancel.get(), progress.get(), bars.get(),
+                                         choice.game);
         // The kill feed's lines, for a copy that shows only them (unreadable: the copy keeps the whole region)
         if (readFeeds && !cancel->load())
             *feedResult = KillFeedLines::feeds(clips, format, Reframe::Mode::Auto, *bars, choice, lengthOf, nullptr,

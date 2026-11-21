@@ -2,6 +2,7 @@
 #include "engine/ReframeAnalysis.h"
 
 #include "core/AppPaths.h"
+#include "core/GameHud.h"
 #include "core/I18n.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
@@ -485,7 +486,7 @@ QVector<Reframe::Target> targets(const Clip& c, FrameRate rate, int fileLength, 
 QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const ProjectFormat& format, double smoothness,
                                         const std::function<int(const QString&)>& lengthOf, QStringList* errors,
                                         const std::atomic<bool>* cancel, std::atomic<int>* progress,
-                                        QHash<QString, QRectF>* contents)
+                                        QHash<QString, QRectF>* contents, const QString& game)
 {
     QHash<int, QVector<Reframe::Key>> out;
     // Progress: every clip counts by its length
@@ -504,6 +505,14 @@ QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const Projec
                 contents->insert(c.mediaPath, r.value_or(QRectF(0, 0, 1, 1)));
             }
             n->content = contents->value(c.mediaPath);
+        }
+        // First-person game footage: the crosshair in the middle is the subject (no measuring)
+        const bool isGame = game.isEmpty() ? GameHud::guess(c.mediaPath) != nullptr
+                                           : game.compare("none", Qt::CaseInsensitive) != 0;
+        if (isGame) {
+            done += std::max(1, c.length());
+            out.insert(c.id, {Reframe::Key{}});
+            continue;
         }
         QString error;
         const qint64 before = done, weight = std::max(1, c.length());

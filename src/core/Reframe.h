@@ -45,11 +45,16 @@ struct PathParams {
     double fps = 25;
     // Visible window as a fraction of the picture (1 = that side is not cropped): 9:16 out of 16:9 = 0.316 x 1
     double windowW = 1, windowH = 1;
+    // First-person game footage: the subject is the crosshair in the middle. Muzzle flash, kill effects, the HUD and
+    // the view turning only look like subjects there: the path stays centred.
+    bool game = false;
 };
 
-// Calm camera path through the targets (sorted by frame). Between two keys the value eases in and out (no
-// overshoot: every section runs monotonically from one key to the next); at a scene cut the path jumps (a key on the
-// frame before the cut and one on the cut). Always at least one key (a still camera); keys on a side that is not
+// Calm camera path through the targets (sorted by frame). It commits to a place and holds it: subjects taking turns
+// (two people, flickering measurements) get one place, not a camera swinging between them; a move needs a subject
+// that is somewhere else clearly and for a while, and holds a while after it. Between two keys the value eases in and
+// out (no overshoot: every section runs monotonically from one key to the next); at a scene cut the path jumps (a key
+// on the frame before the cut and one on the cut). Always at least one key (a still camera); keys on a side that is not
 // cropped stay at 0.5.
 QVector<Key> path(const QVector<Target>& targets, const PathParams& p);
 

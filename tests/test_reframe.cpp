@@ -22,6 +22,8 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -145,6 +147,51 @@ void testPath()
         p.smoothness = 0.5;
     }
     CHECK_EQ(Reframe::path({}, p).size(), 1);
+    // Two subjects taking turns (measurements of a static shot flipping between a tree and a far cyclist, two
+    // people): the camera commits to one place and holds, at most one move - not swinging between them every second
+    // (the iPhone park clip: runs of 0.5 to 1.3 s at x 0.46 and 0.72)
+    {
+        p.fps = 30;
+        const int runs[] = {18, 36, 39, 33, 6, 3, 12, 30, 15, 21, 36, 24, 33, 18};
+        QVector<Target> t;
+        int f = 0;
+        for (int i = 0; i < int(std::size(runs)); ++i) {
+            for (int e = f + runs[i]; f < e; f += 4) t << Target{f, i % 2 ? 0.46 : 0.72, i % 2 ? 0.30 : 0.45, 0.33, false};
+        }
+        const QVector<Key> k = Reframe::path(t, p);
+        int moves = 0;
+        for (int i = 1; i < k.size(); ++i) moves += std::abs(k[i].x - k[i - 1].x) > 1e-6;
+        std::printf("  two subjects in turns: %d keys, %d moves\n", int(k.size()), moves);
+        CHECK(moves <= 1);
+        // Both stay in the window most of the time (one place for both, or one of them held)
+        int seen = 0;
+        for (const Target& x : t) seen += std::abs(xAt(k, x.frame) - x.x) < p.windowW / 2;
+        CHECK(seen * 2 >= t.size());
+        // The same with an equally sure pair of people far apart (cannot both fit): still at most one move
+        for (Target& x : t) x.x = x.x > 0.6 ? 0.85 : 0.2, x.weight = 0.6;
+        const QVector<Key> far = Reframe::path(t, p);
+        moves = 0;
+        for (int i = 1; i < far.size(); ++i) moves += std::abs(far[i].x - far[i - 1].x) > 1e-6;
+        CHECK(moves <= 1);
+        p.fps = 25;
+    }
+    // After a move the camera holds a while before the next one
+    {
+        const QVector<Key> k = Reframe::path(line(0, 48, 0.3) + line(51, 75, 0.7) + line(78, 200, 0.3), p);
+        for (int i = 2; i + 1 < k.size(); ++i)
+            if (std::abs(k[i].x - k[i - 1].x) < 1e-9) CHECK(k[i].frame - k[i - 1].frame >= 25); // a hold: >= 1 s
+    }
+    // First-person game footage: a bright burst off the middle (muzzle flash, kill effect) and sure measurements of
+    // it do not move the camera off the crosshair
+    {
+        const QVector<Target> t = line(0, 60, 0.5, 0.5) + line(63, 200, 0.85, 0.9);
+        p.game = true;
+        const QVector<Key> k = Reframe::path(t, p);
+        CHECK_EQ(k.size(), 1);
+        CHECK(std::abs(k[0].x - 0.5) < 1e-9);
+        p.game = false;
+        CHECK(Reframe::path(t, p).size() > 1); // (not a game: what stays there is a subject)
+    }
 }
 
 void testGeometry()
@@ -363,6 +410,28 @@ void testAnalysis(const QString& dir, const QString& jumping, const QString& gli
                                                   {0.03, 0.8, 0.5, 1, true}, {0.5, 0.8, 0.5, 1, false}};
         const QVector<Target> ct = ReframeAnalysis::targets(cut, f.rate, 100, cutSamples);
         CHECK(std::any_of(ct.begin(), ct.end(), [](const Target& x) { return x.cut && std::abs(x.x - 0.8) < 1e-9; }));
+    }
+    // The same jumping square in a game's recording (a cs2 folder): the crop stays on the crosshair, no keys
+    {
+        const QString gameDir = dir + "/cs2";
+        QDir().mkpath(gameDir);
+        const QString game = gameDir + "/burst.mp4";
+        QFile::remove(game);
+        if (CHECK(QFile::copy(jumping, game))) {
+            Clip c;
+            c.id = 14;
+            c.mediaPath = game;
+            c.out = 99;
+            auto paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 100; });
+            if (CHECK(paths.contains(14))) {
+                CHECK_EQ(paths[14].size(), 1);
+                CHECK(std::abs(paths[14].front().x - 0.5) < 1e-9);
+            }
+            // Told it is no game: followed
+            paths = ReframeAnalysis::paths({c}, f, 0.5, [](const QString&) { return 100; }, nullptr, nullptr, nullptr,
+                                           nullptr, "none");
+            if (CHECK(paths.contains(14))) CHECK(paths[14].size() > 1);
+        }
     }
     // A square gliding from left to right: the window keeps it in view all the way
     {
