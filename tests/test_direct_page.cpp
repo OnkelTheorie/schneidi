@@ -527,6 +527,12 @@ void testStartPage(Engine& engine, const QString& a, const QString& projectDir)
         CHECK(w.currentPage() == Page::Direct);
         CHECK(w.directPage() != nullptr);
         CHECK_EQ(w.startPage(), QString("direct"));
+        // The registered Delete actions reached the lists although the page was built before them (review 21.11.:
+        // the key bindings dialog changed an action the lists never used)
+        if (CHECK(action("direct_remove_suggestion") && action("direct_remove_material"))) {
+            CHECK(action("direct_remove_suggestion")->parent() == w.directPage()->suggestions());
+            CHECK(action("direct_remove_material")->parent() == w.directPage()->material());
+        }
         // Opening a project keeps the page the user is on
         w.showPage(Page::Color);
         ProjectData d;
