@@ -21,6 +21,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QUrl>
 #include <QFile>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -1675,6 +1676,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const QJsonObject pf = run("probe", {{"file", odd["out"].toString()}});
             CHECK_EQ(pf["width"].toInt(), 320);
             CHECK_EQ(pf["height"].toInt(), 180);
+        }
+        // probe says the file's own size, not the even one a project of it gets; a file URL is its local path
+        {
+            const QString oddFile = Check::makeMedia(dir.filePath("odd 641.mkv"), {"-f", "lavfi", "-i", "color=c=red:s=641x359:d=0.2:r=25",
+                                                                                     "-c:v", "ffv1"});
+            const QJsonObject pf = run("probe", {{"file", QUrl::fromLocalFile(oddFile).toString()}});
+            CHECK_EQ(pf["file"].toString(), oddFile);
+            CHECK_EQ(pf["width"].toInt(), 641);
+            CHECK_EQ(pf["height"].toInt(), 359);
         }
         // Scopes of a mid-grey frame: luma in the middle, nothing clipped, no cast
         const QString grey = Check::makeMedia(dir.filePath("grey.mp4"),

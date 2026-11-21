@@ -614,19 +614,98 @@ QVector<AudioLayout> audioLayouts(const QString& path)
     AVFormatContext* raw = nullptr;
     if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return out;
     const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    // Some containers say the channels only after reading a bit of the stream (FLAC 7.1 had 0 channels, a WAV
+    // no order): read that then
+    bool unclear = false;
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        const AVCodecParameters* p = fmt->streams[i]->codecpar;
+        if (p->codec_type == AVMEDIA_TYPE_AUDIO
+            && (p->ch_layout.nb_channels <= 0 || p->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC))
+            unclear = true;
+    }
+    if (unclear) avformat_find_stream_info(fmt.get(), nullptr);
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         const AVCodecParameters* p = fmt->streams[i]->codecpar;
         if (p->codec_type != AVMEDIA_TYPE_AUDIO) continue;
         AudioLayout a;
         a.channels = p->ch_layout.nb_channels;
         if (p->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC || a.channels <= 0) {
-            a.layout = a.channels > 0 ? QStringLiteral("%1 channels").arg(a.channels) : QStringLiteral("unknown");
+            // No order given: one or two channels can only be mono or stereo
+            a.layout = a.channels == 1   ? QStringLiteral("mono")
+                       : a.channels == 2 ? QStringLiteral("stereo")
+                       : a.channels > 0  ? QStringLiteral("%1 channels").arg(a.channels)
+                                         : QStringLiteral("unknown");
         } else {
             char name[128] = {};
             if (av_channel_layout_describe(&p->ch_layout, name, sizeof name) > 0) a.layout = QString::fromUtf8(name);
         }
         out << a;
     }
+    return out;
+}
+
+std::optional<ReadableEnd> endsEarly(const QString& path)
+{
+    AVFormatContext* raw = nullptr;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
+    const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    // The header's length: the container's, else the longest stream's (MP4 states it per stream only)
+    double header = fmt->duration > 0 ? fmt->duration / double(AV_TIME_BASE) : 0.0;
+    if (header <= 0)
+        for (unsigned i = 0; i < fmt->nb_streams; ++i)
+            if (const AVStream* st = fmt->streams[i]; st->duration > 0 && st->duration != AV_NOPTS_VALUE)
+                header = std::max(header, st->duration * av_q2d(st->time_base));
+    if (header <= 0) return std::nullopt;
+    const double start = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time / double(AV_TIME_BASE) : 0.0;
+    struct Read {
+        bool any = false;   // a packet came after the seek
+        bool end = false;   // reading stopped at the end of the data (not at the packet limit)
+        double last = -1;   // the end of the latest packet (seconds from the start)
+    };
+    AVPacket* pkt = av_packet_alloc();
+    if (!pkt) return std::nullopt;
+    // From `at` seconds (the key frame before it) to the end of what can be read, at most `limit` packets
+    const auto readFrom = [&](double at, int limit) {
+        Read r;
+        if (av_seek_frame(fmt.get(), -1, int64_t((at + start) * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD) < 0
+            && av_seek_frame(fmt.get(), -1, int64_t((at + start) * AV_TIME_BASE), AVSEEK_FLAG_ANY) < 0)
+            return r;
+        for (int n = 0; n < limit; ++n) {
+            if (av_read_frame(fmt.get(), pkt) < 0) {
+                r.end = true;
+                return r;
+            }
+            const AVStream* st = fmt->streams[pkt->stream_index];
+            const int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+            if ((st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+                && !(st->disposition & AV_DISPOSITION_ATTACHED_PIC) && ts != AV_NOPTS_VALUE) {
+                r.any = true;
+                r.last = std::max(r.last, (ts + std::max<int64_t>(0, pkt->duration)) * av_q2d(st->time_base) - start);
+            }
+            av_packet_unref(pkt);
+        }
+        return r;
+    };
+    constexpr int kLimit = 4000; // packets read from one seek: a file this long after the seek is not cut off there
+    const double tolerance = std::max(0.5, header * 0.02);
+    std::optional<ReadableEnd> out;
+    Read tail = readFrom(std::max(0.0, header - 1), kLimit);
+    if (!tail.any) {
+        // The seek went past the data (an MP4 whose index lists more than the file holds): halve towards the start
+        double lo = 0, hi = header;
+        for (int i = 0; i < 14 && hi - lo > 0.1; ++i) {
+            const double mid = (lo + hi) / 2;
+            const Read r = readFrom(mid, kLimit);
+            if (r.any && r.end) { // read from a key frame before mid up to where the data stops
+                tail = r;
+                break;
+            }
+            if (r.any) lo = std::max(mid, r.last); // more data beyond the limit
+            else hi = mid;
+        }
+    }
+    av_packet_free(&pkt);
+    if (tail.any && tail.end && tail.last >= 0 && tail.last < header - tolerance) out = ReadableEnd{tail.last, header};
     return out;
 }
 

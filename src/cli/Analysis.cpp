@@ -2,6 +2,7 @@
 // schneidi-cli: commands that look at the material without changing a project – shared parts (opening media,
 // several files in parallel, regions), probe and extensions. Audio: AnalysisAudio.cpp, picture: AnalysisVideo.cpp
 #include "cli/AnalysisDetail.h"
+#include "engine/video/Reader.h"
 #include "cli/Live.h"
 
 #include "core/I18n.h"
@@ -327,8 +328,13 @@ QJsonObject probeOne(const QJsonObject& a)
                   {"frames_count_in", formatJson(m.format)["fps"]}};
     if (m.info.isImage) o["image"] = true;
     if (cf.ok) {
-        o["width"] = cf.width;
-        o["height"] = cf.height;
+        // The file's own size (a project made from it rounds to even: 641x359 -> 640x358)
+        o["width"] = cf.fileWidth;
+        o["height"] = cf.fileHeight;
+        if (const double r = std::fmod(cf.rotation, 90.0); r > 0.5 && r < 89.5)
+            o["rotation_note"] = QString("the file is tagged as turned %1°; only quarter turns are applied, it shows as %2°")
+                                     .arg(std::lround(cf.rotation))
+                                     .arg(Video::quarterTurns(cf.rotation) * 90);
         o["fps"] = std::round(cf.rate.fps() * 1000) / 1000;
         if (cf.variable) o["variable_frame_rate"] = true;
         if (cf.bitDepth > 8) o["bit_depth"] = cf.bitDepth;
@@ -350,6 +356,15 @@ QJsonObject probeOne(const QJsonObject& a)
             layouts << QJsonObject{{"stream", i}, {"channels", found[i].channels}, {"layout", found[i].layout}};
         if (!layouts.isEmpty()) o["audio_channels"] = layouts;
     }
+    // Cut off (a download or recording that stopped): the header's length is longer than what can be read
+    if (!m.info.isImage)
+        if (const std::optional<MediaProbe::ReadableEnd> e = MediaProbe::endsEarly(m.info.path)) {
+            o["readable_s"] = std::round(e->readable * 100) / 100;
+            o["note"] = QString("the file ends at %1 s of the %2 s its header says (cut off?): after that it shows its last "
+                                "picture and is silent")
+                            .arg(e->readable, 0, 'f', 1)
+                            .arg(e->header, 0, 'f', 1);
+        }
     if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
     if (m.info.hasVideo) {
         const std::optional<QRectF> r = a["bars"].toBool() ? BarDetect::content(m.info.path) : BarDetect::cached(m.info.path);
