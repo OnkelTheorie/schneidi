@@ -684,6 +684,21 @@ void testLayout(Engine& engine, const QString& a, const QString& b)
                     Check::report(btn->width() >= btn->sizeHint().width(), "page button whole", __FILE__, __LINE__,
                                   QString("%1: %2 %3 < %4").arg(at, MainWindow::pageId(pg)).arg(btn->width()).arg(btn->sizeHint().width()));
                 }
+                // The result row with all its buttons (after a short: finish, a template's project: open; review
+                // 21.11.): label + 5 buttons in one row never make the page wider than the window
+                for (const char* id : {"direct_finish", "direct_open_project"})
+                    if (auto* btn = page->findChild<QPushButton*>(id); CHECK(btn)) btn->setVisible(true);
+                settle();
+                if (auto* row = page->findChild<QPushButton*>("direct_export"); CHECK(row && row->parentWidget())) {
+                    const int need = row->parentWidget()->minimumSizeHint().width();
+                    Check::report(need <= size.width() - 200, "result row fits", __FILE__, __LINE__,
+                                  QString("%1: needs %2 px").arg(at).arg(need));
+                    std::printf("       %s: result row needs %d px\n", qPrintable(at), need);
+                }
+                Check::report(w.size() == size, "window keeps its size with all result buttons", __FILE__, __LINE__,
+                              QString("%1: %2x%3").arg(at).arg(w.width()).arg(w.height()));
+                const QString p2 = layoutProblems(page);
+                Check::report(p2.isEmpty(), "page not cut off with all result buttons", __FILE__, __LINE__, at + ": " + p2);
                 if (const QString dir = qEnvironmentVariable("DIRECT_PAGE_DUMP"); !dir.isEmpty())
                     w.grab().save(QString("%1/direct-%2-%3-%4.png").arg(dir, lang, large ? "large" : "normal").arg(size.width()));
             }
