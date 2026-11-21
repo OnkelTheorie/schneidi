@@ -170,6 +170,34 @@ QVector<int> hookOrder(const QVector<Direction::Suggestion>& list, const QVector
     return out;
 }
 
+// A hook starts on the action: a hard cut in its lead-in (the round restarts after a round-end or death screen, a
+// clip tool's jump) moves its start to the picture after the cut. Only the lead-in before the first hit counts (a fast
+// turn in the fight is no cut to start at). The picture's scene scores are cached per file (as `scenes` reads them).
+constexpr double kHookCut = 0.3;       // scene score of a hard cut (as `scenes`' default threshold)
+constexpr double kHookBeforeHit = 0.4; // the hook keeps at least this much before the first hit
+
+void startHookOnAction(Direction::Suggestion& x, const QVector<DirectMoment>& found, const QStringList& files)
+{
+    double first = -1;
+    for (const DirectMoment& m : found)
+        if (files.value(m.file) == x.file && m.first >= x.from && m.first < x.to && (first < 0 || m.first < first))
+            first = m.first;
+    if (first < 0 || first - x.from < kHookBeforeHit + 0.2) return;
+    std::vector<PictureScore> scores;
+    try {
+        scores = pictureScores(openMedia({{"file", x.file}}), 320, [](double) {});
+    } catch (const Error& e) {
+        if (e.code == QLatin1String("CANCELED")) throw;
+        return; // unreadable picture: the hook stays as it is
+    }
+    double cut = -1;
+    for (const PictureScore& p : scores)
+        if (p.seconds > x.from + 0.05 && p.seconds <= first - kHookBeforeHit && p.score >= kHookCut) cut = p.seconds;
+    if (cut < 0) return;
+    x.from = std::round(cut * 1000) / 1000;
+    if (!x.labels.contains("hook_trimmed")) x.labels << "hook_trimmed";
+}
+
 // ---------- Recipes ----------
 
 void suggestShort(Direction::Session& s, const CollectedMoments& found, const QStringList& files)
@@ -231,6 +259,16 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
             if (files.value(e.file) == x.file && e.from < x.to && x.from < e.to)
                 for (const QString& l : e.labels)
                     if (!x.labels.contains(l)) x.labels << l;
+    // Each variant's hook starts on the action (not on a round-end screen before it)
+    for (int v = 1; v <= int(picked.size()); ++v) {
+        QVector<int> ns;
+        for (const Direction::Suggestion& x : s.suggestions)
+            if (x.variant == v) ns << x.n;
+        const QVector<int> order = hookOrder(s.suggestions, ns, hookBest, files);
+        for (Direction::Suggestion& x : s.suggestions)
+            if (!order.isEmpty() && x.n == order.first()) startHookOnAction(x, source, files);
+        failIfCanceled();
+    }
     QVector<int> first;
     for (const Direction::Suggestion& x : s.suggestions)
         if (x.variant == 1) first << x.n;

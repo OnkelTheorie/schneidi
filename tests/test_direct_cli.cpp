@@ -491,6 +491,25 @@ int main(int argc, char** argv)
         Q_UNUSED(longer);
     }
 
+    // ---- The short's hook starts on the action: a hard cut in its lead-in (CS2: the round restarts after the
+    // round-end screen) moves its start there (videotest 21.11.: the hook began on "RUNDE VERLOREN")
+    {
+        const QString cutClip = Check::makeMedia(
+            dir.filePath("clips/round.mp4"),
+            {"-f", "lavfi", "-i",
+             "color=c=red:s=320x180:r=30:d=20[a];testsrc2=s=320x180:r=30:d=20[b];[a][b]overlay=enable='gte(t,8)'",
+             "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,9,9.6),0.9*sin(2*PI*440*t),0)':d=20:s=48000",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{cutClip}},
+                                             {"options", QJsonObject{{"game", "none"}}}});
+        const QJsonArray list = r["session"]["suggestions"].toArray();
+        const QJsonObject hook = list.isEmpty() ? QJsonObject{} : list[0].toObject();
+        CHECK(std::abs(hook["from_s"].toDouble() - 8.0) < 0.1);
+        CHECK(hook["labels"].toArray().contains("hook_trimmed"));
+        CHECK(hook["to_s"].toDouble() > 9.6);
+    }
+
     // ---- Recipe talk: the common pauses of two microphones; apply = a copy of the timeline without them
     {
         const QString talk = twoMics(dir.path());
