@@ -506,7 +506,9 @@ QString Transcriber::dtwPreset(const QString& model)
 QString Transcriber::punctuationPrompt(const QString& language)
 {
     const QString lang = language.trimmed().toLower().left(2);
-    if (lang == QLatin1String("de")) return QStringLiteral("Hallo, wie geht's? Gut, und dir? Ja, passt.");
+    // German with a bit of English: a German-only text made whisper write English in German talk in German ("She
+    // asked, like, ..." -> "Sie fragt, ...", "I'm Asian" -> "Ich bin Asien", measured 21.11.); with the English it stays
+    if (lang == QLatin1String("de")) return QStringLiteral("Hallo, wie geht's? Gut, und dir? Ja, passt. Okay, let's go!");
     if (lang == QLatin1String("en")) return QStringLiteral("Hello, how are you? Good, and you? Yeah, fine.");
     return {};
 }

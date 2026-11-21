@@ -175,6 +175,16 @@ void testPieces()
     CHECK_EQ(segs.value(1).first, 1510);
     CHECK_EQ(segs.value(1).second, 1955);
     CHECK_EQ(Transcriber::punctuationPrompt("de").isEmpty(), false);
+    // German with a bit of English, so whisper keeps English said in German talk (a German-only text translated it);
+    // its whole echo still goes
+    CHECK(Transcriber::punctuationPrompt("de").contains("let's"));
+    {
+        QVector<Transcript::Word> w;
+        for (const QString& t : Transcriber::punctuationPrompt("de").split(' ')) w << Transcript::Word{0, 100, t};
+        w << Transcript::Word{200, 300, "Echt?"};
+        CHECK_EQ(Transcript::dropPromptEcho(w, Transcriber::punctuationPrompt("de")), 11);
+        CHECK_EQ(w.size(), 1);
+    }
     CHECK(Transcriber::punctuationPrompt("auto").isEmpty());
 }
 
@@ -376,13 +386,14 @@ int main(int argc, char** argv)
         CHECK_EQ(deps[1]->id, QString("whisper-vad"));
     }
     CHECK(Extensions::find("whisper-model-small") != nullptr);
-    // large-v3 (most accurate) is offered first, so the best installed model is picked by default; "large" names it
+    // turbo is offered first (the default when installed: large-v3 translated English in German talk), then large-v3;
+    // "large" names it
     {
         QStringList models;
         for (const Extensions::Item& i : Extensions::catalog())
             if (i.kind == Extensions::Kind::WhisperModel) models << i.id;
-        CHECK_EQ(models.value(0), QString("whisper-model-large"));
-        CHECK_EQ(models.value(1), QString("whisper-model-turbo"));
+        CHECK_EQ(models.value(0), QString("whisper-model-turbo"));
+        CHECK_EQ(models.value(1), QString("whisper-model-large"));
         QString unknown;
         CHECK(Extensions::parseList("large", &unknown).value(0) == Extensions::find("whisper-model-large"));
         CHECK_EQ(Extensions::find("whisper-model-large")->sha256.size(), 64);
