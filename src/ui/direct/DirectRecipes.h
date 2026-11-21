@@ -97,6 +97,7 @@ private:
     QCheckBox* m_talkRoomTone = nullptr;
     QComboBox* m_talkLoudness = nullptr;
     QComboBox* m_talkTracks = nullptr;
+    QStringList m_audioTrackNames; // what m_talkTracks lists (setAudioTracks)
     // template
     QLabel* m_templateName = nullptr;
     QCheckBox* m_templateAuto = nullptr;

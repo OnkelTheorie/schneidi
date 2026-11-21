@@ -533,6 +533,18 @@ void testStartPage(Engine& engine, const QString& a, const QString& projectDir)
             CHECK(action("direct_remove_suggestion")->parent() == w.directPage()->suggestions());
             CHECK(action("direct_remove_material")->parent() == w.directPage()->material());
         }
+        // Hidden, the page does not follow every timeline change (a drag on Edit: each mouse move, review 21.11.);
+        // it catches up when it shows
+        if (auto* tracks = w.findChild<QComboBox*>("direct_talk_tracks"); CHECK(tracks)) {
+            w.showPage(Page::Edit);
+            const int listed = tracks->count();
+            ProjectData more = w.liveProject()->data();
+            TimelineOps::ensureTracks(more.timeline, TrackKind::Audio, int(more.timeline.audio.size()) + 2);
+            w.liveProject()->load(more);
+            CHECK_EQ(tracks->count(), listed);
+            w.showPage(Page::Direct);
+            CHECK_EQ(tracks->count(), int(more.timeline.audio.size()) + 1);
+        }
         // Opening a project keeps the page the user is on
         w.showPage(Page::Color);
         ProjectData d;

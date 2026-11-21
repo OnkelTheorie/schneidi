@@ -250,7 +250,12 @@ void MainWindow::ensureDirectPage()
                                                            T("Audio (*.wav *.mp3 *.flac *.ogg *.m4a *.opus);;Alle Dateien (*)")));
     });
     updateDirectTracks();
-    connect(m_project, &Project::timelineChanged, m_directPage, [this] { updateDirectTracks(); });
+    // Only while the page is shown: a drag on Edit sends timelineChanged on every mouse move (review 21.11.); hidden,
+    // the page is brought up to date when it shows (showPage) or a suggestion starts
+    connect(m_project, &Project::timelineChanged, m_directPage, [this] {
+        if (m_page == Page::Direct) updateDirectTracks();
+        else m_directTracksDirty = true;
+    });
     // The own wish: to the AI chat; ✕ stops its turn
     connect(m_directPage->wish(), &DirectWish::wishRequested, this, &MainWindow::directWish);
     connect(m_directPage->wish(), &DirectWish::stopRequested, this, [this] {
@@ -278,6 +283,7 @@ void MainWindow::ensureDirectPage()
 void MainWindow::updateDirectTracks()
 {
     if (!m_directPage) return;
+    m_directTracksDirty = false;
     m_directPage->material()->setTimelineLength(TimelineOps::endFrame(m_project->timeline()) / m_project->format().rate.fps());
     QStringList names;
     const QVector<Track>& audio = m_project->timeline().audio;
@@ -323,7 +329,9 @@ void MainWindow::directReset(bool material)
 
 void MainWindow::directSuggest()
 {
-    if (!m_directPage || m_directPage->material()->isEmpty()) return;
+    if (!m_directPage) return;
+    if (m_directTracksDirty) updateDirectTracks();
+    if (m_directPage->material()->isEmpty()) return;
     const int run = ++m_directRun; // first: the old run's reply (also a CANCELED from the cancel below) is dropped
     if (m_directCancel) {
         auto cancel = std::move(m_directCancel);
