@@ -331,6 +331,23 @@ int main(int argc, char** argv)
         }
         CHECK_EQ(Stutter::cleanPieces(s, 0, 1.9).size(), 1); // the 0.3 s after the jump are too short
         CHECK(Stutter::fromTimestamps({0.0, 0.04}).jumps.isEmpty());
+        // From packets: a jump whose next frame repeats the picture (an empty P-frame of a static screen capture with a
+        // variable frame rate, 05) is no stutter; one with a changed picture after it is, so is one with a key frame
+        // after it unless the frames around it are empty too
+        {
+            const int px = 1920 * 1080; // empty frame <= 829 bytes
+            std::vector<Stutter::Packet> p;
+            for (int i = 0; i < 60; ++i) p.push_back({i / 60.0, 30000, i == 0});
+            p.push_back({1.5, 246, false});       // after a jump of 0.5 s: unchanged
+            for (int i = 1; i < 30; ++i) p.push_back({1.5 + i / 60.0, 246, false});
+            p.push_back({2.5, 30000, false});     // after a jump: the picture changed (a game lag)
+            for (int i = 1; i < 30; ++i) p.push_back({2.5 + i / 60.0, 246, false});
+            p.push_back({3.5, 400000, true});     // key frame, empty frames around it
+            p.push_back({3.5 + 1 / 60.0, 246, false});
+            const Stutter::Scan seen = Stutter::fromPackets(p, px);
+            if (CHECK_EQ(seen.jumps.size(), 1)) CHECK(std::abs(seen.jumps[0].end() - 2.5) < 1e-9);
+            CHECK_EQ(Stutter::fromPackets(p, 0).jumps.size(), 3); // unknown size: all
+        }
 
         // Clips over it: the timeline frames where the picture stands still, with the clip; not a clip that only
         // uses clean source, a frozen clip or a hidden track

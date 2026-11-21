@@ -32,6 +32,19 @@ struct Scan {
 // still counts its real frames.
 Scan fromTimestamps(std::vector<double> times);
 
+// The same from the video packets, leaving out jumps nobody sees: the frame after the jump repeats the picture before
+// it. A screen capture with a variable frame rate sends few or no frames while nothing changes (05: a static browser
+// page, "11-34 frames missing" that were never a stutter). Repeated = an inter frame of at most
+// kUnchangedBytesPerPixel per pixel (an empty P-frame: about 250 bytes at 1080p; a game frame tens of KB); a key frame
+// after the jump is judged by the frames before the jump and after the key frame. pixels <= 0: nothing left out.
+struct Packet {
+    double time = 0; // presentation time, seconds (frame 0 = 0)
+    int size = 0;    // bytes
+    bool key = false;
+};
+inline constexpr double kUnchangedBytesPerPixel = 0.0004;
+Scan fromPackets(std::vector<Packet> packets, int pixels);
+
 // Jumps that show inside [from, to) seconds of the source (the picture stands still in that range)
 QVector<Jump> inRange(const Scan& s, double from, double to);
 
