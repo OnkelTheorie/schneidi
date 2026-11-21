@@ -6,7 +6,9 @@
 // the same spots stays as it was. Phone basics: click focus and the on-screen keyboard for a finger, the focused
 // field kept in view, the back key's steps (popup, dialog, the window's own step). Finger-sized handles: a fade
 // grip and a transition's edge just outside the mouse's zone, a pinch on the track headers (track height). Touch
-// mode: auto detection, the setting, larger zones and rows.
+// mode: auto detection, the setting, larger zones and rows. The other views: the node canvas (pinch zoom), the
+// Studio lanes (pinch zoom, pinch on the headers = lane height), the timeline overview (a finger's edge zone, the
+// rectangle follows two fingers); a long press where there is no menu shows the tooltip (or a hint).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -19,14 +21,20 @@
 #include "core/TimelineOps.h"
 #include "ui/FrameView.h"
 #include "ui/MediaPool.h"
+#include "ui/comp/CompCanvas.h"
+#include "ui/studio/StudioTracks.h"
+#include "ui/timeline/TimelineOverview.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/touch/Touch.h"
+#include "ui/touch/TouchGestures.h"
 
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
 #include <QInputDevice>
 #include <QSettings>
+#include <QSignalSpy>
+#include <QToolTip>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QHBoxLayout>
@@ -610,6 +618,156 @@ void testTouchMode()
     Touch::setModeActive(false);
 }
 
+void testCompCanvas()
+{
+    Project project;
+    Selection sel;
+    Editor editor(&project, &sel);
+    CompCanvas canvas(&editor);
+    canvas.resize(600, 400);
+    canvas.show();
+    CHECK(QTest::qWaitForWindowExposed(&canvas));
+    const double zoom = canvas.zoom();
+    twoFingers(&canvas, {250, 200}, {350, 200}, {200, 200}, {400, 200});
+    CHECK(std::abs(canvas.zoom() - 2 * zoom) < 0.05);
+    twoFingers(&canvas, {200, 200}, {400, 200}, {250, 200}, {350, 200});
+    CHECK(std::abs(canvas.zoom() - zoom) < 0.05);
+}
+
+void testStudioTracks()
+{
+    Project project;
+    TimelineGuard guard(project);
+    Selection sel;
+    Editor editor(&project, &sel);
+    project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, false, false});
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(2);
+    tl.audio[0].clips << clip(1, 0, 400);
+    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 5, 0});
+    StudioTracks tracks(&editor, nullptr);
+    tracks.resize(780, 500);
+    tracks.show();
+    CHECK(QTest::qWaitForWindowExposed(&tracks));
+    tracks.setView(1.0, 0);
+    // Two fingers spread on the lanes around frame 200: twice the zoom, frame 200 stays between them
+    const int cx = int(tracks.xOf(200));
+    twoFingers(&tracks, {cx - 50, 200}, {cx + 50, 200}, {cx - 100, 200}, {cx + 100, 200});
+    CHECK(std::abs(tracks.view().pxPerFrame - 2.0) < 0.05);
+    CHECK(std::abs(tracks.frameAt(cx) - 200) < 1.0);
+    CHECK_EQ(project.timeline().audio[0].clips[0].start, 0); // nothing moved
+    // Begun on the track headers: the lane height
+    const int lane = tracks.laneHeight();
+    const QRect a1 = tracks.laneRect(0);
+    const int hx = StudioTracks::kHeaderW / 2, hy = a1.center().y();
+    twoFingers(&tracks, {hx, hy - 15}, {hx, hy + 15}, {hx, hy - 30}, {hx, hy + 30});
+    CHECK(tracks.laneHeight() > lane * 1.5);
+    CHECK(std::abs(tracks.view().pxPerFrame - 2.0) < 0.05); // zoom untouched
+}
+
+void testOverview()
+{
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << clip(1, 0, 3000);
+    const auto make = [&](TimelineOverview& ov) {
+        ov.resize(600, TimelineOverview::kHeight);
+        ov.setTimeline(tl, 25);
+        ov.setVisibleRange(500, 1000);
+        ov.show();
+        QApplication::processEvents();
+    };
+    const double y = TimelineOverview::kHeight / 2.0;
+    // 9 px inside the rectangle's right edge: the mouse moves the rectangle, a finger drags the edge (zoom)
+    {
+        TimelineOverview ov;
+        make(ov);
+        QSignalSpy scroll(&ov, &TimelineOverview::scrollRequested), range(&ov, &TimelineOverview::rangeRequested);
+        const QPoint at(int(ov.visibleRect().right()) - 9, int(y));
+        mouse(ov, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(ov, QEvent::MouseMove, at + QPoint(20, 0), Qt::LeftButton);
+        mouse(ov, QEvent::MouseButtonRelease, at + QPoint(20, 0), Qt::NoButton);
+        CHECK(!scroll.isEmpty());
+        CHECK(range.isEmpty());
+    }
+    {
+        TimelineOverview ov;
+        make(ov);
+        QSignalSpy scroll(&ov, &TimelineOverview::scrollRequested), range(&ov, &TimelineOverview::rangeRequested);
+        const QPoint at(int(ov.visibleRect().right()) - 9, int(y));
+        swipe(&ov, at, at + QPoint(20, 0));
+        CHECK(scroll.isEmpty());
+        if (CHECK(!range.isEmpty())) CHECK_EQ(range.last().at(0).toDouble(), 500.0);
+    }
+    // Two fingers spread around the rectangle's middle: it grows around them (the detail view shows more)
+    {
+        TimelineOverview ov;
+        make(ov);
+        QSignalSpy range(&ov, &TimelineOverview::rangeRequested);
+        // (the detail view follows each request and reports back, like TimelinePanel)
+        QObject::connect(&ov, &TimelineOverview::rangeRequested, &ov, [&ov](double a, double b) { ov.setVisibleRange(a, b); });
+        const int cx = int(ov.visibleRect().center().x());
+        twoFingers(&ov, {cx - 20, int(y)}, {cx + 20, int(y)}, {cx - 40, int(y)}, {cx + 40, int(y)});
+        if (CHECK(!range.isEmpty())) {
+            const double from = range.last().at(0).toDouble(), to = range.last().at(1).toDouble();
+            CHECK(std::abs((to - from) - 1000) < 20);
+            CHECK(std::abs((from + to) / 2 - 750) < 20);
+        }
+    }
+}
+
+// A widget with gestures and no menu of its own (like the overview), and one with a menu
+class Plain : public QWidget {};
+class WithMenu : public QWidget {
+public:
+    int menus = 0;
+
+protected:
+    void contextMenuEvent(QContextMenuEvent*) override { ++menus; }
+};
+
+void testLongPressHint()
+{
+    QWidget window;
+    window.resize(400, 200);
+    auto* plain = new Plain;
+    plain->setParent(&window);
+    plain->setGeometry(0, 0, 200, 200);
+    plain->setToolTip("drag to move");
+    new TouchGestures(plain);
+    auto* withMenu = new WithMenu;
+    withMenu->setParent(&window);
+    withMenu->setGeometry(200, 0, 200, 200);
+    withMenu->setToolTip("has a menu");
+    new TouchGestures(withMenu);
+    window.show();
+    CHECK(QTest::qWaitForWindowExposed(&window));
+    QToolTip::hideText();
+    const auto hold = [](QWidget* w, QPoint p) {
+        QTest::touchEvent(w, g_touch).press(0, p, w);
+        QTest::qWait(Touch::longPressMs() + 150);
+        QTest::touchEvent(w, g_touch).release(0, p, w);
+    };
+    // No menu: what the mouse's tooltip says
+    hold(plain, {100, 100});
+    CHECK(QToolTip::isVisible());
+    CHECK_EQ(QToolTip::text(), QString("drag to move"));
+    QToolTip::hideText();
+    pauseTaps();
+    // A menu: only the menu
+    hold(withMenu, {100, 100});
+    CHECK_EQ(withMenu->menus, 1);
+    CHECK(!QToolTip::isVisible());
+    // No menu, no tooltip: the hint
+    plain->setToolTip({});
+    pauseTaps();
+    hold(plain, {100, 100});
+    CHECK(QToolTip::isVisible());
+    CHECK_EQ(QToolTip::text(), T("Hier gibt es kein Menü."));
+    QToolTip::hideText();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -635,5 +793,9 @@ int main(int argc, char** argv)
     testTransitionEdge();
     testHeaderPinch();
     testTouchMode();
+    testCompCanvas();
+    testStudioTracks();
+    testOverview();
+    testLongPressHint();
     return Check::result();
 }

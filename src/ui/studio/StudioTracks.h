@@ -9,7 +9,7 @@
 // a running voice-over take shows on its lane (setLiveTake).
 //
 // Core rule (docs/architektur.md): zoom and scroll are the lanes' own (ViewState) and change only by user input - the
-// mouse wheel (the wheel settings of the timeline), the scrollbars, the Fit button. A model change never touches them;
+// mouse wheel (the wheel settings of the timeline), two fingers, the scrollbars, the Fit button. A model change never touches them;
 // the scroll range grows with the project and never shrinks under the view. The first showing takes the timeline's
 // zoom and scroll once (setView). The lanes fill the height (a few tracks: tall lanes, many: they scroll); the
 // track-height wheel (Shift+wheel by default) gives them a height of their own.
@@ -109,6 +109,10 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* e) override;
     void hideEvent(QHideEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
+    void pinchView(const QPointF& from, const QPointF& to, double scale); // two fingers (zoom + scroll, lane height)
+    enum class Pinch { None, View, Height }; // what the running pinch changes
+    Pinch m_pinch = Pinch::None;
+    double m_pinchH = 0; // lane height during a pinch on the headers (unrounded)
     void leaveEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
     void dragEnterEvent(QDragEnterEvent* e) override;

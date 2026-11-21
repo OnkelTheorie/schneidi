@@ -4,7 +4,7 @@
 // wires between them. Everything maps onto one Editor comp op (one undo step): drag a node = moveCompNodes, drag a
 // wire from an output onto an input = linkCompNodes, grab a connected input and drop it elsewhere = move/remove that
 // link, Tab = node search (addCompNode behind the selected node), Del = removeCompNode, Ctrl+D = duplicateCompNode.
-// Zoom (wheel) and scroll (drag on the empty canvas, middle button) change only by user input; each clip keeps its
+// Zoom (wheel, two fingers) and scroll (drag on the empty canvas, middle button, two fingers) change only by user input; each clip keeps its
 // own view for the session. A graph whose nodes were never placed (made by the CLI or "Comp from selection") is laid
 // out by its order for the display; the first node moved stores every place.
 
@@ -95,6 +95,7 @@ private:
     };
     QPointF toWidget(const QPointF& world) const;
     QPointF toWorld(const QPointF& widget) const;
+    void pinchView(const QPointF& from, const QPointF& to, double scale); // two fingers: zoom + scroll
     QPointF place(int node) const; // world top left of a node
     QSizeF nodeSize(const CompNode& n) const;
     QStringList inputsOf(const CompNode& n) const;

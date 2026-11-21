@@ -2,6 +2,8 @@
 // The shared touch layer (see Touch.h): device checks, kinetic scrolling of scroll areas, finger drag and drop.
 #include "ui/touch/Touch.h"
 
+#include "core/I18n.h"
+
 #include <QAbstractItemView>
 #include <QAbstractScrollArea>
 #include <QAbstractSlider>
@@ -21,6 +23,7 @@
 #include <QScrollerProperties>
 #include <QStyleHints>
 #include <QTimer>
+#include <QToolTip>
 #include <QTouchEvent>
 #include <cmath>
 
@@ -34,6 +37,22 @@ bool isTouchDevice(const QPointingDevice* device)
 bool isTouch(const QInputEvent* e)
 {
     return e && e->device() && e->device()->type() == QInputDevice::DeviceType::TouchScreen;
+}
+
+void longPressAt(QWidget* w, const QPointF& pos, Qt::KeyboardModifiers mods)
+{
+    if (!w) return;
+    const QPoint global = w->mapToGlobal(pos).toPoint();
+    const QPointer<QWidget> alive(w);
+    // The context menu (like a right click; reason Other: a widget that opens some menus on the right button's
+    // release still opens them). Nobody took it (no menu here): what the mouse's tooltip says - a finger has no hover
+    QContextMenuEvent ce(QContextMenuEvent::Other, pos.toPoint(), global, mods);
+    QApplication::sendEvent(w, &ce);
+    if (ce.isAccepted() || !alive || QApplication::activePopupWidget()) return;
+    QHelpEvent he(QEvent::ToolTip, pos.toPoint(), global);
+    QApplication::sendEvent(w, &he);
+    if (QToolTip::isVisible()) return;
+    QToolTip::showText(global, T("Hier gibt es kein Menü."), w);
 }
 
 int slopPx()
@@ -87,9 +106,7 @@ void sendMouse(QWidget* to, QEvent::Type type, const QPointF& global, bool down,
 
 void contextMenu(QWidget* to, const QPointF& global, Qt::KeyboardModifiers mods)
 {
-    if (!to) return;
-    QContextMenuEvent ce(QContextMenuEvent::Other, to->mapFromGlobal(global.toPoint()), global.toPoint(), mods);
-    QApplication::sendEvent(to, &ce);
+    if (to) longPressAt(to, to->mapFromGlobal(global), mods);
 }
 
 // One finger on a scroll area's viewport: scroll with a flick (QScroller fed by hand, so the press/tap/long press

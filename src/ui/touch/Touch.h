@@ -19,6 +19,7 @@
 #include <QList>
 #include <QMargins>
 #include <QPointF>
+#include <Qt>
 #include <algorithm>
 #include <functional>
 
@@ -61,6 +62,9 @@ inline int handleSlackPx(bool touch, int mousePx) { return touch || modeActive()
 // The event comes from a touchscreen (also a mouse event synthesized from one, by Qt or by TouchGestures)
 bool isTouch(const QInputEvent* e);
 bool isTouchDevice(const QPointingDevice* device);
+// A long press at `pos` (widget coordinates): the context menu as a right click would open it; where nobody opens one,
+// the tooltip the mouse would show there (a finger has no hover), else a short hint that there is no menu
+void longPressAt(QWidget* w, const QPointF& pos, Qt::KeyboardModifiers mods = {});
 // A finger moving less than this (px) is still a tap / a long press
 int slopPx();
 // Held this long without moving = long press (ms)

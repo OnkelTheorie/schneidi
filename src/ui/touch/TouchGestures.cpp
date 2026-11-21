@@ -4,7 +4,6 @@
 #include "ui/touch/Touch.h"
 
 #include <QApplication>
-#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QPointingDevice>
 #include <QStyleHints>
@@ -177,7 +176,5 @@ void TouchGestures::longPress()
     m_state = State::Done; // the rest of this touch does nothing
     m_lastTap.invalidate();
     if (onLongPress && onLongPress(m_pressPos)) return;
-    QContextMenuEvent ce(QContextMenuEvent::Other, m_pressPos.toPoint(), m_target->mapToGlobal(m_pressPos).toPoint(),
-                         Qt::KeyboardModifiers(m_mods));
-    QApplication::sendEvent(m_target, &ce);
+    Touch::longPressAt(m_target, m_pressPos, Qt::KeyboardModifiers(m_mods)); // the menu, else a hint
 }
