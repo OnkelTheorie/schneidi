@@ -25,6 +25,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QStandardPaths>
@@ -356,6 +357,49 @@ int main(int argc, char** argv)
         CHECK(job->doneOnUiThread);
         qputenv("FAKE_WHISPER_MS", "0");
     }
+
+#ifndef Q_OS_WIN
+    // --- schneidi-cli as a process, ended by SIGTERM (`kill`, `timeout`) while whisper and a render run: it answers
+    // CANCELED with exit code 130 at once, stops whisper and leaves no temporary folder and no part file
+    {
+        const QString tmp = dir.filePath("cli-tmp");
+        QDir().mkpath(tmp);
+        const auto stopped = [&](const QStringList& args, int afterMs, QByteArray* out) {
+            QProcess p;
+            QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+            env.insert("TMPDIR", tmp);
+            env.insert("FAKE_WHISPER_MS", "30000");
+            p.setProcessEnvironment(env);
+            p.start(Check::cliPath(), args);
+            if (!p.waitForStarted(10000)) return -1;
+            QThread::msleep(afterMs);
+            QElapsedTimer t;
+            t.start();
+            p.terminate(); // SIGTERM
+            p.waitForFinished(20000);
+            if (!CHECK(t.elapsed() < 4000)) std::printf("       took %lld ms to stop\n", qint64(t.elapsed()));
+            *out = p.readAllStandardOutput();
+            return p.exitStatus() == QProcess::NormalExit ? p.exitCode() : -2;
+        };
+        const QString model = dir.filePath("ggml-test.bin");
+        QByteArray out;
+        CHECK_EQ(stopped({"transcribe", a, "--model", model}, 2500, &out), 130);
+        CHECK(out.contains("\"CANCELED\""));
+        CHECK_EQ(QDir(tmp).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden).size(), 0);
+
+        const QString clip = Check::makeMedia(dir.filePath("long.mkv"), {"-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=60",
+                                                                          "-c:v", "libx264", "-preset", "ultrafast"});
+        const QString project = dir.filePath("long.schneidi");
+        run("new", {{"project", project}});
+        run("edit", {{"project", project}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(clip)}});
+        const QString renders = dir.filePath("renders");
+        QDir().mkpath(renders);
+        CHECK_EQ(stopped({"render", project, "--out", renders + "/long.mp4", "--height", "360", "--encoder", "software"},
+                         2500, &out), 130);
+        CHECK(out.contains("\"CANCELED\""));
+        CHECK_EQ(QDir(renders).entryList(QDir::Files | QDir::Hidden).size(), 0); // no long.<id>.part.mp4
+    }
+#endif
 
     // --- Refusals: changing commands, changing forms, "@app" without the app; onDone comes later, never inside
     {

@@ -31,7 +31,10 @@
 #include <QJsonObject>
 
 #include <algorithm>
+#include <atomic>
 #include <clocale>
+#include <csignal>
+#include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -48,10 +51,73 @@
 #include <windows.h>
 #include <shellapi.h> // CommandLineToArgvW
 #else
-#include <unistd.h> // isatty
+#include <unistd.h> // isatty, alarm, _exit
 #endif
 
 namespace {
+
+// Ctrl+C, `kill`, `timeout`, closing the console: the running command is asked to stop (Context::cancel) so it
+// cleans up after itself - whisper and ffmpeg child programs stopped, temporary folders and part files removed - and
+// answers CANCELED. A command that does not look at the flag, or takes too long to stop, is ended after
+// kCancelGraceS seconds; a second signal ends the program at once.
+std::atomic<bool> g_cancel{false};
+constexpr int kCancelGraceS = 5;
+constexpr int kCanceledExit = 130; // as a shell reports a program ended by SIGINT
+
+#ifdef Q_OS_WIN
+BOOL WINAPI onConsoleCtrl(DWORD type)
+{
+    switch (type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        if (g_cancel.exchange(true)) _exit(kCanceledExit); // the second time
+        // This handler runs on a thread of its own: give the command its time to stop, then end the program.
+        // (Windows ends it anyway a few seconds after a close event.)
+        Sleep(kCancelGraceS * 1000);
+        _exit(kCanceledExit);
+    default:
+        return FALSE;
+    }
+}
+
+void installCancelHandler()
+{
+    SetConsoleCtrlHandler(onConsoleCtrl, TRUE);
+}
+#else
+extern "C" void onCancelSignal(int)
+{
+    // Only async-signal-safe calls here: an atomic store, alarm(), _exit()
+    if (g_cancel.exchange(true)) _exit(kCanceledExit); // the second time
+    alarm(kCancelGraceS);
+}
+
+extern "C" void onCancelGraceOver(int)
+{
+    _exit(kCanceledExit);
+}
+
+void installCancelHandler()
+{
+    struct sigaction sa {};
+    sa.sa_handler = onCancelSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    for (int sig : {SIGINT, SIGTERM, SIGHUP}) {
+        // A signal ignored on purpose (nohup, a background job of a non-interactive shell) stays ignored
+        struct sigaction old {};
+        if (sigaction(sig, nullptr, &old) == 0 && old.sa_handler == SIG_IGN) continue;
+        sigaction(sig, &sa, nullptr);
+    }
+    struct sigaction grace {};
+    grace.sa_handler = onCancelGraceOver;
+    sigemptyset(&grace.sa_mask);
+    sigaction(SIGALRM, &grace, nullptr);
+}
+#endif
 
 // The command line as given, read before QGuiApplication sees it: Qt takes its own options out of argv (-session,
 // -title, -name, -display, -platform, -reverse, -style …, also with two dashes), so `direct --session d3` reached
@@ -278,6 +344,8 @@ int main(int argc, char* argv[])
         return 2;
     }
     Cli::Context ctx;
+    installCancelHandler(); // (mcp and serve have their own)
+    ctx.cancel = &g_cancel;
     // Progress lines on stderr: {"progress":45,"stage":"transcribe","eta_s":30}; a line per new percent or stage.
     // eta_s: from the time so far, once there is something to go by (steps of `short` run at different speeds: rough)
     struct ProgressState {
@@ -329,6 +397,6 @@ int main(int argc, char* argv[])
         return 0;
     } catch (const Cli::Error& e) {
         print(errorJson(e.code, e.message), pretty);
-        return 1;
+        return g_cancel.load() ? kCanceledExit : 1;
     }
 }

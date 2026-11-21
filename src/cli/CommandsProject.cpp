@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: commands on projects (new, info, import, edit, backups, restore, render, effects) and the app
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
@@ -55,6 +56,7 @@
 #include <QJsonDocument>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -1143,8 +1145,21 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         RenderQueue::makeReview(es);
     }
     if (fastS264 && ExportWriter::isOwnH264(es.videoCodec)) es.codecOptions << QStringLiteral("speed=1"); // (not a review's H.264)
+    detail::failIfCanceled();
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
+    // Canceled from outside (Ctrl+C, a background job of the app): the exporter stops and removes its part file
+    QTimer poll;
+    if (const std::atomic<bool>* stop = detail::cancelFlag()) {
+        QObject::connect(&poll, &QTimer::timeout, &loop, [&ex, &poll, stop] {
+            if (!stop->load()) return;
+            poll.stop();
+            ex.cancel(); // (also while it builds or analyses for stabilizing)
+        });
+        poll.start(50);
+    }
     loop.exec();
+    poll.stop();
+    detail::failIfCanceled();
     if (!ok && !es.replace && job.settings.kind() != RenderKind::ImageSequence && QFileInfo::exists(out))
         fail("EXISTS", "output appeared while rendering (another render to the same file?); kept it, this render is "
                        "discarded (pass overwrite to replace it): " + out);

@@ -19,7 +19,10 @@ void lowerThisThread(Level level);
 
 // Starts the child process (ffmpeg, whisper) at low priority. Call before start().
 // Low: nice 10 / BELOW_NORMAL_PRIORITY_CLASS; Lowest: nice 19 / IDLE_PRIORITY_CLASS.
-void lowerProcess(QProcess& process, Level level = Level::Low);
+// dieWithParent (Linux): the child is killed when the thread that starts it ends - also when this program is killed
+// without a chance to stop it (SIGKILL), so a whisper run does not go on alone for minutes. Only for children that
+// live no longer than the thread starting them.
+void lowerProcess(QProcess& process, Level level = Level::Low, bool dieWithParent = false);
 
 // Processor threads for background work: transcription, analyses, proxies, reading files on import (Settings ›
 // General › Performance, setting "performance/threads"). 0 = automatic: each kind of work keeps its own default.

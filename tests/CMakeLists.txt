@@ -560,6 +560,7 @@ target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
 schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
 schneidi_test(test_cli_cancel) # 0.25: Context::cancel, Live::runInBackground (cancel, queue, UI thread), AnalysisCache
 target_link_libraries(test_cli_cancel PRIVATE schneidi_cli_lib)
+add_dependencies(test_cli_cancel schneidi-cli)
 schneidi_test(test_direction_json) # 0.25: Direct session JSON, reason texts, project key "direction", not in planBase
 target_link_libraries(test_direction_json PRIVATE schneidi_cli_lib)
 schneidi_test(test_direct_cli) # 0.25: `direct` short/highlights suggest -> apply, non-game moments, cancel, sessions

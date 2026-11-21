@@ -89,7 +89,8 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
 {
     // Whisper keeps every thread it gets busy for minutes: lowest priority, so music, games and the preview still
     // get through (at normal priority the user's music crackled); also for the ffmpeg that reads the sound first
-    Background::lowerProcess(m_process, Background::Level::Lowest);
+    // ... and it dies with this program (a killed schneidi-cli left whisper running for minutes)
+    Background::lowerProcess(m_process, Background::Level::Lowest, true);
     connect(&m_process, &QProcess::readyReadStandardError, this, [this] {
         const QByteArray data = m_process.readAllStandardError();
         m_log += data;
