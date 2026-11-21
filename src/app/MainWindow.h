@@ -571,6 +571,7 @@ private:
     int m_directStopAt = -1;              // a previewed suggestion stops at this source frame (-1 = none)
     QString m_directStopFile;             // ... of this file (another file in the viewer: no stop)
     bool m_directSized = false;
+    bool m_directTracksDirty = false; // the timeline changed while the Regie page was hidden (updateDirectTracks)
     // The Studio page's sizes are set once (its defaults or the user's), then it keeps them: a round trip to another
     // page changes nothing (the defaults depend on the strips' widths, which settle only once the page showed). The
     // viewer's height in its column is kept while the viewer is on another page. Reset: a tour, "reset sizes".

@@ -100,6 +100,15 @@ const Text kNotes[] = {
      N_("Füllwörter: nur, was die Abschrift enthält."), nullptr},
     {"room_tone", "Room tone is not laid under the cuts yet.", nullptr,
      N_("Raumton unter den Schnitten kommt noch nicht."), nullptr},
+    // Notes of an apply or a short's finish (their answers keep the English text in notes, the keys in note_keys)
+    {"room_tone_apply", "room tone: not laid under the cuts yet (op room_tone on a voice track does it by hand)", nullptr,
+     N_("Raumton unter den Schnitten kommt noch nicht."), nullptr},
+    {"no_captions_whisper",
+     "no captions: speech recognition (whisper) is not installed. Ask the user, then `schneidi-cli extensions --install "
+     "whisper,small` (190 MB; whisper,turbo 574 MB is better) and run again (or captions:'off')",
+     nullptr, N_("Keine Untertitel: Whisper ist nicht installiert (unter Hilfe › Erweiterungen nachladen)."), nullptr},
+    {"no_captions_speech", "no captions: no speech in the short", nullptr,
+     N_("Keine Untertitel: Im Short ist keine Sprache zu hören."), nullptr},
 };
 
 QString number(const QJsonValue& v, Lang lang)

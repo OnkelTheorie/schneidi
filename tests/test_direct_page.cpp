@@ -527,6 +527,24 @@ void testStartPage(Engine& engine, const QString& a, const QString& projectDir)
         CHECK(w.currentPage() == Page::Direct);
         CHECK(w.directPage() != nullptr);
         CHECK_EQ(w.startPage(), QString("direct"));
+        // The registered Delete actions reached the lists although the page was built before them (review 21.11.:
+        // the key bindings dialog changed an action the lists never used)
+        if (CHECK(action("direct_remove_suggestion") && action("direct_remove_material"))) {
+            CHECK(action("direct_remove_suggestion")->parent() == w.directPage()->suggestions());
+            CHECK(action("direct_remove_material")->parent() == w.directPage()->material());
+        }
+        // Hidden, the page does not follow every timeline change (a drag on Edit: each mouse move, review 21.11.);
+        // it catches up when it shows
+        if (auto* tracks = w.findChild<QComboBox*>("direct_talk_tracks"); CHECK(tracks)) {
+            w.showPage(Page::Edit);
+            const int listed = tracks->count();
+            ProjectData more = w.liveProject()->data();
+            TimelineOps::ensureTracks(more.timeline, TrackKind::Audio, int(more.timeline.audio.size()) + 2);
+            w.liveProject()->load(more);
+            CHECK_EQ(tracks->count(), listed);
+            w.showPage(Page::Direct);
+            CHECK_EQ(tracks->count(), int(more.timeline.audio.size()) + 1);
+        }
         // Opening a project keeps the page the user is on
         w.showPage(Page::Color);
         ProjectData d;
@@ -666,6 +684,21 @@ void testLayout(Engine& engine, const QString& a, const QString& b)
                     Check::report(btn->width() >= btn->sizeHint().width(), "page button whole", __FILE__, __LINE__,
                                   QString("%1: %2 %3 < %4").arg(at, MainWindow::pageId(pg)).arg(btn->width()).arg(btn->sizeHint().width()));
                 }
+                // The result row with all its buttons (after a short: finish, a template's project: open; review
+                // 21.11.): label + 5 buttons in one row never make the page wider than the window
+                for (const char* id : {"direct_finish", "direct_open_project"})
+                    if (auto* btn = page->findChild<QPushButton*>(id); CHECK(btn)) btn->setVisible(true);
+                settle();
+                if (auto* row = page->findChild<QPushButton*>("direct_export"); CHECK(row && row->parentWidget())) {
+                    const int need = row->parentWidget()->minimumSizeHint().width();
+                    Check::report(need <= size.width() - 200, "result row fits", __FILE__, __LINE__,
+                                  QString("%1: needs %2 px").arg(at).arg(need));
+                    std::printf("       %s: result row needs %d px\n", qPrintable(at), need);
+                }
+                Check::report(w.size() == size, "window keeps its size with all result buttons", __FILE__, __LINE__,
+                              QString("%1: %2x%3").arg(at).arg(w.width()).arg(w.height()));
+                const QString p2 = layoutProblems(page);
+                Check::report(p2.isEmpty(), "page not cut off with all result buttons", __FILE__, __LINE__, at + ": " + p2);
                 if (const QString dir = qEnvironmentVariable("DIRECT_PAGE_DUMP"); !dir.isEmpty())
                     w.grab().save(QString("%1/direct-%2-%3-%4.png").arg(dir, lang, large ? "large" : "normal").arg(size.width()));
             }

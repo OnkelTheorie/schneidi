@@ -74,8 +74,9 @@ struct ShortFinish {
     QString game;     // empty = none
     QString language; // empty = detect
 };
+// noteKeys (optional): the notes' fixed keys (Direction::noteText), in the order of notes, for a page to translate
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
-                          QJsonArray* done, QJsonArray* notes);
+                          QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys = nullptr);
 bool shortFinishEdit(const QString& project, const QString& timeline, const QJsonArray& ops, Context& ctx,
                      QJsonArray* done);
 bool shortFinish(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx, QJsonArray* done,

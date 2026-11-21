@@ -9,6 +9,7 @@
 #include "cli/AnalysisDetail.h"
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
 
 #include "core/AppPaths.h"
 #include "core/GameHud.h"
@@ -280,11 +281,13 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
     // The transcripts whisper wrote while suggesting (fillers) are the recordings' from now on
     if (s.options["_transcripts"].isObject() && !args["plan"].toBool())
         ops << QJsonObject{{"op", "_transcripts"}, {"files", s.options["_transcripts"]}};
-    QJsonArray done, notes;
+    QJsonArray done, notes, noteKeys;
     if (s.options["_master_db"].isDouble()) // measured when suggesting (never on the app's UI thread)
         ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", s.options["_master_db"]}};
-    if (s.options["room_tone"].toBool())
-        notes << "room tone: not laid under the cuts yet (op room_tone on a voice track does it by hand)";
+    if (s.options["room_tone"].toBool()) {
+        notes << Direction::noteText("room_tone_apply");
+        noteKeys << QString("room_tone_apply");
+    }
     if (!args["plan"].toBool()) ops << QJsonObject{{"op", "_direction"}, {"session", Direction::toJson(s)}};
     QJsonObject e{{"project", project}, {"ops", ops}};
     if (args["plan"].toBool()) e["plan"] = true;
@@ -300,6 +303,7 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
                     {"length_s", edited["timeline"]["length_s"]}, {"done", done}, {"session", s.id},
                     {"next", QString("look at it (`frames`, play it), then `render` timeline '%1'").arg(name)}};
     if (!notes.isEmpty()) out["notes"] = notes;
+    if (!noteKeys.isEmpty()) out["note_keys"] = noteKeys;
     if (edited.contains("live")) out["live"] = true;
     return out;
 }
@@ -490,14 +494,18 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
             // Project); the app's page without an own folder: next to the first clip
             const QFileInfo first(list.isEmpty() ? QString() : list.first()->file);
             QString dir = args["project_dir"].toString().trimmed();
-            dir = !dir.isEmpty() ? absolute(dir) : Live::host() ? first.absolutePath() : AppPaths::projectFolder();
+            // A work folder (`mcp --root`): the project goes into it, everything else would be OUTSIDE_ROOT
+            dir = !dir.isEmpty()      ? absolute(dir)
+                  : Live::host()      ? first.absolutePath()
+                  : Sandbox::active() ? Sandbox::root()
+                                      : AppPaths::projectFolder();
             if (!args["dry_run"].toBool() && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             QString base = QDir(dir).filePath(QFileInfo(tmpl).completeBaseName());
             project = base + "." + QString(ProjectFile::Extension);
             for (int i = 2; QFileInfo::exists(project); ++i) project = QString("%1-%2.%3").arg(base).arg(i).arg(ProjectFile::Extension);
         }
         t["fill"] = tmpl;
-        t["out_project"] = project;
+        t["out_project"] = absolute(project);
     } else {
         if (project.isEmpty()) project = s.project;
         if (project.isEmpty() && Live::host()) project = Live::AppProject;
@@ -522,7 +530,9 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
 {
     // Files alone (no project): the takes are found in a scratch project of them; applying makes the real one (in the
     // folder for projects, like the other recipes)
-    QTemporaryDir scratch;
+    // A work folder (`mcp --root`): the scratch folder inside it (a system one would be OUTSIDE_ROOT), not hidden (the
+    // root refuses hidden ones), removed again with this suggestion
+    QTemporaryDir scratch(Sandbox::active() ? QDir(Sandbox::root()).filePath("schneidi-script-XXXXXX") : QString());
     QString project;
     if (s.project.isEmpty() && !files.isEmpty() && !Live::host() && !Live::appCopy()) {
         if (!scratch.isValid()) fail("SAVE_FAILED", "cannot make a temporary folder");

@@ -658,6 +658,7 @@ void MainWindow::showPage(Page page)
         // Built on the first showing (MainWindowDirect.cpp): the viewer at the top of the middle column
     {
         ensureDirectPage();
+        if (m_directTracksDirty) updateDirectTracks(); // the timeline changed while the page was hidden
         const bool back = m_directPage->center()->indexOf(m_viewer) < 0;
         m_directPage->center()->insertWidget(0, m_viewer);
         m_directPage->center()->setStretchFactor(0, 1);

@@ -9,6 +9,7 @@
 #include "core/Direction.h"
 #include "engine/Extensions.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -618,6 +619,16 @@ int main(int argc, char** argv)
                                                                            {"captions", "off"}, {"session", session}, {"prepare", true}}}});
         CHECK(!prepared["ops"].toArray().isEmpty());
         CHECK(!prepared["stamp"].toString().isEmpty());
+        // Captions without whisper (not installed here): the note has its fixed key, the page shows it translated
+        // (review 21.11.: English text in the German UI)
+        const QJsonObject noCaptions = run("direct", {{"project", fp},
+                                                      {"finish", QJsonObject{{"timeline", made["timeline"]}, {"captions", "karaoke"},
+                                                                             {"session", session}, {"prepare", true}}}});
+        if (CHECK_EQ(noCaptions["note_keys"].toArray().size(), noCaptions["notes"].toArray().size())) {
+            CHECK_EQ(noCaptions["note_keys"][0].toString(), QString("no_captions_whisper"));
+            CHECK_EQ(noCaptions["notes"][0].toString(), Direction::noteText("no_captions_whisper"));
+            CHECK(Direction::noteText("no_captions_whisper", {}, Direction::Lang::Ui) != Direction::noteText("no_captions_whisper"));
+        }
         run("edit", {{"project", fp}, {"timeline", made["timeline"]}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "2s"}}}}});
         CHECK_EQ(run("direct", {{"project", fp}, {"finish", QJsonObject{{"timeline", made["timeline"]}, {"ops", prepared["ops"]},
                                                                          {"stamp", prepared["stamp"]}}}})["error"].toString(),
@@ -672,6 +683,17 @@ int main(int argc, char** argv)
         CHECK(!aloneCut.contains("error"));
         CHECK_EQ(QFileInfo(aloneCut["project"].toString()).absolutePath(), QFileInfo(AppPaths::projectFolder()).absoluteFilePath());
         CHECK(aloneCut["timeline"].toString().startsWith("Rohschnitt"));
+        // The same in a work folder (`mcp --root`, review 21.11.): the scratch project lies inside the root (a system
+        // temporary folder was OUTSIDE_ROOT) and is gone afterwards
+        {
+            Cli::Sandbox::configure({dir.path(), {}, false});
+            const QJsonObject rooted = run("direct", {{"recipe", "script"}, {"files", QJsonArray{beach}},
+                                                      {"options", QJsonObject{{"script", "Hallo."}}}});
+            Cli::Sandbox::configure({});
+            CHECK(!rooted.contains("error"));
+            CHECK(!rooted["session"]["suggestions"].toArray().isEmpty());
+            CHECK(QDir(dir.path()).entryList({"schneidi-script-*"}, QDir::AllEntries | QDir::Hidden).isEmpty());
+        }
         const QJsonObject cut = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
         CHECK(!cut.contains("error"));
         CHECK(cut["timeline"].toString().startsWith("Rohschnitt"));
@@ -734,6 +756,28 @@ int main(int argc, char** argv)
         CHECK(QFileInfo::exists(there["project"].toString()));
         CHECK(QDir(dir.filePath("clips/cs2")).entryList({"*.schneidi"}).isEmpty());
         CHECK(QDir(QFileInfo(beach).absolutePath()).entryList({"short-hook*"}).isEmpty());
+        // A work folder (`mcp --root`, review 21.11.): without project/project_dir the new project goes into the root,
+        // not into the folder for projects outside it
+        Cli::Sandbox::configure({dir.path(), {}, false});
+        const QJsonObject rooted = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        Cli::Sandbox::configure({});
+        if (CHECK(!rooted.contains("error"))) {
+            CHECK_EQ(QFileInfo(rooted["project"].toString()).absolutePath(), QFileInfo(dir.path()).absoluteFilePath());
+            CHECK(QFileInfo::exists(rooted["project"].toString()));
+        }
+        // templates fill resolves out_project itself (called by direct without the parameter table): a relative
+        // path starts in the root, a path outside it is refused
+        Cli::Sandbox::configure({dir.filePath("clips"), {}, false});
+        const Cli::Command* tc = Cli::find("templates");
+        Cli::Context tctx;
+        QString code;
+        try {
+            Cli::execute(*tc, {{"fill", "short-hook"}, {"out_project", dir.filePath("outside.schneidi")}, {"dry_run", true}}, tctx);
+        } catch (const Cli::Error& e) {
+            code = e.code;
+        }
+        Cli::Sandbox::configure({});
+        CHECK_EQ(code, QString("OUTSIDE_ROOT"));
     }
     // ---- Highlights with far less found than wanted: a note with fixed key and values, the end of the recording
     // offered switched off (the plan's fallback "end of every recording")

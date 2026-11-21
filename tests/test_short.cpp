@@ -162,10 +162,12 @@ int main(int argc, char** argv)
         auto fix = ExportCheck::soundFix(ExportCheck::sound(peaks, 0, -14, -0.5, f), -14, mix);
         CHECK(fix.limiter && fix.ceiling == -1.2);
         CHECK_EQ(kDefaultLimiterDb, -1.2);
-        // On at -1.0 (an older project) and still over -1 after the encoder: the ceiling goes down a little
+        // On at -1.0 (an older project) and still over -1 after the encoder: the ceiling goes down a little. The
+        // peak is judged as shown (0.1 dB, check 30f1c923): -0.95 reads "-1.0" and is no finding, -0.9 is one
         mix.masterLimiter = true;
         mix.masterLimiterDb = -1.0;
-        fix = ExportCheck::soundFix(ExportCheck::sound(peaks, 0, -14, -0.95, f, {}, true), -14, mix);
+        CHECK(!ExportCheck::soundFix(ExportCheck::sound(peaks, 0, -14, -0.95, f, {}, true), -14, mix).limiter);
+        fix = ExportCheck::soundFix(ExportCheck::sound(peaks, 0, -14, -0.9, f, {}, true), -14, mix);
         CHECK(fix.limiter && fix.ceiling == -1.2);
         // On at -1.2 and the peak below -1: nothing to do
         mix.masterLimiterDb = -1.2;

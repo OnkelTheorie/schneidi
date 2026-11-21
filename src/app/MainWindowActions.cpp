@@ -2,6 +2,9 @@
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
 
+#include "ui/direct/DirectMaterial.h"
+#include "ui/direct/DirectPage.h"
+#include "ui/direct/DirectSuggestions.h"
 #include "ui/studio/StudioPage.h"
 #include "ui/studio/StudioTracks.h"
 #include "app/AiChatPanel.h"
@@ -1098,6 +1101,11 @@ void MainWindow::buildActions()
     InputBindings::instance().registerPanelAction(m_directRemoveMaterial, "direct_remove_material", T("Regie"),
                                                   "direct_material", QKeySequence(Qt::Key_Delete),
                                                   QKeySequence(Qt::Key_Backspace));
+    // Regie as the start page: the page was built already (buildLayout -> showStartPage, before this): hand them in now
+    if (m_directPage) {
+        m_directPage->suggestions()->setRemoveAction(m_directRemoveSuggestion);
+        m_directPage->material()->setRemoveAction(m_directRemoveMaterial);
+    }
 
     InputBindings::instance().saveIfIncomplete();
 }

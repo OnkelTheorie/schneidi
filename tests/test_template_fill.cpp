@@ -1242,7 +1242,8 @@ void testLibrary()
     const QString a = touch(tmp.filePath("one/clip.mp4"), "aaa"), b = touch(tmp.filePath("two/clip.mp4"), "bbbb");
     const QString unused = touch(tmp.filePath("one/unused.mp4"));
     ProjectData d = project();
-    d.media = {media(a, 100, true, true), media(b, 100, true, true), media(unused, 100, true, true)};
+    // As long as the clips need (clip 2 plays 200-299 of its file): loading clamps a clip to its file's length
+    d.media = {media(a, 300, true, true), media(b, 300, true, true), media(unused, 100, true, true)};
     d.timeline.video[0].clips[0].mediaPath = a;
     d.timeline.video[0].clips[1].mediaPath = b;
     d.timeline.audio[0].clips[0].mediaPath = a;

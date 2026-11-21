@@ -461,16 +461,13 @@ QJsonObject preparePauses(const QJsonObject& editArgs, Context& ctx)
     if (ops.isEmpty()) return editArgs;
     QJsonObject op = ops[0].toObject();
     if (op.value("op").toString() != "cut_pauses" || op.contains("ranges") || op.contains("_pauses")) return editArgs;
-    try {
-        Session s(editArgs.value("project").toString()); // a copy of what the app shows
-        s.selectTimeline(editArgs.value("timeline"));
-        if (ctx.stage) ctx.stage("cut_pauses");
-        const Analysis a = analyse(s, op, ctx.progress);
-        op["_pauses"] = analysisJson(a);
-    } catch (const Error& e) {
-        if (e.code == "CANCELED") throw;
-        return editArgs; // the op reports it where it runs
-    }
+    // An error (unknown track, no sound …) is the answer as it is: the app never measures, so passing the op on
+    // unmeasured only turned it into a misleading LIVE_NOT_PREPARED there (review 21.11.)
+    Session s(editArgs.value("project").toString()); // a copy of what the app shows
+    s.selectTimeline(editArgs.value("timeline"));
+    if (ctx.stage) ctx.stage("cut_pauses");
+    const Analysis a = analyse(s, op, ctx.progress);
+    op["_pauses"] = analysisJson(a);
     ops[0] = op;
     QJsonObject out = editArgs;
     out["ops"] = ops;
