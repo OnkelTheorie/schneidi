@@ -351,14 +351,40 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
     // Frames without any picture: black in the video (a forgotten frame between two clips is the classic)
     const QVector<QPair<int, int>> covered = pictureCoverage(tl, from, to);
     if (covered.isEmpty()) {
-        out << issue(Severity::Warning, "black", T("Die Timeline hat kein Bild (nur Ton)"), from, to);
+        Issue i = issue(Severity::Warning, "black", T("Die Timeline hat kein Bild (nur Ton)"), from, to);
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips)
+                if (!t.hidden && !c.enabled && c.start < to && c.end() > from) {
+                    if (!i.clip) i.clip = c.id;
+                    i.clips << c.id;
+                }
+        if (i.clip) i.message = T("Kein Bild: die Videoclips sind ausgeschaltet (enable schaltet sie ein)");
+        out << i;
     } else {
         int at = from;
         const auto gap = [&](int a, int b) {
             const int n = b - a;
-            out << issue(Severity::Warning, "black",
-                         n == 1 ? T("Lücke: 1 Bild schwarz") : T("Lücke: %1 Bilder schwarz (%2 s)").arg(n).arg(num(n / fps)),
-                         a, b);
+            Issue i = issue(Severity::Warning, "black",
+                            n == 1 ? T("Lücke: 1 Bild schwarz") : T("Lücke: %1 Bilder schwarz (%2 s)").arg(n).arg(num(n / fps)),
+                            a, b);
+            // A switched-off picture there (disable on the clip or its linked sound): say which, it is the cause
+            for (const Track& t : tl.video) {
+                if (t.hidden) continue;
+                for (const Clip& c : t.clips)
+                    if (!c.enabled && c.start < b && c.end() > a) {
+                        if (!i.clip) i.clip = c.id;
+                        i.clips << c.id;
+                    }
+            }
+            if (i.clips.size() == 1) {
+                i.message += QStringLiteral(" – ") + T("Clip %1 ist ausgeschaltet (enable schaltet ihn ein)").arg(i.clip);
+                i.clips.clear();
+            } else if (!i.clips.isEmpty()) {
+                QStringList ids;
+                for (int id : i.clips) ids << QString::number(id);
+                i.message += QStringLiteral(" – ") + T("Clips %1 sind ausgeschaltet (enable schaltet sie ein)").arg(ids.join(", "));
+            }
+            out << i;
         };
         for (const auto& [a, b] : covered) {
             if (a > at) gap(at, a);
@@ -466,13 +492,16 @@ QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double in
         return out;
     }
 
-    if (truePeakDb > 0)
+    // Judged as shown (0.1 dB): -0.96 dBTP reads "-1.0", and "-1.0 is above -1.0" is no finding (01: a limiter at
+    // -1.2 and the encoder's overshoot)
+    const double peakShown = std::round(truePeakDb * 10) / 10;
+    if (peakShown > 0)
         out << issue(Severity::Error, "clipping",
                      (limiter ? T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt)")
                               : T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Limiter im Mischpult einschalten "
                                   "oder leiser mischen"))
                          .arg(num(truePeakDb)));
-    else if (truePeakDb > o.maxTruePeakDb)
+    else if (peakShown > o.maxTruePeakDb + 1e-9)
         out << issue(Severity::Warning, "true_peak",
                      (limiter ? T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern)")
                               : T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern) – Limiter im "
@@ -494,6 +523,61 @@ QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double in
             out << issue(Severity::Info, "silence_start", T("%1 s Stille am Anfang").arg(num(seconds)), a, b);
         else if (a != offset && b != offset + n && b - a > middleMin)
             out << issue(Severity::Info, "silence", T("%1 s Stille").arg(num(seconds)), a, b);
+    }
+    return out;
+}
+
+QVector<Issue> audioHoles(const Timeline& tl, const std::vector<float>& framePeaks, int offset, const ProjectFormat& f)
+{
+    QVector<Issue> out;
+    const double fps = f.rate.fps();
+    const float hole = float(std::pow(10.0, kHoleDb / 20)), edge = float(std::pow(10.0, kHoleEdgeDb / 20));
+    // At least 25 ms (a frame at 25 fps, two at 60: a partly silent frame at a fade is no hole)
+    const int n = int(framePeaks.size()), maxLen = int(std::lround(kMaxHoleS * fps)),
+              minLen = std::max(1, int(std::lround(0.025 * fps)));
+    const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    const auto heard = [&](const Track& t) { return !t.muted && (!solo || t.solo); };
+    for (int i = 1; i < n;) {
+        if (framePeaks[size_t(i)] >= hole) {
+            ++i;
+            continue;
+        }
+        int j = i;
+        while (j < n && framePeaks[size_t(j)] < hole) ++j;
+        const int a = offset + i, b = offset + j;
+        // Sound within 50 ms on both sides (an effect's release - a denoiser, a reverb - may ring a frame on)
+        const int near = std::max(1, int(std::lround(0.05 * fps)));
+        bool before = false, after = false;
+        for (int k = std::max(0, i - near); k < i; ++k) before = before || framePeaks[size_t(k)] >= edge;
+        for (int k = j; k < std::min(n, j + near); ++k) after = after || framePeaks[size_t(k)] >= edge;
+        const bool loudAround = before && after;
+        i = j;
+        if (!loudAround || b - a < minLen || b - a > maxLen) continue;
+        // At an edit: a frame no clip plays (a gap), or a clip edge within a frame of the hole
+        bool gap = false;
+        int edgeClip = 0;
+        for (int fr = a; fr < b && !gap; ++fr)
+            gap = std::none_of(tl.audio.begin(), tl.audio.end(), [&](const Track& t) { return heard(t) && covers(t, fr); });
+        for (const Track& t : tl.audio) {
+            if (!heard(t)) continue;
+            for (const Clip& c : t.clips)
+                if (c.enabled && !edgeClip && ((c.end() >= a - 1 && c.end() <= b + 1) || (c.start >= a - 1 && c.start <= b + 1)))
+                    edgeClip = c.id;
+        }
+        if (!gap && !edgeClip) continue;
+        const QString s = num((b - a) / fps, 2);
+        out << issue(Severity::Warning, "audio_hole",
+                     gap ? T("Ton bricht %1 s ab: Lücke zwischen den Clips der Tonspuren – schließen (delete_range from %2 "
+                             "to %3)")
+                               .arg(s)
+                               .arg(a)
+                               .arg(b)
+                         : T("Ton bricht %1 s ab an einem Schnitt: der Clip hat dort keinen Ton – herausschneiden "
+                             "(delete_range from %2 to %3)")
+                               .arg(s)
+                               .arg(a)
+                               .arg(b),
+                     a, b, gap ? 0 : edgeClip);
     }
     return out;
 }

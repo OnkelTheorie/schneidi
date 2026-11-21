@@ -104,21 +104,37 @@ QVector<ExportCheck::Issue> boostIssues(const Timeline& tl, int from, int to,
     return out;
 }
 
+// Loudness targets of deliveries that are no short (`for`): spoken word (podcast norm, AES TD1008 / Apple, Spotify:
+// -16, loud enough for YouTube too), YouTube and the web (-14), broadcast (EBU R128: -23, true peak -1)
+struct Delivery {
+    const char* id;
+    const char* name;
+    double targetLufs;
+};
+constexpr Delivery kDeliveries[] = {{"podcast", "Podcast", -16}, {"youtube", "YouTube", -14}, {"web", "Web", -14},
+                                    {"broadcast", "Broadcast (EBU R128)", -23}};
+
 ExportCheck::Options options(const QJsonObject& a)
 {
     ExportCheck::Options o;
     // "for", not "platform": QGuiApplication takes --platform from the command line
     if (a.contains("for")) {
-        const ShortPlatform* p = shortPlatform(a["for"].toString());
-        if (!p) {
+        const QString want = a["for"].toString().trimmed().toLower();
+        const auto delivery = std::find_if(std::begin(kDeliveries), std::end(kDeliveries),
+                                           [&want](const Delivery& d) { return want == QLatin1String(d.id); });
+        if (delivery != std::end(kDeliveries)) {
+            o.targetLufs = delivery->targetLufs;
+        } else if (const ShortPlatform* p = shortPlatform(want)) {
+            o.maxLengthS = p->maxSeconds;
+            o.platform = QString::fromLatin1(p->name);
+            o.targetLufs = p->targetLufs;
+            o.maxTruePeakDb = p->maxTruePeakDb;
+        } else {
             QStringList ids;
             for (const ShortPlatform& sp : shortPlatforms()) ids << sp.alias;
+            for (const Delivery& d : kDeliveries) ids << d.id;
             fail("BAD_ARGUMENT", "for must be " + ids.join(", ") + " (the platform)");
         }
-        o.maxLengthS = p->maxSeconds;
-        o.platform = QString::fromLatin1(p->name);
-        o.targetLufs = p->targetLufs;
-        o.maxTruePeakDb = p->maxTruePeakDb;
     }
     if (a.contains("target_lufs")) o.targetLufs = a["target_lufs"].toDouble();
     if (a.contains("max_still_s")) {
@@ -297,25 +313,51 @@ QJsonObject issueJson(const ExportCheck::Issue& i, const ProjectFormat& f)
 }
 
 // The Deliver page's Fix button as ops for `edit`: the model applies them instead of judging the numbers itself
-// (a small one called a true peak of -0.1 dBTP "ok for H.264"). Empty when the sound needs no such fix.
-QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline)
+// (a small one called a true peak of -0.1 dBTP "ok for H.264"). Empty when the sound needs no such fix. The level goes
+// to the target by measuring (mixer target_lufs, loudnessOps), not by the plain difference: the limiter takes part of
+// a raise on peaky sound.
+QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline, double targetLufs)
 {
     if (!fix.any()) return {};
-    QJsonObject mixer{{"op", "mixer"}, {"track", "master"}};
     QStringList what;
-    if (fix.limiter) {
-        mixer["limiter"] = true;
-        mixer["limiter_db"] = fix.ceiling;
-        what << QString("master limiter on at %1 dBTP").arg(fix.ceiling, 0, 'f', 1);
-    }
-    if (fix.level) {
-        mixer["volume_db"] = fix.volumeDb;
-        what << QString("master fader %1%2 dB").arg(fix.change > 0 ? "+" : "").arg(fix.change, 0, 'f', 1);
-    }
+    if (fix.limiter) what << QString("master limiter on at %1 dBTP").arg(fix.ceiling, 0, 'f', 1);
+    if (fix.level)
+        what << QString("master to %1 LUFS (about %2%3 dB, measured after the limiter)")
+                    .arg(targetLufs, 0, 'f', 1)
+                    .arg(fix.change > 0 ? "+" : "")
+                    .arg(fix.change, 0, 'f', 1);
     QJsonArray ops;
-    if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
-    ops << mixer;
+    if (fix.level) {
+        ops = loudnessOps(timeline, targetLufs, fix.limiter, fix.ceiling);
+    } else {
+        if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
+        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", fix.ceiling}};
+    }
     return {{"what", what.join(", ")}, {"ops", ops}, {"how", "apply with `edit` (one undo step), then `check` again"}};
+}
+
+// Spoken word: every heard audio track with clips carries a voice by its name (Stimme, Mikrofon, Discord …) or is
+// music, at least one is a voice (the podcast start template, a talk edit, a Discord call)
+bool spokenWord(const Timeline& tl)
+{
+    bool voice = false;
+    const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    static const char* const voiceWords[] = {"voice", "stimme", "sprache", "speech", "mic", "mikro", "discord",
+                                             "teamspeak", "podcast", "interview", "talk", "narrat", "kommentar",
+                                             "comment", "host", "gast", "guest", "sprecher", "speaker", "voix", "voz",
+                                             "głos", "голос"};
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const Track& t = tl.audio[i];
+        if (t.muted || (solo && !t.solo) || t.name == kSfxTrackName) continue;
+        if (std::none_of(t.clips.begin(), t.clips.end(), [](const Clip& c) { return c.enabled; })) continue;
+        if (ExportCheck::soundRole(tl, i, [](const QString&) { return false; }) == ExportCheck::SoundRole::Music) continue;
+        const QString n = t.name.toLower();
+        if (std::none_of(std::begin(voiceWords), std::end(voiceWords),
+                         [&n](const char* w) { return n.contains(QString::fromUtf8(w)); }))
+            return false;
+        voice = true;
+    }
+    return voice;
 }
 
 constexpr int kMaxListed = 50;   // still stretches in the answer
@@ -426,10 +468,24 @@ QString readText(const QString& path)
 
 } // namespace
 
+QJsonArray loudnessOps(const QJsonValue& timeline, double targetLufs, bool limiterOn, double ceiling)
+{
+    QJsonArray ops;
+    if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
+    QJsonObject mixer{{"op", "mixer"}, {"track", "master"}, {"target_lufs", std::round(targetLufs * 10) / 10}};
+    if (limiterOn) {
+        mixer["limiter"] = true;
+        mixer["limiter_db"] = ceiling;
+    }
+    ops << mixer;
+    return ops;
+}
+
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
-    const ExportCheck::Options opt = options(a);
+    ExportCheck::Options opt = options(a);
+    QString targetBy = a.contains("target_lufs") ? "target_lufs" : a.contains("for") ? "for" : "default";
     const bool withSound = !a.contains("sound") || a["sound"].toBool();
     const auto progress = [&ctx](double from, double to) {
         return goOn([&ctx, from, to](double p) {
@@ -464,6 +520,11 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         const Timeline& tl = s.project.timeline();
         const int end = TimelineOps::endFrame(tl);
         if (end <= 0) s.failEmpty();
+        // A conversation (podcast template, talk edit, a call) is measured against the spoken-word norm, not -14
+        if (targetBy == QLatin1String("default") && spokenWord(tl)) {
+            opt.targetLufs = kDeliveries[0].targetLufs;
+            targetBy = "spoken word";
+        }
         const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
@@ -579,7 +640,8 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             const QVector<ExportCheck::Issue> heard =
                 ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
             issues += heard;
-            fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"]);
+            issues += ExportCheck::audioHoles(render, measured.peaks, from, f);
+            fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"], opt.targetLufs);
             const auto picture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
             if (const auto balance = CheckMeasure::mix(f, render, from, soundTo, picture, opt, progress(0.55, 1)))
                 issues += *balance;
@@ -670,6 +732,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     if (withSound) {
         QJsonObject m = measuredJson(measured);
         m["target_lufs"] = opt.targetLufs;
+        m["target_by"] = targetBy; // target_lufs, for, spoken word (a conversation: -16), default (-14)
         if (soundChannels > 0) m["channels"] = ChannelLayout::name(soundChannels);
         if (!soundNote.isEmpty()) m["note"] = soundNote;
         result["sound"] = m;

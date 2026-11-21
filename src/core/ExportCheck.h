@@ -33,7 +33,8 @@ struct Issue {
                      // "pace_slow", "story_no_hook", "story_hook_late", "story_resolution_late",
                      // "story_open_question", "story_no_cta", "story_gap", "retention_drop", "comp_unused_input",
                      // "comp_output_mask", "comp_slow", "key_edges", "custom_effect_skipped", "custom_code_untrusted",
-                     // "tracker_lost", "tracker_ended", "shape_follow_missing", "mix_silent" (CLI), "loudness_range"
+                     // "tracker_lost", "tracker_ended", "shape_follow_missing", "mix_silent" (CLI), "loudness_range",
+                     // "audio_hole"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;
@@ -95,6 +96,16 @@ int soundEnd(int from, int to, const ProjectFormat& f, QVector<Issue>* issues);
 // (LoudnessMeter::kSilence or lower = no sound). limiter = the master limiter is on (no advice to switch it on).
 QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double integratedLufs, double truePeakDb,
                      const ProjectFormat& f, const Options& o = {}, bool limiter = false);
+
+// Sound that drops out at an edit (videotest 04: 0.18 s at 16.7 s, a gap between two recordings of one call and the
+// first one's sound ending before its picture): a run of at least 25 ms of digital silence (peak under
+// kHoleDb) up to kMaxHoleS long with sound (kHoleEdgeDb) within 50 ms before and after it, where an audio clip starts or
+// ends or no audio clip plays. A natural pause does not drop to digital silence between two loud frames; a hole at
+// an edit does. "audio_hole" (warning), one per hole, `clip` = the clip with the edge (0 = a gap).
+inline constexpr double kMaxHoleS = 1.0;
+inline constexpr double kHoleDb = -80;
+inline constexpr double kHoleEdgeDb = -40;
+QVector<Issue> audioHoles(const Timeline& tl, const std::vector<float>& framePeaks, int offset, const ProjectFormat& f);
 
 // What the master needs so the sound issues of sound() go away (the Deliver page's Fix button, `check`'s "fix"): the
 // limiter at the true-peak ceiling (peaks, or the fader goes up) and the master fader by the difference to the

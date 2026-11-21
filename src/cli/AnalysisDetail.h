@@ -158,4 +158,13 @@ int measuredChannels(const QJsonObject& a, int project, QString* note);
 // size, modification time, frame rate and settings; the answer then has cached:true) or analysed and stored there
 QJsonObject highlightsFile(const QJsonObject& a, Context& ctx);
 
+// ---------- Check (AnalysisCheck.cpp) ----------
+
+// Ops for `edit` that bring the master of `timeline` (undefined/null = the open one) to targetLufs: the limiter on at
+// `ceiling` dBTP when `limiterOn` (it catches the peaks that grow with the raise), then {op:'mixer', track:'master',
+// target_lufs}, which measures the mix after the limiter and steps the faders until within 0.2 LU - a fader set by
+// the plain difference lands short when the limiter takes peaks (06 vlog: +12 dB gave -19.6 instead of -14). `check`'s
+// fix uses it; a command that levels its own result (direct apply, short) can run these ops as one edit.
+QJsonArray loudnessOps(const QJsonValue& timeline, double targetLufs, bool limiterOn = true, double ceiling = -1.2);
+
 } // namespace Cli::detail

@@ -109,6 +109,20 @@ int main(int argc, char** argv)
         CHECK(ExportCheck::timeline(tl, 0, 100, f).isEmpty());
         tl.video[1].clips[0].enabled = false;
         CHECK_EQ(checks(ExportCheck::timeline(tl, 0, 100, f)), QStringList({"black"}));
+        // ... and the gap names the disabled clip (disable on a linked sound took the picture with it, 12-B1)
+        if (const auto* off = find(ExportCheck::timeline(tl, 0, 100, f), "black")) {
+            CHECK_EQ(off->clip, 3);
+            CHECK(off->message.contains("3"));
+        }
+        {
+            Timeline dark;
+            dark.video.resize(1);
+            dark.video[0].clips << clip(7, 0, 100, "/x/a.mp4");
+            dark.video[0].clips[0].enabled = false;
+            const auto all = ExportCheck::timeline(dark, 0, 100, f);
+            const auto* none = find(all, "black");
+            CHECK(none && none->clip == 7 && none->clips == QVector<int>({7}));
+        }
         // Black at the end of the range (sound goes on) and nothing outside the checked range
         CHECK_EQ(checks(ExportCheck::timeline(tl, 51, 120, f)), QStringList({"black"}));
         CHECK(ExportCheck::timeline(tl, 0, 50, f).isEmpty());
@@ -204,6 +218,10 @@ int main(int argc, char** argv)
         const QString advice = issues[0].message;
         issues = ExportCheck::sound(normal, 0, -14, -0.5, f, {}, true);
         CHECK(issues[0].message.size() < advice.size());
+        // Judged as shown: -0.96 reads -1.0, which is not above -1.0 (01: the limiter at -1.2, the encoder's overshoot)
+        CHECK(ExportCheck::sound(normal, 0, -14, -0.96, f, {}, true).isEmpty());
+        CHECK_EQ(checks(ExportCheck::sound(normal, 0, -14, -0.94, f, {}, true)), QStringList({"true_peak"}));
+        CHECK_EQ(checks(ExportCheck::sound(normal, 0, -14, 0.04, f, {}, true)), QStringList({"true_peak"}));
         // The fix (Fix button, `check`'s "fix"). Too quiet with peaks near 0 (a colleague's Valorant clip: -17.1 LUFS,
         // -0.1 dBTP): fader up by the difference and the limiter at -1.2 (under the -1 limit); peaks only: the limiter; too loud with the
         // limiter already on: the fader down only; nothing off: no fix
@@ -237,6 +255,40 @@ int main(int argc, char** argv)
             CHECK(end->severity == ExportCheck::Severity::Warning);
         }
         CHECK(find(issues, "silence_start")->severity == ExportCheck::Severity::Info);
+    }
+    // --- Sound that drops out at an edit (videotest 04): digital silence between two loud frames where a clip ends
+    // and a gap follows = audio_hole; the same inside a clip (a pause that is digitally silent and not at an edit)
+    // and a soft fade to silence are none
+    {
+        Timeline tl;
+        tl.audio.resize(1);
+        tl.audio[0].clips << clip(1, 0, 100, "/x/a.wav") << clip(2, 103, 97, "/x/b.wav"); // gap 100..103
+        std::vector<float> peaks(200, lin(-20));
+        for (int i = 98; i < 103; ++i) peaks[size_t(i)] = 0; // the recording's sound ends 2 frames early, then the gap
+        auto holes = ExportCheck::audioHoles(tl, peaks, 0, f);
+        if (CHECK_EQ(checks(holes), QStringList({"audio_hole"}))) {
+            CHECK_EQ(holes[0].from, 98);
+            CHECK_EQ(holes[0].to, 103);
+            CHECK_EQ(holes[0].clip, 0); // a gap
+            CHECK(holes[0].severity == ExportCheck::Severity::Warning);
+        }
+        // No gap, only the clip's sound ending early: named by the clip
+        tl.audio[0].clips[1].start = 100;
+        holes = ExportCheck::audioHoles(tl, peaks, 0, f);
+        CHECK(holes.size() == 1 && holes[0].clip == 1);
+        // A digitally silent pause inside a clip (a gated microphone) is no hole; one frame is none either
+        std::vector<float> inside(200, lin(-20));
+        for (int i = 40; i < 50; ++i) inside[size_t(i)] = 0;
+        inside[150] = 0;
+        CHECK(ExportCheck::audioHoles(tl, inside, 0, f).isEmpty());
+        // A fade into the silence (quiet before it) and a long silence (over a second) are no holes
+        std::vector<float> faded(200, lin(-20));
+        for (int i = 90; i < 98; ++i) faded[size_t(i)] = lin(-60);
+        for (int i = 98; i < 103; ++i) faded[size_t(i)] = 0;
+        CHECK(ExportCheck::audioHoles(tl, faded, 0, f).isEmpty());
+        std::vector<float> longer(200, lin(-20));
+        for (int i = 70; i < 103; ++i) longer[size_t(i)] = 0;
+        CHECK(ExportCheck::audioHoles(tl, longer, 0, f).isEmpty());
     }
 
     // --- Stutter: 60 fps with frames 61-89 missing (a jump of 0.5 s at 1 s), 2 at 2 s (3 frame durations) and one
@@ -538,14 +590,17 @@ int main(int argc, char** argv)
                              .arg(media)}});
     QJsonObject r = run("check", {{"source", project}});
     // Warnings sorted by time, then the info: the second clip is 4 s without a change (16:9: one info)
-    CHECK_EQ(checksOf(r), QStringList({"loudness", "subtitle_short", "black", "pace_slow"}));
+    // The forgotten frame between the clips drops the sound for its 40 ms too (audio_hole, the tone goes on around it)
+    CHECK_EQ(checksOf(r), QStringList({"loudness", "subtitle_short", "black", "audio_hole", "pace_slow"}));
     CHECK_EQ(r["errors"].toInt(), 0);
-    CHECK_EQ(r["warnings"].toInt(), 3);
+    CHECK_EQ(r["warnings"].toInt(), 4);
     const QJsonArray issues = r["issues"].toArray();
-    if (CHECK_EQ(issues.size(), 4)) {
+    if (CHECK_EQ(issues.size(), 5)) {
         CHECK_EQ(issues[2]["from"].toInt(), 100);
         CHECK_EQ(issues[2]["to"].toInt(), 101);
         CHECK(issues[2]["from_tc"].isString());
+        CHECK_EQ(issues[3]["from"].toInt(), 100);
+        CHECK_EQ(issues[3]["to"].toInt(), 101);
     }
     const double lufs = r["sound"].toObject()["integrated_lufs"].toDouble();
     CHECK(lufs < -16);
@@ -563,13 +618,16 @@ int main(int argc, char** argv)
         r = run("check", {{"source", copy}});
         const QJsonObject fix = r["fix"].toObject();
         const QJsonArray ops = fix["ops"].toArray();
+        // The level by measuring after the limiter (mixer target_lufs), not by the plain difference (06: +12 dB with
+        // the limiter on gave -19.6 instead of -14)
         if (CHECK_EQ(ops.size(), 1)) {
             const QJsonObject mixer = ops[0].toObject();
             CHECK_EQ(mixer["op"].toString(), QString("mixer"));
             CHECK_EQ(mixer["track"].toString(), QString("master"));
-            CHECK(mixer["volume_db"].toDouble() > 2 && mixer["limiter"].toBool());
+            CHECK(mixer["target_lufs"].toDouble() == -14 && mixer["limiter"].toBool() && !mixer.contains("volume_db"));
         }
-        CHECK(fix["what"].toString().contains("master fader +"));
+        CHECK(fix["what"].toString().contains("master to -14.0 LUFS"));
+        CHECK_EQ(r["sound"].toObject()["target_by"].toString(), QString("default"));
         // With a timeline named, the ops start by choosing it
         const QJsonObject info = run("info", {{"project", copy}});
         const QString name = info["timelines"].toArray().at(0).toObject()["name"].toString();
@@ -580,6 +638,16 @@ int main(int argc, char** argv)
         r = run("check", {{"source", copy}});
         CHECK(!checksOf(r).contains("loudness"));
         CHECK(!r.contains("fix"));
+        CHECK(std::abs(r["sound"].toObject()["integrated_lufs"].toDouble() + 14) <= 0.3);
+        // A conversation (voice tracks by name) is judged against the spoken-word norm -16; `for` podcast says so too
+        run("edit", {{"project", copy}, {"ops", R"([{"op":"track","track":"A1","name":"Mikrofon"}])"}});
+        r = run("check", {{"source", copy}, {"sound", true}});
+        CHECK_EQ(r["sound"].toObject()["target_lufs"].toDouble(), -16.0);
+        CHECK_EQ(r["sound"].toObject()["target_by"].toString(), QString("spoken word"));
+        r = run("check", {{"source", copy}, {"for", "broadcast"}});
+        CHECK_EQ(r["sound"].toObject()["target_lufs"].toDouble(), -23.0);
+        CHECK(checksOf(r).contains("loudness"));
+        CHECK(run("check", {{"source", copy}, {"for", "radio"}}).contains("failed"));
     }
 
     // A clip far out on the timeline (frame 2^30, over a year at 25 fps; a broken or hand-written file): the sound is

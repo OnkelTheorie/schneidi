@@ -974,6 +974,7 @@ bool DeliverPanel::runCheck()
             const QVector<ExportCheck::Issue> heard =
                 ExportCheck::sound(peaks, from, loud->integrated, loud->truePeakDb, f, {}, render.masterLimiter);
             issues += heard;
+            issues += ExportCheck::audioHoles(render, peaks, from, f);
             prepareFix(heard, loud->integrated, tl);
             if (loud->integrated > -200)
                 sound = T("Lautheit %1 LUFS, True Peak %2 dBTP")

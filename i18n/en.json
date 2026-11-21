@@ -3641,5 +3641,10 @@
  "Episch": "Epic",
  "Funky": "Funky",
  "Lo-Fi": "Lo-fi",
- "Musikbett: %1": "Music bed: %1"
+ "Musikbett: %1": "Music bed: %1",
+ "Clip %1 ist ausgeschaltet (enable schaltet ihn ein)": "clip %1 is disabled (enable turns it on)",
+ "Clips %1 sind ausgeschaltet (enable schaltet sie ein)": "clips %1 are disabled (enable turns them on)",
+ "Kein Bild: die Videoclips sind ausgeschaltet (enable schaltet sie ein)": "No picture: the video clips are disabled (enable turns them on)",
+ "Ton bricht %1 s ab: Lücke zwischen den Clips der Tonspuren – schließen (delete_range from %2 to %3)": "Sound drops out for %1 s: a gap between the clips of the audio tracks – close it (delete_range from %2 to %3)",
+ "Ton bricht %1 s ab an einem Schnitt: der Clip hat dort keinen Ton – herausschneiden (delete_range from %2 to %3)": "Sound drops out for %1 s at a cut: the clip has no sound there – cut it out (delete_range from %2 to %3)"
 }
