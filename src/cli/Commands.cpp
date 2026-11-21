@@ -168,6 +168,13 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
             fail("BAD_ARGUMENT", QString("%1: frames must be a whole number >= 0, got %2").arg(what).arg(d));
         return int(d);
     }
+    // at:true, at:null, at:[…]: no text to quote ("'' is not a time", 12-B9)
+    if (v.isNull() || v.isUndefined())
+        fail("BAD_ARGUMENT", QString("%1: missing (a time: frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")").arg(what));
+    if (!v.isString())
+        fail("BAD_ARGUMENT", QString("%1: %2 is not a time (use frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")")
+                                 .arg(what, v.isBool() ? (v.toBool() ? "true" : "false")
+                                            : v.isArray() ? QString("a list") : QString("an object")));
     const QString s = v.toString().trimmed();
     if (s.endsWith('s')) {
         bool ok = false;
@@ -2141,10 +2148,16 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                 const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);
                 QJsonArray only;
                 QStringList names;
+                for (const QJsonValue& v : ops) names << v["op"].toString();
                 for (const QJsonValue& v : ops) {
-                    names << v["op"].toString();
+                    // An op told under another one's usage (disable under "{op:'enable'|'disable', …}") finds it
+                    const QString usage = v["usage"].toString();
                     for (const QString& w : wanted)
-                        if (w.trimmed() == v["op"].toString()) only << v;
+                        if (w.trimmed() == v["op"].toString()
+                            || (!names.contains(w.trimmed()) && usage.contains("|'" + w.trimmed() + "'"))) {
+                            only << v;
+                            break;
+                        }
                 }
                 if (only.isEmpty()) fail("NOT_FOUND", "no op " + a["op"].toString() + " (ops: " + names.join(", ") + ")");
                 ops = only;

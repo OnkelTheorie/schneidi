@@ -379,7 +379,28 @@ void opTrim(Session& s, const QJsonObject& op)
     else if (by.isString()) delta = parseTime(by, s.format(), "by");
     if (mode == "normal") {
         if (op.contains("to")) delta = timeOf(s, op, "to") - (edge == TimelineOps::Edge::Start ? c.start : c.end());
-        s.editor.trimClip(c.id, edge, delta, op.value("overwrite").toBool());
+        const int id = c.id, startBefore = c.start, endBefore = c.end();
+        s.editor.trimClip(id, edge, delta, op.value("overwrite").toBool());
+        // Less than asked (or nothing): say why instead of an empty answer (03-#1, 12-B8)
+        TrackRef where;
+        const Timeline& tl = s.project.timeline();
+        const Clip* after = TimelineOps::findClip(tl, id, &where);
+        if (!after || delta == 0) return;
+        const bool start = edge == TimelineOps::Edge::Start;
+        const int moved = start ? after->start - startBefore : after->end() - endBefore;
+        if (moved == delta) return;
+        const bool grows = start ? delta < 0 : delta > 0;
+        QString why = "a clip keeps at least one frame";
+        if (grows) {
+            const int from = start ? startBefore + delta : endBefore, to = start ? startBefore : endBefore + delta;
+            int blocker = 0;
+            for (const Clip& o : tl.track(where).clips)
+                if (o.id != id && o.start < to && o.end() > from) blocker = o.id;
+            why = blocker ? QString("clip %1 is in the way (overwrite:true trims over it)").arg(blocker)
+                          : QString("the file has no more material %1 the clip").arg(start ? "before" : "after");
+        }
+        s.notes << QString("trim: clip %1's %2 moved %3 of %4 frames: %5")
+                       .arg(id).arg(edgeName).arg(moved).arg(delta).arg(why);
         return;
     }
     TimelineOps::TrimKind kind;
@@ -397,6 +418,9 @@ void opTrim(Session& s, const QJsonObject& op)
     if (e.isNull()) fail("FAILED", QString("cannot %1 here (roll needs a neighbouring clip at the cut)").arg(mode));
     const int clamped = s.editor.clampTrimEdit(e, delta);
     s.editor.applyTrimEdit(e, clamped);
+    if (clamped != delta)
+        s.notes << QString("trim (%1): moved %2 of %3 frames (as far as the file's material and the neighbours allow)")
+                       .arg(mode).arg(clamped).arg(delta);
 }
 
 // ---------- transitions ----------
@@ -452,6 +476,8 @@ void opTransition(Session& s, const QJsonObject& op)
         if (k != "video" && k != "audio") fail("BAD_ARGUMENT", "kind must be 'video' or 'audio'");
         only = k == "audio" ? TrackKind::Audio : TrackKind::Video;
     }
+    // The style first: a bad type at a cut without spare material was answered "no spare material" (12-B7)
+    if (!op.value("remove").toBool()) parseTransitionStyle(op, TransitionStyle{});
     // Which transitions: both edges of the clips, or the cut nearest to `at` (on every track)
     QSet<int> clips;
     int cut = -1;
@@ -460,12 +486,29 @@ void opTransition(Session& s, const QJsonObject& op)
         clips = QSet<int>(ids.begin(), ids.end());
     } else {
         const int at = timeOf(s, op, "at");
+        // A cut (a clip ends where the next starts) within half a second of `at`; a lone clip edge (fade from or to
+        // black: the timeline start, before a gap) only exactly there - at:5 faded the timeline start in (12-B7)
+        const int near = std::max(1, int(std::lround(s.format().rate.fps() / 2)));
+        int edge = -1;
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& t : cur.tracks(k))
-                for (const Clip& c : t.clips)
+            for (const Track& t : cur.tracks(k)) {
+                if (t.locked || (only && k != *only)) continue;
+                QSet<int> starts;
+                for (const Clip& c : t.clips) starts.insert(c.start);
+                for (const Clip& c : t.clips) {
+                    if (starts.contains(c.end()) && std::abs(c.end() - at) <= near
+                        && (cut < 0 || std::abs(c.end() - at) < std::abs(cut - at)))
+                        cut = c.end();
                     for (int f : {c.start, c.end()})
-                        if (!t.locked && (!only || k == *only) && (cut < 0 || std::abs(f - at) < std::abs(cut - at))) cut = f;
-        if (cut < 0) fail("FAILED", "no cut there (empty timeline?)");
+                        if (edge < 0 || std::abs(f - at) < std::abs(edge - at)) edge = f;
+                }
+            }
+        if (cut < 0 && edge == at) cut = edge;
+        if (cut < 0 && edge < 0) fail("FAILED", "no cut there (empty timeline?)");
+        if (cut < 0)
+            fail("BAD_ARGUMENT", QString("no cut at %1 (the nearest clip edge is %2; at finds a cut within half a "
+                                         "second, a clip's lone edge - a fade from or to black - only exactly)")
+                                     .arg(tc(at, s.format()), tc(edge, s.format())));
     }
     // Clips ending/starting at the cut (trim:true may move it)
     QSet<int> endsAt, startsAt;
@@ -495,6 +538,21 @@ void opTransition(Session& s, const QJsonObject& op)
     const bool trim = op.value("trim").toBool();
     // The wanted length and alignment go in right away: trim:true takes off only the frames missing for them
     const int length = op.contains("length") ? timeOf(s, op, "length") : 0;
+    if (op.contains("length") && length <= 0)
+        fail("BAD_ARGUMENT", "length must be at least 1 frame (remove:true takes a transition off)");
+    // Longer than a clip it joins: it cannot fit (12-B7: 10 s on two 4 s clips was accepted with trim:true)
+    if (length > 0)
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+            if (only && k != *only) continue;
+            for (const Track& t : cur.tracks(k))
+                for (const Clip& c : t.clips)
+                    if ((clips.isEmpty() ? endsAt.contains(c.id) || startsAt.contains(c.id) : clips.contains(c.id))
+                        && length > c.length())
+                        fail("BAD_ARGUMENT", QString("length %1 frames is longer than clip %2 (%3 frames)")
+                                                 .arg(length).arg(c.id).arg(c.length()));
+        }
+    QSet<QPair<int, int>> had;
+    for (const auto& sp : spans()) had.insert({sp.leftId, sp.rightId});
     std::optional<TransitionAlign> align;
     if (op.contains("align")) {
         const int a = QStringList{"center", "start", "end"}.indexOf(op.value("align").toString());
@@ -508,10 +566,20 @@ void opTransition(Session& s, const QJsonObject& op)
         lacking = ed.addTransitions(0, std::nullopt, only, trim, length, align);
         s.selection.clear();
     }
-    const auto found = spans();
+    QVector<TimelineOps::TransitionSpan> found = spans();
     if (found.isEmpty())
         fail("FAILED", lacking.isEmpty() || trim ? "no transition possible there"
                                                  : "no spare material at the cut ('trim':true shortens the clips so it fits)");
+    // At a cut: the tracks that cut there get the dissolve; a track whose clip only ends or starts there (a title
+    // ending at the same moment) does not also fade to black (12-B7, transition at:24s faded the V2 title out)
+    if (clips.isEmpty() && std::any_of(found.begin(), found.end(), [](const auto& sp) { return sp.isDissolve(); })) {
+        QVector<TimelineOps::TransitionSpan> kept;
+        for (const auto& sp : found) {
+            if (!sp.isDissolve() && !had.contains({sp.leftId, sp.rightId})) ed.removeTransition(sp.leftId, sp.rightId);
+            else kept << sp;
+        }
+        found = kept;
+    }
     for (const auto& sp : found) {
         const TransitionStyle st = parseTransitionStyle(op, sp.style);
         if (st != sp.style) ed.setTransitionStyle(sp.leftId, sp.rightId, st);
@@ -691,30 +759,79 @@ void opSpeedRamp(Session& s, const QJsonObject& op)
     const int id = clipOf(s, op).id;
     if (!ed.canRetime(id)) fail("BAD_ARGUMENT", "this clip cannot get a speed ramp (title, still or freeze frame)");
     const auto clip = [&] { return *TimelineOps::findClip(s.project.timeline(), id); };
-    // Start over: remove the old points (last first)
-    for (int i = clip().ramp.size() - 1; i >= 0; --i) ed.removeSpeedPoint(id, i);
-    if (op.value("clear").toBool()) return;
+    const auto fileLength = [&](const Clip& c) {
+        const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+        return m ? m->length : 0;
+    };
     struct Point {
         int at;
         double speed;
         int smooth;
+        double file = -1; // a timeline time: the file position it shows now (resolved again after the old points go)
     };
+    // Timeline times mean the clip as it is now (as `info` shows it): read before the old points go, which changes
+    // the clip's timing (03-#4: the same `at` gave other points on every call); {clip, source} refs after that
+    const Clip now = clip();
+    const RetimeMap nowMap(now, fileLength(now));
     QVector<Point> points;
-    for (const QJsonValue& v : op.value("points").toArray()) {
-        const QJsonObject p = v.toObject();
-        points << Point{timeOf(s, p, "at"), numberOf(p, "speed", Retime::kMinSpeed, Retime::kMaxSpeed),
-                        p.contains("smooth") ? timeOf(s, p, "smooth") : 0};
+    bool fromStart = false;
+    double startSpeed = 0;
+    if (!op.value("clear").toBool())
+        for (const QJsonValue& v : op.value("points").toArray()) {
+            const QJsonObject p = v.toObject();
+            Point pt{0, numberOf(p, "speed", Retime::kMinSpeed, Retime::kMaxSpeed),
+                     p.contains("smooth") ? timeOf(s, p, "smooth") : 0};
+            if (!p.value("at").isObject()) {
+                const int at = timeOf(s, p, "at");
+                // A point at the clip's first frame is the speed from the start on (03-#3: refused as "not inside")
+                if (at == now.start) {
+                    fromStart = true;
+                    startSpeed = pt.speed;
+                    continue;
+                }
+                if (at < now.start || at >= now.end())
+                    fail("BAD_ARGUMENT", QString("speed point %1 is not inside the clip (%2..%3; a point at %2 sets the "
+                                                 "speed from the start)")
+                                             .arg(at).arg(now.start).arg(now.end() - 1));
+                pt.at = at;
+                if (!now.ramp.isEmpty()) pt.file = nowMap.fileFrameAt(now.in + (at - now.start));
+            } else {
+                pt.at = INT_MIN; // resolved below
+            }
+            points << pt;
+        }
+    // Start over: remove the old points (last first)
+    for (int i = clip().ramp.size() - 1; i >= 0; --i) ed.removeSpeedPoint(id, i);
+    if (op.value("clear").toBool()) return;
+    if (points.isEmpty() && !fromStart) fail("BAD_ARGUMENT", "missing 'points' ([{at, speed, smooth?}, …]) or clear:true");
+    if (fromStart && op.contains("speed"))
+        fail("BAD_ARGUMENT", "a point at the clip's start and 'speed' both set the speed from the start: give one");
+    {
+        const Clip c = clip();
+        const RetimeMap map(c, fileLength(c));
+        int i = 0;
+        for (const QJsonValue& v : op.value("points").toArray()) {
+            const QJsonObject p = v.toObject();
+            if (!p.value("at").isObject()) {
+                if (timeOf(s, p, "at") != now.start) ++i;
+                continue;
+            }
+            points[i++].at = timeOf(s, p, "at");
+        }
+        for (Point& p : points)
+            if (p.file >= 0) p.at = c.start + int(std::lround(map.materialAtFile(p.file))) - c.in;
     }
-    if (points.isEmpty()) fail("BAD_ARGUMENT", "missing 'points' ([{at, speed, smooth?}, …]) or clear:true");
     std::sort(points.begin(), points.end(), [](const Point& a, const Point& b) { return a.at < b.at; });
     // Points first (they keep the timing), then the speeds from the last segment on
     const Clip c = clip();
     for (const Point& p : points) {
-        if (p.at <= c.start || p.at >= c.end()) fail("BAD_ARGUMENT", QString("speed point %1 is not inside the clip (%2..%3)").arg(p.at).arg(c.start).arg(c.end()));
+        if (p.at <= c.start || p.at >= c.end())
+            fail("BAD_ARGUMENT", QString("speed point %1 is not inside the clip (%2..%3)").arg(p.at).arg(c.start).arg(c.end() - 1));
         ed.addSpeedPoint(id, p.at);
     }
     if (clip().ramp.size() != points.size()) fail("FAILED", "speed points must be at least one frame apart");
     if (op.contains("speed")) ed.setSegmentSpeed(id, 0, numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed));
+    if (fromStart) ed.setSegmentSpeed(id, 0, startSpeed);
     for (int i = points.size() - 1; i >= 0; --i) {
         ed.setSegmentSpeed(id, i + 1, points[i].speed);
         if (points[i].smooth > 0) ed.setSpeedPointSmooth(id, i, points[i].smooth);
@@ -1027,8 +1144,10 @@ void addEditOps(QVector<OpDef>& ops)
                  opSpeed, kClipKeys}
         << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?, interpolate?} or {…, clear:true}",
                  "speed ramp: from each point on its own speed (speed = before the first point)",
-                 "at = timeline frame inside the clip as it is now, or {clip, source:\"12.4s\"} = where the clip "
-                 "plays that source time (safe after earlier ramps); smooth = frames of a soft change around the "
+                 "at = timeline frame inside the clip as it is now (as `info` shows it, earlier points included), or "
+                 "{clip, source:\"12.4s\"} = where the clip plays that source time (safest); a point at the clip's "
+                 "first frame = the speed from the start (like speed). speed replaces the clip's own speed before the "
+                 "first point; without it that stays. smooth = frames of a soft change around the "
                  "point. The clip length follows the speeds, later clips move. Replaces earlier points. interpolate as "
                  "for speed ('flow' = smooth slow parts).",
                  opSpeedRamp, {"clips"}} // clipOf: a list of one

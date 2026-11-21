@@ -520,6 +520,45 @@ int runTests(int argc, char** argv)
         CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"trim","clips":[1,2],"edge":"end","to":5}])"}})
                   .contains("trim takes one clip: 'clip'"));
     }
+    // Edits that change nothing or less than asked say so instead of an empty answer (12-B8, 03-#1); other changes
+    // than clips are listed (a mixer op answered changes:{}, 08-#4); clear errors for a missing op, clips:"all",
+    // at:true and a track far past the last (V99 made 97 empty tracks, 12-B6)
+    {
+        const QString before = saved();
+        const auto notes = [](const char* op) {
+            const QJsonObject r = run("edit", {{"project", g_path}, {"ops", QString("[%1]").arg(op)}, {"dry_run", true}});
+            QStringList out;
+            for (const QJsonValue& n : r["notes"].toArray()) out << n.toString();
+            return out.join(" | ");
+        };
+        const int first = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][0]["id"].toInt();
+        const auto with = [first](const char* op) { return QString(op).arg(first); };
+        CHECK(notes(R"({"op":"split","at":0})").startsWith("split: no clip runs across"));
+        CHECK(notes(R"({"op":"split","at":999999})").startsWith("split: no clip runs across"));
+        CHECK(notes(qPrintable(with(R"({"op":"move","clips":[%1],"by":-1000})"))).startsWith("move: moved by 0 of -1000"));
+        CHECK(notes(qPrintable(with(R"({"op":"move","clips":[%1],"track_delta":-3})"))).contains("track_delta 0 of -3"));
+        CHECK(notes(qPrintable(with(R"({"op":"trim","clip":%1,"edge":"start","by":-50})")))
+                  .contains("start moved 0 of -50 frames: the file has no more material before the clip"));
+        CHECK(notes(R"({"op":"delete_range","from":5000,"to":6000})") == "op 0 (delete_range): changed nothing");
+        const QJsonObject mixer = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", R"([{"op":"mixer","track":"master","volume_db":-3}])"}});
+        CHECK(mixer["changes"]["other"].toArray() == QJsonArray{"master"} && !mixer.contains("notes"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"clips":[1]}])"}}).contains("missing 'op'"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"disable","clips":"all"}])"}})
+                  .contains("'clips' must be a list of clip ids"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"split","at":true}])"}})
+                  .contains("at: true is not a time"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"append","media":"/x/a.mp4","track":"V99"}])"}})
+                  .contains("a new one comes at most one past the last"));
+        CHECK(run("edit", {{"project", g_path}, {"dry_run", true},
+                           {"ops", R"([{"op":"append","media":"/x/a.mp4","track":"V3"}])"}})["changes"]["added"].toArray().size() == 2);
+        // A 1-2 frame gap after a clip (rounded seconds of retimed lengths, 03-#2) is closed with a note
+        const QJsonObject gap = run("edit", {{"project", g_path}, {"dry_run", true},
+                                             {"ops", R"([{"op":"keep","media":"/x/a.mp4","ranges":[[0,10]],"at":46}])"}});
+        CHECK(gap["notes"][0].toString().contains("at 00:00:01:21 lay 1 frame(s) after the end of clip"));
+        CHECK_EQ(gap["changes"]["added"][0]["start"].toInt(), 45);
+        CHECK_EQ(saved(), before);
+    }
     // keep with one range written another way (small models): taken with a note; no range at all: a whole example
     for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
                             R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {
@@ -870,6 +909,29 @@ int runTests(int argc, char** argv)
         r = ed(R"([{"op":"transition","at":10,"remove":true}])");
         CHECK(!std::as_const(r)["timeline"]["tracks"][0]["clips"][0].toObject().contains("transition_out"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"type":"zoom"}])"}}), QString("BAD_ARGUMENT"));
+        // Validation (12-B7): the type before the material, length 0 or longer than a clip, `at` far from a cut
+        // (it faded the timeline start in), duration for length; a title ending at the cut does not fade out
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"type":"zoom","length":2}])"}})
+                  .contains("type must be cross_dissolve"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"length":0}])"}})
+                  .contains("length must be at least 1 frame"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"length":500,"trim":true}])"}})
+                  .contains("length 500 frames is longer than clip"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":30}])"}}).contains("no cut at"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"duration":4}])"}})
+                  .contains("use 'length'"));
+        {
+            const QJsonObject d = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", R"([{"op":"title","text":"T","at":0,"duration":10,"track":"V2"},
+                                                           {"op":"transition","at":10,"length":4,"trim":true}])"}});
+            bool dissolve = false, titleFade = false;
+            for (const QJsonValue& t : d["timeline"]["tracks"].toArray())
+                for (const QJsonValue& x : t["clips"].toArray()) {
+                    if (t["track"] == "V1" && x["transition_out"].toInt() == 4) dissolve = true;
+                    if (t["track"] == "V2" && x.toObject().contains("transition_out")) titleFade = true;
+                }
+            CHECK(dissolve && !titleFade);
+        }
         // Title with style, then change it
         r = ed(R"([{"op":"title","text":"Hello
 World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":true,"y":-300,"align":"left"}])");
@@ -904,6 +966,24 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject ramped = std::as_const(r)["timeline"]["tracks"][0]["clips"][1].toObject();
         CHECK_EQ(std::as_const(ramped)["speed_ramp"][0]["at"].toInt(), 30);
         CHECK_EQ(std::as_const(ramped)["end"].toInt(), 30 + 13); // 25 frames at 2x
+        {
+            // `at` means the clip as it is now (03-#4: the old points went first, the same frame meant another
+            // picture): 35 shows the file 5 * 2 frames after the point, which lies at 40 without the ramp
+            const auto ramp = [&](const QString& points) {
+                const QJsonObject d = run("edit", {{"project", g_path}, {"dry_run", true},
+                                                   {"ops", QString(R"([{"op":"speed_ramp","clip":%1,"points":%2}])").arg(c[1]).arg(points)}});
+                for (const QJsonValue& x : d["timeline"]["tracks"][0]["clips"].toArray())
+                    if (x["id"].toInt() == c[1]) return x.toObject();
+                return QJsonObject{};
+            };
+            CHECK_EQ(ramp(R"([{"at":30,"speed":2}])")["speed_ramp"][0]["at"].toInt(), 30);
+            CHECK_EQ(ramp(R"([{"at":35,"speed":2}])")["speed_ramp"][0]["at"].toInt(), 40);
+            // A point at the clip's first frame = the speed from the start (03-#3: "not inside the clip")
+            const int start = std::as_const(ramped)["start"].toInt();
+            const QJsonObject fromStart = ramp(QString(R"([{"at":%1,"speed":2},{"at":%2,"speed":1}])").arg(start).arg(start + 10));
+            CHECK_EQ(fromStart["speed"].toDouble(), 2.0);
+            CHECK_EQ(fromStart["speed_ramp"].toArray().size(), 1);
+        }
         ed(QString(R"([{"op":"speed_ramp","clip":%1,"clear":true},{"op":"speed","clips":[%1],"freeze":true,"ripple":false}])").arg(c[1]));
         CHECK(run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][1]["freeze"].toBool());
         // Markers and In/Out; Media Pool organisation
@@ -1406,6 +1486,29 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             if (!CHECK(note.contains("mixed.mkv: its Mix stream plays together with its single streams (Game, Mic)")
                        && note.contains(QString("{op:'disable', clips:[%1,%2]}").arg(std::min(mixA, mixB)).arg(std::max(mixA, mixB)))))
                 std::printf("       note: %s\n", qPrintable(note));
+            // Following the hint turns exactly the Mix off: the picture and the single streams play on (12-B1: the
+            // whole link group went off, black and silent); a picture takes its sound along, with a note
+            const QJsonObject off = run("edit", {{"project", proj},
+                                                 {"ops", QString(R"([{"op":"disable","clips":[%1,%2]}])").arg(mixA).arg(mixB)}});
+            int enabled = 0, disabled = 0;
+            for (const QJsonValue& t : run("info", {{"project", proj}})["timeline"]["tracks"].toArray())
+                for (const QJsonValue& c : t["clips"].toArray()) {
+                    const bool isMix = c["id"].toInt() == mixA || c["id"].toInt() == mixB;
+                    const bool on = c["enabled"].toBool(true);
+                    if (!CHECK(on != isMix)) std::printf("       clip %d on %s: enabled %d\n", c["id"].toInt(), qPrintable(t["track"].toString()), on);
+                    (on ? enabled : disabled)++;
+                }
+            CHECK_EQ(disabled, 2);
+            CHECK(enabled >= 6);
+            CHECK(off["notes"].toArray().at(0).toString().startsWith("disable: only the named sound clips"));
+            int picture = 0;
+            for (const QJsonValue& c : r["changes"]["added"].toArray())
+                if (c["track"].toString() == "V1" && !picture) picture = c["id"].toInt();
+            const QJsonObject on = run("edit", {{"project", proj},
+                                                {"ops", QString(R"([{"op":"disable","clips":[%1]}])").arg(picture)}});
+            CHECK(on["notes"].toArray().at(0).toString().startsWith("disable: the picture took its linked sound ["));
+            const QJsonObject help = run("help", {{"command", "edit"}, {"op", "disable"}});
+            CHECK(help["commands"].toArray().at(0)["ops"].toArray().at(0)["op"].toString() == "enable");
             const QString gameProj = dir.filePath("mixed-game.schneidi");
             run("new", {{"project", gameProj}, {"template", "game"}});
             CHECK(!run("edit", {{"project", gameProj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(mixed)}}).contains("notes"));
