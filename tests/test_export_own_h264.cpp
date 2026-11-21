@@ -12,6 +12,7 @@
 
 #include "check.h"
 
+#include "core/Keyframes.h"
 #include "core/RenderJob.h"
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
@@ -485,6 +486,121 @@ void testCutFrames()
     CHECK_EQ(cuts(two, 0, kFrames), QVector<int>{40});
 }
 
+// What the timeline tells the encoder (Exporter::encodeHints), and a render with it
+void testEncodeHints(const QString& dir)
+{
+    const auto hints = [](const Timeline& tl, QSize format = {640, 360}, QSize out = {640, 360}, FrameRate rate = {25, 1},
+                          int from = 0, int length = kFrames) {
+        return Exporter::encodeHints(tl, from, length, format, out, {25, 1}, rate);
+    };
+    // Moving pictures only: nothing to say
+    const Timeline moving = sequence({{g_media, 0, 40}, {g_near, 40, 35}});
+    CHECK(hints(moving).isEmpty());
+    // A freeze frame: its frames probably repeat (also under a title; not under a second moving clip)
+    Timeline frozen = moving;
+    frozen.video[0].clips[1].freeze = true;
+    QVector<ExportHintSpan> h = hints(frozen);
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK_EQ(h[0].from, 40);
+        CHECK_EQ(h[0].to, kFrames);
+        CHECK(h[0].still);
+        CHECK(h[0].background.isEmpty());
+    }
+    h = hints(frozen, {640, 360}, {640, 360}, {50, 1});
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK_EQ(h[0].from, 80);
+        CHECK_EQ(h[0].to, 2 * kFrames);
+    }
+    h = hints(frozen, {640, 360}, {640, 360}, {25, 1}, 50, 20); // a range inside the freeze frame
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK_EQ(h[0].from, 0);
+        CHECK_EQ(h[0].to, 20);
+    }
+    Timeline titled = frozen;
+    titled.video.resize(2);
+    Clip title;
+    title.id = 9;
+    title.kind = ClipKind::Title;
+    title.start = 50;
+    title.out = 9;
+    titled.video[1].clips << title;
+    h = hints(titled);
+    CHECK(h.size() == 1 && h[0].from == 40 && h[0].to == kFrames && h[0].still);
+    titled.video[1].clips[0].kind = ClipKind::Media;
+    titled.video[1].clips[0].mediaPath = g_media;
+    h = hints(titled); // moving pictures over frames 50..59
+    if (CHECK_EQ(h.size(), 2)) {
+        CHECK(h[0].from == 40 && h[0].to == 50 && h[1].from == 60 && h[1].to == kFrames);
+    }
+    // No clip at all (black): still
+    Timeline gap = sequence({{g_media, 0, 20}});
+    h = hints(gap);
+    CHECK(h.size() == 1 && h[0].from == 20 && h[0].to == kFrames && h[0].still);
+
+    // 16:9 pictures fitted into a 9:16 frame with the blurred fill: the bars above and below are background
+    Timeline fill = sequence({{g_media, 0, kFrames}});
+    Clip& c = fill.video[0].clips[0];
+    c.pictureAspect = 16.0 / 9.0;
+    c.transform.fill = FitFill::Blur;
+    h = hints(fill, {1080, 1920}, {1080, 1920});
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK(!h[0].still && h[0].from == 0 && h[0].to == kFrames);
+        // The picture is 607.5 high around the middle (656.25 .. 1263.75), a pixel of margin
+        if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 1080, 655), QRect(0, 1265, 1080, 655)}))) qDebug() << h[0].background;
+    }
+    h = hints(fill, {1080, 1920}, {540, 960}); // rendered at half the size
+    if (CHECK_EQ(h.size(), 1))
+        if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 540, 327), QRect(0, 633, 540, 327)}))) qDebug() << h[0].background;
+    // Zoomed to 0.5 and moved right and up: bars on all four sides
+    c.transform.zoomX = c.transform.zoomY = 0.5;
+    c.transform.posX = 100;
+    c.transform.posY = 200;
+    h = hints(fill, {1080, 1920}, {1080, 1920});
+    if (CHECK_EQ(h.size(), 1))
+        if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 1080, 607), QRect(0, 913, 1080, 1007), QRect(0, 607, 369, 306),
+                                                        QRect(911, 607, 169, 306)})))
+            qDebug() << h[0].background;
+    // Not where the picture's place is animated, the fill is off, or a clip without the fill shows as well
+    Timeline animated = fill;
+    Keys::setKey(animated.video[0].clips[0], AnimParam::PosX, 0, 0);
+    Keys::setKey(animated.video[0].clips[0], AnimParam::PosX, 50, 300);
+    CHECK(hints(animated, {1080, 1920}, {1080, 1920}).isEmpty());
+    Timeline off = fill;
+    off.video[0].clips[0].transform.transformOn = false;
+    CHECK(hints(off, {1080, 1920}, {1080, 1920}).isEmpty());
+    Timeline over = fill;
+    over.video.resize(2);
+    over.video[1].clips << moving.video[0].clips[0];
+    over.video[1].clips[0].id = 7;
+    h = hints(over, {1080, 1920}, {1080, 1920}); // frames 0..39 covered by the plain clip
+    CHECK(h.size() == 1 && h[0].from == 40 && h[0].to == kFrames && !h[0].background.isEmpty());
+
+    // Rendered: a clip, then its freeze frame, with the hints and without ("hints=0"). Both decode, the same
+    // length; the freeze frame's pictures are found as repeats, so the hinted file is not larger
+    {
+        Timeline tl = timeline(g_media, 30);
+        tl.video[0].clips[1].freeze = true;
+        const QString with = dir + "/hints.mp4", without = dir + "/nohints.mp4";
+        ExportSettings s = settings(with);
+        if (CHECK(render(tl, s))) {
+            s = settings(without);
+            s.codecOptions << "hints=0";
+            if (CHECK(render(tl, s))) {
+                for (const QString& path : {with, without}) {
+                    CHECK_EQ(probe(path).value("nb_read_frames").toString().toInt(), kFrames);
+                    const QString errors = decodeErrors(path);
+                    if (!CHECK(errors.isEmpty())) std::printf("       %s\n", qPrintable(errors.left(400)));
+                    const double db = psnr(path, g_media, 30);
+                    if (!CHECK(db > 38)) std::printf("       PSNR %.2f dB\n", db);
+                }
+                if (!CHECK(QFileInfo(with).size() <= QFileInfo(without).size()))
+                    std::printf("       with hints %lld bytes, without %lld\n", static_cast<long long>(QFileInfo(with).size()),
+                                static_cast<long long>(QFileInfo(without).size()));
+            }
+        }
+    }
+}
+
 // Rendered: splits, jump cuts and a montage of 2-frame clips make no row of key frames
 void testNoKeyStorm(const QString& dir)
 {
@@ -801,6 +917,7 @@ int main(int argc, char** argv)
     testBFrames(tmp.path());
     testSpeedOption(tmp.path());
     testCutFrames();
+    testEncodeHints(tmp.path());
     testNoKeyStorm(tmp.path());
     testShortAndOdd(tmp.path());
     testLookahead(tmp.path());

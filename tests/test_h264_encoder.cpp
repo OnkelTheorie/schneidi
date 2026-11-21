@@ -23,6 +23,7 @@ extern "C" {
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -124,6 +125,10 @@ struct StreamInfo {
     // Fine detail of the B pictures' reconstructions: the 4x4 Hadamard AC magnitudes of their 8x8 luma blocks, summed
     double detailB = 0;
 };
+
+// EncodeHints for picture t of the next roundTrip calls (nullptr = none), and what the encoder counted in the last one.
+std::function<const EncodeHints*(int)> gHints;
+Encoder::HintStats gHintStats;
 
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
                const ChunkPlan* plan = nullptr, StreamInfo* info = nullptr)
@@ -244,7 +249,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
         }
         const Yuv src = synthFrame(cfg.width, cfg.height, t);
         Picture pic{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2};
-        std::vector<uint8_t> au = encPtr->encode(pic, t == keyframeAt);
+        std::vector<uint8_t> au = encPtr->encode(pic, t == keyframeAt, gHints ? gHints(t) : nullptr);
         if (au.empty())
             continue;
         au.insert(au.begin(), first.begin(), first.end()); // SPS/PPS in front of the first access unit
@@ -261,6 +266,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
     }
     avcodec_send_packet(ctx, nullptr);
     receive();
+    gHintStats = encPtr->hintStats();
     ok = ok && decoded == size_t(frames);
     av_frame_free(&frame);
     av_packet_free(&pkt);
@@ -857,6 +863,144 @@ void testCpuBuilds()
     }
 }
 
+// EncodeHints: what the caller knows about the pictures (repeats, still and background rectangles).
+void testHints()
+{
+    gCabac = true;
+    const int w = 320, h = 192, mbs = (w / 16) * (h / 16);
+    auto base = [&](int threads, int bframes) {
+        EncoderConfig c = config(w, h, IntraMode::Auto, 60, threads);
+        c.bframes = bframes;
+        c.bAdaptive = false;
+        c.aqStrength = 1.5;
+        return c;
+    };
+    EncodeHints none, repeat, wholeStill, topBackground, both;
+    repeat.repeat = true;
+    wholeStill.still.push_back({0, 0, w, h});
+    topBackground.background.push_back({0, 0, w, 96}); // six rows of macroblocks
+    both = topBackground;
+    both.repeat = true;
+    for (const int bframes : {0, 3}) {
+        StreamInfo plain, empty, wrong;
+        // No hints, empty hints, and hints that are wrong (the pictures move): one and the same stream
+        gHints = nullptr;
+        CHECK(roundTrip(base(1, bframes), 24, nullptr, -1, nullptr, &plain));
+        gHints = [&](int) { return &none; };
+        CHECK(roundTrip(base(1, bframes), 24, nullptr, -1, nullptr, &empty));
+        CHECK(plain.hash == empty.hash);
+        gHints = [&](int t) { return t % 2 ? &repeat : &wholeStill; };
+        CHECK(roundTrip(base(1, bframes), 24, nullptr, -1, nullptr, &wrong));
+        CHECK(wrong.hash == plain.hash);
+        CHECK(gHintStats.repeats == 0 && gHintStats.stillMbs == 0);
+
+        // Pictures that repeat in groups of four, with the hint on every picture (wrong on each group's first):
+        // decoded bit-exact, the repeats found, still macroblocks skipped, the same stream with any thread count
+        // and whether the hint says "repeat" or gives the whole picture as a still rectangle
+        gSynthHold = 4;
+        StreamInfo held, hinted, hinted4, rect;
+        gHints = nullptr;
+        CHECK(roundTrip(base(1, bframes), 32, nullptr, -1, nullptr, &held));
+        gHints = [&](int) { return &repeat; };
+        CHECK(roundTrip(base(1, bframes), 32, nullptr, -1, nullptr, &hinted));
+        CHECK(gHintStats.repeats == 24);
+        CHECK(gHintStats.stillMbs > 12 * mbs);
+        CHECK(hinted.types == held.types);
+        CHECK(hinted.minPsnrY > held.minPsnrY - 0.5);
+        const Encoder::HintStats stats1 = gHintStats;
+        CHECK(roundTrip(base(4, bframes), 32, nullptr, -1, nullptr, &hinted4));
+        CHECK(hinted4.hash == hinted.hash);
+        CHECK(gHintStats.stillMbs == stats1.stillMbs);
+        gHints = [&](int) { return &wholeStill; };
+        CHECK(roundTrip(base(1, bframes), 32, nullptr, -1, nullptr, &rect));
+        CHECK(rect.hash == hinted.hash);
+        // A still rectangle over a part: only macroblocks inside it are taken
+        EncodeHints part;
+        part.still.push_back({16, 16, 160, 96}); // 10 x 6 macroblocks
+        gHints = [&](int) { return &part; };
+        CHECK(roundTrip(base(1, bframes), 32));
+        CHECK(gHintStats.repeats == 0 && gHintStats.stillMbs > 0 && gHintStats.stillMbs <= 24 * 60);
+        gSynthHold = 0;
+
+        // Background: the synthetic picture has noise everywhere, so the texture rule would take every macroblock
+        // out again (first case: the stream of no hints); with the rule off the top half is coded coarser and with
+        // the cheap decisions - smaller, decoded bit-exact, the same with four threads, and coarser = smaller still
+        StreamInfo guarded, bg, bg4, bgCoarse;
+        gHints = [&](int) { return &topBackground; };
+        EncoderConfig c = base(1, bframes);
+        c.hintBackgroundEnergy = 0;
+        CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &guarded));
+        CHECK(guarded.hash == plain.hash);
+        CHECK(gHintStats.backgroundMbs == 0);
+        c.hintBackgroundEnergy = 99;
+        size_t bytes = 0, bytesCoarse = 0;
+        CHECK(roundTrip(c, 24, &bytes, -1, nullptr, &bg));
+        CHECK(bg.hash != plain.hash);
+        CHECK(gHintStats.backgroundMbs > 0);
+        c.threads = 4;
+        CHECK(roundTrip(c, 24, nullptr, -1, nullptr, &bg4));
+        CHECK(bg4.hash == bg.hash);
+        c.hintBackgroundQp = 10;
+        CHECK(roundTrip(c, 24, &bytesCoarse, -1, nullptr, &bgCoarse));
+        CHECK(bytesCoarse < bytes);
+        // Background and repeats together, constant quality with the defaults' B pictures and the lookahead
+        gSynthHold = 3;
+        gHints = [&](int) { return &both; };
+        c = base(3, bframes ? 8 : 0);
+        c.bAdaptive = true;
+        c.crf = 24;
+        c.hintBackgroundEnergy = 99;
+        CHECK(roundTrip(c, 45));
+        CHECK(gHintStats.repeats == 30);
+        gSynthHold = 0;
+    }
+    // Without the lookahead the picture before is not at hand: repeats are not taken, the stream is that of no hints
+    {
+        EncoderConfig c = config(w, h, IntraMode::Auto, 30, 1);
+        c.lookahead = 0;
+        c.mbtree = false;
+        gSynthHold = 4;
+        StreamInfo plain, hinted;
+        gHints = nullptr;
+        CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &plain));
+        gHints = [&](int) { return &repeat; };
+        CHECK(roundTrip(c, 16, nullptr, -1, nullptr, &hinted));
+        CHECK(hinted.hash == plain.hash);
+        CHECK(gHintStats.repeats == 0);
+        gSynthHold = 0;
+    }
+    // Two-pass and the second build of the encoder (where there is one): decoded bit-exact with hints, both builds
+    // the same stream
+    {
+        gSynthHold = 4;
+        gHints = [&](int) { return &both; };
+        EncoderConfig c = config(w, h, IntraMode::Auto, 60, 2);
+        c.bframes = 3;
+        c.hintBackgroundEnergy = 99;
+        StreamInfo generic, v3;
+        CHECK(roundTrip(c, 32, nullptr, -1, nullptr, &generic));
+        const Encoder::HintStats statsGeneric = gHintStats;
+        if (std::strcmp(selectCpuBuild(true), "x86-64-v3") == 0) {
+            CHECK(roundTrip(c, 32, nullptr, -1, nullptr, &v3));
+            CHECK(v3.hash == generic.hash);
+            CHECK(gHintStats.repeats == statsGeneric.repeats && gHintStats.stillMbs == statsGeneric.stillMbs
+                  && gHintStats.backgroundMbs == statsGeneric.backgroundMbs);
+        }
+        selectCpuBuild(false);
+        FirstPass fp(c.width, c.height, c.threads, c.bframes);
+        for (int t = 0; t < 32; ++t) {
+            const Yuv src = synthFrame(c.width, c.height, t);
+            fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+        }
+        c.firstPass = fp.stats();
+        c.bitrateKbps = 300;
+        CHECK(roundTrip(c, 32));
+        CHECK(gHintStats.repeats == 24);
+        gSynthHold = 0;
+    }
+    gHints = nullptr;
+}
+
 int main()
 {
     Check::initEnv();
@@ -865,6 +1009,10 @@ int main()
     selectCpuBuild(false);
     if (std::getenv("H264_TEST_CPU")) { // only the two builds and the speed stage (debugging)
         testCpuBuilds();
+        return Check::result();
+    }
+    if (std::getenv("H264_TEST_HINTS")) { // only the hints (debugging)
+        testHints();
         return Check::result();
     }
     if (std::getenv("H264_TEST_VBV")) { // only the VBV cases (debugging)
@@ -1839,5 +1987,6 @@ int main()
     }
     testVbv();
     testCpuBuilds();
+    testHints();
     return Check::result();
 }
