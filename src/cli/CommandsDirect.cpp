@@ -779,7 +779,12 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         }
         if (dry) fail("BAD_ARGUMENT", "dry_run and plan need an existing project (give 'project')");
         const bool streams = std::any_of(s.material.begin(), s.material.end(), [](const Direction::Material& m) { return m.audioStreams.size() > 1; });
-        QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(files)},
+        // Only the recordings in the cut go into the new project's media (not a switched-off one, not one without a
+        // moment)
+        QStringList usedMedia;
+        for (const Direction::Suggestion* x : list)
+            if (!usedMedia.contains(x->file)) usedMedia << x->file;
+        QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(usedMedia)},
                       {"template", game != QLatin1String("none") || streams ? "game" : "neutral"}};
         if (s.material.first().fps > 0) n["fps"] = s.material.first().fps;
         failIfCanceled();
@@ -905,9 +910,9 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     if (!appProject) ops << QJsonObject{{"op", "timeline"}, {"timeline", result}, {"open", true}};
     // The result as loud as a platform wants it (like `short`): the master to target_lufs (default -14) behind its
     // limiter, measured (mixer target_lufs). Not in the app: measuring there would hold its window (the page's export
-    // check does it)
+    // check does it); not for `short` (_no_check: it levels after its captions and sounds, before rendering)
     const double targetLufs = levelTarget(s.options);
-    if (!appProject && !std::isnan(targetLufs))
+    if (!appProject && !args["_no_check"].toBool() && !std::isnan(targetLufs))
         ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", kLevelCeilingDb},
                            {"target_lufs", targetLufs}};
     // The project remembers the session as it was applied (the Direct page shows it again; no undo step)
@@ -992,7 +997,9 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (project.isEmpty() && (Live::host() || Live::appCopy())) project = Live::AppProject;
         if (project.isEmpty()) fail("BAD_ARGUMENT", "finish needs the project of the short");
         const QString timeline = f["timeline"].toString();
-        if (timeline.isEmpty()) fail("BAD_ARGUMENT", "finish needs the short's timeline (the answer's timeline)");
+        if (timeline.isEmpty())
+            fail("BAD_ARGUMENT", "finish needs the short's timeline inside it: finish:{\"timeline\":\"<the apply answer's "
+                                 "timeline>\", captions?, sfx?} (with project)");
         QJsonArray done, notes;
         if (f.contains("ops")) {
             if (timelineStamp(project, timeline) != f["stamp"].toString())

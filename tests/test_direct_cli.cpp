@@ -501,11 +501,25 @@ int main(int argc, char** argv)
              "-f", "lavfi", "-i", burst, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
              "-metadata:s:a:0", "title=Mix", "-metadata:s:a:1", "title=System Output", "-metadata:s:a:2", "title=Discord",
              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
-        const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{chat}},
+        const QString quiet = Check::makeMedia(dir.filePath("clips/quiet.mp4"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=320x180:r=30:d=6", "-f", "lavfi", "-i",
+                                                "aevalsrc='0.01*sin(2*PI*100*t)':d=6:s=48000", "-c:v", "libx264",
+                                                "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{chat, quiet}},
                                              {"options", QJsonObject{{"game", "none"}, {"length_s", 8}}}});
         const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
                                                 {"project_dir", dir.filePath("out/chat")}});
         CHECK(!made.contains("error"));
+        // The new project holds the recordings of the cut only (the quiet one has no moment in it; videotest 21.11.)
+        {
+            ProjectData d;
+            QString error;
+            CHECK(ProjectFile::load(made["project"].toString(), &d, &error));
+            QStringList paths;
+            for (const MediaInfo& m : d.media) paths << m.path;
+            CHECK(paths.contains(chat));
+            CHECK(!paths.contains(quiet));
+        }
         bool said = false;
         for (const QJsonValue& n : made["notes"].toArray())
             said |= n.toString().startsWith("left out of the sound") && n.toString().section(" - ", 0, 0).endsWith(": Discord (chat.mkv)");
