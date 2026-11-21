@@ -55,6 +55,15 @@ bool TouchGestures::touch(QTouchEvent* e)
 {
     const auto& pts = e->points();
     const QPointer<TouchGestures> alive(this);
+    // The finger landed on a child widget (the track name's text field, an overlay button): Qt offers the touch to
+    // the target because the child takes none. Not ours: left unaccepted, Qt makes the child's own mouse events of
+    // it (found in the Android emulator: a tap into the open name field closed it instead of placing the cursor)
+    if (e->type() == QEvent::TouchBegin && !pts.isEmpty() && m_target->childAt(pts.first().position().toPoint())) {
+        m_state = State::Idle;
+        m_hold->stop();
+        e->ignore();
+        return true;
+    }
     e->accept();
     if (e->type() == QEvent::TouchBegin) {
         m_device = e->pointingDevice();

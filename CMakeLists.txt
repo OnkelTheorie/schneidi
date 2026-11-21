@@ -663,7 +663,9 @@ if(ANDROID)
         QT_ANDROID_PACKAGE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/packaging/android/app
         QT_ANDROID_EXTRA_LIBS "${_schneidi_android_libs}"
         QT_ANDROID_VERSION_NAME ${SCHNEIDI_NEXT_VERSION}
-        QT_ANDROID_TARGET_SDK_VERSION 35)
+        # 34, not 35: Android 15 draws apps that target 35 under the status bar (edge to edge), and Qt before 6.9
+        # reports no safe areas to keep the window out of it
+        QT_ANDROID_TARGET_SDK_VERSION 34)
 else()
     add_executable(schneidi src/main.cpp)
 endif()

@@ -6,6 +6,7 @@
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QInputMethod>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -37,16 +38,39 @@ protected:
     {
         // The finger lifted on the focused text field (it just got the focus from this tap or had it already: the
         // keyboard may have been put away): the keyboard comes. The press gave the focus like a click before
-        if (e->type() != QEvent::MouseButtonRelease || !isTouch(static_cast<QMouseEvent*>(e))) return false;
+        // Also when the tap itself put the focus into a text field elsewhere (a double tap on a track name opens its
+        // name field, found in the Android emulator): the focus came within this tap, not by mouse or keyboard
+        switch (e->type()) {
+        case QEvent::FocusIn:
+            if (obj->isWidgetType()) {
+                m_focused = static_cast<QWidget*>(obj);
+                m_focusedAt.start();
+            }
+            return false;
+        case QEvent::KeyPress: m_focused = nullptr; return false;
+        case QEvent::MouseButtonPress:
+            if (!isTouch(static_cast<QMouseEvent*>(e))) m_focused = nullptr;
+            return false;
+        case QEvent::MouseButtonRelease: break;
+        default: return false;
+        }
+        if (!isTouch(static_cast<QMouseEvent*>(e))) return false;
         auto* w = qobject_cast<QWidget*>(obj);
         QWidget* f = QApplication::focusWidget(); // (a number field's text part has the field as its focus proxy)
-        if (!w || !f || (w != f && !f->isAncestorOf(w)) || !f->testAttribute(Qt::WA_InputMethodEnabled)
+        const bool focusedByTap = f && m_focused == f && m_focusedAt.isValid() && m_focusedAt.elapsed() < kTapFocusMs;
+        m_focused = nullptr;
+        if (!w || !f || (!focusedByTap && w != f && !f->isAncestorOf(w)) || !f->testAttribute(Qt::WA_InputMethodEnabled)
             || !f->inputMethodQuery(Qt::ImEnabled).toBool() || f->inputMethodQuery(Qt::ImReadOnly).toBool())
             return false;
         ++g_panelRequests;
         QTimer::singleShot(0, f, [] { QGuiApplication::inputMethod()->show(); }); // after the widget's own release
         return false;
     }
+
+private:
+    static constexpr int kTapFocusMs = 700; // a tap or double tap, not a field focused long before
+    QPointer<QWidget> m_focused; // the widget that last got the focus, until a key or a mouse button says otherwise
+    QElapsedTimer m_focusedAt;
 };
 
 class BackKeyFilter : public QObject {
