@@ -39,6 +39,7 @@
 #include <QSet>
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <cmath>
 
 namespace {
@@ -1555,7 +1556,13 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         st.id = o.value("id").toInt();
         st.label = o.value("label").toString();
         st.image = QByteArray::fromBase64(o.value("image").toString().toLatin1());
-        if (o.value("grade").isObject()) st.grade = clipFromJson(o.value("grade").toObject(), {}, projectDir);
+        // Only its grade and placement: it has no media by design ("media": -1), nothing of it is repaired or said
+        // (review 21.11.: "Clip verweist auf Medium -1" on every open)
+        if (o.value("grade").isObject()) {
+            QStringList* const collecting = std::exchange(t_repairs, nullptr);
+            st.grade = clipFromJson(o.value("grade").toObject(), {}, projectDir);
+            t_repairs = collecting;
+        }
         if (st.id > 0) d.stills << st; // without a picture too (a live snapshot leaves them out)
     }
     for (const QJsonValue& v : root.value("watchFolders").toArray()) {

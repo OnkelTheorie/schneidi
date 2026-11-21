@@ -699,6 +699,16 @@ void testStills(const QString& dir)
         const GradeStill t = GradeStills::make(99, "tall", tall, *clip(id1));
         const QImage pic = GradeStills::picture(t);
         CHECK(pic.height() == GradeStills::kMaxEdge && pic.width() == 270);
+        // Saved and opened again: a still's clip has no media by design, nothing is "repaired" (review 21.11.)
+        {
+            ProjectData d = p.data();
+            d.stills = {t};
+            ProjectData back;
+            QString error, warning;
+            CHECK(ProjectFile::fromJson(ProjectFile::toJson(d, "/x/stills.schneidi"), "/x/stills.schneidi", &back, &error, &warning));
+            if (!CHECK(warning.isEmpty())) std::printf("       %s\n", qPrintable(warning));
+            CHECK_EQ(int(back.stills.size()), 1);
+        }
         const int count = int(p.stills().size());
         for (int i = 0; i < GradeStills::kMaxCount + 2; ++i) ed.addGradeStill(id1, picture, "x");
         CHECK_EQ(int(p.stills().size()), GradeStills::kMaxCount);
