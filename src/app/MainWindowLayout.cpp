@@ -390,20 +390,25 @@ QWidget* MainWindow::buildPageBar()
         {"⇪", N_("Export"), Page::Deliver},
     };
     for (const auto& pg : pages) {
-        auto* b = new QToolButton;
+        // Seven names in a long language with a big font (ru, 1.5x) are wider than a 1024 px window: short of room
+        // the names end in "…" and then only the symbols show (the name in the tooltip), the window never grows for them
+        auto* b = new CompactButton;
         if (*pg.icon) {
             b->setText(QString("%1  %2").arg(pg.icon, T(pg.name)));
+            b->setCompactText(QString::fromUtf8(pg.icon));
             b->setToolButtonStyle(Qt::ToolButtonTextOnly);
         } else { // a drawn symbol as tall as the text's capitals, in the colors the bar gives the text
             const int size = b->fontMetrics().ascent();
             b->setIcon(clapperIcon(size));
             b->setIconSize(QSize(size, size));
             b->setText("  " + T(pg.name)); // about the gap the others have between symbol and name ("▤  Medien")
+            b->setCompactText(" ");        // the drawn symbol alone
             b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         }
         // As tall as the bar (its line at the bottom of the bar): a symbol drawn by a taller fallback font makes one
-        // button and so the bar taller, the others stretch along instead of keeping their own height
-        b->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        // button and so the bar taller, the others stretch along instead of keeping their own height. Never wider
+        // than its text, narrower when the bar is short of room (CompactButton)
+        b->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
         b->setCheckable(true);
         b->setChecked(pg.page == m_page);
         const Page page = pg.page;

@@ -571,8 +571,10 @@ int main(int argc, char* argv[])
         const QJsonObject voice = run("loudness", {{"source", project}, {"tracks", "A1"}});
         CHECK(std::abs(voice["loudness"]["integrated_lufs"].toDouble() - level["program_lufs"].toDouble()) < 0.2);
     }
-    // The same bed again (onto another track, not ducked): the file is reused, a volume given
-    r = edit(project, R"([{"op":"music_bed","mood":"lofi","length":"timeline","duck":false,"gain":-6,"track":"A9"}])");
+    // The same bed again (onto another, new track, not ducked): the file is reused, a volume given. (A new track comes
+    // at most one past the last: "A9" is refused since the track limit of fix-edit-ops)
+    r = edit(project, QString(R"([{"op":"music_bed","mood":"lofi","length":"timeline","duck":false,"gain":-6,"track":"A%1"}])")
+                          .arg(load(project)->timeline().audio.size() + 1));
     n = bedNote(r);
     {
         CHECK(!n["made"].toBool(true)); // reused
