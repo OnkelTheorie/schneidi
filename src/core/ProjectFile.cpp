@@ -43,11 +43,29 @@
 
 namespace {
 
+// What reading a hand-edited file had to repair (fromJson collects it for its warning; nullptr = not collecting)
+thread_local QStringList* t_repairs = nullptr;
+thread_local bool t_textNumbers = false; // a number written as text ("119") was read
+
+void repaired(const QString& what)
+{
+    if (t_repairs && !t_repairs->contains(what)) *t_repairs << what;
+}
+
 // Frame numbers and ids from the file (edited by hand or by an AI: may say anything) stay inside +-2^30, so that the
-// sum of two (start + length, the next id) cannot overflow
+// sum of two (start + length, the next id) cannot overflow. A whole number written as text ("119") is that number
+// (it was 0: a clip with "out":"119" became 1 frame long)
 int intOf(const QJsonValue& v, int fallback = 0)
 {
     constexpr int kLimit = 1 << 30;
+    if (v.isString()) {
+        bool ok = false;
+        const double d = v.toString().trimmed().toDouble(&ok);
+        if (ok && std::isfinite(d) && d == std::floor(d)) {
+            t_textNumbers = true;
+            return int(std::clamp(d, double(-kLimit), double(kLimit)));
+        }
+    }
     return std::clamp(v.toInt(fallback), -kLimit, kLimit);
 }
 
@@ -863,13 +881,30 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         c.kind = ClipKind::Multicam;
         c.sequenceId = intOf(o.value("multicam"));
         c.angle = std::max(0, o.value("angle").toInt());
-    } else {
-        c.mediaPath = media.value(o.value("media").toInt(-1)).path;
     }
-    c.start = std::max(0, intOf(o.value("start")));
+    const MediaInfo* source = nullptr;
+    if (c.kind == ClipKind::Media) {
+        const int index = intOf(o.value("media"), -1);
+        if (index >= 0 && index < media.size()) source = &media[index];
+        else repaired(T("Clip %1 verweist auf Medium %2, das es im Projekt nicht gibt: er hat keine Quelle (schwarz und "
+                        "stumm)").arg(c.id).arg(index));
+        if (source) c.mediaPath = source->path;
+    }
+    c.start = intOf(o.value("start"));
+    if (c.start < 0) repaired(T("Clip %1 begann vor dem Anfang (%2): auf 0 gesetzt").arg(c.id).arg(c.start));
+    c.start = std::max(0, c.start);
     c.in = intOf(o.value("in"));
     // File edited by hand: at least 1 frame long, at most 2^29 (in -2^30 and out 2^30 made length() and end() overflow)
-    c.out = std::clamp(intOf(o.value("out")), c.in, c.in + (1 << 29) - 1);
+    const int out = intOf(o.value("out"));
+    c.out = std::clamp(out, c.in, c.in + (1 << 29) - 1);
+    if (out < c.in) repaired(T("Clip %1 endete vor seinem Anfang in der Quelle (in %2, out %3): 1 Bild lang").arg(c.id).arg(c.in).arg(out));
+    // Not past the end of its file (out 100000 of a 120 frame file made a 55 min clip); a still image has any length
+    if (source && source->length > 0 && !source->isImage && c.out >= source->length) {
+        const int last = std::max(c.in, source->length - 1);
+        repaired(T("Clip %1 reichte über das Ende seiner Datei hinaus (out %2, die Datei hat %3 Bilder): gekürzt")
+                     .arg(c.id).arg(c.out).arg(source->length));
+        c.out = last;
+    }
     c.linkId = intOf(o.value("link"));
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
@@ -888,7 +923,10 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.fadeIn = std::max(0, intOf(o.value("fadeIn")));
     c.fadeOut = std::max(0, intOf(o.value("fadeOut")));
     c.speed = o.value("speed").toDouble(1.0);
-    if (c.speed <= 0) c.speed = 1.0;
+    if (c.speed <= 0) {
+        repaired(T("Clip %1 hatte Tempo %2: auf 1 gesetzt (rückwärts: \"reverse\")").arg(c.id).arg(c.speed));
+        c.speed = 1.0;
+    }
     c.speed = std::clamp(c.speed, Retime::kMinSpeed, Retime::kMaxSpeed); // as the editor allows (1e-9 overflowed lengths)
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
@@ -1174,6 +1212,22 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
 bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error, QString* warning)
 {
     if (warning) warning->clear();
+    // What had to be repaired (values edited by hand), said in the warning
+    QStringList repairs;
+    struct Collect {
+        QStringList* before;
+        bool textBefore;
+        explicit Collect(QStringList* list) : before(t_repairs), textBefore(t_textNumbers)
+        {
+            t_repairs = list;
+            t_textNumbers = false;
+        }
+        ~Collect()
+        {
+            t_repairs = before;
+            t_textNumbers = textBefore;
+        }
+    } collect(&repairs);
     QJsonParseError pe;
     QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
     // A file saved by an editor that wrote umlauts as Latin-1 (or with one damaged byte) did not open at all: the
@@ -1186,6 +1240,13 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     QJsonObject root = doc.object();
     if (pe.error != QJsonParseError::NoError || root.value("app").toString() != "schneidi") {
         if (error) *error = T("Keine gültige schneidi-Projektdatei.");
+        if (error && pe.error != QJsonParseError::NoError) {
+            // Where the JSON breaks (a hand edit): line and column, counted from 1
+            const QByteArray head = json.left(pe.offset);
+            const int line = int(head.count('\n')) + 1;
+            const int column = int(pe.offset - (head.lastIndexOf('\n') + 1)) + 1;
+            *error += " " + T("JSON-Fehler in Zeile %1, Spalte %2: %3").arg(line).arg(column).arg(pe.errorString());
+        }
         return false;
     }
     if (root.value("version").toInt() > kFormatVersion) {
@@ -1204,7 +1265,15 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.format.rate.num = fmt.value("fpsNum").toInt(root.value("fps").toInt(25));
     d.format.rate.den = fmt.value("fpsDen").toInt(1);
     d.format.audioChannels = fmt.value("channels").toInt(2); // withinLimits: 2, 6 or 8
-    d.format = withinLimits(d.format);
+    {
+        const ProjectFormat given = d.format;
+        d.format = withinLimits(d.format);
+        if (given.width != d.format.width || given.height != d.format.height)
+            repaired(T("Bildgröße %1 x %2 gibt es nicht: %3 x %4")
+                         .arg(given.width).arg(given.height).arg(d.format.width).arg(d.format.height));
+        if (given.rate.num != d.format.rate.num || given.rate.den != d.format.rate.den)
+            repaired(T("Bildrate %1/%2 gibt es nicht: %3 fps").arg(given.rate.num).arg(given.rate.den).arg(d.format.rate.fps()));
+    }
     d.playhead = intOf(root.value("playhead"));
     for (const QJsonValue& v : root.value("views").toArray()) {
         const QJsonObject o = v.toObject();
@@ -1535,6 +1604,15 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         *warning = T("Einige Zeichen der Projektdatei waren kein gültiges UTF-8 (z. B. Umlaute, die ein anderes Programm "
                      "anders gespeichert hat) und wurden durch „�“ ersetzt. Medien mit solchen Namen fehlen dann. "
                      "Speichern behält die Ersetzung; die Datei, wie sie war, bleibt als Sicherungskopie.");
+    // Values a hand edit got wrong, repaired on reading: said too (the first few; the next save keeps the repair)
+    if (t_textNumbers) repaired(T("Zahlen als Text („119“) wurden als Zahlen gelesen"));
+    if (!repairs.isEmpty() && warning) {
+        constexpr int kShown = 5;
+        QStringList shown = repairs.mid(0, kShown);
+        if (repairs.size() > kShown) shown << T("und %1 weitere").arg(repairs.size() - kShown);
+        const QString text = T("Die Projektdatei wurde beim Lesen repariert: %1").arg(shown.join("; "));
+        *warning = warning->isEmpty() ? text : *warning + " " + text;
+    }
     return true;
 }
 

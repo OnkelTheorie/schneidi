@@ -10,6 +10,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Retime.h"
+#include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
 
@@ -473,6 +474,45 @@ int main(int argc, char** argv)
         CHECK(ProjectFile::missingMedia(d).isEmpty());
         const Clip* c = TimelineOps::findClip(d.timeline, 1);
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
+    }
+
+    // --- Values edited by hand: repaired on reading and said in the warning (it was silent); a clip is not longer than
+    // its file, numbers written as text count, broken JSON says where
+    {
+        ProjectData d;
+        QString warning;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"format":{"width":0,"height":360,"fpsNum":0},
+            "media":[{"path":"/weg/a.mp4","length":120,"hasVideo":true},{"path":"/weg/p.png","length":1,"hasVideo":true,"isImage":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":100000},
+                                           {"id":2,"media":0,"start":"200","in":0,"out":"59"},
+                                           {"id":3,"media":0,"start":-5,"in":50,"out":10,"speed":0},
+                                           {"id":4,"media":99,"start":400,"in":0,"out":9},
+                                           {"id":5,"media":1,"start":500,"in":0,"out":299}]}],"audio":[]}})",
+                                    tmp.filePath("hand.schneidi"), &d, &err, &warning));
+        const Clip* c1 = TimelineOps::findClip(d.timeline, 1);
+        CHECK(c1 && c1->out == 119);
+        const Clip* c2 = TimelineOps::findClip(d.timeline, 2);
+        CHECK(c2 && c2->start == 200 && c2->out == 59);
+        const Clip* c5 = TimelineOps::findClip(d.timeline, 5);
+        CHECK(c5 && c5->out == 299); // a still image has any length
+        // (in the test's language: the values each repair names)
+        const QString head = T("Die Projektdatei wurde beim Lesen repariert: %1").arg(QString());
+        CHECK(warning.startsWith(head));
+        for (const char* part : {"100000", "120", "in 50, out 10", "-5", "0 x 360", "0/1", "16 x 360"})
+            if (!CHECK(warning.contains(part))) std::printf("       missing '%s' in: %s\n", part, qPrintable(warning));
+        CHECK(warning.contains(T("und %1 weitere").arg(3))); // 8 repairs, the first 5 named
+        QString noMedia;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[{"path":"/weg/a.mp4","length":120,"hasVideo":true}],
+            "timeline":{"video":[{"clips":[{"id":7,"media":99,"start":0,"in":0,"out":9}]}],"audio":[]}})",
+                                    tmp.filePath("nomedia.schneidi"), &d, &err, &noMedia));
+        CHECK(noMedia.contains("7") && noMedia.contains("99"));
+        QString clean;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[{"path":"/weg/a.mp4","length":120,"hasVideo":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":0,"out":119}]}],"audio":[]}})",
+                                    tmp.filePath("clean.schneidi"), &d, &err, &clean));
+        CHECK(clean.isEmpty());
+        CHECK(!ProjectFile::fromJson("{\"app\":\"schneidi\",\n\"media\":[}", tmp.filePath("broken.schneidi"), &d, &err));
+        CHECK(err.contains("2") && err.contains("JSON"));
     }
 
     // --- Media no timeline uses (left in the Media Pool): the open dialog says so (MainWindow::applyLoaded). A file of
