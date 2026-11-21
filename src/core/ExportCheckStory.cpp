@@ -75,7 +75,10 @@ const char* changeKindId(ChangeKind k)
 
 // ---------- pace
 
-QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectFormat& f)
+namespace {
+
+// Every change in (from, to), sorted, close ones not merged yet
+QVector<Change> allChanges(const Timeline& tl, int from, int to, const ProjectFormat& f)
 {
     QVector<Change> all, ends; // ends after starts: at a cut the clip that starts is the change
     const auto add = [&](int frame, ChangeKind kind, int clip) {
@@ -108,6 +111,13 @@ QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectForma
                     if (!before && !after) continue;
                     const int at = c.start + (keys[i].frame - c.in);
                     if (at >= c.start && at < c.end()) add(at, ChangeKind::Motion, c.id);
+                    // A slow move between two keys (a pan, a Ken Burns zoom) moves all the way: a change every second
+                    // of it, not only at its ends (05: "5 s without a zoom" during a 5 s zoom)
+                    if (after) {
+                        const int next = c.start + (keys[i + 1].frame - c.in), step = std::max(1, framesOf(1.0, f));
+                        for (int x = at + step; x < next - step / 2; x += step)
+                            if (x >= c.start && x < c.end()) add(x, ChangeKind::Motion, c.id);
+                    }
                 }
             }
         }
@@ -118,11 +128,18 @@ QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectForma
     }
     all += ends;
     std::stable_sort(all.begin(), all.end(), [](const Change& a, const Change& b) { return a.frame < b.frame; });
+    return all;
+}
+
+} // namespace
+
+QVector<Change> changes(const Timeline& tl, int from, int to, const ProjectFormat& f)
+{
     // Close ones count once: an accent writes keyframes around its hit (rise, peak, landing within ~0.3 s), a cut
     // under a title edge is one change
     const int gap = std::max(1, framesOf(0.4, f));
     QVector<Change> out;
-    for (const Change& c : all)
+    for (const Change& c : allChanges(tl, from, to, f))
         if (out.isEmpty() || c.frame - out.last().frame >= gap) out << c;
     return out;
 }
@@ -132,15 +149,18 @@ Pace pace(const Timeline& tl, int from, int to, const ProjectFormat& f, const Op
     Pace p;
     if (to <= from) return p;
     p.changes = changes(tl, from, to, f);
-    QVector<int> frames;
+    QVector<int> frames, every; // the counted changes; every change (the still stretches start at the last of a group:
+                                // a title 0.3 s after a cut is merged with it, the stillness begins with the title, 06)
     for (const Change& c : p.changes) frames << c.frame;
+    for (const Change& c : allChanges(tl, from, to, f))
+        if (every.isEmpty() || every.last() != c.frame) every << c.frame;
     const double length = secondsOf(to - from, f);
     p.changesPerS = frames.size() / length;
-    p.longest = longestOf(frames, from, to);
+    p.longest = longestOf(every, from, to);
     const int maxStill = framesOf(o.maxStillS, f);
     int last = from;
-    for (int i = 0; i <= frames.size(); ++i) {
-        const int next = i < frames.size() ? frames[i] : to;
+    for (int i = 0; i <= every.size(); ++i) {
+        const int next = i < every.size() ? every[i] : to;
         if (next - last > maxStill) p.still << Stretch{last, next};
         last = next;
     }
@@ -155,13 +175,15 @@ Pace pace(const Timeline& tl, int from, int to, const ProjectFormat& f, const Op
     for (const StorySection& s : tl.sections) {
         const int a = std::max(from, s.from), b = std::min(to, s.to);
         if (b <= a) continue;
-        QVector<int> inside;
+        QVector<int> inside, all;
         for (int x : frames)
             if (x > a && x < b) inside << x;
+        for (int x : every)
+            if (x > a && x < b) all << x;
         StorySection clipped = s;
         clipped.from = a;
         clipped.to = b;
-        p.sections << SectionPace{clipped, inside.size() / secondsOf(b - a, f), longestOf(inside, a, b)};
+        p.sections << SectionPace{clipped, inside.size() / secondsOf(b - a, f), longestOf(all, a, b)};
     }
     return p;
 }
