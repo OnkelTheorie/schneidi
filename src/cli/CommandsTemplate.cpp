@@ -605,7 +605,9 @@ QJsonObject fillRows(const QJsonObject& a, Context& ctx)
     const ContentTemplate t = *contentTemplate(a["fill"].toString());
     const ProjectData d = loadTemplate(t);
     if (a.contains("out_project")) fail("BAD_ARGUMENT", "fill with rows writes one project per row: out_dir (and name) instead of out_project");
-    const QString outDir = a["out_dir"].toString();
+    // Called from other commands too (direct's template recipe, runSub), not only through the parameter table: the
+    // path is resolved here as well (a work folder: relative paths start in it, nothing outside it)
+    const QString outDir = a["out_dir"].toString().isEmpty() ? QString() : Sandbox::resolve(a["out_dir"].toString());
     if (outDir.isEmpty()) fail("BAD_ARGUMENT", "fill with rows needs out_dir (the folder for the projects and videos)");
     // The table: a file (paths in it relative to its folder) or the rows themselves
     QString err;
@@ -941,7 +943,8 @@ QJsonObject fillTemplateInto(const QJsonObject& a0, Context& ctx, FillBatch* bat
                     notes << QString("%1: the brand kit's logo").arg(r.slot.id);
                 }
     }
-    const QString out = a["out_project"].toString();
+    // Resolved here too: direct's template recipe calls this without the parameter table (`mcp --root`: OUTSIDE_ROOT)
+    const QString out = a["out_project"].toString().isEmpty() ? QString() : Sandbox::resolve(a["out_project"].toString());
     if (out.isEmpty() && !dry) fail("BAD_ARGUMENT", "fill needs out_project (the new project file)");
     if (!out.isEmpty()) checkedProjectPath(out, "out_project");
     // What would stop the write: dry_run reports it with the slots' problems, a real fill fails with it

@@ -45,7 +45,10 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
             const Track& t = timeline.audio[i];
             const QString& label = trackLabels[i];
             const qsizetype dash = label.lastIndexOf(QString::fromUtf8(" – "));
-            auto* box = new QCheckBox(label);
+            // "A1  Mix – Mix": the stream named like the track is said once
+            const QString stream = dash >= 0 ? label.mid(dash + 3) : QString();
+            const bool same = dash >= 0 && label.left(dash).endsWith(" " + stream);
+            auto* box = new QCheckBox(same ? label.left(dash) : label);
             box->setChecked(voice.isEmpty() ? !t.muted && (!anySolo || t.solo) : voice.contains(i));
             connect(box, &QCheckBox::toggled, this, &TranscribeDialog::updateState);
             tracks->addWidget(box);
@@ -56,17 +59,20 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
                                  "Untertitelspur je Tonspur, übereinander. Aus: alles in einer Spur, wer gleichzeitig "
                                  "spricht, steht in einer zweiten Zeile."));
         m_separate->setChecked(settings.value("transcribe/separate", true).toBool());
-        if (!voice.isEmpty()) {
-            auto* note = new QLabel(T("Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben."));
-            note->setWordWrap(true);
-            note->setEnabled(false); // dim, a hint
-            tracks->addWidget(note);
-        }
-        tracks->addSpacing(4);
-        tracks->addWidget(m_separate);
         auto* label = new QLabel(T("Tonspuren"));
         label->setToolTip(T("Nur die Spuren mit Sprache anhaken – Musik oder Spielton verschlechtern die Erkennung"));
         form->addRow(label, tracks);
+        // The hint and the option as rows of their own: a wrapped label inside the tracks' layout got the height of
+        // one line (its second line cut off, over the last track; user report 21.11.) - a form row gets its
+        // heightForWidth
+        if (!voice.isEmpty()) {
+            auto* note = new QLabel(T("Nur die Stimme ist angehakt – Musik und Spielton würden sonst mitgeschrieben."));
+            note->setObjectName("transcribe_voice_note");
+            note->setWordWrap(true);
+            note->setEnabled(false); // dim, a hint
+            form->addRow(QString(), note);
+        }
+        form->addRow(QString(), m_separate);
     }
     m_lang = new QComboBox;
     m_lang->addItem(T("Automatisch erkennen"), "auto");
@@ -106,6 +112,9 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     connect(buttons, &QDialogButtonBox::rejected, this, &TranscribeDialog::reject);
 
     auto* lay = new QVBoxLayout(this);
+    // Never narrower than its rows need: a layout with a wrapping label left the dialog at a default width that cut
+    // the per-track option (Russian, large font)
+    lay->setSizeConstraint(QLayout::SetMinimumSize);
     lay->addLayout(form);
     lay->addWidget(m_missing);
     lay->addWidget(m_extensions, 0, Qt::AlignLeft);
@@ -137,6 +146,7 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
         QVector<SubtitleCue> cues =
             Transcript::toCues(m_transcriber.result().words, m_format.rate.fps(), m_chars->value(), 700, m_from);
         Transcript::startAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
+        Transcript::endAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
         for (SubtitleCue& c : cues) c.end = std::min(c.end, m_to);
         if (!cues.isEmpty()) m_results << Result{m_jobs[m_job].name, cues};
         if (++m_job < m_jobs.size()) return startJob();

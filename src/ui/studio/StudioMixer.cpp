@@ -767,6 +767,7 @@ public:
         dynThumb->setVisible(on);
         peak->setVisible(on);
         fxRow->setVisible(!on);
+        fitWidth(); // the small buttons' row can be wider than the pictures (a large font: "EQ" + "DYN" cut off)
     }
     // Height the strip needs with the small buttons (its least) and with the pictures
     int compactHeight() const { return baseHeight() + fxRow->sizeHint().height() + layout()->spacing(); }

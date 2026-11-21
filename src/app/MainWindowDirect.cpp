@@ -250,7 +250,12 @@ void MainWindow::ensureDirectPage()
                                                            T("Audio (*.wav *.mp3 *.flac *.ogg *.m4a *.opus);;Alle Dateien (*)")));
     });
     updateDirectTracks();
-    connect(m_project, &Project::timelineChanged, m_directPage, [this] { updateDirectTracks(); });
+    // Only while the page is shown: a drag on Edit sends timelineChanged on every mouse move (review 21.11.); hidden,
+    // the page is brought up to date when it shows (showPage) or a suggestion starts
+    connect(m_project, &Project::timelineChanged, m_directPage, [this] {
+        if (m_page == Page::Direct) updateDirectTracks();
+        else m_directTracksDirty = true;
+    });
     // The own wish: to the AI chat; ✕ stops its turn
     connect(m_directPage->wish(), &DirectWish::wishRequested, this, &MainWindow::directWish);
     connect(m_directPage->wish(), &DirectWish::stopRequested, this, [this] {
@@ -278,6 +283,7 @@ void MainWindow::ensureDirectPage()
 void MainWindow::updateDirectTracks()
 {
     if (!m_directPage) return;
+    m_directTracksDirty = false;
     m_directPage->material()->setTimelineLength(TimelineOps::endFrame(m_project->timeline()) / m_project->format().rate.fps());
     QStringList names;
     const QVector<Track>& audio = m_project->timeline().audio;
@@ -323,7 +329,9 @@ void MainWindow::directReset(bool material)
 
 void MainWindow::directSuggest()
 {
-    if (!m_directPage || m_directPage->material()->isEmpty()) return;
+    if (!m_directPage) return;
+    if (m_directTracksDirty) updateDirectTracks();
+    if (m_directPage->material()->isEmpty()) return;
     const int run = ++m_directRun; // first: the old run's reply (also a CANCELED from the cancel below) is dropped
     if (m_directCancel) {
         auto cancel = std::move(m_directCancel);
@@ -434,7 +442,9 @@ void MainWindow::directApply()
         m_backgroundJobs->setJob(kApplyJobId, job);
     };
     auto finished = std::make_shared<bool>(false);
-    const auto done = [this, run, finished](const QJsonObject& reply) {
+    // The session as it is applied: a Suggest meanwhile shows another one in the list (review 21.11.)
+    const QJsonObject applied = m_directPage->suggestions()->session();
+    const auto done = [this, run, finished, applied](const QJsonObject& reply) {
         *finished = true;
         if (run != m_directApplyRun) return;
         m_directApplyCancel = {};
@@ -444,10 +454,9 @@ void MainWindow::directApply()
             if (m_backgroundJobs)
                 m_backgroundJobs->finishJob(kApplyJobId, newProject ? T("Regie: Projekt gebaut") : T("Regie: Timeline gebaut"));
             // A short: its captions and effect sounds are offered as the next step
-            const QJsonObject session = m_directPage->suggestions()->session();
-            m_directApplied = {{"session", session}, {"result", reply.value("result")}};
+            m_directApplied = {{"session", applied}, {"result", reply.value("result")}};
             m_directAppliedByAi = false;
-            m_directPage->setFinishOffered(directBackend()->canFinish(session));
+            m_directPage->setFinishOffered(directBackend()->canFinish(applied));
             // A template filled into a new project file: nothing changed here (no undo step), the page offers it
             const QJsonObject result = reply.value("result").toObject();
             if (result.value("new_project").toBool()) {
@@ -473,7 +482,7 @@ void MainWindow::directApply()
             m_directPage->suggestions()->setStale(T("Die Vorschläge sind abgelaufen."));
             return;
         }
-        const QString recipe = m_directPage->suggestions()->session().value("recipe").toString();
+        const QString recipe = applied.value("recipe").toString();
         QMessageBox box(QMessageBox::Warning, T("Regie"), T("Nicht übernommen: %1").arg(friendlyError(recipe, error, true)),
                         QMessageBox::Ok, this);
         box.setDetailedText(error.value("message").toString());
@@ -514,9 +523,12 @@ void MainWindow::directFinish()
         if (reply.value("ok").toBool()) {
             m_directPage->setFinishOffered(false); // done once
             if (m_backgroundJobs) m_backgroundJobs->finishJob(kApplyJobId, T("Regie: Untertitel und Effektklänge fertig"));
-            const QJsonArray notes = reply.value("result").toObject().value("notes").toArray();
-            statusBar()->showMessage(notes.isEmpty() ? T("Regie: Untertitel und Effektklänge eingefügt")
-                                                     : T("Regie: %1").arg(notes.first().toString()),
+            const QJsonObject result = reply.value("result").toObject();
+            const QJsonArray notes = result.value("notes").toArray();
+            // The notes' keys in the UI language (the notes themselves are English, for an AI)
+            QString first = DirectText::note({{"key", result.value("note_keys").toArray().first().toString()}});
+            if (first.isEmpty() && !notes.isEmpty()) first = notes.first().toString();
+            statusBar()->showMessage(first.isEmpty() ? T("Regie: Untertitel und Effektklänge eingefügt") : T("Regie: %1").arg(first),
                                      6000);
             return;
         }
@@ -530,7 +542,8 @@ void MainWindow::directFinish()
             statusBar()->showMessage(T("Regie: Der Short hat sich geändert, Untertitel und Effektklänge wurden nicht eingefügt."), 8000);
             return;
         }
-        m_directPage->setFinishOffered(true);
+        // Offered again for that short, unless a Suggest meanwhile dropped it (the button would finish nothing)
+        m_directPage->setFinishOffered(!m_directApplied.isEmpty());
         if (code == "CANCELED") return;
         QMessageBox box(QMessageBox::Warning, T("Regie"),
                         T("Nicht eingefügt: %1").arg(friendlyError(QStringLiteral("short"), error, true)), QMessageBox::Ok, this);

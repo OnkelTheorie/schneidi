@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.24.0 LANGUAGES CXX)
+project(schneidi VERSION 0.25.0 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
-set(SCHNEIDI_NEXT_VERSION 0.25.0)
+set(SCHNEIDI_NEXT_VERSION 0.25.1)
 
 # Build optimized when nothing is given (debug builds stutter in playback: own filters run per frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -382,6 +382,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/AiSettings.h src/app/AiSettings.cpp
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
     src/app/UpdateCheck.h src/app/UpdateCheck.cpp
+    src/app/BugReport.h src/app/BugReport.cpp
     src/app/TourManager.h src/app/TourManager.cpp
     src/app/AiLog.h src/app/AiLog.cpp
     src/app/AiProvider.h src/app/AiProvider.cpp
