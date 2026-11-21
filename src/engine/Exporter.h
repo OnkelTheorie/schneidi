@@ -145,6 +145,10 @@ public:
     // The first file an export would write that the timeline reads (empty: none): `path` and, with a subtitle path,
     // every subtitle file of Subtitles::srtFiles. Shared by the export and the CLI's subtitle-only render.
     static QString overwrittenSource(const Timeline& tl, const QString& path, const QString& subtitlePath = {});
+    // Source files of switched-on media clips (also in the nested sequences they show) that do not exist (moved,
+    // deleted, other computer), each once in timeline order: they would render as black picture and silence.
+    // from/to (exclusive): only clips of the top timeline in that range (to <= from: all)
+    static QStringList missingSources(const Timeline& tl, int from = 0, int to = 0);
     // Do both paths point to the same existing file? (Windows: case does not matter)
     static bool sameFile(const QString& a, const QString& b);
     // The lossless intermediate of a GIF export with this part id (ExportSettings::partId), in the temp folder

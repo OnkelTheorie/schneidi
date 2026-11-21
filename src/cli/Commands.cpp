@@ -1243,9 +1243,10 @@ const QVector<Command>& commands()
                                      "or ac3 (AC-3/Dolby Digital at 640 kbit/s for 5.1: TVs, AV receivers, Blu-ray "
                                      "tools; a 7.1 mix is written as 5.1). Only when this FFmpeg has the AC-3 encoder "
                                      "(else BAD_ARGUMENT); the answer then has 'audio_codec'"},
-          {"subtitles", T::String, "none (default), burn (into the picture), srt or vtt (files next to the video: the "
+          {"subtitles", T::String, "none, burn (into the picture), srt or vtt (files next to the video: the "
                                   "visible track as <name>.srt, other tracks with entries as <name>.<track name>.srt; "
-                                  "vtt = WebVTT for web players)"},
+                                  "vtt = WebVTT for web players). Default: a visible word caption track (karaoke/word "
+                                  "style) is burned in, plain subtitle lines are left out; the answer's notes say which"},
           {"embed_subtitles", T::Boolean, "also put every subtitle track with entries into the file as a text stream "
                                           "players can switch on (MP4/MOV: mov_text, MKV: SRT, WebM: WebVTT; plain "
                                           "text, word caption styles only burned in). Combines with burn"},
@@ -1260,6 +1261,9 @@ const QVector<Command>& commands()
                                   "Fewer threads also render fewer frames at once and so need less memory: on a "
                                   "machine that is busy (a game, a recording) use 2"},
           {"overwrite", T::Boolean, "replace an existing output file"},
+          {"allow_missing", T::Boolean, "render even when source files are missing (they become black picture and "
+                                        "silence, listed in notes); without it such a render fails with "
+                                        "MISSING_MEDIA naming the files"},
           {"review", T::String,
            "a review render to check the edit yourself instead of guessing (the project is not changed; the marks "
            "exist only in this render): video = small fast video (540 p unless height/size, fastest encoder setting) "

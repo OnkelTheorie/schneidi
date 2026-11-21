@@ -41,6 +41,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -238,6 +239,30 @@ QString Exporter::overwrittenSource(const Timeline& tl, const QString& path, con
     for (const QString& target : std::as_const(targets))
         if (!target.isEmpty() && readsFile(tl, target)) return target;
     return {};
+}
+
+QStringList Exporter::missingSources(const Timeline& tl, int from, int to)
+{
+    QStringList out;
+    QSet<int> visited;
+    const std::function<void(const Timeline&, bool)> scan = [&](const Timeline& t, bool top) {
+        for (const auto* tracks : {&t.video, &t.audio})
+            for (const Track& track : *tracks)
+                for (const Clip& c : track.clips) {
+                    if (!c.enabled || (top && to > from && (c.end() <= from || c.start >= to))) continue;
+                    if (c.kind == ClipKind::Media) {
+                        if (!c.mediaPath.isEmpty() && !out.contains(c.mediaPath) && !QFileInfo::exists(c.mediaPath))
+                            out << c.mediaPath;
+                    } else if ((c.kind == ClipKind::Compound || c.kind == ClipKind::Multicam) && tl.nested
+                               && !visited.contains(c.sequenceId)) {
+                        // The sequence the clip shows (each once; the whole sequence, not only the part used)
+                        visited.insert(c.sequenceId);
+                        if (const auto it = tl.nested->constFind(c.sequenceId); it != tl.nested->constEnd()) scan(*it, false);
+                    }
+                }
+    };
+    scan(tl, true);
+    return out;
 }
 
 bool Exporter::anyRunning()

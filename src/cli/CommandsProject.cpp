@@ -1039,6 +1039,43 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.to = (a.contains("to") ? parseTime(a["to"], s.format(), "to") : end) - 1;
         if (job.to < job.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
     }
+    // Missing source files render as black picture and silence: refuse unless the caller wants that
+    // (`check` says "File missing" too)
+    if (!srtOnly) {
+        const QStringList missing =
+            Exporter::missingSources(tl, job.inOut ? job.from : 0, job.inOut ? job.to + 1 : end);
+        if (!missing.isEmpty()) {
+            if (!a["allow_missing"].toBool())
+                fail("MISSING_MEDIA", QString("%1 source file%2 missing (would render black and silent; relink or "
+                                              "pass allow_missing): %3")
+                                          .arg(missing.size())
+                                          .arg(missing.size() == 1 ? " is" : "s are")
+                                          .arg(missing.join(", ")));
+            s.notes << QString("rendered without missing files (black and silent there): %1").arg(missing.join(", "));
+        }
+    }
+    // Subtitles not asked for: word captions (karaoke/word, made from `transcribe --captions`) exist only burned into
+    // the picture, so they are burned by default; plain subtitle lines stay out (a platform shows its own), with a note
+    if (!srtOnly && !sheet && !a.contains("subtitles") && job.settings.subtitles == RenderSettings::NoSubtitles
+        && !job.settings.audioOnly()) {
+        const int rangeFrom = job.inOut ? job.from : 0, rangeTo = job.inOut ? job.to + 1 : end;
+        for (int i = 0; i < tl.subtitles.size(); ++i) {
+            const SubtitleTrack& track = tl.subtitles[i];
+            if (!track.enabled) continue;
+            const auto cues = std::count_if(track.cues.begin(), track.cues.end(), [&](const SubtitleCue& c) {
+                return c.end > rangeFrom && c.start < rangeTo;
+            });
+            if (cues == 0) continue;
+            const QString name = subtitleTrackDisplayName(track, i);
+            if (track.captions.mode != CaptionMode::Lines) {
+                job.settings.subtitles = RenderSettings::BurnSubtitles;
+                s.notes << QString("%1 word captions of '%2' burned in (subtitles 'none' leaves them out)").arg(cues).arg(name);
+            } else {
+                s.notes << QString("%1 subtitles of '%2' not burned in (subtitles 'burn' burns them, 'srt' writes a file "
+                                   "next to the video)").arg(cues).arg(name);
+            }
+        }
+    }
     QJsonObject reviewInfo;
     std::shared_ptr<const ReviewSheet::Data> marks;
     if (sheet || reviewVideo) {

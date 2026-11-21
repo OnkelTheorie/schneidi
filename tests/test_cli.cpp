@@ -1128,6 +1128,28 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         QFile f(srt);
         CHECK(f.open(QIODevice::ReadOnly) && f.readAll().contains("Hi"));
         CHECK_EQ(errorOf("render", {{"project", g_path}, {"out", dir.filePath("x.mp4")}, {"preset", "Nope"}}), QString("NOT_FOUND"));
+        // A missing source file (/x/a.mp4) would render black and silent: refused naming it, unless allow_missing.
+        // Plain subtitle lines are left out with a note; word captions are burned by default
+        {
+            const QString mp = dir.filePath("miss.schneidi");
+            QFile::copy(g_path, mp);
+            const QString miss = messageOf("render", {{"project", mp}, {"out", dir.filePath("miss.mp4")}});
+            CHECK(miss.contains("/x/a.mp4") && miss.contains("allow_missing"));
+            CHECK_EQ(errorOf("render", {{"project", mp}, {"out", dir.filePath("miss.mp4")}}), QString("MISSING_MEDIA"));
+            CHECK(!QFileInfo::exists(dir.filePath("miss.mp4")));
+            const QJsonObject r = run("render", {{"project", mp}, {"out", dir.filePath("miss.mp4")}, {"allow_missing", true},
+                                                 {"height", 180}, {"to", 10}});
+            const QByteArray notes = QJsonDocument(r["notes"].toArray()).toJson();
+            CHECK(notes.contains("/x/a.mp4"));
+            CHECK(notes.contains("1 subtitles of") && notes.contains("not burned in"));
+            run("edit", {{"project", mp}, {"ops", R"([{"op":"captions","words":[{"from":0,"to":5,"text":"hi"}]}])"}});
+            const QJsonObject w = run("render", {{"project", mp}, {"out", dir.filePath("words.mp4")}, {"allow_missing", true},
+                                                 {"height", 180}, {"to", 10}});
+            CHECK(QJsonDocument(w["notes"].toArray()).toJson().contains("word captions of"));
+            const QJsonObject none = run("render", {{"project", mp}, {"out", dir.filePath("none.mp4")}, {"allow_missing", true},
+                                                    {"height", 180}, {"to", 10}, {"subtitles", "none"}});
+            CHECK(!QJsonDocument(none["notes"].toArray()).toJson().contains("captions"));
+        }
         // Frame rate of an empty project: media lengths follow
         const QString empty = dir.filePath("empty.schneidi");
         run("new", {{"project", empty}});
