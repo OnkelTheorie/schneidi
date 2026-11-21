@@ -32,6 +32,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <functional>
 #include <cmath>
@@ -169,6 +170,28 @@ QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx,
     };
     std::vector<Sample> samples;
     std::mutex mutex;
+    // Still = like the reference picture, the first of the run (ffmpeg's freezedetect), not like the one before: a
+    // slow gradient or pan changes less than the limit from picture to picture but drifts away (04: "frozen" x7 on a
+    // moving background). Each thread keeps its reference; a new time range (previous is not the picture it saw
+    // last) starts from `previous`.
+    struct Reference {
+        uint64_t scan = 0;
+        double last = -1;
+        int w = 0, h = 0;
+        std::vector<uint8_t> planes[3];
+    };
+    static std::atomic<uint64_t> scans{0};
+    const uint64_t scanId = ++scans;
+    thread_local Reference ref;
+    const auto keep = [](Reference& r, const Video::Scan::Frame& fr) {
+        r.w = fr.width, r.h = fr.height;
+        for (int p = 0; p < 3; ++p) {
+            const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
+            r.planes[p].resize(size_t(w) * h);
+            for (int y = 0; y < h; ++y)
+                std::memcpy(r.planes[p].data() + size_t(y) * w, fr.data[p] + size_t(y) * size_t(fr.linesize[p]), size_t(w));
+        }
+    };
     Video::Scan::Options o;
     o.width = 320;
     o.height = -2;
@@ -183,17 +206,27 @@ QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx,
                 for (int x = 0; x < fr.width; ++x) dark += row[x] <= limit;
             }
             const bool black = dark >= 0.98 * fr.width * fr.height;
+            if (previous && (ref.scan != scanId || std::abs(ref.last - previous->seconds) > 1e-9 || ref.w != fr.width
+                             || ref.h != fr.height)) {
+                ref.scan = scanId;
+                keep(ref, *previous);
+            }
             bool still = previous != nullptr;
             for (int p = 0; p < 3 && still; ++p) {
                 const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
                 uint64_t sad = 0;
                 for (int y = 0; y < h; ++y) {
                     const uint8_t* a = fr.data[p] + size_t(y) * size_t(fr.linesize[p]);
-                    const uint8_t* b = previous->data[p] + size_t(y) * size_t(previous->linesize[p]);
+                    const uint8_t* b = ref.planes[p].data() + size_t(y) * w;
                     for (int x = 0; x < w; ++x) sad += uint64_t(std::abs(int(a[x]) - int(b[x])));
                 }
                 still = double(sad) / (double(w) * h * 255.0) <= 0.001; // -60 dB
             }
+            if (!still) {
+                ref.scan = scanId;
+                keep(ref, fr);
+            }
+            ref.last = fr.seconds;
             std::lock_guard lock(mutex);
             samples.push_back({fr.seconds, black, still});
         },

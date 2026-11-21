@@ -1593,7 +1593,7 @@ const QVector<Command>& commands()
                   "in the project, skipped when rendering - e.g. frei0r plugins of old projects; remove or replace "
                   "them; custom_effect_skipped: a shader or filter chain this machine cannot draw - no graphics card, "
                   "no qsb, no libavfilter; custom_code_untrusted: custom code of a project or recipe from someone else, not run "
-                  "until the user trusts it), frames without any picture (a gap = black), subtitles too "
+                  "until the user trusts it), frames without any picture (a gap = black; 'clip' = a disabled video clip there), subtitles too "
                   "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
                   "(stutter: jumps in the time stamps, see `probe` gaps), black_bars (black bars baked into a "
                   "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
@@ -1601,7 +1601,7 @@ const QVector<Command>& commands()
                   "reach the output; comp_output_mask: the output node gives a mask, the graph does nothing; comp_slow: estimated above 40 ms per frame, playback may stutter; key_edges: a "
                   "key's matte with many half-transparent pixels in the subject; tracker_lost: a followed tracker lost "
                   "its point for more than 5 frames, range = the gap; tracker_ended: it never found it again), and the sound of the mix as exported: no "
-                  "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
+                  "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, audio_hole (the sound dropsto digital silence for 25 ms to 1 s at an edit - a gap between clips or a clip without sound there;fix: the delete_range the message names), and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "
                   "sound of a video recording, or a track named voice/mic/game; fix: raise that track or `duck` the "
@@ -1616,7 +1616,7 @@ const QVector<Command>& commands()
                   "stretches, frozen picture, no sound, the same sound checks. 'issues' (errors first, each with check "
                   "id, message, time range and 'clip' when it is about one), counts of 'errors'/'warnings' and the "
                   "measured 'sound'; for a project with clipping, true peak or loudness off the target also 'fix': the "
-                  "ops for `edit` that solve them (master limiter at -1.2 dBTP, a little under the -1 limit, master fader by the difference) - apply "
+                  "ops for `edit` that solve them (master limiter at -1.2 dBTP, a little under the -1 limit, and mixer master target_lufs, which measures after the limiter until the target is reached) - apply "
                   "them, don't judge the numbers yourself. Fix errors before handing over; warnings may be intended "
                   "(a fade to black, a pause). "
                   "Pace (project): a change = a cut or clip edge on a visible video track (V2+: overlay; titles: "
@@ -1647,10 +1647,12 @@ const QVector<Command>& commands()
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"from", T::Time, "for a project: start of the range to check (default: start)"},
           {"to", T::Time, "for a project: end of the range (default: end of the timeline)"},
-          {"target_lufs", T::Number, "loudness target (default -14 for web/streaming; -23 broadcast, -16 podcasts)"},
+          {"target_lufs", T::Number, "loudness target (default -14 for web/streaming, -16 when the audio tracks are "
+                                     "voices by name - a podcast, a call; -23 broadcast); sound.target_by says which"},
           {"for", T::String, "the platform the video is for: shorts, reels or tiktok - also too_long (longer than "
                              "the platform takes as a short: Shorts and Reels 3 min, TikTok 10 min) and its loudness "
-                             "target"},
+                             "target; or a delivery's loudness target only: podcast (-16), youtube, web (-14), "
+                             "broadcast (-23)"},
           {"channels", T::String, "project: the channel format the sound checks measure, like render's channels: "
                                   "project (default: the mix's own), stereo (a 5.1/7.1 mix as a stereo export writes "
                                   "it - MP3, render --channels stereo), 5.1 or 7.1"},

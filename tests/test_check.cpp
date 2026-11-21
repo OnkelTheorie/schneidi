@@ -692,6 +692,18 @@ int main(int argc, char** argv)
                                             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
     r = run("check", {{"source", black}});
     CHECK_EQ(checksOf(r), QStringList({"no_audio", "black_file"}));
+    // A slowly moving gradient (a podcast background, 04): less than the limit from picture to picture, but it drifts
+    // away from where it was - not frozen; a picture that really stands still for 4 s is
+    const QString drift = Check::makeMedia(dir.filePath("drift.mp4"),
+                                           {"-f", "lavfi", "-i", "nullsrc=s=320x180:r=25:d=6", "-vf",
+                                            "geq=lum='(X+N*0.2)*255/W':cb=128:cr=128,format=yuv420p", "-c:v",
+                                            "libx264", "-qp", "0", "-pix_fmt", "yuv420p"});
+    CHECK_EQ(checksOf(run("check", {{"source", drift}})), QStringList({"no_audio"}));
+    const QString frozen = Check::makeMedia(dir.filePath("frozen.mp4"),
+                                            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=1", "-f", "lavfi", "-i",
+                                             "color=c=gray:s=320x180:r=25:d=4", "-filter_complex", "[0][1]concat=n=2",
+                                             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+    CHECK_EQ(checksOf(run("check", {{"source", frozen}})), QStringList({"no_audio", "frozen"}));
     // A still image: said so, not "no picture (sound only)" and "no sound"
     const QString still = Check::makeMedia(dir.filePath("still.png"),
                                            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=1", "-frames:v", "1"});
