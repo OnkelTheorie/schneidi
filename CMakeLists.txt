@@ -659,13 +659,18 @@ if(ANDROID)
         endif()
     endforeach()
     list(REMOVE_DUPLICATES _schneidi_android_libs)
+    # Android 15 draws apps that target SDK 35 under the system bars (edge to edge); only Qt 6.9+ reports the safe
+    # areas that keep the window out of them, older Qt targets 34
+    if(Qt6_VERSION VERSION_LESS 6.9)
+        set(_schneidi_target_sdk 34)
+    else()
+        set(_schneidi_target_sdk 35)
+    endif()
     set_target_properties(schneidi PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/packaging/android/app
         QT_ANDROID_EXTRA_LIBS "${_schneidi_android_libs}"
         QT_ANDROID_VERSION_NAME ${SCHNEIDI_NEXT_VERSION}
-        # 34, not 35: Android 15 draws apps that target 35 under the status bar (edge to edge), and Qt before 6.9
-        # reports no safe areas to keep the window out of it
-        QT_ANDROID_TARGET_SDK_VERSION 34)
+        QT_ANDROID_TARGET_SDK_VERSION ${_schneidi_target_sdk})
 else()
     add_executable(schneidi src/main.cpp)
 endif()
