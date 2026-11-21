@@ -27,6 +27,28 @@ Scan fromTimestamps(std::vector<double> times)
     return s;
 }
 
+Scan fromPackets(std::vector<Packet> packets, int pixels)
+{
+    std::sort(packets.begin(), packets.end(), [](const Packet& a, const Packet& b) { return a.time < b.time; });
+    packets.erase(std::unique(packets.begin(), packets.end(), [](const Packet& a, const Packet& b) { return a.time == b.time; }),
+                  packets.end());
+    std::vector<double> times(packets.size());
+    for (size_t i = 0; i < packets.size(); ++i) times[i] = packets[i].time;
+    Scan s = fromTimestamps(times);
+    if (pixels <= 0 || s.jumps.isEmpty()) return s;
+    const double limit = kUnchangedBytesPerPixel * pixels;
+    const auto unchanged = [&](size_t k) { return k < packets.size() && !packets[k].key && packets[k].size <= limit; };
+    QVector<Jump> seen;
+    for (const Jump& j : s.jumps) {
+        const size_t before = size_t(std::lower_bound(times.begin(), times.end(), j.at) - times.begin()), after = before + 1;
+        const bool repeated = after < packets.size()
+                              && (unchanged(after) || (packets[after].key && unchanged(before) && unchanged(after + 1)));
+        if (!repeated) seen << j;
+    }
+    s.jumps = seen;
+    return s;
+}
+
 QVector<Jump> inRange(const Scan& s, double from, double to)
 {
     // The frozen picture lies between the two frames; half a frame of tolerance for rounding to frames

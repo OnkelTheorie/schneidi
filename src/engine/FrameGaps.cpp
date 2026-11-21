@@ -27,7 +27,7 @@ namespace FrameGaps {
 
 namespace {
 
-constexpr int kVersion = 1; // bump when the rule in Stutter::fromTimestamps changes (old disk entries are ignored)
+constexpr int kVersion = 2; // bump when the rule in Stutter::fromPackets changes (old disk entries are ignored)
 
 QMutex g_mutex;
 QHash<QString, std::optional<Stutter::Scan>>& memory()
@@ -118,6 +118,7 @@ std::optional<Stutter::Scan> read(const QString& path, const std::atomic<bool>* 
     const AVRational tb = fmt->streams[index]->time_base;
 
     std::vector<int64_t> stamps;
+    std::vector<std::pair<int, bool>> sizes; // per stamp: bytes, key frame
     int64_t origin = AV_NOPTS_VALUE;
     AVPacket* pkt = av_packet_alloc();
     for (int64_t count = 0; av_read_frame(fmt.get(), pkt) >= 0; ++count) {
@@ -129,6 +130,7 @@ std::optional<Stutter::Scan> read(const QString& path, const std::atomic<bool>* 
             const int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
             if (ts != AV_NOPTS_VALUE) {
                 stamps.push_back(ts);
+                sizes.emplace_back(pkt->size, (pkt->flags & AV_PKT_FLAG_KEY) != 0);
                 if (origin == AV_NOPTS_VALUE && (pkt->flags & AV_PKT_FLAG_KEY))
                     origin = pkt->dts != AV_NOPTS_VALUE && pkt->dts < 0 ? 0 : ts;
             }
@@ -138,9 +140,11 @@ std::optional<Stutter::Scan> read(const QString& path, const std::atomic<bool>* 
     av_packet_free(&pkt);
     if (stamps.size() < 3) return std::nullopt; // a still in a video container
     if (origin == AV_NOPTS_VALUE) origin = stamps.front();
-    std::vector<double> times(stamps.size());
-    for (size_t i = 0; i < stamps.size(); ++i) times[i] = double(stamps[i] - origin) * av_q2d(tb);
-    return Stutter::fromTimestamps(std::move(times));
+    std::vector<Stutter::Packet> packets(stamps.size());
+    for (size_t i = 0; i < stamps.size(); ++i)
+        packets[i] = {double(stamps[i] - origin) * av_q2d(tb), sizes[i].first, sizes[i].second};
+    const AVCodecParameters* par = fmt->streams[index]->codecpar;
+    return Stutter::fromPackets(std::move(packets), par->width * par->height);
 }
 
 } // namespace

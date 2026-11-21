@@ -98,7 +98,7 @@ void testChanges()
     // Only inside the range
     CHECK_EQ(framesOf(ExportCheck::changes(tl, 60, 200, f)), (QVector<int>{75, 150}));
 
-    // Keyframes: a moving zoom counts at each key, a single key or equal neighbours hold still, a disabled clip
+    // Keyframes: a moving zoom counts at each key and every second between them (it moves all the way), a single key or equal neighbours hold still, a disabled clip
     // and a subtitle track that is off count nothing; changes closer than 0.25 s (6 frames) count once
     Timeline k = oneTrack({media(1, 0, 150)}, 2);
     k.video[0].clips[0].in = 10;
@@ -114,14 +114,14 @@ void testChanges()
     k.subtitles[0].enabled = false;
     k.subtitles[0].cues << SubtitleCue{9, 70, 80, "x", {}};
     const QVector<ExportCheck::Change> m = ExportCheck::changes(k, 0, 150, f);
-    CHECK_EQ(framesOf(m), (QVector<int>{50, 100, 110}));
+    CHECK_EQ(framesOf(m), (QVector<int>{50, 75, 100, 110}));
     if (!m.isEmpty()) CHECK(m[0].kind == ChangeKind::Motion);
     // A value of the compositing graph that moves (a 3D text turning) is motion too; other effects' keys are not
     Timeline g = oneTrack({media(1, 0, 150)});
     g.video[0].clips[0].keys[Keys::effectParam("comp", "n3.rot_y")] = {{40, -70}, {90, 20}};
     g.video[0].clips[0].keys[Keys::effectParam("blur", "radius")] = {{60, 0}, {70, 9}};
     const QVector<ExportCheck::Change> gm = ExportCheck::changes(g, 0, 150, f);
-    CHECK_EQ(framesOf(gm), (QVector<int>{40, 90}));
+    CHECK_EQ(framesOf(gm), (QVector<int>{40, 65, 90}));
     if (!gm.isEmpty()) CHECK(gm[0].kind == ChangeKind::Motion);
 }
 
@@ -150,6 +150,17 @@ void testPace()
     p = ExportCheck::pace(even, 0, 250, f);
     CHECK_EQ(p.changes.size(), 19);
     CHECK(std::abs(p.changesPerS - 1.9) < 1e-9);
+    // A title 0.3 s after a cut counts once with it, but the stillness starts with the title (06: the title at 4 s
+    // after a change at 3.7 s, "still 3.7-7.0 s" while it showed from 4 s): cut 25, title 33-104, cut 104: 79 frames
+    // from the cut but 71 from the title, under the 75 (3 s) of a still stretch
+    {
+        Timeline t = oneTrack({media(1, 0, 25), media(2, 25, 79), media(3, 104, 46)}, 2);
+        t.video[1].clips << title(9, 33, 71);
+        const ExportCheck::Pace q = ExportCheck::pace(t, 0, 150, f);
+        CHECK_EQ(q.changes.size(), 2); // 25 (with the title at 33), 104 (the cut and the title's end)
+        CHECK(q.still.isEmpty());
+        CHECK_EQ(q.longest.length(), 71);
+    }
     // A long video: at most ~60 curve steps
     Timeline longOne = oneTrack({media(1, 0, 25 * 600)});
     p = ExportCheck::pace(longOne, 0, 25 * 600, f);
@@ -430,7 +441,7 @@ void testCommand(const QString& dir)
                              .arg(firstClip(project))}});
     r = run("check", {{"source", project}, {"sound", false}});
     CHECK(!checksOf(r).contains("pace_slow"));
-    CHECK_EQ(r.value("pace")["changes"].toInt(), 2);
+    CHECK_EQ(r.value("pace")["changes"].toInt(), 3); // 2 s, 3 s (moving), 4 s
     CHECK_EQ(r.value("pace")["longest_s"].toDouble(), 2.0);
     run("restore", {{"project", project}});
     CHECK(!checksOf(run("check", {{"source", project}, {"sound", false}, {"max_still_s", 7}})).contains("pace_slow"));

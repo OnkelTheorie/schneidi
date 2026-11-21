@@ -72,18 +72,42 @@ QVector<Range> pauses(const QVector<std::vector<bool>>& quiet, const QVector<int
             if (!q[i]) return false;
         return true;
     };
+    // Holes: runs without a clip shorter than minPause with a part on both sides (missing sound, not a pause)
+    std::vector<bool> hole(length, false);
+    if (present)
+        for (size_t a = 0; a < length;) {
+            if ((*present)[a]) {
+                ++a;
+                continue;
+            }
+            size_t b = a;
+            while (b < length && !(*present)[b]) ++b;
+            if (a > 0 && b < length && int(b - a) < minPause) std::fill(hole.begin() + long(a), hole.begin() + long(b), true);
+            a = b;
+        }
+    const auto cuttable = [&](size_t k) { return hole[k] || allQuiet(k); };
     size_t i = 0;
     while (i < length) {
-        if (!allQuiet(i)) {
+        if (!cuttable(i)) {
             ++i;
             continue;
         }
         size_t j = i;
-        while (j < length && allQuiet(j)) ++j;
+        while (j < length && cuttable(j)) ++j;
+        size_t first = j, last = i; // the hole frames of the run
+        for (size_t k = i; k < j; ++k)
+            if (hole[k]) first = std::min(first, k), last = k + 1;
         // A pad keeps air next to speech; at the end of what was measured no speech follows - a pad there would only
         // leave a sliver of silence behind the last cut (videotest 21.11.: 9 frames at the end)
-        const int from = int(i) + pad, to = j >= length ? int(j) : int(j) - pad;
-        if (int(j - i) >= minPause && to > from) out << Range{from, to, Kind::Pause, tracks, {}};
+        const bool atEnd = j >= length;
+        if (first == j) { // quiet only: a pause when long enough
+            const int from = int(i) + pad, to = atEnd ? int(j) : int(j) - pad;
+            if (int(j - i) >= minPause && to > from) out << Range{from, to, Kind::Pause, tracks, {}};
+        } else { // with a hole: always cut; the quiet beside it keeps `pad` only when it has that much
+            const int from = int(i) + (int(first - i) >= pad ? pad : 0);
+            const int to = atEnd ? int(j) : int(j) - (int(j - last) >= pad ? pad : 0);
+            if (to > from) out << Range{from, to, Kind::Pause, tracks, {}};
+        }
         i = j;
     }
     return out;

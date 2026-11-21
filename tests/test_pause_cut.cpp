@@ -136,8 +136,34 @@ void testCore()
         }
         // a alone has its quiet 10..18 too
         CHECK_EQ(pauses({a}, {0}, 5, 0).size(), 2);
-        const std::vector<bool> q = quietFrames({0.001f, 0.5f}, -40, 4);
-        CHECK(q == std::vector<bool>({true, false, true, true}));
+    }
+    // A hole (no clip, shorter than minPause, a part on both sides: two segments of one recorded call placed with a
+    // sliver between them, videotest 04 at 16.7 s) is missing sound: cut with the short soundless tail before it, even
+    // though the whole quiet is shorter than minPause; a longer quiet beside it keeps its pad
+    {
+        std::vector<bool> q(40, false), present(40, true);
+        for (int i = 20; i < 25; ++i) q[size_t(i)] = true; // the recording's tail without sound
+        for (int i = 25; i < 31; ++i) present[size_t(i)] = false, q[size_t(i)] = true; // the gap
+        const QVector<Range> r = pauses({q}, {0}, 42, 12, &present);
+        if (CHECK_EQ(r.size(), 1)) {
+            CHECK_EQ(r[0].from, 20);
+            CHECK_EQ(r[0].to, 31);
+        }
+        for (int i = 5; i < 20; ++i) q[size_t(i)] = true; // 15 frames of quiet before it: 12 stay
+        const QVector<Range> padded = pauses({q}, {0}, 42, 12, &present);
+        if (CHECK_EQ(padded.size(), 1)) {
+            CHECK_EQ(padded[0].from, 17);
+            CHECK_EQ(padded[0].to, 31);
+        }
+        // A gap of minPause or more (B-roll, a title between two parts) stays
+        std::vector<bool> broll(60, true), qb(60, true);
+        for (int i = 0; i < 10; ++i) qb[size_t(i)] = false;
+        for (int i = 50; i < 60; ++i) qb[size_t(i)] = false;
+        for (int i = 10; i < 50; ++i) broll[size_t(i)] = false;
+        CHECK(pauses({qb}, {0}, 40, 5, &broll).isEmpty());
+        // Without `present` nothing is a hole
+        CHECK(pauses({q}, {0}, 42, 12).isEmpty());
+        CHECK(quietFrames({0.001f, 0.5f}, -40, 4) == std::vector<bool>({true, false, true, true}));
     }
     // Fillers: cut while the other track is quiet; the filler's own bleed on the other mic does not block; the other
     // speaker does; the edges snap onto the filler track's own quiet (none within 3 frames = it stays)

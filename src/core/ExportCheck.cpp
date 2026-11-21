@@ -351,14 +351,40 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
     // Frames without any picture: black in the video (a forgotten frame between two clips is the classic)
     const QVector<QPair<int, int>> covered = pictureCoverage(tl, from, to);
     if (covered.isEmpty()) {
-        out << issue(Severity::Warning, "black", T("Die Timeline hat kein Bild (nur Ton)"), from, to);
+        Issue i = issue(Severity::Warning, "black", T("Die Timeline hat kein Bild (nur Ton)"), from, to);
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips)
+                if (!t.hidden && !c.enabled && c.start < to && c.end() > from) {
+                    if (!i.clip) i.clip = c.id;
+                    i.clips << c.id;
+                }
+        if (i.clip) i.message = T("Kein Bild: die Videoclips sind ausgeschaltet (enable schaltet sie ein)");
+        out << i;
     } else {
         int at = from;
         const auto gap = [&](int a, int b) {
             const int n = b - a;
-            out << issue(Severity::Warning, "black",
-                         n == 1 ? T("Lücke: 1 Bild schwarz") : T("Lücke: %1 Bilder schwarz (%2 s)").arg(n).arg(num(n / fps)),
-                         a, b);
+            Issue i = issue(Severity::Warning, "black",
+                            n == 1 ? T("Lücke: 1 Bild schwarz") : T("Lücke: %1 Bilder schwarz (%2 s)").arg(n).arg(num(n / fps)),
+                            a, b);
+            // A switched-off picture there (disable on the clip or its linked sound): say which, it is the cause
+            for (const Track& t : tl.video) {
+                if (t.hidden) continue;
+                for (const Clip& c : t.clips)
+                    if (!c.enabled && c.start < b && c.end() > a) {
+                        if (!i.clip) i.clip = c.id;
+                        i.clips << c.id;
+                    }
+            }
+            if (i.clips.size() == 1) {
+                i.message += QStringLiteral(" – ") + T("Clip %1 ist ausgeschaltet (enable schaltet ihn ein)").arg(i.clip);
+                i.clips.clear();
+            } else if (!i.clips.isEmpty()) {
+                QStringList ids;
+                for (int id : i.clips) ids << QString::number(id);
+                i.message += QStringLiteral(" – ") + T("Clips %1 sind ausgeschaltet (enable schaltet sie ein)").arg(ids.join(", "));
+            }
+            out << i;
         };
         for (const auto& [a, b] : covered) {
             if (a > at) gap(at, a);
@@ -466,13 +492,16 @@ QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double in
         return out;
     }
 
-    if (truePeakDb > 0)
+    // Judged as shown (0.1 dB): -0.96 dBTP reads "-1.0", and "-1.0 is above -1.0" is no finding (01: a limiter at
+    // -1.2 and the encoder's overshoot)
+    const double peakShown = std::round(truePeakDb * 10) / 10;
+    if (peakShown > 0)
         out << issue(Severity::Error, "clipping",
                      (limiter ? T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt)")
                               : T("Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Limiter im Mischpult einschalten "
                                   "oder leiser mischen"))
                          .arg(num(truePeakDb)));
-    else if (truePeakDb > o.maxTruePeakDb)
+    else if (peakShown > o.maxTruePeakDb + 1e-9)
         out << issue(Severity::Warning, "true_peak",
                      (limiter ? T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern)")
                               : T("True Peak %1 dBTP liegt über %2 dBTP (Codecs können übersteuern) – Limiter im "
@@ -498,12 +527,72 @@ QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double in
     return out;
 }
 
+QVector<Issue> audioHoles(const Timeline& tl, const std::vector<float>& framePeaks, int offset, const ProjectFormat& f)
+{
+    QVector<Issue> out;
+    const double fps = f.rate.fps();
+    const float hole = float(std::pow(10.0, kHoleDb / 20)), edge = float(std::pow(10.0, kHoleEdgeDb / 20));
+    // At least 25 ms (a frame at 25 fps, two at 60: a partly silent frame at a fade is no hole)
+    const int n = int(framePeaks.size()), maxLen = int(std::lround(kMaxHoleS * fps)),
+              minLen = std::max(1, int(std::lround(0.025 * fps)));
+    const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    const auto heard = [&](const Track& t) { return !t.muted && (!solo || t.solo); };
+    for (int i = 1; i < n;) {
+        if (framePeaks[size_t(i)] >= hole) {
+            ++i;
+            continue;
+        }
+        int j = i;
+        while (j < n && framePeaks[size_t(j)] < hole) ++j;
+        const int a = offset + i, b = offset + j;
+        // Sound within 50 ms on both sides (an effect's release - a denoiser, a reverb - may ring a frame on)
+        const int near = std::max(1, int(std::lround(0.05 * fps)));
+        bool before = false, after = false;
+        for (int k = std::max(0, i - near); k < i; ++k) before = before || framePeaks[size_t(k)] >= edge;
+        for (int k = j; k < std::min(n, j + near); ++k) after = after || framePeaks[size_t(k)] >= edge;
+        const bool loudAround = before && after;
+        i = j;
+        if (!loudAround || b - a < minLen || b - a > maxLen) continue;
+        // At an edit: a frame no clip plays (a gap), or a clip edge within a frame of the hole
+        bool gap = false;
+        int edgeClip = 0;
+        for (int fr = a; fr < b && !gap; ++fr)
+            gap = std::none_of(tl.audio.begin(), tl.audio.end(), [&](const Track& t) { return heard(t) && covers(t, fr); });
+        for (const Track& t : tl.audio) {
+            if (!heard(t)) continue;
+            for (const Clip& c : t.clips)
+                if (c.enabled && !edgeClip && ((c.end() >= a - 1 && c.end() <= b + 1) || (c.start >= a - 1 && c.start <= b + 1)))
+                    edgeClip = c.id;
+        }
+        if (!gap && !edgeClip) continue;
+        const QString s = num((b - a) / fps, 2);
+        out << issue(Severity::Warning, "audio_hole",
+                     gap ? T("Ton bricht %1 s ab: Lücke zwischen den Clips der Tonspuren – schließen (delete_range from %2 "
+                             "to %3)")
+                               .arg(s)
+                               .arg(a)
+                               .arg(b)
+                         : T("Ton bricht %1 s ab an einem Schnitt: der Clip hat dort keinen Ton – herausschneiden "
+                             "(delete_range from %2 to %3)")
+                               .arg(s)
+                               .arg(a)
+                               .arg(b),
+                     a, b, gap ? 0 : edgeClip);
+    }
+    return out;
+}
+
 bool isVertical(const ProjectFormat& f) { return f.width > 0 && f.height > 0 && double(f.width) / f.height <= 0.63; }
 
 QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o)
 {
     QVector<Issue> out;
-    if (!isVertical(f) || to <= from) return out;
+    // Text cut off at the picture's edges, in any format: more than kMaxOutside of its letters outside the picture
+    // (11: a 9:16 title 10 % wider than the picture passed, under the 20 % the platforms' zones need). Other formats
+    // look at that only, and only at text and counters (a shape may slide out on purpose).
+    constexpr double kMaxOutside = 0.005;
+    const bool vertical = isVertical(f);
+    if (to <= from || f.width <= 0 || f.height <= 0) return out;
     const double W = f.width, H = f.height;
     // Titles of one track in the same zone (a counter x1 ... x16, captions) are one finding, not one per title
     struct Found {
@@ -528,6 +617,8 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             // A shape over the whole frame is a background (a colour matte, op 'solid'): nothing on it to cover
             if (c.title.isShape() && titleBlock(c, 0, W, H).contains(QRectF(0, 0, W, H))) continue;
             if (Keys::hasOpacity(c) && !Keys::animated(c, AnimParam::Opacity) && c.transform.opacity <= 0) continue;
+            const bool text = c.title.kind == TitleKind::Text || c.title.isCounter();
+            if (!vertical && !text) continue;
             if (c.title.isProgress()) {
                 // A thin bar along the top edge is the usual place (the apps' top row is text over the picture);
                 // at the bottom the apps draw their own progress bar, the caption and the buttons over it
@@ -547,12 +638,20 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             int first = -1, last = -1, bad = 0;
             QVector<int> zones(5, 0);
             for (int fr = a; fr < b; fr += step) {
-                const auto [part, zone] = covered(titleBlock(c, fr - c.start, W, H), W, H, o);
-                if (part < o.safeMaxCovered) continue;
+                const QRectF block = titleBlock(c, fr - c.start, W, H);
+                const auto [part, zone] = covered(block, W, H, o);
+                // The letters themselves (the box and the outline may touch the edge)
+                const double g = (c.title.boxOn ? std::max(0.0, c.title.boxPad) : 0.0)
+                                 + (c.title.outlineOn ? std::max(0.0, c.title.outlineWidth) : 0.0);
+                const QRectF letters = block.adjusted(g, g, -g, -g);
+                const double outside =
+                    area(letters) > 0 ? 1 - area(letters.intersected(QRectF(0, 0, W, H))) / area(letters) : 0;
+                const bool cut = text && outside > kMaxOutside;
+                if (!cut && (!vertical || part < o.safeMaxCovered)) continue;
                 if (first < 0) first = fr;
                 last = fr;
                 bad += std::min(step, b - fr);
-                ++zones[int(zone)];
+                ++zones[int(cut ? Zone::Outside : zone)];
             }
             if (first < 0 || bad < std::min(b - a, int(std::lround(0.5 * f.rate.fps())))) continue;
             const Zone zone = Zone(std::max_element(zones.begin(), zones.end()) - zones.begin());
@@ -587,7 +686,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         out << is;
     }
     // Subtitles: the track style places every cue; one issue per track from its first covered cue on
-    for (int i = 0; i < tl.subtitles.size(); ++i) {
+    for (int i = 0; vertical && i < tl.subtitles.size(); ++i) {
         const SubtitleTrack& st = tl.subtitles[i];
         if (!st.enabled) continue;
         int first = -1, last = -1;

@@ -61,7 +61,11 @@ struct Range {
 // `pad` frames of quiet stay at both ends (at the timeline's start and end too). `tracks` = the track index of each
 // entry of `quiet` (for Range::tracks).
 // present (optional, the same length): frames where at least one chosen track has an enabled clip; only those can be
-// a pause (a picture between two parts of an interview - B-roll, a title - is never cut)
+// a pause (a picture between two parts of an interview - B-roll, a title - is never cut). A hole is different: a run
+// without a clip shorter than minPause between two parts (two recordings of one call placed with a sliver between
+// them) is missing sound, not a pause - it is always cut, with the quiet touching it. That quiet keeps `pad` on its
+// side only when there is at least `pad` of it; less (the soundless tail of a recording) goes with the hole, so the
+// sound on both sides meets instead of dropping out for a moment.
 QVector<Range> pauses(const QVector<std::vector<bool>>& quiet, const QVector<int>& tracks, int minPause, int pad,
                       const std::vector<bool>* present = nullptr);
 

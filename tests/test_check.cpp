@@ -21,6 +21,7 @@
 
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -109,6 +110,20 @@ int main(int argc, char** argv)
         CHECK(ExportCheck::timeline(tl, 0, 100, f).isEmpty());
         tl.video[1].clips[0].enabled = false;
         CHECK_EQ(checks(ExportCheck::timeline(tl, 0, 100, f)), QStringList({"black"}));
+        // ... and the gap names the disabled clip (disable on a linked sound took the picture with it, 12-B1)
+        if (const auto* off = find(ExportCheck::timeline(tl, 0, 100, f), "black")) {
+            CHECK_EQ(off->clip, 3);
+            CHECK(off->message.contains("3"));
+        }
+        {
+            Timeline dark;
+            dark.video.resize(1);
+            dark.video[0].clips << clip(7, 0, 100, "/x/a.mp4");
+            dark.video[0].clips[0].enabled = false;
+            const auto all = ExportCheck::timeline(dark, 0, 100, f);
+            const auto* none = find(all, "black");
+            CHECK(none && none->clip == 7 && none->clips == QVector<int>({7}));
+        }
         // Black at the end of the range (sound goes on) and nothing outside the checked range
         CHECK_EQ(checks(ExportCheck::timeline(tl, 51, 120, f)), QStringList({"black"}));
         CHECK(ExportCheck::timeline(tl, 0, 50, f).isEmpty());
@@ -204,6 +219,10 @@ int main(int argc, char** argv)
         const QString advice = issues[0].message;
         issues = ExportCheck::sound(normal, 0, -14, -0.5, f, {}, true);
         CHECK(issues[0].message.size() < advice.size());
+        // Judged as shown: -0.96 reads -1.0, which is not above -1.0 (01: the limiter at -1.2, the encoder's overshoot)
+        CHECK(ExportCheck::sound(normal, 0, -14, -0.96, f, {}, true).isEmpty());
+        CHECK_EQ(checks(ExportCheck::sound(normal, 0, -14, -0.94, f, {}, true)), QStringList({"true_peak"}));
+        CHECK_EQ(checks(ExportCheck::sound(normal, 0, -14, 0.04, f, {}, true)), QStringList({"true_peak"}));
         // The fix (Fix button, `check`'s "fix"). Too quiet with peaks near 0 (a colleague's Valorant clip: -17.1 LUFS,
         // -0.1 dBTP): fader up by the difference and the limiter at -1.2 (under the -1 limit); peaks only: the limiter; too loud with the
         // limiter already on: the fader down only; nothing off: no fix
@@ -237,6 +256,40 @@ int main(int argc, char** argv)
             CHECK(end->severity == ExportCheck::Severity::Warning);
         }
         CHECK(find(issues, "silence_start")->severity == ExportCheck::Severity::Info);
+    }
+    // --- Sound that drops out at an edit (videotest 04): digital silence between two loud frames where a clip ends
+    // and a gap follows = audio_hole; the same inside a clip (a pause that is digitally silent and not at an edit)
+    // and a soft fade to silence are none
+    {
+        Timeline tl;
+        tl.audio.resize(1);
+        tl.audio[0].clips << clip(1, 0, 100, "/x/a.wav") << clip(2, 103, 97, "/x/b.wav"); // gap 100..103
+        std::vector<float> peaks(200, lin(-20));
+        for (int i = 98; i < 103; ++i) peaks[size_t(i)] = 0; // the recording's sound ends 2 frames early, then the gap
+        auto holes = ExportCheck::audioHoles(tl, peaks, 0, f);
+        if (CHECK_EQ(checks(holes), QStringList({"audio_hole"}))) {
+            CHECK_EQ(holes[0].from, 98);
+            CHECK_EQ(holes[0].to, 103);
+            CHECK_EQ(holes[0].clip, 0); // a gap
+            CHECK(holes[0].severity == ExportCheck::Severity::Warning);
+        }
+        // No gap, only the clip's sound ending early: named by the clip
+        tl.audio[0].clips[1].start = 100;
+        holes = ExportCheck::audioHoles(tl, peaks, 0, f);
+        CHECK(holes.size() == 1 && holes[0].clip == 1);
+        // A digitally silent pause inside a clip (a gated microphone) is no hole; one frame is none either
+        std::vector<float> inside(200, lin(-20));
+        for (int i = 40; i < 50; ++i) inside[size_t(i)] = 0;
+        inside[150] = 0;
+        CHECK(ExportCheck::audioHoles(tl, inside, 0, f).isEmpty());
+        // A fade into the silence (quiet before it) and a long silence (over a second) are no holes
+        std::vector<float> faded(200, lin(-20));
+        for (int i = 90; i < 98; ++i) faded[size_t(i)] = lin(-60);
+        for (int i = 98; i < 103; ++i) faded[size_t(i)] = 0;
+        CHECK(ExportCheck::audioHoles(tl, faded, 0, f).isEmpty());
+        std::vector<float> longer(200, lin(-20));
+        for (int i = 70; i < 103; ++i) longer[size_t(i)] = 0;
+        CHECK(ExportCheck::audioHoles(tl, longer, 0, f).isEmpty());
     }
 
     // --- Stutter: 60 fps with frames 61-89 missing (a jump of 0.5 s at 1 s), 2 at 2 s (3 frame durations) and one
@@ -279,6 +332,23 @@ int main(int argc, char** argv)
         }
         CHECK_EQ(Stutter::cleanPieces(s, 0, 1.9).size(), 1); // the 0.3 s after the jump are too short
         CHECK(Stutter::fromTimestamps({0.0, 0.04}).jumps.isEmpty());
+        // From packets: a jump whose next frame repeats the picture (an empty P-frame of a static screen capture with a
+        // variable frame rate, 05) is no stutter; one with a changed picture after it is, so is one with a key frame
+        // after it unless the frames around it are empty too
+        {
+            const int px = 1920 * 1080; // empty frame <= 829 bytes
+            std::vector<Stutter::Packet> p;
+            for (int i = 0; i < 60; ++i) p.push_back({i / 60.0, 30000, i == 0});
+            p.push_back({1.5, 246, false});       // after a jump of 0.5 s: unchanged
+            for (int i = 1; i < 30; ++i) p.push_back({1.5 + i / 60.0, 246, false});
+            p.push_back({2.5, 30000, false});     // after a jump: the picture changed (a game lag)
+            for (int i = 1; i < 30; ++i) p.push_back({2.5 + i / 60.0, 246, false});
+            p.push_back({3.5, 400000, true});     // key frame, empty frames around it
+            p.push_back({3.5 + 1 / 60.0, 246, false});
+            const Stutter::Scan seen = Stutter::fromPackets(p, px);
+            if (CHECK_EQ(seen.jumps.size(), 1)) CHECK(std::abs(seen.jumps[0].end() - 2.5) < 1e-9);
+            CHECK_EQ(Stutter::fromPackets(p, 0).jumps.size(), 3); // unknown size: all
+        }
 
         // Clips over it: the timeline frames where the picture stands still, with the clip; not a clip that only
         // uses clean source, a frozen clip or a hidden track
@@ -336,10 +406,30 @@ int main(int argc, char** argv)
         tl.video[0].clips << clip(1, 0, 300, "/x/a.mp4");
         tl.video[1].clips << title(2, 0, 50, "HOOK", 0, 0)            // middle: fine
                           << title(3, 50, 50, "x16", 0, -700)         // the caption/buttons at the bottom
-                          << title(4, 100, 50, "RIGHT", 420, 0)       // the button column
-                          << title(5, 150, 50, "TOP", 0, 910)         // the bar at the top
+                          << title(4, 100, 50, "RIGHT", 380, 0)       // the button column
+                          << title(5, 150, 50, "TOP", 0, 870)         // the bar at the top
                           << title(6, 200, 50, "UPPER THIRD", 0, 450) // fine
                           << title(7, 250, 50, "OUT", -700, 0);       // outside the picture
+        // A title a little wider than the picture (cut at both edges, only ~10 % outside: under the 20 % of the zones,
+        // 11) is found in any format; in 16:9 it fits
+        {
+            Timeline wide;
+            wide.video.resize(2);
+            wide.video[0].clips << clip(1, 0, 100, "/x/a.mp4");
+            Clip t = title(2, 0, 100, "Der Abend in 25 Sekunden", 0, 500);
+            t.title.size = 84;
+            t.title.bold = true;
+            wide.video[1].clips << t;
+            const QRectF block = ExportCheck::overlayBlock(t, 1080, 1920);
+            if (CHECK(block.width() > 1080 && block.width() < 1080 / 0.8)) {
+                const auto cut = ExportCheck::layout(wide, 0, 100, v);
+                if (CHECK_EQ(checks(cut), QStringList({"safe_area"}))) CHECK_EQ(cut[0].clip, 2);
+            }
+            wide.video[1].clips[0].title.posY = 0;
+            CHECK(ExportCheck::layout(wide, 0, 100, f).isEmpty());
+            wide.video[1].clips[0].title.posX = 1500; // 16:9, half of it past the right edge
+            CHECK_EQ(checks(ExportCheck::layout(wide, 0, 100, f)), QStringList({"safe_area"}));
+        }
         auto issues = ExportCheck::layout(tl, 0, 300, v);
         CHECK_EQ(checks(issues), QStringList({"safe_area", "safe_area", "safe_area", "safe_area"}));
         CHECK_EQ(clipsOf(issues), QVector<int>({3, 4, 5, 7}));
@@ -380,8 +470,10 @@ int main(int argc, char** argv)
                 CHECK(grouped[1].clips.isEmpty()); // alone in its zone
             }
         }
-        // The same in 16:9, and outside the checked range: nothing
-        CHECK(ExportCheck::layout(tl, 0, 300, f).isEmpty());
+        // The same in 16:9: only the texts cut off by the picture's edge (x16 below it, TOP above it); outside the
+        // checked range nothing
+        const auto flat = ExportCheck::layout(tl, 0, 300, f);
+        if (CHECK_EQ(clipsOf(flat), QVector<int>({3}))) CHECK_EQ(flat[0].clips, QVector<int>({3, 5}));
         CHECK(ExportCheck::layout(tl, 0, 50, v).isEmpty());
         // Subtitles: the default style of a vertical project sits in the bottom zone; a third up is fine
         Timeline subs;
@@ -538,14 +630,17 @@ int main(int argc, char** argv)
                              .arg(media)}});
     QJsonObject r = run("check", {{"source", project}});
     // Warnings sorted by time, then the info: the second clip is 4 s without a change (16:9: one info)
-    CHECK_EQ(checksOf(r), QStringList({"loudness", "subtitle_short", "black", "pace_slow"}));
+    // The forgotten frame between the clips drops the sound for its 40 ms too (audio_hole, the tone goes on around it)
+    CHECK_EQ(checksOf(r), QStringList({"loudness", "subtitle_short", "black", "audio_hole", "pace_slow"}));
     CHECK_EQ(r["errors"].toInt(), 0);
-    CHECK_EQ(r["warnings"].toInt(), 3);
+    CHECK_EQ(r["warnings"].toInt(), 4);
     const QJsonArray issues = r["issues"].toArray();
-    if (CHECK_EQ(issues.size(), 4)) {
+    if (CHECK_EQ(issues.size(), 5)) {
         CHECK_EQ(issues[2]["from"].toInt(), 100);
         CHECK_EQ(issues[2]["to"].toInt(), 101);
         CHECK(issues[2]["from_tc"].isString());
+        CHECK_EQ(issues[3]["from"].toInt(), 100);
+        CHECK_EQ(issues[3]["to"].toInt(), 101);
     }
     const double lufs = r["sound"].toObject()["integrated_lufs"].toDouble();
     CHECK(lufs < -16);
@@ -563,13 +658,16 @@ int main(int argc, char** argv)
         r = run("check", {{"source", copy}});
         const QJsonObject fix = r["fix"].toObject();
         const QJsonArray ops = fix["ops"].toArray();
+        // The level by measuring after the limiter (mixer target_lufs), not by the plain difference (06: +12 dB with
+        // the limiter on gave -19.6 instead of -14)
         if (CHECK_EQ(ops.size(), 1)) {
             const QJsonObject mixer = ops[0].toObject();
             CHECK_EQ(mixer["op"].toString(), QString("mixer"));
             CHECK_EQ(mixer["track"].toString(), QString("master"));
-            CHECK(mixer["volume_db"].toDouble() > 2 && mixer["limiter"].toBool());
+            CHECK(mixer["target_lufs"].toDouble() == -14 && mixer["limiter"].toBool() && !mixer.contains("volume_db"));
         }
-        CHECK(fix["what"].toString().contains("master fader +"));
+        CHECK(fix["what"].toString().contains("master to -14.0 LUFS"));
+        CHECK_EQ(r["sound"].toObject()["target_by"].toString(), QString("default"));
         // With a timeline named, the ops start by choosing it
         const QJsonObject info = run("info", {{"project", copy}});
         const QString name = info["timelines"].toArray().at(0).toObject()["name"].toString();
@@ -580,6 +678,51 @@ int main(int argc, char** argv)
         r = run("check", {{"source", copy}});
         CHECK(!checksOf(r).contains("loudness"));
         CHECK(!r.contains("fix"));
+        CHECK(std::abs(r["sound"].toObject()["integrated_lufs"].toDouble() + 14) <= 0.3);
+        // A conversation (voice tracks by name) is judged against the spoken-word norm -16; `for` podcast says so too
+        run("edit", {{"project", copy}, {"ops", R"([{"op":"track","track":"A1","name":"Mikrofon"}])"}});
+        r = run("check", {{"source", copy}, {"sound", true}});
+        CHECK_EQ(r["sound"].toObject()["target_lufs"].toDouble(), -16.0);
+        CHECK_EQ(r["sound"].toObject()["target_by"].toString(), QString("spoken word"));
+        r = run("check", {{"source", copy}, {"for", "broadcast"}});
+        CHECK_EQ(r["sound"].toObject()["target_lufs"].toDouble(), -23.0);
+        CHECK(checksOf(r).contains("loudness"));
+        CHECK(run("check", {{"source", copy}, {"for", "radio"}}).contains("failed"));
+    }
+
+    // The brand kit's outro without sound (a logo sting, 09): its silence at the end is intended; the same file
+    // without being the outro is a forgotten tail. A logo image scaled into a corner is no recording with bars.
+    {
+        const QString outro = Check::makeMedia(dir.filePath("outro.mp4"),
+                                               {"-f", "lavfi", "-i", "color=c=yellow:s=320x180:r=25:d=3", "-f", "lavfi",
+                                                "-i", "anullsrc=r=48000:cl=stereo:d=3", "-c:v", "libx264", "-pix_fmt",
+                                                "yuv420p", "-c:a", "aac", "-shortest"});
+        const QString logo = dir.filePath("logo.png");
+        QImage img(320, 320, QImage::Format_RGB32);
+        img.fill(Qt::black);
+        for (int y = 100; y < 220; ++y)
+            for (int x = 0; x < 320; ++x) img.setPixel(x, y, qRgb(255, 200, 0));
+        img.save(logo);
+        const QString branded = dir.filePath("branded.schneidi");
+        run("new", {{"project", branded}, {"width", 320}, {"height", 180}, {"media", QJsonArray{media, outro, logo}}});
+        run("edit", {{"project", branded},
+                     {"ops", QString(R"([{"op":"place","media":"%1","at":0},{"op":"place","media":"%2","at":"4s"},
+                                        {"op":"place","media":"%3","at":0,"track":"V2","duration":"4s"}])")
+                                 .arg(media, outro, logo)}});
+        QFile pf(branded);
+        pf.open(QIODevice::ReadOnly);
+        const QJsonObject saved = QJsonDocument::fromJson(pf.readAll()).object();
+        pf.close();
+        const int logoClip = saved["timeline"]["video"].toArray().at(1)["clips"].toArray().at(0)["id"].toInt();
+        CHECK(logoClip > 0);
+        run("edit", {{"project", branded},
+                     {"ops", QString(R"([{"op":"transform","clips":[%1],"zoom":0.2,"x":100,"y":50}])").arg(logoClip)}});
+        r = run("check", {{"source", branded}});
+        CHECK(checksOf(r).contains("silence_end"));
+        CHECK(!checksOf(r).contains("black_bars"));
+        run("brand", {{"project", branded}, {"action", "set"}, {"global", false}, {"outro", outro}});
+        r = run("check", {{"source", branded}});
+        CHECK(!checksOf(r).contains("silence_end"));
     }
 
     // A clip far out on the timeline (frame 2^30, over a year at 25 fps; a broken or hand-written file): the sound is
@@ -624,6 +767,18 @@ int main(int argc, char** argv)
                                             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
     r = run("check", {{"source", black}});
     CHECK_EQ(checksOf(r), QStringList({"no_audio", "black_file"}));
+    // A slowly moving gradient (a podcast background, 04): less than the limit from picture to picture, but it drifts
+    // away from where it was - not frozen; a picture that really stands still for 4 s is
+    const QString drift = Check::makeMedia(dir.filePath("drift.mp4"),
+                                           {"-f", "lavfi", "-i", "nullsrc=s=320x180:r=25:d=6", "-vf",
+                                            "geq=lum='(X+N*0.2)*255/W':cb=128:cr=128,format=yuv420p", "-c:v",
+                                            "libx264", "-qp", "0", "-pix_fmt", "yuv420p"});
+    CHECK_EQ(checksOf(run("check", {{"source", drift}})), QStringList({"no_audio"}));
+    const QString frozen = Check::makeMedia(dir.filePath("frozen.mp4"),
+                                            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=1", "-f", "lavfi", "-i",
+                                             "color=c=gray:s=320x180:r=25:d=4", "-filter_complex", "[0][1]concat=n=2",
+                                             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+    CHECK_EQ(checksOf(run("check", {{"source", frozen}})), QStringList({"no_audio", "frozen"}));
     // A still image: said so, not "no picture (sound only)" and "no sound"
     const QString still = Check::makeMedia(dir.filePath("still.png"),
                                            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=1", "-frames:v", "1"});

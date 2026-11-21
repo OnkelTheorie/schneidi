@@ -10,6 +10,8 @@
 #include "engine/FrameGaps.h"
 #include "engine/Snapshot.h"
 
+#include <QFileInfo>
+#include <QImageReader>
 #include <QHash>
 #include <QSet>
 
@@ -188,6 +190,12 @@ QVector<ExportCheck::Issue> bars(const ProjectFormat& f, const Timeline& tl, int
         if (t.hidden) continue;
         for (const Clip& c : t.clips) {
             if (!c.enabled || c.kind != ClipKind::Media || c.mediaPath.isEmpty() || c.end() <= from || c.start >= to) continue;
+            // An image (a logo) or a clip scaled down (picture in picture) shows its own frame on purpose (09: a
+            // logo.png overlay counted as a recording with bars)
+            static const QList<QByteArray> images = QImageReader::supportedImageFormats();
+            if (images.contains(QFileInfo(c.mediaPath).suffix().toLower().toUtf8())) continue;
+            if (c.transform.transformOn && Keys::staticValue(c, AnimParam::ZoomX) < 0.99 && !c.keys.contains(AnimParam::ZoomX))
+                continue;
             const double aspect = MediaAspect::ofClip(c);
             if (aspect <= 0) continue;
             const double zoom = Keys::staticValue(c, AnimParam::ZoomX);

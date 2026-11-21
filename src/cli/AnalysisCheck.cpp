@@ -4,6 +4,7 @@
 #include "cli/AnalysisDetail.h"
 
 #include "core/Automation.h"
+#include "core/BrandKit.h"
 #include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
@@ -32,6 +33,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <functional>
 #include <cmath>
@@ -104,21 +106,37 @@ QVector<ExportCheck::Issue> boostIssues(const Timeline& tl, int from, int to,
     return out;
 }
 
+// Loudness targets of deliveries that are no short (`for`): spoken word (podcast norm, AES TD1008 / Apple, Spotify:
+// -16, loud enough for YouTube too), YouTube and the web (-14), broadcast (EBU R128: -23, true peak -1)
+struct Delivery {
+    const char* id;
+    const char* name;
+    double targetLufs;
+};
+constexpr Delivery kDeliveries[] = {{"podcast", "Podcast", -16}, {"youtube", "YouTube", -14}, {"web", "Web", -14},
+                                    {"broadcast", "Broadcast (EBU R128)", -23}};
+
 ExportCheck::Options options(const QJsonObject& a)
 {
     ExportCheck::Options o;
     // "for", not "platform": QGuiApplication takes --platform from the command line
     if (a.contains("for")) {
-        const ShortPlatform* p = shortPlatform(a["for"].toString());
-        if (!p) {
+        const QString want = a["for"].toString().trimmed().toLower();
+        const auto delivery = std::find_if(std::begin(kDeliveries), std::end(kDeliveries),
+                                           [&want](const Delivery& d) { return want == QLatin1String(d.id); });
+        if (delivery != std::end(kDeliveries)) {
+            o.targetLufs = delivery->targetLufs;
+        } else if (const ShortPlatform* p = shortPlatform(want)) {
+            o.maxLengthS = p->maxSeconds;
+            o.platform = QString::fromLatin1(p->name);
+            o.targetLufs = p->targetLufs;
+            o.maxTruePeakDb = p->maxTruePeakDb;
+        } else {
             QStringList ids;
             for (const ShortPlatform& sp : shortPlatforms()) ids << sp.alias;
+            for (const Delivery& d : kDeliveries) ids << d.id;
             fail("BAD_ARGUMENT", "for must be " + ids.join(", ") + " (the platform)");
         }
-        o.maxLengthS = p->maxSeconds;
-        o.platform = QString::fromLatin1(p->name);
-        o.targetLufs = p->targetLufs;
-        o.maxTruePeakDb = p->maxTruePeakDb;
     }
     if (a.contains("target_lufs")) o.targetLufs = a["target_lufs"].toDouble();
     if (a.contains("max_still_s")) {
@@ -153,6 +171,28 @@ QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx,
     };
     std::vector<Sample> samples;
     std::mutex mutex;
+    // Still = like the reference picture, the first of the run (ffmpeg's freezedetect), not like the one before: a
+    // slow gradient or pan changes less than the limit from picture to picture but drifts away (04: "frozen" x7 on a
+    // moving background). Each thread keeps its reference; a new time range (previous is not the picture it saw
+    // last) starts from `previous`.
+    struct Reference {
+        uint64_t scan = 0;
+        double last = -1;
+        int w = 0, h = 0;
+        std::vector<uint8_t> planes[3];
+    };
+    static std::atomic<uint64_t> scans{0};
+    const uint64_t scanId = ++scans;
+    thread_local Reference ref;
+    const auto keep = [](Reference& r, const Video::Scan::Frame& fr) {
+        r.w = fr.width, r.h = fr.height;
+        for (int p = 0; p < 3; ++p) {
+            const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
+            r.planes[p].resize(size_t(w) * h);
+            for (int y = 0; y < h; ++y)
+                std::memcpy(r.planes[p].data() + size_t(y) * w, fr.data[p] + size_t(y) * size_t(fr.linesize[p]), size_t(w));
+        }
+    };
     Video::Scan::Options o;
     o.width = 320;
     o.height = -2;
@@ -167,17 +207,27 @@ QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx,
                 for (int x = 0; x < fr.width; ++x) dark += row[x] <= limit;
             }
             const bool black = dark >= 0.98 * fr.width * fr.height;
+            if (previous && (ref.scan != scanId || std::abs(ref.last - previous->seconds) > 1e-9 || ref.w != fr.width
+                             || ref.h != fr.height)) {
+                ref.scan = scanId;
+                keep(ref, *previous);
+            }
             bool still = previous != nullptr;
             for (int p = 0; p < 3 && still; ++p) {
                 const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
                 uint64_t sad = 0;
                 for (int y = 0; y < h; ++y) {
                     const uint8_t* a = fr.data[p] + size_t(y) * size_t(fr.linesize[p]);
-                    const uint8_t* b = previous->data[p] + size_t(y) * size_t(previous->linesize[p]);
+                    const uint8_t* b = ref.planes[p].data() + size_t(y) * w;
                     for (int x = 0; x < w; ++x) sad += uint64_t(std::abs(int(a[x]) - int(b[x])));
                 }
                 still = double(sad) / (double(w) * h * 255.0) <= 0.001; // -60 dB
             }
+            if (!still) {
+                ref.scan = scanId;
+                keep(ref, fr);
+            }
+            ref.last = fr.seconds;
             std::lock_guard lock(mutex);
             samples.push_back({fr.seconds, black, still});
         },
@@ -297,25 +347,51 @@ QJsonObject issueJson(const ExportCheck::Issue& i, const ProjectFormat& f)
 }
 
 // The Deliver page's Fix button as ops for `edit`: the model applies them instead of judging the numbers itself
-// (a small one called a true peak of -0.1 dBTP "ok for H.264"). Empty when the sound needs no such fix.
-QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline)
+// (a small one called a true peak of -0.1 dBTP "ok for H.264"). Empty when the sound needs no such fix. The level goes
+// to the target by measuring (mixer target_lufs, loudnessOps), not by the plain difference: the limiter takes part of
+// a raise on peaky sound.
+QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline, double targetLufs)
 {
     if (!fix.any()) return {};
-    QJsonObject mixer{{"op", "mixer"}, {"track", "master"}};
     QStringList what;
-    if (fix.limiter) {
-        mixer["limiter"] = true;
-        mixer["limiter_db"] = fix.ceiling;
-        what << QString("master limiter on at %1 dBTP").arg(fix.ceiling, 0, 'f', 1);
-    }
-    if (fix.level) {
-        mixer["volume_db"] = fix.volumeDb;
-        what << QString("master fader %1%2 dB").arg(fix.change > 0 ? "+" : "").arg(fix.change, 0, 'f', 1);
-    }
+    if (fix.limiter) what << QString("master limiter on at %1 dBTP").arg(fix.ceiling, 0, 'f', 1);
+    if (fix.level)
+        what << QString("master to %1 LUFS (about %2%3 dB, measured after the limiter)")
+                    .arg(targetLufs, 0, 'f', 1)
+                    .arg(fix.change > 0 ? "+" : "")
+                    .arg(fix.change, 0, 'f', 1);
     QJsonArray ops;
-    if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
-    ops << mixer;
+    if (fix.level) {
+        ops = loudnessOps(timeline, targetLufs, fix.limiter, fix.ceiling);
+    } else {
+        if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
+        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", fix.ceiling}};
+    }
     return {{"what", what.join(", ")}, {"ops", ops}, {"how", "apply with `edit` (one undo step), then `check` again"}};
+}
+
+// Spoken word: every heard audio track with clips carries a voice by its name (Stimme, Mikrofon, Discord …) or is
+// music, at least one is a voice (the podcast start template, a talk edit, a Discord call)
+bool spokenWord(const Timeline& tl)
+{
+    bool voice = false;
+    const bool solo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    static const char* const voiceWords[] = {"voice", "stimme", "sprache", "speech", "mic", "mikro", "discord",
+                                             "teamspeak", "podcast", "interview", "talk", "narrat", "kommentar",
+                                             "comment", "host", "gast", "guest", "sprecher", "speaker", "voix", "voz",
+                                             "głos", "голос"};
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const Track& t = tl.audio[i];
+        if (t.muted || (solo && !t.solo) || t.name == kSfxTrackName) continue;
+        if (std::none_of(t.clips.begin(), t.clips.end(), [](const Clip& c) { return c.enabled; })) continue;
+        if (ExportCheck::soundRole(tl, i, [](const QString&) { return false; }) == ExportCheck::SoundRole::Music) continue;
+        const QString n = t.name.toLower();
+        if (std::none_of(std::begin(voiceWords), std::end(voiceWords),
+                         [&n](const char* w) { return n.contains(QString::fromUtf8(w)); }))
+            return false;
+        voice = true;
+    }
+    return voice;
 }
 
 constexpr int kMaxListed = 50;   // still stretches in the answer
@@ -426,10 +502,24 @@ QString readText(const QString& path)
 
 } // namespace
 
+QJsonArray loudnessOps(const QJsonValue& timeline, double targetLufs, bool limiterOn, double ceiling)
+{
+    QJsonArray ops;
+    if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
+    QJsonObject mixer{{"op", "mixer"}, {"track", "master"}, {"target_lufs", std::round(targetLufs * 10) / 10}};
+    if (limiterOn) {
+        mixer["limiter"] = true;
+        mixer["limiter_db"] = ceiling;
+    }
+    ops << mixer;
+    return ops;
+}
+
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
-    const ExportCheck::Options opt = options(a);
+    ExportCheck::Options opt = options(a);
+    QString targetBy = a.contains("target_lufs") ? "target_lufs" : a.contains("for") ? "for" : "default";
     const bool withSound = !a.contains("sound") || a["sound"].toBool();
     const auto progress = [&ctx](double from, double to) {
         return goOn([&ctx, from, to](double p) {
@@ -464,6 +554,11 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         const Timeline& tl = s.project.timeline();
         const int end = TimelineOps::endFrame(tl);
         if (end <= 0) s.failEmpty();
+        // A conversation (podcast template, talk edit, a call) is measured against the spoken-word norm, not -14
+        if (targetBy == QLatin1String("default") && spokenWord(tl)) {
+            opt.targetLufs = kDeliveries[0].targetLufs;
+            targetBy = "spoken word";
+        }
         const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
@@ -576,10 +671,36 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             if (!loud) fail("DECODE_FAILED", "could not mix the sound");
             measured = {peaks, *loud};
             wideRange(loud->range);
-            const QVector<ExportCheck::Issue> heard =
+            QVector<ExportCheck::Issue> heard =
                 ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
+            // Silence in the brand kit's intro or outro (a logo sting without sound) is intended, not a forgotten
+            // tail (09: "3 s of silence at the end" on every video of a series)
+            const BrandKit kit = Brand::effective(s.project.data());
+            const auto same = [](const QString& a, const QString& b) {
+                return !a.isEmpty() && !b.isEmpty()
+                       && QFileInfo(a).absoluteFilePath() == QFileInfo(b).absoluteFilePath();
+            };
+            const auto branded = [&](const ExportCheck::Issue& i) {
+                if (i.from < 0 || i.to <= i.from) return false;
+                int covered = 0;
+                for (int fr = i.from; fr < i.to; ++fr) {
+                    bool in = false;
+                    for (const Track& t : tl.video)
+                        for (const Clip& c : t.clips)
+                            in = in || (!t.hidden && c.enabled && c.start <= fr && fr < c.end()
+                                        && (same(c.mediaPath, kit.intro) || same(c.mediaPath, kit.outro)));
+                    covered += in;
+                }
+                return covered >= 0.8 * (i.to - i.from);
+            };
+            heard.erase(std::remove_if(heard.begin(), heard.end(), [&](const ExportCheck::Issue& i) {
+                            return (i.check == "silence_end" || i.check == "silence_start" || i.check == "silence")
+                                   && branded(i);
+                        }),
+                        heard.end());
             issues += heard;
-            fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"]);
+            issues += ExportCheck::audioHoles(render, measured.peaks, from, f);
+            fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"], opt.targetLufs);
             const auto picture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
             if (const auto balance = CheckMeasure::mix(f, render, from, soundTo, picture, opt, progress(0.55, 1)))
                 issues += *balance;
@@ -670,6 +791,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     if (withSound) {
         QJsonObject m = measuredJson(measured);
         m["target_lufs"] = opt.targetLufs;
+        m["target_by"] = targetBy; // target_lufs, for, spoken word (a conversation: -16), default (-14)
         if (soundChannels > 0) m["channels"] = ChannelLayout::name(soundChannels);
         if (!soundNote.isEmpty()) m["note"] = soundNote;
         result["sound"] = m;
