@@ -520,6 +520,7 @@ int main(int argc, char* argv[])
     std::setlocale(LC_NUMERIC, "C");
 
     Theme::load(designArg);
+    Touch::initMode(); // touch mode (Settings; auto: a touchscreen without mouse) - the theme's sizes follow it
     Theme::apply(app);
     Touch::installKineticScrolling(&app); // every list/panel scrolls with a finger (ui/touch/Touch.h)
     Touch::installInputPanel(&app); // a text field a finger focuses opens the on-screen keyboard

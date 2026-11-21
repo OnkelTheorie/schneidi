@@ -4,10 +4,13 @@
 // zoom around the fingers, two-finger pan, double tap = fit), lists (kinetic scroll present and scrolling, tap
 // selects, long press + drag of an item onto the timeline) and a slider inside a scrolling panel. Mouse behaviour at
 // the same spots stays as it was. Phone basics: click focus and the on-screen keyboard for a finger, the focused
-// field kept in view, the back key's steps (popup, dialog, the window's own step).
+// field kept in view, the back key's steps (popup, dialog, the window's own step). Finger-sized handles: a fade
+// grip and a transition's edge just outside the mouse's zone, a pinch on the track headers (track height). Touch
+// mode: auto detection, the setting, larger zones and rows.
 #include "check.h"
 #include "timeline_guard.h"
 
+#include "app/SettingsDialog.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -20,7 +23,10 @@
 #include "ui/touch/Touch.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDialog>
+#include <QInputDevice>
+#include <QSettings>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QHBoxLayout>
@@ -481,6 +487,129 @@ void testBackKey()
     CHECK_EQ(steps, 2);
 }
 
+// Mouse hover over a point (no button): what the mouse sees before it presses
+void hover(QWidget& w, QPoint pt) { mouse(w, QEvent::MouseMove, pt, Qt::NoButton); }
+
+void testFadeHandle()
+{
+    // Clip 2 (frames 150..250, x 300..500 at 2 px per frame): 13 px right of its start, 5 px below its top - outside
+    // the mouse's grab zone of the fade grip, inside the finger's
+    {
+        Fixture f;
+        const QPoint at(f.x(150) + 13, 100);
+        hover(*f.tv, at);
+        mouse(*f.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseMove, at + QPoint(20, 0), Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseMove, at + QPoint(40, 0), Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseButtonRelease, at + QPoint(40, 0), Qt::NoButton);
+        const Clip& c = f.project.timeline().video[0].clips[1];
+        CHECK_EQ(c.fadeIn, 0);
+        CHECK_EQ(c.start, 170); // the mouse moved the clip, as before
+    }
+    {
+        Fixture f;
+        // No hover for a finger: a tap selects the clip and shows its grips, the next touch grabs one
+        tap(f.tv, {f.x(200), 120});
+        CHECK(f.sel.contains(2));
+        pauseTaps();
+        const QPoint at(f.x(150) + 13, 100);
+        swipe(f.tv, at, at + QPoint(40, 0));
+        const Clip& c = f.project.timeline().video[0].clips[1];
+        CHECK(c.fadeIn >= 15 && c.fadeIn <= 25);
+        CHECK_EQ(c.start, 150);
+        pauseTaps();
+        // An unselected clip has no grips for a finger: its corner trims it as before
+        const QPoint other(f.x(0) + 13, 100);
+        swipe(f.tv, other, other + QPoint(40, 0));
+        CHECK_EQ(f.project.timeline().video[0].clips[0].fadeIn, 0);
+    }
+}
+
+void testTransitionEdge()
+{
+    // A fade-in of 20 frames at clip 2 (x 300..340): its right edge is the one that drags. 9 px inside it: the mouse
+    // is in the middle (selects only), the finger has the edge
+    const auto withFade = [](Fixture& f) {
+        f.project.edit("fade", [](Timeline& tl) { tl.video[0].clips[1].transIn = 20; });
+    };
+    {
+        Fixture f;
+        withFade(f);
+        const QPoint at(f.x(170) - 9, 120);
+        hover(*f.tv, at);
+        mouse(*f.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseMove, at + QPoint(20, 0), Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseMove, at + QPoint(40, 0), Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseButtonRelease, at + QPoint(40, 0), Qt::NoButton);
+        CHECK_EQ(f.project.timeline().video[0].clips[1].transIn, 20);
+    }
+    {
+        Fixture f;
+        withFade(f);
+        const QPoint at(f.x(170) - 9, 120);
+        swipe(f.tv, at, at + QPoint(40, 0));
+        const int len = f.project.timeline().video[0].clips[1].transIn;
+        CHECK(len >= 35 && len <= 45);
+        CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    }
+}
+
+void testHeaderPinch()
+{
+    Fixture f;
+    const int video = f.tv->view().videoTrackHeight, audio = f.tv->view().audioTrackHeight;
+    // Two fingers on the V1 header spread apart vertically: video tracks get taller, zoom and scroll stay
+    twoFingers(f.tv, {40, 110}, {40, 140}, {40, 95}, {40, 155});
+    CHECK(f.tv->view().videoTrackHeight > video * 1.6);
+    CHECK_EQ(f.tv->view().audioTrackHeight, audio);
+    CHECK_EQ(f.tv->view().pxPerFrame, 2.0);
+    CHECK_EQ(f.tv->view().leftFrame, 0.0);
+    // Pinched together again: smaller, never below the minimum
+    twoFingers(f.tv, {40, 100}, {40, 160}, {40, 128}, {40, 132});
+    CHECK(f.tv->view().videoTrackHeight >= 28 && f.tv->view().videoTrackHeight < video);
+}
+
+void testTouchMode()
+{
+    using T = QInputDevice::DeviceType;
+    CHECK(Touch::autoOn({int(T::TouchScreen)}));
+    CHECK(!Touch::autoOn({int(T::TouchScreen), int(T::Mouse)}));
+    CHECK(!Touch::autoOn({int(T::TouchScreen), int(T::TouchPad)}));
+    CHECK(!Touch::autoOn({int(T::Mouse), int(T::Keyboard)}));
+    // The setting: missing = auto; forced on/off win over the devices
+    QSettings().remove(Touch::kModeKey);
+    CHECK(Touch::savedMode() == Touch::Mode::Auto);
+    Touch::setSavedMode(Touch::Mode::On);
+    CHECK(Touch::decideMode());
+    Touch::setSavedMode(Touch::Mode::Off);
+    CHECK(!Touch::decideMode());
+    // In the settings dialog (General)
+    {
+        SettingsDialog dlg{AiSettings{}};
+        auto* combo = dlg.findChild<QComboBox*>("settings_touch_mode");
+        CHECK(combo);
+        if (combo) {
+            CHECK(dlg.touchMode() == Touch::Mode::Off);
+            combo->setCurrentIndex(combo->findData(int(Touch::Mode::On)));
+            CHECK(dlg.touchMode() == Touch::Mode::On);
+        }
+    }
+    Touch::setSavedMode(Touch::Mode::Auto);
+    CHECK(!QSettings().contains(Touch::kModeKey));
+
+    // Mode on: every pointer gets the finger's zones, the timeline taller rows, the theme larger controls
+    CHECK_EQ(Touch::grabPx(false, 6), 6);
+    Touch::setModeActive(true);
+    CHECK_EQ(Touch::grabPx(false, 6), Touch::kGrabPx);
+    CHECK(Theme::touchStyleSheet().contains("QPushButton"));
+    {
+        Fixture f;
+        CHECK_EQ(f.tv->view().videoTrackHeight, 84);
+        CHECK_EQ(f.tv->view().audioTrackHeight, 68);
+    }
+    Touch::setModeActive(false);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -502,5 +631,9 @@ int main(int argc, char** argv)
     Touch::installInputPanel(qApp);
     testFocusAndKeyboard();
     testBackKey();
+    testFadeHandle();
+    testTransitionEdge();
+    testHeaderPinch();
+    testTouchMode();
     return Check::result();
 }

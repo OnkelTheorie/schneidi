@@ -764,9 +764,10 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         if (r.width() >= 56) drawCurveIcon(p, r, m_curves.contains(c.id));
     }
 
-    // Fade handles (white grips at the top corners), only under the mouse resp. while dragging
+    // Fade handles (white grips at the top corners), only under the mouse (a finger: on the selected clip) resp.
+    // while dragging
     const bool fading = m_drag == Drag::Fade && m_fade.clipId == c.id;
-    if (!ghost && r.width() >= 24 && m_tool == Tool::Select && (c.id == m_hoverClip || fading)) {
+    if (!ghost && r.width() >= 24 && m_tool == Tool::Select && (fadeHandlesShown(c.id) || fading)) {
         p.setPen(QPen(QColor(0, 0, 0, 160), 1));
         p.setBrush(QColor(0xf4, 0xf4, 0xf4));
         for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End})

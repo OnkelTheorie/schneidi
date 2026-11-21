@@ -86,6 +86,8 @@ void activate(const Colors& colors); // sets the colors above (missing keys stay
 void load(const QString& overrideDesign = {}); // at startup before apply(); override only for this run (--design)
 bool restartNeeded(); // saved choice differs from the colors loaded at startup
 void apply(QApplication& app);
+// What touch mode (ui/touch/Touch.h) adds to the application style sheet in apply(): larger controls
+QString touchStyleSheet();
 
 // helpers
 QColor mix(const QColor& a, const QColor& b, double t); // t = 0 -> a, 1 -> b

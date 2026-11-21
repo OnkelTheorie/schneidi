@@ -325,6 +325,7 @@ private:
     // Fade handles at the top clip corners (like DaVinci), only visible/grabbable when the mouse is over the clip
     QRect fadeHandleRect(const QRect& clip, const Clip& c, TimelineOps::Edge edge) const;
     std::optional<EdgeHit> fadeHandleAt(const QPoint& pos) const;
+    bool fadeHandlesShown(int clipId) const; // hover, or a finger's selected clips
     // Keyframes: icon at the bottom right in the clip (opens the keyframe lane) and the lane below (like DaVinci)
     QRect keyIconRect(const QRect& clip) const;
     int keyIconAt(const QPoint& pos) const; // clip ID or 0
@@ -469,6 +470,9 @@ private:
     Tool m_tool = Tool::Select;
     bool m_touchPointer = false; // the last press/move came from a finger: larger grab zones (edges, In/Out handles)
     int edgeGrabPx() const;
+    enum class Pinch { None, View, VideoHeight, AudioHeight }; // what the running pinch changes
+    Pinch m_pinch = Pinch::None;
+    double m_pinchTrackH = 0; // track height during a pinch on the headers (unrounded)
     bool m_snap = true;
     bool m_showNames = true;
     bool m_showDurations = false;

@@ -16,6 +16,7 @@
 // Only touchscreens are handled: touchpads (macOS sends their touches to widgets that take touch events) and pens go
 // the usual way.
 
+#include <QList>
 #include <QMargins>
 #include <QPointF>
 #include <algorithm>
@@ -32,9 +33,30 @@ class QWidget;
 
 namespace Touch {
 
-// Half width of a grab zone (px each side of an edge) for a finger; mouse zones stay as they are
+// ---------- Touch mode (TouchMode.cpp) ----------
+// Settings › General › Touch mode: larger controls for fingers (buttons, fields, scroll bars, menu entries, list rows,
+// timeline tracks, fade handles) and finger-sized grab zones for every pointer. Auto (the default): on where the
+// system has a touchscreen and no mouse or touchpad (a phone, a tablet without keyboard); a touch laptop stays off
+// (its touchpad counts) unless the user turns it on. Decided once at the start (takes effect after a restart, like the
+// interface size): main.cpp calls initMode() before Theme::apply
+enum class Mode { Auto, On, Off };
+inline constexpr const char* kModeKey = "ui/touchMode"; // "on", "off"; missing = auto
+Mode savedMode();
+void setSavedMode(Mode mode);
+// Auto's answer for these input devices (QInputDevice::DeviceType values)
+bool autoOn(const QList<int>& deviceTypes);
+// The saved mode against the devices there are now
+bool decideMode();
+void initMode();                    // modeActive() = decideMode()
+bool modeActive();                  // touch mode is on in this run
+void setModeActive(bool on);        // tests, initMode
+
+// Half width of a grab zone (px each side of an edge) for a finger (or any pointer in touch mode); mouse zones stay
+// as they are
 constexpr int kGrabPx = 14;
-inline int grabPx(bool touch, int mousePx) { return touch ? std::max(mousePx, kGrabPx) : mousePx; }
+inline int grabPx(bool touch, int mousePx) { return touch || modeActive() ? std::max(mousePx, kGrabPx) : mousePx; }
+// Of a small handle (a fade grip, a keyframe icon): how far its grab zone reaches past its picture
+inline int handleSlackPx(bool touch, int mousePx) { return touch || modeActive() ? std::max(mousePx, 8) : mousePx; }
 
 // The event comes from a touchscreen (also a mouse event synthesized from one, by Qt or by TouchGestures)
 bool isTouch(const QInputEvent* e);
