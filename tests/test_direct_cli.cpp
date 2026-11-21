@@ -619,6 +619,16 @@ int main(int argc, char** argv)
                                                                            {"captions", "off"}, {"session", session}, {"prepare", true}}}});
         CHECK(!prepared["ops"].toArray().isEmpty());
         CHECK(!prepared["stamp"].toString().isEmpty());
+        // Captions without whisper (not installed here): the note has its fixed key, the page shows it translated
+        // (review 21.11.: English text in the German UI)
+        const QJsonObject noCaptions = run("direct", {{"project", fp},
+                                                      {"finish", QJsonObject{{"timeline", made["timeline"]}, {"captions", "karaoke"},
+                                                                             {"session", session}, {"prepare", true}}}});
+        if (CHECK_EQ(noCaptions["note_keys"].toArray().size(), noCaptions["notes"].toArray().size())) {
+            CHECK_EQ(noCaptions["note_keys"][0].toString(), QString("no_captions_whisper"));
+            CHECK_EQ(noCaptions["notes"][0].toString(), Direction::noteText("no_captions_whisper"));
+            CHECK(Direction::noteText("no_captions_whisper", {}, Direction::Lang::Ui) != Direction::noteText("no_captions_whisper"));
+        }
         run("edit", {{"project", fp}, {"timeline", made["timeline"]}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "2s"}}}}});
         CHECK_EQ(run("direct", {{"project", fp}, {"finish", QJsonObject{{"timeline", made["timeline"]}, {"ops", prepared["ops"]},
                                                                          {"stamp", prepared["stamp"]}}}})["error"].toString(),

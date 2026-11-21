@@ -1024,7 +1024,7 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (timeline.isEmpty())
             fail("BAD_ARGUMENT", "finish needs the short's timeline inside it: finish:{\"timeline\":\"<the apply answer's "
                                  "timeline>\", captions?, sfx?} (with project)");
-        QJsonArray done, notes;
+        QJsonArray done, notes, noteKeys;
         if (f.contains("ops")) {
             if (timelineStamp(project, timeline) != f["stamp"].toString())
                 fail("FINISH_STALE", QString("the timeline '%1' changed since its speech and sound were measured: "
@@ -1051,9 +1051,9 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (!game.isEmpty() && game != QLatin1String("none")) sf.game = game;
         sf.language = f["language"].toString();
         if (f["prepare"].toBool()) {
-            const QJsonArray ops = shortFinishOps(project, timeline, sf, ctx, &done, &notes);
+            const QJsonArray ops = shortFinishOps(project, timeline, sf, ctx, &done, &notes, &noteKeys);
             return {{"project", project}, {"timeline", timeline}, {"ops", ops}, {"done", done}, {"notes", notes},
-                    {"stamp", timelineStamp(project, timeline)}};
+                    {"note_keys", noteKeys}, {"stamp", timelineStamp(project, timeline)}};
         }
         const bool captions = shortFinish(project, timeline, sf, ctx, &done, &notes);
         QJsonObject o{{"project", project}, {"timeline", timeline}, {"captions", captions}, {"done", done}};

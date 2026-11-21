@@ -514,9 +514,12 @@ void MainWindow::directFinish()
         if (reply.value("ok").toBool()) {
             m_directPage->setFinishOffered(false); // done once
             if (m_backgroundJobs) m_backgroundJobs->finishJob(kApplyJobId, T("Regie: Untertitel und Effektklänge fertig"));
-            const QJsonArray notes = reply.value("result").toObject().value("notes").toArray();
-            statusBar()->showMessage(notes.isEmpty() ? T("Regie: Untertitel und Effektklänge eingefügt")
-                                                     : T("Regie: %1").arg(notes.first().toString()),
+            const QJsonObject result = reply.value("result").toObject();
+            const QJsonArray notes = result.value("notes").toArray();
+            // The notes' keys in the UI language (the notes themselves are English, for an AI)
+            QString first = DirectText::note({{"key", result.value("note_keys").toArray().first().toString()}});
+            if (first.isEmpty() && !notes.isEmpty()) first = notes.first().toString();
+            statusBar()->showMessage(first.isEmpty() ? T("Regie: Untertitel und Effektklänge eingefügt") : T("Regie: %1").arg(first),
                                      6000);
             return;
         }

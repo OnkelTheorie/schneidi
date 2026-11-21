@@ -281,11 +281,13 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
     // The transcripts whisper wrote while suggesting (fillers) are the recordings' from now on
     if (s.options["_transcripts"].isObject() && !args["plan"].toBool())
         ops << QJsonObject{{"op", "_transcripts"}, {"files", s.options["_transcripts"]}};
-    QJsonArray done, notes;
+    QJsonArray done, notes, noteKeys;
     if (s.options["_master_db"].isDouble()) // measured when suggesting (never on the app's UI thread)
         ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"volume_db", s.options["_master_db"]}};
-    if (s.options["room_tone"].toBool())
-        notes << "room tone: not laid under the cuts yet (op room_tone on a voice track does it by hand)";
+    if (s.options["room_tone"].toBool()) {
+        notes << Direction::noteText("room_tone_apply");
+        noteKeys << QString("room_tone_apply");
+    }
     if (!args["plan"].toBool()) ops << QJsonObject{{"op", "_direction"}, {"session", Direction::toJson(s)}};
     QJsonObject e{{"project", project}, {"ops", ops}};
     if (args["plan"].toBool()) e["plan"] = true;
@@ -301,6 +303,7 @@ QJsonObject applyTalk(const Direction::Session& s, const QVector<const Direction
                     {"length_s", edited["timeline"]["length_s"]}, {"done", done}, {"session", s.id},
                     {"next", QString("look at it (`frames`, play it), then `render` timeline '%1'").arg(name)}};
     if (!notes.isEmpty()) out["notes"] = notes;
+    if (!noteKeys.isEmpty()) out["note_keys"] = noteKeys;
     if (edited.contains("live")) out["live"] = true;
     return out;
 }
