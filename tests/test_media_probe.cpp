@@ -19,6 +19,10 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+extern "C" {
+#include <libavformat/version.h>
+}
+
 #include <climits>
 #include <cstring>
 #include <vector>
@@ -205,7 +209,11 @@ int main(int argc, char** argv)
             f.write(data);
             f.close();
             const std::optional<MediaInfo> absurd = MediaProbe::read(f.fileName(), {25, 1});
-            CHECK(absurd && absurd->length == INT_MAX && absurd->hasVideo);
+            // FFmpeg 9.1's Matroska demuxer drops such a Duration itself (no length then, like a file without one:
+            // not readable, or its real length; accepted from libavformat 62 = FFmpeg 8 on, 8 not tried); up to 7.1
+            // it reports it and the cap applies
+            const bool dropped = LIBAVFORMAT_VERSION_MAJOR >= 62;
+            CHECK(absurd ? absurd->hasVideo && (absurd->length == INT_MAX || (dropped && absurd->length > 0)) : dropped);
         }
     }
     const MediaInfo surround = Engine::probe(format, in("surround.wav"));

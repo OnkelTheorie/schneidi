@@ -285,7 +285,9 @@ void testOverlappingAudio(const QString& dir)
     const QString clean = Check::makeMedia(dir + "/beeps.mkv", {
         "-f", "lavfi", "-i", "color=c=black:s=320x180:r=25:d=8", "-f", "lavfi", "-i",
         "aevalsrc=if(lt(mod(t-1\\,2)\\,0.1)*gte(t\\,1)\\,0.5*sin(2*PI*1000*t)\\,0):s=48000:d=8",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest"});
+        // 160k, not 192k: FFmpeg 9.1's AAC encoder never finishes this mono signal (silence, then a 1 kHz tone) at
+        // about 190-200 kbit/s (a busy loop in libavcodec; 7.1 is fine)
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest"});
     const QString overlapping = Check::makeMedia(dir + "/overlap.mkv", {
         "-i", clean, "-c", "copy", "-bsf:a", "setts=ts=TS-21*floor(N/40)"});
     if (!CHECK(!clean.isEmpty() && !overlapping.isEmpty())) return;

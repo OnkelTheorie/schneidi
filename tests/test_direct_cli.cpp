@@ -838,10 +838,12 @@ int main(int argc, char** argv)
         }
         // A weaker loud moment just after the picked one (too close for the spacing): the pick grows towards it, the
         // weaker one stays offered (switched off), cut to what the grown pick leaves free - never the same footage twice
+        // (clearly weaker: at 0.5 the true sound - lossless, or FFmpeg 9.1's AAC - scores it over 80 % of the loud
+        // one, so it came in as a scene of its own; only 7.1's AAC overshoot at the end of the loud tone kept it out)
         const QString near = Check::makeMedia(
             dir.filePath("near.mp4"),
             {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=30", "-f", "lavfi", "-i",
-             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,13,13.6),0.9*sin(2*PI*440*t),0)+if(between(t,19.5,20.1),0.5*sin(2*PI*440*t),0)':d=30:s=48000",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,13,13.6),0.9*sin(2*PI*440*t),0)+if(between(t,19.5,20.1),0.3*sin(2*PI*440*t),0)':d=30:s=48000",
              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
         if (CHECK(!near.isEmpty())) {
             const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{near}},
