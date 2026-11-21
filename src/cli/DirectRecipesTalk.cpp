@@ -9,6 +9,7 @@
 #include "cli/AnalysisDetail.h"
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
 
 #include "core/AppPaths.h"
 #include "core/GameHud.h"
@@ -490,14 +491,18 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
             // Project); the app's page without an own folder: next to the first clip
             const QFileInfo first(list.isEmpty() ? QString() : list.first()->file);
             QString dir = args["project_dir"].toString().trimmed();
-            dir = !dir.isEmpty() ? absolute(dir) : Live::host() ? first.absolutePath() : AppPaths::projectFolder();
+            // A work folder (`mcp --root`): the project goes into it, everything else would be OUTSIDE_ROOT
+            dir = !dir.isEmpty()      ? absolute(dir)
+                  : Live::host()      ? first.absolutePath()
+                  : Sandbox::active() ? Sandbox::root()
+                                      : AppPaths::projectFolder();
             if (!args["dry_run"].toBool() && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             QString base = QDir(dir).filePath(QFileInfo(tmpl).completeBaseName());
             project = base + "." + QString(ProjectFile::Extension);
             for (int i = 2; QFileInfo::exists(project); ++i) project = QString("%1-%2.%3").arg(base).arg(i).arg(ProjectFile::Extension);
         }
         t["fill"] = tmpl;
-        t["out_project"] = project;
+        t["out_project"] = absolute(project);
     } else {
         if (project.isEmpty()) project = s.project;
         if (project.isEmpty() && Live::host()) project = Live::AppProject;

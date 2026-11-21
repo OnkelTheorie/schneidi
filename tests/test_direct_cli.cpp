@@ -9,6 +9,7 @@
 #include "core/Direction.h"
 #include "engine/Extensions.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -734,6 +735,28 @@ int main(int argc, char** argv)
         CHECK(QFileInfo::exists(there["project"].toString()));
         CHECK(QDir(dir.filePath("clips/cs2")).entryList({"*.schneidi"}).isEmpty());
         CHECK(QDir(QFileInfo(beach).absolutePath()).entryList({"short-hook*"}).isEmpty());
+        // A work folder (`mcp --root`, review 21.11.): without project/project_dir the new project goes into the root,
+        // not into the folder for projects outside it
+        Cli::Sandbox::configure({dir.path(), {}, false});
+        const QJsonObject rooted = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        Cli::Sandbox::configure({});
+        if (CHECK(!rooted.contains("error"))) {
+            CHECK_EQ(QFileInfo(rooted["project"].toString()).absolutePath(), QFileInfo(dir.path()).absoluteFilePath());
+            CHECK(QFileInfo::exists(rooted["project"].toString()));
+        }
+        // templates fill resolves out_project itself (called by direct without the parameter table): a relative
+        // path starts in the root, a path outside it is refused
+        Cli::Sandbox::configure({dir.filePath("clips"), {}, false});
+        const Cli::Command* tc = Cli::find("templates");
+        Cli::Context tctx;
+        QString code;
+        try {
+            Cli::execute(*tc, {{"fill", "short-hook"}, {"out_project", dir.filePath("outside.schneidi")}, {"dry_run", true}}, tctx);
+        } catch (const Cli::Error& e) {
+            code = e.code;
+        }
+        Cli::Sandbox::configure({});
+        CHECK_EQ(code, QString("OUTSIDE_ROOT"));
     }
     // ---- Highlights with far less found than wanted: a note with fixed key and values, the end of the recording
     // offered switched off (the plan's fallback "end of every recording")
