@@ -86,11 +86,14 @@ S264_DEV(int, gDeblockB, std::clamp(devEnv("H264_DBB") ? std::atoi(devEnv("H264_
 // 8x8 quadrants' variances, 2 = mean of the two flattest quadrants.
 S264_DEV(int, gAqEdge, devEnv("H264_AQEDGE") ? std::atoi(devEnv("H264_AQEDGE")) : 0);
 // Hints (EncodeHints), for measuring: H264_HINTLA=0 analyses repeated pictures in the lookahead like any other,
-// H264_HINTSKIP=0 takes no skip on the hint's word (still macroblocks go through the normal decision),
-// H264_HINTBG=0 leaves background macroblocks all their choices (only the QP rule stays).
+// H264_HINTSKIP=0: still macroblocks go through the normal decision (2: P pictures skip them on the hint's word),
+// H264_HINTBG = what background macroblocks do without in inter pictures (bit 0: the split search, bit 1: the intra
+// try; 0 = all their choices, only the QP rule stays), H264_HINTMEAN=1 leaves them out of the adaptive
+// quantisation's mean (the other macroblocks then centre on their own mean).
 S264_DEV(bool, gHintLa, !devEnv("H264_HINTLA") || std::atoi(devEnv("H264_HINTLA")) != 0);
-S264_DEV(bool, gHintSkip, !devEnv("H264_HINTSKIP") || std::atoi(devEnv("H264_HINTSKIP")) != 0);
-S264_DEV(bool, gHintBg, !devEnv("H264_HINTBG") || std::atoi(devEnv("H264_HINTBG")) != 0);
+S264_DEV(int, gHintSkip, devEnv("H264_HINTSKIP") ? std::atoi(devEnv("H264_HINTSKIP")) : 1);
+S264_DEV(int, gHintBg, devEnv("H264_HINTBG") ? std::atoi(devEnv("H264_HINTBG")) : 0);
+S264_DEV(bool, gHintMean, devEnv("H264_HINTMEAN") && std::atoi(devEnv("H264_HINTMEAN")) != 0);
 // H264_HINTSTAT=1: the hints change nothing; the bits of the macroblocks inside and outside the background
 // rectangles (and of those the texture rule takes out again) are counted and printed when an encoder ends.
 S264_DEV(bool, gHintStat, devEnv("H264_HINTSTAT") && std::atoi(devEnv("H264_HINTSTAT")) != 0);
@@ -7446,15 +7449,20 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // H264_EARLYSKIPLIGHT: what a refused skip does without (bit 0: the split search, bit 1: the intra try).
     static const int kEarlySkipLight = devEnv("H264_EARLYSKIPLIGHT") ? std::atoi(devEnv("H264_EARLYSKIPLIGHT")) : 3;
     int offSkip = 0; // the skip's residual quantises to nothing, but the skip is far from the source
-    // Hints. The macroblock's samples equal the reference picture's (a still, a title that stands) and the skip
-    // copies that very place: nothing to search or to weigh, what the reference picture shows there is what a
-    // skip of an unchanged block always shows. Background: only the cheap choices below.
+    // Hints. The macroblock's samples equal the reference picture's (a still, a title that stands): the motion is
+    // known - none. The skip is taken as always when its residual quantises to nothing; otherwise only the 16x16
+    // prediction from the same place is weighed against it (it may code a residual: a still gets finer over its
+    // first P pictures, and taking the skip on the hint's word alone cost 0.2 dB there for no bits) - no search,
+    // no splits, no intra try. H264_HINTSKIP=2: the skip on the hint's word (measuring).
     const uint8_t hint = hint_.empty() ? uint8_t(0) : hint_[mbIndex];
-    if ((hint & 1) && gHintSkip && !gHintStat && skipX == 0 && skipY == 0 && !wpAny_) {
-        result.syn.kind = MbSyntax::Kind::Skip;
-        mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+    const bool stillMb = (hint & 1) && gHintSkip && !gHintStat && !wpAny_;
+    if (stillMb) {
         hintStill_.fetch_add(1, std::memory_order_relaxed);
-        return false;
+        if (gHintSkip == 2 && skipX == 0 && skipY == 0) {
+            result.syn.kind = MbSyntax::Kind::Skip;
+            mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+            return false;
+        }
     }
     if (kEarlySkip && skipResidualIsZero(mbx, mby, lp, cp, qp)) {
         if (kEarlySkipSsd <= 0 || double(mbSsd(mbx, mby)) <= std::max(kEarlySkipSsd * lambda, kEarlySkipFloor)) {
@@ -7464,8 +7472,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         }
         offSkip = kEarlySkipLight;
     }
-    if ((hint & 2) && gHintBg && !gHintStat) {
-        offSkip = 3; // no split search, no intra try
+    if (stillMb)
+        offSkip = 3;
+    if ((hint & 2) && !gHintStat) {
+        offSkip |= gHintBg & 3; // no split search (no intra try)
         hintBackground_.fetch_add(1, std::memory_order_relaxed);
     }
     ssdSkip = double(mbSsd(mbx, mby));
@@ -7511,6 +7521,10 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     }
     double wholeFull = -1;
     auto search = [&](int x4, int y4, int w4, int h4, int ref, int pX, int pY, int& outX, int& outY) {
+        if (stillMb && ref == 0) { // hints: the same samples at the same place of the reference picture
+            outX = outY = 0;
+            return double(sadPart(*refs_[0], mbx, mby, x4, y4, w4, h4, 0, 0, true)) + lambdaSad * (seBits(-pX) + seBits(-pY));
+        }
         starts.push_back({pX, pY});
         const double area = double(w4 * h4) / 16.0;
         const bool whole16 = w4 == 4 && h4 == 4 && ref == 0;
@@ -8322,7 +8336,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             return false;
         }
     }
-    const bool hintBackground = (hint & 2) && gHintBg && !gHintStat;
+    const bool hintBackground = (hint & 2) && !gHintStat;
     if (hintBackground)
         hintBackground_.fetch_add(1, std::memory_order_relaxed);
     // Skipped at once where nothing would be coded - unless the lost detail weighs more than the
@@ -8644,7 +8658,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     static const bool kFastBNoSplit = !devEnv("H264_FASTBNOSPLIT") || std::atoi(devEnv("H264_FASTBNOSPLIT")) != 0;
     if (cfg_.speed >= 1 && kFastBNoSplit && wholePlanned && wholeR8.cbpLuma == 15)
         noSplit = true;
-    if (hintBackground)
+    if (hintBackground && (gHintBg & 1))
         noSplit = true;
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)
@@ -8920,7 +8934,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
             est = std::min(est, satd16(cand));
         }
         const double estInter = std::min(estSearch, estDirect);
-        if (double(est) < estInter * gIntraFactor && !hintBackground) {
+        if (double(est) < estInter * gIntraFactor && !(hintBackground && (gHintBg & 2))) {
             const bool borderline = double(est) >= estInter;
             tIntraSkip8 = borderline && (!gFullIntra || (gExp & 2));
             tIntraSkip16 = borderline && (!gFullIntra || (gExp & 4));
@@ -9850,7 +9864,7 @@ void FrameCoder::planMacroblockQp()
             if (hinted && (hint_[size_t(mby) * mbW_ + mbx] & 2)) {
                 if (e >= cfg_.hintBackgroundEnergy)
                     hint_[size_t(mby) * mbW_ + mbx] = uint8_t((hint_[size_t(mby) * mbW_ + mbx] & ~2) | 8);
-                else if (!gHintStat) {
+                else if (!gHintStat && gHintMean) {
                     ++background;
                     continue;
                 }
@@ -9875,11 +9889,31 @@ void FrameCoder::planMacroblockQp()
                 tm += treeOffset_[size_t(m)];
         std::fprintf(stderr, "aq: frame %d qp %d mean %.2f tree %.2f\n", displayIndex_, cfg_.qp, mean, tm / n);
     }
+    static const double kAqFloor2 = devEnv("H264_AQFLOOR") ? std::atof(devEnv("H264_AQFLOOR")) : 3.0;
+    auto aqOffset = [&](int m) {
+        return std::clamp(cfg_.aqStrength * (std::max(double(mbEnergy_[size_t(m)]), kAqFloor2) - mean) * 0.5, -8.0, 8.0);
+    };
+    // Hints: background macroblocks get the mean offset of the picture's other macroblocks plus hintBackgroundQp -
+    // by their own texture they would be the picture's flattest and get its finest QP.
+    double backgroundOffset = 0;
+    bool anyBackground = false;
+    if (hinted && !gHintStat) {
+        double sum = 0;
+        int rest = 0;
+        for (int m = 0; m < n; ++m) {
+            if (hint_[size_t(m)] & 2) {
+                anyBackground = true;
+            } else {
+                sum += aqOffset(m);
+                ++rest;
+            }
+        }
+        backgroundOffset = std::min(12.0, (rest ? sum / rest : 0.0) + cfg_.hintBackgroundQp);
+    }
     for (int m = 0; m < n; ++m) {
-        static const double kAqFloor2 = devEnv("H264_AQFLOOR") ? std::atof(devEnv("H264_AQFLOOR")) : 3.0;
-        double offset = std::clamp(cfg_.aqStrength * (std::max(double(mbEnergy_[size_t(m)]), kAqFloor2) - mean) * 0.5, -8.0, 8.0);
-        if (hinted && (hint_[size_t(m)] & 2) && !gHintStat)
-            offset = cfg_.hintBackgroundQp;
+        double offset = aqOffset(m);
+        if (anyBackground && (hint_[size_t(m)] & 2))
+            offset = backgroundOffset;
         if (tree)
             offset += treeOffset_[size_t(m)];
         mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + offset)), 0, 51));

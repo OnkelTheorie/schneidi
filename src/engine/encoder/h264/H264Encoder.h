@@ -213,11 +213,11 @@ struct EncoderConfig {
     double vbvInit = 0.9; // buffer fullness at the first picture's removal (fraction of vbvBufsizeKbits)
     // At least this full at the end (fraction; 0 = no demand): set by ChunkPlan::configFor for all chunks but the last.
     double vbvEndFill = 0;
-    // EncodeHints::background: QP of such macroblocks above what the picture's other macroblocks get (0 = they
-    // only leave the adaptive quantisation and take the cheap decisions), and the texture energy (the adaptive
-    // quantisation's measure, log2 of 256 x variance + 1; needs aqStrength > 0) from which a macroblock inside a
-    // background rectangle counts as something laid over the blur and is coded like the rest.
-    int hintBackgroundQp = 4;
+    // EncodeHints::background: QP of such macroblocks above the mean of the picture's other macroblocks, and the
+    // texture energy (the adaptive quantisation's measure, log2 of 256 x variance + 1; needs aqStrength > 0) from
+    // which a macroblock inside a background rectangle counts as something laid over the blur and is coded like
+    // the rest.
+    int hintBackgroundQp = 0;
     double hintBackgroundEnergy = 10.0;
 };
 
@@ -318,10 +318,10 @@ struct EncodeHints {
     std::vector<Rect> still;
     // Nobody looks here: the blurred copy of the picture that fills the frame around a fitted clip (16:9 footage in
     // a 9:16 short - two thirds of the frame). There the adaptive quantisation's rule "flat = errors show = finer"
-    // is wrong; such macroblocks get a QP coarser by EncoderConfig::hintBackgroundQp instead, are left out of the
-    // adaptive quantisation's mean (so the sharp part is not pushed coarser by them) and are decided with the cheap
-    // choices only (no split search, no intra try in inter pictures). A macroblock with texture inside such a
-    // rectangle (a caption, a logo laid over the blur) is treated as if the hint were not there.
+    // is wrong (such macroblocks are the picture's flattest and would get its finest QP): they get the mean QP
+    // of the picture's other macroblocks plus EncoderConfig::hintBackgroundQp instead, and in inter pictures no
+    // split search. A macroblock with texture inside such a rectangle (a caption, a logo laid over the blur) is
+    // treated as if the hint were not there.
     std::vector<Rect> background;
     bool empty() const { return !repeat && still.empty() && background.empty(); }
 };

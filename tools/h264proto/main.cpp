@@ -20,7 +20,7 @@
 // --hints file: what an editor knows about the pictures (EncodeHints), one line per picture that has any:
 // "<picture> [key] [repeat] [still x y w h]... [bg x y w h]..." (key = forced keyframe: a cut; repeat = the picture
 // before once more; still = same content as before in that rectangle; bg = blurred background). schneidi's export
-// writes such a file next to the raw pictures with SCHNEIDI_S264_DUMP. --hint-bg-qp N (4) / --hint-bg-energy E (10):
+// writes such a file next to the raw pictures with SCHNEIDI_S264_DUMP. --hint-bg-qp N (0) / --hint-bg-energy E (10):
 // EncoderConfig::hintBackgroundQp / hintBackgroundEnergy. --hints-keys-only: take only the cuts from the file.
 // Not with --chunks; with --2pass the first pass does not see the hints.
 // Input is raw yuv420p ("-" reads stdin). Prints size, speed and PSNR of the encoder's reconstruction.
