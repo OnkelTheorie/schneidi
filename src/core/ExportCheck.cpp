@@ -587,7 +587,12 @@ bool isVertical(const ProjectFormat& f) { return f.width > 0 && f.height > 0 && 
 QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o)
 {
     QVector<Issue> out;
-    if (!isVertical(f) || to <= from) return out;
+    // Text cut off at the picture's edges, in any format: more than kMaxOutside of its letters outside the picture
+    // (11: a 9:16 title 10 % wider than the picture passed, under the 20 % the platforms' zones need). Other formats
+    // look at that only, and only at text and counters (a shape may slide out on purpose).
+    constexpr double kMaxOutside = 0.005;
+    const bool vertical = isVertical(f);
+    if (to <= from || f.width <= 0 || f.height <= 0) return out;
     const double W = f.width, H = f.height;
     // Titles of one track in the same zone (a counter x1 ... x16, captions) are one finding, not one per title
     struct Found {
@@ -612,6 +617,8 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             // A shape over the whole frame is a background (a colour matte, op 'solid'): nothing on it to cover
             if (c.title.isShape() && titleBlock(c, 0, W, H).contains(QRectF(0, 0, W, H))) continue;
             if (Keys::hasOpacity(c) && !Keys::animated(c, AnimParam::Opacity) && c.transform.opacity <= 0) continue;
+            const bool text = c.title.kind == TitleKind::Text || c.title.isCounter();
+            if (!vertical && !text) continue;
             if (c.title.isProgress()) {
                 // A thin bar along the top edge is the usual place (the apps' top row is text over the picture);
                 // at the bottom the apps draw their own progress bar, the caption and the buttons over it
@@ -631,12 +638,20 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             int first = -1, last = -1, bad = 0;
             QVector<int> zones(5, 0);
             for (int fr = a; fr < b; fr += step) {
-                const auto [part, zone] = covered(titleBlock(c, fr - c.start, W, H), W, H, o);
-                if (part < o.safeMaxCovered) continue;
+                const QRectF block = titleBlock(c, fr - c.start, W, H);
+                const auto [part, zone] = covered(block, W, H, o);
+                // The letters themselves (the box and the outline may touch the edge)
+                const double g = (c.title.boxOn ? std::max(0.0, c.title.boxPad) : 0.0)
+                                 + (c.title.outlineOn ? std::max(0.0, c.title.outlineWidth) : 0.0);
+                const QRectF letters = block.adjusted(g, g, -g, -g);
+                const double outside =
+                    area(letters) > 0 ? 1 - area(letters.intersected(QRectF(0, 0, W, H))) / area(letters) : 0;
+                const bool cut = text && outside > kMaxOutside;
+                if (!cut && (!vertical || part < o.safeMaxCovered)) continue;
                 if (first < 0) first = fr;
                 last = fr;
                 bad += std::min(step, b - fr);
-                ++zones[int(zone)];
+                ++zones[int(cut ? Zone::Outside : zone)];
             }
             if (first < 0 || bad < std::min(b - a, int(std::lround(0.5 * f.rate.fps())))) continue;
             const Zone zone = Zone(std::max_element(zones.begin(), zones.end()) - zones.begin());
@@ -671,7 +686,7 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
         out << is;
     }
     // Subtitles: the track style places every cue; one issue per track from its first covered cue on
-    for (int i = 0; i < tl.subtitles.size(); ++i) {
+    for (int i = 0; vertical && i < tl.subtitles.size(); ++i) {
         const SubtitleTrack& st = tl.subtitles[i];
         if (!st.enabled) continue;
         int first = -1, last = -1;

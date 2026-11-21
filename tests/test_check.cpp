@@ -406,10 +406,30 @@ int main(int argc, char** argv)
         tl.video[0].clips << clip(1, 0, 300, "/x/a.mp4");
         tl.video[1].clips << title(2, 0, 50, "HOOK", 0, 0)            // middle: fine
                           << title(3, 50, 50, "x16", 0, -700)         // the caption/buttons at the bottom
-                          << title(4, 100, 50, "RIGHT", 420, 0)       // the button column
-                          << title(5, 150, 50, "TOP", 0, 910)         // the bar at the top
+                          << title(4, 100, 50, "RIGHT", 380, 0)       // the button column
+                          << title(5, 150, 50, "TOP", 0, 870)         // the bar at the top
                           << title(6, 200, 50, "UPPER THIRD", 0, 450) // fine
                           << title(7, 250, 50, "OUT", -700, 0);       // outside the picture
+        // A title a little wider than the picture (cut at both edges, only ~10 % outside: under the 20 % of the zones,
+        // 11) is found in any format; in 16:9 it fits
+        {
+            Timeline wide;
+            wide.video.resize(2);
+            wide.video[0].clips << clip(1, 0, 100, "/x/a.mp4");
+            Clip t = title(2, 0, 100, "Der Abend in 25 Sekunden", 0, 500);
+            t.title.size = 84;
+            t.title.bold = true;
+            wide.video[1].clips << t;
+            const QRectF block = ExportCheck::overlayBlock(t, 1080, 1920);
+            if (CHECK(block.width() > 1080 && block.width() < 1080 / 0.8)) {
+                const auto cut = ExportCheck::layout(wide, 0, 100, v);
+                if (CHECK_EQ(checks(cut), QStringList({"safe_area"}))) CHECK_EQ(cut[0].clip, 2);
+            }
+            wide.video[1].clips[0].title.posY = 0;
+            CHECK(ExportCheck::layout(wide, 0, 100, f).isEmpty());
+            wide.video[1].clips[0].title.posX = 1500; // 16:9, half of it past the right edge
+            CHECK_EQ(checks(ExportCheck::layout(wide, 0, 100, f)), QStringList({"safe_area"}));
+        }
         auto issues = ExportCheck::layout(tl, 0, 300, v);
         CHECK_EQ(checks(issues), QStringList({"safe_area", "safe_area", "safe_area", "safe_area"}));
         CHECK_EQ(clipsOf(issues), QVector<int>({3, 4, 5, 7}));
@@ -450,8 +470,10 @@ int main(int argc, char** argv)
                 CHECK(grouped[1].clips.isEmpty()); // alone in its zone
             }
         }
-        // The same in 16:9, and outside the checked range: nothing
-        CHECK(ExportCheck::layout(tl, 0, 300, f).isEmpty());
+        // The same in 16:9: only the texts cut off by the picture's edge (x16 below it, TOP above it); outside the
+        // checked range nothing
+        const auto flat = ExportCheck::layout(tl, 0, 300, f);
+        if (CHECK_EQ(clipsOf(flat), QVector<int>({3}))) CHECK_EQ(flat[0].clips, QVector<int>({3, 5}));
         CHECK(ExportCheck::layout(tl, 0, 50, v).isEmpty());
         // Subtitles: the default style of a vertical project sits in the bottom zone; a third up is fine
         Timeline subs;
