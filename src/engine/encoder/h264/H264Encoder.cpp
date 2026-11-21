@@ -8263,6 +8263,22 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
     }
     clearNz();
     setDirect();
+    // Hints (see encodeMbP): the samples equal those of every reference picture the direct prediction uses, and it
+    // copies from the same place - the skip, before anything is measured.
+    const uint8_t hint = hint_.empty() ? uint8_t(0) : hint_[mbIndex];
+    if ((hint & 5) && gHintSkip && !gHintStat) {
+        bool still = dUse != 0 && (!(dUse & 1) || (hint & 1)) && (!(dUse & 2) || (hint & 4));
+        for (int q = 0; q < 4 && still; ++q)
+            for (int list = 0; list < 2; ++list)
+                if (dUse & (1 << list))
+                    still = still && d.mv[list][q][0] == 0 && d.mv[list][q][1] == 0;
+        if (still) {
+            result.syn.kind = MbSyntax::Kind::Skip;
+            mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
+            hintStill_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
     // Texture kept (EncoderConfig::bSharp). A prediction from both lists is the average of two
     // pictures. On a slowly drifting texture they show it at different sub-sample positions and
     // the average is softer than either; skipped, it costs nothing, so the B pictures were softer
@@ -8320,22 +8336,6 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         lostDirect = lostOf(e / 2, detail(dlp, 16, 16), std::min(satd[0], satd[1]), gBSharpKeep > 0 ? satd16(dlp) : 0);
     }
     const double sharpDirect = sharp * lambdaSad * lostDirect;
-    // Hints (see encodeMbP): the samples equal those of every reference picture the direct prediction uses, and it
-    // copies from the same place.
-    const uint8_t hint = hint_.empty() ? uint8_t(0) : hint_[mbIndex];
-    if ((hint & 5) && gHintSkip && !gHintStat) {
-        bool still = dUse != 0 && (!(dUse & 1) || (hint & 1)) && (!(dUse & 2) || (hint & 4));
-        for (int q = 0; q < 4 && still; ++q)
-            for (int list = 0; list < 2; ++list)
-                if (dUse & (1 << list))
-                    still = still && d.mv[list][q][0] == 0 && d.mv[list][q][1] == 0;
-        if (still) {
-            result.syn.kind = MbSyntax::Kind::Skip;
-            mbQpFinal_[mbIndex] = int8_t(qpPredOf(mby));
-            hintStill_.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-    }
     const bool hintBackground = (hint & 2) && !gHintStat;
     if (hintBackground)
         hintBackground_.fetch_add(1, std::memory_order_relaxed);

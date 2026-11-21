@@ -784,37 +784,39 @@ QVector<ExportHintSpan> Exporter::encodeHints(const Timeline& tl, int from, int 
     static const QSet<QString> kStills{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("webp"), QStringLiteral("bmp"),
                                        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg"), QStringLiteral("heic"), QStringLiteral("avif")};
     const double sx = double(out.width()) / format.width(), sy = double(out.height()) / format.height();
-    for (qsizetype i = 0; i + 1 < edges.size(); ++i) {
-        const int a = edges[i], b = edges[i + 1];
+    static constexpr AnimParam kPlace[] = {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY,
+                                           AnimParam::Rotation, AnimParam::TiltX, AnimParam::TiltY, AnimParam::CropLeft,
+                                           AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom};
+    // What shows at timeline frame f, as the span of output frames [first, last)
+    auto spanAt = [&](int f, int first, int last) {
         ExportHintSpan span;
-        span.from = outputFrame(a);
-        span.to = outputFrame(b);
-        if (span.to <= span.from) continue;
+        span.from = first;
+        span.to = last;
         span.still = true;
         bool fills = true;  // every media clip showing has the blurred fill at the same place
         QRectF sharp;       // that place: the fitted picture (project pixels)
         for (const Clip* c : clips) {
-            if (c->start >= b || c->end() <= a) continue;
+            if (c->start > f || c->end() <= f) continue;
             if (c->isTitle()) continue;
             const bool image = c->kind == ClipKind::Media && kStills.contains(QFileInfo(c->mediaPath).suffix().toLower());
             if (!(c->kind == ClipKind::Media && (c->freeze || image))) span.still = false;
             const ClipTransform& t = c->transform;
-            bool moves = false;
-            for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::CropLeft,
-                                AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
-                moves = moves || Keys::animated(*c, p);
-            if (c->kind != ClipKind::Media || !t.hasBlurFill() || t.rotation != 0 || t.hasTilt() || moves) {
+            const int at = f - c->start;
+            auto val = [&](AnimParam p) { return Keys::valueAt(*c, p, at); };
+            if (c->kind != ClipKind::Media || !t.hasBlurFill() || val(AnimParam::Rotation) != 0 || val(AnimParam::TiltX) != 0
+                || val(AnimParam::TiltY) != 0) {
                 fills = false;
                 continue;
             }
+            // As the picture engine places it (Renderer: the fitted picture, cropped, zoomed about its centre, moved; Y up)
             const QSizeF frame(format);
             const QSizeF fit = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
-            QRectF r((frame.width() - fit.width()) / 2, (frame.height() - fit.height()) / 2, fit.width(), fit.height());
-            if (t.hasCrop()) r.adjust(t.cropLeft, t.cropTop, -t.cropRight, -t.cropBottom);
-            // Zoom about the frame's centre, then the position (Y up)
-            const QPointF centre(frame.width() / 2, frame.height() / 2);
-            r = QRectF(centre.x() + (r.left() - centre.x()) * t.zoomX + t.posX, centre.y() + (r.top() - centre.y()) * t.zoomY - t.posY,
-                       r.width() * t.zoomX, r.height() * t.zoomY);
+            const double zx = val(AnimParam::ZoomX), zy = val(AnimParam::ZoomY);
+            const double w = fit.width() * zx, h = fit.height() * zy;
+            QRectF r((frame.width() - w) / 2 + val(AnimParam::PosX), (frame.height() - h) / 2 - val(AnimParam::PosY), w, h);
+            if (t.cropOn)
+                r.adjust(val(AnimParam::CropLeft) * zx, val(AnimParam::CropTop) * zy, -val(AnimParam::CropRight) * zx,
+                         -val(AnimParam::CropBottom) * zy);
             if (sharp.isNull()) sharp = r;
             else if (std::abs(sharp.left() - r.left()) > 0.5 || std::abs(sharp.top() - r.top()) > 0.5
                      || std::abs(sharp.width() - r.width()) > 0.5 || std::abs(sharp.height() - r.height()) > 0.5)
@@ -828,16 +830,29 @@ QVector<ExportHintSpan> Exporter::encodeHints(const Timeline& tl, int from, int 
             const int bottom = std::clamp(int(std::ceil(sharp.bottom() * sy)) + 1, 0, out.height());
             if (top > 0) span.background << QRect(0, 0, out.width(), top);
             if (bottom < out.height()) span.background << QRect(0, bottom, out.width(), out.height() - bottom);
-            if (l > 0) span.background << QRect(0, top, l, bottom - top);
-            if (r < out.width()) span.background << QRect(r, top, out.width() - r, bottom - top);
+            if (l > 0 && bottom > top) span.background << QRect(0, top, l, bottom - top);
+            if (r < out.width() && bottom > top) span.background << QRect(r, top, out.width() - r, bottom - top);
         }
-        if (!span.still && span.background.isEmpty()) continue;
+        if (span.to <= span.from || (!span.still && span.background.isEmpty())) return;
         // Joins the span before when it says the same
         if (!spans.isEmpty() && spans.last().to == span.from && spans.last().still == span.still
             && spans.last().background == span.background)
             spans.last().to = span.to;
         else
             spans << span;
+    };
+    for (qsizetype i = 0; i + 1 < edges.size(); ++i) {
+        const int a = edges[i], b = edges[i + 1];
+        // Where a clip's place is animated (a zoom punch, a shake) the picture's rectangle is taken frame by frame
+        bool animated = false;
+        for (const Clip* c : clips)
+            if (c->start < b && c->end() > a && !c->isTitle())
+                for (AnimParam p : kPlace) animated = animated || Keys::animated(*c, p);
+        if (!animated) {
+            spanAt(a, outputFrame(a), outputFrame(b));
+            continue;
+        }
+        for (int f = a; f < b; ++f) spanAt(f, outputFrame(f), outputFrame(f + 1));
     }
     return spans;
 }

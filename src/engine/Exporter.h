@@ -147,8 +147,9 @@ public:
     //   encoder compares the pictures before it relies on it.
     // - background: the parts of the frame that only show the blurred fill (FitFill::Blur) around the fitted
     //   picture, when every visible media clip there has that fill and the same place (16:9 footage in a 9:16
-    //   short); `format` = the timeline's size, `out` the output's. Titles and overlays on top are the encoder's
-    //   to notice (it leaves macroblocks with texture alone).
+    //   short); `format` = the timeline's size, `out` the output's. A place that is animated (a zoom punch, a
+    //   shake) is followed frame by frame; none while the picture is rotated or tilted. Titles and overlays on top
+    //   are the encoder's to notice (it leaves macroblocks with texture alone).
     static QVector<ExportHintSpan> encodeHints(const Timeline& tl, int from, int length, QSize format, QSize out,
                                                                  FrameRate timelineRate, FrameRate outputRate);
     // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it

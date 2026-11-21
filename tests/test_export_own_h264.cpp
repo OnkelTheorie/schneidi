@@ -560,11 +560,27 @@ void testEncodeHints(const QString& dir)
         if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 1080, 607), QRect(0, 913, 1080, 1007), QRect(0, 607, 369, 306),
                                                         QRect(911, 607, 169, 306)})))
             qDebug() << h[0].background;
-    // Not where the picture's place is animated, the fill is off, or a clip without the fill shows as well
-    Timeline animated = fill;
-    Keys::setKey(animated.video[0].clips[0], AnimParam::PosX, 0, 0);
-    Keys::setKey(animated.video[0].clips[0], AnimParam::PosX, 50, 300);
-    CHECK(hints(animated, {1080, 1920}, {1080, 1920}).isEmpty());
+    // A place that is animated (a zoom punch): followed frame by frame - at zoom 1 the bars of the picture above,
+    // at zoom 2 (1080 x 1215 around the middle) smaller ones, between them one span per frame
+    Timeline animated = sequence({{g_media, 0, kFrames}});
+    animated.video[0].clips[0].pictureAspect = 16.0 / 9.0;
+    animated.video[0].clips[0].transform.fill = FitFill::Blur;
+    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY}) {
+        Keys::setKey(animated.video[0].clips[0], p, 10, 1);
+        Keys::setKey(animated.video[0].clips[0], p, 20, 2);
+    }
+    h = hints(animated, {1080, 1920}, {1080, 1920});
+    if (CHECK(h.size() > 3)) {
+        CHECK(h.first().from == 0 && h.first().to == 11);
+        if (!CHECK_EQ(h.first().background, (QVector<QRect>{QRect(0, 0, 1080, 655), QRect(0, 1265, 1080, 655)}))) qDebug() << h.first().background;
+        CHECK(h.last().from == 20 && h.last().to == kFrames);
+        if (!CHECK_EQ(h.last().background, (QVector<QRect>{QRect(0, 0, 1080, 351), QRect(0, 1569, 1080, 351)}))) qDebug() << h.last().background;
+        for (qsizetype i = 1; i < h.size(); ++i) CHECK(h[i].from == h[i - 1].to);
+    }
+    // None while the picture is rotated, where the fill is off, or where a clip without the fill shows as well
+    Timeline rotated = fill;
+    rotated.video[0].clips[0].transform.rotation = 5;
+    CHECK(hints(rotated, {1080, 1920}, {1080, 1920}).isEmpty());
     Timeline off = fill;
     off.video[0].clips[0].transform.transformOn = false;
     CHECK(hints(off, {1080, 1920}, {1080, 1920}).isEmpty());
