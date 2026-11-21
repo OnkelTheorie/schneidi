@@ -8,7 +8,8 @@
 //    (offscreen/minimal platform, VM without GL, software rasteriser, RHI not compiled in, setup failure) or forced
 //    with SCHNEIDI_VIEWER=painter resp. the setting viewer/renderer = "painter"
 // Mouse: the overlay gets the events first; middle button drag pans, so does left drag while zoomed in when nothing
-// else uses it (no dragData, no overlay hit). Ctrl+wheel zooms in steps.
+// else uses it (no dragData, no overlay hit). Ctrl+wheel zooms in steps. Fingers (TouchGestures): two pinch zoom and pan,
+// a double tap fits, one works like the left button (a drag out goes through TouchDrag).
 //
 // Later (picture engine on the GPU): the engine hands over a texture that lives in the viewer's QRhi instead of a
 // QImage. The hook for that is the GPU surface's render(): it samples whatever texture `frameTexture()` returns; a
@@ -110,6 +111,10 @@ public:
     // widget on an axis where it is larger and stays centred where it is smaller
     void setPan(const QPointF& pan);
     QPointF pan() const { return m_pan; }
+    // Two fingers (touch): zoom by `scale` around the fingers, the picture follows their centre from `from` to `to`;
+    // at or below the fit size it fits
+    void pinchZoom(const QPointF& from, const QPointF& to, double scale);
+    double fitZoom() const; // the factor the fitted picture shows at
     // Smooth (bilinear) unless zoomed to 200 % or more – then each pixel is a sharp square
     bool smoothScaling() const { return m_zoom == kFit || m_zoom < 2.0; }
 

@@ -483,6 +483,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/MulticamView.h         src/ui/MulticamView.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/FrameView.h            src/ui/FrameView.cpp
+    src/ui/touch/Touch.h          src/ui/touch/Touch.cpp
+    src/ui/touch/TouchGestures.h  src/ui/touch/TouchGestures.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp

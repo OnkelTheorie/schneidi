@@ -19,6 +19,7 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
+#include "ui/touch/Touch.h"
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
@@ -178,6 +179,7 @@ bool TimelineView::closeSelectedGap()
 
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
+    m_touchPointer = Touch::isTouch(e);
     if (e->button() == Qt::LeftButton && m_gap.on) {
         m_gap = {};
         update();
@@ -398,6 +400,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
 
 void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
+    if (m_drag == Drag::None) m_touchPointer = Touch::isTouch(e); // a running drag keeps the press's zones
     const QPoint pos = e->position().toPoint();
     m_dragPos = pos;
     m_dragMods = e->modifiers();

@@ -12,6 +12,7 @@
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/touch/Touch.h"
 #include "ui/timeline/TimelineViewDetail.h"
 
 #include <QMenu>
@@ -46,7 +47,8 @@ TimelineView::MarkGrab TimelineView::markGrabAt(const QPoint& pos) const
     const double xOut = tl.markOut >= 0 ? frameToX(tl.markOut + 1) : 1e9;
     const double dIn = std::abs(pos.x() - xIn), dOut = std::abs(pos.x() - xOut);
     // A narrow range: the nearer handle (Out wins a tie right of the middle, so both stay reachable)
-    if (dIn <= kHandlePx || dOut <= kHandlePx) return dIn < dOut || (dIn == dOut && pos.x() < (xIn + xOut) / 2) ? MarkGrab::In : MarkGrab::Out;
+    const int handle = Touch::grabPx(m_touchPointer, kHandlePx);
+    if (dIn <= handle || dOut <= handle) return dIn < dOut || (dIn == dOut && pos.x() < (xIn + xOut) / 2) ? MarkGrab::In : MarkGrab::Out;
     // The whole range moves only with both points set (else its length is open) and only from the grip in the
     // middle of the bar's lower half: the rest of the ruler keeps scrubbing the playhead inside the range
     if (tl.markIn >= 0 && tl.markOut >= 0 && pos.x() > xIn && pos.x() < xOut && pos.y() >= kRulerH - kBarH / 2 &&

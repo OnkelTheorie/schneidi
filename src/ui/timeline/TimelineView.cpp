@@ -18,6 +18,8 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
+#include "ui/touch/Touch.h"
+#include "ui/touch/TouchGestures.h"
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
@@ -121,6 +123,9 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     setAcceptDrops(true);
     setMinimumHeight(160);
     setFocusPolicy(Qt::ClickFocus);
+    // Fingers: one = the mouse code below (larger grab zones), two = pinch zoom + scroll, long press = context menu
+    auto* touch = new TouchGestures(this);
+    touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
     m_aiTimer = new QTimer(this);
     m_aiTimer->setInterval(40);
     connect(m_aiTimer, &QTimer::timeout, this, [this] {
@@ -266,7 +271,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
         if (pos.x() < x1 || pos.x() >= x2) continue;
-        const double grab = std::min<double>(kEdgeGrabPx, (x2 - x1) / 3);
+        const double grab = std::min<double>(edgeGrabPx(), (x2 - x1) / 3);
         if (pos.x() < x1 + grab) return EdgeHit{c.id, TimelineOps::Edge::Start};
         if (pos.x() >= x2 - grab) return EdgeHit{c.id, TimelineOps::Edge::End};
         return std::nullopt;
@@ -296,7 +301,7 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         constexpr double kRollPx = 3;
         if (prevAdj && pos.x() < x1 + kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::Start};
         if (nextAdj && pos.x() >= x2 - kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::End};
-        const double grab = std::min<double>(kEdgeGrabPx + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
+        const double grab = std::min<double>(edgeGrabPx() + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
         if (pos.x() < x1 + grab) return TrimHit{TrimKind::Ripple, c.id, Edge::Start};
         if (pos.x() >= x2 - grab) return TrimHit{TrimKind::Ripple, c.id, Edge::End};
         const bool bar = pos.y() < r.top() + std::min(kClipBarH, r.height() / 2);
@@ -610,6 +615,20 @@ void TimelineView::zoomBy(double factor)
     m_view.setZoomAround(m_view.pxPerFrame * factor, xToFrame(anchorX), anchorX - kHeaderW);
     update();
     emit viewChanged();
+}
+
+void TimelineView::pinchView(const QPointF& from, const QPointF& to, double scale)
+{
+    // The frame under the fingers' old centre goes to their new centre: zoom around the fingers and move with them
+    const double ax = std::max<double>(from.x(), kHeaderW);
+    const double bx = std::max<double>(to.x(), kHeaderW);
+    m_view.setZoomAround(m_view.pxPerFrame * scale, xToFrame(ax), bx - kHeaderW);
+    setScrollY(m_view.scrollY - int(std::lround(to.y() - from.y()))); // redraws, reports viewChanged
+}
+
+int TimelineView::edgeGrabPx() const
+{
+    return Touch::grabPx(m_touchPointer, kEdgeGrabPx);
 }
 
 void TimelineView::zoomToFit()

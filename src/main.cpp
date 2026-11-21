@@ -15,6 +15,7 @@
 #include "cli/DirectBackendReal.h"
 #include "cli/Live.h"
 #include "cli/Setup.h"
+#include "ui/touch/Touch.h"
 #include "ui/FrameView.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
@@ -520,6 +521,7 @@ int main(int argc, char* argv[])
 
     Theme::load(designArg);
     Theme::apply(app);
+    Touch::installKineticScrolling(&app); // every list/panel scrolls with a finger (ui/touch/Touch.h)
     // The UI font's fallbacks (the symbols of buttons and tabs are in other fonts): fontconfig looks them up once (~10 ms
     // on the main thread while the window was built). A helper thread does it meanwhile; the font database keeps the
     // lists for all threads

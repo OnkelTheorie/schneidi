@@ -92,6 +92,8 @@ public:
     void setScrollY(int y);
     void zoomBy(double factor);
     void zoomToFit();
+    // Two fingers (touch): zoom by `scale` around the fingers and follow their centre from `from` to `to`
+    void pinchView(const QPointF& from, const QPointF& to, double scale);
 
     // Returns info on a (possibly not yet imported) file for the drop preview
     void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
@@ -465,6 +467,8 @@ private:
     static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
+    bool m_touchPointer = false; // the last press/move came from a finger: larger grab zones (edges, In/Out handles)
+    int edgeGrabPx() const;
     bool m_snap = true;
     bool m_showNames = true;
     bool m_showDurations = false;

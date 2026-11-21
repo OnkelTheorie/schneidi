@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Touch input (offscreen, a touchscreen device made by QTest): the timeline (tap select/deselect, drag a clip, trim
+// with the finger's larger grab zone, ruler tap, long press menu, pinch zoom, two-finger scroll), the viewer (pinch
+// zoom around the fingers, two-finger pan, double tap = fit), lists (kinetic scroll present and scrolling, tap
+// selects, long press + drag of an item onto the timeline) and a slider inside a scrolling panel. Mouse behaviour at
+// the same spots stays as it was.
+#include "check.h"
+#include "timeline_guard.h"
+
+#include "app/Theme.h"
+#include "core/Editor.h"
+#include "core/I18n.h"
+#include "core/Project.h"
+#include "core/Selection.h"
+#include "core/TimelineOps.h"
+#include "ui/FrameView.h"
+#include "ui/MediaPool.h"
+#include "ui/timeline/TimelineView.h"
+#include "ui/touch/Touch.h"
+
+#include <QApplication>
+#include <QHBoxLayout>
+#include <QListWidget>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPointingDevice>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QScroller>
+#include <QSlider>
+#include <QStyleHints>
+#include <QTest>
+#include <QVBoxLayout>
+#include <cmath>
+
+namespace {
+
+QPointingDevice* g_touch = nullptr;
+
+Clip clip(int id, int start, int length)
+{
+    Clip c;
+    c.id = id;
+    c.mediaPath = "/x/a.mp4";
+    c.start = start;
+    c.in = 0;
+    c.out = length - 1;
+    return c;
+}
+
+// Let a following tap not count as the second of a double tap
+void pauseTaps() { QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50); }
+
+void tap(QWidget* w, QPoint p)
+{
+    QTest::touchEvent(w, g_touch).press(0, p, w);
+    QTest::touchEvent(w, g_touch).release(0, p, w);
+}
+
+// One finger from `a` to `b` in steps
+void swipe(QWidget* w, QPoint a, QPoint b, int steps = 6)
+{
+    QTest::touchEvent(w, g_touch).press(0, a, w);
+    for (int i = 1; i <= steps; ++i) QTest::touchEvent(w, g_touch).move(0, a + (b - a) * i / steps, w);
+    QTest::touchEvent(w, g_touch).release(0, b, w);
+}
+
+// Two fingers: from a0/a1 to b0/b1 in steps
+void twoFingers(QWidget* w, QPoint a0, QPoint a1, QPoint b0, QPoint b1, int steps = 5)
+{
+    QTest::touchEvent(w, g_touch).press(0, a0, w).press(1, a1, w);
+    for (int i = 1; i <= steps; ++i)
+        QTest::touchEvent(w, g_touch).move(0, a0 + (b0 - a0) * i / steps, w).move(1, a1 + (b1 - a1) * i / steps, w);
+    QTest::touchEvent(w, g_touch).release(0, b0, w).release(1, b1, w);
+}
+
+void mouse(QWidget& w, QEvent::Type type, QPoint pt, Qt::MouseButtons buttons)
+{
+    QMouseEvent e(type, pt, w.mapToGlobal(pt), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, {});
+    QApplication::sendEvent(&w, &e);
+}
+
+struct Fixture {
+    Project project;
+    TimelineGuard guard_project{project};
+    Selection sel;
+    Editor editor{&project, &sel};
+    QWidget window;
+    QListWidget* list = nullptr;
+    TimelineView* tv = nullptr;
+
+    Fixture()
+    {
+        project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, false, false});
+        Timeline tl;
+        tl.video.resize(2);
+        tl.audio.resize(1);
+        tl.video[0].clips << clip(1, 0, 100) << clip(2, 150, 100); // V1 (y 94..158)
+        tl.video[1].clips << clip(3, 50, 70);                       // V2 (y 30..94)
+        tl.audio[0].clips << clip(4, 0, 100);                       // A1
+        project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 5, 0});
+        auto* lay = new QHBoxLayout(&window);
+        lay->setContentsMargins(0, 0, 0, 0);
+        tv = new TimelineView(&editor);
+        tv->setSnapping(false);
+        lay->addWidget(tv, 1);
+        window.resize(790, 500); // inside the offscreen screen (800 x 600): touch points outside it get lost
+        window.show();
+        CHECK(QTest::qWaitForWindowExposed(&window));
+        tv->setZoomAndScroll(2.0, 0, 0);
+    }
+    int x(double frame) const
+    {
+        return int(std::lround(TimelineView::kHeaderW + (frame - tv->view().leftFrame) * tv->view().pxPerFrame));
+    }
+};
+
+void testTimelineTapAndMove()
+{
+    Fixture f;
+    // Tap on clip 2 selects it, a tap into the gap deselects
+    tap(f.tv, {f.x(200), 120});
+    CHECK(f.sel.ids() == QSet<int>{2});
+    pauseTaps();
+    tap(f.tv, {f.x(130), 120});
+    CHECK(f.sel.isEmpty());
+    pauseTaps();
+
+    // One finger on a clip drags it (20 frames right)
+    swipe(f.tv, {f.x(200), 120}, {f.x(220), 120});
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 170);
+    CHECK(f.sel.ids() == QSet<int>{2});
+    // No view change by any of this (core rule)
+    CHECK_EQ(f.tv->view().leftFrame, 0.0);
+    CHECK_EQ(f.tv->view().pxPerFrame, 2.0);
+    pauseTaps();
+
+    // Tap on the ruler: the playhead goes there
+    int seek = -1;
+    QObject::connect(f.tv, &TimelineView::seekRequested, [&](int frame) { seek = frame; });
+    tap(f.tv, {f.x(300), 15});
+    CHECK_EQ(seek, 300);
+}
+
+void testTimelineTrimZone()
+{
+    // 10 px inside clip 2's end: outside the mouse's grab zone (6 px), inside the finger's (14 px)
+    {
+        Fixture f;
+        const QPoint at(f.x(250) - 10, 120);
+        mouse(*f.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseMove, at + QPoint(20, 0), Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseMove, at + QPoint(40, 0), Qt::LeftButton);
+        mouse(*f.tv, QEvent::MouseButtonRelease, at + QPoint(40, 0), Qt::NoButton);
+        const Clip& c = f.project.timeline().video[0].clips[1];
+        CHECK_EQ(c.start, 170); // the mouse moved it (40 px = 20 frames), as before
+        CHECK_EQ(c.length(), 100);
+    }
+    {
+        Fixture f;
+        const QPoint at(f.x(250) - 10, 120);
+        swipe(f.tv, at, at + QPoint(40, 0));
+        const Clip& c = f.project.timeline().video[0].clips[1];
+        CHECK_EQ(c.start, 150); // the finger trimmed its end
+        CHECK_EQ(c.length(), 120);
+    }
+}
+
+void testTimelineLongPress()
+{
+    Fixture f;
+    int menus = 0;
+    QObject::connect(f.tv, &TimelineView::clipMenuRequested, [&](const QPoint&) { ++menus; });
+    QTest::touchEvent(f.tv, g_touch).press(0, {f.x(50), 120}, f.tv);
+    QTest::qWait(Touch::longPressMs() + 150);
+    QTest::touchEvent(f.tv, g_touch).release(0, {f.x(50), 120}, f.tv);
+    CHECK_EQ(menus, 1);
+    CHECK(f.sel.contains(1)); // the clip pressed is the one the menu is for
+    CHECK_EQ(f.project.timeline().video[0].clips[0].start, 0);
+}
+
+void testTimelinePinchAndScroll()
+{
+    Fixture f;
+    // Spread two fingers around frame 200: twice the zoom (2 -> 4 px per frame), frame 200 stays between them
+    const int cx = f.x(200);
+    twoFingers(f.tv, {cx - 50, 120}, {cx + 50, 120}, {cx - 100, 120}, {cx + 100, 120});
+    CHECK(std::abs(f.tv->view().pxPerFrame - 4.0) < 0.05);
+    CHECK(std::abs(f.tv->view().leftFrame + (cx - TimelineView::kHeaderW) / f.tv->view().pxPerFrame - 200) < 1.0);
+    CHECK(f.sel.isEmpty()); // no tap, no rubber band
+    // Both fingers 160 px to the left: the view scrolls 160 px (40 frames at 4 px)
+    const double left = f.tv->view().leftFrame;
+    twoFingers(f.tv, {cx - 50, 120}, {cx + 50, 120}, {cx - 210, 120}, {cx - 110, 120});
+    CHECK(std::abs(f.tv->view().leftFrame - (left + 40)) < 0.5);
+    CHECK(std::abs(f.tv->view().pxPerFrame - 4.0) < 0.05);
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150); // nothing moved
+}
+
+QImage card(QSize s)
+{
+    QImage img(s, QImage::Format_RGB32);
+    img.fill(Qt::darkGray);
+    QPainter p(&img);
+    p.fillRect(QRect(QPoint(0, 0), s / 2), Qt::red);
+    return img;
+}
+
+void testViewer()
+{
+    FrameView view;
+    view.resize(960, 600);
+    view.show();
+    view.setFrame(card({1920, 1080}));
+    QApplication::processEvents();
+    const double fit = view.fitZoom();
+    CHECK(std::abs(fit - 0.5) < 1e-6);
+    // Pinch around a point off the centre: the picture point there stays under the fingers
+    const QPoint c(300, 200);
+    const QPointF under = view.widgetToFrame(c);
+    twoFingers(&view, c - QPoint(60, 0), c + QPoint(60, 0), c - QPoint(120, 0), c + QPoint(120, 0));
+    CHECK(std::abs(view.zoom() - 2 * fit) < 0.01);
+    const QPointF back = view.frameToWidget(under);
+    CHECK(std::abs(back.x() - c.x()) < 2 && std::abs(back.y() - c.y()) < 2);
+    // Two fingers together pan the zoomed picture
+    const QPointF pan = view.pan();
+    twoFingers(&view, {400, 300}, {500, 300}, {440, 330}, {540, 330});
+    CHECK(std::abs(view.pan().x() - (pan.x() + 40)) < 1.5 && std::abs(view.pan().y() - (pan.y() + 30)) < 1.5);
+    // Double tap: fit
+    pauseTaps();
+    tap(&view, {480, 300});
+    tap(&view, {482, 300});
+    CHECK(view.zoom() == FrameView::kFit);
+    CHECK(view.pan() == QPointF());
+    // Pinching in below the fit size stays at fit
+    pauseTaps();
+    twoFingers(&view, {380, 300}, {580, 300}, {440, 300}, {520, 300});
+    CHECK(view.zoom() == FrameView::kFit);
+}
+
+// A list whose items drag like the Media Pool's
+class PoolList : public QListWidget {
+protected:
+    QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override
+    {
+        auto* d = new QMimeData;
+        if (!items.isEmpty()) d->setData(MediaPool::MimeType, items.first()->data(Qt::UserRole).toString().toUtf8());
+        return d;
+    }
+};
+
+void testLists()
+{
+    Fixture f;
+    auto* list = new PoolList;
+    list->setDragEnabled(true);
+    for (int i = 0; i < 100; ++i) {
+        auto* it = new QListWidgetItem(QString("clip %1").arg(i), list);
+        it->setData(Qt::UserRole, "/x/a.mp4");
+    }
+    static_cast<QHBoxLayout*>(f.window.layout())->insertWidget(0, list);
+    list->setFixedWidth(200);
+    QApplication::processEvents();
+    CHECK(Touch::hasKineticScroll(list)); // every scroll area of the app has it
+    QWidget* vp = list->viewport();
+
+    // A finger swipe up scrolls the list (and keeps going a little: QScroller)
+    CHECK_EQ(list->verticalScrollBar()->value(), 0);
+    swipe(vp, {100, 400}, {100, 150}, 10);
+    QTest::qWait(300); // QScroller moves the content on its animation timer
+    CHECK(list->verticalScrollBar()->value() > 100);
+    QScroller::scroller(vp)->stop();
+    CHECK(list->selectedItems().isEmpty()); // scrolling selects nothing
+    pauseTaps();
+
+    // Tap selects the item under the finger
+    const QRect r1 = list->visualItemRect(list->item(list->indexAt({100, 40}).row()));
+    tap(vp, r1.center());
+    CHECK(list->currentItem() && list->currentItem()->isSelected());
+    const int picked = list->currentRow();
+    pauseTaps();
+
+    // Long press on an item, then the finger moves onto the timeline and lifts: dropped there
+    QStringList dropped;
+    int dropFrame = -1;
+    QObject::connect(f.tv, &TimelineView::dropRequested,
+                     [&](const QStringList& paths, int frame, int, PlaceParts) { dropped = paths; dropFrame = frame; });
+    const QRect r2 = list->visualItemRect(list->item(picked + 2));
+    QTest::touchEvent(vp, g_touch).press(0, r2.center(), vp);
+    QTest::qWait(Touch::longPressMs() + 150);
+    CHECK_EQ(list->currentRow(), picked + 2);
+    const int scrolled = list->verticalScrollBar()->value();
+    const QPoint onTimeline = f.tv->mapTo(vp->window(), QPoint(f.x(150), 120)) - vp->mapTo(vp->window(), QPoint());
+    for (int i = 1; i <= 6; ++i) {
+        QTest::touchEvent(vp, g_touch).move(0, r2.center() + (onTimeline - r2.center()) * i / 6, vp);
+        CHECK(TouchDrag::active());
+    }
+    QTest::touchEvent(vp, g_touch).release(0, onTimeline, vp);
+    CHECK(!TouchDrag::active());
+    CHECK(dropped == QStringList{"/x/a.mp4"});
+    CHECK(std::abs(dropFrame - 150) <= 1);
+    CHECK_EQ(list->verticalScrollBar()->value(), scrolled); // the drag did not scroll the list
+}
+
+void testSliderInPanel()
+{
+    // A slider in a scrolling panel: the finger moves the slider, the panel stays
+    QScrollArea area;
+    auto* inner = new QWidget;
+    auto* lay = new QVBoxLayout(inner);
+    auto* slider = new QSlider(Qt::Horizontal);
+    slider->setRange(0, 100);
+    slider->setFixedWidth(300);
+    lay->addWidget(slider);
+    lay->addSpacing(2000);
+    area.setWidget(inner);
+    area.resize(400, 300);
+    area.show();
+    QApplication::processEvents();
+    CHECK(Touch::hasKineticScroll(&area));
+    const QPoint handle = slider->mapTo(area.viewport(), QPoint(slider->style()->sliderPositionFromValue(0, 100, 0, slider->width()) + 4, slider->height() / 2));
+    swipe(area.viewport(), handle, handle + QPoint(150, 0), 8);
+    CHECK(slider->value() > 20);
+    CHECK_EQ(area.verticalScrollBar()->value(), 0);
+    // ...and a swipe on the empty part scrolls it
+    swipe(area.viewport(), {200, 250}, {200, 60}, 8);
+    QTest::qWait(300);
+    CHECK(area.verticalScrollBar()->value() > 100);
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    Check::initEnv();
+    QApplication app(argc, argv);
+    Check::initApp("touch_input");
+    I18n::install("de");
+    Theme::apply(app);
+    Touch::installKineticScrolling(&app);
+    g_touch = QTest::createTouchDevice();
+    testTimelineTapAndMove();
+    testTimelineTrimZone();
+    testTimelineLongPress();
+    testTimelinePinchAndScroll();
+    testViewer();
+    testLists();
+    testSliderInPanel();
+    return Check::result();
+}
