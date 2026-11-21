@@ -40,8 +40,8 @@ $ADB exec-out screencap -p > android-shots/x.png
 - Use **Qt 6.10.3**: with 6.8.2 buttons in Qt-drawn dialogs do not react to taps (the hello app shows it with a bare
   QDialog) and there are no safe areas. With 6.10.3 both work (`android-shots/07`, `08`). APK 82 MB (libraries stored
   uncompressed by the newer Gradle plugin) instead of 38 MB; same content.
-- arm64-v8a APK: built with 6.8.2 (37 MB); the 6.10.3 build (`build610-arm64-v8a`) was started last, check
-  `android-deps/build610-arm64.log`. Never run on a device (the real phone was not touched).
+- arm64-v8a APK: built with both Qt versions (6.10.3: `build610-arm64-v8a`, 77 MB; 6.8.2: 37 MB), never run on a
+  device (the real phone was not touched).
 - File dialog / `content://` URIs untested; the app does not ask for READ_MEDIA_* itself yet (tests: `pm grant`).
 - Phone layout: the desktop layout on 914x411 logical px is cramped; some icons are boxes (symbol font missing on
   Android: ship a font). Portrait is locked out in the manifest.
