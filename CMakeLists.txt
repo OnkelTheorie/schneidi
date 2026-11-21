@@ -37,7 +37,7 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 # Linux: "show in file manager" over the freedesktop D-Bus interface (src/ui/FileManager.cpp); without it the folder opens
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(Qt6 QUIET COMPONENTS DBus)
 endif()
 find_package(PkgConfig REQUIRED)
@@ -647,7 +647,26 @@ endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
-add_executable(schneidi src/main.cpp)
+if(ANDROID)
+    # Android app (packaging/android, docs/dev/android.md): the program is a shared library that Qt's Java activity
+    # loads; the `apk` target packs it with Qt and the FFmpeg libraries of packaging/android/build-ffmpeg-android.sh
+    qt_policy(SET QTP0002 NEW)
+    qt_add_executable(schneidi src/main.cpp) # (finalized at the end of this file by Qt)
+    set(_schneidi_android_libs "")
+    foreach(_lib IN LISTS FFMPEG_LINK_LIBRARIES AVFILTER_LINK_LIBRARIES)
+        if(_lib MATCHES "\\.so$")
+            list(APPEND _schneidi_android_libs ${_lib})
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _schneidi_android_libs)
+    set_target_properties(schneidi PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/packaging/android/app
+        QT_ANDROID_EXTRA_LIBS "${_schneidi_android_libs}"
+        QT_ANDROID_VERSION_NAME ${SCHNEIDI_NEXT_VERSION}
+        QT_ANDROID_TARGET_SDK_VERSION 35)
+else()
+    add_executable(schneidi src/main.cpp)
+endif()
 target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi schneidi_buildinfo)
 target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live connection (cli/Live.h)
@@ -704,7 +723,9 @@ endif()
 
 # Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe README.md)
 include(GNUInstallDirs)
-install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(NOT ANDROID) # (Android: the `apk` target packs the app)
+    install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 if(SCHNEIDI_SHARED_LIBS)
     # Installed shared build (rare: a developer's `cmake --install`): the libraries go into a private folder that
     # the programs find relative to themselves
