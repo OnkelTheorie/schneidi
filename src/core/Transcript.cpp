@@ -319,6 +319,40 @@ void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, 
     }
 }
 
+void endAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset, int holdMs, int minMs)
+{
+    if (levels.db.isEmpty() || fps <= 0) return;
+    // The noise floor of the whole sound, as for startAtSound: sound is clearly above it
+    QVector<float> sorted = levels.db;
+    std::sort(sorted.begin(), sorted.end());
+    const float floorDb = sorted[sorted.size() / 5] + 10.f;
+    const int fm = std::max(1, levels.frameMs);
+    constexpr int kRun = 3;          // 30 ms of sound, not a click
+    constexpr float kBelowPeak = 30; // dB under the cue's loud part: the fading end of a word still counts
+    const auto frameOf = [&](int ms) { return int(std::floor(ms * fps / 1000.0)); };
+    for (SubtitleCue& c : cues) {
+        const int a = int(std::clamp<double>((c.start - offset) * 1000.0 / fps / fm, 0, levels.db.size()));
+        const int b = int(std::clamp<double>(std::ceil((c.end - offset) * 1000.0 / fps / fm), a, levels.db.size()));
+        if (b - a < kRun) continue;
+        // The cue's loud part: its 90th percentile (one click does not raise it)
+        QVector<float> own(levels.db.begin() + a, levels.db.begin() + b);
+        std::sort(own.begin(), own.end());
+        const float threshold = std::max(floorDb, own[qsizetype(own.size() * 9 / 10)] - kBelowPeak);
+        int last = -1; // the last frame of sound (kRun frames above the threshold end there)
+        for (int f = b - 1, run = 0; f >= a; --f) {
+            run = levels.db[f] >= threshold ? run + 1 : 0;
+            if (run == kRun) {
+                last = f + kRun - 1;
+                break;
+            }
+        }
+        if (last < 0 || last >= b - 1) continue; // no sound found (startAtSound's business) or sound to the end
+        // Multiplied before the division (see startAtSound)
+        const int end = std::max(offset + frameOf((last + 1) * fm + holdMs), c.start + std::max(1, frameOf(minMs)));
+        if (end < c.end) c.end = end;
+    }
+}
+
 void fitToSpeech(QVector<Word>& words, const Levels& levels)
 {
     const QVector<int> voiced = loudPrefix(levels);
@@ -485,8 +519,9 @@ QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& leve
     QVector<SubtitleCue> moved = cues;
     for (int i = 0; i < moved.size(); ++i) moved[i].id = i; // which cue it was (startAtSound drops some)
     startAtSound(moved, levels, fps, offset);
+    endAtSound(moved, levels, fps, offset);
     for (SubtitleCue& c : moved) {
-        const int d = c.start - cues[c.id].start; // the words stay where they are spoken
+        const int d = c.start - cues[c.id].start; // the words stay where they are spoken (and within the cue)
         for (CueWord& w : c.words) {
             w.to = std::clamp(w.to - d, 1, c.length());
             w.from = std::clamp(w.from - d, 0, w.to - 1);

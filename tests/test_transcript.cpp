@@ -276,6 +276,48 @@ int main(int argc, char** argv)
         Transcript::startAtSound(cs, levels(4000, {{2000, 2600}, {3000, 3600}}), 25, 100);
         CHECK_EQ(cues(cs), QString("147-175 Pferd, geh | 175-190 laut"));
     }
+    // Cues end where their sound does (+200 ms), not after the reading minimum in the silence after it. Synthetic
+    // speech: a 220 Hz tone in 4 Hz syllables from 1.0 s, its last syllable fading out by 20 dB until 2.2 s (a soft
+    // ending, kept), then silence; a quiet hiss under everything (-70 dB)
+    {
+        constexpr int kRate = 16000;
+        QVector<qint16> pcm(5 * kRate);
+        quint32 seed = 1;
+        for (int i = 0; i < pcm.size(); ++i) {
+            const double t = double(i) / kRate;
+            seed = seed * 1664525u + 1013904223u;
+            double v = 10.0 * (double(seed >> 16) / 32768.0 - 1.0); // hiss
+            if (t >= 1.0 && t < 2.2) {
+                const double syllable = 0.55 + 0.45 * std::sin(2 * M_PI * 4 * (t - 1.0));
+                const double fade = t < 2.0 ? 1.0 : std::pow(10.0, -20.0 * (t - 2.0) / 0.2 / 20);
+                v += 8000 * syllable * fade * std::sin(2 * M_PI * 220 * t);
+            }
+            pcm[i] = qint16(std::lround(v));
+        }
+        const Transcript::Levels l = Transcript::levelsOf(pcm.constData(), pcm.size(), kRate);
+        // Whisper's words to 2.1 s; toCues adds the reading minimum (0.6 s + 50 ms per character) into the silence
+        const QVector<W> w{{1000, 1400, "Und"}, {1400, 1700, "ich"}, {1700, 1900, "hasse"},
+                           {1900, 2100, "Mathe"}, {2100, 2100, "wirklich"}, {2100, 2100, "sehr."}};
+        QVector<SubtitleCue> cs = Transcript::toCues(w, 25, 42, 700, 100);
+        CHECK(cs.size() == 1 && cs[0].end >= 100 + 75); // 1.0 s + 2.3 s minimum: past 3.0 s
+        Transcript::startAtSound(cs, l, 25, 100);
+        Transcript::endAtSound(cs, l, 25, 100);
+        // The fading syllable is kept (sound to ~2.2 s), then 200 ms: 2.4 s = frame 60 (+100 offset); start unchanged
+        if (!CHECK(cs.size() == 1 && cs[0].start == 100 + 25 && cs[0].end >= 100 + 59 && cs[0].end <= 100 + 61))
+            std::printf("       %s\n", qPrintable(cues(cs)));
+        // Sound to the end of a cue (the next speaker, laughter): unchanged; a short cue keeps 0.6 s at least
+        QVector<SubtitleCue> loud{{0, 100 + 30, 100 + 50, "laut"}, {0, 100 + 52, 100 + 70, "Ja!"}};
+        Transcript::endAtSound(loud, l, 25, 100);
+        CHECK_EQ(cues(loud), QString("130-150 laut | 152-167 Ja!"));
+        // Levels of real recordings: the same with the 10 ms frames of the test helper (speech -20 dB, silence -90 dB)
+        QVector<SubtitleCue> real{{0, 25, 100, "Nein, massier mir mal meine Eier"}};
+        Transcript::endAtSound(real, levels(5000, {{1000, 2500}}), 25);
+        CHECK_EQ(cues(real), QString("25-67 Nein, massier mir mal meine Eier"));
+        // No levels: unchanged
+        QVector<SubtitleCue> none{{0, 25, 100, "x"}};
+        Transcript::endAtSound(none, {}, 25);
+        CHECK_EQ(cues(none), QString("25-100 x"));
+    }
     // A cue without any sound is made up (whisper in silence): dropped
     {
         QVector<SubtitleCue> cs{{0, 10, 20, "Hey,"}, {0, 50, 60, "da"}};
