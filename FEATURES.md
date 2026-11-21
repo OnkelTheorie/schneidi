@@ -12,16 +12,28 @@ the overview. Everything listed here is also reachable from the command line and
 - Clip speed / retime and speed ramps; **smooth slow motion** with in-between frames (blended, or computed from the motion with an own optical flow; never across a scene cut) – chosen in the speed dialog (Ctrl+R)
 - **Multicam:** a multicam clip from several recordings of one event, synced by sound, markers, In points or start; the viewer shows up to 16 angles at once (more on pages) – click or press 1–9 to cut, change angles later, flatten to normal clips
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
+- **Overview strip** (Timeline › Timeline View Options › Overview Timeline): the whole timeline at a glance above the detail view – clips in track colors, markers, sections, the playhead and the visible part as a rectangle; click to jump, drag to scroll, drag an edge to zoom
 - Markers, notes and story sections follow ripple edits: what comes after a ripple delete or trim moves with the content, markers in the removed part go with it, closing a gap moves them to the cut
 - **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
 - `schneidi <file>` while the app runs hands the file over: a project opens, a video lands in the open project's Media Pool; File › Open Video as Project starts a project in the video's own format
 - Contact sheet: stills of the timeline with timecodes as one picture (File › Save Contact Sheet)
 
+## Direct page
+
+- **Edit by recipe** (the Direct page, Shift+1): drop clips from the Media Pool or a file manager, or take the current timeline, and pick a recipe – schneidi analyses the material on your computer and lists suggestions, each with its reason. Click one to play it in the viewer, the checkbox takes it in, drag to reorder, From/To move its edges, Delete takes it out; the strip at the bottom shows the timeline they give. **Accept** builds it as one undo step; then "Open in Edit" or "Export…". Works without any chat AI
+- **Short:** the best moments as a 9:16, 1:1 or 4:5 short for YouTube Shorts, Reels or TikTok, up to three variants without shared moments (each its own timeline), the hook first and starting on the action; after Accept one more button adds word captions and mild effect sounds
+- **Highlights:** a highlight video of any material – kills from a CS2 or Valorant kill feed, loud moments, laughter, applause, cheering, screams, lots of movement or scene changes; best first or in time order, a target length or all, never the same scene twice; music of your own or the music bed, fitted to the length with the cuts on its beat
+- **Talk without pauses** (interviews, podcasts, vlogs, tutorials): every pause where all voices are quiet, and filler words as far as the transcript has them, as suggestions; Accept makes a copy of the timeline without the chosen ones
+- **Fill a template:** the best shot of the material for each clip field of a template (long enough, sharp, well exposed, matching the field's label)
+- **From a script:** the takes of each sentence of a script; the best one is on, the others ready to swap in
+- **Own wish:** with an AI provider set up, a line on the page sends a wish ("only rounds with the AWP") to the AI chat, which answers with new suggestions on the page
+- The same for an AI: the `direct` command (suggest, then apply all, some, with moved edges or in another order); analyses run in the background, can be canceled and are cached per file
+
 ## Shorts, templates and brand
 
 - **A format per timeline:** a 9:16 short (or 1:1, 4:5) next to the 16:9 edit in one project; copy a timeline into another shape in one step; pasting between timelines of different shapes converts positions
 - **Auto reframe:** footage fills a frame of another shape and follows its subject – the view holds still, moves smoothly and jumps only at scene cuts; in game footage the kill feed stays readable as a cropped copy at the top. Or fit the whole picture in with a blurred copy around it, on one track
-- **Accents** (zoom punch, flash, shake) on hits and drops in one click
+- **Accents** on hits and drops in one click: zoom punches (flash and shake only when asked for)
 - **4:3 game footage:** black bars are found and cropped; a 4:3 game that the recorder stretched to 16:9 is unstretched (per clip, per file or as a watch folder preset) and shown with black bars or blurred sides
 - **Blur names:** finds player names in CS2 recordings (team list, kill feed, chat, the name bar) and covers them with blur windows that you check on the Color page – own text detection on your computer, no OCR service. A Valorant template exists but is less tested; small name tags in the 3D picture are often missed
 - **Start templates:** begin a project as a game recording, a podcast/interview or a vertical 9:16 video – or save your own setup (tracks, names, muted mix) as the start of every new project
@@ -73,7 +85,9 @@ the overview. Everything listed here is also reachable from the command line and
 - **Studio page:** the audio tracks fill the page with large waveforms; a mixer column on the right with a narrow strip per track (EQ and compressor curves to drag, pan, mute/solo, fader) and the master with its limiter and a large loudness readout (integrated, short-term, momentary, LRA, true peak); a tools drawer below the tracks cleans a voice, ducks the music under speech, brings the whole mix to a target loudness (YouTube −14, podcast −16, broadcast −23 LUFS) in one click, records a voice-over and browses the effect sounds
 - **Track automation:** a track's volume and pan as a curve – set points on the line (rubber band) or draw with the pen, smoothed; in **write mode** ride the fader or the pan knob while it plays and the moves are recorded (touch); the curves follow ripple edits and show in the Edit timeline (CLI/MCP: ops `track_volume`, `track_pan`)
 - **Multichannel sound:** stereo, 5.1 or 7.1 projects; route single channels of a source to their own track (a wireless mic on channels 3/4 of a camera file), and each clip's waveform shows exactly the stream and channels it plays; a surround panner per track (depth, center, LFE send), meters per speaker, a stereo downmix to listen on headphones, loudness (EBU R128) over all channels; export 5.1/7.1 as AAC, FLAC or WAV, and 5.1 as AC-3 (Dolby Digital) in MP4
-- Per-track EQ (6 bands) and compressor, ducking (music goes down while someone speaks)
+- Per-track EQ (6 bands) and compressor, ducking (music goes down while someone speaks; game sound only under its loud moments)
+- **Music bed:** background music of its own, computed on your computer (no samples, no license questions) – hype, lo-fi, epic or funk, any length, ending on the last frame; its beat grid is known, so cuts snap to the beat without analysing; it sits under the program sound and ducks under speech (Direct page › Highlights, op `music_bed`)
+- **Cut pauses** (op `cut_pauses`): a pause counts only where every chosen track is quiet, each with its own threshold (a noisy mic does not block the rest), optional filler words (äh, um, euh … from the transcript), markers move to the cut
 - Loudness and true-peak meters, a master limiter that holds a true-peak ceiling, volume and loudness normalization
 - **Clean Voice:** removes background noise (RNNoise) and evens out the level of speech in one step; pauses keep a quiet room tone instead of going silent; audio noise reduction (own implementation)
 - **Voice-over recording:** arm a track and record from the microphone while the timeline plays; the take lands exactly where you heard it (input latency compensated)
@@ -86,7 +100,7 @@ the overview. Everything listed here is also reachable from the command line and
 - Export and render queue: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless)
 - Hardware encoders (NVENC, VAAPI, Quick Sync) when available, else x264/x265 (included in the downloads; a GPL-free build uses OpenH264/kvazaar)
 - **10-bit export** for H.265 and AV1 (software encoders and NVENC; VAAPI and Quick Sync 10-bit are not yet checked on real hardware)
-- **s264** (experimental): schneidi's own H.264 encoder as an extra choice on the Deliver page – in two-pass faster than x264 medium on game, calm and animation footage, slower on camera footage and in CRF mode; a fast speed stage (`render` `speed: "fast"`); never the default, x264 stays the encoder to use
+- **s264** (experimental): schneidi's own H.264 encoder as an extra choice on the Deliver page – in two-pass faster than x264 medium on game, calm and animation footage, slower on camera footage and in CRF mode; a second build for CPUs with AVX2 picked at run time (same streams); a fast speed stage (`render` `speed: "fast"`); never the default, x264 stays the encoder to use
 - Presets for YouTube, YouTube Shorts, Instagram Reels and TikTok cap the bit rate; an export quality "Like source"
 - **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end, game sound buried under the music, text that TikTok/Reels/Shorts cover, black bars, stutter in recordings, and for an AI also the platform's length limit (`check --for tiktok`); one click fixes peaks and loudness (master limiter and fader)
@@ -100,7 +114,8 @@ the overview. Everything listed here is also reachable from the command line and
 
 ## Interface
 
-- Six pages – Media, Edit, Compositing, Color, Studio, Deliver – and pages you don't use can be hidden
+- Seven pages – Media, Edit, Compositing, Color, Studio, Direct, Deliver – pages you don't use can be hidden, and the start page is a setting (File › Settings › General)
+- Background work (analyses, proxies, the render cache) shows small at the bottom right with progress and a ✕ that cancels
 - Guided tours on a built-in practice project (first steps, editing, color, compositing, task guides)
 - Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (standard, beginner, Premiere, Final Cut; `.kys` import) and whole sets to save and load, a key trainer; panel sets for the Edit page, panel sizes remembered per page
 - Large viewer (one click hides the panels beside it), full-screen viewer and the preview on a second monitor
