@@ -590,6 +590,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
         }
     }
+    // (development, for measuring encoders through the real export: SCHNEIDI_EXPORT_CRF=<n> = that CRF instead of the
+    // quality level's - s264 makes its QP of it as of a level -, SCHNEIDI_EXPORT_BITRATE=<kbit/s> = a bit rate target
+    // as quality "like source" gives one: s264 two passes, other software encoders their average bit rate)
+    if (!s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
+        if (const int crf = qEnvironmentVariableIntValue("SCHNEIDI_EXPORT_CRF"); crf > 0) m_settings.crf = crf;
+        if (const int k = qEnvironmentVariableIntValue("SCHNEIDI_EXPORT_BITRATE"); k > 0) m_targetBitrateK = k;
+    }
     m_usedCodec.clear();
     m_ownSpeed = -1;
     m_copiedPercent = 0;
