@@ -17,3 +17,4 @@
 0.23.0 Studio Update
 0.24.0 Color Update 2
 0.25.0 Direct Update
+0.26.0 Touch Update
