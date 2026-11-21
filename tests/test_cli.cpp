@@ -585,6 +585,19 @@ int runTests(int argc, char** argv)
     tl = run("info", {{"project", g_path}})["timeline"].toObject();
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(errorOf("restore", {{"project", g_path}, {"backup", "999"}}), QString("NOT_FOUND"));
+    // Several timelines, the open one empty: backups count the clips of all of them and list them, restore answers
+    // with every timeline (both said 0 clips / only the open one right after `direct` made a new timeline)
+    {
+        const QString multi = dir.filePath("multi.schneidi");
+        QFile::copy(g_path, multi); // (clips on its open timeline)
+        run("edit", {{"project", multi}, {"ops", R"([{"op":"new_timeline","name":"Empty"}])"}});
+        run("edit", {{"project", multi}, {"ops", R"([{"op":"mixer","track":"master","volume_db":-3}])"}});
+        const QJsonObject newest = run("backups", {{"project", multi}})["backups"][0].toObject();
+        CHECK(newest["clips"].toInt() >= 1);
+        CHECK_EQ(newest["timelines"].toArray().size(), 2);
+        const QJsonObject r = run("restore", {{"project", multi}});
+        CHECK_EQ(r["timelines"].toArray().size(), 2);
+    }
 
     // Someone else (the app, other AI edits) saving: writing commands wait up to 30 s - ten edits at once on a busy
     // machine take turns longer than 5 s -, then give up; reading works
@@ -1023,7 +1036,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(clipsOf(0)[0].toObject()["interpolate"].toString(), QString("flow"));
         CHECK_EQ(clipsOf(0)[0].toObject()["speed"].toDouble(), 0.25);
         hinted = ed(QString(R"([{"op":"speed","clips":[%1],"speed":0.3}])").arg(v));
-        CHECK(!hinted.contains("notes")); // flow already on
+        if (!CHECK(!hinted.contains("notes"))) std::printf("       %s\n", QJsonDocument(hinted["notes"].toArray()).toJson().constData()); // flow already on
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"speed","clips":[%1],"interpolate":"smooth"}])").arg(v)}}),
                  QString("BAD_ARGUMENT"));
         ed(QString(R"([{"op":"speed","clips":[%1],"interpolate":"repeat"}])").arg(v));

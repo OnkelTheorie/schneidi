@@ -898,13 +898,6 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     const int out = intOf(o.value("out"));
     c.out = std::clamp(out, c.in, c.in + (1 << 29) - 1);
     if (out < c.in) repaired(T("Clip %1 endete vor seinem Anfang in der Quelle (in %2, out %3): 1 Bild lang").arg(c.id).arg(c.in).arg(out));
-    // Not past the end of its file (out 100000 of a 120 frame file made a 55 min clip); a still image has any length
-    if (source && source->length > 0 && !source->isImage && c.out >= source->length) {
-        const int last = std::max(c.in, source->length - 1);
-        repaired(T("Clip %1 reichte über das Ende seiner Datei hinaus (out %2, die Datei hat %3 Bilder): gekürzt")
-                     .arg(c.id).arg(c.out).arg(source->length));
-        c.out = last;
-    }
     c.linkId = intOf(o.value("link"));
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
@@ -944,6 +937,14 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         c.ramp << p;
     }
     Retime::normalize(c.ramp, 0); // discard broken values (file length unknown here)
+    // Not past the end of its file (out 100000 of a 120 frame file made a 55 min clip); a still image has any length.
+    // Only plain clips: a retimed one's out is not a file frame alone
+    if (source && source->length > 0 && !source->isImage && !c.isRetimed() && c.out >= source->length) {
+        const int last = std::max(c.in, source->length - 1);
+        repaired(T("Clip %1 reichte über das Ende seiner Datei hinaus (out %2, die Datei hat %3 Bilder): gekürzt")
+                     .arg(c.id).arg(c.out).arg(source->length));
+        c.out = last;
+    }
     c.renderCache = o.value("renderCache").toBool();
     if (c.kind == ClipKind::Media) c.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
     if (c.kind == ClipKind::Media) c.keepRegion = o.value("keepRegion").toString();

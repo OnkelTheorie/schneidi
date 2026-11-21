@@ -1104,7 +1104,9 @@ const QVector<Command>& commands()
           {"trust_custom_code", T::Boolean, "trust the project's custom code (filters, shaders) from someone else; only "
                                             "when the user said so (in the app the user is asked)"}},
          cmdEdit},
-        {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
+        {"backups", "List the backup copies of a project (every save keeps the previous state, newest first): per "
+                    "copy 'clips' of all timelines, 'length_tc' of the longest, with several timelines 'timelines' "
+                    "(name, clips, length_tc, open).",
          {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},
         {"restore", "Undo: put a backup copy back as the project (the current state becomes a backup itself, so "
                     "restore can be undone too). Open in the app: replaces the timelines there as one undo step, "
@@ -1736,7 +1738,8 @@ const QVector<Command>& commands()
           {"to", T::Time, "every/count: end of the range (default: end)"},
           {"crop", T::String, "only this region \"x,y,w,h\" in pixels of the full picture, or fractions 0..1 "
                               "(\"0.75,0.05,0.25,0.3\" = top right); shown at its own size up to 'width'"},
-          {"out", T::Path, "folder for the images (with sheet: the image file, .jpg or .png)"},
+          {"out", T::Path, "folder for the images (with sheet: the image file, .jpg or .png); a name ending in .jpg/.png "
+                           "without sheet: that file for one frame, <name>_<frame>.<ext> next to it for several"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
           {"columns", T::Integer, "sheet: number of columns (default: 2–4 depending on the count)"},
           {"tile_width", T::Integer, "width of every image/tile in pixels (instead of 'width'; e.g. 320 for many tiles, "
@@ -1982,7 +1985,11 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             if (v.isBool()) out[p.name] = v.toBool();
             else if (str == "true" || str == "1" || str == "yes") out[p.name] = true;
             else if (str == "false" || str == "0" || str == "no") out[p.name] = false;
-            else ok = false;
+            else // a value after a switch (`frames --sheet x.png`): say what it takes
+                fail("BAD_ARGUMENT", QString("'%1' is a switch (true or false), not '%2'%3")
+                                         .arg(p.name, v.toVariant().toString(),
+                                              p.name == "sheet" ? QStringLiteral(": the sheet file goes in 'out' (--sheet --out x.png)")
+                                                                : QString()));
             break;
         case ParamType::Time: out[p.name] = v; ok = v.isDouble() || v.isString(); break;
         case ParamType::Times: {

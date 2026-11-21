@@ -762,12 +762,25 @@ QJsonObject cmdBackups(const QJsonObject& a, Context&)
                       {"saved", QFileInfo(files[i]).lastModified().toString(Qt::ISODate)}};
         ProjectData d;
         if (ProjectFile::load(files[i], &d, nullptr)) {
-            int clips = 0;
-            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-                for (const Track& t : d.timeline.tracks(k)) clips += t.clips.size();
-            const int end = TimelineOps::endFrame(d.timeline);
-            o["clips"] = clips;
-            o["length_tc"] = tc(end, d.format);
+            // Every timeline (it counted only the opened one: 0 clips right after `direct` made a new one)
+            Project p;
+            p.load(d);
+            int clips = 0, longest = 0;
+            QJsonArray timelines;
+            for (const Sequence& q : p.sequences()) {
+                int n = 0;
+                for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                    for (const Track& t : q.timeline.tracks(k)) n += t.clips.size();
+                const int end = TimelineOps::endFrame(q.timeline);
+                clips += n;
+                longest = std::max(longest, end);
+                QJsonObject to{{"name", q.name}, {"clips", n}, {"length_tc", tc(end, d.format)}};
+                if (q.id == p.currentSequence()) to["open"] = true;
+                timelines << to;
+            }
+            o["clips"] = clips;               // all timelines
+            o["length_tc"] = tc(longest, d.format); // the longest one
+            if (timelines.size() > 1) o["timelines"] = timelines;
         } else {
             o["unreadable"] = true;
         }
@@ -798,7 +811,9 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
             current = restored.currentSequence();
         });
         p->closeMerge();
-        return {{"project", path}, {"restored", source}, {"live", true}, {"timeline", timelineJson(*p)}};
+        QJsonObject o{{"project", path}, {"restored", source}, {"live", true}, {"timeline", timelineJson(*p)}};
+        if (p->sequences().size() > 1) o["timelines"] = timelinesJson(*p); // the open one is only one of them
+        return o;
     }
     const QString path = absolute(a["project"].toString());
     if (Live::isAppProject(path)) fail("NO_APP", "the schneidi app is not running");
@@ -817,6 +832,7 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
     Project p;
     p.load(d);
     QJsonObject o{{"project", path}, {"restored", source}, {"timeline", timelineJson(p)}};
+    if (p.sequences().size() > 1) o["timelines"] = timelinesJson(p); // the open one is only one of them
     if (!backup.isEmpty()) o["backup"] = backup;
     return o;
 }
