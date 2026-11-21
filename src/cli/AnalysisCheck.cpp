@@ -4,6 +4,7 @@
 #include "cli/AnalysisDetail.h"
 
 #include "core/Automation.h"
+#include "core/BrandKit.h"
 #include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
@@ -670,8 +671,33 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             if (!loud) fail("DECODE_FAILED", "could not mix the sound");
             measured = {peaks, *loud};
             wideRange(loud->range);
-            const QVector<ExportCheck::Issue> heard =
+            QVector<ExportCheck::Issue> heard =
                 ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
+            // Silence in the brand kit's intro or outro (a logo sting without sound) is intended, not a forgotten
+            // tail (09: "3 s of silence at the end" on every video of a series)
+            const BrandKit kit = Brand::effective(s.project.data());
+            const auto same = [](const QString& a, const QString& b) {
+                return !a.isEmpty() && !b.isEmpty()
+                       && QFileInfo(a).absoluteFilePath() == QFileInfo(b).absoluteFilePath();
+            };
+            const auto branded = [&](const ExportCheck::Issue& i) {
+                if (i.from < 0 || i.to <= i.from) return false;
+                int covered = 0;
+                for (int fr = i.from; fr < i.to; ++fr) {
+                    bool in = false;
+                    for (const Track& t : tl.video)
+                        for (const Clip& c : t.clips)
+                            in = in || (!t.hidden && c.enabled && c.start <= fr && fr < c.end()
+                                        && (same(c.mediaPath, kit.intro) || same(c.mediaPath, kit.outro)));
+                    covered += in;
+                }
+                return covered >= 0.8 * (i.to - i.from);
+            };
+            heard.erase(std::remove_if(heard.begin(), heard.end(), [&](const ExportCheck::Issue& i) {
+                            return (i.check == "silence_end" || i.check == "silence_start" || i.check == "silence")
+                                   && branded(i);
+                        }),
+                        heard.end());
             issues += heard;
             issues += ExportCheck::audioHoles(render, measured.peaks, from, f);
             fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"], opt.targetLufs);

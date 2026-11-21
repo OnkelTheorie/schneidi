@@ -21,6 +21,7 @@
 
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -665,6 +666,41 @@ int main(int argc, char** argv)
         CHECK_EQ(r["sound"].toObject()["target_lufs"].toDouble(), -23.0);
         CHECK(checksOf(r).contains("loudness"));
         CHECK(run("check", {{"source", copy}, {"for", "radio"}}).contains("failed"));
+    }
+
+    // The brand kit's outro without sound (a logo sting, 09): its silence at the end is intended; the same file
+    // without being the outro is a forgotten tail. A logo image scaled into a corner is no recording with bars.
+    {
+        const QString outro = Check::makeMedia(dir.filePath("outro.mp4"),
+                                               {"-f", "lavfi", "-i", "color=c=yellow:s=320x180:r=25:d=3", "-f", "lavfi",
+                                                "-i", "anullsrc=r=48000:cl=stereo:d=3", "-c:v", "libx264", "-pix_fmt",
+                                                "yuv420p", "-c:a", "aac", "-shortest"});
+        const QString logo = dir.filePath("logo.png");
+        QImage img(320, 320, QImage::Format_RGB32);
+        img.fill(Qt::black);
+        for (int y = 100; y < 220; ++y)
+            for (int x = 0; x < 320; ++x) img.setPixel(x, y, qRgb(255, 200, 0));
+        img.save(logo);
+        const QString branded = dir.filePath("branded.schneidi");
+        run("new", {{"project", branded}, {"width", 320}, {"height", 180}, {"media", QJsonArray{media, outro, logo}}});
+        run("edit", {{"project", branded},
+                     {"ops", QString(R"([{"op":"place","media":"%1","at":0},{"op":"place","media":"%2","at":"4s"},
+                                        {"op":"place","media":"%3","at":0,"track":"V2","duration":"4s"}])")
+                                 .arg(media, outro, logo)}});
+        QFile pf(branded);
+        pf.open(QIODevice::ReadOnly);
+        const QJsonObject saved = QJsonDocument::fromJson(pf.readAll()).object();
+        pf.close();
+        const int logoClip = saved["timeline"]["video"].toArray().at(1)["clips"].toArray().at(0)["id"].toInt();
+        CHECK(logoClip > 0);
+        run("edit", {{"project", branded},
+                     {"ops", QString(R"([{"op":"transform","clips":[%1],"zoom":0.2,"x":100,"y":50}])").arg(logoClip)}});
+        r = run("check", {{"source", branded}});
+        CHECK(checksOf(r).contains("silence_end"));
+        CHECK(!checksOf(r).contains("black_bars"));
+        run("brand", {{"project", branded}, {"action", "set"}, {"global", false}, {"outro", outro}});
+        r = run("check", {{"source", branded}});
+        CHECK(!checksOf(r).contains("silence_end"));
     }
 
     // A clip far out on the timeline (frame 2^30, over a year at 25 fps; a broken or hand-written file): the sound is
