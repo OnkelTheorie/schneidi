@@ -625,7 +625,9 @@ int main(int argc, char** argv)
     };
     run("new", {{"project", project}, {"width", 320}, {"height", 180}, {"media", QJsonArray{media}}});
     run("edit", {{"project", project},
-                 {"ops", QString(R"([{"op":"place","media":"%1","at":0},{"op":"place","media":"%1","at":"4.04s"},
+                 // The later clip first: a place 1-2 frames after a clip's end closes that gap (edit, 03-#2), the
+                 // forgotten frame here is on purpose
+                 {"ops", QString(R"([{"op":"place","media":"%1","at":"4.04s"},{"op":"place","media":"%1","at":0},
                                     {"op":"subtitles","cues":[{"from":"1s","to":"1.2s","text":"Hi"}]}])")
                              .arg(media)}});
     QJsonObject r = run("check", {{"source", project}});

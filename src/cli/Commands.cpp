@@ -1347,9 +1347,9 @@ const QVector<Command>& commands()
                    "material for a content template's clip fields, templates auto), script (the takes of each "
                    "sentence of a script, rough_cut). Suggest: "
                    "{recipe, files | project+timeline, options} (talk: a project's timeline; template and script: files, a "
-                   "project's media, or both) -> {session:{id:'d3', material, suggestions:[{n, kind, "
+                   "project's media, or both) -> {session:{id:'d3-7f2a', material, suggestions:[{n, kind, "
                    "file, from_s, to_s, reason:{key, values, text}, labels, on, variant?}], order, length_s, target_s, "
-                   "notes}, next}; sessions are kept a day. Apply: {session:'d3' (or the session object), apply:{on:'all'"
+                   "notes}, next}; sessions are kept a day. Apply: {session:'d3-7f2a' (or the session object), apply:{on:'all'"
                    "|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?}, project?, plan?, dry_run?} -> {project, "
                    "timeline (the new cut; opened in the project), timelines, length_s, moments, check, done, next}; plan:true makes a normal plan (edit "
                    "plan_id … run) instead. Errors: UNKNOWN_RECIPE, NO_MATERIAL, SESSION_EXPIRED, SESSION_STALE (the "
@@ -1373,7 +1373,7 @@ const QVector<Command>& commands()
                                  "none = the project's own fields), game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
                                  "and script also: target_lufs (the result's loudness when applied, default -14, behind "
                                  "the master limiter; false = leave the sound as recorded)"},
-          {"session", T::Object, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},
+          {"session", T::Object, "apply: the session id ('d3-7f2a') or the session object (as suggested, maybe changed)"},
           {"apply", T::Object, "apply: {on:'all'|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?} (default "
                                "on:'all' = the suggestions switched on; variant n = that variant's)"},
           {"plan", T::Boolean, "apply: make a plan of the edit instead (nothing changes until it is run)"},

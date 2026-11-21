@@ -26,7 +26,7 @@ result yourself afterwards (`frames` sheet of `out`) - one call does not replace
 
 **Choose first, then cut**: `direct` with `recipe` `short` suggests the moments (up to 3 `variants` without shared
 moments, each with a `reason` like "2 kills (multi kill)" or "laughter (2.1 s)") and changes nothing; show them or
-pick yourself, then `direct` `session` `'d3'` `apply` `{"on":"all"}` (or `on:[1,3]`, `adjust`, `order`, `variant:2`)
+pick yourself, then `direct` `session` `'d3-7f2a'` `apply` `{"on":"all"}` (or `on:[1,3]`, `adjust`, `order`, `variant:2`)
 builds the cut and the 9:16 copy as one edit (`plan:true` = a plan first), leveled to -14 LUFS like `short`. A hook
 starts on the action: a hard cut in its lead-in (a CS2 round restarting after the round-end screen) moves its start
 there (label `hook_trimmed`). Then captions: `direct` with `project` and

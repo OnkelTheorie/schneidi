@@ -7,6 +7,7 @@
 #include "cli/AnalysisDetail.h"
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
 
 #include "core/AppPaths.h"
 #include "core/GameHud.h"
@@ -26,6 +27,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QRandomGenerator>
+#include <QSaveFile>
 
 #include <algorithm>
 #include <cmath>
@@ -133,14 +136,15 @@ bool overlapsAny(const DirectMoment& c, const QVector<Direction::Suggestion>& li
     });
 }
 
-// The loudness a cut is leveled to when applied: options.target_lufs (default -14 LUFS, web and phone platforms), NaN
-// when it says false/'off' (the sound stays as recorded)
+// The loudness a cut is leveled to when applied: options.target_lufs (default -14 LUFS, web and phone platforms; a
+// script's takes are spoken word: -16, what `check` measures a talk against), NaN when it says false/'off' (the sound
+// stays as recorded)
 constexpr double kLevelCeilingDb = -1.2; // the master limiter's ceiling (under check's -1 dBTP with room for codecs)
 
-double levelTarget(const QJsonObject& options)
+double levelTarget(const QJsonObject& options, const QString& recipe = {})
 {
     const QJsonValue v = options["target_lufs"];
-    if (v.isUndefined() || v.isNull()) return -14;
+    if (v.isUndefined() || v.isNull()) return recipe == QLatin1String("script") ? -16 : -14;
     if (v.isDouble()) return std::clamp(v.toDouble(), -40.0, -5.0);
     if (v.isBool() ? !v.toBool() : v.toString().trimmed().compare("off", Qt::CaseInsensitive) == 0)
         return std::numeric_limits<double>::quiet_NaN();
@@ -422,9 +426,15 @@ void store(Direction::Session& s)
     const QString dir = sessionDir();
     if (!QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot write the session into " + dir);
     pruneSessions(dir);
-    s.id = newPlanId(dir, "d");
-    QFile f(QDir(dir).filePath(s.id + ".json"));
-    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(Direction::toJson(s)).toJson(QJsonDocument::Compact)) < 0)
+    const QString file = newPlanId(dir, "d");
+    // The number counts per data folder (a test run, another XDG_DATA_HOME starts at d1 again): a random tag makes the
+    // id name this session only, so an id from another folder or another client's answer finds nothing instead of
+    // someone else's session (videotest 21.11.: apply with "d1" took another agent's cut)
+    s.id = QString("%1-%2").arg(file).arg(QRandomGenerator::global()->bounded(0x10000), 4, 16, QChar('0'));
+    // Into the name newPlanId reserved (an empty file) in one step: a load in between never reads half a session
+    QSaveFile f(QDir(dir).filePath(file + ".json"));
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(Direction::toJson(s)).toJson(QJsonDocument::Compact)) < 0 ||
+        !f.commit())
         fail("SAVE_FAILED", "cannot write the session " + f.fileName());
 }
 
@@ -459,13 +469,19 @@ Direction::Session load(const QJsonValue& v)
         return *s;
     }
     const QString id = v.toString().trimmed().toLower();
-    static const QRegularExpression valid("^d[1-9][0-9]{0,8}$");
-    if (!valid.match(id).hasMatch()) fail("BAD_ARGUMENT", "session: an id like 'd3' (from the answer of direct) or the session itself");
+    static const QRegularExpression valid("^(d[1-9][0-9]{0,8})(-[0-9a-f]{4})?$");
+    const QRegularExpressionMatch m = valid.match(id);
+    if (!m.hasMatch()) fail("BAD_ARGUMENT", "session: an id like 'd3-7f2a' (from the answer of direct) or the session itself");
     pruneSessions(sessionDir());
-    QFile f(QDir(sessionDir()).filePath(id + ".json"));
-    if (f.open(QIODevice::ReadOnly)) {
+    QFile f(QDir(sessionDir()).filePath(m.captured(1) + ".json"));
+    if (f.open(QIODevice::ReadOnly) && f.size() > 0) {
         s = Direction::fromJson(QJsonDocument::fromJson(f.readAll()).object(), &error);
         if (!s) fail("BAD_ARGUMENT", "session " + id + ": " + error);
+        // Only the whole id opens it: the number alone (or another tag) belongs to a session of another folder/client
+        if (s->id.toLower() != id && s->id.contains('-'))
+            fail("SESSION_EXPIRED", QString("no session '%1' here (ids look like '%2-xxxx'; use the id from your own "
+                                            "answer of direct, or suggest again)")
+                                        .arg(id, m.captured(1)));
         checkFiles(*s);
         return *s;
     }
@@ -771,7 +787,11 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             // In project_dir when given, else the folder for projects (Settings > Project; never the recordings'
             // folder, a clip tool's output an unattended run must not fill); the app's own page: next to the first one
             QString dir = args["project_dir"].toString().trimmed();
-            dir = !dir.isEmpty() ? absolute(dir) : Live::host() ? first.absolutePath() : AppPaths::projectFolder();
+            // A work folder (`mcp --root`): the projects go into it, everything else would be OUTSIDE_ROOT
+            dir = !dir.isEmpty()     ? absolute(dir)
+                  : Live::host()     ? first.absolutePath()
+                  : Sandbox::active() ? Sandbox::root()
+                                     : AppPaths::projectFolder();
             if (!dry && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             project = freeFile(dir, first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
         } else if (QFileInfo(project).suffix().isEmpty()) {
@@ -911,7 +931,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     // The result as loud as a platform wants it (like `short`): the master to target_lufs (default -14) behind its
     // limiter, measured (mixer target_lufs). Not in the app: measuring there would hold its window (the page's export
     // check does it); not for `short` (_no_check: it levels after its captions and sounds, before rendering)
-    const double targetLufs = levelTarget(s.options);
+    const double targetLufs = levelTarget(s.options, s.recipe);
     if (!appProject && !args["_no_check"].toBool() && !std::isnan(targetLufs))
         ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", kLevelCeilingDb},
                            {"target_lufs", targetLufs}};
@@ -1037,7 +1057,7 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         return o;
     }
     if (a.contains("session") || a.contains("apply")) {
-        if (!a.contains("session")) fail("BAD_ARGUMENT", "apply needs the session (its id like 'd3', or the session itself)");
+        if (!a.contains("session")) fail("BAD_ARGUMENT", "apply needs the session (its id like 'd3-7f2a', or the session itself)");
         if (a.contains("recipe")) fail("BAD_ARGUMENT", "recipe makes a new session; session + apply uses one: not both");
         const Direction::Session s = load(a["session"]);
         const QJsonObject r = directApply(s, a["apply"].toObject(), a, ctx);
@@ -1078,7 +1098,7 @@ void addDirectOps(QVector<OpDef>& ops)
                              const MediaInfo* m = s.project.mediaInfo(file);
                              if (m && (it.value().isArray() ? m->transcript(stream) != nullptr : !m->transcripts.isEmpty()))
                                  continue; // the user's own stays
-                             if (!m) s.media(file);
+                             if (!m) continue; // a recording the cut does not use stays out of the project
                              MediaTranscript t;
                              t.audioStream = stream;
                              t.language = one["language"].toString();

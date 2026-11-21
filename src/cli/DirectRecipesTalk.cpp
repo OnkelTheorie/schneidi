@@ -214,8 +214,6 @@ void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
              return files;
          }())
         if (QFileInfo::exists(f)) s.material << materialOf(f);
-    const double pad = o.contains("pad_s") ? o["pad_s"].toDouble() : 0.15; // cut_pauses' default pad
-    const double timelineEnd = s.options["_timeline_length_s"].toDouble();
     for (const QJsonValue& v : note["ranges"].toArray()) {
         Direction::Suggestion x;
         x.n = v["n"].toInt();
@@ -228,10 +226,10 @@ void suggestTalk(Direction::Session& s, const QJsonObject& a, Context& ctx)
         x.track = tracks.join(",");
         x.score = v["length_s"].toDouble();
         x.labels << x.kind;
-        // A pause as long as it is (the quiet, its pads kept at both ends - at the end of the timeline none), the
-        // part cut out as 'cut': "pause of 0.3 s" with min_pause_s 0.7 read like a mistake (videotest 21.11.)
+        // A pause as long as it is (the whole quiet run, as cut_pauses measured it), the part cut out as 'cut':
+        // "pause of 0.3 s" with min_pause_s 0.7 read like a mistake (videotest 21.11.)
         const double cut = v["length_s"].toDouble();
-        const double pause = cut + pad * (x.to >= timelineEnd - 1e-3 ? 1 : 2);
+        const double pause = v["quiet_s"].toDouble(cut);
         x.reason = x.kind == QLatin1String("filler")
                        ? Direction::Reason{"filler", {{"word", v["text"].toString()}}}
                        : Direction::Reason{"pause", {{"s", std::round(pause * 100) / 100}, {"cut", cut}}};

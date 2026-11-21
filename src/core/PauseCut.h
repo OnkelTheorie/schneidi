@@ -54,6 +54,7 @@ struct Range {
     Kind kind = Kind::Pause;
     QVector<int> tracks;  // audio track indices: a pause = every chosen track, a filler = its own track
     QString text;         // filler: the word as written
+    int quiet = 0;        // pause: frames of the whole quiet run, its pads included (the cut is shorter); 0 = filler
     bool operator==(const Range&) const = default;
 };
 

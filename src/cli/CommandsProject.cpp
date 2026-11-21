@@ -567,6 +567,9 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
     const QMap<QString, Shown> before = shownItems(s.project);
     const QJsonObject stateBefore = projectState(s);
     QJsonObject stateLast = stateBefore;
+    // The "changed nothing" check serializes the project after each op: for the short edits a client writes, not for
+    // the long generated ones (direct apply, fill) on a big project
+    const bool noteUnchanged = ops.size() <= 40;
     QMap<QString, Shown> last = before;
     for (int i = 0; i < ops.size(); ++i) {
         try {
@@ -577,10 +580,14 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
             s.opIndex = -1;
             // An op that changed nothing says so (12-B8: split at 0, move before the start, delete_range past the
             // end answered ok with empty changes); the ops that know why have said it already in a note
-            const QJsonObject now = projectState(s);
-            if (now == stateLast && s.notes.size() == notes)
-                s.notes << QString("op %1 (%2): changed nothing").arg(i).arg(ops[i]["op"].toString());
-            stateLast = now;
+            // Not for opening a timeline or the hidden ops (`_…`): those change nothing that is saved, on purpose
+            const QString name = ops[i]["op"].toString();
+            if (noteUnchanged && name != QLatin1String("timeline") && !name.startsWith('_')) {
+                const QJsonObject now = projectState(s);
+                if (now == stateLast && s.notes.size() == notes)
+                    s.notes << QString("op %1 (%2): changed nothing").arg(i).arg(name);
+                stateLast = now;
+            }
         } catch (const Error& e) {
             if (!numbers.isEmpty())
                 throw Error{e.code, QString("step %1 (%2): %3").arg(numbers.value(i)).arg(ops[i]["op"].toString(), e.message)};

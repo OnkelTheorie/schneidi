@@ -222,6 +222,15 @@ int main(int argc, char** argv)
     const QJsonObject session = suggested["session"].toObject();
     CHECK(session["id"].toString().startsWith("d"));
     CHECK(suggested["next"].toString().contains("apply"));
+    {   // The id carries a tag: the number alone (another folder's "d1") or another tag finds nothing
+        const QString id = session["id"].toString();
+        CHECK(QRegularExpression("^d[1-9][0-9]*-[0-9a-f]{4}$").match(id).hasMatch());
+        const QString number = id.section('-', 0, 0);
+        const QString other = number + (id.endsWith("0000") ? "-0001" : "-0000");
+        for (const QString& wrong : {number, other})
+            CHECK_EQ(run("direct", {{"session", wrong}, {"apply", QJsonObject{{"on", "all"}}}})["error"].toString(),
+                     QString("SESSION_EXPIRED"));
+    }
     CHECK(!QFileInfo::exists(dir.filePath("clips/cs2/cs2_clip_test-short.schneidi"))); // suggesting changes nothing
     const QJsonArray suggestions = session["suggestions"].toArray();
     int on = 0;

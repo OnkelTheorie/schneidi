@@ -102,11 +102,11 @@ QVector<Range> pauses(const QVector<std::vector<bool>>& quiet, const QVector<int
         const bool atEnd = j >= length;
         if (first == j) { // quiet only: a pause when long enough
             const int from = int(i) + pad, to = atEnd ? int(j) : int(j) - pad;
-            if (int(j - i) >= minPause && to > from) out << Range{from, to, Kind::Pause, tracks, {}};
+            if (int(j - i) >= minPause && to > from) out << Range{from, to, Kind::Pause, tracks, {}, int(j - i)};
         } else { // with a hole: always cut; the quiet beside it keeps `pad` only when it has that much
             const int from = int(i) + (int(first - i) >= pad ? pad : 0);
             const int to = atEnd ? int(j) : int(j) - (int(j - last) >= pad ? pad : 0);
-            if (to > from) out << Range{from, to, Kind::Pause, tracks, {}};
+            if (to > from) out << Range{from, to, Kind::Pause, tracks, {}, int(j - i)};
         }
         i = j;
     }
@@ -170,6 +170,7 @@ QVector<Range> combined(const QVector<Range>& pauses, const QVector<Range>& fill
         }
         Range& m = out.last();
         m.to = std::max(m.to, r.to);
+        m.quiet = std::max({m.quiet, r.quiet, m.to - m.from}); // a filler touching a pause makes it longer
         if (r.kind == Kind::Pause || m.kind == Kind::Pause) {
             m.kind = Kind::Pause;
             m.text.clear();

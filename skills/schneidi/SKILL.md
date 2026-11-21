@@ -59,9 +59,9 @@ names cost a failed call.
    or `discard:true`. A plan is void once the project changes (`PLAN_STALE`: plan again).
    **Suggestions with reasons, then one edit**: `direct` with a `recipe` - `short`, `highlights` (moments of any
    material), `talk` (pauses and fillers of a timeline), `template` (shots for a content template's clip fields),
-   `script` (the takes of each sentence) - changes nothing and answers a `session` (`d3`) whose `suggestions` each
+   `script` (the takes of each sentence) - changes nothing and answers a `session` (`d3-7f2a`) whose `suggestions` each
    have `from_s`/`to_s` (source seconds), a `reason` (`text`) and `on`. Show them or choose, then `direct` `session`
-   `"d3"` `apply` `{"on":"all"}` (or `on:[1,4]`, `adjust:[{n, from_s, to_s}]`, `order`) = one edit, one undo step;
+   `"d3-7f2a"` `apply` `{"on":"all"}` (or `on:[1,4]`, `adjust:[{n, from_s, to_s}]`, `order`) = one edit, one undo step;
    `plan:true` makes a normal plan. Without `project`, apply makes a new project in the folder for projects (the
    app's setting, else `<Videos>/schneidi`; `project_dir` for another) - never next to the recordings. The project
    opens on the result; short, highlights and script level it to -14 LUFS behind the master limiter

@@ -393,6 +393,7 @@ void opCutPauses(Session& s, const QJsonObject& op)
         const PauseCut::Range& r = a.ranges[i];
         QJsonObject o{{"n", i + 1}, {"from", r.from}, {"to", r.to}, {"from_s", r2(seconds(r.from, f))},
                       {"to_s", r2(seconds(r.to, f))}, {"length_s", r2(seconds(r.to - r.from, f))}};
+        if (r.quiet > 0) o["quiet_s"] = r2(seconds(r.quiet, f)); // the pause as heard, its pads included
         if (analysed) {
             o["kind"] = PauseCut::kindId(r.kind);
             o["tracks"] = trackNames(r.tracks);
