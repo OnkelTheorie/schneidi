@@ -15,8 +15,8 @@
   <description>
     <p>
       schneidi is a fast, light video editor. It starts in under a second, plays a demanding 1080p60 project smoothly
-      on four CPU cores and runs even on a Raspberry Pi. It has four pages for the steps of an edit – Media, Edit,
-      Color and Deliver – and an AI assistant can edit together with you, live in the project you have open.
+      on four CPU cores and runs even on a Raspberry Pi. It has pages for the steps of an edit – Media, Edit,
+      Compositing, Color, Studio, Direct and Deliver – and an AI assistant can edit together with you, live in the project you have open.
     </p>
     <p>
       Tell the AI chat next to the timeline what you want (Claude, an OpenAI-compatible service or a local model
@@ -109,6 +109,17 @@
   </requires>
 
   <releases>
+    <release version="0.25.0" date="2026-11-21">
+      <description>
+        <p>Direct Update: a Direct page that turns clips into a cut by recipe – a short (up to three variants), a
+        highlight video, a talk without pauses, a filled template or a rough cut from a script – with suggestions and a
+        reason for each, applied as one undo step and without any chat AI; background music of its own (hype, lo-fi,
+        epic, funk) with a known beat grid that sits under the program sound; pauses cut where every microphone is
+        quiet; a timeline overview strip; background analyses that can be canceled; a faster s264; a start page
+        setting.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.25.0</url>
+    </release>
     <release version="0.24.0" date="2026-11-18">
       <description>
         <p>Color Update 2: curves (master, RGB, hue and luma curves), a qualifier that grades only the colors it picks,

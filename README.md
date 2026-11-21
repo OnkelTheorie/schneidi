@@ -2,7 +2,7 @@
 
 **A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has six pages – Media, Edit, Compositing, Color, Studio and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
+schneidi has seven pages – Media, Edit, Compositing, Color, Studio, Direct and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in 16 languages, from English and German to Japanese, Hindi and Indonesian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
@@ -24,6 +24,7 @@ schneidi has six pages – Media, Edit, Compositing, Color, Studio and Deliver �
 
 - **Edit together with an AI – any AI, any way.** Tell it what to do in the [AI chat](#ai-chat-in-the-app) next to the timeline (Claude, an OpenAI-compatible service or a local model), connect Claude Code or Claude Desktop in one step, or let an assistant work through the [command line and MCP server](#command-line-and-ai-editing-mcp), also on a server. It finds pauses, scene changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and you see what it does: changed clips light up, the AI log lists every step, each change is an undo step. Or review first and accept or discard the whole request.
 - **From a recording to a short.** A 9:16 short lives next to the 16:9 edit in the same project. Auto reframe keeps the subject in view (and a game's kill feed readable at the top), word-by-word captions come from the speech, and presets for YouTube Shorts, Instagram Reels and TikTok go with a check of the platform's length limit and loudness. An AI can do all of it in one call: `schneidi-cli short` turns game recordings into a finished short.
+- **Clips in, a cut out – without a chat AI.** On the Direct page you drop your clips and pick a recipe: a short, a highlight video, a talk without pauses, a filled template or a rough cut from a script. schneidi lists suggestions with a reason for each ("3 loud moments", "laughter", "pause 1.4 s"), you switch them on or off, move or reorder them, and Accept builds the timeline as one undo step – with background music of its own when you want it.
 - **One template, many videos.** Mark the clips, texts, song and logo of an edit as placeholders and it becomes a template: drop new clips onto it in the app, or let a script or an AI fill it from a table – one finished video per product, episode or match, all with your brand kit's logo, colors and fonts.
 - **Layers, masks, keying and tracking – with nodes or as layers.** The Compositing page shows a clip's compositing as a simple layer stack or as a node graph: key a green screen, put text behind a person, blur a face that moves, stick a logo onto a surface. Ready recipes do the common jobs in one click, and an AI builds the same graphs through the command line.
 - **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes, a sound page with automation and 5.1/7.1 surround – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
@@ -67,6 +68,9 @@ With the AppImage the command is the AppImage itself and the arguments are `["cl
 ![The same edit as a 9:16 short in its own timeline: reframed picture, karaoke captions, picture shape in the Inspector](screenshots/short.png)
 **Short** – the 16:9 edit copied into a 9:16 timeline of the same project: reframed, with karaoke captions from the transcript
 
+![Direct page: five clips as the material on the left, the recipe Short with its settings under the viewer, on the right ten suggestions with their reason ("3 loud moments") and time range, seven of them checked, the first one playing in the viewer; the strip at the bottom shows the timeline they would give](screenshots/direct.png)
+**Direct** – clips in, a recipe picked (short, highlights, talk without pauses, template, script): each suggestion with its reason, a click plays it, the checkbox takes it in, Accept builds the timeline as one undo step
+
 ![Shapes and drawing on the video: a pixelated number plate, a yellow circle round a ball with an arrow pointing at it, a hand-drawn loop round a door; each one its own clip on a track, the circle's values in the Inspector](screenshots/shapes.png)
 **Shapes and drawing** – circles, arrows, stars and more right on the video, a shape that blurs or pixelates what is below it (a number plate, a name), and strokes painted in the viewer (press P); every shape is a clip you can move, trim, animate or pin to a tracker
 
@@ -100,9 +104,11 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 - Multicam with up to 16 angles at once, synced by sound
 - Text-based editing: delete words in the transcript to cut them
 - Speed ramps and smooth slow motion with own optical flow
+- An overview strip of the whole timeline above the detail view (optional)
 - Timeline exchange with Premiere Pro, DaVinci Resolve and others (FCP7 XML, OpenTimelineIO, EDL)
 
-**Shorts, templates, brand**
+**Direct page and shorts, templates, brand**
+- Edit by recipe: a short (up to three variants), highlights of any material, a talk without pauses, a filled template, a rough cut from a script – suggestions with reasons, no chat AI needed
 - A 9:16 (or 1:1, 4:5) timeline next to the 16:9 edit; auto reframe that follows the subject
 - Templates with placeholders – fill them by drag and drop or from a CSV, one video per row
 - Brand kit: logo, colors, fonts, intro/outro for every project
@@ -122,6 +128,7 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 - Own sample-exact audio engine; a Studio page with mixer strips, EQ, compressor and loudness readout
 - Volume and pan automation with points, a pen and a write mode
 - Clean Voice, ducking, loudness to a target in one click, voice-over recording, offline text to speech
+- Background music of its own (hype, lo-fi, epic, funk) with a known beat grid; pauses cut where every microphone is quiet
 - 5.1/7.1 projects with channel routing and a surround panner
 
 **Export**
@@ -151,6 +158,8 @@ edges; never a default.
 | AI chat in the app | 0.12 | stable | A local model needs a 32k context; small local models make more mistakes than Claude |
 | Multicam, sync by sound | 0.8 | stable | Tested with game recordings and synthetic material, not with a real multi-camera shoot |
 | Shorts, auto reframe, captions, `short` | 0.16 | stable | Highlights know kills only in CS2 and Valorant; other footage gets "loud moments" |
+| Direct page, `direct`, `cut_pauses` | 0.25 | young | Moments come from the sound, picture changes and kill feeds – it does not see what is in the picture; filler words only as far as the transcript has them |
+| Music bed (own background music) | 0.25 | young | Simple synth music for under the program sound; four moods |
 | Blur player names | 0.16 | young | CS2 only in practice: a Valorant template exists but is less tested; small name tags in the 3D picture are often missed – always check the result |
 | Templates, brand kit | 0.18 | stable | |
 | Compositing, keying, masks, recipes | 0.19 | young | |
@@ -257,6 +266,7 @@ schneidi-cli beats song.mp3 --project talk.schneidi          # tempo, bars, phra
 schneidi-cli highlights game.mp4 --region 0.70,0.04,0.22,0.23 --color "#e7e371"  # own kills (Valorant), best first
 schneidi-cli sync cam1.mp4 cam2.mp4 cam3.mp4                 # offsets of recordings of the same event
 schneidi-cli short game1.mp4 game2.mp4 --for tiktok          # best moments → reframed 9:16 short with captions, checked, rendered
+schneidi-cli direct clip1.mp4 clip2.mp4 --recipe highlights   # suggestions with reasons; then: direct --session <id> --apply '{"on":"all"}'
 schneidi-cli templates                                       # start and content templates; `template info short-hook`: its fields
 schneidi-cli template fill short-hook --values '{"hook":"Wait for it","clip1":"/clips/a.mp4"}' --out_project short.schneidi --render '{}'
 schneidi-cli brand --action set --colors "#ffcc00,#202020" --fonts Inter --logo logo.png   # your brand kit
@@ -284,7 +294,7 @@ Edit operations cover cutting, inserting and source edits (insert, replace, plac
 trimming (ripple, roll, slip, slide), titles with their style, fades, transitions (dissolve, dip, wipes, luma),
 speed and speed ramps (with in-between frames), markers, subtitles (SRT or cue lists, track styles) and word captions, effects and presets, the color grade
 (wheels, LUTs, windows with blur/pixelate and tracking), transform and crop, reframe to another shape, black bars and stretched 4:3, blurring player names, keyframes for any animatable value, paste attributes, volume/pan, the mixer
-(also to a loudness target, EQ and compressor per track, a surround panner), track volume and pan automation (`track_volume`, `track_pan`), 5.1/7.1 projects and channel routing (`format channels`, `route`), ducking, loudness normalization, voice cleaning, text to speech, tracks, linking, compound
+(also to a loudness target, EQ and compressor per track, a surround panner), track volume and pan automation (`track_volume`, `track_pan`), 5.1/7.1 projects and channel routing (`format channels`, `route`), ducking, background music of its own (`music_bed`), cutting the pauses of a conversation (`cut_pauses`), loudness normalization, voice cleaning, text to speech, tracks, linking, compound
 clips, compositing graphs (`comp` with recipes, `comp_from`, `node`, trackers with `track_node`, AI cutouts with `cutout_node`), template placeholders (mark, fill), multicam clips (create, cut to an angle, change angles, flatten), several timelines (each with its own format) and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
@@ -321,11 +331,9 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 What comes next. Plans can still change, and there are no dates. What earlier versions brought is in the
 [release notes](https://github.com/OnkelTheorie/schneidi/releases).
 
-### Next: 0.25 – Regie
-A page for automatic editing: put clips in, pick a recipe – a short, a highlight video, a talk or podcast without
-pauses, a filled template, a rough cut from a script – and click through suggestions with a reason for each before
-anything changes, and up to three short variants of the same material, each in its own timeline. It runs on schneidi's own analysis on your computer; the AI
-chat is only needed for free-form wishes.
+### Next: 0.26 – Touch Update
+Editing with touch input (a tablet or a touch screen), s264 using what the editor already knows about the picture
+(cuts, still parts, motion), and fixes from tests with real use.
 
 ### Ideas for later (no order, not promised)
 - Color management (a working color space per project) and HDR export
