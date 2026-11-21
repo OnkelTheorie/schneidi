@@ -50,10 +50,12 @@ A vertical podcast clip (speaker, topic on top, word captions, logo): the `podca
 - **From a script:** `{"op":"rough_cut","script":"…"}` finds each sentence in the transcripts of the project's files
   (forgiving misheard words), takes the last complete take (`takes` `"best"` = the highest rated) and lays them out in
   the script's order in a new timeline; the notes list each sentence's take, the alternatives and `missing` sentences.
-  Best as a plan (`plan` true) when the user wants to choose. Or `direct` `recipe` `script` with `project` (`options` `script` or
-  `script_file`; `files`, else the project's media; it transcribes what has no transcript yet): one suggestion per take
-  (`kind` take, `sentence`), the chosen take of each sentence on, the alternatives off - switch them, then `apply`
-  lays the chosen takes in order on a new timeline.
+  Best as a plan (`plan` true) when the user wants to choose. Or `direct` `recipe` `script` with `files` and/or
+  `project` (`options` `script` or `script_file`; `files`, else the project's media; it transcribes what has no
+  transcript yet): one suggestion per take (`kind` take, `sentence`), the chosen take of each sentence on ("best take
+  of sentence N"), the alternatives off ("another take of sentence N") - switch them, then `apply` lays the chosen
+  takes in the script's order on a new timeline (a take switched on goes to its own sentence's place). Numbers match
+  however they are written ("Neuner" = "9er", "einundzwanzig" = "21").
 
 ## Smoother cuts (offer them, they are not automatic)
 - **Room tone:** after a pause cut the gaps between clips of the voice track are dead silent (with a gap left by

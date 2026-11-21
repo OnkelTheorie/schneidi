@@ -271,6 +271,12 @@ QJsonObject highlightsOne(const QJsonObject& given, Context& ctx)
         out["kills_note"] = "kill_s = when the kill feed line is there (a few frames after the hit); hit_s = the hit "
                             "itself: the last shot in the sound before the line began (hit_by 'sound'), or the frame "
                             "the line began to show (hit_by 'feed', no shot heard). Put accents and beats on hit_s";
+        // No line of the player's own that came up while recording: say what that means (not a wrong region)
+        if (game && kills.isEmpty())
+            out["kills_note"] = QString("no kill of the player in this recording: no new kill feed line of the "
+                                        "player's own (%1) came up - lines of other players, the player's own death "
+                                        "and lines already there at the start do not count")
+                                    .arg(game->name);
     }
     if (!teamkills.isEmpty()) {
         QJsonArray times;

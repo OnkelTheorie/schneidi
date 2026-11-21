@@ -32,7 +32,8 @@ look + music), `product-15s` (1:1, 3 product pictures, name, claim, call to acti
 - To let the user swap shots before filling (also on the app's Direct page): `direct` `recipe` `template` with
   `files` and `options` `{"template": "<id>"}` (without it: the clip fields of the given `project`) suggests one
   shot per field (`kind` slot, `slot`, `shot`, `from_s`/`to_s`, a reason); `apply` fills them - with a template id
-  into a new project next to the first clip (the answer's `project`), else in place as one undo step.
+  into a new project in the folder for projects (`project_dir` for another; the answer's `project`), else in place
+  as one undo step.
 - The answer says per slot what was done (`adjusted`: trimmed, slowed, frozen, looped, rippled, reframed, shrunk,
   fit_music …, with `text` and `details`), `unfilled` (slots without a value keep the template's content - a
   warning; `strict:true` makes it an error), `notes` (e.g. reframed to the center because the file was not

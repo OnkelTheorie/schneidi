@@ -24,6 +24,10 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   moments) - fine for sports, events, vlogs. A thin mark needs a higher `tolerance` than a filled one: CS2 frames
   the player's own kills in red (`region` "0.88,0.06,0.115,0.19", `color` "#d8444a", `tolerance` 40). Fewer `kills`
   than you saw in the kill feed: raise `tolerance` step by step (too high counts red walls and blood as kills).
+  With `game` `cs2` (from 1080p) the lines are read by their red frame in a taller area: the answer's `region`
+  "0.88,0.06,0.115,0.34" is that area, not a mistake. 0 candidates and `kill_feed_most_pct` 0 there mean the player
+  had no kill of their own in the recording (`kills_note` says so) - other players' lines, the player's own death and
+  a line already shown at the recording's start don't count. Look with `frames` before you doubt it.
 - Each kill has two times: `kill_s` = when its kill feed line is there, `hit_s` = the hit itself (the last shot
   before the line, ~0.1-0.3 s earlier). Put accents, sounds and beats on `hit_s`, never on `kill_s` - an effect after
   the kill looks late. `hit_by` "feed" means no shot was heard (a silent first audio stream: pass `audio_stream`
