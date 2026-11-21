@@ -1,0 +1,18 @@
+# The name of every feature release (x.y.0): its GitHub title is "schneidi x.y.0 – <name>".
+# Fix releases (x.y.z, z > 0) have no name. tools/release_title.sh reads this file and refuses an x.y.0 without a line
+# here, so a release can never go out unnamed again (0.16, 0.18, 0.23 and 0.24 did: commands copied from a fix release).
+0.10.0 Foundation Update
+0.11.0 Boost Update
+0.12.0 AI Update
+0.13.0 Everyday Update
+0.14.0 Freedom Update
+0.15.0 Speed Update
+0.16.0 Shorts Update
+0.17.0 AI Director Update
+0.18.0 Template Update
+0.19.0 Compositing Update
+0.20.0 Newcomer Update
+0.21.0 Languages Update
+0.22.0 Tracking Update
+0.23.0 Studio Update
+0.24.0 Color Update 2

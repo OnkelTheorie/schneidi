@@ -111,7 +111,7 @@
   <releases>
     <release version="0.24.0" date="2026-11-18">
       <description>
-        <p>Color: curves (master, RGB, hue and luma curves), a qualifier that grades only the colors it picks,
+        <p>Color Update 2: curves (master, RGB, hue and luma curves), a qualifier that grades only the colors it picks,
         master wheels and a stills gallery with a before/after wipe; HDR phone footage (HLG/PQ) is shown and exported as
         SDR without a setting; 10-bit export for H.265 and AV1; s264, an own experimental H.264 encoder (x264 stays the default);
         fixes for AI editing.</p>
@@ -120,7 +120,7 @@
     </release>
     <release version="0.23.0" date="2026-11-15">
       <description>
-        <p>Studio: a page for sound with large waveforms, a mixer column with EQ and compressor curves per track and
+        <p>Studio Update: a page for sound with large waveforms, a mixer column with EQ and compressor curves per track and
         one-click tools (clean a voice, duck the music, loudness to a target, recording, effect sounds); track volume
         and pan automation with a write mode; 5.1/7.1 surround with channel routing, a surround panner, meters per
         speaker and AC-3 export; markers, notes and story sections follow ripple edits.</p>
