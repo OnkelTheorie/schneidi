@@ -524,9 +524,9 @@ QString Transcriber::dtwPreset(const QString& model)
 QString Transcriber::punctuationPrompt(const QString& language)
 {
     const QString lang = language.trimmed().toLower().left(2);
-    // German with a bit of English: a German-only text made whisper write English in German talk in German ("She
-    // asked, like, ..." -> "Sie fragt, ...", "I'm Asian" -> "Ich bin Asien", measured 21.11.); with the English it stays
-    if (lang == QLatin1String("de")) return QStringLiteral("Hallo, wie geht's? Gut, und dir? Ja, passt. Okay, let's go!");
+    // German only (measured 21.11.): with English in it ("… Okay, let's go!", "Okay, cool.") turbo kept English said in
+    // German talk on one test but skipped 10 s of German speech or a whole English passage on others
+    if (lang == QLatin1String("de")) return QStringLiteral("Hallo, wie geht's? Gut, und dir? Ja, passt.");
     if (lang == QLatin1String("en")) return QStringLiteral("Hello, how are you? Good, and you? Yeah, fine.");
     return {};
 }

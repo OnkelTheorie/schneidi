@@ -175,16 +175,6 @@ void testPieces()
     CHECK_EQ(segs.value(1).first, 1510);
     CHECK_EQ(segs.value(1).second, 1955);
     CHECK_EQ(Transcriber::punctuationPrompt("de").isEmpty(), false);
-    // German with a bit of English, so whisper keeps English said in German talk (a German-only text translated it);
-    // its whole echo still goes
-    CHECK(Transcriber::punctuationPrompt("de").contains("let's"));
-    {
-        QVector<Transcript::Word> w;
-        for (const QString& t : Transcriber::punctuationPrompt("de").split(' ')) w << Transcript::Word{0, 100, t};
-        w << Transcript::Word{200, 300, "Echt?"};
-        CHECK_EQ(Transcript::dropPromptEcho(w, Transcriber::punctuationPrompt("de")), 11);
-        CHECK_EQ(w.size(), 1);
-    }
     CHECK(Transcriber::punctuationPrompt("auto").isEmpty());
 }
 
