@@ -124,16 +124,23 @@ def step_export(b, m, logs, runs):
     if m.get("project"):
         targets.append(("project", m["project"], ["--no-ref"]))
     for name, src, ref in targets:
-        best = None
+        best, peaks = None, []
         for i in range(runs):
             code, out, _, _ = run([b.tests / "bench_export", src, "--seconds", m["seconds"], *ref],
                                   logs / f"export-{name}-{i}.log")
             n = export_numbers(out)
+            if code == 0 and n["peak_mb"]:
+                peaks.append(n["peak_mb"])
             if code == 0 and n["fps"] and (best is None or n["fps"] > best["fps"]):
                 best = n  # the least disturbed run
         for k, v in (best or {}).items():
             if v is not None:
                 res[f"{name}_{k}"] = v
+        # Peak memory is bimodal (about one run in four starts on a ~270 MB higher plateau, since 0.15): the fastest
+        # run says nothing about it, so the median of all runs, and every run for the record.
+        if peaks:
+            res[f"{name}_peak_mb"] = round(statistics.median(peaks))
+            res[f"{name}_peak_runs_mb"] = peaks
     return res
 
 
@@ -159,12 +166,18 @@ def step_render(b, m, logs, runs):
                    "--to", f"{m['seconds']}s"]
             if threads:
                 cmd += ["--threads", threads]
-            code, out, secs, rss = run(cmd, logs / f"render-{name}-threads-{threads or 'all'}.log")
-            out_file.unlink(missing_ok=True)
-            if code == 0:
+            times, rsses = [], []
+            for i in range(min(int(runs), 3)):  # peak memory varies between runs (see step_export): median of up to 3
+                code, out, secs, rss = run(cmd, logs / f"render-{name}-threads-{threads or 'all'}-{i}.log")
+                out_file.unlink(missing_ok=True)
+                if code == 0:
+                    times.append(secs)
+                    rsses.append(rss)
+            if times:
                 tag = f"{name}_threads_{threads or 'all'}"
-                res[f"{tag}_s"] = round(secs, 2)
-                res[f"{tag}_peak_mb"] = round(rss)
+                res[f"{tag}_s"] = round(min(times), 2)  # the least disturbed run, like the export fps
+                res[f"{tag}_peak_mb"] = round(statistics.median(rsses))
+                res[f"{tag}_peak_runs_mb"] = [round(r) for r in rsses]
     return res
 
 
