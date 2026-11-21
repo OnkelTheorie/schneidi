@@ -2175,6 +2175,8 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
             if (key == "speed") d->ownSpeed = std::clamp(value.toInt(), 0, 1);
             if (key == "hints") d->ownHints = value.toInt() != 0;
         }
+        // (development: SCHNEIDI_S264_HINTS=0 = option "hints=0", to compare a render with and without)
+        if (qEnvironmentVariable("SCHNEIDI_S264_HINTS") == QLatin1String("0")) d->ownHints = false;
         if (const QString dump = qEnvironmentVariable("SCHNEIDI_S264_DUMP"); !dump.isEmpty()) {
             d->ownDumpYuv.setFileName(dump + QStringLiteral(".yuv"));
             d->ownDumpHints.setFileName(dump + QStringLiteral(".hints"));

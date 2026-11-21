@@ -76,7 +76,8 @@ public:
     // B-frames (adaptive runs, the encoder's default count). Options: "qp" (fixed quantizer), "bitrate" (kbit/s cap: a
     // first pass analyses every picture and predicts the size at "qp"; below the cap the QP stays, else the second pass
     // aims at the cap), "lookahead" (pictures, low memory), "bframes" (most B pictures in a run, 0 = none),
-    // "speed" (1 = the encoder's fast stage: fewer searches in B pictures for a slightly larger file; 0 = default)
+    // "speed" (1 = the encoder's fast stage: fewer searches in B pictures for a slightly larger file; 0 = default),
+    // "hints" (0 = the encoder does not get what the timeline knows, Settings::hints; default 1)
     static constexpr const char* kOwnH264 = "s264";
     // ("h264_own": its name up to 0.23, still in saved render settings)
     static bool isOwnH264(const QString& codec)
