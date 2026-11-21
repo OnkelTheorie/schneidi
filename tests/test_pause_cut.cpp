@@ -609,6 +609,13 @@ void testLive(const QString& dir)
     const QJsonObject late = cli({"edit", fake.path, "--ops", R"([{"op":"marker","at":"1s"},{"op":"cut_pauses","tracks":"A1,A2"}])"});
     CHECK_EQ(late["error"]["code"].toString(), QString("LIVE_NOT_PREPARED"));
     CHECK(state(fake.project) == before);
+    // A measuring error is the real one, the same as on the file (review 21.11.: always LIVE_NOT_PREPARED in the app)
+    const QString bad = R"([{"op":"cut_pauses","tracks":"A9"}])";
+    const QJsonObject badLive = cli({"edit", fake.path, "--ops", bad});
+    const QJsonObject badFile = cli({"edit", copy, "--ops", bad}, noLive);
+    CHECK(!badFile["error"]["code"].toString().isEmpty());
+    CHECK_EQ(badLive["error"]["code"].toString(), badFile["error"]["code"].toString());
+    CHECK(state(fake.project) == before);
 }
 
 // 40 min, two microphones (a 60 s take of each placed 40 times): the analysis cold and from the cache
