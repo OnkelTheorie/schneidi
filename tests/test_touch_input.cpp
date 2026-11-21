@@ -3,7 +3,8 @@
 // with the finger's larger grab zone, ruler tap, long press menu, pinch zoom, two-finger scroll), the viewer (pinch
 // zoom around the fingers, two-finger pan, double tap = fit), lists (kinetic scroll present and scrolling, tap
 // selects, long press + drag of an item onto the timeline) and a slider inside a scrolling panel. Mouse behaviour at
-// the same spots stays as it was.
+// the same spots stays as it was. Phone basics: click focus and the on-screen keyboard for a finger, the focused
+// field kept in view, the back key's steps (popup, dialog, the window's own step).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -19,6 +20,9 @@
 #include "ui/touch/Touch.h"
 
 #include <QApplication>
+#include <QDialog>
+#include <QLineEdit>
+#include <QMessageBox>
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QMenu>
@@ -31,6 +35,7 @@
 #include <QScrollBar>
 #include <QScroller>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyleHints>
 #include <QTest>
 #include <QVBoxLayout>
@@ -346,6 +351,136 @@ void testSliderInPanel()
     CHECK(area.verticalScrollBar()->value() > 100);
 }
 
+void testFocusAndKeyboard()
+{
+    Fixture f;
+    // A tap on the timeline gives it the focus like a click (its keys work)
+    auto* other = new QLineEdit;
+    static_cast<QHBoxLayout*>(f.window.layout())->insertWidget(0, other);
+    other->setFocus();
+    QApplication::processEvents();
+    CHECK(other->hasFocus());
+    tap(f.tv, {f.x(130), 120});
+    CHECK(f.tv->hasFocus());
+    pauseTaps();
+
+    // A text field in a scrolling panel: a finger focuses it and asks for the keyboard at once
+    QScrollArea area;
+    auto* inner = new QWidget;
+    auto* lay = new QVBoxLayout(inner);
+    auto* top = new QLineEdit;
+    lay->addWidget(top);
+    auto* spin = new QSpinBox;
+    lay->addWidget(spin);
+    lay->addSpacing(1500);
+    auto* low = new QLineEdit;
+    lay->addWidget(low);
+    area.setWidget(inner);
+    area.setWidgetResizable(true);
+    area.resize(400, 300);
+    area.show();
+    CHECK(QTest::qWaitForWindowExposed(&area));
+    area.activateWindow();
+    QApplication::processEvents();
+    area.setFocus(); // (the window's activation gave the first field the focus)
+    CHECK(!top->hasFocus());
+    const int asked = Touch::inputPanelRequests();
+    const QPoint inTop = top->mapTo(area.viewport(), top->rect().center());
+    QTest::touchEvent(area.viewport(), g_touch).press(0, inTop, area.viewport());
+    QTest::touchEvent(area.viewport(), g_touch).release(0, inTop, area.viewport());
+    QApplication::processEvents();
+    CHECK(top->hasFocus());
+    CHECK_EQ(Touch::inputPanelRequests(), asked + 1);
+    pauseTaps();
+    // Tapped again (the keyboard was put away): asked again
+    QTest::touchEvent(area.viewport(), g_touch).press(0, inTop, area.viewport());
+    QTest::touchEvent(area.viewport(), g_touch).release(0, inTop, area.viewport());
+    CHECK_EQ(Touch::inputPanelRequests(), asked + 2);
+    pauseTaps();
+    // A number field too (its text part lifts, the field has the focus)
+    const QPoint inSpin = spin->mapTo(area.viewport(), QPoint(10, spin->height() / 2));
+    QTest::touchEvent(area.viewport(), g_touch).press(0, inSpin, area.viewport());
+    QTest::touchEvent(area.viewport(), g_touch).release(0, inSpin, area.viewport());
+    CHECK(spin->hasFocus());
+    CHECK_EQ(Touch::inputPanelRequests(), asked + 3);
+    top->setFocus();
+    pauseTaps();
+    // Scrolling the panel with a finger keeps the focus where it is
+    swipe(area.viewport(), {300, 250}, {300, 60}, 8);
+    QTest::qWait(200);
+    QScroller::scroller(area.viewport())->stop();
+    CHECK(top->hasFocus());
+    CHECK_EQ(Touch::inputPanelRequests(), asked + 3);
+    // A mouse click never asks for the keyboard
+    area.verticalScrollBar()->setValue(area.verticalScrollBar()->maximum());
+    QApplication::processEvents();
+    QTest::mouseClick(low, Qt::LeftButton, {}, low->rect().center());
+    CHECK(low->hasFocus());
+    CHECK_EQ(Touch::inputPanelRequests(), asked + 3);
+    // The keyboard came up: the focused field scrolls into view
+    area.verticalScrollBar()->setValue(0);
+    QApplication::processEvents();
+    Touch::keepFocusVisible();
+    CHECK(area.verticalScrollBar()->value() > 1000);
+}
+
+void testBackKey()
+{
+    QWidget window;
+    window.resize(400, 300);
+    window.show();
+    CHECK(QTest::qWaitForWindowExposed(&window));
+    int steps = 0;
+    const std::function<bool()> step = [&] {
+        ++steps;
+        return true;
+    };
+    // An open menu closes first
+    QMenu menu;
+    menu.addAction("a");
+    menu.popup(window.mapToGlobal(QPoint(50, 50)));
+    QApplication::processEvents();
+    CHECK(QApplication::activePopupWidget() == &menu);
+    CHECK(Touch::back(step));
+    QApplication::processEvents();
+    CHECK(!menu.isVisible());
+    CHECK_EQ(steps, 0);
+    // Then the dialog in front: rejected like Esc
+    QDialog dlg(&window);
+    dlg.setModal(true);
+    dlg.show();
+    QApplication::processEvents();
+    CHECK(Touch::back(step));
+    CHECK(!dlg.isVisible());
+    CHECK_EQ(dlg.result(), int(QDialog::Rejected));
+    CHECK_EQ(steps, 0);
+    // A question takes its Esc answer (No), never Yes
+    QMessageBox box(QMessageBox::Question, "schneidi", "?", QMessageBox::Yes | QMessageBox::No, &window);
+    box.setWindowModality(Qt::ApplicationModal);
+    box.show();
+    QApplication::processEvents();
+    CHECK(Touch::back(step));
+    QApplication::processEvents();
+    CHECK(!box.isVisible());
+    CHECK(box.clickedButton() == box.button(QMessageBox::No));
+    CHECK_EQ(steps, 0);
+    // Nothing in front: the window's own step
+    CHECK(Touch::back(step));
+    CHECK_EQ(steps, 1);
+
+    // The key itself: taken (accepted) on press and release, one step per press
+    Touch::installBackKey(qApp, step);
+    window.activateWindow();
+    window.setFocus();
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Back, Qt::NoModifier);
+    QApplication::sendEvent(&window, &press);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_Back, Qt::NoModifier);
+    release.ignore();
+    QApplication::sendEvent(&window, &release);
+    CHECK(release.isAccepted());
+    CHECK_EQ(steps, 2);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -364,5 +499,8 @@ int main(int argc, char** argv)
     testViewer();
     testLists();
     testSliderInPanel();
+    Touch::installInputPanel(qApp);
+    testFocusAndKeyboard();
+    testBackKey();
     return Check::result();
 }

@@ -16,8 +16,10 @@
 // Only touchscreens are handled: touchpads (macOS sends their touches to widgets that take touch events) and pens go
 // the usual way.
 
+#include <QMargins>
 #include <QPointF>
 #include <algorithm>
+#include <functional>
 
 class QApplication;
 class QAbstractScrollArea;
@@ -50,6 +52,33 @@ bool hasKineticScroll(const QAbstractScrollArea* area);
 // a finger drag on it changes it (sliders, number fields and text fields are known already) - the finger then works
 // the child instead of scrolling
 void installKineticScrolling(QApplication* app);
+
+// ---------- Phone basics (TouchPhone.cpp) ----------
+// The focus a mouse click would give: `w` or the first parent with a click focus policy (Qt gives it only for
+// spontaneous presses; the touch layer's own mouse events are not). TouchGestures and the scroll areas' taps use it
+void clickFocus(QWidget* w);
+// On-screen keyboard: a finger's tap on a text field (focused by the tap or already) asks for the input panel at once
+// (Qt's widgets ask only on a second tap into a field that has the focus already); when the keyboard comes up or the
+// window shrinks for it, the focused field scrolls into view inside its scroll area. Scrolling with a finger never
+// moves the focus. A mouse or a keyboard (Tab) never opens the panel
+void installInputPanel(QApplication* app);
+// The focused widget into view inside the scroll areas around it (what the keyboard's arrival does)
+void keepFocusVisible();
+// How often the layer asked for the keyboard (tests: the offscreen platform has no input panel to look at)
+int inputPanelRequests();
+
+// Back key (Android's back button or gesture, Qt::Key_Back): one step back per press, never quitting by itself -
+// the open popup or menu closes, else the dialog in front (like Esc: a message box takes its Esc answer), else
+// `stepBack` (the main window: leaves the full-screen viewer, the large viewer, another page; with nothing left it
+// asks whether to quit). The key is always taken (Android ends the app on a back key nobody accepted).
+// main.cpp installs it on Android only: on a desktop a keyboard's "browser back" key would do it too
+void installBackKey(QApplication* app, std::function<bool()> stepBack);
+// One step of the back key (also for tests); true = something closed or stepped back
+bool back(const std::function<bool()>& stepBack);
+
+// Safe area of the widget's window (notch, rounded corners, system bars drawn over the app): Qt 6.9 and newer report
+// it and lay widgets out inside it themselves (WA_ContentsMarginsRespectsSafeArea, on for windows); older Qt: none
+QMargins safeAreaMargins(const QWidget* w);
 
 } // namespace Touch
 

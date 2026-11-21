@@ -522,6 +522,7 @@ int main(int argc, char* argv[])
     Theme::load(designArg);
     Theme::apply(app);
     Touch::installKineticScrolling(&app); // every list/panel scrolls with a finger (ui/touch/Touch.h)
+    Touch::installInputPanel(&app); // a text field a finger focuses opens the on-screen keyboard
     // The UI font's fallbacks (the symbols of buttons and tabs are in other fonts): fontconfig looks them up once (~10 ms
     // on the main thread while the window was built). A helper thread does it meanwhile; the font database keeps the
     // lists for all threads
@@ -600,6 +601,14 @@ int main(int argc, char* argv[])
     });
     // The Direct page runs the `direct` command (suggestions in the background, Übernehmen = one undo step)
     w.setDirectBackend(std::make_unique<RealDirectBackend>(&w));
+#ifdef Q_OS_ANDROID
+    // The back key steps back (popup, dialog, full screen, page) and asks before quitting (ui/touch/Touch.h). Only
+    // here: on a desktop a keyboard's "browser back" key sends the same key
+    Touch::installBackKey(&app, [&w] { return w.backStep(); });
+#endif
+#if defined(Q_OS_ANDROID) && QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
+#warning "Qt older than 6.9 reports no safe areas: the notch and the system bars can cover the window's edges"
+#endif
     new FirstPaintWatch(&w);
     QTimer::singleShot(kAfterFirstPaintMaxMs, &w, [] { firstPaintDone(); });
     // The viewer's GPU surface follows the open animation (X11: the window's GPU setup no longer delays the first

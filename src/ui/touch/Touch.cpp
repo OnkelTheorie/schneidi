@@ -76,6 +76,7 @@ void sendMouse(QWidget* to, QEvent::Type type, const QPointF& global, bool down,
                Qt::KeyboardModifiers mods)
 {
     if (!to) return;
+    if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick) clickFocus(to); // like a click
     const QPointF local = to->mapFromGlobal(global);
     const QPointF scene = to->window() ? to->window()->mapFromGlobal(global) : local;
     const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;

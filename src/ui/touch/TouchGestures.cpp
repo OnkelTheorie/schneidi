@@ -43,6 +43,8 @@ void TouchGestures::sendMouse(int type, const QPointF& pos, bool down)
 {
     const auto t = QEvent::Type(type);
     const Qt::MouseButton button = t == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+    // A click's focus (Qt gives it only for a spontaneous press): keys go where the finger tapped
+    if (t == QEvent::MouseButtonPress || t == QEvent::MouseButtonDblClick) Touch::clickFocus(m_target);
     const QPointF global = m_target->mapToGlobal(pos);
     const QPointF scene = m_target->window() ? m_target->mapTo(m_target->window(), pos) : pos;
     QMouseEvent me(t, pos, scene, global, button, down ? Qt::LeftButton : Qt::NoButton,
