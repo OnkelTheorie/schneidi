@@ -39,7 +39,7 @@ QJsonObject run(const QString& name, const QJsonObject& raw)
 bool near(double a, double b, double eps = 0.05) { return std::abs(a - b) <= eps; }
 
 // The moments `short` picked, as "file from-to; …" (file names only): stored below for each case, so `short` on top
-// of `direct` (0.25) is proven to pick exactly what it picked before
+// of `direct` (0.25) is proven to pick what it picked before (closeMoments: to 0.6 s)
 QString momentsText(const QJsonObject& r)
 {
     QStringList parts;
@@ -48,10 +48,28 @@ QString momentsText(const QJsonObject& r)
     return parts.join("; ");
 }
 
+// The same moments: same files in the same order, each end at most 0.6 s off. A moment is placed by the loudest frame
+// of a steady 0.6 s tone, and which frame that is depends on the AAC encoder's rounding (FFmpeg 7.1 and 9.1 differ by
+// up to 0.3 s)
+bool closeMoments(const QString& got, const QString& expected)
+{
+    const QStringList a = got.split("; "), b = expected.split("; ");
+    if (a.size() != b.size()) return false;
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        const qsizetype sa = a[i].lastIndexOf(' '), sb = b[i].lastIndexOf(' ');
+        if (sa < 0 || sb < 0 || a[i].left(sa) != b[i].left(sb)) return false;
+        const QStringList ra = a[i].mid(sa + 1).split('-'), rb = b[i].mid(sb + 1).split('-');
+        if (ra.size() != 2 || rb.size() != 2) return false;
+        for (int k = 0; k < 2; ++k)
+            if (std::abs(ra[k].toDouble() - rb[k].toDouble()) > 0.6) return false;
+    }
+    return true;
+}
+
 bool sameMoments(const char* name, const QJsonObject& r, const QString& expected)
 {
     const QString got = momentsText(r);
-    if (got == expected) return true;
+    if (closeMoments(got, expected)) return true;
     std::printf("       moments of %s: \"%s\" (expected \"%s\")\n", name, qPrintable(got), qPrintable(expected));
     return false;
 }

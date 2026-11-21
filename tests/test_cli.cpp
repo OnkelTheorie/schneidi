@@ -1992,7 +1992,9 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         // peaks group (0.10): each tone burst is one group
         const QJsonArray groups = run("peaks", {{"file", clip}, {"threshold_db", -20}, {"group", "1s"}})["groups"].toArray();
         if (CHECK_EQ(groups.size(), 2)) {
-            CHECK(std::abs(groups[0]["from_s"].toDouble() - 2.0) < 0.2);
+            // the loudest frame of the steady tone: anywhere in its first half (FFmpeg 7.1's AAC encoder made the
+            // first frame the loudest, 9.1's another one)
+            CHECK(groups[0]["from_s"].toDouble() > 1.9 && groups[0]["from_s"].toDouble() < 2.6);
             CHECK(groups[0]["to_s"].toDouble() < 3.2);
             CHECK(groups[0]["hits"].toInt() >= 2);
         }
