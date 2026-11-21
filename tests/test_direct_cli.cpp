@@ -673,6 +673,17 @@ int main(int argc, char** argv)
         CHECK(!aloneCut.contains("error"));
         CHECK_EQ(QFileInfo(aloneCut["project"].toString()).absolutePath(), QFileInfo(AppPaths::projectFolder()).absoluteFilePath());
         CHECK(aloneCut["timeline"].toString().startsWith("Rohschnitt"));
+        // The same in a work folder (`mcp --root`, review 21.11.): the scratch project lies inside the root (a system
+        // temporary folder was OUTSIDE_ROOT) and is gone afterwards
+        {
+            Cli::Sandbox::configure({dir.path(), {}, false});
+            const QJsonObject rooted = run("direct", {{"recipe", "script"}, {"files", QJsonArray{beach}},
+                                                      {"options", QJsonObject{{"script", "Hallo."}}}});
+            Cli::Sandbox::configure({});
+            CHECK(!rooted.contains("error"));
+            CHECK(!rooted["session"]["suggestions"].toArray().isEmpty());
+            CHECK(QDir(dir.path()).entryList({"schneidi-script-*"}, QDir::AllEntries | QDir::Hidden).isEmpty());
+        }
         const QJsonObject cut = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
         CHECK(!cut.contains("error"));
         CHECK(cut["timeline"].toString().startsWith("Rohschnitt"));

@@ -527,7 +527,9 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
 {
     // Files alone (no project): the takes are found in a scratch project of them; applying makes the real one (in the
     // folder for projects, like the other recipes)
-    QTemporaryDir scratch;
+    // A work folder (`mcp --root`): the scratch folder inside it (a system one would be OUTSIDE_ROOT), not hidden (the
+    // root refuses hidden ones), removed again with this suggestion
+    QTemporaryDir scratch(Sandbox::active() ? QDir(Sandbox::root()).filePath("schneidi-script-XXXXXX") : QString());
     QString project;
     if (s.project.isEmpty() && !files.isEmpty() && !Live::host() && !Live::appCopy()) {
         if (!scratch.isValid()) fail("SAVE_FAILED", "cannot make a temporary folder");
