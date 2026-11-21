@@ -503,7 +503,8 @@ bool sameProject(const QString& a, const QString& b)
 
 // Sound of the recordings: audio_stream 'game' (default: only the game streams of game material with several
 // streams), 'all', or numbers/names - as `short` always chose (per file: undefined = all)
-QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said)
+QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said,
+                                 const QStringList& usedFiles, QStringList* dropped)
 {
     const QString choice = s.options.contains("audio_stream") ? s.options["audio_stream"].toVariant().toString().trimmed()
                                                               : QString("game");
@@ -521,10 +522,16 @@ QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& gam
         const QVector<int> g = StreamPresets::gameStreams(names);
         if (g.isEmpty()) continue;
         QJsonArray list;
-        QStringList kept;
+        QStringList kept, left;
         for (int k : g) list << k, kept << names[k];
+        for (int k = 0; k < names.size(); ++k)
+            if (!g.contains(k) && !StreamPresets::isMixTitle(names[k])) // the mix only repeats the others
+                left << (names[k].isEmpty() ? QString("stream %1").arg(k) : names[k]);
         out[i] = list;
+        // Only the recordings in the cut are named (not a switched-off one, not one without a moment)
+        if (!usedFiles.contains(s.material[i].file)) continue;
         *said << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), kept.join(", "));
+        if (!left.isEmpty()) *dropped << QString("%1 (%2)").arg(left.join(", "), QFileInfo(s.material[i].file).fileName());
     }
     return out;
 }
@@ -781,11 +788,18 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
     }
-    QStringList soundSaid;
-    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid);
+    QStringList soundSaid, soundDropped, usedFiles;
+    for (const Direction::Suggestion* x : list) usedFiles << x->file;
+    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, usedFiles, &soundDropped);
     if (!soundSaid.isEmpty())
-        done << QString("sound: only the game streams (%1); audio_stream:'all' keeps voice chat, microphone and music too")
-                    .arg(soundSaid.join("; "));
+        done << QString("sound: only the game streams (%1)").arg(soundSaid.join("; "));
+    // Said on its own, not only inside `done`: voice chat and the microphone are not in the video
+    if (!soundDropped.isEmpty()) {
+        soundDropped.removeDuplicates();
+        notes << QString("left out of the sound (voice chat, microphone, music): %1 - to keep them, suggest "
+                         "again with options.audio_stream 'all' or their names (\"System Output,Discord\")")
+                     .arg(soundDropped.join("; "));
+    }
 
     const QJsonObject before = run("info", {{"project", project}, {"summary", true}});
     QStringList names;

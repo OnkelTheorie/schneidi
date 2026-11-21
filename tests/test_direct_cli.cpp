@@ -491,6 +491,27 @@ int main(int argc, char** argv)
         Q_UNUSED(longer);
     }
 
+    // ---- A game recording with voice chat (Mix, System Output, Discord): the cut keeps the game sound and says on
+    // its own which streams it left out (videotest 21.11.: only inside one long `done` line)
+    {
+        const QString burst = "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,6,6.6),0.9*sin(2*PI*440*t),0)':d=12:s=48000";
+        const QString chat = Check::makeMedia(
+            dir.filePath("clips/chat.mkv"),
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=12", "-f", "lavfi", "-i", burst, "-f", "lavfi", "-i", burst,
+             "-f", "lavfi", "-i", burst, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
+             "-metadata:s:a:0", "title=Mix", "-metadata:s:a:1", "title=System Output", "-metadata:s:a:2", "title=Discord",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{chat}},
+                                             {"options", QJsonObject{{"game", "none"}, {"length_s", 8}}}});
+        const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                {"project_dir", dir.filePath("out/chat")}});
+        CHECK(!made.contains("error"));
+        bool said = false;
+        for (const QJsonValue& n : made["notes"].toArray())
+            said |= n.toString().startsWith("left out of the sound") && n.toString().section(" - ", 0, 0).endsWith(": Discord (chat.mkv)");
+        if (!CHECK(said)) std::printf("       %s\n", QJsonDocument(made).toJson().constData());
+    }
+
     // ---- The short's hook starts on the action: a hard cut in its lead-in (CS2: the round restarts after the
     // round-end screen) moves its start there (videotest 21.11.: the hook began on "RUNDE VERLOREN")
     {
