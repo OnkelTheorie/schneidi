@@ -551,6 +551,11 @@ int runTests(int argc, char** argv)
                   .contains("a new one comes at most one past the last"));
         CHECK(run("edit", {{"project", g_path}, {"dry_run", true},
                            {"ops", R"([{"op":"append","media":"/x/a.mp4","track":"V3"}])"}})["changes"]["added"].toArray().size() == 2);
+        // A 1-2 frame gap after a clip (rounded seconds of retimed lengths, 03-#2) is closed with a note
+        const QJsonObject gap = run("edit", {{"project", g_path}, {"dry_run", true},
+                                             {"ops", R"([{"op":"keep","media":"/x/a.mp4","ranges":[[0,10]],"at":46}])"}});
+        CHECK(gap["notes"][0].toString().contains("at 00:00:01:21 lay 1 frame(s) after the end of clip"));
+        CHECK_EQ(gap["changes"]["added"][0]["start"].toInt(), 45);
         CHECK_EQ(saved(), before);
     }
     // keep with one range written another way (small models): taken with a note; no range at all: a whole example
@@ -924,6 +929,24 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject ramped = std::as_const(r)["timeline"]["tracks"][0]["clips"][1].toObject();
         CHECK_EQ(std::as_const(ramped)["speed_ramp"][0]["at"].toInt(), 30);
         CHECK_EQ(std::as_const(ramped)["end"].toInt(), 30 + 13); // 25 frames at 2x
+        {
+            // `at` means the clip as it is now (03-#4: the old points went first, the same frame meant another
+            // picture): 35 shows the file 5 * 2 frames after the point, which lies at 40 without the ramp
+            const auto ramp = [&](const QString& points) {
+                const QJsonObject d = run("edit", {{"project", g_path}, {"dry_run", true},
+                                                   {"ops", QString(R"([{"op":"speed_ramp","clip":%1,"points":%2}])").arg(c[1]).arg(points)}});
+                for (const QJsonValue& x : d["timeline"]["tracks"][0]["clips"].toArray())
+                    if (x["id"].toInt() == c[1]) return x.toObject();
+                return QJsonObject{};
+            };
+            CHECK_EQ(ramp(R"([{"at":30,"speed":2}])")["speed_ramp"][0]["at"].toInt(), 30);
+            CHECK_EQ(ramp(R"([{"at":35,"speed":2}])")["speed_ramp"][0]["at"].toInt(), 40);
+            // A point at the clip's first frame = the speed from the start (03-#3: "not inside the clip")
+            const int start = std::as_const(ramped)["start"].toInt();
+            const QJsonObject fromStart = ramp(QString(R"([{"at":%1,"speed":2},{"at":%2,"speed":1}])").arg(start).arg(start + 10));
+            CHECK_EQ(fromStart["speed"].toDouble(), 2.0);
+            CHECK_EQ(fromStart["speed_ramp"].toArray().size(), 1);
+        }
         ed(QString(R"([{"op":"speed_ramp","clip":%1,"clear":true},{"op":"speed","clips":[%1],"freeze":true,"ripple":false}])").arg(c[1]));
         CHECK(run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][1]["freeze"].toBool());
         // Markers and In/Out; Media Pool organisation

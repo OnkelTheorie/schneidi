@@ -715,30 +715,79 @@ void opSpeedRamp(Session& s, const QJsonObject& op)
     const int id = clipOf(s, op).id;
     if (!ed.canRetime(id)) fail("BAD_ARGUMENT", "this clip cannot get a speed ramp (title, still or freeze frame)");
     const auto clip = [&] { return *TimelineOps::findClip(s.project.timeline(), id); };
-    // Start over: remove the old points (last first)
-    for (int i = clip().ramp.size() - 1; i >= 0; --i) ed.removeSpeedPoint(id, i);
-    if (op.value("clear").toBool()) return;
+    const auto fileLength = [&](const Clip& c) {
+        const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+        return m ? m->length : 0;
+    };
     struct Point {
         int at;
         double speed;
         int smooth;
+        double file = -1; // a timeline time: the file position it shows now (resolved again after the old points go)
     };
+    // Timeline times mean the clip as it is now (as `info` shows it): read before the old points go, which changes
+    // the clip's timing (03-#4: the same `at` gave other points on every call); {clip, source} refs after that
+    const Clip now = clip();
+    const RetimeMap nowMap(now, fileLength(now));
     QVector<Point> points;
-    for (const QJsonValue& v : op.value("points").toArray()) {
-        const QJsonObject p = v.toObject();
-        points << Point{timeOf(s, p, "at"), numberOf(p, "speed", Retime::kMinSpeed, Retime::kMaxSpeed),
-                        p.contains("smooth") ? timeOf(s, p, "smooth") : 0};
+    bool fromStart = false;
+    double startSpeed = 0;
+    if (!op.value("clear").toBool())
+        for (const QJsonValue& v : op.value("points").toArray()) {
+            const QJsonObject p = v.toObject();
+            Point pt{0, numberOf(p, "speed", Retime::kMinSpeed, Retime::kMaxSpeed),
+                     p.contains("smooth") ? timeOf(s, p, "smooth") : 0};
+            if (!p.value("at").isObject()) {
+                const int at = timeOf(s, p, "at");
+                // A point at the clip's first frame is the speed from the start on (03-#3: refused as "not inside")
+                if (at == now.start) {
+                    fromStart = true;
+                    startSpeed = pt.speed;
+                    continue;
+                }
+                if (at < now.start || at >= now.end())
+                    fail("BAD_ARGUMENT", QString("speed point %1 is not inside the clip (%2..%3; a point at %2 sets the "
+                                                 "speed from the start)")
+                                             .arg(at).arg(now.start).arg(now.end() - 1));
+                pt.at = at;
+                if (!now.ramp.isEmpty()) pt.file = nowMap.fileFrameAt(now.in + (at - now.start));
+            } else {
+                pt.at = INT_MIN; // resolved below
+            }
+            points << pt;
+        }
+    // Start over: remove the old points (last first)
+    for (int i = clip().ramp.size() - 1; i >= 0; --i) ed.removeSpeedPoint(id, i);
+    if (op.value("clear").toBool()) return;
+    if (points.isEmpty() && !fromStart) fail("BAD_ARGUMENT", "missing 'points' ([{at, speed, smooth?}, …]) or clear:true");
+    if (fromStart && op.contains("speed"))
+        fail("BAD_ARGUMENT", "a point at the clip's start and 'speed' both set the speed from the start: give one");
+    {
+        const Clip c = clip();
+        const RetimeMap map(c, fileLength(c));
+        int i = 0;
+        for (const QJsonValue& v : op.value("points").toArray()) {
+            const QJsonObject p = v.toObject();
+            if (!p.value("at").isObject()) {
+                if (timeOf(s, p, "at") != now.start) ++i;
+                continue;
+            }
+            points[i++].at = timeOf(s, p, "at");
+        }
+        for (Point& p : points)
+            if (p.file >= 0) p.at = c.start + int(std::lround(map.materialAtFile(p.file))) - c.in;
     }
-    if (points.isEmpty()) fail("BAD_ARGUMENT", "missing 'points' ([{at, speed, smooth?}, …]) or clear:true");
     std::sort(points.begin(), points.end(), [](const Point& a, const Point& b) { return a.at < b.at; });
     // Points first (they keep the timing), then the speeds from the last segment on
     const Clip c = clip();
     for (const Point& p : points) {
-        if (p.at <= c.start || p.at >= c.end()) fail("BAD_ARGUMENT", QString("speed point %1 is not inside the clip (%2..%3)").arg(p.at).arg(c.start).arg(c.end()));
+        if (p.at <= c.start || p.at >= c.end())
+            fail("BAD_ARGUMENT", QString("speed point %1 is not inside the clip (%2..%3)").arg(p.at).arg(c.start).arg(c.end() - 1));
         ed.addSpeedPoint(id, p.at);
     }
     if (clip().ramp.size() != points.size()) fail("FAILED", "speed points must be at least one frame apart");
     if (op.contains("speed")) ed.setSegmentSpeed(id, 0, numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed));
+    if (fromStart) ed.setSegmentSpeed(id, 0, startSpeed);
     for (int i = points.size() - 1; i >= 0; --i) {
         ed.setSegmentSpeed(id, i + 1, points[i].speed);
         if (points[i].smooth > 0) ed.setSpeedPointSmooth(id, i, points[i].smooth);
@@ -1051,8 +1100,10 @@ void addEditOps(QVector<OpDef>& ops)
                  opSpeed, kClipKeys}
         << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?, interpolate?} or {…, clear:true}",
                  "speed ramp: from each point on its own speed (speed = before the first point)",
-                 "at = timeline frame inside the clip as it is now, or {clip, source:\"12.4s\"} = where the clip "
-                 "plays that source time (safe after earlier ramps); smooth = frames of a soft change around the "
+                 "at = timeline frame inside the clip as it is now (as `info` shows it, earlier points included), or "
+                 "{clip, source:\"12.4s\"} = where the clip plays that source time (safest); a point at the clip's "
+                 "first frame = the speed from the start (like speed). speed replaces the clip's own speed before the "
+                 "first point; without it that stays. smooth = frames of a soft change around the "
                  "point. The clip length follows the speeds, later clips move. Replaces earlier points. interpolate as "
                  "for speed ('flow' = smooth slow parts).",
                  opSpeedRamp, {"clips"}} // clipOf: a list of one

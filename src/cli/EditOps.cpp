@@ -459,17 +459,41 @@ Editor::PlaceParts partsOf(const QJsonObject& op, const MediaInfo& m)
     return video ? Editor::PlaceParts::Picture : audio ? Editor::PlaceParts::Sound : Editor::PlaceParts::Both;
 }
 
+// A given `at` 1-2 frames after a clip's end on the track the clip goes to: a gap that flashes black, from rounding
+// seconds of retimed lengths (03-#2: keep ranges with speeds, the next `at` summed up by the AI). Closed with a note.
+int closeTinyGap(Session& s, const QJsonObject& op, int at, int track, const QString& name)
+{
+    if (!op.contains("at") || op.value("audio_only").toBool()) return at;
+    const Timeline& tl = s.project.timeline();
+    const int index = track >= 0 ? track : 0;
+    if (index >= tl.video.size()) return at;
+    const Clip* before = nullptr;
+    for (const Clip& c : tl.video[index].clips) {
+        if (c.start < at && c.end() > at - 3 && c.end() <= at) before = &c;
+        if (c.start < at && c.end() > at) return at; // `at` inside a clip: overwriting is asked for
+    }
+    if (!before || before->end() == at) return at;
+    s.notes << QString("%1: at %2 lay %3 frame(s) after the end of clip %4 - placed at its end %5 (a gap that short "
+                       "flashes black)")
+                   .arg(name, tc(at, s.format()))
+                   .arg(at - before->end())
+                   .arg(before->id)
+                   .arg(tc(before->end(), s.format()));
+    return before->end();
+}
+
 void opPlace(Session& s, const QJsonObject& op, bool append)
 {
     const PresetsScope presets(s, op);
     const MediaInfo m = s.media(op.value("media").toString());
     int in = 0, out = 0;
     sourceRange(s, op, m, &in, &out);
-    const int at = append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at");
+    const int track = op.contains("track") ? parseTrack(op.value("track")) : -1; // -1: may pass a muted template track
+    const int at = closeTinyGap(s, op, append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at"), track,
+                                append ? "append" : "place");
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
     checkPlacedEnd(at, in, out, speed, m);
     const Placing before(s.project.timeline());
-    const int track = op.contains("track") ? parseTrack(op.value("track")) : -1; // -1: may pass a muted template track
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed, partsOf(op, m));
     onlyStreams(s, op, m, before);
     noteMovedSound(s, op, m, before);
@@ -481,9 +505,9 @@ void opKeep(Session& s, const QJsonObject& op)
 {
     const PresetsScope presets(s, op);
     const MediaInfo m = s.media(op.value("media").toString());
-    int at = timeOf(s, op, "at", endOf(s));
-    const int start = at;
     const int track = op.contains("track") ? parseTrack(op.value("track")) : -1; // -1: may pass a muted template track
+    int at = closeTinyGap(s, op, timeOf(s, op, "at", endOf(s)), track, "keep");
+    const int start = at;
     const Placing before(s.project.timeline());
     const Editor::PlaceParts parts = partsOf(op, m);
     double slowest = 1;
