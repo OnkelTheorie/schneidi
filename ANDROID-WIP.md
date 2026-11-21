@@ -37,3 +37,18 @@ $ADB exec-out screencap -p > android-shots/x.png
   target SDK 34 there; Qt 6.9+ targets 35.
 
 ## Open (next steps)
+- Use **Qt 6.10.3**: with 6.8.2 buttons in Qt-drawn dialogs do not react to taps (the hello app shows it with a bare
+  QDialog) and there are no safe areas. With 6.10.3 both work (`android-shots/07`, `08`). APK 82 MB (libraries stored
+  uncompressed by the newer Gradle plugin) instead of 38 MB; same content.
+- arm64-v8a APK: built with 6.8.2 (37 MB); the 6.10.3 build (`build610-arm64-v8a`) was started last, check
+  `android-deps/build610-arm64.log`. Never run on a device (the real phone was not touched).
+- File dialog / `content://` URIs untested; the app does not ask for READ_MEDIA_* itself yet (tests: `pm grant`).
+- Phone layout: the desktop layout on 914x411 logical px is cramped; some icons are boxes (symbol font missing on
+  Android: ship a font). Portrait is locked out in the manifest.
+- GPU: emulator (SwiftShader) says "GPU picture engine off: no OpenGL device" (second GL context fails) → CPU picture;
+  check on a real device.
+- No TLS (update check, AI chat): Qt for Android needs OpenSSL libraries in the APK.
+- FFmpeg without x264/x265/OpenH264/SVT-AV1/vpx/dav1d/opus/lame; export (MediaCodec, s264) untested; QProcess paths
+  (ffmpeg program for proxies, whisper) do not exist on Android.
+- Release signing, AAB, launcher icon sizes.
+- Desktop check done: `schneidi` and `test_touch_input` build and pass (146 checks) in `android-deps/build-desktop`.
