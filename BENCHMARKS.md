@@ -65,6 +65,7 @@ large project, all threads: s / peak RAM (MB) | memory peak / after giving back 
 | 0.19.0 (b5197a8c) [e] | 2026-11-07 | 0.1 | 453 / 443 | 0.33 | 32 / 33.5 | 113 / 248 | 57.1 / 23.4 | 2.15 | 37.45 / 1554 | 1168 / 651 | 21.84 / 35.48 |
 | 0.20.0 (4208f321) [f] | 2026-11-09 | 1.0 | 403 / 385 | 0.43 | 32.3 / 33.6 | 134 / 228 | 60.2 / 23.8 | 1.88 | 37.83 / 1552 | 1167 / 635 | 19.57 / 30.86 |
 | 0.21.0 (c83ad1cc) [g] | 2026-11-12 | 0.8 | 399 / 394 | 0.31 | 32.1 / 33.2 | 127 / 218 | 57.1 / 19.0 | 2.16 | 38.45 / 1549 | 1165 / 652 | 19.51 / 31.03 |
+| 0.25.0 (2c88f113) [h] | 2026-11-21 | 0.4 | 224 / 223 | 0.32 | 31.7 / 33.1 | 133 / 241 | 56.9 / 23.7 | 1.96 | 39.07 / 1927 | 1166 / 635 | 19.26 / 30.93 |
 
 Notes on rows:
 
@@ -102,6 +103,7 @@ Notes on rows:
 - **[g]** 0.21.0: no number more than 8 % worse than 0.20.0. Playback showed 57.1 instead of 60.2 fps (−5 %, under the
   15 % threshold; 0.19.0 also had 57.1) with a shorter longest gap (19 ms); the CLI render of the project with all threads
   used 704 instead of 1037 MB at its peak.
+- **[h]** 0.22 to 0.24 were not measured on the server. Start time dropped by 44 % against 0.21. The large project's 1927 MB is the known run-to-run jump (see the note on 0.15.1 / 0.16.0 above): three repeats on the same build gave 1536 / 1561 / 1565 MB. The project export's peak RAM behaves the same way (about one run in four peaks at ~1110 MB instead of ~835 MB, back to 0.15); from this row on the bench reports peak RAM as the median of all runs.
 
 ## Raspberry Pi Zero 2 W
 
