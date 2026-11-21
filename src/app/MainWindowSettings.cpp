@@ -14,6 +14,7 @@
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UiScale.h"
+#include "ui/touch/Touch.h"
 #include "app/UpdateCheck.h"
 #include "engine/Engine.h"
 #include "core/I18n.h"
@@ -90,6 +91,9 @@ void MainWindow::settingsDialog(int tab)
         UiScale::setAsked(); // chosen by hand: the 4K offer never comes
         if (m_scaleBar) m_scaleBar->hide(); // nor stays open to overwrite the choice
     }
+    // Touch mode: after a restart too (the theme's sizes are set at the start)
+    const bool touchChanged = dlg.touchMode() != Touch::savedMode() && !m_autosaveDisabled;
+    if (touchChanged) Touch::setSavedMode(dlg.touchMode());
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {
@@ -98,6 +102,9 @@ void MainWindow::settingsDialog(int tab)
                      I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
     } else if (scaleChanged && UiScale::userFactor().isEmpty()) { // the user's QT_SCALE_FACTOR wins: no restart helps
         offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                     T("Später"));
+    } else if (touchChanged && Touch::decideMode() != Touch::modeActive()) {
+        offerRestart(T("Der Touch-Modus ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
     }
 }

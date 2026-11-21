@@ -4,6 +4,7 @@
 #include "engine/PreviewResolution.h"
 #include "engine/ProxyManager.h"
 #include "ui/SecondScreen.h"
+#include "ui/touch/Touch.h"
 
 #include <QDialog>
 
@@ -34,6 +35,7 @@ public:
     AiSettings aiSettings() const;
     QString language() const; // code, as I18n::language()
     double uiScale() const;   // interface size (UiScale::saved: 0 = the system's)
+    Touch::Mode touchMode() const; // larger controls for fingers (Touch::savedMode)
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
@@ -78,6 +80,7 @@ private:
     StartTemplatesPage* m_templatesPage = nullptr;
     QComboBox* m_language = nullptr;
     QComboBox* m_uiScale = nullptr;
+    QComboBox* m_touchMode = nullptr;
     QComboBox* m_startPage = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;

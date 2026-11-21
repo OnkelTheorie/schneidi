@@ -18,6 +18,8 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
+#include "ui/touch/Touch.h"
+#include "ui/touch/TouchGestures.h"
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
@@ -121,6 +123,14 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     setAcceptDrops(true);
     setMinimumHeight(160);
     setFocusPolicy(Qt::ClickFocus);
+    // Fingers: one = the mouse code below (larger grab zones), two = pinch zoom + scroll, long press = context menu
+    if (Touch::modeActive()) { // touch mode: rows a finger hits (the wheel and a pinch on the headers still change them)
+        m_view.videoTrackHeight = 84;
+        m_view.audioTrackHeight = 68;
+    }
+    auto* touch = new TouchGestures(this);
+    touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
+    touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
     m_aiTimer = new QTimer(this);
     m_aiTimer->setInterval(40);
     connect(m_aiTimer, &QTimer::timeout, this, [this] {
@@ -266,7 +276,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
         if (pos.x() < x1 || pos.x() >= x2) continue;
-        const double grab = std::min<double>(kEdgeGrabPx, (x2 - x1) / 3);
+        const double grab = std::min<double>(edgeGrabPx(), (x2 - x1) / 3);
         if (pos.x() < x1 + grab) return EdgeHit{c.id, TimelineOps::Edge::Start};
         if (pos.x() >= x2 - grab) return EdgeHit{c.id, TimelineOps::Edge::End};
         return std::nullopt;
@@ -296,7 +306,7 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         constexpr double kRollPx = 3;
         if (prevAdj && pos.x() < x1 + kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::Start};
         if (nextAdj && pos.x() >= x2 - kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::End};
-        const double grab = std::min<double>(kEdgeGrabPx + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
+        const double grab = std::min<double>(edgeGrabPx() + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
         if (pos.x() < x1 + grab) return TrimHit{TrimKind::Ripple, c.id, Edge::Start};
         if (pos.x() >= x2 - grab) return TrimHit{TrimKind::Ripple, c.id, Edge::End};
         const bool bar = pos.y() < r.top() + std::min(kClipBarH, r.height() / 2);
@@ -347,7 +357,7 @@ std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoi
     for (const auto& s : m_editor->transitions(row->ref)) {
         const QRect r = transitionRect(*row, s);
         if (pos.x() < r.left() || pos.x() > r.right()) continue;
-        const int grab = std::min(kEdgeGrabPx, r.width() / 3);
+        const int grab = std::min(edgeGrabPx(), r.width() / 3); // a finger's zone is larger
         int edge = 0;
         // Only the free edge is draggable: fade-in on the right, fade-out on the left, crossfade both
         if (s.leftId && pos.x() <= r.left() + grab) edge = -1;
@@ -362,7 +372,8 @@ std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoi
 
 QRect TimelineView::fadeHandleRect(const QRect& r, const Clip& c, TimelineOps::Edge edge) const
 {
-    constexpr int w = 7, h = 9;
+    const bool big = Touch::modeActive(); // touch mode: a grip a finger can see
+    const int w = big ? 11 : 7, h = big ? 13 : 9;
     if (edge == TimelineOps::Edge::Start) {
         const int x = int(r.left() + c.fadeIn * m_view.pxPerFrame);
         return QRect(std::clamp(x - w / 2, r.left() + 1, std::max(r.left() + 1, r.right() - w)), r.top() + 1, w, h);
@@ -373,17 +384,27 @@ QRect TimelineView::fadeHandleRect(const QRect& r, const Clip& c, TimelineOps::E
 
 std::optional<TimelineView::EdgeHit> TimelineView::fadeHandleAt(const QPoint& pos) const
 {
-    if (m_tool != Tool::Select || !m_hoverClip || pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
+    if (m_tool != Tool::Select || pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
     const auto row = rowAt(pos.y());
     if (!row || isLocked(*row)) return std::nullopt;
+    const int slack = Touch::handleSlackPx(m_touchPointer, 3); // a finger's zone reaches further around the grip
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
-        if (c.id != m_hoverClip) continue;
+        if (!fadeHandlesShown(c.id)) continue;
         const QRect r = clipRect(*row, c);
-        if (r.width() < 24) return std::nullopt; // too narrow: handles would hide trimming
-        for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End})
-            if (fadeHandleRect(r, c, edge).adjusted(-3, -2, 3, 3).contains(pos)) return EdgeHit{c.id, edge};
+        if (r.width() < 24) continue; // too narrow: handles would hide trimming
+        for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End}) {
+            QRect zone = fadeHandleRect(r, c, edge).adjusted(-slack, -2, slack, slack);
+            if (slack > 3) zone &= r; // a finger's larger zone stays on its clip (the mouse's is as it always was)
+            if (zone.contains(pos)) return EdgeHit{c.id, edge};
+        }
     }
     return std::nullopt;
+}
+
+bool TimelineView::fadeHandlesShown(int clipId) const
+{
+    // Under the mouse; for a finger (no hover) on the selected clips: a tap shows them, the next touch grabs them
+    return clipId == m_hoverClip || (m_touchPointer && m_editor->selection()->contains(clipId));
 }
 
 QRect TimelineView::keyIconRect(const QRect& r) const
@@ -398,7 +419,9 @@ int TimelineView::keyIconAt(const QPoint& pos) const
     if (!row) return 0;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         const QRect r = clipRect(*row, c);
-        if (r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c) && keyIconRect(r).adjusted(-2, -2, 2, 2).contains(pos))
+        const int slack = Touch::handleSlackPx(m_touchPointer, 2); // a finger's zone is larger (inside the clip)
+        if (r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c)
+            && keyIconRect(r).adjusted(-slack, -slack, slack, slack).intersected(r).contains(pos))
             return c.id;
     }
     return 0;
@@ -422,7 +445,7 @@ std::optional<TimelineView::KeyHit> TimelineView::keyframeAt(const QPoint& pos) 
     const auto row = rowAt(pos.y());
     if (isLocked(*row)) return std::nullopt;
     std::optional<KeyHit> best;
-    double bestDist = kKeyGrabPx + 1;
+    double bestDist = Touch::grabPx(m_touchPointer, kKeyGrabPx) + 1;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         if (!m_keyLanes.contains(c.id)) continue;
         for (int t : Keys::keyTimes(c)) {
@@ -610,6 +633,34 @@ void TimelineView::zoomBy(double factor)
     m_view.setZoomAround(m_view.pxPerFrame * factor, xToFrame(anchorX), anchorX - kHeaderW);
     update();
     emit viewChanged();
+}
+
+void TimelineView::pinchView(const QPointF& from, const QPointF& to, double scale)
+{
+    // Begun on the track headers: the height of that kind of track (video or audio) follows the fingers' spread for
+    // the whole gesture; begun on the lanes: zoom and scroll
+    if (m_pinch == Pinch::None) {
+        const auto row = from.x() < kHeaderW && from.y() >= kRulerH ? rowAt(int(from.y())) : std::nullopt;
+        m_pinch = !row ? Pinch::View : row->ref.kind == TrackKind::Audio ? Pinch::AudioHeight : Pinch::VideoHeight;
+        if (row) m_pinchTrackH = m_pinch == Pinch::AudioHeight ? m_view.audioTrackHeight : m_view.videoTrackHeight;
+    }
+    if (m_pinch != Pinch::View) {
+        int& h = m_pinch == Pinch::AudioHeight ? m_view.audioTrackHeight : m_view.videoTrackHeight;
+        m_pinchTrackH = std::clamp(m_pinchTrackH * scale, 28.0, 220.0); // fractions add up over the gesture
+        h = int(std::lround(m_pinchTrackH));
+        setScrollY(m_view.scrollY); // height changed (scrollbar, redraw)
+        return;
+    }
+    // The frame under the fingers' old centre goes to their new centre: zoom around the fingers and move with them
+    const double ax = std::max<double>(from.x(), kHeaderW);
+    const double bx = std::max<double>(to.x(), kHeaderW);
+    m_view.setZoomAround(m_view.pxPerFrame * scale, xToFrame(ax), bx - kHeaderW);
+    setScrollY(m_view.scrollY - int(std::lround(to.y() - from.y()))); // redraws, reports viewChanged
+}
+
+int TimelineView::edgeGrabPx() const
+{
+    return Touch::grabPx(m_touchPointer, kEdgeGrabPx);
 }
 
 void TimelineView::zoomToFit()

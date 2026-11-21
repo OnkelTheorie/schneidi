@@ -8,6 +8,7 @@
 #include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
 #include "ui/comp/CompShared.h"
+#include "ui/touch/TouchGestures.h"
 
 #include <QContextMenuEvent>
 #include <QKeyEvent>
@@ -134,6 +135,19 @@ CompCanvas::CompCanvas(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_tourButton->setFocusPolicy(Qt::NoFocus);
     m_tourButton->hide();
     connect(m_tourButton, &QPushButton::clicked, this, &CompCanvas::tourRequested);
+    // Fingers: one = the mouse code (drag a node or a wire, the empty canvas scrolls), two = zoom around the fingers
+    // and scroll with them, long press = the context menu
+    auto* touch = new TouchGestures(this);
+    touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
+}
+
+void CompCanvas::pinchView(const QPointF& from, const QPointF& to, double scale)
+{
+    const QPointF world = toWorld(from); // the graph point between the fingers stays between them
+    m_view.zoom = std::clamp(m_view.zoom * scale, kMinZoom, kMaxZoom);
+    m_view.offset = world - to / m_view.zoom;
+    m_view.set = true;
+    update();
 }
 
 void CompCanvas::resizeEvent(QResizeEvent*) { placeTourButton(); }

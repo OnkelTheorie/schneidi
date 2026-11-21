@@ -280,6 +280,10 @@ public:
     // not Esc - Esc has its own jobs in the editor) brings back the state before: maximized or normal.
     void setAppFullScreen(bool on);
     class FullScreenViewer* fullScreenViewer() const; // nullptr while it is off
+    // The back key (Android; ui/touch Touch::installBackKey, after popups and dialogs): one step back - the
+    // full-screen viewer, then the large viewer, then another page back to Edit; on Edit with nothing left it asks
+    // whether to quit (never quits by itself). Always true (the key is taken)
+    bool backStep();
     // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
     // it to the next monitor other than the one the main window is on, after the last one back into the window (two
     // monitors: on/off). Full screen there, letterboxed; it does not take the keyboard focus. The main window keeps

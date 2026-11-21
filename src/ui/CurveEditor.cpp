@@ -19,6 +19,7 @@ constexpr double kGrab = 8;     // grab distance of a handle
 
 CurveEditor::CurveEditor(QWidget* parent) : QWidget(parent)
 {
+    setProperty("touchDrags", true); // a finger drag edits the curve, never scrolls the panel around it
     setMouseTracking(true);
     setCursor(Qt::CrossCursor);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);

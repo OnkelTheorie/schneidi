@@ -963,6 +963,27 @@ void MainWindow::updateRightColumn()
     }
 }
 
+bool MainWindow::backStep()
+{
+    if (m_fullScreen) {
+        setViewerFullScreen(false);
+        return true;
+    }
+    if (viewerLarge()) {
+        setViewerLarge(false);
+        return true;
+    }
+    if (m_page != Page::Edit) {
+        showPage(Page::Edit);
+        return true;
+    }
+    if (QMessageBox::question(this, "schneidi", T("schneidi beenden?"), QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No)
+        == QMessageBox::Yes)
+        close(); // the usual quit: asks to save, a running render first
+    return true;
+}
+
 void MainWindow::setViewerLarge(bool on)
 {
     if (on && m_viewerAway.active) on = false; // no viewer in the window to enlarge (second monitor)

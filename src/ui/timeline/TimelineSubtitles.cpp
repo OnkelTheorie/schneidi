@@ -95,7 +95,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::cueEdgeAt(const QPoint& pos) 
     if (t.locked) return std::nullopt;
     for (const SubtitleCue& c : t.cues) {
         const QRect r = cueRect(*row, c);
-        const int grab = std::min(kEdgeGrabPx, std::max(1, r.width() / 3));
+        const int grab = std::min(edgeGrabPx(), std::max(1, r.width() / 3));
         if (std::abs(pos.x() - r.left()) <= grab) return EdgeHit{c.id, TimelineOps::Edge::Start};
         if (std::abs(pos.x() - r.right()) <= grab) return EdgeHit{c.id, TimelineOps::Edge::End};
     }

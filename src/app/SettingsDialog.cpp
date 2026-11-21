@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/SettingsDialog.h"
 #include "app/UiScale.h"
+#include "ui/touch/Touch.h"
 
 #include "app/AiSettingsPage.h"
 #include "app/StartTemplatesPage.h"
@@ -124,6 +125,16 @@ QWidget* SettingsDialog::buildGeneral()
         m_uiScale->addItem(percent(saved), saved);
     m_uiScale->setCurrentIndex(std::max(0, m_uiScale->findData(UiScale::saved())));
     form->addRow(T("Größe"), m_uiScale);
+    // Larger controls for fingers (ui/touch/Touch.h); auto = on for a touchscreen without mouse or touchpad
+    m_touchMode = new QComboBox;
+    m_touchMode->setObjectName("settings_touch_mode");
+    m_touchMode->addItem(T("Automatisch"), int(Touch::Mode::Auto));
+    m_touchMode->addItem(T("Immer"), int(Touch::Mode::On));
+    m_touchMode->addItem(T("Nie"), int(Touch::Mode::Off));
+    m_touchMode->setCurrentIndex(std::max(0, m_touchMode->findData(int(Touch::savedMode()))));
+    m_touchMode->setToolTip(T("Größere Knöpfe, Zeilen, Spuren und Griffe für die Bedienung mit dem Finger. "
+                              "Automatisch: an bei einem Touchscreen ohne Maus und Touchpad."));
+    form->addRow(T("Touch-Modus"), m_touchMode);
     // The page shown at the start and on New Project (MainWindow::showStartPage); filled by setStartPages
     m_startPage = new QComboBox;
     m_startPage->setObjectName("settings_start_page");
@@ -406,3 +417,4 @@ QString SettingsDialog::startPage() const { return m_startPage->currentData().to
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
+Touch::Mode SettingsDialog::touchMode() const { return Touch::Mode(m_touchMode->currentData().toInt()); }

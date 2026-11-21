@@ -5,6 +5,8 @@
 #include "core/I18n.h"
 #include "core/TimelineOps.h"
 #include "ui/timeline/TimelineColors.h"
+#include "ui/touch/Touch.h"
+#include "ui/touch/TouchGestures.h"
 
 #include <QGuiApplication>
 #include <QHash>
@@ -27,6 +29,29 @@ TimelineOverview::TimelineOverview(QWidget* parent) : QWidget(parent)
     setMouseTracking(true);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setToolTip(T("Überblick: Klick springt hin, Rechteck ziehen scrollt, Rand ziehen zoomt"));
+    // Fingers: one = the mouse code (larger edge zones), two = the rectangle follows them (spread = it grows)
+    auto* touch = new TouchGestures(this);
+    touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchRange(from, to, scale); };
+    touch->onPinchEnd = [this] {
+        m_pinching = false;
+        m_dragScale = 0;
+        update(); // the scale may follow the new range now
+    };
+}
+
+void TimelineOverview::pinchRange(const QPointF& from, const QPointF& to, double scale)
+{
+    if (m_visTo <= m_visFrom) return;
+    if (!m_pinching) { // the strip's scale stays put under the fingers, like a mouse drag
+        m_pinching = true;
+        m_dragScale = contentScale();
+    }
+    const double anchor = xToFrame(from.x()), moved = xToFrame(to.x()) - anchor;
+    const double minLen = std::max(1.0, m_fps * 0.2);
+    const double len = std::max(minLen, (m_visTo - m_visFrom) * scale);
+    const double k = len / (m_visTo - m_visFrom);
+    const double a = std::max(0.0, anchor - (anchor - m_visFrom) * k + moved);
+    emit rangeRequested(a, a + len);
 }
 
 void TimelineOverview::setTimeline(const Timeline& timeline, double fps, const Project* project)
@@ -73,7 +98,7 @@ double TimelineOverview::contentScale() const
 
 double TimelineOverview::scaleFrames() const
 {
-    return m_drag != Drag::None && m_dragScale > 0 ? m_dragScale : contentScale();
+    return (m_drag != Drag::None || m_pinching) && m_dragScale > 0 ? m_dragScale : contentScale();
 }
 
 double TimelineOverview::frameToX(double frame) const
@@ -100,12 +125,12 @@ QRect TimelineOverview::playheadColumn(int frame) const
     return QRect(int(std::floor(frameToX(frame))) - 1, 0, 3, height());
 }
 
-TimelineOverview::Drag TimelineOverview::hitTest(double x) const
+TimelineOverview::Drag TimelineOverview::hitTest(double x, bool touch) const
 {
     const QRectF r = visibleRect();
     if (r.isEmpty()) return Drag::None;
-    // A narrow rectangle: the edge zones shrink, the middle third stays for moving
-    const double grab = std::min<double>(kEdgeGrabPx, r.width() / 3);
+    // A narrow rectangle: the edge zones shrink, the middle third stays for moving. A finger's zones are larger
+    const double grab = std::min<double>(Touch::grabPx(touch, kEdgeGrabPx), r.width() / 3);
     if (std::abs(x - r.left()) <= grab && x < r.center().x()) return Drag::LeftEdge;
     if (std::abs(x - r.right()) <= grab && x >= r.center().x()) return Drag::RightEdge;
     if (x > r.left() && x < r.right()) return Drag::Move;
@@ -239,7 +264,7 @@ void TimelineOverview::mousePressEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton || e->position().x() < m_inset) return QWidget::mousePressEvent(e);
     const double x = e->position().x();
-    const Drag hit = hitTest(x);
+    const Drag hit = hitTest(x, Touch::isTouch(e));
     m_dragScale = contentScale(); // frozen until the release
     m_pressPos = e->position().toPoint();
     m_moved = false;
@@ -270,7 +295,7 @@ void TimelineOverview::mouseMoveEvent(QMouseEvent* e)
 {
     const double x = e->position().x();
     if (m_drag == Drag::None) {
-        const Drag hit = x >= m_inset ? hitTest(x) : Drag::None;
+        const Drag hit = x >= m_inset ? hitTest(x, false) : Drag::None; // (the mouse's cursor)
         setCursor(hit == Drag::LeftEdge || hit == Drag::RightEdge ? Qt::SizeHorCursor
                   : hit == Drag::Move                              ? Qt::OpenHandCursor
                                                                    : Qt::ArrowCursor);

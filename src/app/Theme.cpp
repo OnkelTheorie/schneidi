@@ -2,6 +2,7 @@
 #include "app/Theme.h"
 
 #include "core/I18n.h"
+#include "ui/touch/Touch.h"
 
 #include <QApplication>
 #include <QFile>
@@ -231,6 +232,25 @@ QString disabledToolButtonStyle()
         .arg(control.name(), textFaint.name());
 }
 
+// Touch mode (ui/touch/Touch.h): finger-sized buttons, fields, scroll bars, splitter handles, menu entries and rows
+QString touchStyleSheet()
+{
+    return QStringLiteral(R"(
+        QPushButton { min-height: 34px; padding: 4px 14px; }
+        QToolButton { min-height: 30px; min-width: 30px; padding: 6px 10px; }
+        QComboBox, QLineEdit, QAbstractSpinBox { min-height: 32px; }
+        QSplitter::handle:horizontal { width: 8px; }
+        QSplitter::handle:vertical { height: 8px; }
+        QScrollBar:horizontal { height: 18px; }
+        QScrollBar:vertical { width: 18px; }
+        QScrollBar::handle { border-radius: 6px; min-width: 44px; min-height: 44px; }
+        QMenu::item { padding: 10px 28px 10px 20px; }
+        QMenuBar::item { padding: 8px 12px; }
+        QTabBar::tab { min-height: 34px; }
+        QListView::item, QTreeView::item { min-height: 36px; }
+    )");
+}
+
 void apply(QApplication& app)
 {
     app.setStyle(QStyleFactory::create("Fusion")); // looks the same on Linux and Windows
@@ -303,7 +323,8 @@ void apply(QApplication& app)
     )")
                           .arg(window.name(), border.name(), panel.name(), panelHeader.name(), text.name(),
                                primary.name(), textDim.name(), control.name(), controlLight.name())
-                          .arg(textFaint.name()));
+                          .arg(textFaint.name())
+                      + (Touch::modeActive() ? touchStyleSheet() : QString()));
 }
 
 } // namespace Theme
