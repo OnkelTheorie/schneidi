@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <vector>
 
 namespace Reframe {
@@ -36,136 +37,227 @@ bool modeFromId(const QString& id, Mode* m)
 
 namespace {
 
-double median(std::vector<double> v)
-{
-    if (v.empty()) return 0.5;
-    const size_t mid = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + mid, v.end());
-    double m = v[mid];
-    if (v.size() % 2 == 0) m = (m + *std::max_element(v.begin(), v.begin() + mid)) / 2;
-    return m;
-}
-
-struct Point {
-    int frame;
-    double x, y;
-    double weight = 1;
-};
-
-// Median of x and y over the points with frames in [from, to]
-QPointF medianOver(const std::vector<Point>& pts, int from, int to)
-{
-    std::vector<double> xs, ys;
-    for (const Point& p : pts)
-        if (p.frame >= from && p.frame <= to) xs.push_back(p.x), ys.push_back(p.y);
-    if (xs.empty()) return {0.5, 0.5};
-    return {median(xs), median(ys)};
-}
-
-// Weighted median of values (value, weight)
-double weightedMedian(std::vector<std::pair<double, double>> v)
-{
-    std::sort(v.begin(), v.end());
-    double total = 0;
-    for (const auto& [x, w] : v) total += w;
-    double sum = 0;
-    for (const auto& [x, w] : v)
-        if ((sum += w) >= total / 2) return x;
-    return v.empty() ? 0.5 : v.back().first;
-}
-
-// Weighted median over the points with frames in [from, to], plus the middle of the picture with weight `prior` per
-// point: sure measurements decide, unsure ones (a game's busy picture) leave the middle (the crosshair)
-QPointF weightedOver(const std::vector<Point>& pts, int from, int to, double prior, double cx, double cy)
-{
-    std::vector<std::pair<double, double>> xs, ys;
-    for (const Point& p : pts)
-        if (p.frame >= from && p.frame <= to) {
-            xs.push_back({p.x, p.weight});
-            ys.push_back({p.y, p.weight});
-            xs.push_back({cx, prior});
-            ys.push_back({cy, prior});
-        }
-    if (xs.empty()) return {cx, cy};
-    return {weightedMedian(xs), weightedMedian(ys)};
-}
-
 // One shot (no cut inside): holds and eased moves. previous = the camera before a cut: a new shot whose subject is
 // within the dead zone of it keeps it (a flash or a menu counted as a cut must not jolt the picture)
+//
+// The camera commits to a place and holds it: the holds are chosen for the whole shot at once (offline: the future is
+// known) as the cheapest sequence of places, where every sample costs by how far its subject lies from the window
+// centre beyond a comfortable zone (up to leaving the window) and every move costs as much as a subject a good bit off
+// for a second or so. An excursion that turns back soon, or whose subject does not clearly win, is dropped. Two
+// subjects that take turns (two people, a cyclist and a tree, flickering measurements) thus get one place for both
+// (or the one that matters most), not a camera swinging between them; a subject that goes somewhere else and stays
+// there gets one move. Moves are calm eased pans; turning back needs a hold first; pans in the same direction close
+// after each other become one.
 void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& keys, const Key* previous)
 {
     const double s = std::clamp(p.smoothness, 0.0, 1.0);
     const double fps = std::max(1.0, p.fps);
     const double ww = std::clamp(p.windowW, 0.01, 1.0), wh = std::clamp(p.windowH, 0.01, 1.0);
     const bool cropX = ww < 0.999, cropY = wh < 0.999;
-    const auto keep = [](double v, double w, bool crop) { return crop ? std::clamp(v, w / 2, 1 - w / 2) : 0.5; };
+    const int first = seg.front().frame, last = seg.back().frame;
+    // Fill crops one side only (the other fills the frame); both = the wider crop decides, the other stays centred
+    if (!cropX && !cropY) {
+        keys << Key{first, 0.5, 0.5};
+        return;
+    }
+    const bool alongX = cropX && (!cropY || ww <= wh);
+    const double w = alongX ? ww : wh;
+    const double lo = w / 2, hi = 1 - w / 2;
+    const auto keyAt = [&](int frame, double v) { return alongX ? Key{frame, v, 0.5} : Key{frame, 0.5, v}; };
 
-    // Each side kept where the window can go
-    std::vector<Point> raw;
-    raw.reserve(size_t(seg.size()));
-    for (const Target& t : seg)
-        raw.push_back({t.frame, keep(t.x, ww, cropX), keep(t.y, wh, cropY), std::clamp(t.weight, 0.0, 1.0)});
-    // Weighted median over a short time with a pull to the middle: single wrong measurements (a flash, a passing
-    // object) do not move the camera, unsure ones lean towards the middle (game footage: the crosshair)
-    const int half = std::max(1, int(std::lround((0.25 + 0.5 * s) * fps)));
-    constexpr double kPrior = 0.1;
-    std::vector<Point> f(raw.size());
-    for (size_t i = 0; i < raw.size(); ++i) {
-        const QPointF m = weightedOver(raw, raw[i].frame - half, raw[i].frame + half, kPrior, 0.5, 0.5);
-        f[i] = {raw[i].frame, keep(m.x(), ww, cropX), keep(m.y(), wh, cropY)};
+    struct Sample {
+        int frame;
+        double v;      // subject centre on the cropped side, kept where the window can go
+        double weight; // how much it counts: the square of how sure the measurement is (sure ones decide clearly)
+        double dt;     // seconds this sample stands for
+    };
+    // Unsure measurements (a busy picture) lean to the middle: every sample pulls there with this weight too (as much
+    // as a measurement of weight 0.1)
+    constexpr double kPrior = 0.01;
+    std::vector<Sample> pts;
+    pts.reserve(size_t(seg.size()));
+    double scale = 0; // the mean pull of a sample (subject and middle): a move costs in proportion
+    for (const Target& t : seg) {
+        const double weight = std::clamp(t.weight, 0.0, 1.0);
+        pts.push_back({t.frame, std::clamp(alongX ? t.x : t.y, lo, hi), weight * weight, 0});
+        scale += weight * weight + kPrior;
+    }
+    scale /= double(pts.size());
+    for (size_t k = 0; k < pts.size(); ++k) {
+        const int a = k > 0 ? pts[k - 1].frame : pts[k].frame, b = k + 1 < pts.size() ? pts[k + 1].frame : pts[k].frame;
+        pts[k].dt = std::max(1.0, (b - a) / 2.0) / fps;
     }
 
-    const double dzX = ww * (0.08 + 0.22 * s), dzY = wh * (0.08 + 0.22 * s);
-    const int minHold = std::max(1, int(std::lround((0.15 + 0.6 * s) * fps)));
-    const int settle = std::max(1, int(std::lround((0.3 + 0.5 * s) * fps)));
-    // Fastest move: window widths (heights) per second
-    const double speed = 2.5 - 2.0 * s;
-    const int first = f.front().frame, last = f.back().frame;
+    // Cost per second of a subject `d` window widths from the window centre: none in a comfortable zone, then
+    // growing until it is out of the window (further away is not worse: lost is lost - a subject far off for a moment
+    // must not buy a move)
+    const double zone = 0.08 + 0.22 * s;
+    const auto off = [zone](double d) { return std::max(0.0, std::min(d, 0.6) - zone); };
+    const auto cost = [&](const Sample& q, double at) {
+        return q.dt * (q.weight * off(std::abs(q.v - at) / w) + kPrior * off(std::abs(0.5 - at) / w));
+    };
+    // A move costs as much as an average subject a quarter window beyond the comfortable zone for this long: subjects
+    // taking turns for shorter do not pay a move there and back
+    const double commit = 0.5 + 1.0 * s; // seconds
+    const double moveCost = 0.25 * commit * scale;
 
-    QPointF cam = medianOver(f, first, first + settle);
-    if (previous && std::abs(previous->x - cam.x()) <= dzX && std::abs(previous->y - cam.y()) <= dzY)
-        cam = QPointF(previous->x, previous->y);
-    keys << Key{first, cam.x(), cam.y()};
-    int outside = -1;     // index where the subject left the dead zone
-    int busyUntil = first; // end of the running move
-    for (size_t k = 0; k < f.size(); ++k) {
-        if (f[k].frame < busyUntil) continue;
-        const bool away = std::abs(f[k].x - cam.x()) > dzX || std::abs(f[k].y - cam.y()) > dzY;
-        if (!away) {
-            outside = -1;
-            continue;
+    // Places the camera can hold (a twentieth of the window apart)
+    std::vector<double> places;
+    const int n = std::clamp(int(std::ceil((hi - lo) / (0.05 * w))) + 1, 1, 201);
+    for (int j = 0; j < n; ++j) places.push_back(n == 1 ? 0.5 : lo + (hi - lo) * j / (n - 1));
+    if (n > 1) places.push_back(0.5); // the middle exactly
+    const int m = int(places.size());
+    // Viterbi: cheapest sequence of places through the samples
+    std::vector<double> best(static_cast<size_t>(m)), next(static_cast<size_t>(m));
+    std::vector<std::vector<int>> from(pts.size(), std::vector<int>(static_cast<size_t>(m), 0));
+    for (int j = 0; j < m; ++j) best[size_t(j)] = cost(pts[0], places[size_t(j)]);
+    for (size_t k = 1; k < pts.size(); ++k) {
+        int arg = 0;
+        for (int j = 1; j < m; ++j)
+            if (best[size_t(j)] < best[size_t(arg)]) arg = j;
+        for (int j = 0; j < m; ++j) {
+            double c = best[size_t(j)];
+            int src = j;
+            const double moved = best[size_t(arg)] + moveCost;
+            if (moved < c) c = moved, src = arg;
+            next[size_t(j)] = c + cost(pts[k], places[size_t(j)]);
+            from[k][size_t(j)] = src;
         }
-        if (outside < 0) outside = int(k);
-        if (f[k].frame - f[size_t(outside)].frame < minHold && k + 1 < f.size()) continue;
-        // Where the subject stays now
-        const QPointF m = medianOver(f, f[k].frame, f[k].frame + settle);
-        const QPointF to(keep(m.x(), ww, cropX), keep(m.y(), wh, cropY));
-        if (std::abs(to.x() - cam.x()) <= dzX && std::abs(to.y() - cam.y()) <= dzY) {
-            outside = -1; // it came back
-            continue;
+        std::swap(best, next);
+    }
+    std::vector<int> state(pts.size());
+    {
+        int j = 0;
+        for (int i = 1; i < m; ++i)
+            if (best[size_t(i)] < best[size_t(j)]) j = i;
+        for (size_t k = pts.size(); k-- > 0;) {
+            state[k] = j;
+            j = from[k][size_t(j)];
         }
-        // Offline: the move may start when the subject left
-        const int start = std::max(keys.back().frame, f[size_t(outside)].frame);
-        const double dist = std::max(cropX ? std::abs(to.x() - cam.x()) / ww : 0.0,
-                                     cropY ? std::abs(to.y() - cam.y()) / wh : 0.0);
-        const int length = std::clamp(int(std::lround(dist / speed * fps)), std::max(1, int(0.25 * fps)),
-                                      std::max(1, int(2.5 * fps)));
-        int end = std::min(start + length, std::max(last, start + 1));
-        // Arriving just before the shot ends: a quicker move that still holds a while (a short clip, the subject
-        // moving late), else none - a jolt for nothing (the next shot starts anew)
-        if (end + minHold > last && last - minHold - start >= std::max(1, int(0.25 * fps))) end = last - minHold;
-        if (end + minHold > last && start > first) {
-            outside = -1;
-            busyUntil = last + 1;
-            continue;
+    }
+    // Weight of the samples [a, b] that a window at `at` shows (their pull to the middle counts as a subject there)
+    const auto inView = [&](size_t a, size_t b, double at) {
+        const bool middle = std::abs(0.5 - at) < 0.45 * w;
+        double sum = 0;
+        for (size_t i = a; i <= b; ++i)
+            sum += pts[i].dt * (pts[i].weight * (std::abs(pts[i].v - at) < 0.45 * w) + kPrior * middle);
+        return sum;
+    };
+    // Runs of one place. An excursion that turns back (to one subject and back to the other) is no run of its own
+    // when it is short or its samples do not clearly show its subject rather than the one before (subjects taking
+    // turns: the cheapest path may still pay for those when they are sure and far apart): its holds become one
+    std::vector<std::pair<size_t, size_t>> runs;
+    for (size_t k = 0; k < pts.size();) {
+        size_t e = k;
+        while (e + 1 < pts.size() && state[e + 1] == state[k]) ++e;
+        runs.push_back({k, e});
+        k = e + 1;
+    }
+    const double excursion = (1.0 + 2.0 * s) * fps; // frames
+    for (bool merged = true; merged;) {
+        merged = false;
+        for (size_t r = 1; r + 1 < runs.size(); ++r) {
+            const double a = places[size_t(state[runs[r - 1].first])], b = places[size_t(state[runs[r].first])],
+                         c = places[size_t(state[runs[r + 1].first])];
+            const int length = pts[runs[r + 1].first].frame - pts[runs[r].first].frame;
+            double all = 0;
+            for (size_t i = runs[r].first; i <= runs[r].second; ++i) all += pts[i].dt * (pts[i].weight + kPrior);
+            const bool clear = inView(runs[r].first, runs[r].second, b) - inView(runs[r].first, runs[r].second, a)
+                               >= 0.5 * all;
+            if ((b - a) * (c - b) < 0 && std::abs(c - b) >= 0.5 * std::abs(b - a) && (length < excursion || !clear)) {
+                for (size_t i = runs[r].first; i <= runs[r + 1].second; ++i) state[i] = state[runs[r - 1].first];
+                runs[r - 1].second = runs[r + 1].second;
+                runs.erase(runs.begin() + std::ptrdiff_t(r), runs.begin() + std::ptrdiff_t(r) + 2);
+                merged = true;
+                break;
+            }
         }
-        if (start > keys.back().frame) keys << Key{start, cam.x(), cam.y()};
-        if (end <= keys.back().frame) end = keys.back().frame + 1;
-        keys << Key{end, to.x(), to.y()};
+    }
+    // Holds: runs of one place. Each is held on the weighted median of its samples (with the pull to the middle),
+    // unless the place found keeps clearly more of them in the window (two subjects taking turns: between them)
+    struct Hold {
+        size_t a, b; // samples [a, b]
+        double at;
+    };
+    std::vector<Hold> holds;
+    for (const auto& [k, e] : runs) {
+        std::vector<std::pair<double, double>> values;
+        double all = 0;
+        for (size_t i = k; i <= e; ++i) {
+            values.push_back({pts[i].v, pts[i].dt * pts[i].weight});
+            values.push_back({0.5, pts[i].dt * kPrior});
+            all += pts[i].dt * (pts[i].weight + kPrior);
+        }
+        std::sort(values.begin(), values.end());
+        double total = 0, sum = 0, at = 0.5;
+        for (const auto& [v, x] : values) total += x;
+        for (const auto& [v, x] : values)
+            if ((sum += x) >= total / 2) {
+                at = v;
+                break;
+            }
+        // The place showing the most (two subjects that both fit: between them), the nearest to the median of those
+        double place = at, most = inView(k, e, at);
+        for (double c : places) {
+            const double v = inView(k, e, c);
+            if (v > most + 1e-12 || (std::abs(v - most) <= 1e-12 && std::abs(c - at) < std::abs(place - at))) {
+                most = v;
+                place = c;
+            }
+        }
+        if (most > inView(k, e, at) + 0.2 * all) at = place;
+        holds.push_back({k, e, at});
+    }
+    // A new shot whose place is close to the camera before the cut keeps that
+    if (previous) {
+        const double was = alongX ? previous->x : previous->y;
+        if (std::abs(was - holds.front().at) <= w * zone) holds.front().at = was;
+    }
+
+    // Moves between the holds: eased, starting when the subject went (offline); turning back only after a hold
+    const int minHold = std::max(1, int(std::lround((0.6 + 1.2 * s) * fps)));  // before a move back
+    const int endHold = std::max(1, int(std::lround((0.15 + 0.6 * s) * fps))); // before the shot ends
+    const double speed = 1.5 - 1.0 * s; // fastest move: window widths per second (a calm pan, not a jump)
+    QVector<Key> out;
+    out << keyAt(first, holds.front().at);
+    double cam = holds.front().at, lastDir = 0;
+    int lastMoveEnd = std::numeric_limits<int>::min() / 2;
+    for (size_t h = 1; h < holds.size(); ++h) {
+        const double to = holds[h].at;
+        if (std::abs(to - cam) <= 0.1 * w) continue; // (a nudge is no move)
+        const double dir = to > cam ? 1 : -1;
+        const int leave = pts[holds[h].a].frame;
+        const int length = std::clamp(int(std::lround(std::abs(to - cam) / w / speed * fps)),
+                                      std::max(1, int(std::lround((0.4 + 0.8 * s) * fps))),
+                                      std::max(1, int(std::lround(2.5 * fps))));
+        int start = std::max({leave, out.back().frame, dir == lastDir ? lastMoveEnd : lastMoveEnd + minHold});
+        int end = start + length;
+        // Arriving just before the shot ends: a quicker move that still holds a while, else none (the next shot
+        // starts anew)
+        if (end + endHold > last && last - endHold - start >= std::max(1, int(std::lround(0.25 * fps))))
+            end = last - endHold;
+        if (end + endHold > last && start > first) continue;
+        if (start > out.back().frame) out << keyAt(start, cam);
+        if (end <= out.back().frame) end = out.back().frame + 1;
+        out << keyAt(end, to);
         cam = to;
-        busyUntil = end;
-        outside = -1;
+        lastDir = dir;
+        lastMoveEnd = end;
     }
+    // Two pans the same way with a short hold between: one pan (the hold's keys go)
+    const int merge = std::max(1, int(std::lround((1.0 + 1.0 * s) * fps)));
+    const auto value = [alongX](const Key& k) { return alongX ? k.x : k.y; };
+    for (int i = 1; i + 2 < out.size();) {
+        // out[i-1] -> out[i] a move, out[i] -> out[i+1] a hold, out[i+1] -> out[i+2] a move
+        const double d1 = value(out[i]) - value(out[i - 1]), hold = value(out[i + 1]) - value(out[i]),
+                     d2 = value(out[i + 2]) - value(out[i + 1]);
+        if (std::abs(hold) < 1e-9 && std::abs(d1) > 1e-9 && d1 * d2 > 0 && out[i + 1].frame - out[i].frame < merge) {
+            out.remove(i, 2);
+            continue;
+        }
+        ++i;
+    }
+    keys += out;
 }
 
 } // namespace
@@ -173,7 +265,7 @@ void segmentPath(const QVector<Target>& seg, const PathParams& p, QVector<Key>& 
 QVector<Key> path(const QVector<Target>& targets, const PathParams& p)
 {
     QVector<Key> keys;
-    if (targets.isEmpty()) return {Key{}};
+    if (targets.isEmpty() || p.game) return {Key{}};
     for (int i0 = 0; i0 < targets.size();) {
         int i1 = i0 + 1;
         while (i1 < targets.size() && !targets[i1].cut) ++i1;

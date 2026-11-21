@@ -992,7 +992,7 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
         paths = ReframeAnalysis::paths(clips, f, smoothness, [&s](const QString& path) {
             const MediaInfo* m = s.project.mediaInfo(path);
             return m ? m->length : 0;
-        }, &errors, nullptr, nullptr, bars ? &contents : nullptr);
+        }, &errors, nullptr, nullptr, bars ? &contents : nullptr, keepChoice(op).game);
         for (const QString& e : errors) s.notes << "not measured, stays centered: " + e;
     } else if (bars) {
         contents = barContents(clips);

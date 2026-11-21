@@ -65,9 +65,12 @@ QVector<Reframe::Target> targets(const Clip& c, FrameRate rate, int fileLength, 
 // contents: per file the part of the picture to keep (Reframe::apply crops the rest, the path stays inside it); when
 // non-null, black bars are measured (engine/BarDetect) for files not in it yet and added - the caller passes the
 // same map to Editor::reframeClips. Null = the whole picture.
+// game: first-person game footage keeps its crosshair (the middle) in the frame, a centred path without measuring
+// (Reframe::PathParams::game): "" = a file a game is known from by its folder or name (GameHud::guess), a game id =
+// every clip, "none" = no clip.
 QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const ProjectFormat& format, double smoothness,
                                         const std::function<int(const QString&)>& lengthOf, QStringList* errors = nullptr,
                                         const std::atomic<bool>* cancel = nullptr, std::atomic<int>* progress = nullptr,
-                                        QHash<QString, QRectF>* contents = nullptr);
+                                        QHash<QString, QRectF>* contents = nullptr, const QString& game = {});
 
 } // namespace ReframeAnalysis
