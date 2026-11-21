@@ -7,6 +7,7 @@
 #include "app/TranscribeDialog.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "core/I18n.h"
 #include "core/Transcript.h"
 #include "engine/Extensions.h"
 #include "engine/Transcriber.h"
@@ -16,6 +17,9 @@
 #include <QDir>
 #include <QFile>
 #include <QApplication>
+#include <QCheckBox>
+#include <QLabel>
+#include <QTranslator>
 #include <QEventLoop>
 #include <QPushButton>
 #include <QSettings>
@@ -124,6 +128,69 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("transcribe_pick");
+
+    // --- The dialog's track list with a recording's real names (user report 21.11.): each name once ("A1  Mix", not
+    // "A1  Mix – Mix"), the voice hint whole below the tracks (its second line was cut off, over the last track), in
+    // de, en and ru with a large font
+    {
+        Timeline tl;
+        tl.audio.resize(5);
+        QStringList labels;
+        const char* names[] = {"Mix", "Spotify", "Discord", "System Output", "Mikrofon"};
+        for (int i = 0; i < 5; ++i) {
+            Clip c;
+            c.id = i + 1;
+            c.out = 49;
+            tl.audio[i].clips << c;
+            labels << QString("A%1  %2 – %2").arg(i + 1).arg(QString::fromUtf8(names[i]));
+        }
+        labels[1] = QString::fromUtf8("A2  Musik – Spotify"); // differs: both said
+        const QFont normal = QApplication::font();
+        QFont big = normal;
+        big.setPointSizeF(normal.pointSizeF() * 1.4);
+        for (const char* lang : {"de", "en", "ru"}) {
+            for (QTranslator* t : qApp->findChildren<QTranslator*>()) {
+                QCoreApplication::removeTranslator(t);
+                delete t;
+            }
+            I18n::install(lang);
+            for (const bool large : {false, true}) {
+                QApplication::setFont(large ? big : normal);
+                const QString where = QString("%1 %2").arg(lang, large ? "large" : "normal");
+                TranscribeDialog dlg(tl, ProjectFormat{640, 360, {25, 1}}, 0, 50, labels);
+                dlg.show();
+                for (int i = 0; i < 3; ++i) QApplication::processEvents();
+                const QList<QCheckBox*> boxes = dlg.findChildren<QCheckBox*>();
+                QStringList texts;
+                for (QCheckBox* b : boxes) texts << b->text();
+                CHECK(texts.contains("A1  Mix") && texts.contains(QString::fromUtf8("A5  Mikrofon")));
+                CHECK(texts.contains(QString::fromUtf8("A2  Musik – Spotify")));
+                auto* note = dlg.findChild<QLabel*>("transcribe_voice_note");
+                if (!CHECK(note && note->isVisible())) continue;
+                Check::report(note->height() >= note->heightForWidth(note->width()), "voice hint whole", __FILE__, __LINE__,
+                              QString("%1: %2 px of %3").arg(where).arg(note->height()).arg(note->heightForWidth(note->width())));
+                const QRect hint(note->mapTo(&dlg, QPoint(0, 0)), note->size());
+                for (QCheckBox* b : boxes) {
+                    const QRect r(b->mapTo(&dlg, QPoint(0, 0)), b->size());
+                    Check::report(!r.intersects(hint), "voice hint over a checkbox", __FILE__, __LINE__,
+                                  QString("%1: %2").arg(where, b->text()));
+                }
+                Check::report(hint.bottom() < dlg.height(), "voice hint inside the dialog", __FILE__, __LINE__, where);
+                for (QCheckBox* b : boxes)
+                    Check::report(b->width() >= b->sizeHint().width(), "checkbox whole", __FILE__, __LINE__,
+                                  QString("%1: %2 %3 < %4 (dialog %5, min %6)").arg(where, b->text()).arg(b->width())
+                                      .arg(b->sizeHint().width()).arg(dlg.width()).arg(dlg.minimumSizeHint().width()));
+                if (const QString dir = qEnvironmentVariable("TRANSCRIBE_DIALOG_DUMP"); !dir.isEmpty())
+                    dlg.grab().save(QString("%1/transcribe-%2.png").arg(dir, QString(where).replace(' ', '-')));
+            }
+        }
+        QApplication::setFont(normal);
+        for (QTranslator* t : qApp->findChildren<QTranslator*>()) {
+            QCoreApplication::removeTranslator(t);
+            delete t;
+        }
+        I18n::install("de");
+    }
 
     // --- Names that say "voice"
     for (const char* yes : {"Mikrofon", "Mic/Aux", "Microphone", "Voice", "voice 2", "Stimme", "Micro", "Głos",

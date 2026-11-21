@@ -328,25 +328,33 @@ void Transcriber::detectSpeech()
 
 bool Transcriber::writePieces(QString* error)
 {
+    // Read piece by piece, never the whole sound (3 h of 16 kHz = 345 MB in one QByteArray: bad_alloc on a Pi, review
+    // 21.11.): the WAV's chunk headers, then each span of the data chunk where it lies
     QFile in(m_tmp->filePath("audio.wav"));
     if (!in.open(QIODevice::ReadOnly)) {
         *error = in.errorString();
         return false;
     }
-    const QByteArray d = in.readAll();
+    const qint64 fileSize = in.size();
+    if (in.read(12).left(4) != "RIFF") {
+        *error = "no PCM data";
+        return false;
+    }
     // The data chunk of the 16 kHz mono 16-bit WAV (ffmpeg or the Exporter wrote it)
-    qsizetype data = -1, size = 0;
-    for (qsizetype at = 12; at + 8 <= d.size();) {
-        const qsizetype len = qsizetype(quint32(uchar(d[at + 4]) | uchar(d[at + 5]) << 8 | uchar(d[at + 6]) << 16
-                                                | quint32(uchar(d[at + 7])) << 24));
-        if (d.mid(at, 4) == "data") {
+    qint64 data = -1, size = 0;
+    for (qint64 at = 12; at + 8 <= fileSize;) {
+        if (!in.seek(at)) break;
+        const QByteArray h = in.read(8);
+        if (h.size() < 8) break;
+        const qint64 len = qint64(quint32(uchar(h[4]) | uchar(h[5]) << 8 | uchar(h[6]) << 16 | quint32(uchar(h[7])) << 24));
+        if (h.left(4) == "data") {
             data = at + 8;
-            size = std::min(len, d.size() - data);
+            size = std::min(len, fileSize - data);
             break;
         }
         at += 8 + len + (len & 1);
     }
-    if (data < 0 || !d.startsWith("RIFF")) {
+    if (data < 0) {
         *error = "no PCM data";
         return false;
     }
@@ -357,7 +365,17 @@ bool Transcriber::writePieces(QString* error)
         for (const Transcript::PieceSpan& s : m_pieces[i]) {
             const qint64 from = std::min<qint64>(s.from * kBytesPerMs, size);
             const qint64 to = std::min<qint64>((s.from + s.length) * kBytesPerMs, size);
-            if (to > from) pcm.replace(qsizetype(s.at * kBytesPerMs), qsizetype(to - from), d.mid(data + from, to - from));
+            if (to <= from) continue;
+            if (!in.seek(data + from)) {
+                *error = in.errorString();
+                return false;
+            }
+            const QByteArray span = in.read(to - from);
+            if (span.size() != to - from) {
+                *error = "short read: " + in.errorString();
+                return false;
+            }
+            pcm.replace(qsizetype(s.at * kBytesPerMs), span.size(), span);
         }
         QByteArray header("RIFF");
         const auto u32 = [&header](quint32 v) { for (int k = 0; k < 4; ++k) header += char((v >> (8 * k)) & 0xff); };

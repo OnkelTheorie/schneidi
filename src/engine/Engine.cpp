@@ -174,9 +174,10 @@ Engine::Engine(QObject* parent)
     o.buffer = audioBuffer();
     o.backend = audioDriver();
     o.output = audioOutput();
-    // The device ran dry while playing and the player took a bigger buffer: keep it for the next start (the audio menu
-    // shows it; the user can pick a smaller one again)
-    o.bufferGrown = [](int samples) { QSettings().setValue("audio/buffer", samples); };
+    // The device ran dry while playing and the player took a bigger buffer: kept for this session only (the player
+    // holds it); the user's own setting (audio/buffer, the audio menu) stays what they chose - a one-off dropout
+    // must not raise the latency for good (review 21.11.)
+    o.bufferGrown = [](int samples) { qInfo("Audio: buffer %d samples for this session", samples); };
     m_player = std::make_unique<Audio::Player>(o);
     m_player->setLoudness(m_loudness.get());
     // Messages that were already on their way when jumping made the playhead briefly jump back

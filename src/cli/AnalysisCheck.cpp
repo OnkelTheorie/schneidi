@@ -161,7 +161,7 @@ QJsonObject measuredJson(const Measured& m)
 
 // Black and frozen picture in a rendered file, in-process on a small copy (engine/video/Scan) with the rules of
 // ffmpeg's blackdetect (d=1, pix_th=0.10: 98 % of the pixels at most 10 % above black, for 1 s) and freezedetect
-// (n=-60dB, d=3: every plane differs from the picture before by at most 0.1 % on average, for 3 s)
+// (n=-60dB, d=3: all planes together differ from the run's first picture by at most 0.1 % on average, for 3 s)
 QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx, double progressFrom, double progressTo)
 {
     const ProjectFormat& f = m.format;
@@ -212,16 +212,22 @@ QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx,
                 ref.scan = scanId;
                 keep(ref, *previous);
             }
+            // ffmpeg's measure: the difference of all planes together per pixel, in 1/256 (not each plane on its
+            // own: against the run's first picture the chroma of a re-encoded still drifts more than its luma, a
+            // still of 3.5 s was found 6 pictures late)
             bool still = previous != nullptr;
-            for (int p = 0; p < 3 && still; ++p) {
-                const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
-                uint64_t sad = 0;
-                for (int y = 0; y < h; ++y) {
-                    const uint8_t* a = fr.data[p] + size_t(y) * size_t(fr.linesize[p]);
-                    const uint8_t* b = ref.planes[p].data() + size_t(y) * w;
-                    for (int x = 0; x < w; ++x) sad += uint64_t(std::abs(int(a[x]) - int(b[x])));
+            if (still) {
+                uint64_t sad = 0, count = 0;
+                for (int p = 0; p < 3; ++p) {
+                    const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
+                    for (int y = 0; y < h; ++y) {
+                        const uint8_t* a = fr.data[p] + size_t(y) * size_t(fr.linesize[p]);
+                        const uint8_t* b = ref.planes[p].data() + size_t(y) * w;
+                        for (int x = 0; x < w; ++x) sad += uint64_t(std::abs(int(a[x]) - int(b[x])));
+                    }
+                    count += uint64_t(w) * uint64_t(h);
                 }
-                still = double(sad) / (double(w) * h * 255.0) <= 0.001; // -60 dB
+                still = double(sad) / (double(count) * 256.0) <= 0.001; // -60 dB
             }
             if (!still) {
                 ref.scan = scanId;

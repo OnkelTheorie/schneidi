@@ -70,8 +70,12 @@ std::optional<double> soundPeakDb(const QString& project, const QString& timelin
 } // namespace
 
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
-                          QJsonArray* done, QJsonArray* notes)
+                          QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys)
 {
+    const auto note = [&](const char* key) {
+        *notes << Direction::noteText(key);
+        if (noteKeys) *noteKeys << QString(key);
+    };
     const auto run = [&ctx](const char* command, const QJsonObject& args) {
         Context sub;
         sub.cancel = ctx.cancel;
@@ -82,9 +86,7 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
     // Word captions from the speech, when whisper is there (never installed from here)
     if (f.captions != QLatin1String("off")) {
         if (Extensions::whisperProgram().isEmpty() || Extensions::installedWhisperModels().isEmpty()) {
-            *notes << "no captions: speech recognition (whisper) is not installed. Ask the user, then `schneidi-cli "
-                      "extensions --install whisper,small` (190 MB; whisper,turbo 574 MB is better) and run again "
-                      "(or captions:'off')";
+            note("no_captions_whisper");
         } else {
             QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
             if (!f.language.isEmpty()) t["language"] = f.language;
@@ -102,7 +104,7 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
                 if (e.code != QLatin1String("NO_SPEECH")) throw;
             }
             if (words.isEmpty()) {
-                *notes << "no captions: no speech in the short";
+                note("no_captions_speech");
             } else {
                 ops << QJsonObject{{"op", "captions"}, {"style", f.captions}, {"words", words}};
                 *done << QString("%1 captions (%2 segments)").arg(f.captions).arg(segments);

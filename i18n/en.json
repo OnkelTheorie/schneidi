@@ -3676,5 +3676,7 @@
  "… und %1 weitere": "… and %1 more",
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
- "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
+ "Keine Untertitel: Im Short ist keine Sprache zu hören.": "No captions: there is no speech in the short.",
+ "Keine Untertitel: Whisper ist nicht installiert (unter Hilfe › Erweiterungen nachladen).": "No captions: Whisper is not installed (load it under Help › Extensions)."
 }

@@ -632,7 +632,7 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
 
 namespace {
 QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx,
-                      QString* madeProject);
+                      QString* madeProject, bool* hadBackups);
 } // namespace
 
 QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx)
@@ -640,12 +640,15 @@ QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, c
     // A project this apply made itself goes again when it fails before its edit is done (canceled, an op refused): no
     // half project, and no backups or plans of it left; once the edit is saved it stays whatever comes after
     QString made;
+    bool hadBackups = false;
     try {
-        return applyOnce(s, apply, args, ctx, &made);
+        return applyOnce(s, apply, args, ctx, &made, &hadBackups);
     } catch (...) {
         if (!made.isEmpty()) {
             QFile::remove(made);
-            QDir(ProjectFile::backupDir(made)).removeRecursively();
+            // Only a backup folder this apply made: a free project name can still have the backups of an older,
+            // deleted project of that name (review 21.11.)
+            if (!hadBackups) QDir(ProjectFile::backupDir(made)).removeRecursively();
         }
         throw;
     }
@@ -653,7 +656,7 @@ QJsonObject directApply(const Direction::Session& s, const QJsonObject& apply, c
 
 namespace {
 QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, const QJsonObject& args, Context& ctx,
-                      QString* madeProject)
+                      QString* madeProject, bool* hadBackups)
 {
     const auto run = [&ctx](const char* command, const QJsonObject& a) {
         Context sub;
@@ -808,6 +811,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                       {"template", game != QLatin1String("none") || streams ? "game" : "neutral"}};
         if (s.material.first().fps > 0) n["fps"] = s.material.first().fps;
         failIfCanceled();
+        *hadBackups = QFileInfo::exists(ProjectFile::backupDir(project));
         run("new", n);
         *madeProject = project;
         created = true;
@@ -1020,7 +1024,7 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (timeline.isEmpty())
             fail("BAD_ARGUMENT", "finish needs the short's timeline inside it: finish:{\"timeline\":\"<the apply answer's "
                                  "timeline>\", captions?, sfx?} (with project)");
-        QJsonArray done, notes;
+        QJsonArray done, notes, noteKeys;
         if (f.contains("ops")) {
             if (timelineStamp(project, timeline) != f["stamp"].toString())
                 fail("FINISH_STALE", QString("the timeline '%1' changed since its speech and sound were measured: "
@@ -1047,9 +1051,9 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (!game.isEmpty() && game != QLatin1String("none")) sf.game = game;
         sf.language = f["language"].toString();
         if (f["prepare"].toBool()) {
-            const QJsonArray ops = shortFinishOps(project, timeline, sf, ctx, &done, &notes);
+            const QJsonArray ops = shortFinishOps(project, timeline, sf, ctx, &done, &notes, &noteKeys);
             return {{"project", project}, {"timeline", timeline}, {"ops", ops}, {"done", done}, {"notes", notes},
-                    {"stamp", timelineStamp(project, timeline)}};
+                    {"note_keys", noteKeys}, {"stamp", timelineStamp(project, timeline)}};
         }
         const bool captions = shortFinish(project, timeline, sf, ctx, &done, &notes);
         QJsonObject o{{"project", project}, {"timeline", timeline}, {"captions", captions}, {"done", done}};
