@@ -49,14 +49,30 @@ const Clip& clipOf(Session& s, const QJsonObject& op, const char* key)
     return *c;
 }
 
+// A value as JSON for an error message, at most 40 characters
+static QString jsonSnippet(const QJsonValue& v)
+{
+    const QString j = QString::fromUtf8(QJsonDocument(QJsonArray{v}).toJson(QJsonDocument::Compact)).mid(1).chopped(1);
+    return j.size() > 40 ? j.left(40) + "..." : j;
+}
+
 // Clip ids of `clips` (or `clip`); cues = subtitle ids allowed too (delete, move)
 QVector<int> clipIds(Session& s, const QJsonObject& op, bool cues)
 {
     QVector<int> ids;
     const QJsonValue v = op.value("clips");
-    const QJsonArray arr = v.isArray() ? v.toArray() : QJsonArray{op.value("clip")};
+    // clips:"all" or clips:"3" (12-B9: read as id 0): a list of ids is wanted; one number is that one clip
+    if (!v.isUndefined() && !v.isArray() && !v.isDouble())
+        fail("BAD_ARGUMENT", QString("'clips' must be a list of clip ids (numbers, as `info` lists them), not %1")
+                                 .arg(jsonSnippet(v)));
+    const QJsonArray arr = v.isArray() ? v.toArray() : QJsonArray{v.isDouble() ? v : op.value("clip")};
     for (const QJsonValue& x : arr) {
-        const int id = x.toInt();
+        if (x.isUndefined()) continue;
+        bool number = x.isDouble();
+        const int id = number ? x.toInt() : x.toString().trimmed().toInt(&number); // "7" is 7
+        if (!number)
+            fail("BAD_ARGUMENT", QString("%1 is no clip id (a number, as `info` lists them)")
+                                     .arg(jsonSnippet(x)));
         if (!TimelineOps::findClip(s.project.timeline(), id) && !(cues && Subtitles::find(s.project.timeline(), id)))
             fail("NOT_FOUND", QString("no %1 with id %2").arg(cues ? "clip or subtitle" : "clip").arg(id));
         ids << id;
@@ -614,35 +630,57 @@ void opAlign(Session& s, const QJsonObject& op)
     applyOp(s, a);
 }
 
+// The clips an op on whole clips acts on (delete, enable, disable): a picture takes its sound along (like a click in
+// the timeline), a sound clip named alone goes alone (the unwanted streams of a recording in one op, the Mix of a game
+// clip), its picture and the other streams stay; linked:true/false = all partners / exactly the given clips. Notes
+// say which partners went along or stayed.
+QVector<int> pictureTakesSound(Session& s, const QJsonObject& op, const QString& name)
+{
+    if (op.contains("linked")) return clipIds(s, op, true);
+    QJsonObject alone = op;
+    alone["linked"] = false;
+    const Timeline& tl = s.project.timeline();
+    const QVector<int> named = clipIds(s, alone, true);
+    QVector<int> pictures, ids;
+    for (int id : named) {
+        TrackRef r;
+        if (TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video) pictures << id;
+        else ids << id;
+    }
+    ids = s.editor.withLinked(pictures) + ids;
+    QJsonArray along, kept;
+    for (int id : ids)
+        if (!named.contains(id)) along << id;
+    for (int id : s.editor.withLinked(ids))
+        if (!ids.contains(id)) kept << id;
+    const auto list = [](const QJsonArray& a) { return QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact)); };
+    if (!along.isEmpty())
+        s.notes << QString("%1: the picture took its linked sound %2 along (linked:false = only the named clips)")
+                       .arg(name, list(along));
+    if (!kept.isEmpty())
+        s.notes << QString("%1: only the named sound clips; their linked partners %2 stay (linked:true = them too)")
+                       .arg(name, list(kept));
+    return ids;
+}
+
 void opDelete(Session& s, const QJsonObject& op)
 {
-    QVector<int> ids;
-    if (op.contains("linked") || op.value("ripple").toBool()) {
-        ids = clipIds(s, op, true); // a ripple moves the partners' tracks too: they go along unless linked:false
-    } else {
-        // A picture takes its sound along (like a click in the timeline); a sound clip named alone goes alone (the
-        // unwanted streams of a recording in one op), its picture and the other streams stay linked
-        QJsonObject alone = op;
-        alone["linked"] = false;
-        const Timeline& tl = s.project.timeline();
-        QVector<int> pictures;
-        QJsonArray kept;
-        for (int id : clipIds(s, alone, true)) {
-            TrackRef r;
-            if (TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video) pictures << id;
-            else ids << id;
-        }
-        ids = s.editor.withLinked(pictures) + ids;
-        for (int id : s.editor.withLinked(ids))
-            if (!ids.contains(id)) kept << id;
-        if (!kept.isEmpty())
-            s.notes << QString("delete: only the named sound clips; their linked partners %1 stay (linked:true deletes "
-                               "them too)")
-                           .arg(QString::fromUtf8(QJsonDocument(kept).toJson(QJsonDocument::Compact)));
-    }
+    // A ripple moves the partners' tracks too: they go along unless linked:false
+    const QVector<int> ids = op.value("ripple").toBool() ? clipIds(s, op, true) : pictureTakesSound(s, op, "delete");
     s.selection.set(QSet<int>(ids.begin(), ids.end()));
     if (op.value("ripple").toBool()) s.editor.rippleDeleteSelection();
     else s.editor.deleteSelection();
+}
+
+// enable/disable: a picture with its sound, a sound clip alone (12-B1: disabling the Mix of a game clip turned the
+// picture and every stream off); kill feed copies follow their clip
+void opEnable(Session& s, const QJsonObject& op, bool on)
+{
+    QVector<int> ids;
+    for (int id : pictureTakesSound(s, op, on ? "enable" : "disable"))
+        if (s.editor.isSubtitle(id)) fail("BAD_ARGUMENT", QString("%1 is a subtitle: delete it or change its text").arg(id));
+        else ids << id;
+    s.editor.modifyClips(s.editor.withCopies(ids), on ? "Enable" : "Disable", [on](Clip& c) { c.enabled = on; });
 }
 
 void opMove(Session& s, const QJsonObject& op)
@@ -1039,15 +1077,14 @@ QVector<OpDef> makeOps()
         {"fade", "{op:'fade', clips, in?, out?, linked?}", "fade handles (video: to the track below/black, audio: volume); "
          "a video clip's sound fades along unless linked:false; sound alone fades without its picture unless linked:true",
          {}, opFade, kClipKeys},
-        {"enable", "{op:'enable'|'disable', clips}", {}, {},
-         [](Session& s, const QJsonObject& op) {
-             s.editor.modifyClips(s.editor.withCopies(clipIds(s, op)), "Enable", [](Clip& c) { c.enabled = true; });
-         },
+        {"enable", "{op:'enable'|'disable', clips, linked?}", "switch clips on or off (an off clip is not seen or heard)",
+         "A video clip takes its linked sound along; sound clips named alone go alone (the Mix stream of a game "
+         "clip off while its picture and the single streams play on). linked:true = all partners, false = exactly "
+         "the given clips. A disabled picture leaves black (or the track below) where it was.",
+         [](Session& s, const QJsonObject& op) { opEnable(s, op, true); },
          kClipKeys},
         {"disable", {}, {}, {},
-         [](Session& s, const QJsonObject& op) {
-             s.editor.modifyClips(s.editor.withCopies(clipIds(s, op)), "Disable", [](Clip& c) { c.enabled = false; });
-         },
+         [](Session& s, const QJsonObject& op) { opEnable(s, op, false); },
          kClipKeys},
         {"clear", "{op:'clear'}", "empty the timeline", {},
          [](Session& s, const QJsonObject&) { s.editor.deleteRange(0, std::max(1, endOf(s)), false); }},

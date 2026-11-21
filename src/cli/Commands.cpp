@@ -2119,10 +2119,16 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                 const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);
                 QJsonArray only;
                 QStringList names;
+                for (const QJsonValue& v : ops) names << v["op"].toString();
                 for (const QJsonValue& v : ops) {
-                    names << v["op"].toString();
+                    // An op told under another one's usage (disable under "{op:'enable'|'disable', …}") finds it
+                    const QString usage = v["usage"].toString();
                     for (const QString& w : wanted)
-                        if (w.trimmed() == v["op"].toString()) only << v;
+                        if (w.trimmed() == v["op"].toString()
+                            || (!names.contains(w.trimmed()) && usage.contains("|'" + w.trimmed() + "'"))) {
+                            only << v;
+                            break;
+                        }
                 }
                 if (only.isEmpty()) fail("NOT_FOUND", "no op " + a["op"].toString() + " (ops: " + names.join(", ") + ")");
                 ops = only;

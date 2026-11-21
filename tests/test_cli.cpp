@@ -1370,6 +1370,29 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             if (!CHECK(note.contains("mixed.mkv: its Mix stream plays together with its single streams (Game, Mic)")
                        && note.contains(QString("{op:'disable', clips:[%1,%2]}").arg(std::min(mixA, mixB)).arg(std::max(mixA, mixB)))))
                 std::printf("       note: %s\n", qPrintable(note));
+            // Following the hint turns exactly the Mix off: the picture and the single streams play on (12-B1: the
+            // whole link group went off, black and silent); a picture takes its sound along, with a note
+            const QJsonObject off = run("edit", {{"project", proj},
+                                                 {"ops", QString(R"([{"op":"disable","clips":[%1,%2]}])").arg(mixA).arg(mixB)}});
+            int enabled = 0, disabled = 0;
+            for (const QJsonValue& t : run("info", {{"project", proj}})["timeline"]["tracks"].toArray())
+                for (const QJsonValue& c : t["clips"].toArray()) {
+                    const bool isMix = c["id"].toInt() == mixA || c["id"].toInt() == mixB;
+                    const bool on = c["enabled"].toBool(true);
+                    if (!CHECK(on != isMix)) std::printf("       clip %d on %s: enabled %d\n", c["id"].toInt(), qPrintable(t["track"].toString()), on);
+                    (on ? enabled : disabled)++;
+                }
+            CHECK_EQ(disabled, 2);
+            CHECK(enabled >= 6);
+            CHECK(off["notes"].toArray().at(0).toString().startsWith("disable: only the named sound clips"));
+            int picture = 0;
+            for (const QJsonValue& c : r["changes"]["added"].toArray())
+                if (c["track"].toString() == "V1" && !picture) picture = c["id"].toInt();
+            const QJsonObject on = run("edit", {{"project", proj},
+                                                {"ops", QString(R"([{"op":"disable","clips":[%1]}])").arg(picture)}});
+            CHECK(on["notes"].toArray().at(0).toString().startsWith("disable: the picture took its linked sound ["));
+            const QJsonObject help = run("help", {{"command", "edit"}, {"op", "disable"}});
+            CHECK(help["commands"].toArray().at(0)["ops"].toArray().at(0)["op"].toString() == "enable");
             const QString gameProj = dir.filePath("mixed-game.schneidi");
             run("new", {{"project", gameProj}, {"template", "game"}});
             CHECK(!run("edit", {{"project", gameProj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(mixed)}}).contains("notes"));
