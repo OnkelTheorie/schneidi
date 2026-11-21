@@ -5,6 +5,7 @@
 // canceled suggest or apply fails with CANCELED and leaves no half project. Prints the suggest time of 10 clips cold
 // and warm (DIRECT_MEASURE=1 makes them 30 s long as in the plan's target).
 #include "cli/Commands.h"
+#include "core/AppPaths.h"
 #include "core/Direction.h"
 #include "engine/Extensions.h"
 #include "cli/Live.h"
@@ -269,6 +270,12 @@ int main(int argc, char** argv)
         CHECK(ProjectFile::load(proj, &d, &error));
         CHECK_EQ(d.direction["id"].toString(), session["id"].toString());
         CHECK_EQ(d.direction["recipe"].toString(), QString("short"));
+        // The project opens on the result, not on its empty Timeline 1 (videotest 21.11.)
+        CHECK_EQ(run("info", {{"project", proj}, {"summary", true}})["timeline"].toObject()["name"].toString(), QString("Short"));
+        // Its sound leveled like `short` does: the master to -14 LUFS behind the limiter
+        CHECK(QJsonDocument(applied["done"].toArray()).toJson().contains("leveled to"));
+        const QJsonObject l = run("loudness", {{"source", proj}, {"timeline", "Short"}});
+        CHECK(std::abs(l["loudness"]["integrated_lufs"].toDouble() + 14) < 1.0);
     }
     // A choice of its own: only the first suggestion, moved edges, as an object (the page sends what it shows)
     {
@@ -377,7 +384,10 @@ int main(int argc, char** argv)
         const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
         CHECK(!made.contains("error"));
         CHECK_EQ(made["timeline"].toString(), QString("Highlights"));
-        CHECK(QFileInfo::exists(made["project"].toString())); // a new project next to the recording
+        CHECK(QFileInfo::exists(made["project"].toString()));
+        // in the folder for projects, never next to the recording (a recorder's folder; videotest 21.11.)
+        CHECK_EQ(QFileInfo(made["project"].toString()).absolutePath(), QFileInfo(AppPaths::projectFolder()).absoluteFilePath());
+        CHECK(QFileInfo(made["project"].toString()).absolutePath() != QFileInfo(beach).absolutePath());
         // A second recipe on the same material reads the caches
         QElapsedTimer t;
         t.start();
@@ -481,6 +491,60 @@ int main(int argc, char** argv)
         Q_UNUSED(longer);
     }
 
+    // ---- A game recording with voice chat (Mix, System Output, Discord): the cut keeps the game sound and says on
+    // its own which streams it left out (videotest 21.11.: only inside one long `done` line)
+    {
+        const QString burst = "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,6,6.6),0.9*sin(2*PI*440*t),0)':d=12:s=48000";
+        const QString chat = Check::makeMedia(
+            dir.filePath("clips/chat.mkv"),
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=12", "-f", "lavfi", "-i", burst, "-f", "lavfi", "-i", burst,
+             "-f", "lavfi", "-i", burst, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
+             "-metadata:s:a:0", "title=Mix", "-metadata:s:a:1", "title=System Output", "-metadata:s:a:2", "title=Discord",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QString quiet = Check::makeMedia(dir.filePath("clips/quiet.mp4"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=320x180:r=30:d=6", "-f", "lavfi", "-i",
+                                                "aevalsrc='0.01*sin(2*PI*100*t)':d=6:s=48000", "-c:v", "libx264",
+                                                "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject r = run("direct", {{"recipe", "highlights"}, {"files", QJsonArray{chat, quiet}},
+                                             {"options", QJsonObject{{"game", "none"}, {"length_s", 8}}}});
+        const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                {"project_dir", dir.filePath("out/chat")}});
+        CHECK(!made.contains("error"));
+        // The new project holds the recordings of the cut only (the quiet one has no moment in it; videotest 21.11.)
+        {
+            ProjectData d;
+            QString error;
+            CHECK(ProjectFile::load(made["project"].toString(), &d, &error));
+            QStringList paths;
+            for (const MediaInfo& m : d.media) paths << m.path;
+            CHECK(paths.contains(chat));
+            CHECK(!paths.contains(quiet));
+        }
+        bool said = false;
+        for (const QJsonValue& n : made["notes"].toArray())
+            said |= n.toString().startsWith("left out of the sound") && n.toString().section(" - ", 0, 0).endsWith(": Discord (chat.mkv)");
+        if (!CHECK(said)) std::printf("       %s\n", QJsonDocument(made).toJson().constData());
+    }
+
+    // ---- The short's hook starts on the action: a hard cut in its lead-in (CS2: the round restarts after the
+    // round-end screen) moves its start there (videotest 21.11.: the hook began on "RUNDE VERLOREN")
+    {
+        const QString cutClip = Check::makeMedia(
+            dir.filePath("clips/round.mp4"),
+            {"-f", "lavfi", "-i",
+             "color=c=red:s=320x180:r=30:d=20[a];testsrc2=s=320x180:r=30:d=20[b];[a][b]overlay=enable='gte(t,8)'",
+             "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,9,9.6),0.9*sin(2*PI*440*t),0)':d=20:s=48000",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{cutClip}},
+                                             {"options", QJsonObject{{"game", "none"}}}});
+        const QJsonArray list = r["session"]["suggestions"].toArray();
+        const QJsonObject hook = list.isEmpty() ? QJsonObject{} : list[0].toObject();
+        CHECK(std::abs(hook["from_s"].toDouble() - 8.0) < 0.1);
+        CHECK(hook["labels"].toArray().contains("hook_trimmed"));
+        CHECK(hook["to_s"].toDouble() > 9.6);
+    }
+
     // ---- Recipe talk: the common pauses of two microphones; apply = a copy of the timeline without them
     {
         const QString talk = twoMics(dir.path());
@@ -492,6 +556,10 @@ int main(int argc, char** argv)
             CHECK_EQ(v["kind"].toString(), QString("pause"));
             CHECK_EQ(v["reason"]["key"].toString(), QString("pause"));
             common |= v["from_s"].toDouble() > 6.4 && v["to_s"].toDouble() < 9.2;
+            // The reason names the pause as long as it is (with its pads), the cut part separately (videotest 21.11.)
+            const double len = v["to_s"].toDouble() - v["from_s"].toDouble();
+            CHECK(v["reason"]["values"]["s"].toDouble() >= len + 0.15 - 0.02);
+            CHECK(std::abs(v["reason"]["values"]["cut"].toDouble() - len) < 0.02);
             CHECK(!(v["from_s"].toDouble() < 5.2 && v["to_s"].toDouble() > 3.2)); // B talks there
         }
         if (!CHECK(common)) std::printf("       %s\n", QJsonDocument(list).toJson().constData());
@@ -559,11 +627,42 @@ int main(int argc, char** argv)
             CHECK_EQ(takes[0]["sentence"].toInt(), 1);
             CHECK(takes[0]["from_s"].toDouble() >= 0.0 && takes[0]["to_s"].toDouble() > takes[0]["from_s"].toDouble());
         }
+        // talk with fillers on recordings without a transcript: whisper writes one (verbatim) while suggesting, the
+        // apply keeps it in the project (videotest 21.11.: "no transcript" after a `transcribe` of the project)
+        {
+            const QString talk3 = twoMics(dir.path());
+            const QJsonObject f = run("direct", {{"recipe", "talk"}, {"project", talk3},
+                                                 {"options", QJsonObject{{"fillers", true}, {"tracks", "A1,A2"}}}});
+            bool none = false, some = false;
+            for (const QJsonValue& n : f["session"]["notes"].toArray()) {
+                none |= n["key"].toString() == "no_transcript_fillers";
+                some |= n["key"].toString() == "fillers_transcript";
+            }
+            CHECK(!none && some);
+            const QJsonObject applied = run("direct", {{"session", f["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+            CHECK(!applied.contains("error"));
+            ProjectData d;
+            QString error;
+            CHECK(ProjectFile::load(talk3, &d, &error));
+            bool kept = false;
+            for (const MediaInfo& m : d.media) kept |= !m.transcripts.isEmpty();
+            CHECK(kept);
+        }
         // A second suggestion takes the words kept from the first (no second whisper run: the fake is gone now)
         QFile::remove(dir.filePath("bin/whisper-cli"));
         const QJsonObject again = run("direct", {{"recipe", "script"}, {"project", sp}, {"files", QJsonArray{beach}},
                                                  {"options", QJsonObject{{"script", "Hallo."}}}});
         CHECK(!again["session"]["suggestions"].toArray().isEmpty());
+        // Files alone (no project): the takes are found as well, the apply makes a project in the folder for projects
+        // (videotest 21.11.: NO_MATERIAL although the help said files work)
+        const QJsonObject alone = run("direct", {{"recipe", "script"}, {"files", QJsonArray{beach}},
+                                                 {"options", QJsonObject{{"script", "Hallo."}}}});
+        CHECK(!alone.contains("error"));
+        CHECK(!alone["session"]["suggestions"].toArray().isEmpty());
+        const QJsonObject aloneCut = run("direct", {{"session", alone["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
+        CHECK(!aloneCut.contains("error"));
+        CHECK_EQ(QFileInfo(aloneCut["project"].toString()).absolutePath(), QFileInfo(AppPaths::projectFolder()).absoluteFilePath());
+        CHECK(aloneCut["timeline"].toString().startsWith("Rohschnitt"));
         const QJsonObject cut = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}});
         CHECK(!cut.contains("error"));
         CHECK(cut["timeline"].toString().startsWith("Rohschnitt"));
@@ -582,18 +681,40 @@ int main(int argc, char** argv)
     // ---- Recipe template: the built-in short-hook template, its clip fields filled with shots of the material
     {
         const QJsonObject r = run("direct", {{"recipe", "template"}, {"files", QJsonArray{clip, beach}},
-                                             {"options", QJsonObject{{"template", "short-hook"}}}});
+                                             {"options", QJsonObject{{"template", "short-hook"}, {"game", "none"}}}});
         const QJsonArray list = r["session"]["suggestions"].toArray();
         if (CHECK(!list.isEmpty())) {
             CHECK_EQ(list[0]["kind"].toString(), QString("slot"));
-            CHECK(!list[0]["slot"].toString().isEmpty());
-            CHECK_EQ(list[0]["reason"]["key"].toString(), QString("slot_match"));
+            CHECK_EQ(list[0]["slot"].toString(), QString("clip1"));
+            // The fields get the material's moments, not the first seconds of a recording (videotest 21.11.): the
+            // strongest moment ("the strongest moment first") the best one found, as long as the field (4 s)
+            CHECK_EQ(list[0]["reason"]["key"].toString(), QString("loud"));
+            bool burst = false; // the clip's loud burst at 29 s is in a field
+            for (const QJsonValue& x : list) {
+                CHECK(x["score"].toDouble() <= list[0]["score"].toDouble());
+                burst |= x["file"].toString() == clip && x["from_s"].toDouble() <= 29.0 && x["to_s"].toDouble() >= 29.6;
+            }
+            CHECK(burst);
+            for (const QJsonValue& x : list) {
+                CHECK(x["to_s"].toDouble() - x["from_s"].toDouble() <= 4.05);
+                CHECK(!x["reason"]["text"].toString().isEmpty());
+                for (const QJsonValue& y : list) // never the same part of a recording twice
+                    if (x["n"] != y["n"] && x["file"] == y["file"])
+                        CHECK(x["to_s"].toDouble() <= y["from_s"].toDouble() || y["to_s"].toDouble() <= x["from_s"].toDouble());
+            }
         }
+        // The text field is named, not silently left (filled on apply with values)
+        bool kept = false;
+        for (const QJsonValue& n : r["session"]["notes"].toArray())
+            kept |= n["key"].toString() == "fields_kept" && n["text"].toString().contains("hook");
+        CHECK(kept);
         const QString filled = dir.filePath("out/from-template.schneidi");
-        const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+        const QJsonObject made = run("direct", {{"session", r["session"]["id"]},
+                                                {"apply", QJsonObject{{"on", "all"}, {"values", QJsonObject{{"hook", "Watch this"}}}}},
                                                 {"project", filled}});
         CHECK(!made.contains("error"));
         CHECK(QFileInfo::exists(filled));
+        CHECK(!made["result"]["unfilled"].toArray().contains("hook"));
         // project_dir (the app: its folder for projects): the new project and its media folder go there, never next
         // to the recordings (a recorder's folder)
         const QString folder = dir.filePath("my projects");
@@ -722,7 +843,7 @@ int main(int argc, char** argv)
         const QString target = dir.filePath("out/never.schneidi");
         const QJsonObject a = run("direct", {{"session", s["id"]}, {"apply", QJsonObject{{"on", "all"}}}}, &already);
         CHECK_EQ(a["error"].toString(), QString("CANCELED"));
-        CHECK(!QFileInfo::exists(QFileInfo(beach).absolutePath() + "/beach-short.schneidi"));
+        CHECK(!QFileInfo::exists(AppPaths::projectFolder() + "/beach-short.schneidi"));
         Q_UNUSED(target);
     }
 

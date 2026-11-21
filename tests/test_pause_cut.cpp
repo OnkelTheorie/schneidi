@@ -108,7 +108,8 @@ void testCore()
         CHECK(!autoThreshold(std::vector<float>(100, float(std::pow(10.0, -45 / 20.0)))).raised);
         CHECK(std::abs(autoThresholdDb(std::vector<float>(10, 0.f)) - kMaxThresholdDb) < 1e-6);
     }
-    // Only where both are quiet; runs shorter than minPause stay; pad at both ends
+    // Only where both are quiet; runs shorter than minPause stay; pad at both ends - not at the end of what was
+    // measured (no speech follows: a pad would leave a sliver of silence behind the last cut, videotest 21.11.)
     {
         std::vector<bool> a(40, true), b(40, true);
         for (int i = 0; i < 10; ++i) a[size_t(i)] = false; // a speaks 0..10
@@ -118,7 +119,7 @@ void testCore()
         const QVector<Range> r = pauses({a, b}, {0, 1}, 5, 2);
         if (CHECK_EQ(r.size(), 1)) {
             CHECK_EQ(r[0].from, 22);
-            CHECK_EQ(r[0].to, 38);
+            CHECK_EQ(r[0].to, 40);
             CHECK(r[0].tracks == QVector<int>({0, 1}));
             CHECK(r[0].kind == Kind::Pause);
         }
@@ -131,7 +132,7 @@ void testCore()
             CHECK_EQ(split[0].from, 22);
             CHECK_EQ(split[0].to, 23);
             CHECK_EQ(split[1].from, 32);
-            CHECK_EQ(split[1].to, 38);
+            CHECK_EQ(split[1].to, 40);
         }
         // a alone has its quiet 10..18 too
         CHECK_EQ(pauses({a}, {0}, 5, 0).size(), 2);

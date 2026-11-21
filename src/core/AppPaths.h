@@ -15,6 +15,10 @@ namespace AppPaths {
 
 QString writable(QStandardPaths::StandardLocation type);
 
+// The folder for new projects: the one set in the settings (Settings > Project), else <Videos>/schneidi (in a test run a
+// folder of its own). The app's Direct page and `direct`/`templates` without a project put new projects here.
+QString projectFolder();
+
 // The names of schneidi and schneidi-cli (they share backups, effects, settings): application "schneidi", on Windows
 // also the organization "schneidi" (without one QSettings cannot write the registry; on Linux the missing name stays,
 // otherwise existing settings would be gone). Tests that share folders with a schneidi/schneidi-cli they start call

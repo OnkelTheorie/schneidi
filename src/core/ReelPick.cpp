@@ -6,6 +6,10 @@
 
 namespace ReelPick {
 
+namespace {
+constexpr double kEqualShare = 0.8; // a moment this strong next to a better one counts as a scene of its own
+}
+
 QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& durations, const Options& o)
 {
     const auto duration = [&](int file) { return file >= 0 && file < durations.size() ? durations[file] : 0.0; };
@@ -22,12 +26,18 @@ QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& d
     list = ShortPick::joined(list, o.joinGapS);
     // Best first; a moment starting within spacingS of a better one of the same recording is left out
     std::stable_sort(list.begin(), list.end(), [](const Moment& a, const Moment& b) { return a.score > b.score; });
-    QVector<Moment> kept;
+    QVector<Moment> kept, close; // close: left out for a better one near it (its score in `nearScore`)
+    QVector<double> nearScore;
     for (const Moment& m : list) {
-        const bool near = std::any_of(kept.begin(), kept.end(), [&](const Moment& k) {
-            return k.file == m.file && std::abs(k.from - m.from) < o.spacingS;
-        });
-        if (!near) kept << m;
+        double best = -1;
+        for (const Moment& k : kept)
+            if (k.file == m.file && std::abs(k.from - m.from) < o.spacingS) best = std::max(best, k.score);
+        if (best < 0) {
+            kept << m;
+        } else {
+            close << m;
+            nearScore << best;
+        }
     }
     // Up to the target length: the best ones that still fit (a shorter one further down may)
     QVector<Moment> picked;
@@ -49,6 +59,22 @@ QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& d
             picked << m;
             total += len;
         }
+        // Still short of the target: a moment as strong as the one near it is a scene of its own (a second multi
+        // kill a few seconds later), not the same one again - it comes in where it overlaps nothing picked. A weaker
+        // one near a better one (an echo of the same scene) stays out (videotest 21.11.: a 2-kill moment was left out
+        // while 1-kill moments filled the video)
+        for (int i = 0; i < close.size() && total < o.targetS - 1e-6; ++i) {
+            const Moment& m = close[i];
+            const double len = m.to - m.from;
+            if (m.score < kEqualShare * nearScore[i] || total + len > o.targetS + 1e-6) continue;
+            const bool overlaps = std::any_of(picked.begin(), picked.end(), [&](const Moment& p) {
+                return p.file == m.file && m.from < p.to && p.from < m.to;
+            });
+            if (overlaps) continue;
+            picked << m;
+            total += len;
+        }
+        std::stable_sort(picked.begin(), picked.end(), [](const Moment& a, const Moment& b) { return a.score > b.score; });
     }
     // Short of the target: every moment grows into its room (up to growBeforeS before, growAfterS after, within its
     // recording, half the gap to a neighbour of the same recording), all by the same share of that room, just enough

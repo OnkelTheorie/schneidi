@@ -80,7 +80,9 @@ QVector<Range> pauses(const QVector<std::vector<bool>>& quiet, const QVector<int
         }
         size_t j = i;
         while (j < length && allQuiet(j)) ++j;
-        const int from = int(i) + pad, to = int(j) - pad;
+        // A pad keeps air next to speech; at the end of what was measured no speech follows - a pad there would only
+        // leave a sliver of silence behind the last cut (videotest 21.11.: 9 frames at the end)
+        const int from = int(i) + pad, to = j >= length ? int(j) : int(j) - pad;
         if (int(j - i) >= minPause && to > from) out << Range{from, to, Kind::Pause, tracks, {}};
         i = j;
     }

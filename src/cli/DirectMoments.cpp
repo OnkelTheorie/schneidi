@@ -24,7 +24,9 @@ namespace Cli::detail {
 
 namespace {
 
-constexpr int kMomentsVersion = 2; // raise when the moments of a file change for the same sources
+constexpr int kMomentsVersion = 3; // raise when the moments of a file change for the same sources
+
+constexpr double kHighlightsPreS = 2.0; // highlights' default lead-in before the first kill or loud moment
 
 double round2(double v) { return std::round(v * 100) / 100; }
 
@@ -69,7 +71,13 @@ QJsonArray highlightMoments(const QJsonObject& a, Context& ctx, QString* status,
             if (c["loudest_db"].isDouble()) reason.values["db"] = c["loudest_db"];
         }
         if (loud > 0) labels << "loud";
-        out << momentJson(c["from_s"].toDouble(), c["to_s"].toDouble(), c["score"].toDouble(), "highlights", reason, labels);
+        QJsonObject moment = momentJson(c["from_s"].toDouble(), c["to_s"].toDouble(), c["score"].toDouble(), "highlights",
+                                        reason, labels);
+        // Where the action begins (the first hit; a loud moment's first peak: highlights' default lead-in of 2 s after
+        // the start), before it only lead-in - a hook may start later (suggestShort). Unknown at the recording's start
+        if (const QJsonArray hits = c["hit_s"].toArray(); !hits.isEmpty()) moment["first_s"] = hits.first().toDouble();
+        else if (c["from_s"].toDouble() > 0) moment["first_s"] = c["from_s"].toDouble() + kHighlightsPreS;
+        out << moment;
     }
     return out;
 }
@@ -302,7 +310,8 @@ CollectedMoments collectMoments(const QStringList& files, const QString& project
                                       for (const QJsonValue& y : x["labels"].toArray()) s << y.toString();
                                       return s;
                                   }(),
-                                  x["source"].toString()};
+                                  x["source"].toString(),
+                                  x["first_s"].toDouble(-1)};
             return v;
         };
         out.highlights += moments(f["highlights"].toArray());

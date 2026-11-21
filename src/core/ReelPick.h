@@ -25,6 +25,8 @@ struct Options {
     double minMomentS = 4;   // a shorter moment grows to this (build-up and reaction)
     double joinGapS = 1.5;   // moments of one recording closer than this become one
     double spacingS = 8;     // two moments of one recording closer than this (start to start): only the better one
+                             // (one at least 80 % as strong comes in too while the target is not reached, where it
+                             // overlaps nothing picked: a scene of its own)
     // Fewer moments than the target length: each picked one grows by up to this much build-up before and reaction
     // after (all of them by the same share of their room, never past a recording's ends or into a neighbour) - more
     // of the real scene instead of filler. 0 = never

@@ -8,6 +8,7 @@
 #include "cli/DirectDetail.h"
 #include "cli/Live.h"
 
+#include "core/AppPaths.h"
 #include "core/GameHud.h"
 #include "core/I18n.h"
 #include "core/LiveHost.h"
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Cli::detail {
 
@@ -131,6 +133,20 @@ bool overlapsAny(const DirectMoment& c, const QVector<Direction::Suggestion>& li
     });
 }
 
+// The loudness a cut is leveled to when applied: options.target_lufs (default -14 LUFS, web and phone platforms), NaN
+// when it says false/'off' (the sound stays as recorded)
+constexpr double kLevelCeilingDb = -1.2; // the master limiter's ceiling (under check's -1 dBTP with room for codecs)
+
+double levelTarget(const QJsonObject& options)
+{
+    const QJsonValue v = options["target_lufs"];
+    if (v.isUndefined() || v.isNull()) return -14;
+    if (v.isDouble()) return std::clamp(v.toDouble(), -40.0, -5.0);
+    if (v.isBool() ? !v.toBool() : v.toString().trimmed().compare("off", Qt::CaseInsensitive) == 0)
+        return std::numeric_limits<double>::quiet_NaN();
+    fail("BAD_ARGUMENT", "target_lufs is the loudness in LUFS (e.g. -14) or false (leave the sound as it is)");
+}
+
 // The best moment first (hook), then the others by file and time
 QVector<int> hookOrder(const QVector<Direction::Suggestion>& list, const QVector<int>& ns, bool hookBest,
                        const QStringList& files)
@@ -152,6 +168,34 @@ QVector<int> hookOrder(const QVector<Direction::Suggestion>& list, const QVector
     for (int k = 0; k < chosen.size(); ++k)
         if (k != best) out << chosen[k]->n;
     return out;
+}
+
+// A hook starts on the action: a hard cut in its lead-in (the round restarts after a round-end or death screen, a
+// clip tool's jump) moves its start to the picture after the cut. Only the lead-in before the first hit counts (a fast
+// turn in the fight is no cut to start at). The picture's scene scores are cached per file (as `scenes` reads them).
+constexpr double kHookCut = 0.3;       // scene score of a hard cut (as `scenes`' default threshold)
+constexpr double kHookBeforeHit = 0.4; // the hook keeps at least this much before the first hit
+
+void startHookOnAction(Direction::Suggestion& x, const QVector<DirectMoment>& found, const QStringList& files)
+{
+    double first = -1;
+    for (const DirectMoment& m : found)
+        if (files.value(m.file) == x.file && m.first >= x.from && m.first < x.to && (first < 0 || m.first < first))
+            first = m.first;
+    if (first < 0 || first - x.from < kHookBeforeHit + 0.2) return;
+    std::vector<PictureScore> scores;
+    try {
+        scores = pictureScores(openMedia({{"file", x.file}}), 320, [](double) {});
+    } catch (const Error& e) {
+        if (e.code == QLatin1String("CANCELED")) throw;
+        return; // unreadable picture: the hook stays as it is
+    }
+    double cut = -1;
+    for (const PictureScore& p : scores)
+        if (p.seconds > x.from + 0.05 && p.seconds <= first - kHookBeforeHit && p.score >= kHookCut) cut = p.seconds;
+    if (cut < 0) return;
+    x.from = std::round(cut * 1000) / 1000;
+    if (!x.labels.contains("hook_trimmed")) x.labels << "hook_trimmed";
 }
 
 // ---------- Recipes ----------
@@ -215,6 +259,16 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
             if (files.value(e.file) == x.file && e.from < x.to && x.from < e.to)
                 for (const QString& l : e.labels)
                     if (!x.labels.contains(l)) x.labels << l;
+    // Each variant's hook starts on the action (not on a round-end screen before it)
+    for (int v = 1; v <= int(picked.size()); ++v) {
+        QVector<int> ns;
+        for (const Direction::Suggestion& x : s.suggestions)
+            if (x.variant == v) ns << x.n;
+        const QVector<int> order = hookOrder(s.suggestions, ns, hookBest, files);
+        for (Direction::Suggestion& x : s.suggestions)
+            if (!order.isEmpty() && x.n == order.first()) startHookOnAction(x, source, files);
+        failIfCanceled();
+    }
     QVector<int> first;
     for (const Direction::Suggestion& x : s.suggestions)
         if (x.variant == 1) first << x.n;
@@ -449,7 +503,8 @@ bool sameProject(const QString& a, const QString& b)
 
 // Sound of the recordings: audio_stream 'game' (default: only the game streams of game material with several
 // streams), 'all', or numbers/names - as `short` always chose (per file: undefined = all)
-QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said)
+QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said,
+                                 const QStringList& usedFiles, QStringList* dropped)
 {
     const QString choice = s.options.contains("audio_stream") ? s.options["audio_stream"].toVariant().toString().trimmed()
                                                               : QString("game");
@@ -467,10 +522,16 @@ QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& gam
         const QVector<int> g = StreamPresets::gameStreams(names);
         if (g.isEmpty()) continue;
         QJsonArray list;
-        QStringList kept;
+        QStringList kept, left;
         for (int k : g) list << k, kept << names[k];
+        for (int k = 0; k < names.size(); ++k)
+            if (!g.contains(k) && !StreamPresets::isMixTitle(names[k])) // the mix only repeats the others
+                left << (names[k].isEmpty() ? QString("stream %1").arg(k) : names[k]);
         out[i] = list;
+        // Only the recordings in the cut are named (not a switched-off one, not one without a moment)
+        if (!usedFiles.contains(s.material[i].file)) continue;
         *said << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), kept.join(", "));
+        if (!left.isEmpty()) *dropped << QString("%1 (%2)").arg(left.join(", "), QFileInfo(s.material[i].file).fileName());
     }
     return out;
 }
@@ -536,6 +597,7 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     const QString reframe = s.options["reframe"].toString().trimmed().toLower();
     if (!reframe.isEmpty() && !QStringList{"auto", "center", "fit"}.contains(reframe))
         fail("BAD_ARGUMENT", "reframe must be auto, center or fit");
+    levelTarget(s.options); // checked now, not only when applying
     const QString game = gameOf(s.options, files);
     Context sub;
     sub.cancel = ctx.cancel;
@@ -689,7 +751,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     const QString game = gameOf(s.options, files);
     QJsonArray done, notes;
     for (const Direction::Note& n : s.notes) notes << n.text;
-    // The project: given, the session's, else a new one next to the first recording
+    // The project: given, the session's, else a new one in the folder for projects
     QString project = args["project"].toString();
     if (!project.isEmpty() && !Live::isAppProject(project)) project = absolute(project);
     // A session made for one project is applied to that one (its timeline material, its frame rate)
@@ -706,9 +768,10 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     if (project.isEmpty() || missing) {
         if (project.isEmpty()) {
             const QFileInfo first(files.first());
-            // In project_dir when given, else next to the first recording
+            // In project_dir when given, else the folder for projects (Settings > Project; never the recordings'
+            // folder, a clip tool's output an unattended run must not fill); the app's own page: next to the first one
             QString dir = args["project_dir"].toString().trimmed();
-            dir = dir.isEmpty() ? first.absolutePath() : absolute(dir);
+            dir = !dir.isEmpty() ? absolute(dir) : Live::host() ? first.absolutePath() : AppPaths::projectFolder();
             if (!dry && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
             project = freeFile(dir, first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
         } else if (QFileInfo(project).suffix().isEmpty()) {
@@ -716,7 +779,12 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         }
         if (dry) fail("BAD_ARGUMENT", "dry_run and plan need an existing project (give 'project')");
         const bool streams = std::any_of(s.material.begin(), s.material.end(), [](const Direction::Material& m) { return m.audioStreams.size() > 1; });
-        QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(files)},
+        // Only the recordings in the cut go into the new project's media (not a switched-off one, not one without a
+        // moment)
+        QStringList usedMedia;
+        for (const Direction::Suggestion* x : list)
+            if (!usedMedia.contains(x->file)) usedMedia << x->file;
+        QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(usedMedia)},
                       {"template", game != QLatin1String("none") || streams ? "game" : "neutral"}};
         if (s.material.first().fps > 0) n["fps"] = s.material.first().fps;
         failIfCanceled();
@@ -725,11 +793,18 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
     }
-    QStringList soundSaid;
-    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid);
+    QStringList soundSaid, soundDropped, usedFiles;
+    for (const Direction::Suggestion* x : list) usedFiles << x->file;
+    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, usedFiles, &soundDropped);
     if (!soundSaid.isEmpty())
-        done << QString("sound: only the game streams (%1); audio_stream:'all' keeps voice chat, microphone and music too")
-                    .arg(soundSaid.join("; "));
+        done << QString("sound: only the game streams (%1)").arg(soundSaid.join("; "));
+    // Said on its own, not only inside `done`: voice chat and the microphone are not in the video
+    if (!soundDropped.isEmpty()) {
+        soundDropped.removeDuplicates();
+        notes << QString("left out of the sound (voice chat, microphone, music): %1 - to keep them, suggest "
+                         "again with options.audio_stream 'all' or their names (\"System Output,Discord\")")
+                     .arg(soundDropped.join("; "));
+    }
 
     const QJsonObject before = run("info", {{"project", project}, {"summary", true}});
     QStringList names;
@@ -830,6 +905,16 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             ops << copy;
         }
     }
+    // A project file opens on the result (the app's own project: the page shows it), not on an older empty timeline
+    const bool appProject = Live::isAppProject(project) || Live::host();
+    if (!appProject) ops << QJsonObject{{"op", "timeline"}, {"timeline", result}, {"open", true}};
+    // The result as loud as a platform wants it (like `short`): the master to target_lufs (default -14) behind its
+    // limiter, measured (mixer target_lufs). Not in the app: measuring there would hold its window (the page's export
+    // check does it); not for `short` (_no_check: it levels after its captions and sounds, before rendering)
+    const double targetLufs = levelTarget(s.options);
+    if (!appProject && !args["_no_check"].toBool() && !std::isnan(targetLufs))
+        ops << QJsonObject{{"op", "mixer"}, {"track", "master"}, {"limiter", true}, {"limiter_db", kLevelCeilingDb},
+                           {"target_lufs", targetLufs}};
     // The project remembers the session as it was applied (the Direct page shows it again; no undo step)
     // Transcripts whisper made while suggesting (script) go into the project with the cut
     if (s.options["_transcripts"].isObject() && !args["plan"].toBool())
@@ -852,6 +937,13 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                 .arg(list.size() == 1 ? "" : "s")
                 .arg(secondsOf(total))
                 .arg(cut);
+    for (const QJsonValue& n : edited["notes"].toArray())
+        if (const QJsonObject l = n.toObject()["loudness"].toObject(); !l.isEmpty())
+            done << QString("sound: '%1' leveled to %2 LUFS (target %3, master limiter %4 dBTP)")
+                        .arg(result)
+                        .arg(std::round(l["after_lufs"].toDouble() * 10) / 10)
+                        .arg(l["target_lufs"].toDouble())
+                        .arg(kLevelCeilingDb);
     QJsonObject o{{"project", project},
                   {"timeline", result},
                   {"cut_timeline", cut},
@@ -905,7 +997,9 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (project.isEmpty() && (Live::host() || Live::appCopy())) project = Live::AppProject;
         if (project.isEmpty()) fail("BAD_ARGUMENT", "finish needs the project of the short");
         const QString timeline = f["timeline"].toString();
-        if (timeline.isEmpty()) fail("BAD_ARGUMENT", "finish needs the short's timeline (the answer's timeline)");
+        if (timeline.isEmpty())
+            fail("BAD_ARGUMENT", "finish needs the short's timeline inside it: finish:{\"timeline\":\"<the apply answer's "
+                                 "timeline>\", captions?, sfx?} (with project)");
         QJsonArray done, notes;
         if (f.contains("ops")) {
             if (timelineStamp(project, timeline) != f["stamp"].toString())
@@ -971,21 +1065,27 @@ void addDirectOps(QVector<OpDef>& ops)
                      s.project.setDirection(session);
                  },
                  {"session"}};
-    // Hidden too: transcripts measured before the edit ({file: {language, words:[[from_ms, to_ms, text], …]}}) as the
-    // files' transcripts (what rough_cut keeps when it transcribes)
+    // Hidden too: transcripts measured before the edit ({file: {language, stream?, words:[[from_ms, to_ms, text], …]}}
+    // or a list of those per audio stream) as the files' transcripts (what rough_cut keeps when it transcribes)
     ops << OpDef{"_transcripts", {}, {}, {},
                  [](Session& s, const QJsonObject& op) {
                      const QJsonObject files = op.value("files").toObject();
                      for (auto it = files.begin(); it != files.end(); ++it) {
                          const QString file = absolute(it.key());
-                         const MediaInfo* m = s.project.mediaInfo(file);
-                         if (m && !m->transcripts.isEmpty()) continue; // the user's own stays
-                         if (!m) s.media(file);
-                         MediaTranscript t;
-                         t.language = it.value().toObject()["language"].toString();
-                         for (const QJsonValue& w : it.value().toObject()["words"].toArray())
-                             t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
-                         s.project.setTranscript(file, t);
+                         const QJsonArray list = it.value().isArray() ? it.value().toArray() : QJsonArray{it.value()};
+                         for (const QJsonValue& one : list) {
+                             const int stream = one["stream"].toInt(0);
+                             const MediaInfo* m = s.project.mediaInfo(file);
+                             if (m && (it.value().isArray() ? m->transcript(stream) != nullptr : !m->transcripts.isEmpty()))
+                                 continue; // the user's own stays
+                             if (!m) s.media(file);
+                             MediaTranscript t;
+                             t.audioStream = stream;
+                             t.language = one["language"].toString();
+                             for (const QJsonValue& w : one["words"].toArray())
+                                 t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+                             s.project.setTranscript(file, t);
+                         }
                      }
                  },
                  {"files"}};

@@ -24,6 +24,7 @@ struct DirectMoment {
     Direction::Reason reason;
     QStringList labels;
     QString source;    // "highlights" (kill feed / loud), "events" (AudioEvents), "picture" (pictureScores)
+    double first = -1; // highlights with kills: the first hit (seconds), before it only lead-in; -1 = unknown
 };
 
 // The moments of one file (args: file, project?, game: id or "none", no_index?): its material line, the highlights'

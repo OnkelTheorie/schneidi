@@ -1333,11 +1333,12 @@ const QVector<Command>& commands()
                    "voices, cut_pauses: apply = a copy of the timeline without the chosen ones), template (shots of the "
                    "material for a content template's clip fields, templates auto), script (the takes of each "
                    "sentence of a script, rough_cut). Suggest: "
-                   "{recipe, files | project+timeline, options} -> {session:{id:'d3', material, suggestions:[{n, kind, "
+                   "{recipe, files | project+timeline, options} (talk: a project's timeline; template and script: files, a "
+                   "project's media, or both) -> {session:{id:'d3', material, suggestions:[{n, kind, "
                    "file, from_s, to_s, reason:{key, values, text}, labels, on, variant?}], order, length_s, target_s, "
                    "notes}, next}; sessions are kept a day. Apply: {session:'d3' (or the session object), apply:{on:'all'"
                    "|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?}, project?, plan?, dry_run?} -> {project, "
-                   "timeline, timelines, length_s, moments, check, done, next}; plan:true makes a normal plan (edit "
+                   "timeline (the new cut; opened in the project), timelines, length_s, moments, check, done, next}; plan:true makes a normal plan (edit "
                    "plan_id … run) instead. Errors: UNKNOWN_RECIPE, NO_MATERIAL, SESSION_EXPIRED, SESSION_STALE (the "
                    "material or the talk timeline changed: suggest again), SESSION_PROJECT_MISMATCH (made for another "
                    "project), FINISH_STALE, CANCELED. With project \"@app\" the app's Direct page shows the suggestions "
@@ -1346,7 +1347,7 @@ const QVector<Command>& commands()
          {{"recipe", T::String, "suggest: short, highlights, talk, template or script"},
           {"files", T::Paths, "suggest: the recordings to look at", false, true},
           {"project", T::Path, "the project the result goes into (\"@app\" = the app's; default for apply: a new one "
-                               "next to the first recording), and with timeline the material"},
+                               "in project_dir), and with timeline the material"},
           {"timeline", T::String, "suggest: the recordings of this timeline of the project as the material ('@current' = "
                                   "the open one)"},
           {"options", T::Object, "suggest: the recipe's settings. short: for (shorts|reels|tiktok), min_s, max_s, "
@@ -1354,14 +1355,18 @@ const QVector<Command>& commands()
                                  "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
-                                 "min_pause_s, pad_s, fillers, tracks, threshold, target_lufs, room_tone; template: template (id; "
-                                 "none = the project's own fields); script: script|script_file, takes, language"},
+                                 "min_pause_s, pad_s, fillers (whisper transcribes recordings without a transcript, "
+                                 "verbatim), language, tracks, threshold, target_lufs, room_tone; template: template (id; "
+                                 "none = the project's own fields), game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
+                                 "and script also: target_lufs (the result's loudness when applied, default -14, behind "
+                                 "the master limiter; false = leave the sound as recorded)"},
           {"session", T::Object, "apply: the session id ('d3') or the session object (as suggested, maybe changed)"},
           {"apply", T::Object, "apply: {on:'all'|[n…], adjust:[{n, from_s, to_s}], order:[n…], variant?} (default "
                                "on:'all' = the suggestions switched on; variant n = that variant's)"},
           {"plan", T::Boolean, "apply: make a plan of the edit instead (nothing changes until it is run)"},
           {"dry_run", T::Boolean, "apply: what the edit would do, nothing saved"},
-          {"project_dir", T::Path, "apply: the folder for a new project it makes (default: the first recording's)"},
+          {"project_dir", T::Path, "apply: the folder for a new project it makes (default: the folder for projects of the settings, "
+                                    "else <Videos>/schneidi - never the recordings' folder)"},
           {"finish", T::Object, "after a short's apply: {timeline, captions?, sfx?, game?, language?, words?} puts word "
                                 "captions (whisper) and mild effect sounds on it as one more edit"}},
          cmdDirect},
@@ -1499,8 +1504,10 @@ const QVector<Command>& commands()
                        "over stutter in the recording (jumps in the time stamps, see `probe` gaps) has 'stutter' (the "
                        "stretches) and 'clean' (its parts without them, with their kills); 'keep_clean' is 'keep' with "
                        "only those parts - use it to drop the lag, not the moment. 'kill_feed_most_pct' = the most "
-                       "of the colour at one time in percent of the picture (0 = never there: check region and colour; "
-                       "kill feed marks stay well under 0.3); bigger patches of it (a banner in that colour) are not "
+                       "of the colour at one time in percent of the picture (0 = never there: with region and color "
+                       "check them; with game the player has no kill feed line of their own in the recording - lines "
+                       "of others and the player's own death do not count, 'kills_note' says so; kill feed marks stay "
+                       "well under 0.3); bigger patches of it (a banner in that colour) are not "
                        "counted as kills but listed in 'banners' (seconds). Per kill: 'kill_s' = when its kill feed "
                        "line is there, a few frames (~0.1-0.3 s) after the hit; 'hit_s' = the hit itself (the last shot "
                        "in the sound before the line began, 'hit_by' sound; or the frame the line began, 'hit_by' "
@@ -1517,7 +1524,9 @@ const QVector<Command>& commands()
           {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "
                                 "crop first). Only the part with the player's mark, as small as the lines allow (game "
                                 "picture in it can look like a kill): e.g. Valorant \"0.70,0.04,0.22,0.23\", CS2 "
-                                "\"0.88,0.06,0.115,0.19\" (what game uses)"},
+                                "\"0.88,0.06,0.115,0.19\" (counting the colour). game cs2 itself reads the lines by "
+                                "their frame in \"0.88,0.06,0.115,0.34\" from 1080p (ten lines; the answer's region), "
+                                "smaller recordings by the colour in the first one"},
           {"color", T::String, "the mark of the player's own kill feed lines, e.g. Valorant \"#e7e371\" (yellow), "
                                "CS2 \"#d8444a\" (a thin red frame: tolerance 40)"},
           {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25; thin marks such as "

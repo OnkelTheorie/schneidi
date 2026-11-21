@@ -62,7 +62,10 @@ names cost a failed call.
    `script` (the takes of each sentence) - changes nothing and answers a `session` (`d3`) whose `suggestions` each
    have `from_s`/`to_s` (source seconds), a `reason` (`text`) and `on`. Show them or choose, then `direct` `session`
    `"d3"` `apply` `{"on":"all"}` (or `on:[1,4]`, `adjust:[{n, from_s, to_s}]`, `order`) = one edit, one undo step;
-   `plan:true` makes a normal plan. Sessions last a day; `SESSION_STALE` (the material or timeline changed) or
+   `plan:true` makes a normal plan. Without `project`, apply makes a new project in the folder for projects (the
+   app's setting, else `<Videos>/schneidi`; `project_dir` for another) - never next to the recordings. The project
+   opens on the result; short, highlights and script level it to -14 LUFS behind the master limiter
+   (`options.target_lufs`, false = keep the sound as recorded). Sessions last a day; `SESSION_STALE` (the material or timeline changed) or
    `SESSION_EXPIRED` = suggest again. Every analysis is cached per file, so a second recipe is quick.
    **When schneidi lacks an effect**, don't give up and don't fake it with a pile of keyframes: write it.
    `{op:'effect', effect:'ffmpeg_filter', params:{chain:'hue=s=0,edgedetect'}}` runs an FFmpeg filter chain on the

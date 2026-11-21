@@ -65,6 +65,21 @@ int main(int argc, char** argv)
         // Best first
         for (int i = 1; i < p.size(); ++i) CHECK(p[i - 1].score >= p[i].score);
     }
+    // ---- Short of the target: a moment as strong as a better one near it comes in (a second multi kill a few
+    // seconds later, videotest 21.11.); a weaker echo stays out
+    {
+        ReelPick::Options o;
+        o.targetS = 60;
+        o.growBeforeS = o.growAfterS = 0;
+        const QVector<Moment> twins{{0, 13, 19, 26}, {0, 20.6, 26, 26}, {0, 2, 6, 11}};
+        const QVector<Moment> p = ReelPick::pick(twins, {30.0}, o);
+        CHECK_EQ(p.size(), 3);
+        for (int i = 1; i < p.size(); ++i) CHECK(p[i - 1].score >= p[i].score);
+        const QVector<Moment> echo{{0, 13, 19, 26}, {0, 20.6, 26, 12}};
+        CHECK_EQ(ReelPick::pick(echo, {30.0}, o).size(), 1);
+        o.targetS = 8; // the target reached: no second one
+        CHECK_EQ(ReelPick::pick(twins, {30.0}, o).size(), 1);
+    }
     // ---- "all": every moment, minus those too close to a better one of the same recording
     {
         ReelPick::Options o;

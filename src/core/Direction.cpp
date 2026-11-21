@@ -35,6 +35,7 @@ const Text kReasons[] = {
     {"filler", "filler word \"{word}\"", nullptr, N_("Füllwort „{word}“"), nullptr},
     {"slot_match", "fits the field \"{slot}\"", nullptr, N_("passt ins Feld „{slot}“"), nullptr},
     {"take", "best take of sentence {sentence}", nullptr, N_("bester Take von Satz {sentence}"), nullptr},
+    {"alt_take", "another take of sentence {sentence}", nullptr, N_("anderer Take von Satz {sentence}"), nullptr},
     {"fallback_end", "end of the recording (nothing found)", nullptr, N_("Ende der Aufnahme (nichts gefunden)"), nullptr},
 };
 
@@ -70,6 +71,13 @@ const Text kNotes[] = {
     {"fewer_variants", "Only {n} variant(s) instead of {asked}: the material has too few moments for more.", nullptr,
      N_("Nur {n} Variante(n) statt {asked}: Für mehr hat das Material zu wenige Momente."), nullptr},
     {"no_shot", "No shot fits the field \"{slot}\".", nullptr, N_("Für das Feld „{slot}“ passt kein Clip."), nullptr},
+    {"few_slot_moments",
+     "Fewer moments than clip fields: {n} field(s) get the best other shot of the material (sharp, well exposed).",
+     nullptr, N_("Weniger Momente als Clip-Felder: {n} Feld(er) bekommen die beste andere Einstellung des Materials."),
+     nullptr},
+    {"fields_kept",
+     "Not filled here, the template's content stays: {fields} - give them with apply values {field: text or file}.",
+     nullptr, N_("Hier nicht gefüllt, der Inhalt der Vorlage bleibt: {fields}"), nullptr},
     {"not_said", "Not found in what was said: \"{text}\"", nullptr, N_("Nicht im Gesagten gefunden: „{text}“"), nullptr},
     {"no_pause",
      "No pause long enough where every chosen track is quiet (try a shorter min_pause_s, a threshold in dBFS, or fewer "
@@ -83,9 +91,11 @@ const Text kNotes[] = {
      N_("Nie still: {tracks} – das Rauschen liegt über der Schwelle, keine Pause ist allen Spuren gemeinsam (die Spur "
         "unter „Spuren“ weglassen)."),
      nullptr},
-    {"no_transcript_fillers", "No transcript on these tracks: only pauses were found, no filler words (transcribe first).",
+    {"no_transcript_fillers",
+     "No transcript on these tracks and none could be made (whisper missing, or no speech heard): only pauses were "
+     "found, no filler words.",
      nullptr,
-     N_("Keine Abschrift auf diesen Spuren: nur Pausen, keine Füllwörter (erst transkribieren)."), nullptr},
+     N_("Keine Abschrift auf diesen Spuren (Whisper fehlt oder hört keine Sprache): nur Pausen, keine Füllwörter."), nullptr},
     {"fillers_transcript", "Filler words: only those the transcript contains.", nullptr,
      N_("Füllwörter: nur, was die Abschrift enthält."), nullptr},
     {"room_tone", "Room tone is not laid under the cuts yet.", nullptr,
@@ -153,6 +163,9 @@ QString reasonText(const Reason& r, Lang lang)
     QString s = textOf(*t, r.values, lang);
     if (r.key == QLatin1String("kills") && r.values["extra"].toString() == QLatin1String("multi"))
         s += lang == Lang::Ui ? " (" + T("Mehrfach-Abschuss") + ")" : QString(" (multi kill)");
+    // What made the material index choose the shot (English, for the AI): "sharp, well exposed, face"
+    if (r.key == QLatin1String("slot_match") && lang == Lang::English && !r.values["why"].toString().isEmpty())
+        s += " (" + r.values["why"].toString() + ")";
     return s;
 }
 
@@ -304,7 +317,20 @@ QVector<int> resolvedOrder(const Session& s)
     for (const Suggestion& x : s.suggestions)
         if (x.on && !out.contains(x.n)) rest << x.n;
     std::sort(rest.begin(), rest.end());
-    return out + rest;
+    // A take of a script sentence switched on (another take than the suggested one) goes to its sentence's place:
+    // after the takes of its own sentence, before those of later sentences - not to the end
+    for (int n : rest) {
+        const Suggestion* x = s.find(n);
+        int at = int(out.size());
+        if (x->kind == QLatin1String("take") && x->sentence > 0)
+            for (int k = 0; k < out.size(); ++k)
+                if (const Suggestion* y = s.find(out[k]); y->kind == QLatin1String("take") && y->sentence > x->sentence) {
+                    at = k;
+                    break;
+                }
+        out.insert(at, n);
+    }
+    return out;
 }
 
 } // namespace Direction

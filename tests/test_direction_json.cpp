@@ -113,10 +113,26 @@ int main(int argc, char** argv)
         CHECK(Direction::resolvedOrder(o) == (QVector<int>{3, 1, 2}));
         o.order = {9, 2};
         CHECK(Direction::resolvedOrder(o) == (QVector<int>{2, 1, 3}));
+        // Script takes: another take switched on goes to its sentence's place, not to the end (videotest 21.11.)
+        Direction::Session t;
+        for (int n = 1; n <= 6; ++n) {
+            Direction::Suggestion x;
+            x.n = n;
+            x.kind = "take";
+            x.sentence = n <= 3 ? 1 : n - 2; // 1-3: sentence 1, 4: 2, 5: 3, 6: 4
+            x.on = n != 2 && n != 3;
+            t.suggestions << x;
+        }
+        t.order = {1, 4, 5, 6};
+        t.suggestions[0].on = false;
+        t.suggestions[1].on = true; // take 2 instead of 1
+        CHECK(Direction::resolvedOrder(t) == (QVector<int>{2, 4, 5, 6}));
+        t.suggestions[0].on = true; // both takes of sentence 1
+        CHECK(Direction::resolvedOrder(t) == (QVector<int>{1, 2, 4, 5, 6}));
     }
     // ---- Every reason key has an English and a UI text; unknown keys show themselves
     {
-        CHECK_EQ(Direction::reasonKeys().size(), 14);
+        CHECK_EQ(Direction::reasonKeys().size(), 15);
         for (const QString& k : Direction::reasonKeys()) {
             const QString en = Direction::reasonText({k, {{"n", 3}, {"s", 1.5}, {"word", "äh"}, {"slot", "Intro"}, {"sentence", 2}}});
             CHECK(!en.isEmpty() && en != k && !en.contains('{'));
