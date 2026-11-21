@@ -519,6 +519,40 @@ int runTests(int argc, char** argv)
         CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"trim","clips":[1,2],"edge":"end","to":5}])"}})
                   .contains("trim takes one clip: 'clip'"));
     }
+    // Edits that change nothing or less than asked say so instead of an empty answer (12-B8, 03-#1); other changes
+    // than clips are listed (a mixer op answered changes:{}, 08-#4); clear errors for a missing op, clips:"all",
+    // at:true and a track far past the last (V99 made 97 empty tracks, 12-B6)
+    {
+        const QString before = saved();
+        const auto notes = [](const char* op) {
+            const QJsonObject r = run("edit", {{"project", g_path}, {"ops", QString("[%1]").arg(op)}, {"dry_run", true}});
+            QStringList out;
+            for (const QJsonValue& n : r["notes"].toArray()) out << n.toString();
+            return out.join(" | ");
+        };
+        const int first = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][0]["id"].toInt();
+        const auto with = [first](const char* op) { return QString(op).arg(first); };
+        CHECK(notes(R"({"op":"split","at":0})").startsWith("split: no clip runs across"));
+        CHECK(notes(R"({"op":"split","at":999999})").startsWith("split: no clip runs across"));
+        CHECK(notes(qPrintable(with(R"({"op":"move","clips":[%1],"by":-1000})"))).startsWith("move: moved by 0 of -1000"));
+        CHECK(notes(qPrintable(with(R"({"op":"move","clips":[%1],"track_delta":-3})"))).contains("track_delta 0 of -3"));
+        CHECK(notes(qPrintable(with(R"({"op":"trim","clip":%1,"edge":"start","by":-50})")))
+                  .contains("start moved 0 of -50 frames: the file has no more material before the clip"));
+        CHECK(notes(R"({"op":"delete_range","from":5000,"to":6000})") == "op 0 (delete_range): changed nothing");
+        const QJsonObject mixer = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", R"([{"op":"mixer","track":"master","volume_db":-3}])"}});
+        CHECK(mixer["changes"]["other"].toArray() == QJsonArray{"master"} && !mixer.contains("notes"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"clips":[1]}])"}}).contains("missing 'op'"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"disable","clips":"all"}])"}})
+                  .contains("'clips' must be a list of clip ids"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"split","at":true}])"}})
+                  .contains("at: true is not a time"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"append","media":"/x/a.mp4","track":"V99"}])"}})
+                  .contains("a new one comes at most one past the last"));
+        CHECK(run("edit", {{"project", g_path}, {"dry_run", true},
+                           {"ops", R"([{"op":"append","media":"/x/a.mp4","track":"V3"}])"}})["changes"]["added"].toArray().size() == 2);
+        CHECK_EQ(saved(), before);
+    }
     // keep with one range written another way (small models): taken with a note; no range at all: a whole example
     for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
                             R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {

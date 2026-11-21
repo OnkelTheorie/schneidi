@@ -498,6 +498,63 @@ QString stepSummary(const QString& op, const QJsonObject& changes)
     return op + ": " + (parts.isEmpty() ? QString("no clip or subtitle changes") : parts.join(", "));
 }
 
+// A project part without what `changes` lists already (clips, subtitle cues)
+QJsonValue withoutClips(const QJsonValue& v)
+{
+    if (v.isArray()) {
+        QJsonArray out;
+        for (const QJsonValue& x : v.toArray()) out << withoutClips(x);
+        return out;
+    }
+    if (!v.isObject()) return v;
+    QJsonObject out;
+    const QJsonObject o = v.toObject();
+    for (auto it = o.begin(); it != o.end(); ++it)
+        if (it.key() != "clips" && it.key() != "cues") out[it.key()] = withoutClips(it.value());
+    return out;
+}
+
+// The project as saved without what is no edit (playhead, id counters, which timeline is open): two of these differ
+// when an op changed something
+QJsonObject projectState(const Session& s)
+{
+    QJsonObject o = QJsonDocument::fromJson(ProjectFile::toJson(s.project.data(), s.path)).object();
+    for (const char* k : {"app", "version", "playhead", "lastClipId", "lastLinkId", "currentSequence"}) o.remove(k);
+    return o;
+}
+
+// What else than clips and subtitles changed between two projectState()s, in words ("master", "tracks", …): an edit
+// of the mixer answered changes:{} although it was applied (08-#4)
+QJsonArray otherChanges(const QJsonObject& before, const QJsonObject& after)
+{
+    QStringList out;
+    const auto add = [&](const QString& what) {
+        if (!out.contains(what)) out << what;
+    };
+    const QJsonObject tb = before["timeline"].toObject(), ta = after["timeline"].toObject();
+    QStringList keys = tb.keys() + ta.keys();
+    keys.removeDuplicates();
+    for (const QString& k : keys) {
+        if (withoutClips(tb.value(k)) == withoutClips(ta.value(k))) continue;
+        if (k.startsWith("master")) add("master");
+        else if (k == "video" || k == "audio" || k == "subtitles") add("tracks");
+        else if (k == "markers") add("markers");
+        else if (k == "markIn" || k == "markOut") add("in/out marks");
+        else add(k);
+    }
+    for (auto it = after.begin(); it != after.end(); ++it) {
+        if (it.key() == "timeline" || withoutClips(before.value(it.key())) == withoutClips(it.value())) continue;
+        if (it.key() == "media" || it.key() == "bins") add("media pool");
+        else if (it.key() == "format" || it.key() == "fps") add("format");
+        else if (it.key() == "sequences") add("timelines");
+        else add(it.key());
+    }
+    for (auto it = before.begin(); it != before.end(); ++it)
+        if (!after.contains(it.key())) add(it.key());
+    std::sort(out.begin(), out.end());
+    return QJsonArray::fromStringList(out);
+}
+
 // Applies `ops` in order (all or nothing) and answers like `edit`. steps (plan): what each op would change.
 // numbers: the plan's step numbers of the ops (errors name them), empty = op indexes.
 QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, bool dry, QJsonArray* steps = nullptr,
@@ -506,13 +563,22 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
     s.dryRun = dry;
     if (!dry) trustCustomCode(s, a);
     const QMap<QString, Shown> before = shownItems(s.project);
+    const QJsonObject stateBefore = projectState(s);
+    QJsonObject stateLast = stateBefore;
     QMap<QString, Shown> last = before;
     for (int i = 0; i < ops.size(); ++i) {
         try {
             if (!ops[i].isObject()) fail("BAD_ARGUMENT", "operation is not an object");
             s.opIndex = i;
+            const qsizetype notes = s.notes.size();
             applyOp(s, ops[i].toObject());
             s.opIndex = -1;
+            // An op that changed nothing says so (12-B8: split at 0, move before the start, delete_range past the
+            // end answered ok with empty changes); the ops that know why have said it already in a note
+            const QJsonObject now = projectState(s);
+            if (now == stateLast && s.notes.size() == notes)
+                s.notes << QString("op %1 (%2): changed nothing").arg(i).arg(ops[i]["op"].toString());
+            stateLast = now;
         } catch (const Error& e) {
             if (!numbers.isEmpty())
                 throw Error{e.code, QString("step %1 (%2): %3").arg(numbers.value(i)).arg(ops[i]["op"].toString(), e.message)};
@@ -535,6 +601,11 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
     QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry && !s.live},
                   {"timeline", a["full"].toBool() ? tl : summarized(tl)},
                   {"changes", changesJson(before, shownItems(s.project), s.project.currentSequence())}};
+    if (const QJsonArray other = otherChanges(stateBefore, stateLast); !other.isEmpty()) {
+        QJsonObject changes = o["changes"].toObject();
+        changes["other"] = other; // what else changed: master, tracks, markers, media pool, format, timelines
+        o["changes"] = changes;
+    }
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
     if (!s.why.isEmpty()) o["why"] = s.why; // the reasons the ops were given, by op index

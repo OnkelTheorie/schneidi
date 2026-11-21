@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -690,8 +691,25 @@ void opMove(Session& s, const QJsonObject& op)
     if (by.isDouble()) delta = by.toInt();
     else if (by.isString() && by.toString().startsWith('-')) delta = -parseTime(by.toString().mid(1), s.format(), "by");
     else if (by.isString()) delta = parseTime(by, s.format(), "by");
-    if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", clipIds(s, op).first()}}).start;
-    s.editor.moveClips(clipIds(s, op), delta, TrackKind::Video, op.value("track_delta").toInt());
+    const QVector<int> ids = clipIds(s, op);
+    if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", ids.first()}}).start;
+    const int trackDelta = op.value("track_delta").toInt();
+    TrackRef from;
+    const Clip* first = TimelineOps::findClip(s.project.timeline(), ids.first(), &from);
+    const int startBefore = first ? first->start : 0;
+    s.editor.moveClips(ids, delta, TrackKind::Video, trackDelta);
+    // Less than asked (before the timeline start, past the first or last track): say so (12-B8)
+    TrackRef to;
+    const Clip* after = TimelineOps::findClip(s.project.timeline(), ids.first(), &to);
+    if (!first || !after) return;
+    const int moved = after->start - startBefore, movedTracks = to.index - from.index;
+    if (moved != delta)
+        s.notes << QString("move: moved by %1 of %2 frames (clips stop at the timeline start)")
+                       .arg(moved).arg(delta);
+    if (movedTracks != trackDelta)
+        s.notes << QString("move: track_delta %1 of %2 (not below the first nor above the last track; add_track makes "
+                           "more)")
+                       .arg(movedTracks).arg(trackDelta);
 }
 
 // Fade handles of the clips; a video clip's sound fades along unless linked:false. Sound alone does not take the
@@ -1041,6 +1059,23 @@ QVector<OpDef> makeOps()
         {"split", "{op:'split', at, clip?}", "cut all clips under `at` (or one clip)", {},
          [](Session& s, const QJsonObject& op) {
              const int at = timeOf(s, op, "at");
+             // A cut at a clip's edge or outside the clips changes nothing: say so (12-B8)
+             const auto across = [at](const Clip& c) { return c.start < at && at < c.end(); };
+             bool any = false;
+             if (op.contains("clip")) {
+                 any = across(clipOf(s, op));
+             } else {
+                 const Timeline& tl = s.project.timeline();
+                 for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                     for (const Track& t : tl.tracks(k))
+                         for (const Clip& c : t.clips) any = any || across(c);
+             }
+             if (!any) {
+                 s.notes << QString("split: no clip runs across %1 (a cut at a clip's edge or outside the clips "
+                                    "changes nothing)")
+                                .arg(tc(at, s.format()));
+                 return;
+             }
              if (op.contains("clip")) s.editor.bladeAt(clipOf(s, op).id, at);
              else s.editor.splitAtPlayhead(at); // no selection: every clip under `at`
          }},
@@ -1309,6 +1344,8 @@ void applyOp(Session& s, const QJsonObject& given)
     QJsonObject op = given;
     const QString name = op.value("op").toString();
     const auto def = std::find_if(editOps().begin(), editOps().end(), [&](const OpDef& d) { return d.name == name; });
+    if (!given.contains("op") || (name.isEmpty() && !given.value("op").isString()))
+        fail("BAD_ARGUMENT", "missing 'op' (the operation's name, e.g. {op:'trim', clip, edge, by}; `help edit` lists them)");
     if (def == editOps().end()) fail("BAD_ARGUMENT", QString("unknown op '%1' (see `help edit`)").arg(name));
     // A key the op does not read was dropped without a word ("star" for "start"): the op ran and did something else
     const QStringList keys = editOpKeys(name);
@@ -1339,6 +1376,27 @@ void applyOp(Session& s, const QJsonObject& given)
                 s.notes << QString("%1: '%2' read as 'media' (the name of the file key in edit ops)").arg(name, alias);
                 break;
             }
+    // track:'V99' made 97 empty video and audio tracks up to it (12-B6): a new track comes at most one past the last
+    if (const QJsonValue t = op.value("track"); t.isDouble() || t.isString()) {
+        static const QRegularExpression form("^([VA]?)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch m = form.match(t.isDouble() ? QString::number(t.toInt()) : t.toString().trimmed());
+        if (m.hasMatch()) {
+            const Timeline& tl = s.project.timeline();
+            const QString letter = m.captured(1).toUpper();
+            const int n = m.captured(2).toInt();
+            const int have = letter == "A" ? int(tl.audio.size())
+                           : letter == "V" ? int(tl.video.size())
+                                           : int(std::max(tl.video.size(), tl.audio.size()));
+            if (n > have + 1)
+                fail("BAD_ARGUMENT",
+                     QString("track %1: the timeline has %2 %3 track(s); a new one comes at most one past the last (%4%5)")
+                         .arg(t.isDouble() ? QString::number(t.toInt()) : t.toString())
+                         .arg(have)
+                         .arg(letter == "A" ? "audio" : "video")
+                         .arg(letter.isEmpty() ? "" : letter)
+                         .arg(have + 1));
+        }
+    }
     s.selection.clear();
     s.editor.takeNotice(); // (one from an earlier op is not this one's)
     def->run(s, op);

@@ -168,6 +168,13 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
             fail("BAD_ARGUMENT", QString("%1: frames must be a whole number >= 0, got %2").arg(what).arg(d));
         return int(d);
     }
+    // at:true, at:null, at:[…]: no text to quote ("'' is not a time", 12-B9)
+    if (v.isNull() || v.isUndefined())
+        fail("BAD_ARGUMENT", QString("%1: missing (a time: frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")").arg(what));
+    if (!v.isString())
+        fail("BAD_ARGUMENT", QString("%1: %2 is not a time (use frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")")
+                                 .arg(what, v.isBool() ? (v.toBool() ? "true" : "false")
+                                            : v.isArray() ? QString("a list") : QString("an object")));
     const QString s = v.toString().trimmed();
     if (s.endsWith('s')) {
         bool ok = false;

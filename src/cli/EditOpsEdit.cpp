@@ -379,7 +379,28 @@ void opTrim(Session& s, const QJsonObject& op)
     else if (by.isString()) delta = parseTime(by, s.format(), "by");
     if (mode == "normal") {
         if (op.contains("to")) delta = timeOf(s, op, "to") - (edge == TimelineOps::Edge::Start ? c.start : c.end());
-        s.editor.trimClip(c.id, edge, delta, op.value("overwrite").toBool());
+        const int id = c.id, startBefore = c.start, endBefore = c.end();
+        s.editor.trimClip(id, edge, delta, op.value("overwrite").toBool());
+        // Less than asked (or nothing): say why instead of an empty answer (03-#1, 12-B8)
+        TrackRef where;
+        const Timeline& tl = s.project.timeline();
+        const Clip* after = TimelineOps::findClip(tl, id, &where);
+        if (!after || delta == 0) return;
+        const bool start = edge == TimelineOps::Edge::Start;
+        const int moved = start ? after->start - startBefore : after->end() - endBefore;
+        if (moved == delta) return;
+        const bool grows = start ? delta < 0 : delta > 0;
+        QString why = "a clip keeps at least one frame";
+        if (grows) {
+            const int from = start ? startBefore + delta : endBefore, to = start ? startBefore : endBefore + delta;
+            int blocker = 0;
+            for (const Clip& o : tl.track(where).clips)
+                if (o.id != id && o.start < to && o.end() > from) blocker = o.id;
+            why = blocker ? QString("clip %1 is in the way (overwrite:true trims over it)").arg(blocker)
+                          : QString("the file has no more material %1 the clip").arg(start ? "before" : "after");
+        }
+        s.notes << QString("trim: clip %1's %2 moved %3 of %4 frames: %5")
+                       .arg(id).arg(edgeName).arg(moved).arg(delta).arg(why);
         return;
     }
     TimelineOps::TrimKind kind;
@@ -397,6 +418,9 @@ void opTrim(Session& s, const QJsonObject& op)
     if (e.isNull()) fail("FAILED", QString("cannot %1 here (roll needs a neighbouring clip at the cut)").arg(mode));
     const int clamped = s.editor.clampTrimEdit(e, delta);
     s.editor.applyTrimEdit(e, clamped);
+    if (clamped != delta)
+        s.notes << QString("trim (%1): moved %2 of %3 frames (as far as the file's material and the neighbours allow)")
+                       .arg(mode).arg(clamped).arg(delta);
 }
 
 // ---------- transitions ----------
