@@ -2,9 +2,13 @@
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
 
+#include "ui/direct/DirectMaterial.h"
+#include "ui/direct/DirectPage.h"
+#include "ui/direct/DirectSuggestions.h"
 #include "ui/studio/StudioPage.h"
 #include "ui/studio/StudioTracks.h"
 #include "app/AiChatPanel.h"
+#include "app/BugReport.h"
 #include "app/ExtensionsDialog.h"
 
 #include "app/InputBindings.h"
@@ -1049,6 +1053,9 @@ void MainWindow::buildActions()
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
+    // Report a bug: a prefilled GitHub issue in the browser; nothing is sent, the user submits it there (app/BugReport.h)
+    makeAction(help, "report_bug", T("Fehler melden…"), QKeySequence(),
+               [] { QDesktopServices::openUrl(BugReport::issueUrl(BugReport::collect())); });
     setupTours(help); // Help › Tours
     // Practice keys (0.20): a quiet card, not modal; it takes the keys only while it has the focus
     makeAction(help, "key_trainer", T("Tasten üben"), QKeySequence(), [this] {
@@ -1094,6 +1101,11 @@ void MainWindow::buildActions()
     InputBindings::instance().registerPanelAction(m_directRemoveMaterial, "direct_remove_material", T("Regie"),
                                                   "direct_material", QKeySequence(Qt::Key_Delete),
                                                   QKeySequence(Qt::Key_Backspace));
+    // Regie as the start page: the page was built already (buildLayout -> showStartPage, before this): hand them in now
+    if (m_directPage) {
+        m_directPage->suggestions()->setRemoveAction(m_directRemoveSuggestion);
+        m_directPage->material()->setRemoveAction(m_directRemoveMaterial);
+    }
 
     InputBindings::instance().saveIfIncomplete();
 }

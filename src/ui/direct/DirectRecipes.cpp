@@ -357,6 +357,8 @@ void DirectRecipes::setMusicFile(const QString& path)
 
 void DirectRecipes::setAudioTracks(const QStringList& names)
 {
+    if (m_talkTracks->count() > 0 && names == m_audioTrackNames) return; // refilled only when they changed
+    m_audioTrackNames = names;
     const QString keep = m_talkTracks->currentData().toString();
     const QSignalBlocker b(m_talkTracks);
     m_talkTracks->clear();

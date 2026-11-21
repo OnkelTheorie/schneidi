@@ -382,6 +382,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/AiSettings.h src/app/AiSettings.cpp
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
     src/app/UpdateCheck.h src/app/UpdateCheck.cpp
+    src/app/BugReport.h src/app/BugReport.cpp
     src/app/TourManager.h src/app/TourManager.cpp
     src/app/AiLog.h src/app/AiLog.cpp
     src/app/AiProvider.h src/app/AiProvider.cpp

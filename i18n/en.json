@@ -1721,6 +1721,8 @@
  "Keine Tastenbelegung in der Datei": "No key set in the file",
  "Keine Tonspur": "No audio track",
  "Keine Tonspuren: leg Clips mit Ton auf die Timeline": "No audio tracks: put clips with sound on the timeline",
+ "Keine Untertitel: Im Short ist keine Sprache zu hören.": "No captions: there is no speech in the short.",
+ "Keine Untertitel: Whisper ist nicht installiert (unter Hilfe › Erweiterungen nachladen).": "No captions: Whisper is not installed (load it under Help › Extensions).",
  "Keine Verbindung zu %1 – läuft der Dienst?": "No connection to %1 – is the service running?",
  "Keine Vorschläge in diesem Material. Ein anderes Rezept oder mehr Material versuchen.": "No suggestions in this material. Try another recipe or more material.",
  "Keine Vorschläge: Mit diesem Material und diesen Einstellungen kam das Rezept nicht weiter.": "No suggestions: the recipe got nowhere with this material and these settings.",
@@ -3675,5 +3677,6 @@
  "… und %1 weitere": "… and %1 more",
  "◀ Verfolgen": "◀ Track",
  "♪ Audio": "♪ Audio",
- "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None"
+ "✕ pausiert bis zur nächsten Änderung. Ausschalten: Wiedergabe › Render-Cache › Aus": "✕ pauses it until the next change. Switch off: Playback › Render Cache › None",
+ "Fehler melden…": "Report a Bug…"
 }

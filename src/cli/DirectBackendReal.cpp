@@ -110,17 +110,20 @@ DirectBackend::JobHandle RealDirectBackend::finish(const QJsonObject& session, c
             }
             const QJsonObject r = reply.value("result").toObject();
             QJsonArray notes = r.value("notes").toArray();
+            const QJsonArray noteKeys = r.value("note_keys").toArray(); // the page translates them
             if (r.value("ops").toArray().isEmpty()) { // nothing to add (no speech, nothing chosen)
-                onDone({{"ok", true}, {"result", QJsonObject{{"timeline", timeline}, {"notes", notes}, {"done", QJsonArray{}}}}});
+                onDone({{"ok", true},
+                        {"result", QJsonObject{{"timeline", timeline}, {"notes", notes}, {"note_keys", noteKeys}, {"done", QJsonArray{}}}}});
                 return;
             }
             st->step = runLater(host, "direct",
                                 {{"finish", QJsonObject{{"timeline", timeline}, {"ops", r.value("ops")}, {"stamp", r.value("stamp")}}}},
                                 T("Regie: Untertitel und Effektklänge"), onProgress,
-                                [onDone, notes](const QJsonObject& edited) {
+                                [onDone, notes, noteKeys](const QJsonObject& edited) {
                                     if (!edited.value("ok").toBool()) return onDone(edited);
                                     QJsonObject res = edited.value("result").toObject();
                                     if (!notes.isEmpty()) res["notes"] = notes;
+                                    if (!noteKeys.isEmpty()) res["note_keys"] = noteKeys;
                                     onDone({{"ok", true}, {"result", res}});
                                 },
                                 receiver);

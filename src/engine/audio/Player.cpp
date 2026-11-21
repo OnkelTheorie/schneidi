@@ -63,6 +63,8 @@ struct LevelEntry {
 
 struct Player::Impl {
     Options opt;
+    // opt.buffer for the feeder thread (leadBlocks), which reads it without the mutex; written with opt.buffer
+    std::atomic<int> bufferNow{1024};
 
     // Ring: the feeder writes blocks, the callback reads them
     std::vector<Block> ring = std::vector<Block>(kRing);
@@ -176,7 +178,7 @@ struct Player::Impl {
         std::vector<float> chPeaks, chunkChPeaks, tailChPeaks;
     };
 
-    explicit Impl(const Options& o) : opt(o) {}
+    explicit Impl(const Options& o) : opt(o), bufferNow(o.buffer) {}
 
     void process(float* out, int frames);
     // under `mutex`: a log line when sound broke off since the last report; true when the device itself ran dry
@@ -203,7 +205,7 @@ struct Player::Impl {
     // more than the 2048 asked; measured, docs/dev/ton.md)
     int leadBlocks() const
     {
-        const int ahead = std::max({opt.buffer, 2400, latency.load(std::memory_order_relaxed) + opt.rate / 50});
+        const int ahead = std::max({bufferNow.load(std::memory_order_relaxed), 2400, latency.load(std::memory_order_relaxed) + opt.rate / 50});
         return (ahead + kBlock - 1) / kBlock;
     }
 };
@@ -844,6 +846,7 @@ void Player::setDevice(int buffer, const QString& backend, const QString& output
     std::lock_guard<std::mutex> lock(d->mutex);
     if (buffer == d->opt.buffer && backend == d->opt.backend && output == d->opt.output) return;
     d->opt.buffer = buffer;
+    d->bufferNow.store(buffer, std::memory_order_relaxed);
     d->opt.backend = backend;
     d->opt.output = output;
     d->deviceDirty = true; // the watchdog reopens an open device; play() opens with them anyway
@@ -885,6 +888,7 @@ void Player::pause()
         // kMaxAutoBuffer (85 ms at 48 kHz): more lags behind the picture when scrubbing.
         if (d->reportDropouts() && d->opt.buffer < kMaxAutoBuffer) {
             d->opt.buffer = std::min(d->opt.buffer * 2, kMaxAutoBuffer);
+            d->bufferNow.store(d->opt.buffer, std::memory_order_relaxed);
             d->deviceDirty = true; // the watchdog reopens with it
             grown = d->opt.buffer;
             qInfo("Audio: buffer grown to %d samples after the dropout", grown);
