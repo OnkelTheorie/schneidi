@@ -59,6 +59,14 @@ struct AudioLayout {
 };
 QVector<AudioLayout> audioLayouts(const QString& path);
 
+// A file that ends before its header says (a download or recording cut off): the seconds that can be read and the
+// header's; nullopt = it reads to its end (or cannot be told). Reads only packets near the end (a seek or a few,
+// nothing decoded): fast also for long files, but it opens the file - not on the GUI thread.
+struct ReadableEnd {
+    double readable = 0, header = 0; // seconds from the start
+};
+std::optional<ReadableEnd> endsEarly(const QString& path);
+
 // The HDR transfer (HLG/PQ, engine/HdrTone) of the file's picture: from the container header, a small stream analysis
 // when an H.264/H.265/AV1/VP9 stream states none there (only in its bitstream). Blocking (opens the file): background
 // threads only (engine/HdrScan). Cached per path + size + time of change

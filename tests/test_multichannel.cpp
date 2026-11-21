@@ -1052,6 +1052,28 @@ void testSourceLayout(const QTemporaryDir& tmp)
     }
 }
 
+// The probe names the channels of files whose header leaves them open: FLAC 7.1 (0 channels before reading a frame),
+// a mono WAV without a channel mask ("1 channels")
+void testProbeLayouts(const QTemporaryDir& tmp)
+{
+    const QString flac = Check::makeMedia(tmp.filePath("probe71.flac"), {"-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=48000",
+                                                                          "-af", "pan=7.1|c0=c0|c1=c0|c2=c0|c3=c0|c4=c0|c5=c0|c6=c0|c7=c0",
+                                                                          "-c:a", "flac"});
+    const QString mono = Check::makeMedia(tmp.filePath("probe-mono.wav"), {"-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=44100",
+                                                                            "-ac", "1", "-c:a", "pcm_s16le"});
+    if (!CHECK(!flac.isEmpty() && !mono.isEmpty())) return;
+    const QVector<MediaProbe::AudioLayout> f = MediaProbe::audioLayouts(flac);
+    if (CHECK_EQ(f.size(), 1)) {
+        CHECK_EQ(f[0].channels, 8);
+        CHECK_EQ(f[0].layout, QString("7.1"));
+    }
+    const QVector<MediaProbe::AudioLayout> m = MediaProbe::audioLayouts(mono);
+    if (CHECK_EQ(m.size(), 1)) {
+        CHECK_EQ(m[0].channels, 1);
+        CHECK_EQ(m[0].layout, QString("mono"));
+    }
+}
+
 // Waveform of a routed clip: only its channels
 void testWaveform(const QString& frontOnly)
 {
@@ -1321,6 +1343,7 @@ int main(int argc, char** argv)
         return Check::result();
     testRouting(quad);
     testSourceLayout(tmp);
+    testProbeLayouts(tmp);
     testRelinkRouting(tmp, stereo);
     testSurroundMix(stereo, five, bass);
     testLoudness(tone1k);

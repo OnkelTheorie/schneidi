@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: commands on projects (new, info, import, edit, backups, restore, render, effects) and the app
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
@@ -55,6 +56,7 @@
 #include <QJsonDocument>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -760,12 +762,25 @@ QJsonObject cmdBackups(const QJsonObject& a, Context&)
                       {"saved", QFileInfo(files[i]).lastModified().toString(Qt::ISODate)}};
         ProjectData d;
         if (ProjectFile::load(files[i], &d, nullptr)) {
-            int clips = 0;
-            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-                for (const Track& t : d.timeline.tracks(k)) clips += t.clips.size();
-            const int end = TimelineOps::endFrame(d.timeline);
-            o["clips"] = clips;
-            o["length_tc"] = tc(end, d.format);
+            // Every timeline (it counted only the opened one: 0 clips right after `direct` made a new one)
+            Project p;
+            p.load(d);
+            int clips = 0, longest = 0;
+            QJsonArray timelines;
+            for (const Sequence& q : p.sequences()) {
+                int n = 0;
+                for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                    for (const Track& t : q.timeline.tracks(k)) n += t.clips.size();
+                const int end = TimelineOps::endFrame(q.timeline);
+                clips += n;
+                longest = std::max(longest, end);
+                QJsonObject to{{"name", q.name}, {"clips", n}, {"length_tc", tc(end, d.format)}};
+                if (q.id == p.currentSequence()) to["open"] = true;
+                timelines << to;
+            }
+            o["clips"] = clips;               // all timelines
+            o["length_tc"] = tc(longest, d.format); // the longest one
+            if (timelines.size() > 1) o["timelines"] = timelines;
         } else {
             o["unreadable"] = true;
         }
@@ -796,7 +811,9 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
             current = restored.currentSequence();
         });
         p->closeMerge();
-        return {{"project", path}, {"restored", source}, {"live", true}, {"timeline", timelineJson(*p)}};
+        QJsonObject o{{"project", path}, {"restored", source}, {"live", true}, {"timeline", timelineJson(*p)}};
+        if (p->sequences().size() > 1) o["timelines"] = timelinesJson(*p); // the open one is only one of them
+        return o;
     }
     const QString path = absolute(a["project"].toString());
     if (Live::isAppProject(path)) fail("NO_APP", "the schneidi app is not running");
@@ -815,6 +832,7 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
     Project p;
     p.load(d);
     QJsonObject o{{"project", path}, {"restored", source}, {"timeline", timelineJson(p)}};
+    if (p.sequences().size() > 1) o["timelines"] = timelinesJson(p); // the open one is only one of them
     if (!backup.isEmpty()) o["backup"] = backup;
     return o;
 }
@@ -1039,6 +1057,43 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.to = (a.contains("to") ? parseTime(a["to"], s.format(), "to") : end) - 1;
         if (job.to < job.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
     }
+    // Missing source files render as black picture and silence: refuse unless the caller wants that
+    // (`check` says "File missing" too)
+    if (!srtOnly) {
+        const QStringList missing =
+            Exporter::missingSources(tl, job.inOut ? job.from : 0, job.inOut ? job.to + 1 : end);
+        if (!missing.isEmpty()) {
+            if (!a["allow_missing"].toBool())
+                fail("MISSING_MEDIA", QString("%1 source file%2 missing (would render black and silent; relink or "
+                                              "pass allow_missing): %3")
+                                          .arg(missing.size())
+                                          .arg(missing.size() == 1 ? " is" : "s are")
+                                          .arg(missing.join(", ")));
+            s.notes << QString("rendered without missing files (black and silent there): %1").arg(missing.join(", "));
+        }
+    }
+    // Subtitles not asked for: word captions (karaoke/word, made from `transcribe --captions`) exist only burned into
+    // the picture, so they are burned by default; plain subtitle lines stay out (a platform shows its own), with a note
+    if (!srtOnly && !sheet && !a.contains("subtitles") && job.settings.subtitles == RenderSettings::NoSubtitles
+        && !job.settings.audioOnly()) {
+        const int rangeFrom = job.inOut ? job.from : 0, rangeTo = job.inOut ? job.to + 1 : end;
+        for (int i = 0; i < tl.subtitles.size(); ++i) {
+            const SubtitleTrack& track = tl.subtitles[i];
+            if (!track.enabled) continue;
+            const auto cues = std::count_if(track.cues.begin(), track.cues.end(), [&](const SubtitleCue& c) {
+                return c.end > rangeFrom && c.start < rangeTo;
+            });
+            if (cues == 0) continue;
+            const QString name = subtitleTrackDisplayName(track, i);
+            if (track.captions.mode != CaptionMode::Lines) {
+                job.settings.subtitles = RenderSettings::BurnSubtitles;
+                s.notes << QString("%1 word captions of '%2' burned in (subtitles 'none' leaves them out)").arg(cues).arg(name);
+            } else {
+                s.notes << QString("%1 subtitles of '%2' not burned in (subtitles 'burn' burns them, 'srt' writes a file "
+                                   "next to the video)").arg(cues).arg(name);
+            }
+        }
+    }
     QJsonObject reviewInfo;
     std::shared_ptr<const ReviewSheet::Data> marks;
     if (sheet || reviewVideo) {
@@ -1106,8 +1161,21 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         RenderQueue::makeReview(es);
     }
     if (fastS264 && ExportWriter::isOwnH264(es.videoCodec)) es.codecOptions << QStringLiteral("speed=1"); // (not a review's H.264)
+    detail::failIfCanceled();
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
+    // Canceled from outside (Ctrl+C, a background job of the app): the exporter stops and removes its part file
+    QTimer poll;
+    if (const std::atomic<bool>* stop = detail::cancelFlag()) {
+        QObject::connect(&poll, &QTimer::timeout, &loop, [&ex, &poll, stop] {
+            if (!stop->load()) return;
+            poll.stop();
+            ex.cancel(); // (also while it builds or analyses for stabilizing)
+        });
+        poll.start(50);
+    }
     loop.exec();
+    poll.stop();
+    detail::failIfCanceled();
     if (!ok && !es.replace && job.settings.kind() != RenderKind::ImageSequence && QFileInfo::exists(out))
         fail("EXISTS", "output appeared while rendering (another render to the same file?); kept it, this render is "
                        "discarded (pass overwrite to replace it): " + out);

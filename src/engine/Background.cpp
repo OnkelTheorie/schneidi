@@ -13,6 +13,8 @@
 #include <mutex>
 
 #if defined(Q_OS_LINUX)
+#include <csignal>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -61,21 +63,32 @@ void lowerThisThread(Level level)
 #endif
 }
 
-void lowerProcess(QProcess& process, Level level)
+void lowerProcess(QProcess& process, Level level, bool dieWithParent)
 {
 #if defined(Q_OS_WIN)
+    Q_UNUSED(dieWithParent); // (Windows: Ctrl+C reaches the whole console process group)
     const DWORD flag = level == Level::Low ? BELOW_NORMAL_PRIORITY_CLASS : IDLE_PRIORITY_CLASS;
     process.setCreateProcessArgumentsModifier([flag](QProcess::CreateProcessArguments* a) { a->flags |= flag; });
 #elif defined(Q_OS_UNIX)
     const int nice = level == Level::Low ? 10 : 19;
+#if defined(Q_OS_LINUX)
+    const pid_t parent = dieWithParent ? getpid() : 0;
+#else
+    Q_UNUSED(dieWithParent);
+#endif
     // glibc marks nice() warn_unused_result; a (void) cast does not silence GCC under _FORTIFY_SOURCE (Arch, Fedora)
-    process.setChildProcessModifier([nice] {
+    process.setChildProcessModifier([=] {
         if (::nice(nice) == -1) {
         }
+#if defined(Q_OS_LINUX)
+        // (the parent may have died between fork and here: then end at once)
+        if (parent && (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent)) _exit(1);
+#endif
     });
 #else
     Q_UNUSED(process);
     Q_UNUSED(level);
+    Q_UNUSED(dieWithParent);
 #endif
 }
 

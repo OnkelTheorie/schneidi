@@ -2,6 +2,7 @@
 #include "engine/ColorGrade.h"
 
 #include "core/EffectFolders.h"
+#include "core/I18n.h"
 #include "core/GradeCurves.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -685,11 +686,11 @@ LutPtr parseCube(QIODevice& f, QString* error)
         const QList<QByteArray> w = words(line);
         const QByteArray key = w.first().toUpper();
         if (isNumber(w.first())) {
-            if (w.size() < 3 || !expected) return failLut(error, QStringLiteral("Datenzeile vor der Größenangabe"));
+            if (w.size() < 3 || !expected) return failLut(error, T("Datenzeile vor der Größenangabe"));
             for (int c = 0; c < 3; ++c) {
                 bool okc = false;
                 lut->data << float(number(w.at(c), &okc));
-                if (!okc) return failLut(error, QStringLiteral("ungültige Zahl"));
+                if (!okc) return failLut(error, T("ungültige Zahl"));
             }
             continue;
         }
@@ -697,7 +698,7 @@ LutPtr parseCube(QIODevice& f, QString* error)
             lut->is3d = key == "LUT_3D_SIZE";
             lut->size = w.value(1).toInt();
             if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536))
-                return failLut(error, QStringLiteral("ungültige Größe"));
+                return failLut(error, T("ungültige Größe"));
             expected = lut->is3d ? lut->size * lut->size * lut->size : lut->size;
             // not more than the file can hold (each value takes 2 bytes at least): a tiny file claiming 256 reserved 200 MB
             lut->data.reserve(std::min<qint64>(qint64(expected) * 3, f.size() / 2));
@@ -712,7 +713,7 @@ LutPtr parseCube(QIODevice& f, QString* error)
         } // skip TITLE and unknown things
     }
     if (!expected || lut->data.size() != expected * 3)
-        return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
+        return failLut(error, T("Anzahl der Werte passt nicht zur Größe"));
     return lut;
 }
 
@@ -738,11 +739,11 @@ LutPtr parse3dl(QIODevice& f, QString* error)
             size = int(w.size());
             continue;
         }
-        if (w.size() < 3) return failLut(error, QStringLiteral("ungültige Datenzeile"));
+        if (w.size() < 3) return failLut(error, T("ungültige Datenzeile"));
         for (int c = 0; c < 3; ++c) {
             bool ok = false;
             const double v = number(w.at(c), &ok);
-            if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
+            if (!ok) return failLut(error, T("ungültige Zahl"));
             raw << float(v);
             fraction = fraction || v != std::floor(v);
         }
@@ -750,7 +751,7 @@ LutPtr parse3dl(QIODevice& f, QString* error)
     const int count = int(raw.size() / 3);
     if (!size) size = int(std::lround(std::cbrt(double(count)))); // without grid line
     if (size < 2 || size > 256 || count != size * size * size)
-        return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
+        return failLut(error, T("Anzahl der Werte passt nicht zur Größe"));
     if (outMax <= 0) {
         const float m = raw.isEmpty() ? 0 : *std::max_element(raw.cbegin(), raw.cend());
         outMax = fraction || m <= 1.0f ? 1 : m <= 1023 ? 1023 : m <= 4095 ? 4095 : 65535;
@@ -773,9 +774,9 @@ LutPtr parse3dl(QIODevice& f, QString* error)
 // (count, inputs, outputs), then 3D: "N N N" + N^3 triples (R fastest index) resp. 1D: count + triples
 LutPtr parseCsp(QIODevice& f, QString* error)
 {
-    if (!f.readLine().trimmed().startsWith("CSPLUTV100")) return failLut(error, QStringLiteral("kein cineSpace-LUT"));
+    if (!f.readLine().trimmed().startsWith("CSPLUTV100")) return failLut(error, T("kein cineSpace-LUT"));
     const QByteArray kind = f.readLine().trimmed().toUpper();
-    if (kind != "3D" && kind != "1D") return failLut(error, QStringLiteral("unbekannte LUT-Art"));
+    if (kind != "3D" && kind != "1D") return failLut(error, T("unbekannte LUT-Art"));
     QVector<double> nums;
     bool meta = false;
     while (!f.atEnd()) {
@@ -789,7 +790,7 @@ LutPtr parseCsp(QIODevice& f, QString* error)
         for (const QByteArray& w : words(line)) {
             bool ok = false;
             nums << number(w, &ok);
-            if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
+            if (!ok) return failLut(error, T("ungültige Zahl"));
         }
     }
     auto lut = std::make_shared<Lut>();
@@ -802,19 +803,19 @@ LutPtr parseCsp(QIODevice& f, QString* error)
     };
     for (int c = 0; c < 3; ++c) { // Pre-curves
         double n = 0;
-        if (!next(&n) || n < 2 || n > 65536) return failLut(error, QStringLiteral("ungültige Vorab-Kurve"));
+        if (!next(&n) || n < 2 || n > 65536) return failLut(error, T("ungültige Vorab-Kurve"));
         QVector<float> in, out;
         for (int k = 0; k < int(n); ++k) {
             double v;
-            if (!next(&v)) return failLut(error, QStringLiteral("Vorab-Kurve zu kurz"));
+            if (!next(&v)) return failLut(error, T("Vorab-Kurve zu kurz"));
             in << float(v);
         }
         for (int k = 0; k < int(n); ++k) {
             double v;
-            if (!next(&v)) return failLut(error, QStringLiteral("Vorab-Kurve zu kurz"));
+            if (!next(&v)) return failLut(error, T("Vorab-Kurve zu kurz"));
             out << float(v);
         }
-        if (!std::is_sorted(in.cbegin(), in.cend())) return failLut(error, QStringLiteral("ungültige Vorab-Kurve"));
+        if (!std::is_sorted(in.cbegin(), in.cend())) return failLut(error, T("ungültige Vorab-Kurve"));
         const bool identity = n == 2 && in[0] == 0 && in[1] == 1 && out[0] == 0 && out[1] == 1;
         if (!identity) {
             lut->shaperIn[c] = in;
@@ -822,16 +823,16 @@ LutPtr parseCsp(QIODevice& f, QString* error)
         }
     }
     double n = 0;
-    if (!next(&n)) return failLut(error, QStringLiteral("Größenangabe fehlt"));
+    if (!next(&n)) return failLut(error, T("Größenangabe fehlt"));
     if (lut->is3d) {
         double n2 = 0, n3 = 0;
         if (!next(&n2) || !next(&n3) || n != n2 || n != n3)
-            return failLut(error, QStringLiteral("nur gleich große Achsen unterstützt"));
+            return failLut(error, T("nur gleich große Achsen unterstützt"));
     }
     lut->size = int(n);
-    if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536)) return failLut(error, QStringLiteral("ungültige Größe"));
+    if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536)) return failLut(error, T("ungültige Größe"));
     const qsizetype expected = (lut->is3d ? qsizetype(lut->size) * lut->size * lut->size : lut->size) * 3;
-    if (nums.size() - i != expected) return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
+    if (nums.size() - i != expected) return failLut(error, T("Anzahl der Werte passt nicht zur Größe"));
     lut->data.reserve(expected);
     for (; i < nums.size(); ++i) lut->data << float(nums[i]);
     return lut;
@@ -841,11 +842,11 @@ LutPtr parseCsp(QIODevice& f, QString* error)
 LutPtr parseHald(const QString& path, QString* error)
 {
     QImage img(path);
-    if (img.isNull()) return failLut(error, QStringLiteral("Bild lässt sich nicht lesen"));
+    if (img.isNull()) return failLut(error, T("Bild lässt sich nicht lesen"));
     const int w = img.width();
     const int level = int(std::lround(std::cbrt(double(w))));
     if (img.height() != w || level * level * level != w || level < 2 || level > 16)
-        return failLut(error, QStringLiteral("kein Hald-CLUT (quadratisch, Kantenlänge L³)"));
+        return failLut(error, T("kein Hald-CLUT (quadratisch, Kantenlänge L³)"));
     img = img.convertToFormat(QImage::Format_RGBA64); // 16-bit PNGs without loss
     auto lut = std::make_shared<Lut>();
     lut->size = level * level;
@@ -865,9 +866,9 @@ namespace {
 LutPtr parseLutFile(const QString& path, QString* error)
 {
     const QString suffix = QFileInfo(path).suffix().toLower();
-    if (!EffectFolders::isLutFile(path)) return failLut(error, QStringLiteral("unbekanntes LUT-Format"));
+    if (!EffectFolders::isLutFile(path)) return failLut(error, T("unbekanntes LUT-Format"));
     if (suffix != "cube" && suffix != "3dl" && suffix != "csp") {
-        if (!QFileInfo::exists(path)) return failLut(error, QStringLiteral("Datei fehlt"));
+        if (!QFileInfo::exists(path)) return failLut(error, T("Datei fehlt"));
         return parseHald(path, error);
     }
     QFile f(path);

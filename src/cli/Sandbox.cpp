@@ -9,6 +9,7 @@
 #include "core/ProjectFile.h"
 #include "core/ProjectRefs.h"
 
+#include <QUrl>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -141,7 +142,11 @@ QString resolve(const QString& given)
                             "project file");
         return QString(Live::AppProject);
     }
-    QString path = applyMaps(given);
+    // A file URL (dragged from a file manager, copied from a browser): its local path, not "<cwd>/file:/…"
+    QString path = given;
+    if (path.startsWith(QLatin1String("file:"), Qt::CaseInsensitive))
+        if (const QUrl url(path); url.isLocalFile()) path = url.toLocalFile();
+    path = applyMaps(path);
 #ifdef Q_OS_WIN
     path = QDir::fromNativeSeparators(path);
 #endif

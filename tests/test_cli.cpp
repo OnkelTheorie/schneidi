@@ -21,6 +21,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QUrl>
 #include <QFile>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -584,6 +585,19 @@ int runTests(int argc, char** argv)
     tl = run("info", {{"project", g_path}})["timeline"].toObject();
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(errorOf("restore", {{"project", g_path}, {"backup", "999"}}), QString("NOT_FOUND"));
+    // Several timelines, the open one empty: backups count the clips of all of them and list them, restore answers
+    // with every timeline (both said 0 clips / only the open one right after `direct` made a new timeline)
+    {
+        const QString multi = dir.filePath("multi.schneidi");
+        QFile::copy(g_path, multi); // (clips on its open timeline)
+        run("edit", {{"project", multi}, {"ops", R"([{"op":"new_timeline","name":"Empty"}])"}});
+        run("edit", {{"project", multi}, {"ops", R"([{"op":"mixer","track":"master","volume_db":-3}])"}});
+        const QJsonObject newest = run("backups", {{"project", multi}})["backups"][0].toObject();
+        CHECK(newest["clips"].toInt() >= 1);
+        CHECK_EQ(newest["timelines"].toArray().size(), 2);
+        const QJsonObject r = run("restore", {{"project", multi}});
+        CHECK_EQ(r["timelines"].toArray().size(), 2);
+    }
 
     // Someone else (the app, other AI edits) saving: writing commands wait up to 30 s - ten edits at once on a busy
     // machine take turns longer than 5 s -, then give up; reading works
@@ -1022,7 +1036,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(clipsOf(0)[0].toObject()["interpolate"].toString(), QString("flow"));
         CHECK_EQ(clipsOf(0)[0].toObject()["speed"].toDouble(), 0.25);
         hinted = ed(QString(R"([{"op":"speed","clips":[%1],"speed":0.3}])").arg(v));
-        CHECK(!hinted.contains("notes")); // flow already on
+        if (!CHECK(!hinted.contains("notes"))) std::printf("       %s\n", QJsonDocument(hinted["notes"].toArray()).toJson().constData()); // flow already on
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"speed","clips":[%1],"interpolate":"smooth"}])").arg(v)}}),
                  QString("BAD_ARGUMENT"));
         ed(QString(R"([{"op":"speed","clips":[%1],"interpolate":"repeat"}])").arg(v));
@@ -1128,6 +1142,28 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         QFile f(srt);
         CHECK(f.open(QIODevice::ReadOnly) && f.readAll().contains("Hi"));
         CHECK_EQ(errorOf("render", {{"project", g_path}, {"out", dir.filePath("x.mp4")}, {"preset", "Nope"}}), QString("NOT_FOUND"));
+        // A missing source file (/x/a.mp4) would render black and silent: refused naming it, unless allow_missing.
+        // Plain subtitle lines are left out with a note; word captions are burned by default
+        {
+            const QString mp = dir.filePath("miss.schneidi");
+            QFile::copy(g_path, mp);
+            const QString miss = messageOf("render", {{"project", mp}, {"out", dir.filePath("miss.mp4")}});
+            CHECK(miss.contains("/x/a.mp4") && miss.contains("allow_missing"));
+            CHECK_EQ(errorOf("render", {{"project", mp}, {"out", dir.filePath("miss.mp4")}}), QString("MISSING_MEDIA"));
+            CHECK(!QFileInfo::exists(dir.filePath("miss.mp4")));
+            const QJsonObject r = run("render", {{"project", mp}, {"out", dir.filePath("miss.mp4")}, {"allow_missing", true},
+                                                 {"height", 180}, {"to", 10}});
+            const QByteArray notes = QJsonDocument(r["notes"].toArray()).toJson();
+            CHECK(notes.contains("/x/a.mp4"));
+            CHECK(notes.contains("1 subtitles of") && notes.contains("not burned in"));
+            run("edit", {{"project", mp}, {"ops", R"([{"op":"captions","words":[{"from":0,"to":5,"text":"hi"}]}])"}});
+            const QJsonObject w = run("render", {{"project", mp}, {"out", dir.filePath("words.mp4")}, {"allow_missing", true},
+                                                 {"height", 180}, {"to", 10}});
+            CHECK(QJsonDocument(w["notes"].toArray()).toJson().contains("word captions of"));
+            const QJsonObject none = run("render", {{"project", mp}, {"out", dir.filePath("none.mp4")}, {"allow_missing", true},
+                                                    {"height", 180}, {"to", 10}, {"subtitles", "none"}});
+            CHECK(!QJsonDocument(none["notes"].toArray()).toJson().contains("captions"));
+        }
         // Frame rate of an empty project: media lengths follow
         const QString empty = dir.filePath("empty.schneidi");
         run("new", {{"project", empty}});
@@ -1653,6 +1689,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const QJsonObject pf = run("probe", {{"file", odd["out"].toString()}});
             CHECK_EQ(pf["width"].toInt(), 320);
             CHECK_EQ(pf["height"].toInt(), 180);
+        }
+        // probe says the file's own size, not the even one a project of it gets; a file URL is its local path
+        {
+            const QString oddFile = Check::makeMedia(dir.filePath("odd 641.mkv"), {"-f", "lavfi", "-i", "color=c=red:s=641x359:d=0.2:r=25",
+                                                                                     "-c:v", "ffv1"});
+            const QJsonObject pf = run("probe", {{"file", QUrl::fromLocalFile(oddFile).toString()}});
+            CHECK_EQ(pf["file"].toString(), oddFile);
+            CHECK_EQ(pf["width"].toInt(), 641);
+            CHECK_EQ(pf["height"].toInt(), 359);
         }
         // Scopes of a mid-grey frame: luma in the middle, nothing clipped, no cast
         const QString grey = Check::makeMedia(dir.filePath("grey.mp4"),

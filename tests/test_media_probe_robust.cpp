@@ -186,6 +186,29 @@ int main(int argc, char** argv)
         CHECK(!cache.find(path).has_value());
     }
 
+    // 7. A cut off file (a download that stopped) says where it really ends; a whole one says nothing. Matroska and
+    // an MP4 with its index at the start (the index lists more than the file holds)
+    {
+        CHECK(!MediaProbe::endsEarly(in("aac.mkv")).has_value());
+        const auto cut = [&](const QString& from, const QString& to) {
+            QFile f(from);
+            if (!f.open(QIODevice::ReadOnly)) return false;
+            const QByteArray bytes = f.read(f.size() * 4 / 10);
+            QFile o(to);
+            return o.open(QIODevice::WriteOnly) && o.write(bytes) == bytes.size();
+        };
+        const QString fast = in("whole.mp4");
+        CHECK(!Check::makeMedia(fast, v + a + x264 + QStringList{"-c:a", "aac", "-shortest", "-movflags", "+faststart"}).isEmpty());
+        CHECK(!MediaProbe::endsEarly(fast).has_value());
+        for (const auto& [from, to] : {std::pair{in("aac.mkv"), in("cut.mkv")}, std::pair{fast, in("cut.mp4")}}) {
+            if (!CHECK(cut(from, to))) continue;
+            const std::optional<MediaProbe::ReadableEnd> e = MediaProbe::endsEarly(to);
+            if (!CHECK(e.has_value())) continue;
+            if (!CHECK(e->readable > 2 && e->readable < 8 && std::abs(e->header - 12) < 0.2))
+                std::printf("       %s: readable %.2f s of %.2f s\n", qPrintable(QFileInfo(to).fileName()), e->readable, e->header);
+        }
+    }
+
     // 6. A file without permission is no "held by another program"
 #ifdef Q_OS_UNIX
     {

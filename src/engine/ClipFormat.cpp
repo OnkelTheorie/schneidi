@@ -37,6 +37,9 @@ ClipFormat detectClipFormat(const QString& path)
     cf.ok = true;
     cf.hdr = QString::fromLatin1(HdrTone::name(in.tone.transfer));
     if (const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(in.format)) cf.bitDepth = d->comp[0].depth;
+    cf.fileWidth = w;
+    cf.fileHeight = h;
+    cf.rotation = in.rotation;
     cf.width = std::max(2, w & ~1); // even dimensions (yuv420p), a 1x1 video too
     cf.height = std::max(2, h & ~1);
     cf.rate = {num, den};

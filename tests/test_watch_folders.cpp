@@ -559,8 +559,19 @@ void testCliProcess(const QString& root, const QString& clip, const QString& lon
     }
     // Nothing more for it (one line per file)
     CHECK(!p.waitForReadyRead(3500));
+#ifdef Q_OS_WIN
     p.kill();
     p.waitForFinished(5000);
+#else
+    // SIGTERM (`kill`, `timeout`): it stops within a moment and says CANCELED (exit code 130 like Ctrl+C)
+    QElapsedTimer stop;
+    stop.start();
+    p.terminate();
+    CHECK(p.waitForFinished(5000));
+    CHECK(stop.elapsed() < 2000);
+    CHECK_EQ(p.exitCode(), 130);
+    CHECK(p.readAllStandardOutput().contains("\"CANCELED\""));
+#endif
     ProjectData d;
     ProjectFile::load(project, &d, nullptr);
     CHECK_EQ(d.media.size(), 2);

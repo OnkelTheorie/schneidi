@@ -1104,7 +1104,9 @@ const QVector<Command>& commands()
           {"trust_custom_code", T::Boolean, "trust the project's custom code (filters, shaders) from someone else; only "
                                             "when the user said so (in the app the user is asked)"}},
          cmdEdit},
-        {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
+        {"backups", "List the backup copies of a project (every save keeps the previous state, newest first): per "
+                    "copy 'clips' of all timelines, 'length_tc' of the longest, with several timelines 'timelines' "
+                    "(name, clips, length_tc, open).",
          {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},
         {"restore", "Undo: put a backup copy back as the project (the current state becomes a backup itself, so "
                     "restore can be undone too). Open in the app: replaces the timelines there as one undo step, "
@@ -1243,9 +1245,10 @@ const QVector<Command>& commands()
                                      "or ac3 (AC-3/Dolby Digital at 640 kbit/s for 5.1: TVs, AV receivers, Blu-ray "
                                      "tools; a 7.1 mix is written as 5.1). Only when this FFmpeg has the AC-3 encoder "
                                      "(else BAD_ARGUMENT); the answer then has 'audio_codec'"},
-          {"subtitles", T::String, "none (default), burn (into the picture), srt or vtt (files next to the video: the "
+          {"subtitles", T::String, "none, burn (into the picture), srt or vtt (files next to the video: the "
                                   "visible track as <name>.srt, other tracks with entries as <name>.<track name>.srt; "
-                                  "vtt = WebVTT for web players)"},
+                                  "vtt = WebVTT for web players). Default: a visible word caption track (karaoke/word "
+                                  "style) is burned in, plain subtitle lines are left out; the answer's notes say which"},
           {"embed_subtitles", T::Boolean, "also put every subtitle track with entries into the file as a text stream "
                                           "players can switch on (MP4/MOV: mov_text, MKV: SRT, WebM: WebVTT; plain "
                                           "text, word caption styles only burned in). Combines with burn"},
@@ -1260,6 +1263,9 @@ const QVector<Command>& commands()
                                   "Fewer threads also render fewer frames at once and so need less memory: on a "
                                   "machine that is busy (a game, a recording) use 2"},
           {"overwrite", T::Boolean, "replace an existing output file"},
+          {"allow_missing", T::Boolean, "render even when source files are missing (they become black picture and "
+                                        "silence, listed in notes); without it such a render fails with "
+                                        "MISSING_MEDIA naming the files"},
           {"review", T::String,
            "a review render to check the edit yourself instead of guessing (the project is not changed; the marks "
            "exist only in this render): video = small fast video (540 p unless height/size, fastest encoder setting) "
@@ -1741,7 +1747,8 @@ const QVector<Command>& commands()
           {"to", T::Time, "every/count: end of the range (default: end)"},
           {"crop", T::String, "only this region \"x,y,w,h\" in pixels of the full picture, or fractions 0..1 "
                               "(\"0.75,0.05,0.25,0.3\" = top right); shown at its own size up to 'width'"},
-          {"out", T::Path, "folder for the images (with sheet: the image file, .jpg or .png)"},
+          {"out", T::Path, "folder for the images (with sheet: the image file, .jpg or .png); a name ending in .jpg/.png "
+                           "without sheet: that file for one frame, <name>_<frame>.<ext> next to it for several"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
           {"columns", T::Integer, "sheet: number of columns (default: 2–4 depending on the count)"},
           {"tile_width", T::Integer, "width of every image/tile in pixels (instead of 'width'; e.g. 320 for many tiles, "
@@ -1987,7 +1994,11 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             if (v.isBool()) out[p.name] = v.toBool();
             else if (str == "true" || str == "1" || str == "yes") out[p.name] = true;
             else if (str == "false" || str == "0" || str == "no") out[p.name] = false;
-            else ok = false;
+            else // a value after a switch (`frames --sheet x.png`): say what it takes
+                fail("BAD_ARGUMENT", QString("'%1' is a switch (true or false), not '%2'%3")
+                                         .arg(p.name, v.toVariant().toString(),
+                                              p.name == "sheet" ? QStringLiteral(": the sheet file goes in 'out' (--sheet --out x.png)")
+                                                                : QString()));
             break;
         case ParamType::Time: out[p.name] = v; ok = v.isDouble() || v.isString(); break;
         case ParamType::Times: {

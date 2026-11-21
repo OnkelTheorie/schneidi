@@ -132,6 +132,16 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         at += ContactSheet::spread(from, to, n);
     }
     if (at.isEmpty()) fail("BAD_ARGUMENT", "give 'at' (times), 'every' (interval) or 'count' (evenly spread)");
+    // With a clip only its own time shows something (else a black picture without a word)
+    if (clipOnly)
+        for (int fr : std::as_const(at))
+            if (fr < clipFrom || fr >= clipTo)
+                fail("BAD_ARGUMENT", QString("%1 is outside clip %2: with clip, times are timeline times and it runs from "
+                                             "%3 to %4 (%5 - %6)")
+                                         .arg(tc(fr, f), a["clip"].toVariant().toString())
+                                         .arg(clipFrom)
+                                         .arg(clipTo)
+                                         .arg(tc(clipFrom, f), tc(clipTo, f)));
     if (at.size() > 100) fail("BAD_ARGUMENT", QString("too many frames (%1, max 100)").arg(at.size()));
     // Crop: decode the picture only as large as the region needs to come out at maxEdge (at most the full size and
     // 8192: a file with an extreme pixel aspect stated 21844x16384 and took 3 GB), cut the region out, scale it down
@@ -551,6 +561,11 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
     const bool asSheet = a["sheet"].toBool();
     if (outDir.isEmpty() && !ctx.mcp) fail("BAD_ARGUMENT", "missing 'out' (folder for the images, or the sheet file with --sheet)");
 
+    // Single images into a file name (.jpg/.png, not an existing folder)
+    static const QStringList pictureSuffixes{"jpg", "jpeg", "png"};
+    const bool picture = !asSheet && !outDir.isEmpty() && !QFileInfo(outDir).isDir()
+                         && pictureSuffixes.contains(QFileInfo(outDir).suffix().toLower());
+
     QVector<QImage> images;
     QStringList labels;
     QJsonArray perSource;
@@ -564,13 +579,26 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         if (tileWidth)
             for (QImage& img : set.images)
                 if (img.width() != tileWidth) img = img.scaledToWidth(tileWidth, Qt::SmoothTransformation);
+        const bool single = sources.size() == 1 && set.images.size() == 1; // one frame in all
         for (int i = 0; i < set.images.size(); ++i) {
             if (!asSheet && !outDir.isEmpty()) {
-                QDir().mkpath(outDir);
                 const QString prefix = sources.size() > 1 ? QString("src%1_").arg(si + 1) : QString();
-                const QString file = QDir(outDir).absoluteFilePath(
-                    QString("%1frame_%2.jpg").arg(prefix).arg(set.frames[i].toObject()["frame"].toInt(), 6, 10, QChar('0')));
-                if (!set.images[i].save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
+                const QString number = QString::number(set.frames[i].toObject()["frame"].toInt()).rightJustified(6, '0');
+                QString file;
+                const char* format = "JPG";
+                if (picture) {
+                    // out names a picture (x.png, not an existing folder): that file for one frame, else
+                    // x_<frame>.png beside it - it made a folder called x.png
+                    const QFileInfo fi(outDir);
+                    QDir().mkpath(fi.absolutePath());
+                    file = single ? fi.absoluteFilePath()
+                                  : fi.dir().absoluteFilePath(QString("%1_%2%3.%4").arg(fi.completeBaseName(), prefix, number, fi.suffix()));
+                    if (fi.suffix().compare("png", Qt::CaseInsensitive) == 0) format = "PNG";
+                } else {
+                    QDir().mkpath(outDir);
+                    file = QDir(outDir).absoluteFilePath(QString("%1frame_%2.jpg").arg(prefix, number));
+                }
+                if (!set.images[i].save(file, format, 85)) fail("WRITE_FAILED", "cannot write " + file);
                 QJsonObject o = set.frames[i].toObject();
                 o["file"] = file;
                 set.frames[i] = o;

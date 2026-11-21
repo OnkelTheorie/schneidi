@@ -4,6 +4,7 @@
 // prints every new file as one JSON line when it is there - for scripts and AI agents that react to new recordings.
 // A pass changes the project: with the project open in the app it runs there (the app's project, one undo step), else
 // on the file (write lock, backup) - like `import`.
+#include "cli/AnalysisDetail.h"
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 
@@ -336,7 +337,12 @@ QJsonObject follow(const QJsonObject& a, Context& ctx)
     QString projectFile;
     QDateTime projectTime;
     QString lastWarning; // the same problem again (the user turned AI connections off in the app): said once
-    for (bool pass = true;; QThread::msleep(1000)) {
+    // A second between looks; Ctrl+C (the cancel flag) ends it within 0.1 s with CANCELED
+    const auto rest = [] {
+        for (int i = 0; i < 10 && !detail::canceled(); ++i) QThread::msleep(100);
+        detail::failIfCanceled();
+    };
+    for (bool pass = true;; rest()) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (!pass) {
             const auto now = listing(watches);
@@ -362,7 +368,7 @@ QJsonObject follow(const QJsonObject& a, Context& ctx)
             if (!transient.contains(e.code)) throw;
             if (e.code != lastWarning) warn(e);
             lastWarning = e.code;
-            QThread::msleep(1000);
+            rest();
             continue;
         }
         lastWarning.clear();

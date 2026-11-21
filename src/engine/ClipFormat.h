@@ -8,7 +8,9 @@
 
 struct ClipFormat {
     bool ok = false;      // video (no still image/audio) with a readable format
-    int width = 0, height = 0; // as displayed (rotation from the metadata taken into account)
+    int width = 0, height = 0; // as displayed (rotation from the metadata taken into account), even (yuv420p)
+    int fileWidth = 0, fileHeight = 0; // the same before rounding to even: the file's own size (probe)
+    double rotation = 0;  // degrees clockwise from the metadata; only quarter turns are applied
     FrameRate rate;       // frame rate according to the file (the highest with variable frame rate)
     double averageFps = 0; // average frame rate (0 = unknown)
     bool variable = false; // variable frame rate (phone)
