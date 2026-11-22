@@ -592,7 +592,40 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 {
     end = 0;
     bool found = false;
-#ifdef SCHNEIDI_H264_SSE2
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+    // The x86-64-v3 build: the four lanes in one register.
+    const __m256d half = _mm256_set1_pd(0.5);
+    const __m256d absMask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x7fffffffffffffffLL));
+    __m256d tl = _mm256_setzero_pd(), hd = _mm256_setzero_pd();
+    for (int g = count - 4; g >= 0; g -= 4) {
+        const __m256d v = _mm256_loadu_pd(x + g);
+        const __m256d e = _mm256_mul_pd(v, _mm256_loadu_pd(scale + g));
+        const __m256d sq = _mm256_mul_pd(e, e);
+        if (found) {
+            hd = _mm256_add_pd(hd, sq);
+            continue;
+        }
+        const int m = _mm256_movemask_pd(_mm256_cmp_pd(_mm256_and_pd(v, absMask), half, _CMP_GE_OQ));
+        if (!m) {
+            tl = _mm256_add_pd(tl, sq);
+            continue;
+        }
+        found = true;
+        const int last = 31 - std::countl_zero(unsigned(m)); // the last lane of half a level or more
+        end = g + last + 1;
+        static const int64_t kBefore[4][4] = {{-1, 0, 0, 0}, {-1, -1, 0, 0}, {-1, -1, -1, 0}, {-1, -1, -1, -1}};
+        const __m256d before = _mm256_castsi256_pd(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(kBefore[last]))); // lanes < end
+        hd = _mm256_add_pd(hd, _mm256_and_pd(before, sq));
+        tl = _mm256_add_pd(tl, _mm256_andnot_pd(before, sq));
+    }
+    auto lanes = [](__m256d v) {
+        alignas(32) double l[4];
+        _mm256_store_pd(l, v);
+        return (l[0] + l[1]) + (l[2] + l[3]);
+    };
+    tail = lanes(tl);
+    energy = tail + lanes(hd);
+#elif defined(SCHNEIDI_H264_SSE2)
     const __m128d half = _mm_set1_pd(0.5);
     const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
     __m128d tl[2] = {_mm_setzero_pd(), _mm_setzero_pd()}, hd[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
@@ -690,7 +723,7 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 // never drops a level of 1 or more, the caller may still drop the whole block).
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                     int cbfInc, int* out, double* energy, uint64_t* nonZero, double lambdaHigh, int highFrom,
-                    double* zeroCost)
+                    double* zeroCost, TrellisLevelBits* levelTable)
 {
     if (nonZero)
         *nonZero = 0;
@@ -699,76 +732,48 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     // every path in the "nothing coded yet" node at no cost, so the search starts at that one.
     int end = count;
     double tail = 0; // squared error of the coefficients after `end` (always zero)
-    if (energy) {
-        trellisScan(x, scale, count, end, tail, *energy);
-    } else {
-#ifdef SCHNEIDI_H264_SSE2
-        const __m128d half = _mm_set1_pd(0.5);
-        const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
-        while (end >= 2) {
-            const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(_mm_loadu_pd(x + end - 2), absMask), half));
-            if (m) {
-                end -= (m & 2) ? 0 : 1;
-                break;
-            }
-            end -= 2;
-        }
-#elif defined(SCHNEIDI_H264_NEON)
-        const float64x2_t half = vdupq_n_f64(0.5);
-        while (end >= 2) {
-            const uint64x2_t ge = vcgeq_f64(vabsq_f64(vld1q_f64(x + end - 2)), half);
-            if (vgetq_lane_u64(ge, 1)) {
-                break;
-            }
-            if (vgetq_lane_u64(ge, 0)) {
-                end -= 1;
-                break;
-            }
-            end -= 2;
-        }
-#endif
-        while (end > 0 && std::abs(x[end - 1]) < 0.5)
-            --end;
-    }
+    double zero = 0; // and of the whole block at level 0
+    trellisScan(x, scale, count, end, tail, zero);
+    if (energy)
+        *energy = zero;
     std::fill(out, out + count, 0);
     const bool cat5 = cat == 5;
     const double l256 = lambda / 256.0;
     const double h256 = lambdaHigh >= 0 ? lambdaHigh / 256.0 : l256;
     if (lambdaHigh < 0)
         highFrom = count; // no position weighs differently
-    auto emptyCost = [&] {
-        double e = 0;
-        if (energy) {
-            e = *energy;
-        } else {
-            for (int k = 0; k < count; ++k)
-                e += (x[k] * scale[k]) * (x[k] * scale[k]);
-        }
-        return e + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
-    };
-    if (end == 0) {
-        if (zeroCost)
-            *zeroCost = emptyCost();
-        return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
-    }
+    const double cbf0 = cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0);
+    if (zeroCost)
+        *zeroCost = zero + cbf0;
+    if (end == 0)
+        return energy ? zero + cbf0 : 0.0;
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
     auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
     auto lastCtx = [&](int k) { return cat5 ? 417 + kLast8[k] : 166 + kSigOffset[cat] + k; };
     // Bits of a level by node (8 = nothing coded yet: the contexts of state 0), in 1/256 bits: |level| 1 and
     // 2 with the sign, and for larger ones the first bin (as 1, with the sign) and the two costs of the later
     // bins. Kept as doubles: every sum of them below is a whole number, so exact. Node 0 is never reached (the
-    // first coded level leads from "nothing coded yet" to node 1 or 4).
-    double one[9], two[9], first1[9], more0[9], more1[9];
-    for (int n = 1; n < 9; ++n) {
-        const int state = n == kEmpty ? 0 : n;
-        const int ctx0 = absBase + (state < 4 ? 1 + state : 0);
-        const int ctxN = absBase + 5 + (state < 4 ? 0 : state - 3);
-        one[n] = double(ce.binCost(ctx0, 0) + 256);
-        first1[n] = double(ce.binCost(ctx0, 1) + 256);
-        more0[n] = double(ce.binCost(ctxN, 0));
-        more1[n] = double(ce.binCost(ctxN, 1));
-        two[n] = first1[n] + more0[n];
+    // first coded level leads from "nothing coded yet" to node 1 or 4). levelTable (optional) keeps them for
+    // the caller's next blocks of the same category and contexts.
+    TrellisLevelBits ownTable;
+    TrellisLevelBits& table = levelTable ? *levelTable : ownTable;
+    if (!table.ready) {
+        table.ready = true;
+        for (int n = 1; n < 9; ++n) {
+            const int state = n == kEmpty ? 0 : n;
+            const int ctx0 = absBase + (state < 4 ? 1 + state : 0);
+            const int ctxN = absBase + 5 + (state < 4 ? 0 : state - 3);
+            table.one[n] = double(ce.binCost(ctx0, 0) + 256);
+            table.first1[n] = double(ce.binCost(ctx0, 1) + 256);
+            table.more0[n] = double(ce.binCost(ctxN, 0));
+            table.more1[n] = double(ce.binCost(ctxN, 1));
+            table.two[n] = table.first1[n] + table.more0[n];
+        }
+        // (Index 0 repeats "nothing coded yet": the lanes of the low group below are tables[0..3].)
+        table.one[0] = table.one[kEmpty], table.two[0] = table.two[kEmpty], table.first1[0] = table.first1[kEmpty];
+        table.more0[0] = table.more0[kEmpty], table.more1[0] = table.more1[kEmpty];
     }
+    const double *one = table.one, *two = table.two, *first1 = table.first1, *more0 = table.more0, *more1 = table.more1;
     // The part of a level's bits that does not depend on the node: a = |level| - 1 >= 1 costs
     // first1 + ones * more1 + zero * more0 + escape.
     struct LevelBits {
@@ -788,6 +793,10 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         }
         return LevelBits{double(prefix - 1), prefix < 14 ? 1.0 : 0.0, double(escape)};
     };
+    // The costs are kept relative to the all-zero block (`zero`, summed by the scan): a level adds what it takes
+    // off the squared error (a negative number) and its bits, a zero only its bits where a level was coded before -
+    // and those wait as whole numbers (zerosLow, zerosHigh by the weight of their position) until the next
+    // coefficient of half a level or more, so a run of small coefficients costs no floating-point additions.
     // Costs per node, in two groups: "low" = nothing coded yet (cE) and one to three levels of 1 so far (c1 to
     // c3), "high" = one to four levels above 1 so far (c4 to c7). A node no path has reached costs 1e300; adding
     // to it leaves exactly 1e300 and it never wins a strict comparison, so a group is computed as a whole without
@@ -802,35 +811,223 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     uint8_t step[64][9];
     int16_t mags[64][3]; // the candidates' magnitudes
     uint64_t pass = 0; // positions below half a level: every path keeps its node there (level 0)
+    uint32_t zerosLow = 0, zerosHigh = 0; // bits (1/256) of the zeros since the last flush, by weight (lambda, lambdaHigh)
+    auto flushZeros = [&] {
+        if (!(zerosLow | zerosHigh))
+            return;
+        const double z = h256 * double(zerosHigh) + l256 * double(zerosLow);
+        zerosLow = zerosHigh = 0;
+        c1 += z, c2 += z, c3 += z, c4 += z, c5 += z, c6 += z, c7 += z; // (an unreached node stays at 1e300)
+    };
     constexpr int kHi = 16; // step: the second candidate
     auto take = [](double& best, int& bestStep, double c, int s) {
         const bool less = c < best;
         best = less ? c : best;
         bestStep = less ? s : bestStep;
     };
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+    // The x86-64-v3 build keeps each group in one register (low: cE, c1, c2, c3; high: c4 to c7) and computes the
+    // arrivals of a group at once: the same sums and the same order of comparisons as the loop below, so the same
+    // path. The steps are kept as 64-bit lanes (laneStep[k][node & 7]).
+    const bool lanes = gTrellisTwo;
+    alignas(32) int64_t laneStep[64][8];
+    if (lanes) {
+        auto steps = [](int a, int b, int c, int d) { return _mm256_castsi256_pd(_mm256_setr_epi64x(a, b, c, d)); };
+        const __m256d dead = _mm256_set1_pd(kDead);
+        const __m256d lane3 = _mm256_castsi256_pd(_mm256_setr_epi64x(0, 0, 0, -1));
+        const __m256d oneL = _mm256_loadu_pd(one), oneH = _mm256_loadu_pd(one + 4);
+        const __m256d twoL = _mm256_loadu_pd(two), twoH = _mm256_loadu_pd(two + 4);
+        __m256d L = _mm256_setr_pd(0.0, kDead, kDead, kDead), H = dead;
+        auto flushLanes = [&] {
+            if (!(zerosLow | zerosHigh))
+                return;
+            const __m256d z = _mm256_set1_pd(h256 * double(zerosHigh) + l256 * double(zerosLow));
+            zerosLow = zerosHigh = 0;
+            L = _mm256_add_pd(L, _mm256_blend_pd(z, _mm256_setzero_pd(), 1)); // (not "nothing coded yet")
+            H = _mm256_add_pd(H, z);
+        };
+        // cost + error + weight * bits, as the loop below sums it
+        auto arrive = [](__m256d c, __m256d err, __m256d lkv, __m256d bits) {
+            return _mm256_add_pd(_mm256_add_pd(c, err), _mm256_mul_pd(lkv, bits));
+        };
+        auto less = [](__m256d a, __m256d b) { return _mm256_cmp_pd(a, b, _CMP_LT_OQ); };
+        // lanes 0 0 1 2: the arrivals from the node below
+        auto fromBelow = [](__m256d v) { return _mm256_permute4x64_pd(v, _MM_SHUFFLE(2, 1, 0, 0)); };
+        auto takeScalar = [](double& best, int& bestStep, double c, int st) {
+            const bool lt = c < best;
+            best = lt ? c : best;
+            bestStep = lt ? st : bestStep;
+        };
+        auto lane0 = [](__m256d v, double c) { return _mm256_blend_pd(v, _mm256_castpd128_pd256(_mm_set_sd(c)), 1); };
+        auto stepLane0 = [](__m256d v, int st) {
+            return _mm256_blend_pd(v, _mm256_castsi256_pd(_mm256_castsi128_si256(_mm_cvtsi32_si128(st))), 1);
+        };
+        for (int k = end - 1; k >= 0; --k) {
+            const double ax = std::abs(x[k]);
+            if (ax < 0.5) {
+                (k >= highFrom ? zerosHigh : zerosLow) += ce.binCost(sigCtx(k), 0);
+                pass |= uint64_t(1) << k;
+                continue;
+            }
+            flushLanes();
+            const double lk = k >= highFrom ? h256 : l256;
+            const double err0 = ax * scale[k];
+            const double errSq0 = err0 * err0;
+            const bool notLast = k < count - 1;
+            const uint32_t sig1 = notLast ? ce.binCost(sigCtx(k), 1) : 0;
+            const double sigMore = notLast ? double(sig1 + ce.binCost(lastCtx(k), 0)) : 0.0;
+            const double sigLast = notLast ? double(sig1 + ce.binCost(lastCtx(k), 1)) : 0.0;
+            const __m256d lkv = _mm256_set1_pd(lk);
+            const __m256d sigH = _mm256_set1_pd(sigMore);
+            const __m256d sigL = lane0(sigH, sigLast);
+            const int fl = int(ax);
+            __m256d sL = _mm256_setzero_pd(), sH = _mm256_setzero_pd();
+            if (fl == 0) {
+                // 0 (the node stays) or 1.
+                mags[k][0] = 0;
+                mags[k][1] = 1;
+                const double err1 = (ax - 1) * scale[k];
+                const __m256d gain1 = _mm256_set1_pd(err1 * err1 - errSq0);
+                const __m256d stayBits = _mm256_set1_pd(notLast ? lk * ce.binCost(sigCtx(k), 0) : 0.0);
+                if (lowLive) {
+                    const __m256d stay = _mm256_add_pd(L, _mm256_blend_pd(stayBits, _mm256_setzero_pd(), 1));
+                    const __m256d up = arrive(L, gain1, lkv, _mm256_add_pd(oneL, sigL)); // upE, up1, up2, up3
+                    const __m256d upBelow = fromBelow(up);
+                    // cE | stay1, upE | up1, stay2 | up2, stay3, up3
+                    const __m256d first = _mm256_blend_pd(stay, upBelow, 0b1100);
+                    const __m256d second = _mm256_blend_pd(_mm256_blend_pd(upBelow, stay, 0b1100), dead, 1);
+                    const __m256d m2 = less(second, first);
+                    const __m256d best = _mm256_blendv_pd(first, second, m2);
+                    const __m256d st = _mm256_blendv_pd(steps(kEmpty, 1, 1 | kHi, 2 | kHi), steps(0, kEmpty | kHi, 2, 3), m2);
+                    const __m256d m3 = _mm256_and_pd(less(up, best), lane3);
+                    L = _mm256_blendv_pd(best, up, m3);
+                    sL = _mm256_blendv_pd(st, steps(0, 0, 0, 3 | kHi), m3);
+                }
+                if (highLive) {
+                    const __m256d stay = _mm256_add_pd(H, stayBits);
+                    const __m256d up = arrive(H, gain1, lkv, _mm256_add_pd(oneH, sigH));
+                    const __m256d m = less(up, stay);
+                    H = _mm256_blendv_pd(stay, up, m);
+                    sH = _mm256_blendv_pd(steps(4, 5, 6, 7), steps(4 | kHi, 5 | kHi, 6 | kHi, 7 | kHi), m);
+                }
+            } else if (fl == 1) {
+                // 1 or 2: a level of 1.5 or more never drops to zero.
+                mags[k][0] = 1;
+                mags[k][1] = 2;
+                const double errLo = (ax - 1) * scale[k], errHi = (ax - 2) * scale[k];
+                const __m256d errSqLo = _mm256_set1_pd(errLo * errLo - errSq0), errSqHi = _mm256_set1_pd(errHi * errHi - errSq0);
+                __m256d upL = dead, downH = dead, newL = dead, newH = dead;
+                if (lowLive) {
+                    const __m256d down = arrive(L, errSqLo, lkv, _mm256_add_pd(oneL, sigL)); // downE, down1, down2, down3
+                    upL = arrive(L, errSqHi, lkv, _mm256_add_pd(twoL, sigL));
+                    // - | downE | down1 | down2, down3
+                    const __m256d below = fromBelow(down);
+                    const __m256d m = _mm256_and_pd(less(down, below), lane3);
+                    newL = _mm256_blend_pd(_mm256_blendv_pd(below, down, m), dead, 1);
+                    sL = _mm256_blendv_pd(steps(0, kEmpty, 1, 2), steps(0, 0, 0, 3), m);
+                }
+                if (highLive) {
+                    downH = arrive(H, errSqLo, lkv, _mm256_add_pd(oneH, sigH));
+                    const __m256d up = arrive(H, errSqHi, lkv, _mm256_add_pd(twoH, sigH));
+                    // (c4 below) | up4, down5 | up5, down6 | up6, down7, up7
+                    const __m256d first = fromBelow(up);
+                    const __m256d m2 = less(downH, first);
+                    const __m256d best = _mm256_blendv_pd(first, downH, m2);
+                    const __m256d st = _mm256_blendv_pd(steps(0, 4 | kHi, 5 | kHi, 6 | kHi), steps(0, 5, 6, 7), m2);
+                    const __m256d m3 = _mm256_and_pd(less(up, best), lane3);
+                    newH = _mm256_blendv_pd(best, up, m3);
+                    sH = _mm256_blendv_pd(st, steps(0, 0, 0, 7 | kHi), m3);
+                }
+                // c4: up1, up2, up3, down4, then 2 from "nothing coded yet"
+                alignas(32) double u[4];
+                _mm256_store_pd(u, upL);
+                double f4 = u[1];
+                int s4 = 1 | kHi;
+                takeScalar(f4, s4, u[2], 2 | kHi);
+                takeScalar(f4, s4, u[3], 3 | kHi);
+                takeScalar(f4, s4, _mm256_cvtsd_f64(downH), 4);
+                takeScalar(f4, s4, u[0], kEmpty | kHi);
+                L = newL;
+                H = lane0(newH, f4);
+                sH = stepLane0(sH, s4);
+                highLive = true;
+            } else {
+                // Round down or up, both above 1: every path ends in the high group.
+                mags[k][0] = int16_t(fl);
+                mags[k][1] = int16_t(fl + 1);
+                const double errLo = (ax - fl) * scale[k], errHi = (ax - (fl + 1)) * scale[k];
+                const __m256d errSqLo = _mm256_set1_pd(errLo * errLo - errSq0), errSqHi = _mm256_set1_pd(errHi * errHi - errSq0);
+                const LevelBits lo = levelBits(fl - 1), hi = levelBits(fl);
+                // first1 + ones * more1 + zero * more0 + escape + sig (whole numbers: exact in any order)
+                auto bits = [&](const LevelBits& lb, int from, __m256d sig) {
+                    const __m256d a = _mm256_add_pd(_mm256_loadu_pd(first1 + from),
+                                                    _mm256_mul_pd(_mm256_set1_pd(lb.ones), _mm256_loadu_pd(more1 + from)));
+                    const __m256d b = _mm256_add_pd(a, _mm256_mul_pd(_mm256_set1_pd(lb.zero), _mm256_loadu_pd(more0 + from)));
+                    return _mm256_add_pd(_mm256_add_pd(b, _mm256_set1_pd(lb.escape)), sig);
+                };
+                __m256d newH = dead;
+                if (highLive) {
+                    const __m256d down = arrive(H, errSqLo, lkv, bits(lo, 4, sigH));
+                    const __m256d up = arrive(H, errSqHi, lkv, bits(hi, 4, sigH));
+                    // (c4 below) | down4, up4 | down5, up5 | down6, up6, down7, up7
+                    const __m256d first = fromBelow(down), second = fromBelow(up);
+                    const __m256d m2 = less(second, first);
+                    __m256d best = _mm256_blendv_pd(first, second, m2);
+                    __m256d st = _mm256_blendv_pd(steps(0, 4, 5, 6), steps(0, 4 | kHi, 5 | kHi, 6 | kHi), m2);
+                    const __m256d m3 = _mm256_and_pd(less(down, best), lane3);
+                    best = _mm256_blendv_pd(best, down, m3);
+                    st = _mm256_blendv_pd(st, steps(0, 0, 0, 7), m3);
+                    const __m256d m4 = _mm256_and_pd(less(up, best), lane3);
+                    newH = _mm256_blendv_pd(best, up, m4);
+                    sH = _mm256_blendv_pd(st, steps(0, 0, 0, 7 | kHi), m4);
+                }
+                double f4 = kDead;
+                int s4 = 0;
+                if (lowLive) {
+                    alignas(32) double d[4], u[4];
+                    _mm256_store_pd(d, arrive(L, errSqLo, lkv, bits(lo, 0, sigL)));
+                    _mm256_store_pd(u, arrive(L, errSqHi, lkv, bits(hi, 0, sigL)));
+                    f4 = d[1], s4 = 1;
+                    takeScalar(f4, s4, u[1], 1 | kHi);
+                    takeScalar(f4, s4, d[2], 2);
+                    takeScalar(f4, s4, u[2], 2 | kHi);
+                    takeScalar(f4, s4, d[3], 3);
+                    takeScalar(f4, s4, u[3], 3 | kHi);
+                    takeScalar(f4, s4, d[0], kEmpty);
+                    takeScalar(f4, s4, u[0], kEmpty | kHi);
+                }
+                L = dead;
+                H = lane0(newH, f4);
+                sH = stepLane0(sH, s4);
+                lowLive = false;
+                highLive = true;
+            }
+            _mm256_store_pd(reinterpret_cast<double*>(laneStep[k]), sL);
+            _mm256_store_pd(reinterpret_cast<double*>(laneStep[k]) + 4, sH);
+        }
+        flushLanes();
+        alignas(32) double c[8];
+        _mm256_store_pd(c, L);
+        _mm256_store_pd(c + 4, H);
+        cE = c[0], c1 = c[1], c2 = c[2], c3 = c[3], c4 = c[4], c5 = c[5], c6 = c[6], c7 = c[7];
+    }
+    auto stepAt = [&](int k, int n) { return lanes ? int(laneStep[k][n & 7]) : int(step[k][n]); };
+    for (int k = lanes ? -1 : end - 1; k >= 0; --k) {
+#else
+    auto stepAt = [&](int k, int n) { return int(step[k][n]); };
     for (int k = end - 1; k >= 0; --k) {
+#endif
         const double ax = std::abs(x[k]);
-        const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
-        const double stayBits = lk * ce.binCost(sigCtx(k), 0);
-        const double err0 = ax * scale[k];
-        const double errSq0 = err0 * err0;
         if (ax < 0.5) {
-            // Only level 0: every path keeps its node.
-            if (lowLive) {
-                c1 = c1 + errSq0 + stayBits;
-                c2 = c2 + errSq0 + stayBits;
-                c3 = c3 + errSq0 + stayBits;
-                cE += errSq0;
-            }
-            if (highLive) {
-                c4 = c4 + errSq0 + stayBits;
-                c5 = c5 + errSq0 + stayBits;
-                c6 = c6 + errSq0 + stayBits;
-                c7 = c7 + errSq0 + stayBits;
-            }
+            // Only level 0: every path keeps its node, the ones with a level pay the bits of the zero.
+            (k >= highFrom ? zerosHigh : zerosLow) += ce.binCost(sigCtx(k), 0);
             pass |= uint64_t(1) << k;
             continue;
         }
+        flushZeros();
+        const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
+        const double err0 = ax * scale[k];
+        const double errSq0 = err0 * err0;
         // Significance and last bins of this position: a first coded coefficient (from "nothing coded yet") is
         // the last one of the block.
         const bool notLast = k < count - 1;
@@ -844,17 +1041,17 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][0] = 0;
             mags[k][1] = 1;
             const double err1 = (ax - 1) * scale[k];
-            const double errSq1 = err1 * err1;
+            const double gain1 = err1 * err1 - errSq0;
+            const double stayBits = notLast ? lk * ce.binCost(sigCtx(k), 0) : 0.0; // (the last position: no path has a level)
             if (lowLive) {
-                const double stayE = cE + errSq0;
-                const double stay1 = (c1 + errSq0) + stayBits;
-                const double stay2 = (c2 + errSq0) + stayBits;
-                const double stay3 = (c3 + errSq0) + stayBits;
-                const double upE = (cE + errSq1) + lk * (one[kEmpty] + sigLast);
-                const double up1 = (c1 + errSq1) + lk * (one[1] + sigMore);
-                const double up2 = (c2 + errSq1) + lk * (one[2] + sigMore);
-                const double up3 = (c3 + errSq1) + lk * (one[3] + sigMore);
-                cE = stayE, sE = kEmpty;
+                const double stay1 = c1 + stayBits;
+                const double stay2 = c2 + stayBits;
+                const double stay3 = c3 + stayBits;
+                const double upE = (cE + gain1) + lk * (one[kEmpty] + sigLast);
+                const double up1 = (c1 + gain1) + lk * (one[1] + sigMore);
+                const double up2 = (c2 + gain1) + lk * (one[2] + sigMore);
+                const double up3 = (c3 + gain1) + lk * (one[3] + sigMore);
+                sE = kEmpty;
                 c1 = stay1, s1 = 1;
                 take(c1, s1, upE, kEmpty | kHi);
                 c2 = up1, s2 = 1 | kHi;
@@ -865,8 +1062,8 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             }
             if (highLive) {
                 auto stayOrUp = [&](double& c, int& s, int n) {
-                    const double stay = (c + errSq0) + stayBits;
-                    const double up = (c + errSq1) + lk * (one[n] + sigMore);
+                    const double stay = c + stayBits;
+                    const double up = (c + gain1) + lk * (one[n] + sigMore);
                     c = stay, s = n;
                     take(c, s, up, n | kHi);
                 };
@@ -881,6 +1078,8 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][1] = int16_t(fl);
             mags[k][2] = int16_t(fl + 1);
             const double errLo = (ax - fl) * scale[k], errHi = (ax - (fl + 1)) * scale[k];
+            const double gainLo = errLo * errLo - errSq0, gainHi = errHi * errHi - errSq0;
+            const double stayBits = notLast ? lk * ce.binCost(sigCtx(k), 0) : 0.0;
             const LevelBits lo = levelBits(fl - 1), hi = levelBits(fl);
             const double cost[9] = {kDead, c1, c2, c3, c4, c5, c6, c7, cE};
             double fresh[9];
@@ -891,11 +1090,11 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
                 const double sig = n == kEmpty ? sigLast : sigMore;
                 const double bitsLo = fl == 1 ? one[n] : first1[n] + lo.ones * more1[n] + lo.zero * more0[n] + lo.escape;
                 const double bitsHi = first1[n] + hi.ones * more1[n] + hi.zero * more0[n] + hi.escape;
-                take(fresh[n], st[n], n == kEmpty ? cost[n] + errSq0 : (cost[n] + errSq0) + stayBits, n);
+                take(fresh[n], st[n], n == kEmpty ? cost[n] : cost[n] + stayBits, n);
                 const int toLo = fl == 1 ? (state < 4 ? std::min(state + 1, 3) : state) : state < 4 ? 4 : std::min(state + 1, 7);
                 const int toHi = state < 4 ? 4 : std::min(state + 1, 7);
-                take(fresh[toLo], st[toLo], (cost[n] + errLo * errLo) + lk * (bitsLo + sig), n | kHi);
-                take(fresh[toHi], st[toHi], (cost[n] + errHi * errHi) + lk * (bitsHi + sig), n | 2 * kHi);
+                take(fresh[toLo], st[toLo], (cost[n] + gainLo) + lk * (bitsLo + sig), n | kHi);
+                take(fresh[toHi], st[toHi], (cost[n] + gainHi) + lk * (bitsHi + sig), n | 2 * kHi);
             }
             c1 = fresh[1], c2 = fresh[2], c3 = fresh[3], c4 = fresh[4], c5 = fresh[5], c6 = fresh[6], c7 = fresh[7];
             cE = fresh[kEmpty];
@@ -906,7 +1105,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][0] = 1;
             mags[k][1] = 2;
             const double errLo = (ax - 1) * scale[k], errHi = (ax - 2) * scale[k];
-            const double errSqLo = errLo * errLo, errSqHi = errHi * errHi;
+            const double errSqLo = errLo * errLo - errSq0, errSqHi = errHi * errHi - errSq0; // (against level 0)
             double f1 = kDead, f2 = kDead, f3 = kDead, f4 = kDead;
             if (lowLive) {
                 const double downE = (cE + errSqLo) + lk * (one[kEmpty] + sigLast);
@@ -952,7 +1151,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][0] = int16_t(fl);
             mags[k][1] = int16_t(fl + 1);
             const double errLo = (ax - fl) * scale[k], errHi = (ax - (fl + 1)) * scale[k];
-            const double errSqLo = errLo * errLo, errSqHi = errHi * errHi;
+            const double errSqLo = errLo * errLo - errSq0, errSqHi = errHi * errHi - errSq0; // (against level 0)
             const LevelBits lo = levelBits(fl - 1), hi = levelBits(fl);
             auto down = [&](double c, int n, double sig) {
                 return (c + errSqLo) + lk * (first1[n] + lo.ones * more1[n] + lo.zero * more0[n] + lo.escape + sig);
@@ -994,11 +1193,10 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         st[1] = uint8_t(s1), st[2] = uint8_t(s2), st[3] = uint8_t(s3), st[4] = uint8_t(s4);
         st[5] = uint8_t(s5), st[6] = uint8_t(s6), st[7] = uint8_t(s7), st[kEmpty] = uint8_t(sE);
     }
+    flushZeros();
     const double cost[9] = {kDead, c1, c2, c3, c4, c5, c6, c7, cE};
     int best = kEmpty;
-    double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
-    if (zeroCost)
-        *zeroCost = emptyCost();
+    double bestCost = cost[kEmpty] + cbf0;
     for (int n = 0; n < 8; ++n) {
         const double c = cost[n] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 1));
         if (c < bestCost) {
@@ -1011,14 +1209,16 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     uint64_t nz = 0;
     for (int n = best; coded; coded &= coded - 1) {
         const int k = std::countr_zero(coded);
-        const int mag = mags[k][step[k][n] >> 4];
+        const int st = stepAt(k, n);
+        const int mag = mags[k][st >> 4];
         out[k] = x[k] < 0 ? -mag : mag;
         nz |= uint64_t(mag != 0) << k;
-        n = step[k][n] & 15;
+        n = st & 15;
     }
     if (nonZero)
         *nonZero = nz;
-    return bestCost + tail;
+    // (Without energy the squared error after the last coefficient of half a level is left out, as it always was.)
+    return (energy ? zero : zero - tail) + bestCost;
 }
 
 

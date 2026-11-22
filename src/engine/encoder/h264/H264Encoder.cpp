@@ -41,7 +41,7 @@ namespace schneidi::h264 {
 // nonZero (optional): bit k set where out[k] != 0.
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                     int cbfInc, int* out, double* energy = nullptr, uint64_t* nonZero = nullptr, double lambdaHigh = -1.0,
-                    int highFrom = 0, double* zeroCost = nullptr);
+                    int highFrom = 0, double* zeroCost = nullptr, TrellisLevelBits* levelTable = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
 S264_DEV(bool, gTiming, devEnv("H264_TIMING") != nullptr);
@@ -7149,6 +7149,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     };
     const bool noteFine = fineLambda < 0 && tPsy.weight > 0;
     int fineQuads = noteFine ? 0 : 15; // (not asked for: assume it may)
+    TrellisLevelBits levelTable; // (one category per call, and `live` does not change during it)
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
@@ -7215,7 +7216,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 double energy = 0;
                 uint64_t nz = 0;
                 const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
-                                              est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
+                                              est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8, nullptr, &levelTable);
                 if (noteFine && reachesHigh(xs, gPsyFineFrom8, 64))
                     fineQuads |= 1 << b8;
                 const bool any = nz != 0;
@@ -7311,7 +7312,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             uint64_t nz = 0;
             double zeroJ = 0;
             jBlk[blkIdx] = cabacTrellis(*live, 2, xs, scale4, 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr, &nz,
-                                        fineLambda, gPsyFineFrom4, &zeroJ);
+                                        fineLambda, gPsyFineFrom4, &zeroJ, &levelTable);
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             for (uint64_t m = nz; m; m &= m - 1) {
                 const int s = std::countr_zero(m);
@@ -7976,16 +7977,25 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // split only when its estimate is below kEstSplit times the 16x16 one. Measured (two-pass, AQ +
     // tree, 600 pictures CS2, BD-rate PSNR-Y / SSIM-Y / instructions against coding every candidate):
     // -0.40 / -0.33 % / -1.7 % (the split now competes with its best transform, not only with 4x4;
-    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit 1.0: +0.10 %
-    // for another -0.5 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
+    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit and kEstWhole (below)
+    // at 1: only the layout with the lower estimate is coded. EncoderConfig::modeEstimate; H264_RDEST=0/1
+    // overrides, H264_ESTSPLIT the factor (1e9 = the split is always coded).
     static const double kEstBoth = devEnv("H264_ESTBOTH") ? std::atof(devEnv("H264_ESTBOTH")) : 0.0;
-    static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1e9;
+    static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1.0;
     // The split is planned with one transform only where the 16x16 layout's two plans were more than kEstSplitT *
     // lambda apart: the one that won there (it wins for the split as well then; the loss by the statistics is
     // 0.14 % of the luma cost of those macroblocks). Measured 22.11.2026 (fixed QP 22 / 26 / 30 / 34, 900 pictures
     // CS2 with cuts, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions): +0.05 / +0.02 / +0.09 % for -1.5 / -1.2 /
     // -0.7 / -0.3 %. H264_ESTSPLITT overrides, 1e9 = always both.
     static const double kEstSplitT = devEnv("H264_ESTSPLITT") ? std::atof(devEnv("H264_ESTSPLITT")) : 16.0;
+    // The 16x16 layout is not coded for real where the split's estimate is below kEstWhole times its own. Measured
+    // 22.11.2026 at QP 22 / 26 / 30 / 34 (three clips, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions against
+    // coding both layouts), with 0.9 (the split wins nearly every one of those): -0.03 / -0.04 / +0.06 % for -0.4 /
+    // -0.4 / -0.3 / -0.1 % (CS2 with cuts), +0.00 / +0.00 / +0.09 % for -0.1 % (talking head), -0.03 / +0.02 /
+    // -0.09 % for -0.2 / -0.1 / -0.2 / +0.0 % (vertical short); with 1 and kEstSplit 1: +0.06 / +0.05 / -0.02 %
+    // for -1.6 / -1.5 / -1.2 / -0.7 %, +0.01 / +0.06 / -0.34 % for -0.9 / -0.8 / -0.6 / -0.3 %, +0.04 / +0.07 /
+    // +0.09 % for -0.7 / -0.4 / -0.5 / -0.3 %. H264_ESTWHOLE overrides, 0 = always coded.
+    static const double kEstWhole = devEnv("H264_ESTWHOLE") ? std::atof(devEnv("H264_ESTWHOLE")) : 1.0;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
@@ -8072,7 +8082,6 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             return std::min(first, other);
         };
         plan(whole, pw);
-        const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
             const bool one = std::max(pw.j4, pw.j8) < 1e299 && std::abs(pw.j4 - pw.j8) > kEstSplitT * lambda;
             plan(split, ps, &pw, sameQuadrants(predictLayout(whole).lp, predictLayout(split).lp),
@@ -8087,7 +8096,11 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             };
             const double jw = std::min(pw.j4, pw.j8) + lambda * headBits(whole);
             const double js = std::min(ps.j4, ps.j8) + lambda * headBits(split);
-            if (js < jw * kEstSplit || gStats) {
+            const bool codeSplit = js < jw * kEstSplit || gStats;
+            double costWhole = 1e300;
+            if (!codeSplit || !(js < jw * kEstWhole) || gStats)
+                costWhole = codeLayout(whole, pw);
+            if (codeSplit) {
                 const double costSplit = codeLayout(split, ps);
                 if (gStats) {
                     const double r = js / std::max(1.0, jw);
@@ -8100,6 +8113,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     }
                 }
             }
+        } else {
+            codeLayout(whole, pw);
         }
         if (gStats) {
             std::lock_guard<std::mutex> l(gStatMutex);
