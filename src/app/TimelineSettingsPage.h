@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QWidget>
@@ -19,10 +20,12 @@ public:
 
     ZoomAnchor::Mode zoomAnchor() const;          // where wheel zoom stays put (ZoomAnchor::mode)
     PlayheadMove::Mode afterPlayheadMove() const; // playback after moving the playhead (PlayheadMove::mode)
+    TimelineOptions::Follow follow() const;       // follow the playhead while playing
 
     void store() const; // every choice into QSettings (only what changed)
 
 private:
     QComboBox* m_zoomAnchor = nullptr;
     QComboBox* m_afterSeek = nullptr;
+    QComboBox* m_follow = nullptr;
 };

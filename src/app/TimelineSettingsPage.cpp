@@ -59,8 +59,17 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                         "herum; ist sie gerade nicht zu sehen, zoomt es an der Maus. Tasten zoomen immer an der "
                         "Abspielmarke.")));
 
-    // Playback: what it does after the user moved the playhead (PlayheadMove, read at every move)
+    // Playback: following the playhead (read at every play start), what it does after the user moved the playhead
+    // (PlayheadMove, read at every move)
     QFormLayout* play = group(lay, T("Wiedergabe"));
+    using F = TimelineOptions::Follow;
+    m_follow = combo("timeline_follow_playback",
+                     {{T("Aus"), int(F::Off)}, {T("Seitenweise"), int(F::Page)}, {T("Abspielmarke mittig"), int(F::Center)}},
+                     int(TimelineOptions::follow()));
+    play->addRow(T("Beim Abspielen mitscrollen"), m_follow);
+    play->addRow(hint(T("Aus: die Timeline bleibt, wo du sie hinscrollst. Seitenweise: läuft die Abspielmarke aus dem "
+                        "Bild, blättert die Timeline um. Mittig: die Timeline läuft unter der Abspielmarke durch. "
+                        "Scrollst oder zoomst du beim Abspielen, bleibt sie bis zum nächsten Start stehen.")));
     m_afterSeek = combo("timeline_after_playhead_move",
                         {{T("Standard"), int(PlayheadMove::Mode::Standard)},
                          {T("Weiter wie vorher"), int(PlayheadMove::Mode::Continue)},
@@ -83,8 +92,14 @@ PlayheadMove::Mode TimelineSettingsPage::afterPlayheadMove() const
     return PlayheadMove::Mode(m_afterSeek->currentData().toInt());
 }
 
+TimelineOptions::Follow TimelineSettingsPage::follow() const
+{
+    return TimelineOptions::Follow(m_follow->currentData().toInt());
+}
+
 void TimelineSettingsPage::store() const
 {
+    if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());
     if (zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(zoomAnchor());
     if (afterPlayheadMove() != PlayheadMove::mode()) PlayheadMove::setMode(afterPlayheadMove());
 }

@@ -299,6 +299,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
+    // Playing or not: the timeline may follow the playhead while it plays (Settings › Timeline, off by default)
+    connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {
+        tv->setPlaying(m_engine->timelinePositions() ? speed : 0.0);
+    });
     connect(tv, &TimelineView::seekRequested, this, [this](int f) {
         if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(f);
         else m_engine->seek(f);

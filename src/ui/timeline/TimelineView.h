@@ -145,6 +145,9 @@ public:
 
 public slots:
     void setPlayhead(int frame);
+    // Playback speed (0 = paused; Engine::speedChanged): while it plays, the view may follow the playhead
+    // (TimelineOptions::follow, read at the start). Scrolling or zooming sideways stops that until the next start
+    void setPlaying(double speed);
     void setTool(TimelineView::Tool tool);
     void setSnapping(bool on);
     // View like DaVinci's timeline view options: clip name resp. duration in the title bar
@@ -481,6 +484,11 @@ private:
     bool m_showNames = true;
     bool m_showDurations = false;
     int m_playhead = 0;
+    double m_playSpeed = 0;       // setPlaying
+    bool m_following = false;     // the view follows the playhead (until the user scrolls/zooms)
+    int m_followMode = 0;         // TimelineOptions::Follow at the play start
+    void followPlayhead(int frame); // turn the view along with the playing playhead (only from setPlayhead)
+    void stopFollowing() { m_following = false; } // the user moved the view
 
     Drag m_drag = Drag::None;
     QSet<int> m_retimeClips; // clips with visible retime controls

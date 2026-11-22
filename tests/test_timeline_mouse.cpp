@@ -4,7 +4,8 @@
 // tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them); where wheel zoom stays
 // put (ZoomAnchor: the mouse by default, the visible playhead by choice); a playhead move in the ruler is framed by
 // playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
-// table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways.
+// table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
+// the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms.
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -16,6 +17,7 @@
 #include "core/TimelineOps.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/ZoomAnchor.h"
 
@@ -809,6 +811,89 @@ void testWheelSideways()
     CHECK(!TimelineView::wheelPansSideways({60, 120}, {}));
 }
 
+// Following the playhead while playing (TimelineOptions::follow): off by default (core rule); page turns and centre
+// only while it plays and only for the playback; scrolling or zooming sideways ends it until the next start
+void testFollowPlayback()
+{
+    using F = TimelineOptions::Follow;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::follow() == F::Off);
+    Fixture f;
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    const double vis = (f.tv.width() - TimelineView::kHeaderW) / 2.0; // 510 frames
+    // Off: the playhead runs out of view, the view stays
+    f.tv.setPlaying(1.0);
+    for (int fr = 0; fr <= 1200; fr += 10) f.tv.setPlayhead(fr);
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    f.tv.setPlaying(0);
+
+    // Page: nothing until it leaves the view, then the playhead stands at the left edge
+    TimelineOptions::setFollow(F::Page);
+    CHECK(TimelineOptions::follow() == F::Page);
+    f.tv.setPlayhead(0);
+    f.tv.setPlaying(1.0);
+    for (int fr = 0; fr < int(vis); fr += 10) f.tv.setPlayhead(fr);
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    f.tv.setPlayhead(int(vis) + 2);
+    CHECK_EQ(f.tv.view().leftFrame, double(int(vis) + 2));
+    // A model change while it plays moves nothing (core rule)
+    const double left = f.tv.view().leftFrame;
+    f.editor.trimClip(2, TimelineOps::Edge::End, -20, true);
+    QApplication::processEvents();
+    CHECK_EQ(f.tv.view().leftFrame, left);
+    // Not while dragging in the ruler (scrubbing): the seeks of the drag do not turn the page
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(left + 50), TimelineView::kRulerH / 2}, Qt::LeftButton);
+    f.tv.setPlayhead(int(left + 2 * vis));
+    CHECK_EQ(f.tv.view().leftFrame, left);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(left + 50), TimelineView::kRulerH / 2}, Qt::NoButton);
+    // The user scrolls sideways while it plays: following stops until the next start
+    f.tv.setLeftFrame(100);
+    f.tv.setPlayhead(2000);
+    CHECK_EQ(f.tv.view().leftFrame, 100.0);
+    f.tv.setPlaying(0);
+    f.tv.setPlayhead(100);
+    f.tv.setPlaying(1.0);
+    f.tv.setPlayhead(2000);
+    CHECK_EQ(f.tv.view().leftFrame, 2000.0);
+    // Zooming (wheel or keys) ends it too
+    wheelZoom(f.tv, TimelineView::kHeaderW + 100);
+    const double zoomedLeft = f.tv.view().leftFrame;
+    f.tv.setPlayhead(9000);
+    CHECK_EQ(f.tv.view().leftFrame, zoomedLeft);
+    f.tv.setPlaying(0);
+    // Reverse (J): leaving at the left edge puts the playhead at the right edge
+    f.tv.setZoomAndScroll(2.0, 1000, 0);
+    f.tv.setPlayhead(1100);
+    f.tv.setPlaying(-1.0);
+    f.tv.setPlayhead(990);
+    CHECK(std::abs(f.tv.view().leftFrame - (990 - vis + 1)) < 1e-6);
+    f.tv.setPlaying(0);
+
+    // Centre: from the middle on the view runs under the playhead; the start stays at the left edge
+    TimelineOptions::setFollow(F::Center);
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    f.tv.setPlayhead(0);
+    f.tv.setPlaying(1.0);
+    f.tv.setPlayhead(100);
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    f.tv.setPlayhead(1000);
+    CHECK(std::abs(f.tv.view().leftFrame - (1000 - vis / 2)) < 1e-6);
+    f.tv.setPlayhead(1010);
+    CHECK(std::abs(f.tv.view().leftFrame - (1010 - vis / 2)) < 1e-6);
+    // Paused: no following (a seek while paused moves nothing)
+    f.tv.setPlaying(0);
+    const double paused = f.tv.view().leftFrame;
+    f.tv.setPlayhead(5000);
+    CHECK_EQ(f.tv.view().leftFrame, paused);
+    // The choice is read at the start: switched off while paused, the next start does not follow
+    TimelineOptions::setFollow(F::Off);
+    CHECK(!QSettings().contains("timeline/followPlayback"));
+    f.tv.setPlaying(1.0);
+    f.tv.setPlayhead(9000);
+    CHECK_EQ(f.tv.view().leftFrame, paused);
+    f.tv.setPlaying(0);
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -898,6 +983,7 @@ int main(int argc, char** argv)
     testStoryBand();
     testWheelZoomAnchor();
     testWheelSideways();
+    testFollowPlayback();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();

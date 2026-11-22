@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -583,6 +584,7 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude,
 
 void TimelineView::setLeftFrame(double frame)
 {
+    stopFollowing();
     m_view.leftFrame = std::max(0.0, frame);
     update();
     emit viewChanged();
@@ -590,6 +592,7 @@ void TimelineView::setLeftFrame(double frame)
 
 void TimelineView::setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY)
 {
+    stopFollowing();
     m_view.pxPerFrame = std::clamp(pxPerFrame, ViewState::kMinPxPerFrame, ViewState::kMaxPxPerFrame);
     m_view.leftFrame = std::max(0.0, leftFrame);
     setScrollY(scrollY); // limited to the height of the tracks, redraws, reports viewChanged
@@ -604,6 +607,7 @@ void TimelineView::setScrollY(int y)
 
 void TimelineView::zoomBy(double factor)
 {
+    stopFollowing();
     // Keyboard zoom: around the playhead if visible, otherwise around the center
     double anchorX = frameToX(m_playhead);
     if (anchorX < kHeaderW || anchorX > width()) anchorX = kHeaderW + (width() - kHeaderW) / 2.0;
@@ -614,6 +618,7 @@ void TimelineView::zoomBy(double factor)
 
 void TimelineView::zoomToFit()
 {
+    stopFollowing();
     const int fps = m_editor->project()->fps();
     const int end = std::max(TimelineOps::endFrame(m_editor->project()->timeline()), fps * 10);
     m_view.pxPerFrame = std::clamp((width() - kHeaderW - 40) / double(end), ViewState::kMinPxPerFrame,
@@ -627,8 +632,35 @@ void TimelineView::setPlayhead(int frame)
 {
     if (frame == m_playhead) return;
     m_playhead = frame;
-    update(); // deliberately NO automatic scrolling along
+    // No automatic scrolling along, except by the user's choice while it plays (not while dragging in the ruler)
+    if (m_following && m_playSpeed != 0 && m_drag == Drag::None) followPlayhead(frame);
+    update();
     emit playheadChanged(frame);
+}
+
+void TimelineView::setPlaying(double speed)
+{
+    const bool started = m_playSpeed == 0 && speed != 0;
+    m_playSpeed = speed;
+    if (started) {
+        m_followMode = int(TimelineOptions::follow());
+        m_following = m_followMode != int(TimelineOptions::Follow::Off);
+    } else if (speed == 0) {
+        m_following = false;
+    }
+}
+
+void TimelineView::followPlayhead(int frame)
+{
+    const double vis = std::max(1.0, (width() - kHeaderW) / m_view.pxPerFrame);
+    double left = m_view.leftFrame;
+    if (TimelineOptions::Follow(m_followMode) == TimelineOptions::Follow::Center) left = frame - vis / 2;
+    else if (frame < left || frame >= left + vis) // a page: the playhead at the edge it comes from
+        left = m_playSpeed > 0 ? frame : frame - vis + 1;
+    left = std::max(0.0, left);
+    if (left == m_view.leftFrame) return;
+    m_view.leftFrame = left; // not setLeftFrame: that is the user's scrolling and ends following
+    emit viewChanged();
 }
 
 void TimelineView::setTool(Tool tool)

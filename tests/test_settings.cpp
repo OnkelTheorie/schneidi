@@ -19,6 +19,7 @@
 #include "engine/Background.h"
 #include "engine/Engine.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
@@ -288,6 +289,30 @@ void testProjectFolder()
     }
 }
 
+// One choice of Settings › Timeline: `count` entries, `def` shown when nothing is stored (and stored as nothing),
+// each entry stored by store() as `stored()` reads it back and shown again by a new dialog
+void checkTimelineChoice(const char* name, int count, int def, const std::function<int()>& stored)
+{
+    QSettings().remove("timeline");
+    SettingsDialog dlg(AiSettings{});
+    auto* combo = dlg.timelinePage()->findChild<QComboBox*>(name);
+    if (!CHECK(combo)) return;
+    CHECK_EQ(combo->count(), count);
+    CHECK_EQ(combo->currentData().toInt(), def);
+    CHECK_EQ(stored(), def);
+    for (int i = 0; i < combo->count(); ++i) {
+        combo->setCurrentIndex(i);
+        dlg.timelinePage()->store();
+        CHECK_EQ(stored(), combo->itemData(i).toInt());
+        SettingsDialog again(AiSettings{});
+        CHECK_EQ(again.timelinePage()->findChild<QComboBox*>(name)->currentData().toInt(), combo->itemData(i).toInt());
+    }
+    combo->setCurrentIndex(combo->findData(def));
+    dlg.timelinePage()->store();
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty()); // the default is not stored
+    QSettings().remove("timeline");
+}
+
 // Settings › Timeline: its own tab with the timeline choices; store() writes what the fields show
 void testTimelineTab()
 {
@@ -310,6 +335,9 @@ void testTimelineTab()
     page->store();
     CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Playhead);
     QSettings().remove("timeline");
+    // Follow the playhead while playing: off, page, centre (off by default)
+    checkTimelineChoice("timeline_follow_playback", 3, int(TimelineOptions::Follow::Off),
+                        [] { return int(TimelineOptions::follow()); });
 }
 
 void testMainWindow()
