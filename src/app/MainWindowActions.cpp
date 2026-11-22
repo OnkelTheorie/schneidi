@@ -159,6 +159,14 @@ void MainWindow::buildActions()
     makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
+    // Moved files found again at any time, not only when opening (MainWindowRelink.cpp); enabled while some are missing
+    m_findMissingAction = makeAction(file, "find_missing_media", T("Fehlende Medien suchen…"), QKeySequence(),
+                                     [this] { findMissingMedia(); });
+    m_findMissingAction->setEnabled(false);
+    m_mediaPool->setFindMissingAction(m_findMissingAction);
+    connect(file, &QMenu::aboutToShow, this, &MainWindow::updateFindMissingAction);
+    connect(m_mediaPool, &MediaPool::contextMenuAboutToShow, this, &MainWindow::updateFindMissingAction);
+    connect(m_project, &Project::mediaChanged, this, &MainWindow::updateFindMissingAction);
     makeAction(file, "new_bin", T("Neuer Ordner"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
     makeAction(file, "new_timeline", T("Neue Timeline"), QKeySequence("Ctrl+Alt+N"), [this] { m_mediaPool->newTimeline(); });
     makeAction(file, "import_subtitles", T("Untertitel importieren (SRT)…"), QKeySequence(), [this] { importSubtitlesDialog(); });

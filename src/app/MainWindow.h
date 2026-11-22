@@ -61,6 +61,11 @@ struct Endpoint;
 class Keys;
 } // namespace Ai
 
+namespace Relink {
+struct Root;
+struct Progress;
+} // namespace Relink
+
 class MainWindow : public QMainWindow, public LiveHost {
     Q_OBJECT
 public:
@@ -140,6 +145,13 @@ public:
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
+    // File / Media Pool › Find Missing Media… (MainWindowRelink.cpp), also after opening a project with missing media:
+    // looked for by itself near the old places (in the background, core/Relink.h), the clear matches relinked as one
+    // undo step and said in a short note; the dialog ("Search Folder…" / "Leave Offline") only for the rest.
+    // atOpen: after loading (the files of no timeline are asked about only then too)
+    void findMissingMedia(bool atOpen = false);
+    bool relinkSearching() const { return bool(m_relinkJob); } // tests
+    QAction* findMissingAction() const { return m_findMissingAction; } // tests
     // A project that opened but not as written (ProjectFile::load warning): told once, without waiting for an answer
     void showLoadWarning(const QString& warning);
     // Video as project (`schneidi <video>`, File › Open Video as Project…): a new unsaved project whose format (size,
@@ -424,6 +436,12 @@ private:
     void offerRestart(const QString& message, const QString& now, const QString& later);
     // ask = offer relinking missing media / list missing effects (not when reloading after an outside change)
     bool applyLoaded(ProjectData data, const QString& path, bool ask = true);
+    // Find Missing Media (MainWindowRelink.cpp): one search in the background (a second request while it runs: none),
+    // `then` with how many were relinked; the "Medien fehlen" dialog for what is still missing; the menu entries
+    // enabled while files are missing
+    void startRelinkSearch(const QVector<Relink::Root>& roots, bool near, const std::function<void(int)>& then);
+    void askForMissingMedia();
+    void updateFindMissingAction();
     // Project file changed outside (schneidi-cli, an AI, another window): reload; unsaved changes here ask first
     void checkProjectFile();
     void setProjectPath(const QString& path);
@@ -676,6 +694,9 @@ private:
 
     ProbeCache m_probeCache; // drop preview, Viewer of a file not in the pool, import of a dropped file
     QSet<QString> m_probing; // probeLater() running for these
+    QAction* m_findMissingAction = nullptr;              // File › Find Missing Media… (also in the Media Pool's menu)
+    std::shared_ptr<Relink::Progress> m_relinkJob;    // the search running (null = none)
+    QWidget* m_relinkStatus = nullptr;                   // its line in the status bar (folders searched, Cancel)
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
     QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
     QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (saved in the project: views)

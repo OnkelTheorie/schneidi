@@ -229,6 +229,25 @@ MediaChange mediaChange(const QVector<MediaInfo>& before, const QVector<WatchFol
     return c;
 }
 
+// Missing files found again (Project::relinkMedia): the media entries' paths and file facts, every timeline and the
+// brand kit before and after (references to the files live there)
+class RelinkCommand : public QUndoCommand {
+public:
+    using Files = QVector<QPair<Project::MediaFile, Project::MediaFile>>;
+    RelinkCommand(Project* p, const QString& text, Files files, QVector<Sequence> before, QVector<Sequence> after,
+                  std::optional<BrandKit> brandBefore, std::optional<BrandKit> brandAfter)
+        : QUndoCommand(text), m_project(p), m_files(std::move(files)), m_before(std::move(before)),
+          m_after(std::move(after)), m_brandBefore(std::move(brandBefore)), m_brandAfter(std::move(brandAfter)) {}
+    void undo() override { m_project->applyRelink(m_files, false, m_before, m_brandBefore); }
+    void redo() override { m_project->applyRelink(m_files, true, m_after, m_brandAfter); }
+
+private:
+    Project* m_project;
+    Files m_files;
+    QVector<Sequence> m_before, m_after;
+    std::optional<BrandKit> m_brandBefore, m_brandAfter;
+};
+
 // Files of watch folders into the Media Pool (Project::addWatchedMedia); undo takes them out again
 class WatchImportCommand : public QUndoCommand {
 public:
@@ -827,6 +846,7 @@ void Project::addMedia(const MediaInfo& info)
     if (mediaInfo(info.path)) return;
     m_binsUndone.remove(info.path); // imported anew: where it goes now counts
     m_media << info;
+    if (m_media.last().fileSize <= 0) m_media.last().fileSize = QFileInfo(info.path).size(); // 0 when not there
     if (m_media.last().bin != 0 && !bin(m_media.last().bin)) m_media.last().bin = 0;
     m_mediaDirty = true;
     emit mediaChanged();
@@ -1052,6 +1072,60 @@ bool Project::setMediaHdr(const QString& path, const QString& hdr)
             return true;
         }
     return false;
+}
+
+QStringList Project::missingMedia() const
+{
+    QStringList out;
+    for (const MediaInfo& m : m_media)
+        if (!QFileInfo::exists(m.path)) out << m.path;
+    return out;
+}
+
+int Project::relinkMedia(const QHash<QString, QString>& moved, const QHash<QString, MediaInfo>& probed, const QString& text)
+{
+    // Only what still fits: the project may have changed while the search ran
+    QSet<QString> pool;
+    for (const MediaInfo& m : m_media) pool.insert(m.path);
+    QHash<QString, QString> apply;
+    QSet<QString> targets;
+    for (auto it = moved.cbegin(); it != moved.cend(); ++it)
+        if (pool.contains(it.key()) && !pool.contains(it.value()) && !targets.contains(it.value())
+            && !QFileInfo::exists(it.key()) && QFileInfo::exists(it.value())) {
+            apply.insert(it.key(), it.value());
+            targets.insert(it.value());
+        }
+    if (apply.isEmpty()) return 0;
+    ProjectData d = data();
+    ProjectFile::applyRelink(&d, apply, probed);
+    // The open timeline's copy: data() gives it as `timeline` and in `sequences`; applyRelink changed both alike
+    RelinkCommand::Files files;
+    const auto fileOf = [](const MediaInfo& m) { return MediaFile{m.path, m.hasAudio, m.audioStreams, m.fileSize}; };
+    for (int i = 0; i < m_media.size() && i < d.media.size(); ++i)
+        if (apply.contains(m_media[i].path)) files << qMakePair(fileOf(m_media[i]), fileOf(d.media[i]));
+    m_undo->push(new RelinkCommand(this, text, files, m_sequences, d.sequences, m_brand, d.brand));
+    return int(files.size());
+}
+
+void Project::applyRelink(const QVector<QPair<MediaFile, MediaFile>>& files, bool forward,
+                          const QVector<Sequence>& sequences, const std::optional<BrandKit>& brand)
+{
+    for (const auto& [before, after] : files) {
+        const MediaFile& from = forward ? before : after;
+        const MediaFile& to = forward ? after : before;
+        for (MediaInfo& m : m_media)
+            if (m.path == from.path) {
+                m.path = to.path;
+                m.hasAudio = to.hasAudio;
+                m.audioStreams = to.audioStreams;
+                m.fileSize = to.fileSize;
+                break;
+            }
+    }
+    emit mediaChanged();
+    if (brand != m_brand) applyBrand(brand);
+    // The timeline open now (opening one is no step of the history: it may be another than at the relink)
+    applySequences(sequences, m_current);
 }
 
 int Project::clipsPastEnd(const QString& path) const

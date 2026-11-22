@@ -45,6 +45,9 @@ public:
     void refreshTimes() { rebuildClips(); }
     // The app's sticky "leave out sound when placing" toggle, shown in the context menu too
     void setLeaveOutSoundAction(QAction* a) { m_leaveOutSound = a; }
+    // "Find Missing Media…" (the main window's): in the menu of offline clips and of the empty space; its enabled state
+    // is the main window's (contextMenuAboutToShow lets it update first)
+    void setFindMissingAction(QAction* a) { m_findMissing = a; }
     static constexpr const char* MimeType = "application/x-schneidi-media";
     // All dragged Media Pool clips (paths, one line per clip) – for moving into a bin
     static constexpr const char* ListMimeType = "application/x-schneidi-media-list";
@@ -167,6 +170,7 @@ signals:
     void watchFolderRequested(int bin);
     // Right-click "Clean up proxy media…": the main window asks and deletes (app/ProxyCleanupDialog)
     void proxyCleanupRequested();
+    void contextMenuAboutToShow(); // the clip menu is being built (actions given to it update their state)
     // Context menu: put this file onto the timeline - 0 insert at the playhead, 1 place on a free track at the playhead,
     // 2 append at the end
     void editRequested(const QString& path, int how);
@@ -181,6 +185,7 @@ protected:
 
 private:
     QAction* m_leaveOutSound = nullptr;
+    QAction* m_findMissing = nullptr;
     ProbeCache* m_probeCache = nullptr;
     int m_probing = 0;           // addFiles waiting for its probes (nested: a Retry)
     bool m_importCanceled = false; // Cancel in the import's progress: the rest of a folder import stops too

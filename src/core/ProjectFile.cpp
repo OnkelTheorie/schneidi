@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
+
 #include "core/Automation.h"
 #include "core/AppPaths.h"
 #include "core/CodeTrust.h"
 #include "core/TitleLookJson.h"
 #include "core/PathKey.h"
 #include "core/ProjectRefs.h"
+#include "core/Relink.h"
 
 #include "core/Captions.h"
 #include "core/CompGraph.h"
@@ -1012,6 +1014,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         if (m.pictureAspect > 0) o["pictureAspect"] = m.pictureAspect; // optional: shape of its new clips
         if (!m.hdr.isEmpty()) o["hdr"] = m.hdr;                         // optional: HDR transfer ("HLG", "PQ")
+        // optional: the file's size as it is now (else as last seen), so a moved file is told from another of its name
+        if (const QFileInfo fi(m.path); fi.isFile() && fi.size() > 0) o["size"] = fi.size();
+        else if (m.fileSize > 0) o["size"] = m.fileSize;
         if (!m.audioStreams.isEmpty()) {
             QJsonArray streams;
             for (const AudioStreamInfo& a : m.audioStreams) {
@@ -1312,6 +1317,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
         if (m.hasVideo) m.pictureAspect = std::clamp(o.value("pictureAspect").toDouble(0), 0.0, 10.0);
         if (m.hasVideo && (o.value("hdr") == "HLG" || o.value("hdr") == "PQ")) m.hdr = o.value("hdr").toString();
+        m.fileSize = std::max<qint64>(0, qint64(o.value("size").toDouble()));
         if (m.hasAudio) // missing in older files -> audioStreamCount() assumes 1 stream
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
@@ -1840,87 +1846,73 @@ QStringList unusedMedia(const ProjectData& data)
     return out;
 }
 
+void applyRelink(ProjectData* data, const QHash<QString, QString>& moved, const QHash<QString, MediaInfo>& probed)
+{
+    if (moved.isEmpty()) return;
+    redirect(data, moved);
+    // The files found may have other streams than the ones lost: the media list learns them, routing to channels
+    // a stream lacks now is dropped
+    QHash<QString, int> media; // new path -> its entry
+    for (int i = 0; i < data->media.size(); ++i) media.insert(data->media[i].path, i);
+    QSet<QString> fitted;
+    for (const QString& now : moved) {
+        const auto it = media.constFind(now);
+        if (it == media.cend()) continue;
+        MediaInfo& m = data->media[*it];
+        if (const qint64 size = QFileInfo(now).size(); size > 0) m.fileSize = size;
+        const auto p = probed.constFind(now);
+        if (p == probed.cend() || !p->hasAudio) continue; // not probed, unreadable or no sound: nothing known to fit to
+        m.hasAudio = true;
+        m.audioStreams = p->audioStreams;
+        fitted.insert(now);
+    }
+    const auto fit = [&](Timeline& tl) {
+        for (Track& t : tl.audio)
+            for (Clip& c : t.clips)
+                if (fitted.contains(c.mediaPath)) {
+                    const MediaInfo& m = data->media[media.value(c.mediaPath)];
+                    // A stream the file found does not have (a camera file's second stream, found as a file with
+                    // one): its first stream, else the clip would play silence
+                    if (c.audioStream >= m.audioStreamCount()) c.audioStream = 0;
+                    fitSourceChannels(c, m);
+                }
+    };
+    fit(data->timeline);
+    for (Sequence& s : data->sequences) fit(s.timeline);
+}
+
 int relink(ProjectData* data, const QString& searchDir, const std::function<MediaInfo(const QString&)>& probe)
 {
-    QHash<QString, QStringList> wanted; // file name -> old paths (camera names like C0001.MP4 repeat)
-    for (const QString& p : missingMedia(*data)) wanted[fileNameAnyOs(p)] << p;
-    if (wanted.isEmpty()) return 0;
-
-    QHash<QString, QStringList> found; // file name -> files found
-    QDirIterator it(searchDir, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QString path = it.next();
-        if (wanted.contains(it.fileName())) found[it.fileName()] << path;
+    QVector<MediaInfo> missing;
+    QSet<QString> taken;
+    for (const MediaInfo& m : data->media) {
+        taken.insert(m.path);
+        if (!QFileInfo::exists(m.path)) missing << m;
     }
+    if (missing.isEmpty()) return 0;
+    const Relink::Result found = Relink::search(missing, taken, {Relink::Root{searchDir, Relink::kFolderDepth}},
+                                                Relink::Mode::Folder, Relink::kFolderLimits, probe);
+    applyRelink(data, found.moved, found.probed);
+    return found.moved.size();
+}
 
-    // How many folders at the end of both paths match (camA/C0001.MP4 belongs to .../camA/C0001.MP4)
-    auto score = [](const QString& a, const QString& b) {
-        static const QRegularExpression sep("[/\\\\]");
-        const QStringList x = a.split(sep, Qt::SkipEmptyParts), y = b.split(sep, Qt::SkipEmptyParts);
-        int n = 0;
-        while (n < x.size() && n < y.size() && x[x.size() - 1 - n] == y[y.size() - 1 - n]) ++n;
-        return n;
-    };
-    QHash<QString, QString> moved; // old path -> new path
-    for (auto w = wanted.cbegin(); w != wanted.cend(); ++w) {
-        QStringList candidates = found.value(w.key());
-        // Assign pairs with the best match first, each file only once
-        struct Pair { int score; QString old, now; };
-        QVector<Pair> pairs;
-        for (const QString& old : w.value())
-            for (const QString& now : candidates) pairs << Pair{score(old, now), old, now};
-        std::stable_sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.score > b.score; });
-        QSet<QString> used, offline;
-        for (const Pair& pr : pairs) {
-            if (moved.contains(pr.old) || used.contains(pr.now) || offline.contains(pr.old)) continue;
-            // Ambiguous (another file fits just as well, e.g. C0001.MP4 on two camera cards, or another old file of the
-            // same name fits this one just as well): better leave offline than to show wrong material - also no worse
-            // match later
-            const bool ambiguous = std::any_of(pairs.begin(), pairs.end(), [&](const Pair& o) {
-                return o.score == pr.score && !moved.contains(o.old) && !used.contains(o.now)
-                       && !offline.contains(o.old) && ((o.old == pr.old) != (o.now == pr.now));
-            });
-            if (ambiguous) {
-                offline.insert(pr.old);
-                continue;
-            }
-            moved.insert(pr.old, pr.now);
-            used.insert(pr.now);
+int relinkNear(ProjectData* data, const std::function<MediaInfo(const QString&)>& probe)
+{
+    QVector<MediaInfo> missing;
+    QSet<QString> taken;
+    QStringList paths;
+    for (const MediaInfo& m : data->media) {
+        taken.insert(m.path);
+        if (!QFileInfo::exists(m.path)) {
+            missing << m;
+            paths << m.path;
         }
     }
-
-    redirect(data, moved);
-    if (probe) {
-        // The files found may have other streams than the ones lost: the media list learns them, routing to channels
-        // a stream lacks now is dropped
-        QHash<QString, int> media; // new path -> its entry
-        for (int i = 0; i < data->media.size(); ++i) media.insert(data->media[i].path, i);
-        QSet<QString> fitted;
-        for (const QString& now : std::as_const(moved)) {
-            const auto it = media.constFind(now);
-            if (it == media.cend()) continue;
-            const MediaInfo fresh = probe(now);
-            if (!fresh.hasAudio) continue; // unreadable or no sound: nothing known to fit to
-            MediaInfo& m = data->media[*it];
-            m.hasAudio = true;
-            m.audioStreams = fresh.audioStreams;
-            fitted.insert(now);
-        }
-        const auto fit = [&](Timeline& tl) {
-            for (Track& t : tl.audio)
-                for (Clip& c : t.clips)
-                    if (fitted.contains(c.mediaPath)) {
-                        const MediaInfo& m = data->media[media.value(c.mediaPath)];
-                        // A stream the file found does not have (a camera file's second stream, found as a file with
-                        // one): its first stream, else the clip would play silence
-                        if (c.audioStream >= m.audioStreamCount()) c.audioStream = 0;
-                        fitSourceChannels(c, m);
-                    }
-        };
-        fit(data->timeline);
-        for (Sequence& s : data->sequences) fit(s.timeline);
-    }
-    return moved.size();
+    if (missing.isEmpty()) return 0;
+    const Relink::Result found = Relink::search(missing, taken, Relink::nearRoots(paths), Relink::Mode::Near,
+                                                Relink::kNearLimits, probe);
+    applyRelink(data, found.moved, found.probed);
+    return found.moved.size();
 }
 
 QString fileNameAnyOs(const QString& path)
