@@ -7,7 +7,7 @@
 // table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
 // the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms;
 // a click into the tracks sets the playhead by choice; snapping remembered, its targets and reach by choice;
-// thumbnail tiles for each choice (filmstrip, first, first and last, none).
+// thumbnail tiles for each choice (filmstrip, first, first and last, none); waveform height (dB/linear) and shape.
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -1021,6 +1021,39 @@ void testThumbnailTiles()
     CHECK(!QSettings().contains("timeline/thumbnails"));
 }
 
+// Waveforms (TimelineOptions::waveShape/waveScale): the height of a peak in dB (as before) or linear, the column
+// mirrored around the middle (as before) or from the bottom
+void testWaveformStyle()
+{
+    using TimelineOptions::waveHeight, TimelineOptions::waveLine;
+    using WSh = TimelineOptions::WaveShape;
+    using WSc = TimelineOptions::WaveScale;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::waveShape() == WSh::Mirrored && TimelineOptions::waveScale() == WSc::Db);
+    // dB: full scale = 1, -24 dB (peak ~16) = about half, 0 = nothing; the clip's gain on top
+    CHECK(std::abs(waveHeight(255, 0, WSc::Db) - 1.0) < 1e-9);
+    CHECK(std::abs(waveHeight(16, 0, WSc::Db) - 0.5) < 0.02);
+    CHECK_EQ(waveHeight(0, 0, WSc::Db), 0.0);
+    CHECK(std::abs(waveHeight(255, -24, WSc::Db) - 0.5) < 1e-9);
+    // Linear: the amplitude, -6 dB of gain halves it
+    CHECK(std::abs(waveHeight(128, 0, WSc::Linear) - 128 / 255.0) < 1e-9);
+    CHECK(std::abs(waveHeight(16, 0, WSc::Linear) - 16 / 255.0) < 1e-9);
+    CHECK(std::abs(waveHeight(255, -6.0206, WSc::Linear) - 0.5) < 1e-3);
+    CHECK(waveHeight(255, 12, WSc::Linear) <= 1.0);
+    // Columns in a body 100..163 (64 high): mirrored around 132, from the bottom up to 162
+    const QRect body(0, 100, 50, 64);
+    CHECK(waveLine(7, 0.5, body, WSh::Mirrored) == QLine(7, 132 - 15, 7, 132 + 15));
+    CHECK(waveLine(7, 0.5, body, WSh::Bottom) == QLine(7, 162 - 31, 7, 162));
+    CHECK(waveLine(7, 1.0, body, WSh::Bottom).y1() >= body.top());
+    CHECK_EQ(waveLine(7, 0.001, body, WSh::Bottom).dy(), 1); // at least a pixel
+    TimelineOptions::setWaveShape(WSh::Bottom);
+    TimelineOptions::setWaveScale(WSc::Linear);
+    CHECK(TimelineOptions::waveShape() == WSh::Bottom && TimelineOptions::waveScale() == WSc::Linear);
+    TimelineOptions::setWaveShape(WSh::Mirrored);
+    TimelineOptions::setWaveScale(WSc::Db);
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -1114,6 +1147,7 @@ int main(int argc, char** argv)
     testClickSetsPlayhead();
     testSnapOptions();
     testThumbnailTiles();
+    testWaveformStyle();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();

@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QString>
+#include <array>
 #include <cmath>
 
 namespace TimelineOptions {
@@ -132,6 +133,37 @@ void setThumbnails(Thumbnails t)
 {
     store("timeline/thumbnails", t == Thumbnails::Start ? "start" : t == Thumbnails::StartEnd ? "startEnd" : "none",
           t == Thumbnails::Filmstrip);
+}
+
+WaveShape waveShape() { return stored("timeline/waveShape") == "bottom" ? WaveShape::Bottom : WaveShape::Mirrored; }
+void setWaveShape(WaveShape shape) { store("timeline/waveShape", "bottom", shape == WaveShape::Mirrored); }
+WaveScale waveScale() { return stored("timeline/waveScale") == "linear" ? WaveScale::Linear : WaveScale::Db; }
+void setWaveScale(WaveScale scale) { store("timeline/waveScale", "linear", scale == WaveScale::Db); }
+
+double waveHeight(int peak, double gainDb, WaveScale scale)
+{
+    if (peak <= 0) return 0;
+    peak = std::min(peak, 255);
+    if (scale == WaveScale::Linear) return std::min(1.0, peak / 255.0 * std::pow(10.0, gainDb / 20.0));
+    // -48 dB .. 0 dB, otherwise normal material looks almost flat
+    static const auto dbTable = [] {
+        std::array<double, 256> t{};
+        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
+        return t;
+    }();
+    return std::min(1.0, dbTable[peak] + gainDb / 48.0);
+}
+
+QLine waveLine(int x, double v, const QRect& body, WaveShape shape, double inset)
+{
+    if (shape == WaveShape::Bottom) {
+        const int bottom = int(body.bottom() - inset);
+        const int h = std::max(1, int(v * (body.height() - 2 * inset)));
+        return QLine(x, bottom - h, x, bottom);
+    }
+    const int mid = body.top() + body.height() / 2;
+    const int h = std::max(1, int(v * (body.height() / 2.0 - inset)));
+    return QLine(x, mid - h, x, mid + h);
 }
 
 TimeFormat timeFormat()

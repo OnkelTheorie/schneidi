@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
+#include <QLine>
+#include <QRect>
 #include <QString>
 
 // The timeline's behaviour where editors differ: the user's choices in Settings › Timeline (QSettings "timeline/…",
@@ -80,6 +82,21 @@ QString stepText(Step step); // "1 Sekunde", "5 Frames" (translated)
 enum class Thumbnails { Filmstrip, Start, StartEnd, None };
 Thumbnails thumbnails();
 void setThumbnails(Thumbnails thumbnails);
+
+// Waveforms on audio clips (Settings › Timeline › Display; Edit timeline and Studio lanes, read once per paint):
+// shape mirrored around the middle (default, as before; DaVinci, Kdenlive, Audacity) or from the bottom (rectified,
+// Premiere and Final Cut: twice as tall on low tracks); height in dB, -48..0 dB (default, as before: speech does not
+// look flat) or linear (the plain amplitude, Avid's choice).
+enum class WaveShape { Mirrored, Bottom };
+enum class WaveScale { Db, Linear };
+WaveShape waveShape();
+void setWaveShape(WaveShape shape);
+WaveScale waveScale();
+void setWaveScale(WaveScale scale);
+// Height 0..1 of a peak (0..255 as in Waveform's levels) with the clip's gain (dB) on top
+double waveHeight(int peak, double gainDb, WaveScale scale);
+// The line of one column of the waveform at height v (0..1) inside `body`, `inset` pixels from its edges
+QLine waveLine(int x, double v, const QRect& body, WaveShape shape, double inset = 1);
 
 // How the app shows times (Settings › Timeline › Display): timecode "00:00:04:12" (default), seconds "0:04.50"
 // (minutes:seconds with hundredths, the UI language's decimal sign; hours in front from one hour on) or frames "112".

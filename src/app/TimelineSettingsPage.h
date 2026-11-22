@@ -30,6 +30,8 @@ public:
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
     TimelineOptions::Thumbnails thumbnails() const; // pictures on video clips
+    TimelineOptions::WaveShape waveShape() const;
+    TimelineOptions::WaveScale waveScale() const;
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
     double stillSeconds() const;                    // default length of new stills
     double transitionSeconds() const;               // default length of new transitions
@@ -47,6 +49,8 @@ private:
     QComboBox* m_click = nullptr;
     QComboBox* m_timeFormat = nullptr;
     QComboBox* m_thumbnails = nullptr;
+    QComboBox* m_waveShape = nullptr;
+    QComboBox* m_waveScale = nullptr;
     QVector<QPair<int, QCheckBox*>> m_snapTargets;
     QComboBox* m_snapReach = nullptr;
     QDoubleSpinBox* m_stillSeconds = nullptr;

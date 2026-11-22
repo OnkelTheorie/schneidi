@@ -548,14 +548,10 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
         if (TimelineOps::findClip(m_editor->project()->timeline(), c.id, &ref) && ref.kind == TrackKind::Audio)
             autoCurve = &m_editor->project()->timeline().audio[ref.index].volumeAuto;
     }
-    // dB height (-48..0 dB), so speech does not look flat; the waveform follows the volume curve (what is heard)
-    static const auto dbTable = [] {
-        std::array<double, 256> t{};
-        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
-        return t;
-    }();
-    const int mid = body.top() + body.height() / 2;
-    const double half = body.height() / 2.0 - 2;
+    // dB height (-48..0 dB, so speech does not look flat) or linear, mirrored or from the bottom: the user's choice
+    // (Settings › Timeline); the waveform follows the volume curve (what is heard)
+    const TimelineOptions::WaveShape shape = TimelineOptions::waveShape();
+    const TimelineOptions::WaveScale waveScale = TimelineOptions::waveScale();
     const double clipX = xOf(c.start);
     const int x0 = std::max({body.left(), kHeaderW, m_dirty.left() - 1}), x1 = std::min({body.right(), width() - 1, m_dirty.right() + 1});
     QVector<QLine> lines;
@@ -587,10 +583,9 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
         const double g = TimelineOps::audioFadeGain(c, t);
         if (g <= 0.001) continue;
         db += 20.0 * std::log10(g);
-        const double v = std::min(1.0, dbTable[peak] + db / 48.0);
+        const double v = TimelineOptions::waveHeight(peak, db, waveScale);
         if (v <= 0) continue;
-        const int h = std::max(1, int(v * half));
-        lines << QLine(x, mid - h, x, mid + h);
+        lines << TimelineOptions::waveLine(x, v, body, shape, 2);
     }
     p.setPen(Theme::alpha(color, 220));
     p.drawLines(lines);

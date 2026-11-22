@@ -429,6 +429,11 @@ void testTimelineTab()
     // Pictures on video clips: filmstrip (default), first, first and last, none
     checkTimelineChoice("timeline_thumbnails", 4, int(TimelineOptions::Thumbnails::Filmstrip),
                         [] { return int(TimelineOptions::thumbnails()); });
+    // Waveforms: mirrored (default) or from the bottom, dB (default) or linear
+    checkTimelineChoice("timeline_wave_shape", 2, int(TimelineOptions::WaveShape::Mirrored),
+                        [] { return int(TimelineOptions::waveShape()); });
+    checkTimelineChoice("timeline_wave_scale", 2, int(TimelineOptions::WaveScale::Db),
+                        [] { return int(TimelineOptions::waveScale()); });
     checkTimelineChoice("timeline_time_format", 3, int(TimelineOptions::TimeFormat::Timecode),
                         [] { return int(TimelineOptions::timeFormat()); });
     {

@@ -59,6 +59,8 @@ void TimelineView::paintEvent(QPaintEvent*)
 {
     m_timeFormat = TimelineOptions::timeFormat(); // once per paint (timeText)
     m_thumbnails = TimelineOptions::thumbnails();
+    m_waveShape = TimelineOptions::waveShape();
+    m_waveScale = TimelineOptions::waveScale();
     if (m_renaming && m_nameSub >= 0) { // subtitle track
         std::optional<SubRow> row;
         for (const SubRow& r : subRows())
@@ -926,18 +928,10 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
     for (const auto& s : spans)
         if (s.leftId == c.id || s.rightId == c.id) own << s;
     const bool fades = c.fadeIn > 0 || c.fadeOut > 0 || !own.isEmpty();
-    const int mid = body.top() + body.height() / 2;
-    const double half = body.height() / 2.0 - 1;
     const double clipX = frameToX(c.pos());
     const int x0 = std::max(body.left(), kHeaderW);
     const int x1 = std::min(body.right(), width() - 1);
-
-    // Height in dB instead of linear (-48 dB .. 0 dB), otherwise normal material looks almost flat
-    static const auto dbTable = [] {
-        std::array<double, 256> t{};
-        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
-        return t;
-    }();
+    // Mirrored or from the bottom, dB (-48..0) or linear: the user's choice (read at the paint's start)
 
     QVector<QLine> lines;
     lines.reserve(x1 - x0 + 1);
@@ -967,10 +961,9 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
             if (g <= 0.001) continue;
             db += 20.0 * std::log10(g);
         }
-        const double v = std::min(1.0, dbTable[peak] + db / 48.0);
+        const double v = TimelineOptions::waveHeight(peak, db, m_waveScale);
         if (v <= 0) continue;
-        const int h = std::max(1, int(v * half));
-        lines << QLine(x, mid - h, x, mid + h);
+        lines << TimelineOptions::waveLine(x, v, body, m_waveShape);
     }
     // Default light green; with own track color a light tone of it
     QColor pen(0xc8, 0xf0, 0xcf, 210);

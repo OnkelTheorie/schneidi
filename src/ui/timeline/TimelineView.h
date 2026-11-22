@@ -498,6 +498,8 @@ private:
     // A time as the user wants to see it (Settings › Timeline › Display), with the format read at the paint's start
     TimelineOptions::TimeFormat m_timeFormat = TimelineOptions::TimeFormat::Timecode;
     TimelineOptions::Thumbnails m_thumbnails = TimelineOptions::Thumbnails::Filmstrip; // read at the paint's start
+    TimelineOptions::WaveShape m_waveShape = TimelineOptions::WaveShape::Mirrored;
+    TimelineOptions::WaveScale m_waveScale = TimelineOptions::WaveScale::Db;
     QString timeText(int frames) const;
     void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 

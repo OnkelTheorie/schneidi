@@ -82,6 +82,19 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     display->addRow(hint(T("Weniger Bilder: mehr Übersicht bei vielen kurzen Clips, und schwache Rechner müssen beim "
                            "Scrollen weniger dekodieren.")));
 
+    using WSh = TimelineOptions::WaveShape;
+    using WSc = TimelineOptions::WaveScale;
+    m_waveShape = combo("timeline_wave_shape",
+                        {{T("Gespiegelt"), int(WSh::Mirrored)}, {T("Von unten"), int(WSh::Bottom)}},
+                        int(TimelineOptions::waveShape()));
+    display->addRow(T("Wellenform"), m_waveShape);
+    m_waveScale = combo("timeline_wave_scale", {{T("dB"), int(WSc::Db)}, {T("Linear"), int(WSc::Linear)}},
+                        int(TimelineOptions::waveScale()));
+    display->addRow(T("Wellenform-Höhe"), m_waveScale);
+    display->addRow(hint(T("Von unten (wie Premiere, Final Cut) ist auf flachen Spuren doppelt so hoch. dB zeigt "
+                           "auch leise Sprache deutlich, linear die echte Lautstärke-Kurve (laute Stellen stechen "
+                           "heraus).")));
+
     // Zoom and scroll: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
     QFormLayout* view = group(lay, T("Zoom und Scrollen"));
     m_zoomAnchor = combo("timeline_zoom_anchor",
@@ -260,8 +273,20 @@ TimelineOptions::Thumbnails TimelineSettingsPage::thumbnails() const
     return TimelineOptions::Thumbnails(m_thumbnails->currentData().toInt());
 }
 
+TimelineOptions::WaveShape TimelineSettingsPage::waveShape() const
+{
+    return TimelineOptions::WaveShape(m_waveShape->currentData().toInt());
+}
+
+TimelineOptions::WaveScale TimelineSettingsPage::waveScale() const
+{
+    return TimelineOptions::WaveScale(m_waveScale->currentData().toInt());
+}
+
 void TimelineSettingsPage::store() const
 {
+    if (waveShape() != TimelineOptions::waveShape()) TimelineOptions::setWaveShape(waveShape());
+    if (waveScale() != TimelineOptions::waveScale()) TimelineOptions::setWaveScale(waveScale());
     if (thumbnails() != TimelineOptions::thumbnails()) TimelineOptions::setThumbnails(thumbnails());
     if (!(bigStep() == TimelineOptions::bigStep())) TimelineOptions::setBigStep(bigStep());
     if (!(bigNudge() == TimelineOptions::bigNudge())) TimelineOptions::setBigNudge(bigNudge());
