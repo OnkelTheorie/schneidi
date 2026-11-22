@@ -145,6 +145,23 @@ public:
     // The HDR transfer found for a pool file (MediaInfo::hdr: "HLG", "PQ", empty = SDR; engine/HdrScan). Not in the
     // undo history and no change of the project. false = not in the pool or the same already
     bool setMediaHdr(const QString& path, const QString& hdr);
+    // Media Pool files that are not there (moved, renamed, deleted, a drive not plugged in), in pool order
+    QStringList missingMedia() const;
+    // Missing files found again (old path -> new path, core/Relink.h; `probed`: probes of the new files) as one undo
+    // step: every reference follows (ProjectFile::applyRelink: clips of all timelines, pool, nodes, titles, wipes,
+    // effect files, brand kit), the pool entry keeps everything else of it (bin, color, flags, marks, transcripts).
+    // Pairs whose old file is no longer missing or in the pool, or whose new one is in the pool already, are left
+    // out. Returns how many were relinked (0 = no step).
+    int relinkMedia(const QHash<QString, QString>& moved, const QHash<QString, MediaInfo>& probed, const QString& text);
+    // Only for undo: what a relink changes of a media entry (its path and what the file says), and the rest of it
+    struct MediaFile {
+        QString path;
+        bool hasAudio = false;
+        QVector<AudioStreamInfo> audioStreams;
+        qint64 fileSize = 0;
+    };
+    void applyRelink(const QVector<QPair<MediaFile, MediaFile>>& files, bool forward, const QVector<Sequence>& sequences,
+                     const std::optional<BrandKit>& brand);
     // Clips in any timeline whose used range of `path` reaches past its end (the file got shorter)
     int clipsPastEnd(const QString& path) const;
     // After a frame rate change (from `oldRate` to the current one): media lengths, source in/out and source markers

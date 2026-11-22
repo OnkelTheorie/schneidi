@@ -1669,6 +1669,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
     }
     const QStringList paths = selectedMedia();
     const QVector<int> seqs = selectedSequences();
+    emit contextMenuAboutToShow();
     QMenu menu(this);
     if (seqs.size() == 1) { // Timeline/compound clip like DaVinci
         const int id = seqs.first();
@@ -1791,6 +1792,11 @@ void MediaPool::showContextMenu(const QPoint& pos)
         remove->setShortcuts(m_removeClipsKey->shortcuts()); // shows the key (acts only while the menu is open)
     }
     menu.addSeparator();
+    // Moved files: on an offline clip and on the empty space (not on clips that are all there)
+    if (m_findMissing
+        && (paths.isEmpty()
+            || std::any_of(paths.begin(), paths.end(), [](const QString& p) { return !QFileInfo::exists(p); })))
+        menu.addAction(m_findMissing);
     menu.addAction(T("Medien importieren…"), this, &MediaPool::importDialog);
     menu.exec(m_list->viewport()->mapToGlobal(pos));
 }

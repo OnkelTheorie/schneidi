@@ -240,6 +240,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/BrandKit.h           src/core/BrandKit.cpp
     src/core/ProjectRefs.h        src/core/ProjectRefs.cpp
+    src/core/Relink.h             src/core/Relink.cpp
     src/core/TemplateLibrary.h    src/core/TemplateLibrary.cpp
     src/core/TemplateFill.h       src/core/TemplateFill.cpp
     src/core/DataRows.h           src/core/DataRows.cpp
@@ -379,7 +380,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowStudio.cpp
     src/app/MainWindowDirect.cpp
     src/app/DirectBackend.h src/app/DirectBackend.cpp
-    src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
+    src/app/MainWindowProject.cpp src/app/MainWindowRelink.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
