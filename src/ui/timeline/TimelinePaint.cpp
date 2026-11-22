@@ -133,7 +133,11 @@ void TimelineView::drawRuler(QPainter& p)
         p.drawLine(x, kRulerH - (isMajor ? 12 : 5), x, kRulerH - 1);
         if (isMajor) {
             p.setPen(Theme::textDim);
-            p.drawText(x + 3, 12, Timecode::format(fr, fps));
+            // The centred mode (phones): short seconds "00:07" when the marks are a second or more apart
+            const QString text = m_center && major >= fps
+                                     ? QString("%1:%2").arg(fr / fps / 60, 2, 10, QChar('0')).arg(fr / fps % 60, 2, 10, QChar('0'))
+                                     : Timecode::format(fr, fps);
+            p.drawText(x + 3, 12, text);
         }
     }
     // Render cache (like DaVinci): red = still to be rendered, blue = done

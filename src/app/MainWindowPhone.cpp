@@ -81,6 +81,17 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
         const QRectF r = QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5);
+        if (m_square) { // a small light square with a dark "+" at the lanes' edge (as phone editors have it)
+            p.setPen(Qt::NoPen);
+            p.setBrush(isDown() ? Theme::textDim : Theme::text);
+            p.drawRoundedRect(r, 5, 5);
+            p.setPen(QPen(Theme::window, 2.5, Qt::SolidLine, Qt::RoundCap));
+            const QPointF c = r.center();
+            const double a = r.width() * 0.22;
+            p.drawLine(QPointF(c.x() - a, c.y()), QPointF(c.x() + a, c.y()));
+            p.drawLine(QPointF(c.x(), c.y() - a), QPointF(c.x(), c.y() + a));
+            return;
+        }
         p.setBrush(isDown() ? Theme::control : Theme::alpha(Theme::trackHeader, 200));
         p.setPen(QPen(underMouse() ? Theme::textDim : Theme::border.lighter(160), 1.5, Qt::DashLine));
         p.drawRoundedRect(r, 6, 6);
@@ -657,7 +668,7 @@ void MainWindow::updateAddMediaButton()
     if (empty) { // clip-shaped: two thirds of the lane, a clip's height
         tile->setGeometry(lane.left() + 8, lane.top() + 4, std::max(160, lane.width() * 2 / 3), lane.height() - 8);
     } else { // a square at the lanes' right edge, at a clip's height
-        const int side = std::min(lane.height() - 12, 44);
+        const int side = std::min(lane.height() - 16, 36);
         tile->setGeometry(lane.right() - side - 6, lane.top() + (lane.height() - side) / 2, side, side);
     }
     tile->show();
