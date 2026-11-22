@@ -131,9 +131,13 @@ QImage thumbnail(const DeviceMediaItem& item, const QSize& size)
 
 bool hasPermission()
 {
-    for (const QString& p : wantedPermissions())
-        if (QtAndroidPrivate::checkPermission(p).result() != QtAndroidPrivate::Authorized) return false;
-    return true;
+    const auto granted = [](const char* p) {
+        return QtAndroidPrivate::checkPermission(QString::fromLatin1(p)).result() == QtAndroidPrivate::Authorized;
+    };
+    if (sdk() < 33) return granted("android.permission.READ_EXTERNAL_STORAGE");
+    // Videos (photos too, ideally); Android 14+'s "limited access" (what the user picked) counts as well
+    return granted("android.permission.READ_MEDIA_VIDEO")
+           || (sdk() >= 34 && granted("android.permission.READ_MEDIA_VISUAL_USER_SELECTED"));
 }
 
 void requestPermission(QObject* context, std::function<void(bool)> done)
