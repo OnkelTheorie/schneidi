@@ -2,7 +2,7 @@
 // schneidi's own H.264 encoder s264 as the experimental export format "s264" (id "h264_own" up to 0.23, still read):
 // never the default, in no preset, never a fallback (not even in the GPL-free build); a short
 // synthetic timeline into MP4 and MKV (ffprobe sees H.264, frame count, duration, frame rate, decodes without errors,
-// PSNR against the source, a forced key frame at a cut between two near-identical sources, BT.709 limited range in the
+// PSNR against the source, no key frame at a cut between two near-identical sources (soft cut keys), BT.709 limited range in the
 // SPS's VUI and the container, the level from levelIdcFor); which cuts force key frames (no splits, jump cuts or
 // montage storms, only clips inside the range); clips shorter than the lookahead; a size that is no multiple of 16; a
 // shorter lookahead (low memory) reaches the encoder; the "web" cap: two passes land within 10 % of it on noise, a
@@ -287,8 +287,9 @@ void testContainers(const QString& dir)
 {
     for (const char* name : {"own.mp4", "own.mkv"}) {
         const QString path = dir + "/" + name;
-        // At frame 40 the near-identical second source continues where the first one is: only the forced key frame
-        // makes an IDR there, the encoder's scene detection would not
+        // At frame 40 the near-identical second source continues where the first one is: the cut is passed on as a
+        // key frame request, but the picture does not change there, so s264 continues with a P picture
+        // (EncoderConfig::softCutKeys, since 22.11.2026; an IDR until then)
         Timeline tl = timeline(g_media, 40);
         tl.video[0].clips[1].mediaPath = g_near;
         tl.video[0].clips[1].in = 40;
@@ -307,9 +308,9 @@ void testContainers(const QString& dir)
         // The picture against the timeline's: the first 40 frames are the source's first 40
         const double db = psnr(path, g_media, 40);
         if (!CHECK(db > 38)) std::printf("       %s: PSNR %.2f dB\n", name, db);
-        // Key frames: the first picture and the cut at frame 40
+        // Key frames: only the first picture (the cut at frame 40 continues the picture)
         const QVector<int> keys = keyFrames(path);
-        if (!CHECK_EQ(keys, (QVector<int>{0, 40}))) qDebug() << name << "key frames" << keys;
+        if (!CHECK_EQ(keys, (QVector<int>{0}))) qDebug() << name << "key frames" << keys;
         // Colour tags as the libx264 path writes them (the export's BT.709, limited range): container ...
         CHECK_EQ(v.value("color_space").toString(), QString("bt709"));
         CHECK_EQ(v.value("color_primaries").toString(), QString("bt709"));

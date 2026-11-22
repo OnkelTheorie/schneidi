@@ -1080,6 +1080,37 @@ int main()
         c.mbtree = true;
         CHECK(roundTrip(c, 10, nullptr, 6));
     }
+    // softCutKeys: a keyframe the caller asks for where the picture continues the one before is none; one where the
+    // picture changes is (the export's cuts: a still taken from the clip after it continues as a P picture)
+    for (int bf : {0, 8}) {
+        if (bf > 0 && !gCabac)
+            continue; // (B pictures need CABAC)
+        EncoderConfig c = config(176, 144, IntraMode::Auto, 30);
+        c.lookahead = 8;
+        c.bframes = bf;
+        c.softCutKeys = true;
+        Encoder enc(c);
+        std::vector<int> idr; // display index of every IDR picture
+        auto note = [&](const std::vector<uint8_t>& au) {
+            for (size_t i = 0; i + 3 < au.size(); ++i)
+                if (au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1 && (au[i + 3] & 0x1f) == 5) {
+                    idr.push_back(enc.lastDisplayIndex());
+                    return;
+                }
+        };
+        for (int t = 0; t < 16; ++t) {
+            Yuv src = synthFrame(c.width, c.height, t);
+            if (t >= 10) // a different picture from 10 on: the luma inverted
+                for (uint8_t& v : src.y)
+                    v = uint8_t(255 - v);
+            note(enc.encode(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2}, t == 5 || t == 10));
+        }
+        for (std::vector<uint8_t> au = enc.flush(); !au.empty(); au = enc.flush())
+            note(au);
+        if (!CHECK(idr == (std::vector<int>{0, 10})))
+            for (int i : idr)
+                std::fprintf(stderr, "soft cut keys, %d B pictures: IDR at %d\n", bf, i);
+    }
     for (int refs : {2, 3}) { // several reference pictures (ref_idx te(v)/ue(v), sliding window)
         EncoderConfig c = config(176, 144, IntraMode::Auto, 10, 2);
         c.refs = refs;
