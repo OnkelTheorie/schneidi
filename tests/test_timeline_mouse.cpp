@@ -6,7 +6,8 @@
 // playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
 // table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
 // the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms;
-// a click into the tracks sets the playhead by choice; snapping remembered, its targets and reach by choice.
+// a click into the tracks sets the playhead by choice; snapping remembered, its targets and reach by choice;
+// thumbnail tiles for each choice (filmstrip, first, first and last, none).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -992,6 +993,34 @@ void testSnapOptions()
     CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
 }
 
+// Pictures on video clips (TimelineOptions::thumbnails): where the tiles go for each choice
+void testThumbnailTiles()
+{
+    using TH = TimelineOptions::Thumbnails;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::thumbnails() == TH::Filmstrip);
+    // A 200-frame clip at x 300, 2 px per frame (400 px), tiles 50 px wide (25 frames), view 180..1200
+    const auto tiles = [](TH mode, double clipX = 300, double left = 180) {
+        return TimelineView::thumbnailTiles(mode, clipX, 200, 2.0, 50, left, 1200);
+    };
+    const QVector<QPair<double, int>> strip = tiles(TH::Filmstrip);
+    CHECK(strip.size() >= 8);
+    CHECK(strip.first() == (QPair<double, int>{0.0, 0}));
+    CHECK(strip[1] == (QPair<double, int>{50.0, 25}));
+    // Only what is visible: the clip's start scrolled out to the left skips the first tiles
+    CHECK(tiles(TH::Filmstrip, 100).first().first >= 50);
+    CHECK(tiles(TH::Start) == (QVector<QPair<double, int>>{{0.0, 0}}));
+    CHECK(tiles(TH::StartEnd) == (QVector<QPair<double, int>>{{0.0, 0}, {350.0, 199}}));
+    // Too short for two: only the first
+    CHECK_EQ(TimelineView::thumbnailTiles(TH::StartEnd, 300, 40, 2.0, 50, 180, 1200).size(), 1);
+    CHECK(tiles(TH::None).isEmpty());
+    for (TH m : {TH::Start, TH::StartEnd, TH::None, TH::Filmstrip}) {
+        TimelineOptions::setThumbnails(m);
+        CHECK(TimelineOptions::thumbnails() == m);
+    }
+    CHECK(!QSettings().contains("timeline/thumbnails"));
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -1084,6 +1113,7 @@ int main(int argc, char** argv)
     testFollowPlayback();
     testClickSetsPlayhead();
     testSnapOptions();
+    testThumbnailTiles();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();

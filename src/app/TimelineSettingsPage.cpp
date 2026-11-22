@@ -71,6 +71,17 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                            "Schreibweise, „4,5s“ sind immer Sekunden und „112f“ immer Frames. Dateien (EDL, FCPXML) "
                            "behalten den Timecode.")));
 
+    using TH = TimelineOptions::Thumbnails;
+    m_thumbnails = combo("timeline_thumbnails",
+                         {{T("Filmstreifen"), int(TH::Filmstrip)},
+                          {T("Erstes Bild"), int(TH::Start)},
+                          {T("Erstes und letztes Bild"), int(TH::StartEnd)},
+                          {T("Keine"), int(TH::None)}},
+                         int(TimelineOptions::thumbnails()));
+    display->addRow(T("Bilder auf Videoclips"), m_thumbnails);
+    display->addRow(hint(T("Weniger Bilder: mehr Übersicht bei vielen kurzen Clips, und schwache Rechner müssen beim "
+                           "Scrollen weniger dekodieren.")));
+
     // Zoom and scroll: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
     QFormLayout* view = group(lay, T("Zoom und Scrollen"));
     m_zoomAnchor = combo("timeline_zoom_anchor",
@@ -244,8 +255,14 @@ TimelineOptions::Step TimelineSettingsPage::bigNudge() const
     return {m_nudgeCount->value(), m_nudgeUnit->currentData().toInt() == 1};
 }
 
+TimelineOptions::Thumbnails TimelineSettingsPage::thumbnails() const
+{
+    return TimelineOptions::Thumbnails(m_thumbnails->currentData().toInt());
+}
+
 void TimelineSettingsPage::store() const
 {
+    if (thumbnails() != TimelineOptions::thumbnails()) TimelineOptions::setThumbnails(thumbnails());
     if (!(bigStep() == TimelineOptions::bigStep())) TimelineOptions::setBigStep(bigStep());
     if (!(bigNudge() == TimelineOptions::bigNudge())) TimelineOptions::setBigNudge(bigNudge());
     if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());

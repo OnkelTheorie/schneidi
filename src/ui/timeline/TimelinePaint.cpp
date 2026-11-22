@@ -58,6 +58,7 @@ QString TimelineView::timeText(int frames) const
 void TimelineView::paintEvent(QPaintEvent*)
 {
     m_timeFormat = TimelineOptions::timeFormat(); // once per paint (timeText)
+    m_thumbnails = TimelineOptions::thumbnails();
     if (m_renaming && m_nameSub >= 0) { // subtitle track
         std::optional<SubRow> row;
         for (const SubRow& r : subRows())
@@ -815,9 +816,27 @@ void TimelineView::endTrimFrames()
     emit trimFramesEnded();
 }
 
+QVector<QPair<double, int>> TimelineView::thumbnailTiles(TimelineOptions::Thumbnails mode, double clipX, int clipFrames,
+                                                         double pxPerFrame, int tileW, double left, double right)
+{
+    QVector<QPair<double, int>> tiles;
+    using TM = TimelineOptions::Thumbnails;
+    const double framesPerTile = tileW / pxPerFrame;
+    if (mode == TM::Filmstrip) {
+        const int first = std::max(0, int((left - clipX) / tileW));
+        const int last = int((right - clipX) / tileW);
+        for (int i = first; i <= last; ++i) tiles.append({i * double(tileW), int(i * framesPerTile)});
+    } else if (mode != TM::None) {
+        tiles.append({0.0, 0});
+        const double clipW = clipFrames * pxPerFrame;
+        if (mode == TM::StartEnd && clipW >= 2 * tileW) tiles.append({clipW - tileW, clipFrames - 1});
+    }
+    return tiles;
+}
+
 void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
 {
-    if (!m_cache || body.height() < 10) return;
+    if (!m_cache || body.height() < 10 || m_thumbnails == TimelineOptions::Thumbnails::None) return;
     const MediaInfo* info = m_editor->project()->mediaInfo(c.mediaPath);
     const bool still = info && info->isImage;
 
@@ -828,8 +847,10 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     int step = 1;
     while (step * 2 <= framesPerTile) step *= 2;
 
-    const int first = std::max(0, int((kHeaderW - clipX) / tileW));
-    const int last = int((std::min(body.right(), width()) - clipX) / tileW);
+    // Where tiles go (x from the clip's start, the clip frame they show): a filmstrip (default), only the first frame,
+    // the first and the last (when the clip has room for both), none (Settings › Timeline, read once per paint)
+    const QVector<QPair<double, int>> tiles = thumbnailTiles(m_thumbnails, clipX, c.length(), m_view.pxPerFrame, tileW,
+                                                             kHeaderW, std::min(body.right(), width()));
     // Speed/speed ramp: tile shows the file frame that is played there
     const int fileLen = info ? info->length : 0;
     const std::optional<RetimeMap> map = c.isRetimed() && fileLen > 0 ? std::optional<RetimeMap>(RetimeMap(c, fileLen))
@@ -837,8 +858,9 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     const GradedThumbs::ClipGrade grade = m_cache->graded()->forClip(c); // Color page look (false = none)
     // Shown at another shape than the file's (a stretched 4:3 recording): the file's own shape, probed once and cached
     const double fileAspect = c.pictureAspect > 0 ? MediaAspect::of(c.mediaPath) : 0;
-    for (int i = first; i <= last; ++i) {
-        int src = still ? 0 : std::min(c.out, c.in + int(i * framesPerTile));
+    for (const auto& [tileX, offset] : tiles) {
+        if (clipX + tileX + tileW < kHeaderW || clipX + tileX > width()) continue; // out of view
+        int src = still ? 0 : std::min(c.out, c.in + offset);
         if (map && !still)
             src = map->pictureFrame(c.freeze ? c.stillFrame() : src);
         QImage img = m_cache->thumbnail(c.mediaPath, src / step * step, step);
@@ -846,9 +868,9 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
         for (int s = step * 2; img.isNull() && s <= step * 64; s *= 2)
             img = m_cache->cachedThumbnail(c.mediaPath, src / s * s);
         if (img.isNull()) continue;
-        if (grade) img = grade.image(img, std::min(c.length() - 1, int(i * framesPerTile)) / step * step);
+        if (grade) img = grade.image(img, std::min(c.length() - 1, offset) / step * step);
 
-        const QRect target(int(clipX) + i * tileW, body.top(), tileW, tileH);
+        const QRect target(int(clipX + tileX), body.top(), tileW, tileH);
         // Crop the tile's aspect ratio centered from the image
         QRectF source(img.rect());
         const double want = double(tileW) / tileH;

@@ -29,6 +29,7 @@ public:
     bool spaceReturns() const;                    // Space stops and goes back to the start position
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
+    TimelineOptions::Thumbnails thumbnails() const; // pictures on video clips
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
     double stillSeconds() const;                    // default length of new stills
     double transitionSeconds() const;               // default length of new transitions
@@ -45,6 +46,7 @@ private:
     QComboBox* m_space = nullptr;
     QComboBox* m_click = nullptr;
     QComboBox* m_timeFormat = nullptr;
+    QComboBox* m_thumbnails = nullptr;
     QVector<QPair<int, QCheckBox*>> m_snapTargets;
     QComboBox* m_snapReach = nullptr;
     QDoubleSpinBox* m_stillSeconds = nullptr;

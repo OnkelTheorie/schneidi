@@ -121,6 +121,19 @@ QString stepText(Step step)
     return step.count == 1 ? T("1 Frame") : T("%1 Frames").arg(step.count);
 }
 
+Thumbnails thumbnails()
+{
+    const QString v = stored("timeline/thumbnails");
+    return v == "start" ? Thumbnails::Start : v == "startEnd" ? Thumbnails::StartEnd : v == "none" ? Thumbnails::None
+                                                                                                  : Thumbnails::Filmstrip;
+}
+
+void setThumbnails(Thumbnails t)
+{
+    store("timeline/thumbnails", t == Thumbnails::Start ? "start" : t == Thumbnails::StartEnd ? "startEnd" : "none",
+          t == Thumbnails::Filmstrip);
+}
+
 TimeFormat timeFormat()
 {
     const QString v = stored("timeline/timeFormat");

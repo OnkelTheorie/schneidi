@@ -426,6 +426,9 @@ void testTimelineTab()
             CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
         }
     }
+    // Pictures on video clips: filmstrip (default), first, first and last, none
+    checkTimelineChoice("timeline_thumbnails", 4, int(TimelineOptions::Thumbnails::Filmstrip),
+                        [] { return int(TimelineOptions::thumbnails()); });
     checkTimelineChoice("timeline_time_format", 3, int(TimelineOptions::TimeFormat::Timecode),
                         [] { return int(TimelineOptions::timeFormat()); });
     {

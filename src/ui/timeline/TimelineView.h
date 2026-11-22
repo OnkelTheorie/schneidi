@@ -39,6 +39,10 @@ public:
     static bool confirmTrimForTransition(QWidget* parent);
     // A wheel delta that pans the timeline sideways whatever the wheel's binding: mostly sideways (touchpad swipe,
     // tilt wheel) and neither Alt nor Shift held (Qt resp. the system turn an upright wheel sideways with those)
+    // The thumbnail tiles of a video clip starting at clipX (widget x) between left and right: their x from the
+    // clip's start and the clip frame each shows (TimelineOptions::Thumbnails; a filmstrip only where it is visible)
+    static QVector<QPair<double, int>> thumbnailTiles(TimelineOptions::Thumbnails mode, double clipX, int clipFrames,
+                                                      double pxPerFrame, int tileW, double left, double right);
     static bool wheelPansSideways(QPoint angleDelta, Qt::KeyboardModifiers mods)
     {
         return std::abs(angleDelta.x()) > std::abs(angleDelta.y()) && !(mods & (Qt::AltModifier | Qt::ShiftModifier));
@@ -493,6 +497,7 @@ private:
     void stopFollowing() { m_following = false; } // the user moved the view
     // A time as the user wants to see it (Settings › Timeline › Display), with the format read at the paint's start
     TimelineOptions::TimeFormat m_timeFormat = TimelineOptions::TimeFormat::Timecode;
+    TimelineOptions::Thumbnails m_thumbnails = TimelineOptions::Thumbnails::Filmstrip; // read at the paint's start
     QString timeText(int frames) const;
     void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 
