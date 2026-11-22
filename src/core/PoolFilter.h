@@ -7,7 +7,9 @@
 #include "core/Types.h"
 
 #include <QSet>
+#include <QSize>
 #include <QString>
+#include <QStringList>
 
 struct PoolFilter {
     enum Kind : unsigned {
@@ -33,3 +35,8 @@ struct PoolFilter {
     QString summary() const;
     bool operator==(const PoolFilter&) const = default;
 };
+
+// Words a Media Pool search finds a clip by besides its name (core/NameMatch): its kind, clip color and flags (in the
+// UI language and English), HDR, and when its picture is known (size as shown, fps 0 = a still or unknown) "4K",
+// "1080p", "1920x1080", "60 fps", "hochkant"/"vertical", "16:9" …
+QStringList poolSearchWords(const MediaInfo& m, QSize picture = {}, double fps = 0);

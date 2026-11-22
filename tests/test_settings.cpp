@@ -3,7 +3,8 @@
 // added (the AI chat adds its own), the settings survive a restart (QSettings), the main window applies them (AI
 // indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them. General ›
 // Performance chooses the threads for background work (Background::threads). "Connect with
-// Claude" runs the setup the app hands in (in a thread) and shows its answer per target.
+// Claude" runs the setup the app hands in (in a thread) and shows its answer per target. The Timeline tab
+// (TimelineSettingsPage) shows each timeline choice as stored, and store() writes them.
 // SETTINGS_DUMP=<folder>: pictures of both tabs (settings-general.png, settings-ai.png).
 
 #include "check.h"
@@ -12,12 +13,23 @@
 #include "app/AiSettingsPage.h"
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
+#include "app/TimelineSettingsPage.h"
+#include "core/EditDefaults.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
+#include "core/Editor.h"
+#include "core/Project.h"
+#include "core/Timecode.h"
+#include "ui/Inspector.h"
+#include "ui/MediaPool.h"
+#include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
+#include <QListWidget>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
@@ -250,6 +262,194 @@ void testProjectFolder()
         link->setChecked(false);
         CHECK(!dlg.autoLinkNodes());
     }
+    // Timeline: wheel zoom at the mouse by default; the choice shows the stored playhead mode
+    QSettings().remove("timeline");
+    auto* anchor = dlg.findChild<QComboBox*>("timeline_zoom_anchor");
+    if (CHECK(anchor)) {
+        CHECK_EQ(anchor->count(), 2);
+        CHECK(dlg.zoomAnchor() == ZoomAnchor::Mode::Mouse);
+        anchor->setCurrentIndex(anchor->findData(int(ZoomAnchor::Mode::Playhead)));
+        CHECK(dlg.zoomAnchor() == ZoomAnchor::Mode::Playhead);
+        ZoomAnchor::setMode(dlg.zoomAnchor());
+        CHECK_EQ(QSettings().value("timeline/zoomAnchor").toString(), QString("playhead"));
+        SettingsDialog again(AiSettings{});
+        CHECK(again.zoomAnchor() == ZoomAnchor::Mode::Playhead);
+        QSettings().remove("timeline");
+        CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
+    }
+    // Timeline: after moving the playhead - Standard (the behaviour before) by default, four choices, stored and shown
+    auto* after = dlg.findChild<QComboBox*>("timeline_after_playhead_move");
+    if (CHECK(after)) {
+        CHECK_EQ(after->count(), 4);
+        CHECK(dlg.afterPlayheadMove() == PlayheadMove::Mode::Standard);
+        CHECK_EQ(after->currentText(), T("Standard"));
+        for (PlayheadMove::Mode m : {PlayheadMove::Mode::Continue, PlayheadMove::Mode::Stop, PlayheadMove::Mode::Play}) {
+            after->setCurrentIndex(after->findData(int(m)));
+            CHECK(dlg.afterPlayheadMove() == m);
+            PlayheadMove::setMode(dlg.afterPlayheadMove());
+            SettingsDialog again(AiSettings{});
+            CHECK(again.afterPlayheadMove() == m);
+        }
+        CHECK_EQ(QSettings().value("timeline/afterPlayheadMove").toString(), QString("play"));
+        QSettings().remove("timeline");
+        CHECK(PlayheadMove::mode() == PlayheadMove::Mode::Standard);
+    }
+}
+
+// One choice of Settings › Timeline: `count` entries, `def` shown when nothing is stored (and stored as nothing),
+// each entry stored by store() as `stored()` reads it back and shown again by a new dialog
+void checkTimelineChoice(const char* name, int count, int def, const std::function<int()>& stored)
+{
+    QSettings().remove("timeline");
+    SettingsDialog dlg(AiSettings{});
+    auto* combo = dlg.timelinePage()->findChild<QComboBox*>(name);
+    if (!CHECK(combo)) return;
+    CHECK_EQ(combo->count(), count);
+    CHECK_EQ(combo->currentData().toInt(), def);
+    CHECK_EQ(stored(), def);
+    for (int i = 0; i < combo->count(); ++i) {
+        combo->setCurrentIndex(i);
+        dlg.timelinePage()->store();
+        CHECK_EQ(stored(), combo->itemData(i).toInt());
+        SettingsDialog again(AiSettings{});
+        CHECK_EQ(again.timelinePage()->findChild<QComboBox*>(name)->currentData().toInt(), combo->itemData(i).toInt());
+    }
+    combo->setCurrentIndex(combo->findData(def));
+    dlg.timelinePage()->store();
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty()); // the default is not stored
+    QSettings().remove("timeline");
+}
+
+// Settings › Timeline: its own tab with the timeline choices; store() writes what the fields show
+void testTimelineTab()
+{
+    QSettings().remove("timeline");
+    SettingsDialog dlg(AiSettings{});
+    auto* tabs = dlg.findChild<QTabWidget*>();
+    TimelineSettingsPage* page = dlg.timelinePage();
+    if (!CHECK(tabs && page)) return;
+    QStringList names;
+    for (int i = 0; i < tabs->count(); ++i) names << tabs->tabText(i);
+    CHECK(names.contains(T("Timeline")));
+    dlg.showTab(SettingsDialog::Tab::Timeline);
+    CHECK(page->isAncestorOf(tabs->currentWidget()) || tabs->currentWidget()->isAncestorOf(page));
+    // The two older choices live there now (same keys); store() keeps the defaults unwritten
+    CHECK(page->findChild<QComboBox*>("timeline_zoom_anchor"));
+    CHECK(page->findChild<QComboBox*>("timeline_after_playhead_move"));
+    page->store();
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+    page->findChild<QComboBox*>("timeline_zoom_anchor")->setCurrentIndex(1);
+    page->store();
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Playhead);
+    QSettings().remove("timeline");
+    // Follow the playhead while playing: off, page, centre (off by default)
+    checkTimelineChoice("timeline_follow_playback", 3, int(TimelineOptions::Follow::Off),
+                        [] { return int(TimelineOptions::follow()); });
+    // New clips: still 5 s and transition 1 s by default; stored, shown again, the core gets them on apply
+    {
+        QSettings().remove("timeline");
+        SettingsDialog dlg(AiSettings{});
+        auto* still = dlg.timelinePage()->findChild<QDoubleSpinBox*>("timeline_still_seconds");
+        auto* trans = dlg.timelinePage()->findChild<QDoubleSpinBox*>("timeline_transition_seconds");
+        if (CHECK(still && trans)) {
+            CHECK_EQ(still->value(), 5.0);
+            CHECK_EQ(trans->value(), 1.0);
+            dlg.timelinePage()->store();
+            CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+            still->setValue(3);
+            trans->setValue(0.5);
+            dlg.timelinePage()->store();
+            CHECK_EQ(TimelineOptions::stillSeconds(), 3.0);
+            CHECK_EQ(TimelineOptions::transitionSeconds(), 0.5);
+            SettingsDialog again(AiSettings{});
+            CHECK_EQ(again.timelinePage()->findChild<QDoubleSpinBox*>("timeline_still_seconds")->value(), 3.0);
+            TimelineOptions::applyEditDefaults();
+            CHECK_EQ(EditDefaults::stillSeconds(), 3.0);
+            CHECK_EQ(EditDefaults::transitionFrames(25), 13);
+            QSettings().remove("timeline");
+            TimelineOptions::applyEditDefaults();
+            CHECK_EQ(EditDefaults::stillSeconds(), 5.0);
+        }
+    }
+    // Step sizes: big step 1 second, big nudge 5 frames by default; stored as chosen
+    {
+        QSettings().remove("timeline");
+        SettingsDialog dlg(AiSettings{});
+        TimelineSettingsPage* page = dlg.timelinePage();
+        auto* count = page->findChild<QSpinBox*>("timeline_big_step_count");
+        auto* unit = page->findChild<QComboBox*>("timeline_big_step_unit");
+        auto* ncount = page->findChild<QSpinBox*>("timeline_big_nudge_count");
+        auto* nunit = page->findChild<QComboBox*>("timeline_big_nudge_unit");
+        if (CHECK(count && unit && ncount && nunit)) {
+            CHECK(page->bigStep() == TimelineOptions::kDefaultBigStep);
+            CHECK(page->bigNudge() == TimelineOptions::kDefaultBigNudge);
+            CHECK_EQ(count->value(), 1);
+            CHECK_EQ(ncount->value(), 5);
+            page->store();
+            CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+            count->setValue(10);
+            unit->setCurrentIndex(unit->findData(0)); // frames
+            ncount->setValue(2);
+            nunit->setCurrentIndex(nunit->findData(1)); // seconds
+            page->store();
+            CHECK(TimelineOptions::bigStep() == (TimelineOptions::Step{10, false}));
+            CHECK(TimelineOptions::bigNudge() == (TimelineOptions::Step{2, true}));
+            CHECK_EQ(TimelineOptions::stepFrames(TimelineOptions::bigNudge(), 25), 50);
+            SettingsDialog again(AiSettings{});
+            CHECK(again.timelinePage()->bigStep() == (TimelineOptions::Step{10, false}));
+            QSettings().remove("timeline");
+        }
+    }
+    // Space while playing: stop where it is (default) or go back to the start position
+    checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
+    // A click into the tracks: only select (default) or set the playhead too
+    checkTimelineChoice("timeline_click_sets_playhead", 2, 0, [] { return int(TimelineOptions::clickSetsPlayhead()); });
+    // Times as timecode (default), seconds or frames; each entry shows an example
+    // Snapping: reach small/medium (default)/large; targets clip edges + playhead by default, each box stored
+    checkTimelineChoice("timeline_snap_reach", 3, int(TimelineOptions::SnapReach::Medium),
+                        [] { return int(TimelineOptions::snapReach()); });
+    {
+        QSettings().remove("timeline");
+        SettingsDialog dlg(AiSettings{});
+        TimelineSettingsPage* page = dlg.timelinePage();
+        auto* clips = page->findChild<QCheckBox*>("timeline_snap_clips");
+        auto* playhead = page->findChild<QCheckBox*>("timeline_snap_playhead");
+        auto* markers = page->findChild<QCheckBox*>("timeline_snap_markers");
+        auto* inout = page->findChild<QCheckBox*>("timeline_snap_inout");
+        if (CHECK(clips && playhead && markers && inout)) {
+            CHECK(clips->isChecked() && playhead->isChecked() && !markers->isChecked() && !inout->isChecked());
+            CHECK_EQ(page->snapTargets(), TimelineOptions::kDefaultSnapTargets);
+            markers->setChecked(true);
+            playhead->setChecked(false);
+            page->store();
+            CHECK_EQ(TimelineOptions::snapTargets(), TimelineOptions::SnapClipEdges | TimelineOptions::SnapMarkers);
+            SettingsDialog again(AiSettings{});
+            CHECK(again.timelinePage()->findChild<QCheckBox*>("timeline_snap_markers")->isChecked());
+            CHECK(!again.timelinePage()->findChild<QCheckBox*>("timeline_snap_playhead")->isChecked());
+            markers->setChecked(false);
+            playhead->setChecked(true);
+            page->store();
+            CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+        }
+    }
+    // Pictures on video clips: filmstrip (default), first, first and last, none
+    checkTimelineChoice("timeline_thumbnails", 4, int(TimelineOptions::Thumbnails::Filmstrip),
+                        [] { return int(TimelineOptions::thumbnails()); });
+    // Waveforms: mirrored (default) or from the bottom, dB (default) or linear
+    checkTimelineChoice("timeline_wave_shape", 2, int(TimelineOptions::WaveShape::Mirrored),
+                        [] { return int(TimelineOptions::waveShape()); });
+    checkTimelineChoice("timeline_wave_scale", 2, int(TimelineOptions::WaveScale::Db),
+                        [] { return int(TimelineOptions::waveScale()); });
+    checkTimelineChoice("timeline_time_format", 3, int(TimelineOptions::TimeFormat::Timecode),
+                        [] { return int(TimelineOptions::timeFormat()); });
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* tf = dlg.timelinePage()->findChild<QComboBox*>("timeline_time_format");
+        if (CHECK(tf)) {
+            CHECK(tf->itemText(0).contains("00:00:04:12"));
+            CHECK(tf->itemText(2).contains("112"));
+        }
+    }
 }
 
 void testMainWindow()
@@ -327,6 +527,43 @@ void testMainWindow()
     // The test run saved nothing
     CHECK(!QSettings().contains("ai/indicator"));
     CHECK(!QSettings().contains("ai/liveAllowed"));
+
+    // The time format reaches what stands still on screen at once: Media Pool durations, Inspector subtitle fields
+    QSettings().remove("timeline");
+    {
+        MainWindow w3(&engine);
+        w3.disableAutosave();
+        w3.resize(1400, 900);
+        w3.show();
+        auto* ed = w3.findChild<Editor*>();
+        auto* pool = w3.findChild<MediaPool*>();
+        auto* inspector = w3.findChild<Inspector*>();
+        if (CHECK(ed && pool && inspector)) {
+            ed->project()->addMedia(MediaInfo{"/x/lang.mp4", "lang.mp4", 250, true, true, false});
+            ed->addSubtitle(100); // selected: the Inspector shows its start
+            QApplication::processEvents();
+            const auto poolHas = [&](const QString& text) {
+                for (auto* list : pool->findChildren<QListWidget*>())
+                    for (int i = 0; i < list->count(); ++i)
+                        if (list->item(i)->text().contains("lang.mp4") && list->item(i)->text().contains(text)) return true;
+                return false;
+            };
+            const auto inspectorHas = [&](const QString& text) {
+                for (auto* edit : inspector->findChildren<QLineEdit*>())
+                    if (edit->text() == text) return true;
+                return false;
+            };
+            const int fps = ed->project()->fps();
+            CHECK(poolHas(Timecode::format(250, fps)));
+            CHECK(inspectorHas(Timecode::format(100, fps)));
+            TimelineOptions::setTimeFormat(TimelineOptions::TimeFormat::Frames);
+            w3.applyTimelineOptions();
+            QApplication::processEvents();
+            CHECK(poolHas("    250") || poolHas("\n250"));
+            CHECK(inspectorHas("100"));
+        }
+    }
+    QSettings().remove("timeline");
 }
 
 } // namespace
@@ -342,6 +579,7 @@ int main(int argc, char** argv)
     testDialog();
     testBackgroundThreads();
     testProjectFolder();
+    testTimelineTab();
     testMainWindow();
     return Check::result();
 }

@@ -555,7 +555,7 @@ schneidi_test(test_effect_aliases) # readable names of index-keyed effect parame
 target_link_libraries(test_effect_aliases PRIVATE schneidi_cli_lib)
 schneidi_test(test_title_anim) # title entry/exit animation (0.19): pop/fade/slide sizes and opacity, still frames bit-identical, file, op title
 target_link_libraries(test_title_anim PRIVATE schneidi_cli_lib)
-schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track
+schneidi_test(test_subtitles_readable) # readable subtitle cues (0.19): lines, cps, pauses, word times, check, op subtitles readable/words/track; cue lengths short/very short (0.26)
 target_link_libraries(test_subtitles_readable PRIVATE schneidi_cli_lib)
 schneidi_test(test_settings_isolation) # SCHNEIDI_TEST_SETTINGS: a spawned schneidi-cli reads the test's settings, never the user's
 schneidi_test(test_cli_cancel) # 0.25: Context::cancel, Live::runInBackground (cancel, queue, UI thread), AnalysisCache

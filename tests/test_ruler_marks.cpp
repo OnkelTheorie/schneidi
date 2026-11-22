@@ -3,13 +3,15 @@
 // edges and markers, Shift drags freely, In never past Out), the range's lower half moves the whole range (its
 // length stays), a right-button drag draws a new range (a right-click without dragging opens the menu), a click still
 // moves the playhead, no other left click or drag ever changes the range, one undo step per drag, the hover cursor
-// and tooltip, the right-click actions (loop playback in the range). RULER_SHOT_DIR=<dir> saves a picture of the
+// and tooltip, the right-click actions (loop playback in the range); times as timecode, seconds or frames
+// (TimelineOptions::formatTime/parseTime, the tooltip follows the choice). RULER_SHOT_DIR=<dir> saves a picture of the
 // ruler (RULER_LANG=de/ru).
 #include "check.h"
 #include "timeline_guard.h"
 
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -25,6 +27,7 @@
 #include <QMouseEvent>
 #include <QTest>
 #include <QTimer>
+#include <QSettings>
 #include <QToolTip>
 #include <QUndoStack>
 #include <cmath>
@@ -367,6 +370,68 @@ void testPicture()
 
 } // namespace
 
+// Times as the user wants to see them (TimelineOptions::timeFormat): timecode by default, seconds, frames; typed
+// times read in every format; the In/Out tooltip follows the choice
+void testTimeFormat()
+{
+    using TF = TimelineOptions::TimeFormat;
+    using TimelineOptions::formatTime, TimelineOptions::parseTime;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::timeFormat() == TF::Timecode);
+    CHECK_EQ(formatTime(112, 25), QString("00:00:04:12"));
+    CHECK_EQ(formatTime(112, 25, TF::Frames), QString("112"));
+    const QString dp = I18n::decimalPoint();
+    CHECK_EQ(formatTime(112, 25, TF::Seconds), "0:04" + dp + "48");
+    CHECK_EQ(formatTime(25 * 75, 25, TF::Seconds), "1:15" + dp + "00");
+    CHECK_EQ(formatTime(25 * 3725, 25, TF::Seconds), "1:02:05" + dp + "00");
+    CHECK_EQ(formatTime(-30, 30, TF::Seconds), "-0:01" + dp + "00");
+    CHECK_EQ(formatTime(-5, 25, TF::Frames), QString("-5"));
+    // Reading: timecode everywhere, "s" and "f" everywhere, plain numbers by the format
+    for (TF f : {TF::Timecode, TF::Seconds, TF::Frames}) {
+        CHECK_EQ(parseTime("00:00:04:12", 25, f), 112);
+        CHECK_EQ(parseTime("4.5s", 25, f), 113); // 112.5 rounds up
+        CHECK_EQ(parseTime("4,48 s", 25, f), 112);
+        CHECK_EQ(parseTime("112f", 25, f), 112);
+        CHECK_EQ(parseTime("", 25, f), -1);
+        CHECK_EQ(parseTime("abc", 25, f), -1);
+    }
+    CHECK_EQ(parseTime("112", 25, TF::Timecode), 25 + 12); // timecode digits fill from the right, as before
+    CHECK_EQ(parseTime("112", 25, TF::Frames), 112);
+    CHECK_EQ(parseTime("4,5", 25, TF::Seconds), 113);
+    CHECK_EQ(parseTime("1:30", 25, TF::Seconds), 90 * 25);
+    CHECK_EQ(parseTime("1:30", 25, TF::Timecode), 25 + 30); // timecode: 1 s 30 frames, as before
+    CHECK_EQ(parseTime("1:00:00", 25, TF::Seconds), 3600 * 25);
+    // Seconds at the real rate: 29.97 fps, 1800 frames = 60.06 s (not 60.00 at the timecode's 30); timecode stays
+    // non-drop at 30. Every frame reads back as itself at 23.976, 25, 29.97, 50, 59.94 fps
+    CHECK_EQ(formatTime(1800, 30000.0 / 1001, TF::Seconds), "1:00" + dp + "06");
+    CHECK_EQ(formatTime(1800, 30000.0 / 1001, TF::Timecode), QString("00:01:00:00"));
+    CHECK_EQ(formatTime(24, 24000.0 / 1001, TF::Seconds), "0:01" + dp + "00");
+    for (double fps : {24000.0 / 1001, 25.0, 30000.0 / 1001, 50.0, 60000.0 / 1001}) {
+        int bad = 0;
+        for (int f = 0; f < 4000; ++f) bad += parseTime(formatTime(f, fps, TF::Seconds), fps, TF::Seconds) != f;
+        bad += parseTime(formatTime(215784, fps, TF::Seconds), fps, TF::Seconds) != 215784; // past an hour
+        Check::report(bad == 0, "seconds round trip", __FILE__, __LINE__, QString("%1 fps: %2 wrong").arg(fps).arg(bad));
+    }
+    // The ruler's In/Out tooltip in frames
+    TimelineOptions::setTimeFormat(TF::Frames);
+    CHECK(TimelineOptions::timeFormat() == TF::Frames);
+    {
+        Fixture f;
+        f.editor.setMarks(25, 74);
+        const QPoint at(f.x(25) + 2, kBarY);
+        mouse(f.tv, QEvent::MouseMove, at, Qt::NoButton);
+        QHelpEvent help(QEvent::ToolTip, at, f.tv.mapToGlobal(at));
+        QApplication::sendEvent(&f.tv, &help);
+        const QString tip = QToolTip::text();
+        CHECK(tip.contains("25"));
+        CHECK(tip.contains("50"));
+        CHECK(!tip.contains("00:00:01:00"));
+        QToolTip::hideText();
+    }
+    TimelineOptions::setTimeFormat(TF::Timecode);
+    CHECK(!QSettings().contains("timeline/timeFormat"));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -380,6 +445,7 @@ int main(int argc, char** argv)
     testCreate();
     testLeftNeverChanges();
     testHoverAndTip();
+    testTimeFormat();
     testMenu();
     testPicture();
     return Check::result();

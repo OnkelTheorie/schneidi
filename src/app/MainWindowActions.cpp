@@ -62,6 +62,7 @@
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -103,6 +104,18 @@
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
+
+void MainWindow::updateStepTexts()
+{
+    using TimelineOptions::StepAction, TimelineOptions::stepActionText;
+    const QVector<QPair<const char*, QString>> texts = {
+        {"second_prev", stepActionText(StepAction::Back, TimelineOptions::bigStep())},
+        {"second_next", stepActionText(StepAction::Forward, TimelineOptions::bigStep())},
+        {"nudge_left_multi", stepActionText(StepAction::NudgeLeft, TimelineOptions::bigNudge())},
+        {"nudge_right_multi", stepActionText(StepAction::NudgeRight, TimelineOptions::bigNudge())}};
+    for (const auto& [id, text] : texts)
+        if (QAction* a = InputBindings::instance().action(id)) a->setText(text);
+}
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                                const std::function<void()>& fn)
@@ -146,6 +159,14 @@ void MainWindow::buildActions()
     makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
+    // Moved files found again at any time, not only when opening (MainWindowRelink.cpp); enabled while some are missing
+    m_findMissingAction = makeAction(file, "find_missing_media", T("Fehlende Medien suchen…"), QKeySequence(),
+                                     [this] { findMissingMedia(); });
+    m_findMissingAction->setEnabled(false);
+    m_mediaPool->setFindMissingAction(m_findMissingAction);
+    connect(file, &QMenu::aboutToShow, this, &MainWindow::updateFindMissingAction);
+    connect(m_mediaPool, &MediaPool::contextMenuAboutToShow, this, &MainWindow::updateFindMissingAction);
+    connect(m_project, &Project::mediaChanged, this, &MainWindow::updateFindMissingAction);
     makeAction(file, "new_bin", T("Neuer Ordner"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
     makeAction(file, "new_timeline", T("Neue Timeline"), QKeySequence("Ctrl+Alt+N"), [this] { m_mediaPool->newTimeline(); });
     makeAction(file, "import_subtitles", T("Untertitel importieren (SRT)…"), QKeySequence(), [this] { importSubtitlesDialog(); });
@@ -394,10 +415,14 @@ void MainWindow::buildActions()
     };
     makeAction(trimMenu, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
     makeAction(trimMenu, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [nudge] { nudge(1); });
-    makeAction(trimMenu, "nudge_left_multi", T("5 Frames nach links schieben"), QKeySequence("Shift+,"),
-               [nudge] { nudge(-5); });
-    makeAction(trimMenu, "nudge_right_multi", T("5 Frames nach rechts schieben"), QKeySequence("Shift+."),
-               [nudge] { nudge(5); });
+    // The big nudge: 5 frames or the user's size (Settings › Timeline; the texts follow it, updateStepTexts)
+    using TimelineOptions::StepAction, TimelineOptions::stepActionText;
+    makeAction(trimMenu, "nudge_left_multi", stepActionText(StepAction::NudgeLeft, TimelineOptions::bigNudge()),
+               QKeySequence("Shift+,"),
+               [this, nudge] { nudge(-TimelineOptions::stepFrames(TimelineOptions::bigNudge(), m_project->fps())); });
+    makeAction(trimMenu, "nudge_right_multi", stepActionText(StepAction::NudgeRight, TimelineOptions::bigNudge()),
+               QKeySequence("Shift+."),
+               [this, nudge] { nudge(TimelineOptions::stepFrames(TimelineOptions::bigNudge(), m_project->fps())); });
     QMenu* clipMenu = timeline->addMenu(T("Clip"));
     makeAction(clipMenu, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
                [this] { m_editor->toggleSelectionEnabled(); });
@@ -518,6 +543,14 @@ void MainWindow::buildActions()
                [this] { m_editor->addSubtitleTrack(); });
     makeAction(subtitleMenu, "transcribe_subtitles", T("Untertitel aus Audio erzeugen…"), QKeySequence(),
                [this] { transcribeDialog(); });
+    // Existing subtitles (older projects, imported SRT) split into short cues for TikTok/Shorts or back to 1-2 lines
+    QMenu* resplitMenu = subtitleMenu->addMenu(T("Untertitel neu aufteilen"));
+    makeAction(resplitMenu, "resplit_subtitles_normal", T("Normal (1–2 Zeilen)"), QKeySequence(),
+               [this] { resplitSubtitles(Subtitles::CueLength::Normal); });
+    makeAction(resplitMenu, "resplit_subtitles_short", T("Kurz (eine Zeile, für TikTok/Shorts)"), QKeySequence(),
+               [this] { resplitSubtitles(Subtitles::CueLength::Short); });
+    makeAction(resplitMenu, "resplit_subtitles_very_short", T("Sehr kurz (2–3 Wörter)"), QKeySequence(),
+               [this] { resplitSubtitles(Subtitles::CueLength::VeryShort); });
     QMenu* markMenu = timeline->addMenu(T("In/Out und Marker"));
     // In/Out like DaVinci: if the Viewer shows the source, they apply to the source clip (remembered per Media Pool clip)
     auto markIn = [this, tv](int frame) {
@@ -533,11 +566,10 @@ void MainWindow::buildActions()
             const MediaInfo* m = m_editor->sourceMedia(m_engine->sourcePath());
             const int f = in ? m->markIn : m->markOut;
             if (f < 0) return;
-            m_engine->pause();
-            m_engine->seek(f);
+            PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this, f] { m_engine->seek(f); });
             return;
         }
-        jumpToFrame(in ? m_project->timeline().markIn : m_project->timeline().markOut);
+        keyJump(in ? m_project->timeline().markIn : m_project->timeline().markOut);
     };
     makeAction(markMenu, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [markIn] { markIn(0); });
     makeAction(markMenu, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [markOut] { markOut(0); });
@@ -601,21 +633,35 @@ void MainWindow::buildActions()
     makeAction(timeline, "speech", T("Sprechertext…"), QKeySequence(), [this] { speechDialog(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
-    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
+    // Space while it plays: stop there or, by choice (Settings › Timeline), go back to where it started
+    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] {
+        if (m_engine->speed() != 0.0 && TimelineOptions::spaceReturns()) stopAndReturn();
+        else m_engine->togglePlay();
+    });
     makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
     makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
+    makeAction(play, "stop_return", T("Stopp und zurück zur Startposition"), QKeySequence(), [this] { stopAndReturn(); });
     makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
     play->addSeparator();
     makeAction(play, "frame_prev", T("1 Frame zurück"), QKeySequence(Qt::Key_Left), [this] { stepFrames(-1); });
     makeAction(play, "frame_next", T("1 Frame vor"), QKeySequence(Qt::Key_Right), [this] { stepFrames(1); });
-    makeAction(play, "second_prev", T("1 Sekunde zurück"), QKeySequence("Shift+Left"), [this] { stepFrames(-m_project->fps()); });
-    makeAction(play, "second_next", T("1 Sekunde vor"), QKeySequence("Shift+Right"), [this] { stepFrames(m_project->fps()); });
+    // The big step: 1 second or the user's size (Settings › Timeline; the texts follow it, updateStepTexts)
+    makeAction(play, "second_prev", TimelineOptions::stepActionText(TimelineOptions::StepAction::Back, TimelineOptions::bigStep()),
+               QKeySequence("Shift+Left"),
+               [this] { stepFrames(-TimelineOptions::stepFrames(TimelineOptions::bigStep(), m_project->fps())); });
+    makeAction(play, "second_next",
+               TimelineOptions::stepActionText(TimelineOptions::StepAction::Forward, TimelineOptions::bigStep()),
+               QKeySequence("Shift+Right"),
+               [this] { stepFrames(TimelineOptions::stepFrames(TimelineOptions::bigStep(), m_project->fps())); });
     makeAction(play, "edit_prev", T("Vorheriger Schnittpunkt"), QKeySequence(Qt::Key_Up), [this] { jumpToEdit(-1); });
     makeAction(play, "edit_next", T("Nächster Schnittpunkt"), QKeySequence(Qt::Key_Down), [this] { jumpToEdit(1); });
-    makeAction(play, "go_start", T("Zum Anfang"), QKeySequence(Qt::Key_Home), [this] { m_engine->pause(); m_engine->seek(0); });
+    // Jumps: playback after them as the user chose (PlayheadMove; Standard = stop). Frame/second steps always pause
+    makeAction(play, "go_start", T("Zum Anfang"), QKeySequence(Qt::Key_Home), [this] {
+        PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this] { m_engine->seek(0); });
+    });
     makeAction(play, "go_end", T("Zum Ende"), QKeySequence(Qt::Key_End), [this] {
-        m_engine->pause();
-        m_engine->seek(TimelineOps::endFrame(m_project->timeline()));
+        PlayheadMove::jump(m_engine, PlayheadMove::Source::Key,
+                           [this] { m_engine->seek(TimelineOps::endFrame(m_project->timeline())); });
     });
     // Loop playback in the In/Out range (per session, off at every start; export unaffected): only while a range
     // exists, removing it switches the loop off (nothing loops by accident). No default key.

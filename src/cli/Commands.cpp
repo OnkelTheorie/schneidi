@@ -1566,7 +1566,14 @@ const QVector<Command>& commands()
           {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
                                 "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},
           {"srt", T::Path, "also write the segments as an SRT file"},
-          {"max_chars", T::Integer, "longest segment in characters (default 42, one subtitle line)"},
+          {"max_chars", T::Integer, "longest segment in characters (default 42, one subtitle line); given without "
+                                    "length: length normal"},
+          {"length", T::String, "cue length: auto (default: short for a vertical picture - taller than wide - else "
+                                "normal), normal (as before: one line of max_chars; with readable 1-2 lines), short "
+                                "(one line of at most 25 characters / 6 words, about one short sentence or less, for "
+                                "TikTok/Shorts/Reels; split at sentence ends, then commas and conjunctions, word times "
+                                "kept, none under 0.5 s unless the speech is) or very_short (2-3 words). The answer "
+                                "says which one was used; not for captions"},
           {"audio_stream", T::String, "for a media file: which audio stream(s), by number from 0 or by name as "
                                       "`probe` lists them (\"Mikrofon\", \"Discord,Mikrofon\" = mixed). Default auto: "
                                       "the streams named like a microphone/voice (game recordings: no song lyrics "

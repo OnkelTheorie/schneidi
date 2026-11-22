@@ -811,8 +811,17 @@ void opSubtitles(Session& s, const QJsonObject& op)
     // A whole new subtitle track: from an SRT file, a list of cues or of words; or an existing track regrouped
     QVector<SubtitleCue> cues;
     QString trackName = op.value("name").toString();
-    Subtitles::ReadableRules rules;
-    const bool readable = readableRules(op, &rules) || op.contains("words");
+    // Cue length: given = regrouped to it; words without one: auto (short cues on a vertical timeline); readable
+    // alone: normal (1-2 lines). The readable object changes single rules on top.
+    const bool lengthGiven = op.contains("length");
+    Subtitles::CueLength length = op.contains("words") ? Subtitles::CueLength::Auto : Subtitles::CueLength::Normal;
+    if (lengthGiven && !Subtitles::parseCueLength(op.value("length").toString(), &length))
+        fail("BAD_ARGUMENT", QString("length must be auto, normal, short or very_short (not '%1')")
+                                 .arg(op.value("length").toVariant().toString()));
+    length = Subtitles::resolve(length, s.format().size());
+    Subtitles::ReadableRules rules = Subtitles::rulesFor(length);
+    const bool readable = readableRules(op, &rules) || op.contains("words") || lengthGiven;
+    const bool shortCues = length == Subtitles::CueLength::Short || length == Subtitles::CueLength::VeryShort;
     const double fps = s.format().rate.fps();
     if (op.contains("srt")) {
         const QString path = absolute(op.value("srt").toString());
@@ -862,7 +871,8 @@ void opSubtitles(Session& s, const QJsonObject& op)
         std::sort(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
     } else if (op.contains("track")) {
         // An existing track regrouped in place
-        if (!readable) fail("BAD_ARGUMENT", "with only 'track': give readable:true to regroup that track's cues");
+        if (!readable)
+            fail("BAD_ARGUMENT", "with only 'track': give readable:true or length:'short' (…) to regroup that track's cues");
         const Timeline& tl = s.project.timeline();
         const int index = parseSubtitleTrack(op.value("track"));
         if (index < 0 || index >= tl.subtitles.size())
@@ -872,8 +882,23 @@ void opSubtitles(Session& s, const QJsonObject& op)
         if (tl.subtitles[index].locked) fail("FAILED", "the subtitle track is locked");
         const QVector<SubtitleCue> after = Subtitles::readable(before, fps, rules);
         if (after.isEmpty()) fail("BAD_ARGUMENT", "the cues of that subtitle track have no text: nothing to regroup");
-        if (!s.editor.setSubtitleCues(index, after, "Readable subtitles")) fail("FAILED", "the subtitle track could not be changed");
-        s.notes << QString("ST%1: %2 cues regrouped into %3 readable ones").arg(index + 1).arg(before.size()).arg(after.size());
+        if (!s.editor.setSubtitleCues(index, after, shortCues ? "Short subtitles" : "Readable subtitles"))
+            fail("FAILED", "the subtitle track could not be changed");
+        // Word times: the cues' own where they have them (from `transcribe`), otherwise each cue's time shared by
+        // the length of its words
+        int timed = 0;
+        for (const SubtitleCue& c : before)
+            timed += !c.words.isEmpty() && c.words.size() == c.text.simplified().split(' ', Qt::SkipEmptyParts).size();
+        s.notes << QString("ST%1: %2 cues regrouped into %3 %4 ones (%5)")
+                       .arg(index + 1)
+                       .arg(before.size())
+                       .arg(after.size())
+                       .arg(Subtitles::cueLengthKey(length).replace('_', ' '))
+                       .arg(timed == before.size() ? QString("word times kept")
+                            : timed == 0           ? QString("no word times stored: each cue's time shared by its words' length")
+                                                   : QString("%1 of %2 cues had word times, the others shared by length")
+                                                         .arg(timed)
+                                                         .arg(before.size()));
         return;
     }
     if (cues.isEmpty())
@@ -1150,7 +1175,7 @@ QVector<OpDef> makeOps()
         {"subtitle", "{op:'subtitle', text, at, to?|duration?, track?:'ST1'}",
          "add a subtitle (default 3s, stops before the next one), or {op:'subtitle', id, text?, at?, to?} change one",
          {}, opSubtitle},
-        {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], words?, readable?, name?}",
+        {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], words?, readable?, length?, name?}",
          "new subtitle track from an SRT file, cues or words",
          "readable:true regroups the cues into ones people can read (what `check` wants): at most 2 lines of 42 "
          "characters, split evenly at a phrase end, a new cue at a sentence end once slow enough, never across a "
@@ -1159,6 +1184,13 @@ QVector<OpDef> makeOps()
          "`transcribe` with words:true (timeline frames): always grouped readably, the word times kept; a cue may carry "
          "its own words:[[from, to], …] (one per word, timeline frames). Overlapping cues are cut apart first. "
          "{op:'subtitles', track:'ST1', readable:true} regroups an existing track in place (one undo step). "
+         "length: 'normal' (the 1-2 lines above), 'short' (one line of at most 25 characters / 6 words, about one "
+         "short sentence or less, for TikTok/Shorts/Reels: split at sentence ends, then commas and conjunctions, never "
+         "inside a word, each word keeps its time, none under 0.5 s unless the speech is), 'very_short' (2-3 words, at "
+         "most 16 characters) or 'auto' (short on a vertical timeline, else normal); giving it regroups the cues. "
+         "Default: auto with words, normal with readable. {op:'subtitles', track:'ST1', length:'short'} re-splits an "
+         "existing track into short cues: with the word times its cues carry (from `transcribe`), otherwise each "
+         "cue's time is shared by the length of its words. "
          "`transcribe` with apply:true and readable:true does it in one call.",
          opSubtitles, {"track"}},
         {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset} "

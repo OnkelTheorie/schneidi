@@ -74,6 +74,7 @@
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include <QAction>
 #include <QCursor>
@@ -299,10 +300,35 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
+    TimelineOptions::applyEditDefaults(); // the user's still and transition lengths (Settings › Timeline)
+    // Snapping on/off is remembered across starts (test runs leave the settings alone)
+    connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
+        if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);
+    });
+    // Where playback started (Space by choice and "Stop and return" go back there)
+    connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
+        if (m_lastSpeed == 0.0 && speed != 0.0) {
+            m_playStart = m_engine->playStart(); // read before the pump ran (position() may be on already)
+            m_playStartMode = int(m_engine->mode());
+        }
+        m_lastSpeed = speed;
+    });
+    // Another project or timeline: the old start position means nothing there ("Stop and return" only stops). Also
+    // a format change (another frame rate: frames count differently)
+    for (auto signal : {&Project::loaded, &Project::currentSequenceChanged, &Project::formatChanged})
+        connect(m_project, signal, this, [this] { m_playStart = -1; });
+    // Playing or not: the timeline may follow the playhead while it plays (Settings › Timeline, off by default)
+    connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {
+        tv->setPlaying(m_engine->timelinePositions() ? speed : 0.0);
+    });
     connect(tv, &TimelineView::seekRequested, this, [this](int f) {
         if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(f);
         else m_engine->seek(f);
     });
+    // A playhead move by the user (ruler, overview strip, Studio lanes): playback after it as chosen in the settings
+    connect(tv, &TimelineView::playheadMoveStarted, this,
+            [this] { m_playheadMove.begin(m_engine, PlayheadMove::Source::Timeline); });
+    connect(tv, &TimelineView::playheadMoveFinished, this, [this] { m_playheadMove.end(m_engine); });
     // Keyframes: Inspector shows values at the playhead, arrows ◀ ▶ jump like a click into the ruler
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->timelinePositions()) m_inspector->setPlayhead(f);
@@ -1245,8 +1271,7 @@ void MainWindow::jumpToMarker(int direction)
         for (int m : markers)
             if (direction > 0 ? m > pos && (best < 0 || m < best) : m < pos && m > best) best = m;
         if (best < 0) return;
-        m_engine->pause();
-        m_engine->seek(best);
+        PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this, best] { m_engine->seek(best); });
         return;
     }
     jumpTo(m_project->timeline().markers, direction);
@@ -1261,7 +1286,16 @@ void MainWindow::jumpTo(const QVector<int>& points, int direction)
         if (direction < 0 && e < pos) best = std::max(best, e);
     }
     if (best == INT_MAX || best < 0) return;
-    jumpToFrame(best);
+    keyJump(best);
+}
+
+void MainWindow::keyJump(int frame)
+{
+    if (frame < 0) return;
+    PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this, frame] {
+        if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(frame);
+        else m_engine->seek(frame);
+    });
 }
 
 void MainWindow::jumpToFrame(int frame)
@@ -1338,6 +1372,37 @@ void MainWindow::transcribeDialog()
         m_editor->importSubtitles(results[i].cues, results[i].name, results.size() > 1 ? i : -1);
     undo->endMacro();
     if (!dlg.languageHint().isEmpty()) QMessageBox::information(this, T("Untertitel aus Audio erzeugen"), dlg.languageHint());
+}
+
+void MainWindow::resplitSubtitles(Subtitles::CueLength length)
+{
+    const Timeline& tl = m_project->timeline();
+    const QString title = T("Untertitel neu aufteilen");
+    // The track of a selected subtitle, else the visible one with cues, else the first with cues
+    int index = -1;
+    for (int id : m_selection->ids())
+        if (Subtitles::find(tl, id, &index)) break;
+    if (index < 0 || index >= tl.subtitles.size()) {
+        index = -1;
+        for (int i = 0; i < tl.subtitles.size() && index < 0; ++i)
+            if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) index = i;
+        for (int i = 0; i < tl.subtitles.size() && index < 0; ++i)
+            if (!tl.subtitles[i].cues.isEmpty()) index = i;
+    }
+    if (index < 0) {
+        QMessageBox::information(this, title, T("Es gibt keine Untertitel zum Aufteilen."));
+        return;
+    }
+    if (tl.subtitles[index].locked) {
+        QMessageBox::information(this, title, T("Die Untertitelspur ist gesperrt."));
+        return;
+    }
+    const QVector<SubtitleCue> after =
+        Subtitles::readable(tl.subtitles[index].cues, m_project->frameRate(), Subtitles::rulesFor(length));
+    if (after.isEmpty()) return;
+    const QString name = subtitleTrackDisplayName(tl.subtitles[index], index);
+    if (m_editor->setSubtitleCues(index, after, title))
+        statusBar()->showMessage(T("%1: %2 Untertitel").arg(name).arg(after.size()), 4000);
 }
 
 // Text -> voice clip (Piper) at the playhead on the first audio track free there; its words become the file's
@@ -1458,6 +1523,12 @@ void MainWindow::setupBackgroundJobs()
                                      .arg(QFileInfo(progress->failures().back().file).fileName()),
                                  8000);
     });
+}
+
+void MainWindow::stopAndReturn()
+{
+    m_engine->pause();
+    if (m_playStart >= 0 && m_playStartMode == int(m_engine->mode())) m_engine->seek(m_playStart);
 }
 
 void MainWindow::setupProxyHint()

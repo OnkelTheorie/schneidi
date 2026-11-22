@@ -9,7 +9,9 @@
 #include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/ProxyChoice.h"
+#include "core/EditDefaults.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
@@ -24,6 +26,8 @@
 #include "ui/CompactButton.h"
 #include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
+#include "ui/SearchHitDelegate.h"
+#include "core/NameMatch.h"
 #include "ui/TimelineFormatDialog.h"
 #include "core/ProjectFormat.h"
 #include "engine/Background.h"
@@ -417,6 +421,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     connect(m_searchBtn, &QToolButton::toggled, this, [this, title](bool on) {
         title->setVisible(!on);
         m_search->setVisible(on);
+        m_scopeBtn->setVisible(on);
         if (on) m_search->setFocus();
         else m_search->clear();
     });
@@ -499,13 +504,25 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_filterReset->setAutoRaise(true);
     m_filterReset->setVisible(false);
     connect(m_filterReset, &QToolButton::clicked, this, [this] { setFilter({}); });
+    // While searching: the whole project, or (ticked) only the open bin and its sub-bins
+    m_scopeBtn = new CompactButton; // never widens the pool: the text ends in "…" when narrow
+    m_scopeBtn->setObjectName("pool_search_scope");
+    m_scopeBtn->setText(T("Nur dieser Ordner"));
+    m_scopeBtn->setToolTip(T("Nur im geöffneten Ordner und seinen Unterordnern suchen (sonst im ganzen Projekt)"));
+    m_scopeBtn->setCheckable(true);
+    m_scopeBtn->setAutoRaise(true);
+    m_scopeBtn->setVisible(false);
+    m_scopeBtn->setStyleSheet("QToolButton { padding: 1px 4px; }");
+    connect(m_scopeBtn, &QToolButton::toggled, this, [this] { rebuildClips(); });
     auto* titleRow = new QHBoxLayout;
     titleRow->setContentsMargins(0, 0, 4, 0);
     titleRow->setSpacing(2);
     titleRow->addWidget(m_binTitle, 1);
+    titleRow->addWidget(m_scopeBtn);
     titleRow->addWidget(m_filterReset);
 
     m_list = new MediaList;
+    m_list->setItemDelegate(new SearchHitDelegate(m_list)); // search hits: the matched part, the bin of other bins' hits
     m_list->setMovement(QListView::Static);
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
@@ -764,6 +781,7 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
         }
         MediaInfo info = r.info;
         info.bin = bin;
+        if (info.isImage) info.length = EditDefaults::stillFrames(m_project->fps()); // the user's default (probe: 5 s)
         m_project->addMedia(info);
         if (added) ++*added;
     }
@@ -917,6 +935,38 @@ void MediaPool::setSort(SortKey key, bool ascending)
     m_sortAscending = ascending;
     rebuildClips();
     saveSettings();
+}
+
+void MediaPool::setSearchThisBinOnly(bool on)
+{
+    m_scopeBtn->setChecked(on);
+}
+
+bool MediaPool::searchThisBinOnly() const
+{
+    return m_scopeBtn->isChecked();
+}
+
+// The picture formats of the project's files the search does not know yet: in one background job, the list anew after
+void MediaPool::requestFormats()
+{
+    QStringList paths;
+    for (const MediaInfo& m : m_project->media())
+        if (m.hasVideo && !m_formatAsked.contains(m.path) && !m_offline.contains(m.path)) paths << m.path;
+    if (paths.isEmpty()) return;
+    for (const QString& p : paths) m_formatAsked.insert(p);
+    m_thumbPool->start([this, paths] {
+        Background::lowerThisThread(Background::Level::Low);
+        QHash<QString, MediaProbe::PictureFormat> found;
+        for (const QString& p : paths) found.insert(p, MediaProbe::pictureFormat(p));
+        QMetaObject::invokeMethod(
+            this,
+            [this, found] {
+                m_formats.insert(found);
+                if (!m_search->text().trimmed().isEmpty()) rebuildClips();
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void MediaPool::setSearch(const QString& text)
@@ -1093,20 +1143,34 @@ void MediaPool::rebuildClips()
     m_list->clear();
     m_items.clear();
     const QString search = m_search->text().trimmed();
+    const QStringList words = NameMatch::queryWords(search);
     const PoolFilter& filter = m_filterBtn->filter();
-    // Search and filter look into the sub-bins too
+    // Search and filter look into the sub-bins too, the search into the whole project unless "only this bin"
     const bool narrowed = !search.isEmpty() || filter.active();
+    const bool wholeProject = !search.isEmpty() && !m_scopeBtn->isChecked();
     const QString bin = m_project->binName(m_currentBin);
-    QString title = search.isEmpty() ? bin : T("Suche in „%1“: %2").arg(bin, search);
+    QString title = search.isEmpty() ? bin
+                    : wholeProject   ? T("Suche im ganzen Projekt: %1").arg(search)
+                                     : T("Suche in „%1“: %2").arg(bin, search);
     if (filter.active())
         title = search.isEmpty() ? T("Filter in „%1“: %2").arg(bin, filter.summary()) : title + " · " + filter.summary();
     m_binTitle->setFullText(title);
     m_filterReset->setVisible(filter.active());
     const bool list = m_viewMode == ViewMode::List;
-    auto found = [&](int itemBin, const QString& name) {
-        return narrowed ? m_project->binInside(itemBin, m_currentBin) && name.contains(search, Qt::CaseInsensitive)
-                        : itemBin == m_currentBin;
+    auto inScope = [&](int itemBin) {
+        return narrowed ? wholeProject || m_project->binInside(itemBin, m_currentBin) : itemBin == m_currentBin;
     };
+    // A hit of another bin says where it is (small, under its name)
+    bool anySubtitle = false;
+    auto markHit = [&](QListWidgetItem* it, int itemBin, const QString& name) {
+        if (!words.isEmpty())
+            it->setData(SearchHitDelegate::kHighlightRole, SearchHitDelegate::highlights(NameMatch::ranges(words, name)));
+        if (narrowed && itemBin != m_currentBin) {
+            it->setData(SearchHitDelegate::kSubtitleRole, m_project->binName(itemBin));
+            anySubtitle = true;
+        }
+    };
+    if (!words.isEmpty()) requestFormats();
 
     if (m_currentBin == 0 && !narrowed) {
         // Title generator at the front of the Master (in DaVinci under Effects > Titles > "Text"); drag = 5 s title
@@ -1149,7 +1213,8 @@ void MediaPool::rebuildClips()
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
     QVector<const Sequence*> seqs;
     for (const Sequence& q : m_project->sequences())
-        if (found(q.bin, q.name) && filter.matches(q)) seqs << &q;
+        if (inScope(q.bin) && filter.matches(q) && NameMatch::matches(words, QStringList{q.name, T("Timeline"), "timeline"}))
+            seqs << &q;
     std::stable_sort(seqs.begin(), seqs.end(), [&](const Sequence* a, const Sequence* b) {
         const int c = I18n::compareNames(a->name, b->name);
         return m_sortAscending ? c < 0 : c > 0;
@@ -1160,13 +1225,20 @@ void MediaPool::rebuildClips()
         const QImage picture = q->multicam ? QImage() : m_posters->poster(q->id);
         auto* it = new QListWidgetItem(QIcon(sequenceThumb(*q, picture)), QString());
         it->setData(Qt::UserRole, item); // tool tip: updateSequenceItems (with the resolution)
+        markHit(it, q->bin, q->name);
         m_list->addItem(it);
     }
     updateSequenceItems();
 
     QVector<const MediaInfo*> media;
     for (const MediaInfo& m : m_project->media())
-        if (found(m.bin, m.name) && filter.matches(m)) media << &m;
+        if (inScope(m.bin) && filter.matches(m)) {
+            if (!words.isEmpty()) {
+                const MediaProbe::PictureFormat f = m_formats.value(m.path);
+                if (!NameMatch::matches(words, QStringList{m.name} + poolSearchWords(m, f.size, f.fps))) continue;
+            }
+            media << &m;
+        }
     QHash<QString, QDateTime> dates;
     if (m_sortKey == SortKey::Date)
         for (const MediaInfo* m : media) dates.insert(m->path, QFileInfo(m->path).lastModified());
@@ -1198,9 +1270,10 @@ void MediaPool::rebuildClips()
         } else if (m->hasVideo && !offline && m_thumbAspect.value(m->path) != m->pictureAspect) {
             requestThumb(m->path, m->isImage ? 0 : m->length / 3); // shown at another shape: the old one until then
         }
-        const QString duration = Timecode::format(m->length, m_project->fps());
+        const QString duration = TimelineOptions::formatTime(m->length, m_project->frameRate());
         auto* item = new QListWidgetItem(list ? m->name + "    " + duration : m->name + "\n" + duration);
         item->setData(Qt::UserRole, m->path);
+        markHit(item, m->bin, m->name);
         m_list->addItem(item);
         m_items.insert(m->path, item);
         updateItem(m->path);
@@ -1208,6 +1281,9 @@ void MediaPool::rebuildClips()
     for (int i = 0; i < m_list->count(); ++i)
         if (selected.contains(m_list->item(i)->data(Qt::UserRole).toString())) m_list->item(i)->setSelected(true);
     m_list->verticalScrollBar()->setValue(scroll);
+    if (m_viewMode != ViewMode::List) // room for the bin line of other bins' hits
+        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 52
+                                                             + (anySubtitle ? SearchHitDelegate::subtitleHeight(m_list->font()) : 0)));
     m_emptyHint->setText(filter.active() ? T("Nichts passt zum Filter") : T("Nichts passt zur Suche"));
     m_emptyHint->setVisible(narrowed && m_list->count() == 0);
 }
@@ -1432,7 +1508,7 @@ void MediaPool::updateSequenceItems()
         const int id = sequenceOfItem(it->data(Qt::UserRole).toString());
         const Sequence* q = id ? m_project->sequence(id) : nullptr;
         if (!q) continue;
-        const QString duration = Timecode::format(TimelineOps::endFrame(q->timeline), m_project->fps());
+        const QString duration = TimelineOptions::formatTime(TimelineOps::endFrame(q->timeline), m_project->frameRate());
         const QString text = list ? q->name + "    " + duration : q->name + "\n" + duration;
         if (it->text() != text) it->setText(text);
         // What it is, and its resolution: its own (a 9:16 short) or the project's
@@ -1593,6 +1669,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
     }
     const QStringList paths = selectedMedia();
     const QVector<int> seqs = selectedSequences();
+    emit contextMenuAboutToShow();
     QMenu menu(this);
     if (seqs.size() == 1) { // Timeline/compound clip like DaVinci
         const int id = seqs.first();
@@ -1715,6 +1792,11 @@ void MediaPool::showContextMenu(const QPoint& pos)
         remove->setShortcuts(m_removeClipsKey->shortcuts()); // shows the key (acts only while the menu is open)
     }
     menu.addSeparator();
+    // Moved files: on an offline clip and on the empty space (not on clips that are all there)
+    if (m_findMissing
+        && (paths.isEmpty()
+            || std::any_of(paths.begin(), paths.end(), [](const QString& p) { return !QFileInfo::exists(p); })))
+        menu.addAction(m_findMissing);
     menu.addAction(T("Medien importieren…"), this, &MediaPool::importDialog);
     menu.exec(m_list->viewport()->mapToGlobal(pos));
 }

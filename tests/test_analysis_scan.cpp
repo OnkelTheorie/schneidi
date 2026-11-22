@@ -14,6 +14,10 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
+extern "C" {
+#include <libswscale/version.h>
+}
+
 #include <cmath>
 #include <cstdlib>
 
@@ -160,11 +164,18 @@ int main(int argc, char** argv)
             const char* what = color ? "colour" : "region";
             CHECK(o.size() >= (color ? 14 : 7));
             const double slack = turned ? 1 : 0;
-            Check::report(same(full, f, slack), "region events (every picture) == ffmpeg", __FILE__, __LINE__,
+            // From FFmpeg 8 on, the ffmpeg program's scale filter and the swscale calls here no longer run the same
+            // code (FFmpeg 9.1: slightly different pixels): where the box's change scores the same over a few samples,
+            // the strongest one can be another - the same events then, at most 2 samples (5 frames) apart
+            const bool sameScaler = LIBSWSCALE_VERSION_MAJOR < 9;
+            const auto matches = [&](const QJsonArray& x, const QJsonArray& y, double s) {
+                return same(x, y, s) || (!sameScaler && near(x, y, 5));
+            };
+            Check::report(matches(full, f, slack), "region events (every picture) == ffmpeg", __FILE__, __LINE__,
                           QString("%1 %2\n       own: %3\n       ffmpeg: %4\n       first difference: %5")
                               .arg(name, what, frames(full), frames(f), firstDiff(full, f, slack)));
             // region: every picture always (B-frames skipped gave uneven samples); colour: skipping, close
-            Check::report(color ? near(f, o, 3) : same(o, f, turned ? 1 : 0), "region events (default) ~ ffmpeg",
+            Check::report(color ? near(f, o, 3) : matches(o, f, turned ? 1 : 0), "region events (default) ~ ffmpeg",
                           __FILE__, __LINE__,
                           QString("%1 %2\n       own: %3\n       ffmpeg: %4").arg(name, what, frames(o), frames(f)));
             std::printf("%-12s %s own %7.1f ms  ffmpeg %7.1f ms  events %s\n", qPrintable(name), what, ownMs, ffMs,

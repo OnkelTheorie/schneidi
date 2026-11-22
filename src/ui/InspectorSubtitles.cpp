@@ -14,6 +14,7 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "ui/ScrubField.h"
 
@@ -113,7 +114,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         connect(edit, &QLineEdit::editingFinished, this, [this, edit, which] {
             const SubtitleCue* c = selectedCue();
             if (!c) return;
-            const int f = Timecode::parse(edit->text(), m_editor->project()->fps());
+            const int f = TimelineOptions::parseTime(edit->text(), m_editor->project()->frameRate());
             if (f >= 0) {
                 int start = c->start, end = c->end;
                 if (which == Start) { // Start moves, duration stays (like DaVinci)
@@ -132,7 +133,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
             const SubtitleCue* c = cueNow();
             if (!c || edit->hasFocus()) return;
             const int v = which == Start ? c->start : which == End ? c->end : c->length();
-            edit->setText(Timecode::format(v, m_editor->project()->fps()));
+            edit->setText(TimelineOptions::formatTime(v, m_editor->project()->frameRate()));
         };
         cue.grid->addWidget(rowLabel(labels[which]), cue.rows, 0);
         cue.grid->addWidget(edit, cue.rows++, 1, Qt::AlignLeft);

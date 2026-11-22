@@ -3,7 +3,7 @@
 // (lines at most 42 characters, 2 lines, at most ~17-20 characters per second where the speech leaves room, at
 // least 0.8 s, a new cue at a sentence end, never across a pause > 0.7 s, two lines split at a comma), word times
 // kept, every word once in order; `check` no longer finds them too fast; the edit op 'subtitles' with readable,
-// words and an existing track (one undo step).
+// words and an existing track (one undo step); the cue lengths short/very short (0.26) and their op key 'length'.
 #include "check.h"
 
 #include "cli/Commands.h"
@@ -293,6 +293,126 @@ void testPodcastSentences()
             }
 }
 
+// Short cues (0.26, "Untertitel-Länge" Kurz/Sehr kurz): one line, at most `chars` characters and `words` words (a
+// single longer word alone), every word once in order, word times kept, at least 0.5 s where the next cue leaves room
+// (`dangling`: how many may end on an article or preposition; with 2-3 words some do)
+void checkShort(const QVector<SubtitleCue>& out, const QStringList& all, int chars, int words, bool wordTimes,
+                int dangling = 0)
+{
+    int ending = 0;
+    CHECK_EQ(wordsOf(out), all);
+    int brief = 0;
+    for (int i = 0; i < out.size(); ++i) {
+        const SubtitleCue& c = out[i];
+        const int n = int(c.text.split(' ').size());
+        if (!CHECK(!c.text.contains('\n') && (n == 1 || c.text.size() <= chars) && n <= words))
+            std::printf("       too long: %s\n", qPrintable(c.text));
+        if (i > 0) CHECK(c.start >= out[i - 1].end);
+        const int room = i + 1 < out.size() ? out[i + 1].start - c.start : 1 << 20;
+        if (room >= int(0.5 * kFps) && c.length() < int(0.5 * kFps) - 1) ++brief;
+        if (wordTimes) CHECK_EQ(int(c.words.size()), n);
+        else CHECK(c.words.isEmpty());
+        for (const char* word : {" die", " der", " zu", " den", " ein", " einen"}) ending += c.text.endsWith(word);
+    }
+    CHECK_EQ(brief, 0);
+    if (!CHECK(ending <= dangling)) std::printf("       %d cues end on an article or preposition\n", ending);
+}
+
+void print(const QVector<SubtitleCue>& out)
+{
+    for (const SubtitleCue& c : out)
+        std::printf("       [%5.2f-%5.2f] %s\n", c.start / kFps, c.end / kFps, qPrintable(QString(c.text).replace('\n', " / ")));
+}
+
+void testShort()
+{
+    std::printf("short cues\n");
+    // Which length: auto follows the picture (taller than wide = short), keys for the CLI and the settings
+    using L = Subtitles::CueLength;
+    CHECK(Subtitles::resolve(L::Auto, {1080, 1920}) == L::Short);
+    CHECK(Subtitles::resolve(L::Auto, {1920, 1080}) == L::Normal);
+    CHECK(Subtitles::resolve(L::Auto, {1080, 1080}) == L::Normal);
+    CHECK(Subtitles::resolve(L::VeryShort, {1920, 1080}) == L::VeryShort);
+    CHECK(Subtitles::resolve(L::Normal, {1080, 1920}) == L::Normal);
+    for (L l : {L::Auto, L::Normal, L::Short, L::VeryShort}) {
+        L back = L::Auto;
+        CHECK(Subtitles::parseCueLength(Subtitles::cueLengthKey(l), &back) && back == l);
+    }
+    L parsed = L::Auto;
+    CHECK(Subtitles::parseCueLength("Very-Short", &parsed) && parsed == L::VeryShort);
+    CHECK(!Subtitles::parseCueLength("tiny", &parsed));
+    // Normal is the rules as before
+    CHECK(Subtitles::readable(Transcript::wordCues(speech(kText), kFps), kFps, Subtitles::rulesFor(L::Normal))
+          == Subtitles::readable(Transcript::wordCues(speech(kText), kFps), kFps));
+
+    const QVector<Transcript::Word> words = speech(kText);
+    QStringList all;
+    for (const auto& w : words) all << w.text;
+    const QVector<SubtitleCue> normal = Subtitles::readable(Transcript::wordCues(words, kFps), kFps);
+    const QVector<SubtitleCue> out = Subtitles::readable(Transcript::wordCues(words, kFps), kFps, Subtitles::rulesFor(L::Short));
+    print(out);
+    checkShort(out, all, 25, 6, true);
+    CHECK(out.size() > normal.size());
+    // Word times stay exact: each piece from its first word's start
+    int k = 0;
+    for (const SubtitleCue& c : out) {
+        CHECK_EQ(c.start + c.words.first().from, int(std::lround(words[k].from / 1000.0 * kFps)));
+        k += int(c.words.size());
+    }
+    // Split at punctuation first: a short sentence is a cue of its own, a comma ends a cue
+    QStringList flat;
+    for (const SubtitleCue& c : out) flat << c.text;
+    CHECK(flat.contains("Das dauert nicht lange."));
+    int commas = 0;
+    for (const QString& t : flat) commas += t.endsWith(',');
+    CHECK(commas >= 3);
+    // Never across the pause
+    bool pauseBreak = false;
+    for (int i = 0; i + 1 < out.size(); ++i) pauseBreak |= out[i].text.endsWith("glatt.") && out[i + 1].text.startsWith("Das");
+    CHECK(pauseBreak);
+    // Without a comma: before a conjunction rather than in the middle of a phrase
+    const QVector<SubtitleCue> clause = Subtitles::readable(
+        Transcript::wordCues(speech("Ich koche Tee weil es kalt ist."), kFps), kFps,
+        Subtitles::rulesFor(L::Short));
+    print(clause);
+    if (CHECK_EQ(clause.size(), 2)) CHECK(clause[1].text.startsWith("weil"));
+    // Fast speech: no flash shorter than 0.5 s, the words are rather kept together
+    QVector<Transcript::Word> fast;
+    for (int i = 0; i < 12; ++i) fast << Transcript::Word{i * 180, i * 180 + 170, i % 4 == 3 ? "ja," : "so"};
+    const QVector<SubtitleCue> quick = Subtitles::readable(Transcript::wordCues(fast, kFps), kFps, Subtitles::rulesFor(L::Short));
+    print(quick);
+    for (int i = 0; i + 1 < quick.size(); ++i) CHECK(quick[i].length() >= int(0.5 * kFps) - 1);
+    // A single short word alone between pauses stays as it is
+    const QVector<SubtitleCue> alone = Subtitles::readable(Transcript::wordCues(speech("Ja. | | Okay."), kFps), kFps,
+                                                           Subtitles::rulesFor(L::Short));
+    CHECK_EQ(alone.size(), 2);
+
+    // Very short: 2-3 words
+    const QVector<SubtitleCue> very = Subtitles::readable(Transcript::wordCues(words, kFps), kFps, Subtitles::rulesFor(L::VeryShort));
+    checkShort(very, all, 16, 3, true, int(very.size()) / 5);
+    CHECK(very.size() > out.size());
+    int single = 0;
+    for (const SubtitleCue& c : very) single += !c.text.contains(' ');
+    std::printf("       normal %d, short %d, very short %d cues (%d of one word)\n", int(normal.size()), int(out.size()),
+                int(very.size()), single);
+    CHECK(single * 4 < very.size());
+
+    // Re-split an existing track: normal cues with word times keep them; one-line cues without any share each cue's
+    // time by the length of its words
+    const QVector<SubtitleCue> again = Subtitles::readable(normal, kFps, Subtitles::rulesFor(L::Short));
+    checkShort(again, all, 25, 6, true);
+    k = 0;
+    for (const SubtitleCue& c : again) {
+        CHECK_EQ(c.start + c.words.first().from, int(std::lround(words[k].from / 1000.0 * kFps)));
+        k += int(c.words.size());
+    }
+    const QVector<SubtitleCue> plain = Transcript::toCues(words, kFps);
+    const QVector<SubtitleCue> split = Subtitles::readable(plain, kFps, Subtitles::rulesFor(L::Short));
+    checkShort(split, all, 25, 6, false);
+    CHECK(split.size() > plain.size());
+    CHECK_EQ(split.first().start, plain.first().start);
+}
+
 QJsonObject run(const QString& name, QJsonObject raw)
 {
     if (name == "edit") raw["full"] = true;
@@ -392,6 +512,60 @@ void testOp(const QString& dir)
     d = load(path);
     if (CHECK_EQ(d.timeline.subtitles.size(), 5) && CHECK_EQ(d.timeline.subtitles[4].cues.size(), 1))
         CHECK(d.timeline.subtitles[4].cues[0].words == QVector<CueWord>({{2, 10}, {15, 28}}));
+
+    // Cue length: words on a vertical timeline are short cues by default, length chooses; an existing track re-split
+    const QString tall = dir + "/tall.schneidi";
+    {
+        Project p;
+        ProjectData pd;
+        pd.format = ProjectFormat{1080, 1920, {25, 1}};
+        pd.timeline.video.resize(1);
+        p.load(pd);
+        QString error;
+        CHECK(ProjectFile::save(p.data(), tall, &error));
+    }
+    const auto withIds = [](QVector<SubtitleCue> expect, const QVector<SubtitleCue>& got) {
+        for (int i = 0; i < expect.size(); ++i) expect[i].id = got.value(i).id;
+        return expect;
+    };
+    run("edit", {{"project", tall}, {"ops", QJsonArray{QJsonObject{{"op", "subtitles"}, {"words", words}}}}});
+    run("edit", {{"project", tall}, {"ops", QJsonArray{QJsonObject{{"op", "subtitles"}, {"words", words}, {"length", "normal"}}}}});
+    run("edit", {{"project", path}, {"ops", QJsonArray{QJsonObject{{"op", "subtitles"}, {"words", words}, {"length", "very_short"}}}}});
+    d = load(tall);
+    if (CHECK_EQ(d.timeline.subtitles.size(), 2)) {
+        CHECK(d.timeline.subtitles[0].cues == withIds(Subtitles::readable(wc, kFps, Subtitles::rulesFor(Subtitles::CueLength::Short)), d.timeline.subtitles[0].cues));
+        CHECK(d.timeline.subtitles[1].cues == withIds(Subtitles::readable(wc, kFps), d.timeline.subtitles[1].cues));
+    }
+    d = load(path);
+    if (CHECK_EQ(d.timeline.subtitles.size(), 6))
+        CHECK(d.timeline.subtitles[5].cues == withIds(Subtitles::readable(wc, kFps, Subtitles::rulesFor(Subtitles::CueLength::VeryShort)), d.timeline.subtitles[5].cues));
+    // Re-split: ST2 of the tall project (normal, word times) and ST2 of the other (one-line cues without word times)
+    QJsonObject done2 = run("edit", {{"project", tall}, {"ops", R"([{"op":"subtitles","track":"ST2","length":"short"}])"}});
+    const QString note1 = QJsonDocument(done2["notes"].toArray()).toJson(QJsonDocument::Compact);
+    std::printf("       %s\n", qPrintable(note1));
+    CHECK(note1.contains("short ones") && note1.contains("word times kept"));
+    d = load(tall);
+    CHECK(d.timeline.subtitles[1].cues.size() > d.timeline.subtitles[0].cues.size() * 0.8);
+    for (const SubtitleCue& c : d.timeline.subtitles[1].cues) CHECK(!c.text.contains('\n') && c.words.size() == c.text.split(' ').size());
+    // auto on a track: the timeline is vertical, so short
+    run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","track":"ST1","length":"normal"}])"}});
+    done2 = run("edit", {{"project", tall}, {"ops", R"([{"op":"subtitles","track":"ST1","length":"auto"}])"}});
+    CHECK(QJsonDocument(done2["notes"].toArray()).toJson().contains("short ones"));
+    ProjectData before = load(path);
+    done2 = run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","track":"ST3","length":"short"}])"}});
+    const QString note2 = QJsonDocument(done2["notes"].toArray()).toJson(QJsonDocument::Compact);
+    std::printf("       %s\n", qPrintable(note2));
+    CHECK(note2.contains("no word times stored"));
+    d = load(path);
+    CHECK(d.timeline.subtitles[2].cues.size() > before.timeline.subtitles[2].cues.size());
+    CHECK_EQ(wordsOf(d.timeline.subtitles[2].cues), wordsOf(before.timeline.subtitles[2].cues));
+    bool bad = false;
+    try {
+        run("edit", {{"project", path}, {"ops", R"([{"op":"subtitles","track":"ST1","length":"tiny"}])"}});
+    } catch (const Cli::Error& e) {
+        bad = e.code == "BAD_ARGUMENT" && e.message.contains("very_short");
+    }
+    CHECK(bad);
 }
 
 } // namespace
@@ -410,6 +584,7 @@ int main(int argc, char** argv)
     testPausesAndSentences();
     testOverlapsAndSound();
     testPodcastSentences();
+    testShort();
     testOp(tmp.path());
     return Check::result();
 }

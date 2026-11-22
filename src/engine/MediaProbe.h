@@ -14,6 +14,7 @@
 #include "core/Types.h"
 #include "engine/HdrTone.h"
 
+#include <QSize>
 #include <QString>
 
 #include <optional>
@@ -50,6 +51,16 @@ bool isAudioFile(const QString& path);
 // bit rate known. From the header where it suffices (~1 ms), remembered per file while its size and time stay the
 // same. Thread-safe.
 std::optional<SourceBitrate::Video> videoRate(const QString& path);
+
+// Picture size as it is shown (a phone video's rotation applied) and frame rate of a file's video stream; still
+// pictures: their size (fps 0). For the Media Pool's search words ("4K", "60 fps", "hochkant"). From the header
+// (~1 ms; a short stream analysis where the container needs one), remembered per file while its size and time stay the
+// same. Empty size: no picture (sound only, unreadable). Thread-safe.
+struct PictureFormat {
+    QSize size;
+    double fps = 0;
+};
+PictureFormat pictureFormat(const QString& path);
 
 // Channel layout of every audio stream in file order (`probe`, channel routing): FFmpeg's name ("stereo", "5.1(side)",
 // "7.1", "4 channels" without positions) and the count. From the header (~1 ms); empty = not readable.

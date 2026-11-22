@@ -27,9 +27,11 @@
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QSettings>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QListWidget>
@@ -361,6 +363,46 @@ void testWindow(const QString& media, const QString& shots)
         CHECK(TimelineOps::findClip(p->timeline(), last));
     }
     CHECK_EQ(p->undoStack()->index(), cutSteps);
+
+    // Step sizes (Settings › Timeline): Shift+arrow 1 second and Shift+. 5 frames by default, by choice other
+    // sizes; the menu texts say the size
+    QSettings().remove("timeline");
+    const int fps = p->fps();
+    engine.seek(100);
+    QApplication::processEvents();
+    action("second_next")->trigger();
+    QApplication::processEvents();
+    CHECK_EQ(engine.position(), 100 + fps);
+    // Default sizes: exactly the texts from before (translated in every language)
+    CHECK_EQ(action("second_next")->text(), T("1 Sekunde vor"));
+    CHECK_EQ(action("second_prev")->text(), T("1 Sekunde zurück"));
+    CHECK_EQ(action("nudge_left_multi")->text(), T("5 Frames nach links schieben"));
+    TimelineOptions::setBigStep({10, false});
+    TimelineOptions::setBigNudge({2, true});
+    w.applyTimelineOptions();
+    CHECK_EQ(action("second_prev")->text(), T("%1 Frames zurück").arg(10)); // one sentence each (grammar per language)
+    CHECK_EQ(action("nudge_right_multi")->text(), T("%1 Sekunden nach rechts schieben").arg(2));
+    action("second_prev")->trigger();
+    QApplication::processEvents();
+    CHECK_EQ(engine.position(), 100 + fps - 10);
+    const Clip* lastClip = p->timeline().video[0].clips.isEmpty() ? nullptr : &p->timeline().video[0].clips.last();
+    if (lastClip) {
+        const int id = lastClip->id, start = lastClip->start, steps2 = p->undoStack()->index();
+        const QVector<int> linked = ed->withLinked({id}); // with its sound (links stay in sync)
+        sel->set(QSet<int>(linked.begin(), linked.end()));
+        action("nudge_right_multi")->trigger();
+        QApplication::processEvents();
+        if (const Clip* moved = TimelineOps::findClip(p->timeline(), id)) CHECK_EQ(moved->start, start + 2 * fps);
+        p->undoStack()->setIndex(steps2);
+    }
+    QSettings().remove("timeline");
+    w.applyTimelineOptions();
+    CHECK_EQ(action("nudge_right_multi")->text(), T("5 Frames nach rechts schieben"));
+    // In English the default texts are the old translations too
+    using TimelineOptions::StepAction;
+    CHECK_EQ(I18n::translate("en", "1 Sekunde zurück"), QString("Back 1 Second"));
+    CHECK_EQ(I18n::translate("en", "5 Frames nach links schieben"), QString("Nudge 5 Frames Left"));
+    CHECK_EQ(TimelineOptions::stepActionText(StepAction::Forward, {1, false}), T("1 Frame vor"));
 }
 
 } // namespace

@@ -331,10 +331,12 @@ void testColorStandard(const QString& dir)
                 sq[c] += d * d;
             }
         // Lossy codecs and MLT's 4:2:0 -> 4:2:2 chroma: rms ~1, no shift. Without the matrix (601 values as 709)
-        // rms is 6-18; the encoder thread's swscale path (via RGB) shifted luma by -0.5
+        // rms is 6-18; the encoder thread's swscale path (via RGB) shifted luma by -0.5. The reference's chroma is
+        // the ffmpeg program's 4:2:0 -> 4:4:4: FFmpeg 9.1 places it by the file's chroma location (left), 7.1 did not,
+        // and schneidi's own upsampling does not either - up to rms 1.7 for the 4:2:2 and 4:4:4 exports there
         for (int c = 0; c < 3; ++c) {
             const double b = bias[c] / got.size(), rms = std::sqrt(sq[c] / got.size());
-            if (!CHECK(std::abs(b) < 0.3 && rms < 1.5))
+            if (!CHECK(std::abs(b) < 0.3 && rms < 2.0))
                 std::printf("       %s channel %d: bias %+.3f, rms %.3f\n", file, c, b, rms);
         }
     }

@@ -11,6 +11,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/TimelineViewDetail.h"
 
@@ -111,10 +112,10 @@ void TimelineView::drawMarks(QPainter& p)
 int TimelineView::marksSnap(const QVector<int>& edges, Qt::KeyboardModifiers mods) const
 {
     if (!m_snap || (mods & Qt::ShiftModifier)) return 0;
-    // The usual snap points (playhead, clip and subtitle edges) plus the markers
-    QVector<int> pts = snapPoints({});
+    // The usual snap points (the user's targets, not the range's own In/Out) plus the markers
+    QVector<int> pts = snapPoints({}, false);
     pts += m_editor->project()->timeline().markers;
-    const double maxFrames = kSnapPx / m_view.pxPerFrame;
+    const double maxFrames = TimelineOptions::snapPixels() / m_view.pxPerFrame;
     int best = 0;
     double bestDist = maxFrames + 1;
     for (int pt : pts)
@@ -222,7 +223,11 @@ void TimelineView::marksRelease()
     if (!click) return;
     // A right-click (no drag) opens the ruler menu; a left click moves the playhead as everywhere else in the ruler
     if (right) rulerMenu(m_pressPos, mapToGlobal(m_pressPos));
-    else emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
+    else {
+        emit playheadMoveStarted();
+        emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
+        emit playheadMoveFinished();
+    }
 }
 
 QString TimelineView::marksToolTip(MarkGrab grab) const
@@ -230,20 +235,20 @@ QString TimelineView::marksToolTip(MarkGrab grab) const
     const Timeline& tl = m_editor->project()->timeline();
     const int fps = std::max(1, m_editor->project()->fps());
     const bool both = tl.markIn >= 0 && tl.markOut >= 0;
-    const QString length = both ? Timecode::format(tl.markOut - tl.markIn + 1, fps) : QString();
+    const QString length = both ? TimelineOptions::formatTime(tl.markOut - tl.markIn + 1, m_editor->project()->frameRate()) : QString();
     switch (grab) {
     case MarkGrab::In:
         if (tl.markIn < 0) return {};
-        return both ? T("In-Punkt %1 – Länge %2").arg(Timecode::format(tl.markIn, fps), length)
-                    : T("In-Punkt %1").arg(Timecode::format(tl.markIn, fps));
+        return both ? T("In-Punkt %1 – Länge %2").arg(TimelineOptions::formatTime(tl.markIn, m_editor->project()->frameRate()), length)
+                    : T("In-Punkt %1").arg(TimelineOptions::formatTime(tl.markIn, m_editor->project()->frameRate()));
     case MarkGrab::Out:
         if (tl.markOut < 0) return {};
-        return both ? T("Out-Punkt %1 – Länge %2").arg(Timecode::format(tl.markOut, fps), length)
-                    : T("Out-Punkt %1").arg(Timecode::format(tl.markOut, fps));
+        return both ? T("Out-Punkt %1 – Länge %2").arg(TimelineOptions::formatTime(tl.markOut, m_editor->project()->frameRate()), length)
+                    : T("Out-Punkt %1").arg(TimelineOptions::formatTime(tl.markOut, m_editor->project()->frameRate()));
     case MarkGrab::Range:
     case MarkGrab::Create:
         if (!both) return {};
-        return T("In/Out %1 – %2, Länge %3").arg(Timecode::format(tl.markIn, fps), Timecode::format(tl.markOut, fps), length);
+        return T("In/Out %1 – %2, Länge %3").arg(TimelineOptions::formatTime(tl.markIn, m_editor->project()->frameRate()), TimelineOptions::formatTime(tl.markOut, m_editor->project()->frameRate()), length);
     case MarkGrab::None: break;
     }
     return {};

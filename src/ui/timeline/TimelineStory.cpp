@@ -9,6 +9,7 @@
 #include "core/Project.h"
 #include "core/Story.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "core/TimelineStory.h"
 #include "ui/timeline/TimelineColors.h"
@@ -111,12 +112,12 @@ QString TimelineView::storyToolTip(const QPoint& pos) const
     if (const int id = noteAt(pos))
         for (const TimelineNote& n : tl.notes)
             if (n.id == id)
-                return (n.done ? T("Notiz (erledigt)") : T("Notiz")) + QString(" %1: %2").arg(Timecode::format(n.at, fps), n.text);
+                return (n.done ? T("Notiz (erledigt)") : T("Notiz")) + QString(" %1: %2").arg(TimelineOptions::formatTime(n.at, m_editor->project()->frameRate()), n.text);
     if (const int i = sectionAt(pos); i >= 0) {
         const StorySection& s = tl.sections[i];
         QString t = T(kindLabel(s.kind));
         if (!s.name.isEmpty()) t += " – " + s.name;
-        return t + QString(" (%1 – %2)").arg(Timecode::format(s.from, fps), Timecode::format(s.to, fps));
+        return t + QString(" (%1 – %2)").arg(TimelineOptions::formatTime(s.from, m_editor->project()->frameRate()), TimelineOptions::formatTime(s.to, m_editor->project()->frameRate()));
     }
     return {};
 }
@@ -181,7 +182,7 @@ bool TimelineView::rulerMenu(const QPoint& pos, const QPoint& globalPos)
     } else {
         connect(menu.addAction(T("Notiz hier…")), &QAction::triggered, this, [this, frame] {
             bool ok = false;
-            const QString text = QInputDialog::getText(this, T("Notiz"), T("Notiz bei %1:").arg(Timecode::format(frame, m_editor->project()->fps())),
+            const QString text = QInputDialog::getText(this, T("Notiz"), T("Notiz bei %1:").arg(TimelineOptions::formatTime(frame, m_editor->project()->frameRate())),
                                                        QLineEdit::Normal, {}, &ok);
             if (ok && !text.trimmed().isEmpty()) m_editor->addNote(frame, text.trimmed());
         });

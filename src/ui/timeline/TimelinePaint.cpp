@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: drawing (ruler, tracks, clips, filmstrips, waveforms, headers, playhead).
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include "core/Automation.h"
 
@@ -49,8 +50,17 @@
 
 using namespace TimelineViewDetail;
 
+QString TimelineView::timeText(int frames) const
+{
+    return TimelineOptions::formatTime(frames, m_editor->project()->frameRate(), m_timeFormat);
+}
+
 void TimelineView::paintEvent(QPaintEvent*)
 {
+    m_timeFormat = TimelineOptions::timeFormat(); // once per paint (timeText)
+    m_thumbnails = TimelineOptions::thumbnails();
+    m_waveShape = TimelineOptions::waveShape();
+    m_waveScale = TimelineOptions::waveScale();
     if (m_renaming && m_nameSub >= 0) { // subtitle track
         std::optional<SubRow> row;
         for (const SubRow& r : subRows())
@@ -131,7 +141,7 @@ void TimelineView::drawRuler(QPainter& p)
         p.drawLine(x, kRulerH - (isMajor ? 12 : 5), x, kRulerH - 1);
         if (isMajor) {
             p.setPen(Theme::textDim);
-            p.drawText(x + 3, 12, Timecode::format(fr, fps));
+            p.drawText(x + 3, 12, timeText(fr));
         }
     }
     // Render cache (like DaVinci): red = still to be rendered, blue = done
@@ -171,7 +181,7 @@ void TimelineView::drawRuler(QPainter& p)
     tf.setFamily("monospace");
     p.setFont(tf);
     p.setPen(Theme::text);
-    p.drawText(tcBox.adjusted(5, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, Timecode::format(m_playhead, fps));
+    p.drawText(tcBox.adjusted(5, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, timeText(m_playhead));
     p.setPen(Theme::border);
     p.drawLine(kHeaderW - 1, 0, kHeaderW - 1, height());
 }
@@ -388,7 +398,7 @@ void TimelineView::drawTracks(QPainter& p)
             p.setPen(QPen(Theme::primary, 1));
             p.drawLine(x, kRulerH, x, height());
             drawLabel(p, QPoint(x + 8, kRulerH + 6),
-                      (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps()));
+                      (m_trimDelta >= 0 ? "+" : "") + timeText(m_trimDelta));
         }
     }
 
@@ -409,7 +419,7 @@ void TimelineView::drawTracks(QPainter& p)
                 p.drawLine(x, kRulerH, x, height());
             }
             drawLabel(p, QPoint(x + 8, kRulerH + 6),
-                      (m_trimEditDelta >= 0 ? "+" : "") + Timecode::format(m_trimEditDelta, m_editor->project()->fps()));
+                      (m_trimEditDelta >= 0 ? "+" : "") + timeText(m_trimEditDelta));
         }
     }
 
@@ -481,7 +491,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             if (s.leftId != m_transSpan.leftId || s.rightId != m_transSpan.rightId) continue;
             const QRect r = transitionRect(row, s);
             drawLabel(p, QPoint(std::max(r.left(), kHeaderW) + 4, r.top() + 4),
-                      Timecode::format(s.length(), m_editor->project()->fps()));
+                      timeText(s.length()));
         }
     }
 }
@@ -530,7 +540,7 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     if (m_drag == Drag::Keyframe && m_keyDragClip == c.id && m_keyDelta != 0 && !sel->keyTimes().isEmpty()) {
         const int t = *std::min_element(sel->keyTimes().begin(), sel->keyTimes().end()) + m_keyDelta;
         drawLabel(p, QPoint(int(frameToX(c.pos() + t)) + 8, lane.top() - 22),
-                  (m_keyDelta > 0 ? "+" : "") + Timecode::format(m_keyDelta, m_editor->project()->fps()));
+                  (m_keyDelta > 0 ? "+" : "") + timeText(m_keyDelta));
     }
 }
 
@@ -707,7 +717,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         QRect textRect(std::max(r.left(), kHeaderW) + 5 + flagW, r.top(), r.right() - 3 - fxW - std::max(r.left(), kHeaderW) - 5 - flagW, barH);
         // Duration on the right (before "fx"), only if it fits entirely; the name takes the rest
         if (m_showDurations) {
-            const QString dur = Timecode::format(c.length(), m_editor->project()->fps());
+            const QString dur = timeText(c.length());
             const int w = fm.horizontalAdvance(dur);
             if (w + 6 <= textRect.width()) {
                 p.setPen(QColor(0xf0, 0xf0, 0xf0, 170));
@@ -775,7 +785,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
             const int frames = m_fade.edge == TimelineOps::Edge::Start ? c.fadeIn : c.fadeOut;
             const QRect hr = fadeHandleRect(r, c, m_fade.edge);
             p.restore();
-            drawLabel(p, QPoint(hr.left(), r.top() + 14), Timecode::format(frames, m_editor->project()->fps()));
+            drawLabel(p, QPoint(hr.left(), r.top() + 14), timeText(frames));
             return;
         }
     }
@@ -808,9 +818,27 @@ void TimelineView::endTrimFrames()
     emit trimFramesEnded();
 }
 
+QVector<QPair<double, int>> TimelineView::thumbnailTiles(TimelineOptions::Thumbnails mode, double clipX, int clipFrames,
+                                                         double pxPerFrame, int tileW, double left, double right)
+{
+    QVector<QPair<double, int>> tiles;
+    using TM = TimelineOptions::Thumbnails;
+    const double framesPerTile = tileW / pxPerFrame;
+    if (mode == TM::Filmstrip) {
+        const int first = std::max(0, int((left - clipX) / tileW));
+        const int last = int((right - clipX) / tileW);
+        for (int i = first; i <= last; ++i) tiles.append({i * double(tileW), int(i * framesPerTile)});
+    } else if (mode != TM::None) {
+        tiles.append({0.0, 0});
+        const double clipW = clipFrames * pxPerFrame;
+        if (mode == TM::StartEnd && clipW >= 2 * tileW) tiles.append({clipW - tileW, clipFrames - 1});
+    }
+    return tiles;
+}
+
 void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
 {
-    if (!m_cache || body.height() < 10) return;
+    if (!m_cache || body.height() < 10 || m_thumbnails == TimelineOptions::Thumbnails::None) return;
     const MediaInfo* info = m_editor->project()->mediaInfo(c.mediaPath);
     const bool still = info && info->isImage;
 
@@ -821,8 +849,10 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     int step = 1;
     while (step * 2 <= framesPerTile) step *= 2;
 
-    const int first = std::max(0, int((kHeaderW - clipX) / tileW));
-    const int last = int((std::min(body.right(), width()) - clipX) / tileW);
+    // Where tiles go (x from the clip's start, the clip frame they show): a filmstrip (default), only the first frame,
+    // the first and the last (when the clip has room for both), none (Settings › Timeline, read once per paint)
+    const QVector<QPair<double, int>> tiles = thumbnailTiles(m_thumbnails, clipX, c.length(), m_view.pxPerFrame, tileW,
+                                                             kHeaderW, std::min(body.right(), width()));
     // Speed/speed ramp: tile shows the file frame that is played there
     const int fileLen = info ? info->length : 0;
     const std::optional<RetimeMap> map = c.isRetimed() && fileLen > 0 ? std::optional<RetimeMap>(RetimeMap(c, fileLen))
@@ -830,8 +860,9 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     const GradedThumbs::ClipGrade grade = m_cache->graded()->forClip(c); // Color page look (false = none)
     // Shown at another shape than the file's (a stretched 4:3 recording): the file's own shape, probed once and cached
     const double fileAspect = c.pictureAspect > 0 ? MediaAspect::of(c.mediaPath) : 0;
-    for (int i = first; i <= last; ++i) {
-        int src = still ? 0 : std::min(c.out, c.in + int(i * framesPerTile));
+    for (const auto& [tileX, offset] : tiles) {
+        if (clipX + tileX + tileW < kHeaderW || clipX + tileX > width()) continue; // out of view
+        int src = still ? 0 : std::min(c.out, c.in + offset);
         if (map && !still)
             src = map->pictureFrame(c.freeze ? c.stillFrame() : src);
         QImage img = m_cache->thumbnail(c.mediaPath, src / step * step, step);
@@ -839,9 +870,9 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
         for (int s = step * 2; img.isNull() && s <= step * 64; s *= 2)
             img = m_cache->cachedThumbnail(c.mediaPath, src / s * s);
         if (img.isNull()) continue;
-        if (grade) img = grade.image(img, std::min(c.length() - 1, int(i * framesPerTile)) / step * step);
+        if (grade) img = grade.image(img, std::min(c.length() - 1, offset) / step * step);
 
-        const QRect target(int(clipX) + i * tileW, body.top(), tileW, tileH);
+        const QRect target(int(clipX + tileX), body.top(), tileW, tileH);
         // Crop the tile's aspect ratio centered from the image
         QRectF source(img.rect());
         const double want = double(tileW) / tileH;
@@ -897,18 +928,10 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
     for (const auto& s : spans)
         if (s.leftId == c.id || s.rightId == c.id) own << s;
     const bool fades = c.fadeIn > 0 || c.fadeOut > 0 || !own.isEmpty();
-    const int mid = body.top() + body.height() / 2;
-    const double half = body.height() / 2.0 - 1;
     const double clipX = frameToX(c.pos());
     const int x0 = std::max(body.left(), kHeaderW);
     const int x1 = std::min(body.right(), width() - 1);
-
-    // Height in dB instead of linear (-48 dB .. 0 dB), otherwise normal material looks almost flat
-    static const auto dbTable = [] {
-        std::array<double, 256> t{};
-        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
-        return t;
-    }();
+    // Mirrored or from the bottom, dB (-48..0) or linear: the user's choice (read at the paint's start)
 
     QVector<QLine> lines;
     lines.reserve(x1 - x0 + 1);
@@ -938,10 +961,9 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
             if (g <= 0.001) continue;
             db += 20.0 * std::log10(g);
         }
-        const double v = std::min(1.0, dbTable[peak] + db / 48.0);
+        const double v = TimelineOptions::waveHeight(peak, db, m_waveScale);
         if (v <= 0) continue;
-        const int h = std::max(1, int(v * half));
-        lines << QLine(x, mid - h, x, mid + h);
+        lines << TimelineOptions::waveLine(x, v, body, m_waveShape);
     }
     // Default light green; with own track color a light tone of it
     QColor pen(0xc8, 0xf0, 0xcf, 210);

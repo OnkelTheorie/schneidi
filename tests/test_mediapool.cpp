@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test Media Pool: bins (create, rename, move, remove), clip colors, flags - undo, save/load,
-// broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
+// broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin, a still's default length)
 #include "check.h"
 
+#include "core/EditDefaults.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include <QEventLoop>
+#include <cmath>
+#include <QImage>
 #include <QThread>
 #include <QThreadPool>
 
@@ -251,11 +254,14 @@ int main(int argc, char** argv)
         pool.setSearch(".mp4");
         CHECK_EQ(list->count(), 4);
         pool.setCurrentBin(sub);
+        CHECK_EQ(list->count(), 4); // the search looks into the whole project
+        pool.setSearchThisBinOnly(true); // only the open bin (and its sub-bins)
         CHECK_EQ(list->count(), 2);
         pool.setSearch("zzz");
         CHECK_EQ(list->count(), 0);
         pool.setSearch("");
         CHECK_EQ(list->count(), 2);
+        pool.setSearchThisBinOnly(false);
         // Current bin is removed (undo of creating): view jumps to Master
         const int tmpBin = p.addBin(0, "Weg");
         pool.setCurrentBin(tmpBin);
@@ -263,6 +269,22 @@ int main(int argc, char** argv)
         app.processEvents();
         CHECK_EQ(pool.currentBin(), 0);
         CHECK(!pool.grab().isNull());
+        // A still imported: as long as the default for new stills (5 s, or the user's choice via EditDefaults);
+        // one imported before keeps its length
+        QTemporaryDir pics;
+        QImage pic(32, 18, QImage::Format_RGB32);
+        pic.fill(Qt::red);
+        const QString first = QDir(pics.path()).filePath("first.png"), second = QDir(pics.path()).filePath("second.png");
+        CHECK(pic.save(first) && pic.save(second));
+        pool.importFiles({first});
+        const MediaInfo* m1 = p.mediaInfo(first);
+        if (CHECK(m1 && m1->isImage)) CHECK_EQ(m1->length, 5 * p.fps());
+        EditDefaults::setStillSeconds(2.5);
+        pool.importFiles({second});
+        const MediaInfo* m2 = p.mediaInfo(second);
+        if (CHECK(m2)) CHECK_EQ(m2->length, int(std::lround(2.5 * p.fps())));
+        if (CHECK(p.mediaInfo(first))) CHECK_EQ(p.mediaInfo(first)->length, 5 * p.fps());
+        EditDefaults::setStillSeconds(EditDefaults::kStillSeconds);
     }
 
     // --- Folder including subfolders as bins (Media Storage/drop): empty and media-less folders without bin, one undo step
@@ -550,6 +572,22 @@ int main(int argc, char** argv)
             CHECK_EQ(r->markOut, 100);
             CHECK_EQ(r->markers, (QVector<int>{40, 198}));
         }
+        // A still with its own length (Settings › Timeline: 1.5 s = 75 at 50 fps) that exists on disk: rescaled to
+        // 150 at 100 fps, not the probe's fresh 5 s (500); a video that exists takes the probe's length
+        QTemporaryDir dir;
+        const QString png = QDir(dir.path()).filePath("still.png"), mp4 = QDir(dir.path()).filePath("v.mp4");
+        QImage(8, 8, QImage::Format_RGB32).save(png);
+        QFile video(mp4);
+        CHECK(video.open(QIODevice::WriteOnly) && video.write("x") == 1);
+        video.close();
+        q.addMedia(MediaInfo{png, "still.png", 75, true, false, true});
+        q.addMedia(MediaInfo{mp4, "v.mp4", 75, true, false, false});
+        const FrameRate fifty = q.format().rate;
+        f.rate = FrameRate{100, 1};
+        q.setFormat(f);
+        q.recountMedia(fifty, [](const QString&) { return 500; });
+        if (const MediaInfo* st = q.mediaInfo(png); CHECK(st)) CHECK_EQ(st->length, 150);
+        if (const MediaInfo* v = q.mediaInfo(mp4); CHECK(v)) CHECK_EQ(v->length, 500);
     }
     // --- Timelines show their resolution in the tool tip: their own (a 9:16 short) or the project's
     {

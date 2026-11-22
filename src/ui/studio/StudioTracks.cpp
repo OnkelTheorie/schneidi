@@ -11,10 +11,12 @@
 #include "core/Retime.h"
 #include "core/Selection.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QContextMenuEvent>
 #include <QDragEnterEvent>
@@ -420,7 +422,7 @@ void StudioTracks::drawRuler(QPainter& p)
     p.setFont(f);
     p.fillRect(QRect(4, 3, kHeaderW - 8, kRulerH - 6), Theme::well);
     p.setPen(Theme::primary);
-    p.drawText(QRect(8, 3, kHeaderW - 12, kRulerH - 6), Qt::AlignVCenter | Qt::AlignLeft, Timecode::format(m_playhead, fps));
+    p.drawText(QRect(8, 3, kHeaderW - 12, kRulerH - 6), Qt::AlignVCenter | Qt::AlignLeft, TimelineOptions::formatTime(m_playhead, m_editor->project()->frameRate()));
     const int candidates[] = {1, 2, 5, 10, fps, 2 * fps, 5 * fps, 10 * fps, 15 * fps, 30 * fps, 60 * fps,
                               120 * fps, 300 * fps, 600 * fps, 900 * fps, 1800 * fps, 3600 * fps, 7200 * fps};
     int major = candidates[std::size(candidates) - 1];
@@ -442,7 +444,7 @@ void StudioTracks::drawRuler(QPainter& p)
         const bool isMajor = fr % major == 0;
         p.setPen(isMajor ? Theme::textDim : Theme::textFaint);
         p.drawLine(x, kRulerH - (isMajor ? 10 : 5), x, kRulerH - 1);
-        if (isMajor) p.drawText(x + 3, 12, Timecode::format(fr, fps));
+        if (isMajor) p.drawText(x + 3, 12, TimelineOptions::formatTime(fr, m_editor->project()->frameRate()));
     }
     p.restore();
 }
@@ -546,14 +548,10 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
         if (TimelineOps::findClip(m_editor->project()->timeline(), c.id, &ref) && ref.kind == TrackKind::Audio)
             autoCurve = &m_editor->project()->timeline().audio[ref.index].volumeAuto;
     }
-    // dB height (-48..0 dB), so speech does not look flat; the waveform follows the volume curve (what is heard)
-    static const auto dbTable = [] {
-        std::array<double, 256> t{};
-        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
-        return t;
-    }();
-    const int mid = body.top() + body.height() / 2;
-    const double half = body.height() / 2.0 - 2;
+    // dB height (-48..0 dB, so speech does not look flat) or linear, mirrored or from the bottom: the user's choice
+    // (Settings › Timeline); the waveform follows the volume curve (what is heard)
+    const TimelineOptions::WaveShape shape = TimelineOptions::waveShape();
+    const TimelineOptions::WaveScale waveScale = TimelineOptions::waveScale();
     const double clipX = xOf(c.start);
     const int x0 = std::max({body.left(), kHeaderW, m_dirty.left() - 1}), x1 = std::min({body.right(), width() - 1, m_dirty.right() + 1});
     QVector<QLine> lines;
@@ -585,10 +583,9 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
         const double g = TimelineOps::audioFadeGain(c, t);
         if (g <= 0.001) continue;
         db += 20.0 * std::log10(g);
-        const double v = std::min(1.0, dbTable[peak] + db / 48.0);
+        const double v = TimelineOptions::waveHeight(peak, db, waveScale);
         if (v <= 0) continue;
-        const int h = std::max(1, int(v * half));
-        lines << QLine(x, mid - h, x, mid + h);
+        lines << TimelineOptions::waveLine(x, v, body, shape, 2);
     }
     p.setPen(Theme::alpha(color, 220));
     p.drawLines(lines);
@@ -917,6 +914,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
     m_added = {};
     if (pos.y() < kRulerH && pos.x() >= kHeaderW) { // ruler: scrub
         m_drag = Drag::Scrub;
+        emit playheadMoveStarted();
         emit seekRequested(std::max(0, int(std::lround(frameAt(pos.x())))));
         return;
     }
@@ -973,6 +971,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
         m_editor->selection()->set({});
     }
     m_drag = Drag::Scrub;
+    emit playheadMoveStarted();
     emit seekRequested(std::max(0, int(std::lround(frame))));
 }
 
@@ -1040,7 +1039,9 @@ void StudioTracks::endDrag(const QPoint& pos, bool addPoint)
         m_editor->project()->closeMerge();
         m_key = {};
     }
+    const bool scrubbed = m_drag == Drag::Scrub;
     m_drag = Drag::None;
+    if (scrubbed) emit playheadMoveFinished(); // playback after the move (PlayheadMove, MainWindow)
 }
 
 void StudioTracks::mouseDoubleClickEvent(QMouseEvent* e)
@@ -1138,17 +1139,19 @@ void StudioTracks::leaveEvent(QEvent* e)
 void StudioTracks::wheelEvent(QWheelEvent* e)
 {
     // The timeline's wheel settings; without room to scroll vertically a vertical wheel scrolls in time
-    const QPoint delta = e->angleDelta();
-    const int steps = delta.y() != 0 ? delta.y() : delta.x();
+    // A sideways swipe scrolls in time, the held modifiers' binding otherwise - the same rule as the Edit timeline
+    // (InputBindings::wheelMove: Alt/Shift and a modifier bound to zoom keep their binding)
+    const InputBindings::WheelMove move = InputBindings::instance().wheelMove(e->angleDelta(), e->modifiers());
+    const int steps = int(std::lround(move.steps * 120));
     if (steps == 0) return;
-    WheelAction action = InputBindings::instance().wheelAction(e->modifiers());
-    // A sideways wheel / touchpad scrolls in time - but Qt swaps the axes while Alt is held (Alt+wheel is a zoom or scroll
-    // binding like on the timeline), so only without Alt
-    if (delta.y() == 0 && delta.x() != 0 && !(e->modifiers() & Qt::AltModifier)) action = WheelAction::ScrollHorizontal;
+    WheelAction action = move.action;
     if (action == WheelAction::ScrollVertical && !m_vbar->isVisible()) action = WheelAction::ScrollHorizontal;
     switch (action) {
     case WheelAction::Zoom: {
-        const double x = std::max<double>(kHeaderW, e->position().x());
+        // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor, like the timeline)
+        const QRect area = clipArea();
+        const double x = ZoomAnchor::anchorX(std::max<double>(kHeaderW, e->position().x()), xOf(m_playhead), area.left(),
+                                             area.right());
         const double anchor = frameAt(x);
         m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.0015, steps), anchor, x - kHeaderW);
         break;
