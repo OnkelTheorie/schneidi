@@ -15,6 +15,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUuid>
 
@@ -633,6 +634,65 @@ QString whisperModelPath(const QString& idOrPath)
         if (i.kind == Kind::WhisperModel && (i.id == idOrPath || i.id == "whisper-model-" + idOrPath))
             return installedPath(i);
     return QFileInfo(idOrPath).isFile() ? QFileInfo(idOrPath).absoluteFilePath() : QString();
+}
+
+QStringList customWhisperModels()
+{
+    return QSettings().value("transcribe/customModels").toStringList();
+}
+
+void setCustomWhisperModels(const QStringList& paths)
+{
+    QSettings settings;
+    if (paths.isEmpty())
+        settings.remove("transcribe/customModels");
+    else
+        settings.setValue("transcribe/customModels", paths);
+}
+
+bool isWhisperModelFile(const QString& path, QString* error)
+{
+    const auto fail = [&](const QString& why) {
+        if (error) *error = why;
+        return false;
+    };
+    QFile f(path);
+    if (!QFileInfo(path).isFile() || !f.open(QIODevice::ReadOnly))
+        return fail(T("Die Datei lässt sich nicht lesen: %1").arg(QDir::toNativeSeparators(path)));
+    const QByteArray head = f.read(8);
+    if (head.startsWith("GGUF"))
+        return fail(T("Das ist eine GGUF-Datei (z. B. für llama.cpp). Whisper braucht ein whisper.cpp-Modell im "
+                      "ggml-Format (ggml-….bin)."));
+    // whisper.cpp reads a little-endian uint32 GGML_FILE_MAGIC (0x67676d6c, "lmgg" on disk), then the hyperparameters,
+    // n_vocab first (51864 English-only, 51865 multilingual, 51866 large-v3; the Silero VAD model has none)
+    const auto le32 = [&](int at) {
+        return quint32(quint8(head[at])) | quint32(quint8(head[at + 1])) << 8 | quint32(quint8(head[at + 2])) << 16
+               | quint32(quint8(head[at + 3])) << 24;
+    };
+    if (head.size() < 8 || le32(0) != 0x67676d6cu)
+        return fail(T("Das ist kein whisper.cpp-Modell (ggml-Format, meist ggml-….bin)."));
+    if (const quint32 vocab = le32(4); vocab < 50000 || vocab > 60000)
+        return fail(T("Das ist ein ggml-Modell, aber kein Whisper-Sprachmodell (z. B. das Modell der Sprach-Erkennung)."));
+    if (error) error->clear();
+    return true;
+}
+
+bool hasWhisperModel()
+{
+    if (!installedWhisperModels().isEmpty()) return true;
+    for (const QString& p : customWhisperModels())
+        if (QFileInfo(p).isFile()) return true;
+    return false;
+}
+
+QString appWhisperModel(const QString& idOrPath)
+{
+    if (!idOrPath.isEmpty())
+        if (const QString chosen = whisperModelPath(idOrPath); !chosen.isEmpty()) return chosen;
+    if (const QString best = whisperModelPath(); !best.isEmpty()) return best;
+    for (const QString& p : customWhisperModels())
+        if (QFileInfo(p).isFile()) return QFileInfo(p).absoluteFilePath();
+    return {};
 }
 
 // ---------- Installer ----------
