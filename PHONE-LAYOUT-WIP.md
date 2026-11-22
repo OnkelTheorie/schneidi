@@ -112,8 +112,44 @@
 - Seen, not fixed: the export location field shows the app folder again after a restart (the job keeps /sdcard/Movies);
   a dialog that grows stays left-anchored (not centered); the export sheet needs dragging up to reach "Alle rendern".
 
+## Round of 22.11. evening (user feedback from the A51, import, layout forms)
+- Phone timeline: compact track headers (60 px: V1 + eye/mute; locked/armed as small marks; tap = the header's menu
+  with lock, hide/mute, voice-over, rename, color, tracks; no timecode box in the corner). One finger on an empty lane
+  pans (both directions, glides on; never moves the playhead), on a clip it moves/trims at once, a long press on a clip
+  is its menu, a hold on an empty lane then a drag is the rubber band; thick timeline scrollbars (26 px). Tool bar:
+  a scroll area only follows the axes it scrolls (slanted swipes no longer jump). Tests in test_touch_input.
+- Import on Android: content:// from the system picker - the file's path where readable, else a ContentResolver
+  descriptor per open read by FFmpeg's fd protocol (FFmpeg rebuilt with --enable-protocol=fd; prefixes without it
+  kept as android-deps/ffmpeg/<abi>/prefix-nofd), provider's display name, persistable permission
+  (engine/ContentUri, OpenMedia::input). Dialog button rows wider than the screen stack (Android). test_content_uri.
+- Own media gallery (ui/MediaGallery, engine/DeviceMedia): "+ Videos hinzufügen" over an empty timeline and
+  Medien › Importieren… on phone/tablet; MediaStore videos/photos newest first by day, picked in order (numbers),
+  filter, "Hinzufügen (n)", "Andere Datei…" = system picker; permission asked with an explanation (Android 14
+  limited access counts), refused = picker; picks go into the pool and onto the timeline in order.
+- Layout forms (MainWindow::wantedForm/setLayoutForm): Desktop (width >= 1100), Phone (shorter side < 600 and
+  narrower than 1100), Tablet between (unfolded foldable, half a desktop screen); 24 px hysteresis; chosen at the start
+  by the screen and switched live on resizes, fold/unfold and the setting "Anordnung" (Automatisch/Handy/Tablet/
+  Desktop, ui/layoutForm, at once). Widgets move, nothing is rebuilt: ShellHomes records each widget's desktop place
+  (splitter index, box index/stretch, grid cell, scroll area), the toggles, the page and the splitter sizes at the last
+  desktop width; all come back exactly. Tablet: top bar across, tool rail, viewer above timeline, a panel docked at the
+  right (Inspector first). Switches happen under a frozen picture that fades in 200 ms (ui/SwitchCurtain; spinner past
+  0.5 s when events run); "Bewegungen reduzieren" (ui/reduceMotion), Android's remove-animations or
+  SCHNEIDI_REDUCE_MOTION=1 switch without fade. Tests and --screenshot runs pin the desktop layout (check.h,
+  main.cpp) unless SCHNEIDI_LAYOUT/SCHNEIDI_PHONE_LAYOUT is set. test_layout_switch (74 checks).
+- Foldable: AVD schneidi_fold (pixel_fold, same android-35 image; `adb shell cmd device_state state 0|2`, screenshots
+  per display `screencap -d <id>`): open = tablet form (80), folded = phone form on the outer display (81), unfolded
+  again (82), project and view kept. Needs MemoryMax=6G and few reinstalls (OOM-killed at 6G after several).
+- Also: Inspector tabs never cut, export folder remembered (Android: shared Movies), grown dialogs centered, each
+  sheet keeps its own height (export opens tall), half-cut last tool as a swipe hint, proportional tool widths.
+- Shots: 67-68 (pan, header menu), 70-78 (empty timeline button, permission, gallery, picker import), 80-82 (fold).
+
 ## Not done yet
 - Landscape: the picture is small now (~70 px).
+- Soft rebuild for design/language/UI size without a restart: not done. MainWindow builds its widgets and many
+  connections in its constructor and main.cpp wires the one window (live server, back key, runners); a rebuild means
+  either a second MainWindow with the project handed over (undo history lost, a second top-level window for a moment)
+  or splitting the constructor into rebuildable content. UI size (QT_SCALE_FACTOR) cannot change in-process at all.
+- Real CS2 clip import through the picker on the A51: built and installed, not yet driven (phone was locked).
 - Comp/Studio/Direct pages have no phone form; full-screen viewer is a separate top-level window (not checked).
 - Color sheet has no viewer overlay windows; background job indicator not seen on Android (no proxy run there: the
   ffmpeg program does not exist on Android).
