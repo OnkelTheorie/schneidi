@@ -94,7 +94,7 @@ void MainWindow::settingsDialog(int tab)
     // Touch mode: after a restart too (the theme's sizes are set at the start)
     const bool touchChanged = dlg.touchMode() != Touch::savedMode() && !m_autosaveDisabled;
     if (touchChanged) Touch::setSavedMode(dlg.touchMode());
-    // Phone layout: after a restart (the panels are arranged once at the start)
+    // Layout form: at once (the same widgets move)
     const bool phoneChanged = dlg.phoneLayout() != SettingsDialog::savedPhoneLayout() && !m_autosaveDisabled;
     if (phoneChanged) SettingsDialog::setSavedPhoneLayout(dlg.phoneLayout());
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
@@ -109,10 +109,8 @@ void MainWindow::settingsDialog(int tab)
     } else if (touchChanged && Touch::decideMode() != Touch::modeActive()) {
         offerRestart(T("Der Touch-Modus ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
-    } else if (phoneChanged && phoneLayoutWanted() != bool(m_phone)) {
-        offerRestart(T("Das Handy-Layout ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
-                     T("Später"));
     }
+    if (phoneChanged) checkLayoutForm();
 }
 
 void MainWindow::setProxyQuality(ProxyManager::Quality quality)

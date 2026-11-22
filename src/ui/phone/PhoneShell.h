@@ -70,7 +70,13 @@ public:
     // was open
     bool back();
 
-    bool landscape() const { return m_landscape; }
+    bool landscape() const { return m_landscape; } // the tools as a rail at the left (phone landscape, tablet)
+    // The middle form (a tablet, an unfolded foldable, a narrow desktop window): the top bar across, the tools as a
+    // rail at the left, viewer above timeline, one panel docked at the right (not a sheet over the timeline)
+    void setTablet(bool on);
+    bool tablet() const { return m_tablet; }
+    // Gives the panels back (before the shell goes: MainWindow puts them where they were on the desktop)
+    void releasePanels();
 
     // Before the shell is shown its panels report the desktop's minimums (polish and their first layout come with the
     // show): none then, the window is never sized to them (Android maximizes it before anything is laid out). Shown,
@@ -80,9 +86,9 @@ public:
 signals:
     void sheetChanged(const QString& id); // opened (id) or closed (empty)
     void clipToolsLeft();                 // the clip bar's back arrow or the back key: MainWindow clears the selection
-    // The orientation changed (and on the first layout), before the new arrangement is built: the top bar is a row in
-    // portrait and the head of the rail in landscape (MainWindow arranges its buttons)
-    void landscapeChanged(bool landscape);
+    // The arrangement changed (and on the first layout), before it is built: the top bar is the head of the rail
+    // (true: a phone in landscape) or a row across (portrait, tablet); MainWindow arranges its buttons
+    void landscapeChanged(bool barInRail);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -124,6 +130,7 @@ private:
     double m_share = 0.55;
     QHash<QString, double> m_shares; // per panel: its height (setPanelShare, then the user's drags)
     bool m_landscape = false;
+    bool m_tablet = false;
     bool m_laidOut = false;
     bool m_clipMode = false;
     int m_dragStartY = -1;

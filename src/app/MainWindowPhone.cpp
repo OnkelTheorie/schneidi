@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// MainWindow: the phone layout (ui/phone/PhoneShell.h). The same panels, actions and colors as on the desktop,
-// rearranged for a phone: the desktop's top bar, page bar, menu bar and the pages' splitters are hidden, the viewer
-// and the timeline move into the shell, every panel opens as the shell's sheet (one at a time).
+// MainWindow: the layout forms (ui/phone/PhoneShell.h). The same panels, actions and colors as on the desktop,
+// rearranged for a phone or a tablet: the desktop's top bar, page bar, menu bar and the pages' splitters are hidden,
+// the viewer and the timeline move into the shell, every panel opens in the shell's sheet (one at a time). Each widget
+// the shell takes has its desktop place recorded (ShellHomes), so the desktop comes back exactly when the form
+// changes live (a window resized past a threshold, a foldable unfolded, the setting).
 #include "app/MainWindow.h"
 
 #include "app/AiChatPanel.h"
@@ -27,6 +29,12 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QGridLayout>
+#include <QPointer>
+#include <QResizeEvent>
+#include <QScrollArea>
+#include <QStackedWidget>
+#include <QTimer>
 #include <QCoreApplication>
 #include <QBoxLayout>
 #include <QMenu>
@@ -44,17 +52,154 @@ void trigger(const char* id)
 }
 } // namespace
 
+// Where a widget the shell takes lives on the desktop: its parent and its place there (a splitter's index, a box
+// layout's index, stretch and alignment, a grid cell, a scroll area, a stacked widget), its visibility; plus the
+// desktop's splitter sizes and other state the shell changes
+struct ShellHomes {
+    struct Home {
+        QPointer<QWidget> widget, parent;
+        enum Kind { Plain, Splitter, Box, Grid, Scroll, Stack } kind = Plain;
+        QPointer<QLayout> layout;
+        int index = -1, stretch = 0, row = 0, column = 0, rowSpan = 1, columnSpan = 1;
+        Qt::Alignment align;
+        bool hidden = false;
+    };
+    QVector<Home> homes;
+    QVector<QPair<QPointer<QSplitter>, QList<int>>> splitters;
+    QHash<QToolButton*, bool> toggles;
+    MainWindow::Page page = MainWindow::Page::Edit;
+    QSize viewerMin;
+    int timelineMin = 0;
+};
+
+namespace {
+// The layout of `parent` that holds `w` (directly or in a nested layout), with w's index there
+QLayout* layoutHolding(QLayout* lay, QWidget* w, int* index)
+{
+    if (!lay) return nullptr;
+    for (int i = 0; i < lay->count(); ++i) {
+        QLayoutItem* item = lay->itemAt(i);
+        if (item->widget() == w) {
+            *index = i;
+            return lay;
+        }
+        if (QLayout* inner = item->layout())
+            if (QLayout* found = layoutHolding(inner, w, index)) return found;
+    }
+    return nullptr;
+}
+} // namespace
+
+QWidget* MainWindow::shellHome(QWidget* w)
+{
+    if (!w || !m_shellHomes) return w;
+    for (const ShellHomes::Home& h : m_shellHomes->homes)
+        if (h.widget == w) return w; // known: its first place counts
+    ShellHomes::Home h;
+    h.widget = w;
+    h.parent = w->parentWidget();
+    h.hidden = w->isHidden();
+    if (auto* split = qobject_cast<QSplitter*>(h.parent.data())) {
+        h.kind = ShellHomes::Home::Splitter;
+        h.index = split->indexOf(w);
+    } else if (auto* stack = qobject_cast<QStackedWidget*>(h.parent.data())) {
+        h.kind = ShellHomes::Home::Stack;
+        h.index = stack->indexOf(w);
+    } else if (h.parent && h.parent->parentWidget()
+               && qobject_cast<QScrollArea*>(h.parent->parentWidget())
+               && static_cast<QScrollArea*>(h.parent->parentWidget())->widget() == w) {
+        h.kind = ShellHomes::Home::Scroll;
+        h.parent = h.parent->parentWidget(); // the scroll area (the viewport holds it)
+    } else if (h.parent) {
+        int index = -1;
+        if (QLayout* lay = layoutHolding(h.parent->layout(), w, &index)) {
+            h.layout = lay;
+            h.index = index;
+            if (auto* grid = qobject_cast<QGridLayout*>(lay)) {
+                h.kind = ShellHomes::Home::Grid;
+                grid->getItemPosition(index, &h.row, &h.column, &h.rowSpan, &h.columnSpan);
+                h.align = grid->itemAt(index)->alignment();
+            } else if (auto* box = qobject_cast<QBoxLayout*>(lay)) {
+                h.kind = ShellHomes::Home::Box;
+                h.stretch = box->stretch(index);
+                h.align = box->itemAt(index)->alignment();
+            }
+        }
+    }
+    m_shellHomes->homes << h;
+    return w;
+}
+
+MainWindow::LayoutForm MainWindow::wantedForm(const QSize& logical, LayoutForm current)
+{
+    const auto named = [](const QString& v) -> std::optional<LayoutForm> {
+        if (v == "phone" || v == "on" || v == "1") return LayoutForm::Phone;
+        if (v == "tablet") return LayoutForm::Tablet;
+        if (v == "desktop" || v == "off" || v == "0") return LayoutForm::Desktop;
+        return std::nullopt;
+    };
+    if (auto f = named(qEnvironmentVariable("SCHNEIDI_LAYOUT"))) return *f;
+    if (auto f = named(qEnvironmentVariable("SCHNEIDI_PHONE_LAYOUT"))) return *f;
+    QSettings settings;
+    if (auto f = named(settings.value("ui/layoutForm").toString())) return *f;
+    if (auto f = named(settings.value("ui/phoneLayout").toString())) return *f; // (0.26 prototype's setting)
+    if (logical.isEmpty()) return current;
+    // Phone: the shorter side below 600 (a phone either way up) unless the window is desktop-wide (a short wide
+    // desktop window stays a desktop). Desktop: 1100 wide and up. Between: the tablet form (an unfolded foldable,
+    // a tablet upright, half a desktop screen). 24 px of hysteresis: a size on the line does not flip back and forth
+    constexpr int kSlack = 24;
+    const int w = logical.width(), shorter = std::min(logical.width(), logical.height());
+    const int phoneEdge = kPhoneEdge + (current == LayoutForm::Phone ? kSlack : -kSlack) / 2;
+    const int desktopWidth = kDesktopWidth + (current == LayoutForm::Desktop ? -kSlack : kSlack) / 2;
+    if (shorter < phoneEdge && w < desktopWidth) return LayoutForm::Phone;
+    return w >= desktopWidth ? LayoutForm::Desktop : LayoutForm::Tablet;
+}
+
 bool MainWindow::phoneLayoutWanted()
 {
-    const QString env = qEnvironmentVariable("SCHNEIDI_PHONE_LAYOUT");
-    if (env == "1") return true;
-    if (env == "0") return false;
-    const QString setting = QSettings().value("ui/phoneLayout").toString();
-    if (setting == "on") return true;
-    if (setting == "off") return false;
-    // The screen's own size, not the window's: a narrow desktop window keeps the desktop layout
+    // The start: the screen the window opens on (it is maximized there); later resizes check the window itself
     QScreen* screen = startScreen();
-    return screen && PhoneShell::isPhoneSize(screen->size());
+    const QSize size = screen ? screen->availableGeometry().size() : QSize();
+    return wantedForm(size, LayoutForm::Desktop) == LayoutForm::Phone;
+}
+
+MainWindow::LayoutForm MainWindow::layoutForm() const
+{
+    return !m_phone ? LayoutForm::Desktop : m_phone->tablet() ? LayoutForm::Tablet : LayoutForm::Phone;
+}
+
+void MainWindow::enablePhoneLayout() { setLayoutForm(LayoutForm::Phone); }
+
+void MainWindow::setLayoutForm(LayoutForm form)
+{
+    if (form == layoutForm()) return;
+    if (form == LayoutForm::Desktop) {
+        disableShell();
+    } else if (m_phone) { // phone <-> tablet: the same shell, another arrangement
+        m_phone->setTablet(form == LayoutForm::Tablet);
+        if (form == LayoutForm::Tablet && m_phone->sheet().isEmpty()) m_phone->openSheet("inspector");
+    } else {
+        enableShell(form == LayoutForm::Tablet);
+    }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    if (!isVisible()) return; // (the constructor's sizes: the start decided already)
+    if (!m_formTimer) {
+        m_formTimer = new QTimer(this);
+        m_formTimer->setSingleShot(true);
+        m_formTimer->setInterval(120); // a drag-resize settles first; a fold is one step anyway
+        connect(m_formTimer, &QTimer::timeout, this, &MainWindow::checkLayoutForm);
+    }
+    m_formTimer->start();
+}
+
+void MainWindow::checkLayoutForm()
+{
+    const LayoutForm want = wantedForm(size(), layoutForm());
+    if (want != layoutForm()) setLayoutForm(want);
 }
 
 QWidget* MainWindow::buildPhoneTopBar()
@@ -146,13 +291,29 @@ void MainWindow::phoneArrangeTopBar(bool landscape)
     if (jobs) lay->addWidget(jobs, row++, 0, 1, 3, Qt::AlignHCenter);
 }
 
-void MainWindow::enablePhoneLayout()
+void MainWindow::enableShell(bool tablet)
 {
     if (m_phone) return;
+    // What the desktop looks like now, to come back to it exactly
+    delete m_shellHomes;
+    m_shellHomes = new ShellHomes;
+    m_shellHomes->page = m_page;
+    for (QSplitter* split : centralWidget()->findChildren<QSplitter*>()) m_shellHomes->splitters << qMakePair(QPointer<QSplitter>(split), split->sizes());
+    for (QToolButton* t : {m_poolToggle, m_effectsToggle, m_inspectorToggle, m_mixerToggle, m_transcriptToggle, m_chatToggle})
+        if (t) m_shellHomes->toggles.insert(t, t->isChecked());
+    m_shellHomes->viewerMin = m_viewer->screen()->minimumSize();
+    m_shellHomes->timelineMin = m_timeline->view()->minimumHeight();
     // The Edit page's state first (the viewer's overlay for shapes and painting): the phone layout is the Edit page
     if (m_page != Page::Edit) showPage(Page::Edit);
     setViewerLarge(false);
+    shellHome(m_viewer);
+    shellHome(m_timeline);
+    shellHome(m_titleLabel);
+    if (m_liveBox) shellHome(m_liveBox);
+    if (m_backgroundJobs) shellHome(m_backgroundJobs);
+    const bool starting = !isVisible(); // the constructor: start values (track heights) are the phone's
     m_phone = new PhoneShell;
+    m_phone->setTablet(tablet);
     connect(m_phone, &PhoneShell::landscapeChanged, this, [this](bool landscape) {
         phoneArrangeTopBar(landscape);
 #ifdef Q_OS_ANDROID
@@ -180,7 +341,7 @@ void MainWindow::enablePhoneLayout()
     m_timeline->view()->setMinimumHeight(64);
     // Rows a finger still hits but a phone's height holds (landscape: V2, V1 and A1 under the ruler); a start value
     // like touch mode's, the user's pinch on the headers changes them as before
-    m_timeline->view()->setTrackHeights(56, 46);
+    if (starting) m_timeline->view()->setTrackHeights(56, 46); // (a live switch keeps the user's heights)
     m_mediaPool->setCompactTiles(true); // two columns beside the bins in portrait
     m_mediaPool->setGeneratorsLast(true); // the material first, the text and shape tiles after it
     m_viewer->screen()->setMinimumSize(160, 72);
@@ -189,20 +350,20 @@ void MainWindow::enablePhoneLayout()
     if (auto* large = m_viewer->findChild<QToolButton*>("viewAction_large")) large->hide();
 
     // The main tools: the desktop's panels and pages, one at a time in the sheet
-    m_phone->addPanelTool("media", QStringLiteral("▦"), T("Medien"), [this] { return m_mediaPool; });
-    m_phone->addPanelTool("effects", QStringLiteral("✦"), T("Effekte"), [this] { return m_effects; });
+    m_phone->addPanelTool("media", QStringLiteral("▦"), T("Medien"), [this] { return shellHome(m_mediaPool); });
+    m_phone->addPanelTool("effects", QStringLiteral("✦"), T("Effekte"), [this] { return shellHome(m_effects); });
     m_phone->addActionTool("text", QStringLiteral("T"), T("Text"), [this] {
         trigger("add_title"); // at the playhead, selected: its fields in the Inspector
         m_phone->openSheet("inspector");
     }, false);
-    m_phone->addPanelTool("mixer", QStringLiteral("▥"), T("Ton"), [this] { return m_mixer; });
+    m_phone->addPanelTool("mixer", QStringLiteral("▥"), T("Ton"), [this] { return shellHome(m_mixer); });
     m_phone->addPanelTool("color", QStringLiteral("◐"), T("Farbe"), [this]() -> QWidget* {
         ensureColorPage();
-        return m_colorPanel;
+        return shellHome(m_colorPanel);
     });
-    m_phone->addPanelTool("inspector", QStringLiteral("☰"), T("Inspektor"), [this] { return m_inspector; });
-    m_phone->addPanelTool("transcript", QStringLiteral("¶"), T("Transkript"), [this] { return m_transcript; });
-    m_phone->addPanelTool("ai", QStringLiteral("✧"), T("KI"), [this]() -> QWidget* { return m_chatPanel; });
+    m_phone->addPanelTool("inspector", QStringLiteral("☰"), T("Inspektor"), [this] { return shellHome(m_inspector); });
+    m_phone->addPanelTool("transcript", QStringLiteral("¶"), T("Transkript"), [this] { return shellHome(m_transcript); });
+    m_phone->addPanelTool("ai", QStringLiteral("✧"), T("KI"), [this]() -> QWidget* { return shellHome(m_chatPanel); });
     m_phone->addPanelTool("export", QStringLiteral("⇪"), T("Export"), [this]() -> QWidget* {
         // The settings and, below them, the render queue (on the desktop it stands beside them): "Add to Render
         // Queue" alone rendered nothing on the phone, the queue's "Render all" was not on the screen
@@ -211,8 +372,8 @@ void MainWindow::enablePhoneLayout()
         auto* lay = new QVBoxLayout(box);
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(1);
-        lay->addWidget(m_deliver, 3);
-        lay->addWidget(m_deliver->queuePanel(), 2);
+        lay->addWidget(shellHome(m_deliver), 3);
+        lay->addWidget(shellHome(m_deliver->queuePanel()), 2);
         m_deliver->queuePanel()->show();
         return box;
     });
@@ -248,10 +409,76 @@ void MainWindow::enablePhoneLayout()
     if (m_backgroundJobs) phoneAdoptBackgroundJobs(); // (a window built before: tests)
     // The window's minimum from the phone layout now (the desktop's was set when its layout first ran): a resize to
     // the phone's size before the first show must not be held at the desktop's minimum
+    if (tablet) m_phone->openSheet("inspector"); // the tablet's docked panel: the Inspector first
     m_phone->ensurePolished(); // (style sheets: the sizes they give)
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); // the panels' own layouts first
     centralWidget()->layout()->activate();
     if (layout()) layout()->activate();
+}
+
+void MainWindow::disableShell()
+{
+    if (!m_phone || !m_shellHomes) return;
+    setUpdatesEnabled(false);
+#ifdef Q_OS_ANDROID
+    if (isFullScreen()) showMaximized(); // (the phone's landscape)
+#endif
+    m_phone->closeSheet();
+    m_phone->releasePanels();
+    if (m_backgroundJobs) {
+        disconnect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this, nullptr);
+        m_backgroundJobs->setCompact(false);
+    }
+    // Every widget back to its desktop place, the last taken first (indices of a parent stay right)
+    for (int i = int(m_shellHomes->homes.size()) - 1; i >= 0; --i) {
+        const ShellHomes::Home& h = m_shellHomes->homes[i];
+        QWidget* w = h.widget;
+        if (!w || !h.parent) continue;
+        switch (h.kind) {
+        case ShellHomes::Home::Splitter: static_cast<QSplitter*>(h.parent.data())->insertWidget(h.index, w); break;
+        case ShellHomes::Home::Stack: static_cast<QStackedWidget*>(h.parent.data())->insertWidget(h.index, w); break;
+        case ShellHomes::Home::Scroll: static_cast<QScrollArea*>(h.parent.data())->setWidget(w); break;
+        case ShellHomes::Home::Box:
+            if (auto* box = qobject_cast<QBoxLayout*>(h.layout.data())) box->insertWidget(h.index, w, h.stretch, h.align);
+            else w->setParent(h.parent);
+            break;
+        case ShellHomes::Home::Grid:
+            if (auto* grid = qobject_cast<QGridLayout*>(h.layout.data()))
+                grid->addWidget(w, h.row, h.column, h.rowSpan, h.columnSpan, h.align);
+            else w->setParent(h.parent);
+            break;
+        case ShellHomes::Home::Plain: w->setParent(h.parent); break;
+        }
+        w->setVisible(!h.hidden);
+    }
+    // The desktop's own state
+    m_timeline->setCompact(false);
+    TimelineView::setCompactHeaders(false);
+    m_timeline->view()->setFingerPans(false);
+    m_timeline->view()->setMinimumHeight(m_shellHomes->timelineMin);
+    m_mediaPool->setCompactTiles(false);
+    m_mediaPool->setGeneratorsLast(false);
+    m_viewer->screen()->setMinimumSize(m_shellHomes->viewerMin);
+    m_viewer->setCompact(false);
+    if (auto* large = m_viewer->findChild<QToolButton*>("viewAction_large")) large->show();
+    delete m_phone; // (its own bar with it; every desktop widget is out)
+    m_phone = nullptr;
+    m_phoneTopBar = nullptr;
+    m_topBar->show();
+    m_pageBar->show();
+    m_chatSplit->show();
+    menuBar()->show();
+    for (auto it = m_shellHomes->toggles.cbegin(); it != m_shellHomes->toggles.cend(); ++it) {
+        const QSignalBlocker block(it.key());
+        it.key()->setChecked(it.value());
+    }
+    for (const auto& [split, sizes] : m_shellHomes->splitters)
+        if (split) split->setSizes(sizes);
+    const Page page = m_shellHomes->page;
+    delete m_shellHomes;
+    m_shellHomes = nullptr;
+    if (page != Page::Edit) showPage(page);
+    setUpdatesEnabled(true);
 }
 
 void MainWindow::phoneAdoptBackgroundJobs()

@@ -36,7 +36,7 @@ public:
     QString language() const; // code, as I18n::language()
     double uiScale() const;   // interface size (UiScale::saved: 0 = the system's)
     Touch::Mode touchMode() const; // larger controls for fingers (Touch::savedMode)
-    // The phone layout (MainWindow::phoneLayoutWanted): "" automatic, "on", "off" (setting ui/phoneLayout)
+    // The layout form (MainWindow::wantedForm): "" automatic, "phone", "tablet", "desktop" (setting ui/layoutForm)
     QString phoneLayout() const;
     static QString savedPhoneLayout();
     static void setSavedPhoneLayout(const QString& value);

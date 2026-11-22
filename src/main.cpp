@@ -477,6 +477,9 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--storage") == 0) storageArg = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--design") == 0) designArg = QString::fromLocal8Bit(argv[i + 1]);
     }
+    // Screenshot runs keep the desktop layout at any --size (README pictures), unless a layout is asked for
+    if (!screenshot.isEmpty() && !qEnvironmentVariableIsSet("SCHNEIDI_LAYOUT") && !qEnvironmentVariableIsSet("SCHNEIDI_PHONE_LAYOUT"))
+        qputenv("SCHNEIDI_LAYOUT", "desktop");
     // --verbose: FFmpeg warnings too (otherwise only errors, see FfmpegLog)
     for (int i = 1; i < argc; ++i)
         if (qstrcmp(argv[i], "--verbose") == 0) qputenv("SCHNEIDI_VERBOSE", "1");

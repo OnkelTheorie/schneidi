@@ -58,6 +58,9 @@ void isolateSettings();
 inline void initEnv()
 {
     isolateSettings();
+    // The desktop layout whatever the test window's size (the layout forms switch by size: tests of them unset it)
+    if (!qEnvironmentVariableIsSet("SCHNEIDI_LAYOUT") && !qEnvironmentVariableIsSet("SCHNEIDI_PHONE_LAYOUT"))
+        qputenv("SCHNEIDI_LAYOUT", "desktop");
     qputenv("QT_QPA_PLATFORM", qEnvironmentVariable("SCHNEIDI_TEST_QPA", "offscreen").toUtf8());
     // Own audio engine: never the sound card in tests (silence paced by a timer), unless a test chose a device
     if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE")) qputenv("SCHNEIDI_AUDIO_DEVICE", "null");

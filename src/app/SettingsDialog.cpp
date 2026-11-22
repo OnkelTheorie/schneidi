@@ -139,12 +139,14 @@ QWidget* SettingsDialog::buildGeneral()
     m_phoneLayout = new QComboBox;
     m_phoneLayout->setObjectName("settings_phone_layout");
     m_phoneLayout->addItem(T("Automatisch"), QString());
-    m_phoneLayout->addItem(T("Immer"), QStringLiteral("on"));
-    m_phoneLayout->addItem(T("Nie"), QStringLiteral("off"));
+    m_phoneLayout->addItem(T("Handy"), QStringLiteral("phone"));
+    m_phoneLayout->addItem(T("Tablet"), QStringLiteral("tablet"));
+    m_phoneLayout->addItem(T("Desktop"), QStringLiteral("desktop"));
     m_phoneLayout->setCurrentIndex(std::max(0, m_phoneLayout->findData(savedPhoneLayout())));
-    m_phoneLayout->setToolTip(T("Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. "
-                                "Automatisch: an bei einem Bildschirm in Handygröße."));
-    form->addRow(T("Handy-Layout"), m_phoneLayout);
+    m_phoneLayout->setToolTip(T("Handy: Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. "
+                                "Tablet: Werkzeugleiste links, ein Bereich fest daneben. Automatisch: nach der "
+                                "Fenstergröße, wechselt sofort."));
+    form->addRow(T("Anordnung"), m_phoneLayout);
     // The page shown at the start and on New Project (MainWindow::showStartPage); filled by setStartPages
     m_startPage = new QComboBox;
     m_startPage->setObjectName("settings_start_page");
@@ -431,15 +433,19 @@ QString SettingsDialog::phoneLayout() const { return m_phoneLayout->currentData(
 
 QString SettingsDialog::savedPhoneLayout()
 {
-    const QString v = QSettings().value("ui/phoneLayout").toString();
-    return v == "on" || v == "off" ? v : QString();
+    QSettings s;
+    const QString v = s.value("ui/layoutForm").toString();
+    if (v == "phone" || v == "tablet" || v == "desktop") return v;
+    const QString old = s.value("ui/phoneLayout").toString(); // (the 0.26 prototype's on/off)
+    return old == "on" ? QStringLiteral("phone") : old == "off" ? QStringLiteral("desktop") : QString();
 }
 
 void SettingsDialog::setSavedPhoneLayout(const QString& value)
 {
     QSettings s;
-    if (value.isEmpty()) s.remove("ui/phoneLayout");
-    else s.setValue("ui/phoneLayout", value);
+    s.remove("ui/phoneLayout");
+    if (value.isEmpty()) s.remove("ui/layoutForm");
+    else s.setValue("ui/layoutForm", value);
 }
 
 Touch::Mode SettingsDialog::touchMode() const { return Touch::Mode(m_touchMode->currentData().toInt()); }

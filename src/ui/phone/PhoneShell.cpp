@@ -326,6 +326,20 @@ void PhoneShell::closeSheet()
     emit sheetChanged({});
 }
 
+void PhoneShell::setTablet(bool on)
+{
+    if (m_tablet == on) return;
+    m_tablet = on;
+    m_laidOut = false; // the arrangement anew
+    relayout();
+}
+
+void PhoneShell::releasePanels()
+{
+    for (Tool& t : m_tools)
+        if (t.scroll && t.scroll->widget()) t.scroll->takeWidget();
+}
+
 void PhoneShell::setPanelShare(const QString& id, double share)
 {
     m_shares[id] = std::clamp(share, kMinShare, kMaxShare);
@@ -409,11 +423,15 @@ void PhoneShell::updateButtons()
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());
     if (m_landscape) {
         // The rail as wide as its widest tool or the top bar's head, whichever is wider
-        const int rail = std::max(hint.width(), m_top ? m_top->minimumSizeHint().width() : 0);
+        const int rail = std::max(hint.width(), m_top && !m_tablet ? m_top->minimumSizeHint().width() : 0);
         m_toolScroll->setFixedWidth(rail);
         m_toolScroll->setMinimumHeight(0);
         m_toolScroll->setMaximumHeight(QWIDGETSIZE_MAX);
-        if (m_top) m_top->setFixedWidth(rail);
+        if (m_top && !m_tablet) m_top->setFixedWidth(rail);
+        else if (m_top) {
+            m_top->setMinimumWidth(0);
+            m_top->setMaximumWidth(QWIDGETSIZE_MAX);
+        }
     } else {
         m_toolScroll->setFixedHeight(hint.height());
         m_toolScroll->setMinimumWidth(0);
@@ -427,7 +445,7 @@ void PhoneShell::updateButtons()
 
 void PhoneShell::relayout()
 {
-    const bool land = width() > height();
+    const bool land = m_tablet || width() > height();
     if (m_laidOut && land == m_landscape) {
         updateButtons(); // (the first show polishes the buttons: their size with the style sheet)
         placeSheet();
@@ -436,7 +454,7 @@ void PhoneShell::relayout()
     m_landscape = land;
     m_laidOut = true;
     delete layout(); // the items go, the widgets stay (children of the shell)
-    emit landscapeChanged(land);
+    emit landscapeChanged(land && !m_tablet);
     const auto dir = land ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
     m_toolLay->setDirection(dir);
     m_mainLay->setDirection(dir);
@@ -445,7 +463,24 @@ void PhoneShell::relayout()
         b->setSizePolicy(land ? QSizePolicy::Preferred : QSizePolicy::Expanding,
                          land ? QSizePolicy::Fixed : QSizePolicy::Preferred);
     constexpr int kGap = 1; // the border color between the areas, as thin as the desktop's panel edges
-    if (land) {
+    if (m_tablet) {
+        // The top bar across (as on the desktop), below it the tools as a rail, the viewer above the timeline, the
+        // open panel docked at the right
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(kGap);
+        if (m_top) root->addWidget(m_top);
+        auto* row = new QHBoxLayout;
+        row->setSpacing(kGap);
+        row->addWidget(m_toolScroll);
+        auto* column = new QVBoxLayout;
+        column->setSpacing(kGap);
+        if (m_viewer) column->addWidget(m_viewer, 3);
+        if (m_timeline) column->addWidget(m_timeline, 2);
+        row->addLayout(column, 3);
+        row->addWidget(m_sheet, 2);
+        root->addLayout(row, 1);
+    } else if (land) {
         // The height is the scarce side: the top bar's buttons head the rail of tools at the left (no bar across);
         // the viewer above the timeline in a column (the timeline gets the larger share: its first tracks in sight);
         // the open panel at the right over the whole height

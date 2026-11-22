@@ -32,6 +32,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSettings>
 #include <QMessageBox>
 #include <QTimer>
 #include <QLabel>
@@ -453,23 +454,26 @@ void testSetting()
     SettingsDialog::setSavedPhoneLayout({}); // (a run stopped before its end may have left one)
     CHECK(SettingsDialog::savedPhoneLayout().isEmpty());
     CHECK(!MainWindow::phoneLayoutWanted()); // automatic: the offscreen screen is no phone
-    SettingsDialog::setSavedPhoneLayout("on");
+    SettingsDialog::setSavedPhoneLayout("phone");
     CHECK(MainWindow::phoneLayoutWanted());
     {
         SettingsDialog dlg{AiSettings{}};
         auto* combo = dlg.findChild<QComboBox*>("settings_phone_layout");
         if (CHECK(combo)) {
-            CHECK(combo->count() == 3);
-            CHECK(dlg.phoneLayout() == "on");
-            combo->setCurrentIndex(combo->findData(QStringLiteral("off")));
-            CHECK(dlg.phoneLayout() == "off");
+            CHECK(combo->count() == 4);
+            CHECK(dlg.phoneLayout() == "phone");
+            combo->setCurrentIndex(combo->findData(QStringLiteral("desktop")));
+            CHECK(dlg.phoneLayout() == "desktop");
             combo->setCurrentIndex(0);
             CHECK(dlg.phoneLayout().isEmpty());
         }
     }
-    SettingsDialog::setSavedPhoneLayout("off");
+    SettingsDialog::setSavedPhoneLayout("desktop");
     CHECK(!MainWindow::phoneLayoutWanted());
-    CHECK(SettingsDialog::savedPhoneLayout() == "off");
+    CHECK(SettingsDialog::savedPhoneLayout() == "desktop");
+    SettingsDialog::setSavedPhoneLayout({});
+    QSettings().setValue("ui/phoneLayout", "on"); // the prototype's setting still counts
+    CHECK(SettingsDialog::savedPhoneLayout() == "phone");
     SettingsDialog::setSavedPhoneLayout({});
     CHECK(SettingsDialog::savedPhoneLayout().isEmpty());
     CHECK(!MainWindow::phoneLayoutWanted());
@@ -583,9 +587,11 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("phone-layout");
+    qunsetenv("SCHNEIDI_LAYOUT"); // (check.h pins the desktop layout; this test is about the others)
     testSizes();
     testShell();
     if (qEnvironmentVariableIsEmpty("SCHNEIDI_PHONE_LAYOUT")) testSetting();
+    SettingsDialog::setSavedPhoneLayout({});
     Touch::installDialogFit(&app); // (main.cpp: Android only)
     testDialogFit();
     Engine engine;

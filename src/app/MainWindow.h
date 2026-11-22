@@ -288,12 +288,23 @@ public:
     // full-screen viewer, then the large viewer, then another page back to Edit; on Edit with nothing left it asks
     // whether to quit (never quits by itself). Always true (the key is taken)
     bool backStep();
-    // Phone layout (ui/phone/PhoneShell, MainWindowPhone.cpp): on a screen whose shorter side is a phone's (below
-    // PhoneShell::kPhoneEdge logical px) the panels are rearranged - viewer, timeline, a tool bar at the bottom, one
-    // panel at a time as a sheet. Setting ui/phoneLayout ("on"/"off", else automatic) or SCHNEIDI_PHONE_LAYOUT=1/0
-    // decide it otherwise. Decided once in the constructor; tablets and desktops keep the normal layout
-    static bool phoneLayoutWanted();
-    void enablePhoneLayout(); // tests call it on a window built without it
+    // Layout forms (MainWindowPhone.cpp, ui/phone/PhoneShell): Desktop (pages, splitters), Tablet (the middle form:
+    // top bar, tool rail, viewer above the timeline, one panel docked at the side) and Phone (viewer, timeline, a tool
+    // bar, panels as sheets). Chosen by the window's size in logical px (wantedForm), switched live when it crosses a
+    // threshold or the setting changes: the same widgets move, nothing is rebuilt
+    enum class LayoutForm { Desktop, Tablet, Phone };
+    // The form for a window of `logical` size; `current` = the one shown (a little hysteresis around the thresholds).
+    // Setting ui/layoutForm (auto/phone/tablet/desktop; the older ui/phoneLayout on/off), SCHNEIDI_LAYOUT=phone|
+    // tablet|desktop or SCHNEIDI_PHONE_LAYOUT=1/0 pin it
+    static LayoutForm wantedForm(const QSize& logical, LayoutForm current = LayoutForm::Desktop);
+    static bool phoneLayoutWanted(); // the start: wantedForm(the screen) == Phone
+    static constexpr int kPhoneEdge = 600;     // shorter side below: a phone (unless the window is wide)
+    static constexpr int kDesktopWidth = 1100; // width from here: the desktop layout
+    LayoutForm layoutForm() const;
+    // Live: project, unsaved changes, selection, playhead, zoom and scroll stay (core rule); the desktop's splitter
+    // sizes, open panels and page come back as they were when it returns
+    void setLayoutForm(LayoutForm form);
+    void enablePhoneLayout(); // = setLayoutForm(Phone) (tests call it on a window built without it)
     class PhoneShell* phoneShell() const { return m_phone; }
     // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
     // it to the next monitor other than the one the main window is on, after the last one back into the window (two
@@ -318,6 +329,7 @@ public:
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override; // the layout form for the new size (a moment later)
     void changeEvent(QEvent* event) override; // window state: the full-screen action follows
 
 private:
@@ -766,6 +778,12 @@ private:
     void phoneAdoptBackgroundJobs();
     QWidget* m_phoneTopBar = nullptr; // the phone's top bar: a row in portrait, the rail's head in landscape
     void phoneArrangeTopBar(bool landscape);
+    void enableShell(bool tablet);  // the phone/tablet arrangement from the desktop's
+    void disableShell();            // back to the desktop's, everything where it was
+    struct ShellHomes* m_shellHomes = nullptr; // where the shell's widgets live on the desktop (MainWindowPhone.cpp)
+    QWidget* shellHome(QWidget* w);            // records w's desktop place before the shell takes it; returns w
+    class QTimer* m_formTimer = nullptr;       // a resize settles before the form is checked
+    void checkLayoutForm();
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and
