@@ -313,6 +313,12 @@ void apply(QApplication& app)
     families << symbolFontFamilies();
     f.setFamilies(families);
     app.setFont(f);
+    // Fonts that do not come from the app font (Android's class fonts for buttons, labels ... name only the system
+    // family, and the platform theme hands them out again later) lose the list above: the symbol fonts as the system
+    // family's substitutes reach those too
+    if (!symbolFontFamilies().isEmpty())
+        for (const QString& system : {f.family(), QStringLiteral("Roboto"), QStringLiteral("sans-serif")})
+            QFont::insertSubstitutions(system, symbolFontFamilies());
 
     app.setStyleSheet(QString(R"(
         QMainWindow, QWidget#Root { background: %1; }
