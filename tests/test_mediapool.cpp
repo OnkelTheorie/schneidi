@@ -254,11 +254,14 @@ int main(int argc, char** argv)
         pool.setSearch(".mp4");
         CHECK_EQ(list->count(), 4);
         pool.setCurrentBin(sub);
+        CHECK_EQ(list->count(), 4); // the search looks into the whole project
+        pool.setSearchThisBinOnly(true); // only the open bin (and its sub-bins)
         CHECK_EQ(list->count(), 2);
         pool.setSearch("zzz");
         CHECK_EQ(list->count(), 0);
         pool.setSearch("");
         CHECK_EQ(list->count(), 2);
+        pool.setSearchThisBinOnly(false);
         // Current bin is removed (undo of creating): view jumps to Master
         const int tmpBin = p.addBin(0, "Weg");
         pool.setCurrentBin(tmpBin);

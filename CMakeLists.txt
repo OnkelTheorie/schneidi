@@ -253,6 +253,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/ReviewSheet.h        src/core/ReviewSheet.cpp
     src/core/Tours.h              src/core/Tours.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
+    src/core/NameMatch.h          src/core/NameMatch.cpp
     src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
     src/core/SafeGuides.h         src/core/SafeGuides.cpp
@@ -445,6 +446,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
     src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
+    src/ui/SearchHitDelegate.h    src/ui/SearchHitDelegate.cpp
     src/ui/WheelGuard.h           src/ui/WheelGuard.cpp
     src/ui/CompactButton.h        src/ui/CompactButton.cpp
     src/ui/ElidedLabel.h
