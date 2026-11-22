@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaProbe.h"
+
+#include "engine/ContentUri.h"
 #include "engine/OpenMedia.h"
 #include "engine/HdrTone.h"
 
@@ -358,7 +360,8 @@ QString whyUnreadable(const QString& path)
 bool isAudioFile(const QString& path)
 {
     static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};
-    return audioExt.contains(QFileInfo(path).suffix().toLower());
+    // (a content address: its file name's suffix)
+    return audioExt.contains(QFileInfo(ContentUri::is(path) ? ContentUri::displayName(path) : path).suffix().toLower());
 }
 
 std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOptions& options)
@@ -373,7 +376,7 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOpt
         if (!reader.canRead() || !decodableStill(reader)) return std::nullopt;
         MediaInfo info;
         info.path = path;
-        info.name = fi.fileName();
+        info.name = ContentUri::is(path) ? ContentUri::displayName(path) : fi.fileName();
         info.isImage = true;
         info.hasVideo = true;
         info.length = 5 * rate.timebase();
@@ -414,7 +417,7 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOpt
         if (!reader.canRead() || !decodableStill(reader)) return std::nullopt;
         MediaInfo info;
         info.path = path;
-        info.name = fi.fileName();
+        info.name = ContentUri::is(path) ? ContentUri::displayName(path) : fi.fileName();
         info.isImage = true;
         info.hasVideo = true;
         info.length = 5 * rate.timebase();
@@ -423,7 +426,7 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate, const ReadOpt
 
     MediaInfo info;
     info.path = path;
-    info.name = fi.fileName();
+    info.name = ContentUri::is(path) ? ContentUri::displayName(path) : fi.fileName();
     const bool audioFile = isAudioFile(path);
     // A length of 0 or less is no length (fragmented MP4 of an aborted recording: mvhd duration 0)
     const auto known = [](int64_t d) { return d != AV_NOPTS_VALUE && d > 0; };

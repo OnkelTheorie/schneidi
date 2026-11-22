@@ -313,6 +313,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/video/Convert.h    src/engine/video/Convert.cpp
     src/engine/FfmpegLog.h        src/engine/FfmpegLog.cpp
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
+    src/engine/ContentUri.h       src/engine/ContentUri.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp

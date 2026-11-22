@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/OpenMedia.h"
 
+#include "engine/ContentUri.h"
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/dict.h>
@@ -68,6 +70,13 @@ bool notAFile(const char* path)
 
 int input(AVFormatContext** fmt, const char* path, const AVDictionary* extra)
 {
+    // Android's content:// (the system picker): the same file through a descriptor ContentResolver opened
+    QByteArray opened;
+    if (path && ContentUri::is(QString::fromUtf8(path))) {
+        opened = ContentUri::openable(QString::fromUtf8(path)).toUtf8();
+        if (opened.isEmpty()) return AVERROR(ENOENT);
+        path = opened.constData();
+    }
     // Folders, named pipes (FIFOs), devices and sockets are no media files: opening a pipe nobody writes into blocks
     // forever (a hanging import, probe or render), /dev/zero or /dev/urandom never end
     if (path && notAFile(path)) return AVERROR(EINVAL);

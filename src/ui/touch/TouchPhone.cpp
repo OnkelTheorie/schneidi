@@ -9,6 +9,7 @@
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QElapsedTimer>
 #include <QInputMethod>
 #include <QKeyEvent>
@@ -183,6 +184,15 @@ protected:
                 QPointer<QDialog> d(dialog);
                 QTimer::singleShot(0, d, [d] { // after the show's own layout
                     if (!d || !d->layout()) return;
+                    QScreen* scr = d->screen();
+                    const int screenW = scr ? scr->availableGeometry().width() : 100000;
+                    // A row of buttons wider than the screen ("Details einblenden…", "Erneut versuchen", "OK" cut at
+                    // both ends): one under the other
+                    for (QDialogButtonBox* box : d->findChildren<QDialogButtonBox*>())
+                        if (box->orientation() == Qt::Horizontal && box->sizeHint().width() > screenW - 48) {
+                            box->setOrientation(Qt::Vertical);
+                            d->adjustSize();
+                        }
                     const int wanted = std::max(d->layout()->totalMinimumSize().width(), d->sizeHint().width());
                     QScreen* screen = d->screen();
                     const int room = screen ? screen->availableGeometry().width() : wanted;

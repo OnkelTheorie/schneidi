@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/MediaPool.h"
+
+#include "engine/ContentUri.h"
 #include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
@@ -772,8 +774,11 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
     return failed;
 }
 
-void MediaPool::importFiles(const QStringList& paths)
+void MediaPool::importFiles(const QStringList& picked)
 {
+    // Android's picker hands out content:// addresses: the file's path where the app may read it, else the address
+    // (read through ContentResolver, its permission kept for later runs)
+    const QStringList paths = ContentUri::forImport(picked);
     // Folder (e.g. dragged from the file manager) including subfolders as bins
     QStringList files, subtitles;
     for (const QString& path : paths) {

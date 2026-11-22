@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+
+#include "engine/ContentUri.h"
 #include "app/OpenTrace.h"
 #include "core/Shapes.h"
 #include "core/StartupTrace.h"
@@ -675,8 +677,9 @@ void MainWindow::warmUpVideoDecoding()
     if (QGuiApplication::platformName() != QLatin1String("offscreen")) Video::Hardware::warmUp();
 }
 
-void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)
+void MainWindow::importFiles(const QStringList& picked, bool placeOnTimeline, bool adoptFormat)
 {
+    const QStringList paths = ContentUri::forImport(picked); // (Android: content:// -> the file where readable)
     warmUpVideoDecoding();
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
