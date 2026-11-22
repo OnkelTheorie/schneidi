@@ -85,17 +85,24 @@
   pool columns, silent restore without a dialog), `test_touch_input` 146, `test_window_fit` 74,
   `test_autosave_restore` 41, `test_proxy_menus` 86 green.
 
+## Done on 22.11. (fourth round)
+- Landscape: the rail's head (⋮ ↶ ↷, name) takes the rail's color (window), one surface with the camera cutout's
+  strip at the screen edge (`48-phone-landscape-rail-color`).
+- Media Pool on the phone: the generators (Text, Shape) after the clips (`MediaPool::setGeneratorsLast`, only the
+  order shown; desktop keeps them first) (`47-phone-portrait-media-clips-first`).
+- Docs (German, notes repo, not committed here): `dev/touch.md` (sections "Handy-Layout" and its pitfalls),
+  `dev/android.md` (emulator memory/ANDROID_TMP/rotation, snapshot build, silent restore), code map row 33.
+- Tests: `test_phone_layout` 590, `test_touch_input` 146, `test_window_fit` 74, `test_pool_storage` 200,
+  `test_pool_remove` 91, `test_effects` 142 green.
+
 ## Not done yet
 - Real phone (Galaxy A51): not on USB/adb this time (only Termux ssh over WLAN; wireless adb needs pairing on the
   phone). arm64 APK is built (`android-deps/build610-arm64-phone/schneidi-0.26.0-arm64-v8a.apk`), not run on a device.
-- Landscape: the picture is small now (~70 px); the black strip at the left in landscape is the camera cutout's safe
-  area (could take the rail's color).
-- Media Pool: generators (Text, Shape) come before the clips.
+- Landscape: the picture is small now (~70 px).
 - Comp/Studio/Direct pages have no phone form; full-screen viewer is a separate top-level window (not checked).
 - Color sheet has no viewer overlay windows; background job indicator not seen on Android (no proxy run there: the
   ffmpeg program does not exist on Android).
 - Other languages for the 4 new strings (only de+en, translations at the end).
-- Docs (`docs/dev/touch.md`, `android.md`, code map) not updated.
 
 ## Continue
 ```
