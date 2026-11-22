@@ -202,3 +202,7 @@ Status (updated with each commit):
   only if |dy| > 1.7 |dx|.
 - 1, 3, 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
+
+## Pass 1 (22.11. night, stopped for shutdown)
+Done: item 2 (glide/axis lock/snap, setting Schwung) + item 4 (axis lock) in ec64f2cc.
+WIP, unbuilt: item 1 timecode (Viewer.cpp/.h). Not started: 3, 5–11 (list in notes plan-0.26.md / phone-review REPORT.md).
