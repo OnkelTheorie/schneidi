@@ -33,6 +33,8 @@ QJniObject parse(const QString& uri)
                                               QJniObject::fromString(uri).object<jstring>());
 }
 
+} // namespace
+
 // A new descriptor for the address (-1 = refused); exceptions are cleared (and logged by QJniEnvironment)
 int openFd(const QString& uri)
 {
@@ -47,6 +49,7 @@ int openFd(const QString& uri)
     return pfd.callMethod<jint>("detachFd");
 }
 
+namespace {
 QMutex g_lock;
 QHash<QString, int> g_fds; // address -> descriptor kept open for the run
 
@@ -142,6 +145,7 @@ QStringList forImport(const QStringList& paths)
 #else
 
 QString openable(const QString& path) { return is(path) ? QString() : path; }
+int openFd(const QString&) { return -1; }
 QString localPath(const QString& uri) { return is(uri) ? QString() : uri; }
 QString displayName(const QString& uri) { return QFileInfo(uri).fileName(); }
 QStringList forImport(const QStringList& paths) { return paths; }
