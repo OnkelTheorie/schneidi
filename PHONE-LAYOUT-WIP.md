@@ -62,14 +62,35 @@
 - Emulator note: it was OOM-killed twice at 4G/5G (each reinstall grows it); 6G holds. Rotation needs
   `adb shell cmd window user-rotation lock 0|1` (the settings keys alone did not turn it).
 
+## Done on 22.11. (third round)
+- Landscape: the top bar is the head of the tool rail (⋮ ↶ ↷ in a row, the project name below, jobs below that;
+  `MainWindow::phoneArrangeTopBar`, `PhoneShell::landscapeChanged`); no bar across the top. On Android the window goes
+  full screen in landscape (status bar hidden, a swipe shows it; Android's own one-time "Viewing full screen" hint
+  comes once) and back to maximized in portrait (only once the window is visible: the constructor's first layout
+  looked landscape and made the window a small normal one). Viewer 1 : timeline 2, and the phone's rows start at
+  56/46 px (`TimelineView::setTrackHeights`, touch mode had 84/68; a pinch on the headers still changes them): V2, V1
+  and A1 whole on 914x411 (`42-phone-landscape-start`, `43-…-clip-rail`, `44-…-media`). The picture is small
+  (~70 px high) in exchange.
+- Restore after a kill: Android restores the backup without the question (the system ends apps in the background, the
+  question came on almost every start) and says so in a viewer notice ("Nicht gespeicherte Änderungen von „%1“
+  wiederhergestellt.", `46-phone-restored-notice`); desktop unchanged (asks). `MainWindow::restoresWithoutAsking()`,
+  env `SCHNEIDI_SILENT_RESTORE=1/0` overrides. Android also writes the backup when the app goes to the background
+  (`applicationStateChanged`), so a kill loses at most what changed since then. Undo or "close without saving" still
+  drop a restored state as before.
+- Media Pool on the phone: smaller tiles (96x54, `MediaPool::setCompactTiles`), two columns beside the bin list in
+  portrait (`41-phone-portrait-media-two-columns`); desktop tiles unchanged.
+- Shots: `40-phone-portrait-silent-restore` (no dialog), `41`, `42`-`44` landscape, `45-phone-portrait-after-turn`
+  (status bar back), `46` (restore notice).
+- Tests: `test_phone_layout` 584 checks (new: bar in the rail / one row in portrait, V1+A1 whole in landscape, two
+  pool columns, silent restore without a dialog), `test_touch_input` 146, `test_window_fit` 74,
+  `test_autosave_restore` 41, `test_proxy_menus` 86 green.
+
 ## Not done yet
 - Real phone (Galaxy A51): not on USB/adb this time (only Termux ssh over WLAN; wireless adb needs pairing on the
   phone). arm64 APK is built (`android-deps/build610-arm64-phone/schneidi-0.26.0-arm64-v8a.apk`), not run on a device.
-- Landscape is cramped: top bar ~50 px + Android status bar take height, the timeline shows ~1 track (V2 at the top,
-  the clips on V1 need a scroll). Ideas: top bar into the rail's head in landscape, full screen (no status bar) in
-  landscape, timeline scrolled to the first track with clips.
-- Media Pool: one column of large tiles beside the bin list; generators (Text, Shape) come before the clips.
-- Every app start after a kill asks "Restore unsaved changes?" (expected, but noisy while testing).
+- Landscape: the picture is small now (~70 px); the black strip at the left in landscape is the camera cutout's safe
+  area (could take the rail's color).
+- Media Pool: generators (Text, Shape) come before the clips.
 - Comp/Studio/Direct pages have no phone form; full-screen viewer is a separate top-level window (not checked).
 - Color sheet has no viewer overlay windows; background job indicator not seen on Android (no proxy run there: the
   ffmpeg program does not exist on Android).

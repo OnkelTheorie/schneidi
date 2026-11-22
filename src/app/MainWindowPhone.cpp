@@ -155,9 +155,11 @@ void MainWindow::enablePhoneLayout()
         phoneArrangeTopBar(landscape);
 #ifdef Q_OS_ANDROID
         // Landscape: the height is scarce, the status bar goes (a swipe from the edge shows it for a moment);
-        // portrait keeps it (clock, battery). (The full-screen viewer is a window of its own: not touched)
-        if (landscape) showFullScreen();
-        else if (isFullScreen()) showMaximized();
+        // portrait keeps it (clock, battery). (The full-screen viewer is a window of its own: not touched.) Only once
+        // the window is up: the shell's first layout in the constructor has no real size yet (it looked landscape)
+        if (!isVisible()) return;
+        if (landscape && !isFullScreen()) showFullScreen();
+        else if (!landscape && isFullScreen()) showMaximized();
 #endif
     });
     m_topBar->hide();
