@@ -619,6 +619,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosaveTimer->start(60 * 1000);
+#ifdef Q_OS_ANDROID
+    // Going to the background may be the end (the system frees the memory without asking): the backup now
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive && !m_autosaveDisabled) autosave();
+    });
+#endif
     // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
     // and checkProjectFile() adds it again
     m_projectWatcher = new QFileSystemWatcher(this);

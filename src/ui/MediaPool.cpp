@@ -76,6 +76,7 @@ namespace {
 
 constexpr QSize kThumb{144, 81};
 constexpr QSize kListIcon{64, 36};
+constexpr QSize kCompactThumb{96, 54}; // the phone's tiles (the pictures are kThumb, drawn smaller)
 constexpr int kColorBarH = 6; // Clip color as a stripe at the bottom of the thumbnail
 
 class MediaList : public QListWidget {
@@ -506,6 +507,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     titleRow->addWidget(m_filterReset);
 
     m_list = new MediaList;
+    m_list->setObjectName("pool_list");
     m_list->setMovement(QListView::Static);
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
@@ -964,8 +966,9 @@ void MediaPool::applyViewMode()
         m_list->setSpacing(1);
     } else {
         m_list->setViewMode(QListView::IconMode);
-        m_list->setIconSize(kThumb);
-        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 52)); // two text lines + the item border
+        const QSize thumb = m_compactTiles ? kCompactThumb : kThumb;
+        m_list->setIconSize(thumb);
+        m_list->setGridSize(tileSize());
         m_list->setWordWrap(true);
         m_list->setSpacing(0);
     }
@@ -974,6 +977,19 @@ void MediaPool::applyViewMode()
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
+}
+
+QSize MediaPool::tileSize() const
+{
+    if (!m_compactTiles) return QSize(kThumb.width() + 16, kThumb.height() + 52); // two text lines + the item border
+    return QSize(kCompactThumb.width() + 12, kCompactThumb.height() + 2 * m_list->fontMetrics().height() + 12);
+}
+
+void MediaPool::setCompactTiles(bool on)
+{
+    if (m_compactTiles == on) return;
+    m_compactTiles = on;
+    applyViewMode();
 }
 
 MediaPool::~MediaPool()

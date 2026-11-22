@@ -384,13 +384,20 @@ void PhoneShell::updateButtons()
     const QMargins m = m_toolLay->contentsMargins();
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());
     if (m_landscape) {
-        m_toolScroll->setFixedWidth(hint.width());
+        // The rail as wide as its widest tool or the top bar's head, whichever is wider
+        const int rail = std::max(hint.width(), m_top ? m_top->minimumSizeHint().width() : 0);
+        m_toolScroll->setFixedWidth(rail);
         m_toolScroll->setMinimumHeight(0);
         m_toolScroll->setMaximumHeight(QWIDGETSIZE_MAX);
+        if (m_top) m_top->setFixedWidth(rail);
     } else {
         m_toolScroll->setFixedHeight(hint.height());
         m_toolScroll->setMinimumWidth(0);
         m_toolScroll->setMaximumWidth(QWIDGETSIZE_MAX);
+        if (m_top) {
+            m_top->setMinimumWidth(0);
+            m_top->setMaximumWidth(QWIDGETSIZE_MAX);
+        }
     }
 }
 
@@ -405,6 +412,7 @@ void PhoneShell::relayout()
     m_landscape = land;
     m_laidOut = true;
     delete layout(); // the items go, the widgets stay (children of the shell)
+    emit landscapeChanged(land);
     const auto dir = land ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
     m_toolLay->setDirection(dir);
     m_mainLay->setDirection(dir);
@@ -414,16 +422,20 @@ void PhoneShell::relayout()
                          land ? QSizePolicy::Fixed : QSizePolicy::Preferred);
     constexpr int kGap = 1; // the border color between the areas, as thin as the desktop's panel edges
     if (land) {
-        // The tools as a rail at the left (the height is the scarce side); the bar, the viewer and the timeline in a
-        // column; the open panel at the right over the whole height (beside the viewer alone it had ~150 px)
+        // The height is the scarce side: the top bar's buttons head the rail of tools at the left (no bar across);
+        // the viewer above the timeline in a column (the timeline gets the larger share: its first tracks in sight);
+        // the open panel at the right over the whole height
         auto* root = new QHBoxLayout(this);
         root->setContentsMargins(0, 0, 0, 0);
         root->setSpacing(kGap);
-        root->addWidget(m_toolScroll);
+        auto* rail = new QVBoxLayout;
+        rail->setSpacing(kGap);
+        if (m_top) rail->addWidget(m_top);
+        rail->addWidget(m_toolScroll, 1);
+        root->addLayout(rail);
         auto* column = new QVBoxLayout;
         column->setSpacing(kGap);
-        if (m_top) column->addWidget(m_top);
-        if (m_viewer) column->addWidget(m_viewer, 3);
+        if (m_viewer) column->addWidget(m_viewer, 1);
         if (m_timeline) column->addWidget(m_timeline, 2);
         root->addLayout(column, 3);
         root->addWidget(m_sheet, 2);

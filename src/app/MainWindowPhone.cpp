@@ -59,22 +59,20 @@ bool MainWindow::phoneLayoutWanted()
 
 QWidget* MainWindow::buildPhoneTopBar()
 {
-    // The desktop top bar's look: the menus behind one button, the project name, undo and redo
+    // The desktop top bar's look: the menus behind one button, the project name, undo and redo (arranged by
+    // phoneArrangeTopBar: a row in portrait, the head of the tool rail in landscape)
     auto* bar = new QWidget;
     bar->setObjectName("TopBar");
     bar->setStyleSheet(QString("QWidget#TopBar { background: %1; border-bottom: 1px solid %2; }"
-                               "QToolButton { min-width: 40px; min-height: 36px; }")
+                               "QToolButton { min-width: 36px; min-height: 36px; padding: 2px; }")
                            .arg(Theme::topBar.name(), Theme::border.name()));
-    auto* lay = new QHBoxLayout(bar);
-    lay->setContentsMargins(4, 2, 4, 2);
-    lay->setSpacing(2);
     auto bigGlyph = [](QToolButton* b) {
         QFont f = b->font();
         f.setPixelSize(std::max(18, QFontMetrics(f).height()));
         b->setFont(f);
         b->setFocusPolicy(Qt::NoFocus);
     };
-    auto* menuButton = new QToolButton;
+    auto* menuButton = new QToolButton(bar);
     menuButton->setObjectName("phoneMenu");
     menuButton->setText(QStringLiteral("⋮"));
     menuButton->setToolTip(T("Menü"));
@@ -84,19 +82,15 @@ QWidget* MainWindow::buildPhoneTopBar()
     auto* menu = new QMenu(menuButton);
     menu->addActions(menuBar()->actions()); // the menu bar's menus (File, Edit, ...), the same actions
     menuButton->setMenu(menu);
-    lay->addWidget(menuButton);
     m_titleLabel->setParent(bar);
-    lay->addWidget(m_titleLabel, 1);
-    if (m_liveBox) lay->addWidget(m_liveBox);
-    m_phoneTopLay = lay;
+    if (m_liveBox) m_liveBox->setParent(bar);
     const auto historyButton = [&](const char* name, const QString& symbol, const QString& tip, const char* action) {
-        auto* b = new QToolButton;
+        auto* b = new QToolButton(bar);
         b->setObjectName(QString::fromLatin1(name));
         b->setText(symbol);
         b->setToolTip(tip);
         bigGlyph(b);
         connect(b, &QToolButton::clicked, this, [action] { trigger(action); });
-        lay->addWidget(b);
         return b;
     };
     QUndoStack* stack = m_project->undoStack();
@@ -106,7 +100,48 @@ QWidget* MainWindow::buildPhoneTopBar()
     redo->setEnabled(stack->canRedo());
     connect(stack, &QUndoStack::canUndoChanged, undo, &QWidget::setEnabled);
     connect(stack, &QUndoStack::canRedoChanged, redo, &QWidget::setEnabled);
+    m_phoneTopBar = bar;
+    phoneArrangeTopBar(false);
     return bar;
+}
+
+void MainWindow::phoneArrangeTopBar(bool landscape)
+{
+    QWidget* bar = m_phoneTopBar;
+    if (!bar) return;
+    auto* menuButton = bar->findChild<QToolButton*>("phoneMenu");
+    auto* undo = bar->findChild<QToolButton*>("phoneUndo");
+    auto* redo = bar->findChild<QToolButton*>("phoneRedo");
+    // The jobs once adopted (phoneAdoptBackgroundJobs), the live box when the app has one
+    QWidget* jobs = m_backgroundJobs && m_backgroundJobs->parentWidget() == bar ? m_backgroundJobs : nullptr;
+    QWidget* live = m_liveBox && m_liveBox->parentWidget() == bar ? m_liveBox : nullptr;
+    delete bar->layout(); // the widgets stay (children of the bar), only their arrangement changes
+    m_titleLabel->setAlignment(landscape ? Qt::AlignCenter : Qt::AlignVCenter | Qt::AlignHCenter);
+    if (!landscape) {
+        // One row: menu, name, (live), (jobs), undo, redo
+        auto* lay = new QHBoxLayout(bar);
+        lay->setContentsMargins(4, 2, 4, 2);
+        lay->setSpacing(2);
+        lay->addWidget(menuButton);
+        lay->addWidget(m_titleLabel, 1);
+        if (live) lay->addWidget(live);
+        if (jobs) lay->addWidget(jobs);
+        lay->addWidget(undo);
+        lay->addWidget(redo);
+        return;
+    }
+    // The rail's head: menu, undo, redo in a row, the name below them (cut with "…"), then live and jobs
+    auto* lay = new QGridLayout(bar);
+    lay->setContentsMargins(2, 2, 2, 4);
+    lay->setHorizontalSpacing(0);
+    lay->setVerticalSpacing(2);
+    lay->addWidget(menuButton, 0, 0);
+    lay->addWidget(undo, 0, 1);
+    lay->addWidget(redo, 0, 2);
+    lay->addWidget(m_titleLabel, 1, 0, 1, 3);
+    int row = 2;
+    if (live) lay->addWidget(live, row++, 0, 1, 3);
+    if (jobs) lay->addWidget(jobs, row++, 0, 1, 3, Qt::AlignHCenter);
 }
 
 void MainWindow::enablePhoneLayout()
@@ -116,6 +151,15 @@ void MainWindow::enablePhoneLayout()
     if (m_page != Page::Edit) showPage(Page::Edit);
     setViewerLarge(false);
     m_phone = new PhoneShell;
+    connect(m_phone, &PhoneShell::landscapeChanged, this, [this](bool landscape) {
+        phoneArrangeTopBar(landscape);
+#ifdef Q_OS_ANDROID
+        // Landscape: the height is scarce, the status bar goes (a swipe from the edge shows it for a moment);
+        // portrait keeps it (clock, battery). (The full-screen viewer is a window of its own: not touched)
+        if (landscape) showFullScreen();
+        else if (isFullScreen()) showMaximized();
+#endif
+    });
     m_topBar->hide();
     m_pageBar->hide();
     m_chatSplit->hide(); // with every desktop page: their minimum sizes no longer count for the window
@@ -128,6 +172,10 @@ void MainWindow::enablePhoneLayout()
     // share ~380 px of height, in portrait 411 px of width
     m_timeline->setCompact(true);
     m_timeline->view()->setMinimumHeight(64);
+    // Rows a finger still hits but a phone's height holds (landscape: V2, V1 and A1 under the ruler); a start value
+    // like touch mode's, the user's pinch on the headers changes them as before
+    m_timeline->view()->setTrackHeights(56, 46);
+    m_mediaPool->setCompactTiles(true); // two columns beside the bins in portrait
     m_viewer->screen()->setMinimumSize(160, 72);
     m_viewer->setCompact(true);
     // The large viewer: nothing beside the viewer to hide (full screen stays)
@@ -188,11 +236,13 @@ void MainWindow::enablePhoneLayout()
 
 void MainWindow::phoneAdoptBackgroundJobs()
 {
-    if (!m_phone || !m_phoneTopLay || !m_backgroundJobs || m_backgroundJobs->compact()) return;
+    if (!m_phone || !m_phoneTopBar || !m_backgroundJobs || m_backgroundJobs->compact()) return;
     m_backgroundJobs->setCompact(true);
     // After the title (and the live box), before undo/redo: the name gives up its room while something runs
-    const int undo = m_phoneTopLay->indexOf(m_phoneTopLay->parentWidget()->findChild<QWidget*>("phoneUndo"));
-    m_phoneTopLay->insertWidget(undo < 0 ? m_phoneTopLay->count() : undo, m_backgroundJobs);
+    const bool hidden = m_backgroundJobs->isHidden(); // (shown only while there is work)
+    m_backgroundJobs->setParent(m_phoneTopBar);
+    m_backgroundJobs->setVisible(!hidden);
+    phoneArrangeTopBar(m_phone->landscape());
     // A tap: what runs, in full (a phone has no tooltips)
     connect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this,
             [this](const QString& text) { m_viewer->showNotice(text, 4000); });

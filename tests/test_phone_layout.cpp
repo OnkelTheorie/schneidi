@@ -17,12 +17,17 @@
 #include "engine/Engine.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
+#include "ui/timeline/TimelinePanel.h"
+#include "ui/timeline/TimelineView.h"
 #include "ui/phone/PhoneShell.h"
 #include "ui/touch/Touch.h"
 #include "app/Theme.h"
 
 #include <QApplication>
 #include <QComboBox>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QTimer>
 #include <QLabel>
 #include <QLayout>
 #include <QMenuBar>
@@ -196,6 +201,49 @@ void testWindow(Engine& engine, const QSize& size)
     };
     fits("phone layout fits the window");
     CHECK(shell->landscape() == (size.width() > size.height()));
+    // The top bar: a row above the viewer in portrait; in landscape the head of the rail (no bar across the top)
+    {
+        QWidget* menu = shell->findChild<QWidget*>("phoneMenu");
+        QWidget* undo = shell->findChild<QWidget*>("phoneUndo");
+        QWidget* redo = shell->findChild<QWidget*>("phoneRedo");
+        QWidget* viewer = shell->viewer();
+        if (CHECK(menu && undo && redo)) {
+            const auto at = [&](QWidget* x) { return QRect(x->mapTo(&w, QPoint(0, 0)), x->size()); };
+            CHECK(inside(menu, &w) && inside(undo, &w) && inside(redo, &w));
+            if (shell->landscape()) {
+                Check::report(at(undo).right() < at(viewer).left() && at(viewer).top() < 4, "landscape: bar in the rail",
+                              __FILE__, __LINE__, QString("undo %1, viewer %2").arg(rect(at(undo)), rect(at(viewer))));
+                QWidget* rail = shell->toolButton("media");
+                CHECK(at(undo).bottom() < at(rail).top()); // above the tools
+            } else {
+                CHECK(at(menu).center().y() == at(undo).center().y()); // one row
+                CHECK(at(undo).bottom() < at(viewer).top());
+            }
+        }
+    }
+    // Landscape on a phone's full height (status bar hidden): the timeline shows its first tracks whole (V2, V1, A1)
+    if (shell->landscape() && size.height() >= 411) {
+        TimelineView* view = w.findChild<TimelineView*>();
+        if (CHECK(view)) {
+            const QRect v1 = view->trackArea({TrackKind::Video, 0});
+            const QRect a1 = view->trackArea({TrackKind::Audio, 0});
+            Check::report(v1.height() == view->view().videoTrackHeight && a1.height() == view->view().audioTrackHeight,
+                          "landscape: V1 and A1 in sight", __FILE__, __LINE__,
+                          QString("view %1x%2, V1 %3, A1 %4").arg(view->width()).arg(view->height()).arg(rect(v1), rect(a1)));
+        }
+    }
+    // The Media Pool in portrait: two tiles side by side (smaller tiles beside the bin list)
+    if (!shell->landscape()) {
+        shell->openSheet("media");
+        settle();
+        auto* list = shell->panel("media")->findChild<QListWidget*>("pool_list");
+        if (CHECK(list) && CHECK(list->count() >= 2)) {
+            const QRect a = list->visualItemRect(list->item(0)), b = list->visualItemRect(list->item(1));
+            Check::report(a.top() == b.top() && b.left() > a.left(), "media: two columns", __FILE__, __LINE__,
+                          QString("%1 / %2 in %3").arg(rect(a), rect(b), rect(list->viewport()->rect())));
+        }
+        shell->closeSheet();
+    }
     if (!shell->landscape()) { // more tools than room: the last one in sight is cut about in half (a swipe hint)
         QToolButton* media = shell->toolButton("media");
         auto* scroll = qobject_cast<QAbstractScrollArea*>(media->parentWidget()->parentWidget()->parentWidget()->parentWidget());
@@ -383,6 +431,39 @@ void testSetting()
     CHECK(!MainWindow::phoneLayoutWanted());
 }
 
+// Android ends apps in the background: the backup comes back without the question (SCHNEIDI_SILENT_RESTORE=1 here)
+void testSilentRestore(Engine& engine)
+{
+    qputenv("SCHNEIDI_SILENT_RESTORE", "1");
+    CHECK(MainWindow::restoresWithoutAsking());
+    {
+        MainWindow w(&engine); // autosave on (test settings and paths: never the user's backup)
+        w.editor()->addTitle(0, -1, 50, TitleKind::Text);
+        CHECK(w.editor()->project()->isModified());
+        w.autosave();
+    } // gone without closing (as if killed): the backup stays
+    MainWindow w2(&engine);
+    bool asked = false;
+    QTimer guard; // a question would block: answer it with No and note it
+    QObject::connect(&guard, &QTimer::timeout, &guard, [&asked] {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            asked = true;
+            box->reject();
+        }
+    });
+    guard.start(50);
+    const bool restored = w2.offerAutosaveRestore();
+    guard.stop();
+    CHECK(restored && !asked);
+    int titles = 0;
+    for (const Track& t : w2.editor()->project()->timeline().video) titles += int(t.clips.size());
+    CHECK(titles >= 1);
+    w2.disableAutosave();
+    qputenv("SCHNEIDI_SILENT_RESTORE", "0");
+    CHECK(!MainWindow::restoresWithoutAsking());
+    qunsetenv("SCHNEIDI_SILENT_RESTORE");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -396,6 +477,7 @@ int main(int argc, char** argv)
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
+    testSilentRestore(engine);
     testWindow(engine, {411, 914});
     testWindow(engine, {914, 411});
     // As on a phone: touch mode (larger controls) and the app's style sheet with it

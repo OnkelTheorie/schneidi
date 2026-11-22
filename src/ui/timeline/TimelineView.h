@@ -38,6 +38,8 @@ public:
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
     const ViewState& view() const { return m_view; }
+    // Start heights of the rows (the phone layout); later only the user's pinch/wheel on the headers changes them
+    void setTrackHeights(int video, int audio);
     Tool tool() const { return m_tool; }
     // Trim mode and the Slip/Slide tools: a press on a clip starts a TrimEdit
     bool trimTool() const { return m_tool == Tool::Trim || m_tool == Tool::Slip || m_tool == Tool::Slide; }

@@ -241,6 +241,13 @@ QVector<TimelineView::Row> TimelineView::rows() const
     return out;
 }
 
+void TimelineView::setTrackHeights(int video, int audio)
+{
+    m_view.videoTrackHeight = video;
+    m_view.audioTrackHeight = audio;
+    update();
+}
+
 std::optional<TimelineView::Row> TimelineView::rowAt(int y) const
 {
     for (const Row& r : rows())

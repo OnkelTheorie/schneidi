@@ -162,6 +162,10 @@ public:
     // "Check Fields": the placeholders of the open project and what is wrong with them
     void checkPlaceholders();
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
+    // Restore the backup without the question (Android: the system ends apps in the background, a "crash" there is
+    // normal; env SCHNEIDI_SILENT_RESTORE=1/0 decides elsewhere, tests)
+    static bool restoresWithoutAsking();
+    void autosave(); // the automatic backup now (only when modified; Android: also when the app goes to the background)
     // File › Open Backup… after the file dialog: the backup as an untitled, modified project; the automatic backup
     // of the project left is removed (false = not readable, message shown)
     bool openBackup(const QString& path);
@@ -424,7 +428,6 @@ private:
     static QString appName(); // "schneidi 0.9.0" or "schneidi 0.9.0 → 0.10.0" (without the build state)
     void addRecent(const QString& path);
     void rebuildRecentMenu();
-    void autosave();
     void removeAutosave();
     // Every running instance has its own backup slot (QLockFile) so that two windows do not
     // overwrite or delete each other's backup; slot 1 = "autosave.schneidi" as before
@@ -761,7 +764,8 @@ private:
     QWidget* buildPhoneTopBar();
     // The background work indicator (ui/BackgroundJobs) into the phone's top bar, compact (the page bar is hidden)
     void phoneAdoptBackgroundJobs();
-    class QBoxLayout* m_phoneTopLay = nullptr; // the phone's top bar (jobs go before undo/redo)
+    QWidget* m_phoneTopBar = nullptr; // the phone's top bar: a row in portrait, the rail's head in landscape
+    void phoneArrangeTopBar(bool landscape);
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

@@ -3689,5 +3689,6 @@
  "Der ausgewählte Clip hat keinen Ton.": "The selected clip has no sound.",
  "Handy-Layout": "Phone layout",
  "Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. Automatisch: an bei einem Bildschirm in Handygröße.": "Viewer, timeline and tools stacked, one panel at a time. Automatic: on for a phone-sized screen.",
- "Das Handy-Layout ändert sich nach dem Neustart von schneidi.": "The phone layout changes after restarting schneidi."
+ "Das Handy-Layout ändert sich nach dem Neustart von schneidi.": "The phone layout changes after restarting schneidi.",
+ "Nicht gespeicherte Änderungen von „%1“ wiederhergestellt.": "Unsaved changes of “%1” restored."
 }
