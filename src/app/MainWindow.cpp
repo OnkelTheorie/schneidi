@@ -303,6 +303,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(f);
         else m_engine->seek(f);
     });
+    // A playhead move by the user (ruler, overview strip, Studio lanes): playback after it as chosen in the settings
+    connect(tv, &TimelineView::playheadMoveStarted, this,
+            [this] { m_playheadMove.begin(m_engine, PlayheadMove::Source::Timeline); });
+    connect(tv, &TimelineView::playheadMoveFinished, this, [this] { m_playheadMove.end(m_engine); });
     // Keyframes: Inspector shows values at the playhead, arrows ◀ ▶ jump like a click into the ruler
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->timelinePositions()) m_inspector->setPlayhead(f);
@@ -1245,8 +1249,7 @@ void MainWindow::jumpToMarker(int direction)
         for (int m : markers)
             if (direction > 0 ? m > pos && (best < 0 || m < best) : m < pos && m > best) best = m;
         if (best < 0) return;
-        m_engine->pause();
-        m_engine->seek(best);
+        PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this, best] { m_engine->seek(best); });
         return;
     }
     jumpTo(m_project->timeline().markers, direction);
@@ -1261,7 +1264,16 @@ void MainWindow::jumpTo(const QVector<int>& points, int direction)
         if (direction < 0 && e < pos) best = std::max(best, e);
     }
     if (best == INT_MAX || best < 0) return;
-    jumpToFrame(best);
+    keyJump(best);
+}
+
+void MainWindow::keyJump(int frame)
+{
+    if (frame < 0) return;
+    PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this, frame] {
+        if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(frame);
+        else m_engine->seek(frame);
+    });
 }
 
 void MainWindow::jumpToFrame(int frame)

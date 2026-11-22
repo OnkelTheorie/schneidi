@@ -8,6 +8,10 @@
 // Full-screen viewer (Workspace › Full-Screen Viewer, Ctrl+F, MainWindow::setViewerFullScreen): a window of its own
 // over the screen with only the picture; Space/J/K/L/arrows act there, playback goes on across the switch, Esc, the same
 // key and closing the window leave; the main window's layout stays as it was.
+// After moving the playhead (Settings › General › Timeline, PlayheadMove): every choice with playback running and
+// paused before, for a drag in the Edit timeline's ruler, a drag in the viewer's scrub bar and a jump key (Home):
+// Standard keeps the old behaviour (ruler plays on, bar and keys stop), Continue keeps the state, Stop stops, Play
+// starts on release (paused during the drag); zoom and scroll never change.
 // VIEWER_LARGE_DUMP=<folder>: pictures of the window before/with the large viewer (Edit and Color page) and of the
 // full-screen viewer.
 
@@ -27,6 +31,7 @@
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
+#include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
@@ -484,6 +489,113 @@ void testFullScreen(MainWindow& w, Engine& engine)
     }
 }
 
+void sendMouse(QWidget* w, QEvent::Type type, QPoint at, Qt::MouseButtons buttons)
+{
+    QMouseEvent e(type, at, w->mapToGlobal(at), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, {});
+    QApplication::sendEvent(w, &e);
+}
+
+void testPlayheadMoves(MainWindow& w, Engine& engine)
+{
+    using PlayheadMove::Mode;
+    auto* timeline = w.findChild<TimelinePanel*>();
+    auto* viewer = w.findChild<Viewer*>();
+    QWidget* bar = viewer ? viewer->findChild<QWidget*>("viewer_scrubber") : nullptr;
+    QAction* home = InputBindings::instance().action("go_start");
+    if (!CHECK(timeline && bar && home)) return;
+    const Timeline& tl = w.liveProject()->timeline();
+    if (tl.video.value(0).clips.isEmpty()) return; // no ffmpeg: no clip to play
+    const int length = tl.video[0].clips.first().end();
+    w.showPage(MainWindow::Page::Edit);
+    settle();
+    TimelineView* tv = timeline->view();
+    tv->setZoomAndScroll(6.0, 0, 0);
+    const ViewState view = tv->view();
+    const int rulerY = TimelineView::kRulerH / 2;
+    auto rulerX = [&](int frame) {
+        return int(std::lround(TimelineView::kHeaderW + (frame - tv->view().leftFrame) * tv->view().pxPerFrame));
+    };
+    auto barX = [&](int frame) { return int(std::lround(6 + (frame + 0.5) * (bar->width() - 12) / double(length))); };
+    // Paused at frame 5, or playing from there
+    auto prepare = [&](bool playing) {
+        engine.pause();
+        engine.seek(5);
+        if (playing) engine.play();
+        settle();
+        return CHECK_EQ(engine.speed() != 0.0, playing);
+    };
+    // A drag from `from` to `to`: whether it plays during the drag and after the release
+    auto drag = [&](QWidget* target, auto xOf, int y, bool& during, bool& after) {
+        sendMouse(target, QEvent::MouseButtonPress, {xOf(10), y}, Qt::LeftButton);
+        sendMouse(target, QEvent::MouseMove, {xOf(15), y}, Qt::LeftButton);
+        sendMouse(target, QEvent::MouseMove, {xOf(20), y}, Qt::LeftButton);
+        QApplication::processEvents();
+        during = engine.speed() != 0.0;
+        const int at = engine.position();
+        sendMouse(target, QEvent::MouseButtonRelease, {xOf(20), y}, Qt::NoButton);
+        settle();
+        after = engine.speed() != 0.0;
+        return at;
+    };
+    struct Case {
+        Mode mode;
+        bool ruler, bar, key; // playing after the move when it was playing before
+        bool rulerP, barP, keyP; // ... when it was paused before
+    };
+    const Case cases[] = {
+        {Mode::Standard, true, false, false, false, false, false},
+        {Mode::Continue, true, true, true, false, false, false},
+        {Mode::Stop, false, false, false, false, false, false},
+        {Mode::Play, true, true, true, true, true, true},
+    };
+    for (const Case& c : cases) {
+        PlayheadMove::setMode(c.mode);
+        const QString name = QString("mode %1").arg(int(c.mode));
+        for (bool playing : {true, false}) {
+            const QString what = name + (playing ? " playing" : " paused");
+            bool during = false, after = false;
+            // The ruler: during the drag the usual scrubbing (playing plays on unless Stop, paused stays paused)
+            if (prepare(playing)) {
+                const int at = drag(tv, rulerX, rulerY, during, after);
+                Check::report(during == (playing && c.mode != Mode::Stop), "ruler: during", __FILE__, __LINE__, what);
+                Check::report(after == (playing ? c.ruler : c.rulerP), "ruler: after", __FILE__, __LINE__, what);
+                Check::report(at >= 20 && at < 30, "ruler: position", __FILE__, __LINE__,
+                              what + QString(": %1").arg(at));
+            }
+            // The viewer's scrub bar: Standard stops at once (as it always did)
+            if (prepare(playing)) {
+                const int at = drag(bar, barX, bar->height() / 2, during, after);
+                const bool playsOn = playing && c.mode != Mode::Stop && c.mode != Mode::Standard;
+                Check::report(during == playsOn, "bar: during", __FILE__, __LINE__, what);
+                Check::report(after == (playing ? c.bar : c.barP), "bar: after", __FILE__, __LINE__, what);
+                Check::report(at >= 19 && at < 30, "bar: position", __FILE__, __LINE__, what + QString(": %1").arg(at));
+            }
+            // A jump key: Home
+            if (prepare(playing)) {
+                home->trigger();
+                settle();
+                Check::report((engine.speed() != 0.0) == (playing ? c.key : c.keyP), "Home: after", __FILE__, __LINE__,
+                              what);
+                Check::report(engine.position() < 5, "Home: position", __FILE__, __LINE__,
+                              what + QString(": %1").arg(engine.position()));
+            }
+        }
+    }
+    // Frame steps stay outside the rule: always paused
+    PlayheadMove::setMode(Mode::Play);
+    if (prepare(true)) {
+        InputBindings::instance().action("frame_next")->trigger();
+        settle();
+        CHECK(engine.speed() == 0.0);
+    }
+    engine.pause();
+    QSettings().remove("timeline/afterPlayheadMove");
+    CHECK(PlayheadMove::mode() == Mode::Standard);
+    // Core rule: no move changed zoom or scroll
+    CHECK_EQ(tv->view().pxPerFrame, view.pxPerFrame);
+    CHECK_EQ(tv->view().leftFrame, view.leftFrame);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -512,5 +624,6 @@ int main(int argc, char** argv)
     testEditPage(w, engine);
     testOtherPages(w);
     testFullScreen(w, engine);
+    testPlayheadMoves(w, engine);
     return Check::result();
 }

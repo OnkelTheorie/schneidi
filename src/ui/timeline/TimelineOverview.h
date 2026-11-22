@@ -61,6 +61,9 @@ public:
 
 signals:
     void seekRequested(int frame);
+    // A move of the playhead (a click): started before its seekRequested, finished on release (TimelineView's)
+    void playheadMoveStarted();
+    void playheadMoveFinished();
     // Scroll the detail view so that its left edge is at `leftFrame` (its zoom stays)
     void scrollRequested(double leftFrame);
     // Show the frames [from, to) in the detail view (an edge of the rectangle dragged)
@@ -102,4 +105,5 @@ private:
     QPoint m_pressPos;
     bool m_moved = false;
     bool m_pressInside = false;
+    bool m_movedPlayhead = false; // this press moved the playhead: playheadMoveFinished on release
 };

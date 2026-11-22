@@ -222,7 +222,11 @@ void TimelineView::marksRelease()
     if (!click) return;
     // A right-click (no drag) opens the ruler menu; a left click moves the playhead as everywhere else in the ruler
     if (right) rulerMenu(m_pressPos, mapToGlobal(m_pressPos));
-    else emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
+    else {
+        emit playheadMoveStarted();
+        emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
+        emit playheadMoveFinished();
+    }
 }
 
 QString TimelineView::marksToolTip(MarkGrab grab) const

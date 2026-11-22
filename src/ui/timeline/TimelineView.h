@@ -156,6 +156,10 @@ signals:
     // A short note for the status bar (why a gap cannot be closed)
     void message(const QString& text);
     void seekRequested(int frame);
+    // A move of the playhead by the user in the ruler: started before its first seekRequested, finished after its
+    // last (on release). MainWindow applies the "after moving the playhead" choice between the two (PlayheadMove)
+    void playheadMoveStarted();
+    void playheadMoveFinished();
     // The ruler menu's "loop in the range" entry was switched
     void loopInOutRequested(bool on);
     void viewChanged();

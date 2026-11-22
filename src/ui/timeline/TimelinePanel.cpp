@@ -259,6 +259,8 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     m_overview->setVisible(false);
     // Its requests are user input: only they move the view (never a model change, core rule)
     connect(m_overview, &TimelineOverview::seekRequested, m_view, &TimelineView::seekRequested);
+    connect(m_overview, &TimelineOverview::playheadMoveStarted, m_view, &TimelineView::playheadMoveStarted);
+    connect(m_overview, &TimelineOverview::playheadMoveFinished, m_view, &TimelineView::playheadMoveFinished);
     connect(m_overview, &TimelineOverview::scrollRequested, m_view, [this](double left) { m_view->setLeftFrame(left); });
     connect(m_overview, &TimelineOverview::rangeRequested, m_view, [this](double from, double to) {
         const double lanes = std::max(1, m_view->width() - TimelineView::kHeaderW);

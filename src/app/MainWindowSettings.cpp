@@ -77,6 +77,8 @@ void MainWindow::settingsDialog(int tab)
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
     // The timelines read it on every wheel zoom: no restart
     if (!m_autosaveDisabled && dlg.zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(dlg.zoomAnchor());
+    // Read at the start of every playhead move: no restart
+    if (!m_autosaveDisabled && dlg.afterPlayheadMove() != PlayheadMove::mode()) PlayheadMove::setMode(dlg.afterPlayheadMove());
     setSecondScreenMode(dlg.secondScreenMode());
     for (const auto target : {PreviewResolution::Target::Viewer, PreviewResolution::Target::Monitor})
         setPreviewResolution(target, dlg.previewResolution(target));

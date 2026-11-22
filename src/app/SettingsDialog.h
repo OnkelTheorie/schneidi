@@ -4,6 +4,7 @@
 #include "engine/PreviewResolution.h"
 #include "engine/ProxyManager.h"
 #include "ui/SecondScreen.h"
+#include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QDialog>
@@ -19,7 +20,7 @@ class StartTemplatesPage;
 class UpdateCheck;
 
 // Settings of the app (File › Settings…, Ctrl+,), the same for all projects; project settings stay in their own
-// dialog. Tabs: General (language, design, keys, update hint, threads for background work, timeline zoom anchor),
+// dialog. Tabs: General (language, design, keys, update hint, threads for background work, timeline zoom anchor, playback after a playhead move),
 // Start Templates (StartTemplatesPage: how new projects look; its file actions take effect at once) and AI
 // (AiSettingsPage). Nothing else is applied before OK ("Check now" for updates asks right away); the caller reads the
 // choices and applies/saves them (MainWindow::settingsDialog). Options that already have a menu entry keep it (the menus stay where users of other
@@ -40,6 +41,7 @@ public:
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
     bool autoLinkNodes() const; // Compositing: new nodes linked at once (CompUi::autoLink)
     ZoomAnchor::Mode zoomAnchor() const; // Timeline: where wheel zoom stays put (ZoomAnchor::mode)
+    PlayheadMove::Mode afterPlayheadMove() const; // Timeline: playback after moving the playhead (PlayheadMove::mode)
     // Preview on a second monitor: the main window keeps the viewer's area or closes it up (MainWindow)
     SecondScreenPlan::Mode secondScreenMode() const;
     // Preview resolution of the main window resp. the second monitor; setPreviewProject: fixed sizes above this
@@ -85,6 +87,7 @@ private:
     QCheckBox* m_ownFolder = nullptr;
     QCheckBox* m_autoLink = nullptr;
     QComboBox* m_zoomAnchor = nullptr;
+    QComboBox* m_afterSeek = nullptr;
     QComboBox* m_secondScreen = nullptr;
     QComboBox* m_proxyImport = nullptr;
     QComboBox* m_proxyQuality = nullptr;

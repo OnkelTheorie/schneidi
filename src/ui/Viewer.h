@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/TrimFrames.h"
+#include "ui/timeline/PlayheadMove.h"
 
 #include <QImage>
 #include <QWidget>
@@ -121,6 +122,7 @@ private:
     TrimView* m_trim;
     QStackedWidget* m_stack;
     class Scrubber* m_scrubber;
+    PlayheadMove::Gesture m_scrubMove; // a click/drag in the scrub bar (playback after it: the user's choice)
     QLabel* m_mode;
     QWidget* m_hint;
     QLabel* m_hintLabel;

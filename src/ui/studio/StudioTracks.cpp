@@ -918,6 +918,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
     m_added = {};
     if (pos.y() < kRulerH && pos.x() >= kHeaderW) { // ruler: scrub
         m_drag = Drag::Scrub;
+        emit playheadMoveStarted();
         emit seekRequested(std::max(0, int(std::lround(frameAt(pos.x())))));
         return;
     }
@@ -974,6 +975,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
         m_editor->selection()->set({});
     }
     m_drag = Drag::Scrub;
+    emit playheadMoveStarted();
     emit seekRequested(std::max(0, int(std::lround(frame))));
 }
 
@@ -1041,7 +1043,9 @@ void StudioTracks::endDrag(const QPoint& pos, bool addPoint)
         m_editor->project()->closeMerge();
         m_key = {};
     }
+    const bool scrubbed = m_drag == Drag::Scrub;
     m_drag = Drag::None;
+    if (scrubbed) emit playheadMoveFinished(); // playback after the move (PlayheadMove, MainWindow)
 }
 
 void StudioTracks::mouseDoubleClickEvent(QMouseEvent* e)

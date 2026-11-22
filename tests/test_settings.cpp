@@ -16,6 +16,7 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
+#include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
@@ -265,6 +266,23 @@ void testProjectFolder()
         CHECK(again.zoomAnchor() == ZoomAnchor::Mode::Playhead);
         QSettings().remove("timeline");
         CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
+    }
+    // Timeline: after moving the playhead - Standard (the behaviour before) by default, four choices, stored and shown
+    auto* after = dlg.findChild<QComboBox*>("timeline_after_playhead_move");
+    if (CHECK(after)) {
+        CHECK_EQ(after->count(), 4);
+        CHECK(dlg.afterPlayheadMove() == PlayheadMove::Mode::Standard);
+        CHECK_EQ(after->currentText(), T("Standard"));
+        for (PlayheadMove::Mode m : {PlayheadMove::Mode::Continue, PlayheadMove::Mode::Stop, PlayheadMove::Mode::Play}) {
+            after->setCurrentIndex(after->findData(int(m)));
+            CHECK(dlg.afterPlayheadMove() == m);
+            PlayheadMove::setMode(dlg.afterPlayheadMove());
+            SettingsDialog again(AiSettings{});
+            CHECK(again.afterPlayheadMove() == m);
+        }
+        CHECK_EQ(QSettings().value("timeline/afterPlayheadMove").toString(), QString("play"));
+        QSettings().remove("timeline");
+        CHECK(PlayheadMove::mode() == PlayheadMove::Mode::Standard);
     }
 }
 

@@ -2,7 +2,9 @@
 // Test mouse operation of the timeline (offscreen): selection rectangle, auto-scroll at the edge, reorder tracks;
 // plus selection from the playhead (Y / Ctrl+Y / Alt+Y), edit points by keyboard (V, U, , / .) and the Slip/Slide
 // tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them); where wheel zoom stays
-// put (ZoomAnchor: the mouse by default, the visible playhead by choice).
+// put (ZoomAnchor: the mouse by default, the visible playhead by choice); a playhead move in the ruler is framed by
+// playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
+// table is checked here too (with an engine: test_viewer_large).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -13,11 +15,13 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "ui/timeline/TimelinePanel.h"
+#include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
 #include <QMouseEvent>
+#include <QSettings>
 #include <QTest>
 #include <QToolButton>
 #include <QUndoStack>
@@ -758,6 +762,76 @@ void testWheelZoomAnchor()
     CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
 }
 
+void testPlayheadMoveRule()
+{
+    using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
+    for (Source s : {Source::Timeline, Source::ViewerBar, Source::Key})
+        for (bool was : {false, true}) {
+            CHECK_EQ(playsAfter(Mode::Continue, s, was), was);
+            CHECK(!playsAfter(Mode::Stop, s, was));
+            CHECK(playsAfter(Mode::Play, s, was));
+        }
+    // Standard = the behaviour before the setting: the timeline plays on, the viewer's bar and keys stop
+    CHECK(playsAfter(Mode::Standard, Source::Timeline, true));
+    CHECK(!playsAfter(Mode::Standard, Source::Timeline, false));
+    CHECK(!playsAfter(Mode::Standard, Source::ViewerBar, true));
+    CHECK(!playsAfter(Mode::Standard, Source::Key, true));
+    // Stored: nothing = Standard, each choice comes back; Standard removes the key again
+    QSettings().remove("timeline/afterPlayheadMove");
+    CHECK(PlayheadMove::mode() == Mode::Standard);
+    for (Mode m : {Mode::Continue, Mode::Stop, Mode::Play, Mode::Standard}) {
+        PlayheadMove::setMode(m);
+        CHECK(PlayheadMove::mode() == m);
+    }
+    CHECK(!QSettings().contains("timeline/afterPlayheadMove"));
+}
+
+void testPlayheadMoveSignals()
+{
+    Fixture f;
+    QStringList log;
+    QObject::connect(&f.tv, &TimelineView::playheadMoveStarted, [&] { log << "start"; });
+    QObject::connect(&f.tv, &TimelineView::seekRequested, [&](int frame) {
+        log << QString("seek %1").arg(frame);
+        f.tv.setPlayhead(frame);
+    });
+    QObject::connect(&f.tv, &TimelineView::playheadMoveFinished, [&] { log << "finish"; });
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    const ViewState before = f.tv.view();
+    const int y = TimelineView::kRulerH / 2;
+
+    // A drag in the ruler: started before the first seek, finished once on release (not during the drag)
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(20), y}, Qt::LeftButton);
+    CHECK(log == QStringList({"start", "seek 20"}));
+    mouse(f.tv, QEvent::MouseMove, {f.x(40), y}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseMove, {f.x(60), y}, Qt::LeftButton);
+    CHECK(log == QStringList({"start", "seek 20", "seek 40", "seek 60"}));
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(60), y}, Qt::NoButton);
+    CHECK(log == QStringList({"start", "seek 20", "seek 40", "seek 60", "finish"}));
+    CHECK_EQ(f.tv.playhead(), 60);
+    // A click: the same three steps
+    log.clear();
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(90), y}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(90), y}, Qt::NoButton);
+    CHECK(log == QStringList({"start", "seek 90", "finish"}));
+    // With an In/Out range: a click on its grip (no drag) still moves the playhead, framed the same way
+    f.editor.setMarks(100, 199);
+    QApplication::processEvents();
+    log.clear();
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(150), TimelineView::kRulerH - 2}, Qt::LeftButton);
+    CHECK(log.isEmpty()); // the grip took the press: the playhead moves on release (a click, no drag)
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(150), TimelineView::kRulerH - 2}, Qt::NoButton);
+    CHECK(log == QStringList({"start", "seek 150", "finish"}));
+    log.clear();
+    // A click into a track (not the ruler) is no playhead move
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(30), 120}, Qt::LeftButton);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(30), 120}, Qt::NoButton);
+    CHECK(log.isEmpty());
+    // Core rule: none of it changed zoom or scroll
+    CHECK_EQ(f.tv.view().pxPerFrame, before.pxPerFrame);
+    CHECK_EQ(f.tv.view().leftFrame, before.leftFrame);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -776,5 +850,7 @@ int main(int argc, char** argv)
     testTrimOverwrite();
     testStoryBand();
     testWheelZoomAnchor();
+    testPlayheadMoveRule();
+    testPlayheadMoveSignals();
     return Check::result();
 }
