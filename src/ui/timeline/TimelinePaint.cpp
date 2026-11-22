@@ -162,6 +162,11 @@ void TimelineView::drawRuler(QPainter& p)
 
     // Top left corner: current timecode as in DaVinci, in the recessed field
     p.fillRect(QRect(0, 0, kHeaderW, kRulerH), Theme::panelHeader);
+    if (compactHeaders()) { // no room for it (phone): the viewer shows the time right above
+        p.setPen(Theme::border);
+        p.drawLine(kHeaderW - 1, 0, kHeaderW - 1, height());
+        return;
+    }
     const QRect tcBox(4, 4, kHeaderW - 9, kRulerH - 8);
     p.fillRect(tcBox, Theme::well);
     p.setPen(Theme::border);
