@@ -2155,6 +2155,45 @@ double Encoder::crfQp(const LookaheadFrame& frame, double* complexity) const
     return qp;
 }
 
+// The same from the first pass, for all pictures begin..end-1 coded by one encoder: its queue reaches
+// cfg.lookahead pictures ahead, its reference is the mean of the pictures seen so far (as crfQp without
+// crfClipComplexity); the macroblock tree's level shift (crfTreeShift_) is not counted.
+std::vector<double> crfFirstPassQps(const FirstPassStats& st, const EncoderConfig& cfg, size_t begin, size_t end)
+{
+    end = std::min(end, st.size());
+    if (begin >= end)
+        return {};
+    const size_t n = end - begin;
+    const double mbs = double((cfg.width + 15) / 16) * ((cfg.height + 15) / 16);
+    const double base = 23.0 + gCrfSlope * (cfg.crf - 23.0) + gCrfBase + gCrfFps * std::log2(std::clamp(cfg.fps, 1.0, 1000.0) / 30.0);
+    std::vector<double> qp(n, base);
+    if (cfg.qcomp <= 0)
+        return qp;
+    std::vector<double> sum(n + 1, 0.0), all(n + 1, 0.0); // prefix sums: costs that count, all costs
+    std::vector<size_t> count(n + 1, 0);
+    for (size_t j = 0; j < n; ++j) {
+        const double c = st.interSum[begin + j];
+        const bool counts = c >= gCrfRepeat * mbs;
+        sum[j + 1] = sum[j] + (counts ? c : 0.0);
+        all[j + 1] = all[j] + c;
+        count[j + 1] = count[j] + (counts ? 1 : 0);
+    }
+    const size_t w = size_t(std::max(0.0, gQcBlur * cfg.fps));
+    const size_t ahead = std::min(w, size_t(std::max(1, cfg.lookahead)) - 1);
+    for (size_t i = 0; i < n; ++i) {
+        const size_t a = i > w ? i - w : 0, b = std::min(n, i + ahead + 1);
+        const size_t c = count[b] - count[a];
+        const double local = std::log2((c ? (sum[b] - sum[a]) / double(c) : (all[b] - all[a]) / double(b - a)) / mbs + 1.0);
+        double ref = gCrfRef;
+        if (ref < 0)
+            ref = cfg.crfClipComplexity >= 0 ? cfg.crfClipComplexity
+                  : count[b] > 0             ? std::log2(sum[b] / double(count[b]) / mbs + 1.0)
+                                             : local;
+        qp[i] += std::clamp(cfg.qcomp * 6.0 * (local - ref), -gQcMax, gQcMax);
+    }
+    return qp;
+}
+
 int Encoder::delay() const { return (useLookahead() ? std::max(0, cfg_.lookahead - 1) : 0) + (pipelined() ? kInFlight - 1 : 0); }
 
 // Workers of the frame threading. Rows are not waited in: a worker takes a row that can go on (of

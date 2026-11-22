@@ -255,6 +255,9 @@ inline constexpr double kChunkVbvFill = 0.5, kChunkVbvEnd = 0.55;
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 // Constant quality: the clip's mean complexity from the first pass (crfQp's measure), < 0 without pictures.
 double crfClipComplexity(const FirstPassStats& stats, const EncoderConfig& cfg);
+// Constant quality from the first pass: per picture begin..end-1 the P picture QP crfQp gives it when one encoder
+// codes just these pictures (EncoderConfig::crf, fps, qcomp, lookahead), without the macroblock tree's level shift.
+std::vector<double> crfFirstPassQps(const FirstPassStats& stats, const EncoderConfig& cfg, size_t begin, size_t end);
 // What picture i of the first pass needs coded at QP qp (key: as an I picture, else against the picture before), in
 // bits per k: the two-pass bit model's measure (its blocks' costs over the quantiser step, each above the dead zone,
 // from the picture's cost histogram, plus what every macroblock costs whatever its content). A calm picture needs next

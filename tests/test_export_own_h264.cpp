@@ -27,7 +27,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLoggingCategory>
 #include <QMap>
+#include <QMutex>
 #include <QRegularExpression>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
@@ -734,29 +736,72 @@ void testBitrate(const QString& dir)
     CHECK_EQ(spsFields(still).value("level_idc", -1), expectedLevel(0));
 }
 
-// A cap below the clip's rate at the quality level's QP is met (the fixed-QP prediction of the first pass used to take
-// a calm picture pair as the whole clip's measure: 2.6-7x too low on real projects, the cap then exceeded by 60 %).
+// The writer's info lines while a render runs (from its threads): ownFirstPass says there what it predicted
+QMutex g_infoMutex;
+QStringList g_info;
+QtMessageHandler g_previousHandler = nullptr;
+void infoHandler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+{
+    if (type == QtInfoMsg) {
+        QMutexLocker lock(&g_infoMutex);
+        g_info << msg;
+    } else if (g_previousHandler) {
+        g_previousHandler(type, context, msg);
+    }
+}
+// The prediction of the last render against a cap ("... predicts <n> kbit/s for the cap ...: <decision>"), -1 = none
+double predictedKbit(QString* decision)
+{
+    QMutexLocker lock(&g_infoMutex);
+    static const QRegularExpression re(QStringLiteral("predicts (\\d+) kbit/s for the cap \\d+ kbit/s: (.*)$"));
+    for (qsizetype i = g_info.size() - 1; i >= 0; --i)
+        if (const QRegularExpressionMatch m = re.match(g_info[i]); m.hasMatch()) {
+            if (decision) *decision = m.captured(2);
+            return m.captured(1).toDouble();
+        }
+    return -1;
+}
+
+// A cap below the clip's rate at the quality level is met, and the first pass predicts the rate of what the export
+// really codes (constant quality since 22.11.2026). The fixed-QP prediction used to take a calm picture pair as the
+// whole clip's measure (2.6-7x too low on real projects, the cap then exceeded by 60 %); a prediction of a fixed QP's
+// rate under the constant quality export was 28 % low on a short and 30 % high on a game highlight.
 // Moving noise with two equal still pictures at the start, a third and two thirds in (where the old pair probes sat).
 void testCapBelowFixedRate(const QString& dir)
 {
     const Timeline tl = sequence({{g_still, 0, 2}, {g_noisy, 2, 23}, {g_still, 0, 2}, {g_noisy, 27, 23}, {g_still, 0, 2},
                                   {g_noisy, 52, 23}});
     const auto kbitOf = [](const QString& path) { return QFileInfo(path).size() * 8.0 / 1000 / (kFrames / 25.0); };
-    // The rate at the "web" level's QP: a cap far above it keeps the fixed QP
-    const QString fixed = dir + "/cap-fixed.mp4";
-    ExportSettings s = settings(fixed, RenderSettings::kQualityWeb);
+    QLoggingCategory::defaultCategory()->setEnabled(QtInfoMsg, true);
+    g_previousHandler = qInstallMessageHandler(infoHandler);
+    // The rate at the "web" level: a cap far above it keeps the constant quality, and the prediction is that rate
+    const QString free = dir + "/cap-free.mp4";
+    ExportSettings s = settings(free, RenderSettings::kQualityWeb);
     s.maxBitrateK = 200000;
     s.audioCodec.clear();
-    if (!CHECK(render(tl, s))) return;
-    const double fixedKbit = kbitOf(fixed);
-    // Half of it as the cap: met (two passes, or the fixed QP held by the VBV)
+    const bool freeDone = render(tl, s);
+    QString decision;
+    const double predicted = predictedKbit(&decision);
+    const double freeKbit = kbitOf(free);
+    CHECK(freeDone);
+    if (!CHECK(predicted > 0.75 * freeKbit && predicted < 1.25 * freeKbit && decision == "constant quality"))
+        std::printf("       predicted %.0f kbit/s (%s), coded %.0f\n", predicted, qPrintable(decision), freeKbit);
+    // Half of it as the cap: two passes towards it, met
     const QString capped = dir + "/cap-half.mp4";
     s.path = capped;
-    s.maxBitrateK = int(fixedKbit / 2);
-    if (!CHECK(render(tl, s))) return;
+    s.maxBitrateK = int(freeKbit / 2);
+    {
+        QMutexLocker lock(&g_infoMutex);
+        g_info.clear();
+    }
+    const bool cappedDone = render(tl, s);
+    predictedKbit(&decision);
+    qInstallMessageHandler(g_previousHandler);
+    if (!CHECK(cappedDone)) return;
+    CHECK_EQ(decision, QStringLiteral("two passes towards the cap"));
     const double kbit = kbitOf(capped);
     if (!CHECK(kbit < s.maxBitrateK * 1.1 && kbit > s.maxBitrateK * 0.7))
-        std::printf("       %.0f kbit/s for the cap %d (fixed QP: %.0f)\n", kbit, s.maxBitrateK, fixedKbit);
+        std::printf("       %.0f kbit/s for the cap %d (constant quality: %.0f)\n", kbit, s.maxBitrateK, freeKbit);
     CHECK_EQ(probe(capped).value("nb_read_frames").toString().toInt(), kFrames);
     CHECK(decodeErrors(capped).isEmpty());
 }
