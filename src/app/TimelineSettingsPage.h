@@ -24,6 +24,7 @@ public:
     ZoomAnchor::Mode zoomAnchor() const;          // where wheel zoom stays put (ZoomAnchor::mode)
     PlayheadMove::Mode afterPlayheadMove() const; // playback after moving the playhead (PlayheadMove::mode)
     TimelineOptions::Follow follow() const;       // follow the playhead while playing
+    bool spaceReturns() const;                    // Space stops and goes back to the start position
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
@@ -35,6 +36,7 @@ private:
     QComboBox* m_zoomAnchor = nullptr;
     QComboBox* m_afterSeek = nullptr;
     QComboBox* m_follow = nullptr;
+    QComboBox* m_space = nullptr;
     QComboBox* m_click = nullptr;
     QComboBox* m_timeFormat = nullptr;
     QVector<QPair<int, QCheckBox*>> m_snapTargets;

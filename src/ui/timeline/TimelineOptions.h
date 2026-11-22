@@ -25,6 +25,13 @@ void setFollow(Follow follow);
 bool clickSetsPlayhead();
 void setClickSetsPlayhead(bool on);
 
+// What the play/pause key (Space) does while it plays (Settings › Timeline › Playback): stop where it is (default,
+// like Premiere, Final Cut, Kdenlive, Shotcut, CapCut) or stop and go back to where playback started (like Vegas and
+// audio programs: hear a cut again and again). K always stops where it is; the action "Stop and return" does the
+// latter whatever is set. Read at every key press.
+bool spaceReturns();
+void setSpaceReturns(bool on);
+
 // Snapping on or off (the magnet button, N): remembered across starts (default on, as every editor). Stored by the
 // main window when the user switches it (not in test runs).
 bool snapping();

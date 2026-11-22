@@ -338,6 +338,8 @@ void testTimelineTab()
     // Follow the playhead while playing: off, page, centre (off by default)
     checkTimelineChoice("timeline_follow_playback", 3, int(TimelineOptions::Follow::Off),
                         [] { return int(TimelineOptions::follow()); });
+    // Space while playing: stop where it is (default) or go back to the start position
+    checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
     // A click into the tracks: only select (default) or set the playhead too
     checkTimelineChoice("timeline_click_sets_playhead", 2, 0, [] { return int(TimelineOptions::clickSetsPlayhead()); });
     // Times as timecode (default), seconds or frames; each entry shows an example

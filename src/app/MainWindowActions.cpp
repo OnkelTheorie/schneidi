@@ -62,6 +62,7 @@
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -600,9 +601,14 @@ void MainWindow::buildActions()
     makeAction(timeline, "speech", T("Sprechertext…"), QKeySequence(), [this] { speechDialog(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
-    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
+    // Space while it plays: stop there or, by choice (Settings › Timeline), go back to where it started
+    makeAction(play, "play_pause", T("Abspielen/Pause"), QKeySequence(Qt::Key_Space), [this] {
+        if (m_engine->speed() != 0.0 && TimelineOptions::spaceReturns()) stopAndReturn();
+        else m_engine->togglePlay();
+    });
     makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
     makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
+    makeAction(play, "stop_return", T("Stopp und zurück zur Startposition"), QKeySequence(), [this] { stopAndReturn(); });
     makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
     play->addSeparator();
     makeAction(play, "frame_prev", T("1 Frame zurück"), QKeySequence(Qt::Key_Left), [this] { stepFrames(-1); });

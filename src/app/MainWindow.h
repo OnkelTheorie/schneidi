@@ -388,6 +388,11 @@ private:
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);
+    // Stop and go back to where playback last started (Space by choice, the action "stop_return"); paused: only back
+    void stopAndReturn();
+    int m_playStart = -1;          // position where playback last started (Engine::speedChanged from 0)
+    int m_playStartMode = -1;      // its Engine::Mode: back only within the same mode
+    double m_lastSpeed = 0;
 
     void newProject(); // the default start template (or the user's choice, if they want to be asked)
     void openProjectDialog();

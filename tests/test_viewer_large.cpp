@@ -11,7 +11,8 @@
 // After moving the playhead (Settings › General › Timeline, PlayheadMove): every choice with playback running and
 // paused before, for a drag in the Edit timeline's ruler, a drag in the viewer's scrub bar and a jump key (Home):
 // Standard keeps the old behaviour (ruler plays on, bar and keys stop), Continue keeps the state, Stop stops, Play
-// starts on release (paused during the drag); zoom and scroll never change.
+// starts on release (paused during the drag); zoom and scroll never change. Space stops in place or goes back to
+// the start position (Settings › Timeline), "Stop and return"; following the playhead while playing.
 // VIEWER_LARGE_DUMP=<folder>: pictures of the window before/with the large viewer (Edit and Color page) and of the
 // full-screen viewer.
 
@@ -32,6 +33,7 @@
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
@@ -596,6 +598,84 @@ void testPlayheadMoves(MainWindow& w, Engine& engine)
     CHECK_EQ(tv->view().leftFrame, view.leftFrame);
 }
 
+// Space while playing (Settings › Timeline, TimelineOptions::spaceReturns): stops where it is by default, by choice
+// goes back to where playback started; "Stop and return" always does. Following the playhead (TimelineOptions::follow)
+// reaches the timeline through Engine::speedChanged: off stays, page turns while it plays
+void testSpaceAndFollow(MainWindow& w, Engine& engine)
+{
+    const Timeline& tl = w.liveProject()->timeline();
+    if (tl.video.value(0).clips.isEmpty()) return; // no ffmpeg: no clip to play
+    QAction* space = InputBindings::instance().action("play_pause");
+    QAction* back = InputBindings::instance().action("stop_return");
+    if (!CHECK(space && back)) return;
+    QSettings().remove("timeline");
+    w.showPage(MainWindow::Page::Edit);
+    settle();
+    const auto playFrom = [&](int frame) {
+        engine.pause();
+        settle(); // a frame of the playback still on its way must not land after the seek (seen under load)
+        for (int i = 0; i < 5 && engine.position() != frame; ++i) {
+            engine.seek(frame);
+            settle();
+        }
+        space->trigger();
+        for (int i = 0; i < 100 && engine.position() < frame + 3; ++i) QTest::qWait(10);
+        return CHECK(engine.speed() != 0.0) && CHECK(engine.position() >= frame + 3);
+    };
+    // Default: Space stops where it is
+    if (playFrom(5)) {
+        space->trigger();
+        settle();
+        CHECK(engine.speed() == 0.0);
+        CHECK(engine.position() >= 8);
+    }
+    // By choice: back to the start position
+    TimelineOptions::setSpaceReturns(true);
+    if (playFrom(10)) {
+        space->trigger();
+        settle();
+        CHECK(engine.speed() == 0.0);
+        Check::report(engine.position() == 10, "back to 10", __FILE__, __LINE__, QString::number(engine.position()));
+        space->trigger(); // paused: Space plays as always
+        settle();
+        CHECK(engine.speed() != 0.0);
+    }
+    TimelineOptions::setSpaceReturns(false);
+    // The action, whatever is set; paused it goes back to the last start too
+    if (playFrom(12)) {
+        back->trigger();
+        settle();
+        CHECK(engine.speed() == 0.0);
+        CHECK_EQ(engine.position(), 12);
+        engine.seek(30);
+        settle();
+        back->trigger();
+        settle();
+        CHECK_EQ(engine.position(), 12);
+    }
+    // Following: zoomed in as far as it goes, so the 2 s clip is longer than the view
+    TimelineView* tv = w.findChild<TimelinePanel*>()->view();
+    const double ppf = ViewState::kMaxPxPerFrame;
+    tv->setZoomAndScroll(ppf, 0, 0);
+    const int visible = tv->visibleFrames();
+    if (!CHECK(visible + 8 < tl.video[0].clips.first().end())) return;
+    if (playFrom(0)) {
+        engine.pause();
+        CHECK_EQ(tv->view().leftFrame, 0.0); // off by default
+    }
+    TimelineOptions::setFollow(TimelineOptions::Follow::Page);
+    tv->setZoomAndScroll(ppf, 0, 0);
+    if (playFrom(0)) {
+        for (int i = 0; i < 300 && engine.position() < visible + 3; ++i) QTest::qWait(10);
+        engine.pause();
+        settle();
+        CHECK(tv->view().leftFrame > 0);
+        CHECK(tv->view().leftFrame <= engine.position());
+    }
+    engine.pause();
+    QSettings().remove("timeline");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -625,5 +705,6 @@ int main(int argc, char** argv)
     testOtherPages(w);
     testFullScreen(w, engine);
     testPlayheadMoves(w, engine);
+    testSpaceAndFollow(w, engine);
     return Check::result();
 }

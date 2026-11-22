@@ -119,6 +119,12 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(hint(T("Aus: die Timeline bleibt, wo du sie hinscrollst. Seitenweise: läuft die Abspielmarke aus dem "
                         "Bild, blättert die Timeline um. Mittig: die Timeline läuft unter der Abspielmarke durch. "
                         "Scrollst oder zoomst du beim Abspielen, bleibt sie bis zum nächsten Start stehen.")));
+    m_space = combo("timeline_space_stops",
+                    {{T("An der Stelle"), 0}, {T("Zurück zur Startposition"), 1}}, TimelineOptions::spaceReturns() ? 1 : 0);
+    play->addRow(T("Leertaste hält an"), m_space);
+    play->addRow(hint(T("Zurück zur Startposition: die Abspielmarke springt dorthin, wo du das Abspielen gestartet hast "
+                        "(wie in Vegas), gut zum wiederholten Anhören eines Schnitts. K hält immer an der Stelle an; "
+                        "„Stopp und zurück zur Startposition“ gibt es auch als eigene Taste (Tastenbelegung).")));
     m_afterSeek = combo("timeline_after_playhead_move",
                         {{T("Standard"), int(PlayheadMove::Mode::Standard)},
                          {T("Weiter wie vorher"), int(PlayheadMove::Mode::Continue)},
@@ -176,8 +182,11 @@ TimelineOptions::SnapReach TimelineSettingsPage::snapReach() const
     return TimelineOptions::SnapReach(m_snapReach->currentData().toInt());
 }
 
+bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
+
 void TimelineSettingsPage::store() const
 {
+    if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());

@@ -39,6 +39,10 @@ bool clickSetsPlayhead() { return QSettings().value("timeline/clickSetsPlayhead"
 
 void setClickSetsPlayhead(bool on) { store("timeline/clickSetsPlayhead", "true", !on); }
 
+bool spaceReturns() { return stored("timeline/spaceStops") == "return"; }
+
+void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }
+
 bool snapping() { return QSettings().value("timeline/snapping", true).toBool(); }
 
 void setSnapping(bool on) { store("timeline/snapping", "false", on); }

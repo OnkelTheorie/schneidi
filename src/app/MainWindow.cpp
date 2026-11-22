@@ -304,6 +304,14 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
         if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);
     });
+    // Where playback started (Space by choice and "Stop and return" go back there)
+    connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
+        if (m_lastSpeed == 0.0 && speed != 0.0) {
+            m_playStart = m_engine->playStart(); // read before the pump ran (position() may be on already)
+            m_playStartMode = int(m_engine->mode());
+        }
+        m_lastSpeed = speed;
+    });
     // Playing or not: the timeline may follow the playhead while it plays (Settings › Timeline, off by default)
     connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {
         tv->setPlaying(m_engine->timelinePositions() ? speed : 0.0);
@@ -1479,6 +1487,12 @@ void MainWindow::setupBackgroundJobs()
                                      .arg(QFileInfo(progress->failures().back().file).fileName()),
                                  8000);
     });
+}
+
+void MainWindow::stopAndReturn()
+{
+    m_engine->pause();
+    if (m_playStart >= 0 && m_playStartMode == int(m_engine->mode())) m_engine->seek(m_playStart);
 }
 
 void MainWindow::setupProxyHint()
