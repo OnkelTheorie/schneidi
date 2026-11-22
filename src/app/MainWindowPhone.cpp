@@ -61,7 +61,8 @@ void trigger(const char* id)
 // Where a widget the shell takes lives on the desktop: its parent and its place there (a splitter's index, a box
 // layout's index, stretch and alignment, a grid cell, a scroll area, a stacked widget), its visibility; plus the
 // desktop's splitter sizes and other state the shell changes
-struct ShellHomes {
+struct ShellHomes : QObject { // (a child of the window: goes with it)
+    using QObject::QObject;
     struct Home {
         QPointer<QWidget> widget, parent;
         enum Kind { Plain, Splitter, Box, Grid, Scroll, Stack } kind = Plain;
@@ -72,6 +73,9 @@ struct ShellHomes {
     };
     QVector<Home> homes;
     QVector<QPair<QPointer<QSplitter>, QList<int>>> splitters;
+    // The desktop's splitters at its last desktop-wide size (taken on resizes): the form switches only after the
+    // window got narrower, which squeezed them already
+    QVector<QPair<QPointer<QSplitter>, QList<int>>> desktopSplitters;
     QHash<QToolButton*, bool> toggles;
     MainWindow::Page page = MainWindow::Page::Edit;
     QSize viewerMin;
@@ -193,6 +197,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
     if (!isVisible()) return; // (the constructor's sizes: the start decided already)
+    snapshotDesktop();
     if (!m_formTimer) {
         m_formTimer = new QTimer(this);
         m_formTimer->setSingleShot(true);
@@ -200,6 +205,22 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         connect(m_formTimer, &QTimer::timeout, this, &MainWindow::checkLayoutForm);
     }
     m_formTimer->start();
+}
+
+void MainWindow::snapshotDesktop()
+{
+    // The desktop's splitters at a desktop width: what comes back after a tablet or phone form
+    if (m_phone || width() < kDesktopWidth) return;
+    if (!m_shellHomes) m_shellHomes = new ShellHomes(this);
+    m_shellHomes->desktopSplitters.clear();
+    for (QSplitter* split : centralWidget()->findChildren<QSplitter*>())
+        m_shellHomes->desktopSplitters << qMakePair(QPointer<QSplitter>(split), split->sizes());
+}
+
+void MainWindow::showEvent(QShowEvent* event)
+{
+    QMainWindow::showEvent(event);
+    QTimer::singleShot(0, this, &MainWindow::snapshotDesktop); // (after the first layout)
 }
 
 void MainWindow::checkLayoutForm()
@@ -301,10 +322,18 @@ void MainWindow::enableShell(bool tablet)
 {
     if (m_phone) return;
     // What the desktop looks like now, to come back to it exactly
-    delete m_shellHomes;
-    m_shellHomes = new ShellHomes;
+    if (!m_shellHomes) m_shellHomes = new ShellHomes(this);
+    m_shellHomes->homes.clear();
+    m_shellHomes->toggles.clear();
+    m_shellHomes->splitters.clear();
     m_shellHomes->page = m_page;
-    for (QSplitter* split : centralWidget()->findChildren<QSplitter*>()) m_shellHomes->splitters << qMakePair(QPointer<QSplitter>(split), split->sizes());
+    for (QSplitter* split : centralWidget()->findChildren<QSplitter*>()) {
+        QList<int> sizes = split->sizes();
+        if (width() < kDesktopWidth) // squeezed already: the sizes it had at a desktop width
+            for (const auto& [known, wide] : m_shellHomes->desktopSplitters)
+                if (known == split) sizes = wide;
+        m_shellHomes->splitters << qMakePair(QPointer<QSplitter>(split), sizes);
+    }
     for (QToolButton* t : {m_poolToggle, m_effectsToggle, m_inspectorToggle, m_mixerToggle, m_transcriptToggle, m_chatToggle})
         if (t) m_shellHomes->toggles.insert(t, t->isChecked());
     m_shellHomes->viewerMin = m_viewer->screen()->minimumSize();
@@ -439,6 +468,7 @@ void MainWindow::disableShell()
 {
     if (!m_phone || !m_shellHomes) return;
     setUpdatesEnabled(false);
+    m_shellHomes->desktopSplitters.clear(); // (taken anew at desktop widths)
 #ifdef Q_OS_ANDROID
     if (isFullScreen()) showMaximized(); // (the phone's landscape)
 #endif
@@ -495,11 +525,24 @@ void MainWindow::disableShell()
         const QSignalBlocker block(it.key());
         it.key()->setChecked(it.value());
     }
-    for (const auto& [split, sizes] : m_shellHomes->splitters)
-        if (split) split->setSizes(sizes);
+    // The splitters as they were, once the desktop's layout has its sizes again (set before, a splitter that comes
+    // back narrower first keeps squeezed sizes); hidden pages' splitters never laid out (all 0) are left to their layout
+    const auto splitters = m_shellHomes->splitters;
+    const auto restoreSizes = [splitters] {
+        for (const auto& [split, sizes] : splitters) {
+            const bool laidOut = std::any_of(sizes.cbegin(), sizes.cend(), [](int v) { return v > 0; });
+            if (split && laidOut) split->setSizes(sizes);
+        }
+    };
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    centralWidget()->layout()->activate();
+    restoreSizes();
+    QTimer::singleShot(0, this, [this, restoreSizes] {
+        restoreSizes();
+        snapshotDesktop(); // (the desktop as it is now: what the next switch brings back)
+    });
     const Page page = m_shellHomes->page;
-    delete m_shellHomes;
-    m_shellHomes = nullptr;
+    m_shellHomes->homes.clear();
     if (page != Page::Edit) showPage(page);
     setUpdatesEnabled(true);
 }

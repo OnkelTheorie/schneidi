@@ -331,6 +331,7 @@ protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override; // the layout form for the new size (a moment later)
+    void showEvent(QShowEvent* event) override;     // (the desktop's splitter sizes, once laid out)
     void changeEvent(QEvent* event) override; // window state: the full-screen action follows
 
 private:
@@ -785,6 +786,7 @@ private:
     QWidget* shellHome(QWidget* w);            // records w's desktop place before the shell takes it; returns w
     class QTimer* m_formTimer = nullptr;       // a resize settles before the form is checked
     void checkLayoutForm();
+    void snapshotDesktop(); // the desktop's splitter sizes while it is desktop-wide (what comes back later)
     // Adding material the phone's way: schneidi's gallery (ui/MediaGallery; Android asks for the media permission
     // first, refused = the system's file picker), the picked files into the pool and onto the timeline's end
     void openGallery();
