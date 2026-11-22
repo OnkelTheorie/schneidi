@@ -9,6 +9,7 @@
 #include "app/DesignDialog.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/SettingsDialog.h"
+#include "app/TimelineSettingsPage.h"
 #include "core/Project.h"
 #include "ui/comp/CompShared.h"
 #include "app/StartTemplatesPage.h"
@@ -19,9 +20,13 @@
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "engine/Background.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
-#include "ui/timeline/ZoomAnchor.h"
+#include "ui/Viewer.h"
+#include "ui/studio/StudioPage.h"
+#include "ui/studio/StudioTracks.h"
+#include "ui/timeline/TimelineOverview.h"
 
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -37,7 +42,10 @@
 void MainWindow::settingsDialog(int tab)
 {
     SettingsDialog dlg(m_aiSettings, this);
-    dlg.showTab(tab == 1 ? SettingsDialog::Tab::Ai : tab == 2 ? SettingsDialog::Tab::Templates : SettingsDialog::Tab::General);
+    dlg.showTab(tab == 1   ? SettingsDialog::Tab::Ai
+                : tab == 2 ? SettingsDialog::Tab::Templates
+                : tab == 3 ? SettingsDialog::Tab::Timeline
+                           : SettingsDialog::Tab::General);
     dlg.aiPage()->setClaudeSetup(m_claudeSetup);
     dlg.aiPage()->addChatSection(m_aiKeys.get());
     connect(&dlg, &SettingsDialog::designRequested, this, [this, &dlg] {
@@ -75,10 +83,9 @@ void MainWindow::settingsDialog(int tab)
             || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
-    // The timelines read it on every wheel zoom: no restart
-    if (!m_autosaveDisabled && dlg.zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(dlg.zoomAnchor());
-    // Read at the start of every playhead move: no restart
-    if (!m_autosaveDisabled && dlg.afterPlayheadMove() != PlayheadMove::mode()) PlayheadMove::setMode(dlg.afterPlayheadMove());
+    // Timeline tab: the timelines read the choices when they need them (no restart); redrawn for the ones they show
+    if (!m_autosaveDisabled) dlg.timelinePage()->store();
+    applyTimelineOptions();
     setSecondScreenMode(dlg.secondScreenMode());
     for (const auto target : {PreviewResolution::Target::Viewer, PreviewResolution::Target::Monitor})
         setPreviewResolution(target, dlg.previewResolution(target));
@@ -105,6 +112,16 @@ void MainWindow::settingsDialog(int tab)
         offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
     }
+}
+
+void MainWindow::applyTimelineOptions()
+{
+    TimelineOptions::applyEditDefaults(); // still and transition lengths for the core
+    updateStepTexts();
+    m_timeline->view()->update();
+    m_timeline->overview()->update();
+    if (m_studioPage) m_studioPage->tracks()->update();
+    m_viewer->refreshTimeDisplay(); // the time format
 }
 
 void MainWindow::setProxyQuality(ProxyManager::Quality quality)

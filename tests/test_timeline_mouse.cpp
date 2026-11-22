@@ -4,7 +4,10 @@
 // tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them); where wheel zoom stays
 // put (ZoomAnchor: the mouse by default, the visible playhead by choice); a playhead move in the ruler is framed by
 // playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
-// table is checked here too (with an engine: test_viewer_large).
+// table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
+// the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms;
+// a click into the tracks sets the playhead by choice; snapping remembered, its targets and reach by choice;
+// thumbnail tiles for each choice (filmstrip, first, first and last, none); waveform height (dB/linear) and shape.
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -16,6 +19,7 @@
 #include "core/TimelineOps.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/ZoomAnchor.h"
 
@@ -762,6 +766,294 @@ void testWheelZoomAnchor()
     CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
 }
 
+// A wheel event with angle delta (dx, dy) and modifiers
+static void wheel(TimelineView& tv, int dx, int dy, Qt::KeyboardModifiers mods = {})
+{
+    const QPointF at(TimelineView::kHeaderW + 300, 60);
+    QWheelEvent e(at, tv.mapToGlobal(at), QPoint(), QPoint(dx, dy), Qt::NoButton, mods, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&tv, &e);
+}
+
+// A sideways touchpad swipe (or tilt wheel) pans the timeline sideways, not up/down (bug: x was fed into the
+// upright wheel's binding = vertical scroll). Alt/Shift keep the binding (Qt turns an upright wheel sideways there)
+void testWheelSideways()
+{
+    Fixture f;
+    f.tv.resize(1200, 120); // short: room to scroll vertically
+    f.tv.setZoomAndScroll(2.0, 200, 0);
+    QSettings().remove("timeline");
+    // Swipe: content follows to the right (left frame smaller), the vertical scroll stays
+    wheel(f.tv, 120, 0);
+    CHECK(f.tv.view().leftFrame < 200);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    const double left = f.tv.view().leftFrame;
+    wheel(f.tv, -240, 0);
+    CHECK(f.tv.view().leftFrame > left);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    // Mostly sideways with a little up/down (touchpad diagonal): still sideways
+    const double left2 = f.tv.view().leftFrame;
+    wheel(f.tv, -120, 20);
+    CHECK(f.tv.view().leftFrame > left2);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    // An upright wheel without modifiers: vertical scroll (the default binding), left frame stays
+    const double left3 = f.tv.view().leftFrame;
+    wheel(f.tv, 0, -120);
+    CHECK_EQ(f.tv.view().leftFrame, left3);
+    CHECK(f.tv.view().scrollY > 0);
+    // Alt with an x delta (Qt's swapped axes): still the Alt binding = zoom
+    const double px = f.tv.view().pxPerFrame;
+    wheel(f.tv, 120, 0, Qt::AltModifier);
+    CHECK(f.tv.view().pxPerFrame > px * 1.1);
+    // Shift with an x delta: the Shift binding = track height
+    const int h = f.tv.view().videoTrackHeight;
+    wheel(f.tv, 120, 0, Qt::ShiftModifier);
+    CHECK(f.tv.view().videoTrackHeight > h);
+    CHECK(TimelineView::wheelPansSideways({120, 0}, Qt::ControlModifier));
+    CHECK(!TimelineView::wheelPansSideways({120, 0}, Qt::AltModifier));
+    CHECK(!TimelineView::wheelPansSideways({60, 120}, {}));
+}
+
+// Following the playhead while playing (TimelineOptions::follow): off by default (core rule); page turns and centre
+// only while it plays and only for the playback; scrolling or zooming sideways ends it until the next start
+void testFollowPlayback()
+{
+    using F = TimelineOptions::Follow;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::follow() == F::Off);
+    Fixture f;
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    const double vis = (f.tv.width() - TimelineView::kHeaderW) / 2.0; // 510 frames
+    // Off: the playhead runs out of view, the view stays
+    f.tv.setPlaying(1.0);
+    for (int fr = 0; fr <= 1200; fr += 10) f.tv.setPlayhead(fr);
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    f.tv.setPlaying(0);
+
+    // Page: nothing until it leaves the view, then the playhead stands at the left edge
+    TimelineOptions::setFollow(F::Page);
+    CHECK(TimelineOptions::follow() == F::Page);
+    f.tv.setPlayhead(0);
+    f.tv.setPlaying(1.0);
+    for (int fr = 0; fr < int(vis); fr += 10) f.tv.setPlayhead(fr);
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    f.tv.setPlayhead(int(vis) + 2);
+    CHECK_EQ(f.tv.view().leftFrame, double(int(vis) + 2));
+    // A model change while it plays moves nothing (core rule)
+    const double left = f.tv.view().leftFrame;
+    f.editor.trimClip(2, TimelineOps::Edge::End, -20, true);
+    QApplication::processEvents();
+    CHECK_EQ(f.tv.view().leftFrame, left);
+    // Not while dragging in the ruler (scrubbing): the seeks of the drag do not turn the page
+    mouse(f.tv, QEvent::MouseButtonPress, {f.x(left + 50), TimelineView::kRulerH / 2}, Qt::LeftButton);
+    f.tv.setPlayhead(int(left + 2 * vis));
+    CHECK_EQ(f.tv.view().leftFrame, left);
+    mouse(f.tv, QEvent::MouseButtonRelease, {f.x(left + 50), TimelineView::kRulerH / 2}, Qt::NoButton);
+    // The user scrolls sideways while it plays: following stops until the next start
+    f.tv.setLeftFrame(100);
+    f.tv.setPlayhead(2000);
+    CHECK_EQ(f.tv.view().leftFrame, 100.0);
+    f.tv.setPlaying(0);
+    f.tv.setPlayhead(100);
+    f.tv.setPlaying(1.0);
+    f.tv.setPlayhead(2000);
+    CHECK_EQ(f.tv.view().leftFrame, 2000.0);
+    // Zooming (wheel or keys) ends it too
+    wheelZoom(f.tv, TimelineView::kHeaderW + 100);
+    const double zoomedLeft = f.tv.view().leftFrame;
+    f.tv.setPlayhead(9000);
+    CHECK_EQ(f.tv.view().leftFrame, zoomedLeft);
+    f.tv.setPlaying(0);
+    // Reverse (J): leaving at the left edge puts the playhead at the right edge
+    f.tv.setZoomAndScroll(2.0, 1000, 0);
+    f.tv.setPlayhead(1100);
+    f.tv.setPlaying(-1.0);
+    f.tv.setPlayhead(990);
+    CHECK(std::abs(f.tv.view().leftFrame - (990 - vis + 1)) < 1e-6);
+    f.tv.setPlaying(0);
+
+    // Centre: from the middle on the view runs under the playhead; the start stays at the left edge
+    TimelineOptions::setFollow(F::Center);
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    f.tv.setPlayhead(0);
+    f.tv.setPlaying(1.0);
+    f.tv.setPlayhead(100);
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    f.tv.setPlayhead(1000);
+    CHECK(std::abs(f.tv.view().leftFrame - (1000 - vis / 2)) < 1e-6);
+    f.tv.setPlayhead(1010);
+    CHECK(std::abs(f.tv.view().leftFrame - (1010 - vis / 2)) < 1e-6);
+    // Paused: no following (a seek while paused moves nothing)
+    f.tv.setPlaying(0);
+    const double paused = f.tv.view().leftFrame;
+    f.tv.setPlayhead(5000);
+    CHECK_EQ(f.tv.view().leftFrame, paused);
+    // The choice is read at the start: switched off while paused, the next start does not follow
+    TimelineOptions::setFollow(F::Off);
+    CHECK(!QSettings().contains("timeline/followPlayback"));
+    f.tv.setPlaying(1.0);
+    f.tv.setPlayhead(9000);
+    CHECK_EQ(f.tv.view().leftFrame, paused);
+    f.tv.setPlaying(0);
+}
+
+// A click into the tracks sets the playhead only by choice (TimelineOptions::clickSetsPlayhead): on an empty spot
+// and on a clip, framed like a ruler click; a drag stays a rubber band / move; the gap is still picked
+void testClickSetsPlayhead()
+{
+    QSettings().remove("timeline");
+    CHECK(!TimelineOptions::clickSetsPlayhead());
+    Fixture f;
+    QStringList log;
+    QObject::connect(&f.tv, &TimelineView::playheadMoveStarted, [&] { log << "start"; });
+    QObject::connect(&f.tv, &TimelineView::seekRequested, [&](int frame) { log << QString("seek %1").arg(frame); });
+    QObject::connect(&f.tv, &TimelineView::playheadMoveFinished, [&] { log << "finish"; });
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    const auto click = [&](int frame, int y) {
+        mouse(f.tv, QEvent::MouseButtonPress, {f.x(frame), y}, Qt::LeftButton);
+        mouse(f.tv, QEvent::MouseButtonRelease, {f.x(frame), y}, Qt::NoButton);
+    };
+    // Default: only select
+    click(30, 120);
+    CHECK(f.sel.ids().contains(1));
+    click(130, 120);
+    CHECK(log.isEmpty());
+    // By choice: an empty spot (the gap is picked as before) and a clip (selected) set the playhead
+    TimelineOptions::setClickSetsPlayhead(true);
+    CHECK(TimelineOptions::clickSetsPlayhead());
+    click(130, 120);
+    CHECK(log == QStringList({"start", "seek 130", "finish"}));
+    CHECK(f.tv.hasGap());
+    log.clear();
+    click(30, 120);
+    CHECK(log == QStringList({"start", "seek 30", "finish"}));
+    CHECK(f.sel.ids().contains(1));
+    log.clear();
+    // Drags: the rubber band selects, a clip moves - no playhead move
+    drag(f.tv, {f.x(130), 40}, {f.x(95), 120});
+    CHECK(f.sel.ids() == (QSet<int>{1, 3}));
+    drag(f.tv, {f.x(160), 120}, {f.x(180), 120});
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 170);
+    CHECK(log.isEmpty());
+    // Core rule: zoom and scroll stay
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    CHECK_EQ(f.tv.view().pxPerFrame, 2.0);
+    TimelineOptions::setClickSetsPlayhead(false);
+    CHECK(!QSettings().contains("timeline/clickSetsPlayhead"));
+}
+
+// Snapping: remembered on/off (a new timeline starts with the stored state), targets and reach by choice
+// (TimelineOptions::snapTargets/snapReach); the defaults snap to clip edges and the playhead within 8 px, as before
+void testSnapOptions()
+{
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::snapping());
+    {
+        TimelineOptions::setSnapping(false);
+        Fixture f;
+        CHECK(!f.tv.snapping());
+        TimelineOptions::setSnapping(true);
+        CHECK(!QSettings().contains("timeline/snapping"));
+        Fixture g;
+        CHECK(g.tv.snapping());
+    }
+    // Clip 2 (150..250 on V1) dragged by `frames` at 2 px per frame: where it starts afterwards (then undone)
+    const auto moved = [](Fixture& f, int frames) {
+        drag(f.tv, {f.x(200), 120}, {f.x(200 + frames), 120});
+        const int start = f.project.timeline().video[0].clips[1].start;
+        f.project.undoStack()->undo();
+        return start;
+    };
+    Fixture f;
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    f.editor.toggleMarker(300);
+    f.editor.setMarks(20, 299); // Out = 299: the range ends at 300
+    // Default: neither the marker nor the range's end catch the clip's end at 297/298
+    CHECK_EQ(moved(f, 48), 198);
+    // Markers by choice: the end lands on the marker
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets | TimelineOptions::SnapMarkers);
+    CHECK_EQ(moved(f, 48), 200);
+    // In/Out by choice (without markers): the end of the range
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets | TimelineOptions::SnapInOut);
+    CHECK_EQ(moved(f, 48), 200);
+    // The playhead (a default target) catches it; without it, not
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets);
+    f.tv.setPlayhead(300);
+    CHECK_EQ(moved(f, 48), 200);
+    TimelineOptions::setSnapTargets(TimelineOptions::SnapClipEdges);
+    CHECK_EQ(moved(f, 48), 198);
+    // Reach: 3 frames = 6 px away snaps with medium (8 px) and large, not with small (4 px)
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets);
+    CHECK_EQ(moved(f, 47), 200);
+    TimelineOptions::setSnapReach(TimelineOptions::SnapReach::Small);
+    CHECK(TimelineOptions::snapPixels() == 4);
+    CHECK_EQ(moved(f, 47), 197);
+    TimelineOptions::setSnapReach(TimelineOptions::SnapReach::Large);
+    CHECK_EQ(moved(f, 47), 200);
+    TimelineOptions::setSnapReach(TimelineOptions::SnapReach::Medium);
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+}
+
+// Pictures on video clips (TimelineOptions::thumbnails): where the tiles go for each choice
+void testThumbnailTiles()
+{
+    using TH = TimelineOptions::Thumbnails;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::thumbnails() == TH::Filmstrip);
+    // A 200-frame clip at x 300, 2 px per frame (400 px), tiles 50 px wide (25 frames), view 180..1200
+    const auto tiles = [](TH mode, double clipX = 300, double left = 180) {
+        return TimelineView::thumbnailTiles(mode, clipX, 200, 2.0, 50, left, 1200);
+    };
+    const QVector<QPair<double, int>> strip = tiles(TH::Filmstrip);
+    CHECK(strip.size() >= 8);
+    CHECK(strip.first() == (QPair<double, int>{0.0, 0}));
+    CHECK(strip[1] == (QPair<double, int>{50.0, 25}));
+    // Only what is visible: the clip's start scrolled out to the left skips the first tiles
+    CHECK(tiles(TH::Filmstrip, 100).first().first >= 50);
+    CHECK(tiles(TH::Start) == (QVector<QPair<double, int>>{{0.0, 0}}));
+    CHECK(tiles(TH::StartEnd) == (QVector<QPair<double, int>>{{0.0, 0}, {350.0, 199}}));
+    // Too short for two: only the first
+    CHECK_EQ(TimelineView::thumbnailTiles(TH::StartEnd, 300, 40, 2.0, 50, 180, 1200).size(), 1);
+    CHECK(tiles(TH::None).isEmpty());
+    for (TH m : {TH::Start, TH::StartEnd, TH::None, TH::Filmstrip}) {
+        TimelineOptions::setThumbnails(m);
+        CHECK(TimelineOptions::thumbnails() == m);
+    }
+    CHECK(!QSettings().contains("timeline/thumbnails"));
+}
+
+// Waveforms (TimelineOptions::waveShape/waveScale): the height of a peak in dB (as before) or linear, the column
+// mirrored around the middle (as before) or from the bottom
+void testWaveformStyle()
+{
+    using TimelineOptions::waveHeight, TimelineOptions::waveLine;
+    using WSh = TimelineOptions::WaveShape;
+    using WSc = TimelineOptions::WaveScale;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::waveShape() == WSh::Mirrored && TimelineOptions::waveScale() == WSc::Db);
+    // dB: full scale = 1, -24 dB (peak ~16) = about half, 0 = nothing; the clip's gain on top
+    CHECK(std::abs(waveHeight(255, 0, WSc::Db) - 1.0) < 1e-9);
+    CHECK(std::abs(waveHeight(16, 0, WSc::Db) - 0.5) < 0.02);
+    CHECK_EQ(waveHeight(0, 0, WSc::Db), 0.0);
+    CHECK(std::abs(waveHeight(255, -24, WSc::Db) - 0.5) < 1e-9);
+    // Linear: the amplitude, -6 dB of gain halves it
+    CHECK(std::abs(waveHeight(128, 0, WSc::Linear) - 128 / 255.0) < 1e-9);
+    CHECK(std::abs(waveHeight(16, 0, WSc::Linear) - 16 / 255.0) < 1e-9);
+    CHECK(std::abs(waveHeight(255, -6.0206, WSc::Linear) - 0.5) < 1e-3);
+    CHECK(waveHeight(255, 12, WSc::Linear) <= 1.0);
+    // Columns in a body 100..163 (64 high): mirrored around 132, from the bottom up to 162
+    const QRect body(0, 100, 50, 64);
+    CHECK(waveLine(7, 0.5, body, WSh::Mirrored) == QLine(7, 132 - 15, 7, 132 + 15));
+    CHECK(waveLine(7, 0.5, body, WSh::Bottom) == QLine(7, 162 - 31, 7, 162));
+    CHECK(waveLine(7, 1.0, body, WSh::Bottom).y1() >= body.top());
+    CHECK_EQ(waveLine(7, 0.001, body, WSh::Bottom).dy(), 1); // at least a pixel
+    TimelineOptions::setWaveShape(WSh::Bottom);
+    TimelineOptions::setWaveScale(WSc::Linear);
+    CHECK(TimelineOptions::waveShape() == WSh::Bottom && TimelineOptions::waveScale() == WSc::Linear);
+    TimelineOptions::setWaveShape(WSh::Mirrored);
+    TimelineOptions::setWaveScale(WSc::Db);
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -850,6 +1142,12 @@ int main(int argc, char** argv)
     testTrimOverwrite();
     testStoryBand();
     testWheelZoomAnchor();
+    testWheelSideways();
+    testFollowPlayback();
+    testClickSetsPlayhead();
+    testSnapOptions();
+    testThumbnailTiles();
+    testWaveformStyle();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();

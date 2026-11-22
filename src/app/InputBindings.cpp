@@ -977,6 +977,60 @@ WheelAction InputBindings::wheelAction(Qt::KeyboardModifiers mods) const
     return m_wheel.value(modifierKey(mods), WheelAction::None);
 }
 
+QStringList InputBindings::wheelModifiers() { return {"none", "ctrl", "shift", "alt"}; }
+
+WheelAction InputBindings::wheelBinding(const QString& mods) const { return m_wheel.value(mods, WheelAction::None); }
+
+void InputBindings::setWheelBinding(const QString& mods, WheelAction action)
+{
+    if (m_wheel.value(mods, WheelAction::None) == action && m_wheel.contains(mods)) return;
+    m_wheel[mods] = action;
+    save();
+}
+
+QStringList InputBindings::wheelPresetIds() { return {"standard", "premiere", "vegas", "kdenlive", "capcut"}; }
+
+QString InputBindings::wheelPresetName(const QString& id)
+{
+    if (id == "premiere") return QStringLiteral("Premiere Pro");
+    if (id == "vegas") return QStringLiteral("Vegas Pro");
+    if (id == "kdenlive") return QStringLiteral("Kdenlive");
+    if (id == "capcut") return QStringLiteral("CapCut / Shotcut");
+    return T("schneidi-Standard");
+}
+
+QHash<QString, WheelAction> InputBindings::wheelPreset(const QString& id)
+{
+    using A = WheelAction;
+    if (id == "premiere")
+        return {{"none", A::ScrollHorizontal}, {"ctrl", A::ScrollVertical}, {"alt", A::Zoom}, {"shift", A::TrackHeight}};
+    if (id == "vegas")
+        return {{"none", A::Zoom}, {"ctrl", A::ScrollHorizontal}, {"shift", A::ScrollVertical}, {"alt", A::TrackHeight}};
+    if (id == "kdenlive")
+        return {{"none", A::ScrollVertical}, {"ctrl", A::Zoom}, {"shift", A::ScrollHorizontal}, {"alt", A::TrackHeight}};
+    if (id == "capcut")
+        return {{"none", A::ScrollHorizontal}, {"ctrl", A::Zoom}, {"shift", A::ScrollVertical}, {"alt", A::TrackHeight}};
+    return defaultWheel();
+}
+
+void InputBindings::applyWheelPreset(const QString& id)
+{
+    const QHash<QString, WheelAction> preset = wheelPreset(id);
+    for (auto it = preset.begin(); it != preset.end(); ++it) m_wheel[it.key()] = it.value();
+    save();
+}
+
+QString InputBindings::currentWheelPreset() const
+{
+    for (const QString& id : wheelPresetIds()) {
+        const QHash<QString, WheelAction> preset = wheelPreset(id);
+        bool same = true;
+        for (const QString& mods : wheelModifiers()) same &= wheelBinding(mods) == preset.value(mods, WheelAction::None);
+        if (same) return id;
+    }
+    return {};
+}
+
 const QVector<Qt::MouseButton>& InputBindings::bindableMouseButtons()
 {
     static const QVector<Qt::MouseButton> buttons = {Qt::BackButton, Qt::ForwardButton, Qt::TaskButton,

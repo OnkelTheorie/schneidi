@@ -11,6 +11,7 @@
 #include "core/Retime.h"
 #include "core/Selection.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/MediaCache.h"
@@ -421,7 +422,7 @@ void StudioTracks::drawRuler(QPainter& p)
     p.setFont(f);
     p.fillRect(QRect(4, 3, kHeaderW - 8, kRulerH - 6), Theme::well);
     p.setPen(Theme::primary);
-    p.drawText(QRect(8, 3, kHeaderW - 12, kRulerH - 6), Qt::AlignVCenter | Qt::AlignLeft, Timecode::format(m_playhead, fps));
+    p.drawText(QRect(8, 3, kHeaderW - 12, kRulerH - 6), Qt::AlignVCenter | Qt::AlignLeft, TimelineOptions::formatTime(m_playhead, fps));
     const int candidates[] = {1, 2, 5, 10, fps, 2 * fps, 5 * fps, 10 * fps, 15 * fps, 30 * fps, 60 * fps,
                               120 * fps, 300 * fps, 600 * fps, 900 * fps, 1800 * fps, 3600 * fps, 7200 * fps};
     int major = candidates[std::size(candidates) - 1];
@@ -443,7 +444,7 @@ void StudioTracks::drawRuler(QPainter& p)
         const bool isMajor = fr % major == 0;
         p.setPen(isMajor ? Theme::textDim : Theme::textFaint);
         p.drawLine(x, kRulerH - (isMajor ? 10 : 5), x, kRulerH - 1);
-        if (isMajor) p.drawText(x + 3, 12, Timecode::format(fr, fps));
+        if (isMajor) p.drawText(x + 3, 12, TimelineOptions::formatTime(fr, fps));
     }
     p.restore();
 }
@@ -547,14 +548,10 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
         if (TimelineOps::findClip(m_editor->project()->timeline(), c.id, &ref) && ref.kind == TrackKind::Audio)
             autoCurve = &m_editor->project()->timeline().audio[ref.index].volumeAuto;
     }
-    // dB height (-48..0 dB), so speech does not look flat; the waveform follows the volume curve (what is heard)
-    static const auto dbTable = [] {
-        std::array<double, 256> t{};
-        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
-        return t;
-    }();
-    const int mid = body.top() + body.height() / 2;
-    const double half = body.height() / 2.0 - 2;
+    // dB height (-48..0 dB, so speech does not look flat) or linear, mirrored or from the bottom: the user's choice
+    // (Settings › Timeline); the waveform follows the volume curve (what is heard)
+    const TimelineOptions::WaveShape shape = TimelineOptions::waveShape();
+    const TimelineOptions::WaveScale waveScale = TimelineOptions::waveScale();
     const double clipX = xOf(c.start);
     const int x0 = std::max({body.left(), kHeaderW, m_dirty.left() - 1}), x1 = std::min({body.right(), width() - 1, m_dirty.right() + 1});
     QVector<QLine> lines;
@@ -586,10 +583,9 @@ void StudioTracks::drawWaveform(QPainter& p, const QRect& body, const Clip& c, c
         const double g = TimelineOps::audioFadeGain(c, t);
         if (g <= 0.001) continue;
         db += 20.0 * std::log10(g);
-        const double v = std::min(1.0, dbTable[peak] + db / 48.0);
+        const double v = TimelineOptions::waveHeight(peak, db, waveScale);
         if (v <= 0) continue;
-        const int h = std::max(1, int(v * half));
-        lines << QLine(x, mid - h, x, mid + h);
+        lines << TimelineOptions::waveLine(x, v, body, shape, 2);
     }
     p.setPen(Theme::alpha(color, 220));
     p.drawLines(lines);

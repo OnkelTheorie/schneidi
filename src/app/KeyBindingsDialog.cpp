@@ -6,6 +6,8 @@
 #include "core/I18n.h"
 
 #include <QComboBox>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
 #include <algorithm>
@@ -259,9 +261,67 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     lay->addWidget(m_table, 1);
     lay->addWidget(m_notice);
     lay->addWidget(hint);
+    lay->addWidget(buildWheel());
     lay->addLayout(buttons);
 
     fill();
+}
+
+QWidget* KeyBindingsDialog::buildWheel()
+{
+    auto* box = new QGroupBox(T("Mausrad in der Timeline"));
+    auto* grid = new QGridLayout(box);
+    m_wheelPreset = new QComboBox;
+    m_wheelPreset->setObjectName("wheel_preset");
+    m_wheelPreset->setToolTip(T("Mausrad wie in einem anderen Programm (die Tasten bleiben)"));
+    for (const QString& id : InputBindings::wheelPresetIds()) m_wheelPreset->addItem(InputBindings::wheelPresetName(id), id);
+    m_wheelPreset->addItem(T("Eigene"), QString());
+    connect(m_wheelPreset, &QComboBox::activated, this, [this](int index) {
+        const QString id = m_wheelPreset->itemData(index).toString();
+        if (!id.isEmpty()) InputBindings::instance().applyWheelPreset(id);
+        fillWheel();
+    });
+    grid->addWidget(new QLabel(T("Wie in:")), 0, 0);
+    grid->addWidget(m_wheelPreset, 0, 1, 1, 3);
+    const QVector<QPair<WheelAction, QString>> actions = {
+        {WheelAction::ScrollVertical, T("Senkrecht scrollen")}, {WheelAction::ScrollHorizontal, T("Seitlich scrollen")},
+        {WheelAction::Zoom, T("Zoomen")},                       {WheelAction::TrackHeight, T("Spurhöhe")},
+        {WheelAction::None, T("Nichts")}};
+    const QHash<QString, QString> names = {{"none", T("Mausrad")},
+                                           {"ctrl", T("Strg+Mausrad")},
+                                           {"shift", T("Shift+Mausrad")},
+                                           {"alt", T("Alt+Mausrad")}};
+    const QStringList mods = InputBindings::wheelModifiers();
+    for (int i = 0; i < mods.size(); ++i) {
+        const QString mod = mods[i];
+        auto* combo = new QComboBox;
+        combo->setObjectName("wheel_" + mod);
+        for (const auto& [action, text] : actions) combo->addItem(text, int(action));
+        connect(combo, &QComboBox::activated, this, [this, mod, combo](int index) {
+            InputBindings::instance().setWheelBinding(mod, WheelAction(combo->itemData(index).toInt()));
+            fillWheel();
+        });
+        m_wheel[mod] = combo;
+        auto* label = new QLabel(names.value(mod));
+        label->setBuddy(combo);
+        // Two columns: wheel and Ctrl left, Shift and Alt right
+        grid->addWidget(label, 1 + i / 2, (i % 2) * 2);
+        grid->addWidget(combo, 1 + i / 2, (i % 2) * 2 + 1);
+    }
+    grid->setColumnStretch(1, 1);
+    grid->setColumnStretch(3, 1);
+    return box;
+}
+
+void KeyBindingsDialog::fillWheel()
+{
+    const auto& bindings = InputBindings::instance();
+    for (auto it = m_wheel.begin(); it != m_wheel.end(); ++it) {
+        const QSignalBlocker block(it.value());
+        it.value()->setCurrentIndex(std::max(0, it.value()->findData(int(bindings.wheelBinding(it.key())))));
+    }
+    const QSignalBlocker block(m_wheelPreset);
+    m_wheelPreset->setCurrentIndex(std::max(0, m_wheelPreset->findData(bindings.currentWheelPreset())));
 }
 
 void KeyBindingsDialog::fill()
@@ -299,7 +359,7 @@ void KeyBindingsDialog::fill()
         const auto& e = entries[i];
         auto* cat = new QTableWidgetItem(e.category);
         cat->setForeground(Theme::textDim);
-        auto* text = new QTableWidgetItem(e.text);
+        auto* text = new QTableWidgetItem(e.action ? e.action->text() : e.text); // current (step sizes in it)
         text->setData(Qt::UserRole, e.id);
         m_table->setItem(i, ColCategory, cat);
         m_table->setItem(i, ColText, text);
@@ -325,6 +385,7 @@ void KeyBindingsDialog::fill()
         }
     }
     applyFilter();
+    fillWheel();
 }
 
 bool KeyBindingsDialog::importFile(const QString& path)

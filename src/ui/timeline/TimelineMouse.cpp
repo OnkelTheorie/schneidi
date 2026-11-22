@@ -2,6 +2,7 @@
 // Timeline: mouse and wheel input (select, drag, trim, rubber band, auto scroll).
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/ZoomAnchor.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -698,6 +699,15 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
     }
 }
 
+void TimelineView::clickSeek()
+{
+    if (!TimelineOptions::clickSetsPlayhead()) return;
+    // Framed like a click in the ruler: playback after the move follows the same rule (PlayheadMove, MainWindow)
+    emit playheadMoveStarted();
+    emit seekRequested(std::max(0, int(std::lround(xToFrame(m_pressPos.x())))));
+    emit playheadMoveFinished();
+}
+
 void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
     // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it
@@ -735,14 +745,18 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         m_rubberBase.clear();
         // A click (no frame drawn) into the empty part of a track between clips: that gap is picked
         const QPoint at = e->position().toPoint();
-        if (QRect(m_pressPos, at).normalized().width() < kDragStartPx && std::abs(at.y() - m_pressPos.y()) < kDragStartPx
-            && m_pressPos.x() >= kHeaderW)
+        const bool click = QRect(m_pressPos, at).normalized().width() < kDragStartPx
+                           && std::abs(at.y() - m_pressPos.y()) < kDragStartPx && m_pressPos.x() >= kHeaderW;
+        if (click)
             if (const auto row = rowAt(m_pressPos.y()); row && !isLocked(*row))
                 if (const GapPick g = gapAt(row->ref, xToFrame(m_pressPos.x())); g.on) pickGap(g);
+        if (click && e->button() == Qt::LeftButton) clickSeek();
         updateHoverCursor(e->position().toPoint());
         update();
         return;
     }
+    // A click on a clip (pressed, not moved): selected on the press; by choice the playhead goes there too
+    if (m_drag == Drag::MaybeMove && e->button() == Qt::LeftButton) clickSeek();
     if (m_drag == Drag::TrackMove || m_drag == Drag::TrackMaybeMove) {
         const bool moved = m_drag == Drag::TrackMove;
         const int to = m_trackDropTo;
@@ -850,13 +864,16 @@ void TimelineView::leaveEvent(QEvent*)
 
 void TimelineView::wheelEvent(QWheelEvent* e)
 {
-    // Qt swaps the axes while Alt is held -> evaluate both directions
+    // Qt swaps the axes while Alt is held (and some systems while Shift is held) -> evaluate both directions there.
+    // Otherwise a mostly sideways delta (touchpad swipe, tilt wheel) always pans sideways, whatever the wheel's
+    // binding: it is the direction the user moved in (wheelPansSideways)
     const QPoint ad = e->angleDelta();
-    const double steps = (ad.y() != 0 ? ad.y() : ad.x()) / 120.0;
+    const bool sideways = wheelPansSideways(ad, e->modifiers());
+    const double steps = (sideways ? ad.x() : ad.y() != 0 ? ad.y() : ad.x()) / 120.0;
     if (steps == 0) return;
     const double mouseX = e->position().x();
 
-    switch (InputBindings::instance().wheelAction(e->modifiers())) {
+    switch (sideways ? WheelAction::ScrollHorizontal : InputBindings::instance().wheelAction(e->modifiers())) {
     case WheelAction::ScrollVertical:
         setScrollY(m_view.scrollY - int(steps * 40));
         break;
@@ -864,6 +881,7 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         setLeftFrame(m_view.leftFrame - steps * (width() - kHeaderW) * 0.1 / m_view.pxPerFrame);
         break;
     case WheelAction::Zoom: {
+        stopFollowing(); // the user zooms: the view no longer follows the playing playhead
         // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
         const double ax = ZoomAnchor::anchorX(std::max<double>(mouseX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
         m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.2, steps), xToFrame(ax), ax - kHeaderW);

@@ -7,6 +7,9 @@
 // TimelineOps::transitionsAt (the renderer, per frame) gives exactly the spans of transitions() at a frame and asks
 // for source lengths only around it (each can open a file: a project with many dissolves waited for all of them).
 #include "check.h"
+#include "core/EditDefaults.h"
+
+#include <cmath>
 #include "timeline_guard.h"
 
 #include "core/Editor.h"
@@ -168,5 +171,23 @@ int main(int argc, char** argv)
     ed.addTransitions(100, std::nullopt);
     CHECK_EQ(spanOf(p).length(), full);
     CHECK(TimelineOps::findClip(p.timeline(), 1)->transOutStyle.align == TransitionAlign::Center);
+
+    // The default length is the user's choice (EditDefaults, Settings › Timeline): half a second here; a given
+    // length wins; back to 1 s
+    EditDefaults::setTransitionSeconds(0.5);
+    const int half = EditDefaults::transitionFrames(p.fps());
+    CHECK_EQ(half, int(std::lround(p.fps() * 0.5)));
+    setup(p, 100, 300);
+    CHECK(ed.addTransitionAt(1, 2, {}));
+    CHECK_EQ(spanOf(p).length(), half);
+    setup(p, 100, 300);
+    ed.addTransitions(100, std::nullopt);
+    CHECK_EQ(spanOf(p).length(), half);
+    setup(p, 100, 300);
+    ed.addTransitions(100, std::nullopt, {}, false, 10);
+    CHECK_EQ(spanOf(p).length(), 10);
+    EditDefaults::setTransitionSeconds(0); // invalid: back to the default
+    CHECK_EQ(EditDefaults::transitionSeconds(), EditDefaults::kTransitionSeconds);
+    CHECK_EQ(EditDefaults::transitionFrames(p.fps()), full);
     return Check::result();
 }

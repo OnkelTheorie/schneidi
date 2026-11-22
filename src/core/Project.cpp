@@ -1021,7 +1021,7 @@ bool Project::refreshMedia(const MediaInfo& probed)
     for (MediaInfo& m : m_media) {
         if (m.path != probed.path) continue;
         MediaInfo next = m;
-        next.length = probed.length;
+        next.length = probed.isImage && m.isImage ? m.length : probed.length; // a still keeps the length it got
         next.hasVideo = probed.hasVideo;
         next.hasAudio = probed.hasAudio;
         next.isImage = probed.isImage;

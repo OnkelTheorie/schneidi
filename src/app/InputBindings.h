@@ -116,6 +116,20 @@ public:
     QAction* action(const QString& id) const;
 
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
+    // The mouse wheel in the key bindings dialog: one action per modifier ("none", "ctrl", "shift", "alt" - other
+    // combinations stay as the file has them). Takes effect immediately and is saved
+    static QStringList wheelModifiers();
+    WheelAction wheelBinding(const QString& mods) const;
+    void setWheelBinding(const QString& mods, WheelAction action);
+    // Quick sets for the wheel alone, like other editors: "standard" (schneidi's default: wheel scrolls up/down,
+    // Ctrl sideways, Alt zooms, Shift track height), "premiere" (wheel sideways, Ctrl up/down, Alt zooms), "vegas"
+    // (wheel zooms, Ctrl sideways, Shift up/down), "kdenlive" (wheel up/down, Ctrl zooms, Shift sideways), "capcut"
+    // (CapCut and Shotcut: wheel sideways, Ctrl zooms, Shift up/down). The keys stay as they are
+    static QStringList wheelPresetIds();
+    static QString wheelPresetName(const QString& id);
+    static QHash<QString, WheelAction> wheelPreset(const QString& id);
+    void applyWheelPreset(const QString& id);
+    QString currentWheelPreset() const; // the quick set the four bindings match, empty if none
     QString filePath() const;
 
     // An action that only acts inside `scope` (e.g. Delete in the Media Pool's bin list): its keys work while that

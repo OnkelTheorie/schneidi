@@ -224,6 +224,10 @@ public:
                          const std::function<void(int ms)>& idleLimit);
     // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
     void settingsDialog(int tab = 0);
+    // After Settings › Timeline changed: the timelines redraw what they show by those choices (no restart)
+    void applyTimelineOptions();
+    // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline
+    void updateStepTexts();
     // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;
     // main.cpp hands it in): a tour runs on a practice project, nothing of an AI may land there
     void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }
@@ -386,6 +390,11 @@ private:
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);
+    // Stop and go back to where playback last started (Space by choice, the action "stop_return"); paused: only back
+    void stopAndReturn();
+    int m_playStart = -1;          // position where playback last started (Engine::speedChanged from 0)
+    int m_playStartMode = -1;      // its Engine::Mode: back only within the same mode
+    double m_lastSpeed = 0;
 
     void newProject(); // the default start template (or the user's choice, if they want to be asked)
     void openProjectDialog();

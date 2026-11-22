@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+
 #include "core/TimelineOps.h"
 #include "core/TrimFrames.h"
 #include "core/Types.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
 #include <QSet>
 #include <optional>
 #include <QWidget>
+#include <cstdlib>
 #include <functional>
 
 class Editor;
@@ -34,6 +37,16 @@ public:
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
     // DaVinci "Insufficient handles": ask whether to trim the clips so a transition fits
     static bool confirmTrimForTransition(QWidget* parent);
+    // A wheel delta that pans the timeline sideways whatever the wheel's binding: mostly sideways (touchpad swipe,
+    // tilt wheel) and neither Alt nor Shift held (Qt resp. the system turn an upright wheel sideways with those)
+    // The thumbnail tiles of a video clip starting at clipX (widget x) between left and right: their x from the
+    // clip's start and the clip frame each shows (TimelineOptions::Thumbnails; a filmstrip only where it is visible)
+    static QVector<QPair<double, int>> thumbnailTiles(TimelineOptions::Thumbnails mode, double clipX, int clipFrames,
+                                                      double pxPerFrame, int tileW, double left, double right);
+    static bool wheelPansSideways(QPoint angleDelta, Qt::KeyboardModifiers mods)
+    {
+        return std::abs(angleDelta.x()) > std::abs(angleDelta.y()) && !(mods & (Qt::AltModifier | Qt::ShiftModifier));
+    }
 
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
@@ -137,6 +150,9 @@ public:
 
 public slots:
     void setPlayhead(int frame);
+    // Playback speed (0 = paused; Engine::speedChanged): while it plays, the view may follow the playhead
+    // (TimelineOptions::follow, read at the start). Scrolling or zooming sideways stops that until the next start
+    void setPlaying(double speed);
     void setTool(TimelineView::Tool tool);
     void setSnapping(bool on);
     // View like DaVinci's timeline view options: clip name resp. duration in the title bar
@@ -378,7 +394,8 @@ private:
     void updateHoverCursor(const QPoint& pos);
     double frameToX(double frame) const;
     double xToFrame(double x) const;
-    QVector<int> snapPoints(const QSet<int>& exclude) const;
+    // withInOut = false: without the In/Out points (dragging them)
+    QVector<int> snapPoints(const QSet<int>& exclude, bool withInOut = true) const;
     int snapDelta(const QVector<int>& edges, const QSet<int>& exclude, bool* hit = nullptr) const;
 
     void drawRuler(QPainter& p);
@@ -469,10 +486,22 @@ private:
     static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
-    bool m_snap = true;
+    bool m_snap = TimelineOptions::snapping(); // remembered (the main window stores it)
     bool m_showNames = true;
     bool m_showDurations = false;
     int m_playhead = 0;
+    double m_playSpeed = 0;       // setPlaying
+    bool m_following = false;     // the view follows the playhead (until the user scrolls/zooms)
+    int m_followMode = 0;         // TimelineOptions::Follow at the play start
+    void followPlayhead(int frame); // turn the view along with the playing playhead (only from setPlayhead)
+    void stopFollowing() { m_following = false; } // the user moved the view
+    // A time as the user wants to see it (Settings › Timeline › Display), with the format read at the paint's start
+    TimelineOptions::TimeFormat m_timeFormat = TimelineOptions::TimeFormat::Timecode;
+    TimelineOptions::Thumbnails m_thumbnails = TimelineOptions::Thumbnails::Filmstrip; // read at the paint's start
+    TimelineOptions::WaveShape m_waveShape = TimelineOptions::WaveShape::Mirrored;
+    TimelineOptions::WaveScale m_waveScale = TimelineOptions::WaveScale::Db;
+    QString timeText(int frames) const;
+    void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 
     Drag m_drag = Drag::None;
     QSet<int> m_retimeClips; // clips with visible retime controls
