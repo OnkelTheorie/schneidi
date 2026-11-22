@@ -196,7 +196,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     StartupTrace::mark("buildActions");
     setupChat();
     StartupTrace::mark("setupChat");
-    if (phoneLayoutWanted()) enablePhoneLayout();
+    // The layout form for the screen the window opens on (maximized there); later sizes are checked as they come
+    if (QScreen* screen = startScreen()) {
+        const LayoutForm form = wantedForm(screen->availableGeometry().size());
+        if (form != LayoutForm::Desktop) setLayoutForm(form);
+    }
     applyAiMarkStyle();
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 

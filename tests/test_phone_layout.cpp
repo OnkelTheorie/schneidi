@@ -179,7 +179,7 @@ void testWindow(Engine& engine, const QSize& size)
     std::printf("--- window %dx%d\n", size.width(), size.height());
     MainWindow w(&engine);
     w.disableAutosave();
-    CHECK(!w.phoneShell()); // the offscreen screen (800x800) is no phone
+    CHECK(w.layoutForm() != MainWindow::LayoutForm::Phone); // the offscreen screen (800 px) is no phone
     w.enablePhoneLayout();
     PhoneShell* shell = w.phoneShell();
     if (!CHECK(shell)) return;

@@ -191,6 +191,7 @@ void MainWindow::setLayoutForm(LayoutForm form)
     } else if (m_phone) { // phone <-> tablet: the same shell, another arrangement
         m_phone->setTablet(form == LayoutForm::Tablet);
         if (form == LayoutForm::Tablet && m_phone->sheet().isEmpty()) m_phone->openSheet("inspector");
+        if (form == LayoutForm::Phone) m_phone->closeSheet(); // (the phone shows its timeline; a tool opens a panel)
     } else {
         enableShell(form == LayoutForm::Tablet);
     }
@@ -227,7 +228,10 @@ void MainWindow::snapshotDesktop()
 void MainWindow::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
-    QTimer::singleShot(0, this, &MainWindow::snapshotDesktop); // (after the first layout)
+    QTimer::singleShot(0, this, [this] { // after the first layout: the desktop's sizes, the form for the real size
+        snapshotDesktop();
+        checkLayoutForm();
+    });
 }
 
 void MainWindow::checkLayoutForm()
@@ -560,6 +564,7 @@ void MainWindow::phoneAdoptBackgroundJobs()
     m_backgroundJobs->setCompact(true);
     // After the title (and the live box), before undo/redo: the name gives up its room while something runs
     const bool hidden = m_backgroundJobs->isHidden(); // (shown only while there is work)
+    shellHome(m_backgroundJobs); // (made after the shell at the start: its desktop place is the page bar)
     m_backgroundJobs->setParent(m_phoneTopBar);
     m_backgroundJobs->setVisible(!hidden);
     phoneArrangeTopBar(m_phone->landscape());
