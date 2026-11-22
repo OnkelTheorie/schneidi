@@ -401,6 +401,11 @@ struct ExportWriter::Impl {
     // Own H.264 encoder (Settings::videoCodec kOwnH264)
     bool own = false;
     int ownQp = 23, ownBitrateK = 0, ownLookahead = -1; // lookahead -1 = the encoder's default
+    // Option "crf": constant quality (EncoderConfig::crf) instead of the fixed ownQp; 0 = fixed QP. Since 22.11.2026: a
+    // fixed QP gives every part of an edit the same QP, so a still or a calm stretch next to game footage got 2-4 dB
+    // less than x264's CRF gives it for a few bits (talk +14.6 % BD-rate VMAF against x264 -> +3.5 %, highlight
+    // +14.4 -> +0.8 %, short -3.9 % against the fixed QP).
+    int ownCrf = 0;
     // Memory for the first pass's kept per-macroblock analysis (option "analysis_mb"; pictures beyond it are analysed
     // again by the encoder). The Exporter scales it to the free RAM, 0 in low-memory renders
     int ownAnalysisMb = 256;
@@ -806,7 +811,7 @@ struct ExportWriter::Impl {
         std::unique_ptr<schneidi::h264::Encoder> probe;
         try {
             // (batches side by side, same numbers; with B pictures also the probe the adaptive placement plans with)
-            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20);
+            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20, true);
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
@@ -841,7 +846,7 @@ struct ExportWriter::Impl {
             if (ownFixedQp) ownStats.reset(); // (only the two passes towards the cap use it: not kept for the export)
             qInfo("Export: own H.264, QP %d predicts %.0f kbit/s for the cap %d kbit/s: %s", ownQp,
                   bits / 1000.0 * std::max(1.0, fps) / std::max(1, s.length), ownBitrateK,
-                  ownFixedQp ? "fixed QP" : "two passes towards the cap");
+                  ownFixedQp ? (ownCrf > 0 ? "constant quality" : "fixed QP") : "two passes towards the cap");
         } catch (const std::exception& e) {
             fail(QStringLiteral("s264, first pass: %1").arg(e.what()), true);
             return false;
@@ -864,11 +869,15 @@ struct ExportWriter::Impl {
         c.qp = ownQp;
         // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
         c.gop = kOwnGop;
+        // The cuts (ownKey) are key frames where the picture changes there; a still taken from the clip after it, or
+        // the same view from another file, continues as a P picture (the first pass knows the same)
+        c.softCutKeys = true;
         c.threads = ownThreads();
         c.fps = fps;
         c.bframes = ownBframes;
         c.speed = ownSpeed;
         if (ownLookahead >= 0) c.lookahead = ownLookahead;
+        if (ownCrf > 0) c.crf = ownCrf; // (ignored where startOwn adds a bit rate)
         return c;
     }
 
@@ -1338,7 +1347,7 @@ struct ExportWriter::Impl {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
         } else if (ownBitrateK > 0) {
-            // Fixed QP under the cap: the VBV holds it where the prediction was too low (a buffer of two seconds, as
+            // The quality level (constant quality or fixed QP) under the cap: the VBV holds it where the prediction was too low (a buffer of two seconds, as
             // x264 gets it under a cap; Exporter::encoderOptions), and the buffer as full at the end as at the start, so
             // the whole file stays within the cap too
             c.vbvMaxrateKbps = ownBitrateK;
@@ -2193,6 +2202,7 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     if (d->own) {
         for (const auto& [key, value] : s.videoOptions) {
             if (key == "qp") d->ownQp = std::clamp(value.toInt(), 10, 51);
+            if (key == "crf") d->ownCrf = std::clamp(value.toInt(), 0, 51);
             if (key == "bitrate") d->ownBitrateK = std::max(0, value.toInt());
             if (key == "lookahead") d->ownLookahead = std::clamp(value.toInt(), 0, 250);
             if (key == "bframes") d->ownBframes = std::clamp(value.toInt(), 0, 8);
@@ -2294,7 +2304,8 @@ int ExportWriter::ownH264Qp(int crf)
 {
     // Matched by file size on 1080p60 game footage (x264 medium, CRF 18/22/28 against fixed QPs): equal sizes at
     // about CRF + 9, our PSNR then higher (x264 spends bits on psy tuning); one step finer for the lack of psy
-    // tuning. High/medium/small = QP 26/30/36
+    // tuning. High/medium/small = QP 26/30/36. Since 22.11.2026 the export encodes at the level's CRF (option "crf");
+    // this QP is what the prediction against a cap codes its probes at (and the "qp" option of a direct caller)
     return std::clamp(crf + 8, 10, 51);
 }
 

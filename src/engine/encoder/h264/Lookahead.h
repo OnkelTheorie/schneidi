@@ -26,6 +26,7 @@ inline int bComboIndex(int a, int c, int maxB) { return (c - 1) * (maxB + 1) - (
 struct LookaheadFrame {
     std::vector<uint8_t> y, u, v; // source copy, strides width / width/2
     bool forceKeyframe = false;
+    bool softKey = false; // forceKeyframe holds only where the scene test (lower bar) finds a change: softCutKeys
     std::vector<uint8_t> half;                 // half-resolution luma, one 8x8 block per macroblock
     std::vector<int32_t> intraCost, interCost; // per macroblock: SATD of the best intra / motion prediction
     std::vector<int16_t> mvx, mvy;             // per macroblock, half-pel units of the half picture, into the previous frame
