@@ -6179,26 +6179,27 @@ const Basis8& basis8()
 void quantize8x8(const int* residual, int qp, double offset, int* levels, double* real = nullptr)
 {
     // Decoder: r = B^T (Z * v8 * 2^(qp/6 - 2)) B / 64, so Z = 256 * W / (n_i n_j v8 2^(qp/6)) with W = w64 / 64,
-    // i.e. Z = 4 * w64 / den: both multiplications by powers of two are exact, so this is the same double.
-    static const auto kScale = [] { // n_i n_j v8 by QP % 6 and position
+    // i.e. Z = w64 * (1 / (n_i n_j v8)) * 4 / 2^(qp/6): the reciprocal from a table (a division per coefficient
+    // was 1 % of the encoder's time at high rates), the last factor a power of two and so exact.
+    static const auto kInvScale = [] { // 1 / (n_i n_j v8) by QP % 6 and position
         std::array<std::array<double, 64>, 6> t{};
         const Basis8& B = basis8();
         for (int q = 0; q < 6; ++q)
             for (int k = 0; k < 64; ++k)
-                t[size_t(q)][size_t(k)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
+                t[size_t(q)][size_t(k)] = 1.0 / (B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)]);
         return t;
     }();
     int w64[64];
     forward8x8(residual, w64);
-    const double step2 = double(1 << (qp / 6));
-    const double* scale = kScale[size_t(qp % 6)].data();
+    const double pow2 = 4.0 / double(1 << (qp / 6));
+    const double* inv = kInvScale[size_t(qp % 6)].data();
     if (!levels) { // the trellis takes the real-valued levels only
         for (int k = 0; k < 64; ++k)
-            real[k] = 4.0 * double(w64[k]) / (scale[k] * step2);
+            real[k] = double(w64[k]) * inv[k] * pow2;
         return;
     }
     for (int k = 0; k < 64; ++k) {
-        const double x = 4.0 * double(w64[k]) / (scale[k] * step2);
+        const double x = double(w64[k]) * inv[k] * pow2;
         const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
         levels[k] = x < 0 ? -mag : mag;
         if (real)
@@ -6210,37 +6211,36 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels, double
 // doubles (same operations per coefficient), without the copy into scan order afterwards.
 void quantize8x8Scan(const int* residual, int qp, double* xs)
 {
-    static const auto kScaleScan = [] { // n_i n_j v8 by QP % 6 and scan position
+    static const auto kInvScaleScan = [] { // 1 / (n_i n_j v8) by QP % 6 and scan position
         std::array<std::array<double, 64>, 6> t{};
         const Basis8& B = basis8();
         for (int q = 0; q < 6; ++q)
             for (int s = 0; s < 64; ++s) {
                 const int k = kZigzag8[s];
-                t[size_t(q)][size_t(s)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
+                t[size_t(q)][size_t(s)] = 1.0 / (B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)]);
             }
         return t;
     }();
     int w64[64];
     forward8x8(residual, w64);
-    const double step2 = double(1 << (qp / 6));
-    const double* scale = kScaleScan[size_t(qp % 6)].data();
+    const double pow2 = 4.0 / double(1 << (qp / 6));
+    const double* inv = kInvScaleScan[size_t(qp % 6)].data();
     int s = 0;
 #ifdef SCHNEIDI_H264_SSE2
-    const __m128d four = _mm_set1_pd(4.0), st = _mm_set1_pd(step2);
+    const __m128d p2 = _mm_set1_pd(pow2);
     for (; s < 64; s += 2) {
         const __m128d w = _mm_cvtepi32_pd(_mm_setr_epi32(w64[kZigzag8[s]], w64[kZigzag8[s + 1]], 0, 0));
-        _mm_storeu_pd(xs + s, _mm_div_pd(_mm_mul_pd(four, w), _mm_mul_pd(_mm_loadu_pd(scale + s), st)));
+        _mm_storeu_pd(xs + s, _mm_mul_pd(_mm_mul_pd(w, _mm_loadu_pd(inv + s)), p2));
     }
 #elif defined(SCHNEIDI_H264_NEON)
-    const float64x2_t st = vdupq_n_f64(step2);
     for (; s < 64; s += 2) {
         const int32x2_t wi = {w64[kZigzag8[s]], w64[kZigzag8[s + 1]]};
         const float64x2_t w = vcvtq_f64_s64(vmovl_s32(wi));
-        vst1q_f64(xs + s, vdivq_f64(vmulq_n_f64(w, 4.0), vmulq_f64(vld1q_f64(scale + s), st)));
+        vst1q_f64(xs + s, vmulq_n_f64(vmulq_f64(w, vld1q_f64(inv + s)), pow2));
     }
 #endif
     for (; s < 64; ++s)
-        xs[s] = 4.0 * double(w64[kZigzag8[s]]) / (scale[s] * step2);
+        xs[s] = double(w64[kZigzag8[s]]) * inv[s] * pow2;
 }
 
 void dequant8x8(const int* levels, int qp, int* d)
