@@ -304,6 +304,7 @@ public:
     // Live: project, unsaved changes, selection, playhead, zoom and scroll stay (core rule); the desktop's splitter
     // sizes, open panels and page come back as they were when it returns
     void setLayoutForm(LayoutForm form);
+    class QPushButton* addMediaButton() const { return m_addMediaButton; } // tests
     void enablePhoneLayout(); // = setLayoutForm(Phone) (tests call it on a window built without it)
     class PhoneShell* phoneShell() const { return m_phone; }
     // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
@@ -784,6 +785,13 @@ private:
     QWidget* shellHome(QWidget* w);            // records w's desktop place before the shell takes it; returns w
     class QTimer* m_formTimer = nullptr;       // a resize settles before the form is checked
     void checkLayoutForm();
+    // Adding material the phone's way: schneidi's gallery (ui/MediaGallery; Android asks for the media permission
+    // first, refused = the system's file picker), the picked files into the pool and onto the timeline's end
+    void openGallery();
+    void pickWithSystem();
+    void addPicked(const QStringList& paths);
+    class QPushButton* m_addMediaButton = nullptr; // "+ Videos hinzufügen" over an empty timeline (phone, tablet)
+    void updateAddMediaButton();
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

@@ -681,6 +681,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
 
 void MediaPool::importDialog()
 {
+    if (m_importHandler) {
+        m_importHandler();
+        return;
+    }
     const QStringList files = QFileDialog::getOpenFileNames(
         this, T("Medien importieren"), QString(),
         T("Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "

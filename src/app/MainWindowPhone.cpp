@@ -18,7 +18,10 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/ElidedLabel.h"
 #include "ui/Inspector.h"
+#include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
+#include "core/TimelineOps.h"
+#include "engine/DeviceMedia.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/Mixer.h"
 #include "ui/TranscriptPanel.h"
@@ -29,7 +32,10 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QFileDialog>
 #include <QGridLayout>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QPointer>
 #include <QResizeEvent>
 #include <QScrollArea>
@@ -344,6 +350,19 @@ void MainWindow::enableShell(bool tablet)
     if (starting) m_timeline->view()->setTrackHeights(56, 46); // (a live switch keeps the user's heights)
     m_mediaPool->setCompactTiles(true); // two columns beside the bins in portrait
     m_mediaPool->setGeneratorsLast(true); // the material first, the text and shape tiles after it
+    m_mediaPool->setImportHandler([this] { openGallery(); }); // "Importieren…": the own gallery
+    // An empty timeline: one big button for the first step
+    m_addMediaButton = new QPushButton(T("+ Videos hinzufügen"), m_timeline->view());
+    m_addMediaButton->setObjectName("addMediaButton");
+    m_addMediaButton->setStyleSheet(Theme::primaryButtonStyle() + " QPushButton { padding: 14px 28px; }");
+    QFont big = m_addMediaButton->font();
+    big.setPointSizeF(big.pointSizeF() * 1.3);
+    big.setBold(true);
+    m_addMediaButton->setFont(big);
+    connect(m_addMediaButton, &QPushButton::clicked, this, &MainWindow::openGallery);
+    connect(m_project, &Project::timelineChanged, m_addMediaButton, [this] { updateAddMediaButton(); });
+    m_timeline->view()->installEventFilter(this); // (its resizes: the button placed again, MainWindow::eventFilter)
+    updateAddMediaButton();
     m_viewer->screen()->setMinimumSize(160, 72);
     m_viewer->setCompact(true);
     // The large viewer: nothing beside the viewer to hide (full screen stays)
@@ -458,6 +477,10 @@ void MainWindow::disableShell()
     m_timeline->view()->setMinimumHeight(m_shellHomes->timelineMin);
     m_mediaPool->setCompactTiles(false);
     m_mediaPool->setGeneratorsLast(false);
+    m_mediaPool->setImportHandler(nullptr);
+    m_timeline->view()->removeEventFilter(this);
+    delete m_addMediaButton;
+    m_addMediaButton = nullptr;
     m_viewer->screen()->setMinimumSize(m_shellHomes->viewerMin);
     m_viewer->setCompact(false);
     if (auto* large = m_viewer->findChild<QToolButton*>("viewAction_large")) large->show();
@@ -493,6 +516,76 @@ void MainWindow::phoneAdoptBackgroundJobs()
     // A tap: what runs, in full (a phone has no tooltips)
     connect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this,
             [this](const QString& text) { m_viewer->showNotice(text, 4000); });
+}
+
+void MainWindow::updateAddMediaButton()
+{
+    if (!m_addMediaButton) return;
+    const Timeline& tl = m_project->timeline();
+    bool empty = true;
+    for (const auto* tracks : {&tl.video, &tl.audio})
+        for (const Track& t : *tracks)
+            if (!t.clips.isEmpty()) empty = false;
+    m_addMediaButton->setVisible(empty);
+    if (!empty) return;
+    m_addMediaButton->adjustSize();
+    QWidget* view = m_timeline->view();
+    const int left = TimelineView::kHeaderW;
+    m_addMediaButton->move(left + (view->width() - left - m_addMediaButton->width()) / 2,
+                           std::max(TimelineView::kRulerH + 8, (view->height() - m_addMediaButton->height()) / 2));
+    m_addMediaButton->raise();
+}
+
+void MainWindow::openGallery()
+{
+    if (DeviceMedia::hasPermission()) {
+        MediaGallery gallery(this);
+        if (m_phone) gallery.setWindowState(gallery.windowState() | Qt::WindowMaximized);
+        else gallery.resize(std::min(width() - 40, 980), std::min(height() - 40, 760));
+        const bool ok = gallery.exec() == QDialog::Accepted;
+        if (ok) addPicked(gallery.chosenPaths());
+        else if (gallery.otherFileWanted()) pickWithSystem();
+        return;
+    }
+    // Android: the permission first, with the why; refused = the system's picker (it needs none)
+    QMessageBox ask(this);
+    ask.setWindowTitle(T("Videos hinzufügen"));
+    ask.setText(T("schneidi zeigt dir hier deine Videos und Fotos zum Auswählen. Dafür fragt Android gleich, ob "
+                  "schneidi sie lesen darf. Es wird nichts hochgeladen oder verändert."));
+    QPushButton* go = ask.addButton(T("Weiter"), QMessageBox::AcceptRole);
+    QPushButton* other = ask.addButton(T("Andere Datei…"), QMessageBox::RejectRole);
+    ask.exec();
+    if (ask.clickedButton() == other || ask.clickedButton() != go) {
+        if (ask.clickedButton() == other) pickWithSystem();
+        return;
+    }
+    DeviceMedia::requestPermission(this, [this](bool granted) {
+        if (granted) QTimer::singleShot(0, this, &MainWindow::openGallery);
+        else {
+            m_viewer->showNotice(T("Ohne Erlaubnis öffnet sich die Dateiauswahl von Android."), 3500);
+            QTimer::singleShot(0, this, &MainWindow::pickWithSystem);
+        }
+    });
+}
+
+void MainWindow::pickWithSystem()
+{
+    const QStringList files = QFileDialog::getOpenFileNames(this, T("Videos hinzufügen"), QString(),
+        T("Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "
+          "*.png *.jpg *.jpeg *.webp *.bmp);;Alle Dateien (*)"));
+    if (!files.isEmpty()) addPicked(files);
+}
+
+void MainWindow::addPicked(const QStringList& paths)
+{
+    if (paths.isEmpty()) return;
+    // Into the pool and onto the timeline's end, in the order picked; an empty timeline takes the first clip's format
+    const Timeline& tl = m_project->timeline();
+    bool empty = true;
+    for (const auto* tracks : {&tl.video, &tl.audio})
+        for (const Track& t : *tracks)
+            if (!t.clips.isEmpty()) empty = false;
+    importFiles(paths, true, empty);
 }
 
 void MainWindow::phoneTogglePanel(QWidget* panel, bool on)

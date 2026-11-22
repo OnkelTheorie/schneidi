@@ -314,6 +314,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/FfmpegLog.h        src/engine/FfmpegLog.cpp
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
     src/engine/ContentUri.h       src/engine/ContentUri.cpp
+    src/engine/DeviceMedia.h      src/engine/DeviceMedia.cpp
+    src/ui/MediaGallery.h         src/ui/MediaGallery.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp
@@ -672,6 +674,8 @@ if(ANDROID)
     else()
         set(_schneidi_target_sdk 35)
     endif()
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate) # (the media permission: QtAndroidPrivate::requestPermission)
+    target_link_libraries(schneidi_lib PRIVATE Qt6::CorePrivate)
     # Qt's own texts (Cancel, Save, a text field's menu) in the UI languages: an APK has no Qt translations folder,
     # they go into the resources (core/I18n.cpp looks in :/qt-translations; ~2.4 MB)
     set(_qt_tr_dir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_TRANSLATIONS}")

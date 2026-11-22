@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include <functional>
 #include "core/PoolFilter.h"
 #include "core/Types.h"
 #include "engine/MediaProbe.h"
@@ -91,6 +92,8 @@ public:
     // The generators (text, shape) after the clips instead of before them (the phone: its two columns show the
     // material first; only the order shown, nothing in the project)
     void setGeneratorsLast(bool on);
+    // Instead of the file dialog behind "Importieren…" (the phone: schneidi's own gallery); empty = the dialog
+    void setImportHandler(std::function<void()> handler) { m_importHandler = std::move(handler); }
     void setSort(SortKey key, bool ascending);
     // Search (magnifier on top): shows matching clips (name contains text) in the bin and its sub-bins, and below them
     // the shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
@@ -247,6 +250,7 @@ private:
     ViewMode m_viewMode = ViewMode::Thumbnails;
     bool m_compactTiles = false;
     bool m_generatorsLast = false;
+    std::function<void()> m_importHandler;
     SortKey m_sortKey = SortKey::Name;
     bool m_sortAscending = true;
     bool m_saveSettings = true;

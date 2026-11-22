@@ -17,6 +17,7 @@
 #include "engine/Engine.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
+#include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -29,6 +30,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QTemporaryDir>
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollBar>
@@ -562,6 +566,113 @@ void testToolBarSwipe(Engine& engine)
     CHECK(shell->sheet().isEmpty());
 }
 
+// A second-long WAV of `seconds` (silence) for the gallery's files
+QString writeWav(const QString& path, int seconds)
+{
+    const quint32 rate = 8000, bytes = rate * 2 * quint32(seconds);
+    QByteArray d;
+    auto u32 = [&d](quint32 v) { d.append(reinterpret_cast<const char*>(&v), 4); };
+    auto u16 = [&d](quint16 v) { d.append(reinterpret_cast<const char*>(&v), 2); };
+    d += "RIFF";
+    u32(36 + bytes);
+    d += "WAVEfmt ";
+    u32(16);
+    u16(1);
+    u16(1);
+    u32(rate);
+    u32(rate * 2);
+    u16(2);
+    u16(16);
+    d += "data";
+    u32(bytes);
+    d.append(QByteArray(int(bytes), '\0'));
+    QFile f(path);
+    if (f.open(QIODevice::WriteOnly)) f.write(d);
+    return path;
+}
+
+// The phone's way to add material: the empty timeline's big button, schneidi's gallery (newest first, by day, picked
+// in order with numbers), the picks in that order into the pool and onto the timeline
+void testGallery(Engine& engine)
+{
+    QTemporaryDir dir;
+    const QDateTime now = QDateTime::currentDateTime();
+    QVector<DeviceMediaItem> items;
+    const auto item = [&](const char* name, int seconds, QDateTime date, bool video) {
+        DeviceMediaItem m;
+        m.path = writeWav(dir.filePath(name), seconds);
+        m.name = name;
+        m.date = date;
+        m.durationMs = seconds * 1000;
+        m.video = video;
+        items << m;
+    };
+    item("one.wav", 1, now, true);
+    item("two.wav", 2, now.addSecs(-60), true);
+    item("three.wav", 3, now.addDays(-1), true);
+    item("photo.wav", 1, now.addDays(-3), false); // (shown as a photo)
+    DeviceMedia::setTestItems(items);
+    {
+        MediaGallery g;
+        g.resize(411, 700);
+        g.show();
+        settle();
+        CHECK(g.tiles().size() == 4);
+        CHECK(!g.addButton()->isEnabled());
+        // Picked: three, then one; the numbers follow the order, unpicking renumbers
+        const auto tileOf = [&](int i) -> GalleryTile* {
+            for (GalleryTile* t : g.tiles())
+                if (t->item() == i) return t;
+            return nullptr;
+        };
+        QTest::mouseClick(tileOf(2), Qt::LeftButton);
+        QTest::mouseClick(tileOf(0), Qt::LeftButton);
+        QTest::mouseClick(tileOf(1), Qt::LeftButton);
+        CHECK(tileOf(2)->number() == 1 && tileOf(0)->number() == 2 && tileOf(1)->number() == 3);
+        QTest::mouseClick(tileOf(0), Qt::LeftButton); // unpicked: two moves up
+        CHECK(tileOf(0)->number() == 0 && tileOf(1)->number() == 2);
+        CHECK(g.addButton()->isEnabled() && g.addButton()->text().contains("2"));
+        CHECK(g.chosenPaths() == QStringList({items[2].path, items[1].path}));
+        g.setFilter(MediaGallery::Filter::Photos);
+        CHECK(g.tiles().size() == 1);
+        g.setFilter(MediaGallery::Filter::Videos);
+        CHECK(g.tiles().size() == 3);
+        CHECK(tileOf(2)->number() == 1); // (the picks stay through the filter)
+    }
+    // The flow: the big button over the empty timeline, the gallery, two picked, added in that order
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.enablePhoneLayout();
+    w.resize(411, 590);
+    w.show();
+    settle();
+    QPushButton* add = w.addMediaButton();
+    if (!CHECK(add && add->isVisible())) return;
+    CHECK(inside(add, &w));
+    bool shown = false;
+    QTimer::singleShot(300, [&] {
+        auto* g = qobject_cast<MediaGallery*>(QApplication::activeModalWidget());
+        if (!g) return;
+        shown = true;
+        for (int want : {2, 0})
+            for (GalleryTile* t : g->tiles())
+                if (t->item() == want) QTest::mouseClick(t, Qt::LeftButton);
+        QTest::mouseClick(g->addButton(), Qt::LeftButton);
+    });
+    QTest::mouseClick(add, Qt::LeftButton);
+    QTest::qWait(3000); // (probing)
+    settle();
+    CHECK(shown);
+    const Timeline& tl = w.editor()->project()->timeline();
+    QStringList order;
+    for (const Track& t : tl.audio)
+        for (const Clip& c : t.clips) order << QFileInfo(c.mediaPath).fileName();
+    Check::report(order == QStringList({"three.wav", "one.wav"}), "gallery: picks on the timeline in order", __FILE__,
+                  __LINE__, order.join(", "));
+    CHECK(!add->isVisible()); // (the timeline has clips now)
+    DeviceMedia::setTestItems({});
+}
+
 // Android: a dialog shown narrower than its contents grows about its middle (Touch::installDialogFit)
 void testDialogFit()
 {
@@ -600,6 +711,7 @@ int main(int argc, char** argv)
     testSilentRestore(engine);
     Touch::installKineticScrolling(&app); // (main.cpp: every scroll area takes a finger)
     testToolBarSwipe(engine);
+    testGallery(engine);
     testWindow(engine, {411, 914});
     testWindow(engine, {914, 411});
     // As on a phone: touch mode (larger controls) and the app's style sheet with it

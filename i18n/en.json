@@ -3697,5 +3697,17 @@
  "Tablet": "Tablet",
  "Desktop": "Desktop",
  "Anordnung": "Layout",
- "Handy: Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. Tablet: Werkzeugleiste links, ein Bereich fest daneben. Automatisch: nach der Fenstergröße, wechselt sofort.": "Phone: viewer, timeline and tools stacked, one panel at a time. Tablet: tool rail on the left, one panel docked beside. Automatic: by the window size, switches at once."
+ "Handy: Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. Tablet: Werkzeugleiste links, ein Bereich fest daneben. Automatisch: nach der Fenstergröße, wechselt sofort.": "Phone: viewer, timeline and tools stacked, one panel at a time. Tablet: tool rail on the left, one panel docked beside. Automatic: by the window size, switches at once.",
+ "+ Videos hinzufügen": "+ Add videos",
+ "Videos hinzufügen": "Add videos",
+ "Videos": "Videos",
+ "Fotos": "Photos",
+ "Andere Datei…": "Other file…",
+ "Hinzufügen (%1)": "Add (%1)",
+ "Heute": "Today",
+ "Gestern": "Yesterday",
+ "Keine Videos oder Fotos auf dem Gerät gefunden. „Andere Datei…“ öffnet die Dateiauswahl.": "No videos or photos found on the device. “Other file…” opens the file picker.",
+ "Hier ist nichts von dieser Art.": "Nothing of this kind here.",
+ "schneidi zeigt dir hier deine Videos und Fotos zum Auswählen. Dafür fragt Android gleich, ob schneidi sie lesen darf. Es wird nichts hochgeladen oder verändert.": "schneidi shows your videos and photos here to pick from. Android will ask whether schneidi may read them. Nothing is uploaded or changed.",
+ "Ohne Erlaubnis öffnet sich die Dateiauswahl von Android.": "Without permission, Android's file picker opens."
 }
