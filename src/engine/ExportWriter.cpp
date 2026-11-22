@@ -788,17 +788,21 @@ struct ExportWriter::Impl {
     // Own encoder, bit rate cap: every picture rendered once more for the encoder's first pass (its cheap lookahead
     // analysis of the whole clip, nothing encoded). With it the clip's size at the quality level's QP is predicted
     // (probeOwnBits); below the cap that QP is kept (like x264's CRF under a VBV cap: easy pictures do not fill the
-    // cap), above it the encoder's two-pass rate control aims at the cap.
+    // cap; the encoder's VBV holds the cap where the prediction was wrong, startOwn), above it the encoder's two-pass
+    // rate control aims at the cap.
     bool ownFirstPass()
     {
-        // Probe pairs (a key picture and the P picture after it) at the start, a third and two thirds into the clip
-        std::vector<int> probeAt;
-        for (int a : {0, s.length / 3, 2 * s.length / 3})
-            if (a + 1 < s.length && (probeAt.empty() || a > probeAt.back() + 1)) probeAt.push_back(a);
-        // Each pair is coded as soon as its second picture is there: only the key picture waits (one clone), not up to
-        // six whole pictures for the whole first pass
+        // Probe runs of kOwnProbeRun pictures around a sixth, half and five sixths into the clip (the whole clip when
+        // it is shorter), each coded as the export codes it while the first pass goes by: no picture is kept for them
+        std::vector<std::pair<int, int>> runs; // first picture, count
+        for (int sixth : {1, 3, 5}) {
+            int a = std::max(0, int(int64_t(s.length) * sixth / 6) - kOwnProbeRun / 2);
+            if (!runs.empty()) a = std::max(a, runs.back().first + runs.back().second);
+            const int n = std::min(kOwnProbeRun, s.length - a);
+            if (n >= 2) runs.push_back({a, n});
+        }
         std::vector<OwnProbe> probes;
-        FramePtr waiting;
+        std::unique_ptr<schneidi::h264::Encoder> probe;
         try {
             // (batches side by side, same numbers; with B pictures also the probe the adaptive placement plans with)
             schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20);
@@ -810,22 +814,28 @@ struct ExportWriter::Impl {
                     return false;
                 }
                 pass.add(ownPicture(f.get()), ownKeyAt(i));
-                for (int a : probeAt) {
-                    if (i == a) waiting.reset(av_frame_clone(f.get()));
-                    else if (i == a + 1 && waiting) {
-                        probes.push_back(probeOwnPair(a, waiting.get(), f.get()));
-                        waiting.reset();
+                for (const auto& [a, n] : runs) {
+                    if (i < a || i >= a + n) continue;
+                    if (i == a) {
+                        probe = std::make_unique<schneidi::h264::Encoder>(ownConfig(false));
+                        probes.push_back({a, {}, {}});
+                    }
+                    schneidi::h264::EncodeHints hints;
+                    const bool hinted = ownHintAt(i, hints);
+                    probeOwnTake(probes.back(), probe->encode(ownPicture(f.get()), ownKeyAt(i), hinted ? &hints : nullptr), *probe);
+                    if (i == a + n - 1) {
+                        for (std::vector<uint8_t> au; !(au = probe->flush()).empty();) probeOwnTake(probes.back(), au, *probe);
+                        probe.reset();
                     }
                 }
                 ++analysed;
             }
-            waiting.reset();
+            probe.reset();
             if (stop) return false;
             ownStats = pass.stats();
             const double bits = probeOwnBits(*ownStats, probes);
             const double cap = ownBitrateK * 1000.0 * s.length / std::max(1.0, fps);
-            // Margin for what the probe does not see (macroblock tree, the model's error): on 720p30 noise the
-            // prediction was 21 % under the real size at that QP
+            // Margin for the prediction's error (within about 25 % on game, vertical and talk projects, 22.11.2026)
             ownFixedQp = bits > 0 && bits < kOwnFixedShare * cap;
             if (ownFixedQp) ownStats.reset(); // (only the two passes towards the cap use it: not kept for the export)
             qInfo("Export: own H.264, QP %d predicts %.0f kbit/s for the cap %d kbit/s: %s", ownQp,
@@ -837,61 +847,77 @@ struct ExportWriter::Impl {
         }
         return !stop;
     }
-    static constexpr double kOwnFixedShare = 0.7;
-    static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (startOwn, probeOwnBits)
+    static constexpr double kOwnFixedShare = 0.8;
+    static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (ownConfig, probeOwnBits)
+    static constexpr int kOwnProbeRun = 30;
 
-    // A probe pair coded at ownQp: the key picture at `at` and the next one as a P picture
-    struct OwnProbe {
-        int at = 0;
-        double bitsI = 0, bitsP = 0;
-    };
-    OwnProbe probeOwnPair(int at, const AVFrame* key, const AVFrame* next) const
+    // The encoder's settings as the export codes (two passes: without the bit rate, startOwn adds it); probe = for a
+    // probe run of ownFirstPass (no frame threading: fewer pictures in flight; the stream does not depend on it)
+    schneidi::h264::EncoderConfig ownConfig(bool probe) const
     {
         schneidi::h264::EncoderConfig c;
         c.width = width;
         c.height = height;
         c.qp = ownQp;
+        // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
         c.gop = kOwnGop;
         c.threads = ownThreads();
         c.fps = fps;
-        c.lookahead = 0; // (no macroblock tree either)
-        c.bframes = 0;   // a key picture and a P picture: the model counts I and P costs (B pictures only save bits)
-        c.sceneCut = false;
-        c.frameThreads = false;
-        schneidi::h264::Encoder probe(c);
-        OwnProbe p;
-        p.at = at;
-        p.bitsI = double(probe.encode(ownPicture(key)).size()) * 8;
-        p.bitsP = double(probe.encode(ownPicture(next)).size()) * 8;
-        return p;
+        c.bframes = ownBframes;
+        c.speed = ownSpeed;
+        if (ownLookahead >= 0) c.lookahead = ownLookahead;
+        if (probe) c.frameThreads = false;
+        return c;
     }
 
-    // Bits of the whole clip at ownQp: per probe pair (probeOwnPair) bits per first-pass cost of each type times the
-    // clip's costs (key pictures placed as the encoder places them; a pair whose second picture is a key picture there
-    // does not count). 0 = no usable pair.
+    // A probe run of ownFirstPass coded at ownQp: per picture of the run (display order) its bits and type
+    struct OwnProbe {
+        int at = 0;
+        std::vector<double> bits;
+        std::vector<char> type;
+    };
+    static void probeOwnTake(OwnProbe& p, const std::vector<uint8_t>& au, const schneidi::h264::Encoder& enc)
+    {
+        if (au.empty()) return;
+        const size_t d = size_t(std::max(0, enc.lastDisplayIndex()));
+        if (p.bits.size() <= d) {
+            p.bits.resize(d + 1, 0);
+            p.type.resize(d + 1, 'P');
+        }
+        p.bits[d] = double(au.size()) * 8;
+        p.type[d] = enc.lastType();
+    }
+
+    // Bits of the whole clip at ownQp: the probe runs' bits per first-pass need (firstPassNeed: the costs over the
+    // quantiser step above a dead zone - bits per plain cost sum differ 3-4x between calm and moving pictures, and a
+    // P picture right after a key picture costs half of one further on) for I pictures and for the others, times the
+    // clip's needs (key pictures placed as the encoder places them). 0 = no usable run.
     double probeOwnBits(const schneidi::h264::FirstPassStats& st, const std::vector<OwnProbe>& probes) const
     {
-        std::vector<char> key(st.size(), 0);
-        double costI = 0, costP = 0;
+        const int mbs = ((width + 15) / 16) * ((height + 15) / 16);
+        double needI = 0, needP = 0;
         int since = 0;
         for (size_t i = 0; i < st.size(); ++i, ++since) {
-            if (i == 0 || since >= kOwnGop || st.forceKeyframe[i] || (st.sceneChange[i] && since >= 6)) {
-                key[i] = 1;
-                since = 0;
+            const bool key = i == 0 || since >= kOwnGop || st.forceKeyframe[i] || (st.sceneChange[i] && since >= 6);
+            if (key) since = 0;
+            (key ? needI : needP) += key ? schneidi::h264::firstPassNeed(st, i, true, ownQp - 3, mbs)
+                                         : schneidi::h264::firstPassNeed(st, i, false, ownQp, mbs);
+        }
+        double bitsI = 0, probeI = 0, bitsP = 0, probeP = 0;
+        for (const OwnProbe& p : probes)
+            for (size_t d = 0; d < p.bits.size(); ++d) {
+                const size_t i = size_t(p.at) + d;
+                if (i >= st.size()) break;
+                if (p.type[d] == 'I') {
+                    bitsI += p.bits[d];
+                    probeI += schneidi::h264::firstPassNeed(st, i, true, ownQp - 3, mbs);
+                } else {
+                    bitsP += p.bits[d];
+                    probeP += schneidi::h264::firstPassNeed(st, i, false, ownQp, mbs);
+                }
             }
-            (key[i] ? costI : costP) += key[i] ? st.intraSum[i] : st.interSum[i];
-        }
-        double kI = 0, kP = 0;
-        int pairs = 0;
-        for (const OwnProbe& p : probes) {
-            const size_t a = size_t(p.at);
-            if (a + 1 >= st.size() || key[a + 1]) continue;
-            kI += p.bitsI / std::max(1.0, st.intraSum[a]);
-            kP += p.bitsP / std::max(1.0, st.interSum[a + 1]);
-            ++pairs;
-        }
-        if (pairs == 0) return 0;
-        return (kI * costI + kP * costP) / pairs;
+        if (probeI <= 0 || probeP <= 0) return 0;
+        return bitsI / probeI * needI + bitsP / probeP * needP;
     }
 
     void fetch()
@@ -1305,21 +1331,18 @@ struct ExportWriter::Impl {
     // its parameter sets (MP4/MOV make an avcC of them, Matroska its CodecPrivate) and the header
     bool startOwn()
     {
-        schneidi::h264::EncoderConfig c;
-        c.width = width;
-        c.height = height;
-        c.qp = ownQp;
-        // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
-        c.gop = kOwnGop;
-        c.threads = ownThreads();
-        c.fps = fps;
-        c.bframes = ownBframes;
-        c.speed = ownSpeed;
+        schneidi::h264::EncoderConfig c = ownConfig(false);
         if (ownBitrateK > 0 && !ownFixedQp) {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
+        } else if (ownBitrateK > 0) {
+            // Fixed QP under the cap: the VBV holds it where the prediction was too low (a buffer of two seconds, as
+            // x264 gets it under a cap; Exporter::codecOptions), and the buffer as full at the end as at the start, so
+            // the whole file stays within the cap too
+            c.vbvMaxrateKbps = ownBitrateK;
+            c.vbvBufsizeKbits = 2 * ownBitrateK;
+            c.vbvEndFill = c.vbvInit;
         }
-        if (ownLookahead >= 0) c.lookahead = ownLookahead;
         // The colour tags exactly as an FFmpeg encoder gets them (newVideoEncoder): the VUI of the SPS and the stream's
         // parameters below say the same (AVColor* values are the H.273 codes the VUI carries)
         const AVColorSpace matrix = matrixOf(colorspace, height);

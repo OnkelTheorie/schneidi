@@ -1842,9 +1842,8 @@ S264_DEV(bool, gTpRun, !devEnv("H264_TPRUN") || std::atoi(devEnv("H264_TPRUN")) 
 // What picture j needs at a quantiser scale against the picture before it (key: as an I picture), in bits per
 // k: its blocks' first-pass costs over the quantiser step, each above the dead zone (from the picture's cost
 // histogram; without one, the plain sum).
-double Encoder::tpRawNeed(size_t j, bool key, double scale) const
+static double rawNeed(const FirstPassStats& st, size_t j, bool key, double scale)
 {
-    const FirstPassStats& st = *cfg_.firstPass;
     if (st.histCount.size() != st.size() * 2 * FirstPassStats::kHistBins)
         return (key ? st.intraSum[j] : st.interSum[j]) * scale;
     const size_t base = (j * 2 + (key ? 0 : 1)) * FirstPassStats::kHistBins;
@@ -1858,6 +1857,16 @@ double Encoder::tpRawNeed(size_t j, bool key, double scale) const
             need += over;
     }
     return need;
+}
+
+double Encoder::tpRawNeed(size_t j, bool key, double scale) const
+{
+    return rawNeed(*cfg_.firstPass, j, key, scale);
+}
+
+double firstPassNeed(const FirstPassStats& stats, size_t i, bool key, double qp, int macroblocks)
+{
+    return i < stats.size() ? rawNeed(stats, i, key, std::exp2(-qp / 6.0)) + gTpFloor * macroblocks : 0.0;
 }
 
 // What picture i needs at QP qp, in bits per k. A picture whose reference is not the picture before it

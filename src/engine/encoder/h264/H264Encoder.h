@@ -249,6 +249,11 @@ inline constexpr double kChunkVbvFill = 0.5, kChunkVbvEnd = 0.55;
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 // Constant quality: the clip's mean complexity from the first pass (crfQp's measure), < 0 without pictures.
 double crfClipComplexity(const FirstPassStats& stats, const EncoderConfig& cfg);
+// What picture i of the first pass needs coded at QP qp (key: as an I picture, else against the picture before), in
+// bits per k: the two-pass bit model's measure (its blocks' costs over the quantiser step, each above the dead zone,
+// from the picture's cost histogram, plus what every macroblock costs whatever its content). A calm picture needs next
+// to nothing however large its plain cost sum - bits follow this, not the cost sum. macroblocks: of the coded size.
+double firstPassNeed(const FirstPassStats& stats, size_t i, bool key, double qp, int macroblocks);
 
 // Where B pictures pay, measured instead of estimated: every kInterval pictures and after each
 // scene change or keyframe the caller asks for, the next few half-size pictures (the lookahead's)
