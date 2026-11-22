@@ -316,6 +316,9 @@ void testWindow(Engine& engine, const QSize& size)
         QToolButton* b = shell->toolButton(id);
         QWidget* box = b ? b->parentWidget()->parentWidget() : nullptr; // clip tools -> the bar's box
         const bool ok = b && box && box->rect().contains(QRect(b->mapTo(box, QPoint(0, 0)), b->size()));
+        if (b) // the label whole ("Lauts…" on the phone)
+            Check::report(b->width() >= b->sizeHint().width(), "clip tool label not cut", __FILE__, __LINE__,
+                          QString("%1: %2 < %3").arg(b->text()).arg(b->width()).arg(b->sizeHint().width()));
         Check::report(ok, "clip tool inside the bar's box", __FILE__, __LINE__,
                       QString("%1 at %2 in %3").arg(id).arg(b ? rect(QRect(b->mapTo(box, QPoint(0, 0)), b->size())) : "-")
                           .arg(box ? rect(box->rect()) : "-"));

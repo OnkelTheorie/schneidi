@@ -369,17 +369,28 @@ void PhoneShell::updateButtons()
         const QList<QToolButton*> buttons = bar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
         const int spacing = std::max(0, static_cast<QBoxLayout*>(bar->layout())->spacing());
         const int room = width() - m_toolLay->contentsMargins().left() - m_toolLay->contentsMargins().right();
-        int total = 0, widest = 1;
+        // Each button at its own label's width; when they do not fit, all widen by one factor so that the first one
+        // past the edge is cut in half (a long label such as "Geschwindigkeit" never widens the short ones alone)
+        QVector<int> hints;
+        int total = 0;
         for (QToolButton* b : buttons) {
-            total += b->sizeHint().width() + spacing;
-            widest = std::max(widest, b->sizeHint().width() + spacing);
+            if (b->isHidden()) continue;
+            hints << b->sizeHint().width() + spacing;
+            total += hints.back();
         }
-        int even = 0;
+        double factor = 1.0;
         if (!m_landscape && total > room && room > 0) {
-            const int whole = std::max(1, int(double(room) / widest - 0.5)); // buttons fully in sight
-            even = int(room / (whole + 0.5)) - spacing;
+            int whole = 0, sum = 0;
+            while (whole < hints.size() && sum + hints[whole] <= room) sum += hints[whole++];
+            if (whole < hints.size()) {
+                const double wanted = sum + 0.5 * hints[whole];
+                factor = std::max(1.0, room / wanted);
+                // A button barely in sight (less than a third) says nothing: one button less in sight, wider ones
+                if (room - sum < hints[whole] / 3 && whole > 0) factor = std::max(1.0, room / (sum - hints[whole - 1] * 0.5));
+            }
         }
-        for (QToolButton* b : buttons) b->setMinimumWidth(m_landscape ? 0 : std::max(b->sizeHint().width(), even));
+        for (QToolButton* b : buttons)
+            b->setMinimumWidth(m_landscape ? 0 : int((b->sizeHint().width() + spacing) * factor) - spacing);
     }
     const QMargins m = m_toolLay->contentsMargins();
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());
