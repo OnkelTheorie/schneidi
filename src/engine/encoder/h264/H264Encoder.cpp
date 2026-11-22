@@ -7917,22 +7917,25 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // split only when its estimate is below kEstSplit times the 16x16 one. Measured (two-pass, AQ +
     // tree, 600 pictures CS2, BD-rate PSNR-Y / SSIM-Y / instructions against coding every candidate):
     // -0.40 / -0.33 % / -1.7 % (the split now competes with its best transform, not only with 4x4;
-    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit 1.0: +0.10 %
-    // for another -0.5 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
+    // the estimate picks the wrong transform for 0.12 % of the inter cost). kEstSplit and kEstWhole (below)
+    // at 1: only the layout with the lower estimate is coded. EncoderConfig::modeEstimate; H264_RDEST=0/1
+    // overrides, H264_ESTSPLIT the factor (1e9 = the split is always coded).
     static const double kEstBoth = devEnv("H264_ESTBOTH") ? std::atof(devEnv("H264_ESTBOTH")) : 0.0;
-    static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1e9;
+    static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1.0;
     // The split is planned with one transform only where the 16x16 layout's two plans were more than kEstSplitT *
     // lambda apart: the one that won there (it wins for the split as well then; the loss by the statistics is
     // 0.14 % of the luma cost of those macroblocks). Measured 22.11.2026 (fixed QP 22 / 26 / 30 / 34, 900 pictures
     // CS2 with cuts, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions): +0.05 / +0.02 / +0.09 % for -1.5 / -1.2 /
     // -0.7 / -0.3 %. H264_ESTSPLITT overrides, 1e9 = always both.
     static const double kEstSplitT = devEnv("H264_ESTSPLITT") ? std::atof(devEnv("H264_ESTSPLITT")) : 16.0;
-    // The 16x16 layout is not coded for real where the split's estimate is below kEstWhole times its own (the
-    // split wins nearly every one of those). Measured with 0.9 at QP 22 / 26 / 30 / 34 (three clips, BD-rate
-    // PSNR-Y / SSIM-Y / VMAF and instructions): -0.03 / -0.04 / +0.06 % for -0.4 / -0.4 / -0.3 / -0.1 % (CS2 with
-    // cuts), +0.00 / +0.00 / +0.09 % for -0.1 % (talking head), -0.03 / +0.02 / -0.09 % for -0.2 / -0.1 / -0.2 /
-    // +0.0 % (vertical short). H264_ESTWHOLE overrides, 0 = always coded.
-    static const double kEstWhole = devEnv("H264_ESTWHOLE") ? std::atof(devEnv("H264_ESTWHOLE")) : 0.9;
+    // The 16x16 layout is not coded for real where the split's estimate is below kEstWhole times its own. Measured
+    // 22.11.2026 at QP 22 / 26 / 30 / 34 (three clips, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions against
+    // coding both layouts), with 0.9 (the split wins nearly every one of those): -0.03 / -0.04 / +0.06 % for -0.4 /
+    // -0.4 / -0.3 / -0.1 % (CS2 with cuts), +0.00 / +0.00 / +0.09 % for -0.1 % (talking head), -0.03 / +0.02 /
+    // -0.09 % for -0.2 / -0.1 / -0.2 / +0.0 % (vertical short); with 1 and kEstSplit 1: +0.06 / +0.05 / -0.02 %
+    // for -1.6 / -1.5 / -1.2 / -0.7 %, +0.01 / +0.06 / -0.34 % for -0.9 / -0.8 / -0.6 / -0.3 %, +0.04 / +0.07 /
+    // +0.09 % for -0.7 / -0.4 / -0.5 / -0.3 %. H264_ESTWHOLE overrides, 0 = always coded.
+    static const double kEstWhole = devEnv("H264_ESTWHOLE") ? std::atof(devEnv("H264_ESTWHOLE")) : 1.0;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
