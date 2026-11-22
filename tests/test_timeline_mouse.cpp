@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test mouse operation of the timeline (offscreen): selection rectangle, auto-scroll at the edge, reorder tracks;
 // plus selection from the playhead (Y / Ctrl+Y / Alt+Y), edit points by keyboard (V, U, , / .) and the Slip/Slide
-// tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them).
+// tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them); where wheel zoom stays
+// put (ZoomAnchor: the mouse by default, the visible playhead by choice).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -13,12 +14,14 @@
 #include "core/TimelineOps.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
 #include <QMouseEvent>
 #include <QTest>
 #include <QToolButton>
 #include <QUndoStack>
+#include <QWheelEvent>
 #include <cmath>
 
 namespace {
@@ -690,6 +693,71 @@ void testStoryBand()
     }
 }
 
+// Alt+wheel (the default zoom binding) at x, one notch in (or out with in = false)
+static void wheelZoom(TimelineView& tv, double x, bool in = true)
+{
+    const QPointF at(x, 60);
+    QWheelEvent e(at, tv.mapToGlobal(at), QPoint(), QPoint(0, in ? 120 : -120), Qt::NoButton, Qt::AltModifier,
+                  Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&tv, &e);
+}
+
+void testWheelZoomAnchor()
+{
+    Fixture f;
+    const auto frameAt = [&](double x) {
+        return f.tv.view().leftFrame + (x - TimelineView::kHeaderW) / f.tv.view().pxPerFrame;
+    };
+    const auto xOf = [&](double frame) {
+        return TimelineView::kHeaderW + (frame - f.tv.view().leftFrame) * f.tv.view().pxPerFrame;
+    };
+    const double mouseX = TimelineView::kHeaderW + 400;
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse); // nothing stored: the mouse, as before the setting
+
+    // Default: the frame under the mouse stays under it, the playhead moves on screen
+    f.tv.setZoomAndScroll(2.0, 20, 0);
+    f.tv.setPlayhead(150);
+    const double underMouse = frameAt(mouseX), playheadX = xOf(150);
+    wheelZoom(f.tv, mouseX);
+    CHECK(f.tv.view().pxPerFrame > 2.0 * 1.1);
+    CHECK(std::abs(frameAt(mouseX) - underMouse) < 1e-6);
+    CHECK(std::abs(xOf(150) - playheadX) > 10);
+
+    // Playhead: the red line keeps its x, the mouse's frame moves away
+    ZoomAnchor::setMode(ZoomAnchor::Mode::Playhead);
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Playhead);
+    f.tv.setZoomAndScroll(2.0, 20, 0);
+    wheelZoom(f.tv, mouseX);
+    CHECK(f.tv.view().pxPerFrame > 2.0 * 1.1);
+    CHECK(std::abs(xOf(150) - playheadX) < 1e-6);
+    CHECK(std::abs(frameAt(mouseX) - underMouse) > 1);
+    // Zooming out keeps it too (while the left edge does not reach frame 0)
+    f.tv.setZoomAndScroll(2.0, 100, 0);
+    const double playheadX2 = xOf(150);
+    wheelZoom(f.tv, mouseX, false);
+    CHECK(f.tv.view().pxPerFrame < 2.0 / 1.1);
+    CHECK(std::abs(xOf(150) - playheadX2) < 1e-6);
+
+    // Playhead scrolled out of view, left of the visible part: back to the mouse
+    f.tv.setZoomAndScroll(2.0, 200, 0);
+    CHECK(xOf(150) < TimelineView::kHeaderW);
+    const double underMouse2 = frameAt(mouseX);
+    wheelZoom(f.tv, mouseX);
+    CHECK(f.tv.view().pxPerFrame > 2.0 * 1.1);
+    CHECK(std::abs(frameAt(mouseX) - underMouse2) < 1e-6);
+    // ... and right of it
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    f.tv.setPlayhead(2000);
+    CHECK(xOf(2000) > f.tv.width());
+    const double underMouse3 = frameAt(mouseX);
+    wheelZoom(f.tv, mouseX);
+    CHECK(f.tv.view().pxPerFrame > 2.0 * 1.1);
+    CHECK(std::abs(frameAt(mouseX) - underMouse3) < 1e-6);
+
+    ZoomAnchor::setMode(ZoomAnchor::Mode::Mouse);
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -707,5 +775,6 @@ int main(int argc, char** argv)
     testSplitEdit();
     testTrimOverwrite();
     testStoryBand();
+    testWheelZoomAnchor();
     return Check::result();
 }

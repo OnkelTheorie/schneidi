@@ -253,6 +253,21 @@ QWidget* SettingsDialog::buildGeneral()
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
 
+    // Timeline: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
+    auto* timelineBox = new QGroupBox(T("Timeline"));
+    auto* tform = new QFormLayout(timelineBox);
+    tform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_zoomAnchor = new QComboBox;
+    m_zoomAnchor->setObjectName("timeline_zoom_anchor");
+    m_zoomAnchor->addItem(T("Mausposition"), int(ZoomAnchor::Mode::Mouse));
+    m_zoomAnchor->addItem(T("Abspielmarke"), int(ZoomAnchor::Mode::Playhead));
+    m_zoomAnchor->setCurrentIndex(std::max(0, m_zoomAnchor->findData(int(ZoomAnchor::mode()))));
+    tform->addRow(T("Zoom an"), m_zoomAnchor);
+    tform->addRow(hint(T("Wo das Mausrad zoomt. Abspielmarke: die rote Linie bleibt stehen, die Timeline wächst um sie "
+                         "herum; ist sie gerade nicht zu sehen, zoomt es an der Maus. Tasten zoomen immer an der "
+                         "Abspielmarke.")));
+    lay->addWidget(timelineBox);
+
     // Compositing: new nodes from the node search linked at once (default) or only added
     auto* comp = new QGroupBox(T("Compositing"));
     auto* cform = new QFormLayout(comp);
@@ -325,6 +340,8 @@ QWidget* SettingsDialog::buildGeneral()
 }
 
 bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
+
+ZoomAnchor::Mode SettingsDialog::zoomAnchor() const { return ZoomAnchor::Mode(m_zoomAnchor->currentData().toInt()); }
 
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {

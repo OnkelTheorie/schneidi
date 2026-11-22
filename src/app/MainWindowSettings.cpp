@@ -21,6 +21,7 @@
 #include "engine/Background.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -74,6 +75,8 @@ void MainWindow::settingsDialog(int tab)
             || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
+    // The timelines read it on every wheel zoom: no restart
+    if (!m_autosaveDisabled && dlg.zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(dlg.zoomAnchor());
     setSecondScreenMode(dlg.secondScreenMode());
     for (const auto target : {PreviewResolution::Target::Viewer, PreviewResolution::Target::Monitor})
         setPreviewResolution(target, dlg.previewResolution(target));

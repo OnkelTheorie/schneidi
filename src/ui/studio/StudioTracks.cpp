@@ -15,6 +15,7 @@
 #include "core/Voiceover.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QContextMenuEvent>
 #include <QDragEnterEvent>
@@ -1148,7 +1149,10 @@ void StudioTracks::wheelEvent(QWheelEvent* e)
     if (action == WheelAction::ScrollVertical && !m_vbar->isVisible()) action = WheelAction::ScrollHorizontal;
     switch (action) {
     case WheelAction::Zoom: {
-        const double x = std::max<double>(kHeaderW, e->position().x());
+        // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor, like the timeline)
+        const QRect area = clipArea();
+        const double x = ZoomAnchor::anchorX(std::max<double>(kHeaderW, e->position().x()), xOf(m_playhead), area.left(),
+                                             area.right());
         const double anchor = frameAt(x);
         m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.0015, steps), anchor, x - kHeaderW);
         break;

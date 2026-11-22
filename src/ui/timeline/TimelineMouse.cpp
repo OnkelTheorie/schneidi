@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: mouse and wheel input (select, drag, trim, rubber band, auto scroll).
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -855,7 +856,8 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         setLeftFrame(m_view.leftFrame - steps * (width() - kHeaderW) * 0.1 / m_view.pxPerFrame);
         break;
     case WheelAction::Zoom: {
-        const double ax = std::max<double>(mouseX, kHeaderW);
+        // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
+        const double ax = ZoomAnchor::anchorX(std::max<double>(mouseX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
         m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.2, steps), xToFrame(ax), ax - kHeaderW);
         update();
         emit viewChanged();
