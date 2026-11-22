@@ -690,7 +690,7 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 // never drops a level of 1 or more, the caller may still drop the whole block).
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                     int cbfInc, int* out, double* energy, uint64_t* nonZero, double lambdaHigh, int highFrom,
-                    double* zeroCost)
+                    double* zeroCost, TrellisLevelBits* levelTable)
 {
     if (nonZero)
         *nonZero = 0;
@@ -699,76 +699,45 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     // every path in the "nothing coded yet" node at no cost, so the search starts at that one.
     int end = count;
     double tail = 0; // squared error of the coefficients after `end` (always zero)
-    if (energy) {
-        trellisScan(x, scale, count, end, tail, *energy);
-    } else {
-#ifdef SCHNEIDI_H264_SSE2
-        const __m128d half = _mm_set1_pd(0.5);
-        const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
-        while (end >= 2) {
-            const int m = _mm_movemask_pd(_mm_cmpge_pd(_mm_and_pd(_mm_loadu_pd(x + end - 2), absMask), half));
-            if (m) {
-                end -= (m & 2) ? 0 : 1;
-                break;
-            }
-            end -= 2;
-        }
-#elif defined(SCHNEIDI_H264_NEON)
-        const float64x2_t half = vdupq_n_f64(0.5);
-        while (end >= 2) {
-            const uint64x2_t ge = vcgeq_f64(vabsq_f64(vld1q_f64(x + end - 2)), half);
-            if (vgetq_lane_u64(ge, 1)) {
-                break;
-            }
-            if (vgetq_lane_u64(ge, 0)) {
-                end -= 1;
-                break;
-            }
-            end -= 2;
-        }
-#endif
-        while (end > 0 && std::abs(x[end - 1]) < 0.5)
-            --end;
-    }
+    double zero = 0; // and of the whole block at level 0
+    trellisScan(x, scale, count, end, tail, zero);
+    if (energy)
+        *energy = zero;
     std::fill(out, out + count, 0);
     const bool cat5 = cat == 5;
     const double l256 = lambda / 256.0;
     const double h256 = lambdaHigh >= 0 ? lambdaHigh / 256.0 : l256;
     if (lambdaHigh < 0)
         highFrom = count; // no position weighs differently
-    auto emptyCost = [&] {
-        double e = 0;
-        if (energy) {
-            e = *energy;
-        } else {
-            for (int k = 0; k < count; ++k)
-                e += (x[k] * scale[k]) * (x[k] * scale[k]);
-        }
-        return e + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
-    };
-    if (end == 0) {
-        if (zeroCost)
-            *zeroCost = emptyCost();
-        return energy ? tail + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0)) : 0.0;
-    }
+    const double cbf0 = cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0);
+    if (zeroCost)
+        *zeroCost = zero + cbf0;
+    if (end == 0)
+        return energy ? zero + cbf0 : 0.0;
     const int absBase = cat5 ? 426 : 227 + kAbsOffset[cat];
     auto sigCtx = [&](int k) { return cat5 ? 402 + kSig8[k] : 105 + kSigOffset[cat] + k; };
     auto lastCtx = [&](int k) { return cat5 ? 417 + kLast8[k] : 166 + kSigOffset[cat] + k; };
     // Bits of a level by node (8 = nothing coded yet: the contexts of state 0), in 1/256 bits: |level| 1 and
     // 2 with the sign, and for larger ones the first bin (as 1, with the sign) and the two costs of the later
     // bins. Kept as doubles: every sum of them below is a whole number, so exact. Node 0 is never reached (the
-    // first coded level leads from "nothing coded yet" to node 1 or 4).
-    double one[9], two[9], first1[9], more0[9], more1[9];
-    for (int n = 1; n < 9; ++n) {
-        const int state = n == kEmpty ? 0 : n;
-        const int ctx0 = absBase + (state < 4 ? 1 + state : 0);
-        const int ctxN = absBase + 5 + (state < 4 ? 0 : state - 3);
-        one[n] = double(ce.binCost(ctx0, 0) + 256);
-        first1[n] = double(ce.binCost(ctx0, 1) + 256);
-        more0[n] = double(ce.binCost(ctxN, 0));
-        more1[n] = double(ce.binCost(ctxN, 1));
-        two[n] = first1[n] + more0[n];
+    // first coded level leads from "nothing coded yet" to node 1 or 4). levelTable (optional) keeps them for
+    // the caller's next blocks of the same category and contexts.
+    TrellisLevelBits ownTable;
+    TrellisLevelBits& table = levelTable ? *levelTable : ownTable;
+    if (!table.ready) {
+        table.ready = true;
+        for (int n = 1; n < 9; ++n) {
+            const int state = n == kEmpty ? 0 : n;
+            const int ctx0 = absBase + (state < 4 ? 1 + state : 0);
+            const int ctxN = absBase + 5 + (state < 4 ? 0 : state - 3);
+            table.one[n] = double(ce.binCost(ctx0, 0) + 256);
+            table.first1[n] = double(ce.binCost(ctx0, 1) + 256);
+            table.more0[n] = double(ce.binCost(ctxN, 0));
+            table.more1[n] = double(ce.binCost(ctxN, 1));
+            table.two[n] = table.first1[n] + table.more0[n];
+        }
     }
+    const double *one = table.one, *two = table.two, *first1 = table.first1, *more0 = table.more0, *more1 = table.more1;
     // The part of a level's bits that does not depend on the node: a = |level| - 1 >= 1 costs
     // first1 + ones * more1 + zero * more0 + escape.
     struct LevelBits {
@@ -788,6 +757,10 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         }
         return LevelBits{double(prefix - 1), prefix < 14 ? 1.0 : 0.0, double(escape)};
     };
+    // The costs are kept relative to the all-zero block (`zero`, summed by the scan): a level adds what it takes
+    // off the squared error (a negative number) and its bits, a zero only its bits where a level was coded before -
+    // and those wait as whole numbers (zerosLow, zerosHigh by the weight of their position) until the next
+    // coefficient of half a level or more, so a run of small coefficients costs no floating-point additions.
     // Costs per node, in two groups: "low" = nothing coded yet (cE) and one to three levels of 1 so far (c1 to
     // c3), "high" = one to four levels above 1 so far (c4 to c7). A node no path has reached costs 1e300; adding
     // to it leaves exactly 1e300 and it never wins a strict comparison, so a group is computed as a whole without
@@ -802,6 +775,14 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     uint8_t step[64][9];
     int16_t mags[64][3]; // the candidates' magnitudes
     uint64_t pass = 0; // positions below half a level: every path keeps its node there (level 0)
+    uint32_t zerosLow = 0, zerosHigh = 0; // bits (1/256) of the zeros since the last flush, by weight (lambda, lambdaHigh)
+    auto flushZeros = [&] {
+        if (!(zerosLow | zerosHigh))
+            return;
+        const double z = h256 * double(zerosHigh) + l256 * double(zerosLow);
+        zerosLow = zerosHigh = 0;
+        c1 += z, c2 += z, c3 += z, c4 += z, c5 += z, c6 += z, c7 += z; // (an unreached node stays at 1e300)
+    };
     constexpr int kHi = 16; // step: the second candidate
     auto take = [](double& best, int& bestStep, double c, int s) {
         const bool less = c < best;
@@ -810,27 +791,16 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     };
     for (int k = end - 1; k >= 0; --k) {
         const double ax = std::abs(x[k]);
-        const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
-        const double stayBits = lk * ce.binCost(sigCtx(k), 0);
-        const double err0 = ax * scale[k];
-        const double errSq0 = err0 * err0;
         if (ax < 0.5) {
-            // Only level 0: every path keeps its node.
-            if (lowLive) {
-                c1 = c1 + errSq0 + stayBits;
-                c2 = c2 + errSq0 + stayBits;
-                c3 = c3 + errSq0 + stayBits;
-                cE += errSq0;
-            }
-            if (highLive) {
-                c4 = c4 + errSq0 + stayBits;
-                c5 = c5 + errSq0 + stayBits;
-                c6 = c6 + errSq0 + stayBits;
-                c7 = c7 + errSq0 + stayBits;
-            }
+            // Only level 0: every path keeps its node, the ones with a level pay the bits of the zero.
+            (k >= highFrom ? zerosHigh : zerosLow) += ce.binCost(sigCtx(k), 0);
             pass |= uint64_t(1) << k;
             continue;
         }
+        flushZeros();
+        const double lk = k >= highFrom ? h256 : l256; // weight of this position's bits
+        const double err0 = ax * scale[k];
+        const double errSq0 = err0 * err0;
         // Significance and last bins of this position: a first coded coefficient (from "nothing coded yet") is
         // the last one of the block.
         const bool notLast = k < count - 1;
@@ -844,17 +814,17 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][0] = 0;
             mags[k][1] = 1;
             const double err1 = (ax - 1) * scale[k];
-            const double errSq1 = err1 * err1;
+            const double gain1 = err1 * err1 - errSq0;
+            const double stayBits = notLast ? lk * ce.binCost(sigCtx(k), 0) : 0.0; // (the last position: no path has a level)
             if (lowLive) {
-                const double stayE = cE + errSq0;
-                const double stay1 = (c1 + errSq0) + stayBits;
-                const double stay2 = (c2 + errSq0) + stayBits;
-                const double stay3 = (c3 + errSq0) + stayBits;
-                const double upE = (cE + errSq1) + lk * (one[kEmpty] + sigLast);
-                const double up1 = (c1 + errSq1) + lk * (one[1] + sigMore);
-                const double up2 = (c2 + errSq1) + lk * (one[2] + sigMore);
-                const double up3 = (c3 + errSq1) + lk * (one[3] + sigMore);
-                cE = stayE, sE = kEmpty;
+                const double stay1 = c1 + stayBits;
+                const double stay2 = c2 + stayBits;
+                const double stay3 = c3 + stayBits;
+                const double upE = (cE + gain1) + lk * (one[kEmpty] + sigLast);
+                const double up1 = (c1 + gain1) + lk * (one[1] + sigMore);
+                const double up2 = (c2 + gain1) + lk * (one[2] + sigMore);
+                const double up3 = (c3 + gain1) + lk * (one[3] + sigMore);
+                sE = kEmpty;
                 c1 = stay1, s1 = 1;
                 take(c1, s1, upE, kEmpty | kHi);
                 c2 = up1, s2 = 1 | kHi;
@@ -865,8 +835,8 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             }
             if (highLive) {
                 auto stayOrUp = [&](double& c, int& s, int n) {
-                    const double stay = (c + errSq0) + stayBits;
-                    const double up = (c + errSq1) + lk * (one[n] + sigMore);
+                    const double stay = c + stayBits;
+                    const double up = (c + gain1) + lk * (one[n] + sigMore);
                     c = stay, s = n;
                     take(c, s, up, n | kHi);
                 };
@@ -881,6 +851,8 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][1] = int16_t(fl);
             mags[k][2] = int16_t(fl + 1);
             const double errLo = (ax - fl) * scale[k], errHi = (ax - (fl + 1)) * scale[k];
+            const double gainLo = errLo * errLo - errSq0, gainHi = errHi * errHi - errSq0;
+            const double stayBits = notLast ? lk * ce.binCost(sigCtx(k), 0) : 0.0;
             const LevelBits lo = levelBits(fl - 1), hi = levelBits(fl);
             const double cost[9] = {kDead, c1, c2, c3, c4, c5, c6, c7, cE};
             double fresh[9];
@@ -891,11 +863,11 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
                 const double sig = n == kEmpty ? sigLast : sigMore;
                 const double bitsLo = fl == 1 ? one[n] : first1[n] + lo.ones * more1[n] + lo.zero * more0[n] + lo.escape;
                 const double bitsHi = first1[n] + hi.ones * more1[n] + hi.zero * more0[n] + hi.escape;
-                take(fresh[n], st[n], n == kEmpty ? cost[n] + errSq0 : (cost[n] + errSq0) + stayBits, n);
+                take(fresh[n], st[n], n == kEmpty ? cost[n] : cost[n] + stayBits, n);
                 const int toLo = fl == 1 ? (state < 4 ? std::min(state + 1, 3) : state) : state < 4 ? 4 : std::min(state + 1, 7);
                 const int toHi = state < 4 ? 4 : std::min(state + 1, 7);
-                take(fresh[toLo], st[toLo], (cost[n] + errLo * errLo) + lk * (bitsLo + sig), n | kHi);
-                take(fresh[toHi], st[toHi], (cost[n] + errHi * errHi) + lk * (bitsHi + sig), n | 2 * kHi);
+                take(fresh[toLo], st[toLo], (cost[n] + gainLo) + lk * (bitsLo + sig), n | kHi);
+                take(fresh[toHi], st[toHi], (cost[n] + gainHi) + lk * (bitsHi + sig), n | 2 * kHi);
             }
             c1 = fresh[1], c2 = fresh[2], c3 = fresh[3], c4 = fresh[4], c5 = fresh[5], c6 = fresh[6], c7 = fresh[7];
             cE = fresh[kEmpty];
@@ -906,7 +878,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][0] = 1;
             mags[k][1] = 2;
             const double errLo = (ax - 1) * scale[k], errHi = (ax - 2) * scale[k];
-            const double errSqLo = errLo * errLo, errSqHi = errHi * errHi;
+            const double errSqLo = errLo * errLo - errSq0, errSqHi = errHi * errHi - errSq0; // (against level 0)
             double f1 = kDead, f2 = kDead, f3 = kDead, f4 = kDead;
             if (lowLive) {
                 const double downE = (cE + errSqLo) + lk * (one[kEmpty] + sigLast);
@@ -952,7 +924,7 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             mags[k][0] = int16_t(fl);
             mags[k][1] = int16_t(fl + 1);
             const double errLo = (ax - fl) * scale[k], errHi = (ax - (fl + 1)) * scale[k];
-            const double errSqLo = errLo * errLo, errSqHi = errHi * errHi;
+            const double errSqLo = errLo * errLo - errSq0, errSqHi = errHi * errHi - errSq0; // (against level 0)
             const LevelBits lo = levelBits(fl - 1), hi = levelBits(fl);
             auto down = [&](double c, int n, double sig) {
                 return (c + errSqLo) + lk * (first1[n] + lo.ones * more1[n] + lo.zero * more0[n] + lo.escape + sig);
@@ -994,11 +966,10 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         st[1] = uint8_t(s1), st[2] = uint8_t(s2), st[3] = uint8_t(s3), st[4] = uint8_t(s4);
         st[5] = uint8_t(s5), st[6] = uint8_t(s6), st[7] = uint8_t(s7), st[kEmpty] = uint8_t(sE);
     }
+    flushZeros();
     const double cost[9] = {kDead, c1, c2, c3, c4, c5, c6, c7, cE};
     int best = kEmpty;
-    double bestCost = cost[kEmpty] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 0));
-    if (zeroCost)
-        *zeroCost = emptyCost();
+    double bestCost = cost[kEmpty] + cbf0;
     for (int n = 0; n < 8; ++n) {
         const double c = cost[n] + (cat5 ? 0.0 : l256 * ce.binCost(85 + kCbfOffset[cat] + cbfInc, 1));
         if (c < bestCost) {
@@ -1018,7 +989,8 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     }
     if (nonZero)
         *nonZero = nz;
-    return bestCost + tail;
+    // (Without energy the squared error after the last coefficient of half a level is left out, as it always was.)
+    return (energy ? zero : zero - tail) + bestCost;
 }
 
 

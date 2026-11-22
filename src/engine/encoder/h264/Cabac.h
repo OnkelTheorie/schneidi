@@ -229,4 +229,11 @@ private:
     uint8_t ctx_[kCabacContexts];
 };
 
+// cabacTrellis' bits of a level by node (see there), kept by the caller over the blocks of one category
+// that are planned against the same contexts: filled by the first block that needs them.
+struct TrellisLevelBits {
+    bool ready = false;
+    double one[9], two[9], first1[9], more0[9], more1[9];
+};
+
 } // namespace schneidi::h264

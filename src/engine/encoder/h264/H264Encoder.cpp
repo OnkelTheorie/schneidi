@@ -41,7 +41,7 @@ namespace schneidi::h264 {
 // nonZero (optional): bit k set where out[k] != 0.
 double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const double* scale, int count, double lambda,
                     int cbfInc, int* out, double* energy = nullptr, uint64_t* nonZero = nullptr, double lambdaHigh = -1.0,
-                    int highFrom = 0, double* zeroCost = nullptr);
+                    int highFrom = 0, double* zeroCost = nullptr, TrellisLevelBits* levelTable = nullptr);
 
 // Phase timing per picture (H264_TIMING=1): where the serial parts are.
 S264_DEV(bool, gTiming, devEnv("H264_TIMING") != nullptr);
@@ -7089,6 +7089,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     };
     const bool noteFine = fineLambda < 0 && tPsy.weight > 0;
     int fineQuads = noteFine ? 0 : 15; // (not asked for: assume it may)
+    TrellisLevelBits levelTable; // (one category per call, and `live` does not change during it)
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
@@ -7155,7 +7156,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 double energy = 0;
                 uint64_t nz = 0;
                 const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
-                                              est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
+                                              est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8, nullptr, &levelTable);
                 if (noteFine && reachesHigh(xs, gPsyFineFrom8, 64))
                     fineQuads |= 1 << b8;
                 const bool any = nz != 0;
@@ -7251,7 +7252,7 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             uint64_t nz = 0;
             double zeroJ = 0;
             jBlk[blkIdx] = cabacTrellis(*live, 2, xs, scale4, 16, lambda, 1, scanLv, est ? &eBlk[blkIdx] : nullptr, &nz,
-                                        fineLambda, gPsyFineFrom4, &zeroJ);
+                                        fineLambda, gPsyFineFrom4, &zeroJ, &levelTable);
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             for (uint64_t m = nz; m; m &= m - 1) {
                 const int s = std::countr_zero(m);
