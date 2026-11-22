@@ -518,6 +518,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
     src/ui/timeline/TimelineColors.h
     src/ui/timeline/TimelineOverview.h src/ui/timeline/TimelineOverview.cpp
+    src/ui/timeline/ZoomAnchor.h  src/ui/timeline/ZoomAnchor.cpp
     src/engine/AnalysisCache.h    src/engine/AnalysisCache.cpp
 )
 

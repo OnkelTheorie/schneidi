@@ -57,6 +57,7 @@
 #include <QWheelEvent>
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -173,6 +174,45 @@ void testWindow(Engine& engine, const QString& audioFile)
         QCoreApplication::sendEvent(tracks, &alt);
         CHECK(tracks->view().pxPerFrame > before * 1.05);
         tracks->setView(before, tracks->view().leftFrame);
+    }
+    {
+        // Where the wheel zoom stays put (ZoomAnchor, the timeline's setting): the mouse by default, the visible
+        // playhead by choice, the mouse again while the playhead is out of view
+        const double before = tracks->view().pxPerFrame, left = tracks->view().leftFrame;
+        const int oldPlayhead = tracks->playhead();
+        const QPointF at(StudioTracks::kHeaderW + 300, 40);
+        const auto zoomIn = [&] {
+            QWheelEvent e(at, tracks->mapToGlobal(at), QPoint(), QPoint(120, 0), Qt::NoButton, Qt::AltModifier,
+                          Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(tracks, &e);
+        };
+        const double ppf = 2.0;
+        const int playhead = 40; // 80 px into the lanes at 2 px per frame from frame 0
+        tracks->setView(ppf, 0);
+        tracks->setPlayhead(playhead);
+        const double underMouse = tracks->frameAt(at.x()), playheadX = tracks->xOf(playhead);
+        zoomIn();
+        CHECK(tracks->view().pxPerFrame > ppf * 1.05);
+        CHECK(std::abs(tracks->frameAt(at.x()) - underMouse) < 1e-6);
+        CHECK(std::abs(tracks->xOf(playhead) - playheadX) > 10);
+
+        ZoomAnchor::setMode(ZoomAnchor::Mode::Playhead);
+        tracks->setView(ppf, 0);
+        zoomIn();
+        CHECK(tracks->view().pxPerFrame > ppf * 1.05);
+        CHECK(std::abs(tracks->xOf(playhead) - playheadX) < 1e-6);
+        CHECK(std::abs(tracks->frameAt(at.x()) - underMouse) > 1);
+
+        tracks->setView(ppf, playhead + 100); // the playhead left of the lanes
+        CHECK(tracks->xOf(playhead) < StudioTracks::kHeaderW);
+        const double underMouse2 = tracks->frameAt(at.x());
+        zoomIn();
+        CHECK(tracks->view().pxPerFrame > ppf * 1.05);
+        CHECK(std::abs(tracks->frameAt(at.x()) - underMouse2) < 1e-6);
+
+        ZoomAnchor::setMode(ZoomAnchor::Mode::Mouse);
+        tracks->setPlayhead(oldPlayhead);
+        tracks->setView(before, left);
     }
     project->undoStack()->undo();
     settle();

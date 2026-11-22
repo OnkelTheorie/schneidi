@@ -16,6 +16,7 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
+#include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -249,6 +250,21 @@ void testProjectFolder()
         CHECK(link->isChecked() && dlg.autoLinkNodes());
         link->setChecked(false);
         CHECK(!dlg.autoLinkNodes());
+    }
+    // Timeline: wheel zoom at the mouse by default; the choice shows the stored playhead mode
+    QSettings().remove("timeline");
+    auto* anchor = dlg.findChild<QComboBox*>("timeline_zoom_anchor");
+    if (CHECK(anchor)) {
+        CHECK_EQ(anchor->count(), 2);
+        CHECK(dlg.zoomAnchor() == ZoomAnchor::Mode::Mouse);
+        anchor->setCurrentIndex(anchor->findData(int(ZoomAnchor::Mode::Playhead)));
+        CHECK(dlg.zoomAnchor() == ZoomAnchor::Mode::Playhead);
+        ZoomAnchor::setMode(dlg.zoomAnchor());
+        CHECK_EQ(QSettings().value("timeline/zoomAnchor").toString(), QString("playhead"));
+        SettingsDialog again(AiSettings{});
+        CHECK(again.zoomAnchor() == ZoomAnchor::Mode::Playhead);
+        QSettings().remove("timeline");
+        CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
     }
 }
 
