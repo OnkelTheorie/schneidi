@@ -7899,6 +7899,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // for another -0.5 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
     static const double kEstBoth = devEnv("H264_ESTBOTH") ? std::atof(devEnv("H264_ESTBOTH")) : 0.0;
     static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1e9;
+    // The split is planned with one transform only where the 16x16 layout's two plans were more than kEstSplitT *
+    // lambda apart: the one that won there (it wins for the split as well then; the loss by the statistics is
+    // 0.14 % of the luma cost of those macroblocks). Measured 22.11.2026 (fixed QP 22 / 26 / 30 / 34, 900 pictures
+    // CS2 with cuts, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions): +0.05 / +0.02 / +0.09 % for -1.5 / -1.2 /
+    // -0.7 / -0.3 %. H264_ESTSPLITT overrides, 1e9 = always both.
+    static const double kEstSplitT = devEnv("H264_ESTSPLITT") ? std::atof(devEnv("H264_ESTSPLITT")) : 16.0;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
@@ -7919,8 +7925,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     const InterResidual* wonPlan = nullptr;  // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
         // like, likeQuads: a layout planned before and the quadrants (bit b8) it predicts with the same pixels as
-        // this one - the plans of those come out again and are taken from it.
-        auto plan = [&](const Choice& c, Plan& p, const Plan* like = nullptr, int likeQuads = 0) {
+        // this one - the plans of those come out again and are taken from it. only: 0 = both transforms, 1 = only
+        // 8x8, 2 = only 4x4.
+        auto plan = [&](const Choice& c, Plan& p, const Plan* like = nullptr, int likeQuads = 0, int only = 0) {
             const PredCache& pc = predictLayout(c);
             const InterResidual* same8[4];
             const InterResidual* same4[4];
@@ -7929,6 +7936,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 same8[q] = take ? &like->r8 : nullptr;
                 same4[q] = take && like->j4 < 1e299 ? &like->r4 : nullptr;
             }
+            if (only == 2) {
+                p.j8 = 1e300;
+                planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, nullptr, like ? same4 : nullptr);
+                p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
+                return;
+            }
             if (lateValid && c.layout == 0) {
                 p.r8 = lateR8;
                 p.j8 = lateJ8;
@@ -7936,7 +7949,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8, -1.0, nullptr, like ? same8 : nullptr);
             }
             p.j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r8.cbpLuma, true);
-            if (kZero8 && p.r8.cbpLuma == 0) {
+            if ((kZero8 && p.r8.cbpLuma == 0) || only == 1) {
                 p.j4 = 1e300;
                 return;
             }
@@ -7980,7 +7993,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
-            plan(split, ps, &pw, sameQuadrants(predictLayout(whole).lp, predictLayout(split).lp));
+            const bool one = std::max(pw.j4, pw.j8) < 1e299 && std::abs(pw.j4 - pw.j8) > kEstSplitT * lambda;
+            plan(split, ps, &pw, sameQuadrants(predictLayout(whole).lp, predictLayout(split).lp),
+                 !one ? 0 : pw.j8 < pw.j4 ? 1 : 2);
             // Header bits of both layouts as the CAVLC count (type, references, vector differences).
             auto headBits = [&](const Choice& c) {
                 const Layout& L = kLayouts[c.layout];
