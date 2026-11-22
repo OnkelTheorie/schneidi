@@ -592,7 +592,40 @@ static void trellisScan(const double* x, const double* scale, int count, int& en
 {
     end = 0;
     bool found = false;
-#ifdef SCHNEIDI_H264_SSE2
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+    // The x86-64-v3 build: the four lanes in one register.
+    const __m256d half = _mm256_set1_pd(0.5);
+    const __m256d absMask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x7fffffffffffffffLL));
+    __m256d tl = _mm256_setzero_pd(), hd = _mm256_setzero_pd();
+    for (int g = count - 4; g >= 0; g -= 4) {
+        const __m256d v = _mm256_loadu_pd(x + g);
+        const __m256d e = _mm256_mul_pd(v, _mm256_loadu_pd(scale + g));
+        const __m256d sq = _mm256_mul_pd(e, e);
+        if (found) {
+            hd = _mm256_add_pd(hd, sq);
+            continue;
+        }
+        const int m = _mm256_movemask_pd(_mm256_cmp_pd(_mm256_and_pd(v, absMask), half, _CMP_GE_OQ));
+        if (!m) {
+            tl = _mm256_add_pd(tl, sq);
+            continue;
+        }
+        found = true;
+        const int last = 31 - std::countl_zero(unsigned(m)); // the last lane of half a level or more
+        end = g + last + 1;
+        static const int64_t kBefore[4][4] = {{-1, 0, 0, 0}, {-1, -1, 0, 0}, {-1, -1, -1, 0}, {-1, -1, -1, -1}};
+        const __m256d before = _mm256_castsi256_pd(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(kBefore[last]))); // lanes < end
+        hd = _mm256_add_pd(hd, _mm256_and_pd(before, sq));
+        tl = _mm256_add_pd(tl, _mm256_andnot_pd(before, sq));
+    }
+    auto lanes = [](__m256d v) {
+        alignas(32) double l[4];
+        _mm256_store_pd(l, v);
+        return (l[0] + l[1]) + (l[2] + l[3]);
+    };
+    tail = lanes(tl);
+    energy = tail + lanes(hd);
+#elif defined(SCHNEIDI_H264_SSE2)
     const __m128d half = _mm_set1_pd(0.5);
     const __m128d absMask = _mm_castsi128_pd(_mm_set1_epi64x(0x7fffffffffffffffLL));
     __m128d tl[2] = {_mm_setzero_pd(), _mm_setzero_pd()}, hd[2] = {_mm_setzero_pd(), _mm_setzero_pd()};
