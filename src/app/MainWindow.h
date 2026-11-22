@@ -224,6 +224,8 @@ public:
                          const std::function<void(int ms)>& idleLimit);
     // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
     void settingsDialog(int tab = 0);
+    // After Settings › Timeline changed: the timelines redraw what they show by those choices (no restart)
+    void applyTimelineOptions();
     // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;
     // main.cpp hands it in): a tour runs on a practice project, nothing of an AI may land there
     void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }

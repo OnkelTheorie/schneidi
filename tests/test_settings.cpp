@@ -3,7 +3,8 @@
 // added (the AI chat adds its own), the settings survive a restart (QSettings), the main window applies them (AI
 // indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them. General ›
 // Performance chooses the threads for background work (Background::threads). "Connect with
-// Claude" runs the setup the app hands in (in a thread) and shows its answer per target.
+// Claude" runs the setup the app hands in (in a thread) and shows its answer per target. The Timeline tab
+// (TimelineSettingsPage) shows each timeline choice as stored, and store() writes them.
 // SETTINGS_DUMP=<folder>: pictures of both tabs (settings-general.png, settings-ai.png).
 
 #include "check.h"
@@ -12,6 +13,7 @@
 #include "app/AiSettingsPage.h"
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
+#include "app/TimelineSettingsPage.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
@@ -286,6 +288,30 @@ void testProjectFolder()
     }
 }
 
+// Settings › Timeline: its own tab with the timeline choices; store() writes what the fields show
+void testTimelineTab()
+{
+    QSettings().remove("timeline");
+    SettingsDialog dlg(AiSettings{});
+    auto* tabs = dlg.findChild<QTabWidget*>();
+    TimelineSettingsPage* page = dlg.timelinePage();
+    if (!CHECK(tabs && page)) return;
+    QStringList names;
+    for (int i = 0; i < tabs->count(); ++i) names << tabs->tabText(i);
+    CHECK(names.contains(T("Timeline")));
+    dlg.showTab(SettingsDialog::Tab::Timeline);
+    CHECK(page->isAncestorOf(tabs->currentWidget()) || tabs->currentWidget()->isAncestorOf(page));
+    // The two older choices live there now (same keys); store() keeps the defaults unwritten
+    CHECK(page->findChild<QComboBox*>("timeline_zoom_anchor"));
+    CHECK(page->findChild<QComboBox*>("timeline_after_playhead_move"));
+    page->store();
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+    page->findChild<QComboBox*>("timeline_zoom_anchor")->setCurrentIndex(1);
+    page->store();
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Playhead);
+    QSettings().remove("timeline");
+}
+
 void testMainWindow()
 {
     QSettings().remove("ai");
@@ -376,6 +402,7 @@ int main(int argc, char** argv)
     testDialog();
     testBackgroundThreads();
     testProjectFolder();
+    testTimelineTab();
     testMainWindow();
     return Check::result();
 }

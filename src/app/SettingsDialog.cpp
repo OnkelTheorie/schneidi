@@ -4,6 +4,7 @@
 
 #include "app/AiSettingsPage.h"
 #include "app/StartTemplatesPage.h"
+#include "app/TimelineSettingsPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/AppPaths.h"
@@ -81,6 +82,9 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
     m_tabs = new QTabWidget;
     m_generalTab = scrolling(buildGeneral());
     m_tabs->addTab(m_generalTab, T("Allgemein"));
+    m_timelinePage = new TimelineSettingsPage;
+    m_timelineTab = scrolling(m_timelinePage);
+    m_tabs->addTab(m_timelineTab, T("Timeline"));
     m_templatesPage = new StartTemplatesPage;
     m_templatesTab = scrolling(m_templatesPage);
     m_tabs->addTab(m_templatesTab, T("Startvorlagen"));
@@ -253,34 +257,6 @@ QWidget* SettingsDialog::buildGeneral()
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
 
-    // Timeline: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live) and what playback
-    // does after the user moved the playhead (PlayheadMove, read at every move)
-    auto* timelineBox = new QGroupBox(T("Timeline"));
-    auto* tform = new QFormLayout(timelineBox);
-    tform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-    m_zoomAnchor = new QComboBox;
-    m_zoomAnchor->setObjectName("timeline_zoom_anchor");
-    m_zoomAnchor->addItem(T("Mausposition"), int(ZoomAnchor::Mode::Mouse));
-    m_zoomAnchor->addItem(T("Abspielmarke"), int(ZoomAnchor::Mode::Playhead));
-    m_zoomAnchor->setCurrentIndex(std::max(0, m_zoomAnchor->findData(int(ZoomAnchor::mode()))));
-    tform->addRow(T("Zoom an"), m_zoomAnchor);
-    tform->addRow(hint(T("Wo das Mausrad zoomt. Abspielmarke: die rote Linie bleibt stehen, die Timeline wächst um sie "
-                         "herum; ist sie gerade nicht zu sehen, zoomt es an der Maus. Tasten zoomen immer an der "
-                         "Abspielmarke.")));
-    m_afterSeek = new QComboBox;
-    m_afterSeek->setObjectName("timeline_after_playhead_move");
-    m_afterSeek->addItem(T("Standard"), int(PlayheadMove::Mode::Standard));
-    m_afterSeek->addItem(T("Weiter wie vorher"), int(PlayheadMove::Mode::Continue));
-    m_afterSeek->addItem(T("Anhalten"), int(PlayheadMove::Mode::Stop));
-    m_afterSeek->addItem(T("Abspielen"), int(PlayheadMove::Mode::Play));
-    m_afterSeek->setCurrentIndex(std::max(0, m_afterSeek->findData(int(PlayheadMove::mode()))));
-    tform->addRow(T("Nach dem Bewegen der Abspielmarke"), m_afterSeek);
-    tform->addRow(hint(T("Standard: Klicken und Ziehen in Lineal, Überblick und Studio spielt weiter, wenn es lief; die "
-                         "Leiste unter der Vorschau und Sprungtasten (Pos1/Ende, Schnittpunkte, Marker) halten an. "
-                         "Weiter wie vorher: lief es, spielt es an der neuen Stelle weiter, sonst bleibt es stehen. "
-                         "Abspielen: startet beim Loslassen. Einzelbild-Schritte mit den Pfeiltasten halten immer an.")));
-    lay->addWidget(timelineBox);
-
     // Compositing: new nodes from the node search linked at once (default) or only added
     auto* comp = new QGroupBox(T("Compositing"));
     auto* cform = new QFormLayout(comp);
@@ -354,12 +330,9 @@ QWidget* SettingsDialog::buildGeneral()
 
 bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 
-ZoomAnchor::Mode SettingsDialog::zoomAnchor() const { return ZoomAnchor::Mode(m_zoomAnchor->currentData().toInt()); }
+ZoomAnchor::Mode SettingsDialog::zoomAnchor() const { return m_timelinePage->zoomAnchor(); }
 
-PlayheadMove::Mode SettingsDialog::afterPlayheadMove() const
-{
-    return PlayheadMove::Mode(m_afterSeek->currentData().toInt());
-}
+PlayheadMove::Mode SettingsDialog::afterPlayheadMove() const { return m_timelinePage->afterPlayheadMove(); }
 
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {
@@ -424,7 +397,10 @@ int SettingsDialog::backgroundThreads() const { return m_threads->currentData().
 
 void SettingsDialog::showTab(Tab tab)
 {
-    m_tabs->setCurrentWidget(tab == Tab::Ai ? m_aiTab : tab == Tab::Templates ? m_templatesTab : m_generalTab);
+    m_tabs->setCurrentWidget(tab == Tab::Ai          ? m_aiTab
+                             : tab == Tab::Templates ? m_templatesTab
+                             : tab == Tab::Timeline  ? m_timelineTab
+                                                     : m_generalTab);
 }
 
 AiSettings SettingsDialog::aiSettings() const { return m_aiPage->settings(); }
