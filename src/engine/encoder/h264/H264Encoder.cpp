@@ -2167,7 +2167,7 @@ std::vector<double> crfFirstPassQps(const FirstPassStats& st, const EncoderConfi
     const double mbs = double((cfg.width + 15) / 16) * ((cfg.height + 15) / 16);
     const double base = 23.0 + gCrfSlope * (cfg.crf - 23.0) + gCrfBase + gCrfFps * std::log2(std::clamp(cfg.fps, 1.0, 1000.0) / 30.0);
     std::vector<double> qp(n, base);
-    if (cfg.qcomp <= 0)
+    if (cfg.qcomp <= 0 || cfg.lookahead <= 0 || cfg.gop <= 1) // (no lookahead costs: one QP, as crfQp)
         return qp;
     std::vector<double> sum(n + 1, 0.0), all(n + 1, 0.0); // prefix sums: costs that count, all costs
     std::vector<size_t> count(n + 1, 0);
@@ -2179,7 +2179,7 @@ std::vector<double> crfFirstPassQps(const FirstPassStats& st, const EncoderConfi
         count[j + 1] = count[j] + (counts ? 1 : 0);
     }
     const size_t w = size_t(std::max(0.0, gQcBlur * cfg.fps));
-    const size_t ahead = std::min(w, size_t(std::max(1, cfg.lookahead)) - 1);
+    const size_t ahead = std::min(w, size_t(cfg.lookahead) - 1);
     for (size_t i = 0; i < n; ++i) {
         const size_t a = i > w ? i - w : 0, b = std::min(n, i + ahead + 1);
         const size_t c = count[b] - count[a];
