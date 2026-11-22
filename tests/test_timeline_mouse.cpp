@@ -6,7 +6,7 @@
 // playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
 // table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
 // the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms;
-// a click into the tracks sets the playhead by choice.
+// a click into the tracks sets the playhead by choice; snapping remembered, its targets and reach by choice.
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -940,6 +940,58 @@ void testClickSetsPlayhead()
     CHECK(!QSettings().contains("timeline/clickSetsPlayhead"));
 }
 
+// Snapping: remembered on/off (a new timeline starts with the stored state), targets and reach by choice
+// (TimelineOptions::snapTargets/snapReach); the defaults snap to clip edges and the playhead within 8 px, as before
+void testSnapOptions()
+{
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::snapping());
+    {
+        TimelineOptions::setSnapping(false);
+        Fixture f;
+        CHECK(!f.tv.snapping());
+        TimelineOptions::setSnapping(true);
+        CHECK(!QSettings().contains("timeline/snapping"));
+        Fixture g;
+        CHECK(g.tv.snapping());
+    }
+    // Clip 2 (150..250 on V1) dragged by `frames` at 2 px per frame: where it starts afterwards (then undone)
+    const auto moved = [](Fixture& f, int frames) {
+        drag(f.tv, {f.x(200), 120}, {f.x(200 + frames), 120});
+        const int start = f.project.timeline().video[0].clips[1].start;
+        f.project.undoStack()->undo();
+        return start;
+    };
+    Fixture f;
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    f.editor.toggleMarker(300);
+    f.editor.setMarks(20, 299); // Out = 299: the range ends at 300
+    // Default: neither the marker nor the range's end catch the clip's end at 297/298
+    CHECK_EQ(moved(f, 48), 198);
+    // Markers by choice: the end lands on the marker
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets | TimelineOptions::SnapMarkers);
+    CHECK_EQ(moved(f, 48), 200);
+    // In/Out by choice (without markers): the end of the range
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets | TimelineOptions::SnapInOut);
+    CHECK_EQ(moved(f, 48), 200);
+    // The playhead (a default target) catches it; without it, not
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets);
+    f.tv.setPlayhead(300);
+    CHECK_EQ(moved(f, 48), 200);
+    TimelineOptions::setSnapTargets(TimelineOptions::SnapClipEdges);
+    CHECK_EQ(moved(f, 48), 198);
+    // Reach: 3 frames = 6 px away snaps with medium (8 px) and large, not with small (4 px)
+    TimelineOptions::setSnapTargets(TimelineOptions::kDefaultSnapTargets);
+    CHECK_EQ(moved(f, 47), 200);
+    TimelineOptions::setSnapReach(TimelineOptions::SnapReach::Small);
+    CHECK(TimelineOptions::snapPixels() == 4);
+    CHECK_EQ(moved(f, 47), 197);
+    TimelineOptions::setSnapReach(TimelineOptions::SnapReach::Large);
+    CHECK_EQ(moved(f, 47), 200);
+    TimelineOptions::setSnapReach(TimelineOptions::SnapReach::Medium);
+    CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -1031,6 +1083,7 @@ int main(int argc, char** argv)
     testWheelSideways();
     testFollowPlayback();
     testClickSetsPlayhead();
+    testSnapOptions();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();

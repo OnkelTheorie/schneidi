@@ -112,10 +112,10 @@ void TimelineView::drawMarks(QPainter& p)
 int TimelineView::marksSnap(const QVector<int>& edges, Qt::KeyboardModifiers mods) const
 {
     if (!m_snap || (mods & Qt::ShiftModifier)) return 0;
-    // The usual snap points (playhead, clip and subtitle edges) plus the markers
-    QVector<int> pts = snapPoints({});
+    // The usual snap points (the user's targets, not the range's own In/Out) plus the markers
+    QVector<int> pts = snapPoints({}, false);
     pts += m_editor->project()->timeline().markers;
-    const double maxFrames = kSnapPx / m_view.pxPerFrame;
+    const double maxFrames = TimelineOptions::snapPixels() / m_view.pxPerFrame;
     int best = 0;
     double bestDist = maxFrames + 1;
     for (int pt : pts)

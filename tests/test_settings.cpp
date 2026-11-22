@@ -341,6 +341,33 @@ void testTimelineTab()
     // A click into the tracks: only select (default) or set the playhead too
     checkTimelineChoice("timeline_click_sets_playhead", 2, 0, [] { return int(TimelineOptions::clickSetsPlayhead()); });
     // Times as timecode (default), seconds or frames; each entry shows an example
+    // Snapping: reach small/medium (default)/large; targets clip edges + playhead by default, each box stored
+    checkTimelineChoice("timeline_snap_reach", 3, int(TimelineOptions::SnapReach::Medium),
+                        [] { return int(TimelineOptions::snapReach()); });
+    {
+        QSettings().remove("timeline");
+        SettingsDialog dlg(AiSettings{});
+        TimelineSettingsPage* page = dlg.timelinePage();
+        auto* clips = page->findChild<QCheckBox*>("timeline_snap_clips");
+        auto* playhead = page->findChild<QCheckBox*>("timeline_snap_playhead");
+        auto* markers = page->findChild<QCheckBox*>("timeline_snap_markers");
+        auto* inout = page->findChild<QCheckBox*>("timeline_snap_inout");
+        if (CHECK(clips && playhead && markers && inout)) {
+            CHECK(clips->isChecked() && playhead->isChecked() && !markers->isChecked() && !inout->isChecked());
+            CHECK_EQ(page->snapTargets(), TimelineOptions::kDefaultSnapTargets);
+            markers->setChecked(true);
+            playhead->setChecked(false);
+            page->store();
+            CHECK_EQ(TimelineOptions::snapTargets(), TimelineOptions::SnapClipEdges | TimelineOptions::SnapMarkers);
+            SettingsDialog again(AiSettings{});
+            CHECK(again.timelinePage()->findChild<QCheckBox*>("timeline_snap_markers")->isChecked());
+            CHECK(!again.timelinePage()->findChild<QCheckBox*>("timeline_snap_playhead")->isChecked());
+            markers->setChecked(false);
+            playhead->setChecked(true);
+            page->store();
+            CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+        }
+    }
     checkTimelineChoice("timeline_time_format", 3, int(TimelineOptions::TimeFormat::Timecode),
                         [] { return int(TimelineOptions::timeFormat()); });
     {

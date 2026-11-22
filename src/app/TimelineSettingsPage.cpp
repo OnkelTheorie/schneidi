@@ -4,7 +4,10 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QGridLayout>
+#include <tuple>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
@@ -75,6 +78,36 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                         "herum; ist sie gerade nicht zu sehen, zoomt es an der Maus. Tasten zoomen immer an der "
                         "Abspielmarke.")));
 
+    // Snapping: what a drag snaps to and how near (read on every snap; on/off stays the magnet button, N)
+    QFormLayout* snap = group(lay, T("Einrasten"));
+    {
+        auto* boxes = new QWidget;
+        auto* grid = new QGridLayout(boxes);
+        grid->setContentsMargins(0, 0, 0, 0);
+        const QVector<std::tuple<int, const char*, QString>> targets = {
+            {TimelineOptions::SnapClipEdges, "timeline_snap_clips", T("Clipkanten")},
+            {TimelineOptions::SnapPlayhead, "timeline_snap_playhead", T("Abspielmarke")},
+            {TimelineOptions::SnapMarkers, "timeline_snap_markers", T("Marker")},
+            {TimelineOptions::SnapInOut, "timeline_snap_inout", T("In- und Out-Punkt")}};
+        const int stored = TimelineOptions::snapTargets();
+        for (int i = 0; i < targets.size(); ++i) {
+            const auto& [flag, name, text] = targets[i];
+            auto* box = new QCheckBox(text);
+            box->setObjectName(name);
+            box->setChecked(stored & flag);
+            grid->addWidget(box, i / 2, i % 2);
+            m_snapTargets.append({flag, box});
+        }
+        snap->addRow(T("Rastet ein an"), boxes);
+    }
+    using SR = TimelineOptions::SnapReach;
+    m_snapReach = combo("timeline_snap_reach",
+                        {{T("Klein"), int(SR::Small)}, {T("Mittel"), int(SR::Medium)}, {T("Groß"), int(SR::Large)}},
+                        int(TimelineOptions::snapReach()));
+    snap->addRow(T("Einrast-Abstand"), m_snapReach);
+    snap->addRow(hint(T("Ein- und ausschalten mit dem Magnet-Knopf oder N, das bleibt nach dem Neustart. Einrast-Abstand: wie "
+                        "nah eine Kante kommen muss. Der In/Out-Bereich rastet immer auch an Markern ein.")));
+
     // Playback: following the playhead (read at every play start), what it does after the user moved the playhead
     // (PlayheadMove, read at every move)
     QFormLayout* play = group(lay, T("Wiedergabe"));
@@ -130,8 +163,23 @@ TimelineOptions::TimeFormat TimelineSettingsPage::timeFormat() const
     return TimelineOptions::TimeFormat(m_timeFormat->currentData().toInt());
 }
 
+int TimelineSettingsPage::snapTargets() const
+{
+    int flags = 0;
+    for (const auto& [flag, box] : m_snapTargets)
+        if (box->isChecked()) flags |= flag;
+    return flags;
+}
+
+TimelineOptions::SnapReach TimelineSettingsPage::snapReach() const
+{
+    return TimelineOptions::SnapReach(m_snapReach->currentData().toInt());
+}
+
 void TimelineSettingsPage::store() const
 {
+    if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
+    if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());

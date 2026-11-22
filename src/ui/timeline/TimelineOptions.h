@@ -25,6 +25,24 @@ void setFollow(Follow follow);
 bool clickSetsPlayhead();
 void setClickSetsPlayhead(bool on);
 
+// Snapping on or off (the magnet button, N): remembered across starts (default on, as every editor). Stored by the
+// main window when the user switches it (not in test runs).
+bool snapping();
+void setSnapping(bool on);
+// What a drag snaps to (Settings › Timeline › Snapping; read on every snap). The defaults are what schneidi did
+// before: clip (and subtitle) edges and the playhead. Markers and the In/Out points can be added for clips, edges and
+// the blade; the In/Out range and node bars snap to markers whatever is set. The timeline's start always counts.
+enum SnapTarget { SnapClipEdges = 1, SnapPlayhead = 2, SnapMarkers = 4, SnapInOut = 8 };
+int snapTargets(); // SnapTarget flags
+void setSnapTargets(int targets);
+constexpr int kDefaultSnapTargets = SnapClipEdges | SnapPlayhead;
+// How near (screen pixels) an edge has to come to snap: small 4, medium 8 (default, as before), large 14
+enum class SnapReach { Small, Medium, Large };
+SnapReach snapReach();
+void setSnapReach(SnapReach reach);
+int snapPixels(SnapReach reach);
+inline int snapPixels() { return snapPixels(snapReach()); }
+
 // How the app shows times (Settings › Timeline › Display): timecode "00:00:04:12" (default), seconds "0:04.50"
 // (minutes:seconds with hundredths, the UI language's decimal sign; hours in front from one hour on) or frames "112".
 // Shown in the timeline (ruler, corner, durations, trim and drag numbers, In/Out tips), the Studio lanes, the

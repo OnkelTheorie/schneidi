@@ -213,7 +213,7 @@ int TimelineView::nodeSnapDelta(const QVector<int>& edges) const
     if (!m_snap) return 0;
     QVector<int> pts = snapPoints({});
     pts << m_editor->project()->timeline().markers;
-    const double maxFrames = kSnapPx / m_view.pxPerFrame;
+    const double maxFrames = TimelineOptions::snapPixels() / m_view.pxPerFrame;
     int best = 0;
     double bestDist = maxFrames + 1;
     for (int p : pts)

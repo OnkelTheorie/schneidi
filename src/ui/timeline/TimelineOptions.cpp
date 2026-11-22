@@ -39,6 +39,31 @@ bool clickSetsPlayhead() { return QSettings().value("timeline/clickSetsPlayhead"
 
 void setClickSetsPlayhead(bool on) { store("timeline/clickSetsPlayhead", "true", !on); }
 
+bool snapping() { return QSettings().value("timeline/snapping", true).toBool(); }
+
+void setSnapping(bool on) { store("timeline/snapping", "false", on); }
+
+int snapTargets() { return QSettings().value("timeline/snapTargets", kDefaultSnapTargets).toInt(); }
+
+void setSnapTargets(int targets)
+{
+    if (targets == kDefaultSnapTargets) QSettings().remove("timeline/snapTargets");
+    else QSettings().setValue("timeline/snapTargets", targets);
+}
+
+SnapReach snapReach()
+{
+    const QString v = stored("timeline/snapReach");
+    return v == "small" ? SnapReach::Small : v == "large" ? SnapReach::Large : SnapReach::Medium;
+}
+
+void setSnapReach(SnapReach reach)
+{
+    store("timeline/snapReach", reach == SnapReach::Small ? "small" : "large", reach == SnapReach::Medium);
+}
+
+int snapPixels(SnapReach reach) { return reach == SnapReach::Small ? 4 : reach == SnapReach::Large ? 14 : 8; }
+
 TimeFormat timeFormat()
 {
     const QString v = stored("timeline/timeFormat");

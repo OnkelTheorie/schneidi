@@ -74,6 +74,7 @@
 #include "ui/comp/CompCanvas.h"
 #include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include <QAction>
 #include <QCursor>
@@ -298,6 +299,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     TimelineView* tv = m_timeline->view();
     connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
+    });
+    // Snapping on/off is remembered across starts (test runs leave the settings alone)
+    connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
+        if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);
     });
     // Playing or not: the timeline may follow the playhead while it plays (Settings › Timeline, off by default)
     connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {

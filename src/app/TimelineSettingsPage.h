@@ -5,8 +5,11 @@
 #include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ZoomAnchor.h"
 
+#include <QPair>
+#include <QVector>
 #include <QWidget>
 
+class QCheckBox;
 class QComboBox;
 class QFormLayout;
 
@@ -23,6 +26,8 @@ public:
     TimelineOptions::Follow follow() const;       // follow the playhead while playing
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
+    int snapTargets() const;                        // TimelineOptions::SnapTarget flags
+    TimelineOptions::SnapReach snapReach() const;
 
     void store() const; // every choice into QSettings (only what changed)
 
@@ -32,4 +37,6 @@ private:
     QComboBox* m_follow = nullptr;
     QComboBox* m_click = nullptr;
     QComboBox* m_timeFormat = nullptr;
+    QVector<QPair<int, QCheckBox*>> m_snapTargets;
+    QComboBox* m_snapReach = nullptr;
 };

@@ -390,7 +390,8 @@ private:
     void updateHoverCursor(const QPoint& pos);
     double frameToX(double frame) const;
     double xToFrame(double x) const;
-    QVector<int> snapPoints(const QSet<int>& exclude) const;
+    // withInOut = false: without the In/Out points (dragging them)
+    QVector<int> snapPoints(const QSet<int>& exclude, bool withInOut = true) const;
     int snapDelta(const QVector<int>& edges, const QSet<int>& exclude, bool* hit = nullptr) const;
 
     void drawRuler(QPainter& p);
@@ -481,7 +482,7 @@ private:
     static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
-    bool m_snap = true;
+    bool m_snap = TimelineOptions::snapping(); // remembered (the main window stores it)
     bool m_showNames = true;
     bool m_showDurations = false;
     int m_playhead = 0;

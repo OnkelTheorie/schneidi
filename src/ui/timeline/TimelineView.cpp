@@ -545,17 +545,27 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
 
 // ---------- Snapping ----------
 
-QVector<int> TimelineView::snapPoints(const QSet<int>& exclude) const
+QVector<int> TimelineView::snapPoints(const QSet<int>& exclude, bool withInOut) const
 {
-    QVector<int> pts{0, m_playhead};
+    // The user's targets (Settings › Timeline › Snapping); the start always counts
+    const int targets = TimelineOptions::snapTargets();
+    QVector<int> pts{0};
+    if (targets & TimelineOptions::SnapPlayhead) pts << m_playhead;
     const Timeline& tl = m_editor->project()->timeline();
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (const auto& t : tl.tracks(k))
-            for (const auto& c : t.clips)
-                if (!exclude.contains(c.id)) pts << c.start << c.end();
-    for (const SubtitleTrack& t : tl.subtitles)
-        for (const SubtitleCue& c : t.cues)
-            if (!exclude.contains(c.id)) pts << c.start << c.end;
+    if (targets & TimelineOptions::SnapClipEdges) {
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const auto& t : tl.tracks(k))
+                for (const auto& c : t.clips)
+                    if (!exclude.contains(c.id)) pts << c.start << c.end();
+        for (const SubtitleTrack& t : tl.subtitles)
+            for (const SubtitleCue& c : t.cues)
+                if (!exclude.contains(c.id)) pts << c.start << c.end;
+    }
+    if (targets & TimelineOptions::SnapMarkers) pts += tl.markers;
+    if (withInOut && (targets & TimelineOptions::SnapInOut)) {
+        if (tl.markIn >= 0) pts << tl.markIn;
+        if (tl.markOut >= 0) pts << tl.markOut + 1; // the end of the range (Out is its last frame)
+    }
     return pts;
 }
 
@@ -564,7 +574,7 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude,
 {
     if (hit) *hit = false;
     if (!m_snap) return 0;
-    const double maxFrames = kSnapPx / m_view.pxPerFrame;
+    const double maxFrames = TimelineOptions::snapPixels() / m_view.pxPerFrame;
     int best = 0;
     double bestDist = maxFrames + 1;
     for (int p : snapPoints(exclude)) {
