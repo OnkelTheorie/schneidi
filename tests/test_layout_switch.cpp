@@ -128,7 +128,9 @@ int main(int argc, char** argv)
     const Snapshot before = take(w, panels);
     const auto same = [&](const char* when) {
         Check::report(w.liveSelection()->ids() == selection, "selection kept", __FILE__, __LINE__, when);
-        Check::report(view->view().pxPerFrame == 3.5 && view->view().leftFrame == 20.0, "zoom and scroll kept",
+        // (the phone and tablet forms centre the playhead: their scroll follows it; the desktop's comes back)
+        const bool desktop = w.layoutForm() == F::Desktop;
+        Check::report(view->view().pxPerFrame == 3.5 && (!desktop || view->view().leftFrame == 20.0), "zoom and scroll kept",
                       __FILE__, __LINE__, QString("%1: %2 / %3").arg(when).arg(view->view().pxPerFrame)
                                                 .arg(view->view().leftFrame));
         Check::report(view->playhead() == 55, "playhead kept", __FILE__, __LINE__, when);
@@ -151,6 +153,7 @@ int main(int argc, char** argv)
                 CHECK(menu->mapTo(&w, menu->rect().center()).y() == undo->mapTo(&w, undo->rect().center()).y());
         }
         same("tablet");
+        CHECK(view->centerPlayhead()); // (default on in the shell forms)
         // A phone's width: the phone form; panels opened as sheets
         w.resize(411, 760);
         settle();
@@ -171,6 +174,7 @@ int main(int argc, char** argv)
         settle();
         CHECK(w.layoutForm() == F::Desktop);
         CHECK(!w.phoneShell() && w.menuBar()->isVisible());
+        CHECK(!view->centerPlayhead());
         same("desktop again");
         compare(before, take(w, panels), round == 0 ? "desktop as before (1)" : "desktop as before (2)");
         CHECK(TimelineView::kHeaderW == TimelineView::kHeaderWide);

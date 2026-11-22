@@ -794,6 +794,9 @@ private:
     void addPicked(const QStringList& paths);
     class QAbstractButton* m_addMediaButton = nullptr; // the timeline's "+ Videos hinzufügen" (phone, tablet)
     void updateAddMediaButton();
+    // The timeline's playhead fixed in the middle: setting timeline/centerPlayhead on/off, else on in the phone and
+    // tablet forms (TimelineView::setCenterPlayhead)
+    void applyCenterPlayhead();
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

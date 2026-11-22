@@ -3707,5 +3707,8 @@
  "schneidi zeigt dir hier deine Videos und Fotos zum Auswählen. Dafür fragt Android gleich, ob schneidi sie lesen darf. Es wird nichts hochgeladen oder verändert.": "schneidi shows your videos and photos here to pick from. Android will ask whether schneidi may read them. Nothing is uploaded or changed.",
  "Ohne Erlaubnis öffnet sich die Dateiauswahl von Android.": "Without permission, Android's file picker opens.",
  "Bewegungen reduzieren": "Reduce motion",
- "Wechselt die Anordnung (Fenstergröße, Klapphandy), ohne Überblenden.": "Switches the layout (window size, foldable) without fading."
+ "Wechselt die Anordnung (Fenstergröße, Klapphandy), ohne Überblenden.": "Switches the layout (window size, foldable) without fading.",
+ "Automatisch (Handy, Tablet)": "Automatic (phone, tablet)",
+ "Abspielmarke in der Mitte": "Playhead in the middle",
+ "Die Abspielmarke bleibt in der Mitte stehen, die Timeline gleitet darunter: zur Seite ziehen spult, beim Abspielen läuft die Timeline mit.": "The playhead stays in the middle and the timeline slides under it: dragging sideways scrubs, during playback the timeline moves along."
 }

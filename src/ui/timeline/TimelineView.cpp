@@ -639,12 +639,15 @@ void TimelineView::setFingerPans(bool on)
         return clipAt(p) || clipAt(p + QPoint(zone, 0)) || clipAt(p - QPoint(zone, 0));
     };
     m_gestures->panAt = [this, onClip](const QPointF& pos) {
-        return pos.x() >= kHeaderW && pos.y() >= kRulerH + subtitlesHeight() && !onClip(pos);
+        if (pos.x() < kHeaderW) return false;
+        if (pos.y() < kRulerH) return m_center; // the ruler scrubs by sliding in the centre mode
+        return pos.y() >= kRulerH + subtitlesHeight() && !onClip(pos);
     };
     // User input: the view follows the finger (leftFrame, scrollY), the playhead stays (core rule kept)
     m_gestures->onPan = [this](const QPointF& delta) {
-        const double left = std::max(0.0, m_view.leftFrame - delta.x() / m_view.pxPerFrame);
-        if (left != m_view.leftFrame) setLeftFrame(left);
+        // (the centre mode: setLeftFrame scrubs; its limits are the timeline's start and end under the line)
+        const double left = m_view.leftFrame - delta.x() / m_view.pxPerFrame;
+        if (left != m_view.leftFrame && (m_center || left >= 0 || m_view.leftFrame > 0)) setLeftFrame(std::max(m_center ? left : 0.0, left));
         if (const int dy = int(std::lround(delta.y())); dy != 0) setScrollY(m_view.scrollY - dy);
     };
     m_gestures->onHoldCue = [this](const QPointF& pos) {
@@ -657,8 +660,38 @@ void TimelineView::setFingerPans(bool on)
     };
 }
 
+double TimelineView::centreLeft() const
+{
+    return m_playhead - (width() - kHeaderW) / 2.0 / m_view.pxPerFrame;
+}
+
+void TimelineView::setCenterPlayhead(bool on)
+{
+    if (m_center == on) return;
+    m_center = on;
+    if (on) m_view.leftFrame = centreLeft();
+    else m_view.leftFrame = std::max(0.0, m_view.leftFrame);
+    update();
+    emit viewChanged();
+}
+
 void TimelineView::setLeftFrame(double frame)
 {
+    if (m_center) {
+        // Sliding the timeline under the fixed line = scrubbing: the frame under the line becomes the playhead
+        const double half = (width() - kHeaderW) / 2.0 / m_view.pxPerFrame;
+        const int end = std::max(0, TimelineOps::endFrame(m_editor->project()->timeline()));
+        const int target = std::clamp(int(std::lround(frame + half)), 0, end);
+        m_view.leftFrame = target - half;
+        update();
+        emit viewChanged();
+        if (target != m_playhead) {
+            m_playhead = target; // (at once: the engine's answer follows)
+            emit playheadChanged(target);
+            emit seekRequested(target);
+        }
+        return;
+    }
     m_view.leftFrame = std::max(0.0, frame);
     update();
     emit viewChanged();
@@ -731,7 +764,11 @@ void TimelineView::setPlayhead(int frame)
 {
     if (frame == m_playhead) return;
     m_playhead = frame;
-    update(); // deliberately NO automatic scrolling along
+    if (m_center) { // the timeline slides under the fixed line (playback too: every frame, no paging)
+        m_view.leftFrame = centreLeft();
+        emit viewChanged();
+    }
+    update(); // otherwise deliberately NO automatic scrolling along
     emit playheadChanged(frame);
 }
 
@@ -881,5 +918,6 @@ int TimelineView::trackDropIndex(int y) const
 
 void TimelineView::resizeEvent(QResizeEvent*)
 {
+    if (m_center) m_view.leftFrame = centreLeft();
     emit viewChanged();
 }

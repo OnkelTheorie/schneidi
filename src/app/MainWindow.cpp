@@ -201,6 +201,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         const LayoutForm form = wantedForm(screen->availableGeometry().size());
         if (form != LayoutForm::Desktop) setLayoutForm(form);
     }
+    applyCenterPlayhead(); // (the desktop: only when set to "on")
     applyAiMarkStyle();
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 

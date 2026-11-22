@@ -99,7 +99,11 @@ void MainWindow::settingsDialog(int tab)
     // Layout form: at once (the same widgets move)
     const bool phoneChanged = dlg.phoneLayout() != SettingsDialog::savedPhoneLayout() && !m_autosaveDisabled;
     if (phoneChanged) SettingsDialog::setSavedPhoneLayout(dlg.phoneLayout());
-    if (!m_autosaveDisabled) QSettings().setValue("ui/reduceMotion", dlg.reduceMotion());
+    if (!m_autosaveDisabled) {
+        QSettings().setValue("ui/reduceMotion", dlg.reduceMotion());
+        QSettings().setValue("timeline/centerPlayhead", dlg.centerPlayhead());
+    }
+    applyCenterPlayhead();
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {

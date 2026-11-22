@@ -69,6 +69,8 @@ void TimelineView::paintEvent(QPaintEvent*)
             finishRename(false);
         }
     }
+    // The centre mode: whatever moved the view (a zoom around the fingers, the wheel), the playhead stays in the middle
+    if (m_center) m_view.leftFrame = centreLeft();
     QPainter p(this);
     p.fillRect(rect(), Theme::timelineBg);
     drawTracks(p);
@@ -119,7 +121,7 @@ void TimelineView::drawRuler(QPainter& p)
 
     p.save();
     p.setClipRect(kHeaderW, 0, width() - kHeaderW, kRulerH);
-    const int first = int(m_view.leftFrame) / minor * minor;
+    const int first = std::max(0, int(m_view.leftFrame) / minor * minor); // (the centre mode shows room before 0)
     const int last = int(xToFrame(width())) + minor;
     QFont f = font();
     f.setPointSizeF(7.5);
@@ -1160,6 +1162,35 @@ void TimelineView::drawRubber(QPainter& p)
 
 void TimelineView::drawPlayhead(QPainter& p)
 {
+    if (m_center) {
+        // A thin line in the text color, fixed in the lanes' middle; at the ruler's left the time "00:07 / 00:32"
+        const int x = int(std::lround(frameToX(m_playhead)));
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(Theme::text, 2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(x, kRulerH - 6, x, height() - 2);
+        const int fps = std::max(1, m_editor->project()->fps());
+        const auto mmss = [fps](int f) {
+            const int sec = std::max(0, f) / fps;
+            return QString("%1:%2").arg(sec / 60, 2, 10, QChar('0')).arg(sec % 60, 2, 10, QChar('0'));
+        };
+        const QString now = mmss(m_playhead), total = " / " + mmss(TimelineOps::endFrame(m_editor->project()->timeline()));
+        QFont f = font();
+        f.setPixelSize(11);
+        f.setBold(true);
+        const QFontMetrics fm(f);
+        QFont g = f;
+        g.setBold(false);
+        const int w = fm.horizontalAdvance(now) + QFontMetrics(g).horizontalAdvance(total) + 12;
+        const QRect box(kHeaderW, 0, w, kRulerH - 1);
+        p.fillRect(box, Theme::ruler);
+        p.setFont(f);
+        p.setPen(Theme::text);
+        p.drawText(box.adjusted(6, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, now);
+        p.setFont(g);
+        p.setPen(Theme::textDim);
+        p.drawText(box.adjusted(6 + fm.horizontalAdvance(now), 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, total);
+        return;
+    }
     const int x = int(frameToX(m_playhead));
     if (x < kHeaderW || x > width()) return;
     p.setPen(QPen(Theme::playhead, 1));

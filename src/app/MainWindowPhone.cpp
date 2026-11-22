@@ -136,6 +136,7 @@ struct ShellHomes : QObject { // (a child of the window: goes with it)
     MainWindow::Page page = MainWindow::Page::Edit;
     QSize viewerMin;
     int timelineMin = 0;
+    double leftFrame = 0; // the desktop's scroll (the phone's centred playhead moves it)
 };
 
 namespace {
@@ -404,6 +405,7 @@ void MainWindow::enableShell(bool tablet)
         if (t) m_shellHomes->toggles.insert(t, t->isChecked());
     m_shellHomes->viewerMin = m_viewer->screen()->minimumSize();
     m_shellHomes->timelineMin = m_timeline->view()->minimumHeight();
+    m_shellHomes->leftFrame = m_timeline->view()->view().leftFrame;
     // The Edit page's state first (the viewer's overlay for shapes and painting): the phone layout is the Edit page
     if (m_page != Page::Edit) showPage(Page::Edit);
     setViewerLarge(false);
@@ -519,6 +521,7 @@ void MainWindow::enableShell(bool tablet)
     // The window's minimum from the phone layout now (the desktop's was set when its layout first ran): a resize to
     // the phone's size before the first show must not be held at the desktop's minimum
     if (tablet) m_phone->openSheet("inspector"); // the tablet's docked panel: the Inspector first
+    applyCenterPlayhead();
     m_phone->ensurePolished(); // (style sheets: the sizes they give)
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); // the panels' own layouts first
     centralWidget()->layout()->activate();
@@ -604,6 +607,12 @@ void MainWindow::disableShell()
     });
     const Page page = m_shellHomes->page;
     m_shellHomes->homes.clear();
+    const bool wasCentred = m_timeline->view()->centerPlayhead();
+    applyCenterPlayhead();
+    if (wasCentred && !m_timeline->view()->centerPlayhead()) { // the desktop's own scroll back (zoom stays the user's)
+        TimelineView* view = m_timeline->view();
+        view->setZoomAndScroll(view->view().pxPerFrame, m_shellHomes->leftFrame, view->view().scrollY);
+    }
     if (page != Page::Edit) showPage(page);
     setUpdatesEnabled(true);
 }
@@ -621,6 +630,12 @@ void MainWindow::phoneAdoptBackgroundJobs()
     // A tap: what runs, in full (a phone has no tooltips)
     connect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this,
             [this](const QString& text) { m_viewer->showNotice(text, 4000); });
+}
+
+void MainWindow::applyCenterPlayhead()
+{
+    const QString v = QSettings().value("timeline/centerPlayhead").toString();
+    m_timeline->view()->setCenterPlayhead(v == "on" || (v.isEmpty() && m_phone));
 }
 
 void MainWindow::updateAddMediaButton()

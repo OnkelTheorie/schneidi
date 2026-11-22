@@ -281,6 +281,20 @@ QWidget* SettingsDialog::buildGeneral()
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
 
+    // Timeline: the playhead fixed in the middle (phones' editors) - automatic = on the phone and tablet forms
+    auto* timelineBox = new QGroupBox(T("Timeline"));
+    auto* tform = new QFormLayout(timelineBox);
+    m_centerPlayhead = new QComboBox;
+    m_centerPlayhead->setObjectName("settings_center_playhead");
+    m_centerPlayhead->addItem(T("Automatisch (Handy, Tablet)"), QString());
+    m_centerPlayhead->addItem(T("Immer"), QStringLiteral("on"));
+    m_centerPlayhead->addItem(T("Nie"), QStringLiteral("off"));
+    m_centerPlayhead->setCurrentIndex(std::max(0, m_centerPlayhead->findData(QSettings().value("timeline/centerPlayhead").toString())));
+    tform->addRow(T("Abspielmarke in der Mitte"), m_centerPlayhead);
+    tform->addRow(hint(T("Die Abspielmarke bleibt in der Mitte stehen, die Timeline gleitet darunter: zur Seite ziehen "
+                         "spult, beim Abspielen läuft die Timeline mit.")));
+    lay->addWidget(timelineBox);
+
     // Compositing: new nodes from the node search linked at once (default) or only added
     auto* comp = new QGroupBox(T("Compositing"));
     auto* cform = new QFormLayout(comp);
@@ -434,6 +448,8 @@ QString SettingsDialog::startPage() const { return m_startPage->currentData().to
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
+QString SettingsDialog::centerPlayhead() const { return m_centerPlayhead->currentData().toString(); }
+
 bool SettingsDialog::reduceMotion() const { return m_reduceMotion->isChecked(); }
 
 QString SettingsDialog::phoneLayout() const { return m_phoneLayout->currentData().toString(); }

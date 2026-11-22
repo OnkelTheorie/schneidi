@@ -38,6 +38,11 @@ public:
     // Phone: one finger in the track area moves the view (with a glide); a clip moves after a hold (TouchGestures)
     void setFingerPans(bool on);
     bool fingerPans() const { return m_fingerPans; }
+    // The playhead fixed in the lanes' middle (phones' editors): the timeline slides under it. A sideways drag on
+    // empty lanes or the ruler (and a fling, the scrollbar) scrubs; playback keeps the line in the middle. A wanted
+    // exception to the core rule (the view follows the playhead), only in this mode (docs/architektur.md)
+    void setCenterPlayhead(bool on);
+    bool centerPlayhead() const { return m_center; }
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
@@ -222,6 +227,8 @@ protected:
 private:
     class TouchGestures* m_gestures = nullptr;
     bool m_fingerPans = false;
+    bool m_center = false;          // setCenterPlayhead
+    double centreLeft() const;      // the left frame that puts the playhead in the lanes' middle
     QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment
 
     struct GapPick {

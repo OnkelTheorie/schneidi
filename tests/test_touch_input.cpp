@@ -827,6 +827,75 @@ void testFingerPan()
     f.tv->setFingerPans(false);
 }
 
+// The centred playhead (phones' editors): the line stays in the lanes' middle, sliding the timeline scrubs, a clip
+// still moves under a finger, playback keeps the line in the middle; off = the free view as before
+void testCenterPlayhead()
+{
+    Fixture f;
+    f.tv->setFingerPans(true);
+    int seek = -1, seeks = 0;
+    QObject::connect(f.tv, &TimelineView::seekRequested, [&](int frame) {
+        seek = frame;
+        ++seeks;
+        f.tv->setPlayhead(frame); // (as the engine answers)
+    });
+    f.tv->setPlayhead(100);
+    f.tv->setCenterPlayhead(true);
+    QApplication::processEvents();
+    const int centre = TimelineView::kHeaderW + (f.tv->width() - TimelineView::kHeaderW) / 2;
+    CHECK(std::abs(f.x(100) - centre) <= 1);
+    // Playback (the engine moves the playhead): the line stays in the middle, the timeline slides
+    for (int fr : {101, 150, 230}) {
+        f.tv->setPlayhead(fr);
+        CHECK(std::abs(f.x(fr) - centre) <= 1);
+    }
+    // The start: frame 0 under the line, room before it
+    f.tv->setPlayhead(0);
+    CHECK(f.tv->view().leftFrame < 0);
+    CHECK(std::abs(f.x(0) - centre) <= 1);
+    f.tv->setPlayhead(100);
+    pauseTaps();
+    // Sliding an empty lane 60 px to the left scrubs 30 frames on (2 px per frame); the clips stay
+    const int clip3Before = f.project.timeline().video[1].clips[0].start;
+    QPoint at(f.x(135), 60); // V2 after clip 3 (50..120): empty
+    swipe(f.tv, at, at - QPoint(60, 0));
+    QTest::qWait(700); // (any glide over)
+    Check::report(seeks > 0 && f.tv->playhead() >= 130, "slide scrubs", __FILE__, __LINE__,
+                  QString("playhead %1, seeks %2").arg(f.tv->playhead()).arg(seeks));
+    CHECK(std::abs(f.x(f.tv->playhead()) - centre) <= 1);
+    CHECK_EQ(f.project.timeline().video[1].clips[0].start, clip3Before);
+    pauseTaps();
+    // The ruler slides too
+    const int before = f.tv->playhead();
+    swipe(f.tv, {centre, 15}, {centre + 40, 15});
+    QTest::qWait(700);
+    CHECK(f.tv->playhead() < before);
+    pauseTaps();
+    // A finger on a clip still moves the clip
+    f.tv->setPlayhead(60);
+    const int c1 = f.project.timeline().video[0].clips[0].start; // (clip 1: 0..100, in sight around the line)
+    const QPoint onClip(f.x(c1 + 50), 120);
+    swipe(f.tv, onClip, onClip + QPoint(20, 0));
+    CHECK_EQ(f.project.timeline().video[0].clips[0].start, c1 + 10);
+    pauseTaps();
+    // Never past the end nor before 0
+    f.tv->setLeftFrame(100000);
+    CHECK(f.tv->playhead() == TimelineOps::endFrame(f.project.timeline()));
+    f.tv->setLeftFrame(-100000);
+    CHECK(f.tv->playhead() == 0);
+    // Off: the free view again (a slide moves the view, the playhead stays)
+    f.tv->setCenterPlayhead(false);
+    f.tv->setZoomAndScroll(2.0, 0, 0);
+    f.tv->setPlayhead(10);
+    const int seeksBefore = seeks;
+    swipe(f.tv, {f.x(135), 60}, {f.x(135) - 60, 60});
+    QTest::qWait(700);
+    CHECK(f.tv->view().leftFrame > 0);
+    CHECK_EQ(seeks, seeksBefore);
+    CHECK_EQ(f.tv->playhead(), 10);
+    f.tv->setFingerPans(false);
+}
+
 // Phone: compact track headers (60 px: V1 + eye/mute); a tap on the header opens its menu
 void testCompactHeaders()
 {
@@ -889,5 +958,6 @@ int main(int argc, char** argv)
     testLongPressHint();
     testFingerPan();
     testCompactHeaders();
+    testCenterPlayhead();
     return Check::result();
 }
