@@ -18,6 +18,7 @@
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
 #include "ui/MediaPool.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/phone/PhoneShell.h"
@@ -279,6 +280,10 @@ void testWindow(Engine& engine, const QSize& size)
             if (s->isVisible()) ++shown;
         Check::report(shown == 1, "one panel in the sheet", __FILE__, __LINE__, QString("%1: %2").arg(id).arg(shown));
         fits(id);
+        if (QString(id) == "export") { // the queue with its "Render all" in the same sheet (else nothing renders)
+            auto* queue = shell->panel("export")->findChild<RenderQueuePanel*>();
+            CHECK(queue && queue->isVisibleTo(shell));
+        }
         if (QString(id) == "color") // the palette tabs at their full width ("W…s" in touch mode on Android)
             for (int i = 0; i < 4; ++i)
                 if (auto* b = shell->panel("color")->findChild<QToolButton*>(QString("color_palette_%1").arg(i)); CHECK(b))

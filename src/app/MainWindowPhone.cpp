@@ -201,7 +201,19 @@ void MainWindow::enablePhoneLayout()
     m_phone->addPanelTool("inspector", QStringLiteral("☰"), T("Inspektor"), [this] { return m_inspector; });
     m_phone->addPanelTool("transcript", QStringLiteral("¶"), T("Transkript"), [this] { return m_transcript; });
     m_phone->addPanelTool("ai", QStringLiteral("✧"), T("KI"), [this]() -> QWidget* { return m_chatPanel; });
-    m_phone->addPanelTool("export", QStringLiteral("⇪"), T("Export"), [this]() -> QWidget* { return m_deliver; });
+    m_phone->addPanelTool("export", QStringLiteral("⇪"), T("Export"), [this]() -> QWidget* {
+        // The settings and, below them, the render queue (on the desktop it stands beside them): "Add to Render
+        // Queue" alone rendered nothing on the phone, the queue's "Render all" was not on the screen
+        auto* box = new QWidget;
+        box->setObjectName("phoneExport");
+        auto* lay = new QVBoxLayout(box);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(1);
+        lay->addWidget(m_deliver, 3);
+        lay->addWidget(m_deliver->queuePanel(), 2);
+        m_deliver->queuePanel()->show();
+        return box;
+    });
 
     // The clip tools (while clips are selected)
     m_phone->addActionTool("split", QStringLiteral("✂"), T("Teilen"), [] { trigger("split"); });
