@@ -93,6 +93,19 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     m_chars->setValue(settings.value("transcribe/maxChars", 42).toInt());
     m_chars->setSuffix(T(" Zeichen"));
     m_chars->setToolTip(T("Längste Untertitelzeile; Sätze und längere Pausen beginnen immer einen neuen Untertitel"));
+    // Cue length: short ones for TikTok/Shorts; "automatic" follows the timeline (vertical = short)
+    m_length = new QComboBox;
+    m_length->setObjectName("transcribe_length");
+    const bool vertical = Subtitles::resolve(Subtitles::CueLength::Auto, format.size()) != Subtitles::CueLength::Normal;
+    m_length->addItem(vertical ? T("Automatisch (Kurz, Hochformat)") : T("Automatisch (Normal)"), "auto");
+    m_length->addItem(T("Normal (1–2 Zeilen)"), "normal");
+    m_length->addItem(T("Kurz (eine Zeile, für TikTok/Shorts)"), "short");
+    m_length->addItem(T("Sehr kurz (2–3 Wörter)"), "very_short");
+    m_length->setCurrentIndex(std::max(0, m_length->findData(settings.value("transcribe/length", "auto"))));
+    m_length->setToolTip(T("Kurz: höchstens ein kurzer Satz pro Untertitel, geteilt an Satzzeichen und Nebensätzen, "
+                           "nie mitten im Wort. Automatisch: kurz bei Hochformat (9:16), sonst normal."));
+    connect(m_length, &QComboBox::currentIndexChanged, this, &TranscribeDialog::updateState);
+    form->addRow(T("Untertitel-Länge"), m_length);
     form->addRow(T("Höchstens"), m_chars);
 
     m_missing = new QLabel;
@@ -143,10 +156,16 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
                                  .arg(int(std::lround(m_transcriber.detectedProbability() * 100)))
                                  .arg(name(m_language));
         }
-        QVector<SubtitleCue> cues =
-            Transcript::toCues(m_transcriber.result().words, m_format.rate.fps(), m_chars->value(), 700, m_from);
-        Transcript::startAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
-        Transcript::endAtSound(cues, m_transcriber.result().levels, m_format.rate.fps(), m_from);
+        const Transcript::Result& r = m_transcriber.result();
+        const double fps = m_format.rate.fps();
+        QVector<SubtitleCue> cues;
+        if (const Subtitles::CueLength length = cueLength(); length == Subtitles::CueLength::Normal) {
+            cues = Transcript::toCues(r.words, fps, m_chars->value(), 700, m_from);
+            Transcript::startAtSound(cues, r.levels, fps, m_from);
+            Transcript::endAtSound(cues, r.levels, fps, m_from);
+        } else { // short cues, each word keeps its time (Transcript panel, re-split later)
+            cues = Transcript::readableCues(r.words, r.levels, fps, m_from, false, Subtitles::rulesFor(length));
+        }
         for (SubtitleCue& c : cues) c.end = std::min(c.end, m_to);
         if (!cues.isEmpty()) m_results << Result{m_jobs[m_job].name, cues};
         if (++m_job < m_jobs.size()) return startJob();
@@ -191,7 +210,15 @@ void TranscribeDialog::updateState()
     m_start->setEnabled(ready && (m_tracks.isEmpty() || ticked > 0) && !running);
     m_lang->setEnabled(!running);
     m_model->setEnabled(!running);
-    m_chars->setEnabled(!running);
+    m_length->setEnabled(!running);
+    m_chars->setEnabled(!running && cueLength() == Subtitles::CueLength::Normal); // short ones have their own size
+}
+
+Subtitles::CueLength TranscribeDialog::cueLength() const
+{
+    Subtitles::CueLength length = Subtitles::CueLength::Auto;
+    Subtitles::parseCueLength(m_length->currentData().toString(), &length);
+    return Subtitles::resolve(length, m_format.size());
 }
 
 void TranscribeDialog::run()
@@ -200,6 +227,7 @@ void TranscribeDialog::run()
     settings.setValue("transcribe/language", m_lang->currentData());
     settings.setValue("transcribe/model", m_model->currentData());
     settings.setValue("transcribe/maxChars", m_chars->value());
+    settings.setValue("transcribe/length", m_length->currentData()); // the last choice, "auto" too
     if (m_separate) settings.setValue("transcribe/separate", m_separate->isChecked());
     // One job for the mix (all ticked tracks, or the timeline as heard), or one per ticked track
     m_jobs.clear();

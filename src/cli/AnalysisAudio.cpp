@@ -448,6 +448,11 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         length = m.info.length;
     }
 
+    // Cue length: chosen, else max_chars keeps the size it gives (normal), else auto (short cues for a vertical picture)
+    Subtitles::CueLength chosen = a.contains("max_chars") ? Subtitles::CueLength::Normal : Subtitles::CueLength::Auto;
+    if (a.contains("length") && !Subtitles::parseCueLength(a["length"].toString(), &chosen))
+        fail("BAD_ARGUMENT", QString("length must be auto, normal, short or very_short (not '%1')").arg(a["length"].toString()));
+
     Transcriber t;
     QEventLoop loop;
     bool ok = false;
@@ -485,9 +490,15 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
         Transcript::endAtSound(cues, r.levels, f.rate.fps(), offset);
     }
-    // Readable subtitles: the words regrouped into 1-2 line cues (word times kept, edit op 'subtitles' takes them)
-    const bool readable = a["readable"].toBool() && !a.contains("captions");
-    if (readable) cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music);
+    // Readable subtitles: the words regrouped into 1-2 line cues, or short ones (word times kept, edit op 'subtitles'
+    // takes them)
+    const Subtitles::CueLength cueLength = Subtitles::resolve(chosen, f.size());
+    const bool shortCues = cueLength == Subtitles::CueLength::Short || cueLength == Subtitles::CueLength::VeryShort;
+    const bool readable = (a["readable"].toBool() || shortCues) && !a.contains("captions");
+    if (readable)
+        cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music, Subtitles::rulesFor(cueLength));
+    if (shortCues && chosen == Subtitles::CueLength::Auto && !a.contains("captions"))
+        notes << QString("short cues (one line, a few words) for the vertical picture; length:\"normal\" for 1-2 lines");
     QJsonArray segments;
     for (const SubtitleCue& c : cues) {
         QJsonObject o = range(c.start, std::min(c.end, offset + length), f);
@@ -496,6 +507,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     }
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
                     {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
+    if (!a.contains("captions")) out["length"] = Subtitles::cueLengthKey(cueLength);
     for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
     if (!t.promptNote().isEmpty()) notes << t.promptNote();
     if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {

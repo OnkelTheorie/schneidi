@@ -1374,6 +1374,37 @@ void MainWindow::transcribeDialog()
     if (!dlg.languageHint().isEmpty()) QMessageBox::information(this, T("Untertitel aus Audio erzeugen"), dlg.languageHint());
 }
 
+void MainWindow::resplitSubtitles(Subtitles::CueLength length)
+{
+    const Timeline& tl = m_project->timeline();
+    const QString title = T("Untertitel neu aufteilen");
+    // The track of a selected subtitle, else the visible one with cues, else the first with cues
+    int index = -1;
+    for (int id : m_selection->ids())
+        if (Subtitles::find(tl, id, &index)) break;
+    if (index < 0 || index >= tl.subtitles.size()) {
+        index = -1;
+        for (int i = 0; i < tl.subtitles.size() && index < 0; ++i)
+            if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) index = i;
+        for (int i = 0; i < tl.subtitles.size() && index < 0; ++i)
+            if (!tl.subtitles[i].cues.isEmpty()) index = i;
+    }
+    if (index < 0) {
+        QMessageBox::information(this, title, T("Es gibt keine Untertitel zum Aufteilen."));
+        return;
+    }
+    if (tl.subtitles[index].locked) {
+        QMessageBox::information(this, title, T("Die Untertitelspur ist gesperrt."));
+        return;
+    }
+    const QVector<SubtitleCue> after =
+        Subtitles::readable(tl.subtitles[index].cues, m_project->frameRate(), Subtitles::rulesFor(length));
+    if (after.isEmpty()) return;
+    const QString name = subtitleTrackDisplayName(tl.subtitles[index], index);
+    if (m_editor->setSubtitleCues(index, after, title))
+        statusBar()->showMessage(T("%1: %2 Untertitel").arg(name).arg(after.size()), 4000);
+}
+
 // Text -> voice clip (Piper) at the playhead on the first audio track free there; its words become the file's
 // transcript (Transcript panel, word captions)
 void MainWindow::speechDialog()

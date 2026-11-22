@@ -512,9 +512,10 @@ QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset
     return cues;
 }
 
-QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset, bool music)
+QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset, bool music,
+                                  const Subtitles::ReadableRules& rules)
 {
-    QVector<SubtitleCue> cues = Subtitles::readable(wordCues(words, fps, offset), fps);
+    QVector<SubtitleCue> cues = Subtitles::readable(wordCues(words, fps, offset), fps, rules);
     if (music) return cues;
     QVector<SubtitleCue> moved = cues;
     for (int i = 0; i < moved.size(); ++i) moved[i].id = i; // which cue it was (startAtSound drops some)

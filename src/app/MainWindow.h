@@ -8,6 +8,7 @@
 #include "core/LiveHost.h"
 #include "core/PlaybackMeter.h"
 #include "core/ProjectFile.h"
+#include "core/Subtitles.h"
 #include "core/Types.h"
 
 #include <QElapsedTimer>
@@ -344,6 +345,9 @@ private:
     void contactSheetDialog(); // File › Save Contact Sheet: stills of the timeline as one picture
     void exportTimelineDialog();
     void transcribeDialog();
+    // Timeline › Subtitles › Re-split: the subtitle track of the selection (else the visible one) regrouped into cues
+    // of this length (Subtitles::readable; stored word times kept, otherwise shared by word length), one undo step
+    void resplitSubtitles(Subtitles::CueLength length);
     void speechDialog();
     MediaInfo probeCached(const QString& path);
     void probeLater(const QString& path); // full probe in the background into m_probeCache
