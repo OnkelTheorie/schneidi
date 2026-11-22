@@ -554,7 +554,7 @@ bool Viewer::eventFilter(QObject* obj, QEvent* event)
         case QEvent::Hide:
         case QEvent::DevicePixelRatioChange:
             m_edgeTimer->start();
-            if (m_notice->isVisible()) m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
+            if (m_notice->isVisible()) placeNotice();
             break;
         default: break;
         }
@@ -565,11 +565,23 @@ bool Viewer::eventFilter(QObject* obj, QEvent* event)
 void Viewer::showNotice(const QString& text, int ms)
 {
     m_notice->setText(text);
-    m_notice->adjustSize();
-    m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
+    placeNotice();
     m_notice->show();
     m_notice->raise(); // above the GPU surface and the overlay layer
     m_noticeTimer->start(ms);
+}
+
+void Viewer::placeNotice()
+{
+    // One line where it fits; on a narrow viewer (a phone in portrait) it wraps instead of reaching past the edges
+    const int room = std::max(80, m_screen->width() - 16);
+    m_notice->setWordWrap(false);
+    m_notice->adjustSize();
+    if (m_notice->width() > room) {
+        m_notice->setWordWrap(true);
+        m_notice->resize(room, m_notice->heightForWidth(room));
+    }
+    m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
 }
 
 QString Viewer::notice() const

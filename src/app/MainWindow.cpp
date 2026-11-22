@@ -1429,6 +1429,7 @@ void MainWindow::setupBackgroundJobs()
 {
     m_backgroundJobs = new BackgroundJobs;
     m_pageBarRight->addWidget(m_backgroundJobs); // right in the page bar (the status bar is hidden)
+    if (m_phone) phoneAdoptBackgroundJobs();     // the page bar is hidden there: the phone's top bar
     ProxyManager* proxies = m_engine->proxies();
     ProxyProgress* progress = ProxyProgress::of(proxies);
     connect(progress, &ProxyProgress::changed, m_backgroundJobs, [this, proxies, progress] {

@@ -37,6 +37,9 @@ public:
     void setFrameSize(const QSize& size);
     // Builds the pages still waiting for their first use (title, transition, subtitles; see ensurePage)
     void ensureAllPages();
+    // The Audio tab at its top (the Volume section first): the phone's Volume tool. False = no audio clip selected
+    bool showAudio();
+    int currentPage() const; // tests: 0 video, 1 audio, …
 
 public slots:
     // Playhead (timeline frame): values show the interpolated value there, keyframes are set there

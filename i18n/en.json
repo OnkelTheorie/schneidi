@@ -3685,5 +3685,9 @@
  "Touch-Modus": "Touch mode",
  "schneidi beenden?": "Quit schneidi?",
  "Diese Seite gibt es auf dem Handy noch nicht.": "This page is not available on phones yet.",
- "Teilen": "Split"
+ "Teilen": "Split",
+ "Der ausgewählte Clip hat keinen Ton.": "The selected clip has no sound.",
+ "Handy-Layout": "Phone layout",
+ "Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. Automatisch: an bei einem Bildschirm in Handygröße.": "Viewer, timeline and tools stacked, one panel at a time. Automatic: on for a phone-sized screen.",
+ "Das Handy-Layout ändert sich nach dem Neustart von schneidi.": "The phone layout changes after restarting schneidi."
 }

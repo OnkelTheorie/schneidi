@@ -42,8 +42,10 @@ public:
     // A tool that runs `run` (no panel of its own), in the clip bar (shown while clips are selected) or the main bar
     void addActionTool(const QString& id, const QString& symbol, const QString& label, std::function<void()> run,
                        bool clipBar = true);
-    // A clip tool that opens a panel of the main bar (e.g. "Lautstärke" -> the Inspector)
-    void addClipPanelTool(const QString& id, const QString& symbol, const QString& label, const QString& panelId);
+    // A clip tool that opens a panel of the main bar (e.g. "Lautstärke" -> the Inspector); `opened` runs after the
+    // sheet opened (e.g. the Inspector's Audio tab), with the panel's scroll at its top
+    void addClipPanelTool(const QString& id, const QString& symbol, const QString& label, const QString& panelId,
+                          std::function<void()> opened = {});
     QToolButton* toolButton(const QString& id) const; // tests
 
     // The sheet: one panel at a time; opening another closes the one before
@@ -53,6 +55,7 @@ public:
     QWidget* sheetFrame() const { return m_sheet; }        // the sheet itself (header and panel)
     QWidget* panel(const QString& id) const;               // nullptr until it was opened once
     QString panelId(const QWidget* panel) const;           // the tool that shows `panel` (empty = none)
+    void scrollPanelToTop(const QString& id);               // the sheet's own scroll of that panel back to its top
     // Height of the sheet in portrait as a share of the room above the tool bar (dragging its handle changes it)
     double sheetShare() const { return m_share; }
     void setSheetShare(double share);

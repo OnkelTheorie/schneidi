@@ -226,19 +226,27 @@ void PhoneShell::addActionTool(const QString& id, const QString& symbol, const Q
     m_tools << t;
 }
 
-void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, const QString& label, const QString& panelId)
+void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, const QString& label, const QString& panelId,
+                                  std::function<void()> opened)
 {
     Tool t;
     t.id = id;
     t.label = label;
     t.panelId = panelId;
+    t.run = std::move(opened);
     t.clip = true;
     t.button = makeToolButton(symbol, label);
     t.button->setObjectName("phoneTool_" + id);
     t.button->setCheckable(true);
-    connect(t.button, &QToolButton::clicked, this, [this, panelId] {
-        if (m_open == panelId) closeSheet();
-        else openSheet(panelId);
+    connect(t.button, &QToolButton::clicked, this, [this, id, panelId] {
+        if (m_open == panelId) {
+            closeSheet();
+            return;
+        }
+        openSheet(panelId);
+        if (m_open != panelId) return;
+        scrollPanelToTop(panelId);
+        if (Tool* t = tool(id); t && t->run) t->run();
     });
     m_clipLay->addWidget(t.button);
     m_tools << t;
@@ -258,6 +266,11 @@ QWidget* PhoneShell::panel(const QString& id) const
     for (const Tool& t : m_tools)
         if (t.id == id && t.scroll) return t.scroll->widget();
     return nullptr;
+}
+
+void PhoneShell::scrollPanelToTop(const QString& id)
+{
+    if (Tool* t = tool(id); t && t->scroll) t->scroll->verticalScrollBar()->setValue(0);
 }
 
 QString PhoneShell::panelId(const QWidget* panel) const

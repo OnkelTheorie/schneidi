@@ -759,6 +759,9 @@ private:
     void phoneShowPage(Page page);  // showPage in the phone layout: a page becomes its panel's sheet
     void phoneTogglePanel(QWidget* panel, bool on); // a panel toggle (menu, key, workspace) in the phone layout
     QWidget* buildPhoneTopBar();
+    // The background work indicator (ui/BackgroundJobs) into the phone's top bar, compact (the page bar is hidden)
+    void phoneAdoptBackgroundJobs();
+    class QBoxLayout* m_phoneTopLay = nullptr; // the phone's top bar (jobs go before undo/redo)
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

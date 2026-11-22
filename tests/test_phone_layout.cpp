@@ -9,16 +9,20 @@
 
 #include "app/InputBindings.h"
 #include "app/MainWindow.h"
+#include "app/SettingsDialog.h"
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Types.h"
 #include "engine/Engine.h"
+#include "ui/BackgroundJobs.h"
+#include "ui/Inspector.h"
 #include "ui/phone/PhoneShell.h"
 #include "ui/touch/Touch.h"
 #include "app/Theme.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QLabel>
 #include <QLayout>
 #include <QMenuBar>
@@ -232,6 +236,8 @@ void testWindow(Engine& engine, const QSize& size)
     QTest::mouseClick(shell->toolButton("volume"), Qt::LeftButton);
     settle();
     CHECK(shell->sheet() == "inspector");
+    auto* inspector = qobject_cast<Inspector*>(shell->panel("inspector"));
+    CHECK(inspector && inspector->currentPage() != 1); // a title has no sound: no Audio tab
     fits("clip selected, Inspector open");
     CHECK(w.backStep());
     CHECK(shell->sheet().isEmpty() && shell->clipToolsShown());
@@ -249,6 +255,63 @@ void testWindow(Engine& engine, const QSize& size)
                               : int(w.editor()->project()->timeline().video.first().clips.size());
         CHECK(after < before || before == 0);
     }
+    // Volume on a clip with sound: the Inspector's Audio tab, at its top (the Volume section first)
+    shell->closeSheet();
+    if (inspector) {
+        int id = 0;
+        w.editor()->project()->edit("audio clip", [&](Timeline& tl) {
+            if (tl.audio.isEmpty()) tl.audio.resize(1);
+            Clip c;
+            c.id = id = w.editor()->project()->newClipId();
+            c.mediaPath = QStringLiteral("phone-test-missing.wav"); // offline media: the Inspector needs only the clip
+            c.start = 0;
+            c.in = 0;
+            c.out = 49;
+            tl.audio[0].clips << c;
+        });
+        w.editor()->selection()->set({id});
+        settle();
+        CHECK(shell->clipToolsShown());
+        QTest::mouseClick(shell->toolButton("volume"), Qt::LeftButton);
+        settle();
+        CHECK(shell->sheet() == "inspector");
+        CHECK(inspector->currentPage() == 1);
+        CHECK(shell->toolButton("volume")->isChecked());
+        fits("volume: Audio tab");
+        QTest::mouseClick(shell->toolButton("volume"), Qt::LeftButton); // again: closes
+        settle();
+        CHECK(shell->sheet().isEmpty());
+        w.editor()->selection()->set({});
+        settle();
+    }
+    // Background work: in the phone's top bar, compact (percent), inside the window; a tap shows the details
+    if (auto* jobs = w.findChild<BackgroundJobs*>("background_jobs"); CHECK(jobs)) {
+        CHECK(jobs->compact());
+        QWidget* top = jobs->parentWidget();
+        CHECK(top && top->objectName() == "TopBar" && shell->isAncestorOf(top));
+        BackgroundJobs::Job job;
+        job.text = "Proxy 2/5 – a_rather_long_file_name_from_a_phone_camera.mp4 – 34 %";
+        job.fraction = 0.34;
+        bool cancelled = false;
+        job.cancel = [&cancelled] { cancelled = true; };
+        jobs->setJob("proxies", job);
+        settle();
+        CHECK(jobs->isVisible());
+        CHECK(jobs->text() == "34 %");
+        CHECK(inside(jobs, &w));
+        fits("background job shown");
+        QString details;
+        QObject::connect(jobs, &BackgroundJobs::detailsRequested, jobs, [&details](const QString& t) { details = t; });
+        QTest::mouseClick(jobs, Qt::LeftButton, {}, QPoint(2, jobs->height() / 2));
+        CHECK(details.contains("a_rather_long_file_name"));
+        if (auto* cancel = jobs->findChild<QToolButton*>("background_jobs_cancel"); CHECK(cancel && cancel->isVisible())) {
+            QTest::mouseClick(cancel, Qt::LeftButton);
+            CHECK(cancelled);
+        }
+        jobs->removeJob("proxies");
+        settle();
+        CHECK(!jobs->isVisible());
+    }
     // Turned while running (Android follows the device): the other orientation, still inside
     const QSize turned(size.height(), size.width());
     w.resize(turned);
@@ -263,6 +326,34 @@ void testWindow(Engine& engine, const QSize& size)
                   __FILE__, __LINE__, QString("%1x%2").arg(turnedLeast.width()).arg(turnedLeast.height()));
 }
 
+// The setting ui/phoneLayout (Settings › Oberfläche › Handy-Layout): on/off win over the screen's size
+void testSetting()
+{
+    SettingsDialog::setSavedPhoneLayout({}); // (a run stopped before its end may have left one)
+    CHECK(SettingsDialog::savedPhoneLayout().isEmpty());
+    CHECK(!MainWindow::phoneLayoutWanted()); // automatic: the offscreen screen is no phone
+    SettingsDialog::setSavedPhoneLayout("on");
+    CHECK(MainWindow::phoneLayoutWanted());
+    {
+        SettingsDialog dlg{AiSettings{}};
+        auto* combo = dlg.findChild<QComboBox*>("settings_phone_layout");
+        if (CHECK(combo)) {
+            CHECK(combo->count() == 3);
+            CHECK(dlg.phoneLayout() == "on");
+            combo->setCurrentIndex(combo->findData(QStringLiteral("off")));
+            CHECK(dlg.phoneLayout() == "off");
+            combo->setCurrentIndex(0);
+            CHECK(dlg.phoneLayout().isEmpty());
+        }
+    }
+    SettingsDialog::setSavedPhoneLayout("off");
+    CHECK(!MainWindow::phoneLayoutWanted());
+    CHECK(SettingsDialog::savedPhoneLayout() == "off");
+    SettingsDialog::setSavedPhoneLayout({});
+    CHECK(SettingsDialog::savedPhoneLayout().isEmpty());
+    CHECK(!MainWindow::phoneLayoutWanted());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -272,6 +363,7 @@ int main(int argc, char** argv)
     Check::initApp("phone-layout");
     testSizes();
     testShell();
+    if (qEnvironmentVariableIsEmpty("SCHNEIDI_PHONE_LAYOUT")) testSetting();
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();

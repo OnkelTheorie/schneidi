@@ -135,6 +135,16 @@ QWidget* SettingsDialog::buildGeneral()
     m_touchMode->setToolTip(T("Größere Knöpfe, Zeilen, Spuren und Griffe für die Bedienung mit dem Finger. "
                               "Automatisch: an bei einem Touchscreen ohne Maus und Touchpad."));
     form->addRow(T("Touch-Modus"), m_touchMode);
+    // Viewer, timeline and tools stacked, one panel at a time (MainWindow::phoneLayoutWanted)
+    m_phoneLayout = new QComboBox;
+    m_phoneLayout->setObjectName("settings_phone_layout");
+    m_phoneLayout->addItem(T("Automatisch"), QString());
+    m_phoneLayout->addItem(T("Immer"), QStringLiteral("on"));
+    m_phoneLayout->addItem(T("Nie"), QStringLiteral("off"));
+    m_phoneLayout->setCurrentIndex(std::max(0, m_phoneLayout->findData(savedPhoneLayout())));
+    m_phoneLayout->setToolTip(T("Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. "
+                                "Automatisch: an bei einem Bildschirm in Handygröße."));
+    form->addRow(T("Handy-Layout"), m_phoneLayout);
     // The page shown at the start and on New Project (MainWindow::showStartPage); filled by setStartPages
     m_startPage = new QComboBox;
     m_startPage->setObjectName("settings_start_page");
@@ -417,4 +427,19 @@ QString SettingsDialog::startPage() const { return m_startPage->currentData().to
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
+QString SettingsDialog::phoneLayout() const { return m_phoneLayout->currentData().toString(); }
+
+QString SettingsDialog::savedPhoneLayout()
+{
+    const QString v = QSettings().value("ui/phoneLayout").toString();
+    return v == "on" || v == "off" ? v : QString();
+}
+
+void SettingsDialog::setSavedPhoneLayout(const QString& value)
+{
+    QSettings s;
+    if (value.isEmpty()) s.remove("ui/phoneLayout");
+    else s.setValue("ui/phoneLayout", value);
+}
+
 Touch::Mode SettingsDialog::touchMode() const { return Touch::Mode(m_touchMode->currentData().toInt()); }

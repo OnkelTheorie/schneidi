@@ -10,6 +10,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "ui/BackgroundJobs.h"
 #include "ui/ColorPanel.h"
 #include "ui/DeliverPanel.h"
 #include "ui/EffectsLibrary.h"
@@ -87,6 +88,7 @@ QWidget* MainWindow::buildPhoneTopBar()
     m_titleLabel->setParent(bar);
     lay->addWidget(m_titleLabel, 1);
     if (m_liveBox) lay->addWidget(m_liveBox);
+    m_phoneTopLay = lay;
     const auto historyButton = [&](const char* name, const QString& symbol, const QString& tip, const char* action) {
         auto* b = new QToolButton;
         b->setObjectName(QString::fromLatin1(name));
@@ -150,7 +152,10 @@ void MainWindow::enablePhoneLayout()
 
     // The clip tools (while clips are selected)
     m_phone->addActionTool("split", QStringLiteral("✂"), T("Teilen"), [] { trigger("split"); });
-    m_phone->addClipPanelTool("volume", QStringLiteral("♪"), T("Lautstärke"), "inspector");
+    m_phone->addClipPanelTool("volume", QStringLiteral("♪"), T("Lautstärke"), "inspector", [this] {
+        // The Audio tab, its Volume section at the top; a video without sound keeps the tab it shows
+        if (!m_inspector->showAudio()) m_viewer->showNotice(T("Der ausgewählte Clip hat keinen Ton."), 2500);
+    });
     m_phone->addActionTool("speed", QStringLiteral("≫"), T("Tempo"), [] { trigger("clip_speed"); });
     m_phone->addClipPanelTool("clipEffects", QStringLiteral("✦"), T("Effekte"), "effects");
     m_phone->addClipPanelTool("clipColor", QStringLiteral("◐"), T("Farbe"), "color");
@@ -172,12 +177,25 @@ void MainWindow::enablePhoneLayout()
     };
     connect(m_phone, &PhoneShell::sheetChanged, this, syncToggles);
     syncToggles({});
+    if (m_backgroundJobs) phoneAdoptBackgroundJobs(); // (a window built before: tests)
     // The window's minimum from the phone layout now (the desktop's was set when its layout first ran): a resize to
     // the phone's size before the first show must not be held at the desktop's minimum
     m_phone->ensurePolished(); // (style sheets: the sizes they give)
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); // the panels' own layouts first
     centralWidget()->layout()->activate();
     if (layout()) layout()->activate();
+}
+
+void MainWindow::phoneAdoptBackgroundJobs()
+{
+    if (!m_phone || !m_phoneTopLay || !m_backgroundJobs || m_backgroundJobs->compact()) return;
+    m_backgroundJobs->setCompact(true);
+    // After the title (and the live box), before undo/redo: the name gives up its room while something runs
+    const int undo = m_phoneTopLay->indexOf(m_phoneTopLay->parentWidget()->findChild<QWidget*>("phoneUndo"));
+    m_phoneTopLay->insertWidget(undo < 0 ? m_phoneTopLay->count() : undo, m_backgroundJobs);
+    // A tap: what runs, in full (a phone has no tooltips)
+    connect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this,
+            [this](const QString& text) { m_viewer->showNotice(text, 4000); });
 }
 
 void MainWindow::phoneTogglePanel(QWidget* panel, bool on)

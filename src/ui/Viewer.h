@@ -146,6 +146,7 @@ private:
     bool m_recording = false;
     bool m_compact = false;
     QLabel* m_notice = nullptr;       // showNotice
+    void placeNotice();               // its size (wrapped when the viewer is narrow) and place at the top
     class QTimer* m_noticeTimer = nullptr;
     class QTimer* m_edgeTimer = nullptr; // bundles resize steps before previewEdgeWanted
     int m_lastEdge = 0;
