@@ -514,6 +514,7 @@ void Viewer::setCompact(bool on)
     m_stack->setSizePolicy(on ? QSizePolicy::Ignored : QSizePolicy::Preferred, on ? QSizePolicy::Ignored : QSizePolicy::Preferred);
     m_stack->setMinimumSize(on ? m_screen->minimumSize() : QSize(0, 0));
     updateBalance();
+    updateModeText();
     if (layout()) layout()->invalidate();
 }
 
@@ -730,9 +731,10 @@ void Viewer::setTimelineTitle(const QString& title)
 
 void Viewer::updateModeText()
 {
+    const QString plain = m_timelineTitle.isEmpty() ? T("Timeline") : m_timelineTitle;
     QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
                    : m_multicamOn         ? T("Timeline – Multicam")
-                   : !m_programAway       ? (m_timelineTitle.isEmpty() ? T("Timeline") : m_timelineTitle)
+                   : !m_programAway       ? plain
                    : m_keptSource.isEmpty() ? T("Timeline auf dem zweiten Monitor")
                                             : T("Quelle – %1 (angehalten)").arg(m_keptSource);
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
@@ -743,6 +745,9 @@ void Viewer::updateModeText()
         text = text.toHtmlEscaped()
                + QString("&nbsp;&nbsp;<b style=\"color:%1\">● %2</b>").arg(Theme::recording.name(), T("Aufnahme"));
     m_mode->setText(text);
+    // Compact (phone): the line only when it says more than "the timeline" (a source clip, recording, proxies ...);
+    // the timeline's name is in its own bar, and the height is the picture's
+    m_mode->setVisible(!m_compact || text != plain);
 }
 
 void Viewer::setRecording(bool on)

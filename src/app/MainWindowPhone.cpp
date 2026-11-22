@@ -156,7 +156,7 @@ void MainWindow::enablePhoneLayout()
         // The Audio tab, its Volume section at the top; a video without sound keeps the tab it shows
         if (!m_inspector->showAudio()) m_viewer->showNotice(T("Der ausgewählte Clip hat keinen Ton."), 2500);
     });
-    m_phone->addActionTool("speed", QStringLiteral("≫"), T("Tempo"), [] { trigger("clip_speed"); });
+    m_phone->addActionTool("speed", QStringLiteral("≫"), T("Geschwindigkeit"), [] { trigger("clip_speed"); });
     m_phone->addClipPanelTool("clipEffects", QStringLiteral("✦"), T("Effekte"), "effects");
     m_phone->addClipPanelTool("clipColor", QStringLiteral("◐"), T("Farbe"), "color");
     m_phone->addActionTool("delete", QStringLiteral("⌫"), T("Löschen"), [] { trigger("ripple_delete"); });

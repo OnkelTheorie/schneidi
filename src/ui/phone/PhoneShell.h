@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The phone layout (small screens, docs/dev/touch.md › Handy-Layout): the main window's panels rearranged for a
 // screen whose shorter side is a phone's. Portrait: top bar, viewer, timeline, a tool bar at the bottom; a tool opens
-// its panel as a sheet over the timeline (one at a time). Landscape: the tools as a rail at the left, the viewer and
-// the open panel side by side, the timeline below. A selected clip switches the bar to clip tools (with a back arrow).
+// its panel as a sheet over the timeline (one at a time). Landscape: the tools as a rail at the left, the viewer above
+// the timeline, the open panel at the right over the whole height. A selected clip switches the bar to clip tools (with a back arrow).
 // The shell only arranges widgets it is given; MainWindow (MainWindowPhone.cpp) hands in its panels and actions.
 // Nothing here is ever wider or taller than the shell: a panel larger than its room scrolls inside the sheet.
 #pragma once

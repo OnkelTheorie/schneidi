@@ -155,6 +155,8 @@ QToolButton* PhoneShell::makeToolButton(const QString& symbol, const QString& la
     b->setSizePolicy(m_landscape ? QSizePolicy::Preferred : QSizePolicy::Expanding,
                      m_landscape ? QSizePolicy::Fixed : QSizePolicy::Preferred);
     b->setFocusPolicy(Qt::NoFocus); // a tap never takes the keyboard focus from the timeline
+    // A tool half out of the bar comes in whole when tapped (its checked state stays in sight)
+    connect(b, &QToolButton::clicked, this, [this, b] { m_toolScroll->ensureWidgetVisible(b, 0, 0); });
     return b;
 }
 
@@ -294,6 +296,8 @@ void PhoneShell::openSheet(const QString& id)
         t->scroll->setWidgetResizable(true);
         t->scroll->setWidget(p);
         m_sheetLay->addWidget(t->scroll, 1);
+        // The panel's own title says what the sheet's header says already (its room goes to the panel's tabs)
+        for (QLabel* title : p->findChildren<QLabel*>("PanelTitle", Qt::FindDirectChildrenOnly)) title->hide();
     }
     for (Tool& other : m_tools)
         if (other.scroll) other.scroll->setVisible(&other == t);
@@ -358,7 +362,11 @@ void PhoneShell::updateButtons()
     // The bar's thickness follows its buttons (one row / one column): the largest button, not the box's hint (stale
     // right after the direction changed)
     QSize hint;
-    for (const QToolButton* b : m_toolBox->findChildren<QToolButton*>()) hint = hint.expandedTo(b->sizeHint());
+    for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) {
+        hint = hint.expandedTo(b->sizeHint());
+        // Portrait: never narrower than the label ("Ins…tor"); the bar scrolls instead
+        b->setMinimumWidth(m_landscape ? 0 : b->sizeHint().width());
+    }
     const QMargins m = m_toolLay->contentsMargins();
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());
     if (m_landscape) {
@@ -392,8 +400,8 @@ void PhoneShell::relayout()
                          land ? QSizePolicy::Fixed : QSizePolicy::Preferred);
     constexpr int kGap = 1; // the border color between the areas, as thin as the desktop's panel edges
     if (land) {
-        // The tools as a rail at the left (the height is the scarce side), the viewer and the open panel side by
-        // side, the timeline below them
+        // The tools as a rail at the left (the height is the scarce side); the bar, the viewer and the timeline in a
+        // column; the open panel at the right over the whole height (beside the viewer alone it had ~150 px)
         auto* root = new QHBoxLayout(this);
         root->setContentsMargins(0, 0, 0, 0);
         root->setSpacing(kGap);
@@ -401,13 +409,10 @@ void PhoneShell::relayout()
         auto* column = new QVBoxLayout;
         column->setSpacing(kGap);
         if (m_top) column->addWidget(m_top);
-        auto* rowLay = new QHBoxLayout;
-        rowLay->setSpacing(kGap);
-        if (m_viewer) rowLay->addWidget(m_viewer, 3);
-        rowLay->addWidget(m_sheet, 2);
-        column->addLayout(rowLay, 3);
+        if (m_viewer) column->addWidget(m_viewer, 3);
         if (m_timeline) column->addWidget(m_timeline, 2);
-        root->addLayout(column, 1);
+        root->addLayout(column, 3);
+        root->addWidget(m_sheet, 2);
     } else {
         // Top to bottom: bar, viewer, timeline, tools; the sheet lies over the timeline (placeSheet)
         auto* root = new QVBoxLayout(this);
