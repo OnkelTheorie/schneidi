@@ -109,10 +109,10 @@ QImage thumbnail(const DeviceMediaItem& item, const QSize& size)
     QJniObject r = resolver();
     QJniObject uri = QJniObject::callStaticObjectMethod("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;",
                                                         QJniObject::fromString(item.uri).object<jstring>());
-    QJniObject jsize("android/util/Size", "(II)V", jint(size.width()), jint(size.height()));
+    QJniObject want("android/util/Size", "(II)V", jint(size.width()), jint(size.height()));
     QJniObject bmp = r.callObjectMethod(
         "loadThumbnail", "(Landroid/net/Uri;Landroid/util/Size;Landroid/os/CancellationSignal;)Landroid/graphics/Bitmap;",
-        uri.object(), jsize.object(), nullptr);
+        uri.object(), want.object(), nullptr);
     if (env.checkAndClearExceptions() || !bmp.isValid()) return {};
     QJniObject bos("java/io/ByteArrayOutputStream");
     QJniObject jpeg = QJniObject::getStaticObjectField("android/graphics/Bitmap$CompressFormat", "JPEG",
