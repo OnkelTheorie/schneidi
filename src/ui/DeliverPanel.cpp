@@ -37,6 +37,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStandardItemModel>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QToolButton>
@@ -110,6 +111,20 @@ public:
 
 } // namespace
 
+QString DeliverPanel::defaultFolder()
+{
+    // The folder the last export went to; else the videos folder. Android: the shared one (/storage/emulated/0/
+    // Movies, the gallery sees it), not the app's own (writableLocation's first answer, hidden from the user)
+    const QString last = QSettings().value("render/folder").toString();
+    if (!last.isEmpty() && QFileInfo(last).isDir()) return last;
+#ifdef Q_OS_ANDROID
+    const QStringList all = QStandardPaths::standardLocations(QStandardPaths::MoviesLocation);
+    for (const QString& dir : all)
+        if (!dir.contains("/Android/data/") && !dir.contains("/data/user/") && !dir.contains("/data/data/")) return dir;
+#endif
+    return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+}
+
 DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     : QWidget(parent), m_project(project), m_queue(new RenderQueue(project, this))
 {
@@ -133,7 +148,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_name = new QLineEdit;
     m_name->setObjectName("renderName");
     m_name->setToolTip(T("Name der Datei. Leer oder unverändert: der Name der geöffneten Timeline"));
-    m_folder = new QLineEdit(QDir::toNativeSeparators(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)));
+    m_folder = new QLineEdit(QDir::toNativeSeparators(defaultFolder()));
     m_folder->setObjectName("renderFolder");
     auto* browseBtn = new QToolButton;
     browseBtn->setText(T("Durchsuchen…"));
@@ -852,6 +867,7 @@ RenderJob DeliverPanel::makeJob() const
     job.review = m_review->isChecked() && m_review->isEnabled();
     if (job.review) name = renderFileBaseName(name + " - " + T("Prüf-Render")); // never over the real export
     job.path = QDir(QDir::fromNativeSeparators(m_folder->text().trimmed())).absoluteFilePath(name + ext);
+    QSettings().setValue("render/folder", QFileInfo(job.path).absolutePath()); // the next start offers it again
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;
     if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();

@@ -33,6 +33,8 @@ public:
     ~DeliverPanel() override;
 
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
+    // Where exports go at first: the last export's folder (setting render/folder), else the videos folder
+    static QString defaultFolder();
     RenderQueue* renderQueue() const { return m_queue; }
 
     // Current settings (resolution as timeline / shorter edge / fixed size, depending on the choice)

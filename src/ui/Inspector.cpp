@@ -718,6 +718,14 @@ int Inspector::localFrame(const Clip& c) const
     return std::clamp(m_playhead - c.start, 0, std::max(0, c.length() - 1));
 }
 
+void Inspector::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    // The tabs' two lines (symbol, name) whole when the panel is squeezed (a phone with its keyboard up): a style
+    // sheet's min-height (touch mode) is an explicit minimum below the text's height, so it is set from the text
+    for (QAbstractButton* b : m_tabs->buttons()) b->setMinimumHeight(b->sizeHint().height());
+}
+
 bool Inspector::showAudio()
 {
     QAbstractButton* audio = m_tabs->button(1);

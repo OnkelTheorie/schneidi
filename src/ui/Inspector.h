@@ -52,6 +52,7 @@ public slots:
     void setKeyPicking(bool on);
 
 protected:
+    void showEvent(QShowEvent* event) override;
     // Dragging the header of an effect section changes the effect order
     bool eventFilter(QObject* watched, QEvent* event) override;
 

@@ -19,7 +19,7 @@
 namespace {
 
 constexpr int kIconPx = 22;
-constexpr double kMinShare = 0.3, kMaxShare = 0.95;
+constexpr double kMinShare = 0.3, kMaxShare = 0.95, kDefaultShare = 0.55;
 
 // A symbol of the UI font (the same ones the desktop's bars use) as an icon, in the colors the page bar gives its
 // text: dim, the hovered text color, the primary color for the open panel (QIcon::On)
@@ -308,6 +308,7 @@ void PhoneShell::openSheet(const QString& id)
     const bool changed = m_open != id;
     m_open = id;
     m_openedBy.clear();
+    if (changed) m_share = m_shares.value(id, kDefaultShare); // its own height (dragged or set), else the usual
     m_sheet->show();
     m_sheet->raise();
     placeSheet();
@@ -325,9 +326,16 @@ void PhoneShell::closeSheet()
     emit sheetChanged({});
 }
 
+void PhoneShell::setPanelShare(const QString& id, double share)
+{
+    m_shares[id] = std::clamp(share, kMinShare, kMaxShare);
+    if (m_open == id) setSheetShare(share);
+}
+
 void PhoneShell::setSheetShare(double share)
 {
     m_share = std::clamp(share, kMinShare, kMaxShare);
+    if (!m_open.isEmpty()) m_shares[m_open] = m_share;
     placeSheet();
 }
 
@@ -527,6 +535,8 @@ bool PhoneShell::eventFilter(QObject* obj, QEvent* event)
                 if (m_share < kMinShare) { // pulled down: closed, the next one opens as tall as before
                     m_share = m_dragStartShare;
                     closeSheet();
+                } else if (!m_open.isEmpty()) {
+                    m_shares[m_open] = m_share; // this panel keeps the height it was dragged to
                 }
             }
             return true;

@@ -26,8 +26,11 @@
 #include "app/Theme.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QListWidget>
+#include <QPushButton>
 #include <QMessageBox>
 #include <QTimer>
 #include <QLabel>
@@ -280,9 +283,27 @@ void testWindow(Engine& engine, const QSize& size)
             if (s->isVisible()) ++shown;
         Check::report(shown == 1, "one panel in the sheet", __FILE__, __LINE__, QString("%1: %2").arg(id).arg(shown));
         fits(id);
+        if (QString(id) == "inspector") // its tabs' two lines whole (cut at the bottom with the keyboard up)
+            for (QToolButton* b : shell->panel("inspector")->findChildren<QToolButton*>())
+                if (b->isVisibleTo(shell) && b->text().contains('\n'))
+                    Check::report(b->minimumHeight() >= b->sizeHint().height(), "inspector tab not cut", __FILE__,
+                                  __LINE__, QString("%1: min %2 < %3").arg(b->text()).arg(b->minimumHeight())
+                                                .arg(b->sizeHint().height()));
         if (QString(id) == "export") { // the queue with its "Render all" in the same sheet (else nothing renders)
             auto* queue = shell->panel("export")->findChild<RenderQueuePanel*>();
             CHECK(queue && queue->isVisibleTo(shell));
+            // "Render all" in sight without dragging the sheet up (the sheet opens tall for it)
+            if (queue && !shell->landscape()) {
+                QPushButton* render = nullptr;
+                for (QPushButton* b : queue->findChildren<QPushButton*>())
+                    if (b->isVisibleTo(queue) && (!render || b->y() > render->y())) render = b; // the bottom one
+                auto* scroll = shell->sheetFrame()->findChild<QScrollArea*>("phonePanel_export");
+                if (CHECK(render && scroll)) {
+                    const QRect r(render->mapTo(scroll->viewport(), QPoint(0, 0)), render->size());
+                    Check::report(r.top() >= 0 && r.bottom() < scroll->viewport()->height(), "export: Render all in sight", __FILE__,
+                                  __LINE__, QString("%1 in %2").arg(rect(r), rect(scroll->viewport()->rect())));
+                }
+            }
         }
         if (QString(id) == "color") // the palette tabs at their full width ("W…s" in touch mode on Android)
             for (int i = 0; i < 4; ++i)
@@ -486,6 +507,24 @@ void testSilentRestore(Engine& engine)
     qunsetenv("SCHNEIDI_SILENT_RESTORE");
 }
 
+// Android: a dialog shown narrower than its contents grows about its middle (Touch::installDialogFit)
+void testDialogFit()
+{
+    QDialog d;
+    auto* lay = new QVBoxLayout(&d);
+    auto* box = new QCheckBox("A check box with a long text that needs more room than the dialog was given at first");
+    lay->addWidget(box);
+    d.setGeometry(100, 100, 200, 120); // narrower than the text
+    d.setMinimumWidth(0);
+    d.show();
+    const int middle = d.geometry().center().x();
+    settle();
+    Check::report(d.width() >= box->sizeHint().width(), "dialog grew to its contents", __FILE__, __LINE__,
+                  QString("%1 < %2").arg(d.width()).arg(box->sizeHint().width()));
+    Check::report(std::abs(d.geometry().center().x() - middle) <= 2 || d.geometry().left() == 0, "grown about its middle",
+                  __FILE__, __LINE__, QString("center %1 -> %2").arg(middle).arg(d.geometry().center().x()));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -496,6 +535,8 @@ int main(int argc, char** argv)
     testSizes();
     testShell();
     if (qEnvironmentVariableIsEmpty("SCHNEIDI_PHONE_LAYOUT")) testSetting();
+    Touch::installDialogFit(&app); // (main.cpp: Android only)
+    testDialogFit();
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();

@@ -214,6 +214,7 @@ void MainWindow::enablePhoneLayout()
         m_deliver->queuePanel()->show();
         return box;
     });
+    m_phone->setPanelShare("export", 0.92); // tall at once: the settings and "Render all" without a drag
 
     // The clip tools (while clips are selected)
     m_phone->addActionTool("split", QStringLiteral("✂"), T("Teilen"), [] { trigger("split"); });

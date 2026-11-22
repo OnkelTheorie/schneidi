@@ -58,7 +58,9 @@ public:
     void scrollPanelToTop(const QString& id);               // the sheet's own scroll of that panel back to its top
     // Height of the sheet in portrait as a share of the room above the tool bar (dragging its handle changes it)
     double sheetShare() const { return m_share; }
-    void setSheetShare(double share);
+    void setSheetShare(double share); // the open panel's (each panel keeps its own height)
+    // A panel's first height (e.g. the export settings with the queue's "Render all": tall); the user's drag wins
+    void setPanelShare(const QString& id, double share);
 
     // The clip bar instead of the main tools (MainWindow: while clips are selected)
     void setClipToolsShown(bool on);
@@ -120,6 +122,7 @@ private:
     QString m_open;
     QString m_openedBy; // the clip tool that opened the sheet (its panel belongs to a main tool), else empty
     double m_share = 0.55;
+    QHash<QString, double> m_shares; // per panel: its height (setPanelShare, then the user's drags)
     bool m_landscape = false;
     bool m_laidOut = false;
     bool m_clipMode = false;

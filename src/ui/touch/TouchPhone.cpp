@@ -5,6 +5,7 @@
 #include <QLayout>
 #include <QScreen>
 
+#include <algorithm>
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDialog>
@@ -185,7 +186,13 @@ protected:
                     const int wanted = std::max(d->layout()->totalMinimumSize().width(), d->sizeHint().width());
                     QScreen* screen = d->screen();
                     const int room = screen ? screen->availableGeometry().width() : wanted;
-                    if (d->width() < std::min(wanted, room)) d->resize(std::min(wanted, room), d->height());
+                    const int w = std::min(wanted, room);
+                    if (d->width() >= w) return;
+                    // Grown about its middle (it was centered at its first width), inside the screen
+                    const QRect avail = screen ? screen->availableGeometry() : QRect();
+                    int x = d->x() - (w - d->width()) / 2;
+                    if (avail.isValid()) x = std::clamp(x, avail.left(), avail.right() + 1 - w);
+                    d->setGeometry(x, d->y(), w, d->height());
                 });
             }
         return QObject::eventFilter(obj, event);
