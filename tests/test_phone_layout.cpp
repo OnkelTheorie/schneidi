@@ -677,9 +677,10 @@ void testGallery(Engine& engine)
     w.resize(411, 590);
     w.show();
     settle();
-    QPushButton* add = w.addMediaButton();
+    QAbstractButton* add = w.addMediaButton();
     if (!CHECK(add && add->isVisible())) return;
     CHECK(inside(add, &w));
+    CHECK(add->width() > 2 * add->height()); // clip-shaped on V1 while the timeline is empty
     bool shown = false;
     QTimer::singleShot(300, [&] {
         auto* g = qobject_cast<MediaGallery*>(QApplication::activeModalWidget());
@@ -700,7 +701,9 @@ void testGallery(Engine& engine)
         for (const Clip& c : t.clips) order << QFileInfo(c.mediaPath).fileName();
     Check::report(order == QStringList({"three.wav", "one.wav"}), "gallery: picks on the timeline in order", __FILE__,
                   __LINE__, order.join(", "));
-    CHECK(!add->isVisible()); // (the timeline has clips now)
+    // The timeline has clips now: the small "+" square at the lanes' right edge (same gallery)
+    CHECK(add->isVisible() && add->width() == add->height() && add->width() <= 48);
+    CHECK(add->geometry().right() > w.findChild<TimelineView*>()->width() - 60);
     DeviceMedia::setTestItems({});
 }
 

@@ -32,7 +32,9 @@
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
+#include <QAbstractButton>
 #include <QAction>
+#include <QPainter>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QMessageBox>
@@ -53,6 +55,59 @@
 #include <QUndoStack>
 
 namespace {
+// "+ Videos hinzufügen" in the timeline's own look: over an empty timeline a clip-shaped drop zone on V1 (dashed
+// outline in the border color, "+" and the words in the text color); with clips a small dashed "+" square at the
+// lanes' right edge (as phone editors put it), both open the gallery
+class AddMediaTile : public QAbstractButton {
+public:
+    explicit AddMediaTile(QWidget* parent) : QAbstractButton(parent)
+    {
+        setObjectName("addMediaButton");
+        setText(T("Videos hinzufügen"));
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
+    }
+    void setSquare(bool on)
+    {
+        m_square = on;
+        setToolTip(on ? text() : QString());
+        update();
+    }
+    bool square() const { return m_square; }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r = QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5);
+        p.setBrush(isDown() ? Theme::control : Theme::alpha(Theme::trackHeader, 200));
+        p.setPen(QPen(underMouse() ? Theme::textDim : Theme::border.lighter(160), 1.5, Qt::DashLine));
+        p.drawRoundedRect(r, 6, 6);
+        p.setPen(Theme::text);
+        QFont plus = font();
+        plus.setPixelSize(std::max(14, std::min(height(), 40) * 6 / 10));
+        if (m_square) {
+            p.setFont(plus);
+            p.drawText(r, Qt::AlignCenter, QStringLiteral("+"));
+            return;
+        }
+        QFont words = font();
+        words.setPixelSize(std::max(12, std::min(height() / 3, 16)));
+        const QString label = text();
+        const int gap = 8;
+        const int wPlus = QFontMetrics(plus).horizontalAdvance('+'), wWords = QFontMetrics(words).horizontalAdvance(label);
+        int x = int(r.center().x()) - (wPlus + gap + wWords) / 2;
+        p.setFont(plus);
+        p.drawText(QRect(x, 0, wPlus, height()), Qt::AlignCenter, QStringLiteral("+"));
+        p.setFont(words);
+        p.drawText(QRect(x + wPlus + gap, 0, wWords + 2, height()), Qt::AlignVCenter | Qt::AlignLeft, label);
+    }
+
+private:
+    bool m_square = false;
+};
+
 void trigger(const char* id)
 {
     if (QAction* a = InputBindings::instance().action(QString::fromLatin1(id)); a && a->isEnabled()) a->trigger();
@@ -391,16 +446,11 @@ void MainWindow::enableShell(bool tablet)
     m_mediaPool->setCompactTiles(true); // two columns beside the bins in portrait
     m_mediaPool->setGeneratorsLast(true); // the material first, the text and shape tiles after it
     m_mediaPool->setImportHandler([this] { openGallery(); }); // "Importieren…": the own gallery
-    // An empty timeline: one big button for the first step
-    m_addMediaButton = new QPushButton(T("+ Videos hinzufügen"), m_timeline->view());
-    m_addMediaButton->setObjectName("addMediaButton");
-    m_addMediaButton->setStyleSheet(Theme::primaryButtonStyle() + " QPushButton { padding: 14px 28px; }");
-    QFont big = m_addMediaButton->font();
-    big.setPointSizeF(big.pointSizeF() * 1.3);
-    big.setBold(true);
-    m_addMediaButton->setFont(big);
-    connect(m_addMediaButton, &QPushButton::clicked, this, &MainWindow::openGallery);
+    // Adding material from the timeline itself: an empty one shows a drop zone on V1, else a small "+" at the right
+    m_addMediaButton = new AddMediaTile(m_timeline->view());
+    connect(m_addMediaButton, &QAbstractButton::clicked, this, &MainWindow::openGallery);
     connect(m_project, &Project::timelineChanged, m_addMediaButton, [this] { updateAddMediaButton(); });
+    connect(m_timeline->view(), &TimelineView::viewChanged, m_addMediaButton, [this] { updateAddMediaButton(); });
     m_timeline->view()->installEventFilter(this); // (its resizes: the button placed again, MainWindow::eventFilter)
     updateAddMediaButton();
     m_viewer->screen()->setMinimumSize(160, 72);
@@ -575,20 +625,28 @@ void MainWindow::phoneAdoptBackgroundJobs()
 
 void MainWindow::updateAddMediaButton()
 {
-    if (!m_addMediaButton) return;
+    auto* tile = static_cast<AddMediaTile*>(m_addMediaButton);
+    if (!tile) return;
     const Timeline& tl = m_project->timeline();
     bool empty = true;
     for (const auto* tracks : {&tl.video, &tl.audio})
         for (const Track& t : *tracks)
             if (!t.clips.isEmpty()) empty = false;
-    m_addMediaButton->setVisible(empty);
-    if (!empty) return;
-    m_addMediaButton->adjustSize();
-    QWidget* view = m_timeline->view();
-    const int left = TimelineView::kHeaderW;
-    m_addMediaButton->move(left + (view->width() - left - m_addMediaButton->width()) / 2,
-                           std::max(TimelineView::kRulerH + 8, (view->height() - m_addMediaButton->height()) / 2));
-    m_addMediaButton->raise();
+    TimelineView* view = m_timeline->view();
+    const QRect lane = view->trackArea({TrackKind::Video, 0}); // V1's lane in sight (empty = scrolled away)
+    if (lane.height() < 20 || tl.video.isEmpty()) {
+        tile->hide();
+        return;
+    }
+    tile->setSquare(!empty);
+    if (empty) { // clip-shaped: two thirds of the lane, a clip's height
+        tile->setGeometry(lane.left() + 8, lane.top() + 4, std::max(160, lane.width() * 2 / 3), lane.height() - 8);
+    } else { // a square at the lanes' right edge, at a clip's height
+        const int side = std::min(lane.height() - 12, 44);
+        tile->setGeometry(lane.right() - side - 6, lane.top() + (lane.height() - side) / 2, side, side);
+    }
+    tile->show();
+    tile->raise();
 }
 
 void MainWindow::openGallery()

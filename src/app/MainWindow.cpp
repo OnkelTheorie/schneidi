@@ -1197,7 +1197,7 @@ void MainWindow::onTimelineFormatChanged()
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
     const QEvent::Type t = event->type();
-    // The empty timeline's "+ Videos hinzufügen" stays in its middle
+    // The timeline's "+ Videos hinzufügen" follows V1 and the lanes' edge
     if (t == QEvent::Resize && m_addMediaButton && obj == m_timeline->view()) updateAddMediaButton();
     // Double-click on a clip with a compositing graph in the timeline: open it on the Comp page (the press before
     // selected it; the timeline itself has no double-click on clips)
