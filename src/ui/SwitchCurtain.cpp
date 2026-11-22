@@ -9,6 +9,7 @@
 #include <QVariantAnimation>
 
 #ifdef Q_OS_ANDROID
+#include <QCoreApplication>
 #include <QJniObject>
 #endif
 
