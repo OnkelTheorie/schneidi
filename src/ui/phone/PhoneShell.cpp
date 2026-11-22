@@ -362,10 +362,24 @@ void PhoneShell::updateButtons()
     // The bar's thickness follows its buttons (one row / one column): the largest button, not the box's hint (stale
     // right after the direction changed)
     QSize hint;
-    for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) {
-        hint = hint.expandedTo(b->sizeHint());
-        // Portrait: never narrower than the label ("Ins…tor"); the bar scrolls instead
-        b->setMinimumWidth(m_landscape ? 0 : b->sizeHint().width());
+    for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) hint = hint.expandedTo(b->sizeHint());
+    // Portrait: a button never narrower than its label ("Ins…tor"); the bar scrolls instead. When the tools do not
+    // fit, they are widened so that the last one in sight is cut in half: the cut says "there is more, swipe"
+    for (QWidget* bar : {m_mainTools, m_clipTools}) {
+        const QList<QToolButton*> buttons = bar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
+        const int spacing = std::max(0, static_cast<QBoxLayout*>(bar->layout())->spacing());
+        const int room = width() - m_toolLay->contentsMargins().left() - m_toolLay->contentsMargins().right();
+        int total = 0, widest = 1;
+        for (QToolButton* b : buttons) {
+            total += b->sizeHint().width() + spacing;
+            widest = std::max(widest, b->sizeHint().width() + spacing);
+        }
+        int even = 0;
+        if (!m_landscape && total > room && room > 0) {
+            const int whole = std::max(1, int(double(room) / widest - 0.5)); // buttons fully in sight
+            even = int(room / (whole + 0.5)) - spacing;
+        }
+        for (QToolButton* b : buttons) b->setMinimumWidth(m_landscape ? 0 : std::max(b->sizeHint().width(), even));
     }
     const QMargins m = m_toolLay->contentsMargins();
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());

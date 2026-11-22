@@ -196,6 +196,21 @@ void testWindow(Engine& engine, const QSize& size)
     };
     fits("phone layout fits the window");
     CHECK(shell->landscape() == (size.width() > size.height()));
+    if (!shell->landscape()) { // more tools than room: the last one in sight is cut about in half (a swipe hint)
+        QToolButton* media = shell->toolButton("media");
+        auto* scroll = qobject_cast<QAbstractScrollArea*>(media->parentWidget()->parentWidget()->parentWidget()->parentWidget());
+        if (CHECK(scroll)) {
+            const int edge = scroll->viewport()->width();
+            double cut = -1;
+            for (const char* id : {"media", "effects", "text", "mixer", "color", "inspector", "transcript", "ai", "export"}) {
+                QToolButton* b = shell->toolButton(id);
+                const int x = b->mapTo(scroll->viewport(), QPoint(0, 0)).x();
+                if (x < edge && x + b->width() > edge) cut = double(edge - x) / b->width();
+            }
+            Check::report(cut > 0.25 && cut < 0.75, "last tool in sight cut in half", __FILE__, __LINE__,
+                          QString("visible share %1").arg(cut));
+        }
+    }
     const char* tools[] = {"media", "effects", "mixer", "color", "inspector", "transcript", "ai", "export"};
     for (const char* id : tools) {
         shell->openSheet(id);
