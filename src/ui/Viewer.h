@@ -129,6 +129,7 @@ private:
     QLabel* m_hintLabel;
     QToolButton* m_hintButton;
     QLabel* m_timecode;
+    int m_timecodeChars = -1; // the timecode length its minimum width was set for
     QToolButton* m_playBtn;
     QHBoxLayout* m_barRight;        // Before/After and the view buttons
     QWidget* m_partHandles = nullptr; // with a source: drag only its picture / only its sound

@@ -14,6 +14,9 @@
 #include "ui/FrameView.h"
 #include "ui/ViewerOverlay.h"
 
+#include <QFontDatabase>
+#include <QFontInfo>
+#include <QFontMetrics>
 #include <QAction>
 #include <QApplication>
 #include <QDrag>
@@ -283,10 +286,19 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     };
 
     m_timecode = new QLabel;
-    // Timecode in the recessed field (design language of the mixer)
+    // Timecode in the recessed field (design language of the mixer). "monospace" is a fontconfig alias: Android (and
+    // a system without it) has no such family and falls back to a proportional font, so the label's width changed
+    // with every frame and the play buttons beside it jittered - there the system's fixed font
+    QString mono = QStringLiteral("monospace");
+    {
+        QFont probe;
+        probe.setFamily(mono);
+        if (!QFontInfo(probe).fixedPitch()) mono = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    }
     m_timecode->setStyleSheet(QString("color: %1; background: %2; border: 1px solid %3; border-radius: 2px;"
-                                      " font-family: monospace; font-size: 13px; padding: 1px 6px;")
-                                  .arg(Theme::text.name(), Theme::well.name(), Theme::border.name()));
+                                      " font-family: \"%4\"; font-size: 13px; padding: 1px 6px;")
+                                  .arg(Theme::text.name(), Theme::well.name(), Theme::border.name(), mono));
+    m_timecode->setAlignment(Qt::AlignCenter);
 
     auto makeBtn = [](const QString& text, const QString& tip) {
         auto* b = new QToolButton;
@@ -771,6 +783,21 @@ QMimeData* Viewer::dragData(const QByteArray& part) const
 
 void Viewer::updateTimecode(int frame)
 {
-    m_timecode->setText(Timecode::format(frame, m_engine->fps()));
+    const QString tc = Timecode::format(frame, m_engine->fps());
+    m_timecode->setText(tc);
+    // Never narrower than the widest timecode of this length (every digit as the widest one): even a font whose
+    // digits differ in width never moves the buttons beside it. Grows only
+    if (tc.size() != m_timecodeChars) {
+        m_timecodeChars = int(tc.size());
+        m_timecode->ensurePolished();
+        const QFontMetrics fm(m_timecode->font());
+        QChar widest = u'0';
+        for (QChar d = u'0'; d <= u'9'; d = QChar(d.unicode() + 1))
+            if (fm.horizontalAdvance(d) > fm.horizontalAdvance(widest)) widest = d;
+        QString wide = tc;
+        for (QChar& c : wide)
+            if (c.isDigit()) c = widest;
+        m_timecode->setMinimumWidth(std::max(m_timecode->minimumWidth(), fm.horizontalAdvance(wide) + 16));
+    }
     m_scrubber->setPosition(frame);
 }
