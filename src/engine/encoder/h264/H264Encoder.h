@@ -217,8 +217,13 @@ struct EncoderConfig {
     int vbvMaxrateKbps = 0;
     int vbvBufsizeKbits = 0;
     double vbvInit = 0.9; // buffer fullness at the first picture's removal (fraction of vbvBufsizeKbits)
-    // At least this full at the end (fraction; 0 = no demand): set by ChunkPlan::configFor for all chunks but the last.
+    // At least this full at the end (fraction; 0 = no demand): set by ChunkPlan::configFor for all chunks but the last,
+    // by the export for a quality level under a cap.
     double vbvEndFill = 0;
+    // The most the end demand alone may raise a picture's QP (beyond it only the buffer's own limits count): a cap
+    // on a whole file (constant quality under a cap) rather ends a little lower than its hardest last seconds at
+    // QP 51. Chunks keep no limit (the seam must hold).
+    double vbvEndRaiseMax = 51.0;
     // EncodeHints::background: QP of such macroblocks above the mean of the picture's other macroblocks, and the
     // texture energy (the adaptive quantisation's measure, log2 of 256 x variance + 1; needs aqStrength > 0) from
     // which a macroblock inside a background rectangle counts as something laid over the blur and is coded like

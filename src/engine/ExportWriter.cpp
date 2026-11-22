@@ -6,6 +6,7 @@
 #include "engine/OpenMedia.h"
 #include "engine/OutputColor.h"
 #include "engine/audio/Mixer.h"
+#include "engine/encoder/h264/DevEnv.h"
 #include "engine/encoder/h264/H264Encoder.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
@@ -811,7 +812,8 @@ struct ExportWriter::Impl {
         std::unique_ptr<schneidi::h264::Encoder> probe;
         try {
             // (batches side by side, same numbers; with B pictures also the probe the adaptive placement plans with)
-            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20, true);
+            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20,
+                                           ownConfig().softCutKeys);
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
@@ -823,7 +825,7 @@ struct ExportWriter::Impl {
                 for (const auto& [a, n] : runs) {
                     if (i < a || i >= a + n) continue;
                     if (i == a) {
-                        probe = std::make_unique<schneidi::h264::Encoder>(ownConfig());
+                        probe = std::make_unique<schneidi::h264::Encoder>(ownProbeConfig());
                         probes.push_back({a, {}, {}});
                     }
                     schneidi::h264::EncodeHints hints;
@@ -854,6 +856,7 @@ struct ExportWriter::Impl {
         return !stop;
     }
     static constexpr double kOwnFixedShare = 0.8;
+    static constexpr double kOwnCapEndFill = 0.5, kOwnCapEndRaise = 6.0; // (startOwn, quality level under a cap)
     static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (ownConfig, probeOwnBits)
     // 5 x 20 pictures: within 5 % on the three projects of 22.11.2026 (3 x 30: talk -33 %, its runs on still
     // pictures; 9 x 10: up to -28 %): about 10 % of the pictures coded once more, 2-3 s of a 1080p60 render of 15 s
@@ -871,13 +874,24 @@ struct ExportWriter::Impl {
         c.gop = kOwnGop;
         // The cuts (ownKey) are key frames where the picture changes there; a still taken from the clip after it, or
         // the same view from another file, continues as a P picture (the first pass knows the same)
-        c.softCutKeys = true;
+        // (they need the lookahead's scene test: without one every cut stays a key frame)
+        if (ownLookahead >= 0) c.lookahead = ownLookahead;
+        c.softCutKeys = c.lookahead > 0;
         c.threads = ownThreads();
         c.fps = fps;
         c.bframes = ownBframes;
         c.speed = ownSpeed;
-        if (ownLookahead >= 0) c.lookahead = ownLookahead;
         if (ownCrf > 0) c.crf = ownCrf; // (ignored where startOwn adds a bit rate)
+        return c;
+    }
+
+    // A probe run's encoder: the export's settings with half the threads and no frame threads, as it runs next to
+    // the first pass's workers (neither changes a bit of the stream)
+    schneidi::h264::EncoderConfig ownProbeConfig() const
+    {
+        schneidi::h264::EncoderConfig c = ownConfig();
+        c.threads = std::max(1, c.threads / 2);
+        c.frameThreads = false;
         return c;
     }
 
@@ -937,7 +951,7 @@ struct ExportWriter::Impl {
             }
         }
         if (probeI <= 0 || probeP <= 0) return 0;
-        static const bool kTrace = qEnvironmentVariableIsSet("SCHNEIDI_OWN_PROBE_TRACE");
+        static const bool kTrace = schneidi::h264::devEnv("SCHNEIDI_OWN_PROBE_TRACE") != nullptr; // (with SCHNEIDI_S264_DEV=1)
         if (kTrace)
             qInfo("Export: own H.264 probes: I %.0f bits / %.0f need, P %.0f / %.0f; clip need I %.0f, P %.0f", bitsI,
                   probeI, bitsP, probeP, needI, needP);
@@ -1360,12 +1374,15 @@ struct ExportWriter::Impl {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
         } else if (ownBitrateK > 0) {
-            // The quality level (constant quality or fixed QP) under the cap: the VBV holds it where the prediction was too low (a buffer of two seconds, as
-            // x264 gets it under a cap; Exporter::encoderOptions), and the buffer as full at the end as at the start, so
-            // the whole file stays within the cap too
+            // The quality level (constant quality or fixed QP) under the cap: the VBV holds it where the prediction was
+            // too low (a buffer of two seconds, as x264 gets it under a cap; Exporter::encoderOptions). At the end the
+            // buffer is still half full (the file at most 0.8 s of the cap's rate above it, 0.9 full at the start), and
+            // that demand alone raises the QP by at most 6: a too low prediction with the hardest part last would
+            // otherwise code the last lookahead at QP 51
             c.vbvMaxrateKbps = ownBitrateK;
             c.vbvBufsizeKbits = 2 * ownBitrateK;
-            c.vbvEndFill = c.vbvInit;
+            c.vbvEndFill = kOwnCapEndFill;
+            c.vbvEndRaiseMax = kOwnCapEndRaise;
         }
         // The colour tags exactly as an FFmpeg encoder gets them (newVideoEncoder): the VUI of the SPS and the stream's
         // parameters below say the same (AVColor* values are the H.273 codes the VUI carries)

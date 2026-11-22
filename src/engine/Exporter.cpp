@@ -23,6 +23,7 @@
 #include "engine/SmartRender.h"
 #include "engine/Stabilizer.h"
 #include "engine/audio/Mixer.h"
+#include "engine/encoder/h264/DevEnv.h"
 #include "engine/picture/Renderer.h"
 #include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Reader.h"
@@ -592,10 +593,11 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     // (development, for measuring encoders through the real export: SCHNEIDI_EXPORT_CRF=<n> = that CRF instead of the
     // quality level's - s264 makes its QP of it as of a level -, SCHNEIDI_EXPORT_BITRATE=<kbit/s> = a bit rate target
-    // as quality "like source" gives one: s264 two passes, other software encoders their average bit rate)
+    // as quality "like source" gives one: s264 two passes, other software encoders their average bit rate; only with
+    // SCHNEIDI_S264_DEV=1 as well, so a stray variable cannot change a user's export)
     if (!s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
-        if (const int crf = qEnvironmentVariableIntValue("SCHNEIDI_EXPORT_CRF"); crf > 0) m_settings.crf = crf;
-        if (const int k = qEnvironmentVariableIntValue("SCHNEIDI_EXPORT_BITRATE"); k > 0) m_targetBitrateK = k;
+        if (const char* e = schneidi::h264::devEnv("SCHNEIDI_EXPORT_CRF"); e && std::atoi(e) > 0) m_settings.crf = std::atoi(e);
+        if (const char* e = schneidi::h264::devEnv("SCHNEIDI_EXPORT_BITRATE"); e && std::atoi(e) > 0) m_targetBitrateK = std::atoi(e);
     }
     m_usedCodec.clear();
     m_ownSpeed = -1;

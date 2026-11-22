@@ -306,8 +306,8 @@ public:
         // The same by quadrant (bit b8), and of trellis plans with estimate what the estimate summed: the cost of
         // each 8x8 block with its levels (j8), or cost and squared error of each 4x4 block (j4, e4). For taking the
         // quadrants of a plan over into another one (planInterLuma: same).
-        uint8_t fineQuads;
-        double j8[4], j4[16], e4[16];
+        uint8_t fineQuads = 15;
+        double j8[4]{}, j4[16]{}, e4[16]{};
     };
     void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
                        InterResidual& ir, double fineLambda = -1.0);
