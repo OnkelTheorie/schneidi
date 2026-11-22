@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/PoolFilter.h"
+#include "engine/MediaProbe.h"
 #include "core/Types.h"
 #include "engine/MediaProbe.h"
 
@@ -88,9 +89,13 @@ public:
     void setCurrentBin(int id);
     void setViewMode(ViewMode mode);
     void setSort(SortKey key, bool ascending);
-    // Search (magnifier on top): shows matching clips (name contains text) in the bin and its sub-bins, and below them
-    // the shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
+    // Search (magnifier on top): shows the matching clips of the whole project (core/NameMatch: every word, a typo,
+    // any separator; by name, clip color, flags, kind and picture format - "4K", "60 fps", "hochkant"), each one of
+    // another bin with that bin under its name; "Only this bin" searches the bin and its sub-bins. Below them the
+    // shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
     void setSearch(const QString& text);
+    void setSearchThisBinOnly(bool on);
+    bool searchThisBinOnly() const;
     // Filter (funnel next to the search): by kind, flag and clip color; like the search it shows the matching clips of
     // the bin and its sub-bins, and both combine. For this session only (not in the project).
     const PoolFilter& filter() const;
@@ -224,6 +229,11 @@ private:
     QLineEdit* m_search;
     PoolFilterButton* m_filterBtn;
     QToolButton* m_filterReset; // beside the bin title while a filter is active
+    QToolButton* m_scopeBtn;    // beside the bin title while searching: only this bin (and its sub-bins)
+    // Picture formats for the search words (MediaProbe::pictureFormat, read in m_thumbPool while searching)
+    QHash<QString, MediaProbe::PictureFormat> m_formats;
+    QSet<QString> m_formatAsked;
+    void requestFormats();
     QLabel* m_emptyHint;        // over the empty list: nothing matches the search or filter
     QAction* m_removeBinKey;   // Delete/Backspace in the bin list
     QAction* m_closeSearchKey; // Esc in the search field

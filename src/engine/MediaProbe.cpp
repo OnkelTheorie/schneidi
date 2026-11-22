@@ -7,6 +7,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/display.h>
 #include <libavutil/samplefmt.h>
 }
 
@@ -726,6 +727,86 @@ std::optional<SourceBitrate::Video> videoRate(const QString& path)
     if (cache.size() > 2000) cache.clear(); // a long session with very many files: start over
     cache.insert(path, e);
     return e.video;
+}
+
+namespace {
+
+PictureFormat readPictureFormat(const QString& path, const QFileInfo& fi)
+{
+    PictureFormat out;
+    const QString suffix = fi.suffix().toLower();
+    if (isAudioFile(path) || forOtherProducer(suffix)) return out;
+    if (stillSuffix(suffix)) {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        out.size = reader.size();
+        if (out.size.isValid() && (reader.transformation() & QImageIOHandler::TransformationRotate90))
+            out.size.transpose();
+        return out;
+    }
+    AVFormatContext* raw = nullptr;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return out;
+    std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
+    const auto bestVideo = [&] {
+        const int v = av_find_best_stream(fmt.get(), AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+        return v >= 0 && !(fmt->streams[v]->disposition & AV_DISPOSITION_ATTACHED_PIC) ? v : -1;
+    };
+    int v = bestVideo();
+    if (!headerSuffices(fmt->iformat) || v < 0 || fmt->streams[v]->codecpar->width <= 0) {
+        fmt->probesize = 1 << 20;
+        fmt->max_analyze_duration = AV_TIME_BASE / 2;
+        if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return out;
+        v = bestVideo();
+    }
+    if (v < 0) return out;
+    const AVStream* st = fmt->streams[v];
+    if (st->codecpar->width <= 0 || st->codecpar->height <= 0) return out;
+    out.size = QSize(st->codecpar->width, st->codecpar->height);
+    // Rotation like the video reader takes it: the "rotate" tag, else the display matrix
+    double theta = 0;
+    if (const AVDictionaryEntry* tag = av_dict_get(st->metadata, "rotate", nullptr, 0); tag && *tag->value) {
+        theta = QString::fromUtf8(tag->value).toDouble();
+    } else if (const AVPacketSideData* sd = av_packet_side_data_get(st->codecpar->coded_side_data,
+                                                                    st->codecpar->nb_coded_side_data,
+                                                                    AV_PKT_DATA_DISPLAYMATRIX);
+               sd && sd->size >= 9 * sizeof(int32_t)) {
+        theta = -av_display_rotation_get(reinterpret_cast<const int32_t*>(sd->data));
+    }
+    if (std::isfinite(theta)) {
+        const int quarter = int(std::lround(theta / 90.0)) & 3;
+        if (quarter == 1 || quarter == 3) out.size.transpose();
+    }
+    if (!pictureDemuxer(fmt->iformat)) {
+        const AVRational r = st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0 ? st->avg_frame_rate : st->r_frame_rate;
+        if (r.num > 0 && r.den > 0) out.fps = av_q2d(r);
+        if (out.fps > 1000) out.fps = 0; // a container's time base, not a frame rate
+    }
+    return out;
+}
+
+} // namespace
+
+PictureFormat pictureFormat(const QString& path)
+{
+    struct Entry {
+        qint64 size = -1, modified = 0;
+        PictureFormat format;
+    };
+    static std::mutex mutex;
+    static QHash<QString, Entry> cache;
+    const QFileInfo fi(path);
+    if (!fi.isFile()) return {};
+    const qint64 size = fi.size(), modified = fi.lastModified().toMSecsSinceEpoch();
+    {
+        std::lock_guard lock(mutex);
+        const auto it = cache.constFind(path);
+        if (it != cache.cend() && it->size == size && it->modified == modified) return it->format;
+    }
+    const Entry e{size, modified, readPictureFormat(path, fi)};
+    std::lock_guard lock(mutex);
+    if (cache.size() > 4000) cache.clear();
+    cache.insert(path, e);
+    return e.format;
 }
 
 namespace {

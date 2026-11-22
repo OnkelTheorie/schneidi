@@ -4,16 +4,25 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "core/NameMatch.h"
 #include "engine/Background.h"
 #include "engine/ProxyManager.h"
 #include "engine/StorageThumbCache.h"
 #include "engine/video/Thumbnails.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
+#include "ui/SearchHitDelegate.h"
 
+#include <QActionGroup>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDateTime>
+#include <QDirIterator>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QDir>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -50,6 +59,27 @@ constexpr int kPathRole = Qt::UserRole;
 constexpr int kDirRole = Qt::UserRole + 1;
 constexpr int kLoadedRole = Qt::UserRole + 2;
 constexpr int kDeferredListMs = 1000; // the start folder of a panel not shown, listed after the window is up
+constexpr int kDeepPauseMs = 200;     // typing with "With subfolders": search after this pause
+constexpr int kDeepBatchMs = 150;     // hits come to the list at least this often while it searches
+
+const char* sortId(MediaStorage::Sort s)
+{
+    switch (s) {
+    case MediaStorage::Sort::Newest: return "newest";
+    case MediaStorage::Sort::Oldest: return "oldest";
+    case MediaStorage::Sort::Size: return "size";
+    case MediaStorage::Sort::Name: break;
+    }
+    return "name";
+}
+
+MediaStorage::Sort sortFromId(const QString& id)
+{
+    for (const MediaStorage::Sort s :
+         {MediaStorage::Sort::Name, MediaStorage::Sort::Newest, MediaStorage::Sort::Oldest, MediaStorage::Sort::Size})
+        if (id == QLatin1String(sortId(s))) return s;
+    return MediaStorage::Sort::Name;
+}
 
 const QStringList& videoExt()
 {
@@ -147,8 +177,16 @@ protected:
 
 bool MediaStorage::isMediaFile(const QString& path)
 {
+    return kindOf(path) != Kind::All;
+}
+
+MediaStorage::Kind MediaStorage::kindOf(const QString& path)
+{
     const QString ext = QFileInfo(path).suffix().toLower();
-    return videoExt().contains(ext) || audioExt().contains(ext) || imageExt().contains(ext);
+    if (videoExt().contains(ext)) return Kind::Video;
+    if (audioExt().contains(ext)) return Kind::Audio;
+    if (imageExt().contains(ext)) return Kind::Image;
+    return Kind::All;
 }
 
 MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
@@ -158,6 +196,13 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     // Several files at once, but leave most of the machine to the preview and everything else (low priority anyway)
     m_thumbPool->setMaxThreadCount(std::clamp(QThread::idealThreadCount() / 4, 1, 3));
     m_thumbPool->setThreadPriority(QThread::LowPriority);
+    m_searchPool = new QThreadPool(this);
+    m_searchPool->setMaxThreadCount(1);
+    m_searchPool->setThreadPriority(QThread::LowPriority);
+    m_deepTimer = new QTimer(this);
+    m_deepTimer->setSingleShot(true);
+    m_deepTimer->setInterval(kDeepPauseMs);
+    connect(m_deepTimer, &QTimer::timeout, this, &MediaStorage::startDeepSearch);
 
     auto* title = new QLabel(T("Dateibrowser"));
     title->setObjectName("PanelTitle");
@@ -185,11 +230,118 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     m_thumbBtn = viewButton("▦", T("Miniaturansicht"), false);
     m_listBtn = viewButton("☰", T("Listenansicht"), true);
 
+    // Sort: remembered
+    m_sort = sortFromId(QSettings().value("mediaStorage/sort").toString());
+    m_sortBtn = new QToolButton;
+    m_sortBtn->setText("⇅");
+    m_sortBtn->setToolTip(T("Sortieren nach"));
+    m_sortBtn->setAutoRaise(true);
+    m_sortBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* sortMenu = new QMenu(m_sortBtn);
+    auto* sortGroup = new QActionGroup(sortMenu);
+    const struct { Sort sort; const char* name; } sorts[] = {{Sort::Name, N_("Name")},
+                                                              {Sort::Newest, N_("Neueste zuerst")},
+                                                              {Sort::Oldest, N_("Älteste zuerst")},
+                                                              {Sort::Size, N_("Größte zuerst")}};
+    for (const auto& k : sorts) {
+        QAction* a = sortMenu->addAction(T(k.name));
+        a->setCheckable(true);
+        a->setChecked(k.sort == m_sort);
+        a->setData(int(k.sort));
+        sortGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, sort = k.sort] { setSort(sort); });
+    }
+    m_sortBtn->setMenu(sortMenu);
+
+    // Search: the magnifier shows the field (like the Media Pool's), Esc resp. another click clears and closes it
+    m_search = new QLineEdit;
+    m_search->setObjectName("storage_search");
+    m_search->setPlaceholderText(T("Dateien suchen…"));
+    m_search->setClearButtonEnabled(true);
+    m_search->setVisible(false);
+    m_search->setSizePolicy(QSizePolicy::Ignored, m_search->sizePolicy().verticalPolicy()); // never widens the panel
+    m_search->installEventFilter(this);
+    connect(m_search, &QLineEdit::textChanged, this, [this] {
+        updateGrid();
+        if (deepActive()) {
+            cancelDeepSearch();
+            m_deepHits.clear();
+            showFiles();
+            m_deepTimer->start();
+        } else {
+            showFiles();
+        }
+    });
+    m_searchBtn = new QToolButton;
+    m_searchBtn->setObjectName("storage_search_button");
+    m_searchBtn->setText("🔍︎"); // U+FE0E: as text, not as a colored emoji (Windows)
+    m_searchBtn->setToolTip(T("Dateien suchen"));
+    m_searchBtn->setAutoRaise(true);
+    m_searchBtn->setCheckable(true);
+
+    // Below the header while searching: subfolders too, quick filter by kind, how many were found
+    m_deepBox = new QCheckBox(T("Mit Unterordnern"));
+    m_deepBox->setObjectName("storage_search_deep");
+    m_deepBox->setToolTip(T("Auch in allen Unterordnern suchen (versteckte Ordner nicht)"));
+    connect(m_deepBox, &QCheckBox::toggled, this, [this] {
+        cancelDeepSearch();
+        m_deepHits.clear();
+        updateGrid();
+        showFiles();
+        if (deepActive()) startDeepSearch();
+    });
+    m_kindBox = new QComboBox;
+    m_kindBox->setObjectName("storage_search_kind");
+    m_kindBox->addItem(T("Alle"), int(Kind::All));
+    m_kindBox->addItem(T("Videos"), int(Kind::Video));
+    m_kindBox->addItem(T("Audio"), int(Kind::Audio));
+    m_kindBox->addItem(T("Bilder"), int(Kind::Image));
+    m_kindBox->setToolTip(T("Nur diese Art von Dateien zeigen"));
+    m_kindBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    connect(m_kindBox, &QComboBox::currentIndexChanged, this,
+            [this] { setKindFilter(Kind(m_kindBox->currentData().toInt())); });
+    m_searchStatus = new QLabel;
+    m_searchStatus->setObjectName("storage_search_status");
+    m_searchStatus->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_searchStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_searchRow = new QWidget;
+    auto* searchLay = new QHBoxLayout(m_searchRow);
+    searchLay->setContentsMargins(4, 0, 4, 2);
+    searchLay->setSpacing(6);
+    searchLay->addWidget(m_deepBox);
+    searchLay->addWidget(m_kindBox);
+    searchLay->addWidget(m_searchStatus, 1);
+    m_searchRow->setVisible(false);
+
+    // The open field takes the title's place: the header stays as narrow as before
+    connect(m_searchBtn, &QToolButton::toggled, this, [this, title](bool on) {
+        title->setVisible(!on);
+        m_search->setVisible(on);
+        m_searchRow->setVisible(on);
+        if (on) {
+            m_search->setFocus();
+            return;
+        }
+        cancelDeepSearch();
+        m_deepHits.clear();
+        const QSignalBlocker blockText(m_search), blockKind(m_kindBox);
+        m_search->clear();
+        m_kindBox->setCurrentIndex(0);
+        m_kind = Kind::All;
+        updateGrid();
+        showFiles();
+    });
+
     header->addWidget(title);
     header->addStretch(1);
+    header->addWidget(m_search, 100);
+    header->addWidget(m_searchBtn);
     header->addWidget(m_thumbBtn);
     header->addWidget(m_listBtn);
+    header->addWidget(m_sortBtn);
     header->addWidget(addBtn);
+    for (QToolButton* b : {m_searchBtn, m_thumbBtn, m_listBtn, m_sortBtn})
+        b->setStyleSheet("QToolButton { padding: 3px 3px; } QToolButton::menu-indicator { image: none; }");
 
     // Left: storage locations, subfolders are only read when expanded
     m_tree = new QTreeWidget;
@@ -225,6 +377,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     pathRow->addWidget(m_pathLabel, 1);
 
     m_list = new StorageList;
+    m_list->setItemDelegate(new SearchHitDelegate(m_list));
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
@@ -279,6 +432,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addLayout(header);
+    lay->addWidget(m_searchRow);
     lay->addWidget(split, 1);
 
     // New/deleted files in the open folder (e.g. freshly copied from the phone) appear on their own
@@ -324,6 +478,8 @@ MediaStorage::~MediaStorage()
     // Finish a running thumbnail while this object is complete (it reports back to it)
     m_thumbPool->clear();
     m_thumbPool->waitForDone();
+    cancelDeepSearch();
+    m_searchPool->waitForDone();
 }
 
 void MediaStorage::setListMode(bool list)
@@ -341,7 +497,6 @@ void MediaStorage::setListMode(bool list)
     } else {
         m_list->setViewMode(QListView::IconMode);
         m_list->setIconSize(kThumb);
-        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 36));
         m_list->setWordWrap(true);
         m_list->setSpacing(0);
     }
@@ -350,7 +505,17 @@ void MediaStorage::setListMode(bool list)
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
+    updateGrid();
     for (QListWidgetItem* it : std::as_const(m_items)) updateItem(it); // pool mark in the size of the view
+}
+
+// Icon view: the name's lines, and with hits below the folder their folder under it
+void MediaStorage::updateGrid()
+{
+    if (m_listMode) return;
+    // two lines of name stay (the folder line and a little air below it)
+    const int folderLine = deepActive() ? SearchHitDelegate::subtitleHeight(m_list->font()) + 6 : 0;
+    m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 36 + folderLine));
 }
 
 // Shorten the path from the left: the end (current folder) is what matters
@@ -364,6 +529,13 @@ void MediaStorage::updatePathLabel()
 bool MediaStorage::eventFilter(QObject* obj, QEvent* e)
 {
     if (obj == m_pathLabel && e->type() == QEvent::Resize) updatePathLabel();
+    // Esc in the search field clears and closes it; the field takes the key itself (no window key with Esc fires)
+    if (obj == m_search && (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress)
+        && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape && static_cast<QKeyEvent*>(e)->modifiers() == Qt::NoModifier) {
+        e->accept();
+        if (e->type() == QEvent::KeyPress) m_searchBtn->setChecked(false);
+        return true;
+    }
     return QWidget::eventFilter(obj, e);
 }
 
@@ -492,7 +664,56 @@ QStringList MediaStorage::mediaIn(const QString& dir) const
 void MediaStorage::rebuildFiles()
 {
     m_filesPending = false;
-    QStringList selected = selectedFiles();
+    m_dirEntries.clear();
+    m_fileEntries.clear();
+    if (!m_folder.isEmpty()) {
+        const QDir dir(m_folder);
+        m_dirEntries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware);
+        for (const QFileInfo& fi : dir.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware))
+            if (isMediaFile(fi.fileName())) m_fileEntries << fi;
+    }
+    if (deepActive()) {
+        // the folder changed (another one, or files came and went): search below it again
+        cancelDeepSearch();
+        m_deepHits.clear();
+        showFiles();
+        startDeepSearch();
+        return;
+    }
+    showFiles();
+}
+
+bool MediaStorage::sortsBefore(const QFileInfo& a, const QFileInfo& b) const
+{
+    switch (m_sort) {
+    case Sort::Newest:
+    case Sort::Oldest: {
+        const QDateTime ta = a.lastModified(), tb = b.lastModified();
+        if (ta != tb) return m_sort == Sort::Newest ? ta > tb : ta < tb;
+        break;
+    }
+    case Sort::Size:
+        if (a.size() != b.size()) return a.size() > b.size();
+        break;
+    case Sort::Name: break;
+    }
+    const int c = I18n::compareNames(a.fileName(), b.fileName());
+    return c != 0 ? c < 0 : a.absoluteFilePath() < b.absoluteFilePath();
+}
+
+bool MediaStorage::kindMatches(const QString& path) const
+{
+    return m_kind == Kind::All || kindOf(path) == m_kind;
+}
+
+bool MediaStorage::deepActive() const
+{
+    return m_searchBtn->isChecked() && m_deepBox->isChecked() && !NameMatch::queryWords(m_search->text()).isEmpty();
+}
+
+void MediaStorage::showFiles()
+{
+    const QStringList selected = selectedFiles();
     m_scrub->forget();
     m_hoverPath.clear();
     m_list->clear();
@@ -500,38 +721,242 @@ void MediaStorage::rebuildFiles()
     m_shown.clear();
     m_thumbQueue.clear();
     m_thumbOnDisk.clear();
-    if (m_folder.isEmpty()) return;
-
-    const QDir dir(m_folder);
-    for (const QFileInfo& fi : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware)) {
-        auto* it = new QListWidgetItem(QIcon(placeholder({}, true)), fi.fileName());
-        it->setData(kPathRole, fi.absoluteFilePath());
-        it->setData(kDirRole, true);
-        it->setToolTip(T("Ordner öffnen (Doppelklick)"));
-        m_list->addItem(it);
+    m_shownFiles.clear();
+    m_dirRows = 0;
+    const QStringList words = m_searchBtn->isChecked() ? NameMatch::queryWords(m_search->text()) : QStringList();
+    const bool deep = deepActive();
+    if (!m_folder.isEmpty() && !deep) {
+        for (const QFileInfo& fi : std::as_const(m_dirEntries)) {
+            if (!NameMatch::matches(words, fi.fileName())) continue;
+            auto* it = new QListWidgetItem(QIcon(placeholder({}, true)), fi.fileName());
+            it->setData(kPathRole, fi.absoluteFilePath());
+            it->setData(kDirRole, true);
+            it->setData(SearchHitDelegate::kHighlightRole,
+                        SearchHitDelegate::highlights(NameMatch::ranges(words, fi.fileName())));
+            it->setToolTip(T("Ordner öffnen (Doppelklick)"));
+            m_list->addItem(it);
+            ++m_dirRows;
+        }
     }
-    for (const QString& path : mediaIn(m_folder)) {
-        const QFileInfo fi(path);
-        const QString ext = fi.suffix().toLower();
-        QPixmap pm = m_thumbs.value(thumbKey(fi));
-        if (pm.isNull()) {
-            if (audioExt().contains(ext)) {
-                pm = placeholder(T("♪ Audio"));
-            } else {
-                pm = placeholder("…");
-                queueThumb(path);
-                if (QFileInfo::exists(StorageThumbCache::fileFor(fi))) m_thumbOnDisk.insert(path);
+    QFileInfoList files;
+    for (const QFileInfo& fi : deep ? std::as_const(m_deepHits) : std::as_const(m_fileEntries))
+        if (kindMatches(fi.fileName()) && (deep || NameMatch::matches(words, fi.fileName()))) files << fi;
+    std::stable_sort(files.begin(), files.end(), [this](const QFileInfo& a, const QFileInfo& b) { return sortsBefore(a, b); });
+    const QDir root(m_folder);
+    for (const QFileInfo& fi : std::as_const(files)) {
+        QString sub;
+        if (deep) {
+            const QString rel = root.relativeFilePath(fi.absolutePath());
+            sub = QDir::toNativeSeparators(rel == "." ? root.dirName() : root.dirName() + '/' + rel);
+        }
+        addFileItem(fi, m_list->count(), sub, words);
+        if (selected.contains(fi.absoluteFilePath())) m_items.value(fi.absoluteFilePath())->setSelected(true);
+    }
+    updateSearchStatus();
+    nextThumb();
+}
+
+void MediaStorage::addFileItem(const QFileInfo& fi, int row, const QString& subtitle, const QStringList& words)
+{
+    const QString path = fi.absoluteFilePath();
+    if (m_items.contains(path)) return;
+    const QString ext = fi.suffix().toLower();
+    QPixmap pm = m_thumbs.value(thumbKey(fi));
+    if (pm.isNull()) {
+        if (audioExt().contains(ext)) {
+            pm = placeholder(T("♪ Audio"));
+        } else {
+            pm = placeholder("…");
+            queueThumb(path);
+            if (QFileInfo::exists(StorageThumbCache::fileFor(fi))) m_thumbOnDisk.insert(path);
+        }
+    }
+    auto* it = new QListWidgetItem(fi.fileName());
+    it->setData(kPathRole, path);
+    if (!words.isEmpty())
+        it->setData(SearchHitDelegate::kHighlightRole, SearchHitDelegate::highlights(NameMatch::ranges(words, fi.fileName())));
+    if (!subtitle.isEmpty()) it->setData(SearchHitDelegate::kSubtitleRole, subtitle);
+    m_list->insertItem(row, it);
+    m_shownFiles.insert(row - m_dirRows, fi);
+    m_items.insert(path, it);
+    m_shown.insert(path, pm);
+    updateItem(it);
+}
+
+QStringList MediaStorage::shownFiles() const
+{
+    QStringList out;
+    for (const QFileInfo& fi : m_shownFiles) out << fi.absoluteFilePath();
+    return out;
+}
+
+void MediaStorage::cancelDeepSearch()
+{
+    m_deepTimer->stop();
+    if (m_deepCancel) *m_deepCancel = true;
+    m_deepCancel.reset();
+    ++m_deepGeneration; // what the old one still sends is dropped
+    m_deepRunning = false;
+}
+
+// Below the current folder, in a thread of its own: breadth first (the near folders first), hidden folders and
+// symbolic links to folders skipped (no loops), at most kMaxDeepHits hits; they come in batches to addDeepHits
+void MediaStorage::startDeepSearch()
+{
+    cancelDeepSearch();
+    m_deepHits.clear();
+    m_deepCapped = false;
+    if (!deepActive() || m_folder.isEmpty()) {
+        updateSearchStatus();
+        return;
+    }
+    m_deepRunning = true;
+    auto cancel = std::make_shared<std::atomic_bool>(false);
+    m_deepCancel = cancel;
+    const int generation = m_deepGeneration;
+    const QStringList words = NameMatch::queryWords(m_search->text());
+    const Kind kind = m_kind;
+    const QString root = m_folder;
+    updateSearchStatus();
+    m_searchPool->start([this, cancel, generation, words, kind, root] {
+        QFileInfoList batch;
+        QElapsedTimer sinceSent;
+        sinceSent.start();
+        int found = 0;
+        bool capped = false;
+        auto send = [&](bool done) {
+            QMetaObject::invokeMethod(
+                this,
+                [this, generation, batch, done, capped] {
+                    if (generation != m_deepGeneration) return; // an older search
+                    addDeepHits(batch);
+                    if (done) {
+                        m_deepRunning = false;
+                        m_deepCapped = capped;
+                        m_deepCancel.reset();
+                        updateSearchStatus();
+                    }
+                },
+                Qt::QueuedConnection);
+            batch.clear();
+            sinceSent.restart();
+        };
+        QStringList dirs{root};
+        while (!dirs.isEmpty() && !*cancel && !capped) {
+            const QString dir = dirs.takeFirst();
+            // No QDir::Hidden: hidden files and folders are left out (dot names; on Windows the hidden attribute)
+            QDirIterator it(dir, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+            while (it.hasNext() && !*cancel) {
+                const QFileInfo fi = it.nextFileInfo();
+                if (fi.isDir()) {
+                    if (!fi.isSymLink()) dirs << fi.absoluteFilePath();
+                    continue;
+                }
+                const Kind k = kindOf(fi.fileName());
+                if (k == Kind::All || (kind != Kind::All && k != kind)) continue;
+                if (!NameMatch::matches(words, fi.fileName())) continue;
+                (void)fi.size(); // read here, not on the UI thread when sorting
+                (void)fi.lastModified();
+                batch << fi;
+                if (++found >= kMaxDeepHits) {
+                    capped = true;
+                    break;
+                }
+                if (sinceSent.elapsed() >= kDeepBatchMs) send(false);
             }
         }
-        auto* it = new QListWidgetItem(fi.fileName());
-        it->setData(kPathRole, path);
-        m_list->addItem(it);
-        m_items.insert(path, it);
-        m_shown.insert(path, pm);
-        updateItem(it);
-        if (selected.contains(path)) it->setSelected(true);
+        if (!*cancel) send(true);
+    });
+}
+
+void MediaStorage::addDeepHits(const QFileInfoList& hits)
+{
+    if (hits.isEmpty()) return;
+    const QStringList words = NameMatch::queryWords(m_search->text());
+    const QDir root(m_folder);
+    for (const QFileInfo& fi : hits) {
+        m_deepHits << fi;
+        if (!kindMatches(fi.fileName())) continue;
+        // into its place by the sort order (the list stays sorted while hits come in)
+        const auto at = std::upper_bound(m_shownFiles.cbegin(), m_shownFiles.cend(), fi,
+                                         [this](const QFileInfo& a, const QFileInfo& b) { return sortsBefore(a, b); });
+        const QString rel = root.relativeFilePath(fi.absolutePath());
+        const QString sub = QDir::toNativeSeparators(rel == "." ? root.dirName() : root.dirName() + '/' + rel);
+        addFileItem(fi, m_dirRows + int(at - m_shownFiles.cbegin()), sub, words);
     }
+    updateSearchStatus();
     nextThumb();
+}
+
+void MediaStorage::updateSearchStatus()
+{
+    if (!m_searchBtn->isChecked() || NameMatch::queryWords(m_search->text()).isEmpty()) {
+        m_searchStatus->clear();
+        return;
+    }
+    const int n = int(m_shownFiles.size());
+    QString text;
+    if (m_deepRunning) text = n ? T("Sucht … %1 gefunden").arg(n) : T("Sucht …");
+    else if (deepActive() && m_deepCapped) text = T("Die ersten %1 Treffer – genauer suchen").arg(n);
+    else if (n == 0 && m_list->count() == 0) text = T("Nichts gefunden");
+    else text = T("%1 Treffer").arg(n);
+    m_searchStatus->setText(text);
+    m_searchStatus->setToolTip(text);
+}
+
+void MediaStorage::setSearch(const QString& text)
+{
+    m_searchBtn->setChecked(!text.isEmpty());
+    m_search->setText(text);
+}
+
+bool MediaStorage::searchRunning() const
+{
+    return m_deepRunning || m_deepTimer->isActive();
+}
+
+QString MediaStorage::search() const
+{
+    return m_search->text();
+}
+
+void MediaStorage::setSearchSubfolders(bool on)
+{
+    m_deepBox->setChecked(on);
+}
+
+bool MediaStorage::searchSubfolders() const
+{
+    return m_deepBox->isChecked();
+}
+
+void MediaStorage::setKindFilter(Kind kind)
+{
+    if (const int i = m_kindBox->findData(int(kind)); i >= 0 && i != m_kindBox->currentIndex()) {
+        m_kindBox->setCurrentIndex(i); // comes back here
+        return;
+    }
+    if (kind == m_kind) return;
+    m_kind = kind;
+    if (deepActive()) {
+        // the search below filters by kind itself (the cap counts what is shown)
+        cancelDeepSearch();
+        m_deepHits.clear();
+        showFiles();
+        startDeepSearch();
+    } else {
+        showFiles();
+    }
+}
+
+void MediaStorage::setSort(Sort sort)
+{
+    for (QAction* a : m_sortBtn->menu()->actions())
+        if (a->data().toInt() == int(sort)) a->setChecked(true);
+    if (sort == m_sort) return;
+    m_sort = sort;
+    if (m_persistent) QSettings().setValue("mediaStorage/sort", sortId(sort));
+    showFiles();
 }
 
 QStringList MediaStorage::selectedFiles() const
