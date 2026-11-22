@@ -90,6 +90,12 @@ struct EncoderConfig {
     double aqStrength = 1.5;
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
+    // A keyframe the caller asks for (encode's forceKeyframe: a cut it knows) only where the picture changes: the
+    // lookahead's scene test with a lower bar (its motion search on the thumbnails saves less than 40 % against
+    // intra; real cuts measured 0.92-0.95). A cut from a still to the recording it was taken from, or between two
+    // takes of the same view, is coded as the P picture it predicts well as (talk: -2 % BD-rate). Needs the lookahead;
+    // a FirstPass for this encoder must have the same setting. false = every requested keyframe (the stream before).
+    bool softCutKeys = false;
     bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
     bool transform8x8 = true; // 8x8 transform for inter macroblocks (High profile; needs CABAC)
     int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
@@ -379,7 +385,9 @@ public:
     // (the probe: about 3 pictures' worth of encoding at half size every 120 pictures).
     // keepAnalysisBytes: memory for FirstPassStats::analysis (about 12 bytes per macroblock and
     // picture: 1080p ~100 KB); pictures beyond it are analysed again by the encoder.
-    FirstPass(int width, int height, int threads = 1, int bframes = 0, size_t keepAnalysisBytes = size_t(1) << 30);
+    // softCutKeys: as EncoderConfig::softCutKeys of the encoder that takes the statistics.
+    FirstPass(int width, int height, int threads = 1, int bframes = 0, size_t keepAnalysisBytes = size_t(1) << 30,
+              bool softCutKeys = false);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
     std::shared_ptr<const FirstPassStats> stats() const;
@@ -390,6 +398,7 @@ private:
     void joinWorker() const;
     std::unique_ptr<FirstPassAlt> alt_; // does the work instead (see EncoderAlt)
     int width_, height_, threads_;
+    bool softCutKeys_ = false;
     std::unique_ptr<Lookahead> la_;
     // Pictures waiting for the next batch, the batch under analysis (on worker_ with threads > 1,
     // which alone touches it, prev_, the probe and the statistics until joined) and the last

@@ -913,10 +913,13 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     if (s.videoCodec.isEmpty()) return o;
     const int target = m_targetBitrateK; // quality "like source": a bit rate instead of a constant quality
     if (ExportWriter::isOwnH264(codec)) {
-        // Own encoder: a fixed QP from the quality level; "Web" adds the cap as "bitrate" (the writer keeps the QP when
-        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter).
+        // Own encoder: constant quality at the level's CRF (s264's scale is x264's), "qp" the fixed QP of the same level
+        // for the prediction against a cap; "Web" adds the cap as "bitrate" (the writer keeps the constant quality when
+        // the clip stays below the cap at that QP, else it encodes in two passes towards the cap, see ExportWriter).
         // "Like source": the source's rate as that cap - two passes towards it, or "High" when that stays below it
-        o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
+        const int crf = s.crf > 0 ? s.crf : 20;
+        o.append({"crf", QByteArray::number(crf)});
+        o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(crf))});
         // Memory for the first pass's kept analysis (two passes towards a cap): an eighth of the free RAM, at most
         // 1 GB (1080p: ~100 KB per picture); lowMemoryOptions below sets 0
         if (m_availableBytes > 0)

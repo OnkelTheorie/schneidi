@@ -401,6 +401,11 @@ struct ExportWriter::Impl {
     // Own H.264 encoder (Settings::videoCodec kOwnH264)
     bool own = false;
     int ownQp = 23, ownBitrateK = 0, ownLookahead = -1; // lookahead -1 = the encoder's default
+    // Option "crf": constant quality (EncoderConfig::crf) instead of the fixed ownQp; 0 = fixed QP. Since 22.11.2026: a
+    // fixed QP gives every part of an edit the same QP, so a still or a calm stretch next to game footage got 2-4 dB
+    // less than x264's CRF gives it for a few bits (talk +14.6 % BD-rate VMAF against x264 -> +3.5 %, highlight
+    // +14.4 -> +0.8 %, short -3.9 % against the fixed QP).
+    int ownCrf = 0;
     // Memory for the first pass's kept per-macroblock analysis (option "analysis_mb"; pictures beyond it are analysed
     // again by the encoder). The Exporter scales it to the free RAM, 0 in low-memory renders
     int ownAnalysisMb = 256;
@@ -801,7 +806,7 @@ struct ExportWriter::Impl {
         FramePtr waiting;
         try {
             // (batches side by side, same numbers; with B pictures also the probe the adaptive placement plans with)
-            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20);
+            schneidi::h264::FirstPass pass(width, height, ownThreads(), ownBframes, size_t(ownAnalysisMb) << 20, true);
             pump->run(0, s.length);
             for (int i = 0; i < s.length && !stop; ++i) {
                 FramePtr f(pump->take(i));
@@ -830,7 +835,7 @@ struct ExportWriter::Impl {
             if (ownFixedQp) ownStats.reset(); // (only the two passes towards the cap use it: not kept for the export)
             qInfo("Export: own H.264, QP %d predicts %.0f kbit/s for the cap %d kbit/s: %s", ownQp,
                   bits / 1000.0 * std::max(1.0, fps) / std::max(1, s.length), ownBitrateK,
-                  ownFixedQp ? "fixed QP" : "two passes towards the cap");
+                  ownFixedQp ? (ownCrf > 0 ? "constant quality" : "fixed QP") : "two passes towards the cap");
         } catch (const std::exception& e) {
             fail(QStringLiteral("s264, first pass: %1").arg(e.what()), true);
             return false;
@@ -1311,6 +1316,9 @@ struct ExportWriter::Impl {
         c.qp = ownQp;
         // Key frame at least every 250 pictures (x264's default), cuts and scene changes in between
         c.gop = kOwnGop;
+        // The cuts (ownKey) are key frames where the picture changes there; a still taken from the clip after it, or
+        // the same view from another file, continues as a P picture (the first pass knows the same)
+        c.softCutKeys = true;
         c.threads = ownThreads();
         c.fps = fps;
         c.bframes = ownBframes;
@@ -1318,6 +1326,8 @@ struct ExportWriter::Impl {
         if (ownBitrateK > 0 && !ownFixedQp) {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
+        } else if (ownCrf > 0) {
+            c.crf = ownCrf;
         }
         if (ownLookahead >= 0) c.lookahead = ownLookahead;
         // The colour tags exactly as an FFmpeg encoder gets them (newVideoEncoder): the VUI of the SPS and the stream's
@@ -2168,6 +2178,7 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     if (d->own) {
         for (const auto& [key, value] : s.videoOptions) {
             if (key == "qp") d->ownQp = std::clamp(value.toInt(), 10, 51);
+            if (key == "crf") d->ownCrf = std::clamp(value.toInt(), 0, 51);
             if (key == "bitrate") d->ownBitrateK = std::max(0, value.toInt());
             if (key == "lookahead") d->ownLookahead = std::clamp(value.toInt(), 0, 250);
             if (key == "bframes") d->ownBframes = std::clamp(value.toInt(), 0, 8);

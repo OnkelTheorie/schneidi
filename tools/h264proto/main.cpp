@@ -205,6 +205,8 @@ int main(int argc, char** argv)
             cfg.refs = std::atoi(argv[++i]);
         else if (a == "--no-scenecut")
             cfg.sceneCut = false;
+        else if (a == "--soft-cuts")
+            cfg.softCutKeys = true;
         else if (a == "--lookahead" && i + 1 < argc)
             cfg.lookahead = std::atoi(argv[++i]);
         else if (a == "--fps" && i + 1 < argc)
@@ -329,7 +331,7 @@ int main(int argc, char** argv)
     if (chunks > 1 && in != stdin) {
         // First pass over the whole clip, then the chunks side by side.
         auto t0 = std::chrono::steady_clock::now();
-        FirstPass fp(w, h, cfg.threads, cfg.bAdaptive ? cfg.bframes : 0);
+        FirstPass fp(w, h, cfg.threads, cfg.bAdaptive ? cfg.bframes : 0, size_t(1) << 30, cfg.softCutKeys);
         for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
             Picture pic;
             pic.y = frame.data();
@@ -392,7 +394,7 @@ int main(int argc, char** argv)
     }
     if (twoPass && in != stdin) {
         const auto t0 = std::chrono::steady_clock::now();
-        FirstPass fp(w, h, cfg.threads, cfg.bAdaptive ? cfg.bframes : 0);
+        FirstPass fp(w, h, cfg.threads, cfg.bAdaptive ? cfg.bframes : 0, size_t(1) << 30, cfg.softCutKeys);
         for (int n = 0; n < maxFrames && std::fread(frame.data(), 1, frame.size(), in) == frame.size(); ++n) {
             Picture pic;
             pic.y = frame.data();

@@ -76,6 +76,10 @@ double gStatEstT8[8][3] = {}, gStatEstSplit[8][3] = {}, gStatEstTotal = 0;
 std::atomic<long> gStatB[9] = {};
 std::atomic<long> gStatCalls[10] = {}; // calls: plan 8x8, plan 4x4, motion search, SATD position, SAD position (sadPart), intra try, mbBits, P macroblocks, -, chroma
 std::atomic<long> gStatB2[6] = {}; // B macroblocks: early skip, direct-plan skip, searched, split searched, 8x8 searched, split or 8x8 coded for real
+// Finest macroblock-tree QP offset (H264_TREECAP for measurements). 8 until 22.11.2026: the first picture of a still
+// that stays for seconds (a talk's screenshot, 40 pictures of lookahead that all copy it) got 2.5 QP less than x264
+// gives it; 12 leaves room for the tree's full -2 * log2(40) - talk -5 %, game highlight -1 %, short -0.5 % BD-rate.
+S264_DEV(float, gTreeCap, devEnv("H264_TREECAP") ? float(std::atof(devEnv("H264_TREECAP"))) : 12.0f);
 // Experiments (H264_EXP bit mask), for A/B measurements only.
 S264_DEV(int, gExp, devEnv("H264_EXP") ? std::atoi(devEnv("H264_EXP")) : 0);
 // Deblocking filter offsets (slice_alpha_c0_offset_div2 / slice_beta_offset_div2, -6..6), for
@@ -660,7 +664,7 @@ struct V3Encoder final : EncoderAlt {
     Encoder e;
 };
 struct V3FirstPass final : FirstPassAlt {
-    V3FirstPass(int w, int h, int threads, int bframes, size_t keep) : p(w, h, threads, bframes, keep) {}
+    V3FirstPass(int w, int h, int threads, int bframes, size_t keep, bool soft) : p(w, h, threads, bframes, keep, soft) {}
     void add(const Picture& picture, bool forceKeyframe) override { p.add(picture, forceKeyframe); }
     std::shared_ptr<const FirstPassStats> stats() const override { return p.stats(); }
     FirstPass p;
@@ -683,14 +687,14 @@ extern "C" schneidi::h264::EncoderAlt* schneidi_s264_v3_encoder(const schneidi::
     fillOnce();
     return new V3Encoder(*config);
 }
-extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes)
+extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes, bool softCutKeys)
 {
     fillOnce();
-    return new V3FirstPass(width, height, threads, bframes, keepBytes);
+    return new V3FirstPass(width, height, threads, bframes, keepBytes, softCutKeys);
 }
 #elif defined(SCHNEIDI_S264_HAVE_V3)
 extern "C" schneidi::h264::EncoderAlt* schneidi_s264_v3_encoder(const schneidi::h264::EncoderConfig* config);
-extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes);
+extern "C" schneidi::h264::FirstPassAlt* schneidi_s264_v3_first_pass(int width, int height, int threads, int bframes, size_t keepBytes, bool softCutKeys);
 #endif
 
 namespace schneidi::h264 {
@@ -1394,13 +1398,13 @@ int BProbe::measure(const std::vector<std::vector<uint8_t>>& pics, int w, int h,
     return 0;
 }
 
-FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes)
-    : width_(width), height_(height), threads_(std::max(1, threads)),
+FirstPass::FirstPass(int width, int height, int threads, int bframes, size_t keepAnalysisBytes, bool softCutKeys)
+    : width_(width), height_(height), threads_(std::max(1, threads)), softCutKeys_(softCutKeys),
       bframes_(std::clamp(bframes, 0, 8)), keepBytes_(keepAnalysisBytes)
 {
 #if defined(SCHNEIDI_S264_HAVE_V3) && !defined(SCHNEIDI_S264_V3_BUILD)
     if (useV3()) {
-        alt_.reset(schneidi_s264_v3_first_pass(width, height, threads, bframes, keepAnalysisBytes));
+        alt_.reset(schneidi_s264_v3_first_pass(width, height, threads, bframes, keepAnalysisBytes, softCutKeys));
         return;
     }
 #endif
@@ -1424,6 +1428,7 @@ void FirstPass::add(const Picture& pic, bool forceKeyframe)
         return alt_->add(pic, forceKeyframe);
     LookaheadFrame f; // the analysis reads only the luma
     f.forceKeyframe = forceKeyframe;
+    f.softKey = softCutKeys_;
     f.y.resize(size_t(width_) * height_);
     for (int y = 0; y < height_; ++y)
         std::memcpy(f.y.data() + size_t(y) * width_, pic.y + size_t(y) * pic.strideY, size_t(width_));
@@ -2518,6 +2523,8 @@ void Encoder::analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const
     f.intraSum = a.intraSum;
     f.interSum = a.interSum;
     f.sceneChange = a.sceneChange;
+    if (f.softKey)
+        f.forceKeyframe = f.forceKeyframe && a.sceneChange; // (the first pass tested it with the same bar)
 }
 
 // The caller's hints as the encoder uses them. Background rectangles become a macroblock map. Still content is
@@ -2576,6 +2583,7 @@ void Encoder::takeHints(LookaheadFrame& f, const EncodeHints* hints, const Looka
 std::vector<uint8_t> Encoder::encodeImpl(const Picture& picture, bool forceKeyframe, const EncodeHints* hints)
 {
     LookaheadFrame f = copyPicture(picture, cfg_.width, cfg_.height, forceKeyframe);
+    f.softKey = cfg_.softCutKeys;
     f.index = inCount_++;
     if (!useLookahead()) {
         takeHints(f, hints, nullptr);
@@ -3050,7 +3058,7 @@ double Encoder::frameCost(const LookaheadFrame& f, bool intra, const std::vector
     for (size_t m = 0; m < n; ++m) {
         const double c = intra ? f.intraCost[m] : std::min(f.intraCost[m], (*inter)[m]);
         if (cfg_.mbtree) {
-            const float off = std::max(-8.0f, Lookahead::qpOffset(f, int(m), treeStrength(f)));
+            const float off = std::max(-gTreeCap, Lookahead::qpOffset(f, int(m), treeStrength(f)));
             sum += c * std::exp2(-off / 6.0);
         } else {
             sum += c;
@@ -3936,7 +3944,7 @@ double Encoder::vbvCost(const LookaheadFrame* f, int type, double* shift) const
         for (size_t m = 0; m < n; ++m) {
             const double c = type == 0 ? g.intraCost[m] : std::min(g.intraCost[m], (*inter)[m]);
             raw += c;
-            tree += cfg_.mbtree ? c * std::exp2(-std::max(-8.0f, Lookahead::qpOffset(g, int(m), strength)) / 6.0) : c;
+            tree += cfg_.mbtree ? c * std::exp2(-std::max(-gTreeCap, Lookahead::qpOffset(g, int(m), strength)) / 6.0) : c;
         }
         if (raw < 1.0)
             return 1.0;
@@ -4211,7 +4219,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 la_->propagate(queue_);
             fc.treeOffset_.resize(size_t(mbW_) * mbH_);
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
-                fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
+                fc.treeOffset_[m] = std::max(-gTreeCap, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
         }
     } else {
         fc.treeOffset_.clear();
@@ -4375,7 +4383,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 la_->propagateB(queue_, cfg_.bframes, cfg_.weightedBipred);
                 if (gFirstTree && !fc.treeOffset_.empty())
                     for (size_t m = 0; m < fc.treeOffset_.size(); ++m)
-                        fc.treeOffset_[m] = std::max(-8.0f, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
+                        fc.treeOffset_[m] = std::max(-gTreeCap, Lookahead::qpOffset(frame, int(m), treeStrength(frame)));
             }
             double tree = 1.0;
             if (twoPass && !fc.treeOffset_.empty() && gTpSeedTree) {
@@ -4404,7 +4412,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     // picture from none): its offsets keep their shape and move to the settled pictures' level.
                     const float shift = (g.type == 2 || !settledAt(g)) && treeLevel < mean ? float(treeLevel - mean) : 0.0f;
                     for (float& o : probeOffsets)
-                        o = std::max(-8.0f, o + shift);
+                        o = std::max(-gTreeCap, o + shift);
                     probe.probeTree_ = &probeOffsets;
                 }
                 const double bits = double(probe.encode(pictureOf(g, cfg_.width)).size()) * 8.0;
@@ -4458,7 +4466,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                         continue;
                     double mean = 0;
                     for (size_t m = 0; m < g.intraCost.size(); ++m)
-                        mean += std::max(-8.0f, Lookahead::qpOffset(g, int(m), treeStrength(g)));
+                        mean += std::max(-gTreeCap, Lookahead::qpOffset(g, int(m), treeStrength(g)));
                     sum += mean / double(g.intraCost.size());
                     ++count;
                 }
@@ -4473,7 +4481,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                     double mean = 0;
                     if (g.propagate.size() == g.intraCost.size())
                         for (size_t m = 0; m < g.intraCost.size(); ++m)
-                            mean += std::max(-8.0f, Lookahead::qpOffset(g, int(m), treeStrength(g)));
+                            mean += std::max(-gTreeCap, Lookahead::qpOffset(g, int(m), treeStrength(g)));
                     std::fprintf(stderr, "pq: %d type %d refDist %d decided %d tree %.2f\n", g.index, g.type, g.refDist, int(g.decided), mean / std::max<size_t>(1, g.intraCost.size()));
                 }
             }
@@ -4741,8 +4749,12 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         double tm = 0;
         for (float o : fc.treeOffset_)
             tm += o;
-        std::fprintf(stderr, "qp: picture %d %c qp %d tree %.2f cost %.0f\n", frame.index, "IPB"[type], cfg_.qp,
-                     fc.treeOffset_.empty() ? 0.0 : tm / double(fc.treeOffset_.size()), costUsed);
+        int hist[4] = {}; // tree offsets: > -2, -2..-5, -5..-8, finer
+        for (float o : fc.treeOffset_)
+            ++hist[o > -2 ? 0 : o > -5 ? 1 : o > -8 ? 2 : 3];
+        std::fprintf(stderr, "qp: picture %d %c qp %d tree %.2f cost %.0f strength %.1f run %d hist %d %d %d %d\n", frame.index, "IPB"[type], cfg_.qp,
+                     fc.treeOffset_.empty() ? 0.0 : tm / double(fc.treeOffset_.size()), costUsed, treeStrength(frame), frame.nearRun,
+                     hist[0], hist[1], hist[2], hist[3]);
     }
     // Psy strength follows the picture's QP (EncoderConfig::psyQpFull / psyQpOff): full below, none
     // above, linear between - texture is kept where there are bits for it and not invented where
