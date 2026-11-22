@@ -4096,7 +4096,7 @@ double Encoder::vbvRaise(const LookaheadFrame* frame, int type, double qp, doubl
             seconds += tick / vbvRate();
         }
         // A chunk followed by another (vbvEndFill): once the queue holds the rest, it ends at least that full.
-        if (flushing_ && cfg_.vbvEndFill > 0 && f < cfg_.vbvEndFill * size)
+        if (flushing_ && cfg_.vbvEndFill > 0 && d < cfg_.vbvEndRaiseMax && f < cfg_.vbvEndFill * size)
             return false;
         return f >= std::min(fill + gVbvTarget * seconds * vbvRate(), gVbvTarget * size);
     };
@@ -8028,6 +8028,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                 same4[q] = take && like->j4 < 1e299 ? &like->r4 : nullptr;
             }
             if (only == 2) {
+                // like->r4 was planned with its 8x8 plan's empty quadrants left empty (kZeroQuad), this plan is not:
+                // only quadrants the 8x8 plan kept are the plan this one would make
+                if (like && kZeroQuad)
+                    for (int q = 0; q < 4; ++q)
+                        if (!((like->r8.cbpLuma >> q) & 1))
+                            same4[q] = nullptr;
                 p.j8 = 1e300;
                 planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, nullptr, like ? same4 : nullptr);
                 p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);

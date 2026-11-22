@@ -6,7 +6,8 @@
 // SPS's VUI and the container, the level from levelIdcFor); which cuts force key frames (no splits, jump cuts or
 // montage storms, only clips inside the range); clips shorter than the lookahead; a size that is no multiple of 16; a
 // shorter lookahead (low memory) reaches the encoder; the "web" cap: two passes land within 10 % of it on noise, a
-// still picture keeps the fixed QP far below it, a cap below the fixed QP's rate is met; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
+// still picture keeps the fixed QP far below it, a cap below the fixed QP's rate is met, a much too low prediction
+// keeps the cap without QP 51 at the end; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
 // writer itself; cancel during the first pass and while encoding leaves no file; B pictures: pts/dts in MP4 and MKV
 // (testBFrames). Checked with ffprobe/ffmpeg.
 
@@ -806,6 +807,80 @@ void testCapBelowFixedRate(const QString& dir)
     CHECK(decodeErrors(capped).isEmpty());
 }
 
+// The QP of every slice in decode order (26 + pic_init_qp_minus26 + slice_qp_delta, as trace_headers reads them)
+QVector<int> sliceQps(const QString& path)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-nostdin", "-v", "info", "-i", path, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "trace_headers",
+                       "-f", "null", "-"});
+    p.waitForFinished(120000);
+    static const QRegularExpression line(R"(^\[trace_headers[^\]]*\]\s+\d+\s+(pic_init_qp_minus26|slice_qp_delta)\s+[01]+\s+=\s+(-?\d+)\s*$)",
+                                         QRegularExpression::MultilineOption);
+    QVector<int> qps;
+    int init = 0;
+    for (auto it = line.globalMatch(QString::fromUtf8(p.readAllStandardError())); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        if (m.captured(1) == QLatin1String("pic_init_qp_minus26")) init = m.captured(2).toInt();
+        else qps << 26 + init + m.captured(2).toInt();
+    }
+    return qps;
+}
+
+// The quality level under a cap whose prediction was much too low, with the hardest part at the end (moving noise
+// only where the five probe runs do not look, the last 15 pictures among it): the VBV holds the cap, and the last
+// pictures are not driven towards QP 51 by the demand that the buffer ends as full as it started (with it: QP 47
+// at the end against 33 before, 22.11.2026).
+void testCapLowPredictionEnd(const QString& dir)
+{
+    // 250 pictures; probe runs at [15,35) [65,85) [115,135) [165,185) [215,235): all on the still picture
+    const Timeline tl = sequence({{g_still, 0, 70}, {g_still, 0, 65}, {g_noisy, 0, 30}, {g_still, 0, 20}, {g_noisy, 30, 30},
+                                  {g_still, 0, 20}, {g_noisy, 45, 15}});
+    constexpr int kLength = 250;
+    QLoggingCategory::defaultCategory()->setEnabled(QtInfoMsg, true);
+    g_previousHandler = qInstallMessageHandler(infoHandler);
+    {
+        QMutexLocker lock(&g_infoMutex);
+        g_info.clear();
+    }
+    const QString free = dir + "/low-free.mp4";
+    ExportSettings s = settings(free, RenderSettings::kQualityWeb);
+    s.maxBitrateK = 200000;
+    s.audioCodec.clear();
+    const bool freeDone = render(tl, s);
+    QString decision;
+    const double predicted = predictedKbit(&decision);
+    const auto kbitOf = [](const QString& path) { return QFileInfo(path).size() * 8.0 / 1000 / (kLength / 25.0); };
+    const double freeKbit = kbitOf(free);
+    // The cap just above what keeps the constant quality (the prediction below 0.8 of it): far below what it codes
+    const QString capped = dir + "/low-capped.mp4";
+    s.path = capped;
+    s.maxBitrateK = int(std::ceil(predicted * 1.3));
+    {
+        QMutexLocker lock(&g_infoMutex);
+        g_info.clear();
+    }
+    const bool cappedDone = render(tl, s);
+    predictedKbit(&decision);
+    qInstallMessageHandler(g_previousHandler);
+    if (!CHECK(freeDone && cappedDone && predicted > 0)) return;
+    CHECK_EQ(decision, QStringLiteral("constant quality"));
+    if (!CHECK(freeKbit > 1.5 * s.maxBitrateK)) // (else the test does not test what it should)
+        std::printf("       predicted %.0f kbit/s, coded %.0f without the cap %d\n", predicted, freeKbit, s.maxBitrateK);
+    const double kbit = kbitOf(capped);
+    if (!CHECK(kbit < s.maxBitrateK * 1.1)) std::printf("       %.0f kbit/s for the cap %d\n", kbit, s.maxBitrateK);
+    const QVector<int> qps = sliceQps(capped);
+    if (!CHECK(qps.size() >= kLength)) return;
+    int lastMax = 0, before = 0;
+    for (qsizetype i = 0; i < qps.size(); ++i) {
+        int& top = i >= qps.size() - 40 ? lastMax : before;
+        top = std::max(top, qps[i]);
+    }
+    if (!CHECK(lastMax < 51 && lastMax <= before + 8))
+        std::printf("       QP of the last 40 pictures up to %d, before up to %d\n", lastMax, before);
+    CHECK_EQ(probe(capped).value("nb_read_frames").toString().toInt(), kLength);
+    CHECK(decodeErrors(capped).isEmpty());
+}
+
 void testRefused(const QString& dir)
 {
     const auto refused = [&](ExportSettings s, const QString& reason) {
@@ -1012,6 +1087,7 @@ int main(int argc, char** argv)
     testLookahead(tmp.path());
     testBitrate(tmp.path());
     testCapBelowFixedRate(tmp.path());
+    testCapLowPredictionEnd(tmp.path());
     testRefused(tmp.path());
     testSizes(tmp.path());
     testReview();
