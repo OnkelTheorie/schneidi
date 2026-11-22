@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/ColorPanel.h"
+#include "ui/touch/Touch.h"
 
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -415,12 +416,17 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     m_enabled = new QToolButton;
     m_enabled->setCheckable(true);
-    m_enabled->setFixedSize(10, 10);
+    // The dot: touch mode's minimum button size (a style sheet rule) must not stretch it into a bar
+    const int dot = Touch::modeActive() ? 20 : 10;
+    m_enabled->setFixedSize(dot, dot);
     m_enabled->setFocusPolicy(Qt::NoFocus);
     m_enabled->setToolTip(T("Farbkorrektur des Clips an/aus"));
-    m_enabled->setStyleSheet(QString("QToolButton { border: none; border-radius: 5px; background: %1; }"
+    m_enabled->setStyleSheet(QString("QToolButton { border: none; border-radius: %3px; background: %1; padding: 0;"
+                                     " min-width: %4px; max-width: %4px; min-height: %4px; max-height: %4px; }"
                                      "QToolButton:checked { background: %2; }")
-                                 .arg(Theme::controlOff.name(), Theme::warning.name()));
+                                 .arg(Theme::controlOff.name(), Theme::warning.name())
+                                 .arg(dot / 2)
+                                 .arg(dot));
     connect(m_enabled, &QToolButton::clicked, this, [this](bool on) { m_editor->setGradeEnabled(targets(), on); });
     m_keyPrev = smallButton("◀", T("Voriger Keyframe"));
     m_keyDiamond = smallButton("◇", T("Keyframe für die ganze Korrektur setzen/entfernen"));
@@ -471,6 +477,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
         b->setCheckable(true);
         b->setFocusPolicy(Qt::NoFocus);
         b->setObjectName(QString("color_palette_%1").arg(i));
+        b->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred); // never cut to "W…s": the page scrolls instead
         paletteGroup->addButton(b, i);
         connect(b, &QToolButton::clicked, this, [this, i] { setPalette(i); });
         m_paletteButtons << b;

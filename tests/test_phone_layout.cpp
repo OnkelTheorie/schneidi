@@ -233,6 +233,15 @@ void testWindow(Engine& engine, const QSize& size)
     CHECK(!w.liveSelection()->isEmpty());
     CHECK(shell->clipToolsShown());
     CHECK(shell->toolButton("split")->isVisible());
+    // Every clip tool can be reached: inside the bar's scrolled box (the bar scrolls, nothing lies past its end)
+    for (const char* id : {"split", "volume", "speed", "clipEffects", "clipColor", "delete"}) {
+        QToolButton* b = shell->toolButton(id);
+        QWidget* box = b ? b->parentWidget()->parentWidget() : nullptr; // clip tools -> the bar's box
+        const bool ok = b && box && box->rect().contains(QRect(b->mapTo(box, QPoint(0, 0)), b->size()));
+        Check::report(ok, "clip tool inside the bar's box", __FILE__, __LINE__,
+                      QString("%1 at %2 in %3").arg(id).arg(b ? rect(QRect(b->mapTo(box, QPoint(0, 0)), b->size())) : "-")
+                          .arg(box ? rect(box->rect()) : "-"));
+    }
     QTest::mouseClick(shell->toolButton("volume"), Qt::LeftButton);
     settle();
     CHECK(shell->sheet() == "inspector");
