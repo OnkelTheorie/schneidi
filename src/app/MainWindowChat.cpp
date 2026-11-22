@@ -131,6 +131,7 @@ void MainWindow::showAiChat(bool on)
 
 void MainWindow::placeChat(bool left)
 {
+    if (m_phone) return; // the chat is the phone sheet's
     m_chatSplit->insertWidget(left ? 0 : 1, m_chatPanel);
     m_chatSplit->setStretchFactor(m_chatSplit->indexOf(m_pages), 1);
     m_chatSplit->setStretchFactor(m_chatSplit->indexOf(m_chatPanel), 0);
@@ -146,6 +147,7 @@ void MainWindow::placeChat(bool left)
 
 void MainWindow::applyChatWidth()
 {
+    if (m_phone) return;
     // The remembered width (a panel shown again or moved gets it back, the pages the rest)
     const int width = std::max(260, QSettings().value("layout/aiChatWidth", kChatWidth).toInt());
     const int total = std::max(m_chatSplit->width(), width + 600);

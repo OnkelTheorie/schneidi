@@ -393,6 +393,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/AiChat.h src/app/AiChat.cpp
     src/app/AiChatPanel.h src/app/AiChatPanel.cpp
     src/app/MainWindowChat.cpp
+    src/app/MainWindowPhone.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/MainWindowReframe.cpp
@@ -488,6 +489,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/touch/TouchGestures.h  src/ui/touch/TouchGestures.cpp
     src/ui/touch/TouchMode.cpp
     src/ui/touch/TouchPhone.cpp
+    src/ui/phone/PhoneShell.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp
@@ -538,6 +540,9 @@ file(GLOB SCHNEIDI_I18N RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJE
 qt_add_resources(schneidi_lib "i18n" PREFIX "/" FILES ${SCHNEIDI_I18N})
 set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json assets/themes/beige.json)
 qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
+# Symbol glyphs as fallback fonts (tools/make_symbol_fonts.py): Android's fonts lack many (boxes); loaded only there
+set(SCHNEIDI_SYMBOL_FONTS assets/fonts/schneidi-symbols-a.ttf assets/fonts/schneidi-symbols-b.ttf assets/fonts/schneidi-symbols-c.ttf)
+qt_add_resources(schneidi_lib "fonts" PREFIX "/" BASE assets FILES ${SCHNEIDI_SYMBOL_FONTS})
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 # Bundled looks: effect presets (LUT + effects) in the preset format of core/Presets, names in core/EffectFolders

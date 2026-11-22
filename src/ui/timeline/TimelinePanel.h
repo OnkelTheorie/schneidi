@@ -38,6 +38,10 @@ public:
     void setOverviewOnPage(bool on);
     bool overviewShown() const { return m_overviewEnabled && m_overviewOnPage; }
 
+    // Phone layout (ui/phone/PhoneShell): the tool bar never sets the panel's width - fewer tools (slip and slide stay
+    // in the menu), a narrow timeline list, the rest scrolls sideways
+    void setCompact(bool on);
+
 private:
     void syncScrollbars();
     void syncOverview();      // shown or not; when shown, the current timeline/view/playhead into it
@@ -57,5 +61,8 @@ private:
     QScrollBar* m_hbar;
     QScrollBar* m_vbar;
     QHBoxLayout* m_bar = nullptr;
+    QWidget* m_barWidget = nullptr;
+    class QScrollArea* m_barScroll = nullptr; // setCompact
+
     int m_toolInsert = 0;
 };

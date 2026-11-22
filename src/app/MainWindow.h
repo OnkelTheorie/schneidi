@@ -284,6 +284,13 @@ public:
     // full-screen viewer, then the large viewer, then another page back to Edit; on Edit with nothing left it asks
     // whether to quit (never quits by itself). Always true (the key is taken)
     bool backStep();
+    // Phone layout (ui/phone/PhoneShell, MainWindowPhone.cpp): on a screen whose shorter side is a phone's (below
+    // PhoneShell::kPhoneEdge logical px) the panels are rearranged - viewer, timeline, a tool bar at the bottom, one
+    // panel at a time as a sheet. Setting ui/phoneLayout ("on"/"off", else automatic) or SCHNEIDI_PHONE_LAYOUT=1/0
+    // decide it otherwise. Decided once in the constructor; tablets and desktops keep the normal layout
+    static bool phoneLayoutWanted();
+    void enablePhoneLayout(); // tests call it on a window built without it
+    class PhoneShell* phoneShell() const { return m_phone; }
     // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
     // it to the next monitor other than the one the main window is on, after the last one back into the window (two
     // monitors: on/off). Full screen there, letterboxed; it does not take the keyboard focus. The main window keeps
@@ -746,6 +753,12 @@ private:
     QSplitter* m_chatSplit = nullptr;
     QToolButton* m_chatToggle = nullptr;
     class QHBoxLayout* m_topBarLayout = nullptr;
+    QWidget* m_topBar = nullptr;  // the desktop's bars (hidden in the phone layout)
+    QWidget* m_pageBar = nullptr;
+    class PhoneShell* m_phone = nullptr; // the phone layout (nullptr = the normal one)
+    void phoneShowPage(Page page);  // showPage in the phone layout: a page becomes its panel's sheet
+    void phoneTogglePanel(QWidget* panel, bool on); // a panel toggle (menu, key, workspace) in the phone layout
+    QWidget* buildPhoneTopBar();
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

@@ -296,6 +296,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         return b;
     };
     auto* startBtn = makeBtn("⏮", T("Zum Anfang (Home)"));
+    startBtn->setObjectName("viewer_start");
     auto* backBtn = makeBtn("◀◀", T("Rückwärts (J)"));
     m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
     auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
@@ -307,6 +308,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
 
     // Before/After (bypass color correction, Shift+D) like in the DaVinci Viewer; on = orange
     auto* bypass = new QToolButton;
+    bypass->setObjectName("viewer_bypass");
     bypass->setText("◐");
     bypass->setCheckable(true);
     bypass->setFocusPolicy(Qt::NoFocus);
@@ -346,8 +348,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_barRight->addWidget(m_partHandles);
     m_barRight->addWidget(bypass);
     transport->addLayout(m_barRight);
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -429,6 +430,7 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
     b->setObjectName(icon == ViewIcon::Large ? "viewer_large" : "viewer_full_screen");
     b->setIcon(viewIcon(icon));
     b->setIconSize(QSize(18, 18));
+    b->setObjectName(icon == ViewIcon::Large ? "viewAction_large" : "viewAction_fullScreen");
     b->setStyleSheet("QToolButton { padding: 3px 3px; }"); // narrow: the bar decides the viewer's minimum width
     b->setCheckable(true);
     b->setChecked(action->isChecked());
@@ -444,8 +446,7 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
     });
     connect(action, &QAction::toggled, b, &QToolButton::setChecked);
     m_barRight->addWidget(b);
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
     layout()->invalidate();
     return b;
 }
@@ -490,9 +491,30 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
     show(zoom());
     connect(this, &Viewer::zoomChanged, b, show);
     m_barRight->insertWidget(0, b);
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
     layout()->invalidate();
+}
+
+void Viewer::updateBalance()
+{
+    // The transport buttons centered: as much room right of them as the timecode takes left (compact: none, the
+    // buttons may sit off the middle)
+    const int balance = m_compact ? 0 : std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
+    m_barBalance->changeSize(balance, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+}
+
+void Viewer::setCompact(bool on)
+{
+    m_compact = on;
+    // "To the start" and Before/After stay in the Playback and Color menus
+    for (const char* id : {"viewer_start", "viewer_bypass"})
+        if (auto* b = findChild<QToolButton*>(id)) b->setVisible(!on);
+    // The picture's pages (trim view, the "program elsewhere" page with its text and buttons) never set the height:
+    // the picture alone does (a phone in landscape has ~380 px for the bars, the picture and the timeline)
+    m_stack->setSizePolicy(on ? QSizePolicy::Ignored : QSizePolicy::Preferred, on ? QSizePolicy::Ignored : QSizePolicy::Preferred);
+    m_stack->setMinimumSize(on ? m_screen->minimumSize() : QSize(0, 0));
+    updateBalance();
+    if (layout()) layout()->invalidate();
 }
 
 int Viewer::heightFor(int width) const
@@ -683,8 +705,7 @@ void Viewer::setSource(const QString& path, const QString& name)
     if (path.isEmpty()) m_screen->dragData = nullptr;
     else m_screen->dragData = [this] { return dragData(); };
     m_partHandles->setVisible(!path.isEmpty());
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
     if (layout()) layout()->invalidate();
 }
 

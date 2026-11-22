@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QFont>
+#include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPalette>
@@ -251,6 +252,23 @@ QString touchStyleSheet()
     )");
 }
 
+QStringList symbolFontFamilies()
+{
+    static const QStringList families = [] {
+        QStringList out;
+#ifndef Q_OS_ANDROID
+        if (qEnvironmentVariable("SCHNEIDI_SYMBOL_FONTS") != "1") return out;
+#endif
+        for (const char* file : {":/fonts/schneidi-symbols-a.ttf", ":/fonts/schneidi-symbols-b.ttf",
+                                 ":/fonts/schneidi-symbols-c.ttf"}) {
+            const int id = QFontDatabase::addApplicationFont(QString::fromLatin1(file));
+            if (id >= 0) out << QFontDatabase::applicationFontFamilies(id);
+        }
+        return out;
+    }();
+    return families;
+}
+
 void apply(QApplication& app)
 {
     app.setStyle(QStyleFactory::create("Fusion")); // looks the same on Linux and Windows
@@ -292,6 +310,7 @@ void apply(QApplication& app)
 #else
     families << "Noto Sans Devanagari";
 #endif
+    families << symbolFontFamilies();
     f.setFamilies(families);
     app.setFont(f);
 

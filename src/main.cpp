@@ -747,6 +747,9 @@ int main(int argc, char* argv[])
             if (wh.size() == 2 && wh[0].toInt() > 0 && wh[1].toInt() > 0) size = QSize(wh[0].toInt(), wh[1].toInt());
         }
         w.resize(size);
+        // Once more after the layout settled: the phone layout's minimum follows its orientation (the first resize is
+        // held at the other orientation's)
+        QTimer::singleShot(300, &w, [&w, size] { w.resize(size); });
         QTimer::singleShot(1500 + screenshotWait, &w, [&w, screenshot] {
             w.grab().save(screenshot);
             QApplication::quit();

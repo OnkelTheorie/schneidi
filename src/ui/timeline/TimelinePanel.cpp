@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPainterPath>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QToolButton>
@@ -236,7 +237,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     bar->addWidget(zoomOut);
     bar->addWidget(zoomIn);
 
-    auto* barWidget = new QWidget;
+    auto* barWidget = m_barWidget = new QWidget;
     barWidget->setObjectName("Panel");
     // Switches show their state only via the icon color (no background as in DaVinci)
     barWidget->setStyleSheet(QString("QWidget#Panel { background: %1; }"
@@ -285,6 +286,31 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
 
     syncScrollbars();
     rebuildTimelines();
+}
+
+void TimelinePanel::setCompact(bool on)
+{
+    // The content tools (slip, slide) stay in the Timeline menu; the timeline list as narrow as a few letters
+    for (const char* id : {"tool_slip", "tool_slide"})
+        if (auto* b = findChild<QToolButton*>(id)) b->setVisible(!on);
+    m_timelines->setMinimumWidth(on ? 0 : 160);
+    m_timelines->setSizeAdjustPolicy(on ? QComboBox::AdjustToMinimumContentsLengthWithIcon : QComboBox::AdjustToContents);
+    m_timelines->setMinimumContentsLength(on ? 7 : 0);
+    if (on && !m_barScroll) {
+        // What still does not fit scrolls sideways (a swipe), the panel never gets wider for it
+        auto* lay = static_cast<QBoxLayout*>(layout());
+        const int at = lay->indexOf(m_barWidget);
+        m_barScroll = new QScrollArea;
+        m_barScroll->setObjectName("timelineBarScroll");
+        m_barScroll->setFrameShape(QFrame::NoFrame);
+        m_barScroll->setWidgetResizable(true);
+        m_barScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_barScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        lay->insertWidget(at, m_barScroll);
+        m_barScroll->setWidget(m_barWidget);
+        m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+    }
+    if (m_barScroll) m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
 }
 
 void TimelinePanel::syncScrollbars()

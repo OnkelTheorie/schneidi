@@ -194,6 +194,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     StartupTrace::mark("buildActions");
     setupChat();
     StartupTrace::mark("setupChat");
+    if (phoneLayoutWanted()) enablePhoneLayout();
     applyAiMarkStyle();
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
