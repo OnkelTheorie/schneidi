@@ -31,6 +31,7 @@
 #include <QDialog>
 #include <QListWidget>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QMessageBox>
 #include <QTimer>
 #include <QLabel>
@@ -507,6 +508,56 @@ void testSilentRestore(Engine& engine)
     qunsetenv("SCHNEIDI_SILENT_RESTORE");
 }
 
+// The tool bar under a finger (found on the A51): past its left end it stays at 0, a slanted swipe only scrolls
+// sideways, and no swipe opens a tool
+void testToolBarSwipe(Engine& engine)
+{
+    QPointingDevice* finger = QTest::createTouchDevice();
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.enablePhoneLayout();
+    PhoneShell* shell = w.phoneShell();
+    w.resize(411, 590); // (inside the offscreen screen: touch points outside it get lost)
+    w.show();
+    settle();
+    QWidget* vp = shell->toolButton("media")->parentWidget()->parentWidget()->parentWidget();
+    auto* area = qobject_cast<QAbstractScrollArea*>(vp->parentWidget());
+    if (!CHECK(area)) return;
+    QScrollBar* h = area->horizontalScrollBar();
+    QScrollBar* v = area->verticalScrollBar();
+    CHECK(h->maximum() > 0);
+    const int y = vp->height() / 2;
+    const auto swipe = [&](QPoint a, QPoint b, int steps) {
+        QTest::touchEvent(vp, finger).press(0, a, vp);
+        for (int i = 1; i <= steps; ++i) {
+            QTest::touchEvent(vp, finger).move(0, a + (b - a) * i / steps, vp);
+            QTest::qWait(8);
+        }
+        QTest::touchEvent(vp, finger).release(0, b, vp);
+    };
+    // Past the left end: stays at 0 (no jump to the right), nothing opens
+    int most = 0;
+    QObject::connect(h, &QScrollBar::valueChanged, h, [&](int value) { most = std::max(most, value); });
+    swipe({100, y}, {300, y}, 10);
+    QTest::qWait(400);
+    Check::report(h->value() == 0 && most == 0, "tool bar: stays at its left end", __FILE__, __LINE__,
+                  QString("value %1, at most %2").arg(h->value()).arg(most));
+    CHECK(shell->sheet().isEmpty());
+    // Slanted: only sideways, the way the finger went (about 150 px), nothing opens
+    QTest::qWait(500);
+    swipe({300, y}, {150, y - 40}, 10);
+    QTest::qWait(600);
+    Check::report(h->value() >= 100 && v->value() == 0, "tool bar: slanted swipe scrolls sideways", __FILE__, __LINE__,
+                  QString("h %1, v %2").arg(h->value()).arg(v->value()));
+    CHECK(shell->sheet().isEmpty());
+    // Back to the start and further: 0 again
+    QTest::qWait(500);
+    swipe({100, y}, {400, y + 30}, 12);
+    QTest::qWait(800);
+    Check::report(h->value() == 0, "tool bar: back at 0", __FILE__, __LINE__, QString("value %1").arg(h->value()));
+    CHECK(shell->sheet().isEmpty());
+}
+
 // Android: a dialog shown narrower than its contents grows about its middle (Touch::installDialogFit)
 void testDialogFit()
 {
@@ -541,6 +592,8 @@ int main(int argc, char** argv)
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
     testSilentRestore(engine);
+    Touch::installKineticScrolling(&app); // (main.cpp: every scroll area takes a finger)
+    testToolBarSwipe(engine);
     testWindow(engine, {411, 914});
     testWindow(engine, {914, 411});
     // As on a phone: touch mode (larger controls) and the app's style sheet with it

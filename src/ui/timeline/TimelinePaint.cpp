@@ -980,7 +980,8 @@ void TimelineView::drawHeaders(QPainter& p)
         p.drawRect(shortBox.adjusted(0, 0, -1, -1));
         p.setPen(Theme::text);
         p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
-        if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
+        const bool compact = compactHeaders(); // phone: short name, eye/mute, small marks; the rest in the menu
+        if (!compact && !(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
             f.setBold(false);
             f.setPointSizeF(8.5);
             p.setFont(f);
@@ -992,8 +993,9 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setPointSizeF(7.5);
         p.setFont(f);
         p.setPen(Theme::textDim);
-        p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
-                   (t.clips.size() == 1 ? T("1 Clip") : T("%1 Clips").arg(t.clips.size())));
+        if (!compact)
+            p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
+                       (t.clips.size() == 1 ? T("1 Clip") : T("%1 Clips").arg(t.clips.size())));
 
         // Button: video = eye (hide), audio = M (mute)
         const QRect b = headerButton(row);
@@ -1007,6 +1009,14 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         p.setFont(f);
         p.drawText(b, Qt::AlignCenter, row.ref.kind == TrackKind::Video ? (t.hidden ? "⊘" : "◉") : "M");
+        if (compact) { // only what is on: locked, armed for a voice-over (small, below)
+            const QRect mark(6, row.y + 28, 18, 14);
+            if (t.locked && mark.bottom() < row.y + row.h) drawLock(p, mark, Theme::primary);
+            if (row.ref.kind == TrackKind::Audio && row.ref.index == m_armedTrack && mark.bottom() < row.y + row.h)
+                drawMic(p, mark.translated(22, 0), Theme::recording);
+            p.setRenderHint(QPainter::Antialiasing, false);
+            continue;
+        }
         // Lock: locked = bright on orange
         const QRect lb = lockButton(row);
         p.setPen(Qt::NoPen);

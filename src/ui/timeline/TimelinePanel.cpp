@@ -311,6 +311,12 @@ void TimelinePanel::setCompact(bool on)
         m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
     }
     if (m_barScroll) m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+    // The scrollbars: where clips cover every lane they are the finger's way to move the view (phone: thick)
+    const QString thick = on ? QStringLiteral("QScrollBar:horizontal { height: 26px; } QScrollBar:vertical { width: 26px; }"
+                                              "QScrollBar::handle { min-width: 56px; min-height: 56px; border-radius: 8px; }")
+                             : QString();
+    m_hbar->setStyleSheet(thick);
+    m_vbar->setStyleSheet(thick);
 }
 
 void TimelinePanel::syncScrollbars()

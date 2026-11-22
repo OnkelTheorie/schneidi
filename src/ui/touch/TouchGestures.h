@@ -10,6 +10,10 @@
 //  - a second finger before the first one moved: pinch. onPinch gets the previous and the new centre of the two
 //    fingers and the scale since the last update (distance ratio): zoom around the fingers and pan in one
 //  - a running TouchDrag (started by the widget's mouse code for a touch press) gets the finger's moves and drop
+//  - panAt (optional) true for the press point: one finger moving pans (onPan with each step's distance, and after
+//    the lift a decaying glide like a flicked list). The widget's own drag (moving clips, a rubber band) then needs
+//    a hold first: held still for longPressMs (onHoldCue shows it) and then moved = press + moves as above; held and
+//    lifted without moving = the long press (context menu)
 
 #include <QElapsedTimer>
 #include <QObject>
@@ -30,8 +34,11 @@ public:
     std::function<void()> onPinchEnd;
     std::function<bool(const QPointF& pos)> onDoubleTap; // true = handled (else a double click goes to the widget)
     std::function<bool(const QPointF& pos)> onLongPress; // true = handled (else the context menu event)
+    std::function<bool(const QPointF& pos)> panAt;      // one finger pans here (see above)
+    std::function<void(const QPointF& delta)> onPan;    // move the view's content by delta (finger direction)
+    std::function<void(const QPointF& pos)> onHoldCue;  // the hold is ready: the next move works the widget itself
 
-    enum class State { Idle, Pending, Pressed, Pinch, Done };
+    enum class State { Idle, Pending, Pressed, Pinch, Done, Panning, Held };
     State state() const { return m_state; }
 
 protected:
@@ -41,6 +48,7 @@ private:
     bool touch(QTouchEvent* e);
     void longPress();
     void sendMouse(int type, const QPointF& pos, bool down);
+    void glide(); // one step of the glide after a pan
 
     QWidget* m_target;
     QTimer* m_hold;
@@ -52,4 +60,8 @@ private:
     double m_pinchDist = 0;
     QPointF m_lastTapPos{-1e9, -1e9};
     QElapsedTimer m_lastTap;
+    bool m_pan = false;        // this touch pans (panAt said so at the press)
+    QPointF m_velocity;        // px per ms, smoothed, while panning
+    QElapsedTimer m_moveClock; // time since the last pan step
+    QTimer* m_glide = nullptr;
 };

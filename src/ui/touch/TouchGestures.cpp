@@ -20,6 +20,20 @@ TouchGestures::TouchGestures(QWidget* target) : QObject(target), m_target(target
     m_hold->setSingleShot(true);
     m_hold->setInterval(Touch::longPressMs());
     connect(m_hold, &QTimer::timeout, this, &TouchGestures::longPress);
+    m_glide = new QTimer(this);
+    m_glide->setInterval(16);
+    connect(m_glide, &QTimer::timeout, this, &TouchGestures::glide);
+}
+
+void TouchGestures::glide()
+{
+    // Like a flicked list: the speed of the last moves, slowing down (about 0.4 s to a stop from a quick flick)
+    m_velocity *= 0.9;
+    if (std::hypot(m_velocity.x(), m_velocity.y()) < 0.02 || !onPan) {
+        m_glide->stop();
+        return;
+    }
+    onPan(m_velocity * 16.0);
 }
 
 bool TouchGestures::eventFilter(QObject* obj, QEvent* e)
@@ -66,12 +80,15 @@ bool TouchGestures::touch(QTouchEvent* e)
     }
     e->accept();
     if (e->type() == QEvent::TouchBegin) {
+        m_glide->stop(); // a finger stops a gliding view
         m_device = e->pointingDevice();
         m_mods = int(e->modifiers());
         m_state = State::Pending;
         m_pressPos = m_lastPos = pts.isEmpty() ? QPointF() : pts.first().position();
         m_lastGlobal = pts.isEmpty() ? QPointF() : pts.first().globalPosition();
         m_hold->start();
+        m_pan = panAt && onPan && panAt(m_pressPos);
+        m_velocity = {};
         if (pts.size() < 2) return true;
         // two fingers at once: straight into the pinch below
     }
@@ -138,7 +155,46 @@ bool TouchGestures::touch(QTouchEvent* e)
         if (QLineF(m_pressPos, m_lastPos).length() < Touch::slopPx()) return true;
         m_hold->stop();
         m_lastTap.invalidate();
+        if (m_pan) { // one finger moves the view
+            m_state = State::Panning;
+            onPan(m_lastPos - m_pressPos);
+            m_moveClock.start();
+            m_pinchCentre = m_lastPos; // (the last pan point)
+            return true;
+        }
         m_state = State::Pressed;
+        sendMouse(QEvent::MouseButtonPress, m_pressPos, true);
+        if (alive && !TouchDrag::active()) sendMouse(QEvent::MouseMove, m_lastPos, true);
+        return true;
+    case State::Panning: {
+        if (live >= 2) { // a second finger joins: from here a pinch
+            m_state = State::Pinch;
+            m_pinchCentre = (pts[0].position() + pts[1].position()) / 2;
+            m_pinchDist = QLineF(pts[0].position(), pts[1].position()).length();
+            return true;
+        }
+        const QPointF step = m_lastPos - m_pinchCentre;
+        const double ms = std::max<qint64>(1, m_moveClock.restart());
+        m_pinchCentre = m_lastPos;
+        if (!step.isNull()) {
+            m_velocity = m_velocity * 0.6 + (step / ms) * 0.4;
+            onPan(step);
+        }
+        if (end) {
+            m_state = State::Idle;
+            if (m_moveClock.elapsed() < 80) m_glide->start(); // still moving when lifted: it glides on
+        }
+        return true;
+    }
+    case State::Held:
+        if (end) { // held and lifted without moving: the long press as before (the menu)
+            m_state = State::Idle;
+            if (onLongPress && onLongPress(m_pressPos)) return true;
+            Touch::longPressAt(m_target, m_pressPos, Qt::KeyboardModifiers(m_mods));
+            return true;
+        }
+        if (QLineF(m_pressPos, m_lastPos).length() < Touch::slopPx()) return true;
+        m_state = State::Pressed; // held, then moved: the widget's own drag from the press point
         sendMouse(QEvent::MouseButtonPress, m_pressPos, true);
         if (alive && !TouchDrag::active()) sendMouse(QEvent::MouseMove, m_lastPos, true);
         return true;
@@ -182,6 +238,12 @@ bool TouchGestures::touch(QTouchEvent* e)
 void TouchGestures::longPress()
 {
     if (m_state != State::Pending) return;
+    if (m_pan) { // a panning surface: the hold arms the widget's own drag (the menu comes on a lift without moving)
+        m_state = State::Held;
+        m_lastTap.invalidate();
+        if (onHoldCue) onHoldCue(m_pressPos);
+        return;
+    }
     m_state = State::Done; // the rest of this touch does nothing
     m_lastTap.invalidate();
     if (onLongPress && onLongPress(m_pressPos)) return;

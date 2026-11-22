@@ -175,6 +175,8 @@ void MainWindow::enablePhoneLayout()
     // Their minimums sized for the desktop's Edit page: on a phone in landscape the viewer, the timeline and the bars
     // share ~380 px of height, in portrait 411 px of width
     m_timeline->setCompact(true);
+    TimelineView::setCompactHeaders(true); // V1 + eye/mute; the rest in the header's menu (a tap)
+    m_timeline->view()->setFingerPans(true); // one finger on empty lanes moves the view
     m_timeline->view()->setMinimumHeight(64);
     // Rows a finger still hits but a phone's height holds (landscape: V2, V1 and A1 under the ruler); a start value
     // like touch mode's, the user's pinch on the headers changes them as before

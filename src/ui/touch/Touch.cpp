@@ -20,6 +20,7 @@
 #include <QPointer>
 #include <QPointingDevice>
 #include <QScroller>
+#include <QScrollBar>
 #include <QScrollerProperties>
 #include <QStyleHints>
 #include <QTimer>
@@ -128,6 +129,8 @@ public:
         p.setScrollMetric(QScrollerProperties::HorizontalOvershootPolicy, QScrollerProperties::OvershootAlwaysOff);
         p.setScrollMetric(QScrollerProperties::VerticalOvershootPolicy, QScrollerProperties::OvershootAlwaysOff);
         p.setScrollMetric(QScrollerProperties::DragStartDistance, 0.001);
+        // A slanted swipe follows its main direction (a list does not drift sideways while flicked)
+        p.setScrollMetric(QScrollerProperties::AxisLockThreshold, 0.6);
         s->setScrollerProperties(p);
     }
 
@@ -147,7 +150,16 @@ private:
     enum class State { Idle, Pending, Scrolling, Held, Dragging, Done };
 
     QScroller* scroller() const { return QScroller::scroller(m_vp); }
-    QPointF local(const QPointF& global) const { return m_vp->mapFromGlobal(global); }
+    // The finger in the viewport, along the axes the area scrolls: a bar that only scrolls sideways (the phone's tool
+    // bar) never sees the finger's up and down (on the A51 a slanted swipe made it jump)
+    QPointF local(const QPointF& global) const
+    {
+        QPointF p = m_vp->mapFromGlobal(global);
+        const QPointF start = m_vp->mapFromGlobal(m_press);
+        if (m_area && m_area->verticalScrollBar()->maximum() <= 0) p.setY(start.y());
+        if (m_area && m_area->horizontalScrollBar()->maximum() <= 0) p.setX(start.x());
+        return p;
+    }
     QWidget* targetAt(const QPointF& global) const
     {
         QWidget* c = m_vp->childAt(local(global).toPoint());

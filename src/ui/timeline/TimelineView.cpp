@@ -35,6 +35,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QDateTime>
+#include <QApplication>
 #include <QTimer>
 #include <QWheelEvent>
 #include <array>
@@ -128,7 +129,7 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
         m_view.videoTrackHeight = 84;
         m_view.audioTrackHeight = 68;
     }
-    auto* touch = new TouchGestures(this);
+    auto* touch = m_gestures = new TouchGestures(this);
     touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
     touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
     m_aiTimer = new QTimer(this);
@@ -611,6 +612,51 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude,
 
 // ---------- View control (by the user only) ----------
 
+void TimelineView::setCompactHeaders(bool on)
+{
+    kHeaderW = on ? kHeaderCompact : kHeaderWide;
+    for (QWidget* w : QApplication::allWidgets())
+        if (auto* view = qobject_cast<TimelineView*>(w)) {
+            view->update();
+            emit view->viewChanged(); // (what shows of the lanes changed: scrollbars, overview)
+        }
+}
+
+void TimelineView::setFingerPans(bool on)
+{
+    m_fingerPans = on;
+    if (!on) {
+        m_gestures->panAt = nullptr;
+        m_gestures->onPan = nullptr;
+        m_gestures->onHoldCue = nullptr;
+        return;
+    }
+    // The empty lanes: not the headers (tap = menu, drag = reorder), the ruler (scrub), nor a clip or its edges (a
+    // finger there moves or trims it at once, a long press is its menu). Clips covering everything: the scrollbars
+    const auto onClip = [this](const QPointF& pos) {
+        const QPoint p = pos.toPoint();
+        const int zone = Touch::grabPx(true, kEdgeGrabPx);
+        return clipAt(p) || clipAt(p + QPoint(zone, 0)) || clipAt(p - QPoint(zone, 0));
+    };
+    m_gestures->panAt = [this, onClip](const QPointF& pos) {
+        return pos.x() >= kHeaderW && pos.y() >= kRulerH + subtitlesHeight() && !onClip(pos);
+    };
+    // User input: the view follows the finger (leftFrame, scrollY), the playhead stays (core rule kept)
+    m_gestures->onPan = [this](const QPointF& delta) {
+        const double left = std::max(0.0, m_view.leftFrame - delta.x() / m_view.pxPerFrame);
+        if (left != m_view.leftFrame) setLeftFrame(left);
+        if (const int dy = int(std::lround(delta.y())); dy != 0) setScrollY(m_view.scrollY - dy);
+    };
+    m_gestures->onHoldCue = [this](const QPointF& pos) {
+        m_holdCue = pos;
+        update();
+        QTimer::singleShot(350, this, [this] {
+            m_holdCue = {-1, -1};
+            update();
+        });
+    };
+}
+
 void TimelineView::setLeftFrame(double frame)
 {
     m_view.leftFrame = std::max(0.0, frame);
@@ -753,17 +799,19 @@ QString TimelineView::renderCacheToolTip(const QPoint& pos) const
 
 QRect TimelineView::headerButton(const Row& row) const
 {
+    if (compactHeaders()) return QRect(kHeaderW - 26, row.y + 6, 22, 18); // beside the short name
     return QRect(kHeaderW - 30, row.y + 6, 20, 16);
 }
 
 QRect TimelineView::lockButton(const Row& row) const
 {
+    if (compactHeaders()) return {}; // (the menu)
     return QRect(kHeaderW - 54, row.y + 6, 20, 16);
 }
 
 QRect TimelineView::micButton(const Row& row) const
 {
-    if (row.ref.kind != TrackKind::Audio) return {};
+    if (row.ref.kind != TrackKind::Audio || compactHeaders()) return {};
     return QRect(kHeaderW - 78, row.y + 6, 20, 16);
 }
 
@@ -799,11 +847,13 @@ void TimelineView::setLiveTake(const Voiceover::LiveTake* take, int track)
 
 QRect TimelineView::shortNameRect(const Row& row) const
 {
+    if (compactHeaders()) return QRect(6, row.y + 7, 24, 16);
     return QRect(10, row.y + 6, 26, 16);
 }
 
 QRect TimelineView::nameRect(const Row& row) const
 {
+    if (compactHeaders()) return QRect(6, row.y + 26, kHeaderW - 10, 16); // (renaming from the menu: the field)
     const int left = 42;
     const int right = row.ref.kind == TrackKind::Audio ? micButton(row).left() : lockButton(row).left();
     return QRect(left, row.y + 5, right - 4 - left, 18);

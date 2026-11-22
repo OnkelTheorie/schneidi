@@ -745,6 +745,9 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         if (moved && to >= 0 && to != m_trackDragRef.index) m_editor->moveTrack(m_trackDragRef.kind, m_trackDragRef.index, to);
         updateHoverCursor(e->position().toPoint());
         update();
+        // Compact headers (phone): a tap on the header is its menu (lock, name, mic, color, tracks live there)
+        if (!moved && compactHeaders())
+            if (const auto row = rowFor(m_trackDragRef)) headerMenu(*row, mapToGlobal(e->position().toPoint()));
         return;
     }
     if (m_drag == Drag::Move)

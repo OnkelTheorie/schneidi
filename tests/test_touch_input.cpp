@@ -770,6 +770,96 @@ void testLongPressHint()
 
 } // namespace
 
+// Phone (TimelineView::setFingerPans): one finger on empty lanes moves the view and glides on; on a clip it still
+// moves the clip at once; a long press on a clip is its menu; a hold on empty lanes arms the rubber band
+void testFingerPan()
+{
+    Fixture f;
+    f.tv->setFingerPans(true);
+    int seeks = 0;
+    QObject::connect(f.tv, &TimelineView::seekRequested, [&](int) { ++seeks; });
+    const int playhead = f.tv->playhead();
+    // Empty lane (V1, between clip 1 and 2): 60 px to the left = 30 frames later in view, nothing else changes
+    swipe(f.tv, {f.x(125), 120}, {f.x(125) - 60, 120});
+    CHECK(f.tv->view().leftFrame >= 29.0);
+    const double afterSwipe = f.tv->view().leftFrame;
+    CHECK_EQ(f.tv->view().pxPerFrame, 2.0);
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 150);
+    CHECK(f.sel.isEmpty());
+    CHECK_EQ(seeks, 0);
+    CHECK_EQ(f.tv->playhead(), playhead);
+    // Lifted while moving: it glides on a little
+    QTest::qWait(150);
+    CHECK(f.tv->view().leftFrame > afterSwipe);
+    QTest::qWait(600); // (glide over)
+    f.tv->setZoomAndScroll(2.0, 0, 0);
+    pauseTaps();
+    // Downwards: the lanes scroll up (scrollY never below 0: first down, then up)
+    f.tv->setZoomAndScroll(2.0, 0, 40);
+    swipe(f.tv, {f.x(125), 120}, {f.x(125), 150});
+    CHECK(f.tv->view().scrollY < 40);
+    QTest::qWait(600);
+    f.tv->setZoomAndScroll(2.0, 0, 0);
+    pauseTaps();
+    // On a clip: moves the clip as before (20 frames right), the view stays
+    swipe(f.tv, {f.x(200), 120}, {f.x(220), 120});
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 170);
+    CHECK_EQ(f.tv->view().leftFrame, 0.0);
+    pauseTaps();
+    // Long press on a clip: its menu (no drag)
+    int menus = 0;
+    QObject::connect(f.tv, &TimelineView::clipMenuRequested, [&](const QPoint&) { ++menus; });
+    QTest::touchEvent(f.tv, g_touch).press(0, {f.x(50), 120}, f.tv);
+    QTest::qWait(Touch::longPressMs() + 150);
+    QTest::touchEvent(f.tv, g_touch).release(0, {f.x(50), 120}, f.tv);
+    CHECK_EQ(menus, 1);
+    pauseTaps();
+    // A hold on an empty lane: the ring shows, then a drag is the rubber band (selects clip 3 on V2), no pan
+    f.sel.clear();
+    const QPoint from(f.x(30), 60), to(f.x(140), 140);
+    QTest::touchEvent(f.tv, g_touch).press(0, from, f.tv);
+    QTest::qWait(Touch::longPressMs() + 100);
+    CHECK(f.tv->holdCue().x() >= 0);
+    for (int i = 1; i <= 6; ++i) QTest::touchEvent(f.tv, g_touch).move(0, from + (to - from) * i / 6, f.tv);
+    QTest::touchEvent(f.tv, g_touch).release(0, to, f.tv);
+    CHECK_EQ(f.tv->view().leftFrame, 0.0);
+    CHECK(f.sel.contains(3));
+    f.tv->setFingerPans(false);
+}
+
+// Phone: compact track headers (60 px: V1 + eye/mute); a tap on the header opens its menu
+void testCompactHeaders()
+{
+    Fixture f;
+    TimelineView::setCompactHeaders(true);
+    CHECK_EQ(TimelineView::kHeaderW, TimelineView::kHeaderCompact);
+    CHECK(f.x(0) == TimelineView::kHeaderCompact);
+    int menus = 0;
+    QStringList texts;
+    QTimer closer;
+    QObject::connect(&closer, &QTimer::timeout, [&] {
+        if (auto* m = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+            ++menus;
+            for (QAction* a : m->actions()) texts << a->text();
+            m->close();
+        }
+    });
+    closer.start(30);
+    tap(f.tv, {40, 140}); // V1's header below the short name and the eye
+    QTest::qWait(150);
+    CHECK_EQ(menus, 1);
+    CHECK(texts.contains("Spur sperren") && texts.contains("Spur ausblenden"));
+    pauseTaps();
+    // The eye button still works directly
+    const bool hidden = f.project.timeline().video[0].hidden;
+    tap(f.tv, {TimelineView::kHeaderW - 15, 94 + 14});
+    QTest::qWait(50);
+    CHECK(f.project.timeline().video[0].hidden != hidden);
+    closer.stop();
+    TimelineView::setCompactHeaders(false);
+    CHECK_EQ(TimelineView::kHeaderW, TimelineView::kHeaderWide);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -797,5 +887,7 @@ int main(int argc, char** argv)
     testStudioTracks();
     testOverview();
     testLongPressHint();
+    testFingerPan();
+    testCompactHeaders();
     return Check::result();
 }

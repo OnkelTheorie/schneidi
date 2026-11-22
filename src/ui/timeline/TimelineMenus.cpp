@@ -52,6 +52,22 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
     lock->setCheckable(true);
     lock->setChecked(t.locked);
     connect(lock, &QAction::triggered, this, [this, ref] { m_editor->toggleTrackLock(ref); });
+    if (compactHeaders()) { // the header's own buttons and its name, which the compact header leaves out
+        menu.setTitle(trackShortName(ref) + "  " + trackDisplayName(t, ref));
+        QAction* hide = menu.addAction(ref.kind == TrackKind::Video ? T("Spur ausblenden") : T("Spur stummschalten"));
+        hide->setCheckable(true);
+        hide->setChecked(ref.kind == TrackKind::Video ? t.hidden : t.muted);
+        connect(hide, &QAction::triggered, this, [this, ref] {
+            if (ref.kind == TrackKind::Video) m_editor->toggleTrackHidden(ref);
+            else m_editor->toggleTrackMute(ref);
+        });
+        if (ref.kind == TrackKind::Audio) {
+            QAction* arm = menu.addAction(T("Voice-over auf diese Spur"));
+            arm->setCheckable(true);
+            arm->setChecked(ref.index == m_armedTrack);
+            connect(arm, &QAction::triggered, this, [this, ref] { emit armToggled(ref.index); });
+        }
+    }
     connect(menu.addAction(T("Spur umbenennen")), &QAction::triggered, this, [this, ref] { startRename(ref); });
     QMenu* colors = menu.addMenu(T("Spurfarbe ändern"));
     auto addColor = [&](const QString& id, const QString& name, const QColor& c) {

@@ -28,7 +28,16 @@ public:
     // resp. slides it (same edit, snapping, linked clips, undo and trim view as in trim mode)
     enum class Tool { Select, Trim, Blade, Slip, Slide };
 
-    static constexpr int kHeaderW = 180;
+    // Width of the track headers: 180, the phone's compact headers 60 (setCompactHeaders, for every timeline view)
+    static inline int kHeaderW = 180;
+    static constexpr int kHeaderWide = 180, kHeaderCompact = 60;
+    // Phone: the headers only show the short name (V1) and the eye/mute button (locked/armed as small marks); the
+    // rest (lock, name, mic, color, tracks) is in the header's menu, which a tap on the header opens
+    static void setCompactHeaders(bool on);
+    static bool compactHeaders() { return kHeaderW == kHeaderCompact; }
+    // Phone: one finger in the track area moves the view (with a glide); a clip moves after a hold (TouchGestures)
+    void setFingerPans(bool on);
+    bool fingerPans() const { return m_fingerPans; }
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
@@ -38,6 +47,7 @@ public:
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
     const ViewState& view() const { return m_view; }
+    QPointF holdCue() const { return m_holdCue; } // tests: where the hold's ring shows (negative = none)
     // Start heights of the rows (the phone layout); later only the user's pinch/wheel on the headers changes them
     void setTrackHeights(int video, int audio);
     Tool tool() const { return m_tool; }
@@ -210,6 +220,10 @@ protected:
     void resizeEvent(QResizeEvent*) override;
 
 private:
+    class TouchGestures* m_gestures = nullptr;
+    bool m_fingerPans = false;
+    QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment
+
     struct GapPick {
         bool on = false;
         TrackRef ref;
