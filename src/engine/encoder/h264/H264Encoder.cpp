@@ -6239,26 +6239,27 @@ const Basis8& basis8()
 void quantize8x8(const int* residual, int qp, double offset, int* levels, double* real = nullptr)
 {
     // Decoder: r = B^T (Z * v8 * 2^(qp/6 - 2)) B / 64, so Z = 256 * W / (n_i n_j v8 2^(qp/6)) with W = w64 / 64,
-    // i.e. Z = 4 * w64 / den: both multiplications by powers of two are exact, so this is the same double.
-    static const auto kScale = [] { // n_i n_j v8 by QP % 6 and position
+    // i.e. Z = w64 * (1 / (n_i n_j v8)) * 4 / 2^(qp/6): the reciprocal from a table (a division per coefficient
+    // was 1 % of the encoder's time at high rates), the last factor a power of two and so exact.
+    static const auto kInvScale = [] { // 1 / (n_i n_j v8) by QP % 6 and position
         std::array<std::array<double, 64>, 6> t{};
         const Basis8& B = basis8();
         for (int q = 0; q < 6; ++q)
             for (int k = 0; k < 64; ++k)
-                t[size_t(q)][size_t(k)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
+                t[size_t(q)][size_t(k)] = 1.0 / (B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)]);
         return t;
     }();
     int w64[64];
     forward8x8(residual, w64);
-    const double step2 = double(1 << (qp / 6));
-    const double* scale = kScale[size_t(qp % 6)].data();
+    const double pow2 = 4.0 / double(1 << (qp / 6));
+    const double* inv = kInvScale[size_t(qp % 6)].data();
     if (!levels) { // the trellis takes the real-valued levels only
         for (int k = 0; k < 64; ++k)
-            real[k] = 4.0 * double(w64[k]) / (scale[k] * step2);
+            real[k] = double(w64[k]) * inv[k] * pow2;
         return;
     }
     for (int k = 0; k < 64; ++k) {
-        const double x = 4.0 * double(w64[k]) / (scale[k] * step2);
+        const double x = double(w64[k]) * inv[k] * pow2;
         const int mag = std::min(int(std::abs(x) + offset), kMaxLevel);
         levels[k] = x < 0 ? -mag : mag;
         if (real)
@@ -6270,37 +6271,36 @@ void quantize8x8(const int* residual, int qp, double offset, int* levels, double
 // doubles (same operations per coefficient), without the copy into scan order afterwards.
 void quantize8x8Scan(const int* residual, int qp, double* xs)
 {
-    static const auto kScaleScan = [] { // n_i n_j v8 by QP % 6 and scan position
+    static const auto kInvScaleScan = [] { // 1 / (n_i n_j v8) by QP % 6 and scan position
         std::array<std::array<double, 64>, 6> t{};
         const Basis8& B = basis8();
         for (int q = 0; q < 6; ++q)
             for (int s = 0; s < 64; ++s) {
                 const int k = kZigzag8[s];
-                t[size_t(q)][size_t(s)] = B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)];
+                t[size_t(q)][size_t(s)] = 1.0 / (B.norm[k >> 3] * B.norm[k & 7] * kDequantV8[q][posClass8(k)]);
             }
         return t;
     }();
     int w64[64];
     forward8x8(residual, w64);
-    const double step2 = double(1 << (qp / 6));
-    const double* scale = kScaleScan[size_t(qp % 6)].data();
+    const double pow2 = 4.0 / double(1 << (qp / 6));
+    const double* inv = kInvScaleScan[size_t(qp % 6)].data();
     int s = 0;
 #ifdef SCHNEIDI_H264_SSE2
-    const __m128d four = _mm_set1_pd(4.0), st = _mm_set1_pd(step2);
+    const __m128d p2 = _mm_set1_pd(pow2);
     for (; s < 64; s += 2) {
         const __m128d w = _mm_cvtepi32_pd(_mm_setr_epi32(w64[kZigzag8[s]], w64[kZigzag8[s + 1]], 0, 0));
-        _mm_storeu_pd(xs + s, _mm_div_pd(_mm_mul_pd(four, w), _mm_mul_pd(_mm_loadu_pd(scale + s), st)));
+        _mm_storeu_pd(xs + s, _mm_mul_pd(_mm_mul_pd(w, _mm_loadu_pd(inv + s)), p2));
     }
 #elif defined(SCHNEIDI_H264_NEON)
-    const float64x2_t st = vdupq_n_f64(step2);
     for (; s < 64; s += 2) {
         const int32x2_t wi = {w64[kZigzag8[s]], w64[kZigzag8[s + 1]]};
         const float64x2_t w = vcvtq_f64_s64(vmovl_s32(wi));
-        vst1q_f64(xs + s, vdivq_f64(vmulq_n_f64(w, 4.0), vmulq_f64(vld1q_f64(scale + s), st)));
+        vst1q_f64(xs + s, vmulq_n_f64(vmulq_f64(w, vld1q_f64(inv + s)), pow2));
     }
 #endif
     for (; s < 64; ++s)
-        xs[s] = 4.0 * double(w64[kZigzag8[s]]) / (scale[s] * step2);
+        xs[s] = double(w64[kZigzag8[s]]) * inv[s] * pow2;
 }
 
 void dequant8x8(const int* levels, int qp, int* d)
@@ -7093,13 +7093,40 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     reconInterLuma(mbx, mby, lp, qp, t8, io, ir);
 }
 
+// The 8x8 quadrants (bit b8) in which two 16x16 luma predictions are the same pixels.
+static int sameQuadrants(const uint8_t* a, const uint8_t* b)
+{
+    int quads = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
+        const int off = (b8 >> 1) * 128 + (b8 & 1) * 8;
+        bool equal = true;
+        for (int y = 0; y < 8 && equal; ++y)
+            equal = std::memcmp(a + off + y * 16, b + off + y * 16, 8) == 0;
+        if (equal)
+            quads |= 1 << b8;
+    }
+    return quads;
+}
+
+// Factor on the thresholds below which the split layouts are not searched (encodeMbP: kSplitSkip, encodeMbB:
+// gBSplitSkip) at high rates: in a picture below QP 30 they grow by 2^(power * (30 - QP) / 6), which is the ratio
+// of lambda's root at QP 30 to the picture's, to the power. By the picture's QP, not the macroblock's: where the
+// adaptive quantisation lowers the QP in a picture of QP 30 or more, the splits are worth their search (by the
+// macroblock's QP: VMAF +0.7 % BD-rate on CS2, most of it at QP 30 and 34). H264_SPLITLOWQP overrides the 30.
+static double lowRateSplit(double pictureQp, double power)
+{
+    static const double kFrom = devEnv("H264_SPLITLOWQP") ? std::atof(devEnv("H264_SPLITLOWQP")) : 30.0;
+    return power > 0 && pictureQp < kFrom ? std::pow(2.0, power * (kFrom - pictureQp) / 6.0) : 1.0;
+}
+
 // First half of coding an inter macroblock's luma residual: transform and quantisation (trellis,
 // decimation) into ir. With est (trellis path only, else left at -1): the trellis' own estimate of
 // squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
 // fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
 // above the lowest frequencies are decided with fineLambda instead of lambda.
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
-                               InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8)
+                               InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8,
+                               const InterResidual* const* same)
 {
     if (gStats)
         ++gStatCalls[t8 ? 0 : 1];
@@ -7121,12 +7148,23 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         return false;
     };
     const bool noteFine = fineLambda < 0 && tPsy.weight > 0;
-    ir.fineMayDiffer = !noteFine; // (not asked for: assume it may)
+    int fineQuads = noteFine ? 0 : 15; // (not asked for: assume it may)
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
         double sum = 0;
         for (int b8 = 0; b8 < 4; ++b8) {
+            if (same && same[b8]) {
+                const InterResidual& from = *same[b8];
+                std::copy(from.levels8[b8], from.levels8[b8] + 64, levels8[b8]);
+                ir.energy8[b8] = from.energy8[b8];
+                ir.j8[b8] = from.j8[b8];
+                const int coded = from.cbpLuma & (1 << b8);
+                sum += coded ? ir.j8[b8] : ir.energy8[b8];
+                cbpLuma |= coded;
+                fineQuads |= from.fineQuads & (1 << b8);
+                continue;
+            }
             const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
             int res[64];
             {
@@ -7178,8 +7216,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 uint64_t nz = 0;
                 const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
                                               est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
-                if (noteFine && !ir.fineMayDiffer)
-                    ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom8, 64);
+                if (noteFine && reachesHigh(xs, gPsyFineFrom8, 64))
+                    fineQuads |= 1 << b8;
                 const bool any = nz != 0;
                 std::fill(levels8[b8], levels8[b8] + 64, 0);
                 for (uint64_t m = nz; m; m &= m - 1) {
@@ -7188,10 +7226,11 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 }
                 sum += any ? j : energy;
                 ir.energy8[b8] = energy;
+                ir.j8[b8] = j;
                 if (any)
                     cbpLuma |= 1 << b8;
             } else {
-                ir.fineMayDiffer = true;
+                fineQuads = 15;
                 for (int k = 0; k < 64; ++k)
                     if (levels8[b8][k] != 0) {
                         cbpLuma |= 1 << b8;
@@ -7204,6 +7243,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         if (est && live && cfg_.effort > 0 && trellis)
             *est = sum;
         ir.cbpLuma = cbpLuma;
+        ir.fineQuads = uint8_t(fineQuads);
+        ir.fineMayDiffer = fineQuads != 0;
         return;
     }
     // Pixel error per level unit of a 4x4 coefficient, by QP and scan position.
@@ -7234,13 +7275,21 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     double gain[16];
     const bool trellisPath = cfg_.effort > 0 && live && trellis;
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        const int quad = blkIdx >> 2;
+        if (same && same[quad]) {
+            const InterResidual& from = *same[quad];
+            std::copy(from.levels[blkIdx], from.levels[blkIdx] + 16, levels[blkIdx]); // (zero where its group was dropped)
+            jBlk[blkIdx] = from.j4[blkIdx];
+            eBlk[blkIdx] = from.e4[blkIdx];
+            continue;
+        }
         if (emptyOf8 && est && trellisPath && !((emptyOf8->cbpLuma >> (blkIdx >> 2)) & 1)) {
             // The 8x8 plan left this quadrant without a level: taken as empty here too, at the
             // same squared error (the quadrant's, in equal shares).
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             gain[blkIdx] = 0.0;
             jBlk[blkIdx] = eBlk[blkIdx] = 0.25 * emptyOf8->energy8[blkIdx >> 2];
-            ir.fineMayDiffer = true; // the finer plan is made without emptyOf8
+            fineQuads |= 1 << quad; // the finer plan is made without emptyOf8
             continue;
         }
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
@@ -7269,8 +7318,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
             }
             gain[blkIdx] = nz ? zeroJ - jBlk[blkIdx] : 0.0;
-            if (noteFine && !ir.fineMayDiffer)
-                ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom4, 16);
+            if (noteFine && !((fineQuads >> quad) & 1) && reachesHigh(xs, gPsyFineFrom4, 16))
+                fineQuads |= 1 << quad;
             if (gDecLog && nz && fineLambda < 0)
                 decLogSample(levels[blkIdx], xs, scale4, lambda, gain[blkIdx]);
             continue;
@@ -7285,22 +7334,27 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
         }
         gain[blkIdx] = sparseLevelGain(levels[blkIdx], xs, scale4, lambda);
-        ir.fineMayDiffer = true;
+        fineQuads = 15;
     }
     // Residual groups that do not pay for themselves: an 8x8 group is coded only when its blocks
     // together gain more than its own signalling and the context cost of a non-empty group
     // (kGroupBits, fitted by measurement: the coded_block_pattern bit alone would be about one).
     double sum = 0;
     for (int b8 = 0; b8 < 4; ++b8) {
-        const double groupGain = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
-        if (groupGain > lambda * kGroupBits) {
+        if (same && same[b8]) {
+            cbpLuma |= same[b8]->cbpLuma & (1 << b8);
+            fineQuads |= same[b8]->fineQuads & (1 << b8);
+        } else if (gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3] > lambda * kGroupBits) {
             cbpLuma |= 1 << b8; // a group with a positive gain has a level
         } else {
             // (The plan with fineLambda is made without est: its gains count the squared error after the last
             // level twice, so it may keep a group dropped here.)
-            if (noteFine && !ir.fineMayDiffer)
-                for (int k = 0; k < 4 && !ir.fineMayDiffer; ++k)
-                    ir.fineMayDiffer = std::any_of(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, [](int v) { return v != 0; });
+            if (noteFine && !((fineQuads >> b8) & 1))
+                for (int k = 0; k < 4; ++k)
+                    if (std::any_of(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, [](int v) { return v != 0; })) {
+                        fineQuads |= 1 << b8;
+                        break;
+                    }
             for (int k = 0; k < 4; ++k)
                 std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
         }
@@ -7308,9 +7362,14 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             for (int k = 0; k < 4; ++k)
                 sum += (cbpLuma >> b8) & 1 ? jBlk[b8 * 4 + k] : eBlk[b8 * 4 + k];
     }
-    if (est && trellisPath)
+    if (est && trellisPath) {
         *est = sum;
+        std::copy(jBlk, jBlk + 16, ir.j4);
+        std::copy(eBlk, eBlk + 16, ir.e4);
+    }
     ir.cbpLuma = cbpLuma;
+    ir.fineQuads = uint8_t(fineQuads);
+    ir.fineMayDiffer = fineQuads != 0;
 }
 
 // Whether two plans of the same prediction and transform hold the same levels (then they are the same macroblock).
@@ -7713,9 +7772,19 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             }
         }
     }
-    bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
+    // At high rates the threshold falls below what the picture's noise alone costs (QP 22: 2.3 per sample) and
+    // nearly every macroblock searched its splits, for little: in pictures below QP 30 the threshold is larger
+    // (lowRateSplit, mode decision by estimate only; with the exponent 0.6 QP 26: 264 instead of 200 times lambda's
+    // root, QP 22: 348). Measured 22.11.2026 with one factor for all macroblocks (fixed QP, 900 pictures CS2 with
+    // cuts; bytes / PSNR-Y of the P pictures / instructions): QP 22 300 0.00 % / 0.00 dB / -2.0 %, 400 +0.10 % /
+    // -0.02 dB / -4.2 %; QP 26 250 -0.03 % / 0.00 dB / -1.8 %; QP 30 250 +0.10 % / -0.01 dB / -3.0 %, 300 +0.21 % /
+    // -0.03 dB / -5.8 % (there the threshold is where it should be). With the rule of the B pictures: see there.
+    // H264_SPLITLOW overrides the exponent, 0 = off (the stream before).
+    static const double kSplitLow = devEnv("H264_SPLITLOW") ? std::atof(devEnv("H264_SPLITLOW")) : 0.6;
+    const double splitSkipCost = kSplitSkip * lambdaSad * (kRdEst ? lowRateSplit(cfg_.qp + qpFrac_, kSplitLow) : 1.0);
+    bool skipSplits = whole.cost < splitSkipCost;
     if (skipSplits && kSplitQuad > 0 && cfg_.effort > 0) {
-        const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
+        const double quadLim = kSplitQuad * 0.25 * splitSkipCost;
         const RefPic& R = *refs_[size_t(whole.ref[0])];
         int qMax = 0, qSum = 0;
         for (int q = 0; q < 4; ++q) {
@@ -7911,6 +7980,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // for another -0.5 %, not worth it. EncoderConfig::modeEstimate; H264_RDEST=0/1 overrides.
     static const double kEstBoth = devEnv("H264_ESTBOTH") ? std::atof(devEnv("H264_ESTBOTH")) : 0.0;
     static const double kEstSplit = devEnv("H264_ESTSPLIT") ? std::atof(devEnv("H264_ESTSPLIT")) : 1e9;
+    // The split is planned with one transform only where the 16x16 layout's two plans were more than kEstSplitT *
+    // lambda apart: the one that won there (it wins for the split as well then; the loss by the statistics is
+    // 0.14 % of the luma cost of those macroblocks). Measured 22.11.2026 (fixed QP 22 / 26 / 30 / 34, 900 pictures
+    // CS2 with cuts, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions): +0.05 / +0.02 / +0.09 % for -1.5 / -1.2 /
+    // -0.7 / -0.3 %. H264_ESTSPLITT overrides, 1e9 = always both.
+    static const double kEstSplitT = devEnv("H264_ESTSPLITT") ? std::atof(devEnv("H264_ESTSPLITT")) : 16.0;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
@@ -7930,20 +8005,37 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     Plan pw, ps;                             // the 16x16 layout's and the split's
     const InterResidual* wonPlan = nullptr;  // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
-        auto plan = [&](const Choice& c, Plan& p) {
+        // like, likeQuads: a layout planned before and the quadrants (bit b8) it predicts with the same pixels as
+        // this one - the plans of those come out again and are taken from it. only: 0 = both transforms, 1 = only
+        // 8x8, 2 = only 4x4.
+        auto plan = [&](const Choice& c, Plan& p, const Plan* like = nullptr, int likeQuads = 0, int only = 0) {
             const PredCache& pc = predictLayout(c);
+            const InterResidual* same8[4];
+            const InterResidual* same4[4];
+            for (int q = 0; q < 4; ++q) {
+                const bool take = like && ((likeQuads >> q) & 1);
+                same8[q] = take ? &like->r8 : nullptr;
+                same4[q] = take && like->j4 < 1e299 ? &like->r4 : nullptr;
+            }
+            if (only == 2) {
+                p.j8 = 1e300;
+                planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, nullptr, like ? same4 : nullptr);
+                p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
+                return;
+            }
             if (lateValid && c.layout == 0) {
                 p.r8 = lateR8;
                 p.j8 = lateJ8;
             } else {
-                planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8);
+                planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8, -1.0, nullptr, like ? same8 : nullptr);
             }
             p.j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r8.cbpLuma, true);
-            if (kZero8 && p.r8.cbpLuma == 0) {
+            if ((kZero8 && p.r8.cbpLuma == 0) || only == 1) {
                 p.j4 = 1e300;
                 return;
             }
-            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, kZeroQuad ? &p.r8 : nullptr);
+            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, kZeroQuad ? &p.r8 : nullptr,
+                          like ? same4 : nullptr);
             p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
         };
         auto consider = [&](const Choice& c, bool t8, const Plan& p) {
@@ -7982,7 +8074,9 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
-            plan(split, ps);
+            const bool one = std::max(pw.j4, pw.j8) < 1e299 && std::abs(pw.j4 - pw.j8) > kEstSplitT * lambda;
+            plan(split, ps, &pw, sameQuadrants(predictLayout(whole).lp, predictLayout(split).lp),
+                 !one ? 0 : pw.j8 < pw.j4 ? 1 : 2);
             // Header bits of both layouts as the CAVLC count (type, references, vector differences).
             auto headBits = [&](const Choice& c) {
                 const Layout& L = kLayouts[c.layout];
@@ -8085,7 +8179,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // (Not where the chosen plan has nothing at the positions the finer lambda weighs: it would come out again.)
     if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe && !(wonPlan && !wonPlan->fineMayDiffer)) {
         InterResidual fine;
-        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
+        // (The quadrants of the chosen plan with nothing at those positions come out again.)
+        const InterResidual* same[4];
+        for (int q = 0; q < 4; ++q)
+            same[q] = wonPlan && !((wonPlan->fineQuads >> q) & 1) ? wonPlan : nullptr;
+        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine, nullptr,
+                      wonPlan ? same : nullptr);
         // (Not where the finer plan is the chosen one again - no level changed, or both are empty: the same macroblock.)
         if ((fine.cbpLuma || interBits.syn.cbpLuma) && !(wonPlan && samePlan(fine, *wonPlan, bestT8))) {
             MbOut fineBits;
@@ -8720,6 +8819,37 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         noSplit = true;
     if (hintBackground && (gHintBg & 1))
         noSplit = true;
+    // At high rates the threshold gBSplitSkip falls below the cost of the picture's noise and nearly every
+    // macroblock searched its splits. In pictures below QP 30 the threshold grows like the one of P pictures
+    // (lowRateSplit; mode decision by estimate only), and in the part it gains the splits are still searched where
+    // the dearest 8x8 quarter of the better prediction (16x16 or direct) holds at least kBSplitConc of the four
+    // quarters' SATD - a part that moves differently, as in P pictures (kSplitConc). Measured 22.11.2026 (fixed QP,
+    // 900 pictures CS2 with cuts; bytes / PSNR-Y of the B pictures / instructions): QP 22 300 times lambda's root
+    // +0.12 % / -0.01 dB / -5.0 %, 400 +0.16 % / -0.03 dB / -8.2 % (without the exception +0.20 % / -0.04 dB /
+    // -8.9 %); QP 26 250 +0.03 % / 0.00 dB / -2.0 %; QP 30 250 +0.06 % / -0.01 dB / -1.6 %.
+    // Both rules together by their exponent (fixed QP 22 / 26 / 30 / 34, BD-rate PSNR-Y / SSIM-Y / VMAF; instructions
+    // at QP 22 / 26, none at 30 and 34): CS2 with cuts 0.45 +0.07 / +0.06 / +0.07 % for -6.3 / -3.1 %, 0.6 +0.14 /
+    // +0.11 / +0.12 % for -9.4 / -4.4 %, 0.8 +0.27 / +0.19 / +0.26 % for -13.0 / -6.3 %, 1.0 +0.44 / +0.30 / +0.26 %
+    // for -16.1 / -8.3 %; camera (talk) 0.6 +0.19 / +0.13 / -0.10 % for -11.4 / -3.1 %, 0.8 +0.24 / +0.20 / +0.19 %
+    // for -15.1 / -4.7 %; vertical short 0.6 +0.31 / +0.25 / +0.18 % for -6.2 / -2.7 %. H264_BSPLITLOW overrides the
+    // exponent (0 = off, the stream before), H264_BSPLITCONC the share (0 = no exception).
+    static const double kBSplitLow = devEnv("H264_BSPLITLOW") ? std::atof(devEnv("H264_BSPLITLOW")) : 0.6;
+    static const double kBSplitConc = devEnv("H264_BSPLITCONC") ? std::atof(devEnv("H264_BSPLITCONC")) : 0.4;
+    const double bSplitLow = useEst ? gBSplitSkip * lambdaSad * lowRateSplit(cfg_.qp + qpFrac_, kBSplitLow) : 0.0;
+    if (!noSplit && gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < bSplitLow) {
+        noSplit = true;
+        if (kBSplitConc > 0 && (wholePlanned || estDirect <= cands[0].cost)) {
+            const uint8_t* pred = estDirect <= cands[0].cost ? dlp : clp[0];
+            int qMax = 0, qSum = 0;
+            for (int q = 0; q < 4; ++q) {
+                const int off = (q >> 1) * 8 * 16 + (q & 1) * 8;
+                const int s = satd8x8U8(&srcY_[lumaOff + size_t((q >> 1) * 8) * padW_ + (q & 1) * 8], padW_, pred + off, 16);
+                qMax = std::max(qMax, s);
+                qSum += s;
+            }
+            noSplit = !(qMax >= kBSplitConc * qSum);
+        }
+    }
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)
             ++gStatB2[3];
@@ -8871,13 +9001,28 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         double estMin = estDirect;
         for (int k = 0; k < candCount; ++k)
             estMin = std::min(estMin, cands[k].cost);
-        bool planned[kMaxBCands + 1];
+        bool planned[kMaxBCands + 1], planned4[kMaxBCands + 1];
         for (int which = 0; which <= candCount; ++which) {
             const uint8_t* lp = which ? clp[which - 1] : dlp;
             double j8 = 0, j4 = 1e300;
             planned[which] = !(kBPlanPrune > 0 && (which ? cands[which - 1].cost : estDirect) > kBPlanPrune * estMin);
             if (!planned[which])
                 continue;
+            // The quadrants an earlier candidate predicts with the same pixels: its plans of them come out again.
+            const InterResidual* same8[4] = {};
+            const InterResidual* same4[4] = {};
+            for (int w = 0; w < which; ++w) {
+                if (!planned[w])
+                    continue;
+                const int quads = sameQuadrants(w ? clp[w - 1] : dlp, lp);
+                for (int q = 0; q < 4; ++q)
+                    if ((quads >> q) & 1) {
+                        if (!same8[q])
+                            same8[q] = &r8[w];
+                        if (!same4[q] && planned4[w])
+                            same4[q] = &r4[w];
+                    }
+            }
             if (which == 0 && directPlanned) {
                 r8[0] = directR8;
                 j8 = directJ8;
@@ -8885,11 +9030,13 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 r8[1] = wholeR8;
                 j8 = wholeJ8;
             } else {
-                planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+                planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8, -1.0, nullptr, same8);
             }
             j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r8[which].cbpLuma, true);
-            if (!(kZero8B && r8[which].cbpLuma == 0)) {
-                planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr);
+            planned4[which] = !(kZero8B && r8[which].cbpLuma == 0);
+            if (planned4[which]) {
+                planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr,
+                              same4);
                 j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r4[which].cbpLuma, false);
             }
             use8[which] = j8 < j4;
@@ -8963,7 +9110,12 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         InterResidual fine;
         bool same = wonPlan && !wonPlan->fineMayDiffer; // nothing at the positions the finer lambda weighs
         if (wonPlan && !same) {
-            planInterLuma(mbx, mby, bestWhich ? clp[bestWhich - 1] : dlp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
+            // (The quadrants of the chosen plan with nothing at those positions come out again.)
+            const InterResidual* sameQuad[4];
+            for (int q = 0; q < 4; ++q)
+                sameQuad[q] = !((wonPlan->fineQuads >> q) & 1) ? wonPlan : nullptr;
+            planInterLuma(mbx, mby, bestWhich ? clp[bestWhich - 1] : dlp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine,
+                          nullptr, sameQuad);
             same = samePlan(fine, *wonPlan, bestT8);
         }
         if (!same) {
