@@ -6,7 +6,7 @@
 // SPS's VUI and the container, the level from levelIdcFor); which cuts force key frames (no splits, jump cuts or
 // montage storms, only clips inside the range); clips shorter than the lookahead; a size that is no multiple of 16; a
 // shorter lookahead (low memory) reaches the encoder; the "web" cap: two passes land within 10 % of it on noise, a
-// still picture keeps the fixed QP far below it; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
+// still picture keeps the fixed QP far below it, a cap below the fixed QP's rate is met; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
 // writer itself; cancel during the first pass and while encoding leaves no file; B pictures: pts/dts in MP4 and MKV
 // (testBFrames). Checked with ffprobe/ffmpeg.
 
@@ -733,6 +733,33 @@ void testBitrate(const QString& dir)
     CHECK_EQ(spsFields(still).value("level_idc", -1), expectedLevel(0));
 }
 
+// A cap below the clip's rate at the quality level's QP is met (the fixed-QP prediction of the first pass used to take
+// a calm picture pair as the whole clip's measure: 2.6-7x too low on real projects, the cap then exceeded by 60 %).
+// Moving noise with two equal still pictures at the start, a third and two thirds in (where the old pair probes sat).
+void testCapBelowFixedRate(const QString& dir)
+{
+    const Timeline tl = sequence({{g_still, 0, 2}, {g_noisy, 2, 23}, {g_still, 0, 2}, {g_noisy, 27, 23}, {g_still, 0, 2},
+                                  {g_noisy, 52, 23}});
+    const auto kbitOf = [](const QString& path) { return QFileInfo(path).size() * 8.0 / 1000 / (kFrames / 25.0); };
+    // The rate at the "web" level's QP: a cap far above it keeps the fixed QP
+    const QString fixed = dir + "/cap-fixed.mp4";
+    ExportSettings s = settings(fixed, RenderSettings::kQualityWeb);
+    s.maxBitrateK = 200000;
+    s.audioCodec.clear();
+    if (!CHECK(render(tl, s))) return;
+    const double fixedKbit = kbitOf(fixed);
+    // Half of it as the cap: met (two passes, or the fixed QP held by the VBV)
+    const QString capped = dir + "/cap-half.mp4";
+    s.path = capped;
+    s.maxBitrateK = int(fixedKbit / 2);
+    if (!CHECK(render(tl, s))) return;
+    const double kbit = kbitOf(capped);
+    if (!CHECK(kbit < s.maxBitrateK * 1.1 && kbit > s.maxBitrateK * 0.7))
+        std::printf("       %.0f kbit/s for the cap %d (fixed QP: %.0f)\n", kbit, s.maxBitrateK, fixedKbit);
+    CHECK_EQ(probe(capped).value("nb_read_frames").toString().toInt(), kFrames);
+    CHECK(decodeErrors(capped).isEmpty());
+}
+
 void testRefused(const QString& dir)
 {
     const auto refused = [&](ExportSettings s, const QString& reason) {
@@ -938,6 +965,7 @@ int main(int argc, char** argv)
     testShortAndOdd(tmp.path());
     testLookahead(tmp.path());
     testBitrate(tmp.path());
+    testCapBelowFixedRate(tmp.path());
     testRefused(tmp.path());
     testSizes(tmp.path());
     testReview();

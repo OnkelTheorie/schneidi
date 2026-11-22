@@ -792,11 +792,12 @@ struct ExportWriter::Impl {
     // rate control aims at the cap.
     bool ownFirstPass()
     {
-        // Probe runs of kOwnProbeRun pictures around a sixth, half and five sixths into the clip (the whole clip when
-        // it is shorter), each coded as the export codes it while the first pass goes by: no picture is kept for them
+        // kOwnProbeRuns probe runs of kOwnProbeRun pictures spread evenly over the clip (the whole clip when it is
+        // shorter), each coded as the export codes it (B pictures, macroblock tree, cuts, hints) while the first pass
+        // goes by: no picture is kept for them
         std::vector<std::pair<int, int>> runs; // first picture, count
-        for (int sixth : {1, 3, 5}) {
-            int a = std::max(0, int(int64_t(s.length) * sixth / 6) - kOwnProbeRun / 2);
+        for (int r = 0; r < kOwnProbeRuns; ++r) {
+            int a = std::max(0, int(int64_t(s.length) * (2 * r + 1) / (2 * kOwnProbeRuns)) - kOwnProbeRun / 2);
             if (!runs.empty()) a = std::max(a, runs.back().first + runs.back().second);
             const int n = std::min(kOwnProbeRun, s.length - a);
             if (n >= 2) runs.push_back({a, n});
@@ -817,7 +818,7 @@ struct ExportWriter::Impl {
                 for (const auto& [a, n] : runs) {
                     if (i < a || i >= a + n) continue;
                     if (i == a) {
-                        probe = std::make_unique<schneidi::h264::Encoder>(ownConfig(false));
+                        probe = std::make_unique<schneidi::h264::Encoder>(ownConfig());
                         probes.push_back({a, {}, {}});
                     }
                     schneidi::h264::EncodeHints hints;
@@ -835,7 +836,7 @@ struct ExportWriter::Impl {
             ownStats = pass.stats();
             const double bits = probeOwnBits(*ownStats, probes);
             const double cap = ownBitrateK * 1000.0 * s.length / std::max(1.0, fps);
-            // Margin for the prediction's error (within about 25 % on game, vertical and talk projects, 22.11.2026)
+            // Margin for the prediction's error (within 5 % on a game highlight, a short and a talk, 22.11.2026)
             ownFixedQp = bits > 0 && bits < kOwnFixedShare * cap;
             if (ownFixedQp) ownStats.reset(); // (only the two passes towards the cap use it: not kept for the export)
             qInfo("Export: own H.264, QP %d predicts %.0f kbit/s for the cap %d kbit/s: %s", ownQp,
@@ -849,11 +850,12 @@ struct ExportWriter::Impl {
     }
     static constexpr double kOwnFixedShare = 0.8;
     static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (ownConfig, probeOwnBits)
-    static constexpr int kOwnProbeRun = 30;
+    // 5 x 20 pictures: within 5 % on the three projects of 22.11.2026 (3 x 30: talk -33 %, its runs on still
+    // pictures; 9 x 10: up to -28 %), about 10 % of the pictures, 2-3 s of a 1080p60 render of 15 s on 5 threads
+    static constexpr int kOwnProbeRuns = 5, kOwnProbeRun = 20;
 
-    // The encoder's settings as the export codes (two passes: without the bit rate, startOwn adds it); probe = for a
-    // probe run of ownFirstPass (no frame threading: fewer pictures in flight; the stream does not depend on it)
-    schneidi::h264::EncoderConfig ownConfig(bool probe) const
+    // The encoder's settings as the export codes (two passes: without the bit rate, startOwn adds it)
+    schneidi::h264::EncoderConfig ownConfig() const
     {
         schneidi::h264::EncoderConfig c;
         c.width = width;
@@ -866,7 +868,6 @@ struct ExportWriter::Impl {
         c.bframes = ownBframes;
         c.speed = ownSpeed;
         if (ownLookahead >= 0) c.lookahead = ownLookahead;
-        if (probe) c.frameThreads = false;
         return c;
     }
 
@@ -1331,7 +1332,7 @@ struct ExportWriter::Impl {
     // its parameter sets (MP4/MOV make an avcC of them, Matroska its CodecPrivate) and the header
     bool startOwn()
     {
-        schneidi::h264::EncoderConfig c = ownConfig(false);
+        schneidi::h264::EncoderConfig c = ownConfig();
         if (ownBitrateK > 0 && !ownFixedQp) {
             c.bitrateKbps = ownBitrateK;
             c.firstPass = ownStats;
