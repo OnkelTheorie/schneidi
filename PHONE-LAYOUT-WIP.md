@@ -143,6 +143,23 @@
   sheet keeps its own height (export opens tall), half-cut last tool as a swipe hint, proportional tool widths.
 - Shots: 67-68 (pan, header menu), 70-78 (empty timeline button, permission, gallery, picker import), 80-82 (fold).
 
+## Round of 22.11. night (CapCut-like bar and timeline)
+- Tool bar like phones' own (the user compared with CapCut; no "Mehr" button): frameless items as wide as their
+  label (min 60 px), small symbol over a small label in the text color, active in the accent with a line; the clip
+  bar's back arrow fixed outside the scrolling part; QScroller tuned (light drag, fling, soft bounce at both ends,
+  axis lock), a finger on a gliding bar only stops it, Android touch slop 8 dp.
+- Add tile in the timeline's own look: empty timeline = dashed clip-shaped drop zone on V1 ("+ Videos hinzufügen");
+  with clips a small light "+" square at the lanes' right edge at clip height (as CapCut). Phone/tablet only.
+- Playhead fixed in the middle (TimelineView::setCenterPlayhead; Settings › Timeline › Abspielmarke in der Mitte:
+  Automatisch = phone/tablet, Immer, Nie): sliding empty lanes or the ruler scrubs (glide on), playback keeps the line
+  centred every frame, room before 0 and after the end, "00:03 / 00:16" at the ruler's left, short seconds on the
+  ruler; clip drag/long press/tap unchanged; desktop default off and gets its own scroll back after the phone form.
+  Documented as a wanted exception to the core rule in notes/architektur.md. Scrub sound: unchanged (the existing
+  scrub-audio behaviour).
+- Shots 90-92 (92 = CapCut reference beside schneidi). Tests: test_touch_input 185 (centre mode), test_phone_layout 690
+  (bar labels whole, flick stop, fixed back arrow, add tile), test_layout_switch 78.
+- Not yet: swipe tests on the real A51 (it was locked: only installed).
+
 ## Not done yet
 - Landscape: the picture is small now (~70 px).
 - Soft rebuild for design/language/UI size without a restart: not done. MainWindow builds its widgets and many
