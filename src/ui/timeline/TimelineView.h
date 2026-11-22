@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+
 #include "core/TimelineOps.h"
 #include "core/TrimFrames.h"
 #include "core/Types.h"
@@ -9,6 +10,7 @@
 #include <QSet>
 #include <optional>
 #include <QWidget>
+#include <cstdlib>
 #include <functional>
 
 class Editor;
@@ -34,6 +36,12 @@ public:
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
     // DaVinci "Insufficient handles": ask whether to trim the clips so a transition fits
     static bool confirmTrimForTransition(QWidget* parent);
+    // A wheel delta that pans the timeline sideways whatever the wheel's binding: mostly sideways (touchpad swipe,
+    // tilt wheel) and neither Alt nor Shift held (Qt resp. the system turn an upright wheel sideways with those)
+    static bool wheelPansSideways(QPoint angleDelta, Qt::KeyboardModifiers mods)
+    {
+        return std::abs(angleDelta.x()) > std::abs(angleDelta.y()) && !(mods & (Qt::AltModifier | Qt::ShiftModifier));
+    }
 
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 

@@ -4,7 +4,7 @@
 // tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them); where wheel zoom stays
 // put (ZoomAnchor: the mouse by default, the visible playhead by choice); a playhead move in the ruler is framed by
 // playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
-// table is checked here too (with an engine: test_viewer_large).
+// table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways.
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -762,6 +762,53 @@ void testWheelZoomAnchor()
     CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
 }
 
+// A wheel event with angle delta (dx, dy) and modifiers
+static void wheel(TimelineView& tv, int dx, int dy, Qt::KeyboardModifiers mods = {})
+{
+    const QPointF at(TimelineView::kHeaderW + 300, 60);
+    QWheelEvent e(at, tv.mapToGlobal(at), QPoint(), QPoint(dx, dy), Qt::NoButton, mods, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&tv, &e);
+}
+
+// A sideways touchpad swipe (or tilt wheel) pans the timeline sideways, not up/down (bug: x was fed into the
+// upright wheel's binding = vertical scroll). Alt/Shift keep the binding (Qt turns an upright wheel sideways there)
+void testWheelSideways()
+{
+    Fixture f;
+    f.tv.resize(1200, 120); // short: room to scroll vertically
+    f.tv.setZoomAndScroll(2.0, 200, 0);
+    QSettings().remove("timeline");
+    // Swipe: content follows to the right (left frame smaller), the vertical scroll stays
+    wheel(f.tv, 120, 0);
+    CHECK(f.tv.view().leftFrame < 200);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    const double left = f.tv.view().leftFrame;
+    wheel(f.tv, -240, 0);
+    CHECK(f.tv.view().leftFrame > left);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    // Mostly sideways with a little up/down (touchpad diagonal): still sideways
+    const double left2 = f.tv.view().leftFrame;
+    wheel(f.tv, -120, 20);
+    CHECK(f.tv.view().leftFrame > left2);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    // An upright wheel without modifiers: vertical scroll (the default binding), left frame stays
+    const double left3 = f.tv.view().leftFrame;
+    wheel(f.tv, 0, -120);
+    CHECK_EQ(f.tv.view().leftFrame, left3);
+    CHECK(f.tv.view().scrollY > 0);
+    // Alt with an x delta (Qt's swapped axes): still the Alt binding = zoom
+    const double px = f.tv.view().pxPerFrame;
+    wheel(f.tv, 120, 0, Qt::AltModifier);
+    CHECK(f.tv.view().pxPerFrame > px * 1.1);
+    // Shift with an x delta: the Shift binding = track height
+    const int h = f.tv.view().videoTrackHeight;
+    wheel(f.tv, 120, 0, Qt::ShiftModifier);
+    CHECK(f.tv.view().videoTrackHeight > h);
+    CHECK(TimelineView::wheelPansSideways({120, 0}, Qt::ControlModifier));
+    CHECK(!TimelineView::wheelPansSideways({120, 0}, Qt::AltModifier));
+    CHECK(!TimelineView::wheelPansSideways({60, 120}, {}));
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -850,6 +897,7 @@ int main(int argc, char** argv)
     testTrimOverwrite();
     testStoryBand();
     testWheelZoomAnchor();
+    testWheelSideways();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();
