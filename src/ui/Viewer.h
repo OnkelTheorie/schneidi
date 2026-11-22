@@ -96,6 +96,9 @@ public:
     void showNotice(const QString& text, int ms = 2000);
     QString notice() const;
 
+    // The time field again in the format chosen in Settings › Timeline (after the dialog)
+    void refreshTimeDisplay() { updateTimecode(m_timecodeFrame); }
+
 signals:
     void hintAccepted(); // the hint's button
     void hintClosed();   // the hint's close button
@@ -111,6 +114,7 @@ protected:
 
 private:
     void updateTimecode(int frame);
+    int m_timecodeFrame = 0; // what the time field shows
     void updateModeText(); // "Timeline"/"Quelle – …", hint when the color correction is bypassed
     // part: Viewer::PartsMimeType content ("picture", "sound"), empty = both
     QMimeData* dragData(const QByteArray& part = {}) const;

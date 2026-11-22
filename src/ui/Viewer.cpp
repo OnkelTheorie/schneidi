@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "engine/Engine.h"
 #include "engine/PreviewResolution.h"
 #include "engine/ProxyManager.h"
@@ -753,6 +754,7 @@ QMimeData* Viewer::dragData(const QByteArray& part) const
 
 void Viewer::updateTimecode(int frame)
 {
-    m_timecode->setText(Timecode::format(frame, m_engine->fps()));
+    m_timecodeFrame = frame;
+    m_timecode->setText(TimelineOptions::formatTime(frame, m_engine->fps()));
     m_scrubber->setPosition(frame);
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: drawing (ruler, tracks, clips, filmstrips, waveforms, headers, playhead).
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include "core/Automation.h"
 
@@ -49,8 +50,14 @@
 
 using namespace TimelineViewDetail;
 
+QString TimelineView::timeText(int frames) const
+{
+    return TimelineOptions::formatTime(frames, m_editor->project()->fps(), m_timeFormat);
+}
+
 void TimelineView::paintEvent(QPaintEvent*)
 {
+    m_timeFormat = TimelineOptions::timeFormat(); // once per paint (timeText)
     if (m_renaming && m_nameSub >= 0) { // subtitle track
         std::optional<SubRow> row;
         for (const SubRow& r : subRows())
@@ -131,7 +138,7 @@ void TimelineView::drawRuler(QPainter& p)
         p.drawLine(x, kRulerH - (isMajor ? 12 : 5), x, kRulerH - 1);
         if (isMajor) {
             p.setPen(Theme::textDim);
-            p.drawText(x + 3, 12, Timecode::format(fr, fps));
+            p.drawText(x + 3, 12, timeText(fr));
         }
     }
     // Render cache (like DaVinci): red = still to be rendered, blue = done
@@ -171,7 +178,7 @@ void TimelineView::drawRuler(QPainter& p)
     tf.setFamily("monospace");
     p.setFont(tf);
     p.setPen(Theme::text);
-    p.drawText(tcBox.adjusted(5, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, Timecode::format(m_playhead, fps));
+    p.drawText(tcBox.adjusted(5, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, timeText(m_playhead));
     p.setPen(Theme::border);
     p.drawLine(kHeaderW - 1, 0, kHeaderW - 1, height());
 }
@@ -388,7 +395,7 @@ void TimelineView::drawTracks(QPainter& p)
             p.setPen(QPen(Theme::primary, 1));
             p.drawLine(x, kRulerH, x, height());
             drawLabel(p, QPoint(x + 8, kRulerH + 6),
-                      (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps()));
+                      (m_trimDelta >= 0 ? "+" : "") + timeText(m_trimDelta));
         }
     }
 
@@ -409,7 +416,7 @@ void TimelineView::drawTracks(QPainter& p)
                 p.drawLine(x, kRulerH, x, height());
             }
             drawLabel(p, QPoint(x + 8, kRulerH + 6),
-                      (m_trimEditDelta >= 0 ? "+" : "") + Timecode::format(m_trimEditDelta, m_editor->project()->fps()));
+                      (m_trimEditDelta >= 0 ? "+" : "") + timeText(m_trimEditDelta));
         }
     }
 
@@ -481,7 +488,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             if (s.leftId != m_transSpan.leftId || s.rightId != m_transSpan.rightId) continue;
             const QRect r = transitionRect(row, s);
             drawLabel(p, QPoint(std::max(r.left(), kHeaderW) + 4, r.top() + 4),
-                      Timecode::format(s.length(), m_editor->project()->fps()));
+                      timeText(s.length()));
         }
     }
 }
@@ -530,7 +537,7 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     if (m_drag == Drag::Keyframe && m_keyDragClip == c.id && m_keyDelta != 0 && !sel->keyTimes().isEmpty()) {
         const int t = *std::min_element(sel->keyTimes().begin(), sel->keyTimes().end()) + m_keyDelta;
         drawLabel(p, QPoint(int(frameToX(c.pos() + t)) + 8, lane.top() - 22),
-                  (m_keyDelta > 0 ? "+" : "") + Timecode::format(m_keyDelta, m_editor->project()->fps()));
+                  (m_keyDelta > 0 ? "+" : "") + timeText(m_keyDelta));
     }
 }
 
@@ -707,7 +714,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         QRect textRect(std::max(r.left(), kHeaderW) + 5 + flagW, r.top(), r.right() - 3 - fxW - std::max(r.left(), kHeaderW) - 5 - flagW, barH);
         // Duration on the right (before "fx"), only if it fits entirely; the name takes the rest
         if (m_showDurations) {
-            const QString dur = Timecode::format(c.length(), m_editor->project()->fps());
+            const QString dur = timeText(c.length());
             const int w = fm.horizontalAdvance(dur);
             if (w + 6 <= textRect.width()) {
                 p.setPen(QColor(0xf0, 0xf0, 0xf0, 170));
@@ -775,7 +782,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
             const int frames = m_fade.edge == TimelineOps::Edge::Start ? c.fadeIn : c.fadeOut;
             const QRect hr = fadeHandleRect(r, c, m_fade.edge);
             p.restore();
-            drawLabel(p, QPoint(hr.left(), r.top() + 14), Timecode::format(frames, m_editor->project()->fps()));
+            drawLabel(p, QPoint(hr.left(), r.top() + 14), timeText(frames));
             return;
         }
     }

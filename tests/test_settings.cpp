@@ -340,6 +340,17 @@ void testTimelineTab()
                         [] { return int(TimelineOptions::follow()); });
     // A click into the tracks: only select (default) or set the playhead too
     checkTimelineChoice("timeline_click_sets_playhead", 2, 0, [] { return int(TimelineOptions::clickSetsPlayhead()); });
+    // Times as timecode (default), seconds or frames; each entry shows an example
+    checkTimelineChoice("timeline_time_format", 3, int(TimelineOptions::TimeFormat::Timecode),
+                        [] { return int(TimelineOptions::timeFormat()); });
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* tf = dlg.timelinePage()->findChild<QComboBox*>("timeline_time_format");
+        if (CHECK(tf)) {
+            CHECK(tf->itemText(0).contains("00:00:04:12"));
+            CHECK(tf->itemText(2).contains("112"));
+        }
+    }
 }
 
 void testMainWindow()

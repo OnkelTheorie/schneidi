@@ -48,6 +48,22 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     lay->setContentsMargins(12, 12, 12, 12);
     lay->setSpacing(10);
 
+    // Display: how times are shown (TimelineOptions::timeFormat, read at every paint)
+    QFormLayout* display = group(lay, T("Anzeige"));
+    {
+        using TF = TimelineOptions::TimeFormat;
+        const auto example = [](TF f) { return TimelineOptions::formatTime(112, 25, f); }; // 4.48 s at 25 fps
+        m_timeFormat = combo("timeline_time_format",
+                             {{T("Timecode (%1)").arg(example(TF::Timecode)), int(TF::Timecode)},
+                              {T("Sekunden (%1)").arg(example(TF::Seconds)), int(TF::Seconds)},
+                              {T("Frames (%1)").arg(example(TF::Frames)), int(TF::Frames)}},
+                             int(TimelineOptions::timeFormat()));
+    }
+    display->addRow(T("Zeit anzeigen als"), m_timeFormat);
+    display->addRow(hint(T("In Timeline, Vorschau, Studio, Trim-Ansicht und Media Pool. Eingabefelder verstehen jede "
+                           "Schreibweise, „4,5s“ sind immer Sekunden und „112f“ immer Frames. Dateien (EDL, FCPXML) "
+                           "behalten den Timecode.")));
+
     // Zoom and scroll: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
     QFormLayout* view = group(lay, T("Zoom und Scrollen"));
     m_zoomAnchor = combo("timeline_zoom_anchor",
@@ -109,8 +125,14 @@ TimelineOptions::Follow TimelineSettingsPage::follow() const
 
 bool TimelineSettingsPage::clickSetsPlayhead() const { return m_click->currentData().toInt() == 1; }
 
+TimelineOptions::TimeFormat TimelineSettingsPage::timeFormat() const
+{
+    return TimelineOptions::TimeFormat(m_timeFormat->currentData().toInt());
+}
+
 void TimelineSettingsPage::store() const
 {
+    if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());
     if (zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(zoomAnchor());

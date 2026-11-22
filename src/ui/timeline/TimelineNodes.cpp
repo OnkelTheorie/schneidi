@@ -10,6 +10,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
 #include "ui/timeline/TimelineView.h"
@@ -140,8 +141,8 @@ void TimelineView::drawNodeBars(QPainter& p, const QRect& r, const Clip& c)
             if (b.node == m_nodeDrag.node) {
                 const int fps = std::max(1, m_editor->project()->fps());
                 drawLabel(p, QPoint(b.rect.left(), b.rect.top() - 18),
-                          QStringLiteral("%1  (%2)").arg(Timecode::format(b.first, fps),
-                                                        Timecode::format(b.end - b.first, fps)));
+                          QStringLiteral("%1  (%2)").arg(TimelineOptions::formatTime(b.first, fps),
+                                                        TimelineOptions::formatTime(b.end - b.first, fps)));
             }
 }
 
@@ -179,7 +180,7 @@ QString TimelineView::nodeBarToolTip(const QPoint& pos) const
         QRect dot;
         const QVector<NodeBar> bars = nodeBars(r, c, &more, &dot);
         const auto line = [&](const NodeBar& b) {
-            return T("%1: %2 bis %3").arg(b.label, Timecode::format(b.first, fps), Timecode::format(b.end, fps));
+            return T("%1: %2 bis %3").arg(b.label, TimelineOptions::formatTime(b.first, fps), TimelineOptions::formatTime(b.end, fps));
         };
         for (const NodeBar& b : bars)
             if (b.rect.adjusted(-3, -1, 3, 1).contains(pos))

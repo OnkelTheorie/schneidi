@@ -14,6 +14,7 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
@@ -153,7 +154,7 @@ void TimelineView::drawRetime(QPainter& p, const QRect& r, const Clip& c)
     if (dragging && m_rampDelta != 0 && m_rampDrag.point < points.size()) {
         const double x = xOf(points[m_rampDrag.point]) + m_rampDelta * m_view.pxPerFrame;
         drawLabel(p, QPoint(int(x) + 8, bar.top() - 22),
-                  (m_rampDelta > 0 ? "+" : "") + Timecode::format(m_rampDelta, m_editor->project()->fps()));
+                  (m_rampDelta > 0 ? "+" : "") + TimelineOptions::formatTime(m_rampDelta, m_editor->project()->fps()));
     }
 }
 

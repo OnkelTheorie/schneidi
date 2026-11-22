@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
+#include <QString>
+
 // The timeline's behaviour where editors differ: the user's choices in Settings › Timeline (QSettings "timeline/…",
 // app/TimelineSettingsPage). Each default is what schneidi did before the choice existed. The timelines read them when
 // they need them (a play start, a paint, a click), so a change takes effect at once, no restart. The wheel zoom anchor
@@ -22,5 +24,21 @@ void setFollow(Follow follow);
 // moves through the ruler, like Premiere, DaVinci, Kdenlive. A drag stays a rubber band resp. a move either way.
 bool clickSetsPlayhead();
 void setClickSetsPlayhead(bool on);
+
+// How the app shows times (Settings › Timeline › Display): timecode "00:00:04:12" (default), seconds "0:04.50"
+// (minutes:seconds with hundredths, the UI language's decimal sign; hours in front from one hour on) or frames "112".
+// Shown in the timeline (ruler, corner, durations, trim and drag numbers, In/Out tips), the Studio lanes, the
+// viewer, the trim view, the Media Pool and the subtitle fields; files (EDL, FCPXML, still names) and the CLI keep
+// timecode. Read once per paint resp. per update.
+enum class TimeFormat { Timecode, Seconds, Frames };
+TimeFormat timeFormat();
+void setTimeFormat(TimeFormat format);
+QString formatTime(int frames, int fps, TimeFormat format);
+inline QString formatTime(int frames, int fps) { return formatTime(frames, fps, timeFormat()); }
+// A typed time -> frames, -1 = invalid. Every format reads timecode (Timecode::parse); "4.5s" is always seconds and
+// "112f" always frames. Besides, with Seconds a number with a decimal sign or up to two colons is seconds
+// ("4,5", "1:30" = 90 s), with Frames plain digits are frames.
+int parseTime(const QString& text, int fps, TimeFormat format);
+inline int parseTime(const QString& text, int fps) { return parseTime(text, fps, timeFormat()); }
 
 } // namespace TimelineOptions

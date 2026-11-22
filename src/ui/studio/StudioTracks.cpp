@@ -11,6 +11,7 @@
 #include "core/Retime.h"
 #include "core/Selection.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "core/Voiceover.h"
 #include "engine/MediaCache.h"
@@ -421,7 +422,7 @@ void StudioTracks::drawRuler(QPainter& p)
     p.setFont(f);
     p.fillRect(QRect(4, 3, kHeaderW - 8, kRulerH - 6), Theme::well);
     p.setPen(Theme::primary);
-    p.drawText(QRect(8, 3, kHeaderW - 12, kRulerH - 6), Qt::AlignVCenter | Qt::AlignLeft, Timecode::format(m_playhead, fps));
+    p.drawText(QRect(8, 3, kHeaderW - 12, kRulerH - 6), Qt::AlignVCenter | Qt::AlignLeft, TimelineOptions::formatTime(m_playhead, fps));
     const int candidates[] = {1, 2, 5, 10, fps, 2 * fps, 5 * fps, 10 * fps, 15 * fps, 30 * fps, 60 * fps,
                               120 * fps, 300 * fps, 600 * fps, 900 * fps, 1800 * fps, 3600 * fps, 7200 * fps};
     int major = candidates[std::size(candidates) - 1];
@@ -443,7 +444,7 @@ void StudioTracks::drawRuler(QPainter& p)
         const bool isMajor = fr % major == 0;
         p.setPen(isMajor ? Theme::textDim : Theme::textFaint);
         p.drawLine(x, kRulerH - (isMajor ? 10 : 5), x, kRulerH - 1);
-        if (isMajor) p.drawText(x + 3, 12, Timecode::format(fr, fps));
+        if (isMajor) p.drawText(x + 3, 12, TimelineOptions::formatTime(fr, fps));
     }
     p.restore();
 }

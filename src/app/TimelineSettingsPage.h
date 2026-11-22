@@ -22,6 +22,7 @@ public:
     PlayheadMove::Mode afterPlayheadMove() const; // playback after moving the playhead (PlayheadMove::mode)
     TimelineOptions::Follow follow() const;       // follow the playhead while playing
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
+    TimelineOptions::TimeFormat timeFormat() const; // how times are shown
 
     void store() const; // every choice into QSettings (only what changed)
 
@@ -30,4 +31,5 @@ private:
     QComboBox* m_afterSeek = nullptr;
     QComboBox* m_follow = nullptr;
     QComboBox* m_click = nullptr;
+    QComboBox* m_timeFormat = nullptr;
 };

@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include <QFontDatabase>
 #include <QPainter>
@@ -164,7 +165,7 @@ void TrimView::drawSlot(QPainter& p, const QRect& r, const Slot& s, bool large) 
     // name left, source timecode right, under the pane
     const int label = fontMetrics().height() + 6;
     const QRect line(r.left(), r.bottom() + 1, r.width(), label);
-    const QString tc = Timecode::format(pane.sourceFrame, m_fps);
+    const QString tc = TimelineOptions::formatTime(pane.sourceFrame, m_fps);
     const int tcW = fontMetrics().horizontalAdvance(tc);
     p.setPen(Theme::text);
     p.drawText(line.adjusted(0, 0, -tcW - 8, 0), Qt::AlignLeft | Qt::AlignVCenter,
@@ -189,7 +190,7 @@ void TrimView::paintEvent(QPaintEvent*)
     p.drawText(QRect(0, top - label, width(), label), Qt::AlignHCenter | Qt::AlignVCenter, kindName(m_view.kind));
     // trim amount below, signed like the readout at the edit in the timeline
     const int bottom = main.value(0).bottom() + label;
-    const QString delta = (m_view.delta >= 0 ? "+" : "") + Timecode::format(m_view.delta, m_fps);
+    const QString delta = (m_view.delta >= 0 ? "+" : "") + TimelineOptions::formatTime(m_view.delta, m_fps);
     p.setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     p.setPen(m_view.delta ? Theme::primary : Theme::textDim);
     p.drawText(QRect(0, bottom, width(), label), Qt::AlignHCenter | Qt::AlignVCenter, delta);

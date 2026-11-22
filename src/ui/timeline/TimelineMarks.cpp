@@ -11,6 +11,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/TimelineViewDetail.h"
 
@@ -234,20 +235,20 @@ QString TimelineView::marksToolTip(MarkGrab grab) const
     const Timeline& tl = m_editor->project()->timeline();
     const int fps = std::max(1, m_editor->project()->fps());
     const bool both = tl.markIn >= 0 && tl.markOut >= 0;
-    const QString length = both ? Timecode::format(tl.markOut - tl.markIn + 1, fps) : QString();
+    const QString length = both ? TimelineOptions::formatTime(tl.markOut - tl.markIn + 1, fps) : QString();
     switch (grab) {
     case MarkGrab::In:
         if (tl.markIn < 0) return {};
-        return both ? T("In-Punkt %1 – Länge %2").arg(Timecode::format(tl.markIn, fps), length)
-                    : T("In-Punkt %1").arg(Timecode::format(tl.markIn, fps));
+        return both ? T("In-Punkt %1 – Länge %2").arg(TimelineOptions::formatTime(tl.markIn, fps), length)
+                    : T("In-Punkt %1").arg(TimelineOptions::formatTime(tl.markIn, fps));
     case MarkGrab::Out:
         if (tl.markOut < 0) return {};
-        return both ? T("Out-Punkt %1 – Länge %2").arg(Timecode::format(tl.markOut, fps), length)
-                    : T("Out-Punkt %1").arg(Timecode::format(tl.markOut, fps));
+        return both ? T("Out-Punkt %1 – Länge %2").arg(TimelineOptions::formatTime(tl.markOut, fps), length)
+                    : T("Out-Punkt %1").arg(TimelineOptions::formatTime(tl.markOut, fps));
     case MarkGrab::Range:
     case MarkGrab::Create:
         if (!both) return {};
-        return T("In/Out %1 – %2, Länge %3").arg(Timecode::format(tl.markIn, fps), Timecode::format(tl.markOut, fps), length);
+        return T("In/Out %1 – %2, Länge %3").arg(TimelineOptions::formatTime(tl.markIn, fps), TimelineOptions::formatTime(tl.markOut, fps), length);
     case MarkGrab::None: break;
     }
     return {};

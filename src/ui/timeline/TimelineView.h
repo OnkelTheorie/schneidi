@@ -4,6 +4,7 @@
 #include "core/TimelineOps.h"
 #include "core/TrimFrames.h"
 #include "core/Types.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
@@ -489,6 +490,9 @@ private:
     int m_followMode = 0;         // TimelineOptions::Follow at the play start
     void followPlayhead(int frame); // turn the view along with the playing playhead (only from setPlayhead)
     void stopFollowing() { m_following = false; } // the user moved the view
+    // A time as the user wants to see it (Settings › Timeline › Display), with the format read at the paint's start
+    TimelineOptions::TimeFormat m_timeFormat = TimelineOptions::TimeFormat::Timecode;
+    QString timeText(int frames) const;
     void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 
     Drag m_drag = Drag::None;

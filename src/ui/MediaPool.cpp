@@ -10,6 +10,7 @@
 #include "core/Project.h"
 #include "core/ProxyChoice.h"
 #include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
@@ -1198,7 +1199,7 @@ void MediaPool::rebuildClips()
         } else if (m->hasVideo && !offline && m_thumbAspect.value(m->path) != m->pictureAspect) {
             requestThumb(m->path, m->isImage ? 0 : m->length / 3); // shown at another shape: the old one until then
         }
-        const QString duration = Timecode::format(m->length, m_project->fps());
+        const QString duration = TimelineOptions::formatTime(m->length, m_project->fps());
         auto* item = new QListWidgetItem(list ? m->name + "    " + duration : m->name + "\n" + duration);
         item->setData(Qt::UserRole, m->path);
         m_list->addItem(item);
@@ -1432,7 +1433,7 @@ void MediaPool::updateSequenceItems()
         const int id = sequenceOfItem(it->data(Qt::UserRole).toString());
         const Sequence* q = id ? m_project->sequence(id) : nullptr;
         if (!q) continue;
-        const QString duration = Timecode::format(TimelineOps::endFrame(q->timeline), m_project->fps());
+        const QString duration = TimelineOptions::formatTime(TimelineOps::endFrame(q->timeline), m_project->fps());
         const QString text = list ? q->name + "    " + duration : q->name + "\n" + duration;
         if (it->text() != text) it->setText(text);
         // What it is, and its resolution: its own (a 9:16 short) or the project's
