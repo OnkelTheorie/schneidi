@@ -308,6 +308,16 @@ QWidget* SettingsDialog::buildGeneral()
     m_clipDrag->setToolTip(T("Auf Handy und Tablet. Gedrückt halten: Wischen spult auch über Clips, ein Clip bewegt sich "
                              "erst nach kurzem Halten. Sofort: ein Finger auf einem Clip verschiebt ihn gleich."));
     tform->addRow(T("Clip ziehen"), m_clipDrag);
+    // How far the timeline glides after a flick of the finger (phone and tablet)
+    m_momentum = new QComboBox;
+    m_momentum->setObjectName("settings_timeline_momentum");
+    m_momentum->addItem(T("Wenig"), QStringLiteral("low"));
+    m_momentum->addItem(T("Normal"), QStringLiteral("normal"));
+    m_momentum->addItem(T("Aus"), QStringLiteral("off"));
+    m_momentum->setCurrentIndex(std::max(0, m_momentum->findData(QSettings().value("timeline/momentum", "low").toString())));
+    m_momentum->setToolTip(T("Wie weit die Timeline nach einem schnellen Wischen weitergleitet. Langsames Ziehen hält an "
+                             "Clip-Anfängen und -Enden kurz an."));
+    tform->addRow(T("Schwung der Timeline"), m_momentum);
     lay->addWidget(timelineBox);
 
     // Compositing: new nodes from the node search linked at once (default) or only added
@@ -465,6 +475,7 @@ QString SettingsDialog::language() const { return m_language->currentData().toSt
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
 bool SettingsDialog::magneticMain() const { return m_magneticMain->isChecked(); }
 QString SettingsDialog::clipDrag() const { return m_clipDrag->currentData().toString(); }
+QString SettingsDialog::timelineMomentum() const { return m_momentum->currentData().toString(); }
 
 QString SettingsDialog::centerPlayhead() const { return m_centerPlayhead->currentData().toString(); }
 

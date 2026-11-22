@@ -11,14 +11,17 @@
 //    fingers and the scale since the last update (distance ratio): zoom around the fingers and pan in one
 //  - a running TouchDrag (started by the widget's mouse code for a touch press) gets the finger's moves and drop
 //  - panAt (optional) true for the press point: one finger moving pans (onPan with each step's distance, and after
-//    the lift a decaying glide like a flicked list). The widget's own drag (moving clips, a rubber band) then needs
+//    the lift a glide, only after a real flick: see Momentum). The widget's own drag (moving clips, a rubber band) then needs
 //    a hold first: held still for longPressMs (onHoldCue shows it) and then moved = press + moves as above; held and
-//    lifted without moving = the long press (context menu)
+//    lifted without moving = the long press (context menu). setAxisLock: a pan follows one axis only, chosen at its
+//    start (sideways unless the swipe is clearly vertical). A finger landing on a gliding view only stops it (no tap)
 
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPointF>
 #include <QPointer>
+#include <QString>
+#include <QVector>
 #include <functional>
 
 class QPointingDevice;
@@ -38,6 +41,18 @@ public:
     std::function<void(const QPointF& delta)> onPan;    // move the view's content by delta (finger direction)
     std::function<void(const QPointF& pos)> onHoldCue;  // the hold is ready: the next move works the widget itself
 
+    std::function<void()> onPanStart;                   // a pan begins (before its first onPan)
+
+    // The glide after a pan: Off = none, Low = short (a quick flick only), Normal = like a flicked list
+    enum class Momentum { Off, Low, Normal };
+    void setMomentum(Momentum m) { m_momentum = m; }
+    Momentum momentum() const { return m_momentum; }
+    static Momentum momentumFromSetting(const QString& value); // "" / "low" = Low, "normal", "off"
+    void setAxisLock(bool on) { m_axisLock = on; }
+    // The finger's speed over the last ~80 ms (px per ms, along the pan's axis); 0 when not panning
+    double panSpeed() const;
+    bool gliding() const;
+
     enum class State { Idle, Pending, Pressed, Pinch, Done, Panning, Held };
     State state() const { return m_state; }
 
@@ -49,6 +64,9 @@ private:
     void longPress();
     void sendMouse(int type, const QPointF& pos, bool down);
     void glide(); // one step of the glide after a pan
+    QPointF axisOnly(const QPointF& d) const;
+    QPointF recentVelocity() const; // px per ms over the last samples
+    void startGlide();
 
     QWidget* m_target;
     QTimer* m_hold;
@@ -61,7 +79,18 @@ private:
     QPointF m_lastTapPos{-1e9, -1e9};
     QElapsedTimer m_lastTap;
     bool m_pan = false;        // this touch pans (panAt said so at the press)
-    QPointF m_velocity;        // px per ms, smoothed, while panning
-    QElapsedTimer m_moveClock; // time since the last pan step
+    struct Sample {
+        qint64 ms;
+        QPointF pos;
+    };
+    QVector<Sample> m_samples; // the pan's recent finger positions (time from m_clock)
+    QElapsedTimer m_clock;     // runs from construction
+    QPointF m_glideV;          // the glide's start speed (px per ms)
+    qint64 m_glideStart = 0;
+    double m_glideDone = 0;    // the part of the glide's distance already handed out (0..1 of v * tau)
     QTimer* m_glide = nullptr;
+    Momentum m_momentum = Momentum::Normal;
+    bool m_axisLock = false;
+    enum class Axis { Both, X, Y } m_axis = Axis::Both;
+    bool m_stopper = false; // this touch stopped a glide: a tap does nothing
 };

@@ -652,6 +652,7 @@ void MainWindow::applyCenterPlayhead()
     // The finger's clip handling and the magnetic main track: phone and tablet only (the desktop stays as it is)
     view->setHoldToMove(settings.value("timeline/clipDrag", "hold").toString() != "instant");
     view->setMagneticMain(m_phone && settings.value("timeline/magneticMain", true).toBool());
+    view->setMomentum(settings.value("timeline/momentum", "low").toString());
 }
 
 void MainWindow::updateAddMediaButton()

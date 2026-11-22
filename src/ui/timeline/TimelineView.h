@@ -53,6 +53,10 @@ public:
     void setMagneticMain(bool on);
     bool magneticMain() const { return m_magnetic; }
     bool reordering() const { return m_reorder.on; } // tests
+    // The glide after a flick on the lanes ("low" default, "normal", "off"; setting timeline/momentum). A pan locks
+    // its axis at the start (sideways = time only); a slow scrub in the centred mode stops at clip edges and marks
+    void setMomentum(const QString& value);
+    class TouchGestures* gestures() const { return m_gestures; } // tests
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
@@ -239,6 +243,9 @@ private:
     bool m_fingerPans = false;
     bool m_center = false;          // setCenterPlayhead
     double centreLeft() const;      // the left frame that puts the playhead in the lanes' middle
+    void centreScrub(double dx);    // a finger's step in the centred mode (snaps a slow scrub to edges)
+    double m_scrubRaw = 0;          // the centred scrub's unsnapped left frame during a pan
+    int m_scrubSnap = -1;           // the edge a slow scrub holds at (-1 none)
     QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment
     bool m_holdToMove = true;
     bool m_magnetic = false;

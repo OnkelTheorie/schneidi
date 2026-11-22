@@ -132,6 +132,8 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     auto* touch = m_gestures = new TouchGestures(this);
     touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
     touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
+    touch->setMomentum(TouchGestures::Momentum::Low); // (setMomentum: the setting)
+    touch->setAxisLock(true);                         // a sideways swipe moves along the time only
     m_aiTimer = new QTimer(this);
     m_aiTimer->setInterval(40);
     connect(m_aiTimer, &QTimer::timeout, this, [this] {
@@ -672,8 +674,16 @@ void TimelineView::setFingerPans(bool on)
         return true;
     };
     // User input: the view follows the finger (leftFrame, scrollY), the playhead stays (core rule kept)
+    m_gestures->onPanStart = [this] {
+        m_scrubRaw = m_view.leftFrame;
+        m_scrubSnap = -1;
+    };
     m_gestures->onPan = [this](const QPointF& delta) {
-        // (the centre mode: setLeftFrame scrubs; its limits are the timeline's start and end under the line)
+        if (m_center) {
+            if (delta.x() != 0) centreScrub(delta.x());
+            if (const int dy = int(std::lround(delta.y())); dy != 0) setScrollY(m_view.scrollY - dy);
+            return;
+        }
         const double left = m_view.leftFrame - delta.x() / m_view.pxPerFrame;
         if (left != m_view.leftFrame && (m_center || left >= 0 || m_view.leftFrame > 0)) setLeftFrame(std::max(m_center ? left : 0.0, left));
         if (const int dy = int(std::lround(delta.y())); dy != 0) setScrollY(m_view.scrollY - dy);
@@ -691,6 +701,45 @@ void TimelineView::setFingerPans(bool on)
             update();
         });
     };
+}
+
+void TimelineView::setMomentum(const QString& value)
+{
+    m_gestures->setMomentum(TouchGestures::momentumFromSetting(value));
+}
+
+void TimelineView::centreScrub(double dx)
+{
+    // The centre mode: setLeftFrame scrubs (its limits are the timeline's start and end under the line). The finger's
+    // own position runs on unsnapped (m_scrubRaw); a slow finger (not a glide) holds the line at a clip's start or end,
+    // a mark or the in/out point it passes within a few px - with a haptic tick - and lets go once it is past them
+    const double ppf = m_view.pxPerFrame;
+    const double half = (width() - kHeaderW) / 2.0 / ppf;
+    const int end = std::max(0, TimelineOps::endFrame(m_editor->project()->timeline()));
+    m_scrubRaw = std::clamp(m_scrubRaw - dx / ppf, -half, end - half);
+    const double under = m_scrubRaw + half;
+    const bool slow = !m_gestures->gliding() && m_gestures->panSpeed() < 0.45;
+    int snap = -1;
+    if (slow) {
+        const Timeline& tl = m_editor->project()->timeline();
+        QVector<int> edges{0, end};
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const auto& t : tl.tracks(k))
+                for (const auto& c : t.clips) edges << c.start << c.end();
+        edges << tl.markers;
+        if (tl.markIn >= 0) edges << tl.markIn;
+        if (tl.markOut >= 0) edges << tl.markOut + 1;
+        const double reach = 8.0 / ppf; // px of the finger's way the line holds at an edge
+        double best = reach + 1;
+        for (int e : edges)
+            if (const double d = std::abs(e - under); d <= reach && d < best) {
+                best = d;
+                snap = e;
+            }
+    }
+    if (snap >= 0 && snap != m_scrubSnap) Touch::tick();
+    m_scrubSnap = snap;
+    setLeftFrame(snap >= 0 ? snap - half : m_scrubRaw);
 }
 
 double TimelineView::centreLeft() const

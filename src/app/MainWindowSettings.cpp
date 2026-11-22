@@ -104,6 +104,7 @@ void MainWindow::settingsDialog(int tab)
         QSettings().setValue("timeline/centerPlayhead", dlg.centerPlayhead());
         QSettings().setValue("timeline/magneticMain", dlg.magneticMain());
         QSettings().setValue("timeline/clipDrag", dlg.clipDrag());
+        QSettings().setValue("timeline/momentum", dlg.timelineMomentum());
     }
     applyCenterPlayhead();
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting

@@ -189,3 +189,16 @@ cp third_party/rnnoise/rnnoise_data-*.tar.gz $S/third_party/rnnoise/   # once (i
 # emulator: systemd-run --user --scope -p MemoryMax=6G … emulator -avd schachi_test -no-window …
 # rotation: adb shell cmd window user-rotation lock 0|1
 ```
+
+## Fix pass 1 (22./23.11., the approved list of 11 items from phone-review-2026-11-22)
+Status (updated with each commit):
+- 2 Centre playhead too slippery: DONE (desktop-tested, not yet on the emulator). TouchGestures: speed = finger's way
+  over the last 80 ms (0 if it stood still > 50 ms before the lift), glide only after a flick (low 0.7 / normal 0.35
+  px/ms), time-based exponential friction (tau 140 / 325 ms, capped 3 / 6 px/ms), a finger down stops it and that
+  touch is no tap. Centred mode: a slow scrub (< 0.45 px/ms, no glide) holds at clip starts/ends, 0/end, markers,
+  in/out within 8 px, one Touch::tick() per edge. Setting Timeline › "Schwung der Timeline" Wenig (default) / Normal /
+  Aus (timeline/momentum). Test testMomentumAndAxis in test_touch_input (216 checks green).
+- 4 Axis lock: DONE (same commit): TouchGestures::setAxisLock (timeline on), axis chosen at the pan start, vertical
+  only if |dy| > 1.7 |dx|.
+- 1, 3, 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
+- Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.

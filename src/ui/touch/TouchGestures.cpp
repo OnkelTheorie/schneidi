@@ -14,6 +14,7 @@
 
 TouchGestures::TouchGestures(QWidget* target) : QObject(target), m_target(target)
 {
+    m_clock.start();
     target->setAttribute(Qt::WA_AcceptTouchEvents);
     target->installEventFilter(this);
     m_hold = new QTimer(this);
@@ -25,15 +26,84 @@ TouchGestures::TouchGestures(QWidget* target) : QObject(target), m_target(target
     connect(m_glide, &QTimer::timeout, this, &TouchGestures::glide);
 }
 
+namespace {
+// The glide's time constant (ms): its speed falls to 1/e in this time, its whole way is speed * tau
+double glideTau(TouchGestures::Momentum m) { return m == TouchGestures::Momentum::Normal ? 325.0 : 140.0; }
+// The finger's speed at the lift that counts as a flick (px per ms); slower = the view stops where the finger left it
+double flickSpeed(TouchGestures::Momentum m) { return m == TouchGestures::Momentum::Normal ? 0.35 : 0.7; }
+double maxGlideSpeed(TouchGestures::Momentum m) { return m == TouchGestures::Momentum::Normal ? 6.0 : 3.0; }
+constexpr qint64 kVelocityWindowMs = 80; // the speed of a lift: the finger's way over this time
+} // namespace
+
+TouchGestures::Momentum TouchGestures::momentumFromSetting(const QString& value)
+{
+    if (value == QLatin1String("off")) return Momentum::Off;
+    if (value == QLatin1String("normal")) return Momentum::Normal;
+    return Momentum::Low;
+}
+
+QPointF TouchGestures::axisOnly(const QPointF& d) const
+{
+    if (m_axis == Axis::X) return {d.x(), 0};
+    if (m_axis == Axis::Y) return {0, d.y()};
+    return d;
+}
+
+QPointF TouchGestures::recentVelocity() const
+{
+    if (m_samples.size() < 2) return {};
+    const Sample& last = m_samples.last();
+    // A finger that stood still before the lift: no speed (only moves of the last window count)
+    if (m_clock.elapsed() - last.ms > 50) return {};
+    const Sample* from = &m_samples.first();
+    for (const Sample& s : m_samples)
+        if (last.ms - s.ms <= kVelocityWindowMs) {
+            from = &s;
+            break;
+        }
+    const double ms = double(last.ms - from->ms);
+    if (ms < 8) return {}; // too short to tell a speed (one event)
+    return axisOnly((last.pos - from->pos) / ms);
+}
+
+double TouchGestures::panSpeed() const
+{
+    if (m_state != State::Panning) return 0;
+    const QPointF v = recentVelocity();
+    return std::hypot(v.x(), v.y());
+}
+
+bool TouchGestures::gliding() const { return m_glide->isActive(); }
+
+void TouchGestures::startGlide()
+{
+    if (m_momentum == Momentum::Off || !onPan) return;
+    QPointF v = recentVelocity();
+    const double speed = std::hypot(v.x(), v.y());
+    if (speed < flickSpeed(m_momentum)) return; // no flick: it stops where the finger left it
+    if (speed > maxGlideSpeed(m_momentum)) v *= maxGlideSpeed(m_momentum) / speed;
+    m_glideV = v;
+    m_glideStart = m_clock.elapsed();
+    m_glideDone = 0;
+    m_glide->start();
+}
+
 void TouchGestures::glide()
 {
-    // Like a flicked list: the speed of the last moves, slowing down (about 0.4 s to a stop from a quick flick)
-    m_velocity *= 0.9;
-    if (std::hypot(m_velocity.x(), m_velocity.y()) < 0.02 || !onPan) {
+    // Time-based friction (the same way on a slow or a busy device, whatever the timer's ticks): the speed falls off
+    // exponentially, the way gone is v * tau * (1 - e^(-t / tau))
+    const double tau = glideTau(m_momentum);
+    const double t = double(m_clock.elapsed() - m_glideStart);
+    const double part = 1.0 - std::exp(-t / tau);
+    const double speedNow = std::hypot(m_glideV.x(), m_glideV.y()) * std::exp(-t / tau);
+    const QPointF step = m_glideV * tau * (part - m_glideDone);
+    m_glideDone = part;
+    if (!onPan || speedNow < 0.02) {
         m_glide->stop();
+        if (onPan && !step.isNull()) onPan(step);
         return;
     }
-    onPan(m_velocity * 16.0);
+    if (!step.isNull()) onPan(step);
 }
 
 bool TouchGestures::eventFilter(QObject* obj, QEvent* e)
@@ -69,6 +139,11 @@ bool TouchGestures::touch(QTouchEvent* e)
 {
     const auto& pts = e->points();
     const QPointer<TouchGestures> alive(this);
+    if (e->type() == QEvent::TouchBegin) {
+        // A finger stops a gliding view at once (and that touch is no tap: it only stopped it)
+        m_stopper = m_glide->isActive();
+        m_glide->stop();
+    }
     // The finger landed on a child widget (the track name's text field, an overlay button): Qt offers the touch to
     // the target because the child takes none. Not ours: left unaccepted, Qt makes the child's own mouse events of
     // it (found in the Android emulator: a tap into the open name field closed it instead of placing the cursor)
@@ -80,7 +155,6 @@ bool TouchGestures::touch(QTouchEvent* e)
     }
     e->accept();
     if (e->type() == QEvent::TouchBegin) {
-        m_glide->stop(); // a finger stops a gliding view
         m_device = e->pointingDevice();
         m_mods = int(e->modifiers());
         m_state = State::Pending;
@@ -88,7 +162,8 @@ bool TouchGestures::touch(QTouchEvent* e)
         m_lastGlobal = pts.isEmpty() ? QPointF() : pts.first().globalPosition();
         m_hold->start();
         m_pan = panAt && onPan && panAt(m_pressPos);
-        m_velocity = {};
+        m_samples.clear();
+        m_axis = Axis::Both;
         if (pts.size() < 2) return true;
         // two fingers at once: straight into the pinch below
     }
@@ -139,6 +214,10 @@ bool TouchGestures::touch(QTouchEvent* e)
                                 && m_lastTap.elapsed() < QGuiApplication::styleHints()->mouseDoubleClickInterval()
                                 && QLineF(m_lastTapPos, m_pressPos).length() < 3 * Touch::slopPx();
             m_state = State::Idle;
+            if (m_stopper) { // it only stopped the glide
+                m_stopper = false;
+                return true;
+            }
             if (second) {
                 m_lastTap.invalidate();
                 if (onDoubleTap && onDoubleTap(m_pressPos)) return true;
@@ -157,8 +236,14 @@ bool TouchGestures::touch(QTouchEvent* e)
         m_lastTap.invalidate();
         if (m_pan) { // one finger moves the view
             m_state = State::Panning;
-            onPan(m_lastPos - m_pressPos);
-            m_moveClock.start();
+            const QPointF d = m_lastPos - m_pressPos;
+            // The axis is chosen once: sideways (time) unless the swipe is clearly vertical (steeper than ~60 deg)
+            if (m_axisLock) m_axis = std::abs(d.y()) > 1.7 * std::abs(d.x()) ? Axis::Y : Axis::X;
+            if (onPanStart) onPanStart();
+            if (alive) onPan(axisOnly(d));
+            if (!alive) return true;
+            m_samples.clear();
+            m_samples.append({m_clock.elapsed(), m_lastPos});
             m_pinchCentre = m_lastPos; // (the last pan point)
             return true;
         }
@@ -173,16 +258,18 @@ bool TouchGestures::touch(QTouchEvent* e)
             m_pinchDist = QLineF(pts[0].position(), pts[1].position()).length();
             return true;
         }
-        const QPointF step = m_lastPos - m_pinchCentre;
-        const double ms = std::max<qint64>(1, m_moveClock.restart());
+        const QPointF step = axisOnly(m_lastPos - m_pinchCentre);
         m_pinchCentre = m_lastPos;
+        const qint64 now = m_clock.elapsed();
         if (!step.isNull()) {
-            m_velocity = m_velocity * 0.6 + (step / ms) * 0.4;
-            onPan(step);
+            m_samples.append({now, m_lastPos});
+            while (m_samples.size() > 2 && now - m_samples.first().ms > 4 * kVelocityWindowMs) m_samples.removeFirst();
         }
+        if (!step.isNull()) onPan(step);
+        if (!alive) return true;
         if (end) {
             m_state = State::Idle;
-            if (m_moveClock.elapsed() < 80) m_glide->start(); // still moving when lifted: it glides on
+            startGlide(); // a real flick glides on (see Momentum), else the view stops with the finger
         }
         return true;
     }

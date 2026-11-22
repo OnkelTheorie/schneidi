@@ -87,6 +87,17 @@ void swipe(QWidget* w, QPoint a, QPoint b, int steps = 6)
     QTest::touchEvent(w, g_touch).release(0, b, w);
 }
 
+// One finger from `a` to `b` in steps with `ms` between them (a real speed for the glide)
+void swipeTimed(QWidget* w, QPoint a, QPoint b, int steps, int ms, bool lift = true)
+{
+    QTest::touchEvent(w, g_touch).press(0, a, w);
+    for (int i = 1; i <= steps; ++i) {
+        QTest::qWait(ms);
+        QTest::touchEvent(w, g_touch).move(0, a + (b - a) * i / steps, w);
+    }
+    if (lift) QTest::touchEvent(w, g_touch).release(0, b, w);
+}
+
 // Two fingers: from a0/a1 to b0/b1 in steps
 void twoFingers(QWidget* w, QPoint a0, QPoint a1, QPoint b0, QPoint b1, int steps = 5)
 {
@@ -986,6 +997,88 @@ void testHoldToMove()
     f.tv->setFingerPans(false);
 }
 
+// The timeline's glide (setting timeline/momentum): only a real flick glides, "low" less far than "normal", "off"
+// never; a finger on the gliding view stops it at once (no tap); a sideways swipe never scrolls the lanes up or down;
+// a slow scrub in the centred mode holds at a clip's edge (a haptic tick)
+void testMomentumAndAxis()
+{
+    Fixture f;
+    f.tv->setFingerPans(true);
+    f.tv->setHoldToMove(false);
+    const QPoint lane(f.x(125), 120);
+    // A slow drag (60 px in 300 ms) stops with the finger
+    f.tv->setMomentum("low");
+    swipeTimed(f.tv, lane, lane - QPoint(60, 0), 10, 30);
+    const double slowEnd = f.tv->view().leftFrame;
+    QTest::qWait(300);
+    CHECK_EQ(f.tv->view().leftFrame, slowEnd);
+    pauseTaps();
+    // A flick (120 px in 60 ms): glides on; "normal" further than "low"; "off" not at all
+    const auto flick = [&](const QString& m) {
+        f.tv->setZoomAndScroll(2.0, 0, 0);
+        f.tv->setMomentum(m);
+        swipeTimed(f.tv, lane, lane - QPoint(120, 0), 6, 10);
+        QTest::qWait(1500);
+        pauseTaps();
+        return f.tv->view().leftFrame - 60; // (the finger's own way: 120 px = 60 frames)
+    };
+    const double low = flick("low"), normal = flick("normal"), off = flick("off");
+    Check::report(low > 5 && normal > low * 1.5 && std::abs(off) < 0.01, "glide low < normal, off none", __FILE__, __LINE__,
+                  QString("low %1, normal %2, off %3").arg(low).arg(normal).arg(off));
+    // A finger on the gliding view stops it at once, and that touch selects nothing
+    f.tv->setZoomAndScroll(2.0, 0, 0);
+    f.tv->setMomentum("normal");
+    swipeTimed(f.tv, lane, lane - QPoint(120, 0), 6, 10);
+    QTest::qWait(60);
+    CHECK(f.tv->gestures()->gliding());
+    const QPoint onClip(f.x(200), 120);
+    QTest::touchEvent(f.tv, g_touch).press(0, onClip, f.tv);
+    const double stopped = f.tv->view().leftFrame;
+    QTest::qWait(200);
+    QTest::touchEvent(f.tv, g_touch).release(0, onClip, f.tv);
+    CHECK_EQ(f.tv->view().leftFrame, stopped);
+    CHECK(f.sel.isEmpty());
+    pauseTaps();
+    // Axis lock: a sideways swipe with some slant moves only the time; a clearly vertical one only the lanes
+    f.tv->setTrackHeights(200, 200); // (room to scroll)
+    f.tv->setZoomAndScroll(2.0, 0, 40);
+    swipeTimed(f.tv, {f.x(135), 140}, {f.x(135) - 80, 170}, 8, 30); // (V2 after clip 3)
+    CHECK_EQ(f.tv->view().scrollY, 40);
+    CHECK(f.tv->view().leftFrame > 30);
+    pauseTaps();
+    f.tv->setZoomAndScroll(2.0, 0, 40);
+    swipeTimed(f.tv, {f.x(135), 140}, {f.x(135) - 8, 110}, 8, 30);
+    CHECK_EQ(f.tv->view().leftFrame, 0.0);
+    CHECK(f.tv->view().scrollY > 40);
+    pauseTaps();
+    // The centred scrub: a slow finger holds the line at clip 1's end (frame 100) with one tick, then goes on
+    f.tv->setTrackHeights(64, 64);
+    f.tv->setZoomAndScroll(2.0, 0, 0);
+    QObject::connect(f.tv, &TimelineView::seekRequested, [&](int frame) { f.tv->setPlayhead(frame); });
+    f.tv->setCenterPlayhead(true);
+    f.tv->setPlayhead(90);
+    QApplication::processEvents();
+    const int ticks = Touch::tickCount();
+    QPoint from(f.x(125), 120); // (V1 between clips 1 and 2)
+    QTest::touchEvent(f.tv, g_touch).press(0, from, f.tv);
+    QVector<int> seen;
+    for (int i = 1; i <= 15; ++i) { // 2 px per 30 ms = 0.07 px/ms: slow
+        QTest::qWait(30);
+        QTest::touchEvent(f.tv, g_touch).move(0, from - QPoint(12 + 2 * i, 0), f.tv);
+        seen << f.tv->playhead();
+    }
+    QTest::touchEvent(f.tv, g_touch).release(0, from - QPoint(42, 0), f.tv);
+    Check::report(seen.count(100) >= 3 && Touch::tickCount() == ticks + 1, "slow scrub holds at the clip's end",
+                  __FILE__, __LINE__, QString("ticks %1, seen %2").arg(Touch::tickCount() - ticks).arg([&] {
+                      QStringList l;
+                      for (int v : seen) l << QString::number(v);
+                      return l.join(' ');
+                  }()));
+    CHECK(f.tv->playhead() > 100); // (past it the finger's own place again)
+    f.tv->setCenterPlayhead(false);
+    f.tv->setFingerPans(false);
+}
+
 // Editor::packTrack: back to back from 0, linked clips along
 void testPackTrack()
 {
@@ -1066,6 +1159,7 @@ int main(int argc, char** argv)
     testCompactHeaders();
     testCenterPlayhead();
     testHoldToMove();
+    testMomentumAndAxis();
     testPackTrack();
     return Check::result();
 }
