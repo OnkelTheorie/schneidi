@@ -12,6 +12,13 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDir>
+#include <QFile>
+#include <QSettings>
+#include <QStandardItemModel>
+#include <QTemporaryDir>
+#include <QToolButton>
 #include <QLabel>
 
 #include <cmath>
@@ -362,6 +369,82 @@ int main(int argc, char** argv)
         for (QCheckBox* b : plain.findChildren<QCheckBox*>()) ticked << QString("%1:%2").arg(b->text()).arg(b->isChecked());
         CHECK_EQ(ticked.join(' '), QString("A1 mix:0 A2 Audio 2:1 A3 Audio 3:1 Eine Untertitelspur pro Tonspur:1"));
         for (QLabel* l : plain.findChildren<QLabel*>()) CHECK(!l->text().startsWith("Nur die Stimme"));
+    }
+
+    // Own whisper models: a ggml file anywhere, checked by its header; listed after the catalog, a gone one marked
+    {
+        QTemporaryDir dir;
+        const auto write = [&](const char* name, const QByteArray& bytes) {
+            const QString path = dir.filePath(name);
+            QFile f(path);
+            f.open(QIODevice::WriteOnly);
+            f.write(bytes);
+            return path;
+        };
+        const QByteArray magic("lmgg", 4); // GGML_FILE_MAGIC 0x67676d6c, little-endian
+        const QString good = write("ggml-own.bin", magic + QByteArray("\x59\xca\0\0", 4) + QByteArray(64, '\0'));
+        const QString other = write("ggml-other.bin", magic + QByteArray("\x9a\xca\0\0", 4) + QByteArray(64, '\0'));
+        const QString vad = write("ggml-silero.bin", magic + QByteArray("\x0a\0\0\0", 4) + QByteArray(64, '\0'));
+        const QString text = write("notes.bin", "hello world, no model");
+        const QString gguf = write("model.gguf", QByteArray("GGUF\3\0\0\0", 8) + QByteArray(64, '\0'));
+        const QString gone = dir.filePath("ggml-gone.bin");
+        QString error;
+        CHECK(Extensions::isWhisperModelFile(good, &error));
+        CHECK(error.isEmpty());
+        CHECK(!Extensions::isWhisperModelFile(text, &error));
+        CHECK(error.startsWith("Das ist kein whisper.cpp-Modell"));
+        CHECK(!Extensions::isWhisperModelFile(vad, &error));
+        CHECK(error.contains("kein Whisper-Sprachmodell"));
+        CHECK(!Extensions::isWhisperModelFile(gguf, &error));
+        CHECK(error.contains("GGUF"));
+        CHECK(!Extensions::isWhisperModelFile(gone, &error));
+        CHECK_EQ(Extensions::whisperModelPath(good), QFileInfo(good).absoluteFilePath()); // a path resolves
+        CHECK(Extensions::installedWhisperModels().isEmpty()); // test paths: no catalog model
+        Extensions::setCustomWhisperModels({gone});
+        CHECK(!Extensions::hasWhisperModel());
+        CHECK(Extensions::appWhisperModel({}).isEmpty());
+        Extensions::setCustomWhisperModels({gone, good});
+        CHECK(Extensions::hasWhisperModel()); // the panel's "Whisper ready" with only an own model
+        CHECK_EQ(Extensions::appWhisperModel({}), QFileInfo(good).absoluteFilePath());
+        CHECK_EQ(Extensions::appWhisperModel("whisper-model-turbo"), QFileInfo(good).absoluteFilePath());
+
+        Timeline tl;
+        tl.audio.resize(1);
+        tl.audio[0].clips << Clip{};
+        TranscribeDialog dlg(tl, ProjectFormat{}, 0, 100, {"A1 mix"});
+        auto* combo = dlg.findChild<QComboBox*>("transcribe_model");
+        auto* remove = dlg.findChild<QToolButton*>("transcribe_model_remove");
+        auto* items = combo ? qobject_cast<QStandardItemModel*>(combo->model()) : nullptr;
+        if (CHECK(combo && remove && items)) {
+            const auto entries = [&] {
+                QStringList out;
+                for (int i = 0; i < combo->count(); ++i)
+                    out << combo->itemText(i) + (items->item(i)->isEnabled() ? "" : ":off");
+                return out.join(" | ");
+            };
+            CHECK_EQ(entries(), QString("ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…"));
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin")); // the first usable one, not the gone file
+            CHECK_EQ(combo->itemData(1, Qt::ToolTipRole).toString(),
+                     QDir::toNativeSeparators(QFileInfo(good).absoluteFilePath()));
+            CHECK(!remove->isHidden());
+            CHECK(!dlg.addCustomModel(text, &error));
+            CHECK(!error.isEmpty());
+            CHECK_EQ(Extensions::customWhisperModels().size(), 2);
+            CHECK(dlg.addCustomModel(other, &error));
+            CHECK_EQ(combo->currentText(), QString("ggml-other.bin"));
+            CHECK_EQ(entries(), QString("ggml-gone.bin (fehlt):off | ggml-own.bin | ggml-other.bin | Eigenes Modell…"));
+            CHECK(dlg.addCustomModel(other)); // twice = once
+            CHECK_EQ(Extensions::customWhisperModels().size(), 3);
+            remove->click();
+            CHECK_EQ(entries(), QString("ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…"));
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin"));
+            combo->setCurrentIndex(0); // the gone one can be taken out too
+            CHECK(!remove->isHidden());
+            remove->click();
+            CHECK_EQ(Extensions::customWhisperModels(), QStringList{QFileInfo(good).absoluteFilePath()});
+        }
+        Extensions::setCustomWhisperModels({});
+        CHECK(!QSettings().contains("transcribe/customModels"));
     }
 
     // Catalog: every download pinned; whisper brings the voice detection, models need the program

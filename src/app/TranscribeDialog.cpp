@@ -8,16 +8,29 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStandardItemModel>
+#include <QStandardPaths>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <cmath>
+
+namespace {
+// What a model entry is (item data role beside the id/path in Qt::UserRole)
+constexpr int kKindRole = Qt::UserRole + 1;
+enum ModelKind { CatalogModel, CustomModel, AddModel };
+} // namespace
 
 TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat& format, int from, int to,
                                    const QStringList& trackLabels, QWidget* parent)
@@ -87,7 +100,29 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     m_lang->setCurrentIndex(std::max(0, m_lang->findData(settings.value("transcribe/language", "auto"))));
     form->addRow(T("Sprache"), m_lang);
     m_model = new QComboBox;
-    form->addRow(T("Modell"), m_model);
+    m_model->setObjectName("transcribe_model");
+    // Own models: the last entry asks for a whisper.cpp file; an own one can be taken out of the list again
+    connect(m_model, &QComboBox::activated, this, [this](int index) {
+        if (m_model->itemData(index, kKindRole).toInt() == AddModel) chooseCustomModel();
+    });
+    m_removeModel = new QToolButton;
+    m_removeModel->setObjectName("transcribe_model_remove");
+    m_removeModel->setText(QString::fromUtf8("✕"));
+    m_removeModel->setAutoRaise(true);
+    m_removeModel->setToolTip(T("Eigenes Modell aus der Liste nehmen (die Datei bleibt)"));
+    connect(m_removeModel, &QToolButton::clicked, this, &TranscribeDialog::removeCustomModel);
+    connect(m_model, &QComboBox::currentIndexChanged, this, &TranscribeDialog::updateRemoveButton);
+    auto* modelRow = new QHBoxLayout;
+    modelRow->setContentsMargins(0, 0, 0, 0);
+    modelRow->addWidget(m_model, 1);
+    modelRow->addWidget(m_removeModel);
+    form->addRow(T("Modell"), modelRow);
+    auto* where = new QLabel(QString("<a href=\"https://huggingface.co/ggerganov/whisper.cpp/tree/main\">%1</a>")
+                                 .arg(T("Wo finde ich Modelle?").toHtmlEscaped()));
+    where->setObjectName("transcribe_model_link");
+    where->setOpenExternalLinks(true);
+    where->setToolTip(T("whisper.cpp-Modelle (ggml-….bin) zum Herunterladen; danach mit „Eigenes Modell…“ wählen"));
+    form->addRow(QString(), where);
     m_chars = new QSpinBox;
     m_chars->setRange(16, 120);
     m_chars->setValue(settings.value("transcribe/maxChars", 42).toInt());
@@ -188,14 +223,43 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
 
 void TranscribeDialog::updateState()
 {
-    const QString current = m_model->currentData().toString();
+    // No entry or "Eigenes Modell…" current (the file dialog, an own model just added or removed): the model before
+    const bool none = m_model->currentIndex() < 0 || m_model->currentData(kKindRole).toInt() == AddModel;
+    const QString current = none ? m_lastModel : m_model->currentData().toString();
+    const QSignalBlocker block(m_model);
     m_model->clear();
-    for (const QString& id : Extensions::installedWhisperModels())
+    auto* items = qobject_cast<QStandardItemModel*>(m_model->model());
+    for (const QString& id : Extensions::installedWhisperModels()) {
         m_model->addItem(T(Extensions::find(id)->name), id);
-    const QString preferred = current.isEmpty() ? QSettings().value("transcribe/model").toString() : current;
-    if (const int i = m_model->findData(preferred); i >= 0) m_model->setCurrentIndex(i);
+        m_model->setItemData(m_model->count() - 1, CatalogModel, kKindRole);
+    }
+    // Own models after the catalog: by file name, the full path as tooltip; a file that is gone stays (marked, off)
+    for (const QString& path : Extensions::customWhisperModels()) {
+        const QFileInfo file(path);
+        const bool there = file.isFile();
+        const int i = m_model->count();
+        m_model->addItem(there ? file.fileName() : T("%1 (fehlt)").arg(file.fileName()), file.absoluteFilePath());
+        m_model->setItemData(i, CustomModel, kKindRole);
+        m_model->setItemData(i, QDir::toNativeSeparators(file.absoluteFilePath()), Qt::ToolTipRole);
+        if (!there && items) items->item(i)->setEnabled(false);
+    }
+    m_model->addItem(T("Eigenes Modell…"));
+    m_model->setItemData(m_model->count() - 1, AddModel, kKindRole);
+    m_model->setItemData(m_model->count() - 1, T("Ein whisper.cpp-Modell (ggml-….bin) von der Festplatte wählen"),
+                         Qt::ToolTipRole);
+    const auto usable = [&](int i) {
+        return i >= 0 && m_model->itemData(i, kKindRole).toInt() != AddModel && (!items || items->item(i)->isEnabled());
+    };
+    // The previous choice, else the stored one, else the first usable model (the best installed catalog one)
+    int pick = m_model->findData(current.isEmpty() ? QSettings().value("transcribe/model").toString() : current);
+    if (!usable(pick)) pick = -1;
+    for (int i = 0; pick < 0 && i < m_model->count(); ++i)
+        if (usable(i)) pick = i;
+    m_model->setCurrentIndex(pick);
+    m_lastModel = m_model->currentData().toString();
+    updateRemoveButton();
     const bool program = !Extensions::whisperProgram().isEmpty();
-    const bool ready = program && m_model->count() > 0;
+    const bool ready = program && usable(m_model->currentIndex());
     m_missing->setText(!program ? T("Dafür wird die Erweiterung „Whisper“ mit einem Sprachmodell gebraucht (einmaliger Download).")
                                 : T("Es ist noch kein Whisper-Sprachmodell installiert."));
     m_missing->setVisible(!ready);
@@ -210,8 +274,63 @@ void TranscribeDialog::updateState()
     m_start->setEnabled(ready && (m_tracks.isEmpty() || ticked > 0) && !running);
     m_lang->setEnabled(!running);
     m_model->setEnabled(!running);
+    m_removeModel->setEnabled(!running);
     m_length->setEnabled(!running);
     m_chars->setEnabled(!running && cueLength() == Subtitles::CueLength::Normal); // short ones have their own size
+}
+
+void TranscribeDialog::updateRemoveButton()
+{
+    m_removeModel->setVisible(m_model->currentData(kKindRole).toInt() == CustomModel);
+}
+
+bool TranscribeDialog::addCustomModel(const QString& path, QString* error)
+{
+    if (!Extensions::isWhisperModelFile(path, error)) return false;
+    const QString file = QFileInfo(path).absoluteFilePath();
+    QStringList own = Extensions::customWhisperModels();
+    if (!own.contains(file)) Extensions::setCustomWhisperModels(own << file);
+    m_lastModel = file;
+    m_model->setCurrentIndex(-1); // updateState picks m_lastModel: the new file
+    updateState();
+    return true;
+}
+
+void TranscribeDialog::chooseCustomModel()
+{
+    QSettings settings;
+    QString folder = settings.value("transcribe/customModelFolder").toString();
+    if (folder.isEmpty() || !QFileInfo(folder).isDir())
+        folder = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    const QString path = QFileDialog::getOpenFileName(this, T("Eigenes Whisper-Modell wählen"), folder,
+                                                      T("whisper.cpp-Modelle (*.bin)") + ";;" + T("Alle Dateien (*)"));
+    if (path.isEmpty()) { // cancelled: back to the model chosen before
+        m_model->setCurrentIndex(-1); // updateState picks m_lastModel again
+        updateState();
+        return;
+    }
+    settings.setValue("transcribe/customModelFolder", QFileInfo(path).absolutePath());
+    QString error;
+    if (!addCustomModel(path, &error)) {
+        QMessageBox::warning(this, windowTitle(), error);
+        m_model->setCurrentIndex(-1); // updateState picks m_lastModel again
+        updateState();
+    }
+}
+
+void TranscribeDialog::removeCustomModel()
+{
+    if (m_model->currentData(kKindRole).toInt() != CustomModel) return;
+    const QString file = m_model->currentData().toString();
+    QStringList own = Extensions::customWhisperModels();
+    for (qsizetype i = own.size() - 1; i >= 0; --i) // compared as shown (absolute), however it was stored
+        if (QFileInfo(own[i]).absoluteFilePath() == file) own.removeAt(i);
+    Extensions::setCustomWhisperModels(own);
+    QSettings settings;
+    if (QFileInfo(settings.value("transcribe/model").toString()).absoluteFilePath() == file) settings.remove("transcribe/model");
+    m_lastModel.clear();
+    m_model->setCurrentIndex(-1);
+    updateState(); // falls back to the stored or the best installed model
 }
 
 Subtitles::CueLength TranscribeDialog::cueLength() const

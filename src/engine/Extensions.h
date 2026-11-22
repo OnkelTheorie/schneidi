@@ -81,6 +81,18 @@ QString whisperVadProgram();
 QStringList installedWhisperModels();
 // Model file for an id or a path; empty id = best installed. Empty result = not installed.
 QString whisperModelPath(const QString& idOrPath = {});
+// Own whisper.cpp models the user added in the app (QSettings "transcribe/customModels"): absolute paths in the order
+// added; files that are gone stay listed (the app shows them marked, the user removes them)
+QStringList customWhisperModels();
+void setCustomWhisperModels(const QStringList& paths);
+// Whether a file is a whisper.cpp model, checked cheaply like whisper.cpp's loader: the ggml magic 0x67676d6c at the
+// start, then a whisper vocabulary size (tells the VAD model and other ggml files apart). error = why not, for the user
+bool isWhisperModelFile(const QString& path, QString* error = nullptr);
+// A model to transcribe with is there in the app: an installed catalog model or an own one whose file exists
+bool hasWhisperModel();
+// The model file the app transcribes with for a stored choice ("transcribe/model": id or path): that one, else the best
+// installed, else the first own model that exists; empty = none
+QString appWhisperModel(const QString& idOrPath);
 
 // ffmpeg program of the x264/x265 extension (or the one SCHNEIDI_ENCODER_FFMPEG names); empty = not installed.
 // Whether it really has libx264/libx265: HardwareEncoders::externalProgram.

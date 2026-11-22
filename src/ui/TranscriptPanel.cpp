@@ -375,7 +375,7 @@ void TranscriptPanel::updateState()
 void TranscriptPanel::transcribe()
 {
     if (m_transcriber.isRunning()) return;
-    if (Extensions::whisperProgram().isEmpty() || Extensions::installedWhisperModels().isEmpty()) {
+    if (Extensions::whisperProgram().isEmpty() || !Extensions::hasWhisperModel()) {
         const auto answer = QMessageBox::question(
             this, T("Transkript"),
             T("Dafür wird die Erweiterung „Whisper“ mit einem Sprachmodell gebraucht (einmaliger Download). "
@@ -399,7 +399,7 @@ void TranscriptPanel::startNext()
     req.format = m_project->format();
     QSettings settings;
     req.language = settings.value("transcribe/language", "auto").toString();
-    req.model = Extensions::whisperModelPath(settings.value("transcribe/model").toString());
+    req.model = Extensions::appWhisperModel(settings.value("transcribe/model").toString());
     QString error;
     if (!m_transcriber.start(req, &error)) {
         m_queue.clear();

@@ -12,6 +12,7 @@ class QLabel;
 class QProgressBar;
 class QPushButton;
 class QSpinBox;
+class QToolButton;
 
 // Timeline → Subtitles → Create Subtitles from Audio (like DaVinci): the timeline's sound (whole or In/Out, chosen
 // audio tracks mixed or one after another) through whisper (engine/Transcriber); accepted = results() holds the new
@@ -33,12 +34,18 @@ public:
     QString languageHint() const { return m_languageHint; }
 
     void reject() override;
+    // Adds an own whisper.cpp model file to the model choice (remembered for next time) and selects it; false + error
+    // when it is no whisper model (Extensions::isWhisperModelFile). The "Eigenes Modell…" entry asks for the file.
+    bool addCustomModel(const QString& path, QString* error = nullptr);
 
 signals:
     void openExtensions(); // whisper or a model is missing
 
 private:
     void updateState();
+    void chooseCustomModel();  // the file dialog of "Eigenes Modell…"
+    void removeCustomModel();  // the chosen own model out of the list (the file stays)
+    void updateRemoveButton(); // only for an own model
     Subtitles::CueLength cueLength() const; // the chosen one, Auto resolved by the timeline's format
     void run();
     void startJob();
@@ -48,6 +55,8 @@ private:
     int m_from, m_to;
     QComboBox* m_lang;
     QComboBox* m_model;
+    QToolButton* m_removeModel;
+    QString m_lastModel; // the model chosen before "Eigenes Modell…" (back to it when the file dialog is cancelled)
     QSpinBox* m_chars;
     QComboBox* m_length; // Untertitel-Länge: auto, normal, short, very_short
     struct TrackBox {
