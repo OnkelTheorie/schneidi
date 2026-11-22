@@ -116,10 +116,27 @@ void setBigStep(Step step) { storeStep("timeline/bigStep", step, kDefaultBigStep
 Step bigNudge() { return readStep("timeline/bigNudge", kDefaultBigNudge); }
 void setBigNudge(Step step) { storeStep("timeline/bigNudge", step, kDefaultBigNudge); }
 
-QString stepText(Step step)
+QString stepActionText(StepAction action, Step step)
 {
-    if (step.seconds) return step.count == 1 ? T("1 Sekunde") : T("%1 Sekunden").arg(step.count);
-    return step.count == 1 ? T("1 Frame") : T("%1 Frames").arg(step.count);
+    const int n = step.count;
+    const bool one = n == 1;
+    switch (action) {
+    case StepAction::Back:
+        if (step.seconds) return one ? T("1 Sekunde zurück") : T("%1 Sekunden zurück").arg(n);
+        return one ? T("1 Frame zurück") : T("%1 Frames zurück").arg(n);
+    case StepAction::Forward:
+        if (step.seconds) return one ? T("1 Sekunde vor") : T("%1 Sekunden vor").arg(n);
+        return one ? T("1 Frame vor") : T("%1 Frames vor").arg(n);
+    case StepAction::NudgeLeft:
+        if (step.seconds) return one ? T("1 Sekunde nach links schieben") : T("%1 Sekunden nach links schieben").arg(n);
+        if (n == 5) return T("5 Frames nach links schieben"); // the default: the text it always had
+        return one ? T("1 Frame nach links schieben") : T("%1 Frames nach links schieben").arg(n);
+    case StepAction::NudgeRight:
+        if (step.seconds) return one ? T("1 Sekunde nach rechts schieben") : T("%1 Sekunden nach rechts schieben").arg(n);
+        if (n == 5) return T("5 Frames nach rechts schieben");
+        return one ? T("1 Frame nach rechts schieben") : T("%1 Frames nach rechts schieben").arg(n);
+    }
+    return {};
 }
 
 Thumbnails thumbnails()
@@ -177,16 +194,18 @@ void setTimeFormat(TimeFormat format)
     store("timeline/timeFormat", format == TimeFormat::Seconds ? "seconds" : "frames", format == TimeFormat::Timecode);
 }
 
-QString formatTime(int frames, int fps, TimeFormat format)
+QString formatTime(int frames, double fps, TimeFormat format)
 {
-    if (fps <= 0) fps = 25;
+    if (!(fps > 0)) fps = 25;
+    const int timebase = std::max(1, int(std::lround(fps))); // timecode: whole frames per second (29.97 -> 30)
     switch (format) {
     case TimeFormat::Frames: return QString::number(frames);
     case TimeFormat::Seconds: {
         const bool neg = frames < 0;
-        const long long f = std::llabs((long long)frames);
-        const long long sec = f / fps;
-        const int hundredths = int((f % fps) * 100 / fps);
+        // Real seconds at the real rate, to the nearest hundredth (carried into the seconds)
+        const long long total = std::llround(std::llabs((long long)frames) * 100.0 / fps);
+        const long long sec = total / 100;
+        const int hundredths = int(total % 100);
         const QString rest = QString("%1%2%3")
                                  .arg(sec % 60, 2, 10, QChar('0'))
                                  .arg(I18n::decimalPoint())
@@ -197,13 +216,14 @@ QString formatTime(int frames, int fps, TimeFormat format)
     }
     case TimeFormat::Timecode: break;
     }
-    return Timecode::format(frames, fps);
+    return Timecode::format(frames, timebase);
 }
 
-int parseTime(const QString& text, int fps, TimeFormat format)
+int parseTime(const QString& text, double fps, TimeFormat format)
 {
     QString t = text.trimmed();
-    if (t.isEmpty() || fps <= 0) return -1;
+    if (t.isEmpty() || !(fps > 0)) return -1;
+    const int timebase = std::max(1, int(std::lround(fps)));
     // "112f": frames in any format
     static const QRegularExpression framesRe(R"(^(\d+)\s*f$)", QRegularExpression::CaseInsensitiveOption);
     if (const auto m = framesRe.match(t); m.hasMatch()) {
@@ -231,7 +251,7 @@ int parseTime(const QString& text, int fps, TimeFormat format)
         const double frames = std::round((hours * 3600 + minutes * 60 + seconds) * fps);
         return frames > 2000000000.0 ? -1 : int(frames);
     }
-    return Timecode::parse(t, fps);
+    return Timecode::parse(t, timebase);
 }
 
 } // namespace TimelineOptions

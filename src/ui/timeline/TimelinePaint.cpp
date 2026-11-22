@@ -52,7 +52,7 @@ using namespace TimelineViewDetail;
 
 QString TimelineView::timeText(int frames) const
 {
-    return TimelineOptions::formatTime(frames, m_editor->project()->fps(), m_timeFormat);
+    return TimelineOptions::formatTime(frames, m_editor->project()->frameRate(), m_timeFormat);
 }
 
 void TimelineView::paintEvent(QPaintEvent*)

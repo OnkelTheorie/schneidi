@@ -11,7 +11,6 @@
 #include <QSet>
 #include <optional>
 #include <QWidget>
-#include <cstdlib>
 #include <functional>
 
 class Editor;
@@ -37,16 +36,10 @@ public:
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
     // DaVinci "Insufficient handles": ask whether to trim the clips so a transition fits
     static bool confirmTrimForTransition(QWidget* parent);
-    // A wheel delta that pans the timeline sideways whatever the wheel's binding: mostly sideways (touchpad swipe,
-    // tilt wheel) and neither Alt nor Shift held (Qt resp. the system turn an upright wheel sideways with those)
     // The thumbnail tiles of a video clip starting at clipX (widget x) between left and right: their x from the
     // clip's start and the clip frame each shows (TimelineOptions::Thumbnails; a filmstrip only where it is visible)
     static QVector<QPair<double, int>> thumbnailTiles(TimelineOptions::Thumbnails mode, double clipX, int clipFrames,
                                                       double pxPerFrame, int tileW, double left, double right);
-    static bool wheelPansSideways(QPoint angleDelta, Qt::KeyboardModifiers mods)
-    {
-        return std::abs(angleDelta.x()) > std::abs(angleDelta.y()) && !(mods & (Qt::AltModifier | Qt::ShiftModifier));
-    }
 
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 

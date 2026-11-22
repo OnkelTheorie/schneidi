@@ -222,7 +222,8 @@ public:
     // the AI; empty = the user disconnected it) / allow again / how long a silent AI keeps the app (ms, 0 = always)
     void setLiveControls(const std::function<void(const QString& reason)>& disconnect, const std::function<void()>& allow,
                          const std::function<void(int ms)>& idleLimit);
-    // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
+    // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving, except the Timeline
+    // tab: its choices live only in the settings (TimelineOptions), so a test run leaves them as they are
     void settingsDialog(int tab = 0);
     // After Settings › Timeline changed: the timelines redraw what they show by those choices (no restart)
     void applyTimelineOptions();
@@ -392,7 +393,8 @@ private:
     void shuttle(int direction);
     // Stop and go back to where playback last started (Space by choice, the action "stop_return"); paused: only back
     void stopAndReturn();
-    int m_playStart = -1;          // position where playback last started (Engine::speedChanged from 0)
+    int m_playStart = -1;          // position where playback last started (Engine::speedChanged from 0); -1 after
+                                   // a project/timeline switch
     int m_playStartMode = -1;      // its Engine::Mode: back only within the same mode
     double m_lastSpeed = 0;
 

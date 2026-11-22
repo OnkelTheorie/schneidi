@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QKeySequence>
+#include <QPoint>
 #include <QPointer>
 #include <QSet>
 #include <QString>
@@ -116,6 +117,17 @@ public:
     QAction* action(const QString& id) const;
 
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
+    // One wheel event as the timelines read it (Edit timeline and Studio lanes alike): what it does and how many
+    // notches (120 = 1, the sign as Qt gives it). A mostly sideways delta (touchpad swipe, tilt wheel) pans sideways
+    // whatever the binding - except with Alt or Shift (Qt resp. the system turn an upright wheel sideways there) and
+    // except while a modifier bound to zoom or track height is held (Ctrl+touchpad zooms with the Kdenlive/CapCut
+    // wheel even when the swipe is diagonal). Otherwise the binding of the held modifiers, on the larger axis
+    struct WheelMove {
+        WheelAction action = WheelAction::None;
+        double steps = 0;
+    };
+    WheelMove wheelMove(QPoint angleDelta, Qt::KeyboardModifiers mods) const;
+    static WheelMove wheelMove(QPoint angleDelta, Qt::KeyboardModifiers mods, WheelAction bound);
     // The mouse wheel in the key bindings dialog: one action per modifier ("none", "ctrl", "shift", "alt" - other
     // combinations stay as the file has them). Takes effect immediately and is saved
     static QStringList wheelModifiers();

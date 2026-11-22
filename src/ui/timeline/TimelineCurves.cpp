@@ -339,7 +339,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
         QString text = formatValue(v, range.hi - range.lo);
         if (m_curveDragDt != 0)
             text += "   " + QString(m_curveDragDt > 0 ? "+" : "") +
-                    TimelineOptions::formatTime(m_curveDragDt, m_editor->project()->fps());
+                    TimelineOptions::formatTime(m_curveDragDt, m_editor->project()->frameRate());
         drawLabel(p, QPoint(int(frameToX(c.pos() + t)) + 10, int(curveY(plot, range, v)) - 24), text);
     }
 }

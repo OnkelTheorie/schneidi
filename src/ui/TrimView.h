@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+
 #include "core/TrimFrames.h"
 
 #include <QImage>
 #include <QSize>
 #include <QWidget>
+#include <algorithm>
+#include <cmath>
 
 // Trim view in the viewer like DaVinci Resolve: while an edit is dragged the viewer shows the frames on both
 // sides of it instead of the playhead frame. Two-up for ripple/roll/edge trims (left Out, right In),
@@ -15,7 +18,12 @@ class TrimView : public QWidget {
 public:
     explicit TrimView(QWidget* parent = nullptr);
 
-    void setFps(int fps) { m_fps = std::max(1, fps); }
+    // The real frame rate (29.97: seconds are shown at it; m_fps counts whole frames per second)
+    void setFps(double fps)
+    {
+        m_rate = fps > 0 ? fps : 25;
+        m_fps = std::max(1, int(std::lround(m_rate)));
+    }
     void setAspect(const QSize& frameSize); // project format (pane shape)
     // New frames to show. A pane that still shows the same clip keeps its last image until the new one arrives
     // (no flicker to black while dragging).
@@ -47,4 +55,5 @@ private:
     QVector<Slot> m_main, m_small;
     QSize m_aspect{16, 9};
     int m_fps = 25;
+    double m_rate = 25;
 };

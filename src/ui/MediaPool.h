@@ -40,6 +40,8 @@ class TimelinePosters;
 class MediaPool : public QWidget {
     Q_OBJECT
 public:
+    // The clip list again with the durations in the time format chosen in Settings › Timeline
+    void refreshTimes() { rebuildClips(); }
     // The app's sticky "leave out sound when placing" toggle, shown in the context menu too
     void setLeaveOutSoundAction(QAction* a) { m_leaveOutSound = a; }
     static constexpr const char* MimeType = "application/x-schneidi-media";

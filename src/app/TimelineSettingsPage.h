@@ -16,7 +16,8 @@ class QSpinBox;
 class QFormLayout;
 
 // Settings › Timeline: how the timelines behave where editors differ (wheel zoom anchor, playback after a playhead
-// move, ...). Each field shows the stored choice; store() writes them all (MainWindow::settingsDialog after OK). The
+// move, ...). Each field shows the stored choice; store() writes them all (MainWindow::settingsDialog after OK; not in
+// a test run of the app, which never writes the user's settings: there the tab has no effect). The
 // timelines read the choices when they need them, so a change takes effect at once, no restart.
 class TimelineSettingsPage : public QWidget {
     Q_OBJECT

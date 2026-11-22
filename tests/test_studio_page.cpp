@@ -176,6 +176,27 @@ void testWindow(Engine& engine, const QString& audioFile)
         tracks->setView(before, tracks->view().leftFrame);
     }
     {
+        // A diagonal touchpad swipe, mostly sideways: scrolls in time like on the timeline (no zoom, no lane scroll);
+        // with the CapCut wheel (Ctrl zooms) the same swipe with Ctrl zooms
+        const double before = tracks->view().pxPerFrame, left = tracks->view().leftFrame;
+        tracks->setView(2.0, 100);
+        const QPointF at(StudioTracks::kHeaderW + 50, 40);
+        const auto swipe = [&](Qt::KeyboardModifiers mods) {
+            QWheelEvent e(at, tracks->mapToGlobal(at), QPoint(), QPoint(-120, 20), Qt::NoButton, mods, Qt::NoScrollPhase,
+                          false);
+            QCoreApplication::sendEvent(tracks, &e);
+        };
+        swipe(Qt::NoModifier);
+        CHECK(tracks->view().leftFrame > 100);
+        CHECK_EQ(tracks->view().pxPerFrame, 2.0);
+        InputBindings::instance().applyWheelPreset("capcut");
+        tracks->setView(2.0, 100);
+        swipe(Qt::ControlModifier);
+        CHECK(tracks->view().pxPerFrame != 2.0);
+        InputBindings::instance().applyWheelPreset("standard");
+        tracks->setView(before, left);
+    }
+    {
         // Where the wheel zoom stays put (ZoomAnchor, the timeline's setting): the mouse by default, the visible
         // playhead by choice, the mouse again while the playhead is out of view
         const double before = tracks->view().pxPerFrame, left = tracks->view().leftFrame;
