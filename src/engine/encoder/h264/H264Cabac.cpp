@@ -769,6 +769,9 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
             table.more1[n] = double(ce.binCost(ctxN, 1));
             table.two[n] = table.first1[n] + table.more0[n];
         }
+        // (Index 0 repeats "nothing coded yet": the lanes of the low group below are tables[0..3].)
+        table.one[0] = table.one[kEmpty], table.two[0] = table.two[kEmpty], table.first1[0] = table.first1[kEmpty];
+        table.more0[0] = table.more0[kEmpty], table.more1[0] = table.more1[kEmpty];
     }
     const double *one = table.one, *two = table.two, *first1 = table.first1, *more0 = table.more0, *more1 = table.more1;
     // The part of a level's bits that does not depend on the node: a = |level| - 1 >= 1 costs
@@ -822,7 +825,198 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
         best = less ? c : best;
         bestStep = less ? s : bestStep;
     };
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+    // The x86-64-v3 build keeps each group in one register (low: cE, c1, c2, c3; high: c4 to c7) and computes the
+    // arrivals of a group at once: the same sums and the same order of comparisons as the loop below, so the same
+    // path. The steps are kept as 64-bit lanes (laneStep[k][node & 7]).
+    const bool lanes = gTrellisTwo;
+    alignas(32) int64_t laneStep[64][8];
+    if (lanes) {
+        auto steps = [](int a, int b, int c, int d) { return _mm256_castsi256_pd(_mm256_setr_epi64x(a, b, c, d)); };
+        const __m256d dead = _mm256_set1_pd(kDead);
+        const __m256d lane3 = _mm256_castsi256_pd(_mm256_setr_epi64x(0, 0, 0, -1));
+        const __m256d oneL = _mm256_loadu_pd(one), oneH = _mm256_loadu_pd(one + 4);
+        const __m256d twoL = _mm256_loadu_pd(two), twoH = _mm256_loadu_pd(two + 4);
+        __m256d L = _mm256_setr_pd(0.0, kDead, kDead, kDead), H = dead;
+        auto flushLanes = [&] {
+            if (!(zerosLow | zerosHigh))
+                return;
+            const __m256d z = _mm256_set1_pd(h256 * double(zerosHigh) + l256 * double(zerosLow));
+            zerosLow = zerosHigh = 0;
+            L = _mm256_add_pd(L, _mm256_blend_pd(z, _mm256_setzero_pd(), 1)); // (not "nothing coded yet")
+            H = _mm256_add_pd(H, z);
+        };
+        // cost + error + weight * bits, as the loop below sums it
+        auto arrive = [](__m256d c, __m256d err, __m256d lkv, __m256d bits) {
+            return _mm256_add_pd(_mm256_add_pd(c, err), _mm256_mul_pd(lkv, bits));
+        };
+        auto less = [](__m256d a, __m256d b) { return _mm256_cmp_pd(a, b, _CMP_LT_OQ); };
+        // lanes 0 0 1 2: the arrivals from the node below
+        auto fromBelow = [](__m256d v) { return _mm256_permute4x64_pd(v, _MM_SHUFFLE(2, 1, 0, 0)); };
+        auto takeScalar = [](double& best, int& bestStep, double c, int st) {
+            const bool lt = c < best;
+            best = lt ? c : best;
+            bestStep = lt ? st : bestStep;
+        };
+        auto lane0 = [](__m256d v, double c) { return _mm256_blend_pd(v, _mm256_castpd128_pd256(_mm_set_sd(c)), 1); };
+        auto stepLane0 = [](__m256d v, int st) {
+            return _mm256_blend_pd(v, _mm256_castsi256_pd(_mm256_castsi128_si256(_mm_cvtsi32_si128(st))), 1);
+        };
+        for (int k = end - 1; k >= 0; --k) {
+            const double ax = std::abs(x[k]);
+            if (ax < 0.5) {
+                (k >= highFrom ? zerosHigh : zerosLow) += ce.binCost(sigCtx(k), 0);
+                pass |= uint64_t(1) << k;
+                continue;
+            }
+            flushLanes();
+            const double lk = k >= highFrom ? h256 : l256;
+            const double err0 = ax * scale[k];
+            const double errSq0 = err0 * err0;
+            const bool notLast = k < count - 1;
+            const uint32_t sig1 = notLast ? ce.binCost(sigCtx(k), 1) : 0;
+            const double sigMore = notLast ? double(sig1 + ce.binCost(lastCtx(k), 0)) : 0.0;
+            const double sigLast = notLast ? double(sig1 + ce.binCost(lastCtx(k), 1)) : 0.0;
+            const __m256d lkv = _mm256_set1_pd(lk);
+            const __m256d sigH = _mm256_set1_pd(sigMore);
+            const __m256d sigL = lane0(sigH, sigLast);
+            const int fl = int(ax);
+            __m256d sL = _mm256_setzero_pd(), sH = _mm256_setzero_pd();
+            if (fl == 0) {
+                // 0 (the node stays) or 1.
+                mags[k][0] = 0;
+                mags[k][1] = 1;
+                const double err1 = (ax - 1) * scale[k];
+                const __m256d gain1 = _mm256_set1_pd(err1 * err1 - errSq0);
+                const __m256d stayBits = _mm256_set1_pd(notLast ? lk * ce.binCost(sigCtx(k), 0) : 0.0);
+                if (lowLive) {
+                    const __m256d stay = _mm256_add_pd(L, _mm256_blend_pd(stayBits, _mm256_setzero_pd(), 1));
+                    const __m256d up = arrive(L, gain1, lkv, _mm256_add_pd(oneL, sigL)); // upE, up1, up2, up3
+                    const __m256d upBelow = fromBelow(up);
+                    // cE | stay1, upE | up1, stay2 | up2, stay3, up3
+                    const __m256d first = _mm256_blend_pd(stay, upBelow, 0b1100);
+                    const __m256d second = _mm256_blend_pd(_mm256_blend_pd(upBelow, stay, 0b1100), dead, 1);
+                    const __m256d m2 = less(second, first);
+                    const __m256d best = _mm256_blendv_pd(first, second, m2);
+                    const __m256d st = _mm256_blendv_pd(steps(kEmpty, 1, 1 | kHi, 2 | kHi), steps(0, kEmpty | kHi, 2, 3), m2);
+                    const __m256d m3 = _mm256_and_pd(less(up, best), lane3);
+                    L = _mm256_blendv_pd(best, up, m3);
+                    sL = _mm256_blendv_pd(st, steps(0, 0, 0, 3 | kHi), m3);
+                }
+                if (highLive) {
+                    const __m256d stay = _mm256_add_pd(H, stayBits);
+                    const __m256d up = arrive(H, gain1, lkv, _mm256_add_pd(oneH, sigH));
+                    const __m256d m = less(up, stay);
+                    H = _mm256_blendv_pd(stay, up, m);
+                    sH = _mm256_blendv_pd(steps(4, 5, 6, 7), steps(4 | kHi, 5 | kHi, 6 | kHi, 7 | kHi), m);
+                }
+            } else if (fl == 1) {
+                // 1 or 2: a level of 1.5 or more never drops to zero.
+                mags[k][0] = 1;
+                mags[k][1] = 2;
+                const double errLo = (ax - 1) * scale[k], errHi = (ax - 2) * scale[k];
+                const __m256d errSqLo = _mm256_set1_pd(errLo * errLo - errSq0), errSqHi = _mm256_set1_pd(errHi * errHi - errSq0);
+                __m256d upL = dead, downH = dead, newL = dead, newH = dead;
+                if (lowLive) {
+                    const __m256d down = arrive(L, errSqLo, lkv, _mm256_add_pd(oneL, sigL)); // downE, down1, down2, down3
+                    upL = arrive(L, errSqHi, lkv, _mm256_add_pd(twoL, sigL));
+                    // - | downE | down1 | down2, down3
+                    const __m256d below = fromBelow(down);
+                    const __m256d m = _mm256_and_pd(less(down, below), lane3);
+                    newL = _mm256_blend_pd(_mm256_blendv_pd(below, down, m), dead, 1);
+                    sL = _mm256_blendv_pd(steps(0, kEmpty, 1, 2), steps(0, 0, 0, 3), m);
+                }
+                if (highLive) {
+                    downH = arrive(H, errSqLo, lkv, _mm256_add_pd(oneH, sigH));
+                    const __m256d up = arrive(H, errSqHi, lkv, _mm256_add_pd(twoH, sigH));
+                    // (c4 below) | up4, down5 | up5, down6 | up6, down7, up7
+                    const __m256d first = fromBelow(up);
+                    const __m256d m2 = less(downH, first);
+                    const __m256d best = _mm256_blendv_pd(first, downH, m2);
+                    const __m256d st = _mm256_blendv_pd(steps(0, 4 | kHi, 5 | kHi, 6 | kHi), steps(0, 5, 6, 7), m2);
+                    const __m256d m3 = _mm256_and_pd(less(up, best), lane3);
+                    newH = _mm256_blendv_pd(best, up, m3);
+                    sH = _mm256_blendv_pd(st, steps(0, 0, 0, 7 | kHi), m3);
+                }
+                // c4: up1, up2, up3, down4, then 2 from "nothing coded yet"
+                alignas(32) double u[4];
+                _mm256_store_pd(u, upL);
+                double f4 = u[1];
+                int s4 = 1 | kHi;
+                takeScalar(f4, s4, u[2], 2 | kHi);
+                takeScalar(f4, s4, u[3], 3 | kHi);
+                takeScalar(f4, s4, _mm256_cvtsd_f64(downH), 4);
+                takeScalar(f4, s4, u[0], kEmpty | kHi);
+                L = newL;
+                H = lane0(newH, f4);
+                sH = stepLane0(sH, s4);
+                highLive = true;
+            } else {
+                // Round down or up, both above 1: every path ends in the high group.
+                mags[k][0] = int16_t(fl);
+                mags[k][1] = int16_t(fl + 1);
+                const double errLo = (ax - fl) * scale[k], errHi = (ax - (fl + 1)) * scale[k];
+                const __m256d errSqLo = _mm256_set1_pd(errLo * errLo - errSq0), errSqHi = _mm256_set1_pd(errHi * errHi - errSq0);
+                const LevelBits lo = levelBits(fl - 1), hi = levelBits(fl);
+                // first1 + ones * more1 + zero * more0 + escape + sig (whole numbers: exact in any order)
+                auto bits = [&](const LevelBits& lb, int from, __m256d sig) {
+                    const __m256d a = _mm256_add_pd(_mm256_loadu_pd(first1 + from),
+                                                    _mm256_mul_pd(_mm256_set1_pd(lb.ones), _mm256_loadu_pd(more1 + from)));
+                    const __m256d b = _mm256_add_pd(a, _mm256_mul_pd(_mm256_set1_pd(lb.zero), _mm256_loadu_pd(more0 + from)));
+                    return _mm256_add_pd(_mm256_add_pd(b, _mm256_set1_pd(lb.escape)), sig);
+                };
+                __m256d newH = dead;
+                if (highLive) {
+                    const __m256d down = arrive(H, errSqLo, lkv, bits(lo, 4, sigH));
+                    const __m256d up = arrive(H, errSqHi, lkv, bits(hi, 4, sigH));
+                    // (c4 below) | down4, up4 | down5, up5 | down6, up6, down7, up7
+                    const __m256d first = fromBelow(down), second = fromBelow(up);
+                    const __m256d m2 = less(second, first);
+                    __m256d best = _mm256_blendv_pd(first, second, m2);
+                    __m256d st = _mm256_blendv_pd(steps(0, 4, 5, 6), steps(0, 4 | kHi, 5 | kHi, 6 | kHi), m2);
+                    const __m256d m3 = _mm256_and_pd(less(down, best), lane3);
+                    best = _mm256_blendv_pd(best, down, m3);
+                    st = _mm256_blendv_pd(st, steps(0, 0, 0, 7), m3);
+                    const __m256d m4 = _mm256_and_pd(less(up, best), lane3);
+                    newH = _mm256_blendv_pd(best, up, m4);
+                    sH = _mm256_blendv_pd(st, steps(0, 0, 0, 7 | kHi), m4);
+                }
+                double f4 = kDead;
+                int s4 = 0;
+                if (lowLive) {
+                    alignas(32) double d[4], u[4];
+                    _mm256_store_pd(d, arrive(L, errSqLo, lkv, bits(lo, 0, sigL)));
+                    _mm256_store_pd(u, arrive(L, errSqHi, lkv, bits(hi, 0, sigL)));
+                    f4 = d[1], s4 = 1;
+                    takeScalar(f4, s4, u[1], 1 | kHi);
+                    takeScalar(f4, s4, d[2], 2);
+                    takeScalar(f4, s4, u[2], 2 | kHi);
+                    takeScalar(f4, s4, d[3], 3);
+                    takeScalar(f4, s4, u[3], 3 | kHi);
+                    takeScalar(f4, s4, d[0], kEmpty);
+                    takeScalar(f4, s4, u[0], kEmpty | kHi);
+                }
+                L = dead;
+                H = lane0(newH, f4);
+                sH = stepLane0(sH, s4);
+                lowLive = false;
+                highLive = true;
+            }
+            _mm256_store_pd(reinterpret_cast<double*>(laneStep[k]), sL);
+            _mm256_store_pd(reinterpret_cast<double*>(laneStep[k]) + 4, sH);
+        }
+        flushLanes();
+        alignas(32) double c[8];
+        _mm256_store_pd(c, L);
+        _mm256_store_pd(c + 4, H);
+        cE = c[0], c1 = c[1], c2 = c[2], c3 = c[3], c4 = c[4], c5 = c[5], c6 = c[6], c7 = c[7];
+    }
+    auto stepAt = [&](int k, int n) { return lanes ? int(laneStep[k][n & 7]) : int(step[k][n]); };
+    for (int k = lanes ? -1 : end - 1; k >= 0; --k) {
+#else
+    auto stepAt = [&](int k, int n) { return int(step[k][n]); };
     for (int k = end - 1; k >= 0; --k) {
+#endif
         const double ax = std::abs(x[k]);
         if (ax < 0.5) {
             // Only level 0: every path keeps its node, the ones with a level pay the bits of the zero.
@@ -1015,10 +1209,11 @@ double cabacTrellis(const CabacEncoder& ce, int cat, const double* x, const doub
     uint64_t nz = 0;
     for (int n = best; coded; coded &= coded - 1) {
         const int k = std::countr_zero(coded);
-        const int mag = mags[k][step[k][n] >> 4];
+        const int st = stepAt(k, n);
+        const int mag = mags[k][st >> 4];
         out[k] = x[k] < 0 ? -mag : mag;
         nz |= uint64_t(mag != 0) << k;
-        n = step[k][n] & 15;
+        n = st & 15;
     }
     if (nonZero)
         *nonZero = nz;
