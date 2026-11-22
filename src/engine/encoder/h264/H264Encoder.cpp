@@ -7033,11 +7033,6 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     reconInterLuma(mbx, mby, lp, qp, t8, io, ir);
 }
 
-// First half of coding an inter macroblock's luma residual: transform and quantisation (trellis,
-// decimation) into ir. With est (trellis path only, else left at -1): the trellis' own estimate of
-// squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
-// fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
-// above the lowest frequencies are decided with fineLambda instead of lambda.
 // The 8x8 quadrants (bit b8) in which two 16x16 luma predictions are the same pixels.
 static int sameQuadrants(const uint8_t* a, const uint8_t* b)
 {
@@ -7053,6 +7048,19 @@ static int sameQuadrants(const uint8_t* a, const uint8_t* b)
     return quads;
 }
 
+// Factor on the thresholds below which the split layouts are not searched (encodeMbP: kSplitSkip, encodeMbB:
+// gBSplitSkip) at high rates: below QP 30 (lambda's root under 7.376) they grow by (7.376 / root)^power.
+static double lowRateSplit(double lambdaSad, double power)
+{
+    constexpr double kRef = 7.376; // sqrt(0.85 * 2^6), QP 30
+    return power > 0 && lambdaSad < kRef ? std::pow(kRef / lambdaSad, power) : 1.0;
+}
+
+// First half of coding an inter macroblock's luma residual: transform and quantisation (trellis,
+// decimation) into ir. With est (trellis path only, else left at -1): the trellis' own estimate of
+// squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
+// fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
+// above the lowest frequencies are decided with fineLambda instead of lambda.
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
                                InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8,
                                const InterResidual* const* same)
@@ -7701,9 +7709,17 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             }
         }
     }
-    bool skipSplits = whole.cost < kSplitSkip * lambdaSad;
+    // At high rates the threshold falls below what the picture's noise alone costs (QP 22: 2.3 per sample) and
+    // nearly every macroblock searched its splits, for little: below QP 30 the threshold shrinks with lambda^0.275
+    // instead of its root (mode decision by estimate only; QP 22: 300 instead of 200 times the root, QP 26: 250).
+    // Measured 22.11.2026 (fixed QP, 900 pictures CS2 with cuts; bytes / PSNR-Y / instructions): QP 22 300 0.00 % /
+    // +0.01 dB / -2.0 %, 400 +0.10 % / -0.01 dB / -4.2 %; QP 26 250 -0.03 % / 0.00 dB / -1.8 %.
+    // H264_SPLITLOW overrides the exponent, 0 = off (the stream before).
+    static const double kSplitLow = devEnv("H264_SPLITLOW") ? std::atof(devEnv("H264_SPLITLOW")) : 0.45;
+    const double splitSkipCost = kSplitSkip * lambdaSad * (kRdEst ? lowRateSplit(lambdaSad, kSplitLow) : 1.0);
+    bool skipSplits = whole.cost < splitSkipCost;
     if (skipSplits && kSplitQuad > 0 && cfg_.effort > 0) {
-        const double quadLim = kSplitQuad * 0.25 * kSplitSkip * lambdaSad;
+        const double quadLim = kSplitQuad * 0.25 * splitSkipCost;
         const RefPic& R = *refs_[size_t(whole.ref[0])];
         int qMax = 0, qSum = 0;
         for (int q = 0; q < 4; ++q) {
@@ -8738,6 +8754,35 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         noSplit = true;
     if (hintBackground && (gHintBg & 1))
         noSplit = true;
+    // At high rates the threshold gBSplitSkip falls below the cost of the picture's noise and nearly every
+    // macroblock searched its splits. Below QP 30 the threshold grows like the one of P pictures (lowRateSplit; mode
+    // decision by estimate only), and in the part it gains the splits are still searched where the dearest 8x8
+    // quarter of the better prediction (16x16 or direct) holds at least kBSplitConc of the four quarters' SATD - a
+    // part that moves differently, as in P pictures (kSplitConc). Measured 22.11.2026 (fixed QP, 900 pictures CS2
+    // with cuts; bytes / PSNR-Y of the B pictures / instructions): QP 22 300 times lambda's root (the exponent 0.45)
+    // +0.12 % / -0.01 dB / -5.0 %, 400 +0.16 % / -0.03 dB / -8.2 % (without the exception +0.20 % / -0.04 dB /
+    // -8.9 %); QP 26 250 +0.03 % / 0.00 dB / -2.0 %. Both rules together (fixed QP 22 / 26 / 30 / 34, BD-rate
+    // PSNR-Y / SSIM-Y / VMAF and instructions per QP): CS2 with cuts +0.17 / +0.26 / +0.77 % for -8.1 / -5.0 / -2.5 /
+    // -0.4 %, vertical short +0.09 / +0.17 / +0.06 % for -3.3 / -1.4 / -0.4 / 0.0 %, camera (talk) +0.22 / +0.39 /
+    // +0.27 % for -9.8 / -4.2 / -2.9 / -0.9 %. H264_BSPLITLOW overrides the exponent (0 = off, the stream before),
+    // H264_BSPLITCONC the share (0 = no exception).
+    static const double kBSplitLow = devEnv("H264_BSPLITLOW") ? std::atof(devEnv("H264_BSPLITLOW")) : 0.45;
+    static const double kBSplitConc = devEnv("H264_BSPLITCONC") ? std::atof(devEnv("H264_BSPLITCONC")) : 0.4;
+    const double bSplitLow = useEst ? gBSplitSkip * lambdaSad * lowRateSplit(lambdaSad, kBSplitLow) : 0.0;
+    if (!noSplit && gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < bSplitLow) {
+        noSplit = true;
+        if (kBSplitConc > 0 && (wholePlanned || estDirect <= cands[0].cost)) {
+            const uint8_t* pred = estDirect <= cands[0].cost ? dlp : clp[0];
+            int qMax = 0, qSum = 0;
+            for (int q = 0; q < 4; ++q) {
+                const int off = (q >> 1) * 8 * 16 + (q & 1) * 8;
+                const int s = satd8x8U8(&srcY_[lumaOff + size_t((q >> 1) * 8) * padW_ + (q & 1) * 8], padW_, pred + off, 16);
+                qMax = std::max(qMax, s);
+                qSum += s;
+            }
+            noSplit = !(qMax >= kBSplitConc * qSum);
+        }
+    }
     if (cfg_.effort > 0 && gBParts && !noSplit && !(gBSplitSkip > 0 && std::min(cands[0].cost, estDirect) < gBSplitSkip * lambdaSad)) {
         if (gStats)
             ++gStatB2[3];
