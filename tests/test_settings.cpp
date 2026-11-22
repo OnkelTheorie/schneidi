@@ -365,6 +365,35 @@ void testTimelineTab()
             CHECK_EQ(EditDefaults::stillSeconds(), 5.0);
         }
     }
+    // Step sizes: big step 1 second, big nudge 5 frames by default; stored as chosen
+    {
+        QSettings().remove("timeline");
+        SettingsDialog dlg(AiSettings{});
+        TimelineSettingsPage* page = dlg.timelinePage();
+        auto* count = page->findChild<QSpinBox*>("timeline_big_step_count");
+        auto* unit = page->findChild<QComboBox*>("timeline_big_step_unit");
+        auto* ncount = page->findChild<QSpinBox*>("timeline_big_nudge_count");
+        auto* nunit = page->findChild<QComboBox*>("timeline_big_nudge_unit");
+        if (CHECK(count && unit && ncount && nunit)) {
+            CHECK(page->bigStep() == TimelineOptions::kDefaultBigStep);
+            CHECK(page->bigNudge() == TimelineOptions::kDefaultBigNudge);
+            CHECK_EQ(count->value(), 1);
+            CHECK_EQ(ncount->value(), 5);
+            page->store();
+            CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+            count->setValue(10);
+            unit->setCurrentIndex(unit->findData(0)); // frames
+            ncount->setValue(2);
+            nunit->setCurrentIndex(nunit->findData(1)); // seconds
+            page->store();
+            CHECK(TimelineOptions::bigStep() == (TimelineOptions::Step{10, false}));
+            CHECK(TimelineOptions::bigNudge() == (TimelineOptions::Step{2, true}));
+            CHECK_EQ(TimelineOptions::stepFrames(TimelineOptions::bigNudge(), 25), 50);
+            SettingsDialog again(AiSettings{});
+            CHECK(again.timelinePage()->bigStep() == (TimelineOptions::Step{10, false}));
+            QSettings().remove("timeline");
+        }
+    }
     // Space while playing: stop where it is (default) or go back to the start position
     checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
     // A click into the tracks: only select (default) or set the playhead too

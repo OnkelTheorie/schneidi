@@ -12,6 +12,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QSpinBox;
 class QFormLayout;
 
 // Settings › Timeline: how the timelines behave where editors differ (wheel zoom anchor, playback after a playhead
@@ -31,6 +32,8 @@ public:
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
     double stillSeconds() const;                    // default length of new stills
     double transitionSeconds() const;               // default length of new transitions
+    TimelineOptions::Step bigStep() const;          // Shift+arrow
+    TimelineOptions::Step bigNudge() const;         // Shift+, / Shift+.
     TimelineOptions::SnapReach snapReach() const;
 
     void store() const; // every choice into QSettings (only what changed)
@@ -46,4 +49,8 @@ private:
     QComboBox* m_snapReach = nullptr;
     QDoubleSpinBox* m_stillSeconds = nullptr;
     QDoubleSpinBox* m_transitionSeconds = nullptr;
+    QSpinBox* m_stepCount = nullptr;
+    QComboBox* m_stepUnit = nullptr;
+    QSpinBox* m_nudgeCount = nullptr;
+    QComboBox* m_nudgeUnit = nullptr;
 };

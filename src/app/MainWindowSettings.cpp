@@ -117,6 +117,7 @@ void MainWindow::settingsDialog(int tab)
 void MainWindow::applyTimelineOptions()
 {
     TimelineOptions::applyEditDefaults(); // still and transition lengths for the core
+    updateStepTexts();
     m_timeline->view()->update();
     m_timeline->overview()->update();
     if (m_studioPage) m_studioPage->tracks()->update();

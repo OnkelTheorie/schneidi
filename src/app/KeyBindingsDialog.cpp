@@ -359,7 +359,7 @@ void KeyBindingsDialog::fill()
         const auto& e = entries[i];
         auto* cat = new QTableWidgetItem(e.category);
         cat->setForeground(Theme::textDim);
-        auto* text = new QTableWidgetItem(e.text);
+        auto* text = new QTableWidgetItem(e.action ? e.action->text() : e.text); // current (step sizes in it)
         text->setData(Qt::UserRole, e.id);
         m_table->setItem(i, ColCategory, cat);
         m_table->setItem(i, ColText, text);

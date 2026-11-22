@@ -93,6 +93,34 @@ void applyEditDefaults()
     EditDefaults::setTransitionSeconds(transitionSeconds());
 }
 
+namespace {
+// "1s", "10f"
+Step readStep(const char* key, Step def)
+{
+    const QString v = stored(key);
+    bool ok = false;
+    const int n = v.left(v.size() - 1).toInt(&ok);
+    if (!ok || n < 1 || n > 100000 || !(v.endsWith('s') || v.endsWith('f'))) return def;
+    return Step{n, v.endsWith('s')};
+}
+void storeStep(const char* key, Step step, Step def)
+{
+    if (step == def || step.count < 1) QSettings().remove(key);
+    else QSettings().setValue(key, QString::number(step.count) + (step.seconds ? 's' : 'f'));
+}
+} // namespace
+
+Step bigStep() { return readStep("timeline/bigStep", kDefaultBigStep); }
+void setBigStep(Step step) { storeStep("timeline/bigStep", step, kDefaultBigStep); }
+Step bigNudge() { return readStep("timeline/bigNudge", kDefaultBigNudge); }
+void setBigNudge(Step step) { storeStep("timeline/bigNudge", step, kDefaultBigNudge); }
+
+QString stepText(Step step)
+{
+    if (step.seconds) return step.count == 1 ? T("1 Sekunde") : T("%1 Sekunden").arg(step.count);
+    return step.count == 1 ? T("1 Frame") : T("%1 Frames").arg(step.count);
+}
+
 TimeFormat timeFormat()
 {
     const QString v = stored("timeline/timeFormat");

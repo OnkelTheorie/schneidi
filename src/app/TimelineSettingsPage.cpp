@@ -12,6 +12,8 @@
 #include <tuple>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
+#include <QSpinBox>
 #include <QLabel>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -98,6 +100,29 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     fresh->addRow(T("Übergänge"), m_transitionSeconds);
     fresh->addRow(hint(T("So lang werden Bilder, die du ab jetzt importierst, und Übergänge ohne eigene Länge "
                          "(Strg+T, aus den Effekten gezogen). Schon importierte Bilder behalten ihre Länge.")));
+
+    // Keys: the big step of the playhead and the big nudge (read at every key press)
+    QFormLayout* keys = group(lay, T("Tasten"));
+    const auto stepRow = [&](const char* name, TimelineOptions::Step step, QSpinBox*& count, QComboBox*& unit) {
+        auto* row = new QWidget;
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        count = new QSpinBox;
+        count->setObjectName(QString(name) + "_count");
+        count->setRange(1, 999);
+        count->setValue(step.count);
+        unit = combo((QString(name) + "_unit").toUtf8().constData(), {{T("Frames"), 0}, {T("Sekunden"), 1}},
+                     step.seconds ? 1 : 0);
+        h->addWidget(count);
+        h->addWidget(unit, 1);
+        return row;
+    };
+    keys->addRow(T("Großer Schritt (Shift+Pfeil)"),
+                 stepRow("timeline_big_step", TimelineOptions::bigStep(), m_stepCount, m_stepUnit));
+    keys->addRow(T("Weit schieben (Shift+, und Shift+.)"),
+                 stepRow("timeline_big_nudge", TimelineOptions::bigNudge(), m_nudgeCount, m_nudgeUnit));
+    keys->addRow(hint(T("Großer Schritt: wie weit die Abspielmarke springt (1 Sekunde; Premiere 5 Frames, Final Cut "
+                        "10 Frames). Weit schieben: wie weit Clips und Schnittpunkte rücken (5 Frames).")));
 
     // Snapping: what a drag snaps to and how near (read on every snap; on/off stays the magnet button, N)
     QFormLayout* snap = group(lay, T("Einrasten"));
@@ -209,8 +234,20 @@ double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value
 
 double TimelineSettingsPage::transitionSeconds() const { return m_transitionSeconds->value(); }
 
+TimelineOptions::Step TimelineSettingsPage::bigStep() const
+{
+    return {m_stepCount->value(), m_stepUnit->currentData().toInt() == 1};
+}
+
+TimelineOptions::Step TimelineSettingsPage::bigNudge() const
+{
+    return {m_nudgeCount->value(), m_nudgeUnit->currentData().toInt() == 1};
+}
+
 void TimelineSettingsPage::store() const
 {
+    if (!(bigStep() == TimelineOptions::bigStep())) TimelineOptions::setBigStep(bigStep());
+    if (!(bigNudge() == TimelineOptions::bigNudge())) TimelineOptions::setBigNudge(bigNudge());
     if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());
     if (std::abs(transitionSeconds() - TimelineOptions::transitionSeconds()) > 1e-9)
         TimelineOptions::setTransitionSeconds(transitionSeconds());

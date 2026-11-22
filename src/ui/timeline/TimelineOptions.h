@@ -58,6 +58,23 @@ double transitionSeconds();
 void setTransitionSeconds(double seconds);
 void applyEditDefaults();
 
+// Step sizes (Settings › Timeline › Keys): the big step of the playhead (Shift+arrow: 1 second, as before; Premiere
+// 5 frames, Final Cut and Avid 10) and the big nudge of clips/edit points (Shift+, and Shift+.: 5 frames, as before).
+// A number of frames or of seconds; read at every key press.
+struct Step {
+    int count = 1;
+    bool seconds = true;
+    bool operator==(const Step&) const = default;
+};
+constexpr Step kDefaultBigStep{1, true};
+constexpr Step kDefaultBigNudge{5, false};
+Step bigStep();
+void setBigStep(Step step);
+Step bigNudge();
+void setBigNudge(Step step);
+inline int stepFrames(Step step, int fps) { return step.seconds ? step.count * fps : step.count; }
+QString stepText(Step step); // "1 Sekunde", "5 Frames" (translated)
+
 // How the app shows times (Settings › Timeline › Display): timecode "00:00:04:12" (default), seconds "0:04.50"
 // (minutes:seconds with hundredths, the UI language's decimal sign; hours in front from one hour on) or frames "112".
 // Shown in the timeline (ruler, corner, durations, trim and drag numbers, In/Out tips), the Studio lanes, the
