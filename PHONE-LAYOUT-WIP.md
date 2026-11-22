@@ -95,9 +95,24 @@
 - Tests: `test_phone_layout` 590, `test_touch_input` 146, `test_window_fit` 74, `test_pool_storage` 200,
   `test_pool_remove` 91, `test_effects` 142 green.
 
+## Real phone (Galaxy A51, 22.11., arm64 APK of 273962f0)
+- Tested by adb taps on the user's A51 (Android 13, 1080x2400 @420 = 411x914, 3-button nav bar), German UI. Shots
+  `android-shots/50..66` (540 wide). Start: window visible after 1.45-1.7 s (`am start -W` TotalTime 0.5-0.65 s).
+  GPU picture engine is off on the real device too ("no OpenGL device") -> CPU picture; playback ran in real time.
+- Works: play/pause, playhead by tapping the ruler, split, Volume (Audio tab, slider drag), speed dialog (200 %), title
+  via Text with the on-screen keyboard (live in the viewer), color sheet, export s264 720p30 8 s in 10 s (~24 fps
+  incl. start): `~/projects/data/schneidi/phone-layout/a51-export.mp4` (h264 1280x720 30 fps 240 frames + AAC, 8.0 s,
+  decodes clean), rotation (landscape full screen, back to portrait), silent restore after a kill (all edits back).
+- Fixed on the phone: clip bar showed 2.5 tools ("Lauts…" cut in the middle: one long label made every button that
+  wide) -> widths grow by one factor from each label; export sheet had no render queue ("Add to Render Queue" rendered
+  nothing) -> queue below the settings in the sheet; "Cancel" in English (APK had no Qt translations) -> qtbase_*.qm
+  of the UI languages in the resources; speed dialog cut its last check box -> dialogs grow to their contents once
+  shown (Android only); color wheels scrolled the page instead of moving -> `touchDrags`; "Lautstärke" stayed
+  checked while the Inspector was opened by Text -> a clip tool is checked only when it opened the panel.
+- Seen, not fixed: the export location field shows the app folder again after a restart (the job keeps /sdcard/Movies);
+  a dialog that grows stays left-anchored (not centered); the export sheet needs dragging up to reach "Alle rendern".
+
 ## Not done yet
-- Real phone (Galaxy A51): not on USB/adb this time (only Termux ssh over WLAN; wireless adb needs pairing on the
-  phone). arm64 APK is built (`android-deps/build610-arm64-phone/schneidi-0.26.0-arm64-v8a.apk`), not run on a device.
 - Landscape: the picture is small now (~70 px).
 - Comp/Studio/Direct pages have no phone form; full-screen viewer is a separate top-level window (not checked).
 - Color sheet has no viewer overlay windows; background job indicator not seen on Android (no proxy run there: the
