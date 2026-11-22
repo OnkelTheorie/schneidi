@@ -477,7 +477,6 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
         b->setCheckable(true);
         b->setFocusPolicy(Qt::NoFocus);
         b->setObjectName(QString("color_palette_%1").arg(i));
-        b->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred); // never cut to "W…s": the page scrolls instead
         paletteGroup->addButton(b, i);
         connect(b, &QToolButton::clicked, this, [this, i] { setPalette(i); });
         m_paletteButtons << b;
@@ -907,6 +906,9 @@ void ColorPanel::setPlayhead(int frame)
 void ColorPanel::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
+    // The palette tabs never cut to "W…s" (a narrow panel scrolls instead): a style sheet's min-width (touch mode)
+    // is an explicit minimum that wins over the text's own size, so their minimum is set from it once polished
+    for (QToolButton* b : m_paletteButtons) b->setMinimumWidth(b->sizeHint().width());
     m_overlay->setVisible(true);
     fitWidth();
     refresh();

@@ -206,6 +206,11 @@ void testWindow(Engine& engine, const QSize& size)
             if (s->isVisible()) ++shown;
         Check::report(shown == 1, "one panel in the sheet", __FILE__, __LINE__, QString("%1: %2").arg(id).arg(shown));
         fits(id);
+        if (QString(id) == "color") // the palette tabs at their full width ("W…s" in touch mode on Android)
+            for (int i = 0; i < 4; ++i)
+                if (auto* b = shell->panel("color")->findChild<QToolButton*>(QString("color_palette_%1").arg(i)); CHECK(b))
+                    Check::report(b->width() >= b->sizeHint().width(), "palette tab not cut", __FILE__, __LINE__,
+                                  QString("%1: %2 < %3").arg(b->text()).arg(b->width()).arg(b->sizeHint().width()));
     }
     // A desktop toggle (menu, key) opens its panel as the sheet, the one before closes
     shell->closeSheet();
