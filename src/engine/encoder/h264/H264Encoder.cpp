@@ -7926,6 +7926,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // CS2 with cuts, BD-rate PSNR-Y / SSIM-Y / VMAF and instructions): +0.05 / +0.02 / +0.09 % for -1.5 / -1.2 /
     // -0.7 / -0.3 %. H264_ESTSPLITT overrides, 1e9 = always both.
     static const double kEstSplitT = devEnv("H264_ESTSPLITT") ? std::atof(devEnv("H264_ESTSPLITT")) : 16.0;
+    // The 16x16 layout is not coded for real where the split's estimate is below kEstWhole times its own (the
+    // split wins nearly every one of those). Measured with 0.9 at QP 22 / 26 / 30 / 34 (three clips, BD-rate
+    // PSNR-Y / SSIM-Y / VMAF and instructions): -0.03 / -0.04 / +0.06 % for -0.4 / -0.4 / -0.3 / -0.1 % (CS2 with
+    // cuts), +0.00 / +0.00 / +0.09 % for -0.1 % (talking head), -0.03 / +0.02 / -0.09 % for -0.2 / -0.1 / -0.2 /
+    // +0.0 % (vertical short). H264_ESTWHOLE overrides, 0 = always coded.
+    static const double kEstWhole = devEnv("H264_ESTWHOLE") ? std::atof(devEnv("H264_ESTWHOLE")) : 0.9;
     const CabacEncoder* liveCe = cabacByTop_[size_t(rowKey_[size_t(mby)])];
     const bool useEst = kRdEst && liveCe && cfg_.effort > 0 && useT8() && !trellisLast && !t8Pre;
     // A layout whose 8x8 plan leaves no luma level is not planned with the 4x4 transform as well
@@ -8012,7 +8018,6 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             return std::min(first, other);
         };
         plan(whole, pw);
-        const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
             const bool one = std::max(pw.j4, pw.j8) < 1e299 && std::abs(pw.j4 - pw.j8) > kEstSplitT * lambda;
             plan(split, ps, &pw, sameQuadrants(predictLayout(whole).lp, predictLayout(split).lp),
@@ -8027,7 +8032,11 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
             };
             const double jw = std::min(pw.j4, pw.j8) + lambda * headBits(whole);
             const double js = std::min(ps.j4, ps.j8) + lambda * headBits(split);
-            if (js < jw * kEstSplit || gStats) {
+            const bool codeSplit = js < jw * kEstSplit || gStats;
+            double costWhole = 1e300;
+            if (!codeSplit || !(js < jw * kEstWhole) || gStats)
+                costWhole = codeLayout(whole, pw);
+            if (codeSplit) {
                 const double costSplit = codeLayout(split, ps);
                 if (gStats) {
                     const double r = js / std::max(1.0, jw);
@@ -8040,6 +8049,8 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
                     }
                 }
             }
+        } else {
+            codeLayout(whole, pw);
         }
         if (gStats) {
             std::lock_guard<std::mutex> l(gStatMutex);
