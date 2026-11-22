@@ -6920,12 +6920,54 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     const int bw = w4 * 4, bh = h4 * 4;
     const WeightParams* const wpR = weightsOf(R);
     const bool weighted = wpR && wpR->luma;
+    // Bits of the vector difference: one table read per component where every position stays inside the table
+    // (positions reach +-range, so the prediction may lie up to 767 away).
+    const bool nearPred = std::abs(pX) < 768 && std::abs(pY) < 768;
+    const uint8_t* const bitsX = kSeBits.bits + 1024 - (nearPred ? pX : 0);
+    const uint8_t* const bitsY = kSeBits.bits + 1024 - (nearPred ? pY : 0);
+    auto mvBits = [&](int vx, int vy) { return nearPred ? bitsX[vx] + bitsY[vy] : seBits(vx - pX) + seBits(vy - pY); };
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+    // The x86-64-v3 build measures every position against a copy of the source block made once per stage
+    // (Satd.h): rows without gaps for the SAD (sadPacked), pair words for the SATD (satdBlockPairsAvx2).
+    // Same numbers as sadBlock / sadPart; weighted references and other block shapes take those.
+    alignas(32) uint8_t srcPacked[256];
+    __m256i srcPairs[16];
+    const bool packed = !weighted && ((bw == 16 && !(bh & 3)) || (bw == 8 && !(bh & 7)));
+    if (packed)
+        sadPackSource(srcBlk, padW_, bw, bh, srcPacked);
+    auto cost = [&](int vx, int vy) {
+        int sad;
+        if (!packed) {
+            sad = sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd);
+        } else if (!useSatd) { // the first stage: full-pel positions only
+            sad = sadPacked(srcPacked, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh);
+        } else {
+            if (gStats)
+                ++gStatCalls[3];
+            // The prediction as in sadPart: full and half positions are one plane, read in place.
+            const int fx = vx & 3, fy = vy & 3;
+            uint8_t buf[256];
+            const uint8_t* pred = buf;
+            int ps = 16;
+            if (!(fx & 1) && !(fy & 1)) {
+                const std::vector<uint8_t>& plane = fy ? (fx ? R.J : R.V) : (fx ? R.B : R.F);
+                pred = plane.data() + size_t(py0 + (vy >> 2) + kMargin) * extW_ + size_t(px0 + (vx >> 2) + kMargin);
+                ps = extW_;
+            } else {
+                mcLumaPlain(R, px0 + (vx >> 2), py0 + (vy >> 2), fx, fy, bw, bh, buf);
+            }
+            sad = satdBlockPairsAvx2(srcPairs, pred, ps, bw, bh);
+        }
+        return double(sad) + lambdaSad * mvBits(vx, vy);
+    };
+#else
     auto cost = [&](int vx, int vy) {
         const int sad = !useSatd && !(vx & 3) && !(vy & 3) && !weighted
                             ? sadBlock(srcBlk, padW_, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh)
                             : sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, useSatd);
-        return double(sad) + lambdaSad * (seBits(vx - pX) + seBits(vy - pY));
+        return double(sad) + lambdaSad * mvBits(vx, vy);
     };
+#endif
     // Start points measured so far (duplicates are common: the skip vector, the neighbours, the prediction).
     int seenX[16], seenY[16], seenCount = 0;
     int bx = 0, by = 0;
@@ -7024,6 +7066,10 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     if (fullPelCost)
         *fullPelCost = best;
     useSatd = true;
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+    if (packed)
+        satdSourcePairsAvx2(srcBlk, padW_, bw, bh, srcPairs);
+#endif
     best = cost(bx, by);
     const bool diamond = gExp & 16; // experiment: 4 instead of 8 neighbours per sub-pel step
     for (int step : {2, 1}) {

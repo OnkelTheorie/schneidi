@@ -422,6 +422,16 @@ bool kernelsMatchReference()
     return true;
 }
 
+#ifdef SCHNEIDI_H264_AVX2
+// The SATD of a block against a source prepared once (the motion search of the x86-64-v3 build).
+__attribute__((target("avx2"))) int satdBlockViaPairs(const uint8_t* a, int strideA, const uint8_t* b, int strideB, int w, int h)
+{
+    __m256i pairs[16];
+    satdSourcePairsAvx2(a, strideA, w, h, pairs);
+    return satdBlockPairsAvx2(pairs, b, strideB, w, h);
+}
+#endif
+
 // The distortion, transform and quantisation kernels (SSE2 / AVX2 / NEON where available) against
 // plain references written out here, on random blocks: the stream must not depend on the platform.
 bool vectorKernelsMatchReference()
@@ -457,6 +467,14 @@ bool vectorKernelsMatchReference()
             satd8x8U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 8) || satd8x8U8Fast(p, sp, q, sq) != satdRef(p, sp, q, sq, 8, 8) ||
             satd16x4U8(p, sp, q, sq) != satdRef(p, sp, q, sq, 16, 4))
             return false;
+#ifdef SCHNEIDI_H264_AVX2
+        if (haveAvx2())
+            for (int w : {8, 16})
+                for (int h : {8, 16})
+                    if (satdBlockAvx2(p, sp, q, sq, w, h) != satdRef(p, sp, q, sq, w, h) ||
+                        satdBlockViaPairs(p, sp, q, sq, w, h) != satdRef(p, sp, q, sq, w, h))
+                        return false;
+#endif
         for (int w : {8, 16})
             for (int h : {2, 4, 8, 16}) {
                 int ref = 0;
@@ -1001,6 +1019,53 @@ void testHints()
     gHints = nullptr;
 }
 
+// Two-pass on a clip with a standing start (one of the rate control cases of main; alone with H264_TEST_STANDING).
+void testStandingStart()
+{
+    // A clip that stands for its first pictures and then moves (a game's menu or a held shot before the
+    // action): the probe that starts the two-pass model takes the queued picture that needs the most as its
+    // P picture, not the second one - a picture that repeats the first says nothing about the moving ones,
+    // the plan began several QP too fine and the first pictures took the bits of the rest.
+    gSynthKind = 2;
+    gSynthStart = 20;
+    EncoderConfig c = config(320, 192, IntraMode::Auto, 120, 2);
+    c.bframes = 3;
+    c.bitrateKbps = 600;
+    c.fps = 60;
+    FirstPass fp(c.width, c.height, 2, c.bframes);
+    for (int t = 0; t < 120; ++t) {
+        const Yuv src = synthFrame(c.width, c.height, t);
+        fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
+    }
+    c.firstPass = fp.stats();
+    size_t bytes = 0;
+    StreamInfo info;
+    CHECK(roundTrip(c, 120, &bytes, -1, nullptr, &info));
+    gSynthKind = 0;
+    gSynthStart = 0;
+    const double kbps = bytes * 8.0 / 2.0 / 1000.0;
+    std::vector<int> late;
+    size_t startBytes = 0;
+    for (size_t i = 0; i < info.types.size(); ++i) {
+        if (info.types[i] == 'P' && info.order[i] >= 60)
+            late.push_back(info.qps[i]);
+        if (info.order[i] < 20)
+            startBytes += info.sizes[i];
+    }
+    CHECK(!late.empty());
+    std::sort(late.begin(), late.end());
+    const int lateQp = late.empty() ? 0 : late[late.size() / 2];
+    // (the I picture is coded 3 below the P QP; the plan's first QP within 4 of where it settles; the rate
+    // within 15 %: these 2 seconds come out below the target with every version - 547 kbit/s on main
+    // 7016fe69, 541 after the CRF and tempo work, 539 with the cheaper trellis - the check is about the probe)
+    if (info.qps[0] < lateQp - 7 || startBytes * 4 > bytes || std::abs(kbps - 600.0) >= 90.0)
+        std::fprintf(stderr, "standing start, two-pass: I QP %d, P QP later %d, %zu of %zu bytes in the standing pictures, %.0f kbit/s\n",
+                     info.qps[0], lateQp, startBytes, bytes, kbps);
+    CHECK(info.qps[0] >= lateQp - 7);
+    CHECK(startBytes * 4 <= bytes);
+    CHECK(std::abs(kbps - 600.0) < 90.0);
+}
+
 int main()
 {
     Check::initEnv();
@@ -1013,6 +1078,11 @@ int main()
     }
     if (std::getenv("H264_TEST_HINTS")) { // only the hints (debugging)
         testHints();
+        return Check::result();
+    }
+    if (std::getenv("H264_TEST_STANDING")) { // only the two-pass clip with a standing start (debugging)
+        gCabac = true;
+        testStandingStart();
         return Check::result();
     }
     if (std::getenv("H264_TEST_VBV")) { // only the VBV cases (debugging)
@@ -1715,50 +1785,7 @@ int main()
                 std::fprintf(stderr, "duplicated pictures, crf: %zu bytes held, %zu moving\n", held, moving);
             CHECK(held < moving);
         }
-        {
-            // A clip that stands for its first pictures and then moves (a game's menu or a held shot before the
-            // action): the probe that starts the two-pass model takes the queued picture that needs the most as its
-            // P picture, not the second one - a picture that repeats the first says nothing about the moving ones,
-            // the plan began several QP too fine and the first pictures took the bits of the rest.
-            gSynthKind = 2;
-            gSynthStart = 20;
-            EncoderConfig c = config(320, 192, IntraMode::Auto, 120, 2);
-            c.bframes = 3;
-            c.bitrateKbps = 600;
-            c.fps = 60;
-            FirstPass fp(c.width, c.height, 2, c.bframes);
-            for (int t = 0; t < 120; ++t) {
-                const Yuv src = synthFrame(c.width, c.height, t);
-                fp.add(Picture{src.y.data(), src.u.data(), src.v.data(), src.w, src.w / 2});
-            }
-            c.firstPass = fp.stats();
-            size_t bytes = 0;
-            StreamInfo info;
-            CHECK(roundTrip(c, 120, &bytes, -1, nullptr, &info));
-            gSynthKind = 0;
-            gSynthStart = 0;
-            const double kbps = bytes * 8.0 / 2.0 / 1000.0;
-            std::vector<int> late;
-            size_t startBytes = 0;
-            for (size_t i = 0; i < info.types.size(); ++i) {
-                if (info.types[i] == 'P' && info.order[i] >= 60)
-                    late.push_back(info.qps[i]);
-                if (info.order[i] < 20)
-                    startBytes += info.sizes[i];
-            }
-            CHECK(!late.empty());
-            std::sort(late.begin(), late.end());
-            const int lateQp = late.empty() ? 0 : late[late.size() / 2];
-            // (the I picture is coded 3 below the P QP; the plan's first QP within 4 of where it settles; the rate
-            // within 15 %: these 2 seconds come out below the target with every version - 547 kbit/s on main
-            // 7016fe69, 541 after the CRF and tempo work, 539 with the cheaper trellis - the check is about the probe)
-            if (info.qps[0] < lateQp - 7 || startBytes * 4 > bytes || std::abs(kbps - 600.0) >= 90.0)
-                std::fprintf(stderr, "standing start, two-pass: I QP %d, P QP later %d, %zu of %zu bytes in the standing pictures, %.0f kbit/s\n",
-                             info.qps[0], lateQp, startBytes, bytes, kbps);
-            CHECK(info.qps[0] >= lateQp - 7);
-            CHECK(startBytes * 4 <= bytes);
-            CHECK(std::abs(kbps - 600.0) < 90.0);
-        }
+        testStandingStart();
         {
             // Rate control with B pictures: one pass, with a first pass, and in chunks
             EncoderConfig c = config(320, 192, IntraMode::Auto, 30, 2);
