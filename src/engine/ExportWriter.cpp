@@ -2280,7 +2280,8 @@ int ExportWriter::ownH264Qp(int crf)
 {
     // Matched by file size on 1080p60 game footage (x264 medium, CRF 18/22/28 against fixed QPs): equal sizes at
     // about CRF + 9, our PSNR then higher (x264 spends bits on psy tuning); one step finer for the lack of psy
-    // tuning. High/medium/small = QP 26/30/36
+    // tuning. High/medium/small = QP 26/30/36. Since 22.11.2026 the export encodes at the level's CRF (option "crf");
+    // this QP is what the prediction against a cap codes its probes at (and the "qp" option of a direct caller)
     return std::clamp(crf + 8, 10, 51);
 }
 
