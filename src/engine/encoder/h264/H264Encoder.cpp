@@ -7038,8 +7038,24 @@ void FrameCoder::codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
 // squared luma error + lambda * coefficient bits, for comparing candidates without reconstructing them.
 // fineLambda >= 0 (trellis path only): the psy candidate's finer quantisation - the coefficients
 // above the lowest frequencies are decided with fineLambda instead of lambda.
+// The 8x8 quadrants (bit b8) in which two 16x16 luma predictions are the same pixels.
+static int sameQuadrants(const uint8_t* a, const uint8_t* b)
+{
+    int quads = 0;
+    for (int b8 = 0; b8 < 4; ++b8) {
+        const int off = (b8 >> 1) * 128 + (b8 & 1) * 8;
+        bool equal = true;
+        for (int y = 0; y < 8 && equal; ++y)
+            equal = std::memcmp(a + off + y * 16, b + off + y * 16, 8) == 0;
+        if (equal)
+            quads |= 1 << b8;
+    }
+    return quads;
+}
+
 void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis,
-                               InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8)
+                               InterResidual& ir, double* est, double fineLambda, const InterResidual* emptyOf8,
+                               const InterResidual* const* same)
 {
     if (gStats)
         ++gStatCalls[t8 ? 0 : 1];
@@ -7061,12 +7077,23 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         return false;
     };
     const bool noteFine = fineLambda < 0 && tPsy.weight > 0;
-    ir.fineMayDiffer = !noteFine; // (not asked for: assume it may)
+    int fineQuads = noteFine ? 0 : 15; // (not asked for: assume it may)
     if (t8) {
         // No residual-group test here: measured with the same rule (RD gain against the block's
         // coded_block_pattern bit), it gains nothing for 8x8 blocks.
         double sum = 0;
         for (int b8 = 0; b8 < 4; ++b8) {
+            if (same && same[b8]) {
+                const InterResidual& from = *same[b8];
+                std::copy(from.levels8[b8], from.levels8[b8] + 64, levels8[b8]);
+                ir.energy8[b8] = from.energy8[b8];
+                ir.j8[b8] = from.j8[b8];
+                const int coded = from.cbpLuma & (1 << b8);
+                sum += coded ? ir.j8[b8] : ir.energy8[b8];
+                cbpLuma |= coded;
+                fineQuads |= from.fineQuads & (1 << b8);
+                continue;
+            }
             const int ox = (b8 & 1) * 8, oy = (b8 >> 1) * 8;
             int res[64];
             {
@@ -7118,8 +7145,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 uint64_t nz = 0;
                 const double j = cabacTrellis(*live, 5, xs, kScale8[size_t(qp)].data(), 64, lambda, 0, scanLv,
                                               est ? &energy : nullptr, &nz, fineLambda, gPsyFineFrom8);
-                if (noteFine && !ir.fineMayDiffer)
-                    ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom8, 64);
+                if (noteFine && reachesHigh(xs, gPsyFineFrom8, 64))
+                    fineQuads |= 1 << b8;
                 const bool any = nz != 0;
                 std::fill(levels8[b8], levels8[b8] + 64, 0);
                 for (uint64_t m = nz; m; m &= m - 1) {
@@ -7128,10 +7155,11 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 }
                 sum += any ? j : energy;
                 ir.energy8[b8] = energy;
+                ir.j8[b8] = j;
                 if (any)
                     cbpLuma |= 1 << b8;
             } else {
-                ir.fineMayDiffer = true;
+                fineQuads = 15;
                 for (int k = 0; k < 64; ++k)
                     if (levels8[b8][k] != 0) {
                         cbpLuma |= 1 << b8;
@@ -7144,6 +7172,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
         if (est && live && cfg_.effort > 0 && trellis)
             *est = sum;
         ir.cbpLuma = cbpLuma;
+        ir.fineQuads = uint8_t(fineQuads);
+        ir.fineMayDiffer = fineQuads != 0;
         return;
     }
     // Pixel error per level unit of a 4x4 coefficient, by QP and scan position.
@@ -7174,13 +7204,21 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
     double gain[16];
     const bool trellisPath = cfg_.effort > 0 && live && trellis;
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
+        const int quad = blkIdx >> 2;
+        if (same && same[quad]) {
+            const InterResidual& from = *same[quad];
+            std::copy(from.levels[blkIdx], from.levels[blkIdx] + 16, levels[blkIdx]); // (zero where its group was dropped)
+            jBlk[blkIdx] = from.j4[blkIdx];
+            eBlk[blkIdx] = from.e4[blkIdx];
+            continue;
+        }
         if (emptyOf8 && est && trellisPath && !((emptyOf8->cbpLuma >> (blkIdx >> 2)) & 1)) {
             // The 8x8 plan left this quadrant without a level: taken as empty here too, at the
             // same squared error (the quadrant's, in equal shares).
             std::fill(levels[blkIdx], levels[blkIdx] + 16, 0);
             gain[blkIdx] = 0.0;
             jBlk[blkIdx] = eBlk[blkIdx] = 0.25 * emptyOf8->energy8[blkIdx >> 2];
-            ir.fineMayDiffer = true; // the finer plan is made without emptyOf8
+            fineQuads |= 1 << quad; // the finer plan is made without emptyOf8
             continue;
         }
         const int ox = kBlkX[blkIdx] * 4, oy = kBlkY[blkIdx] * 4;
@@ -7209,8 +7247,8 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][kZigzag[s]] = std::clamp(scanLv[s], -kMaxLevel, kMaxLevel);
             }
             gain[blkIdx] = nz ? zeroJ - jBlk[blkIdx] : 0.0;
-            if (noteFine && !ir.fineMayDiffer)
-                ir.fineMayDiffer = reachesHigh(xs, gPsyFineFrom4, 16);
+            if (noteFine && !((fineQuads >> quad) & 1) && reachesHigh(xs, gPsyFineFrom4, 16))
+                fineQuads |= 1 << quad;
             if (gDecLog && nz && fineLambda < 0)
                 decLogSample(levels[blkIdx], xs, scale4, lambda, gain[blkIdx]);
             continue;
@@ -7225,22 +7263,27 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
                 levels[blkIdx][i] = quantize(coef[i], kQuantMf[qpMod][posClass(i)], qbits, interOffset);
         }
         gain[blkIdx] = sparseLevelGain(levels[blkIdx], xs, scale4, lambda);
-        ir.fineMayDiffer = true;
+        fineQuads = 15;
     }
     // Residual groups that do not pay for themselves: an 8x8 group is coded only when its blocks
     // together gain more than its own signalling and the context cost of a non-empty group
     // (kGroupBits, fitted by measurement: the coded_block_pattern bit alone would be about one).
     double sum = 0;
     for (int b8 = 0; b8 < 4; ++b8) {
-        const double groupGain = gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3];
-        if (groupGain > lambda * kGroupBits) {
+        if (same && same[b8]) {
+            cbpLuma |= same[b8]->cbpLuma & (1 << b8);
+            fineQuads |= same[b8]->fineQuads & (1 << b8);
+        } else if (gain[b8 * 4] + gain[b8 * 4 + 1] + gain[b8 * 4 + 2] + gain[b8 * 4 + 3] > lambda * kGroupBits) {
             cbpLuma |= 1 << b8; // a group with a positive gain has a level
         } else {
             // (The plan with fineLambda is made without est: its gains count the squared error after the last
             // level twice, so it may keep a group dropped here.)
-            if (noteFine && !ir.fineMayDiffer)
-                for (int k = 0; k < 4 && !ir.fineMayDiffer; ++k)
-                    ir.fineMayDiffer = std::any_of(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, [](int v) { return v != 0; });
+            if (noteFine && !((fineQuads >> b8) & 1))
+                for (int k = 0; k < 4; ++k)
+                    if (std::any_of(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, [](int v) { return v != 0; })) {
+                        fineQuads |= 1 << b8;
+                        break;
+                    }
             for (int k = 0; k < 4; ++k)
                 std::fill(levels[b8 * 4 + k], levels[b8 * 4 + k] + 16, 0);
         }
@@ -7248,9 +7291,14 @@ void FrameCoder::planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, doub
             for (int k = 0; k < 4; ++k)
                 sum += (cbpLuma >> b8) & 1 ? jBlk[b8 * 4 + k] : eBlk[b8 * 4 + k];
     }
-    if (est && trellisPath)
+    if (est && trellisPath) {
         *est = sum;
+        std::copy(jBlk, jBlk + 16, ir.j4);
+        std::copy(eBlk, eBlk + 16, ir.e4);
+    }
     ir.cbpLuma = cbpLuma;
+    ir.fineQuads = uint8_t(fineQuads);
+    ir.fineMayDiffer = fineQuads != 0;
 }
 
 // Whether two plans of the same prediction and transform hold the same levels (then they are the same macroblock).
@@ -7870,20 +7918,30 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     Plan pw, ps;                             // the 16x16 layout's and the split's
     const InterResidual* wonPlan = nullptr;  // the levels of the chosen inter coding, where it came from a plan
     if (useEst) {
-        auto plan = [&](const Choice& c, Plan& p) {
+        // like, likeQuads: a layout planned before and the quadrants (bit b8) it predicts with the same pixels as
+        // this one - the plans of those come out again and are taken from it.
+        auto plan = [&](const Choice& c, Plan& p, const Plan* like = nullptr, int likeQuads = 0) {
             const PredCache& pc = predictLayout(c);
+            const InterResidual* same8[4];
+            const InterResidual* same4[4];
+            for (int q = 0; q < 4; ++q) {
+                const bool take = like && ((likeQuads >> q) & 1);
+                same8[q] = take ? &like->r8 : nullptr;
+                same4[q] = take && like->j4 < 1e299 ? &like->r4 : nullptr;
+            }
             if (lateValid && c.layout == 0) {
                 p.r8 = lateR8;
                 p.j8 = lateJ8;
             } else {
-                planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8);
+                planInterLuma(mbx, mby, pc.lp, qp, lambda, true, true, p.r8, &p.j8, -1.0, nullptr, like ? same8 : nullptr);
             }
             p.j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r8.cbpLuma, true);
             if (kZero8 && p.r8.cbpLuma == 0) {
                 p.j4 = 1e300;
                 return;
             }
-            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, kZeroQuad ? &p.r8 : nullptr);
+            planInterLuma(mbx, mby, pc.lp, qp, lambda, false, true, p.r4, &p.j4, -1.0, kZeroQuad ? &p.r8 : nullptr,
+                          like ? same4 : nullptr);
             p.j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, p.r4.cbpLuma, false);
         };
         auto consider = [&](const Choice& c, bool t8, const Plan& p) {
@@ -7922,7 +7980,7 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
         plan(whole, pw);
         const double costWhole = codeLayout(whole, pw);
         if (split.cost < whole.cost * kSplitTry) {
-            plan(split, ps);
+            plan(split, ps, &pw, sameQuadrants(predictLayout(whole).lp, predictLayout(split).lp));
             // Header bits of both layouts as the CAVLC count (type, references, vector differences).
             auto headBits = [&](const Choice& c) {
                 const Layout& L = kLayouts[c.layout];
@@ -8025,7 +8083,12 @@ bool FrameCoder::encodeMbP(MbOut& result, int mbx, int mby)
     // (Not where the chosen plan has nothing at the positions the finer lambda weighs: it would come out again.)
     if (tPsy.weight > 0 && gPsyFine > 0 && cfg_.effort > 0 && bestPsy > 0 && liveCe && !(wonPlan && !wonPlan->fineMayDiffer)) {
         InterResidual fine;
-        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
+        // (The quadrants of the chosen plan with nothing at those positions come out again.)
+        const InterResidual* same[4];
+        for (int q = 0; q < 4; ++q)
+            same[q] = wonPlan && !((wonPlan->fineQuads >> q) & 1) ? wonPlan : nullptr;
+        planInterLuma(mbx, mby, predictLayout(best).lp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine, nullptr,
+                      wonPlan ? same : nullptr);
         // (Not where the finer plan is the chosen one again - no level changed, or both are empty: the same macroblock.)
         if ((fine.cbpLuma || interBits.syn.cbpLuma) && !(wonPlan && samePlan(fine, *wonPlan, bestT8))) {
             MbOut fineBits;
@@ -8811,13 +8874,28 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         double estMin = estDirect;
         for (int k = 0; k < candCount; ++k)
             estMin = std::min(estMin, cands[k].cost);
-        bool planned[kMaxBCands + 1];
+        bool planned[kMaxBCands + 1], planned4[kMaxBCands + 1];
         for (int which = 0; which <= candCount; ++which) {
             const uint8_t* lp = which ? clp[which - 1] : dlp;
             double j8 = 0, j4 = 1e300;
             planned[which] = !(kBPlanPrune > 0 && (which ? cands[which - 1].cost : estDirect) > kBPlanPrune * estMin);
             if (!planned[which])
                 continue;
+            // The quadrants an earlier candidate predicts with the same pixels: its plans of them come out again.
+            const InterResidual* same8[4] = {};
+            const InterResidual* same4[4] = {};
+            for (int w = 0; w < which; ++w) {
+                if (!planned[w])
+                    continue;
+                const int quads = sameQuadrants(w ? clp[w - 1] : dlp, lp);
+                for (int q = 0; q < 4; ++q)
+                    if ((quads >> q) & 1) {
+                        if (!same8[q])
+                            same8[q] = &r8[w];
+                        if (!same4[q] && planned4[w])
+                            same4[q] = &r4[w];
+                    }
+            }
             if (which == 0 && directPlanned) {
                 r8[0] = directR8;
                 j8 = directJ8;
@@ -8825,11 +8903,13 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 r8[1] = wholeR8;
                 j8 = wholeJ8;
             } else {
-                planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8);
+                planInterLuma(mbx, mby, lp, qp, lambda, true, true, r8[which], &j8, -1.0, nullptr, same8);
             }
             j8 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r8[which].cbpLuma, true);
-            if (!(kZero8B && r8[which].cbpLuma == 0)) {
-                planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr);
+            planned4[which] = !(kZero8B && r8[which].cbpLuma == 0);
+            if (planned4[which]) {
+                planInterLuma(mbx, mby, lp, qp, lambda, false, true, r4[which], &j4, -1.0, kZeroQuadB ? &r8[which] : nullptr,
+                              same4);
                 j4 += lambda * cabacLumaSideBits(*liveCe, mbx, mby, r4[which].cbpLuma, false);
             }
             use8[which] = j8 < j4;
@@ -8903,7 +8983,12 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
         InterResidual fine;
         bool same = wonPlan && !wonPlan->fineMayDiffer; // nothing at the positions the finer lambda weighs
         if (wonPlan && !same) {
-            planInterLuma(mbx, mby, bestWhich ? clp[bestWhich - 1] : dlp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine);
+            // (The quadrants of the chosen plan with nothing at those positions come out again.)
+            const InterResidual* sameQuad[4];
+            for (int q = 0; q < 4; ++q)
+                sameQuad[q] = !((wonPlan->fineQuads >> q) & 1) ? wonPlan : nullptr;
+            planInterLuma(mbx, mby, bestWhich ? clp[bestWhich - 1] : dlp, qp, lambda, bestT8, true, fine, nullptr, lambda * gPsyFine,
+                          nullptr, sameQuad);
             same = samePlan(fine, *wonPlan, bestT8);
         }
         if (!same) {
