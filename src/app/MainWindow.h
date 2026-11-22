@@ -14,6 +14,7 @@
 #include "engine/PreviewResolution.h"
 #include "engine/ProbeCache.h"
 #include "ui/SecondScreen.h"
+#include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
@@ -379,7 +380,9 @@ private:
     void updateViewer();        // scrubber range, In/Out and title of the Viewer
     void jumpToEdit(int direction);
     void jumpToMarker(int direction);
-    void jumpToFrame(int frame);
+    void jumpToFrame(int frame); // pauses, then jumps (AI/live and other programmatic jumps)
+    // A jump key (Home/End, edit points, markers, In/Out): playback after it as the user chose (PlayheadMove)
+    void keyJump(int frame);
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);
@@ -497,6 +500,7 @@ private:
     void blurNames();
 
     Engine* m_engine;
+    PlayheadMove::Gesture m_playheadMove; // a click/drag of the playhead in the ruler, overview strip, Studio lanes
     Project* m_project;
     Selection* m_selection;
     Editor* m_editor;

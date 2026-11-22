@@ -13,6 +13,7 @@
 #include "ui/MediaPool.h"
 #include "ui/FrameView.h"
 #include "ui/ViewerOverlay.h"
+#include "ui/timeline/PlayheadMove.h"
 
 #include <QAction>
 #include <QApplication>
@@ -41,6 +42,7 @@
 class Scrubber : public QWidget {
 public:
     std::function<void(int)> seek;
+    std::function<void()> pressed, released; // around the seeks of one click/drag (PlayheadMove)
 
     explicit Scrubber(QWidget* parent = nullptr) : QWidget(parent)
     {
@@ -114,15 +116,31 @@ protected:
     }
     void mousePressEvent(QMouseEvent* e) override
     {
-        if (e->button() == Qt::LeftButton && seek && m_length > 0) seek(frameAt(e->pos().x()));
+        if (e->button() != Qt::LeftButton || !seek || m_length <= 0) return;
+        m_dragging = true;
+        if (pressed) pressed();
+        seek(frameAt(e->pos().x()));
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
-        if ((e->buttons() & Qt::LeftButton) && seek && m_length > 0) seek(frameAt(e->pos().x()));
+        if (!m_dragging) return;
+        if (!(e->buttons() & Qt::LeftButton)) return finish(); // the release got lost
+        if (seek && m_length > 0) seek(frameAt(e->pos().x()));
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override
+    {
+        if (e->button() == Qt::LeftButton) finish();
+    }
+    void hideEvent(QHideEvent*) override { finish(); }
+    void finish()
+    {
+        if (!std::exchange(m_dragging, false)) return;
+        if (released) released();
     }
 
 private:
     int m_length = 0, m_in = -1, m_out = -1, m_pos = 0;
+    bool m_dragging = false;
     QVector<int> m_markers;
 };
 
@@ -277,10 +295,11 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
             [this](const QString& path, int frame, const QImage& img) { m_trim->setImage(path, frame, img); });
 
     m_scrubber = new Scrubber;
-    m_scrubber->seek = [this](int frame) {
-        if (m_engine->speed() != 0.0) m_engine->pause();
-        m_engine->seek(frame);
-    };
+    m_scrubber->setObjectName("viewer_scrubber");
+    // Playback after the move: the user's choice (PlayheadMove; Standard = stop, as the bar always did)
+    m_scrubber->pressed = [this] { m_scrubMove.begin(m_engine, PlayheadMove::Source::ViewerBar); };
+    m_scrubber->seek = [this](int frame) { m_engine->seek(frame); };
+    m_scrubber->released = [this] { m_scrubMove.end(m_engine); };
 
     m_timecode = new QLabel;
     // Timecode in the recessed field (design language of the mixer)
@@ -300,7 +319,8 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
     auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
 
-    connect(startBtn, &QToolButton::clicked, this, [this] { m_engine->pause(); m_engine->seek(0); });
+    connect(startBtn, &QToolButton::clicked, this,
+            [this] { PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this] { m_engine->seek(0); }); });
     connect(backBtn, &QToolButton::clicked, this, [this] { m_engine->setSpeed(-1.0); });
     connect(m_playBtn, &QToolButton::clicked, m_engine, &Engine::togglePlay);
     connect(fwdBtn, &QToolButton::clicked, this, [this] { m_engine->setSpeed(2.0); });

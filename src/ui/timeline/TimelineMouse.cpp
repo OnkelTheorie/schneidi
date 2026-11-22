@@ -217,6 +217,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         if (marksPress(pos, e->modifiers())) return; // In/Out handles, the range's grip
         m_drag = Drag::Scrub;
         m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        emit playheadMoveStarted();
         emit seekRequested(m_scrubFrame);
         return;
     }
@@ -703,6 +704,13 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if ((m_drag == Drag::Marks && m_markRight) != (e->button() == Qt::RightButton)) return;
     if (e->button() != Qt::LeftButton && e->button() != Qt::RightButton) return;
     m_autoScroll->stop();
+    if (m_drag == Drag::Scrub) { // the playhead let go: playback after the move (PlayheadMove, MainWindow)
+        m_drag = Drag::None;
+        emit playheadMoveFinished();
+        updateHoverCursor(e->position().toPoint());
+        update();
+        return;
+    }
     if (m_drag == Drag::SectionEdge) {
         m_drag = Drag::None;
         m_sectionDrag = -1;

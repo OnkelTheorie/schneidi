@@ -38,6 +38,8 @@ void MainWindow::ensureStudioPage()
         if (m_engine->timelinePositions()) tracks->setPlayhead(f);
     });
     connect(tracks, &StudioTracks::seekRequested, tv, &TimelineView::seekRequested);
+    connect(tracks, &StudioTracks::playheadMoveStarted, tv, &TimelineView::playheadMoveStarted);
+    connect(tracks, &StudioTracks::playheadMoveFinished, tv, &TimelineView::playheadMoveFinished);
 
     StudioTools* tools = m_studioPage->tools();
     tools->setRunner([this](const QString& command, const QJsonObject& args, const QString& undoText) {

@@ -253,7 +253,8 @@ QWidget* SettingsDialog::buildGeneral()
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
 
-    // Timeline: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
+    // Timeline: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live) and what playback
+    // does after the user moved the playhead (PlayheadMove, read at every move)
     auto* timelineBox = new QGroupBox(T("Timeline"));
     auto* tform = new QFormLayout(timelineBox);
     tform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
@@ -266,6 +267,18 @@ QWidget* SettingsDialog::buildGeneral()
     tform->addRow(hint(T("Wo das Mausrad zoomt. Abspielmarke: die rote Linie bleibt stehen, die Timeline wächst um sie "
                          "herum; ist sie gerade nicht zu sehen, zoomt es an der Maus. Tasten zoomen immer an der "
                          "Abspielmarke.")));
+    m_afterSeek = new QComboBox;
+    m_afterSeek->setObjectName("timeline_after_playhead_move");
+    m_afterSeek->addItem(T("Standard"), int(PlayheadMove::Mode::Standard));
+    m_afterSeek->addItem(T("Weiter wie vorher"), int(PlayheadMove::Mode::Continue));
+    m_afterSeek->addItem(T("Anhalten"), int(PlayheadMove::Mode::Stop));
+    m_afterSeek->addItem(T("Abspielen"), int(PlayheadMove::Mode::Play));
+    m_afterSeek->setCurrentIndex(std::max(0, m_afterSeek->findData(int(PlayheadMove::mode()))));
+    tform->addRow(T("Nach dem Bewegen der Abspielmarke"), m_afterSeek);
+    tform->addRow(hint(T("Standard: Klicken und Ziehen in Lineal, Überblick und Studio spielt weiter, wenn es lief; die "
+                         "Leiste unter der Vorschau und Sprungtasten (Pos1/Ende, Schnittpunkte, Marker) halten an. "
+                         "Weiter wie vorher: lief es, spielt es an der neuen Stelle weiter, sonst bleibt es stehen. "
+                         "Abspielen: startet beim Loslassen. Einzelbild-Schritte mit den Pfeiltasten halten immer an.")));
     lay->addWidget(timelineBox);
 
     // Compositing: new nodes from the node search linked at once (default) or only added
@@ -342,6 +355,11 @@ QWidget* SettingsDialog::buildGeneral()
 bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 
 ZoomAnchor::Mode SettingsDialog::zoomAnchor() const { return ZoomAnchor::Mode(m_zoomAnchor->currentData().toInt()); }
+
+PlayheadMove::Mode SettingsDialog::afterPlayheadMove() const
+{
+    return PlayheadMove::Mode(m_afterSeek->currentData().toInt());
+}
 
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {

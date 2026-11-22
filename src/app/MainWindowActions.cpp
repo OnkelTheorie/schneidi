@@ -533,11 +533,10 @@ void MainWindow::buildActions()
             const MediaInfo* m = m_editor->sourceMedia(m_engine->sourcePath());
             const int f = in ? m->markIn : m->markOut;
             if (f < 0) return;
-            m_engine->pause();
-            m_engine->seek(f);
+            PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this, f] { m_engine->seek(f); });
             return;
         }
-        jumpToFrame(in ? m_project->timeline().markIn : m_project->timeline().markOut);
+        keyJump(in ? m_project->timeline().markIn : m_project->timeline().markOut);
     };
     makeAction(markMenu, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [markIn] { markIn(0); });
     makeAction(markMenu, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [markOut] { markOut(0); });
@@ -612,10 +611,13 @@ void MainWindow::buildActions()
     makeAction(play, "second_next", T("1 Sekunde vor"), QKeySequence("Shift+Right"), [this] { stepFrames(m_project->fps()); });
     makeAction(play, "edit_prev", T("Vorheriger Schnittpunkt"), QKeySequence(Qt::Key_Up), [this] { jumpToEdit(-1); });
     makeAction(play, "edit_next", T("Nächster Schnittpunkt"), QKeySequence(Qt::Key_Down), [this] { jumpToEdit(1); });
-    makeAction(play, "go_start", T("Zum Anfang"), QKeySequence(Qt::Key_Home), [this] { m_engine->pause(); m_engine->seek(0); });
+    // Jumps: playback after them as the user chose (PlayheadMove; Standard = stop). Frame/second steps always pause
+    makeAction(play, "go_start", T("Zum Anfang"), QKeySequence(Qt::Key_Home), [this] {
+        PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this] { m_engine->seek(0); });
+    });
     makeAction(play, "go_end", T("Zum Ende"), QKeySequence(Qt::Key_End), [this] {
-        m_engine->pause();
-        m_engine->seek(TimelineOps::endFrame(m_project->timeline()));
+        PlayheadMove::jump(m_engine, PlayheadMove::Source::Key,
+                           [this] { m_engine->seek(TimelineOps::endFrame(m_project->timeline())); });
     });
     // Loop playback in the In/Out range (per session, off at every start; export unaffected): only while a range
     // exists, removing it switches the loop off (nothing loops by accident). No default key.

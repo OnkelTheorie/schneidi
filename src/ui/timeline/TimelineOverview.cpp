@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr int kBandH = 4;      // story sections at the top
@@ -252,6 +253,8 @@ void TimelineOverview::mousePressEvent(QMouseEvent* e)
     case Drag::None: {
         // Outside the rectangle: the playhead goes there and the detail view centres it; holding on drags
         const int frame = std::max(0, int(std::lround(xToFrame(x))));
+        m_movedPlayhead = true;
+        emit playheadMoveStarted();
         emit seekRequested(frame);
         if (len > 0) {
             const double left = std::max(0.0, frame - len / 2); // near the end it may reach past it (the view can)
@@ -259,7 +262,11 @@ void TimelineOverview::mousePressEvent(QMouseEvent* e)
             emit scrollRequested(left);
         }
         m_drag = len > 0 ? Drag::Move : Drag::None;
-        if (m_drag == Drag::None) m_dragScale = 0;
+        if (m_drag == Drag::None) {
+            m_dragScale = 0;
+            m_movedPlayhead = false;
+            emit playheadMoveFinished(); // nothing to drag: the click is over
+        }
         return;
     }
     }
@@ -312,12 +319,17 @@ void TimelineOverview::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton || m_drag == Drag::None) return QWidget::mouseReleaseEvent(e);
     // A click inside the rectangle (no drag): only the playhead moves, that frame is in view already
-    if (!m_moved && m_pressInside) emit seekRequested(std::max(0, int(std::lround(xToFrame(e->position().x())))));
+    if (!m_moved && m_pressInside) {
+        m_movedPlayhead = true;
+        emit playheadMoveStarted();
+        emit seekRequested(std::max(0, int(std::lround(xToFrame(e->position().x())))));
+    }
     endDrag();
 }
 
 void TimelineOverview::endDrag()
 {
+    if (std::exchange(m_movedPlayhead, false)) emit playheadMoveFinished();
     m_drag = Drag::None;
     m_dragScale = 0;
     setCursor(Qt::ArrowCursor);

@@ -177,6 +177,8 @@ public:
     void togglePlay();
     void setSpeed(double speed);
     double speed() const { return m_speed; }
+    // At (or behind) the last frame of what is shown: playing forward from here would start from the front
+    bool atPlayEnd() const { return atEnd(1.0); }
     // Paused: an edit handed over whose picture is not shown yet (editShown() follows)
     bool editPending() const { return m_editAt.load() != 0; }
     // The picture of an edit while paused was just shown: when the edit reached the engine and when its picture was
