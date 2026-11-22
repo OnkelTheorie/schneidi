@@ -2,7 +2,7 @@
 // Key presets for people coming from other editors: Premiere Pro and Final Cut Pro on schneidi's actions (keys schneidi's
 // own actions lose when the preset takes them, second monitor reachable in every set), the preset stored in
 // keybindings.json, a Premiere .kys file (in the layout and key codes Premiere saves) imported as a preset of its own ("9 taken, 3 unknown"), the key settings
-// dialog (preset combo, import) and the key trainer (rounds, hits, skip, its keys never fire window actions). The dialog
+// dialog (preset combo, import, the mouse wheel rows with quick sets) and the key trainer (rounds, hits, skip, its keys never fire window actions). The dialog
 // and the trainer in English and Russian with a 1.25x font: every button's text fits.
 // KEY_PRESETS_DUMP=<dir> saves screenshots.
 #include "check.h"
@@ -838,6 +838,56 @@ void testLanguages(Engine& engine)
 
 } // namespace
 
+// The mouse wheel in the key bindings dialog: one action per modifier, quick sets like other editors (the keys stay),
+// takes effect at once and lands in keybindings.json; a whole key preset brings its own wheel again
+void testWheelBindings()
+{
+    InputBindings& b = InputBindings::instance();
+    b.applyPreset("standard");
+    const QString split = in("split").value(0);
+    KeyBindingsDialog dlg;
+    dlg.show();
+    auto* preset = dlg.findChild<QComboBox*>("wheel_preset");
+    auto* plain = dlg.findChild<QComboBox*>("wheel_none");
+    auto* ctrl = dlg.findChild<QComboBox*>("wheel_ctrl");
+    if (!CHECK(preset && plain && ctrl && dlg.findChild<QComboBox*>("wheel_shift") && dlg.findChild<QComboBox*>("wheel_alt")))
+        return;
+    // Standard: what schneidi did before (wheel up/down, Ctrl sideways, Alt zoom, Shift track height)
+    CHECK_EQ(preset->currentData().toString(), QString("standard"));
+    CHECK(WheelAction(plain->currentData().toInt()) == WheelAction::ScrollVertical);
+    CHECK(WheelAction(ctrl->currentData().toInt()) == WheelAction::ScrollHorizontal);
+    CHECK(b.wheelAction(Qt::AltModifier) == WheelAction::Zoom);
+    // Quick set Vegas: the wheel zooms at once, saved, the rows show it, the keys stay
+    preset->setCurrentIndex(preset->findData("vegas"));
+    emit preset->activated(preset->currentIndex());
+    CHECK(b.wheelAction(Qt::NoModifier) == WheelAction::Zoom);
+    CHECK(b.wheelAction(Qt::ShiftModifier) == WheelAction::ScrollVertical);
+    CHECK(WheelAction(plain->currentData().toInt()) == WheelAction::Zoom);
+    CHECK_EQ(in("split").value(0), split);
+    const auto stored = [&](const char* mod) {
+        QFile f(b.filePath());
+        f.open(QIODevice::ReadOnly);
+        return QJsonDocument::fromJson(f.readAll()).object().value("wheel").toObject().value(mod).toString();
+    };
+    CHECK_EQ(stored("none"), QString("zoom"));
+    // Each quick set is distinct and the dialog finds it again
+    for (const QString& id : InputBindings::wheelPresetIds()) {
+        b.applyWheelPreset(id);
+        CHECK_EQ(b.currentWheelPreset(), id);
+    }
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::Zoom); // capcut
+    // One row by hand: Ctrl+wheel = nothing -> "own"
+    ctrl->setCurrentIndex(ctrl->findData(int(WheelAction::None)));
+    emit ctrl->activated(ctrl->currentIndex());
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::None);
+    CHECK_EQ(stored("ctrl"), QString("none"));
+    CHECK(b.currentWheelPreset().isEmpty());
+    CHECK(preset->currentData().toString().isEmpty());
+    // A whole key preset brings its wheel back
+    b.applyPreset("standard");
+    CHECK_EQ(b.currentWheelPreset(), QString("standard"));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -861,6 +911,7 @@ int main(int argc, char** argv)
         w.activateWindow();
         QApplication::processEvents();
         testPresets();
+        testWheelBindings();
         testImport();
         testKysContexts();
         testDuplicates();
