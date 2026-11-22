@@ -567,7 +567,7 @@ void MainWindow::phoneAdoptBackgroundJobs()
     shellHome(m_backgroundJobs); // (made after the shell at the start: its desktop place is the page bar)
     m_backgroundJobs->setParent(m_phoneTopBar);
     m_backgroundJobs->setVisible(!hidden);
-    phoneArrangeTopBar(m_phone->landscape());
+    phoneArrangeTopBar(m_phone->landscape() && !m_phone->tablet()); // (the rail's head only on a phone in landscape)
     // A tap: what runs, in full (a phone has no tooltips)
     connect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this,
             [this](const QString& text) { m_viewer->showNotice(text, 4000); });

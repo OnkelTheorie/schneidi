@@ -144,6 +144,11 @@ int main(int argc, char** argv)
             CHECK(shell->tablet() && shell->sheet() == "inspector");
             CHECK(shell->isAncestorOf(panels[0]) && shell->isAncestorOf(panels[1]));
             CHECK(!w.menuBar()->isVisible());
+            // The top bar across, in one row (not the phone's rail head)
+            QWidget* menu = shell->findChild<QWidget*>("phoneMenu");
+            QWidget* undo = shell->findChild<QWidget*>("phoneUndo");
+            if (CHECK(menu && undo))
+                CHECK(menu->mapTo(&w, menu->rect().center()).y() == undo->mapTo(&w, undo->rect().center()).y());
         }
         same("tablet");
         // A phone's width: the phone form; panels opened as sheets
