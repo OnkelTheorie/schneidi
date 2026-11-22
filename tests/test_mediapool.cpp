@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test Media Pool: bins (create, rename, move, remove), clip colors, flags - undo, save/load,
-// broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
+// broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin, a still's default length)
 #include "check.h"
 
+#include "core/EditDefaults.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include <QEventLoop>
+#include <cmath>
+#include <QImage>
 #include <QThread>
 #include <QThreadPool>
 
@@ -263,6 +266,22 @@ int main(int argc, char** argv)
         app.processEvents();
         CHECK_EQ(pool.currentBin(), 0);
         CHECK(!pool.grab().isNull());
+        // A still imported: as long as the default for new stills (5 s, or the user's choice via EditDefaults);
+        // one imported before keeps its length
+        QTemporaryDir pics;
+        QImage pic(32, 18, QImage::Format_RGB32);
+        pic.fill(Qt::red);
+        const QString first = QDir(pics.path()).filePath("first.png"), second = QDir(pics.path()).filePath("second.png");
+        CHECK(pic.save(first) && pic.save(second));
+        pool.importFiles({first});
+        const MediaInfo* m1 = p.mediaInfo(first);
+        if (CHECK(m1 && m1->isImage)) CHECK_EQ(m1->length, 5 * p.fps());
+        EditDefaults::setStillSeconds(2.5);
+        pool.importFiles({second});
+        const MediaInfo* m2 = p.mediaInfo(second);
+        if (CHECK(m2)) CHECK_EQ(m2->length, int(std::lround(2.5 * p.fps())));
+        if (CHECK(p.mediaInfo(first))) CHECK_EQ(p.mediaInfo(first)->length, 5 * p.fps());
+        EditDefaults::setStillSeconds(EditDefaults::kStillSeconds);
     }
 
     // --- Folder including subfolders as bins (Media Storage/drop): empty and media-less folders without bin, one undo step

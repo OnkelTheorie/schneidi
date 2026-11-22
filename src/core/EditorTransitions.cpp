@@ -2,6 +2,7 @@
 // Editor: transitions.
 #include "core/Editor.h"
 #include "core/EditorDetail.h"
+#include "core/EditDefaults.h"
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -174,7 +175,7 @@ std::optional<Timeline> Editor::withTransitions(int frame, std::optional<Transit
 
     // Start from a copy and bring it to the fitting length
     Timeline tl = cur;
-    const int length = wantedLength > 0 ? wantedLength : std::max(1, m_project->fps()); // default 1 s
+    const int length = wantedLength > 0 ? wantedLength : EditDefaults::transitionFrames(m_project->fps()); // 1 s or the user's
     QSet<int> touched;
     QVector<QPair<int, int>> cuts; // dissolves (clip ending | clip starting at the cut)
     for (const EdgeRef& e : edges) {
@@ -289,7 +290,7 @@ std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const 
     if ((leftId && !l) || (rightId && !r) || (!l && !r)) return std::nullopt;
     if ((l && tl.track(lRef).locked) || (r && tl.track(rRef).locked)) return std::nullopt; // locked track
     if (l && r && (!(lRef == rRef) || l->end() != r->start)) return std::nullopt; // no common cut
-    const int length = std::max(1, m_project->fps()); // default 1 s like DaVinci
+    const int length = EditDefaults::transitionFrames(m_project->fps()); // 1 s by default (or the user's choice)
     if (l) l->transOut = length, l->transOutStyle = style;
     if (r) r->transIn = length, r->transInStyle = style;
     if (l && r) l->transOutAlone = r->transInAlone = false; // dragged onto the cut: dissolve

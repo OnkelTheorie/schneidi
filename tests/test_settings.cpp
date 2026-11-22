@@ -14,6 +14,7 @@
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "app/TimelineSettingsPage.h"
+#include "core/EditDefaults.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
@@ -338,6 +339,32 @@ void testTimelineTab()
     // Follow the playhead while playing: off, page, centre (off by default)
     checkTimelineChoice("timeline_follow_playback", 3, int(TimelineOptions::Follow::Off),
                         [] { return int(TimelineOptions::follow()); });
+    // New clips: still 5 s and transition 1 s by default; stored, shown again, the core gets them on apply
+    {
+        QSettings().remove("timeline");
+        SettingsDialog dlg(AiSettings{});
+        auto* still = dlg.timelinePage()->findChild<QDoubleSpinBox*>("timeline_still_seconds");
+        auto* trans = dlg.timelinePage()->findChild<QDoubleSpinBox*>("timeline_transition_seconds");
+        if (CHECK(still && trans)) {
+            CHECK_EQ(still->value(), 5.0);
+            CHECK_EQ(trans->value(), 1.0);
+            dlg.timelinePage()->store();
+            CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+            still->setValue(3);
+            trans->setValue(0.5);
+            dlg.timelinePage()->store();
+            CHECK_EQ(TimelineOptions::stillSeconds(), 3.0);
+            CHECK_EQ(TimelineOptions::transitionSeconds(), 0.5);
+            SettingsDialog again(AiSettings{});
+            CHECK_EQ(again.timelinePage()->findChild<QDoubleSpinBox*>("timeline_still_seconds")->value(), 3.0);
+            TimelineOptions::applyEditDefaults();
+            CHECK_EQ(EditDefaults::stillSeconds(), 3.0);
+            CHECK_EQ(EditDefaults::transitionFrames(25), 13);
+            QSettings().remove("timeline");
+            TimelineOptions::applyEditDefaults();
+            CHECK_EQ(EditDefaults::stillSeconds(), 5.0);
+        }
+    }
     // Space while playing: stop where it is (default) or go back to the start position
     checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
     // A click into the tracks: only select (default) or set the playhead too

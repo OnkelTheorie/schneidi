@@ -6,6 +6,8 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <cmath>
 #include <QGridLayout>
 #include <tuple>
 #include <QFormLayout>
@@ -77,6 +79,25 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     view->addRow(hint(T("Wo das Mausrad zoomt. Abspielmarke: die rote Linie bleibt stehen, die Timeline wächst um sie "
                         "herum; ist sie gerade nicht zu sehen, zoomt es an der Maus. Tasten zoomen immer an der "
                         "Abspielmarke.")));
+
+    // New clips: default lengths of stills and transitions (EditDefaults, applied after OK)
+    QFormLayout* fresh = group(lay, T("Neue Clips"));
+    const auto secondsBox = [](const char* name, double min, double max, double value) {
+        auto* box = new QDoubleSpinBox;
+        box->setObjectName(name);
+        box->setRange(min, max);
+        box->setDecimals(2);
+        box->setSingleStep(0.5);
+        box->setSuffix(" s");
+        box->setValue(value);
+        return box;
+    };
+    m_stillSeconds = secondsBox("timeline_still_seconds", 0.1, 600, TimelineOptions::stillSeconds());
+    fresh->addRow(T("Standbilder"), m_stillSeconds);
+    m_transitionSeconds = secondsBox("timeline_transition_seconds", 0.04, 30, TimelineOptions::transitionSeconds());
+    fresh->addRow(T("Übergänge"), m_transitionSeconds);
+    fresh->addRow(hint(T("So lang werden Bilder, die du ab jetzt importierst, und Übergänge ohne eigene Länge "
+                         "(Strg+T, aus den Effekten gezogen). Schon importierte Bilder behalten ihre Länge.")));
 
     // Snapping: what a drag snaps to and how near (read on every snap; on/off stays the magnet button, N)
     QFormLayout* snap = group(lay, T("Einrasten"));
@@ -184,8 +205,15 @@ TimelineOptions::SnapReach TimelineSettingsPage::snapReach() const
 
 bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
 
+double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value(); }
+
+double TimelineSettingsPage::transitionSeconds() const { return m_transitionSeconds->value(); }
+
 void TimelineSettingsPage::store() const
 {
+    if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());
+    if (std::abs(transitionSeconds() - TimelineOptions::transitionSeconds()) > 1e-9)
+        TimelineOptions::setTransitionSeconds(transitionSeconds());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());

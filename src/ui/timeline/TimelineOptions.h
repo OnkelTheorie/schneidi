@@ -50,6 +50,14 @@ void setSnapReach(SnapReach reach);
 int snapPixels(SnapReach reach);
 inline int snapPixels() { return snapPixels(snapReach()); }
 
+// Default lengths (Settings › Timeline › New clips): stills imported from now on (5 s) and transitions added without
+// a length (1 s). applyEditDefaults() hands the stored choice to the core (EditDefaults): at the start and after OK.
+double stillSeconds();
+void setStillSeconds(double seconds);
+double transitionSeconds();
+void setTransitionSeconds(double seconds);
+void applyEditDefaults();
+
 // How the app shows times (Settings › Timeline › Display): timecode "00:00:04:12" (default), seconds "0:04.50"
 // (minutes:seconds with hundredths, the UI language's decimal sign; hours in front from one hour on) or frames "112".
 // Shown in the timeline (ruler, corner, durations, trim and drag numbers, In/Out tips), the Studio lanes, the

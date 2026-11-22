@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/timeline/TimelineOptions.h"
 
+#include "core/EditDefaults.h"
 #include "core/I18n.h"
 #include "core/Timecode.h"
 
@@ -67,6 +68,30 @@ void setSnapReach(SnapReach reach)
 }
 
 int snapPixels(SnapReach reach) { return reach == SnapReach::Small ? 4 : reach == SnapReach::Large ? 14 : 8; }
+
+namespace {
+double seconds(const char* key, double def)
+{
+    const double v = QSettings().value(key, def).toDouble();
+    return v > 0 ? v : def;
+}
+void storeSeconds(const char* key, double v, double def)
+{
+    if (std::abs(v - def) < 1e-9) QSettings().remove(key);
+    else QSettings().setValue(key, v);
+}
+} // namespace
+
+double stillSeconds() { return seconds("timeline/stillSeconds", EditDefaults::kStillSeconds); }
+void setStillSeconds(double v) { storeSeconds("timeline/stillSeconds", v, EditDefaults::kStillSeconds); }
+double transitionSeconds() { return seconds("timeline/transitionSeconds", EditDefaults::kTransitionSeconds); }
+void setTransitionSeconds(double v) { storeSeconds("timeline/transitionSeconds", v, EditDefaults::kTransitionSeconds); }
+
+void applyEditDefaults()
+{
+    EditDefaults::setStillSeconds(stillSeconds());
+    EditDefaults::setTransitionSeconds(transitionSeconds());
+}
 
 TimeFormat timeFormat()
 {

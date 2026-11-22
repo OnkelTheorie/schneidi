@@ -174,6 +174,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
     src/core/ChannelLayout.h      src/core/ChannelLayout.cpp
     src/core/Project.h            src/core/Project.cpp
+    src/core/EditDefaults.h       src/core/EditDefaults.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h
     src/core/TaskProgress.h

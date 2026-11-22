@@ -9,6 +9,7 @@
 #include "core/MediaAspect.h"
 #include "core/Project.h"
 #include "core/ProxyChoice.h"
+#include "core/EditDefaults.h"
 #include "core/Timecode.h"
 #include "ui/timeline/TimelineOptions.h"
 #include "core/TimelineOps.h"
@@ -765,6 +766,7 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
         }
         MediaInfo info = r.info;
         info.bin = bin;
+        if (info.isImage) info.length = EditDefaults::stillFrames(m_project->fps()); // the user's default (probe: 5 s)
         m_project->addMedia(info);
         if (added) ++*added;
     }

@@ -11,6 +11,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QFormLayout;
 
 // Settings › Timeline: how the timelines behave where editors differ (wheel zoom anchor, playback after a playhead
@@ -28,6 +29,8 @@ public:
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
+    double stillSeconds() const;                    // default length of new stills
+    double transitionSeconds() const;               // default length of new transitions
     TimelineOptions::SnapReach snapReach() const;
 
     void store() const; // every choice into QSettings (only what changed)
@@ -41,4 +44,6 @@ private:
     QComboBox* m_timeFormat = nullptr;
     QVector<QPair<int, QCheckBox*>> m_snapTargets;
     QComboBox* m_snapReach = nullptr;
+    QDoubleSpinBox* m_stillSeconds = nullptr;
+    QDoubleSpinBox* m_transitionSeconds = nullptr;
 };

@@ -305,7 +305,7 @@ public:
     // A cut without spare material on a needed side gets none (DaVinci "insufficient handles"); trimClips =
     // ripple-trim the clips there first (with linked partners, like the trim mode) so it fits. One undo step.
     // Returns the cuts (left, right clip id) that got no transition for lack of material.
-    // length > 0: the wanted length instead of the default 1 s, align: the alignment of new and existing ones (both
+    // length > 0: the wanted length instead of the default (1 s, EditDefaults), align: the alignment of new and existing ones (both
     // decide how much trimClips takes off)
     QVector<QPair<int, int>> addTransitions(int frame, std::optional<TransitionStyle> style = {},
                                             std::optional<TrackKind> onlyKind = {}, bool trimClips = false,

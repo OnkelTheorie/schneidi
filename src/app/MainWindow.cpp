@@ -300,6 +300,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
+    TimelineOptions::applyEditDefaults(); // the user's still and transition lengths (Settings › Timeline)
     // Snapping on/off is remembered across starts (test runs leave the settings alone)
     connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
         if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);

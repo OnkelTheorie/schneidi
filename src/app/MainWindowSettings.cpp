@@ -20,6 +20,7 @@
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "engine/Background.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/Viewer.h"
@@ -115,6 +116,7 @@ void MainWindow::settingsDialog(int tab)
 
 void MainWindow::applyTimelineOptions()
 {
+    TimelineOptions::applyEditDefaults(); // still and transition lengths for the core
     m_timeline->view()->update();
     m_timeline->overview()->update();
     if (m_studioPage) m_studioPage->tracks()->update();
