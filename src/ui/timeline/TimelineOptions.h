@@ -17,4 +17,10 @@ enum class Follow { Off, Page, Center };
 Follow follow();
 void setFollow(Follow follow);
 
+// A click (no drag) into the tracks - an empty spot or a clip - also sets the playhead there, like Vegas, Final Cut,
+// Avid, Shotcut, CapCut (Settings › Timeline › Mouse). Off (default): it only selects (a clip, a gap); the playhead
+// moves through the ruler, like Premiere, DaVinci, Kdenlive. A drag stays a rubber band resp. a move either way.
+bool clickSetsPlayhead();
+void setClickSetsPlayhead(bool on);
+
 } // namespace TimelineOptions

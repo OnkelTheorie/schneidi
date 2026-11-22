@@ -489,6 +489,7 @@ private:
     int m_followMode = 0;         // TimelineOptions::Follow at the play start
     void followPlayhead(int frame); // turn the view along with the playing playhead (only from setPlayhead)
     void stopFollowing() { m_following = false; } // the user moved the view
+    void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 
     Drag m_drag = Drag::None;
     QSet<int> m_retimeClips; // clips with visible retime controls

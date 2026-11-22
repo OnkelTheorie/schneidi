@@ -5,7 +5,8 @@
 // put (ZoomAnchor: the mouse by default, the visible playhead by choice); a playhead move in the ruler is framed by
 // playheadMoveStarted/-Finished (press ... release) for the "after moving the playhead" rule (PlayheadMove), whose
 // table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
-// the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms.
+// the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms;
+// a click into the tracks sets the playhead by choice.
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -894,6 +895,51 @@ void testFollowPlayback()
     f.tv.setPlaying(0);
 }
 
+// A click into the tracks sets the playhead only by choice (TimelineOptions::clickSetsPlayhead): on an empty spot
+// and on a clip, framed like a ruler click; a drag stays a rubber band / move; the gap is still picked
+void testClickSetsPlayhead()
+{
+    QSettings().remove("timeline");
+    CHECK(!TimelineOptions::clickSetsPlayhead());
+    Fixture f;
+    QStringList log;
+    QObject::connect(&f.tv, &TimelineView::playheadMoveStarted, [&] { log << "start"; });
+    QObject::connect(&f.tv, &TimelineView::seekRequested, [&](int frame) { log << QString("seek %1").arg(frame); });
+    QObject::connect(&f.tv, &TimelineView::playheadMoveFinished, [&] { log << "finish"; });
+    f.tv.setZoomAndScroll(2.0, 0, 0);
+    const auto click = [&](int frame, int y) {
+        mouse(f.tv, QEvent::MouseButtonPress, {f.x(frame), y}, Qt::LeftButton);
+        mouse(f.tv, QEvent::MouseButtonRelease, {f.x(frame), y}, Qt::NoButton);
+    };
+    // Default: only select
+    click(30, 120);
+    CHECK(f.sel.ids().contains(1));
+    click(130, 120);
+    CHECK(log.isEmpty());
+    // By choice: an empty spot (the gap is picked as before) and a clip (selected) set the playhead
+    TimelineOptions::setClickSetsPlayhead(true);
+    CHECK(TimelineOptions::clickSetsPlayhead());
+    click(130, 120);
+    CHECK(log == QStringList({"start", "seek 130", "finish"}));
+    CHECK(f.tv.hasGap());
+    log.clear();
+    click(30, 120);
+    CHECK(log == QStringList({"start", "seek 30", "finish"}));
+    CHECK(f.sel.ids().contains(1));
+    log.clear();
+    // Drags: the rubber band selects, a clip moves - no playhead move
+    drag(f.tv, {f.x(130), 40}, {f.x(95), 120});
+    CHECK(f.sel.ids() == (QSet<int>{1, 3}));
+    drag(f.tv, {f.x(160), 120}, {f.x(180), 120});
+    CHECK_EQ(f.project.timeline().video[0].clips[1].start, 170);
+    CHECK(log.isEmpty());
+    // Core rule: zoom and scroll stay
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    CHECK_EQ(f.tv.view().pxPerFrame, 2.0);
+    TimelineOptions::setClickSetsPlayhead(false);
+    CHECK(!QSettings().contains("timeline/clickSetsPlayhead"));
+}
+
 void testPlayheadMoveRule()
 {
     using PlayheadMove::Mode, PlayheadMove::Source, PlayheadMove::playsAfter;
@@ -984,6 +1030,7 @@ int main(int argc, char** argv)
     testWheelZoomAnchor();
     testWheelSideways();
     testFollowPlayback();
+    testClickSetsPlayhead();
     testPlayheadMoveRule();
     testPlayheadMoveSignals();
     return Check::result();

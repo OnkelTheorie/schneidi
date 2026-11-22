@@ -30,4 +30,8 @@ void setFollow(Follow follow)
     store("timeline/followPlayback", follow == Follow::Page ? "page" : "center", follow == Follow::Off);
 }
 
+bool clickSetsPlayhead() { return QSettings().value("timeline/clickSetsPlayhead").toBool(); }
+
+void setClickSetsPlayhead(bool on) { store("timeline/clickSetsPlayhead", "true", !on); }
+
 } // namespace TimelineOptions

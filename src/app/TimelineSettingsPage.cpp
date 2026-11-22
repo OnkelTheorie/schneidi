@@ -82,6 +82,16 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                         "Weiter wie vorher: lief es, spielt es an der neuen Stelle weiter, sonst bleibt es stehen. "
                         "Abspielen: startet beim Loslassen. Einzelbild-Schritte mit den Pfeiltasten halten immer an.")));
 
+    // Mouse: what a click into the tracks does (read at every click)
+    QFormLayout* mouse = group(lay, T("Maus"));
+    m_click = combo("timeline_click_sets_playhead",
+                    {{T("Nur auswählen"), 0}, {T("Auswählen und Abspielmarke setzen"), 1}},
+                    TimelineOptions::clickSetsPlayhead() ? 1 : 0);
+    mouse->addRow(T("Klick in die Spuren"), m_click);
+    mouse->addRow(hint(T("Nur auswählen: die Abspielmarke setzt du im Lineal. Abspielmarke setzen: ein Klick auf einen "
+                         "Clip oder eine leere Stelle setzt sie auch dorthin (wie in Vegas, Final Cut, Shotcut, "
+                         "CapCut). Ziehen wählt weiter mit dem Rahmen aus bzw. verschiebt.")));
+
     lay->addStretch(1);
 }
 
@@ -97,8 +107,11 @@ TimelineOptions::Follow TimelineSettingsPage::follow() const
     return TimelineOptions::Follow(m_follow->currentData().toInt());
 }
 
+bool TimelineSettingsPage::clickSetsPlayhead() const { return m_click->currentData().toInt() == 1; }
+
 void TimelineSettingsPage::store() const
 {
+    if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());
     if (zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(zoomAnchor());
     if (afterPlayheadMove() != PlayheadMove::mode()) PlayheadMove::setMode(afterPlayheadMove());
