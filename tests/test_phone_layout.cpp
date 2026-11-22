@@ -746,6 +746,32 @@ int main(int argc, char** argv)
     Touch::installKineticScrolling(&app); // (main.cpp: every scroll area takes a finger)
     testToolBarSwipe(engine);
     testGallery(engine);
+    // The phone's timeline: centred playhead without the sideways scrollbar, hold-to-move and the magnetic main track
+    // on by default; the settings switch them (the desktop never has them)
+    {
+        MainWindow w(&engine);
+        w.disableAutosave();
+        w.enablePhoneLayout();
+        w.resize(411, 590);
+        w.show();
+        settle();
+        TimelineView* view = w.findChild<TimelineView*>();
+        CHECK(view->centerPlayhead() && view->holdToMove() && view->magneticMain());
+        bool barShown = false;
+        for (QScrollBar* b : w.findChild<TimelinePanel*>()->findChildren<QScrollBar*>())
+            if (b->orientation() == Qt::Horizontal && b->isVisible() && !qobject_cast<QAbstractScrollArea*>(b->parentWidget()->parentWidget()))
+                barShown = true;
+        CHECK(!barShown);
+        QSettings().setValue("timeline/magneticMain", false);
+        QSettings().setValue("timeline/clipDrag", "instant");
+        w.setLayoutForm(MainWindow::LayoutForm::Desktop);
+        w.setLayoutForm(MainWindow::LayoutForm::Phone);
+        CHECK(!view->magneticMain() && !view->holdToMove());
+        w.setLayoutForm(MainWindow::LayoutForm::Desktop);
+        CHECK(!view->magneticMain() && !view->centerPlayhead());
+        QSettings().remove("timeline/magneticMain");
+        QSettings().remove("timeline/clipDrag");
+    }
     testWindow(engine, {411, 914});
     testWindow(engine, {914, 411});
     // As on a phone: touch mode (larger controls) and the app's style sheet with it

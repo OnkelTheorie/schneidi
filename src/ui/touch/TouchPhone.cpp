@@ -9,6 +9,11 @@
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDialog>
+#ifdef Q_OS_ANDROID
+#include <QCoreApplication>
+#include <QJniEnvironment>
+#include <QJniObject>
+#endif
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
 #include <QInputMethod>
@@ -211,5 +216,27 @@ protected:
 } // namespace
 
 void installDialogFit(QApplication* app) { app->installEventFilter(new DialogFit(app)); }
+
+namespace {
+int g_ticks = 0;
+} // namespace
+
+int tickCount() { return g_ticks; }
+
+void tick()
+{
+    ++g_ticks;
+#ifdef Q_OS_ANDROID
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([] {
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniEnvironment env;
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        if (env.checkAndClearExceptions() || !window.isValid()) return;
+        QJniObject view = window.callObjectMethod("getDecorView", "()Landroid/view/View;");
+        if (view.isValid()) view.callMethod<jboolean>("performHapticFeedback", "(I)Z", jint(4)); // CLOCK_TICK
+        env.checkAndClearExceptions();
+    });
+#endif
+}
 
 } // namespace Touch

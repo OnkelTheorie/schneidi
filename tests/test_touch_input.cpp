@@ -776,6 +776,7 @@ void testFingerPan()
 {
     Fixture f;
     f.tv->setFingerPans(true);
+    f.tv->setHoldToMove(false); // ("Sofort": a finger on a clip moves it at once)
     int seeks = 0;
     QObject::connect(f.tv, &TimelineView::seekRequested, [&](int) { ++seeks; });
     const int playhead = f.tv->playhead();
@@ -806,13 +807,14 @@ void testFingerPan()
     CHECK_EQ(f.project.timeline().video[0].clips[1].start, 170);
     CHECK_EQ(f.tv->view().leftFrame, 0.0);
     pauseTaps();
-    // Long press on a clip: its menu (no drag)
+    // Long press on a clip: no menu on the phone (its tools are the clip bar), the clip selected
     int menus = 0;
     QObject::connect(f.tv, &TimelineView::clipMenuRequested, [&](const QPoint&) { ++menus; });
     QTest::touchEvent(f.tv, g_touch).press(0, {f.x(50), 120}, f.tv);
     QTest::qWait(Touch::longPressMs() + 150);
     QTest::touchEvent(f.tv, g_touch).release(0, {f.x(50), 120}, f.tv);
-    CHECK_EQ(menus, 1);
+    CHECK_EQ(menus, 0);
+    CHECK(f.sel.contains(1));
     pauseTaps();
     // A hold on an empty lane: the ring shows, then a drag is the rubber band (selects clip 3 on V2), no pan
     f.sel.clear();
@@ -833,6 +835,7 @@ void testCenterPlayhead()
 {
     Fixture f;
     f.tv->setFingerPans(true);
+    f.tv->setHoldToMove(false); // ("Sofort": a finger on a clip moves it at once)
     int seek = -1, seeks = 0;
     QObject::connect(f.tv, &TimelineView::seekRequested, [&](int frame) {
         seek = frame;
@@ -894,6 +897,109 @@ void testCenterPlayhead()
     CHECK_EQ(seeks, seeksBefore);
     CHECK_EQ(f.tv->playhead(), 10);
     f.tv->setFingerPans(false);
+}
+
+// Phone editors' clip handling (setHoldToMove, the default on phones): a swipe over a clip scrubs too, a tap selects
+// (frame and handles), a handle trims, a long press then a drag moves; the magnetic main track reorders and keeps no
+// gaps; a long press on a clip opens no menu (its tools are the clip bar)
+void testHoldToMove()
+{
+    Fixture f;
+    f.tv->setFingerPans(true);
+    f.tv->setHoldToMove(true);
+    f.tv->setCenterPlayhead(true);
+    QObject::connect(f.tv, &TimelineView::seekRequested, [&](int frame) { f.tv->setPlayhead(frame); });
+    int menus = 0;
+    QObject::connect(f.tv, &TimelineView::clipMenuRequested, [&](const QPoint&) { ++menus; });
+    f.tv->setPlayhead(60);
+    QApplication::processEvents();
+    // A swipe that starts on clip 1 scrubs; the clip stays
+    const int c1 = f.project.timeline().video[0].clips[0].start;
+    swipe(f.tv, {f.x(60), 120}, {f.x(60) - 40, 120});
+    QTest::qWait(700);
+    CHECK_EQ(f.project.timeline().video[0].clips[0].start, c1);
+    CHECK(f.tv->playhead() > 60);
+    pauseTaps();
+    // Tap selects
+    f.tv->setPlayhead(60);
+    tap(f.tv, {f.x(50), 120});
+    CHECK(f.sel.contains(1));
+    pauseTaps();
+    // The right handle (24 px wide zone) trims clip 1's end 20 frames shorter (40 px at 2 px per frame)
+    const int len = f.project.timeline().video[0].clips[0].length();
+    const QPoint handle(f.x(99) - 4, 120);
+    swipe(f.tv, handle, handle - QPoint(40, 0));
+    QTest::qWait(100);
+    Check::report(f.project.timeline().video[0].clips[0].length() < len, "handle trims", __FILE__, __LINE__,
+                  QString("%1 -> %2").arg(len).arg(f.project.timeline().video[0].clips[0].length()));
+    pauseTaps();
+    f.project.undoStack()->undo();
+    // A long press on a clip: no menu, the clip selected
+    f.sel.clear();
+    f.tv->setPlayhead(200);
+    QApplication::processEvents();
+    QTest::touchEvent(f.tv, g_touch).press(0, {f.x(200), 120}, f.tv);
+    QTest::qWait(Touch::longPressMs() + 150);
+    QTest::touchEvent(f.tv, g_touch).release(0, {f.x(200), 120}, f.tv);
+    CHECK_EQ(menus, 0);
+    CHECK(f.sel.contains(2));
+    pauseTaps();
+    // A long press then a drag on another track (V2, not magnetic) moves clip 3 in time; a snap ticks
+    f.tv->setMagneticMain(false);
+    f.tv->setSnapping(true);
+    f.tv->setPlayhead(85);
+    QApplication::processEvents();
+    const int c3 = f.project.timeline().video[1].clips[0].start;
+    const int ticks = Touch::tickCount();
+    QPoint from(f.x(85), 60);
+    QTest::touchEvent(f.tv, g_touch).press(0, from, f.tv);
+    QTest::qWait(Touch::longPressMs() + 100);
+    for (int i = 1; i <= 6; ++i) {
+        QTest::touchEvent(f.tv, g_touch).move(0, from + QPoint(12 * i, 0), f.tv);
+        QTest::qWait(10);
+    }
+    QTest::touchEvent(f.tv, g_touch).release(0, from + QPoint(72, 0), f.tv);
+    Check::report(f.project.timeline().video[1].clips[0].start != c3, "hold + drag moves", __FILE__, __LINE__,
+                  QString("start %1").arg(f.project.timeline().video[1].clips[0].start));
+    CHECK(Touch::tickCount() > ticks); // its start reached the playhead: a haptic tick
+    CHECK_EQ(f.project.timeline().video[1].clips[0].start, 85);
+    f.tv->setSnapping(false);
+    pauseTaps();
+    // The magnetic main track: a long press on clip 2 shows the row, dragging it before clip 1 reorders, no gaps
+    f.tv->setMagneticMain(true);
+    f.tv->setPlayhead(200);
+    QApplication::processEvents();
+    from = QPoint(f.x(200), 120);
+    QTest::touchEvent(f.tv, g_touch).press(0, from, f.tv);
+    QTest::qWait(Touch::longPressMs() + 100);
+    CHECK(f.tv->reordering());
+    for (int i = 1; i <= 8; ++i) {
+        QTest::touchEvent(f.tv, g_touch).move(0, from - QPoint(20 * i, 0), f.tv);
+        QTest::qWait(10);
+    }
+    QTest::touchEvent(f.tv, g_touch).release(0, from - QPoint(160, 0), f.tv);
+    CHECK(!f.tv->reordering());
+    const auto& v1 = f.project.timeline().video[0].clips;
+    Check::report(v1.size() == 2 && v1[0].id == 2 && v1[0].start == 0 && v1[1].id == 1 && v1[1].start == v1[0].length(),
+                  "magnetic reorder, no gaps", __FILE__, __LINE__,
+                  QString("%1@%2, %3@%4").arg(v1.value(0).id).arg(v1.value(0).start).arg(v1.value(1).id).arg(v1.value(1).start));
+    f.tv->setFingerPans(false);
+}
+
+// Editor::packTrack: back to back from 0, linked clips along
+void testPackTrack()
+{
+    Fixture f;
+    f.project.edit("link", [](Timeline& tl) {
+        tl.video[0].clips[1].linkId = 7;
+        tl.audio[0].clips << clip(9, 150, 100);
+        tl.audio[0].clips.last().linkId = 7;
+    });
+    CHECK(f.editor.packTrack({TrackKind::Video, 0}));
+    const Timeline& tl = f.project.timeline();
+    CHECK_EQ(tl.video[0].clips[1].start, 100);
+    CHECK_EQ(TimelineOps::findClip(tl, 9)->start, 100);
+    CHECK(!f.editor.packTrack({TrackKind::Video, 0})); // (nothing to close)
 }
 
 // Phone: compact track headers (60 px: V1 + eye/mute); a tap on the header opens its menu
@@ -959,5 +1065,7 @@ int main(int argc, char** argv)
     testFingerPan();
     testCompactHeaders();
     testCenterPlayhead();
+    testHoldToMove();
+    testPackTrack();
     return Check::result();
 }

@@ -95,6 +95,8 @@ void TimelineView::paintEvent(QPaintEvent*)
                     p.drawRect(r.adjusted(0, 0, -1, -1));
                 }
             }
+    drawTouchSelection(p);
+    drawReorder(p);
     drawPlayhead(p);
     drawAiArrows(p);
 }
@@ -1280,5 +1282,81 @@ void TimelineView::drawTrackAutomation(QPainter& p, const Row& row, const Track&
     if (curve.isEmpty()) p.setPen(QPen(Theme::alpha(Theme::secondary, 140), 1.0, Qt::DashLine));
     else p.setPen(QPen(Theme::alpha(Theme::secondary, 200), 1.2));
     p.drawPolyline(line);
+    p.restore();
+}
+
+// Phones: the selected clip framed in the text color with a trim handle at each end (a finger's width to grab)
+void TimelineView::drawTouchSelection(QPainter& p)
+{
+    if (!m_fingerPans || !m_holdToMove || m_reorder.on) return;
+    const QSet<int> sel = m_editor->selection()->ids();
+    if (sel.isEmpty()) return;
+    const Timeline& tl = m_editor->project()->timeline();
+    p.save();
+    p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
+    p.setRenderHint(QPainter::Antialiasing);
+    for (const Row& row : rows())
+        for (const Clip& c : tl.track(row.ref).clips) {
+            if (!sel.contains(c.id)) continue;
+            const QRect r = clipRect(row, c);
+            if (r.right() < kHeaderW || r.left() > width()) continue;
+            p.setPen(QPen(Theme::text, 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(QRectF(r).adjusted(1, 1, -1, -1), 3, 3);
+            const int hw = 12;
+            for (const QRect h : {QRect(r.left(), r.top(), hw, r.height()), QRect(r.right() - hw + 1, r.top(), hw, r.height())}) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(Theme::text);
+                p.drawRoundedRect(h, 3, 3);
+                p.setPen(QPen(Theme::window, 2, Qt::SolidLine, Qt::RoundCap));
+                const int cx = h.center().x(), half = std::min(8, h.height() / 4);
+                p.drawLine(cx, h.center().y() - half, cx, h.center().y() + half);
+            }
+        }
+    p.restore();
+}
+
+// The magnetic main track while a clip is held: its clips as small pictures in a row, the held one under the finger,
+// the others making room where it would land
+void TimelineView::drawReorder(QPainter& p)
+{
+    if (!m_reorder.on) return;
+    const auto row = rowFor({TrackKind::Video, 0});
+    if (!row) return;
+    const Timeline& tl = m_editor->project()->timeline();
+    p.save();
+    const QRect lane(kHeaderW, row->y, width() - kHeaderW, row->h - row->lane);
+    p.setClipRect(lane);
+    p.fillRect(lane, Theme::trackBg);
+    p.setRenderHint(QPainter::Antialiasing);
+    const int tw = m_reorder.tw, th = std::max(20, lane.height() - 10), gap = 4;
+    const auto tile = [&](const Clip& c, double x, bool held) {
+        const QRectF r(x, lane.top() + (lane.height() - th) / 2.0, tw, th);
+        QImage img = m_cache ? m_cache->cachedThumbnail(c.mediaPath, c.in) : QImage();
+        if (img.isNull() && m_cache) img = m_cache->thumbnail(c.mediaPath, c.in, 1);
+        QPainterPath clip;
+        clip.addRoundedRect(r, 4, 4);
+        p.save();
+        p.setClipPath(clip, Qt::IntersectClip);
+        p.fillRect(r, clipColor(m_editor->project(), c, &tl.video[0]));
+        if (!img.isNull()) {
+            const QSize s = img.size().scaled(r.size().toSize(), Qt::KeepAspectRatioByExpanding);
+            p.drawImage(QRectF(r.center().x() - s.width() / 2.0, r.center().y() - s.height() / 2.0, s.width(), s.height()), img);
+        }
+        p.restore();
+        if (held) {
+            p.setPen(QPen(Theme::text, 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(r.adjusted(-1, -1, 1, 1), 4, 4);
+        }
+    };
+    int slot = 0;
+    for (int id : m_reorder.order) {
+        if (id == m_reorder.id) continue;
+        if (slot == m_reorder.to) ++slot; // the room where the held one lands
+        if (const Clip* c = TimelineOps::findClip(tl, id)) tile(*c, m_reorder.base + slot * (tw + gap), false);
+        ++slot;
+    }
+    if (const Clip* c = TimelineOps::findClip(tl, m_reorder.id)) tile(*c, m_reorder.fingerX - tw / 2.0, true);
     p.restore();
 }

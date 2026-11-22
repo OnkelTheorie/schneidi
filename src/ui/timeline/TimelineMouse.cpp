@@ -26,6 +26,7 @@
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QUndoStack>
 #include <QUrl>
 #include <QContextMenuEvent>
 #include <QHash>
@@ -180,6 +181,10 @@ bool TimelineView::closeSelectedGap()
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
     m_touchPointer = Touch::isTouch(e);
+    if (m_reorder.on) { // the held clip of the magnetic main track follows the finger (mouseMoveEvent)
+        m_reorder.fingerX = e->position().x();
+        return;
+    }
     if (e->button() == Qt::LeftButton && m_gap.on) {
         m_gap = {};
         update();
@@ -400,6 +405,14 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
 
 void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
+    if (m_reorder.on) {
+        m_reorder.fingerX = e->position().x();
+        const int n = int(m_reorder.order.size());
+        const double slot = m_reorder.tw + 4;
+        m_reorder.to = std::clamp(int(std::lround((m_reorder.fingerX - m_reorder.tw / 2.0 - m_reorder.base) / slot)), 0, n - 1);
+        update();
+        return;
+    }
     if (m_drag == Drag::None) m_touchPointer = Touch::isTouch(e); // a running drag keeps the press's zones
     const QPoint pos = e->position().toPoint();
     m_dragPos = pos;
@@ -701,6 +714,10 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
 
 void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
+    if (m_reorder.on) {
+        finishReorder(true);
+        return;
+    }
     // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it
     if ((m_drag == Drag::Marks && m_markRight) != (e->button() == Qt::RightButton)) return;
     if (e->button() != Qt::LeftButton && e->button() != Qt::RightButton) return;
@@ -750,8 +767,17 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
             if (const auto row = rowFor(m_trackDragRef)) headerMenu(*row, mapToGlobal(e->position().toPoint()));
         return;
     }
-    if (m_drag == Drag::Move)
+    if (m_drag == Drag::Move) {
+        // The magnetic main track: a clip moved onto, off or along V1 leaves no gap there (one undo step)
+        QUndoStack* undo = m_editor->project()->undoStack();
+        const bool magnetic = m_magnetic && !m_editor->project()->timeline().video.isEmpty();
+        if (magnetic) undo->beginMacro(T("Clips verschieben"));
         m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
+        if (magnetic) {
+            m_editor->packTrack({TrackKind::Video, 0});
+            undo->endMacro();
+        }
+    }
     if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
         const Drag d = m_drag;
         m_drag = Drag::None; // before the change, so the preview does not apply twice
@@ -772,7 +798,18 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     m_drag = Drag::None; // before trimClip, so the preview is not applied twice
     if (ramp && m_rampDelta != 0) m_editor->moveSpeedPoint(m_rampDrag.clipId, m_rampDrag.point, m_rampDelta);
     m_rampDelta = 0;
-    if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
+    if (trimmed && m_trimDelta != 0) {
+        TrackRef where;
+        const bool onMain = m_magnetic && TimelineOps::findClip(m_editor->project()->timeline(), m_trim.clipId, &where)
+                            && where.kind == TrackKind::Video && where.index == 0;
+        QUndoStack* undo = m_editor->project()->undoStack();
+        if (onMain) undo->beginMacro(T("Clip trimmen"));
+        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
+        if (onMain) { // magnetic main track: the gap the trim left closes
+            m_editor->packTrack({TrackKind::Video, 0});
+            undo->endMacro();
+        }
+    }
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;

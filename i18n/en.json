@@ -3710,5 +3710,14 @@
  "Wechselt die Anordnung (Fenstergröße, Klapphandy), ohne Überblenden.": "Switches the layout (window size, foldable) without fading.",
  "Automatisch (Handy, Tablet)": "Automatic (phone, tablet)",
  "Abspielmarke in der Mitte": "Playhead in the middle",
- "Die Abspielmarke bleibt in der Mitte stehen, die Timeline gleitet darunter: zur Seite ziehen spult, beim Abspielen läuft die Timeline mit.": "The playhead stays in the middle and the timeline slides under it: dragging sideways scrubs, during playback the timeline moves along."
+ "Die Abspielmarke bleibt in der Mitte stehen, die Timeline gleitet darunter: zur Seite ziehen spult, beim Abspielen läuft die Timeline mit.": "The playhead stays in the middle and the timeline slides under it: dragging sideways scrubs, during playback the timeline moves along.",
+ "Hauptspur schließen": "Close main track",
+ "Clip umsortieren": "Reorder clip",
+ "Clip trimmen": "Trim clip",
+ "Hauptspur magnetisch": "Magnetic main track",
+ "Auf Handy und Tablet: Clips auf V1 liegen ohne Lücken hintereinander; gedrückt halten und ziehen sortiert sie um. Aus: Lücken erlaubt wie am Desktop.": "On phone and tablet: clips on V1 sit back to back without gaps; press, hold and drag to reorder them. Off: gaps allowed as on the desktop.",
+ "Gedrückt halten": "Press and hold",
+ "Sofort": "At once",
+ "Clip ziehen": "Drag clips",
+ "Auf Handy und Tablet. Gedrückt halten: Wischen spult auch über Clips, ein Clip bewegt sich erst nach kurzem Halten. Sofort: ein Finger auf einem Clip verschiebt ihn gleich.": "On phone and tablet. Press and hold: swiping scrubs over clips too, a clip moves after a short hold. At once: a finger on a clip moves it right away."
 }

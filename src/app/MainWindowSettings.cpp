@@ -102,6 +102,8 @@ void MainWindow::settingsDialog(int tab)
     if (!m_autosaveDisabled) {
         QSettings().setValue("ui/reduceMotion", dlg.reduceMotion());
         QSettings().setValue("timeline/centerPlayhead", dlg.centerPlayhead());
+        QSettings().setValue("timeline/magneticMain", dlg.magneticMain());
+        QSettings().setValue("timeline/clipDrag", dlg.clipDrag());
     }
     applyCenterPlayhead();
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting

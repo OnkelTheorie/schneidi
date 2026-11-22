@@ -352,3 +352,45 @@ void Editor::moveTrack(TrackKind kind, int from, int to)
         [from, to](int t) { return movedIndex(t, to, from); }));
     undo->endMacro();
 }
+
+bool Editor::packTrack(TrackRef ref, const QVector<int>& order, const QString& text)
+{
+    const Timeline& now = m_project->timeline();
+    if (ref.index < 0 || ref.index >= now.tracks(ref.kind).size() || isTrackLocked(ref)) return false;
+    QVector<Clip> clips = now.track(ref).clips;
+    std::stable_sort(clips.begin(), clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+    if (!order.isEmpty()) {
+        QVector<Clip> sorted;
+        for (int id : order)
+            for (const Clip& c : clips)
+                if (c.id == id) sorted << c;
+        for (const Clip& c : clips) // (any the order left out: after it)
+            if (!order.contains(c.id)) sorted << c;
+        clips = sorted;
+    }
+    // The new start of each clip; linked clips get the same shift
+    QHash<int, int> shift;   // clip id -> frames
+    QHash<int, int> byLink;  // linkId -> frames
+    int at = 0;
+    for (const Clip& c : clips) {
+        if (c.start != at) {
+            shift.insert(c.id, at - c.start);
+            if (c.linkId) byLink.insert(c.linkId, at - c.start);
+        }
+        at += c.length();
+    }
+    if (shift.isEmpty()) return false;
+    m_project->edit(text.isEmpty() ? T("Hauptspur schließen") : text, [&](Timeline& tl) {
+        for (auto* tracks : {&tl.video, &tl.audio})
+            for (int t = 0; t < tracks->size(); ++t)
+                for (Clip& c : (*tracks)[t].clips) {
+                    const bool own = ref.kind == (tracks == &tl.video ? TrackKind::Video : TrackKind::Audio) && t == ref.index;
+                    if (own && shift.contains(c.id)) c.start += shift.value(c.id);
+                    else if (!own && c.linkId && byLink.contains(c.linkId)) c.start += byLink.value(c.linkId);
+                }
+        for (auto* tracks : {&tl.video, &tl.audio})
+            for (Track& tr : *tracks)
+                std::stable_sort(tr.clips.begin(), tr.clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+    });
+    return true;
+}

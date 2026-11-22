@@ -321,6 +321,8 @@ void TimelinePanel::setCompact(bool on)
 
 void TimelinePanel::syncScrollbars()
 {
+    // The centred playhead (phones): sliding the timeline is the way along it, no bar under it
+    m_hbar->setVisible(!m_view->centerPlayhead());
     // Scrollbars only mirror the ViewState – they never reset it here
     const QSignalBlocker bh(m_hbar), bv(m_vbar);
     const auto& v = m_view->view();

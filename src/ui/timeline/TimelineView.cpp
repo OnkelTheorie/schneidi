@@ -597,15 +597,22 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude,
     const double maxFrames = kSnapPx / m_view.pxPerFrame;
     int best = 0;
     double bestDist = maxFrames + 1;
+    bool found = false;
     for (int p : snapPoints(exclude)) {
         for (int e : edges) {
             const double d = std::abs(p - e);
             if (d <= maxFrames && d < bestDist) {
                 bestDist = d;
                 best = p - e;
-                if (hit) *hit = true;
+                found = true;
             }
         }
+    }
+    if (hit) *hit = found;
+    // A clip moved or trimmed reaches a cut or the playhead: one short haptic tick (phones)
+    if (m_drag == Drag::Move || m_drag == Drag::Trim) {
+        if (found && !m_lastSnap) Touch::tick();
+        m_lastSnap = found;
     }
     return best;
 }
@@ -629,10 +636,12 @@ void TimelineView::setFingerPans(bool on)
         m_gestures->panAt = nullptr;
         m_gestures->onPan = nullptr;
         m_gestures->onHoldCue = nullptr;
+        m_gestures->onLongPress = nullptr;
         return;
     }
-    // The empty lanes: not the headers (tap = menu, drag = reorder), the ruler (scrub), nor a clip or its edges (a
-    // finger there moves or trims it at once, a long press is its menu). Clips covering everything: the scrollbars
+    // Where one finger slides the view: "hold" mode (phones' editors) everywhere on the lanes, clips too, but the
+    // selected clip's trim handles; "at once" mode only the empty lanes (a finger on a clip moves or trims it). Never
+    // the headers (tap = menu, drag = reorder); the ruler only in the centred mode (there it scrubs)
     const auto onClip = [this](const QPointF& pos) {
         const QPoint p = pos.toPoint();
         const int zone = Touch::grabPx(true, kEdgeGrabPx);
@@ -640,8 +649,27 @@ void TimelineView::setFingerPans(bool on)
     };
     m_gestures->panAt = [this, onClip](const QPointF& pos) {
         if (pos.x() < kHeaderW) return false;
-        if (pos.y() < kRulerH) return m_center; // the ruler scrubs by sliding in the centre mode
-        return pos.y() >= kRulerH + subtitlesHeight() && !onClip(pos);
+        if (pos.y() < kRulerH) return m_center;
+        if (pos.y() < kRulerH + subtitlesHeight()) return false;
+        return m_holdToMove ? !onSelectedHandle(pos) : !onClip(pos);
+    };
+    // A long press: on a clip it selects it (its tools are the clip bar; no menu), empty lanes keep their menu
+    m_gestures->onLongPress = [this](const QPointF& pos) {
+        if (m_reorder.on) {
+            finishReorder(false);
+            return true;
+        }
+        const int id = clipAt(pos.toPoint());
+        if (!id) return false;
+        const Timeline& tl = m_editor->project()->timeline();
+        QSet<int> ids{id};
+        if (const Clip* c = TimelineOps::findClip(tl, id); c && c->linkId)
+            for (const auto* tracks : {&tl.video, &tl.audio})
+                for (const Track& t : *tracks)
+                    for (const Clip& o : t.clips)
+                        if (o.linkId == c->linkId) ids.insert(o.id);
+        m_editor->selection()->set(ids);
+        return true;
     };
     // User input: the view follows the finger (leftFrame, scrollY), the playhead stays (core rule kept)
     m_gestures->onPan = [this](const QPointF& delta) {
@@ -652,6 +680,11 @@ void TimelineView::setFingerPans(bool on)
     };
     m_gestures->onHoldCue = [this](const QPointF& pos) {
         m_holdCue = pos;
+        // The magnetic main track: a held clip on V1 shows the whole track as small pictures to reorder
+        if (m_magnetic && m_holdToMove)
+            if (const auto row = rowAt(int(pos.y())); row && row->ref.kind == TrackKind::Video && row->ref.index == 0
+                                                      && !isLocked(*row))
+                if (const int id = clipAt(pos.toPoint())) startReorder(pos, id);
         update();
         QTimer::singleShot(350, this, [this] {
             m_holdCue = {-1, -1};
@@ -746,7 +779,71 @@ void TimelineView::pinchView(const QPointF& from, const QPointF& to, double scal
 
 int TimelineView::edgeGrabPx() const
 {
+    // The phone's trim handles of a selected clip: a finger's width to grab
+    if (m_fingerPans && m_holdToMove && m_touchPointer) return 24;
     return Touch::grabPx(m_touchPointer, kEdgeGrabPx);
+}
+
+void TimelineView::setHoldToMove(bool hold)
+{
+    m_holdToMove = hold;
+    update();
+}
+
+void TimelineView::setMagneticMain(bool on)
+{
+    m_magnetic = on;
+    if (!on && m_reorder.on) finishReorder(false);
+}
+
+bool TimelineView::onSelectedHandle(const QPointF& pos) const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    const QSet<int> sel = m_editor->selection()->ids();
+    if (sel.isEmpty()) return false;
+    for (const Row& row : rows())
+        for (const Clip& c : tl.track(row.ref).clips) {
+            if (!sel.contains(c.id)) continue;
+            const QRect r = clipRect(row, c);
+            if (pos.y() < r.top() || pos.y() > r.bottom()) continue;
+            if (std::abs(pos.x() - r.left()) <= 24 || std::abs(pos.x() - r.right()) <= 24) return true;
+        }
+    return false;
+}
+
+void TimelineView::startReorder(const QPointF& pos, int clipId)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    if (tl.video.isEmpty()) return;
+    QVector<const Clip*> clips;
+    for (const Clip& c : tl.video[0].clips) clips << &c;
+    std::stable_sort(clips.begin(), clips.end(), [](const Clip* a, const Clip* b) { return a->start < b->start; });
+    m_reorder = {};
+    for (const Clip* c : clips) m_reorder.order << c->id;
+    m_reorder.from = m_reorder.to = int(m_reorder.order.indexOf(clipId));
+    if (m_reorder.from < 0) return;
+    const auto row = rowFor({TrackKind::Video, 0});
+    const int h = row ? row->h - row->lane - 10 : 40;
+    m_reorder.tw = std::clamp(h * 16 / 9, 40, 72);
+    m_reorder.id = clipId;
+    m_reorder.fingerX = pos.x();
+    m_reorder.base = pos.x() - m_reorder.from * (m_reorder.tw + 4) - m_reorder.tw / 2.0;
+    m_reorder.on = true;
+    m_editor->selection()->set({clipId});
+    update();
+}
+
+void TimelineView::finishReorder(bool apply)
+{
+    if (!m_reorder.on) return;
+    m_reorder.on = false;
+    if (apply) {
+        QVector<int> order = m_reorder.order;
+        order.removeAll(m_reorder.id);
+        order.insert(std::clamp(m_reorder.to, 0, int(order.size())), m_reorder.id);
+        m_editor->packTrack({TrackKind::Video, 0}, order, T("Clip umsortieren"));
+    }
+    update();
 }
 
 void TimelineView::zoomToFit()

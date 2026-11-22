@@ -645,8 +645,13 @@ void MainWindow::phoneAdoptBackgroundJobs()
 
 void MainWindow::applyCenterPlayhead()
 {
-    const QString v = QSettings().value("timeline/centerPlayhead").toString();
-    m_timeline->view()->setCenterPlayhead(v == "on" || (v.isEmpty() && m_phone));
+    QSettings settings;
+    const QString v = settings.value("timeline/centerPlayhead").toString();
+    TimelineView* view = m_timeline->view();
+    view->setCenterPlayhead(v == "on" || (v.isEmpty() && m_phone));
+    // The finger's clip handling and the magnetic main track: phone and tablet only (the desktop stays as it is)
+    view->setHoldToMove(settings.value("timeline/clipDrag", "hold").toString() != "instant");
+    view->setMagneticMain(m_phone && settings.value("timeline/magneticMain", true).toBool());
 }
 
 void MainWindow::updateAddMediaButton()

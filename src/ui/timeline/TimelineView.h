@@ -43,6 +43,16 @@ public:
     // exception to the core rule (the view follows the playhead), only in this mode (docs/architektur.md)
     void setCenterPlayhead(bool on);
     bool centerPlayhead() const { return m_center; }
+    // Phone clip handling (with setFingerPans), as phone editors do it: hold = a swipe anywhere (clips too) slides the
+    // view, a tap selects (a frame with trim handles, ~24 px to grab), a long press then a drag moves the clip; false
+    // ("Sofort") = a finger on a clip moves it at once, only empty lanes slide
+    void setHoldToMove(bool hold);
+    bool holdToMove() const { return m_holdToMove; }
+    // The main track (V1) magnetic: no gaps (a move or trim on it closes them; Editor::packTrack), a long press on one
+    // of its clips shows all of them as small pictures in a row to reorder
+    void setMagneticMain(bool on);
+    bool magneticMain() const { return m_magnetic; }
+    bool reordering() const { return m_reorder.on; } // tests
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
@@ -230,6 +240,20 @@ private:
     bool m_center = false;          // setCenterPlayhead
     double centreLeft() const;      // the left frame that puts the playhead in the lanes' middle
     QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment
+    bool m_holdToMove = true;
+    bool m_magnetic = false;
+    mutable bool m_lastSnap = false; // a snap reached during a drag: one haptic tick
+    struct Reorder {
+        bool on = false;
+        QVector<int> order; // V1's clip ids by start
+        int id = 0, from = 0, to = 0, tw = 64;
+        double base = 0, fingerX = 0;
+    } m_reorder;
+    void startReorder(const QPointF& pos, int clipId);
+    void finishReorder(bool apply);
+    void drawReorder(QPainter& p);
+    void drawTouchSelection(QPainter& p);
+    bool onSelectedHandle(const QPointF& pos) const;
 
     struct GapPick {
         bool on = false;

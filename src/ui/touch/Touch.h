@@ -103,6 +103,10 @@ void installBackKey(QApplication* app, std::function<bool()> stepBack);
 // final ones: a check box's text was cut at the edge) grows to its contents' width once shown, at most the screen's.
 // main.cpp installs it on Android only
 void installDialogFit(QApplication* app);
+// A short haptic tick (a snap reached, as phones do it); Android's own haptic feedback, nothing elsewhere. Tests count
+// the ticks: tickCount()
+void tick();
+int tickCount();
 // One step of the back key (also for tests); true = something closed or stepped back
 bool back(const std::function<bool()>& stepBack);
 

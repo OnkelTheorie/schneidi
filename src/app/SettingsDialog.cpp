@@ -293,6 +293,21 @@ QWidget* SettingsDialog::buildGeneral()
     tform->addRow(T("Abspielmarke in der Mitte"), m_centerPlayhead);
     tform->addRow(hint(T("Die Abspielmarke bleibt in der Mitte stehen, die Timeline gleitet darunter: zur Seite ziehen "
                          "spult, beim Abspielen läuft die Timeline mit.")));
+    // Phone and tablet: how a finger handles clips (as phone editors do by default)
+    m_magneticMain = new QCheckBox(T("Hauptspur magnetisch"));
+    m_magneticMain->setObjectName("settings_magnetic_main");
+    m_magneticMain->setChecked(QSettings().value("timeline/magneticMain", true).toBool());
+    m_magneticMain->setToolTip(T("Auf Handy und Tablet: Clips auf V1 liegen ohne Lücken hintereinander; gedrückt halten "
+                                 "und ziehen sortiert sie um. Aus: Lücken erlaubt wie am Desktop."));
+    tform->addRow(QString(), m_magneticMain);
+    m_clipDrag = new QComboBox;
+    m_clipDrag->setObjectName("settings_clip_drag");
+    m_clipDrag->addItem(T("Gedrückt halten"), QStringLiteral("hold"));
+    m_clipDrag->addItem(T("Sofort"), QStringLiteral("instant"));
+    m_clipDrag->setCurrentIndex(std::max(0, m_clipDrag->findData(QSettings().value("timeline/clipDrag", "hold").toString())));
+    m_clipDrag->setToolTip(T("Auf Handy und Tablet. Gedrückt halten: Wischen spult auch über Clips, ein Clip bewegt sich "
+                             "erst nach kurzem Halten. Sofort: ein Finger auf einem Clip verschiebt ihn gleich."));
+    tform->addRow(T("Clip ziehen"), m_clipDrag);
     lay->addWidget(timelineBox);
 
     // Compositing: new nodes from the node search linked at once (default) or only added
@@ -448,6 +463,9 @@ QString SettingsDialog::startPage() const { return m_startPage->currentData().to
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
+bool SettingsDialog::magneticMain() const { return m_magneticMain->isChecked(); }
+QString SettingsDialog::clipDrag() const { return m_clipDrag->currentData().toString(); }
+
 QString SettingsDialog::centerPlayhead() const { return m_centerPlayhead->currentData().toString(); }
 
 bool SettingsDialog::reduceMotion() const { return m_reduceMotion->isChecked(); }

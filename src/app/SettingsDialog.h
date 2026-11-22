@@ -41,7 +41,9 @@ public:
     static QString savedPhoneLayout();
     static void setSavedPhoneLayout(const QString& value);
     bool reduceMotion() const;
-    QString centerPlayhead() const; // "" automatic (phone, tablet), "on", "off" (setting timeline/centerPlayhead) // no fades when the window's arrangement changes (setting ui/reduceMotion)
+    QString centerPlayhead() const; // "" automatic (phone, tablet), "on", "off" (setting timeline/centerPlayhead)
+    bool magneticMain() const;      // phone/tablet: V1 without gaps (timeline/magneticMain, default on)
+    QString clipDrag() const;       // phone/tablet: "hold" (default) or "instant" (timeline/clipDrag) // no fades when the window's arrangement changes (setting ui/reduceMotion)
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
@@ -90,6 +92,8 @@ private:
     QComboBox* m_phoneLayout = nullptr;
     QCheckBox* m_reduceMotion = nullptr;
     QComboBox* m_centerPlayhead = nullptr;
+    QCheckBox* m_magneticMain = nullptr;
+    QComboBox* m_clipDrag = nullptr;
     QComboBox* m_startPage = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;
