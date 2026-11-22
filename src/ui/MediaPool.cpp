@@ -985,6 +985,13 @@ QSize MediaPool::tileSize() const
     return QSize(kCompactThumb.width() + 12, kCompactThumb.height() + 2 * m_list->fontMetrics().height() + 12);
 }
 
+void MediaPool::setGeneratorsLast(bool on)
+{
+    if (m_generatorsLast == on) return;
+    m_generatorsLast = on;
+    rebuildClips();
+}
+
 void MediaPool::setCompactTiles(bool on)
 {
     if (m_compactTiles == on) return;
@@ -1124,7 +1131,9 @@ void MediaPool::rebuildClips()
                         : itemBin == m_currentBin;
     };
 
-    if (m_currentBin == 0 && !narrowed) {
+    // The generators (text, shape): the Master's first tiles; the phone shows the clips first (setGeneratorsLast)
+    const auto addGenerators = [&] {
+        if (m_currentBin != 0 || narrowed) return;
         // Title generator at the front of the Master (in DaVinci under Effects > Titles > "Text"); drag = 5 s title
         QPixmap titleThumb(kThumb);
         titleThumb.fill(Theme::titleClip.darker(135));
@@ -1160,7 +1169,8 @@ void MediaPool::rebuildClips()
         shapeItem->setData(Qt::UserRole, QString(ShapeItem));
         shapeItem->setToolTip(T("Form (Kreis, Rechteck, Pfeil, Stern …) – in die Timeline ziehen"));
         m_list->addItem(shapeItem);
-    }
+    };
+    if (!m_generatorsLast) addGenerators();
 
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
     QVector<const Sequence*> seqs;
@@ -1221,6 +1231,7 @@ void MediaPool::rebuildClips()
         m_items.insert(m->path, item);
         updateItem(m->path);
     }
+    if (m_generatorsLast) addGenerators();
     for (int i = 0; i < m_list->count(); ++i)
         if (selected.contains(m_list->item(i)->data(Qt::UserRole).toString())) m_list->item(i)->setSelected(true);
     m_list->verticalScrollBar()->setValue(scroll);

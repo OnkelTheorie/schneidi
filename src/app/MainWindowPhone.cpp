@@ -63,9 +63,6 @@ QWidget* MainWindow::buildPhoneTopBar()
     // phoneArrangeTopBar: a row in portrait, the head of the tool rail in landscape)
     auto* bar = new QWidget;
     bar->setObjectName("TopBar");
-    bar->setStyleSheet(QString("QWidget#TopBar { background: %1; border-bottom: 1px solid %2; }"
-                               "QToolButton { min-width: 36px; min-height: 36px; padding: 2px; }")
-                           .arg(Theme::topBar.name(), Theme::border.name()));
     auto bigGlyph = [](QToolButton* b) {
         QFont f = b->font();
         f.setPixelSize(std::max(18, QFontMetrics(f).height()));
@@ -116,6 +113,11 @@ void MainWindow::phoneArrangeTopBar(bool landscape)
     QWidget* jobs = m_backgroundJobs && m_backgroundJobs->parentWidget() == bar ? m_backgroundJobs : nullptr;
     QWidget* live = m_liveBox && m_liveBox->parentWidget() == bar ? m_liveBox : nullptr;
     delete bar->layout(); // the widgets stay (children of the bar), only their arrangement changes
+    // Portrait: the desktop top bar's color. Landscape: the rail's (window) color - the rail is one surface down to the
+    // screen's edge, the camera cutout's strip beside it (the safe area, painted in the window color) included
+    bar->setStyleSheet(QString("QWidget#TopBar { background: %1; border-bottom: 1px solid %2; }"
+                               "QToolButton { min-width: 36px; min-height: 36px; padding: 2px; }")
+                           .arg((landscape ? Theme::window : Theme::topBar).name(), Theme::border.name()));
     m_titleLabel->setAlignment(landscape ? Qt::AlignCenter : Qt::AlignVCenter | Qt::AlignHCenter);
     if (!landscape) {
         // One row: menu, name, (live), (jobs), undo, redo
@@ -178,6 +180,7 @@ void MainWindow::enablePhoneLayout()
     // like touch mode's, the user's pinch on the headers changes them as before
     m_timeline->view()->setTrackHeights(56, 46);
     m_mediaPool->setCompactTiles(true); // two columns beside the bins in portrait
+    m_mediaPool->setGeneratorsLast(true); // the material first, the text and shape tiles after it
     m_viewer->screen()->setMinimumSize(160, 72);
     m_viewer->setCompact(true);
     // The large viewer: nothing beside the viewer to hide (full screen stays)

@@ -88,6 +88,9 @@ public:
     // Smaller tiles (the phone layout: two columns beside the bin list on a phone in portrait)
     void setCompactTiles(bool on);
     QSize tileSize() const; // the thumbnail view's grid cell (tests)
+    // The generators (text, shape) after the clips instead of before them (the phone: its two columns show the
+    // material first; only the order shown, nothing in the project)
+    void setGeneratorsLast(bool on);
     void setSort(SortKey key, bool ascending);
     // Search (magnifier on top): shows matching clips (name contains text) in the bin and its sub-bins, and below them
     // the shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
@@ -243,6 +246,7 @@ private:
     int m_editBin = 0; // newly created: edit the name after the rebuild
     ViewMode m_viewMode = ViewMode::Thumbnails;
     bool m_compactTiles = false;
+    bool m_generatorsLast = false;
     SortKey m_sortKey = SortKey::Name;
     bool m_sortAscending = true;
     bool m_saveSettings = true;

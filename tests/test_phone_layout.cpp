@@ -17,6 +17,7 @@
 #include "engine/Engine.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
+#include "ui/MediaPool.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/phone/PhoneShell.h"
@@ -215,6 +216,8 @@ void testWindow(Engine& engine, const QSize& size)
                               __FILE__, __LINE__, QString("undo %1, viewer %2").arg(rect(at(undo)), rect(at(viewer))));
                 QWidget* rail = shell->toolButton("media");
                 CHECK(at(undo).bottom() < at(rail).top()); // above the tools
+                // One surface with the rail (and the cutout's strip at the screen's edge): the window color
+                CHECK(menu->parentWidget()->styleSheet().contains(Theme::window.name()));
             } else {
                 CHECK(at(menu).center().y() == at(undo).center().y()); // one row
                 CHECK(at(undo).bottom() < at(viewer).top());
@@ -241,6 +244,13 @@ void testWindow(Engine& engine, const QSize& size)
             const QRect a = list->visualItemRect(list->item(0)), b = list->visualItemRect(list->item(1));
             Check::report(a.top() == b.top() && b.left() > a.left(), "media: two columns", __FILE__, __LINE__,
                           QString("%1 / %2 in %3").arg(rect(a), rect(b), rect(list->viewport()->rect())));
+            // The generators (text, shape) after the material: the last two tiles
+            const auto data = [&](int i) { return list->item(i)->data(Qt::UserRole).toString(); };
+            const int n = list->count();
+            Check::report(n >= 3 && data(0) != MediaPool::TitleItem && data(n - 2) == MediaPool::TitleItem
+                              && data(n - 1) == MediaPool::ShapeItem,
+                          "media: generators last", __FILE__, __LINE__,
+                          QString("first %1, last %2").arg(data(0), data(n - 1)));
         }
         shell->closeSheet();
     }
