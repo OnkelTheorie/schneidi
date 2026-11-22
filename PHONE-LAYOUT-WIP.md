@@ -43,18 +43,22 @@
   - Viewer's "Timeline" title line hidden in compact mode unless it says more (source clip, proxy, recording).
   - Speed tool said "Easing" in English (key "Tempo" means easing there): now "Geschwindigkeit"/"Speed".
   - Viewer notices wrap on a narrow viewer (a long notice reached past the window).
+  - The tool bar's last tools were off-screen without a hint: when the tools do not fit, the last one in sight is cut
+    in half (`39-phone-portrait-swipe-hint`).
 - Background jobs (proxies, renders ...): `BackgroundJobs::setCompact` (bar over "34 %" and ✕) sits in the phone's top
   bar between title and undo; a tap shows the full text as a viewer notice (no tooltips on touch).
 - Volume clip tool: opens the Inspector on its Audio tab at the top (Volume section); a clip without sound keeps its tab
   and shows "Der ausgewählte Clip hat keinen Ton." (`Inspector::showAudio`, `PhoneShell::addClipPanelTool(..., opened)`).
 - Settings › Oberfläche › Handy-Layout: Automatisch / Immer / Nie (`ui/phoneLayout` ""/on/off), after a restart
   (offered when it changes the layout). de+en strings only.
-- Tests: `test_phone_layout` 536 checks (new: Volume → Audio tab, jobs in the top bar, setting, every clip tool
-  reachable, palette tabs not cut), `test_touch_input` 146, `test_window_fit` 74, also `test_color` 87,
+- Tests: `test_phone_layout` 542 checks (new: Volume → Audio tab, jobs in the top bar, setting, every clip tool
+  reachable, palette tabs not cut, last tool cut in half), `test_touch_input` 146, `test_window_fit` 74, also `test_color` 87,
   `test_grade_qualifier`, `test_grade_windows`, `test_settings_layout`, `test_ui_scale` green.
 - Emulator shots (Qt 6.10.3, x86_64, 1080x2400 @420 dpi = 411x914): `android-shots/30-phone-portrait-start`,
   `31-…-media`, `31b-…-media-scrolled`, `32-…-clip-bar`, `33-…-volume` (Audio tab), `34-…-color`, `34b-…-effects`,
-  `35-…-export`, `36-phone-landscape-export`, `37-…-landscape-start`, `38-…-landscape-media`.
+  `35-…-export`, `36-phone-landscape-export`, `37-…-landscape-start`, `38-…-landscape-media`, `39-…-swipe-hint`.
+- APKs of 82de4ef1: `android-deps/build610-x86_64-phone/schneidi-0.26.0-x86_64.apk` (83 MB),
+  `android-deps/build610-arm64-phone/schneidi-0.26.0-arm64-v8a.apk` (77 MB; FFmpeg LGPL, no x264/x265).
 - Emulator note: it was OOM-killed twice at 4G/5G (each reinstall grows it); 6G holds. Rotation needs
   `adb shell cmd window user-rotation lock 0|1` (the settings keys alone did not turn it).
 
@@ -64,7 +68,6 @@
 - Landscape is cramped: top bar ~50 px + Android status bar take height, the timeline shows ~1 track (V2 at the top,
   the clips on V1 need a scroll). Ideas: top bar into the rail's head in landscape, full screen (no status bar) in
   landscape, timeline scrolled to the first track with clips.
-- The clip bar's last tools (Color, Delete) are off-screen without a visible hint that the bar scrolls.
 - Media Pool: one column of large tiles beside the bin list; generators (Text, Shape) come before the clips.
 - Every app start after a kill asks "Restore unsaved changes?" (expected, but noisy while testing).
 - Comp/Studio/Direct pages have no phone form; full-screen viewer is a separate top-level window (not checked).
