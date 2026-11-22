@@ -23,6 +23,7 @@
 #include "core/TimelineOps.h"
 #include "engine/DeviceMedia.h"
 #include "ui/RenderQueuePanel.h"
+#include "ui/SwitchCurtain.h"
 #include "ui/Mixer.h"
 #include "ui/TranscriptPanel.h"
 #include "ui/Viewer.h"
@@ -183,6 +184,8 @@ void MainWindow::enablePhoneLayout() { setLayoutForm(LayoutForm::Phone); }
 void MainWindow::setLayoutForm(LayoutForm form)
 {
     if (form == layoutForm()) return;
+    // The switch under the window's frozen picture, which then fades (ui/SwitchCurtain)
+    SwitchCurtain* curtain = SwitchCurtain::cover(this);
     if (form == LayoutForm::Desktop) {
         disableShell();
     } else if (m_phone) { // phone <-> tablet: the same shell, another arrangement
@@ -190,6 +193,10 @@ void MainWindow::setLayoutForm(LayoutForm form)
         if (form == LayoutForm::Tablet && m_phone->sheet().isEmpty()) m_phone->openSheet("inspector");
     } else {
         enableShell(form == LayoutForm::Tablet);
+    }
+    if (curtain) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); // (the new arrangement laid out)
+        curtain->reveal();
     }
 }
 

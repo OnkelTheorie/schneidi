@@ -147,6 +147,11 @@ QWidget* SettingsDialog::buildGeneral()
                                 "Tablet: Werkzeugleiste links, ein Bereich fest daneben. Automatisch: nach der "
                                 "Fenstergröße, wechselt sofort."));
     form->addRow(T("Anordnung"), m_phoneLayout);
+    m_reduceMotion = new QCheckBox(T("Bewegungen reduzieren"));
+    m_reduceMotion->setObjectName("settings_reduce_motion");
+    m_reduceMotion->setChecked(QSettings().value("ui/reduceMotion", false).toBool());
+    m_reduceMotion->setToolTip(T("Wechselt die Anordnung (Fenstergröße, Klapphandy), ohne Überblenden."));
+    form->addRow(QString(), m_reduceMotion);
     // The page shown at the start and on New Project (MainWindow::showStartPage); filled by setStartPages
     m_startPage = new QComboBox;
     m_startPage->setObjectName("settings_start_page");
@@ -429,6 +434,8 @@ QString SettingsDialog::startPage() const { return m_startPage->currentData().to
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
+bool SettingsDialog::reduceMotion() const { return m_reduceMotion->isChecked(); }
+
 QString SettingsDialog::phoneLayout() const { return m_phoneLayout->currentData().toString(); }
 
 QString SettingsDialog::savedPhoneLayout()

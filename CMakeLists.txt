@@ -316,6 +316,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/ContentUri.h       src/engine/ContentUri.cpp
     src/engine/DeviceMedia.h      src/engine/DeviceMedia.cpp
     src/ui/MediaGallery.h         src/ui/MediaGallery.cpp
+    src/ui/SwitchCurtain.h        src/ui/SwitchCurtain.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp

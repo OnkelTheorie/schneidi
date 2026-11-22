@@ -170,6 +170,22 @@ int main(int argc, char** argv)
         compare(before, take(w, panels), round == 0 ? "desktop as before (1)" : "desktop as before (2)");
         CHECK(TimelineView::kHeaderW == TimelineView::kHeaderWide);
     }
+    // The switch under a frozen picture that fades (about 200 ms); reduced motion: gone at once
+    w.resize(900, 760);
+    QTest::qWait(160); // (the form check after the resize)
+    QApplication::processEvents();
+    CHECK(w.layoutForm() == F::Tablet);
+    CHECK(w.findChild<QWidget*>("switchCurtain") != nullptr); // still fading
+    settle(500);
+    CHECK(w.findChild<QWidget*>("switchCurtain") == nullptr);
+    qputenv("SCHNEIDI_REDUCE_MOTION", "1");
+    w.resize(1400, 900);
+    QTest::qWait(160);
+    QApplication::processEvents();
+    QApplication::processEvents();
+    CHECK(w.layoutForm() == F::Desktop);
+    CHECK(w.findChild<QWidget*>("switchCurtain") == nullptr);
+    qunsetenv("SCHNEIDI_REDUCE_MOTION");
     // The setting pins a form at once (no restart)
     qputenv("SCHNEIDI_LAYOUT", "phone");
     w.resize(1400, 901);

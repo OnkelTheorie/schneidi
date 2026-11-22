@@ -2,6 +2,8 @@
 // MainWindow: settings of the app (File › Settings…) and applying them
 #include "app/MainWindow.h"
 
+#include <QSettings>
+
 #include "app/AiChat.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
@@ -97,6 +99,7 @@ void MainWindow::settingsDialog(int tab)
     // Layout form: at once (the same widgets move)
     const bool phoneChanged = dlg.phoneLayout() != SettingsDialog::savedPhoneLayout() && !m_autosaveDisabled;
     if (phoneChanged) SettingsDialog::setSavedPhoneLayout(dlg.phoneLayout());
+    if (!m_autosaveDisabled) QSettings().setValue("ui/reduceMotion", dlg.reduceMotion());
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {
