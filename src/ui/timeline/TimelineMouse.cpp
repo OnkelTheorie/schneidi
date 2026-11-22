@@ -864,16 +864,13 @@ void TimelineView::leaveEvent(QEvent*)
 
 void TimelineView::wheelEvent(QWheelEvent* e)
 {
-    // Qt swaps the axes while Alt is held (and some systems while Shift is held) -> evaluate both directions there.
-    // Otherwise a mostly sideways delta (touchpad swipe, tilt wheel) always pans sideways, whatever the wheel's
-    // binding: it is the direction the user moved in (wheelPansSideways)
-    const QPoint ad = e->angleDelta();
-    const bool sideways = wheelPansSideways(ad, e->modifiers());
-    const double steps = (sideways ? ad.x() : ad.y() != 0 ? ad.y() : ad.x()) / 120.0;
+    // The binding of the held modifiers; a sideways swipe pans sideways (InputBindings::wheelMove, like the Studio)
+    const InputBindings::WheelMove move = InputBindings::instance().wheelMove(e->angleDelta(), e->modifiers());
+    const double steps = move.steps;
     if (steps == 0) return;
     const double mouseX = e->position().x();
 
-    switch (sideways ? WheelAction::ScrollHorizontal : InputBindings::instance().wheelAction(e->modifiers())) {
+    switch (move.action) {
     case WheelAction::ScrollVertical:
         setScrollY(m_view.scrollY - int(steps * 40));
         break;

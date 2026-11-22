@@ -107,12 +107,12 @@
 
 void MainWindow::updateStepTexts()
 {
-    const QString step = TimelineOptions::stepText(TimelineOptions::bigStep());
-    const QString nudge = TimelineOptions::stepText(TimelineOptions::bigNudge());
-    const QVector<QPair<const char*, QString>> texts = {{"second_prev", T("%1 zurück").arg(step)},
-                                                        {"second_next", T("%1 vor").arg(step)},
-                                                        {"nudge_left_multi", T("%1 nach links schieben").arg(nudge)},
-                                                        {"nudge_right_multi", T("%1 nach rechts schieben").arg(nudge)}};
+    using TimelineOptions::StepAction, TimelineOptions::stepActionText;
+    const QVector<QPair<const char*, QString>> texts = {
+        {"second_prev", stepActionText(StepAction::Back, TimelineOptions::bigStep())},
+        {"second_next", stepActionText(StepAction::Forward, TimelineOptions::bigStep())},
+        {"nudge_left_multi", stepActionText(StepAction::NudgeLeft, TimelineOptions::bigNudge())},
+        {"nudge_right_multi", stepActionText(StepAction::NudgeRight, TimelineOptions::bigNudge())}};
     for (const auto& [id, text] : texts)
         if (QAction* a = InputBindings::instance().action(id)) a->setText(text);
 }
@@ -408,10 +408,12 @@ void MainWindow::buildActions()
     makeAction(trimMenu, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
     makeAction(trimMenu, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [nudge] { nudge(1); });
     // The big nudge: 5 frames or the user's size (Settings › Timeline; the texts follow it, updateStepTexts)
-    const QString bigNudge = TimelineOptions::stepText(TimelineOptions::bigNudge());
-    makeAction(trimMenu, "nudge_left_multi", T("%1 nach links schieben").arg(bigNudge), QKeySequence("Shift+,"),
+    using TimelineOptions::StepAction, TimelineOptions::stepActionText;
+    makeAction(trimMenu, "nudge_left_multi", stepActionText(StepAction::NudgeLeft, TimelineOptions::bigNudge()),
+               QKeySequence("Shift+,"),
                [this, nudge] { nudge(-TimelineOptions::stepFrames(TimelineOptions::bigNudge(), m_project->fps())); });
-    makeAction(trimMenu, "nudge_right_multi", T("%1 nach rechts schieben").arg(bigNudge), QKeySequence("Shift+."),
+    makeAction(trimMenu, "nudge_right_multi", stepActionText(StepAction::NudgeRight, TimelineOptions::bigNudge()),
+               QKeySequence("Shift+."),
                [this, nudge] { nudge(TimelineOptions::stepFrames(TimelineOptions::bigNudge(), m_project->fps())); });
     QMenu* clipMenu = timeline->addMenu(T("Clip"));
     makeAction(clipMenu, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
@@ -628,10 +630,12 @@ void MainWindow::buildActions()
     makeAction(play, "frame_prev", T("1 Frame zurück"), QKeySequence(Qt::Key_Left), [this] { stepFrames(-1); });
     makeAction(play, "frame_next", T("1 Frame vor"), QKeySequence(Qt::Key_Right), [this] { stepFrames(1); });
     // The big step: 1 second or the user's size (Settings › Timeline; the texts follow it, updateStepTexts)
-    const QString bigStep = TimelineOptions::stepText(TimelineOptions::bigStep());
-    makeAction(play, "second_prev", T("%1 zurück").arg(bigStep), QKeySequence("Shift+Left"),
+    makeAction(play, "second_prev", TimelineOptions::stepActionText(TimelineOptions::StepAction::Back, TimelineOptions::bigStep()),
+               QKeySequence("Shift+Left"),
                [this] { stepFrames(-TimelineOptions::stepFrames(TimelineOptions::bigStep(), m_project->fps())); });
-    makeAction(play, "second_next", T("%1 vor").arg(bigStep), QKeySequence("Shift+Right"),
+    makeAction(play, "second_next",
+               TimelineOptions::stepActionText(TimelineOptions::StepAction::Forward, TimelineOptions::bigStep()),
+               QKeySequence("Shift+Right"),
                [this] { stepFrames(TimelineOptions::stepFrames(TimelineOptions::bigStep(), m_project->fps())); });
     makeAction(play, "edit_prev", T("Vorheriger Schnittpunkt"), QKeySequence(Qt::Key_Up), [this] { jumpToEdit(-1); });
     makeAction(play, "edit_next", T("Nächster Schnittpunkt"), QKeySequence(Qt::Key_Down), [this] { jumpToEdit(1); });

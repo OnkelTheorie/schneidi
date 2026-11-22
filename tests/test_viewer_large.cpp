@@ -652,13 +652,29 @@ void testSpaceAndFollow(MainWindow& w, Engine& engine)
         back->trigger();
         settle();
         CHECK_EQ(engine.position(), 12);
+        // Another timeline opened and back: the old start position is gone, "Stop and return" only stops
+        Project* project = w.liveProject();
+        const int first = project->currentSequence();
+        const int other = project->addTimeline("andere");
+        settle();
+        project->setCurrentSequence(first);
+        settle();
+        engine.seek(30);
+        settle();
+        back->trigger();
+        settle();
+        CHECK_EQ(engine.position(), 30);
+        CHECK(engine.speed() == 0.0);
+        project->undoStack()->undo(); // the extra timeline
+        settle();
+        CHECK(!project->sequence(other) || project->currentSequence() == first);
     }
     // Following: zoomed in as far as it goes, so the 2 s clip is longer than the view
     TimelineView* tv = w.findChild<TimelinePanel*>()->view();
     const double ppf = ViewState::kMaxPxPerFrame;
     tv->setZoomAndScroll(ppf, 0, 0);
     const int visible = tv->visibleFrames();
-    if (!CHECK(visible + 8 < tl.video[0].clips.first().end())) return;
+    if (!CHECK(visible + 8 < w.liveProject()->timeline().video[0].clips.first().end())) return;
     if (playFrom(0)) {
         engine.pause();
         CHECK_EQ(tv->view().leftFrame, 0.0); // off by default

@@ -595,7 +595,7 @@ void Viewer::showTrim(const TrimFrames::View& view)
         endTrim();
         return;
     }
-    m_trim->setFps(m_engine->fps());
+    m_trim->setFps(m_engine->format().rate.fps());
     m_trim->setAspect(m_engine->frameSize());
     m_trim->setView(view);
     // Cached frames at once, the rest in the background (latest request wins -> stays responsive while dragging)
@@ -755,6 +755,6 @@ QMimeData* Viewer::dragData(const QByteArray& part) const
 void Viewer::updateTimecode(int frame)
 {
     m_timecodeFrame = frame;
-    m_timecode->setText(TimelineOptions::formatTime(frame, m_engine->fps()));
+    m_timecode->setText(TimelineOptions::formatTime(frame, m_engine->format().rate.fps()));
     m_scrubber->setPosition(frame);
 }

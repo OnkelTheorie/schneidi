@@ -569,6 +569,22 @@ int main(int argc, char** argv)
             CHECK_EQ(r->markOut, 100);
             CHECK_EQ(r->markers, (QVector<int>{40, 198}));
         }
+        // A still with its own length (Settings › Timeline: 1.5 s = 75 at 50 fps) that exists on disk: rescaled to
+        // 150 at 100 fps, not the probe's fresh 5 s (500); a video that exists takes the probe's length
+        QTemporaryDir dir;
+        const QString png = QDir(dir.path()).filePath("still.png"), mp4 = QDir(dir.path()).filePath("v.mp4");
+        QImage(8, 8, QImage::Format_RGB32).save(png);
+        QFile video(mp4);
+        CHECK(video.open(QIODevice::WriteOnly) && video.write("x") == 1);
+        video.close();
+        q.addMedia(MediaInfo{png, "still.png", 75, true, false, true});
+        q.addMedia(MediaInfo{mp4, "v.mp4", 75, true, false, false});
+        const FrameRate fifty = q.format().rate;
+        f.rate = FrameRate{100, 1};
+        q.setFormat(f);
+        q.recountMedia(fifty, [](const QString&) { return 500; });
+        if (const MediaInfo* st = q.mediaInfo(png); CHECK(st)) CHECK_EQ(st->length, 150);
+        if (const MediaInfo* v = q.mediaInfo(mp4); CHECK(v)) CHECK_EQ(v->length, 500);
     }
     // --- Timelines show their resolution in the tool tip: their own (a 9:16 short) or the project's
     {

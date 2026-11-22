@@ -313,6 +313,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         }
         m_lastSpeed = speed;
     });
+    // Another project or timeline: the old start position means nothing there ("Stop and return" only stops). Also
+    // a format change (another frame rate: frames count differently)
+    for (auto signal : {&Project::loaded, &Project::currentSequenceChanged, &Project::formatChanged})
+        connect(m_project, signal, this, [this] { m_playStart = -1; });
     // Playing or not: the timeline may follow the playhead while it plays (Settings › Timeline, off by default)
     connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {
         tv->setPlaying(m_engine->timelinePositions() ? speed : 0.0);

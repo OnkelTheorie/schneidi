@@ -11,6 +11,7 @@
 #include "check.h"
 #include "timeline_guard.h"
 
+#include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -808,9 +809,24 @@ void testWheelSideways()
     const int h = f.tv.view().videoTrackHeight;
     wheel(f.tv, 120, 0, Qt::ShiftModifier);
     CHECK(f.tv.view().videoTrackHeight > h);
-    CHECK(TimelineView::wheelPansSideways({120, 0}, Qt::ControlModifier));
-    CHECK(!TimelineView::wheelPansSideways({120, 0}, Qt::AltModifier));
-    CHECK(!TimelineView::wheelPansSideways({60, 120}, {}));
+    using A = WheelAction;
+    const auto move = [](QPoint d, Qt::KeyboardModifiers mods, A bound) { return InputBindings::wheelMove(d, mods, bound); };
+    CHECK(move({120, 0}, Qt::ControlModifier, A::ScrollHorizontal).action == A::ScrollHorizontal);
+    CHECK(move({120, 0}, Qt::AltModifier, A::Zoom).action == A::Zoom);
+    CHECK(move({60, 120}, {}, A::ScrollVertical).action == A::ScrollVertical);
+    CHECK_EQ(move({60, 120}, {}, A::ScrollVertical).steps, 1.0);
+    // A modifier bound to zoom (Kdenlive/CapCut wheel: Ctrl) keeps zooming on a diagonal swipe, on its larger axis
+    CHECK(move({-120, 30}, Qt::ControlModifier, A::Zoom).action == A::Zoom);
+    CHECK_EQ(move({-120, 30}, Qt::ControlModifier, A::Zoom).steps, -1.0);
+    CHECK(move({120, 10}, Qt::ControlModifier, A::TrackHeight).action == A::TrackHeight);
+    // Without a held modifier a sideways swipe pans even when the plain wheel zooms (Vegas wheel)
+    CHECK(move({120, 10}, {}, A::Zoom).action == A::ScrollHorizontal);
+    // End to end with the CapCut wheel: Ctrl + diagonal swipe zooms the timeline
+    InputBindings::instance().applyWheelPreset("capcut");
+    f.tv.setZoomAndScroll(2.0, 200, 0);
+    wheel(f.tv, 120, 30, Qt::ControlModifier);
+    CHECK(f.tv.view().pxPerFrame > 2.0 * 1.1);
+    InputBindings::instance().applyWheelPreset("standard");
 }
 
 // Following the playhead while playing (TimelineOptions::follow): off by default (core rule); page turns and centre

@@ -75,7 +75,10 @@ void setBigStep(Step step);
 Step bigNudge();
 void setBigNudge(Step step);
 inline int stepFrames(Step step, int fps) { return step.seconds ? step.count * fps : step.count; }
-QString stepText(Step step); // "1 Sekunde", "5 Frames" (translated)
+// The menu text of a step action as one whole sentence per unit and direction (translatable with its grammar); the
+// defaults give exactly the texts from before ("1 Sekunde zurück", "5 Frames nach links schieben")
+enum class StepAction { Back, Forward, NudgeLeft, NudgeRight };
+QString stepActionText(StepAction action, Step step);
 
 // Pictures on video clips (Settings › Timeline › Display): a filmstrip (default, as before), the first frame, the
 // first and the last frame, none (the clip's colour only: least decoding, for weak computers). Read once per paint.
@@ -106,12 +109,14 @@ QLine waveLine(int x, double v, const QRect& body, WaveShape shape, double inset
 enum class TimeFormat { Timecode, Seconds, Frames };
 TimeFormat timeFormat();
 void setTimeFormat(TimeFormat format);
-QString formatTime(int frames, int fps, TimeFormat format);
-inline QString formatTime(int frames, int fps) { return formatTime(frames, fps, timeFormat()); }
+// fps = the real frame rate (29.97, 23.976: seconds are real seconds; timecode counts whole frames per second as
+// Timecode::format does). Seconds round to the nearest hundredth, so up to 100 fps every frame reads back as itself
+QString formatTime(int frames, double fps, TimeFormat format);
+inline QString formatTime(int frames, double fps) { return formatTime(frames, fps, timeFormat()); }
 // A typed time -> frames, -1 = invalid. Every format reads timecode (Timecode::parse); "4.5s" is always seconds and
 // "112f" always frames. Besides, with Seconds a number with a decimal sign or up to two colons is seconds
 // ("4,5", "1:30" = 90 s), with Frames plain digits are frames.
-int parseTime(const QString& text, int fps, TimeFormat format);
-inline int parseTime(const QString& text, int fps) { return parseTime(text, fps, timeFormat()); }
+int parseTime(const QString& text, double fps, TimeFormat format);
+inline int parseTime(const QString& text, double fps) { return parseTime(text, fps, timeFormat()); }
 
 } // namespace TimelineOptions

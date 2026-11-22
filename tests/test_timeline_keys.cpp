@@ -373,12 +373,15 @@ void testWindow(const QString& media, const QString& shots)
     action("second_next")->trigger();
     QApplication::processEvents();
     CHECK_EQ(engine.position(), 100 + fps);
-    CHECK(action("second_next")->text().contains(T("1 Sekunde")));
+    // Default sizes: exactly the texts from before (translated in every language)
+    CHECK_EQ(action("second_next")->text(), T("1 Sekunde vor"));
+    CHECK_EQ(action("second_prev")->text(), T("1 Sekunde zurück"));
+    CHECK_EQ(action("nudge_left_multi")->text(), T("5 Frames nach links schieben"));
     TimelineOptions::setBigStep({10, false});
     TimelineOptions::setBigNudge({2, true});
     w.applyTimelineOptions();
-    CHECK(action("second_prev")->text().contains(T("%1 Frames").arg(10)));
-    CHECK(action("nudge_right_multi")->text().contains(T("%1 Sekunden").arg(2)));
+    CHECK_EQ(action("second_prev")->text(), T("%1 Frames zurück").arg(10)); // one sentence each (grammar per language)
+    CHECK_EQ(action("nudge_right_multi")->text(), T("%1 Sekunden nach rechts schieben").arg(2));
     action("second_prev")->trigger();
     QApplication::processEvents();
     CHECK_EQ(engine.position(), 100 + fps - 10);
@@ -394,7 +397,12 @@ void testWindow(const QString& media, const QString& shots)
     }
     QSettings().remove("timeline");
     w.applyTimelineOptions();
-    CHECK(action("nudge_right_multi")->text().contains(T("%1 Frames").arg(5)));
+    CHECK_EQ(action("nudge_right_multi")->text(), T("5 Frames nach rechts schieben"));
+    // In English the default texts are the old translations too
+    using TimelineOptions::StepAction;
+    CHECK_EQ(I18n::translate("en", "1 Sekunde zurück"), QString("Back 1 Second"));
+    CHECK_EQ(I18n::translate("en", "5 Frames nach links schieben"), QString("Nudge 5 Frames Left"));
+    CHECK_EQ(TimelineOptions::stepActionText(StepAction::Forward, {1, false}), T("1 Frame vor"));
 }
 
 } // namespace

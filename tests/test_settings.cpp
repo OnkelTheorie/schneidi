@@ -19,11 +19,17 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
+#include "core/Editor.h"
+#include "core/Project.h"
+#include "core/Timecode.h"
+#include "ui/Inspector.h"
+#include "ui/MediaPool.h"
 #include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QApplication>
+#include <QListWidget>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
@@ -521,6 +527,43 @@ void testMainWindow()
     // The test run saved nothing
     CHECK(!QSettings().contains("ai/indicator"));
     CHECK(!QSettings().contains("ai/liveAllowed"));
+
+    // The time format reaches what stands still on screen at once: Media Pool durations, Inspector subtitle fields
+    QSettings().remove("timeline");
+    {
+        MainWindow w3(&engine);
+        w3.disableAutosave();
+        w3.resize(1400, 900);
+        w3.show();
+        auto* ed = w3.findChild<Editor*>();
+        auto* pool = w3.findChild<MediaPool*>();
+        auto* inspector = w3.findChild<Inspector*>();
+        if (CHECK(ed && pool && inspector)) {
+            ed->project()->addMedia(MediaInfo{"/x/lang.mp4", "lang.mp4", 250, true, true, false});
+            ed->addSubtitle(100); // selected: the Inspector shows its start
+            QApplication::processEvents();
+            const auto poolHas = [&](const QString& text) {
+                for (auto* list : pool->findChildren<QListWidget*>())
+                    for (int i = 0; i < list->count(); ++i)
+                        if (list->item(i)->text().contains("lang.mp4") && list->item(i)->text().contains(text)) return true;
+                return false;
+            };
+            const auto inspectorHas = [&](const QString& text) {
+                for (auto* edit : inspector->findChildren<QLineEdit*>())
+                    if (edit->text() == text) return true;
+                return false;
+            };
+            const int fps = ed->project()->fps();
+            CHECK(poolHas(Timecode::format(250, fps)));
+            CHECK(inspectorHas(Timecode::format(100, fps)));
+            TimelineOptions::setTimeFormat(TimelineOptions::TimeFormat::Frames);
+            w3.applyTimelineOptions();
+            QApplication::processEvents();
+            CHECK(poolHas("    250") || poolHas("\n250"));
+            CHECK(inspectorHas("100"));
+        }
+    }
+    QSettings().remove("timeline");
 }
 
 } // namespace

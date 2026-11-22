@@ -4,6 +4,8 @@
 #include "core/AppPaths.h"
 #include "core/I18n.h"
 
+#include <cstdlib>
+
 #include <QAction>
 #include <QDir>
 #include <QFile>
@@ -975,6 +977,21 @@ QString InputBindings::modifierKey(Qt::KeyboardModifiers mods)
 WheelAction InputBindings::wheelAction(Qt::KeyboardModifiers mods) const
 {
     return m_wheel.value(modifierKey(mods), WheelAction::None);
+}
+
+InputBindings::WheelMove InputBindings::wheelMove(QPoint angleDelta, Qt::KeyboardModifiers mods) const
+{
+    return wheelMove(angleDelta, mods, wheelAction(mods));
+}
+
+InputBindings::WheelMove InputBindings::wheelMove(QPoint d, Qt::KeyboardModifiers mods, WheelAction bound)
+{
+    const bool mostlySideways = std::abs(d.x()) > std::abs(d.y());
+    const bool held = mods & (Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier);
+    const bool heldBinding = held && (bound == WheelAction::Zoom || bound == WheelAction::TrackHeight);
+    if (mostlySideways && !(mods & (Qt::AltModifier | Qt::ShiftModifier)) && !heldBinding)
+        return {WheelAction::ScrollHorizontal, d.x() / 120.0};
+    return {bound, (mostlySideways ? d.x() : d.y()) / 120.0};
 }
 
 QStringList InputBindings::wheelModifiers() { return {"none", "ctrl", "shift", "alt"}; }

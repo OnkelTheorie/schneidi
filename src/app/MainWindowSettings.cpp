@@ -23,6 +23,8 @@
 #include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/MediaPool.h"
+#include "ui/Inspector.h"
 #include "ui/Viewer.h"
 #include "ui/studio/StudioPage.h"
 #include "ui/studio/StudioTracks.h"
@@ -83,7 +85,9 @@ void MainWindow::settingsDialog(int tab)
             || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
-    // Timeline tab: the timelines read the choices when they need them (no restart); redrawn for the ones they show
+    // Timeline tab: the timelines read the choices from the settings when they need them (no restart), so storing
+    // is applying. A test run (disableAutosave) must not write the user's settings: there the tab is NOT applied
+    // (unlike the other tabs, which apply without saving); tests set TimelineOptions themselves
     if (!m_autosaveDisabled) dlg.timelinePage()->store();
     applyTimelineOptions();
     setSecondScreenMode(dlg.secondScreenMode());
@@ -121,7 +125,10 @@ void MainWindow::applyTimelineOptions()
     m_timeline->view()->update();
     m_timeline->overview()->update();
     if (m_studioPage) m_studioPage->tracks()->update();
-    m_viewer->refreshTimeDisplay(); // the time format
+    // The time format, at once wherever a time stands still on screen
+    m_viewer->refreshTimeDisplay();
+    m_mediaPool->refreshTimes();
+    m_inspector->refreshTimes();
 }
 
 void MainWindow::setProxyQuality(ProxyManager::Quality quality)

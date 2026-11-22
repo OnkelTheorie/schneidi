@@ -401,6 +401,17 @@ void testTimeFormat()
     CHECK_EQ(parseTime("1:30", 25, TF::Seconds), 90 * 25);
     CHECK_EQ(parseTime("1:30", 25, TF::Timecode), 25 + 30); // timecode: 1 s 30 frames, as before
     CHECK_EQ(parseTime("1:00:00", 25, TF::Seconds), 3600 * 25);
+    // Seconds at the real rate: 29.97 fps, 1800 frames = 60.06 s (not 60.00 at the timecode's 30); timecode stays
+    // non-drop at 30. Every frame reads back as itself at 23.976, 25, 29.97, 50, 59.94 fps
+    CHECK_EQ(formatTime(1800, 30000.0 / 1001, TF::Seconds), "1:00" + dp + "06");
+    CHECK_EQ(formatTime(1800, 30000.0 / 1001, TF::Timecode), QString("00:01:00:00"));
+    CHECK_EQ(formatTime(24, 24000.0 / 1001, TF::Seconds), "0:01" + dp + "00");
+    for (double fps : {24000.0 / 1001, 25.0, 30000.0 / 1001, 50.0, 60000.0 / 1001}) {
+        int bad = 0;
+        for (int f = 0; f < 4000; ++f) bad += parseTime(formatTime(f, fps, TF::Seconds), fps, TF::Seconds) != f;
+        bad += parseTime(formatTime(215784, fps, TF::Seconds), fps, TF::Seconds) != 215784; // past an hour
+        Check::report(bad == 0, "seconds round trip", __FILE__, __LINE__, QString("%1 fps: %2 wrong").arg(fps).arg(bad));
+    }
     // The ruler's In/Out tooltip in frames
     TimelineOptions::setTimeFormat(TF::Frames);
     CHECK(TimelineOptions::timeFormat() == TF::Frames);

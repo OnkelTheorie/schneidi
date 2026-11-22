@@ -886,7 +886,8 @@ void Project::recountMedia(FrameRate oldRate, const std::function<int(const QStr
     const double k = m_format.rate.fps() / oldRate.fps();
     QVector<MediaInfo> media = m_media;
     for (MediaInfo& m : media) {
-        const int fresh = probeLength && QFileInfo::exists(m.path) ? probeLength(m.path) : 0;
+        // A still has the length it was given (Settings › Timeline, EditDefaults), not the probe's 5 s: only rescaled
+        const int fresh = !m.isImage && probeLength && QFileInfo::exists(m.path) ? probeLength(m.path) : 0;
         m.length = fresh > 0 ? fresh : std::max(1, int(std::lround(m.length * k)));
         const auto scale = [&](int frame) { return frame < 0 ? -1 : std::min(m.length - 1, int(std::lround(frame * k))); };
         m.markIn = scale(m.markIn);

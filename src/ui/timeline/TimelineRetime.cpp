@@ -154,7 +154,7 @@ void TimelineView::drawRetime(QPainter& p, const QRect& r, const Clip& c)
     if (dragging && m_rampDelta != 0 && m_rampDrag.point < points.size()) {
         const double x = xOf(points[m_rampDrag.point]) + m_rampDelta * m_view.pxPerFrame;
         drawLabel(p, QPoint(int(x) + 8, bar.top() - 22),
-                  (m_rampDelta > 0 ? "+" : "") + TimelineOptions::formatTime(m_rampDelta, m_editor->project()->fps()));
+                  (m_rampDelta > 0 ? "+" : "") + TimelineOptions::formatTime(m_rampDelta, m_editor->project()->frameRate()));
     }
 }
 
