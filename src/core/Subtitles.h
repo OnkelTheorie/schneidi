@@ -58,14 +58,34 @@ QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path);
 // keeps them (the new cue gets them all, when every source cue had them); otherwise words share their cue's time by
 // length. Overlapping input is cut apart first (a cue ends where the next starts; two starting together are one);
 // cues without text are left out. ids 0 in the result.
+// The defaults are the "normal" length; rulesFor(CueLength) gives the short ones (one line, a few words).
 struct ReadableRules {
     int lines = 2;
     int lineChars = 42;
     double cps = 17;
     double minSeconds = 0.8;
     double pause = 0.7;
+    int maxWords = 0;          // most words per cue (one longer word alone may still be more characters); 0 = any
+    int shortChars = 20;       // a piece of a sentence under this many characters ...
+    int shortWords = 2;        // ... or of at most this many words costs a lot (an orphan "dazu gehört.")
+    double tooShortCost = 0;   // cost of a cue the next word leaves less than minSeconds (0 = none: one more cue is
+                               // fine); a stretch of speech that short is shown as it is
+    double conjunctionCost = 12; // cost of a break before a conjunction ("und", "weil", "but"); mid-phrase is 12
+    double danglingCost = 0;     // extra cost of a cue ending on an article or short word ("die", "zu", "einen", "the")
 };
 QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, const ReadableRules& rules = {});
+
+// ---- Cue length (0.26): "Untertitel-Länge" ----
+// Normal: today's 1-2 line cues (ReadableRules{}). Short: one line of at most 25 characters and 6 words, about one
+// short sentence or less (split at sentence ends, then commas and conjunctions, never shown under 0.5 s unless the
+// speech is that short) - for TikTok/Shorts. VeryShort: 2-3 words (at most 16 characters) at a time. Auto: Short for a
+// vertical picture (taller than wide), Normal otherwise.
+enum class CueLength { Auto, Normal, Short, VeryShort };
+CueLength resolve(CueLength length, QSize format);
+ReadableRules rulesFor(CueLength length); // Auto counts as Normal (resolve first)
+QString cueLengthKey(CueLength length);   // "auto", "normal", "short", "very_short" (CLI, settings)
+// From cueLengthKey (also "very-short", "veryshort", any case); false = unknown
+bool parseCueLength(const QString& key, CueLength* length);
 
 // Default style for a project format (sizes relative to the picture height, basis 1080 pixels)
 TitleStyle defaultStyle(QSize format);

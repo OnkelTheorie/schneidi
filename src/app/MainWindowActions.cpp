@@ -535,6 +535,14 @@ void MainWindow::buildActions()
                [this] { m_editor->addSubtitleTrack(); });
     makeAction(subtitleMenu, "transcribe_subtitles", T("Untertitel aus Audio erzeugen…"), QKeySequence(),
                [this] { transcribeDialog(); });
+    // Existing subtitles (older projects, imported SRT) split into short cues for TikTok/Shorts or back to 1-2 lines
+    QMenu* resplitMenu = subtitleMenu->addMenu(T("Untertitel neu aufteilen"));
+    makeAction(resplitMenu, "resplit_subtitles_normal", T("Normal (1–2 Zeilen)"), QKeySequence(),
+               [this] { resplitSubtitles(Subtitles::CueLength::Normal); });
+    makeAction(resplitMenu, "resplit_subtitles_short", T("Kurz (eine Zeile, für TikTok/Shorts)"), QKeySequence(),
+               [this] { resplitSubtitles(Subtitles::CueLength::Short); });
+    makeAction(resplitMenu, "resplit_subtitles_very_short", T("Sehr kurz (2–3 Wörter)"), QKeySequence(),
+               [this] { resplitSubtitles(Subtitles::CueLength::VeryShort); });
     QMenu* markMenu = timeline->addMenu(T("In/Out und Marker"));
     // In/Out like DaVinci: if the Viewer shows the source, they apply to the source clip (remembered per Media Pool clip)
     auto markIn = [this, tv](int frame) {

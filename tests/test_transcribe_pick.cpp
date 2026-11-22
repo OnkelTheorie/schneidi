@@ -8,6 +8,7 @@
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/I18n.h"
+#include "core/ProjectFile.h"
 #include "core/Transcript.h"
 #include "engine/Extensions.h"
 #include "engine/Transcriber.h"
@@ -18,6 +19,8 @@
 #include <QFile>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QSpinBox>
 #include <QLabel>
 #include <QTranslator>
 #include <QEventLoop>
@@ -84,10 +87,18 @@ int fakeWhisper(int argc, char** argv)
     const double seconds = (last - first) / 16000.0;
     const int pitch = seconds > 0 ? int(std::lround(crossings / 2.0 / seconds / 100)) * 100 : 0;
     std::fprintf(stderr, "whisper_print_progress_callback: progress =  50%%\n");
-    const QJsonObject json{
-        {"result", QJsonObject{{"language", lang}}},
-        {"transcription", QJsonArray{QJsonObject{{"text", QString(" f%1").arg(pitch)},
-                                                 {"offsets", QJsonObject{{"from", 100}, {"to", 900}}}}}}};
+    QJsonArray segments{QJsonObject{{"text", QString(" f%1").arg(pitch)}, {"offsets", QJsonObject{{"from", 100}, {"to", 900}}}}};
+    // FAKE_WHISPER_TEXT: these words instead, one segment each (as -ml 1), spread evenly over the sounding part
+    if (const QStringList words = qEnvironmentVariable("FAKE_WHISPER_TEXT").split(' ', Qt::SkipEmptyParts);
+        !words.isEmpty() && last > first) {
+        segments = {};
+        const double from = first / 16.0, step = (last - first) / 16.0 / words.size();
+        for (int i = 0; i < words.size(); ++i)
+            segments << QJsonObject{{"text", " " + words[i]},
+                                    {"offsets", QJsonObject{{"from", qint64(from + i * step)},
+                                                            {"to", qint64(from + (i + 1) * step - 20)}}}};
+    }
+    const QJsonObject json{{"result", QJsonObject{{"language", lang}}}, {"transcription", segments}};
     QFile o(out + ".json");
     if (!o.open(QIODevice::WriteOnly)) return 4;
     o.write(QJsonDocument(json).toJson());
@@ -436,6 +447,122 @@ int main(int argc, char** argv)
         CHECK(hintFor("en", &cues).isEmpty());
         CHECK(hintFor("auto", &cues).isEmpty());
         CHECK_EQ(cues, 1);
+    }
+    {
+        // Cue length (0.26): a vertical timeline gets short cues (one line, a few words, word times kept) by default,
+        // a horizontal one or length:"normal" the cues as before; max_chars alone keeps normal; the dialog offers the
+        // choice, remembers it and makes short cues with word times
+        const QString text = QString::fromUtf8(
+            "Heute zeige ich euch, wie man in fünf Minuten einen richtig guten Kaffee kocht, ohne teure Maschine. "
+            "Zuerst braucht ihr frisch gemahlene Bohnen und heißes Wasser, aber nicht kochend.");
+        qputenv("FAKE_WHISPER_TEXT", text.toUtf8());
+        // Syllable-like pulses (0.25 s sound, 0.1 s quiet): a steady tone would be the noise floor, its words "silent"
+        const QString talk = Check::makeMedia(
+            dir.filePath("talk.mkv"),
+            {"-f", "lavfi", "-i", "color=c=gray:s=160x120:r=25:d=10", "-f", "lavfi", "-i",
+             "sine=f=1000:d=10:sample_rate=48000,volume='between(t,0.1,9.5)*lt(mod(t,0.35),0.25)':eval=frame", "-c:v",
+             "libx264", "-c:a", "aac"});
+        if (CHECK(!talk.isEmpty())) {
+            const QString wide = dir.filePath("wide.schneidi"), tall = dir.filePath("tall.schneidi");
+            run("new", {{"project", wide}, {"media", QJsonArray{talk}}});
+            run("edit", {{"project", wide}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(talk)}});
+            run("new", {{"project", tall}, {"media", QJsonArray{talk}}, {"template", "vertical"}});
+            run("edit", {{"project", tall}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(talk)}});
+            const auto longest = [](const QJsonObject& r, int* words = nullptr) {
+                int most = 0, w = 0;
+                for (const QJsonValue& v : r["segments"].toArray()) {
+                    const QString t = v["text"].toString();
+                    most = std::max(most, int(t.size()));
+                    w = std::max(w, int(t.simplified().split(' ').size()));
+                }
+                if (words) *words = w;
+                return most;
+            };
+            const QJsonObject normal = run("transcribe", {{"source", wide}, {"model", model}});
+            CHECK_EQ(normal["length"].toString(), QString("normal"));
+            int words = 0;
+            const QJsonObject shortCues = run("transcribe", {{"source", tall}, {"model", model}});
+            CHECK_EQ(shortCues["length"].toString(), QString("short"));
+            const int shortest = longest(shortCues, &words);
+            std::printf("       wide: %d cues (longest %d characters), tall: %d cues (longest %d, %d words)\n",
+                        int(normal["segments"].toArray().size()), longest(normal), int(shortCues["segments"].toArray().size()),
+                        shortest, words);
+            CHECK(shortest <= 25 && words <= 6);
+            CHECK(shortCues["segments"].toArray().size() > normal["segments"].toArray().size());
+            CHECK(QJsonDocument(shortCues["notes"].toArray()).toJson().contains("short cues"));
+            // Every word once, in order
+            QStringList heard;
+            for (const QJsonValue& v : shortCues["segments"].toArray()) heard += v["text"].toString().split(' ');
+            CHECK_EQ(heard, text.split(' '));
+            CHECK_EQ(run("transcribe", {{"source", tall}, {"model", model}, {"length", "normal"}})["length"].toString(),
+                     QString("normal"));
+            CHECK_EQ(run("transcribe", {{"source", tall}, {"model", model}, {"max_chars", 30}})["length"].toString(),
+                     QString("normal"));
+            const QJsonObject wideShort = run("transcribe", {{"source", wide}, {"model", model}, {"length", "short"}});
+            CHECK_EQ(wideShort["length"].toString(), QString("short"));
+            CHECK(!QJsonDocument(wideShort["notes"].toArray()).toJson().contains("short cues")); // chosen: no note
+            int veryWords = 0;
+            const QJsonObject very = run("transcribe", {{"source", wide}, {"model", model}, {"length", "very-short"}});
+            CHECK(longest(very, &veryWords) <= 16 && veryWords <= 3);
+            CHECK(errorOf("transcribe", {{"source", wide}, {"model", model}, {"length", "tiny"}}).startsWith("BAD_ARGUMENT"));
+            // apply: the short cues land with their word times
+            const QJsonObject applied = run("transcribe", {{"source", tall}, {"model", model}, {"apply", true}});
+            CHECK_EQ(applied["applied"]["cues"].toInt(), int(shortCues["segments"].toArray().size()));
+            ProjectData d;
+            QString error;
+            if (CHECK(ProjectFile::load(tall, &d, &error)) && CHECK_EQ(d.timeline.subtitles.size(), 1))
+                for (const SubtitleCue& c : d.timeline.subtitles[0].cues)
+                    CHECK_EQ(int(c.words.size()), int(c.text.simplified().split(' ').size()));
+        }
+        // The dialog: "automatic" says what it picks, the characters box is for normal cues only; short cues with
+        // word times; the choice is remembered
+        Timeline tl;
+        tl.audio.resize(1);
+        Clip c;
+        c.id = 1;
+        c.mediaPath = talk;
+        c.out = 249;
+        tl.audio[0].clips << c;
+        QSettings().remove("transcribe/length");
+        QSettings().setValue("transcribe/language", "auto");
+        const ProjectFormat tallFormat{1080, 1920, {25, 1}}, wideFormat{1920, 1080, {25, 1}};
+        {
+            TranscribeDialog wideDlg(tl, wideFormat, 0, 250, {"A1"});
+            auto* box = wideDlg.findChild<QComboBox*>("transcribe_length");
+            if (CHECK(box)) CHECK_EQ(box->currentText(), T("Automatisch (Normal)"));
+            for (QSpinBox* spin : wideDlg.findChildren<QSpinBox*>()) CHECK(spin->isEnabled());
+        }
+        const auto runDialog = [&](const ProjectFormat& format, const char* choice, QVector<SubtitleCue>* cues) {
+            TranscribeDialog dlg(tl, format, 0, 250, {"A1"});
+            auto* box = dlg.findChild<QComboBox*>("transcribe_length");
+            if (!CHECK(box)) return;
+            if (choice) box->setCurrentIndex(box->findData(choice));
+            else CHECK_EQ(box->currentText(), T("Automatisch (Kurz, Hochformat)"));
+            for (QSpinBox* spin : dlg.findChildren<QSpinBox*>()) CHECK_EQ(spin->isEnabled(), choice && QString(choice) == "normal");
+            QPushButton* start = nullptr;
+            for (QPushButton* b : dlg.findChildren<QPushButton*>())
+                if (b->text() == T("Erzeugen")) start = b;
+            if (!CHECK(start && start->isEnabled())) return;
+            QEventLoop loop;
+            QObject::connect(&dlg, &QDialog::finished, &loop, &QEventLoop::quit);
+            QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+            start->click();
+            loop.exec();
+            if (CHECK_EQ(dlg.result(), int(QDialog::Accepted)) && CHECK(!dlg.results().isEmpty())) *cues = dlg.results()[0].cues;
+        };
+        QVector<SubtitleCue> autoCues, normalCues;
+        runDialog(tallFormat, nullptr, &autoCues);
+        CHECK_EQ(QSettings().value("transcribe/length").toString(), QString("auto"));
+        bool ok = !autoCues.isEmpty();
+        for (const SubtitleCue& cue : autoCues)
+            ok = ok && cue.text.size() <= 25 && !cue.text.contains('\n')
+              && cue.words.size() == cue.text.simplified().split(' ').size();
+        CHECK(ok);
+        runDialog(tallFormat, "normal", &normalCues);
+        CHECK_EQ(QSettings().value("transcribe/length").toString(), QString("normal"));
+        CHECK(normalCues.size() < autoCues.size());
+        QSettings().remove("transcribe/length");
+        qunsetenv("FAKE_WHISPER_TEXT");
     }
     {
         // Progress while whisper says nothing: estimated from the time against the expected run time, rising,

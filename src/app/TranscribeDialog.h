@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "core/Subtitles.h"
 #include "core/Types.h"
 #include "engine/Transcriber.h"
 
@@ -38,6 +39,7 @@ signals:
 
 private:
     void updateState();
+    Subtitles::CueLength cueLength() const; // the chosen one, Auto resolved by the timeline's format
     void run();
     void startJob();
 
@@ -47,6 +49,7 @@ private:
     QComboBox* m_lang;
     QComboBox* m_model;
     QSpinBox* m_chars;
+    QComboBox* m_length; // Untertitel-Länge: auto, normal, short, very_short
     struct TrackBox {
         int index;    // audio track
         QString name; // subtitle track name part ("Mikrofon" or "A3")

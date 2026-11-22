@@ -500,6 +500,28 @@ bool phraseEnd(const QString& w)
         || w.endsWith(QChar(0x2014));
 }
 
+// A word that starts a clause ("und", "weil", "but"): a cue may end before it when there is no comma
+bool conjunction(const QString& w)
+{
+    static const QSet<QString> kWords{
+        "und", "oder", "aber", "weil", "dass", "wenn", "denn", "sondern", "als", "ob", "damit", "bis", "dann",
+        "obwohl", "während", "also", "and", "or", "but", "because", "so", "that", "when", "if", "while", "then",
+        "until", "though", "although", "et", "ou", "mais", "parce", "quand", "y", "pero", "porque", "cuando"};
+    QString t = w.toLower();
+    while (!t.isEmpty() && !t.front().isLetter()) t.remove(0, 1);
+    return kWords.contains(t);
+}
+
+// A word a line or cue should not end on: an article, a preposition, a short lower-case word ("die", "zu", "einen")
+bool dangling(const QString& w)
+{
+    static const QSet<QString> kWords{"einen", "einem", "einer", "eines", "eine", "keine", "keinen", "meine",
+                                      "meinen", "deine", "seine", "seinen", "unsere", "ihre", "ihren", "with",
+                                      "from", "into", "your", "their", "about", "über", "unter", "durch"};
+    if (w.isEmpty() || phraseEnd(w)) return false;
+    return (w.size() <= 3 && w.front().isLower()) || kWords.contains(w.toLower());
+}
+
 // Sorted, without overlaps: a cue that starts inside the one before ends that one there; two starting together
 // become one (their text one after the other, no word times)
 QVector<SubtitleCue> apart(QVector<SubtitleCue> in)
@@ -609,18 +631,28 @@ QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, cons
         const auto endsSentence = [&](int k) { return k == r1 || sentenceEnd(tok[k - 1].text); }; // a cue ending before k
         const auto cost = [&](int a, int b) {
             double c = 10;
-            if (b < r1) c += sentenceEnd(tok[b - 1].text) ? 0 : phraseEnd(tok[b - 1].text) ? 4 : 12;
+            if (b < r1)
+                c += sentenceEnd(tok[b - 1].text) ? 0
+                   : phraseEnd(tok[b - 1].text)   ? 4
+                   : conjunction(tok[b].text)     ? r.conjunctionCost
+                                                  : 12;
+            if (b < r1 && dangling(tok[b - 1].text)) c += r.danglingCost;
             const bool whole = startsSentence(a) && endsSentence(b);
             const int len = chars(a, b);
-            if (!whole && (len < 20 || b - a <= 2)) c += 40;
+            if (!whole && (len < r.shortChars || b - a <= r.shortWords)) c += 40;
             if (!whole) { // a piece of a long sentence: about as long as the others
                 const int sentence = chars(sFrom[a], sTo[a]);
-                const double ideal = sentence / std::ceil(sentence / cap);
+                double pieces = std::ceil(sentence / cap);
+                if (r.maxWords > 0) pieces = std::max(pieces, std::ceil(double(sTo[a] - sFrom[a]) / r.maxWords));
+                const double ideal = sentence / pieces;
                 c += 25 * std::pow((len - ideal) / ideal, 2);
             }
             for (int k = a + 1; k < b; ++k)
                 if (sentenceEnd(tok[k - 1].text)) c += 12;
             if (!slowEnough(a, b)) c += 6;
+            // Shown too briefly to read (the next word follows at once): rather one more word, unless the whole
+            // stretch of speech is that short
+            if (r.tooShortCost > 0 && room(a, b) < minFrames && !(a == r0 && b == r1)) c += r.tooShortCost;
             return c;
         };
         const int m = r1 - r0;
@@ -629,7 +661,8 @@ QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, cons
         best[0] = 0;
         for (int b = r0 + 1; b <= r1; ++b)
             for (int a = b - 1; a >= r0; --a) {
-                if (a < b - 1 && lineCount(a, b) > lines) break; // one word longer than the lines: a cue of its own
+                // one word longer than the lines: a cue of its own
+                if (a < b - 1 && (lineCount(a, b) > lines || (r.maxWords > 0 && b - a > r.maxWords))) break;
                 const double c = best[a - r0] + cost(a, b);
                 if (c < best[b - r0]) best[b - r0] = c, from[b - r0] = a;
             }
@@ -686,6 +719,66 @@ QVector<SubtitleCue> readable(const QVector<SubtitleCue>& cues, double fps, cons
         out << c;
     }
     return out;
+}
+
+CueLength resolve(CueLength length, QSize format)
+{
+    if (length != CueLength::Auto) return length;
+    return format.height() > format.width() ? CueLength::Short : CueLength::Normal;
+}
+
+ReadableRules rulesFor(CueLength length)
+{
+    ReadableRules r;
+    if (length == CueLength::Short) {
+        r.lines = 1;
+        r.lineChars = 25;
+        r.maxWords = 6;
+        r.minSeconds = 0.5;
+        r.pause = 0.5;
+        r.shortChars = 8; // "Ja, genau." alone is fine, a single word of a sentence is not
+        r.shortWords = 1;
+        r.tooShortCost = 30;
+        r.conjunctionCost = 6;
+        r.danglingCost = 10;
+    } else if (length == CueLength::VeryShort) {
+        r.lines = 1;
+        r.lineChars = 16;
+        r.maxWords = 3;
+        r.cps = 20; // a few words flash by: read at a glance
+        r.minSeconds = 0.5;
+        r.pause = 0.4;
+        r.shortChars = 0;
+        r.shortWords = 1;
+        r.tooShortCost = 30;
+        r.conjunctionCost = 6;
+        r.danglingCost = 10;
+    }
+    return r;
+}
+
+QString cueLengthKey(CueLength length)
+{
+    switch (length) {
+    case CueLength::Auto: return "auto";
+    case CueLength::Normal: return "normal";
+    case CueLength::Short: return "short";
+    case CueLength::VeryShort: return "very_short";
+    }
+    return "auto";
+}
+
+bool parseCueLength(const QString& key, CueLength* length)
+{
+    QString k = key.trimmed().toLower();
+    k.replace('-', '_');
+    if (k == "veryshort") k = "very_short";
+    for (CueLength l : {CueLength::Auto, CueLength::Normal, CueLength::Short, CueLength::VeryShort})
+        if (k == cueLengthKey(l)) {
+            if (length) *length = l;
+            return true;
+        }
+    return false;
 }
 
 } // namespace Subtitles
