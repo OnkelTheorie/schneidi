@@ -118,6 +118,7 @@ private:
     QBoxLayout* m_sheetLay;
     QVector<Tool> m_tools;
     QString m_open;
+    QString m_openedBy; // the clip tool that opened the sheet (its panel belongs to a main tool), else empty
     double m_share = 0.55;
     bool m_landscape = false;
     bool m_laidOut = false;

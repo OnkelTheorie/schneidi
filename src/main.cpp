@@ -606,6 +606,7 @@ int main(int argc, char* argv[])
     // The back key steps back (popup, dialog, full screen, page) and asks before quitting (ui/touch/Touch.h). Only
     // here: on a desktop a keyboard's "browser back" key sends the same key
     Touch::installBackKey(&app, [&w] { return w.backStep(); });
+    Touch::installDialogFit(&app); // dialogs never narrower than their contents (a cut check box text)
 #endif
 #if defined(Q_OS_ANDROID) && QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 #warning "Qt older than 6.9 reports no safe areas: the notch and the system bars can cover the window's edges"

@@ -368,6 +368,10 @@ void testWindow(Engine& engine, const QSize& size)
         CHECK(inspector->currentPage() == 1);
         CHECK(shell->toolButton("volume")->isChecked());
         fits("volume: Audio tab");
+        shell->openSheet("inspector"); // the same panel opened another way (the Text tool): Volume is not the one
+        CHECK(!shell->toolButton("volume")->isChecked());
+        QTest::mouseClick(shell->toolButton("volume"), Qt::LeftButton); // and a tap makes it the one, not closes
+        CHECK(shell->sheet() == "inspector" && shell->toolButton("volume")->isChecked());
         QTest::mouseClick(shell->toolButton("volume"), Qt::LeftButton); // again: closes
         settle();
         CHECK(shell->sheet().isEmpty());

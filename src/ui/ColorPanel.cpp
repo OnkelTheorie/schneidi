@@ -87,6 +87,7 @@ public:
     {
         setFixedSize(112, 112);
         setCursor(Qt::CrossCursor);
+        setProperty("touchDrags", true); // a finger drag moves the balance, never scrolls the page around it
         setToolTip(T("Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen"));
     }
     void setPoint(double u, double v)
@@ -192,6 +193,7 @@ public:
     {
         setFixedSize(104, 14);
         setCursor(Qt::SizeHorCursor);
+        setProperty("touchDrags", true); // (as the wheel)
         setToolTip(T("Master: zur Seite ziehen = heller/dunkler (Shift = fein), Doppelklick = zurücksetzen"));
     }
     void setActive(bool moved)
@@ -269,6 +271,7 @@ public:
         setFixedHeight(16);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setCursor(Qt::SizeHorCursor);
+        setProperty("touchDrags", true); // (as the wheel)
         setToolTip(kind == Hue ? T("Ränder ziehen = Breite, Mitte ziehen = Farbton verschieben")
                                : T("Ränder ziehen = Bereich ändern"));
     }

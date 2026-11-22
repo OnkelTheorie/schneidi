@@ -99,6 +99,10 @@ int inputPanelRequests();
 // asks whether to quit). The key is always taken (Android ends the app on a back key nobody accepted).
 // main.cpp installs it on Android only: on a desktop a keyboard's "browser back" key would do it too
 void installBackKey(QApplication* app, std::function<bool()> stepBack);
+// A dialog shown narrower than its contents (on Android a dialog's first size came from fonts that were not yet the
+// final ones: a check box's text was cut at the edge) grows to its contents' width once shown, at most the screen's.
+// main.cpp installs it on Android only
+void installDialogFit(QApplication* app);
 // One step of the back key (also for tests); true = something closed or stepped back
 bool back(const std::function<bool()>& stepBack);
 

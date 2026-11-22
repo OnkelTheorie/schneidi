@@ -241,12 +241,14 @@ void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, cons
     t.button->setObjectName("phoneTool_" + id);
     t.button->setCheckable(true);
     connect(t.button, &QToolButton::clicked, this, [this, id, panelId] {
-        if (m_open == panelId) {
+        if (m_open == panelId && m_openedBy == id) {
             closeSheet();
             return;
         }
         openSheet(panelId);
         if (m_open != panelId) return;
+        m_openedBy = id; // this tool is the checked one, not every tool showing the same panel
+        updateButtons();
         scrollPanelToTop(panelId);
         if (Tool* t = tool(id); t && t->run) t->run();
     });
@@ -305,6 +307,7 @@ void PhoneShell::openSheet(const QString& id)
     m_sheetTitle->setText(t->label);
     const bool changed = m_open != id;
     m_open = id;
+    m_openedBy.clear();
     m_sheet->show();
     m_sheet->raise();
     placeSheet();
@@ -316,6 +319,7 @@ void PhoneShell::closeSheet()
 {
     if (m_open.isEmpty()) return;
     m_open.clear();
+    m_openedBy.clear();
     m_sheet->hide();
     updateButtons();
     emit sheetChanged({});
@@ -356,8 +360,9 @@ void PhoneShell::updateButtons()
 {
     for (Tool& t : m_tools) {
         if (!t.button->isCheckable()) continue;
-        const QString panel = t.panelId.isEmpty() ? t.id : t.panelId;
-        t.button->setChecked(!m_open.isEmpty() && panel == m_open);
+        // A main tool: its panel is open. A clip tool (Volume -> the Inspector): it opened the sheet itself
+        const bool on = t.panelId.isEmpty() ? !m_open.isEmpty() && t.id == m_open : t.panelId == m_open && m_openedBy == t.id;
+        t.button->setChecked(on);
     }
     // The bar's thickness follows its buttons (one row / one column): the largest button, not the box's hint (stale
     // right after the direction changed)

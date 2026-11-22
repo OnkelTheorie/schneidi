@@ -2,6 +2,8 @@
 // Phone basics of the touch layer (see Touch.h): click focus for the layer's own mouse events, the on-screen
 // keyboard, the back key, safe areas. Nothing here is Android-only code; main.cpp decides what runs where.
 #include "ui/touch/Touch.h"
+#include <QLayout>
+#include <QScreen>
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -166,5 +168,31 @@ QMargins safeAreaMargins(const QWidget* w)
 #endif
     return {};
 }
+
+namespace {
+class DialogFit : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override
+    {
+        if (event->type() == QEvent::Show)
+            if (auto* dialog = qobject_cast<QDialog*>(obj)) {
+                QPointer<QDialog> d(dialog);
+                QTimer::singleShot(0, d, [d] { // after the show's own layout
+                    if (!d || !d->layout()) return;
+                    const int wanted = std::max(d->layout()->totalMinimumSize().width(), d->sizeHint().width());
+                    QScreen* screen = d->screen();
+                    const int room = screen ? screen->availableGeometry().width() : wanted;
+                    if (d->width() < std::min(wanted, room)) d->resize(std::min(wanted, room), d->height());
+                });
+            }
+        return QObject::eventFilter(obj, event);
+    }
+};
+} // namespace
+
+void installDialogFit(QApplication* app) { app->installEventFilter(new DialogFit(app)); }
 
 } // namespace Touch

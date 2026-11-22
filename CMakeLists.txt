@@ -671,6 +671,18 @@ if(ANDROID)
     else()
         set(_schneidi_target_sdk 35)
     endif()
+    # Qt's own texts (Cancel, Save, a text field's menu) in the UI languages: an APK has no Qt translations folder,
+    # they go into the resources (core/I18n.cpp looks in :/qt-translations; ~2.4 MB)
+    set(_qt_tr_dir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_TRANSLATIONS}")
+    set(_qt_tr "")
+    foreach(_l de es fr it ja ko nl pl pt_BR ru tr uk zh_CN)
+        if(EXISTS "${_qt_tr_dir}/qtbase_${_l}.qm")
+            list(APPEND _qt_tr "${_qt_tr_dir}/qtbase_${_l}.qm")
+        endif()
+    endforeach()
+    if(_qt_tr)
+        qt_add_resources(schneidi_lib "qt_translations" PREFIX "/qt-translations" BASE "${_qt_tr_dir}" FILES ${_qt_tr})
+    endif()
     set_target_properties(schneidi PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/packaging/android/app
         QT_ANDROID_EXTRA_LIBS "${_schneidi_android_libs}"
