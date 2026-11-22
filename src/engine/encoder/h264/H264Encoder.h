@@ -90,6 +90,12 @@ struct EncoderConfig {
     double aqStrength = 1.5;
     int refs = 1;        // reference pictures for P frames (1..16)
     bool sceneCut = true; // keyframe on detected scene changes
+    // A keyframe the caller asks for (encode's forceKeyframe: a cut it knows) only where the picture changes: the
+    // lookahead's scene test with a lower bar (its motion search on the thumbnails saves less than 40 % against
+    // intra; real cuts measured 0.92-0.95). A cut from a still to the recording it was taken from, or between two
+    // takes of the same view, is coded as the P picture it predicts well as (talk: -2 % BD-rate). Needs the lookahead;
+    // a FirstPass for this encoder must have the same setting. false = every requested keyframe (the stream before).
+    bool softCutKeys = false;
     bool cabac = true;    // CABAC entropy coding (Main profile); false = CAVLC (Baseline)
     bool transform8x8 = true; // 8x8 transform for inter macroblocks (High profile; needs CABAC)
     int lookahead = 40;       // pictures analysed ahead for the rate control and the macroblock tree (0 = none)
@@ -213,6 +219,12 @@ struct EncoderConfig {
     double vbvInit = 0.9; // buffer fullness at the first picture's removal (fraction of vbvBufsizeKbits)
     // At least this full at the end (fraction; 0 = no demand): set by ChunkPlan::configFor for all chunks but the last.
     double vbvEndFill = 0;
+    // EncodeHints::background: QP of such macroblocks above the mean of the picture's other macroblocks, and the
+    // texture energy (the adaptive quantisation's measure, log2 of 256 x variance + 1; needs aqStrength > 0) from
+    // which a macroblock inside a background rectangle counts as something laid over the blur and is coded like
+    // the rest.
+    int hintBackgroundQp = 0;
+    double hintBackgroundEnergy = 10.0;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -243,6 +255,14 @@ inline constexpr double kChunkVbvFill = 0.5, kChunkVbvEnd = 0.55;
 ChunkPlan planChunks(const FirstPassStats& stats, const EncoderConfig& cfg, int chunks, int minFrames = 0);
 // Constant quality: the clip's mean complexity from the first pass (crfQp's measure), < 0 without pictures.
 double crfClipComplexity(const FirstPassStats& stats, const EncoderConfig& cfg);
+// Constant quality from the first pass: per picture begin..end-1 the P picture QP crfQp gives it when one encoder
+// codes just these pictures (EncoderConfig::crf, fps, qcomp, lookahead), without the macroblock tree's level shift.
+std::vector<double> crfFirstPassQps(const FirstPassStats& stats, const EncoderConfig& cfg, size_t begin, size_t end);
+// What picture i of the first pass needs coded at QP qp (key: as an I picture, else against the picture before), in
+// bits per k: the two-pass bit model's measure (its blocks' costs over the quantiser step, each above the dead zone,
+// from the picture's cost histogram, plus what every macroblock costs whatever its content). A calm picture needs next
+// to nothing however large its plain cost sum - bits follow this, not the cost sum. macroblocks: of the coded size.
+double firstPassNeed(const FirstPassStats& stats, size_t i, bool key, double qp, int macroblocks);
 
 // Where B pictures pay, measured instead of estimated: every kInterval pictures and after each
 // scene change or keyframe the caller asks for, the next few half-size pictures (the lookahead's)
@@ -296,6 +316,30 @@ private:
     double lastActivity_ = 0, activitySum_ = 0, sampleActivity_ = 0;
 };
 
+// What the caller knows about a picture beyond its samples (schneidi's export puts the picture together itself, so
+// it knows what is where: engine/ExportHints). All optional; without hints, and with empty ones, the stream is the
+// same as before. Rectangles are in luma samples; a macroblock takes a hint only when it lies inside one whole.
+struct EncodeHints {
+    struct Rect {
+        int x = 0, y = 0, w = 0, h = 0;
+    };
+    // The picture is the one before it once more (a still, a freeze frame, a pause). The encoder compares the
+    // samples before it believes this (cheap: it stops at the first difference), so a wrong hint costs time only.
+    // Needs the lookahead (the picture before is kept there); ignored without it.
+    bool repeat = false;
+    // The same content at the same place as in the picture before (a title or graphic over a still background, a
+    // paused picture-in-picture). Checked like repeat.
+    std::vector<Rect> still;
+    // Nobody looks here: the blurred copy of the picture that fills the frame around a fitted clip (16:9 footage in
+    // a 9:16 short - two thirds of the frame). There the adaptive quantisation's rule "flat = errors show = finer"
+    // is wrong (such macroblocks are the picture's flattest and would get its finest QP): they get the mean QP
+    // of the picture's other macroblocks plus EncoderConfig::hintBackgroundQp instead, and in inter pictures no
+    // split search. A macroblock with texture inside such a rectangle (a caption, a logo laid over the blur) is
+    // treated as if the hint were not there.
+    std::vector<Rect> background;
+    bool empty() const { return !repeat && still.empty() && background.empty(); }
+};
+
 struct Picture {
     const uint8_t* y = nullptr;
     const uint8_t* u = nullptr;
@@ -315,12 +359,13 @@ struct EncoderAlt {
     struct State {
         bool sceneCut = false;
         int displayIndex = -1, weightedPictures = 0, qp = 0, vbvUnderflows = 0, vbvFramesSinceBp = 0;
+        int64_t hintRepeats = 0, hintStillMbs = 0, hintBackgroundMbs = 0;
         char type = 'I';
         double vbvMinFill = 0;
     };
     virtual ~EncoderAlt() = default;
     virtual std::vector<uint8_t> headers() const = 0;
-    virtual std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe) = 0;
+    virtual std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe, const EncodeHints* hints) = 0;
     virtual std::vector<uint8_t> flush() = 0;
     virtual State state() const = 0;
     virtual const std::vector<uint8_t>& recon(int plane) const = 0;
@@ -348,7 +393,9 @@ public:
     // (the probe: about 3 pictures' worth of encoding at half size every 120 pictures).
     // keepAnalysisBytes: memory for FirstPassStats::analysis (about 12 bytes per macroblock and
     // picture: 1080p ~100 KB); pictures beyond it are analysed again by the encoder.
-    FirstPass(int width, int height, int threads = 1, int bframes = 0, size_t keepAnalysisBytes = size_t(1) << 30);
+    // softCutKeys: as EncoderConfig::softCutKeys of the encoder that takes the statistics.
+    FirstPass(int width, int height, int threads = 1, int bframes = 0, size_t keepAnalysisBytes = size_t(1) << 30,
+              bool softCutKeys = false);
     ~FirstPass();
     void add(const Picture& picture, bool forceKeyframe = false);
     std::shared_ptr<const FirstPassStats> stats() const;
@@ -359,6 +406,7 @@ private:
     void joinWorker() const;
     std::unique_ptr<FirstPassAlt> alt_; // does the work instead (see EncoderAlt)
     int width_, height_, threads_;
+    bool softCutKeys_ = false;
     std::unique_ptr<Lookahead> la_;
     // Pictures waiting for the next batch, the batch under analysis (on worker_ with threads > 1,
     // which alone touches it, prev_, the probe and the statistics until joined) and the last
@@ -387,7 +435,14 @@ public:
     // the lookahead is still filling, while the first pictures are in flight (frame threading), and
     // once more where the frame threading goes from two to three pictures in flight. forceKeyframe: start a new GOP at this picture (e.g. a cut in
     // the timeline). Pictures come out in order, `delay()` pictures after they went in.
-    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe = false);
+    // hints: what the caller knows about the picture (EncodeHints; nullptr = nothing, the stream as without).
+    std::vector<uint8_t> encode(const Picture& picture, bool forceKeyframe = false, const EncodeHints* hints = nullptr);
+    // Pictures the hints made cheap so far: whole pictures found equal to the one before (EncodeHints::repeat or
+    // still rectangles over all of it), and macroblocks coded as still / as background.
+    struct HintStats {
+        int64_t repeats = 0, stillMbs = 0, backgroundMbs = 0;
+    };
+    HintStats hintStats() const { return hintStats_; }
     // Exceptions (also those on the encoder's own threads, e.g. std::bad_alloc) come out of
     // encode()/flush(); the encoder is then finished: every later call throws the same again.
     // After the last picture: the remaining access units, one per call, empty when done.
@@ -542,7 +597,13 @@ private:
     void joinPending();
     // Lookahead analysis of f against prev, or the first pass's when it kept it.
     void analyseFrame(LookaheadFrame& f, const LookaheadFrame* prev) const;
-    std::vector<uint8_t> encodeImpl(const Picture& picture, bool forceKeyframe);
+    std::vector<uint8_t> encodeImpl(const Picture& picture, bool forceKeyframe, const EncodeHints* hints);
+    // EncodeHints of the picture coming in: its macroblock map and, checked against the picture before it (prev,
+    // nullptr = not at hand), since which picture each macroblock has shown the same samples.
+    void takeHints(LookaheadFrame& f, const EncodeHints* hints, const LookaheadFrame* prev);
+    std::vector<int32_t> stillFrom_; // per macroblock: display index of the first picture of its run of equal ones
+    bool hintsSeen_ = false;
+    HintStats hintStats_;
     std::vector<uint8_t> flushImpl();
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)

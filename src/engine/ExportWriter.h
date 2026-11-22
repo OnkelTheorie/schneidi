@@ -18,6 +18,7 @@
 // mixer (always encoded). Problems with one GOP only mean encoding it; problems with the whole stream
 // end the export with smartFailed() (the Exporter renders again without).
 
+#include "engine/ExportHints.h"
 #include "core/ProjectFormat.h"
 #include "core/Subtitles.h"
 #include "engine/SmartRender.h"
@@ -66,13 +67,17 @@ public:
         // Own H.264 encoder (videoCodec kOwnH264): output frames that start with a key frame (hard cuts of the
         // timeline; sorted). The encoder also finds scene changes itself.
         QVector<int> keyframes;
+        // Own H.264 encoder: what the timeline knows about the pictures (Exporter::encodeHints, engine/ExportHints.h),
+        // sorted, not overlapping. Empty = no hints. Option "hints" = 0 switches them off.
+        QVector<ExportHintSpan> hints;
     };
     // schneidi's own H.264 encoder (engine/encoder/h264, experimental): not an FFmpeg encoder, written by the writer
     // itself (Annex B packets into the muxer, parameter sets as the stream's extradata). 8-bit 4:2:0 only, with
     // B-frames (adaptive runs, the encoder's default count). Options: "qp" (fixed quantizer), "bitrate" (kbit/s cap: a
     // first pass analyses every picture and predicts the size at "qp"; below the cap the QP stays, else the second pass
     // aims at the cap), "lookahead" (pictures, low memory), "bframes" (most B pictures in a run, 0 = none),
-    // "speed" (1 = the encoder's fast stage: fewer searches in B pictures for a slightly larger file; 0 = default)
+    // "speed" (1 = the encoder's fast stage: fewer searches in B pictures for a slightly larger file; 0 = default),
+    // "hints" (0 = the encoder does not get what the timeline knows, Settings::hints; default 1)
     static constexpr const char* kOwnH264 = "s264";
     // ("h264_own": its name up to 0.23, still in saved render settings)
     static bool isOwnH264(const QString& codec)

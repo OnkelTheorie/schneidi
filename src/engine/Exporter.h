@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "engine/ExportHints.h"
 #include "core/ProjectFormat.h"
 #include "core/Subtitles.h"
 #include "core/Types.h"
@@ -139,6 +140,18 @@ public:
     // source), sorted, at least kOwnMinKeyDistance apart: key frames of the own H.264 encoder
     static constexpr int kOwnMinKeyDistance = 6; // as the encoder's scene detection
     static QVector<int> cutFrames(const Timeline& tl, int from, int length, FrameRate timelineRate, FrameRate outputRate);
+    // What the timeline knows about the pictures of [from, from + length) that an encoder cannot (the own H.264
+    // encoder's hints, ExportWriter::Settings::hints), as spans of output frames:
+    // - still: no visible clip there shows moving pictures (only stills, freeze frames, titles, or nothing), so a
+    //   picture probably repeats the one before. A guess on purpose (an animated title, an effect that moves): the
+    //   encoder compares the pictures before it relies on it.
+    // - background: the parts of the frame that only show the blurred fill (FitFill::Blur) around the fitted
+    //   picture, when every visible media clip there has that fill and the same place (16:9 footage in a 9:16
+    //   short); `format` = the timeline's size, `out` the output's. A place that is animated (a zoom punch, a
+    //   shake) is followed frame by frame; none while the picture is rotated or tilted. Titles and overlays on top
+    //   are the encoder's to notice (it leaves macroblocks with texture alone).
+    static QVector<ExportHintSpan> encodeHints(const Timeline& tl, int from, int length, QSize format, QSize out,
+                                                                 FrameRate timelineRate, FrameRate outputRate);
     // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it
     // (source and output destroyed) – refuse like DaVinci instead of asking.
     static bool readsFile(const Timeline& tl, const QString& path);
@@ -249,6 +262,7 @@ private:
     quint64 m_threadRun = 0;
 
     QVector<int> m_keyframes;          // own H.264 encoder: cuts (cutFrames)
+    QVector<ExportHintSpan> m_hints; // own H.264 encoder: encodeHints
     QVector<SmartRender::Span> m_copy; // smart render: what may be copied (empty = encode everything)
     int m_copiedPercent = 0;
     int m_ownSpeed = -1;
