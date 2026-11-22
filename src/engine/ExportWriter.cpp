@@ -851,7 +851,8 @@ struct ExportWriter::Impl {
     static constexpr double kOwnFixedShare = 0.8;
     static constexpr int kOwnGop = 250; // key picture at least every 250 pictures (ownConfig, probeOwnBits)
     // 5 x 20 pictures: within 5 % on the three projects of 22.11.2026 (3 x 30: talk -33 %, its runs on still
-    // pictures; 9 x 10: up to -28 %), about 10 % of the pictures, 2-3 s of a 1080p60 render of 15 s on 5 threads
+    // pictures; 9 x 10: up to -28 %): about 10 % of the pictures coded once more, 2-3 s of a 1080p60 render of 15 s
+    // on 5 threads
     static constexpr int kOwnProbeRuns = 5, kOwnProbeRun = 20;
 
     // The encoder's settings as the export codes (two passes: without the bit rate, startOwn adds it)
@@ -1338,7 +1339,7 @@ struct ExportWriter::Impl {
             c.firstPass = ownStats;
         } else if (ownBitrateK > 0) {
             // Fixed QP under the cap: the VBV holds it where the prediction was too low (a buffer of two seconds, as
-            // x264 gets it under a cap; Exporter::codecOptions), and the buffer as full at the end as at the start, so
+            // x264 gets it under a cap; Exporter::encoderOptions), and the buffer as full at the end as at the start, so
             // the whole file stays within the cap too
             c.vbvMaxrateKbps = ownBitrateK;
             c.vbvBufsizeKbits = 2 * ownBitrateK;
