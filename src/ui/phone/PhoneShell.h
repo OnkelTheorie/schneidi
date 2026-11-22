@@ -108,12 +108,17 @@ private:
     void relayout();      // the layout for the orientation (rebuilt when it changes)
     void placeSheet();    // portrait: the sheet's geometry over the timeline
     void updateButtons(); // checked = the open panel's tool; the bar's direction
+    void tuneScroller();  // the bar's flick and bounce (once, after the first show)
+    bool m_scrollTuned = false;
     Tool* tool(const QString& id);
 
     QWidget* m_top = nullptr;
     QWidget* m_viewer = nullptr;
     QWidget* m_timeline = nullptr;
     QScrollArea* m_toolScroll;   // the bar (scrolls when its tools do not fit)
+    QWidget* m_bar;              // the bar's frame: the clip bar's fixed back arrow, then the scrolling tools
+    QBoxLayout* m_barLay;
+    QToolButton* m_back;
     QWidget* m_toolBox;          // inside it: main tools, clip tools
     QBoxLayout* m_toolLay;
     QWidget* m_mainTools;

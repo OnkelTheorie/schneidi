@@ -58,8 +58,12 @@ void longPressAt(QWidget* w, const QPointF& pos, Qt::KeyboardModifiers mods)
 
 int slopPx()
 {
-    // A finger is less precise than a mouse (startDragDistance is 10 px by default)
+    // A finger is less precise than a mouse (startDragDistance is 10 px by default); Android's own touch slop is 8 dp
+#ifdef Q_OS_ANDROID
+    return 8;
+#else
     return std::max(10, QGuiApplication::styleHints()->startDragDistance());
+#endif
 }
 
 int longPressMs()
@@ -188,6 +192,8 @@ private:
             m_mods = e->modifiers();
             m_press = m_last = global;
             m_state = State::Pending;
+            // A finger on a gliding list only stops it (no tap on what happens to pass under it)
+            m_stoppedFling = scroller()->state() == QScroller::Scrolling;
             m_hold->start();
             scroller()->handleInput(QScroller::InputPress, local(global), clock().elapsed());
             return true;
@@ -213,7 +219,7 @@ private:
             }
             scroller()->handleInput(end ? QScroller::InputRelease : QScroller::InputMove, local(global),
                                     clock().elapsed());
-            if (end && m_state == State::Pending) tap();
+            if (end && m_state == State::Pending && !m_stoppedFling) tap();
             if (end && alive) m_state = State::Idle;
             return true;
         case State::Held:
@@ -301,6 +307,7 @@ private:
     Qt::KeyboardModifiers m_mods;
     QPointF m_press, m_last, m_lastTapPos;
     QElapsedTimer m_lastTap;
+    bool m_stoppedFling = false; // this touch began on a gliding list
 };
 
 class PolishFilter : public QObject {

@@ -445,9 +445,9 @@ void MainWindow::enableShell(bool tablet)
         if (!m_inspector->showAudio()) m_viewer->showNotice(T("Der ausgewählte Clip hat keinen Ton."), 2500);
     });
     m_phone->addActionTool("speed", QStringLiteral("≫"), T("Geschwindigkeit"), [] { trigger("clip_speed"); });
+    m_phone->addActionTool("delete", QStringLiteral("⌫"), T("Löschen"), [] { trigger("ripple_delete"); });
     m_phone->addClipPanelTool("clipEffects", QStringLiteral("✦"), T("Effekte"), "effects");
     m_phone->addClipPanelTool("clipColor", QStringLiteral("◐"), T("Farbe"), "color");
-    m_phone->addActionTool("delete", QStringLiteral("⌫"), T("Löschen"), [] { trigger("ripple_delete"); });
 
     connect(m_selection, &Selection::changed, m_phone, [this] { m_phone->setClipToolsShown(!m_selection->isEmpty()); });
     connect(m_phone, &PhoneShell::clipToolsLeft, this, [this] { m_selection->clear(); });

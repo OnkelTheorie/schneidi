@@ -36,6 +36,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QScroller>
 #include <QSettings>
 #include <QMessageBox>
 #include <QTimer>
@@ -564,6 +565,36 @@ void testToolBarSwipe(Engine& engine)
     QTest::qWait(800);
     Check::report(h->value() == 0, "tool bar: back at 0", __FILE__, __LINE__, QString("value %1").arg(h->value()));
     CHECK(shell->sheet().isEmpty());
+    // Every label whole (items as wide as their labels), no frames
+    for (QToolButton* b : vp->findChildren<QToolButton*>())
+        if (b->isVisibleTo(vp))
+            Check::report(b->width() >= b->sizeHint().width(), "tool bar: label whole", __FILE__, __LINE__,
+                          QString("%1: %2 < %3").arg(b->text()).arg(b->width()).arg(b->sizeHint().width()));
+    // A flick, then a finger on the gliding bar: it stops, no tool opens
+    QTest::qWait(500);
+    h->setValue(0);
+    QTest::touchEvent(vp, finger).press(0, {300, y}, vp);
+    for (int i = 1; i <= 4; ++i) {
+        QTest::touchEvent(vp, finger).move(0, QPoint(300 - 20 * i, y), vp);
+        QTest::qWait(10);
+    }
+    QTest::touchEvent(vp, finger).release(0, {220, y}, vp);
+    QTest::qWait(30);
+    QTest::touchEvent(vp, finger).press(0, {200, y}, vp);
+    QTest::touchEvent(vp, finger).release(0, {200, y}, vp);
+    QTest::qWait(300);
+    CHECK(shell->sheet().isEmpty());
+    // The clip bar's back arrow is outside the scrolling part: it stays where it is
+    w.editor()->addTitle(0, -1, 50, TitleKind::Text);
+    settle();
+    QToolButton* back = shell->toolButton("back");
+    if (CHECK(back && back->isVisible())) {
+        CHECK(!vp->isAncestorOf(back));
+        const QPoint before = back->mapTo(&w, QPoint(0, 0));
+        swipe({300, y}, {60, y}, 8);
+        QTest::qWait(600);
+        CHECK(back->mapTo(&w, QPoint(0, 0)) == before);
+    }
 }
 
 // A second-long WAV of `seconds` (silence) for the gallery's files

@@ -12,6 +12,9 @@
 #include <QPainter>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QScroller>
+#include <QScrollerProperties>
+#include <QTimer>
 #include <QScrollBar>
 #include <QToolButton>
 #include <algorithm>
@@ -41,7 +44,7 @@ QIcon glyphIcon(const QString& symbol, int px)
         return pm;
     };
     QIcon icon;
-    icon.addPixmap(draw(Theme::textDim), QIcon::Normal, QIcon::Off);
+    icon.addPixmap(draw(Theme::text), QIcon::Normal, QIcon::Off);
     icon.addPixmap(draw(Theme::text), QIcon::Active, QIcon::Off);
     icon.addPixmap(draw(Theme::primary), QIcon::Normal, QIcon::On);
     icon.addPixmap(draw(Theme::primary), QIcon::Active, QIcon::On);
@@ -73,14 +76,14 @@ PhoneShell::PhoneShell(QWidget* parent) : QWidget(parent)
     m_toolBox = new QWidget;
     m_toolBox->setObjectName("PhoneToolBox");
     m_toolBox->setStyleSheet(
+        // As phones' own tool bars: no frames, a small symbol over a short small label in the text color, the open
+        // one in the accent color with a short line under it; items as wide as their label (at least 60 px)
         QString("QWidget#PhoneToolBox { background: %1; }"
-                "QToolButton { color: %2; padding: 6px 8px 4px 8px; border-radius: 0; min-width: 58px; min-height: 50px;"
-                " border-bottom: 2px solid transparent; }"
-                "QToolButton:checked { color: %3; background: transparent; border-bottom: 2px solid %3; }"
-                "QToolButton:hover { color: %4; }"
-                "QToolButton:pressed { background: %5; }")
-            .arg(Theme::window.name(), Theme::textDim.name(), Theme::primary.name(), Theme::text.name(),
-                 Theme::control.name()));
+                "QToolButton { color: %2; background: transparent; border: none; padding: 6px 4px 6px 4px;"
+                " border-radius: 0; min-width: 0; min-height: 0; font-size: 11px; border-bottom: 2px solid transparent; }"
+                "QToolButton:checked { color: %3; border-bottom: 2px solid %3; }"
+                "QToolButton:pressed { background: %4; }")
+            .arg(Theme::window.name(), Theme::text.name(), Theme::primary.name(), Theme::control.name()));
     m_toolLay = new QBoxLayout(QBoxLayout::LeftToRight, m_toolBox);
     m_toolLay->setContentsMargins(4, 0, 4, 0);
     m_toolLay->setSpacing(0);
@@ -96,11 +99,28 @@ PhoneShell::PhoneShell(QWidget* parent) : QWidget(parent)
     m_toolLay->addWidget(m_mainTools, 1);
     m_toolLay->addWidget(m_clipTools, 1);
     m_toolScroll->setWidget(m_toolBox);
-    // The clip bar's first button: back to the main tools (the selection goes)
-    auto* back = makeToolButton(QStringLiteral("←"), T("Zurück"));
-    back->setObjectName("phoneTool_back");
-    connect(back, &QToolButton::clicked, this, [this] { emit clipToolsLeft(); });
-    m_clipLay->addWidget(back);
+    // The clip bar's back arrow: fixed at the bar's start (it never scrolls away), back to the main tools
+    m_bar = new QWidget(this);
+    m_bar->setObjectName("PhoneBar");
+    m_bar->setAttribute(Qt::WA_StyledBackground);
+    m_bar->setStyleSheet(QString("QWidget#PhoneBar { background: %1; border-top: 1px solid %2; }"
+                                 "QToolButton#phoneTool_back { color: %3; background: transparent; border: none;"
+                                 " border-right: 1px solid %2; min-width: 0; padding: 0 10px; }"
+                                 "QToolButton#phoneTool_back:pressed { background: %4; }")
+                             .arg(Theme::window.name(), Theme::border.name(), Theme::text.name(), Theme::control.name()));
+    m_barLay = new QBoxLayout(QBoxLayout::LeftToRight, m_bar);
+    m_barLay->setContentsMargins(0, 0, 0, 0);
+    m_barLay->setSpacing(0);
+    m_back = new QToolButton;
+    m_back->setObjectName("phoneTool_back");
+    m_back->setIcon(glyphIcon(QStringLiteral("←"), kIconPx + 4));
+    m_back->setIconSize(QSize(kIconPx + 4, kIconPx + 4));
+    m_back->setToolTip(T("Zurück"));
+    m_back->setFocusPolicy(Qt::NoFocus);
+    m_back->hide();
+    connect(m_back, &QToolButton::clicked, this, [this] { emit clipToolsLeft(); });
+    m_barLay->addWidget(m_back);
+    m_barLay->addWidget(m_toolScroll, 1);
 
     // The sheet: a header (drag handle, the panel's name, close) above the open panel
     m_sheet = new QWidget(this);
@@ -155,6 +175,8 @@ QToolButton* PhoneShell::makeToolButton(const QString& symbol, const QString& la
     b->setSizePolicy(m_landscape ? QSizePolicy::Preferred : QSizePolicy::Expanding,
                      m_landscape ? QSizePolicy::Fixed : QSizePolicy::Preferred);
     b->setFocusPolicy(Qt::NoFocus); // a tap never takes the keyboard focus from the timeline
+    // Two lines at most: a long label breaks at its space ("Medien generieren"); a single long word stays one line
+    if (label.contains(' ') && QFontMetrics(b->font()).horizontalAdvance(label) > 72) b->setText(QString(label).replace(' ', '\n'));
     // A tool half out of the bar comes in whole when tapped (its checked state stays in sight)
     connect(b, &QToolButton::clicked, this, [this, b] { m_toolScroll->ensureWidgetVisible(b, 0, 0); });
     return b;
@@ -259,7 +281,7 @@ void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, cons
 
 QToolButton* PhoneShell::toolButton(const QString& id) const
 {
-    if (id == "back") return m_clipTools->findChild<QToolButton*>("phoneTool_back");
+    if (id == "back") return m_back;
     for (const Tool& t : m_tools)
         if (t.id == id) return t.button;
     return nullptr;
@@ -359,6 +381,7 @@ void PhoneShell::setClipToolsShown(bool on)
     m_clipMode = on;
     m_mainTools->setVisible(!on);
     m_clipTools->setVisible(on);
+    m_back->setVisible(on);
     m_toolScroll->horizontalScrollBar()->setValue(0);
     m_toolScroll->verticalScrollBar()->setValue(0);
     updateButtons();
@@ -390,34 +413,15 @@ void PhoneShell::updateButtons()
     // right after the direction changed)
     QSize hint;
     for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) hint = hint.expandedTo(b->sizeHint());
-    // Portrait: a button never narrower than its label ("Ins…tor"); the bar scrolls instead. When the tools do not
-    // fit, they are widened so that the last one in sight is cut in half: the cut says "there is more, swipe"
-    for (QWidget* bar : {m_mainTools, m_clipTools}) {
-        const QList<QToolButton*> buttons = bar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
-        const int spacing = std::max(0, static_cast<QBoxLayout*>(bar->layout())->spacing());
-        const int room = width() - m_toolLay->contentsMargins().left() - m_toolLay->contentsMargins().right();
-        // Each button at its own label's width; when they do not fit, all widen by one factor so that the first one
-        // past the edge is cut in half (a long label such as "Geschwindigkeit" never widens the short ones alone)
-        QVector<int> hints;
-        int total = 0;
-        for (QToolButton* b : buttons) {
-            if (b->isHidden()) continue;
-            hints << b->sizeHint().width() + spacing;
-            total += hints.back();
+    // Upright: each item as wide as its label (at least 60 px), the bar scrolls sideways; the one at the edge shows
+    // cut, which says there is more. On its side (rail): the rail's width
+    for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) {
+        if (m_landscape) {
+            b->setMinimumWidth(0);
+            b->setMaximumWidth(QWIDGETSIZE_MAX);
+        } else {
+            b->setFixedWidth(std::max(60, b->sizeHint().width() + 8));
         }
-        double factor = 1.0;
-        if (!m_landscape && total > room && room > 0) {
-            int whole = 0, sum = 0;
-            while (whole < hints.size() && sum + hints[whole] <= room) sum += hints[whole++];
-            if (whole < hints.size()) {
-                const double wanted = sum + 0.5 * hints[whole];
-                factor = std::max(1.0, room / wanted);
-                // A button barely in sight (less than a third) says nothing: one button less in sight, wider ones
-                if (room - sum < hints[whole] / 3 && whole > 0) factor = std::max(1.0, room / (sum - hints[whole - 1] * 0.5));
-            }
-        }
-        for (QToolButton* b : buttons)
-            b->setMinimumWidth(m_landscape ? 0 : int((b->sizeHint().width() + spacing) * factor) - spacing);
     }
     const QMargins m = m_toolLay->contentsMargins();
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());
@@ -425,6 +429,7 @@ void PhoneShell::updateButtons()
         // The rail as wide as its widest tool or the top bar's head, whichever is wider
         const int rail = std::max(hint.width(), m_top && !m_tablet ? m_top->minimumSizeHint().width() : 0);
         m_toolScroll->setFixedWidth(rail);
+        m_back->setFixedSize(rail, 44);
         m_toolScroll->setMinimumHeight(0);
         m_toolScroll->setMaximumHeight(QWIDGETSIZE_MAX);
         if (m_top && !m_tablet) m_top->setFixedWidth(rail);
@@ -434,6 +439,7 @@ void PhoneShell::updateButtons()
         }
     } else {
         m_toolScroll->setFixedHeight(hint.height());
+        m_back->setFixedSize(44, hint.height());
         m_toolScroll->setMinimumWidth(0);
         m_toolScroll->setMaximumWidth(QWIDGETSIZE_MAX);
         if (m_top) {
@@ -472,7 +478,7 @@ void PhoneShell::relayout()
         if (m_top) root->addWidget(m_top);
         auto* row = new QHBoxLayout;
         row->setSpacing(kGap);
-        row->addWidget(m_toolScroll);
+        row->addWidget(m_bar);
         auto* column = new QVBoxLayout;
         column->setSpacing(kGap);
         if (m_viewer) column->addWidget(m_viewer, 3);
@@ -490,7 +496,7 @@ void PhoneShell::relayout()
         auto* rail = new QVBoxLayout;
         rail->setSpacing(kGap);
         if (m_top) rail->addWidget(m_top);
-        rail->addWidget(m_toolScroll, 1);
+        rail->addWidget(m_bar, 1);
         root->addLayout(rail);
         auto* column = new QVBoxLayout;
         column->setSpacing(kGap);
@@ -506,8 +512,9 @@ void PhoneShell::relayout()
         if (m_top) root->addWidget(m_top);
         if (m_viewer) root->addWidget(m_viewer, 4);
         if (m_timeline) root->addWidget(m_timeline, 5);
-        root->addWidget(m_toolScroll);
+        root->addWidget(m_bar);
     }
+    m_barLay->setDirection(land ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
     m_toolScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_toolScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_sheet->setVisible(!m_open.isEmpty());
@@ -521,7 +528,7 @@ void PhoneShell::placeSheet()
     if (m_landscape || m_open.isEmpty()) return;
     // Over the timeline (and as far up as its share reaches), above the tool bar; the viewer stays in sight at the
     // usual share
-    const int bottom = m_toolScroll->geometry().top() - 1;
+    const int bottom = m_bar->geometry().top() - 1;
     const int top = m_top ? m_top->geometry().bottom() + 1 : 0;
     const int room = std::max(0, bottom - top);
     const int least = std::min(room, m_sheetHeader->sizeHint().height() + 60);
@@ -544,13 +551,38 @@ void PhoneShell::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     relayout();
+    if (!m_scrollTuned && m_toolScroll->isVisible()) QTimer::singleShot(0, this, [this] { tuneScroller(); });
+}
+
+void PhoneShell::tuneScroller()
+{
+    // The bar's flick as on a phone (after Touch's kinetic filter made its scroller, at the first show): light to
+    // drag, a fling that carries and slows down, a soft bounce at both ends (back to the end, never past it to the
+    // other side); only along the bar
+    if (m_scrollTuned) return;
+    m_scrollTuned = true;
+    QScroller* sc = QScroller::scroller(m_toolScroll->viewport());
+    QScrollerProperties p = sc->scrollerProperties();
+    p.setScrollMetric(QScrollerProperties::DecelerationFactor, 0.2);
+    p.setScrollMetric(QScrollerProperties::MaximumVelocity, 1.2);
+    p.setScrollMetric(QScrollerProperties::MinimumVelocity, 0.02);
+    p.setScrollMetric(QScrollerProperties::DragVelocitySmoothingFactor, 0.4);
+    p.setScrollMetric(QScrollerProperties::AxisLockThreshold, 0.0);
+    p.setScrollMetric(QScrollerProperties::HorizontalOvershootPolicy, QScrollerProperties::OvershootWhenScrollable);
+    p.setScrollMetric(QScrollerProperties::VerticalOvershootPolicy, QScrollerProperties::OvershootWhenScrollable);
+    p.setScrollMetric(QScrollerProperties::OvershootDragResistanceFactor, 0.35);
+    p.setScrollMetric(QScrollerProperties::OvershootDragDistanceFactor, 0.12);
+    p.setScrollMetric(QScrollerProperties::OvershootScrollDistanceFactor, 0.06);
+    p.setScrollMetric(QScrollerProperties::OvershootScrollTime, 0.35);
+    p.setScrollMetric(QScrollerProperties::FrameRate, QScrollerProperties::Fps60);
+    sc->setScrollerProperties(p);
 }
 
 bool PhoneShell::eventFilter(QObject* obj, QEvent* event)
 {
     // Dragging the sheet's header (portrait): taller or lower; let go low enough, it closes
     if (obj == m_sheetHeader && !m_landscape) {
-        const int room = std::max(1, m_toolScroll->geometry().top() - (m_top ? m_top->geometry().bottom() : 0));
+        const int room = std::max(1, m_bar->geometry().top() - (m_top ? m_top->geometry().bottom() : 0));
         switch (event->type()) {
         case QEvent::MouseButtonPress:
             m_dragStartY = int(static_cast<QMouseEvent*>(event)->globalPosition().y());
