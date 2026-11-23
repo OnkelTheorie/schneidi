@@ -433,6 +433,10 @@ void MainWindow::enableShell(bool tablet)
     m_phone->setTablet(tablet);
     connect(m_phone, &PhoneShell::landscapeChanged, this, [this](bool landscape) {
         phoneArrangeTopBar(landscape);
+        // Landscape: the timeline's tool row goes (the height is the picture's), the timeline as tall as its first
+        // rows (PhoneShell::setTimelineHeightHint), measured again once the row is gone
+        m_timeline->setBarShown(!landscape);
+        QTimer::singleShot(0, m_phone, [this] { if (m_phone) m_phone->refreshTimelineHeight(); });
 #ifdef Q_OS_ANDROID
         // Landscape: the height is scarce, the status bar goes (a swipe from the edge shows it for a moment);
         // portrait keeps it (clock, battery). (The full-screen viewer is a window of its own: not touched.) Only once
@@ -506,6 +510,12 @@ void MainWindow::enableShell(bool tablet)
     });
     m_phone->setPanelShare("export", 0.92); // tall at once: the settings and "Render all" without a drag
     // A tool's sheet leaves the timeline's video rows in sight (the clip a tool works on), down to V1 and the gap
+    m_phone->setTimelineHeightHint([this] {
+        TimelineView* view = m_timeline->view();
+        // Every video track and A1 (what is around the lanes - scroll bars - as laid out now)
+        return view->heightFor(1) + std::max(0, m_timeline->height() - view->height());
+    });
+    connect(m_editor->project(), &Project::timelineChanged, m_phone, [this] { m_phone->refreshTimelineHeight(); });
     m_phone->setSheetTopHint([this] {
         TimelineView* view = m_timeline->view();
         return view->mapTo(m_phone, QPoint(0, view->mainTrackBottom() + 10)).y();
@@ -587,6 +597,9 @@ void MainWindow::disableShell()
     }
     // The desktop's own state
     m_timeline->setCompact(false);
+    m_timeline->setBarShown(true);
+    m_timeline->setMaximumHeight(QWIDGETSIZE_MAX);
+    m_timeline->setMinimumHeight(0);
     TimelineView::setCompactHeaders(false);
     m_timeline->view()->setFingerPans(false);
     m_timeline->view()->setMinimumHeight(m_shellHomes->timelineMin);

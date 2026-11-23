@@ -43,6 +43,8 @@ public:
     void setCompact(bool on);
     // Phone: thin indicators over the lanes that show only while the view moves, instead of the scroll bars
     void setScrollIndicators(bool on);
+    // Phone landscape: the tool row above the lanes hidden (its tools are in the menus; the height goes to the picture)
+    void setBarShown(bool on);
     bool scrollIndicators() const { return m_vIndicator != nullptr; }
 
 private:
@@ -68,6 +70,7 @@ private:
     QHBoxLayout* m_bar = nullptr;
     QWidget* m_barWidget = nullptr;
     class QScrollArea* m_barScroll = nullptr; // setCompact
+    bool m_barShown = true;                    // setBarShown
 
     int m_toolInsert = 0;
 };

@@ -215,6 +215,17 @@ void testWindow(Engine& engine, const QSize& size)
                           .arg(least.height()));
     };
     fits("phone layout fits the window");
+    if (shell->landscape()) { // item 10: a picture worth the name, the rail's tools with their names
+        if (auto* screen = w.findChild<QWidget*>("viewer_screen"); CHECK(screen))
+            Check::report(screen->height() >= size.height() * 3 / 10, "landscape picture not tiny", __FILE__, __LINE__,
+                          QString("%1 of %2").arg(screen->height()).arg(size.height()));
+        if (QToolButton* media = shell->toolButton("media"); CHECK(media))
+            CHECK(media->toolButtonStyle() == Qt::ToolButtonTextBesideIcon && media->width() >= media->sizeHint().width());
+        CHECK(!w.findChild<TimelinePanel*>()->findChild<QScrollArea*>("timelineBarScroll")->isVisible());
+    }
+    if (const QString dir = qEnvironmentVariable("SCHNEIDI_TEST_SHOTS"); !dir.isEmpty())
+        w.grab().save(QString("%1/window-%2x%3%4.png").arg(dir).arg(size.width()).arg(size.height())
+                          .arg(Touch::modeActive() ? "-touch" : ""));
     CHECK(shell->landscape() == (size.width() > size.height()));
     // The top bar: a row above the viewer in portrait; in landscape the head of the rail (no bar across the top)
     {

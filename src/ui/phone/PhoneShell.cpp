@@ -171,7 +171,7 @@ QToolButton* PhoneShell::makeToolButton(const QString& symbol, const QString& la
     b->setIcon(glyphIcon(symbol, kIconPx));
     b->setIconSize(QSize(kIconPx, kIconPx));
     b->setText(label);
-    b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    b->setToolButtonStyle(m_landscape ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonTextUnderIcon); // (as relayout)
     b->setSizePolicy(m_landscape ? QSizePolicy::Preferred : QSizePolicy::Expanding,
                      m_landscape ? QSizePolicy::Fixed : QSizePolicy::Preferred);
     b->setFocusPolicy(Qt::NoFocus); // a tap never takes the keyboard focus from the timeline
@@ -465,9 +465,12 @@ void PhoneShell::relayout()
     m_toolLay->setDirection(dir);
     m_mainLay->setDirection(dir);
     m_clipLay->setDirection(dir);
-    for (QToolButton* b : m_toolBox->findChildren<QToolButton*>())
+    for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) {
         b->setSizePolicy(land ? QSizePolicy::Preferred : QSizePolicy::Expanding,
                          land ? QSizePolicy::Fixed : QSizePolicy::Preferred);
+        // On its side the rail has no height for a label under each symbol (it was cut away): beside it
+        b->setToolButtonStyle(land ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonTextUnderIcon);
+    }
     constexpr int kGap = 1; // the border color between the areas, as thin as the desktop's panel edges
     if (m_tablet) {
         // The top bar across (as on the desktop), below it the tools as a rail, the viewer above the timeline, the
@@ -501,7 +504,7 @@ void PhoneShell::relayout()
         auto* column = new QVBoxLayout;
         column->setSpacing(kGap);
         if (m_viewer) column->addWidget(m_viewer, 1);
-        if (m_timeline) column->addWidget(m_timeline, 2);
+        if (m_timeline) column->addWidget(m_timeline, m_timelineHeight ? 0 : 2); // (a height hint: the viewer the rest)
         root->addLayout(column, 3);
         root->addWidget(m_sheet, 2);
     } else {
@@ -515,6 +518,7 @@ void PhoneShell::relayout()
         root->addWidget(m_bar);
     }
     m_barLay->setDirection(land ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    refreshTimelineHeight();
     m_toolScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_toolScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_sheet->setVisible(!m_open.isEmpty());
@@ -558,10 +562,26 @@ QSize PhoneShell::minimumSizeHint() const
     return QWidget::minimumSizeHint().boundedTo(QSize(edge, edge));
 }
 
+void PhoneShell::refreshTimelineHeight()
+{
+    if (!m_timeline) return;
+    if (!m_landscape || m_tablet || !m_timelineHeight) {
+        m_timeline->setMinimumHeight(0);
+        m_timeline->setMaximumHeight(QWIDGETSIZE_MAX);
+        return;
+    }
+    // Its first rows, but never more than 60 % of the height (the picture keeps at least the rest) nor less than a third
+    const int h = std::clamp(m_timelineHeight(), height() / 3, height() * 3 / 5);
+    m_timeline->setMinimumHeight(0);
+    m_timeline->setMaximumHeight(h);
+    m_timeline->setMinimumHeight(h);
+}
+
 void PhoneShell::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     relayout();
+    refreshTimelineHeight();
     if (!m_scrollTuned && m_toolScroll->isVisible()) QTimer::singleShot(0, this, [this] { tuneScroller(); });
 }
 

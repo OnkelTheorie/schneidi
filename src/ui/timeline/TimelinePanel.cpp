@@ -312,6 +312,7 @@ void TimelinePanel::setCompact(bool on)
         m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
     }
     if (m_barScroll) m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+    if (m_barScroll) m_barScroll->setVisible(m_barShown); // (hidden before the compact form came)
     // The scrollbars: where clips cover every lane they are the finger's way to move the view (phone: thick)
     const QString thick = on ? QStringLiteral("QScrollBar:horizontal { height: 26px; } QScrollBar:vertical { width: 26px; }"
                                               "QScrollBar::handle { min-width: 56px; min-height: 56px; border-radius: 8px; }")
@@ -341,6 +342,13 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setValue(v.scrollY);
     if (m_vIndicator) m_vIndicator->poke(); // (the bars' signals are blocked above)
     if (m_hIndicator && !m_view->centerPlayhead()) m_hIndicator->poke();
+}
+
+void TimelinePanel::setBarShown(bool on)
+{
+    m_barShown = on;
+    if (m_barScroll) m_barScroll->setVisible(on);
+    else m_barWidget->setVisible(on);
 }
 
 void TimelinePanel::setScrollIndicators(bool on)

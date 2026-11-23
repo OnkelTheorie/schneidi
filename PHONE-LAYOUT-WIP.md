@@ -236,7 +236,14 @@ Status (updated with each commit):
   (`RenderQueuePanel::setBelowSettings`, de+en; other languages at the end). The settings form keeps its own scroll
   (a full-height form put "Alle rendern" out of sight again, the A51 fix). Test "timeline's V1 above the sheet" for
   every tool in portrait (788), test_layout_switch 78, test_i18n 22.
-- 10, 11: NOT STARTED.
+- 10 Landscape: DONE. The timeline is as tall as its video tracks + A1 (`PhoneShell::setTimelineHeightHint`,
+  `TimelineView::heightFor`, clamped to 1/3..3/5 of the height, refreshed on timeline changes), the viewer gets the
+  rest: picture ~170 px on 914x411 (was ~70). The timeline's tool row (select/blade/snap/link/mic/timeline/zoom) is
+  hidden in phone landscape (`TimelinePanel::setBarShown`; all in the ⋮ menus, zoom by pinch). Rail tools show
+  their names beside the symbol (`ToolButtonTextBesideIcon`; under it there was no height, the names were cut
+  away - also for tools added after the first layout). Tests: picture >= 30 % of the height, names beside, no tool
+  row (803), test_layout_switch 78, test_touch_input 216, test_window_fit 74.
+- 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

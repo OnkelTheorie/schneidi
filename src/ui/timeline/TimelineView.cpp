@@ -265,6 +265,14 @@ int TimelineView::mainTrackBottom() const
     return kRulerH;
 }
 
+int TimelineView::heightFor(int audioRows) const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    const int audio = std::min(audioRows, int(tl.audio.size()));
+    return kRulerH + subtitlesHeight() + int(tl.video.size()) * m_view.videoTrackHeight + kSeparator
+           + audio * audioRowHeight() + 2;
+}
+
 int TimelineView::audioRowHeight() const
 {
     const Timeline& tl = m_editor->project()->timeline();
