@@ -222,9 +222,11 @@ QVector<EffectDescriptor> ownLooks()
     return out;
 }
 
-QVector<EffectDescriptor>& registry()
+// Made again in another UI language (I18n::Cached: names and descriptions are translated here)
+const QVector<EffectDescriptor>& registry()
 {
-    static QVector<EffectDescriptor> effects = withWindows({
+    static I18n::Cached<QVector<EffectDescriptor>> cache;
+    return cache.get([] { return withWindows({
         // Own keyer (engine/VideoEffects): distance in the chroma plane, soft edge, spill suppression; real
         // transparency. Fixed stage after the grade: it keys the camera picture, the effects then work on the keyed
         // picture. The service and the properties "0"/"1" are those of frei0r.bluescreen0r it replaced (presets).
@@ -344,8 +346,7 @@ QVector<EffectDescriptor>& registry()
         {"comp", T("Compositing"), {}, true, {}, false,
          T("Ebenen, Masken, Keying und Tracking als Knoten (Seite Compositing)"), true, EffectCategory::Keying},
     }) + ownLooks() // after the built-in ones: the Effects Library lists them behind blur and color correction
-                   + customEffects() + QVector<EffectDescriptor>{clipShapeEffect()};
-    return effects;
+                   + customEffects() + QVector<EffectDescriptor>{clipShapeEffect()}; });
 }
 
 } // namespace

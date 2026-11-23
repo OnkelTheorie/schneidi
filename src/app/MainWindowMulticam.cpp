@@ -2,6 +2,7 @@
 // MainWindow: multicam like DaVinci (docs/archiv/plan-0.8.md) – viewer mode with the grid of the angles, cut/switch
 // keys, "Create Multicam Clip" from the Media Pool, angle menu in the timeline.
 #include "app/MainWindow.h"
+#include "core/NestedLoop.h"
 
 #include "app/InputBindings.h"
 #include "app/MulticamDialog.h"
@@ -91,14 +92,14 @@ void MainWindow::setupMulticam()
     TimelineView* tv = m_timeline->view();
     connect(m_multicam, &MulticamView::gridChanged, this, &MainWindow::syncMulticam);
     connect(m_multicam, &MulticamView::soundAngleChanged, m_engine, &Engine::setMulticamAudio);
-    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+    connect(m_engine, &Engine::positionChanged, m_ui, [this](int f) {
         if (m_multicamMode && m_engine->timelinePositions()) m_multicam->setPosition(f);
     });
-    connect(m_engine, &Engine::speedChanged, this, [this](double s) { m_multicam->setPlaying(s != 0.0); });
-    connect(m_engine, &Engine::frameReady, this, [this](const QImage& img) {
+    connect(m_engine, &Engine::speedChanged, m_ui, [this](double s) { m_multicam->setPlaying(s != 0.0); });
+    connect(m_engine, &Engine::frameReady, m_ui, [this](const QImage& img) {
         if (m_engine->mode() == Engine::Mode::Multicam) m_multicam->setFrame(img);
     });
-    connect(m_engine, &Engine::modeChanged, this, [this, tv](Engine::Mode mode) {
+    connect(m_engine, &Engine::modeChanged, m_ui, [this, tv](Engine::Mode mode) {
         m_viewer->showMulticam(m_multicamMode && mode != Engine::Mode::Source);
         if (m_multicamMode && mode == Engine::Mode::Timeline) { // back from the source view (Q)
             m_multicam->setPosition(tv->playhead());
@@ -110,10 +111,10 @@ void MainWindow::setupMulticam()
     ProxyManager* proxies = m_engine->proxies();
     connect(m_multicam, &MulticamView::gridChanged, this, &MainWindow::updateMulticamProxies);
     connect(m_multicam, &MulticamView::proxiesRequested, proxies, &ProxyManager::generate);
-    connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateMulticamProxies);
-    connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateMulticamProxies);
-    connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateMulticamProxies);
-    connect(proxies, &ProxyManager::qualityChanged, this, &MainWindow::updateMulticamProxies);
+    connect(proxies, &ProxyManager::queueChanged, m_ui, [this] { updateMulticamProxies(); });
+    connect(proxies, &ProxyManager::proxyChanged, m_ui, [this] { updateMulticamProxies(); });
+    connect(proxies, &ProxyManager::enabledChanged, m_ui, [this] { updateMulticamProxies(); });
+    connect(proxies, &ProxyManager::qualityChanged, m_ui, [this] { updateMulticamProxies(); });
     updateMulticamProxies();
 }
 
@@ -242,6 +243,7 @@ void MainWindow::createMulticamClip(const QStringList& paths)
     if (dlg.method() == Multicam::SyncMethod::Sound) {
         // Decoding hours of sound takes a while: progress + cancel
         QProgressDialog progress(T("Ton wird synchronisiert…"), T("Abbrechen"), 0, 1000, this);
+        const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
         progress.setWindowTitle(T("Neuer Multicam-Clip"));
         progress.setWindowModality(Qt::WindowModal);
         progress.setMinimumDuration(300);

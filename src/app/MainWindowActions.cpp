@@ -166,7 +166,7 @@ void MainWindow::buildActions()
     m_mediaPool->setFindMissingAction(m_findMissingAction);
     connect(file, &QMenu::aboutToShow, this, &MainWindow::updateFindMissingAction);
     connect(m_mediaPool, &MediaPool::contextMenuAboutToShow, this, &MainWindow::updateFindMissingAction);
-    connect(m_project, &Project::mediaChanged, this, &MainWindow::updateFindMissingAction);
+    connect(m_project, &Project::mediaChanged, m_ui, [this] { updateFindMissingAction(); });
     makeAction(file, "new_bin", T("Neuer Ordner"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
     makeAction(file, "new_timeline", T("Neue Timeline"), QKeySequence("Ctrl+Alt+N"), [this] { m_mediaPool->newTimeline(); });
     makeAction(file, "import_subtitles", T("Untertitel importieren (SRT)…"), QKeySequence(), [this] { importSubtitlesDialog(); });
@@ -198,7 +198,7 @@ void MainWindow::buildActions()
         redoAct->setEnabled(u->canRedo());
     };
     followUndo();
-    connect(m_project, &Project::undoStackChanged, this, followUndo);
+    connect(m_project, &Project::undoStackChanged, m_ui, followUndo);
     undoAct->setEnabled(false);
     redoAct->setEnabled(false);
     edit->addSeparator();
@@ -667,6 +667,7 @@ void MainWindow::buildActions()
     // exists, removing it switches the loop off (nothing loops by accident). No default key.
     auto* loop = makeAction(play, "loop_inout", T("Im Bereich wiederholen"), QKeySequence(), [] {});
     loop->setCheckable(true);
+    loop->setChecked(m_engine->looping()); // (built again, rebuildUi: the loop stays as it was)
     auto applyLoop = [this, tv, loop] {
         const Timeline& tl = m_project->timeline();
         const bool range = tl.markIn >= 0 || tl.markOut >= 0;
@@ -679,7 +680,7 @@ void MainWindow::buildActions()
     };
     connect(loop, &QAction::toggled, this, applyLoop);
     connect(tv, &TimelineView::loopInOutRequested, loop, &QAction::setChecked);
-    connect(m_project, &Project::timelineChanged, this, applyLoop);
+    connect(m_project, &Project::timelineChanged, m_ui, applyLoop);
     applyLoop();
     makeAction(play, "show_timeline", T("Timeline in der Vorschau zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
@@ -743,6 +744,7 @@ void MainWindow::buildActions()
     auto* bypass = makeAction(play, "color_bypass", T("Farbkorrektur umgehen (Vorher/Nachher)"), QKeySequence("Shift+D"),
                               [] {});
     bypass->setCheckable(true);
+    bypass->setChecked(m_engine->colorBypass()); // (built again, rebuildUi: as it is)
     connect(bypass, &QAction::toggled, m_engine, &Engine::setColorBypass);
     connect(m_engine, &Engine::colorBypassChanged, bypass, &QAction::setChecked);
     // Like DaVinci (Preferences → Decode Options → use GPU for H.264/H.265): preview and export
@@ -959,12 +961,12 @@ void MainWindow::buildActions()
     m_viewerScreenModeMenu->addActions(screenModeGroup->actions());
     m_viewerScreenModeMenu->menuAction()->setVisible(false); // only while the preview is on the monitor
     m_viewer->addAction(m_viewerScreenModeMenu->menuAction());
-    connect(m_engine, &Engine::frameReady, this, &MainWindow::feedPreviewOutput);
+    connect(m_engine, &Engine::frameReady, m_ui, [this](const QImage& frame) { feedPreviewOutput(frame); });
     // The viewer's page while the program is on the monitor: its button brings the preview back
     connect(m_viewer, &Viewer::programBackWanted, this, [this] { showPreviewOn(nullptr); });
     connect(m_viewer, &Viewer::areaHideWanted, this, [this] { setSecondScreenMode(SecondScreenPlan::Mode::HideViewer); });
-    connect(qGuiApp, &QGuiApplication::screenAdded, this, [this] { screensChanged(nullptr); });
-    connect(qGuiApp, &QGuiApplication::screenRemoved, this, &MainWindow::screensChanged);
+    connect(qGuiApp, &QGuiApplication::screenAdded, m_ui, [this] { screensChanged(nullptr); });
+    connect(qGuiApp, &QGuiApplication::screenRemoved, m_ui, [this](QScreen* removed) { screensChanged(removed); });
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
     QMenu* panels = workspace->addMenu(T("Bereiche"));
     makeAction(panels, "panels_standard", T("Standard (Medienpool, Inspektor)"), QKeySequence(),
@@ -997,7 +999,7 @@ void MainWindow::buildActions()
         dlg.exec();
     });
     workspace->addSeparator();
-    // Language like in DaVinci (Preferences → User → UI Settings): takes effect after a restart
+    // Language: applied at once (the window builds its widgets again in it: rebuildUi)
     QMenu* langMenu = workspace->addMenu(T("Sprache"));
     auto* langGroup = new QActionGroup(langMenu);
     for (const I18n::Language& l : I18n::languages()) {
@@ -1008,15 +1010,12 @@ void MainWindow::buildActions()
         connect(a, &QAction::triggered, this, [this, lang = l.code] {
             if (I18n::language() == lang) return;
             I18n::setLanguage(lang);
-            // The hint already in the new language (it is not installed until the restart)
-            offerRestart(I18n::translate(lang, N_("Die Sprache ändert sich nach dem Neustart von schneidi.")),
-                         I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
+            applyLookChange();
         });
     }
-    // Design (UI colors): takes effect after restart, like the language
+    // Design (UI colors): applied at once, like the language
     makeAction(workspace, "design", T("Design…"), QKeySequence(), [this] {
-        if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
-            offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
+        if (DesignDialog(this).exec() == QDialog::Accepted) applyLookChange();
     });
     // Brand kit (0.18): the global kit or the project's own; titles that reference it follow (one undo step). Logo and
     // intro/outro go into the timeline only when asked for here.

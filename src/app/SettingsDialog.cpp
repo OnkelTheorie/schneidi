@@ -140,7 +140,7 @@ QWidget* SettingsDialog::buildGeneral()
     lay->setContentsMargins(12, 12, 12, 12);
     lay->setSpacing(10);
 
-    // Look: language (takes effect after a restart, like from the menu), design and keys in their own dialogs
+    // Look: language (applied at once with OK, like from the menu), design and keys in their own dialogs
     auto* look = new QGroupBox(T("Oberfläche"));
     auto* form = new QFormLayout(look);
     form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
@@ -202,7 +202,8 @@ QWidget* SettingsDialog::buildGeneral()
     buttons->addWidget(keys);
     buttons->addStretch(1);
     form->addRow(buttons);
-    form->addRow(hint(T("Sprache, Größe und Design ändern sich nach dem Neustart von schneidi.")));
+    form->addRow(hint(T("Sprache und Design wechseln sofort. Eine neue Größe braucht einen Neustart; das Projekt und die "
+                        "Ansicht kommen danach so zurück, wie sie waren.")));
     lay->addWidget(look);
 
     // Update hint (the check itself happens in the main window; "Check now" asks right here)

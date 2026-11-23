@@ -36,6 +36,7 @@
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
+#include <utility>
 #include <QAbstractButton>
 #include <QAction>
 #include <QPainter>
@@ -284,6 +285,11 @@ void MainWindow::setShellShortcuts(bool on)
     for (QAction* top : menuBar()->actions())
         if (top->menu()) collect(top->menu());
     addActions(m_shellShortcuts);
+}
+
+void MainWindow::dropShellHomes()
+{
+    delete std::exchange(m_shellHomes, nullptr);
 }
 
 bool MainWindow::phoneLayoutWanted()

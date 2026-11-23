@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "core/NestedLoop.h"
 
 #include "engine/ContentUri.h"
 #include "app/OpenTrace.h"
@@ -8,7 +9,10 @@
 #include "app/TourManager.h"
 #include "ui/ScreenAwake.h"
 #include "ui/TourOverlay.h"
+#include "app/AiChat.h"
 #include "app/AiKeys.h"
+#include "app/FolderWatch.h"
+#include "app/VoiceoverRecorder.h"
 #include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
 #include "app/TranscribeDialog.h"
@@ -191,20 +195,70 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     importPresets();
 
     StartupTrace::mark("MainWindow ctor begin");
+    // What lives as long as the window (the widgets come and go with rebuildUi: design or language changed)
+    m_aiKeys = std::make_unique<Ai::Keys>();
+    m_chat = new AiChat(this);
+    m_mediaCache = new MediaCache(this);
+    m_folderWatch = new FolderWatch(m_project, this);
+    createVoiceover();
+    m_playClock.start();
+    // Watching the cut without touching mouse or keyboard: the monitor stays on while it plays
+    auto* awake = new ScreenAwake(this);
+    connect(m_engine, &Engine::speedChanged, awake, [awake](double speed) { awake->setActive(speed != 0.0); });
+    // HDR files found in the background (projects from before 0.24, transfer only in the bitstream): Media Pool mark,
+    // Inspector, their proxies' names
+    (new HdrScan(m_project, m_engine->proxies(), this))->scan();
+    m_engine->updateTimeline(m_project->renderTimeline());
+    buildUi();
+    // The layout form (once: rebuildUi brings back the form it had) for the screen the window opens on (maximized there); later sizes are checked as they come
+    if (QScreen* screen = startScreen()) {
+        const LayoutForm form = wantedForm(screen->availableGeometry().size());
+        if (form != LayoutForm::Desktop) setLayoutForm(form);
+    }
+    applyCenterPlayhead(); // (the desktop: only when set to "on")
+    qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
+
+    // Automatic backup every minute (only on changes), separate from the project file
+    m_autosaveTimer = new QTimer(this);
+    connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
+    m_autosaveTimer->start(60 * 1000);
+#ifdef Q_OS_ANDROID
+    // Going to the background may be the end (the system frees the memory without asking): the backup now
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive && !m_autosaveDisabled) autosave();
+    });
+#endif
+    // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
+    // and checkProjectFile() adds it again
+    m_projectWatcher = new QFileSystemWatcher(this);
+    m_projectCheck.setSingleShot(true);
+    m_projectCheck.setInterval(300);
+    connect(&m_projectCheck, &QTimer::timeout, this, &MainWindow::checkProjectFile);
+    connect(m_projectWatcher, &QFileSystemWatcher::fileChanged, this, [this] { m_projectCheck.start(); });
+
+    // schneidi starts with the user's start template too (Settings › Start Templates; Neutral = as it always did)
+    if (const StartTemplate t = StartTemplates::defaultTemplate(); t.id != QLatin1String(StartTemplates::NeutralId)) {
+        const ProjectData d = StartTemplates::apply(t);
+        m_engine->setFormat(d.format);
+        m_project->load(d);
+        m_engine->showTimeline(0);
+    }
+    StartupTrace::mark("MainWindow ctor end");
+}
+
+void MainWindow::buildUi()
+{
+    // Context of every connection from something that outlives the widgets (engine, project, selection, ...): goes
+    // with them (rebuildUi), so that the connections made again here never run twice
+    m_ui = new QObject(this);
+    m_ui->setObjectName("uiScope");
     buildLayout();
     StartupTrace::mark("buildLayout");
     buildActions();
     StartupTrace::mark("buildActions");
     setupChat();
     StartupTrace::mark("setupChat");
-    // The layout form for the screen the window opens on (maximized there); later sizes are checked as they come
-    if (QScreen* screen = startScreen()) {
-        const LayoutForm form = wantedForm(screen->availableGeometry().size());
-        if (form != LayoutForm::Desktop) setLayoutForm(form);
-    }
-    applyCenterPlayhead(); // (the desktop: only when set to "on")
     applyAiMarkStyle();
-    qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
     // model -> engine
     // Bundled: while dragging (fade handle, volume line, Inspector, a shape's handle …) every mouse move changes the
@@ -215,24 +269,24 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     // most one per kEngineEvery. Mixer changes are cheap (set live) and still go through immediately.
     m_engineTimer.setSingleShot(true);
     m_engineSent.start();
-    connect(&m_engineTimer, &QTimer::timeout, this, [this] {
+    connect(&m_engineTimer, &QTimer::timeout, m_ui, [this] {
         m_engineSent.restart();
         m_engine->updateTimeline(previewTimeline()); // the Comp page may show one node of a graph
         OpenTrace::timelineSent();
         updateRenderCacheBar();
     });
-    connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
+    connect(m_editor, &Editor::mixerOnlyEdit, m_ui, [this] { m_engine->mixerOnlyNext(); });
     // The sound is mixed with the project's media lengths, like in the export (RenderQueue::exportSettings)
     auto mediaLengths = [this] {
         QHash<QString, int> lengths;
         for (const MediaInfo& m : m_project->media()) lengths.insert(m.path, m.length);
         m_engine->setMediaLengths(lengths);
     };
-    connect(m_project, &Project::mediaChanged, this, mediaLengths);
+    connect(m_project, &Project::mediaChanged, m_ui, mediaLengths);
     mediaLengths();
     // A file overwritten under its name (re-rendered elsewhere): its length, picture/sound and streams again, probed
     // in the background; the pool entry follows without an undo step. Clips now reaching past its end are said.
-    connect(m_engine, &Engine::mediaFilesChanged, this, [this](const QStringList& paths) {
+    connect(m_engine, &Engine::mediaFilesChanged, m_ui, [this](const QStringList& paths) {
         for (const QString& path : paths) m_probeCache.remove(path);
         QStringList pooled;
         for (const QString& path : paths)
@@ -255,7 +309,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }, Qt::QueuedConnection);
         });
     });
-    connect(m_project, &Project::timelineChanged, this, [this] {
+    connect(m_project, &Project::timelineChanged, m_ui, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(previewTimeline());
         else if (m_engineTimer.isActive()) return; // goes out with the next one
         else if (m_engine->speed() != 0.0)
@@ -263,41 +317,37 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         else
             m_engineTimer.start(int(std::max<qint64>(0, kEngineGap - m_engineSent.elapsed())));
     });
-    m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview
     ProxyManager* proxies = m_engine->proxies();
-    // HDR files found in the background (projects from before 0.24, transfer only in the bitstream): Media Pool mark,
-    // Inspector, their proxies' names
-    (new HdrScan(m_project, proxies, this))->scan();
     auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->renderTimeline()); };
-    connect(proxies, &ProxyManager::proxyChanged, this, [this, proxiesChanged](const QString& path) {
+    connect(proxies, &ProxyManager::proxyChanged, m_ui, [this, proxiesChanged](const QString& path) {
         // also clips in compound clips (nested sequences)
         const auto& seqs = m_project->sequences();
         if (std::any_of(seqs.begin(), seqs.end(),
                         [&](const Sequence& s) { return TimelineOps::usesMediaOnVideo(s.timeline, path); }))
             proxiesChanged();
     });
-    connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
-    connect(proxies, &ProxyManager::qualityChanged, this, proxiesChanged); // other proxy files now
+    connect(proxies, &ProxyManager::enabledChanged, m_ui, proxiesChanged);
+    connect(proxies, &ProxyManager::qualityChanged, m_ui, proxiesChanged); // other proxy files now
     setupProxyHint();
     setupBackgroundJobs();
     // Before/After: cached clips contain the correction -> rebuild the preview so they come from the original
-    connect(m_engine, &Engine::colorBypassChanged, this, [this] {
+    connect(m_engine, &Engine::colorBypassChanged, m_ui, [this] {
         if (m_engine->renderCache()->mode() != RenderCache::Mode::Off) m_engine->updateTimeline(m_project->renderTimeline());
     });
     // Render cache: file finished/deleted or mode changed -> rebuild the preview, bar above the timeline
     RenderCache* renderCache = m_engine->renderCache();
-    connect(renderCache, &RenderCache::cacheChanged, this, [this, proxiesChanged] {
+    connect(renderCache, &RenderCache::cacheChanged, m_ui, [this, proxiesChanged] {
         proxiesChanged();
         updateRenderCacheBar();
     });
-    connect(renderCache, &RenderCache::progressChanged, this, &MainWindow::updateRenderCacheBar);
+    connect(renderCache, &RenderCache::progressChanged, m_ui, [this] { updateRenderCacheBar(); });
     // Stabilization analysis done: the engine draws the preview again and lets the render cache start (Engine.cpp)
-    connect(Stabilizer::instance(), &Stabilizer::resultReady, this, &MainWindow::updateRenderCacheBar);
-    connect(renderCache, &RenderCache::failed, this,
+    connect(Stabilizer::instance(), &Stabilizer::resultReady, m_ui, [this] { updateRenderCacheBar(); });
+    connect(renderCache, &RenderCache::failed, m_ui,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
     // A source lost while the project is open (disk or share gone, file moved): named, the preview tries it again
-    connect(m_engine, &Engine::sourceLost, this, [this](const QString& path) {
+    connect(m_engine, &Engine::sourceLost, m_ui, [this](const QString& path) {
         statusBar()->showMessage(T("Quelldatei nicht lesbar: %1 – neuer Versuch beim nächsten Abspielen oder Springen")
                                      .arg(QFileInfo(path).fileName()),
                                  8000);
@@ -305,7 +355,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     // Engine -> playhead (timeline and multicam grid; in source mode the playhead stays put)
     TimelineView* tv = m_timeline->view();
-    connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
+    connect(m_engine, &Engine::positionChanged, m_ui, [this, tv](int f) {
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
     TimelineOptions::applyEditDefaults(); // the user's still and transition lengths (Settings › Timeline)
@@ -314,7 +364,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);
     });
     // Where playback started (Space by choice and "Stop and return" go back there)
-    connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
+    connect(m_engine, &Engine::speedChanged, m_ui, [this](double speed) {
         if (m_lastSpeed == 0.0 && speed != 0.0) {
             m_playStart = m_engine->playStart(); // read before the pump ran (position() may be on already)
             m_playStartMode = int(m_engine->mode());
@@ -324,7 +374,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     // Another project or timeline: the old start position means nothing there ("Stop and return" only stops). Also
     // a format change (another frame rate: frames count differently)
     for (auto signal : {&Project::loaded, &Project::currentSequenceChanged, &Project::formatChanged})
-        connect(m_project, signal, this, [this] { m_playStart = -1; });
+        connect(m_project, signal, m_ui, [this] { m_playStart = -1; });
     // Playing or not: the timeline may follow the playhead while it plays (Settings › Timeline, off by default)
     connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {
         tv->setPlaying(m_engine->timelinePositions() ? speed : 0.0);
@@ -338,7 +388,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             [this] { m_playheadMove.begin(m_engine, PlayheadMove::Source::Timeline); });
     connect(tv, &TimelineView::playheadMoveFinished, this, [this] { m_playheadMove.end(m_engine); });
     // Keyframes: Inspector shows values at the playhead, arrows ◀ ▶ jump like a click into the ruler
-    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+    connect(m_engine, &Engine::positionChanged, m_ui, [this](int f) {
         if (m_engine->timelinePositions()) m_inspector->setPlayhead(f);
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
@@ -347,11 +397,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::keyPickCancelled, this, &MainWindow::stopKeyPick);
     connect(m_inspector, &Inspector::compOpenRequested, this, &MainWindow::openComp);
     connect(m_inspector, &Inspector::drawToolRequested, this, [this] { setDrawTool(true); });
-    connect(m_selection, &Selection::changed, this, [this] {
+    connect(m_selection, &Selection::changed, m_ui, [this] {
         if (m_keyPicker) stopKeyPick();
         if (m_page == Page::Color) playheadInto(selectedVideoClip()); // the viewer shows the clip being graded
     });
-    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+    connect(m_engine, &Engine::positionChanged, m_ui, [this](int f) {
         if (m_engine->timelinePositions()) m_transcript->setPlayhead(f);
     });
     connect(m_transcript, &TranscriptPanel::seekRequested, tv, &TimelineView::seekRequested);
@@ -373,7 +423,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
     connect(m_mediaPool, &MediaPool::reframedCopyRequested, this, &MainWindow::reframedCopy);
     // The source viewer follows a file's shape set in the Media Pool (and its undo)
-    connect(m_project, &Project::poolChanged, this, [this] {
+    connect(m_project, &Project::poolChanged, m_ui, [this] {
         if (!sourceActive()) return;
         const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
         if (m && m->pictureAspect != m_engine->sourceAspect()) showSource(m->path);
@@ -392,7 +442,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     // Another timeline opened: selection gone, playhead and zoom/scroll as last in this timeline (like DaVinci)
     m_shownSequence = m_project->currentSequence();
-    connect(m_project, &Project::currentSequenceChanged, this, [this, tv] {
+    connect(m_project, &Project::currentSequenceChanged, m_ui, [this, tv] {
         const int id = m_project->currentSequence();
         if (id == m_shownSequence) return;
         m_sequencePos[m_shownSequence] = tv->playhead();
@@ -418,7 +468,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::slotFilled, this, [this](const QString& message, bool) { statusBar()->showMessage(message, 6000); });
     connect(tv, &TimelineView::message, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
     // An edit refused or only partly done (a ripple that would take picture and sound apart): why
-    connect(m_editor, &Editor::notice, this, [this](const QString& text) { statusBar()->showMessage(text, 8000); });
+    connect(m_editor, &Editor::notice, m_ui, [this](const QString& text) { statusBar()->showMessage(text, 8000); });
     // Recipe dropped on a clip: applied after the drop (it may ask for a file)
     connect(tv, &TimelineView::recipeDropped, this, [this](int clipId, const QString& recipe) {
         // The clip that got it selected: the Comp page and the Inspector show it next (not another one selected before)
@@ -588,11 +638,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         });
     });
     // Viewer: scrubber (length, In/Out) and title depending on source/timeline
-    connect(m_engine, &Engine::modeChanged, this, &MainWindow::updateViewer);
-    connect(m_project, &Project::timelineChanged, this, &MainWindow::updateViewer);
-    connect(m_project, &Project::mediaMarksChanged, this, &MainWindow::updateViewer);
-    connect(m_project, &Project::mediaChanged, this, &MainWindow::updateViewer);
-    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+    connect(m_engine, &Engine::modeChanged, m_ui, [this] { updateViewer(); });
+    connect(m_project, &Project::timelineChanged, m_ui, [this] { updateViewer(); });
+    connect(m_project, &Project::mediaMarksChanged, m_ui, [this] { updateViewer(); });
+    connect(m_project, &Project::mediaChanged, m_ui, [this] { updateViewer(); });
+    connect(m_engine, &Engine::positionChanged, m_ui, [this](int f) {
         if (sourceActive()) m_sourcePos[m_engine->sourcePath()] = f;
     });
     updateViewer();
@@ -602,7 +652,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
     connect(m_storage, &MediaStorage::previewRequested, this, &MainWindow::previewFile);
-    connect(m_editor, &Editor::previewSourceChanged, this, &MainWindow::updateViewer);
+    connect(m_editor, &Editor::previewSourceChanged, m_ui, [this] { updateViewer(); });
     // Media Storage marks what is in the Media Pool already
     auto poolFiles = [this] {
         QStringList paths;
@@ -610,7 +660,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         for (const MediaInfo& m : m_project->media()) paths << m.path;
         m_storage->setPoolFiles(paths);
     };
-    connect(m_project, &Project::mediaChanged, this, poolFiles);
+    connect(m_project, &Project::mediaChanged, m_ui, poolFiles);
     poolFiles();
     // Effects Library: double-click = like Ctrl+T resp. "Insert title", only with the chosen kind
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
@@ -639,41 +689,14 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_engine->play();
     });
     tv->setProbe([this](const QString& path) { return probeCached(path); });
-    m_mediaCache = new MediaCache(this);
     tv->setMediaCache(m_mediaCache);
     // Project settings -> engine (profile anew), cache, Inspector; comes before timelineChanged
-    connect(m_project, &Project::formatChanged, this, &MainWindow::onFormatChanged);
+    connect(m_project, &Project::formatChanged, m_ui, [this] { onFormatChanged(); });
     // Another timeline opened or a timeline's own resolution: the viewer renders at that size
-    connect(m_project, &Project::timelineFormatChanged, this, &MainWindow::onTimelineFormatChanged);
+    connect(m_project, &Project::timelineFormatChanged, m_ui, [this] { onTimelineFormatChanged(); });
 
-    connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
+    connect(m_project, &Project::modifiedChanged, m_ui, [this] { updateTitle(); });
     updateTitle();
-    // Automatic backup every minute (only on changes), separate from the project file
-    m_autosaveTimer = new QTimer(this);
-    connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
-    m_autosaveTimer->start(60 * 1000);
-#ifdef Q_OS_ANDROID
-    // Going to the background may be the end (the system frees the memory without asking): the backup now
-    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        if (state != Qt::ApplicationActive && !m_autosaveDisabled) autosave();
-    });
-#endif
-    // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
-    // and checkProjectFile() adds it again
-    m_projectWatcher = new QFileSystemWatcher(this);
-    m_projectCheck.setSingleShot(true);
-    m_projectCheck.setInterval(300);
-    connect(&m_projectCheck, &QTimer::timeout, this, &MainWindow::checkProjectFile);
-    connect(m_projectWatcher, &QFileSystemWatcher::fileChanged, this, [this] { m_projectCheck.start(); });
-
-    // schneidi starts with the user's start template too (Settings › Start Templates; Neutral = as it always did)
-    if (const StartTemplate t = StartTemplates::defaultTemplate(); t.id != QLatin1String(StartTemplates::NeutralId)) {
-        const ProjectData d = StartTemplates::apply(t);
-        m_engine->setFormat(d.format);
-        m_project->load(d);
-        m_engine->showTimeline(0);
-    }
-    StartupTrace::mark("MainWindow ctor end");
 }
 
 void MainWindow::connectColorPage()
@@ -1183,6 +1206,7 @@ void MainWindow::normalizeAudioDialog()
     const bool loudness = dlg.mode() == NormalizeDialog::Mode::Loudness;
     QProgressDialog progress(loudness ? T("Lautheit wird gemessen…") : T("Audiopegel werden gemessen…"), T("Abbrechen"),
                              0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
     const Timeline tl = m_project->timeline(); // copy: stays the same while events are processed
@@ -1510,6 +1534,10 @@ void MainWindow::setupBackgroundJobs()
 {
     m_backgroundJobs = new BackgroundJobs;
     m_pageBarRight->addWidget(m_backgroundJobs); // right in the page bar (the status bar is hidden)
+    if (m_oldJobs) { // built again (rebuildUi): what still runs stays shown
+        m_backgroundJobs->adoptJobs(*m_oldJobs);
+        delete m_oldJobs;
+    }
     if (m_phone) phoneAdoptBackgroundJobs();     // the page bar is hidden there: the phone's top bar
     ProxyManager* proxies = m_engine->proxies();
     ProxyProgress* progress = ProxyProgress::of(proxies);
@@ -1551,17 +1579,13 @@ void MainWindow::stopAndReturn()
 
 void MainWindow::setupProxyHint()
 {
-    m_playClock.start();
-    connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
+    connect(m_engine, &Engine::speedChanged, m_ui, [this](double speed) {
         if (speed == 1.0) m_playMeter.start(m_project->frameRate(), m_playClock.elapsed());
         else m_playMeter.stop();
     });
-    // Watching the cut without touching mouse or keyboard: the monitor stays on while it plays
-    auto* awake = new ScreenAwake(this);
-    connect(m_engine, &Engine::speedChanged, awake, [awake](double speed) { awake->setActive(speed != 0.0); });
     ProxyManager* proxies = m_engine->proxies();
     RenderCache* cache = m_engine->renderCache();
-    connect(m_engine, &Engine::positionChanged, this, [this, proxies] {
+    connect(m_engine, &Engine::positionChanged, m_ui, [this, proxies] {
         if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || m_slow) return;
         m_slow = true;
         m_slowFiles = playingVideoFiles();
@@ -1614,15 +1638,15 @@ void MainWindow::setupProxyHint()
         m_slowFiles.clear();
         m_hintOffer = HintOffer::None;
     });
-    connect(cache, &RenderCache::modeChanged, this, &MainWindow::updateProxyHint);
-    connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
-    connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateProxyHint);
-    connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
-    connect(proxies, &ProxyManager::qualityChanged, this, &MainWindow::updateProxyHint);
+    connect(cache, &RenderCache::modeChanged, m_ui, [this] { updateProxyHint(); });
+    connect(proxies, &ProxyManager::queueChanged, m_ui, [this] { updateProxyHint(); });
+    connect(proxies, &ProxyManager::proxyChanged, m_ui, [this] { updateProxyHint(); });
+    connect(proxies, &ProxyManager::enabledChanged, m_ui, [this] { updateProxyHint(); });
+    connect(proxies, &ProxyManager::qualityChanged, m_ui, [this] { updateProxyHint(); });
 
     // Proxies on import (Settings › General): every way a file comes into the open project (Media Pool, drop on the
     // timeline, watch folders, the live MCP/CLI import) says mediaImported; undo/redo and loading a project do not
-    connect(m_project, &Project::mediaImported, this, [this, proxies](const QStringList& paths) {
+    connect(m_project, &Project::mediaImported, m_ui, [this, proxies](const QStringList& paths) {
         if (m_importedMedia.isEmpty())
             QTimer::singleShot(0, this, [this, proxies] {
                 proxies->importedFiles(std::exchange(m_importedMedia, {}),
@@ -1632,7 +1656,7 @@ void MainWindow::setupProxyHint()
             });
         m_importedMedia << paths;
     });
-    connect(m_project, &Project::loaded, proxies, [this, proxies] {
+    connect(m_project, &Project::loaded, m_ui, [this, proxies] {
         m_importedMedia.clear();
         proxies->dropImports();
         ProxyProgress::of(proxies)->clearFailures(); // the old project's files

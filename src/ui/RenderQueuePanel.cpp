@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/RenderQueuePanel.h"
+#include "core/NestedLoop.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -118,6 +119,7 @@ protected:
             drag->setPixmap(picture);
             drag->setHotSpot(card->mapFromGlobal(QCursor::pos()));
         }
+        const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
         drag->exec(Qt::MoveAction); // (not QAbstractItemView::startDrag: it would remove the moved rows itself)
     }
     // Only a drag that started in this list (files or another list's items are ignored). QDrag cannot run without a

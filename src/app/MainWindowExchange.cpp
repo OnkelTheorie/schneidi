@@ -2,6 +2,7 @@
 // MainWindow: timelines from and to other editors (File › Import/Export Timeline, like DaVinci) – FCP7 XML,
 // OpenTimelineIO, EDL. The formats are in core/Interchange.
 #include "app/MainWindow.h"
+#include "core/NestedLoop.h"
 #include "app/ContactSheetDialog.h"
 #include "app/TimelineExportDialog.h"
 
@@ -182,6 +183,7 @@ void MainWindow::contactSheetDialog()
     const ProjectFormat f = m_project->timelineFormat(); // the timeline's shape
 
     QProgressDialog progress(T("Bilder werden geholt…"), T("Abbrechen"), 0, int(frames.size()), this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
     int failed = -1;

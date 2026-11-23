@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/Viewer.h"
+#include "core/NestedLoop.h"
 
 #include "app/Theme.h"
 #include "core/I18n.h"
@@ -174,6 +175,7 @@ protected:
         if (!mime) return;
         auto* drag = new QDrag(this);
         drag->setMimeData(mime);
+        const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
         drag->exec(Qt::CopyAction);
     }
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/studio/StudioTools.h"
+#include "core/NestedLoop.h"
 
 #include "app/Theme.h"
 #include "app/ToolErrors.h"
@@ -760,6 +761,7 @@ int StudioTools::duck()
     // Measure where the other tracks have sound (mixed like the export; originals, never proxies)
     KeysWatch keys(this);
     QProgressDialog progress(T("Ton wird gemessen…"), T("Abbrechen"), 0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(400);
     const auto step = [&](double f) {
@@ -814,6 +816,7 @@ bool StudioTools::loudnessToTarget()
     // window must not take input meanwhile (the AIs wait too, Cli::Live), nor may a recording start.
     KeysWatch keys(this);
     QProgressDialog progress(T("Mix wird gemessen…"), T("Abbrechen"), 0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
     progress.setValue(0);

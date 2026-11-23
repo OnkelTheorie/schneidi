@@ -38,6 +38,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
@@ -53,10 +54,8 @@ void MainWindow::settingsDialog(int tab)
                            : SettingsDialog::Tab::General);
     dlg.aiPage()->setClaudeSetup(m_claudeSetup);
     dlg.aiPage()->addChatSection(m_aiKeys.get());
-    connect(&dlg, &SettingsDialog::designRequested, this, [this, &dlg] {
-        if (DesignDialog(&dlg).exec() == QDialog::Accepted && Theme::restartNeeded())
-            offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
-    });
+    // The design is saved by its own dialog; it is applied once the settings close (OK or not: it was chosen there)
+    connect(&dlg, &SettingsDialog::designRequested, this, [&dlg] { DesignDialog(&dlg).exec(); });
     connect(&dlg, &SettingsDialog::keyBindingsRequested, this, [&dlg] { KeyBindingsDialog(&dlg).exec(); });
     StartTemplatesPage* templates = dlg.startTemplatesPage();
     connect(templates, &StartTemplatesPage::saveRequested, this, [this, &dlg, templates] {
@@ -74,7 +73,10 @@ void MainWindow::settingsDialog(int tab)
     }
     // A phone: the dialog is the app window's size (its own size reached past the screen, OK out of sight)
     if (m_phone) dlg.fitScreen(QRect(mapToGlobal(QPoint(0, 0)), size()));
-    if (dlg.exec() != QDialog::Accepted) return;
+    if (dlg.exec() != QDialog::Accepted) {
+        if (Theme::changed()) applyLookChange(); // a design chosen in its dialog meanwhile
+        return;
+    }
     if (!dlg.startPage().isEmpty()) setStartPage(dlg.startPage()); // test runs: not saved (setStartPage)
     // Start templates: the template new projects start with, whether New Project asks (test runs keep the settings)
     if (!m_autosaveDisabled) {
@@ -125,20 +127,30 @@ void MainWindow::settingsDialog(int tab)
         QSettings().setValue("timeline/momentum", dlg.timelineMomentum());
     }
     applyCenterPlayhead();
-    // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
+    if (phoneChanged) checkLayoutForm();
+    // Language like from the menu (Workspace › Language) and the design: at once (applyLookChange, after this dialog
+    // is gone); test runs keep the language setting
     const QString lang = dlg.language();
-    if (lang != I18n::language() && !m_autosaveDisabled) {
-        I18n::setLanguage(lang);
-        offerRestart(I18n::translate(lang, N_("Die Sprache ändert sich nach dem Neustart von schneidi.")),
-                     I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
-    } else if (scaleChanged && UiScale::userFactor().isEmpty()) { // the user's QT_SCALE_FACTOR wins: no restart helps
-        offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
-                     T("Später"));
-    } else if (touchChanged && Touch::decideMode() != Touch::modeActive()) {
+    if (lang != I18n::language() && !m_autosaveDisabled) I18n::setLanguage(lang);
+    applyLookChange(); // (nothing when neither changed)
+    // The interface size and the touch mode need a restart: one that comes back as it was (restartRestoring). The
+    // user's QT_SCALE_FACTOR wins: no restart helps
+    if (scaleChanged && UiScale::userFactor().isEmpty()) offerScaleRestart();
+    else if (touchChanged && Touch::decideMode() != Touch::modeActive())
         offerRestart(T("Der Touch-Modus ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
-    }
-    if (phoneChanged) checkLayoutForm();
+}
+
+void MainWindow::offerScaleRestart()
+{
+    QMessageBox box(QMessageBox::Question, "schneidi",
+                    T("Die Größe der Oberfläche ändert sich nach einem Neustart von schneidi. Das Projekt und die "
+                      "Ansicht kommen danach so zurück, wie sie jetzt sind."),
+                    QMessageBox::NoButton, this);
+    QPushButton* now = box.addButton(T("Jetzt neu starten"), QMessageBox::AcceptRole);
+    box.setDefaultButton(box.addButton(T("Später"), QMessageBox::RejectRole));
+    box.exec();
+    if (box.clickedButton() == now) restartRestoring();
 }
 
 void MainWindow::applyTimelineOptions()
@@ -245,9 +257,10 @@ QWidget* MainWindow::buildUpdateBar()
     });
     m_updateBar->hide();
 
-    m_updates = new UpdateCheck(this);
-    connect(m_updates, &UpdateCheck::newer, this, [this](const UpdateCheck::Release& r, const QString& current) {
+    if (!m_updates) m_updates = new UpdateCheck(this); // (lives as long as the window: rebuildUi makes only the bar again)
+    connect(m_updates, &UpdateCheck::newer, m_ui, [this](const UpdateCheck::Release& r, const QString& current) {
         m_updatePage = r.page;
+        m_updateNews = {r.version, current};
         m_updateText->setText(T("schneidi %1 ist da (du hast %2).").arg(r.version, current));
         m_updateBar->show();
     });
@@ -259,6 +272,7 @@ void MainWindow::offerUiScale(double factor)
     // Like the update hint: a thin bar, nothing modal; nothing changes unless "Larger" is clicked. Asked once: either
     // answer is kept (a bar left open asks again at the next start)
     if (m_scaleBar || factor <= 0) return;
+    m_scaleOffer = factor; // (rebuildUi shows the bar again while it is open)
     m_scaleBar = new QWidget;
     m_scaleBar->setObjectName("ui_scale_bar");
     m_scaleBar->setAttribute(Qt::WA_StyledBackground);
@@ -289,8 +303,7 @@ void MainWindow::offerUiScale(double factor)
         UiScale::setSaved(factor);
         UiScale::setAsked();
         m_scaleBar->hide();
-        offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
-                     T("Später"));
+        offerScaleRestart();
     });
     connect(keep, &QToolButton::clicked, this, [this] {
         UiScale::setAsked();

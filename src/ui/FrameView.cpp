@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/FrameView.h"
+#include "core/NestedLoop.h"
 
 #include "app/Theme.h"
 #include "core/StartupTrace.h"
@@ -730,6 +731,7 @@ void FrameView::mouseMoveEvent(QMouseEvent* e)
     drag->setMimeData(mime);
     if (!m_image.isNull())
         drag->setPixmap(QPixmap::fromImage(m_image.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+    const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
     drag->exec(Qt::CopyAction);
 }
 

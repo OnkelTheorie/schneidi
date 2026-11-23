@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompNodes.h"
+#include "core/I18n.h"
 #include "engine/picture/CompCamera.h"
 #include "core/CompGraph.h"
 #include "core/CompTrack.h"
@@ -18,9 +19,11 @@ const EffectParam* NodeType::param(const QString& key) const
     return nullptr;
 }
 
+// Made again in another UI language (I18n::Cached: the labels are translated here)
 const QVector<NodeType>& all()
 {
-    static const QVector<NodeType> kinds = [] {
+    static I18n::Cached<QVector<NodeType>> cache;
+    return cache.get([] {
         QVector<NodeType> out;
         // One line per package file (keeps merges of parallel packages trivial)
         registerCoreNodes(out);
@@ -38,8 +41,7 @@ const QVector<NodeType>& all()
         for (NodeType& k : out)
             if (::Comp::takesCamera(k.id)) k.params << cameraLayerParams();
         return out;
-    }();
-    return kinds;
+    });
 }
 
 const NodeType* find(const QString& id)

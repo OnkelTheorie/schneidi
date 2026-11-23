@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/DeliverPanel.h"
+#include "core/NestedLoop.h"
 #include "ui/WheelGuard.h"
 
 #include "app/Theme.h"
@@ -143,9 +144,10 @@ QString DeliverPanel::defaultFolder()
     return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
 }
 
-DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
-    : QWidget(parent), m_project(project), m_queue(new RenderQueue(project, this))
+DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue)
+    : QWidget(parent), m_project(project), m_queue(queue ? queue : new RenderQueue(project, this))
 {
+    if (queue) queue->setParent(this);
     setObjectName("Panel");
     // No fixed minimum width: the layout's (the settings form, FormScroll) keeps the splitter from cutting the form off
     m_queuePanel = new RenderQueuePanel(project, m_queue);
@@ -465,6 +467,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     reloadPresets();
     selectPreset(0); // YouTube 1080p
     updateControls();
+}
+
+RenderQueue* DeliverPanel::takeRenderQueue()
+{
+    m_queue->disconnect(this); // the panel's own connections go with it
+    m_queue->setParent(nullptr);
+    return m_queue;
 }
 
 DeliverPanel::~DeliverPanel()
@@ -990,6 +999,7 @@ bool DeliverPanel::runCheck()
     QString sound;
     bool canceled = false;
     QProgressDialog progress(T("Aufnahmen werden geprüft…"), T("Abbrechen"), 0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(400);
     const auto step = [&progress](double a, double b) {

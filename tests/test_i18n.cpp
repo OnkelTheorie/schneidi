@@ -30,9 +30,9 @@ int main(int argc, char** argv)
     CHECK_EQ(I18n::displayName("pt"), QString("Português (Portuguese, Brazil)"));
     CHECK_EQ(I18n::displayName("zh"), QString("简体中文 (Chinese, Simplified)"));
 
-    const char* hint = "Die Sprache ändert sich nach dem Neustart von schneidi.";
+    const char* hint = "Jetzt neu starten";
     CHECK_EQ(I18n::translate("de", hint), QString(hint));
-    CHECK_EQ(I18n::translate("en", hint), QString("The language changes after restarting schneidi."));
+    CHECK_EQ(I18n::translate("en", hint), QString("Restart Now"));
     CHECK(I18n::translate("fr", hint) != I18n::translate("en", hint));
     // Unknown source text stays as it is
     CHECK_EQ(I18n::translate("fr", "gibt es nicht"), QString("gibt es nicht"));

@@ -196,9 +196,30 @@ public:
     static constexpr QMargins kFrameEstimate{4, 32, 4, 4};
     // Set project settings (one undo step); test helper --format
     void setProjectFormat(const ProjectFormat& format);
-    // Restart (design/language): main() restarts schneidi with these arguments after quitting
+    // Restart (interface size): main() restarts schneidi with these arguments after quitting
     bool restartRequested() const { return m_restartRequested; }
     QStringList restartArguments() const;
+    // Design or language changed (Settings, Workspace menu): applied at once - the window builds its widgets again
+    // under a still of itself that then fades (rebuildUi, MainWindowRebuild.cpp). Queued (after the dialog that
+    // changed it closed); nothing when neither changed.
+    void applyLookChange();
+    // The widgets, menus and actions made again in the saved design and language. Stays: the project with its undo
+    // history, playhead, selection, every timeline's zoom/scroll, the page, panels and splitter sizes, playback, a
+    // running render, background jobs, the Regie page's material and suggestions, the AI chat. false = not now (a
+    // Regie job, a voice-over take or a modal dialog runs: tried again when it ended; `retry` false = not at all)
+    bool rebuildUi(bool retry = true);
+    int uiGeneration() const { return m_uiGeneration; } // counts rebuildUi (tests)
+    // Interface size changed: a restart that comes back as it was - the project (unsaved changes too, from a file of
+    // their own), its file name, page, playhead, zoom/scroll and selection (app/SessionResume.h). Asks only about a
+    // running render. false = cancelled
+    bool restartRestoring();
+    // After such a restart (main.cpp, --resume <file>): the state back; false = not readable (nothing changed). The
+    // files go only once the project is open and in this process's automatic backup.
+    bool resumeSession(const QString& file);
+    // The new process could not be started (main.cpp): the window back as it was, the user told
+    void restartFailed();
+    // At the start: resume files a restart left (its new process never opened them) offered; true = one opened
+    bool offerLeftoverResume();
 
     // Live connection (cli/Live.h, started in main.cpp): what an AI session sees and controls (MainWindowLive.cpp)
     Project* liveProject() override { return m_project; }
@@ -472,6 +493,7 @@ private:
     bool maybeLeaveProject();
     void startProject(const StartTemplate& t); // the new project (after maybeLeaveProject)
     void offerRestart(const QString& message, const QString& now, const QString& later);
+    void offerScaleRestart(); // the interface size changed: restart now (restartRestoring) or later
     // ask = offer relinking missing media / list missing effects (not when reloading after an outside change)
     bool applyLoaded(ProjectData data, const QString& path, bool ask = true);
     // Find Missing Media (MainWindowRelink.cpp): one search in the background (a second request while it runs: none),
@@ -771,6 +793,8 @@ private:
     QWidget* m_scaleBar = nullptr; // offerUiScale
     class QLabel* m_updateText = nullptr;
     QUrl m_updatePage;
+    QStringList m_updateNews; // the bar's newer version and the running one (rebuildUi shows it again)
+    double m_scaleOffer = 0;  // the factor offerUiScale's bar offers
     static QString liveOffReason(); // for the AI: connections are off in the settings
     class AiLog* m_aiLog = nullptr;
     class AiLogView* m_aiLogView = nullptr;
@@ -832,6 +856,7 @@ private:
     void enableShell(bool tablet);  // the phone/tablet arrangement from the desktop's
     void disableShell();            // back to the desktop's, everything where it was
     struct ShellHomes* m_shellHomes = nullptr; // where the shell's widgets live on the desktop (MainWindowPhone.cpp)
+    void dropShellHomes(); // forgets them (rebuildUi: the widgets they name are gone)
     QWidget* shellHome(QWidget* w);            // records w's desktop place before the shell takes it; returns w
     class QTimer* m_formTimer = nullptr;       // a resize settles before the form is checked
     void checkLayoutForm();
@@ -874,6 +899,7 @@ private:
     bool m_liveCommand = false; // a command of an AI runs in the app (watch folders wait with their import)
 
     // Voice-over recording (app/VoiceoverRecorder.h, MainWindowVoiceover.cpp)
+    void createVoiceover(); // the recorder (once, before the widgets)
     void setupVoiceover(); // after the layout (Mixer, Viewer)
     void buildVoiceoverActions(QMenu* play, QMenu* audioMenu);
     void toggleVoiceover();
@@ -926,4 +952,16 @@ private:
     void closePopups(); // open context menus closed (before the project under them changes)
     QVector<QToolButton*> tourToggles() const; // the panel toggles the tour sets (pool, effects, storage, ...)
     class QShortcut* m_voiceoverEscape = nullptr;
+
+    // Building the widgets (again: rebuildUi, MainWindowRebuild.cpp)
+    void buildUi();               // layout, actions, chat panel and their connections (MainWindow.cpp)
+    void tearDownUi();            // every widget, menu, action and UI connection gone; the model untouched
+    QObject* m_ui = nullptr;      // context of the UI's connections to what outlives it (deleted with the widgets)
+    bool m_rebuilding = false;
+    bool m_rebuildQueued = false; // applyLookChange/a postponed rebuild waits for its turn
+    int m_uiGeneration = 0;
+    class RenderQueue* m_keptQueue = nullptr; // a running render goes on in the new Deliver page
+    QPointer<class BackgroundJobs> m_oldJobs; // its jobs move to the new indicator
+    bool m_resumeQuit = false;    // restartRestoring: the project is in the resume file, quitting asks nothing
+    QString m_resumeFile;
 };

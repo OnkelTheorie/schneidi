@@ -199,26 +199,25 @@ void MainWindow::checkProjectFile()
     applyLoaded(std::move(data), m_projectPath, false);
 }
 
-// Restart now or later; "now" asks about saving like on quit and reopens the project afterwards
+// Restart now or later; "now" comes back as it was (the project with its unsaved changes, page, view: restartRestoring)
 void MainWindow::offerRestart(const QString& message, const QString& now, const QString& later)
 {
     QMessageBox box(QMessageBox::Question, "schneidi", message, QMessageBox::NoButton, this);
     QPushButton* nowButton = box.addButton(now, QMessageBox::AcceptRole);
     box.setDefaultButton(box.addButton(later, QMessageBox::RejectRole));
     box.exec();
-    if (box.clickedButton() != nowButton) return;
-    m_restartRequested = true;
-    if (!close()) m_restartRequested = false; // Saving canceled -> keep working
+    if (box.clickedButton() == nowButton) restartRestoring();
 }
 
 QStringList MainWindow::restartArguments() const
 {
-    return LaunchArgs::restart(m_projectPath);
+    return LaunchArgs::restart(m_projectPath, m_resumeFile);
 }
 
 bool MainWindow::maybeSave()
 {
     if (!m_project->isModified() || m_autosaveDisabled) return true; // test run: never ask
+    if (m_resumeQuit) return true; // a restart that brings the project back as it is (restartRestoring)
     const auto answer = QMessageBox::question(this, "schneidi", T("Änderungen am Projekt speichern?"),
                                               QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
                                               QMessageBox::Save);
@@ -799,7 +798,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
-    removeAutosave(); // quit normally -> nothing to restore
+    // Quit normally -> nothing to restore. A restart keeping the project as it is (restartRestoring): the backup stays
+    // until the new process has it in its own
+    if (!m_resumeQuit) removeAutosave();
     // The preview on the second monitor goes with the main window (its window is a top-level of its own)
     if (m_output) showPreviewOn(nullptr);
     event->accept();

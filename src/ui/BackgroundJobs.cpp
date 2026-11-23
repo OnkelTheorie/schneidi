@@ -108,6 +108,14 @@ void BackgroundJobs::setJob(const QString& id, const Job& job)
     refresh();
 }
 
+void BackgroundJobs::adoptJobs(const BackgroundJobs& other)
+{
+    for (const Entry& e : other.m_jobs) {
+        if (e.done) finishJob(e.id, e.job.text); // its done text for a moment again
+        else setJob(e.id, e.job);
+    }
+}
+
 void BackgroundJobs::finishJob(const QString& id, const QString& doneText)
 {
     const int i = indexOf(id);

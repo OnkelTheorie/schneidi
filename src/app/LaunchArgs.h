@@ -9,7 +9,8 @@ namespace LaunchArgs {
 // Options of schneidi that take a value (removed with it)
 inline const QStringList& valueOptions()
 {
-    static const QStringList v = {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design", "--size", "--actions"};
+    static const QStringList v = {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design", "--size", "--actions",
+                                  "--resume"};
     return v;
 }
 
@@ -23,9 +24,12 @@ QStringList files(const QStringList& args);
 // checks --screenshot and SCHNEIDI_LIVE itself.
 bool handsOver(const QStringList& args);
 
-// The arguments of the restart after a design/language change: the same project again, in a window of its own. Never
-// handed over: with a second schneidi running, the project would land in that one and this window would be gone.
-QStringList restart(const QString& projectPath);
+// The arguments of a restart (a new interface size): the same project again, in a window of its own. Never handed
+// over: with a second schneidi running, the project would land in that one and this window would be gone. With a
+// resume file (app/SessionResume.h) that instead of the project file: it brings the project back as it was.
+QStringList restart(const QString& projectPath, const QString& resumeFile = {});
+// The resume file of a launch (--resume <file>; empty = none)
+QString resumeFile(const QStringList& args);
 
 // --help/-h and --version/-v: printed to stdout before anything else, no window, no display needed (main.cpp; on
 // Windows the GUI program writes into the console it was started from)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/EffectsLibrary.h"
+#include "core/NestedLoop.h"
 #include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
@@ -214,6 +215,7 @@ protected:
         auto* drag = new QDrag(this);
         drag->setMimeData(mimeData({it}));
         drag->setPixmap(it->icon().pixmap(iconSize()));
+        const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
         if (drag->exec(supported, Qt::CopyAction) != Qt::IgnoreAction && dropped) dropped(d);
     }
 };

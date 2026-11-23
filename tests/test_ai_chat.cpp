@@ -683,6 +683,11 @@ void test(const QString& dir)
     CHECK_EQ(fake.requests.last().body["system"][0]["text"].toString(), system);
     CHECK(lastUserText(fake.requests[3].body).contains("reviews your changes"));
     dump(panel, "ai-approval.png");
+    // Design or language changed meanwhile (MainWindow::rebuildUi): the new panel still waits for the answer
+    CHECK(w.rebuildUi(false));
+    panel = w.aiChatPanel();
+    CHECK(panel->approvalShown());
+    CHECK(!panel->input()->isEnabled());
     if (auto* accept = panel->findChild<QPushButton*>("ai_accept"); CHECK(accept)) accept->click();
     CHECK(!panel->approvalShown());
     CHECK(panel->input()->isEnabled());

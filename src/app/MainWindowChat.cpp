@@ -48,17 +48,17 @@ MainWindow::~MainWindow()
     m_project->ownUndoStack()->blockSignals(true);
     m_project->blockSignals(true);
     if (m_relinkJob) m_relinkJob->cancel = true; // a search for moved files ends soon (its result is dropped)
+    delete std::exchange(m_ui, nullptr); // the UI's connections to the engine and the model end before the widgets go
     delete m_fullScreen; // a window without a parent (FullScreenViewer.h)
     delete m_output;     // its window has no parent either
 }
 
 void MainWindow::buildChat()
 {
-    m_aiKeys = std::make_unique<Ai::Keys>();
-    m_chat = new AiChat(this);
+    // (m_chat and m_aiKeys live as long as the window: MainWindow's constructor)
     // Plans belong to the project they were made on: another one opened, their cards cannot run any more
     // (Not when a tour trades the user's project for its practice project and back: the plans are still the user's)
-    connect(m_project, &Project::loaded, m_chat, [this] {
+    connect(m_project, &Project::loaded, m_ui, [this] {
         if (m_tourSwap) return;
         m_chat->stopPlans(T("Nicht mehr gültig: ein anderes Projekt wurde geöffnet."));
         // A review counts undo steps of the project it started on: the loaded one has another history, accept and
@@ -108,14 +108,14 @@ void MainWindow::setupChat()
         }
         setAiSettings(s); // also updates the panel
     });
-    connect(m_chat, &AiChat::turnFinished, this, &MainWindow::chatTurnFinished);
-    connect(m_chat, &AiChat::cleared, this, [this] {
+    connect(m_chat, &AiChat::turnFinished, m_ui, [this] { chatTurnFinished(); });
+    connect(m_chat, &AiChat::cleared, m_ui, [this] {
         // A new chat while the bar waits: the changes stay (one step each), nothing is thrown away unasked
         if (m_review.pending) m_chatPanel->hideApproval();
         m_review = {};
         m_chatSeen.reset();
     });
-    connect(m_project->undoStack(), &QUndoStack::indexChanged, this, &MainWindow::chatUndoChanged);
+    connect(m_project->undoStack(), &QUndoStack::indexChanged, m_ui, [this] { chatUndoChanged(); });
     updateChatPanel();
 }
 

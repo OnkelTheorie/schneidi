@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // The size of the whole interface (Settings › General › Size): a factor on top of the system's scaling, applied as
-// QT_SCALE_FACTOR before the QApplication exists (takes effect after a restart, like language and design). Nothing
+// QT_SCALE_FACTOR before the QApplication exists (takes effect after a restart, MainWindow::restartRestoring). Nothing
 // saved = the system's size. The factor scales everything (fonts, columns, icons), not only the font: at 4K with 100 %
 // scaling the panels keep their pixel widths and a larger font alone would not fit them.
 // The offer: on a screen with many pixels shown at 100 % (a 4K monitor without scaling) everything is tiny; the first

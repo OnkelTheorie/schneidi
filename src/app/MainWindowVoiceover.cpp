@@ -57,7 +57,7 @@ void fillInputMenu(QMenu* menu, const std::function<void()>& changed)
 
 } // namespace
 
-void MainWindow::setupVoiceover()
+void MainWindow::createVoiceover()
 {
     m_voiceover = new VoiceoverRecorder(
         m_engine, m_project, m_editor, [this] { return m_projectPath; },
@@ -66,8 +66,12 @@ void MainWindow::setupVoiceover()
             return m_project->mediaInfo(path) != nullptr;
         },
         this);
-    m_mixer->setRecorder(m_voiceover);
     QTimer::singleShot(0, this, &MainWindow::offerCrashedTake); // after the window is up
+}
+
+void MainWindow::setupVoiceover()
+{
+    m_mixer->setRecorder(m_voiceover);
     // The timeline: mic buttons in the audio track headers, the growing take, the input level of the armed track
     TimelineView* view = m_timeline->view();
     connect(view, &TimelineView::armToggled, this, [this](int track) {
@@ -90,12 +94,12 @@ void MainWindow::setupVoiceover()
         menu.exec(globalPos);
     });
     auto syncView = [this, view] { view->setVoiceoverState(m_voiceover->armedTrack(), m_voiceover->recording()); };
-    connect(m_voiceover, &VoiceoverRecorder::armedChanged, this, syncView);
+    connect(m_voiceover, &VoiceoverRecorder::armedChanged, m_ui, syncView);
     connect(m_voiceover, &VoiceoverRecorder::inputLevel, view, &TimelineView::setInputLevel);
-    connect(m_voiceover, &VoiceoverRecorder::takeChanged, this, [this, view] {
+    connect(m_voiceover, &VoiceoverRecorder::takeChanged, m_ui, [this, view] {
         if (m_voiceover->live()) view->setLiveTake(&m_voiceover->take(), m_voiceover->liveTrack());
     });
-    connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this, view, syncView](bool on) {
+    connect(m_voiceover, &VoiceoverRecorder::recordingChanged, m_ui, [this, view, syncView](bool on) {
         syncView();
         if (!on) view->setLiveTake(nullptr, -1);
         if (m_voiceoverAction && !on) m_voiceoverAction->setChecked(false);
@@ -112,7 +116,7 @@ void MainWindow::setupVoiceover()
         if (m_voiceover->recording()) toggleVoiceover();
     });
     m_voiceoverEscape->setEnabled(false);
-    connect(m_voiceover, &VoiceoverRecorder::recordingChanged, this, [this](bool on) {
+    connect(m_voiceover, &VoiceoverRecorder::recordingChanged, m_ui, [this](bool on) {
         updateEscapeKeys(); // Esc ends the recording first
         if (on) statusBar()->showMessage(T("Voiceover: gleich …")); // the input opens, the timeline not yet heard
         else {
@@ -122,7 +126,7 @@ void MainWindow::setupVoiceover()
         }
     });
     // Red (viewer sign, toolbar mic, the take in the timeline) only once the take really runs
-    connect(m_voiceover, &VoiceoverRecorder::liveChanged, this, [this](bool on) {
+    connect(m_voiceover, &VoiceoverRecorder::liveChanged, m_ui, [this](bool on) {
         if (!on) return;
         m_viewer->setRecording(true);
         if (m_voiceoverAction) m_voiceoverAction->setChecked(true);
@@ -130,10 +134,10 @@ void MainWindow::setupVoiceover()
                                      .arg(trackShortName({TrackKind::Audio, m_voiceover->liveTrack()})));
     });
     // The input did not open (start() returned at once, the input opens on its own thread)
-    connect(m_voiceover, &VoiceoverRecorder::failed, this, [this](const QString& error) {
+    connect(m_voiceover, &VoiceoverRecorder::failed, m_ui, [this](const QString& error) {
         QMessageBox::warning(this, T("Voiceover aufnehmen"), error);
     });
-    connect(m_voiceover, &VoiceoverRecorder::finished, this,
+    connect(m_voiceover, &VoiceoverRecorder::finished, m_ui,
             [this](const QString& path, bool placed, const QString& error) {
                 // Whenever a take replaced something, say so (and how to get it back)
                 const int replaced = m_voiceover->replaced();

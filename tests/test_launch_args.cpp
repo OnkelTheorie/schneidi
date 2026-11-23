@@ -36,6 +36,12 @@ int main(int argc, char** argv)
     CHECK_EQ(files(LaunchArgs::restart("/p/x.schneidi")), QStringList{"/p/x.schneidi"});
     CHECK(!handsOver(LaunchArgs::restart("/p/x.schneidi")));
     CHECK(files(LaunchArgs::restart({})).isEmpty());
+    // A restart that comes back as it was: the resume file instead of the project (never taken as a file to open)
+    const QStringList resumed = LaunchArgs::restart("/p/x.schneidi", "/d/resume/resume.json");
+    CHECK(files(resumed).isEmpty());
+    CHECK(!handsOver(resumed));
+    CHECK_EQ(LaunchArgs::resumeFile(resumed), QString("/d/resume/resume.json"));
+    CHECK(LaunchArgs::resumeFile(LaunchArgs::restart("/p/x.schneidi")).isEmpty());
     // --help and --version print and quit (main.cpp, before any window); not after "--" (a file of that name)
     using LaunchArgs::Info;
     CHECK(LaunchArgs::info({"--help"}) == Info::Help);
