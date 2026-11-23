@@ -286,6 +286,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     };
 
     m_timecode = new QLabel;
+    m_timecode->setObjectName("viewer_timecode");
     // Timecode in the recessed field (design language of the mixer). "monospace" is a fontconfig alias: Android (and
     // a system without it) has no such family and falls back to a proportional font, so the label's width changed
     // with every frame and the play buttons beside it jittered - there the system's fixed font
@@ -311,6 +312,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     startBtn->setObjectName("viewer_start");
     auto* backBtn = makeBtn("◀◀", T("Rückwärts (J)"));
     m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
+    m_playBtn->setObjectName("viewer_play");
     auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
 
     connect(startBtn, &QToolButton::clicked, this, [this] { m_engine->pause(); m_engine->seek(0); });
@@ -391,7 +393,18 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::showsProxyChanged, this, &Viewer::updateModeText);
     connect(m_engine->proxies(), &ProxyManager::qualityChanged, this, &Viewer::updateModeText);
     connect(m_engine, &Engine::speedChanged, this,
-            [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
+            [this](double s) {
+                // As wide as the wider of both glyphs: a font whose pause sign is wider (Android's symbol fallback)
+                // made the play button and its neighbours jump at every play/pause
+                m_playBtn->ensurePolished();
+                int widest = m_playBtn->minimumWidth();
+                for (const char* g : {"⏸", "▶"}) {
+                    m_playBtn->setText(QString::fromUtf8(g));
+                    widest = std::max(widest, m_playBtn->sizeHint().width());
+                }
+                m_playBtn->setMinimumWidth(widest);
+                m_playBtn->setText(s == 0.0 ? "▶" : "⏸");
+            });
     // Loop playback in the In/Out range (ruler menu, Playback menu): the button says so
     connect(m_engine, &Engine::loopChanged, this, [this](bool on) {
         m_playBtn->setToolTip(on ? T("Play/Pause (Leertaste) – wiederholt im In/Out-Bereich") : T("Play/Pause (Leertaste)"));

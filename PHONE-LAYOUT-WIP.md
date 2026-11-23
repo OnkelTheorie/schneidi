@@ -200,7 +200,10 @@ Status (updated with each commit):
   Aus (timeline/momentum). Test testMomentumAndAxis in test_touch_input (216 checks green).
 - 4 Axis lock: DONE (same commit): TouchGestures::setAxisLock (timeline on), axis chosen at the pan start, vertical
   only if |dy| > 1.7 |dx|.
-- 1, 3, 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
+- 1 Transport jitter: DONE. Viewer timecode in the system fixed font when "monospace" is no fixed-pitch family
+  (Android), centred, minimum width = the timecode with every digit as the widest digit (grows only); the play button
+  as wide as the wider of ▶/⏸. Test testSteadyTransport in test_phone_layout (play x and timecode width over frames).
+- 3, 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

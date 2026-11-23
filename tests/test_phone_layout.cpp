@@ -31,6 +31,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QFile>
+#include <QFontInfo>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QListWidget>
@@ -725,6 +726,42 @@ void testDialogFit()
                   __FILE__, __LINE__, QString("center %1 -> %2").arg(middle).arg(d.geometry().center().x()));
 }
 
+// The viewer's timecode and play button never change width while the time runs (item 1 of the phone review: on
+// Android "monospace" fell back to a proportional font and the transport buttons jittered with every frame)
+void testSteadyTransport(Engine& engine)
+{
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.enablePhoneLayout();
+    w.resize(411, 914);
+    w.show();
+    settle();
+    auto* tc = w.findChild<QLabel*>("viewer_timecode");
+    auto* play = w.findChild<QToolButton*>("viewer_play");
+    if (!CHECK(tc && play)) return;
+    emit engine.positionChanged(0);
+    emit engine.speedChanged(1.0);
+    emit engine.speedChanged(0.0);
+    settle();
+    const int x = play->mapTo(&w, QPoint()).x(), width = tc->width();
+    bool steady = true;
+    QString moved;
+    for (int f : {1, 11, 111, 4444, 18181, 89898, 7, 0}) {
+        emit engine.positionChanged(f);
+        emit engine.speedChanged(f % 2 ? 1.0 : 0.0);
+        QApplication::processEvents();
+        tc->parentWidget()->layout()->activate();
+        if (play->mapTo(&w, QPoint()).x() != x || tc->width() != width) {
+            steady = false;
+            moved = QString("frame %1: play x %2 -> %3, timecode %4 -> %5").arg(f).arg(x)
+                        .arg(play->mapTo(&w, QPoint()).x()).arg(width).arg(tc->width());
+        }
+    }
+    Check::report(steady, "timecode and play button keep their place while the time runs", __FILE__, __LINE__, moved);
+    Check::report(tc->font().fixedPitch() || QFontInfo(tc->font()).fixedPitch(), "timecode in a fixed-pitch font",
+                  __FILE__, __LINE__, QFontInfo(tc->font()).family());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -743,6 +780,7 @@ int main(int argc, char** argv)
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
     testSilentRestore(engine);
+    testSteadyTransport(engine);
     Touch::installKineticScrolling(&app); // (main.cpp: every scroll area takes a finger)
     testToolBarSwipe(engine);
     testGallery(engine);
