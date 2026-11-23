@@ -369,11 +369,18 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         const QString id = Extensions::qualityModel(a["quality"].toString());
         if (id.isEmpty())
             fail("BAD_ARGUMENT", QString("quality must be accurate, fast or very_fast (not '%1')").arg(a["quality"].toString()));
-        if (!Extensions::isInstalled(*Extensions::find(id)))
+        const Extensions::Item* item = Extensions::find(id);
+        if (!item) // Parakeet only where the whisper package with parakeet-cli is offered (Linux/Windows x64)
+            fail("NOT_INSTALLED", QString("quality '%1' is not offered on this system").arg(a["quality"].toString()));
+        if (!Extensions::isInstalled(*item))
             fail("NOT_INSTALLED", QString("the model of quality '%1' is not installed (see `extensions`, e.g. --install %2)")
                                       .arg(a["quality"].toString(), id == "parakeet" ? "parakeet" : "whisper," + id.section('-', 2)));
         model = id;
     }
+    // Nothing chosen and no whisper model, but Parakeet is there (`extensions` calls that ready): Parakeet
+    if (model.isEmpty() && Extensions::whisperModelPath().isEmpty() && !Extensions::parakeetModel().isEmpty()
+        && !Extensions::parakeetProgram().isEmpty())
+        model = "parakeet";
     const bool parakeet = model.compare("parakeet", Qt::CaseInsensitive) == 0 || Transcriber::isParakeet(model);
     if (parakeet) {
         req.model = model.compare("parakeet", Qt::CaseInsensitive) == 0 ? Extensions::parakeetModel()

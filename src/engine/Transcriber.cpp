@@ -623,23 +623,19 @@ bool Transcriber::readParakeet(QString* error)
         if (error) *error = T("Parakeet hat kein Ergebnis geschrieben: %1").arg(QString::fromUtf8(m_log.right(400)).trimmed());
         return false;
     }
+    // No repeat filter: Parakeet does not write a piece twice, and its blind 28 s pieces can hold a real repeat
     if (m_pieces.isEmpty()) {
         m_result.words = files.value("audio.wav");
-        m_repeats = Transcript::dropRepeats(m_result.words, 0);
         return true;
     }
-    qsizetype previous = -1;
     for (int i = 0; i < m_pieces.size(); ++i) {
         const Transcript::Piece& piece = m_pieces[i];
-        const qsizetype first = m_result.words.size();
         for (const Transcript::Word& w : files.value(QString("piece_%1.wav").arg(i, 3, 10, QChar('0')))) {
             Transcript::Word mapped{Transcript::pieceTime(piece, w.from), Transcript::pieceTime(piece, w.to, true), w.text};
-            mapped.to = std::max(mapped.to, mapped.from);
             if (!m_result.words.isEmpty()) mapped.from = std::max(mapped.from, m_result.words.last().from);
+            mapped.to = std::max(mapped.to, mapped.from);
             m_result.words << mapped;
         }
-        m_repeats += Transcript::dropRepeats(m_result.words, first, previous);
-        if (m_result.words.size() > first) previous = first;
     }
     return true;
 }
@@ -653,9 +649,8 @@ bool Transcriber::readResult(QString* error)
     if (m_pieces.isEmpty()) {
         QFile json(m_tmp->filePath("out.json"));
         if (!json.open(QIODevice::ReadOnly)) return false;
-        if (!Transcript::parseWhisperJson(json.readAll(), &m_result, error)) return false;
-        m_repeats = Transcript::dropRepeats(m_result.words, 0);
-        return true;
+        // The whole sound at once: no repeat filter (it is made for speech pieces)
+        return Transcript::parseWhisperJson(json.readAll(), &m_result, error);
     }
     qsizetype previous = -1; // the words of the last piece that had any
     for (int i = 0; i < m_pieces.size(); ++i) {
@@ -667,8 +662,8 @@ bool Transcriber::readResult(QString* error)
                                            [&piece](qint64 t, bool end) { return Transcript::pieceTime(piece, t, end); },
                                            &m_result, error))
             return false;
-        // A piece written twice, or the piece before written once more (whisper turbo)
-        m_repeats += Transcript::dropRepeats(m_result.words, first, previous);
+        // A piece written twice, or the piece before written once more (whisper turbo); not in a song (a chorus)
+        if (!m_request.music) m_repeats += Transcript::dropRepeats(m_result.words, first, previous);
         if (m_result.words.size() > first) previous = first;
     }
     return true;

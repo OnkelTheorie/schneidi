@@ -192,20 +192,39 @@ void testPieces()
         CHECK_EQ(w[3].from, 3000);
         CHECK_EQ(w.last().from, 7000);
         CHECK_EQ(w.last().to, 8080);
+        // ... said twice for real (the second time takes its time too): it stays
+        QVector<Transcript::Word> said = words(twice, 0, 1000);
+        CHECK_EQ(Transcript::dropRepeats(said, 0), 0);
+        CHECK_EQ(said.size(), 16);
+        // The copy squeezed into the piece's end (whisper's own times without DTW: 0.9 s against 17 s)
+        const auto squeeze = [](QVector<Transcript::Word>& ws, int from) {
+            for (int i = from; i < ws.size(); ++i) ws[i].from = 4000 + (i - from) * 40, ws[i].to = ws[i].from + 40;
+        };
         // The copy a word short or with one word changed (case and punctuation do not count)
         w = words("Das Schwimmen ist hier sicher, es gibt Familienstrände das schwimmen ist hier sicher es gibt", 0, 500);
+        squeeze(w, 8);
         CHECK_EQ(Transcript::dropRepeats(w, 0), 7);
         CHECK_EQ(text(w), QString("Das Schwimmen ist hier sicher, es gibt Familienstrände"));
         w = words("Das Schwimmen ist hier sicher. Es gibt Familienstrände. Das Schwimmen ist hier sicher. Es gibt "
                   "Strände.",
                   0, 500);
+        squeeze(w, 8);
         CHECK_EQ(Transcript::dropRepeats(w, 0), 8);
+        // A whole recording passed in (thousands of words): left alone at once, never compared word by word
+        {
+            QString many;
+            for (int i = 0; i < 4000; ++i) many += QString("wort%1 ").arg(i % 997);
+            QVector<Transcript::Word> all = words(many, 0, 300);
+            CHECK_EQ(Transcript::dropRepeats(all, 0), 0);
+            CHECK_EQ(all.size(), 4000);
+        }
         // Not a repeat: a short phrase said twice, a chant, different halves, too many changes
         for (const QString& kept : {QString("Ja, ja. Ja, ja."), QString("Go, go, go! Go, go, go!"),
                                     QString("ja ja ja ja ja ja ja ja"),
                                     QString("Wir gehen jetzt rein und dann gucken wir mal was da so los ist"),
                                     QString("eins zwei drei vier fünf sechs eins zwei sieben acht neun zehn")}) {
             QVector<Transcript::Word> k = words(kept, 0, 300);
+            squeeze(k, int(k.size() / 2)); // even squeezed
             CHECK_EQ(Transcript::dropRepeats(k, 0), 0);
             CHECK_EQ(text(k), kept);
         }

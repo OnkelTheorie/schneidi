@@ -257,14 +257,17 @@ bool repeats(const QStringList& a, const QStringList& b, int minWords)
 
 int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous, int minWords)
 {
+    constexpr qsizetype kMaxRepeatWords = 300;
     first = std::clamp<qsizetype>(first, 0, words.size());
     QStringList piece;
     QVector<qsizetype> at; // index in words of each plain word (punctuation-only words are left out)
     for (qsizetype i = first; i < words.size(); ++i)
         if (const QString p = plainWord(words[i].text); !p.isEmpty()) piece << p, at << i;
-    if (piece.isEmpty()) return 0;
+    // A speech piece is at most ~28 s (~100 words): the comparison grows with the cube of the words, a whole hour
+    // passed in by mistake must never hang the program
+    if (piece.isEmpty() || piece.size() > kMaxRepeatWords) return 0;
     // The piece before written once more: the whole piece goes
-    if (previous >= 0 && previous < first) {
+    if (previous >= 0 && previous < first && first - previous <= kMaxRepeatWords) {
         QStringList before;
         for (qsizetype i = previous; i < first; ++i)
             if (const QString p = plainWord(words[i].text); !p.isEmpty()) before << p;
@@ -275,12 +278,20 @@ int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous, int m
         }
     }
     // The piece written twice: a split near the middle whose halves match (the second may be a little shorter or
-    // longer); the best of them: a copy that starts like the piece, then the fewest changes
+    // longer) and whose second half whisper squeezed into a moment (its words start within a quarter of the time the
+    // first half's words took: 19 words at one time with DTW, 0.9 s against 17 s without; a sentence really said
+    // twice takes its time twice and stays); the best of them: a copy that starts like the piece, then the fewest
+    // changes
+    const auto squeezed = [&](qsizetype k) {
+        const qint64 kept = words[at[k - 1]].from - words[at[0]].from;
+        const qint64 copy = words[at.last()].from - words[at[k]].from;
+        return copy * 4 <= kept;
+    };
     const qsizetype n = piece.size();
     const qsizetype slack = std::max<qsizetype>(1, n / 10);
     qsizetype best = -1, bestScore = 0;
     for (qsizetype k = n / 2 - slack; k <= (n + 1) / 2 + slack; ++k) {
-        if (k < minWords || n - k < minWords) continue;
+        if (k < minWords || n - k < minWords || !squeezed(k)) continue;
         const QStringList a = piece.mid(0, k), b = piece.mid(k);
         if (!repeats(a, b, minWords)) continue;
         const qsizetype score = wordDistance(a, b) + (a.first() == b.first() ? 0 : n);

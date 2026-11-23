@@ -2,7 +2,7 @@
 // Speech recognition "Sehr schnell" with NVIDIA Parakeet (engine/Transcriber, 23.11.): parakeet-cli beside whisper-cli
 // hears the speech pieces of the voice detection (or, without it, the sound in pieces of up to 28 s) in one run, its
 // token times (-ps) become the words at their times in the whole sound. A language Parakeet does not know (chosen, or
-// detected first by a whisper model) goes to the request's whisper model. A piece written twice keeps one copy.
+// detected first by a whisper model) goes to the request's whisper model. Text said twice stays (no repeat filter).
 // Neither whisper nor Parakeet is needed: this program copies itself as "whisper-cli", "parakeet-cli" and
 // "whisper-vad-speech-segments".
 #include "check.h"
@@ -299,12 +299,17 @@ int main(int argc, char** argv)
         CHECK_EQ(alone.words.size(), 5);
     }
 
-    // 6. A piece written twice: one copy stays
+    // 6. The text twice in a piece: Parakeet does not make up repeats, so it was said twice and stays (no repeat
+    // filter); a word whose times went back is moved up to the one before and never ends before it starts
     qputenv("FAKE_TWICE", "1");
     {
         const Outcome o = transcribe(media, model, large, "de");
         CHECK(o.ok);
-        CHECK_EQ(text(o.words), QString("Eins, zwei drei vier fünf."));
+        CHECK_EQ(text(o.words), QString("Eins, zwei drei vier fünf. Eins, zwei drei vier fünf."));
+        for (int i = 0; i < o.words.size(); ++i) {
+            CHECK(o.words[i].to >= o.words[i].from);
+            if (i > 0) CHECK(o.words[i].from >= o.words[i - 1].from);
+        }
     }
     qunsetenv("FAKE_TWICE");
     return Check::result();

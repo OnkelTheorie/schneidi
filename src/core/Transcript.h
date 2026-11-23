@@ -79,8 +79,12 @@ int dropPromptEcho(QVector<Word>& words, const QString& prompt);
 // words[first..] are the words of one piece, words[previous..first) those of the piece before it (previous < 0 =
 // none). A copy is dropped when it has at least `minWords` words, three of them different ("ja ja ja ja" said twice
 // stays), and differs from what it repeats in at most a fifth of its words. Of a piece written twice the first copy
-// stays with its times (whisper squeezes the copy into the end of the piece), its last word lasting to the copy's
-// end; a piece that only repeats the one before goes whole. Returns how many words were dropped.
+// stays with its times, its last word lasting to the copy's end - only when the copy is squeezed into the end of the
+// piece (its words start within a quarter of the first copy's time), as whisper writes it; said twice for real, it
+// stays. A piece that only repeats the one before goes whole. Pieces (and pieces before) of more than 300 words are
+// left as they are (speech pieces are ~100 at most). For whisper's speech pieces only: not for music (a chorus
+// sung twice), not for Parakeet (it does not repeat; its blind 28 s pieces can hold a real repeat). Returns how many
+// words were dropped.
 int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous = -1, int minWords = 4);
 
 
