@@ -3,7 +3,10 @@
 
 #include <QChar>
 #include <QList>
+#include <QMutex>
 #include <QString>
+
+#include <atomic>
 
 // UI language: German is the source language in the code, every other language comes from i18n/<code>.json
 // (German text -> translated text). A new language only needs a new file there. switchTo() changes it in a running
@@ -31,6 +34,34 @@ bool switchTo(const QString& lang);
 // The setting changed since install()/switchTo (setLanguage): switchTo(language()) is due. A --lang of this run is no
 // change of the setting.
 bool languageChanged();
+// Counts install()/switchTo: texts made in the language before are out of date
+int generation();
+
+// A table with translated texts (effect names, node types ...), made once per UI language: get() returns the one of
+// the language in use, made by `build` on first use after install()/switchTo. Tables of a language before stay alive
+// (a render thread may still read one; pointers into them stay valid). Thread-safe.
+template <class Table>
+class Cached {
+public:
+    template <class Build>
+    const Table& get(Build build)
+    {
+        const int now = generation();
+        if (m_generation.load(std::memory_order_acquire) != now) {
+            QMutexLocker lock(&m_mutex);
+            if (m_generation.load(std::memory_order_relaxed) != now) {
+                m_table.store(new Table(build()), std::memory_order_release); // (the one before stays: see above)
+                m_generation.store(now, std::memory_order_release);
+            }
+        }
+        return *m_table.load(std::memory_order_acquire);
+    }
+
+private:
+    QMutex m_mutex;
+    std::atomic<const Table*> m_table{nullptr};
+    std::atomic<int> m_generation{-1};
+};
 QString translate(const QString& lang, const char* source); // source text in another language than the installed one
 QChar decimalPoint();                  // decimal separator of the UI language ("," in German, "." in English)
 // Thousands separator of the UI language ("." in German and Spanish, "," in English, a no-break space in French,

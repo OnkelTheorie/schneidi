@@ -15,6 +15,7 @@
 #include "app/SessionResume.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/NestedLoop.h"
 #include "core/Project.h"
@@ -22,6 +23,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/RenderQueue.h"
+#include "engine/picture/CompNodes.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/Viewer.h"
@@ -185,6 +187,12 @@ void testSwitch(Engine& engine)
         CHECK_EQ(Theme::window, now.window);
         CHECK(english ? now.updateBarStyle != german.updateBarStyle : now.updateBarStyle == german.updateBarStyle);
         CHECK(qApp->styleSheet().contains(Theme::window.name()));
+        // Tables of translated names made once (effects, compositing nodes): in the new language too
+        if (const EffectDescriptor* fx = EffectRegistry::find("color"); CHECK(fx))
+            CHECK_EQ(fx->name, QString(english ? "Color Corrector" : "Farbkorrektur"));
+        if (const Picture::Comp::NodeType* node = Picture::Comp::find("merge"); CHECK(node))
+            CHECK_EQ(node->name, T("Mischen"));
+        CHECK(english == (T("Mischen") != QString("Mischen")));
         dump(&w, english ? "2-en-hell" : "3-de-dark-orange");
 
         // The model: the same objects, the same history and clips, the same selection

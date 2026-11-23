@@ -539,12 +539,12 @@ const QVector<AnimParam>& animParams() { return kParams; }
 
 const QVector<AnimParam>& qualifierParams()
 {
-    static const QVector<AnimParam> list = [] {
+    static I18n::Cached<QVector<AnimParam>> cache; // (labels in the UI language: made again in another one)
+    return cache.get([] {
         QVector<AnimParam> l;
         for (const QString& k : GradeWindows::correctionKeys()) l << GradeQualifier::param(k);
         return l;
-    }();
-    return list;
+    });
 }
 
 namespace {
