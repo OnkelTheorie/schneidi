@@ -911,5 +911,6 @@ int warnings(const QVector<Issue>& issues)
 }
 
 QRectF overlayBlock(const Clip& c, double W, double H) { return titleBlock(c, 0, W, H); }
+QRectF overlayBlockAt(const Clip& c, double t, double W, double H) { return titleBlock(c, t, W, H); }
 
 } // namespace ExportCheck

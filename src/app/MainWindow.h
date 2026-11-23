@@ -176,6 +176,10 @@ public:
     // "Check Fields": the placeholders of the open project and what is wrong with them
     void checkPlaceholders();
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
+    // Restore the backup without the question (Android: the system ends apps in the background, a "crash" there is
+    // normal; env SCHNEIDI_SILENT_RESTORE=1/0 decides elsewhere, tests)
+    static bool restoresWithoutAsking();
+    void autosave(); // the automatic backup now (only when modified; Android: also when the app goes to the background)
     // File › Open Backup… after the file dialog: the backup as an untitled, modified project; the automatic backup
     // of the project left is removed (false = not readable, message shown)
     bool openBackup(const QString& path);
@@ -299,6 +303,38 @@ public:
     // not Esc - Esc has its own jobs in the editor) brings back the state before: maximized or normal.
     void setAppFullScreen(bool on);
     class FullScreenViewer* fullScreenViewer() const; // nullptr while it is off
+    // The back key (Android; ui/touch Touch::installBackKey, after popups and dialogs): one step back - the
+    // full-screen viewer, then the large viewer, then another page back to Edit; on Edit with nothing left it asks
+    // whether to quit (never quits by itself). Always true (the key is taken)
+    bool backStep();
+    // Layout forms (MainWindowPhone.cpp, ui/phone/PhoneShell): Desktop (pages, splitters), Tablet (the middle form:
+    // top bar, tool rail, viewer above the timeline, one panel docked at the side) and Phone (viewer, timeline, a tool
+    // bar, panels as sheets). Chosen by the window's size in logical px (wantedForm), switched live when it crosses a
+    // threshold or the setting changes: the same widgets move, nothing is rebuilt
+    enum class LayoutForm { Desktop, Tablet, Phone };
+    // The form for a window of `logical` size; `current` = the one shown (a little hysteresis around the thresholds).
+    // Setting ui/layoutForm (auto/phone/tablet/desktop; the older ui/phoneLayout on/off), SCHNEIDI_LAYOUT=phone|
+    // tablet|desktop or SCHNEIDI_PHONE_LAYOUT=1/0 pin it
+    static LayoutForm wantedForm(const QSize& logical, LayoutForm current = LayoutForm::Desktop);
+    static bool phoneLayoutWanted(); // the start: wantedForm(the screen) == Phone
+    // Set while a silent autosave restore starts, cleared 2 s after the window is up: still set = that start crashed
+    static constexpr const char* kRestoreStartKey = "autosave/silentRestorePending";
+    // "Automatisch" picks the form by the window's size only on Android; a desktop system stays Desktop at any size
+    // (half a screen, a portrait monitor) unless the setting or SCHNEIDI_LAYOUT asks for another form.
+    // SCHNEIDI_LAYOUT_BY_SIZE=1/0 and setFormBySize (tests) override
+    static bool formBySize();
+    static void setFormBySize(std::optional<bool> on);
+    // The input is a finger (touch mode or a touchscreen): the shell's centred playhead, magnetic V1 and hold-to-move
+    static bool touchInput();
+    static constexpr int kPhoneEdge = 600;     // shorter side below: a phone (unless the window is wide)
+    static constexpr int kDesktopWidth = 1100; // width from here: the desktop layout
+    LayoutForm layoutForm() const;
+    // Live: project, unsaved changes, selection, playhead, zoom and scroll stay (core rule); the desktop's splitter
+    // sizes, open panels and page come back as they were when it returns
+    void setLayoutForm(LayoutForm form);
+    class QAbstractButton* addMediaButton() const { return m_addMediaButton; } // tests
+    void enablePhoneLayout(); // = setLayoutForm(Phone) (tests call it on a window built without it)
+    class PhoneShell* phoneShell() const { return m_phone; }
     // Preview on a second monitor (Workspace menu, Ctrl+Shift+F; ui/SecondScreen, MainWindowLayout.cpp): the key moves
     // it to the next monitor other than the one the main window is on, after the last one back into the window (two
     // monitors: on/off). Full screen there, letterboxed; it does not take the keyboard focus. The main window keeps
@@ -322,6 +358,8 @@ public:
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override; // the layout form for the new size (a moment later)
+    void showEvent(QShowEvent* event) override;     // (the desktop's splitter sizes, once laid out)
     void changeEvent(QEvent* event) override; // window state: the full-screen action follows
 
 private:
@@ -449,7 +487,6 @@ private:
     static QString appName(); // "schneidi 0.9.0" or "schneidi 0.9.0 → 0.10.0" (without the build state)
     void addRecent(const QString& path);
     void rebuildRecentMenu();
-    void autosave();
     void removeAutosave();
     // Every running instance has its own backup slot (QLockFile) so that two windows do not
     // overwrite or delete each other's backup; slot 1 = "autosave.schneidi" as before
@@ -782,6 +819,37 @@ private:
     QSplitter* m_chatSplit = nullptr;
     QToolButton* m_chatToggle = nullptr;
     class QHBoxLayout* m_topBarLayout = nullptr;
+    QWidget* m_topBar = nullptr;  // the desktop's bars (hidden in the phone layout)
+    QWidget* m_pageBar = nullptr;
+    class PhoneShell* m_phone = nullptr; // the phone layout (nullptr = the normal one)
+    void phoneShowPage(Page page);  // showPage in the phone layout: a page becomes its panel's sheet
+    void phoneTogglePanel(QWidget* panel, bool on); // a panel toggle (menu, key, workspace) in the phone layout
+    QWidget* buildPhoneTopBar();
+    // The background work indicator (ui/BackgroundJobs) into the phone's top bar, compact (the page bar is hidden)
+    void phoneAdoptBackgroundJobs();
+    QWidget* m_phoneTopBar = nullptr; // the phone's top bar: a row in portrait, the rail's head in landscape
+    void phoneArrangeTopBar(bool landscape);
+    void enableShell(bool tablet);  // the phone/tablet arrangement from the desktop's
+    void disableShell();            // back to the desktop's, everything where it was
+    struct ShellHomes* m_shellHomes = nullptr; // where the shell's widgets live on the desktop (MainWindowPhone.cpp)
+    QWidget* shellHome(QWidget* w);            // records w's desktop place before the shell takes it; returns w
+    class QTimer* m_formTimer = nullptr;       // a resize settles before the form is checked
+    void checkLayoutForm();
+    void snapshotDesktop(); // the desktop's splitter sizes while it is desktop-wide (what comes back later)
+    // Adding material the phone's way: schneidi's gallery (ui/MediaGallery; Android asks for the media permission
+    // first, refused = the system's file picker), the picked files into the pool and onto the timeline's end
+    void openGallery();
+    void pickWithSystem();
+    void addPicked(const QStringList& paths);
+    class QAbstractButton* m_addMediaButton = nullptr; // the timeline's "+ Videos hinzufügen" (phone, tablet)
+    void updateAddMediaButton();
+    // The timeline's playhead fixed in the middle: setting timeline/centerPlayhead on/off, else on in the phone and
+    // tablet forms (TimelineView::setCenterPlayhead)
+    void applyCenterPlayhead();
+    void applyScrollIndicators(); // phone form: thin indicators instead of scroll bars
+    class ScrollIndicators* m_scrollIndicators = nullptr;
+    QList<QAction*> m_shellShortcuts; // the hidden menu bar's actions on the window itself (shortcuts keep working)
+    void setShellShortcuts(bool on);
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

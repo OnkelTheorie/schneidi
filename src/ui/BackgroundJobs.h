@@ -44,6 +44,18 @@ public:
     QString text() const;
     int percent() const; // -1 = busy bar or a done text
     int holdMs() const { return m_holdMs; }
+    // Small form for the phone's top bar: the bar above a short line (percent or the elided text) and the ✕; a tap on
+    // it emits detailsRequested (touch has no tooltip: MainWindow shows the full text)
+    void setCompact(bool on);
+    bool compact() const { return m_compact; }
+
+signals:
+    void detailsRequested(const QString& text);
+
+protected:
+    void mouseReleaseEvent(class QMouseEvent* event) override;
+
+public:
     void setHoldMs(int ms) { m_holdMs = ms; } // tests
 
 private:
@@ -62,4 +74,5 @@ private:
     ElidedLabel* m_text;
     QToolButton* m_cancel;
     int m_holdMs = 2000;
+    bool m_compact = false;
 };

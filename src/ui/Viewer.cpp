@@ -16,6 +16,9 @@
 #include "ui/ViewerOverlay.h"
 #include "ui/timeline/PlayheadMove.h"
 
+#include <QFontDatabase>
+#include <QFontInfo>
+#include <QFontMetrics>
 #include <QAction>
 #include <QApplication>
 #include <QDrag>
@@ -303,10 +306,20 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_scrubber->released = [this] { m_scrubMove.end(m_engine); };
 
     m_timecode = new QLabel;
-    // Timecode in the recessed field (design language of the mixer)
+    m_timecode->setObjectName("viewer_timecode");
+    // Timecode in the recessed field (design language of the mixer). "monospace" is a fontconfig alias: Android (and
+    // a system without it) has no such family and falls back to a proportional font, so the label's width changed
+    // with every frame and the play buttons beside it jittered - there the system's fixed font
+    QString mono = QStringLiteral("monospace");
+    {
+        QFont probe;
+        probe.setFamily(mono);
+        if (!QFontInfo(probe).fixedPitch()) mono = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    }
     m_timecode->setStyleSheet(QString("color: %1; background: %2; border: 1px solid %3; border-radius: 2px;"
-                                      " font-family: monospace; font-size: 13px; padding: 1px 6px;")
-                                  .arg(Theme::text.name(), Theme::well.name(), Theme::border.name()));
+                                      " font-family: \"%4\"; font-size: 13px; padding: 1px 6px;")
+                                  .arg(Theme::text.name(), Theme::well.name(), Theme::border.name(), mono));
+    m_timecode->setAlignment(Qt::AlignCenter);
 
     auto makeBtn = [](const QString& text, const QString& tip) {
         auto* b = new QToolButton;
@@ -316,8 +329,10 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         return b;
     };
     auto* startBtn = makeBtn("⏮", T("Zum Anfang (Home)"));
+    startBtn->setObjectName("viewer_start");
     auto* backBtn = makeBtn("◀◀", T("Rückwärts (J)"));
     m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
+    m_playBtn->setObjectName("viewer_play");
     auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
 
     connect(startBtn, &QToolButton::clicked, this,
@@ -328,6 +343,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
 
     // Before/After (bypass color correction, Shift+D) like in the DaVinci Viewer; on = orange
     auto* bypass = new QToolButton;
+    bypass->setObjectName("viewer_bypass");
     bypass->setText("◐");
     bypass->setCheckable(true);
     bypass->setFocusPolicy(Qt::NoFocus);
@@ -367,8 +383,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_barRight->addWidget(m_partHandles);
     m_barRight->addWidget(bypass);
     transport->addLayout(m_barRight);
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -399,7 +414,18 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::showsProxyChanged, this, &Viewer::updateModeText);
     connect(m_engine->proxies(), &ProxyManager::qualityChanged, this, &Viewer::updateModeText);
     connect(m_engine, &Engine::speedChanged, this,
-            [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
+            [this](double s) {
+                // As wide as the wider of both glyphs: a font whose pause sign is wider (Android's symbol fallback)
+                // made the play button and its neighbours jump at every play/pause
+                m_playBtn->ensurePolished();
+                int widest = m_playBtn->minimumWidth();
+                for (const char* g : {"⏸", "▶"}) {
+                    m_playBtn->setText(QString::fromUtf8(g));
+                    widest = std::max(widest, m_playBtn->sizeHint().width());
+                }
+                m_playBtn->setMinimumWidth(widest);
+                m_playBtn->setText(s == 0.0 ? "▶" : "⏸");
+            });
     // Loop playback in the In/Out range (ruler menu, Playback menu): the button says so
     connect(m_engine, &Engine::loopChanged, this, [this](bool on) {
         m_playBtn->setToolTip(on ? T("Play/Pause (Leertaste) – wiederholt im In/Out-Bereich") : T("Play/Pause (Leertaste)"));
@@ -465,8 +491,7 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
     });
     connect(action, &QAction::toggled, b, &QToolButton::setChecked);
     m_barRight->addWidget(b);
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
     layout()->invalidate();
     return b;
 }
@@ -511,9 +536,31 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
     show(zoom());
     connect(this, &Viewer::zoomChanged, b, show);
     m_barRight->insertWidget(0, b);
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
     layout()->invalidate();
+}
+
+void Viewer::updateBalance()
+{
+    // The transport buttons centered: as much room right of them as the timecode takes left (compact: none, the
+    // buttons may sit off the middle)
+    const int balance = m_compact ? 0 : std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
+    m_barBalance->changeSize(balance, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+}
+
+void Viewer::setCompact(bool on)
+{
+    m_compact = on;
+    // "To the start" and Before/After stay in the Playback and Color menus
+    for (const char* id : {"viewer_start", "viewer_bypass"})
+        if (auto* b = findChild<QToolButton*>(id)) b->setVisible(!on);
+    // The picture's pages (trim view, the "program elsewhere" page with its text and buttons) never set the height:
+    // the picture alone does (a phone in landscape has ~380 px for the bars, the picture and the timeline)
+    m_stack->setSizePolicy(on ? QSizePolicy::Ignored : QSizePolicy::Preferred, on ? QSizePolicy::Ignored : QSizePolicy::Preferred);
+    m_stack->setMinimumSize(on ? m_screen->minimumSize() : QSize(0, 0));
+    updateBalance();
+    updateModeText();
+    if (layout()) layout()->invalidate();
 }
 
 int Viewer::heightFor(int width) const
@@ -553,7 +600,7 @@ bool Viewer::eventFilter(QObject* obj, QEvent* event)
         case QEvent::Hide:
         case QEvent::DevicePixelRatioChange:
             m_edgeTimer->start();
-            if (m_notice->isVisible()) m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
+            if (m_notice->isVisible()) placeNotice();
             break;
         default: break;
         }
@@ -564,11 +611,23 @@ bool Viewer::eventFilter(QObject* obj, QEvent* event)
 void Viewer::showNotice(const QString& text, int ms)
 {
     m_notice->setText(text);
-    m_notice->adjustSize();
-    m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
+    placeNotice();
     m_notice->show();
     m_notice->raise(); // above the GPU surface and the overlay layer
     m_noticeTimer->start(ms);
+}
+
+void Viewer::placeNotice()
+{
+    // One line where it fits; on a narrow viewer (a phone in portrait) it wraps instead of reaching past the edges
+    const int room = std::max(80, m_screen->width() - 16);
+    m_notice->setWordWrap(false);
+    m_notice->adjustSize();
+    if (m_notice->width() > room) {
+        m_notice->setWordWrap(true);
+        m_notice->resize(room, m_notice->heightForWidth(room));
+    }
+    m_notice->move((m_screen->width() - m_notice->width()) / 2, 12);
 }
 
 QString Viewer::notice() const
@@ -704,8 +763,7 @@ void Viewer::setSource(const QString& path, const QString& name)
     if (path.isEmpty()) m_screen->dragData = nullptr;
     else m_screen->dragData = [this] { return dragData(); };
     m_partHandles->setVisible(!path.isEmpty());
-    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
-                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    updateBalance();
     if (layout()) layout()->invalidate();
 }
 
@@ -718,9 +776,10 @@ void Viewer::setTimelineTitle(const QString& title)
 
 void Viewer::updateModeText()
 {
+    const QString plain = m_timelineTitle.isEmpty() ? T("Timeline") : m_timelineTitle;
     QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
                    : m_multicamOn         ? T("Timeline – Multicam")
-                   : !m_programAway       ? (m_timelineTitle.isEmpty() ? T("Timeline") : m_timelineTitle)
+                   : !m_programAway       ? plain
                    : m_keptSource.isEmpty() ? T("Timeline auf dem zweiten Monitor")
                                             : T("Quelle – %1 (angehalten)").arg(m_keptSource);
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
@@ -731,6 +790,9 @@ void Viewer::updateModeText()
         text = text.toHtmlEscaped()
                + QString("&nbsp;&nbsp;<b style=\"color:%1\">● %2</b>").arg(Theme::recording.name(), T("Aufnahme"));
     m_mode->setText(text);
+    // Compact (phone): the line only when it says more than "the timeline" (a source clip, recording, proxies ...);
+    // the timeline's name is in its own bar, and the height is the picture's
+    m_mode->setVisible(!m_compact || text != plain);
 }
 
 void Viewer::setRecording(bool on)
@@ -755,6 +817,21 @@ QMimeData* Viewer::dragData(const QByteArray& part) const
 void Viewer::updateTimecode(int frame)
 {
     m_timecodeFrame = frame;
-    m_timecode->setText(TimelineOptions::formatTime(frame, m_engine->format().rate.fps()));
+    const QString tc = TimelineOptions::formatTime(frame, m_engine->format().rate.fps());
+    m_timecode->setText(tc);
+    // Never narrower than the widest timecode of this length (every digit as the widest one): even a font whose
+    // digits differ in width never moves the buttons beside it. Grows only
+    if (tc.size() != m_timecodeChars) {
+        m_timecodeChars = int(tc.size());
+        m_timecode->ensurePolished();
+        const QFontMetrics fm(m_timecode->font());
+        QChar widest = u'0';
+        for (QChar d = u'0'; d <= u'9'; d = QChar(d.unicode() + 1))
+            if (fm.horizontalAdvance(d) > fm.horizontalAdvance(widest)) widest = d;
+        QString wide = tc;
+        for (QChar& c : wide)
+            if (c.isDigit()) c = widest;
+        m_timecode->setMinimumWidth(std::max(m_timecode->minimumWidth(), fm.horizontalAdvance(wide) + 16));
+    }
     m_scrubber->setPosition(frame);
 }

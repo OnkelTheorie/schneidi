@@ -448,6 +448,7 @@ void MainWindow::setupTours(QMenu* help)
 
 void MainWindow::offerTours()
 {
+    if (m_phone) return; // the tours point at the desktop's bars and pages
     // An AI driving the app right now (live connection): no question in its way; asked at a later start
     if (m_tours && !m_liveConnected) m_tours->offerAtStart();
 }

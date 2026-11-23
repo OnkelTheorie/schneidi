@@ -4,6 +4,7 @@
 #include "engine/PreviewResolution.h"
 #include "engine/ProxyManager.h"
 #include "ui/SecondScreen.h"
+#include "ui/touch/Touch.h"
 #include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/ZoomAnchor.h"
 
@@ -33,10 +34,23 @@ public:
 
     SettingsDialog(const AiSettings& ai, QWidget* parent = nullptr);
     void showTab(Tab tab);
+    // Smaller than the dialog's own size (a phone): fills `room` (the screen's available part), pages narrow and
+    // scrolling, OK/Cancel in sight
+    void fitScreen(const QRect& room);
 
     AiSettings aiSettings() const;
     QString language() const; // code, as I18n::language()
     double uiScale() const;   // interface size (UiScale::saved: 0 = the system's)
+    Touch::Mode touchMode() const; // larger controls for fingers (Touch::savedMode)
+    // The layout form (MainWindow::wantedForm): "" automatic, "phone", "tablet", "desktop" (setting ui/layoutForm)
+    QString phoneLayout() const;
+    static QString savedPhoneLayout();
+    static void setSavedPhoneLayout(const QString& value);
+    bool reduceMotion() const; // no fades when the window's arrangement changes (setting ui/reduceMotion)
+    QString centerPlayhead() const; // "" automatic (phone, tablet), "on", "off" (setting timeline/centerPlayhead)
+    bool magneticMain() const;      // phone/tablet: V1 without gaps (timeline/magneticMain, default on)
+    QString clipDrag() const;       // phone/tablet: "hold" (default) or "instant" (timeline/clipDrag)
+    QString timelineMomentum() const; // the glide after a flick: "low" (default), "normal", "off" (timeline/momentum)
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
@@ -73,8 +87,12 @@ signals:
     void designRequested();
     void keyBindingsRequested();
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     QWidget* buildGeneral();
+    QRect m_fitRoom; // fitScreen
 
     QTabWidget* m_tabs = nullptr;
     QWidget* m_generalTab = nullptr;
@@ -86,6 +104,13 @@ private:
     StartTemplatesPage* m_templatesPage = nullptr;
     QComboBox* m_language = nullptr;
     QComboBox* m_uiScale = nullptr;
+    QComboBox* m_touchMode = nullptr;
+    QComboBox* m_phoneLayout = nullptr;
+    QCheckBox* m_reduceMotion = nullptr;
+    QComboBox* m_centerPlayhead = nullptr;
+    QCheckBox* m_magneticMain = nullptr;
+    QComboBox* m_clipDrag = nullptr;
+    QComboBox* m_momentum = nullptr;
     QComboBox* m_startPage = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;

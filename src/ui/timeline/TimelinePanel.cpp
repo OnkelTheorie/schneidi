@@ -15,7 +15,9 @@
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPainterPath>
+#include <QScrollArea>
 #include <QScrollBar>
+#include "ui/touch/ScrollIndicators.h"
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -236,7 +238,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     bar->addWidget(zoomOut);
     bar->addWidget(zoomIn);
 
-    auto* barWidget = new QWidget;
+    auto* barWidget = m_barWidget = new QWidget;
     barWidget->setObjectName("Panel");
     // Switches show their state only via the icon color (no background as in DaVinci)
     barWidget->setStyleSheet(QString("QWidget#Panel { background: %1; }"
@@ -289,8 +291,52 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     rebuildTimelines();
 }
 
+void TimelinePanel::setCompact(bool on)
+{
+    // The content tools (slip, slide) stay in the Timeline menu; the timeline list as narrow as a few letters
+    for (const char* id : {"tool_slip", "tool_slide"})
+        if (auto* b = findChild<QToolButton*>(id)) b->setVisible(!on);
+    m_timelines->setMinimumWidth(on ? 0 : 160);
+    m_timelines->setSizeAdjustPolicy(on ? QComboBox::AdjustToMinimumContentsLengthWithIcon : QComboBox::AdjustToContents);
+    m_timelines->setMinimumContentsLength(on ? 7 : 0);
+    if (!on && m_barScroll) { // the bar back into the panel's own layout (the scroll area goes)
+        auto* lay = static_cast<QBoxLayout*>(layout());
+        const int at = lay->indexOf(m_barScroll);
+        m_barScroll->takeWidget();
+        lay->insertWidget(at, m_barWidget);
+        m_barWidget->setVisible(m_barShown);
+        delete m_barScroll;
+        m_barScroll = nullptr;
+    }
+    if (on && !m_barScroll) {
+        // What still does not fit scrolls sideways (a swipe), the panel never gets wider for it
+        auto* lay = static_cast<QBoxLayout*>(layout());
+        const int at = lay->indexOf(m_barWidget);
+        m_barScroll = new QScrollArea;
+        m_barScroll->setObjectName("timelineBarScroll");
+        m_barScroll->setFrameShape(QFrame::NoFrame);
+        m_barScroll->setWidgetResizable(true);
+        m_barScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_barScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        lay->insertWidget(at, m_barScroll);
+        m_barScroll->setWidget(m_barWidget);
+        m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+    }
+    if (m_barScroll) m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+    if (m_barScroll) m_barScroll->setVisible(m_barShown); // (hidden before the compact form came)
+    // The scrollbars: where clips cover every lane they are the finger's way to move the view (phone: thick)
+    const QString thick = on ? QStringLiteral("QScrollBar:horizontal { height: 26px; } QScrollBar:vertical { width: 26px; }"
+                                              "QScrollBar::handle { min-width: 56px; min-height: 56px; border-radius: 8px; }")
+                             : QString();
+    m_hbar->setStyleSheet(thick);
+    m_vbar->setStyleSheet(thick);
+}
+
 void TimelinePanel::syncScrollbars()
 {
+    // The centred playhead (phones): sliding the timeline is the way along it, no bar under it
+    m_hbar->setVisible(!m_view->centerPlayhead() && !m_hIndicator);
+    m_vbar->setVisible(!m_vIndicator);
     // Scrollbars only mirror the ViewState – they never reset it here
     const QSignalBlocker bh(m_hbar), bv(m_vbar);
     const auto& v = m_view->view();
@@ -305,6 +351,34 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setPageStep(vp);
     m_vbar->setSingleStep(20);
     m_vbar->setValue(v.scrollY);
+    if (m_vIndicator) m_vIndicator->poke(); // (the bars' signals are blocked above)
+    if (m_hIndicator && !m_view->centerPlayhead()) m_hIndicator->poke();
+}
+
+void TimelinePanel::setBarShown(bool on)
+{
+    m_barShown = on;
+    if (m_barScroll) m_barScroll->setVisible(on);
+    else m_barWidget->setVisible(on);
+}
+
+void TimelinePanel::setScrollIndicators(bool on)
+{
+    if (on == (m_vIndicator != nullptr)) return;
+    delete m_vIndicator;
+    delete m_hIndicator;
+    m_vIndicator = m_hIndicator = nullptr;
+    if (on) {
+        // Along the lanes: below the ruler, right of the track headers
+        TimelineView* view = m_view;
+        const auto lanes = [view] {
+            return QRect(TimelineView::kHeaderW, TimelineView::kRulerH, std::max(1, view->width() - TimelineView::kHeaderW),
+                         std::max(1, view->height() - TimelineView::kRulerH));
+        };
+        m_vIndicator = new ScrollIndicator(m_vbar, m_view, lanes);
+        m_hIndicator = new ScrollIndicator(m_hbar, m_view, lanes);
+    }
+    syncScrollbars();
 }
 
 void TimelinePanel::setOverviewEnabled(bool on)

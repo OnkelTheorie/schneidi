@@ -2,10 +2,12 @@
 #include "app/Theme.h"
 
 #include "core/I18n.h"
+#include "ui/touch/Touch.h"
 
 #include <QApplication>
 #include <QFile>
 #include <QFont>
+#include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPalette>
@@ -231,6 +233,42 @@ QString disabledToolButtonStyle()
         .arg(control.name(), textFaint.name());
 }
 
+// Touch mode (ui/touch/Touch.h): finger-sized buttons, fields, scroll bars, splitter handles, menu entries and rows
+QString touchStyleSheet()
+{
+    return QStringLiteral(R"(
+        QPushButton { min-height: 34px; padding: 4px 14px; }
+        QToolButton { min-height: 30px; min-width: 30px; padding: 6px 10px; }
+        QComboBox, QLineEdit, QAbstractSpinBox { min-height: 32px; }
+        QSplitter::handle:horizontal { width: 8px; }
+        QSplitter::handle:vertical { height: 8px; }
+        QScrollBar:horizontal { height: 18px; }
+        QScrollBar:vertical { width: 18px; }
+        QScrollBar::handle { border-radius: 6px; min-width: 44px; min-height: 44px; }
+        QMenu::item { padding: 10px 28px 10px 20px; }
+        QMenuBar::item { padding: 8px 12px; }
+        QTabBar::tab { min-height: 34px; }
+        QListView::item, QTreeView::item { min-height: 36px; }
+    )");
+}
+
+QStringList symbolFontFamilies()
+{
+    static const QStringList families = [] {
+        QStringList out;
+#ifndef Q_OS_ANDROID
+        if (qEnvironmentVariable("SCHNEIDI_SYMBOL_FONTS") != "1") return out;
+#endif
+        for (const char* file : {":/fonts/schneidi-symbols-a.ttf", ":/fonts/schneidi-symbols-b.ttf",
+                                 ":/fonts/schneidi-symbols-c.ttf"}) {
+            const int id = QFontDatabase::addApplicationFont(QString::fromLatin1(file));
+            if (id >= 0) out << QFontDatabase::applicationFontFamilies(id);
+        }
+        return out;
+    }();
+    return families;
+}
+
 void apply(QApplication& app)
 {
     app.setStyle(QStyleFactory::create("Fusion")); // looks the same on Linux and Windows
@@ -272,8 +310,15 @@ void apply(QApplication& app)
 #else
     families << "Noto Sans Devanagari";
 #endif
+    families << symbolFontFamilies();
     f.setFamilies(families);
     app.setFont(f);
+    // Fonts that do not come from the app font (Android's class fonts for buttons, labels ... name only the system
+    // family, and the platform theme hands them out again later) lose the list above: the symbol fonts as the system
+    // family's substitutes reach those too
+    if (!symbolFontFamilies().isEmpty())
+        for (const QString& system : {f.family(), QStringLiteral("Roboto"), QStringLiteral("sans-serif")})
+            QFont::insertSubstitutions(system, symbolFontFamilies());
 
     app.setStyleSheet(QString(R"(
         QMainWindow, QWidget#Root { background: %1; }
@@ -303,7 +348,8 @@ void apply(QApplication& app)
     )")
                           .arg(window.name(), border.name(), panel.name(), panelHeader.name(), text.name(),
                                primary.name(), textDim.name(), control.name(), controlLight.name())
-                          .arg(textFaint.name()));
+                          .arg(textFaint.name())
+                      + (Touch::modeActive() ? touchStyleSheet() : QString()));
 }
 
 } // namespace Theme

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/OpenMedia.h"
 
+#include "engine/ContentUri.h"
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/dict.h>
@@ -12,6 +14,9 @@ extern "C" {
 #include <QList>
 
 #include <algorithm>
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
 #include <cstring>
 #include <vector>
 
@@ -68,6 +73,24 @@ bool notAFile(const char* path)
 
 int input(AVFormatContext** fmt, const char* path, const AVDictionary* extra)
 {
+    // Android's content:// (the system picker): a descriptor of its own from ContentResolver, read through FFmpeg's
+    // fd protocol (it keeps a duplicate; ours is closed here). Without the media permission a path to the same file
+    // (/proc/self/fd) is refused: only the descriptor itself may read it
+    if (path && ContentUri::is(QString::fromUtf8(path))) {
+        const int fd = ContentUri::openFd(QString::fromUtf8(path));
+        if (fd < 0) return AVERROR(EACCES);
+        AVDictionary* options = nullptr;
+        if (extra) av_dict_copy(&options, extra, 0);
+        av_dict_set(&options, "protocol_whitelist", "fd", 0);
+        av_dict_set_int(&options, "fd", fd, 0);
+        av_dict_set(&options, "format_whitelist", allowed().constData(), 0);
+        const int r = avformat_open_input(fmt, "fd:", nullptr, &options);
+        av_dict_free(&options);
+#ifdef Q_OS_UNIX
+        ::close(fd);
+#endif
+        return r;
+    }
     // Folders, named pipes (FIFOs), devices and sockets are no media files: opening a pipe nobody writes into blocks
     // forever (a hanging import, probe or render), /dev/zero or /dev/urandom never end
     if (path && notAFile(path)) return AVERROR(EINVAL);

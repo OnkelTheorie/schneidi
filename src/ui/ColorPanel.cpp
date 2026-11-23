@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/ColorPanel.h"
+#include "ui/touch/Touch.h"
 
 #include "app/Theme.h"
 #include "core/Editor.h"
@@ -86,6 +87,7 @@ public:
     {
         setFixedSize(112, 112);
         setCursor(Qt::CrossCursor);
+        setProperty("touchDrags", true); // a finger drag moves the balance, never scrolls the page around it
         setToolTip(T("Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen"));
     }
     void setPoint(double u, double v)
@@ -191,6 +193,7 @@ public:
     {
         setFixedSize(104, 14);
         setCursor(Qt::SizeHorCursor);
+        setProperty("touchDrags", true); // (as the wheel)
         setToolTip(T("Master: zur Seite ziehen = heller/dunkler (Shift = fein), Doppelklick = zurücksetzen"));
     }
     void setActive(bool moved)
@@ -268,6 +271,7 @@ public:
         setFixedHeight(16);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setCursor(Qt::SizeHorCursor);
+        setProperty("touchDrags", true); // (as the wheel)
         setToolTip(kind == Hue ? T("Ränder ziehen = Breite, Mitte ziehen = Farbton verschieben")
                                : T("Ränder ziehen = Bereich ändern"));
     }
@@ -415,12 +419,17 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_clipName->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     m_enabled = new QToolButton;
     m_enabled->setCheckable(true);
-    m_enabled->setFixedSize(10, 10);
+    // The dot: touch mode's minimum button size (a style sheet rule) must not stretch it into a bar
+    const int dot = Touch::modeActive() ? 20 : 10;
+    m_enabled->setFixedSize(dot, dot);
     m_enabled->setFocusPolicy(Qt::NoFocus);
     m_enabled->setToolTip(T("Farbkorrektur des Clips an/aus"));
-    m_enabled->setStyleSheet(QString("QToolButton { border: none; border-radius: 5px; background: %1; }"
+    m_enabled->setStyleSheet(QString("QToolButton { border: none; border-radius: %3px; background: %1; padding: 0;"
+                                     " min-width: %4px; max-width: %4px; min-height: %4px; max-height: %4px; }"
                                      "QToolButton:checked { background: %2; }")
-                                 .arg(Theme::controlOff.name(), Theme::warning.name()));
+                                 .arg(Theme::controlOff.name(), Theme::warning.name())
+                                 .arg(dot / 2)
+                                 .arg(dot));
     connect(m_enabled, &QToolButton::clicked, this, [this](bool on) { m_editor->setGradeEnabled(targets(), on); });
     m_keyPrev = smallButton("◀", T("Voriger Keyframe"));
     m_keyDiamond = smallButton("◇", T("Keyframe für die ganze Korrektur setzen/entfernen"));
@@ -900,6 +909,9 @@ void ColorPanel::setPlayhead(int frame)
 void ColorPanel::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
+    // The palette tabs never cut to "W…s" (a narrow panel scrolls instead): a style sheet's min-width (touch mode)
+    // is an explicit minimum that wins over the text's own size, so their minimum is set from it once polished
+    for (QToolButton* b : m_paletteButtons) b->setMinimumWidth(b->sizeHint().width());
     m_overlay->setVisible(true);
     fitWidth();
     refresh();

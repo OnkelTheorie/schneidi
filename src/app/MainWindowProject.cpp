@@ -687,20 +687,47 @@ void MainWindow::removeAutosave()
     QSettings().remove(autosaveKey());
 }
 
+bool MainWindow::restoresWithoutAsking()
+{
+    const QString env = qEnvironmentVariable("SCHNEIDI_SILENT_RESTORE");
+    if (env == "1") return true;
+    if (env == "0") return false;
+#ifdef Q_OS_ANDROID
+    // Android ends apps in the background whenever it needs the memory: that is no crash, and the question came on
+    // nearly every start. The backup comes back as it was, a notice says so (undo/close without saving drop it)
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool MainWindow::offerAutosaveRestore()
 {
     if (m_autosaveDisabled) return false;
     if (!QFileInfo::exists(autosavePath()) && !adoptOrphanedAutosave()) return false;
     const QString original = QSettings().value(autosaveKey()).toString();
     const QString name = original.isEmpty() ? T("Unbenannt") : QFileInfo(original).fileName();
-    const auto answer = QMessageBox::question(
-        this, T("Wiederherstellen"),
-        T("schneidi wurde nicht normal beendet.\nNicht gespeicherte Änderungen von „%1“ wiederherstellen?")
-            .arg(name),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-    if (answer != QMessageBox::Yes) {
-        removeAutosave();
-        return false;
+    // A silent restore that never got to a running window (the restored project crashed it) asks the next time:
+    // else a project that crashes would come back and crash on every start
+    QSettings settings;
+    const bool lastFailed = settings.value(kRestoreStartKey).toBool();
+    const bool silent = restoresWithoutAsking() && !lastFailed;
+    if (silent) {
+        settings.setValue(kRestoreStartKey, true); // (cleared once the window ran a moment: MainWindow::showEvent)
+        settings.sync();
+    } else {
+        settings.remove(kRestoreStartKey);
+    }
+    if (!silent) {
+        const auto answer = QMessageBox::question(
+            this, T("Wiederherstellen"),
+            T("schneidi wurde nicht normal beendet.\nNicht gespeicherte Änderungen von „%1“ wiederherstellen?")
+                .arg(name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (answer != QMessageBox::Yes) {
+            removeAutosave();
+            return false;
+        }
     }
     ProjectData data;
     QString error;
@@ -722,6 +749,10 @@ bool MainWindow::offerAutosaveRestore()
     }
     if (!applyLoaded(std::move(data), original)) return false;
     m_project->markModified(); // restored, but not yet saved into the project file
+    if (silent) // once the window shows
+        QTimer::singleShot(800, this, [this, name] {
+            m_viewer->showNotice(T("Nicht gespeicherte Änderungen von „%1“ wiederhergestellt.").arg(name), 4000);
+        });
     return true;
 }
 

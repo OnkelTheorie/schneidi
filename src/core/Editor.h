@@ -258,6 +258,10 @@ public:
     // on all unlocked tracks, so they stay in sync. Refused (false, *why translated) when an unlocked track has
     // something inside that range - closing would cut it or move tracks apart (lock that track to close it anyway).
     bool closeGap(TrackRef on, int from, int to, QString* why = nullptr);
+    // The main track as phone editors keep it (magnetic): its clips back to back from frame 0 in `order` (clip ids;
+    // empty = by their start), clips linked to them (the same linkId, on other tracks) move along. One undo step
+    // `text`; nothing when nothing moves. Returns whether something moved.
+    bool packTrack(TrackRef ref, const QVector<int>& order = {}, const QString& text = {});
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap.
     // markerCut: what happens to timeline markers/notes inside a range on ripple (cut_pauses: they move to the cut)
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text,

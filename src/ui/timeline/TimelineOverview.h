@@ -80,7 +80,9 @@ protected:
 
 private:
     enum class Drag { None, Move, LeftEdge, RightEdge };
-    Drag hitTest(double x) const;
+    Drag hitTest(double x, bool touch) const; // touch: a finger's larger edge zones
+    void pinchRange(const QPointF& from, const QPointF& to, double scale);
+    bool m_pinching = false; // two fingers on the strip (its scale frozen like a drag's)
     void endDrag();
     double contentScale() const;
     void rebuildCache();

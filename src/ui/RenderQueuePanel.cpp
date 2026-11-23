@@ -177,6 +177,7 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
                               .arg(Theme::panel.name(), Theme::panelHeader.name(), Theme::border.name(),
                                    Theme::primary.name(), Theme::control.name()));
     m_empty = new QLabel(T("Keine Aufträge.\nLinks „Zur Render-Warteschlange hinzufügen“."));
+    m_empty->setObjectName("renderQueueEmpty");
     m_empty->setAlignment(Qt::AlignCenter);
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
@@ -440,4 +441,13 @@ void RenderQueuePanel::contextMenu(const QPoint& pos)
         removeJobs(all);
     });
     menu.exec(m_list->viewport()->mapToGlobal(pos));
+}
+
+void RenderQueuePanel::setBelowSettings(bool on)
+{
+    // (a phone: the queue stands below the settings, not beside them; and its empty state small)
+    m_empty->setText(on ? T("Keine Aufträge.\nOben „Zur Render-Warteschlange hinzufügen“.")
+                        : T("Keine Aufträge.\nLinks „Zur Render-Warteschlange hinzufügen“."));
+    // Below the settings the empty hint takes only its lines: the room goes to the settings above
+    if (auto* box = qobject_cast<QBoxLayout*>(layout())) box->setStretchFactor(m_empty, on ? 0 : 1);
 }

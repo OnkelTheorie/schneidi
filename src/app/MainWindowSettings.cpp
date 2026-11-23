@@ -2,6 +2,8 @@
 // MainWindow: settings of the app (File › Settings…) and applying them
 #include "app/MainWindow.h"
 
+#include <QSettings>
+
 #include "app/AiChat.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
@@ -15,6 +17,7 @@
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UiScale.h"
+#include "ui/touch/Touch.h"
 #include "app/UpdateCheck.h"
 #include "engine/Engine.h"
 #include "core/I18n.h"
@@ -69,6 +72,8 @@ void MainWindow::settingsDialog(int tab)
             if (!isPageHidden(p) || pageId(p) == startPage()) pages.append({pageId(p), pageTitle(p)});
         dlg.setStartPages(pages, startPage());
     }
+    // A phone: the dialog is the app window's size (its own size reached past the screen, OK out of sight)
+    if (m_phone) dlg.fitScreen(QRect(mapToGlobal(QPoint(0, 0)), size()));
     if (dlg.exec() != QDialog::Accepted) return;
     if (!dlg.startPage().isEmpty()) setStartPage(dlg.startPage()); // test runs: not saved (setStartPage)
     // Start templates: the template new projects start with, whether New Project asks (test runs keep the settings)
@@ -106,6 +111,20 @@ void MainWindow::settingsDialog(int tab)
         UiScale::setAsked(); // chosen by hand: the 4K offer never comes
         if (m_scaleBar) m_scaleBar->hide(); // nor stays open to overwrite the choice
     }
+    // Touch mode: after a restart too (the theme's sizes are set at the start)
+    const bool touchChanged = dlg.touchMode() != Touch::savedMode() && !m_autosaveDisabled;
+    if (touchChanged) Touch::setSavedMode(dlg.touchMode());
+    // Layout form: at once (the same widgets move)
+    const bool phoneChanged = dlg.phoneLayout() != SettingsDialog::savedPhoneLayout() && !m_autosaveDisabled;
+    if (phoneChanged) SettingsDialog::setSavedPhoneLayout(dlg.phoneLayout());
+    if (!m_autosaveDisabled) {
+        QSettings().setValue("ui/reduceMotion", dlg.reduceMotion());
+        QSettings().setValue("timeline/centerPlayhead", dlg.centerPlayhead());
+        QSettings().setValue("timeline/magneticMain", dlg.magneticMain());
+        QSettings().setValue("timeline/clipDrag", dlg.clipDrag());
+        QSettings().setValue("timeline/momentum", dlg.timelineMomentum());
+    }
+    applyCenterPlayhead();
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {
@@ -115,7 +134,11 @@ void MainWindow::settingsDialog(int tab)
     } else if (scaleChanged && UiScale::userFactor().isEmpty()) { // the user's QT_SCALE_FACTOR wins: no restart helps
         offerRestart(T("Die Größe der Oberfläche ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
+    } else if (touchChanged && Touch::decideMode() != Touch::modeActive()) {
+        offerRestart(T("Der Touch-Modus ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                     T("Später"));
     }
+    if (phoneChanged) checkLayoutForm();
 }
 
 void MainWindow::applyTimelineOptions()

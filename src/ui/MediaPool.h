@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include <functional>
 #include "core/PoolFilter.h"
 #include "engine/MediaProbe.h"
 #include "core/Types.h"
@@ -91,6 +92,14 @@ public:
     int currentBin() const { return m_currentBin; }
     void setCurrentBin(int id);
     void setViewMode(ViewMode mode);
+    // Smaller tiles (the phone layout: two columns beside the bin list on a phone in portrait)
+    void setCompactTiles(bool on);
+    QSize tileSize() const; // the thumbnail view's grid cell (tests)
+    // The generators (text, shape) after the clips instead of before them (the phone: its two columns show the
+    // material first; only the order shown, nothing in the project)
+    void setGeneratorsLast(bool on);
+    // Instead of the file dialog behind "Importieren…" (the phone: schneidi's own gallery); empty = the dialog
+    void setImportHandler(std::function<void()> handler) { m_importHandler = std::move(handler); }
     void setSort(SortKey key, bool ascending);
     // Search (magnifier on top): shows the matching clips of the whole project (core/NameMatch: every word, a typo,
     // any separator; by name, clip color, flags, kind and picture format - "4K", "60 fps", "hochkant"), each one of
@@ -256,6 +265,9 @@ private:
     int m_currentBin = 0;
     int m_editBin = 0; // newly created: edit the name after the rebuild
     ViewMode m_viewMode = ViewMode::Thumbnails;
+    bool m_compactTiles = false;
+    bool m_generatorsLast = false;
+    std::function<void()> m_importHandler;
     SortKey m_sortKey = SortKey::Name;
     bool m_sortAscending = true;
     bool m_saveSettings = true;

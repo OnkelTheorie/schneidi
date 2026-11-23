@@ -30,7 +30,35 @@ public:
     // resp. slides it (same edit, snapping, linked clips, undo and trim view as in trim mode)
     enum class Tool { Select, Trim, Blade, Slip, Slide };
 
-    static constexpr int kHeaderW = 180;
+    // Width of the track headers: 180, the phone's compact headers 60 (setCompactHeaders, for every timeline view)
+    static inline int kHeaderW = 180;
+    static constexpr int kHeaderWide = 180, kHeaderCompact = 60;
+    // Phone: the headers only show the short name (V1) and the eye/mute button (locked/armed as small marks); the
+    // rest (lock, name, mic, color, tracks) is in the header's menu, which a tap on the header opens
+    static void setCompactHeaders(bool on);
+    static bool compactHeaders() { return kHeaderW == kHeaderCompact; }
+    // Phone: one finger in the track area moves the view (with a glide); a clip moves after a hold (TouchGestures)
+    void setFingerPans(bool on);
+    bool fingerPans() const { return m_fingerPans; }
+    // The playhead fixed in the lanes' middle (phones' editors): the timeline slides under it. A sideways drag on
+    // empty lanes or the ruler (and a fling, the scrollbar) scrubs; playback keeps the line in the middle. A wanted
+    // exception to the core rule (the view follows the playhead), only in this mode (docs/architektur.md)
+    void setCenterPlayhead(bool on);
+    bool centerPlayhead() const { return m_center; }
+    // Phone clip handling (with setFingerPans), as phone editors do it: hold = a swipe anywhere (clips too) slides the
+    // view, a tap selects (a frame with trim handles, ~24 px to grab), a long press then a drag moves the clip; false
+    // ("Sofort") = a finger on a clip moves it at once, only empty lanes slide
+    void setHoldToMove(bool hold);
+    bool holdToMove() const { return m_holdToMove; }
+    // The main track (V1) magnetic: no gaps (a move or trim on it closes them; Editor::packTrack), a long press on one
+    // of its clips shows all of them as small pictures in a row to reorder
+    void setMagneticMain(bool on);
+    bool magneticMain() const { return m_magnetic; }
+    bool reordering() const { return m_reorder.on; } // tests
+    // The glide after a flick on the lanes ("low" default, "normal", "off"; setting timeline/momentum). A pan locks
+    // its axis at the start (sideways = time only); a slow scrub in the centred mode stops at clip edges and marks
+    void setMomentum(const QString& value);
+    class TouchGestures* gestures() const { return m_gestures; } // tests
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
@@ -44,6 +72,18 @@ public:
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
     const ViewState& view() const { return m_view; }
+    QPointF holdCue() const { return m_holdCue; } // tests: where the hold's ring shows (negative = none)
+    // Start heights of the rows (the phone layout); later only the user's pinch/wheel on the headers changes them
+    void setTrackHeights(int video, int audio);
+    // Phone: with more than two audio tracks (a recording with several sound streams) they share half of the lanes'
+    // height (rows down to kFitAudioMin) instead of filling the timeline; a pinch or wheel on the heights ends it
+    void setFitAudioRows(bool on);
+    bool fitAudioRows() const { return m_fitAudio; }
+    int audioRowHeight() const; // the audio tracks' height as shown
+    int mainTrackBottom() const; // y below V1's row as shown now (the ruler's bottom without tracks)
+    // Height that shows the ruler, every video track and the first `audioRows` audio tracks (not scrolled)
+    int heightFor(int audioRows) const;
+    static constexpr int kFitAudioMin = 24;
     Tool tool() const { return m_tool; }
     // Trim mode and the Slip/Slide tools: a press on a clip starts a TrimEdit
     bool trimTool() const { return m_tool == Tool::Trim || m_tool == Tool::Slip || m_tool == Tool::Slide; }
@@ -98,6 +138,8 @@ public:
     void setScrollY(int y);
     void zoomBy(double factor);
     void zoomToFit();
+    // Two fingers (touch): zoom by `scale` around the fingers and follow their centre from `from` to `to`
+    void pinchView(const QPointF& from, const QPointF& to, double scale);
 
     // Returns info on a (possibly not yet imported) file for the drop preview
     void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
@@ -219,6 +261,31 @@ protected:
     void resizeEvent(QResizeEvent*) override;
 
 private:
+    class TouchGestures* m_gestures = nullptr;
+    bool m_fingerPans = false;
+    bool m_center = false;          // setCenterPlayhead
+    double centreLeft() const;      // the left frame that puts the playhead in the lanes' middle
+    QSet<int> withLinked(int id) const; // the clip and the clips linked to it
+    void cancelTouchDrag();             // TouchGestures::onCancel
+    void centreScrub(double dx);    // a finger's step in the centred mode (snaps a slow scrub to edges)
+    double m_scrubRaw = 0;          // the centred scrub's unsnapped left frame during a pan
+    int m_scrubSnap = -1;           // the edge a slow scrub holds at (-1 none)
+    QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment
+    bool m_holdToMove = true;
+    bool m_magnetic = false;
+    mutable bool m_lastSnap = false; // a snap reached during a drag: one haptic tick
+    struct Reorder {
+        bool on = false;
+        QVector<int> order; // V1's clip ids by start
+        int id = 0, from = 0, to = 0, tw = 64;
+        double base = 0, fingerX = 0;
+    } m_reorder;
+    void startReorder(const QPointF& pos, int clipId);
+    void finishReorder(bool apply);
+    void drawReorder(QPainter& p);
+    void drawTouchSelection(QPainter& p);
+    bool onSelectedHandle(const QPointF& pos) const;
+
     struct GapPick {
         bool on = false;
         TrackRef ref;
@@ -336,6 +403,7 @@ private:
     // Fade handles at the top clip corners (like DaVinci), only visible/grabbable when the mouse is over the clip
     QRect fadeHandleRect(const QRect& clip, const Clip& c, TimelineOps::Edge edge) const;
     std::optional<EdgeHit> fadeHandleAt(const QPoint& pos) const;
+    bool fadeHandlesShown(int clipId) const; // hover, or a finger's selected clips
     // Keyframes: icon at the bottom right in the clip (opens the keyframe lane) and the lane below (like DaVinci)
     QRect keyIconRect(const QRect& clip) const;
     int keyIconAt(const QPoint& pos) const; // clip ID or 0
@@ -479,6 +547,12 @@ private:
     static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
+    bool m_touchPointer = false; // the last press/move came from a finger: larger grab zones (edges, In/Out handles)
+    int edgeGrabPx() const;
+    enum class Pinch { None, View, VideoHeight, AudioHeight }; // what the running pinch changes
+    Pinch m_pinch = Pinch::None;
+    double m_pinchTrackH = 0; // track height during a pinch on the headers (unrounded)
+    bool m_fitAudio = false; // setFitAudioRows
     bool m_snap = TimelineOptions::snapping(); // remembered (the main window stores it)
     bool m_showNames = true;
     bool m_showDurations = false;
@@ -502,6 +576,7 @@ private:
     int m_rampDelta = 0;     // timeline frames while dragging
     QPoint m_pressPos;
     int m_scrubFrame = -1; // last jump target while dragging in the ruler (do not jump to the same frame again)
+    int m_scrubPressX = 0, m_scrubPressFrame = 0; // centre mode: the ruler's press (a drag slides from there)
     TrackRef m_anchorRef;
     QVector<int> m_dragIds;
     int m_dragDelta = 0;

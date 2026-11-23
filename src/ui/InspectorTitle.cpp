@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Inspector: title page.
+#include "ui/touch/Touch.h"
 #include "ui/Inspector.h"
 #include "ui/LazyFontBox.h"
 
@@ -126,7 +127,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
             edit->setPlainText(c->title.text);
         }
     };
-    txt.grid->addWidget(edit, txt.rows++, 0, 1, 3);
+    txt.grid->addWidget(edit, txt.rows++, 0, 1, Touch::modeActive() ? 4 : 3); // (touch: across the keys' column too)
     const int fontRow = txt.rows;
 
     auto* fontBox = new LazyFontBox; // the real QFontComboBox on the first showing (start time)
@@ -763,7 +764,9 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
     button->setFocusPolicy(Qt::NoFocus);
     button->setPopupMode(QToolButton::InstantPopup);
     button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    button->setFixedHeight(18);
+    // (touch mode: a finger's height - a fixed 18 px under its style sheet's 30 px minimum drew "B" squeezed
+    // with its menu arrow below it)
+    button->setFixedHeight(Touch::modeActive() ? 30 : 18);
     button->setMinimumWidth(30);
     auto* menu = new QMenu(button);
     button->setMenu(menu);
@@ -810,8 +813,12 @@ QToolButton* Inspector::brandButton(bool font, const QString& text, const std::f
             const QString tip = n ? (font ? T("Brand-Schrift %1").arg(n) : T("Brand-Farbe %1").arg(n))
                                   : T("Fester Wert (nicht aus dem Branding)");
             if (button->toolTip() != tip) button->setToolTip(tip);
-            const QString css = n ? QString("QToolButton { color: %1; font-weight: bold; }").arg(Theme::primary.name())
-                                  : QString("QToolButton { color: %1; }").arg(Theme::textDim.name());
+            QString css = n ? QString("QToolButton { color: %1; font-weight: bold; }").arg(Theme::primary.name())
+                            : QString("QToolButton { color: %1; }").arg(Theme::textDim.name());
+            if (Touch::modeActive()) // a finger's button: a surface of its own, no menu arrow squeezed below the "B"
+                css += QString("QToolButton { background: %1; border-radius: 3px; padding: 0 8px; }"
+                               "QToolButton::menu-indicator { image: none; width: 0px; }")
+                           .arg(Theme::control.name());
             if (button->styleSheet() != css) button->setStyleSheet(css);
         }
     };

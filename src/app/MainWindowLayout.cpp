@@ -51,6 +51,7 @@
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
+#include "ui/phone/PhoneShell.h"
 #include "ui/MulticamView.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/SecondScreen.h"
@@ -205,10 +206,10 @@ void MainWindow::buildLayout()
     buildChat();
     StartupTrace::mark("  buildChat");
 
-    lay->insertWidget(0, buildTopBar());
+    lay->insertWidget(0, m_topBar = buildTopBar());
     StartupTrace::mark("  topbar");
     lay->insertWidget(1, buildUpdateBar());
-    lay->addWidget(buildPageBar());
+    lay->addWidget(m_pageBar = buildPageBar());
     StartupTrace::mark("  pagebar");
     // The status bar's messages show in the page bar (one compact row at the bottom, the room goes to the pages):
     // the QStatusBar itself stays hidden, every statusBar()->showMessage() lands there through messageChanged
@@ -237,6 +238,10 @@ QWidget* MainWindow::buildTopBar()
         // Only hide panels not yet inserted (show() without a parent opened its own window)
         if (panel->parentWidget() || !b->isChecked()) panel->setVisible(b->isChecked());
         connect(b, &QToolButton::toggled, this, [this, key, panel](bool on) {
+            if (m_phone) { // one panel at a time, in the sheet (never saved: the desktop's set stays as it was)
+                phoneTogglePanel(panel, on);
+                return;
+            }
             setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
@@ -541,6 +546,10 @@ void MainWindow::updatePageButtons()
 
 void MainWindow::showPage(Page page)
 {
+    if (m_phone) {
+        phoneShowPage(page);
+        return;
+    }
     setViewerLarge(false); // the page's own layout first, then the switch
     restoreViewerArea();   // the viewer moves to the new page's place: closed up there again at the end
     const Page before = m_page;
@@ -685,6 +694,7 @@ void MainWindow::showPage(Page page)
         if (!m_shapeOverlay) {
             m_shapeOverlay = new ShapeOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
                                               [this] { return !m_viewer->showsSource(); });
+            m_shapeOverlay->setTextTitles(m_phone != nullptr); // (a phone/tablet: text titles move on the picture)
             // Painting (0.22) over it: what the paint tool and the drawing box do not take goes to the shape box
             m_drawOverlay = new DrawOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
                                             [this] { return !m_viewer->showsSource(); }, m_shapeOverlay);
@@ -890,6 +900,7 @@ void MainWindow::applyPanelSet(bool pool, bool effects, bool storage, bool trans
 
 void MainWindow::updateLeftColumn()
 {
+    if (m_phone) return; // the panels are the phone sheet's
     if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked()
                                                   || m_storageToggle->isChecked());
 }
@@ -924,6 +935,7 @@ void MainWindow::fitRightColumn(QList<int> sizes, bool exact)
 
 void MainWindow::updateRightColumn()
 {
+    if (m_phone) return;
     // The Inspector's place in the top row stays (its slot), so the row keeps its saved sizes either way
     const bool column = m_mixerToggle && m_mixerToggle->isChecked();
     // In place: in the column (built there at the start: the slot holds its first place in the row, the column still
@@ -963,8 +975,31 @@ void MainWindow::updateRightColumn()
     }
 }
 
+bool MainWindow::backStep()
+{
+    if (m_phone && !m_fullScreen && m_phone->back()) return true; // the sheet, then the clip tools
+    if (m_fullScreen) {
+        setViewerFullScreen(false);
+        return true;
+    }
+    if (viewerLarge()) {
+        setViewerLarge(false);
+        return true;
+    }
+    if (m_page != Page::Edit) {
+        showPage(Page::Edit);
+        return true;
+    }
+    if (QMessageBox::question(this, "schneidi", T("schneidi beenden?"), QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No)
+        == QMessageBox::Yes)
+        close(); // the usual quit: asks to save, a running render first
+    return true;
+}
+
 void MainWindow::setViewerLarge(bool on)
 {
+    if (m_phone) on = false; // the phone layout has no panels beside the viewer to hide (full screen instead)
     if (on && m_viewerAway.active) on = false; // no viewer in the window to enlarge (second monitor)
     if (on != m_large.active) {
         if (!on) {

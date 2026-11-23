@@ -33,6 +33,9 @@ public:
     ~DeliverPanel() override;
 
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
+    // Where exports go at first: the folder the user chose last (Browse or typed; setting render/folder), else the
+    // videos folder (Android: the shared Movies folder)
+    static QString defaultFolder();
     RenderQueue* renderQueue() const { return m_queue; }
 
     // Current settings (resolution as timeline / shorter edge / fixed size, depending on the choice)

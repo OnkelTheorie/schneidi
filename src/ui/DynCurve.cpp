@@ -24,6 +24,7 @@ QString number(double v, int decimals)
 
 DynCurve::DynCurve(Editor* editor, int track, QWidget* parent) : QWidget(parent), m_editor(editor), m_track(track)
 {
+    setProperty("touchDrags", true); // a finger drag edits the curve, never scrolls the panel around it
     setMinimumSize(200, 120);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);

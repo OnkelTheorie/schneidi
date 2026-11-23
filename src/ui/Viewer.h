@@ -85,6 +85,8 @@ public:
     double zoom() const;
     void addZoomActions(const QList<QAction*>& actions);
     class FrameView* screen() const { return m_screen; }
+    // Phone layout (ui/phone/PhoneShell): a transport bar that fits a phone's width (fewer buttons, not centered)
+    void setCompact(bool on);
     // Height of the whole viewer (bars included) at which the picture fills `width` (0 = no frame size known)
     int heightFor(int width) const;
     // Longer edge of the preview the fitted picture needs to look sharp here: the physical pixels it covers
@@ -119,7 +121,8 @@ private:
     // part: Viewer::PartsMimeType content ("picture", "sound"), empty = both
     QMimeData* dragData(const QByteArray& part = {}) const;
     void updatePage();        // which page the stack shows (trim, multicam, picture, program-away page)
-    bool keepsPicture() const; // program elsewhere and the engine on the timeline: the picture is not replaced
+    bool keepsPicture() const;
+    void updateBalance(); // m_barBalance // program elsewhere and the engine on the timeline: the picture is not replaced
 
     Engine* m_engine;
     class FrameView* m_screen;
@@ -132,6 +135,7 @@ private:
     QLabel* m_hintLabel;
     QToolButton* m_hintButton;
     QLabel* m_timecode;
+    int m_timecodeChars = -1; // the timecode length its minimum width was set for
     QToolButton* m_playBtn;
     QHBoxLayout* m_barRight;        // Before/After and the view buttons
     QWidget* m_partHandles = nullptr; // with a source: drag only its picture / only its sound
@@ -147,7 +151,9 @@ private:
     QString m_sourcePath, m_sourceName;
     int m_length = 0, m_in = -1, m_out = -1;
     bool m_recording = false;
+    bool m_compact = false;
     QLabel* m_notice = nullptr;       // showNotice
+    void placeNotice();               // its size (wrapped when the viewer is narrow) and place at the top
     class QTimer* m_noticeTimer = nullptr;
     class QTimer* m_edgeTimer = nullptr; // bundles resize steps before previewEdgeWanted
     int m_lastEdge = 0;
