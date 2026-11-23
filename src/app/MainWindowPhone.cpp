@@ -497,12 +497,19 @@ void MainWindow::enableShell(bool tablet)
         auto* lay = new QVBoxLayout(box);
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(1);
-        lay->addWidget(shellHome(m_deliver), 3);
-        lay->addWidget(shellHome(m_deliver->queuePanel()), 2);
+        // The settings take the room (the queue's empty hint was half the sheet and the form showed four rows)
+        lay->addWidget(shellHome(m_deliver), 4);
+        lay->addWidget(shellHome(m_deliver->queuePanel()), 1);
         m_deliver->queuePanel()->show();
+        m_deliver->queuePanel()->setBelowSettings(true);
         return box;
     });
     m_phone->setPanelShare("export", 0.92); // tall at once: the settings and "Render all" without a drag
+    // A tool's sheet leaves the timeline's video rows in sight (the clip a tool works on), down to V1 and the gap
+    m_phone->setSheetTopHint([this] {
+        TimelineView* view = m_timeline->view();
+        return view->mapTo(m_phone, QPoint(0, view->mainTrackBottom() + 10)).y();
+    });
 
     // The clip tools (while clips are selected)
     m_phone->addActionTool("split", QStringLiteral("✂"), T("Teilen"), [] { trigger("split"); });
@@ -585,6 +592,7 @@ void MainWindow::disableShell()
     m_timeline->view()->setMinimumHeight(m_shellHomes->timelineMin);
     m_mediaPool->setCompactTiles(false);
     m_mediaPool->setGeneratorsLast(false);
+    if (m_deliver && m_deliver->queuePanel()) m_deliver->queuePanel()->setBelowSettings(false);
     m_mediaPool->setImportHandler(nullptr);
     m_timeline->view()->removeEventFilter(this);
     delete m_addMediaButton;

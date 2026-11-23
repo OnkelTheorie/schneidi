@@ -330,7 +330,7 @@ void PhoneShell::openSheet(const QString& id)
     const bool changed = m_open != id;
     m_open = id;
     m_openedBy.clear();
-    if (changed) m_share = m_shares.value(id, kDefaultShare); // its own height (dragged or set), else the usual
+    if (changed) m_share = m_shares.contains(id) ? m_shares.value(id) : defaultShare(); // its own height, else the usual
     m_sheet->show();
     m_sheet->raise();
     placeSheet();
@@ -521,6 +521,17 @@ void PhoneShell::relayout()
     updateButtons();
     layout()->activate();
     placeSheet();
+}
+
+double PhoneShell::defaultShare() const
+{
+    if (!m_sheetTopHint || m_landscape || m_tablet) return kDefaultShare;
+    const int bottom = m_bar->geometry().top() - 1;
+    const int top = m_top ? m_top->geometry().bottom() + 1 : 0;
+    const int room = bottom - top;
+    if (room <= 0) return kDefaultShare;
+    // Never higher than the usual share (the viewer stays as large), never lower than the least
+    return std::clamp(double(bottom - m_sheetTopHint()) / room, kMinShare, kDefaultShare);
 }
 
 void PhoneShell::placeSheet()

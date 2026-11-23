@@ -229,7 +229,14 @@ Status (updated with each commit):
   the brand "B" button 30 px high with its own surface and no menu arrow, the text box across all columns. Text title
   box got room around the letters (handles beside them, not on them). Tests in test_phone_layout (no arrows, B
   finger-high; 767), test_brand_kit 179, test_generators 231, test_effects 142, test_shapes 189.
-- 9, 10, 11: NOT STARTED.
+- 9 Sheets cover the timeline: DONE. `PhoneShell::setSheetTopHint` / `defaultShare`: a sheet without its own height
+  opens with its top just below V1's row (`TimelineView::mainTrackBottom` + 10), between 0.3 and the old 0.55 of the
+  room, so the clips stay in sight (as CapCut); dragged heights and the tall export sheet unchanged. Export sheet: the
+  settings get 4:1 of the room against the queue, whose empty hint no longer stretches and says "Oben …"/"above"
+  (`RenderQueuePanel::setBelowSettings`, de+en; other languages at the end). The settings form keeps its own scroll
+  (a full-height form put "Alle rendern" out of sight again, the A51 fix). Test "timeline's V1 above the sheet" for
+  every tool in portrait (788), test_layout_switch 78, test_i18n 22.
+- 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

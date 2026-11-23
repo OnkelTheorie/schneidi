@@ -1707,6 +1707,7 @@
  "Keine Abschrift auf diesen Spuren (Whisper fehlt oder hört keine Sprache): nur Pausen, keine Füllwörter.": "No transcript on these tracks (whisper missing or no speech heard): only pauses, no filler words.",
  "Keine Antwort von %1 (Zeitüberschreitung).": "No answer from %1 (timeout).",
  "Keine Aufträge.\nLinks „Zur Render-Warteschlange hinzufügen“.": "No jobs.\nUse “Add to Render Queue” on the left.",
+ "Keine Aufträge.\nOben „Zur Render-Warteschlange hinzufügen“.": "No jobs.\nUse “Add to Render Queue” above.",
  "Keine EDL-Ereignisse gefunden": "No EDL events found",
  "Keine Final-Cut-Pro-7-XML-Datei (kein <xmeml>)": "Not a Final Cut Pro 7 XML file (no <xmeml>)",
  "Keine Füllung": "No fill",

@@ -74,6 +74,7 @@ public:
     void setFitAudioRows(bool on);
     bool fitAudioRows() const { return m_fitAudio; }
     int audioRowHeight() const; // the audio tracks' height as shown
+    int mainTrackBottom() const; // y below V1's row as shown now (the ruler's bottom without tracks)
     static constexpr int kFitAudioMin = 24;
     Tool tool() const { return m_tool; }
     // Trim mode and the Slip/Slide tools: a press on a clip starts a TrimEdit

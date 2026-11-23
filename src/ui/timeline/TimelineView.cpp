@@ -259,6 +259,12 @@ void TimelineView::setFitAudioRows(bool on)
     setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
 }
 
+int TimelineView::mainTrackBottom() const
+{
+    if (const auto r = rowFor({TrackKind::Video, 0})) return std::max(kRulerH, r->y + r->h);
+    return kRulerH;
+}
+
 int TimelineView::audioRowHeight() const
 {
     const Timeline& tl = m_editor->project()->timeline();

@@ -293,6 +293,13 @@ void testWindow(Engine& engine, const QSize& size)
             if (s->isVisible()) ++shown;
         Check::report(shown == 1, "one panel in the sheet", __FILE__, __LINE__, QString("%1: %2").arg(id).arg(shown));
         fits(id);
+        if (!shell->landscape() && QString(id) != "export") { // item 9: V1 stays in sight above a tool's sheet
+            TimelineView* tv = w.findChild<TimelineView*>();
+            const int v1 = tv->mapTo(&w, QPoint(0, tv->mainTrackBottom())).y();
+            const int top = shell->sheetFrame()->mapTo(&w, QPoint(0, 0)).y();
+            Check::report(top >= v1 || shell->sheetShare() <= 0.31, "timeline's V1 above the sheet", __FILE__, __LINE__,
+                          QString("%1: sheet top %2, V1 bottom %3").arg(id).arg(top).arg(v1));
+        }
         if (QString(id) == "inspector") // its tabs' two lines whole (cut at the bottom with the keyboard up)
             for (QToolButton* b : shell->panel("inspector")->findChildren<QToolButton*>())
                 if (b->isVisibleTo(shell) && b->text().contains('\n'))
