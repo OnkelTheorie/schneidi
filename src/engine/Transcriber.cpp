@@ -96,6 +96,23 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         m_log += data;
         if (m_log.size() > 64 * 1024) m_log = m_log.right(16 * 1024);
         if (m_stage != 1) return;
+        if (m_parakeet) {
+            // Its whole log holds the token times. No progress of its own: the files it has begun
+            // ("Processing file: piece_003.wav"), looked for in the new data and the line before it
+            const qsizetype from = std::max<qsizetype>(0, m_output.size() - 200);
+            m_output += data;
+            static const QRegularExpression file("Processing file:\\s*piece_(\\d+)\\.wav");
+            for (auto f = file.globalMatch(QString::fromUtf8(m_output.mid(from))); f.hasNext();)
+                m_piece = std::clamp(f.next().captured(1).toInt(), m_piece, std::max(0, int(m_pieces.size()) - 1));
+            qint64 total = 0, before = 0;
+            for (int i = 0; i < m_pieces.size(); ++i) {
+                total += Transcript::pieceLength(m_pieces[i]);
+                if (i < m_piece) before += Transcript::pieceLength(m_pieces[i]);
+            }
+            if (total > 0) m_whisper = std::max(m_whisper, before / double(total));
+            beat();
+            return;
+        }
         // "whisper_print_progress_callback: progress =  45%"
         static const QRegularExpression re("progress\\s*=\\s*(\\d+)%");
         auto it = re.globalMatch(QString::fromUtf8(data));
@@ -138,15 +155,15 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
                 qInfo("Whisper: pieces not written (%s), the whole sound at once", qPrintable(error));
                 m_pieces.clear();
             }
-            // Automatic language with pieces: whisper would detect it again on every short piece (a laugh heard as
-            // another language): once first, on the longest piece
-            if (!m_pieces.isEmpty() && m_language == QLatin1String("auto")) return detectLanguageFirst();
-            return runWhisper();
+            return piecesReady();
         }
         if (m_stage == 4) {
             static const QRegularExpression re("auto-detected language:\\s*([a-z]+)");
             if (const auto m = re.match(QString::fromUtf8(m_log)); m.hasMatch()) m_language = m.captured(1);
-            return runWhisper(); // nothing detected: auto as before
+            // Parakeet and a language it does not know: whisper instead (if there is one)
+            if (m_parakeet && m_language != QLatin1String("auto") && !parakeetLanguage(m_language))
+                useWhisperInstead(m_language);
+            return recognise(); // nothing detected: auto as before
         }
         if (m_stage == 2) {
             // "auto-detected language: en (p = 0.976562)"; a failed check never fails the transcript
@@ -163,10 +180,11 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
                 return done(false, hint);
             // On the graphics card (a driver that crashes, too little video memory): once more on the CPU
             if (m_stage == 1 && !m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty()) {
-                qInfo("Whisper failed on the GPU (exit %d), again on the CPU: %s", code, qPrintable(tail.right(200)));
+                qInfo("%s failed on the GPU (exit %d), again on the CPU: %s", m_parakeet ? "Parakeet" : "Whisper", code,
+                      qPrintable(tail.right(200)));
                 m_cpuOnly = true;
                 m_log.clear();
-                return runWhisper();
+                return recognise();
             }
             // With DTW word times (a model file named like one whose alignment heads it lacks): once more without
             if (m_stage == 1 && m_usedDtw && !m_noDtw) {
@@ -175,7 +193,8 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
                 m_log.clear();
                 return runWhisper();
             }
-            return done(false, m_stage == 0 ? T("Ton konnte nicht gelesen werden: %1").arg(tail)
+            return done(false, m_stage == 0   ? T("Ton konnte nicht gelesen werden: %1").arg(tail)
+                               : m_parakeet ? T("Parakeet ist fehlgeschlagen: %1").arg(tail)
                                             : T("Whisper ist fehlgeschlagen: %1").arg(tail));
         }
         if (m_stage == 0) return detectSpeech();
@@ -191,12 +210,17 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         } else {
             m_result.dropped = Transcript::dropHallucinations(m_result.words, m_result.levels);
         }
+        m_result.dropped += m_repeats;
         if (!m_prompt.isEmpty() && !m_request.verbatim) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_prompt);
         Transcript::fitToSpeech(m_result.words, m_result.levels);
         const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
-        // A chosen language is what whisper wrote in; it reports "en" when it heard nothing
+        // A chosen language is what whisper wrote in; it reports "en" when it heard nothing. Parakeet reports none:
+        // the one detected first
         if (lang != QLatin1String("auto")) m_result.language = lang;
-        if (m_request.checkLanguage && lang != QLatin1String("auto") && !m_result.words.isEmpty()) return runDetection();
+        else if (m_result.language.isEmpty() && m_language != QLatin1String("auto")) m_result.language = m_language;
+        // Not after Parakeet: it hears every language it knows without being told, a wrong choice changes nothing
+        if (m_request.checkLanguage && lang != QLatin1String("auto") && !m_result.words.isEmpty() && !m_parakeet)
+            return runDetection();
         done(true, {});
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
@@ -209,9 +233,9 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
                 // The voice detection or the first language detection are helpers: without them, as before
                 if (stage == 3) {
                     m_pieces.clear();
-                    return runWhisper();
+                    return piecesReady();
                 }
-                if (stage == 4) return runWhisper();
+                if (stage == 4) return recognise();
                 done(false, T("%1 konnte nicht gestartet werden.").arg(program));
             });
     });
@@ -236,11 +260,23 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
         return false;
     };
     if (m_running) return fail("already running");
-    if (Extensions::whisperProgram().isEmpty())
-        return fail(T("Whisper ist nicht installiert (Arbeitsbereich → Erweiterungen)."));
-    if (request.model.isEmpty() || !QFile::exists(request.model))
-        return fail(T("Kein Whisper-Modell installiert (Arbeitsbereich → Erweiterungen)."));
+    if (isParakeet(request.model)) {
+        if (Extensions::parakeetProgram().isEmpty())
+            return fail(T("Für „Sehr schnell“ (Parakeet) fehlt das Programm parakeet-cli aus der Erweiterung „Whisper“ "
+                          "(Arbeitsbereich → Erweiterungen)."));
+        if (!QFile::exists(request.model))
+            return fail(T("Das Modell „Sehr schnell“ (Parakeet) ist nicht installiert (Arbeitsbereich → Erweiterungen)."));
+    } else {
+        if (Extensions::whisperProgram().isEmpty())
+            return fail(T("Whisper ist nicht installiert (Arbeitsbereich → Erweiterungen)."));
+        if (request.model.isEmpty() || !QFile::exists(request.model))
+            return fail(T("Kein Whisper-Modell installiert (Arbeitsbereich → Erweiterungen)."));
+    }
     m_request = request;
+    m_model = request.model;
+    m_parakeet = isParakeet(request.model);
+    m_engineNote.clear();
+    m_output.clear();
     m_tmp = std::make_unique<QTemporaryDir>();
     if (!m_tmp->isValid()) return fail(m_tmp->errorString());
     m_result = {};
@@ -253,6 +289,8 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     m_noDtw = false;
     m_pieces.clear();
     m_language = request.language.isEmpty() ? QString("auto") : request.language;
+    // A chosen language Parakeet does not know: whisper from the start (or Parakeet with a note)
+    if (m_parakeet && m_language != QLatin1String("auto") && !parakeetLanguage(m_language)) useWhisperInstead(m_language);
     m_running = true; // a failed start below is reported through finished() (see errorOccurred)
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
@@ -314,7 +352,7 @@ void Transcriber::detectSpeech()
     m_pieces.clear();
     const QString program = Extensions::whisperVadProgram(), vad = Extensions::whisperVadModel();
     // Music: voice detection hears no speech in a song (see runWhisper); without the program or its model: at once
-    if (m_request.music || program.isEmpty() || vad.isEmpty() || !QFile::exists(vad)) return runWhisper();
+    if (m_request.music || program.isEmpty() || vad.isEmpty() || !QFile::exists(vad)) return piecesReady();
     m_stage = 3;
     m_log.clear();
     m_process.setWorkingDirectory(m_tmp->path());
@@ -403,6 +441,11 @@ bool Transcriber::writePieces(QString* error)
 double Transcriber::whisperWork() const
 {
     if (m_pieces.size() <= 1) return m_audioSeconds;
+    if (m_parakeet) { // no 30 s windows: the speech it hears
+        qint64 ms = 0;
+        for (const auto& p : m_pieces) ms += Transcript::pieceLength(p);
+        return ms / 1000.0;
+    }
     // Every piece costs about one 30 s window, however short
     double work = 0;
     for (const auto& p : m_pieces) work += std::max(Transcript::pieceLength(p) / 1000.0, kWindow);
@@ -417,7 +460,7 @@ void Transcriber::detectLanguageFirst()
     for (int i = 1; i < m_pieces.size(); ++i)
         if (Transcript::pieceLength(m_pieces[i]) > Transcript::pieceLength(m_pieces[longest])) longest = i;
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
-    QStringList args{"-m", narrowSafePath(m_request.model), "-f", QString("piece_%1.wav").arg(longest, 3, 10, QChar('0')),
+    QStringList args{"-m", narrowSafePath(detectionModel()), "-f", QString("piece_%1.wav").arg(longest, 3, 10, QChar('0')),
                      "-t", QString::number(threads), "-l", "auto", "-dl"};
     if (m_cpuOnly) args << "-ng";
     m_process.setWorkingDirectory(m_tmp->path());
@@ -431,7 +474,7 @@ void Transcriber::runWhisper()
     emit progress(kAudioShare);
     m_audioSeconds = std::max<qint64>(0, QFileInfo(m_tmp->filePath("audio.wav")).size() - 44) / 32000.0;
     // The speed is remembered apart for the graphics card (about 10x faster than the CPU)
-    m_speedModel = m_request.model + (!m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty() ? "@gpu" : "");
+    m_speedModel = m_model + (!m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty() ? "@gpu" : "");
     m_expected = whisperSeconds(m_speedModel, whisperWork());
     m_whisper = m_shown = 0;
     m_piece = m_lastPercent = 0;
@@ -442,7 +485,7 @@ void Transcriber::runWhisper()
     // Files by name in whisper's working directory (the temporary folder): whisper-cli reads its arguments in the
     // ANSI code page on Windows, a temp folder under a user name with other letters became '?'
     m_process.setWorkingDirectory(m_tmp->path());
-    QStringList args{"-m", narrowSafePath(m_request.model), "-t", QString::number(threads), "-l", m_language, "-ml", "1",
+    QStringList args{"-m", narrowSafePath(m_model), "-t", QString::number(threads), "-l", m_language, "-ml", "1",
                      "-sow", "-np", "-pp"};
     // Word times from DTW (the attention of the model's alignment heads; needs flash attention off): whisper's own
     // times hand a laugh or pause before a sentence to its first word ("Was bist du?" 2.4 s early, measured 20.11.)
@@ -450,7 +493,7 @@ void Transcriber::runWhisper()
     // cut out and are not mapped back (a 6 min track came out squeezed to two thirds, measured 20.11.)
     const QString vadModel = Extensions::whisperVadModel();
     const bool ownVad = m_pieces.isEmpty() && !m_request.music && !vadModel.isEmpty();
-    const QString dtw = m_noDtw || ownVad ? QString() : dtwPreset(m_request.model);
+    const QString dtw = m_noDtw || ownVad ? QString() : dtwPreset(m_model);
     m_usedDtw = !dtw.isEmpty();
     if (m_usedDtw) args << "-ojf" << "-nfa" << "-dtw" << dtw;
     else args << "-oj";
@@ -462,7 +505,7 @@ void Transcriber::runWhisper()
     if (!m_prompt.isEmpty()) args << "--prompt" << m_prompt;
     if (m_cpuOnly) args << "-ng";
     const QString gpu = m_cpuOnly ? QString() : Extensions::whisperGpuBackend();
-    qInfo("Whisper: %s, %s, %s", qPrintable(QFileInfo(m_request.model).fileName()),
+    qInfo("Whisper: %s, %s, %s", qPrintable(QFileInfo(m_model).fileName()),
           gpu.isEmpty() ? "CPU" : qPrintable("GPU (" + QFileInfo(gpu).fileName() + ")"),
           m_pieces.isEmpty() ? "the whole sound" : qPrintable(QString("%1 pieces of speech").arg(m_pieces.size())));
     if (!m_pieces.isEmpty()) {
@@ -482,23 +525,146 @@ void Transcriber::runWhisper()
     m_process.start(Extensions::whisperProgram(), args);
 }
 
+void Transcriber::piecesReady()
+{
+    // Parakeet has no voice detection of its own and hears a long sound at once (its memory grows with it): without
+    // the voice detection's pieces, the sound in pieces of up to 28 s
+    if (m_parakeet && m_pieces.isEmpty() && m_audioSeconds > 0) {
+        const qint64 lengthMs = qint64(m_audioSeconds * 1000);
+        m_pieces = Transcript::speechPieces({qMakePair(qint64(0), lengthMs)}, lengthMs);
+        QString error;
+        if (!writePieces(&error)) return done(false, T("Ton konnte nicht gelesen werden: %1").arg(error));
+    }
+    // Automatic language with pieces: whisper would detect it again on every short piece (a laugh heard as another
+    // language): once first, on the longest piece. Parakeet: whether it knows the language (a whisper model tells it)
+    if (!m_pieces.isEmpty() && m_language == QLatin1String("auto") && !detectionModel().isEmpty())
+        return detectLanguageFirst();
+    recognise();
+}
+
+void Transcriber::recognise()
+{
+    if (m_parakeet) runParakeet();
+    else runWhisper();
+}
+
+QString Transcriber::detectionModel() const
+{
+    if (!m_parakeet) return m_model;
+    if (Extensions::whisperProgram().isEmpty()) return {};
+    // The smallest whisper model there is (the language of the first 30 s; tiny is enough for that), else the fallback
+    if (const QString small = Extensions::detectionWhisperModel(); !small.isEmpty()) return small;
+    return QFile::exists(m_request.whisperModel) ? m_request.whisperModel : QString();
+}
+
+bool Transcriber::useWhisperInstead(const QString& language)
+{
+    if (m_request.whisperModel.isEmpty() || !QFile::exists(m_request.whisperModel)
+        || isParakeet(m_request.whisperModel) || Extensions::whisperProgram().isEmpty()) {
+        m_engineNote = T("Parakeet kennt die Sprache „%1“ nicht – das Ergebnis kann unbrauchbar sein. Besser "
+                         "„Genau“ oder „Schnell“ wählen.").arg(language);
+        return false;
+    }
+    m_engineNote = T("Parakeet kennt die Sprache „%1“ nicht – Whisper hat sie erkannt.").arg(language);
+    qInfo("Parakeet does not know '%s': whisper (%s) instead", qPrintable(language),
+          qPrintable(QFileInfo(m_request.whisperModel).fileName()));
+    m_model = m_request.whisperModel;
+    m_parakeet = false;
+    return true;
+}
+
+bool Transcriber::isParakeet(const QString& model)
+{
+    return QFileInfo(model).fileName().contains(QLatin1String("parakeet"), Qt::CaseInsensitive);
+}
+
+bool Transcriber::parakeetLanguage(const QString& language)
+{
+    // Parakeet TDT 0.6B v3 (model card): bg hr cs da nl en et fi fr de el hu it lv lt mt pl pt ro sk sl es sv ru uk
+    static const QStringList known{"bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it",
+                                   "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk"};
+    return known.contains(language.trimmed().toLower().left(2));
+}
+
+void Transcriber::runParakeet()
+{
+    m_stage = 1;
+    emit progress(kAudioShare);
+    m_audioSeconds = std::max<qint64>(0, QFileInfo(m_tmp->filePath("audio.wav")).size() - 44) / 32000.0;
+    const QString program = Extensions::parakeetProgram();
+    m_speedModel = m_model + (!m_cpuOnly && !Extensions::whisperGpuBackend().isEmpty() ? "@gpu" : "");
+    m_expected = whisperSeconds(m_speedModel, whisperWork());
+    m_whisper = m_shown = 0;
+    m_piece = m_lastPercent = 0;
+    m_output.clear();
+    m_prompt.clear(); // no starting text, no DTW: its own token times
+    m_promptNote.clear();
+    m_usedDtw = false;
+    m_clock.start();
+    m_beat.start();
+    const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
+    // Token times (-ps, on stderr; 10 ms steps) for the words; one run over all pieces, the model loaded once
+    m_process.setWorkingDirectory(m_tmp->path());
+    QStringList args{"-m", narrowSafePath(m_model), "-t", QString::number(threads), "-ps"};
+    if (m_cpuOnly) args << "-ng";
+    for (int i = 0; i < m_pieces.size(); ++i) args << QString("piece_%1.wav").arg(i, 3, 10, QChar('0'));
+    if (m_pieces.isEmpty()) args << "audio.wav"; // no sound at all
+    const QString gpu = m_cpuOnly ? QString() : Extensions::whisperGpuBackend();
+    qInfo("Parakeet: %s, %s, %d pieces", qPrintable(QFileInfo(m_model).fileName()),
+          gpu.isEmpty() ? "CPU" : qPrintable("GPU (" + QFileInfo(gpu).fileName() + ")"), int(m_pieces.size()));
+    Extensions::provideRuntime(program);
+    m_process.start(program, args);
+}
+
+bool Transcriber::readParakeet(QString* error)
+{
+    const QHash<QString, QVector<Transcript::Word>> files = Transcript::parseParakeetLog(QString::fromUtf8(m_output));
+    if (files.isEmpty()) {
+        if (error) *error = T("Parakeet hat kein Ergebnis geschrieben: %1").arg(QString::fromUtf8(m_log.right(400)).trimmed());
+        return false;
+    }
+    // No repeat filter: Parakeet does not write a piece twice, and its blind 28 s pieces can hold a real repeat
+    if (m_pieces.isEmpty()) {
+        m_result.words = files.value("audio.wav");
+        return true;
+    }
+    for (int i = 0; i < m_pieces.size(); ++i) {
+        const Transcript::Piece& piece = m_pieces[i];
+        for (const Transcript::Word& w : files.value(QString("piece_%1.wav").arg(i, 3, 10, QChar('0')))) {
+            Transcript::Word mapped{Transcript::pieceTime(piece, w.from), Transcript::pieceTime(piece, w.to, true), w.text};
+            if (!m_result.words.isEmpty()) mapped.from = std::max(mapped.from, m_result.words.last().from);
+            mapped.to = std::max(mapped.to, mapped.from);
+            m_result.words << mapped;
+        }
+    }
+    return true;
+}
+
 bool Transcriber::readResult(QString* error)
 {
     m_result.words.clear();
     m_result.language.clear();
+    m_repeats = 0;
+    if (m_parakeet) return readParakeet(error);
     if (m_pieces.isEmpty()) {
         QFile json(m_tmp->filePath("out.json"));
         if (!json.open(QIODevice::ReadOnly)) return false;
+        // The whole sound at once: no repeat filter (it is made for speech pieces)
         return Transcript::parseWhisperJson(json.readAll(), &m_result, error);
     }
+    qsizetype previous = -1; // the words of the last piece that had any
     for (int i = 0; i < m_pieces.size(); ++i) {
         QFile json(m_tmp->filePath(QString("piece_%1.wav.json").arg(i, 3, 10, QChar('0'))));
         if (!json.open(QIODevice::ReadOnly)) return false;
         const Transcript::Piece& piece = m_pieces[i];
+        const qsizetype first = m_result.words.size();
         if (!Transcript::appendWhisperJson(json.readAll(),
                                            [&piece](qint64 t, bool end) { return Transcript::pieceTime(piece, t, end); },
                                            &m_result, error))
             return false;
+        // A piece written twice, or the piece before written once more (whisper turbo); not in a song (a chorus)
+        if (!m_request.music) m_repeats += Transcript::dropRepeats(m_result.words, first, previous);
+        if (m_result.words.size() > first) previous = first;
     }
     return true;
 }
@@ -549,7 +715,7 @@ void Transcriber::runDetection()
     m_log.clear(); // the detected language is a log line of whisper (not with -np)
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
     m_process.setWorkingDirectory(m_tmp->path());
-    QStringList args{"-m", narrowSafePath(m_request.model), "-f", "audio.wav", "-t", QString::number(threads), "-l",
+    QStringList args{"-m", narrowSafePath(detectionModel()), "-f", "audio.wav", "-t", QString::number(threads), "-l",
                      "auto", "-dl"};
     if (m_cpuOnly) args << "-ng";
     m_process.start(Extensions::whisperProgram(), args);
@@ -650,7 +816,8 @@ double Transcriber::whisperSeconds(const QString& model, double audioSeconds)
     if (perSecond <= 0) {
         const bool gpu = model.endsWith(QLatin1String("@gpu"));
         const QString file = gpu ? model.chopped(4) : model;
-        perSecond = (0.5 + QFileInfo(file).size() / (150.0 * 1024 * 1024)) / (gpu ? 10 : 1);
+        // Parakeet: ~0.15 s per second of sound on 4 cores (measured 22.11.)
+        perSecond = (isParakeet(file) ? 0.2 : 0.5 + QFileInfo(file).size() / (150.0 * 1024 * 1024)) / (gpu ? 10 : 1);
     }
     return perSecond * std::max(audioSeconds, kWindow);
 }

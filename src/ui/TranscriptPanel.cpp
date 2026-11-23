@@ -375,7 +375,8 @@ void TranscriptPanel::updateState()
 void TranscriptPanel::transcribe()
 {
     if (m_transcriber.isRunning()) return;
-    if (Extensions::whisperProgram().isEmpty() || !Extensions::hasWhisperModel()) {
+    const bool parakeet = !Extensions::parakeetModel().isEmpty() && !Extensions::parakeetProgram().isEmpty();
+    if ((Extensions::whisperProgram().isEmpty() || !Extensions::hasWhisperModel()) && !parakeet) {
         const auto answer = QMessageBox::question(
             this, T("Transkript"),
             T("Dafür wird die Erweiterung „Whisper“ mit einem Sprachmodell gebraucht (einmaliger Download). "
@@ -399,7 +400,16 @@ void TranscriptPanel::startNext()
     req.format = m_project->format();
     QSettings settings;
     req.language = settings.value("transcribe/language", "auto").toString();
-    req.model = Extensions::appWhisperModel(settings.value("transcribe/model").toString());
+    // The model chosen last in "Untertitel aus Audio erzeugen"; Parakeet ("Sehr schnell") hands a language it does not
+    // know to the best whisper model
+    const QString chosen = settings.value("transcribe/model").toString();
+    const QString parakeet = Extensions::parakeetProgram().isEmpty() ? QString() : Extensions::parakeetModel();
+    if ((chosen == QLatin1String("parakeet") || !Extensions::hasWhisperModel()) && !parakeet.isEmpty()) {
+        req.model = parakeet;
+        req.whisperModel = Extensions::appWhisperModel(QString());
+    } else {
+        req.model = Extensions::appWhisperModel(chosen);
+    }
     QString error;
     if (!m_transcriber.start(req, &error)) {
         m_queue.clear();

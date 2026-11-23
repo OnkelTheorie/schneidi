@@ -440,7 +440,9 @@ QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
     // What works now: transcribe (whisper with a model), speak (piper with a voice), x264 (H.264/H.265 with x264/x265,
     // built in or the extension), faces (the face model with a runtime that loads)
     QJsonArray ready;
-    if (!Extensions::whisperProgram().isEmpty() && !Extensions::installedWhisperModels().isEmpty()) ready << "transcribe";
+    if ((!Extensions::whisperProgram().isEmpty() && !Extensions::installedWhisperModels().isEmpty())
+        || (!Extensions::parakeetProgram().isEmpty() && !Extensions::parakeetModel().isEmpty()))
+        ready << "transcribe";
     if (!Extensions::piperProgram().isEmpty() && !Extensions::installedVoices().isEmpty()) ready << "speak";
     if (HardwareEncoders::builtIn("libx264") || !HardwareEncoders::externalProgram("libx264").isEmpty()) ready << "x264";
     if (FaceDetect::available()) ready << "faces"; // counted faces in `index`

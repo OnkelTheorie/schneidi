@@ -1554,14 +1554,19 @@ const QVector<Command>& commands()
           {"top", T::Integer, "only the best N candidates ('best' with several files)"},
           {"project", T::Path, "count frames in this project's frame rate (recommended before 'keep')"}},
          cmdHighlights},
-        {"transcribe", "Speech to text with whisper (offline; install it with `extensions`). Returns subtitle-sized "
+        {"transcribe", "Speech to text with whisper or Parakeet (offline; install them with `extensions`). Returns subtitle-sized "
                        "'segments' with times and, with words, every word's time (to cut out words or filler). "
                        "Source: a media file or a project (its timeline sound, times in timeline frames).",
          {{"source", T::Path, "media file or project (.schneidi)", true, true},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"language", T::String, "spoken language: de, en, fr, … (default auto = detect; a chosen one is checked "
                                   "against whisper's detection: detected_language + a note when it hears another)"},
-          {"model", T::String, "large, turbo, small, base, tiny or a model file (default: best installed)"},
+          {"quality", T::String, "instead of model: accurate (whisper large-v3, the best on unclear chat), fast "
+                                 "(large-v3-turbo) or very_fast (NVIDIA Parakeet v3, 5-8x faster, 25 European "
+                                 "languages, misses short shouts; another language goes to the best whisper model). "
+                                 "Default: accurate with a graphics card for whisper, else fast (if installed)"},
+          {"model", T::String, "large, turbo, small, base, tiny, parakeet or a model file (default: see quality, else "
+                               "the best installed)"},
           {"words", T::Boolean, "also return every word with its time"},
           {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
                                 "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},
