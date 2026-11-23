@@ -27,7 +27,10 @@ struct TranscribeRequest {
     ProjectFormat format;
     int from = 0, to = -1; // timeline frames; to < 0 = until the end
     QVector<int> audioTracks; // timeline: only these audio tracks (also muted ones), e.g. the voice without music; empty = as heard
-    QString model;               // model file (Extensions::whisperModelPath)
+    QString model;               // model file (Extensions::whisperModelPath, or Parakeet: Extensions::parakeetModel)
+    // With Parakeet as `model`: the whisper model for a language Parakeet does not know (detected or chosen); empty =
+    // none (Parakeet writes it anyway, badly)
+    QString whisperModel;
     QString language = "auto";   // "de", "en", … or "auto"
     bool music = false;          // sung words and shouts in a song (no voice detection, see runWhisper)
     int threads = 0;             // 0 = Background::threads (setting, else half of the logical processors)
@@ -73,6 +76,16 @@ public:
     static bool fitsCodePage(const QString& text);
     // verbatim without a starting text (the code page could not hold it): why, for the answer; empty = none
     QString promptNote() const { return m_promptNote; }
+    // The model file that wrote the result: the request's, or its whisperModel when Parakeet does not know the language
+    QString usedModel() const { return m_model; }
+    // Parakeet was asked for but whisper wrote it (or Parakeet wrote a language it does not know): why, for the user;
+    // empty = as asked
+    QString engineNote() const { return m_engineNote; }
+
+    // NVIDIA Parakeet (parakeet-cli) instead of whisper: a model file named like it ("ggml-parakeet-tdt-0.6b-v3-…")
+    static bool isParakeet(const QString& model);
+    // The 25 European languages Parakeet TDT 0.6B v3 knows ("de", "en", …; not Turkish)
+    static bool parakeetLanguage(const QString& language);
 
     // Progress between whisper's own updates (a 30 s clip jumped from 10 % to 100 % after a minute): estimated from
     // the time whisper has run against what it is expected to take (whisperSeconds). Follows the time up to 90 % of
@@ -97,17 +110,27 @@ signals:
     void finished(bool ok, const QString& error); // ok: result() holds the words (times from the start of the source)
 
 private:
-    void detectSpeech();     // stage 3: voice detection -> pieces (or straight to runWhisper without it)
+    void detectSpeech();     // stage 3: voice detection -> pieces (or straight to piecesReady without it)
+    void piecesReady();      // after the voice detection: language first (auto, pieces) or the recognition
+    void recognise();        // stage 1: runWhisper or runParakeet
+    void runParakeet();
+    bool useWhisperInstead(const QString& language); // Parakeet lacks it: whisperModel takes over (false = none)
+    QString detectionModel() const; // the whisper model that tells the language
     bool writePieces(QString* error);
     void detectLanguageFirst(); // stage 4
     void runWhisper();
     void runDetection();
     bool readResult(QString* error); // whisper's output files -> m_result.words
+    bool readParakeet(QString* error); // parakeet-cli's token times (m_output) -> m_result.words
     double whisperWork() const; // seconds of sound whisper works through (pieces: a window each)
     void done(bool ok, const QString& error);
     void beat();
 
     TranscribeRequest m_request;
+    QString m_model;       // the model file that runs (m_request.model, or its whisperModel)
+    bool m_parakeet = false; // m_model is Parakeet (parakeet-cli)
+    QString m_engineNote;
+    QByteArray m_output;   // parakeet-cli's whole log of stage 1 (its token times; m_log keeps only the end)
     std::unique_ptr<QTemporaryDir> m_tmp;
     std::unique_ptr<Exporter> m_exporter;
     QProcess m_process;
@@ -123,6 +146,7 @@ private:
     // (piece_000.wav …); empty = the whole sound at once.
     QVector<Transcript::Piece> m_pieces;
     QString m_prompt; // the starting text whisper got (its echo is removed)
+    int m_repeats = 0; // words of repeated pieces readResult dropped (Transcript::dropRepeats)
     int m_piece = 0, m_lastPercent = 0; // piece whisper works on now (its progress restarts per file)
     QString m_speedModel; // model file (+ "@gpu"): the key of its measured speed (whisperSeconds)
     bool m_cpuOnly = false; // whisper failed on the graphics card: this request runs on the CPU (-ng)

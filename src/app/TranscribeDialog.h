@@ -2,6 +2,7 @@
 #pragma once
 #include "core/Subtitles.h"
 #include "core/Types.h"
+#include "engine/Extensions.h"
 #include "engine/Transcriber.h"
 
 #include <QDialog>
@@ -31,12 +32,21 @@ public:
     QVector<Result> results() const { return m_results; }
     QString language() const { return m_language; } // detected or chosen
     // After the run: whisper is sure the sound is in another language than the chosen one (a hint to show; empty = none)
-    QString languageHint() const { return m_languageHint; }
+    // Also: Parakeet did not know the language (Transcriber::engineNote)
+    QString languageHint() const
+    {
+        return m_engineNote.isEmpty() ? m_languageHint
+               : m_languageHint.isEmpty() ? m_engineNote
+                                          : m_languageHint + "\n\n" + m_engineNote;
+    }
 
     void reject() override;
     // Adds an own whisper.cpp model file to the model choice (remembered for next time) and selects it; false + error
     // when it is no whisper model (Extensions::isWhisperModelFile). The "Eigenes Modell…" entry asks for the file.
     bool addCustomModel(const QString& path, QString* error = nullptr);
+
+    // What the chosen model entry needs downloaded first (the model, the whisper package for it): empty = ready
+    QVector<const Extensions::Item*> missingDownloads() const;
 
 signals:
     void openExtensions(); // whisper or a model is missing
@@ -49,6 +59,7 @@ private:
     Subtitles::CueLength cueLength() const; // the chosen one, Auto resolved by the timeline's format
     void run();
     void startJob();
+    void downloadNext(); // the next of m_downloads, then the jobs
 
     Timeline m_timeline;
     ProjectFormat m_format;
@@ -77,7 +88,11 @@ private:
     QPushButton* m_start;
     QPushButton* m_extensions;
     Transcriber m_transcriber;
+    Extensions::Installer m_installer;
+    QVector<const Extensions::Item*> m_downloads; // still to download before the jobs start
+    const Extensions::Item* m_downloading = nullptr;
     QVector<Result> m_results;
     QString m_language;
     QString m_languageHint;
+    QString m_engineNote;
 };

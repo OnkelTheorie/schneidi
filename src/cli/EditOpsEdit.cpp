@@ -10,6 +10,7 @@
 #include "core/Retime.h"
 #include "core/Subtitles.h"
 #include "core/TitleLookJson.h"
+#include "core/Transcript.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
 
@@ -641,6 +642,7 @@ void opCaptions(Session& s, const QJsonObject& op)
     captions.mode = CaptionMode::Karaoke;
     applyCaptions(captions, op, "style");
     QVector<TranscriptCut::Word> words;
+    int track = -1; // the words' audio track, if named
     if (op.contains("words")) {
         // Word times given (e.g. `transcribe` with words:true: timeline frames)
         for (const QJsonValue& v : op.value("words").toArray()) {
@@ -654,7 +656,6 @@ void opCaptions(Session& s, const QJsonObject& op)
         std::stable_sort(words.begin(), words.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
     } else {
         // The transcripts of the media files (Transcript panel), following trims and speed changes of the clips
-        int track = -1;
         if (op.contains("track")) {
             TrackKind k = TrackKind::Audio;
             track = parseTrack(op.value("track"), &k);
@@ -692,6 +693,9 @@ void opCaptions(Session& s, const QJsonObject& op)
         const int last = words.isEmpty() ? 0 : words.last().spokenTo + int(period) * int(words.size());
         for (double b = first; b <= last; b += period) o.beats << int(std::lround(b));
     }
+    // No caption over a cut between clips, none on into the next clip (the words' track, else the clips with a
+    // picture or every audible track: Transcript::cutFrames)
+    o.cuts = Transcript::cutFrames(s.project.timeline(), -1, INT_MAX, track >= 0 ? QVector<int>{track} : QVector<int>{});
     if (style == "beat" && o.beats.isEmpty())
         fail("BAD_ARGUMENT", "style 'beat' needs beats ([times] from `beats` with beats:true) or bpm (+ first_beat)");
     const QVector<SubtitleCue> cues = Captions::fromWords(words, o);
