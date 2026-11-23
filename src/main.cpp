@@ -690,7 +690,9 @@ int main(int argc, char* argv[])
     // Restored: this project stays open (the file can then be opened normally).
     liveWaiting("schneidi is waiting for the user (restore dialog: restore unsaved changes after a crash?); "
                 "try again once it is answered");
-    const bool restored = !testRun && w.offerAutosaveRestore();
+    // A restart for a new interface size: the project, page and view as they were (MainWindow::restartRestoring)
+    const QString resume = LaunchArgs::resumeFile(app.arguments());
+    const bool restored = (!resume.isEmpty() && w.resumeSession(resume)) || (!testRun && w.offerAutosaveRestore());
     StartupTrace::mark("autosave restore check");
     liveWaiting("schneidi is opening a project; try again in a moment");
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
@@ -745,7 +747,8 @@ int main(int argc, char* argv[])
     const int rc = app.exec();
     HangWatch::uninstall(); // waits while quitting (threads, a running voice-over take) are no hang
     if (g_claudeSetupThread) g_claudeSetupThread->wait(); // a running `claude mcp add` finishes first
-    // Restart after design/language change: only here, when the window is closed and everything has been saved
+    // Restart (interface size, compatibility mode, audio driver): only here, when the window is closed and the project
+    // is saved or kept in the resume file
     // The live server goes first: the new process would otherwise hand its project back to this one, which is quitting
     if (w.restartRequested()) {
         live.reset();

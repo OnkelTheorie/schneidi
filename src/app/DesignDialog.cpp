@@ -318,9 +318,6 @@ DesignDialog::DesignDialog(QWidget* parent) : QDialog(parent)
     sigGrid->addWidget(sigReset, perColumn, 0, 1, 6, Qt::AlignRight);
     lay->addWidget(sig);
 
-    auto* note = new QLabel(T("Das Design ändert sich nach dem Neustart von schneidi."));
-    note->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
-    lay->addWidget(note);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, this, &DesignDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &DesignDialog::reject);

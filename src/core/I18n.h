@@ -6,7 +6,8 @@
 #include <QString>
 
 // UI language: German is the source language in the code, every other language comes from i18n/<code>.json
-// (German text -> translated text). A new language only needs a new file there. Switching takes effect after a restart.
+// (German text -> translated text). A new language only needs a new file there. switchTo() changes it in a running
+// program (the main window then builds its widgets again: MainWindow::rebuildUi).
 namespace I18n {
 
 struct Language {
@@ -20,10 +21,13 @@ QString englishName(const QString& code);
 QList<Language> languages();           // German plus one language per dictionary in i18n/, German first
 QString language();                    // code of the current UI language
 QString installedLanguage();           // language of this run (install(), also --lang); language() before install()
-void setLanguage(const QString& lang); // only stores it, takes effect on the next start
+void setLanguage(const QString& lang); // only stores it (switchTo or the next start applies it)
 // Before creating the QApplication (application name set): environment for texts of the platform theme (LANGUAGE)
 void prepareEnvironment(const QString& override = {});
 void install(const QString& override = {}); // after creating the QApplication; override = language for this run only
+// While running: the translators of install() replaced by those of `lang` (also the locale and LANGUAGE); texts made
+// before keep their old language - whoever shows them makes them again. false = `lang` unknown, nothing changed
+bool switchTo(const QString& lang);
 QString translate(const QString& lang, const char* source); // source text in another language than the installed one
 QChar decimalPoint();                  // decimal separator of the UI language ("," in German, "." in English)
 // Thousands separator of the UI language ("." in German and Spanish, "," in English, a no-break space in French,

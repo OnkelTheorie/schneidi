@@ -180,7 +180,7 @@ void MainWindow::buildLayout()
     m_timeline = new TimelinePanel(m_editor, m_editMain);
     m_editMain->addWidget(m_timeline);
     StartupTrace::mark("ctor TimelinePanel");
-    m_deliver = new DeliverPanel(m_project, m_deliverPage);
+    m_deliver = new DeliverPanel(m_project, m_deliverPage, std::exchange(m_keptQueue, nullptr)); // (rebuildUi: the old one)
     StartupTrace::mark("ctor DeliverPanel");
     m_mixer->setEditor(m_editor);
     m_transcript = new TranscriptPanel(m_project, m_editor, m_editTop);
@@ -213,12 +213,14 @@ void MainWindow::buildLayout()
     // The status bar's messages show in the page bar (one compact row at the bottom, the room goes to the pages):
     // the QStatusBar itself stays hidden, every statusBar()->showMessage() lands there through messageChanged
     statusBar()->hide();
-    connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString& text) { showStatusText(text); });
+    connect(statusBar(), &QStatusBar::messageChanged, m_ui, [this](const QString& text) { showStatusText(text); });
     StartupTrace::mark("  statusbar");
 
-    // The start page (Edit unless the user chose another), or the nearest shown one when it is hidden
+    // The start page (Edit unless the user chose another), or the nearest shown one when it is hidden. Built again
+    // (rebuildUi): the page it was on, as the same page (no page entry: the playhead and the Comp clip stay)
     StartupTrace::mark("pages assembled");
-    showStartPage();
+    if (m_rebuilding) showPage(m_page);
+    else showStartPage();
     StartupTrace::mark("showPage");
 }
 

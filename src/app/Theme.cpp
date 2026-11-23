@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QPalette>
 #include <QSettings>
+#include <QStyle>
 #include <QStyleFactory>
 
 #include <algorithm>
@@ -184,9 +185,17 @@ void load(const QString& overrideDesign)
     activate(loadedColors());
 }
 
-bool restartNeeded()
+bool changed()
 {
     return saved(savedDesign()) != loadedColors();
+}
+
+bool switchToSaved(QApplication& app)
+{
+    if (!changed()) return false;
+    load();
+    apply(app);
+    return true;
 }
 
 QColor mix(const QColor& a, const QColor& b, double t)
@@ -233,7 +242,8 @@ QString disabledToolButtonStyle()
 
 void apply(QApplication& app)
 {
-    app.setStyle(QStyleFactory::create("Fusion")); // looks the same on Linux and Windows
+    // Looks the same on Linux and Windows (once: a new style object repolishes every widget again)
+    if (app.style()->name().compare("fusion", Qt::CaseInsensitive) != 0) app.setStyle(QStyleFactory::create("Fusion"));
 
     QPalette p;
     p.setColor(QPalette::Window, window);

@@ -397,6 +397,8 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/AiChat.h src/app/AiChat.cpp
     src/app/AiChatPanel.h src/app/AiChatPanel.cpp
     src/app/MainWindowChat.cpp
+    src/app/MainWindowRebuild.cpp
+    src/app/SessionResume.h src/app/SessionResume.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/MainWindowReframe.cpp
@@ -464,6 +466,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/ShapeOverlay.h         src/ui/ShapeOverlay.cpp
+    src/ui/SwitchCurtain.h        src/ui/SwitchCurtain.cpp
     src/ui/DrawOverlay.h          src/ui/DrawOverlay.cpp
     src/ui/TourOverlay.h          src/ui/TourOverlay.cpp
     src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp

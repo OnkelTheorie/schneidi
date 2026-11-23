@@ -9,7 +9,8 @@ class QApplication;
 
 // Colors of the UI. All widgets get their colors from here (never hardcode).
 // Designs exist as data (assets/themes/*.json, built in as a resource). At startup load() sets the values
-// below from the chosen design + user choice (QSettings); a change takes effect after restart (like the language).
+// below from the chosen design + user choice (QSettings); a change applies at once: switchToSaved() sets the values
+// and the app's palette/style sheet, the main window builds its widgets again (MainWindow::rebuildUi, like the language).
 // The default values here correspond to the "Dark Orange" design (also apply if load() never runs, e.g. in tests).
 namespace Theme {
 
@@ -84,8 +85,11 @@ void save(const QString& design, const Colors& chosen); // saves design + deviat
 
 void activate(const Colors& colors); // sets the colors above (missing keys stay)
 void load(const QString& overrideDesign = {}); // at startup before apply(); override only for this run (--design)
-bool restartNeeded(); // saved choice differs from the colors loaded at startup
+bool changed(); // saved choice differs from the colors in use (load/switchToSaved)
 void apply(QApplication& app);
+// The saved choice in use from now on (load + apply); false = it was in use already. Widgets that took colors when
+// they were made keep them: the caller builds them again
+bool switchToSaved(QApplication& app);
 
 // helpers
 QColor mix(const QColor& a, const QColor& b, double t); // t = 0 -> a, 1 -> b

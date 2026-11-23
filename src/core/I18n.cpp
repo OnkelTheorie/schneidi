@@ -16,6 +16,7 @@ namespace {
 
 constexpr const char* kContext = "schneidi";
 QString s_installed; // language of this run (install), may differ from the setting (--lang)
+QList<QTranslator*> s_translators; // what install() put in (switchTo takes them out again)
 
 // Simple translator without Qt Linguist: dictionary from a JSON resource
 class MapTranslator : public QTranslator {
@@ -125,13 +126,17 @@ void install(const QString& override)
     QLocale::setDefault(locale);
     // Only against a platform theme in another language: in the system language its texts are right (KDE
     // translates e.g. "Cancel" itself, which the source translator would hide)
-    if (lang != QLocale::system().name().left(2)) QCoreApplication::installTranslator(new SourceTranslator(app));
+    const auto put = [](QTranslator* t) {
+        QCoreApplication::installTranslator(t);
+        s_translators << t;
+    };
+    if (lang != QLocale::system().name().left(2)) put(new SourceTranslator(app));
     if (lang != "de") {
         // English first, so texts not translated yet show in English rather than German
         QHash<QString, QString> map;
         readDictionary("en", map);
         if (lang != "en") readDictionary(lang, map);
-        QCoreApplication::installTranslator(new MapTranslator(std::move(map), app));
+        put(new MapTranslator(std::move(map), app));
         if (lang == "en") return;
     }
     // Qt's own texts (dialog buttons like Save/Discard, the context menu of text fields) in the same language: where
@@ -139,9 +144,22 @@ void install(const QString& override)
     auto* qt = new QTranslator(app);
     if (qt->load(QLocale(lang), "qtbase", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath))
         || qt->load(QLocale(lang), "qtbase", "_", QCoreApplication::applicationDirPath() + "/translations"))
-        QCoreApplication::installTranslator(qt);
+        put(qt);
     else
         delete qt;
+}
+
+bool switchTo(const QString& lang)
+{
+    if (!known(lang)) return false;
+    for (QTranslator* t : std::as_const(s_translators)) {
+        QCoreApplication::removeTranslator(t);
+        delete t;
+    }
+    s_translators.clear();
+    prepareEnvironment(lang); // the platform theme's own texts (KDE message box buttons) in new dialogs
+    install(lang);
+    return true;
 }
 
 QString translate(const QString& lang, const char* source)

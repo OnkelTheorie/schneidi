@@ -360,7 +360,7 @@ QWidget* MainWindow::buildLiveIndicator()
     lay->addWidget(m_liveButton);
     m_liveLinger.setSingleShot(true);
     m_liveLinger.setInterval(2500);
-    connect(&m_liveLinger, &QTimer::timeout, this, &MainWindow::updateLiveIndicator);
+    connect(&m_liveLinger, &QTimer::timeout, m_ui, [this] { updateLiveIndicator(); });
     connect(m_liveButton, &QToolButton::clicked, this, [this] {
         if (m_liveRefused) {
             m_liveRefused = false;

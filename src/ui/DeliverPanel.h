@@ -29,11 +29,15 @@ class QListWidget;
 class DeliverPanel : public QWidget {
     Q_OBJECT
 public:
-    DeliverPanel(Project* project, QWidget* parent = nullptr);
+    // queue: one that goes on (a running render while the window builds its widgets again, MainWindow::rebuildUi);
+    // taken over as a child. Without one the panel makes its own.
+    DeliverPanel(Project* project, QWidget* parent = nullptr, RenderQueue* queue = nullptr);
     ~DeliverPanel() override;
 
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
     RenderQueue* renderQueue() const { return m_queue; }
+    // The queue out of this panel (it goes on without it; the caller hands it to the next panel). Once, before deleting
+    RenderQueue* takeRenderQueue();
 
     // Current settings (resolution as timeline / shorter edge / fixed size, depending on the choice)
     RenderSettings settings() const;

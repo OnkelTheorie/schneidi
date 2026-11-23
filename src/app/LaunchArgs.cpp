@@ -34,11 +34,18 @@ bool handsOver(const QStringList& args)
            && !args.contains("--new-instance");
 }
 
-QStringList restart(const QString& projectPath)
+QStringList restart(const QString& projectPath, const QString& resumeFile)
 {
     QStringList args{"--new-instance"};
-    if (!projectPath.isEmpty()) args << projectPath;
+    if (!resumeFile.isEmpty()) args << "--resume" << resumeFile;
+    else if (!projectPath.isEmpty()) args << projectPath;
     return args;
+}
+
+QString resumeFile(const QStringList& args)
+{
+    const int i = args.indexOf("--resume");
+    return i >= 0 && i + 1 < args.size() ? args.at(i + 1) : QString();
 }
 
 Info info(const QStringList& args)
