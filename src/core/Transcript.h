@@ -92,7 +92,9 @@ int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous = -1, 
 // `maxGapMs` or before it would get longer than `maxChars`; long pauses are not shown (a word lasts at most
 // about its spoken length); every cue stays long enough to read, up to the next one. ids stay 0
 // (Editor::importSubtitles assigns them).
-QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars = 42, int maxGapMs = 700, int offset = 0);
+// `cutsMs`: cuts between clips (ms of the transcribed sound, cutsMs below): no cue spans one, none lasts past it.
+QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars = 42, int maxGapMs = 700, int offset = 0,
+                            const QVector<qint64>& cutsMs = {});
 
 // One cue per word (from its start to where it is spoken to, one CueWord; a word overlapping the next ends there),
 // timeline frames with `offset` added: the input of Subtitles::readable with the word times
@@ -101,8 +103,22 @@ QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset
 // Readable subtitles of the words (Subtitles::readable of wordCues with `rules`, word times kept); not for music: then like
 // startAtSound per cue (a cue without any sound is dropped, a start in silence moves to the sound) - per cue, so a
 // quiet word between loud ones stays
+// `cutsMs` as in toCues: the words between two cuts are made readable on their own.
 QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset = 0,
-                                  bool music = false, const Subtitles::ReadableRules& rules = {});
+                                  bool music = false, const Subtitles::ReadableRules& rules = {},
+                                  const QVector<qint64>& cutsMs = {});
+
+// Cuts of a timeline range [from, to) (frames) on the audio tracks `tracks` (empty = every track not muted): where a
+// clip begins or ends inside the range, not where one only continues the one before (same file, the next source
+// frame: a clip split in two). Sorted, each once. For transcripts of a timeline: a subtitle never starts in the clip
+// before its words' clip (user report 23.11.: the next clip's line already showed at the end of the one before).
+QVector<int> cutFrames(const Timeline& tl, int from, int to, const QVector<int>& tracks = {});
+// cutFrames as ms of the sound transcribed from `from` on (the words' times)
+QVector<qint64> cutsMs(const QVector<int>& cutFrames, int from, double fps);
+// Words at cuts (ms): a word whose spoken part (spokenEnd) crosses a cut belongs to the side with more of it (whisper
+// and the voice detection's padding start the first word after a cut a little early) - after it, it starts at the
+// cut; before it, it ends there. Any word ends at the next cut after its start.
+void fitToCuts(QVector<Word>& words, const QVector<qint64>& cutsMs);
 
 // End of a word without the pause after it (whisper stretches `to` to the next word)
 qint64 spokenEnd(const Word& w);

@@ -249,6 +249,63 @@ void testPieces()
         CHECK_EQ(later.size(), second + 7);
         CHECK(Transcript::dropRepeats(later, later.size()) == 0); // an empty piece
     }
+    // Two clips cut back to back (user report 23.11.: the next clip's line already showed at the end of the clip
+    // before): the cut is known, the first word after it (whisper put it 150 ms early) starts at it, no cue spans it
+    {
+        Timeline tl;
+        tl.audio.resize(2);
+        Clip a, b;
+        a.mediaPath = "/m/a.wav", a.start = 0, a.in = 0, a.out = 49;   // frames 0-49 (25 fps: 0-2 s)
+        b.mediaPath = "/m/b.wav", b.start = 50, b.in = 10, b.out = 59; // frames 50-99
+        tl.audio[0].clips << b << a; // in any order
+        CHECK(Transcript::cutFrames(tl, 0, 100) == QVector<int>{50});
+        CHECK(Transcript::cutFrames(tl, 0, 100, {1}).isEmpty()); // the other track
+        CHECK(Transcript::cutFrames(tl, 60, 100).isEmpty());      // outside the range
+        // A clip split in two (same file, next source frame) is no cut; a gap after a clip is
+        Clip rest = a;
+        rest.start = 50, rest.in = 50, rest.out = 79;
+        Timeline split;
+        split.audio.resize(1);
+        split.audio[0].clips << a << rest;
+        CHECK(Transcript::cutFrames(split, 0, 200) == QVector<int>{80}); // only where the sound ends
+        split.audio[0].clips[1].start = 60;
+        CHECK(Transcript::cutFrames(split, 0, 200) == (QVector<int>{50, 60, 90}));
+        const QVector<qint64> cuts = Transcript::cutsMs(Transcript::cutFrames(tl, 0, 100), 0, 25);
+        CHECK(cuts == QVector<qint64>{2000});
+
+        const QVector<Transcript::Word> heard{{0, 400, "Das"},       {400, 800, "war"},     {800, 1300, "Clip"},
+                                              {1300, 2100, "eins"},  {1850, 2300, "Hallo"}, {2300, 2600, "hier"},
+                                              {2600, 3000, "zwei."}};
+        // Without the cuts: one line over the cut, starting in the first clip (the bug)
+        const QVector<SubtitleCue> before = Transcript::toCues(heard, 25, 42, 700, 0);
+        CHECK(before.size() == 1 && before.value(0).text.contains("Hallo"));
+        QVector<Transcript::Word> w = heard;
+        Transcript::fitToCuts(w, cuts);
+        CHECK_EQ(w[4].from, 2000);           // "Hallo" belongs to the second clip
+        CHECK_EQ(w[3].to, 2000);             // "eins" never runs on into it
+        CHECK(w[3].from == 1300 && w[0].from == 0);
+        const auto spans = [](const QVector<SubtitleCue>& cues, int cut) {
+            for (const SubtitleCue& c : cues)
+                if (c.start < cut && c.end > cut) return true;
+            return false;
+        };
+        const QVector<SubtitleCue> lines = Transcript::toCues(w, 25, 42, 700, 0, cuts);
+        CHECK_EQ(cues(lines), QString("0-46 Das war Clip eins | 50-85 Hallo hier zwei."));
+        CHECK(!spans(lines, 50));
+        // With an offset (a range from frame 100 on) and short readable cues: the same
+        Timeline later = tl;
+        for (Clip& c : later.audio[0].clips) c.start += 100;
+        const QVector<qint64> laterCuts = Transcript::cutsMs(Transcript::cutFrames(later, 100, 200), 100, 25);
+        CHECK(laterCuts == QVector<qint64>{2000});
+        for (const auto length : {Subtitles::CueLength::Normal, Subtitles::CueLength::Short, Subtitles::CueLength::VeryShort}) {
+            const QVector<SubtitleCue> r = Transcript::readableCues(w, {}, 25, 100, false, Subtitles::rulesFor(length), laterCuts);
+            CHECK(!r.isEmpty() && !spans(r, 150));
+            for (const SubtitleCue& c : r)
+                if (c.text.contains("Hallo")) CHECK(c.start >= 150);
+            for (const SubtitleCue& c : r)
+                for (const CueWord& cw : c.words) CHECK(cw.from >= 0 && cw.to <= c.length() && cw.from < cw.to);
+        }
+    }
     // DTW presets by model file, speech segments of the voice detection program
     CHECK_EQ(Transcriber::dtwPreset("/x/ggml-large-v3-q5_0.bin"), QString("large.v3"));
     CHECK_EQ(Transcriber::dtwPreset("ggml-large-v3-turbo-q5_0.bin"), QString("large.v3.turbo"));

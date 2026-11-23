@@ -224,15 +224,20 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
                                  .arg(int(std::lround(m_transcriber.detectedProbability() * 100)))
                                  .arg(name(m_language));
         }
-        const Transcript::Result& r = m_transcriber.result();
+        Transcript::Result r = m_transcriber.result();
         const double fps = m_format.rate.fps();
+        // The words belong to their clip, no subtitle spans a cut between clips (the next clip's line showed at the
+        // end of the clip before, user report 23.11.)
+        const QVector<qint64> cuts =
+            Transcript::cutsMs(Transcript::cutFrames(m_timeline, m_from, m_to, m_jobs[m_job].tracks), m_from, fps);
+        Transcript::fitToCuts(r.words, cuts);
         QVector<SubtitleCue> cues;
         if (const Subtitles::CueLength length = cueLength(); length == Subtitles::CueLength::Normal) {
-            cues = Transcript::toCues(r.words, fps, m_chars->value(), 700, m_from);
+            cues = Transcript::toCues(r.words, fps, m_chars->value(), 700, m_from, cuts);
             Transcript::startAtSound(cues, r.levels, fps, m_from);
             Transcript::endAtSound(cues, r.levels, fps, m_from);
         } else { // short cues, each word keeps its time (Transcript panel, re-split later)
-            cues = Transcript::readableCues(r.words, r.levels, fps, m_from, false, Subtitles::rulesFor(length));
+            cues = Transcript::readableCues(r.words, r.levels, fps, m_from, false, Subtitles::rulesFor(length), cuts);
         }
         for (SubtitleCue& c : cues) c.end = std::min(c.end, m_to);
         if (!cues.isEmpty()) m_results << Result{m_jobs[m_job].name, cues};

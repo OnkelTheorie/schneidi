@@ -591,7 +591,93 @@ QVector<int> balancedBreaks(const QVector<Word>& words, int first, int last, int
 }
 }
 
-QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars, int maxGapMs, int offset)
+namespace {
+// The first cut after `t` (ms); -1 = none
+qint64 cutAfter(const QVector<qint64>& cuts, qint64 t)
+{
+    const auto it = std::upper_bound(cuts.begin(), cuts.end(), t);
+    return it == cuts.end() ? -1 : *it;
+}
+
+// No cue lasts past the first cut after its start (frames); its word times stay inside it
+void endAtCuts(QVector<SubtitleCue>& cues, const QVector<qint64>& cutsMs, double fps, int offset)
+{
+    if (cutsMs.isEmpty()) return;
+    for (SubtitleCue& c : cues) {
+        // The first cut (as a frame) after the cue's start
+        int frame = -1;
+        for (const qint64 cut : cutsMs)
+            if (const int f = offset + int(std::lround(cut / 1000.0 * fps)); f > c.start) {
+                frame = f;
+                break;
+            }
+        if (frame > c.start && frame < c.end) c.end = frame;
+        for (CueWord& w : c.words) {
+            w.to = std::clamp(w.to, 1, c.length());
+            w.from = std::clamp(w.from, 0, w.to - 1);
+        }
+    }
+}
+} // namespace
+
+QVector<int> cutFrames(const Timeline& tl, int from, int to, const QVector<int>& tracks)
+{
+    QVector<int> out;
+    for (int t = 0; t < tl.audio.size(); ++t) {
+        if (tracks.isEmpty() ? tl.audio[t].muted : !tracks.contains(t)) continue;
+        QVector<Clip> clips = tl.audio[t].clips;
+        std::sort(clips.begin(), clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+        for (int i = 0; i < clips.size(); ++i) {
+            const Clip& c = clips[i];
+            // A clip that only continues the one before it (split in two): no cut between them
+            const bool continues = i > 0 && clips[i - 1].end() == c.start && clips[i - 1].mediaPath == c.mediaPath
+                                   && !c.mediaPath.isEmpty() && clips[i - 1].out + 1 == c.in
+                                   && clips[i - 1].speed == c.speed && clips[i - 1].audioStream == c.audioStream;
+            const bool continued = i + 1 < clips.size() && clips[i + 1].start == c.end()
+                                   && clips[i + 1].mediaPath == c.mediaPath && !c.mediaPath.isEmpty()
+                                   && c.out + 1 == clips[i + 1].in && clips[i + 1].speed == c.speed
+                                   && clips[i + 1].audioStream == c.audioStream;
+            if (!continues && c.start > from && c.start < to) out << c.start;
+            if (!continued && c.end() > from && c.end() < to) out << c.end();
+        }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+QVector<qint64> cutsMs(const QVector<int>& cutFrames, int from, double fps)
+{
+    QVector<qint64> out;
+    if (fps <= 0) return out;
+    for (int f : cutFrames) out << qint64(std::lround((f - from) * 1000.0 / fps));
+    return out;
+}
+
+void fitToCuts(QVector<Word>& words, const QVector<qint64>& cutsMs)
+{
+    if (cutsMs.isEmpty()) return;
+    for (Word& w : words) {
+        const qint64 end = std::max(spokenEnd(w), w.from + 1);
+        const qint64 cut = cutAfter(cutsMs, w.from);
+        if (cut >= 0 && cut < end) {
+            if (end - cut > cut - w.from) { // mostly after the cut: it is the next clip's word
+                w.to = std::max(w.to, cut + (end - w.from));
+                w.from = cut;
+            } else {
+                w.to = cut;
+            }
+        }
+        // Never on into the next clip (whisper stretches `to` over the pause up to the next word)
+        if (const qint64 next = cutAfter(cutsMs, w.from); next >= 0) w.to = std::clamp(w.to, w.from, next);
+    }
+    // The order stays (a word moved to the cut never passes the next one)
+    for (qsizetype i = 1; i < words.size(); ++i) words[i].from = std::max(words[i].from, words[i - 1].from);
+    for (Word& w : words) w.to = std::max(w.to, w.from);
+}
+
+QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars, int maxGapMs, int offset,
+                            const QVector<qint64>& cutsMs)
 {
     QVector<SubtitleCue> cues;
     const auto frame = [&](qint64 ms) { return offset + int(std::lround(ms / 1000.0 * fps)); };
@@ -611,6 +697,11 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
     for (int i = 0; i < words.size(); ++i) {
         const Word& w = words[i];
         if (i > first && w.from - spokenEnd(words[i - 1]) > maxGapMs) flush(first, i - 1), first = i, chars = 0;
+        // A cut between two clips: never one cue over it
+        if (i > first && !cutsMs.isEmpty()) {
+            const qint64 cut = cutAfter(cutsMs, words[i - 1].from);
+            if (cut >= 0 && cut <= w.from) flush(first, i - 1), first = i, chars = 0;
+        }
         chars += (chars ? 1 : 0) + int(w.text.size());
         const QChar last = w.text.back();
         // Sentence end: always a new cue; a comma after half a line: a good place for one
@@ -625,6 +716,7 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
         if (i + 1 < cues.size()) end = std::min(end, cues[i + 1].start);
         cues[i].end = std::max(cues[i].end, end);
     }
+    endAtCuts(cues, cutsMs, fps, offset);
     return cues;
 }
 
@@ -647,9 +739,18 @@ QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset
 }
 
 QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset, bool music,
-                                  const Subtitles::ReadableRules& rules)
+                                  const Subtitles::ReadableRules& rules, const QVector<qint64>& cutsMs)
 {
-    QVector<SubtitleCue> cues = Subtitles::readable(wordCues(words, fps, offset), fps, rules);
+    // The words of each clip (between two cuts) on their own: readable never joins them over a cut
+    QVector<SubtitleCue> cues;
+    for (qsizetype a = 0; a < words.size();) {
+        const qint64 cut = cutAfter(cutsMs, words[a].from);
+        qsizetype b = a + 1;
+        while (b < words.size() && (cut < 0 || words[b].from < cut)) ++b;
+        cues += Subtitles::readable(wordCues(words.mid(a, b - a), fps, offset), fps, rules);
+        a = b;
+    }
+    endAtCuts(cues, cutsMs, fps, offset);
     if (music) return cues;
     QVector<SubtitleCue> moved = cues;
     for (int i = 0; i < moved.size(); ++i) moved[i].id = i; // which cue it was (startAtSound drops some)

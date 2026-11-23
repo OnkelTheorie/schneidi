@@ -511,9 +511,17 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     failIfCanceled();
     if (!ok) fail("TRANSCRIBE_FAILED", message);
 
-    const Transcript::Result& r = t.result();
+    Transcript::Result r = t.result();
+    // A project: its cuts between clips; the words belong to their clip, no cue spans a cut (the next clip's line
+    // showed at the end of the clip before)
+    QVector<qint64> cuts;
+    if (isProjectFile(src)) {
+        cuts = Transcript::cutsMs(Transcript::cutFrames(req.timeline, req.from, req.to, req.audioTracks), req.from,
+                                  f.rate.fps());
+        Transcript::fitToCuts(r.words, cuts);
+    }
     const int maxChars = a.contains("max_chars") ? std::clamp(a["max_chars"].toInt(), 10, 200) : 42;
-    QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
+    QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset, cuts);
     // Not for music: its "loud" is measured against the file, a quieter intro of a song counts as silence (the first
     // shouted line was dropped while its words were there)
     if (!req.music) {
@@ -526,7 +534,8 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     const bool shortCues = cueLength == Subtitles::CueLength::Short || cueLength == Subtitles::CueLength::VeryShort;
     const bool readable = (a["readable"].toBool() || shortCues) && !a.contains("captions");
     if (readable)
-        cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music, Subtitles::rulesFor(cueLength));
+        cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music, Subtitles::rulesFor(cueLength),
+                                        cuts);
     if (shortCues && chosen == Subtitles::CueLength::Auto && !a.contains("captions"))
         notes << QString("short cues (one line, a few words) for the vertical picture; length:\"normal\" for 1-2 lines");
     QJsonArray segments;
