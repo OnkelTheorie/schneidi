@@ -129,7 +129,7 @@ bool MainWindow::rebuildUi(bool retry)
     const bool busy = NestedLoop::running() || QApplication::activeModalWidget() || QApplication::activePopupWidget()
                       || (m_mediaPool && m_mediaPool->probing()) || (m_voiceover && m_voiceover->recording())
                       || m_directCancel || m_directApplyCancel || m_directWishTurn || m_liveCommand || m_chatCommand
-                      || m_review.active;
+                      || (m_review.active && !m_review.pending); // (a turn under way; its waiting bar comes back below)
     if (busy) {
         if (retry && !m_rebuildQueued) {
             m_rebuildQueued = true;
@@ -244,6 +244,9 @@ bool MainWindow::rebuildUi(bool retry)
     }
     m_deliver->setSettings(deliver);
     if (m_chatPanel && !chatDraft.isEmpty()) m_chatPanel->input()->setPlainText(chatDraft);
+    if (m_chatPanel && m_review.pending) // the AI's changes still wait for "accept or discard"
+        m_chatPanel->showApproval(T("Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder "
+                                    "verwerfen? Bis dahin wartet sie."));
     if (updateBar) {
         m_updateText->setText(T("schneidi %1 ist da (du hast %2).").arg(m_updateNews[0], m_updateNews[1]));
         m_updateBar->show();
