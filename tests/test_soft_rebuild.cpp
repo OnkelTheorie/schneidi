@@ -334,9 +334,9 @@ void testSwitch(Engine& engine)
 
 void testPhone(Engine& engine)
 {
-    // The phone form by the window's size (as on Android): a language and design switch keeps the form - a shell of
-    // the new widgets - and the state; the desktop comes back as it was when the window is wide again
-    MainWindow::setFormBySize(true);
+    // The phone form (setLayoutForm, as the size rule does on Android): a language and design switch keeps the form - a
+    // shell of the new widgets - and the state; the desktop form afterwards is in the new language too
+    qputenv("SCHNEIDI_LAYOUT", "phone"); // (check.h pins the desktop form)
     chooseLook("de", "dark-orange");
     I18n::switchTo("de");
     Theme::switchToSaved(*qApp);
@@ -344,7 +344,9 @@ void testPhone(Engine& engine)
     w.disableAutosave();
     w.resize(411, 760);
     w.show();
-    QTest::qWait(400); // (the form follows the size a moment later)
+    QTest::qWait(50);
+    w.setLayoutForm(MainWindow::LayoutForm::Phone);
+    QTest::qWait(50);
     CHECK(w.layoutForm() == MainWindow::LayoutForm::Phone);
     Project* project = w.liveProject();
     w.editor()->addTitle(0, -1, 0, TitleKind::Text);
@@ -381,9 +383,11 @@ void testPhone(Engine& engine)
     if (auto* add = w.addMediaButton(); CHECK(add)) CHECK_EQ(add->text(), QString("Add videos")); // the shell's own, new
     dump(&w, "6-phone-en");
 
-    // Wide again: the desktop form, with its page bar in the new language
+    // The desktop form again: its menus in the new language
+    qputenv("SCHNEIDI_LAYOUT", "desktop");
     w.resize(1600, 950);
-    QTest::qWait(400);
+    w.setLayoutForm(MainWindow::LayoutForm::Desktop);
+    QTest::qWait(50);
     CHECK(w.layoutForm() == MainWindow::LayoutForm::Desktop);
     CHECK_EQ(firstMenu(w), QString("&File"));
     CHECK_EQ(Check::dump(project->timeline()), clips);
@@ -391,7 +395,6 @@ void testPhone(Engine& engine)
 
     chooseLook("de", "dark-orange");
     CHECK(w.rebuildUi(false));
-    MainWindow::setFormBySize(std::nullopt);
 }
 
 void testResume(Engine& engine)
