@@ -797,6 +797,8 @@ private:
     // The timeline's playhead fixed in the middle: setting timeline/centerPlayhead on/off, else on in the phone and
     // tablet forms (TimelineView::setCenterPlayhead)
     void applyCenterPlayhead();
+    void applyScrollIndicators(); // phone form: thin indicators instead of scroll bars
+    class ScrollIndicators* m_scrollIndicators = nullptr;
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

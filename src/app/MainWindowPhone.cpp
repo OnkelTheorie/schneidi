@@ -12,6 +12,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "ui/touch/ScrollIndicators.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/ColorPanel.h"
 #include "ui/DeliverPanel.h"
@@ -262,6 +263,7 @@ void MainWindow::setLayoutForm(LayoutForm form)
     } else {
         enableShell(form == LayoutForm::Tablet);
     }
+    applyScrollIndicators();
     if (curtain) {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); // (the new arrangement laid out)
         curtain->reveal();
@@ -641,6 +643,20 @@ void MainWindow::phoneAdoptBackgroundJobs()
     // A tap: what runs, in full (a phone has no tooltips)
     connect(m_backgroundJobs, &BackgroundJobs::detailsRequested, this,
             [this](const QString& text) { m_viewer->showNotice(text, 4000); });
+}
+
+void MainWindow::applyScrollIndicators()
+{
+    // A phone's scroll bars are thin indicators that show while the content moves (finger-wide bars took room in
+    // every panel); the tablet keeps the touch mode's bars, the desktop its own
+    const bool on = m_phone && !m_phone->tablet();
+    if (on && !m_scrollIndicators) {
+        m_scrollIndicators = new ScrollIndicators(this);
+    } else if (!on && m_scrollIndicators) {
+        delete m_scrollIndicators;
+        m_scrollIndicators = nullptr;
+    }
+    m_timeline->setScrollIndicators(on);
 }
 
 void MainWindow::applyCenterPlayhead()

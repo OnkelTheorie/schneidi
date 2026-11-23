@@ -493,6 +493,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/touch/TouchGestures.h  src/ui/touch/TouchGestures.cpp
     src/ui/touch/TouchMode.cpp
     src/ui/touch/TouchPhone.cpp
+    src/ui/touch/ScrollIndicators.h src/ui/touch/ScrollIndicators.cpp
     src/ui/phone/PhoneShell.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h

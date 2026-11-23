@@ -203,7 +203,13 @@ Status (updated with each commit):
 - 1 Transport jitter: DONE. Viewer timecode in the system fixed font when "monospace" is no fixed-pitch family
   (Android), centred, minimum width = the timecode with every digit as the widest digit (grows only); the play button
   as wide as the wider of ▶/⏸. Test testSteadyTransport in test_phone_layout (play x and timecode width over frames).
-- 3, 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
+- 3 Scroll bars: DONE. Phone form only (tablet keeps the touch bars, desktop its own): `ui/touch/ScrollIndicators`
+  (every scroll area of the window, also ones shown later: bars AlwaysOff, a 4 px rounded indicator over the edge,
+  shown when value/range move, fades after 900 ms; while shown a 14 px zone drags it, so a mouse in a narrow window
+  keeps a way; hidden = transparent to the mouse). Timeline: `TimelinePanel::setScrollIndicators` (over the lanes,
+  poked from syncScrollbars). Leaving the phone form restores the policies. Tests testScrollIndicators + "no scroll
+  bar in the phone window" in test_phone_layout (710 green), test_layout_switch 78.
+- 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

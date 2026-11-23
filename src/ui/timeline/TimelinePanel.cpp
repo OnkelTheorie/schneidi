@@ -17,6 +17,7 @@
 #include <QPainterPath>
 #include <QScrollArea>
 #include <QScrollBar>
+#include "ui/touch/ScrollIndicators.h"
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -322,7 +323,8 @@ void TimelinePanel::setCompact(bool on)
 void TimelinePanel::syncScrollbars()
 {
     // The centred playhead (phones): sliding the timeline is the way along it, no bar under it
-    m_hbar->setVisible(!m_view->centerPlayhead());
+    m_hbar->setVisible(!m_view->centerPlayhead() && !m_hIndicator);
+    m_vbar->setVisible(!m_vIndicator);
     // Scrollbars only mirror the ViewState – they never reset it here
     const QSignalBlocker bh(m_hbar), bv(m_vbar);
     const auto& v = m_view->view();
@@ -337,6 +339,27 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setPageStep(vp);
     m_vbar->setSingleStep(20);
     m_vbar->setValue(v.scrollY);
+    if (m_vIndicator) m_vIndicator->poke(); // (the bars' signals are blocked above)
+    if (m_hIndicator && !m_view->centerPlayhead()) m_hIndicator->poke();
+}
+
+void TimelinePanel::setScrollIndicators(bool on)
+{
+    if (on == (m_vIndicator != nullptr)) return;
+    delete m_vIndicator;
+    delete m_hIndicator;
+    m_vIndicator = m_hIndicator = nullptr;
+    if (on) {
+        // Along the lanes: below the ruler, right of the track headers
+        TimelineView* view = m_view;
+        const auto lanes = [view] {
+            return QRect(TimelineView::kHeaderW, TimelineView::kRulerH, std::max(1, view->width() - TimelineView::kHeaderW),
+                         std::max(1, view->height() - TimelineView::kRulerH));
+        };
+        m_vIndicator = new ScrollIndicator(m_vbar, m_view, lanes);
+        m_hIndicator = new ScrollIndicator(m_hbar, m_view, lanes);
+    }
+    syncScrollbars();
 }
 
 void TimelinePanel::setOverviewEnabled(bool on)

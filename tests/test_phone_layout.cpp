@@ -24,6 +24,7 @@
 #include "ui/timeline/TimelineView.h"
 #include "ui/phone/PhoneShell.h"
 #include "ui/touch/Touch.h"
+#include "ui/touch/ScrollIndicators.h"
 #include "app/Theme.h"
 
 #include <QApplication>
@@ -762,6 +763,43 @@ void testSteadyTransport(Engine& engine)
                   __FILE__, __LINE__, QFontInfo(tc->font()).family());
 }
 
+// Item 3 of the phone review: thin scroll indicators that show while the content moves, instead of finger-wide bars
+void testScrollIndicators()
+{
+    QWidget window;
+    auto* lay = new QVBoxLayout(&window);
+    auto* area = new QScrollArea;
+    auto* tall = new QWidget;
+    tall->setMinimumSize(200, 2000);
+    area->setWidget(tall);
+    lay->addWidget(area);
+    window.resize(300, 400);
+    window.show();
+    settle();
+    auto* indicators = new ScrollIndicators(&window);
+    settle();
+    CHECK(area->verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff && !area->verticalScrollBar()->isVisible());
+    auto* ind = area->findChild<ScrollIndicator*>("scrollIndicatorV");
+    if (!CHECK(ind)) return;
+    CHECK(!ind->shown() && ind->testAttribute(Qt::WA_TransparentForMouseEvents)); // (hidden: no room, no touch)
+    CHECK(ind->width() <= ScrollIndicator::kHit && ind->geometry().right() >= area->viewport()->geometry().right() - 1);
+    area->verticalScrollBar()->setValue(300);
+    CHECK(ind->shown() && !ind->testAttribute(Qt::WA_TransparentForMouseEvents));
+    QTest::qWait(ScrollIndicator::kHideMs + 400);
+    CHECK(!ind->shown() && ind->testAttribute(Qt::WA_TransparentForMouseEvents));
+    // Shown, it drags like a bar (a mouse in a narrow window)
+    area->verticalScrollBar()->setValue(0);
+    const QPoint top(ind->width() / 2, 10);
+    QTest::mousePress(ind, Qt::LeftButton, {}, top);
+    QTest::mouseMove(ind, top + QPoint(0, 150));
+    QTest::mouseRelease(ind, Qt::LeftButton, {}, top + QPoint(0, 150));
+    Check::report(area->verticalScrollBar()->value() > 300, "indicator drags the content", __FILE__, __LINE__,
+                  QString::number(area->verticalScrollBar()->value()));
+    // Gone: the scroll bars as they were
+    delete indicators;
+    CHECK(area->verticalScrollBarPolicy() == Qt::ScrollBarAsNeeded && !area->findChild<ScrollIndicator*>());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -776,6 +814,7 @@ int main(int argc, char** argv)
     SettingsDialog::setSavedPhoneLayout({});
     Touch::installDialogFit(&app); // (main.cpp: Android only)
     testDialogFit();
+    testScrollIndicators();
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
@@ -800,6 +839,20 @@ int main(int argc, char** argv)
             if (b->orientation() == Qt::Horizontal && b->isVisible() && !qobject_cast<QAbstractScrollArea*>(b->parentWidget()->parentWidget()))
                 barShown = true;
         CHECK(!barShown);
+        // No scroll bar anywhere in the phone window (thin indicators instead); the desktop gets its bars back
+        const auto visibleBars = [&w] {
+            int n = 0;
+            for (QScrollBar* b : w.findChildren<QScrollBar*>())
+                if (b->isVisible() && b->maximum() > b->minimum()) ++n;
+            return n;
+        };
+        for (const char* id : {"media", "inspector", "effects"}) {
+            w.phoneShell()->openSheet(id);
+            settle();
+            Check::report(visibleBars() == 0, "no scroll bar in the phone window", __FILE__, __LINE__, id);
+        }
+        w.phoneShell()->closeSheet();
+        CHECK(w.findChild<TimelinePanel*>()->scrollIndicators());
         QSettings().setValue("timeline/magneticMain", false);
         QSettings().setValue("timeline/clipDrag", "instant");
         w.setLayoutForm(MainWindow::LayoutForm::Desktop);
@@ -807,6 +860,7 @@ int main(int argc, char** argv)
         CHECK(!view->magneticMain() && !view->holdToMove());
         w.setLayoutForm(MainWindow::LayoutForm::Desktop);
         CHECK(!view->magneticMain() && !view->centerPlayhead());
+        CHECK(!w.findChild<TimelinePanel*>()->scrollIndicators() && !w.findChild<ScrollIndicator*>());
         QSettings().remove("timeline/magneticMain");
         QSettings().remove("timeline/clipDrag");
     }

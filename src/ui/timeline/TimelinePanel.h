@@ -41,6 +41,9 @@ public:
     // Phone layout (ui/phone/PhoneShell): the tool bar never sets the panel's width - fewer tools (slip and slide stay
     // in the menu), a narrow timeline list, the rest scrolls sideways
     void setCompact(bool on);
+    // Phone: thin indicators over the lanes that show only while the view moves, instead of the scroll bars
+    void setScrollIndicators(bool on);
+    bool scrollIndicators() const { return m_vIndicator != nullptr; }
 
 private:
     void syncScrollbars();
@@ -60,6 +63,8 @@ private:
     bool m_overviewOnPage = true;
     QScrollBar* m_hbar;
     QScrollBar* m_vbar;
+    class ScrollIndicator* m_vIndicator = nullptr; // setScrollIndicators
+    class ScrollIndicator* m_hIndicator = nullptr;
     QHBoxLayout* m_bar = nullptr;
     QWidget* m_barWidget = nullptr;
     class QScrollArea* m_barScroll = nullptr; // setCompact
