@@ -30,11 +30,17 @@ namespace {
 // What a model entry is (item data role beside the id/path in Qt::UserRole)
 constexpr int kKindRole = Qt::UserRole + 1;
 enum ModelKind { CatalogModel, CustomModel, AddModel };
-// The quality levels, offered for download when missing: "Genau" (large-v3), "Schnell" (turbo)
-const char* const kLevels[] = {"whisper-model-large", "whisper-model-turbo"};
+// The quality levels, offered for download when missing: "Genau" (large-v3), "Schnell" (turbo), "Sehr schnell"
+// (Parakeet, only for its languages)
+const char* const kLevels[] = {"whisper-model-large", "whisper-model-turbo", "parakeet"};
 QString megabytes(qint64 bytes) { return T("%1 MB").arg(bytes / 1e6, 0, 'f', 0); }
 // The program a catalog model runs with is there or comes with the download (the whisper package)
-bool runnable() { return Extensions::find("whisper") || !Extensions::whisperProgram().isEmpty(); }
+bool runnable(const Extensions::Item& item)
+{
+    if (Extensions::find("whisper")) return true;
+    return item.kind == Extensions::Kind::ParakeetModel ? !Extensions::parakeetProgram().isEmpty()
+                                                        : !Extensions::whisperProgram().isEmpty();
+}
 } // namespace
 
 TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat& format, int from, int to,
@@ -105,6 +111,8 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     for (const auto& l : kLanguages) m_lang->addItem(T(l.name), l.code);
     m_lang->setCurrentIndex(std::max(0, m_lang->findData(settings.value("transcribe/language", "auto"))));
     form->addRow(T("Sprache"), m_lang);
+    // "Sehr schnell" (Parakeet) only for the languages it knows
+    connect(m_lang, &QComboBox::currentIndexChanged, this, &TranscribeDialog::updateState);
     m_model = new QComboBox;
     m_model->setObjectName("transcribe_model");
     // Own models: the last entry asks for a whisper.cpp file; an own one can be taken out of the list again
@@ -203,6 +211,8 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
             return;
         }
         m_language = m_transcriber.result().language;
+        // Parakeet did not know the language (whisper wrote it, or it may be poor): said after the run
+        if (const QString note = m_transcriber.engineNote(); !note.isEmpty()) m_engineNote = note;
         if (const QString heard = m_transcriber.otherLanguage(); !heard.isEmpty() && m_languageHint.isEmpty()) {
             const auto name = [this](const QString& code) {
                 const int i = m_lang->findData(code);
@@ -259,9 +269,16 @@ void TranscribeDialog::updateState()
         m_model->setItemData(i, CatalogModel, kKindRole);
         m_model->setItemData(i, T(item.description), Qt::ToolTipRole);
     };
-    // The quality levels first, missing ones as a download
-    for (const char* id : kLevels)
-        if (const Extensions::Item* item = Extensions::find(id); item && runnable()) addCatalog(*item);
+    // The quality levels first, missing ones as a download; "Sehr schnell" only for a language Parakeet knows
+    const QString language = m_lang->currentData().toString();
+    for (const char* id : kLevels) {
+        const Extensions::Item* item = Extensions::find(id);
+        if (!item || !runnable(*item)) continue;
+        if (item->kind == Extensions::Kind::ParakeetModel && language != QLatin1String("auto")
+            && !Transcriber::parakeetLanguage(language))
+            continue;
+        addCatalog(*item);
+    }
     // Other installed catalog models (small, base, tiny)
     for (const QString& id : Extensions::installedWhisperModels())
         if (m_model->findData(id) < 0) addCatalog(*Extensions::find(id));
@@ -411,6 +428,7 @@ void TranscribeDialog::run()
     m_jobs.clear();
     m_results.clear();
     m_languageHint.clear();
+    m_engineNote.clear();
     m_job = 0;
     // Always one whisper run per ticked track: in a mix whisper mixes up the speakers (measured: "oder" of one put
     // 3 s early onto the other's "Ja, ja"); without "one track each" the results are merged afterwards
@@ -457,7 +475,10 @@ void TranscribeDialog::startJob()
     req.language = m_lang->currentData().toString();
     // A chosen language is checked against whisper's own detection (a wrong one gives made-up words): told afterwards
     req.checkLanguage = req.language != QLatin1String("auto");
-    req.model = Extensions::whisperModelPath(m_model->currentData().toString());
+    // Parakeet ("Sehr schnell"): a language it does not know goes to the best whisper model there is
+    const QString chosen = m_model->currentData().toString();
+    req.model = chosen == QLatin1String("parakeet") ? Extensions::parakeetModel() : Extensions::whisperModelPath(chosen);
+    if (Transcriber::isParakeet(req.model)) req.whisperModel = Extensions::appWhisperModel(QString());
     QString error;
     if (!m_transcriber.start(req, &error)) {
         m_progress->hide();

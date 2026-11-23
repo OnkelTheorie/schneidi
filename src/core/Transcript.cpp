@@ -74,6 +74,49 @@ bool appendWhisperJson(const QByteArray& json, const std::function<qint64(qint64
     return true;
 }
 
+QHash<QString, QVector<Word>> parseParakeetLog(const QString& log)
+{
+    QHash<QString, QVector<Word>> out;
+    // "  [ 0] id=  515 frame= 48 dur_idx= 4 dur_val= 4 p=1.0000 plog=0.0000 t0= 384 t1= 416 word_start=true "▁F""
+    static const QRegularExpression token(R"re(t0=\s*(\d+)\s+t1=\s*(\d+)\s+word_start=(true|false)\s+"(.*)"\s*$)re");
+    static const QRegularExpression file(R"(^Processing file:\s*(.+?)\s*$)");
+    QString current; // the file being read; its words are appended to out[current] (no pointer: QHash rehashes)
+    QVector<Word> words;
+    qint64 pendingFrom = -1; // a bare word mark: the word starts there, with the next token's text
+    const auto flush = [&] {
+        if (!current.isNull()) out[current] += words;
+        words.clear();
+    };
+    for (const QString& line : log.split(QChar('\n'))) {
+        if (const auto m = file.match(line); m.hasMatch()) {
+            flush();
+            current = m.captured(1);
+            pendingFrom = -1;
+            continue;
+        }
+        const auto m = token.match(line);
+        if (!m.hasMatch() || current.isNull()) continue;
+        const qint64 t0 = m.captured(1).toLongLong() * 10, t1 = std::max(t0, m.captured(2).toLongLong() * 10);
+        QString text = m.captured(4);
+        const bool start = pendingFrom >= 0 || m.captured(3) == QLatin1String("true") || text.startsWith(QChar(0x2581));
+        text.remove(QChar(0x2581)); // SentencePiece's word mark
+        text = text.trimmed();
+        if (text.isEmpty()) {
+            if (start && pendingFrom < 0) pendingFrom = t0;
+            continue;
+        }
+        if (start || words.isEmpty()) {
+            words << Word{pendingFrom >= 0 ? pendingFrom : t0, t1, text};
+            pendingFrom = -1;
+        } else {
+            words.last().text += text;
+            words.last().to = std::max(words.last().to, t1);
+        }
+    }
+    flush();
+    return out;
+}
+
 qint64 pieceLength(const Piece& piece)
 {
     return piece.isEmpty() ? 0 : piece.last().at + piece.last().length;

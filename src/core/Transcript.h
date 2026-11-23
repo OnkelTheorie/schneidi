@@ -7,6 +7,7 @@
 #include "core/Types.h"
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
 #include <QVector>
 
@@ -41,6 +42,12 @@ bool parseWhisperJson(const QByteArray& json, Result* out, QString* error = null
 // after it).
 bool appendWhisperJson(const QByteArray& json, const std::function<qint64(qint64, bool)>& map, Result* out,
                        QString* error = nullptr);
+
+// parakeet-cli's log with token times (-ps, on stderr), files read one after the other: per file as it names it
+// ("Processing file: piece_000.wav") its words, in time order (ms from the file's start). A token that starts a word
+// ("▁Hallo") begins one, the others ("ür", ",", ".") belong to the word before; a word lasts from its first token's
+// start to its last token's end (10 ms steps).
+QHash<QString, QVector<Word>> parseParakeetLog(const QString& log);
 
 // A piece of sound for whisper: stretches of the whole sound (ms) one after the other, `at` = where a stretch starts
 // in the piece; between two stretches the piece is silent (a long pause cut short).

@@ -32,7 +32,13 @@ public:
     QVector<Result> results() const { return m_results; }
     QString language() const { return m_language; } // detected or chosen
     // After the run: whisper is sure the sound is in another language than the chosen one (a hint to show; empty = none)
-    QString languageHint() const { return m_languageHint; }
+    // Also: Parakeet did not know the language (Transcriber::engineNote)
+    QString languageHint() const
+    {
+        return m_engineNote.isEmpty() ? m_languageHint
+               : m_languageHint.isEmpty() ? m_engineNote
+                                          : m_languageHint + "\n\n" + m_engineNote;
+    }
 
     void reject() override;
     // Adds an own whisper.cpp model file to the model choice (remembered for next time) and selects it; false + error
@@ -88,4 +94,5 @@ private:
     QVector<Result> m_results;
     QString m_language;
     QString m_languageHint;
+    QString m_engineNote;
 };

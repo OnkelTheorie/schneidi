@@ -47,7 +47,8 @@ x264, x265 and libnuma) is the release asset `schneidi-<version>-gpl-sources.tar
 
 Not in these packages: Rubber Band, vid.stab, frei0r plugins (and x264/x265 in the GPL-free variant).
 
-whisper.cpp (speech recognition, MIT) is not bundled: schneidi downloads it as an extension on request.
+whisper.cpp (speech recognition, MIT; its package also carries `parakeet-cli`) is not bundled: schneidi downloads it as
+an extension on request, with its models (OpenAI Whisper, MIT, in whisper.cpp's ggml format).
 
 Local AI models are not bundled either; on request (Extensions, `schneidi-cli extensions --install faces`) schneidi
 downloads, each pinned by size and SHA-256:
@@ -56,6 +57,7 @@ downloads, each pinned by size and SHA-256:
 |---|---|---|
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.20.1, the CPU build of its GitHub release (Linux x64, Windows x64), id `onnxruntime` | MIT (its `LICENSE` and `ThirdPartyNotices.txt` are kept beside the library) | runs the models below; loaded at run time (QLibrary), never linked |
 | [YuNet](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet) `face_detection_yunet_2023mar.onnx` (Copyright (c) 2020 Shiqi Yu; opencv_zoo commit `48b10fa`), id `faces` | MIT (its `LICENSE` of the same commit is downloaded beside the model) | faces per shot in the material index (`index`) |
+| [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) by NVIDIA, in whisper.cpp's ggml conversion [ggml-org/parakeet-GGUF](https://huggingface.co/ggml-org/parakeet-GGUF/tree/35156454d1a39de06863303dd209fd2bed6ee079) `ggml-parakeet-tdt-0.6b-v3-q8_0.bin` (revision `3515645`), id `parakeet` | CC-BY-4.0 (attribution: NVIDIA, model unchanged apart from the format conversion and 8-bit quantization) | speech recognition "Sehr schnell" (`transcribe` `quality` `very_fast`), run by `parakeet-cli` of the whisper.cpp package |
 
 In the GPL-free variant x264/x265 (GPL-2.0+) are not bundled either: on request (Extensions, `schneidi-cli extensions --install x264`)
 schneidi downloads an FFmpeg program built with them ([BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds),

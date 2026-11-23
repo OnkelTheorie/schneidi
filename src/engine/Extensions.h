@@ -23,7 +23,7 @@ class QCryptographicHash;
 namespace Extensions {
 
 enum class Kind { Program, WhisperModel, WhisperVad, Encoder, Speech, Voice, Runtime, AudioModel, SoundPack, FaceModel,
-                  CutoutModel };
+                  CutoutModel, ParakeetModel };
 
 struct Item {
     QString id;          // "whisper", "whisper-model-small", "x264"
@@ -96,10 +96,18 @@ bool hasWhisperModel();
 QString appWhisperModel(const QString& idOrPath);
 
 // The quality levels of speech recognition (transcribe dialog, CLI/MCP `quality`): "accurate" = whisper large-v3,
-// "fast" = large-v3-turbo. The catalog id of a level's model; empty = no such level
+// "fast" = large-v3-turbo, "very_fast" = Parakeet v3 (25 European languages). The catalog id of a level's model; empty
+// = no such level
 QString qualityModel(const QString& quality);
 // "accurate" with a GPU backend beside whisper (whisperGpuBackend: large-v3 runs ~10x faster there), else "fast"
 QString defaultQuality();
+// The smallest installed whisper model (catalog ones first, else an own one): enough to tell the language before
+// Parakeet runs; empty = none
+QString detectionWhisperModel();
+// parakeet-cli (NVIDIA Parakeet, whisper.cpp): beside whisper-cli in the whisper package, else on PATH; empty = none
+QString parakeetProgram();
+// The model file of the "parakeet" extension; empty = not installed
+QString parakeetModel();
 
 // ffmpeg program of the x264/x265 extension (or the one SCHNEIDI_ENCODER_FFMPEG names); empty = not installed.
 // Whether it really has libx264/libx265: HardwareEncoders::externalProgram.

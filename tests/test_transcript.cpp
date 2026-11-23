@@ -478,36 +478,48 @@ int main(int argc, char** argv)
         auto* combo = dlg.findChild<QComboBox*>("transcribe_model");
         auto* remove = dlg.findChild<QToolButton*>("transcribe_model_remove");
         auto* items = combo ? qobject_cast<QStandardItemModel*>(combo->model()) : nullptr;
+        auto* language = dlg.findChild<QComboBox*>("transcribe_language");
         auto* start = [&]() -> QPushButton* {
             for (auto* b : dlg.findChildren<QPushButton*>())
                 if (b->text() == "Erzeugen" || b->text() == "Herunterladen und erzeugen") return b;
             return nullptr;
         }();
-        if (CHECK(combo && remove && items && start)) {
+        if (CHECK(combo && remove && items && language && start)) {
             const auto entries = [&] {
                 QStringList out;
                 for (int i = 0; i < combo->count(); ++i)
                     out << combo->itemText(i) + (items->item(i)->isEnabled() ? "" : ":off");
                 return out.join(" | ");
             };
-            // The quality levels first, as downloads (where the whisper package is offered), then the own models
+            // The quality levels first, as downloads (where the whisper package is offered), then the own models;
+            // "Sehr schnell" (Parakeet) only for a language it knows
             const bool offered = Extensions::find("whisper") != nullptr;
             const QString levels = offered ? QString("Whisper „Genau“ (large-v3) – Download 1081 MB | Whisper „Schnell“ "
                                                      "(large-v3-turbo) – Download 574 MB | ")
                                            : QString();
-            const QString parakeet;
+            const QString parakeet = offered ? QString("Spracherkennung „Sehr schnell“ (Parakeet v3) – Download 669 MB | ")
+                                             : QString();
             CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
             CHECK_EQ(combo->currentText(), QString("ggml-own.bin")); // the first installed one, not the gone file
             CHECK_EQ(combo->currentData(Qt::ToolTipRole).toString(),
                      QDir::toNativeSeparators(QFileInfo(good).absoluteFilePath()));
             CHECK_EQ(start->text(), QString("Erzeugen"));
             CHECK(dlg.missingDownloads().isEmpty());
+            language->setCurrentIndex(language->findData("tr")); // Turkish: no Parakeet
+            CHECK_EQ(entries(), levels + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin"));
+            language->setCurrentIndex(language->findData("de"));
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
             if (offered) {
                 // A missing level: downloaded with the whisper package when the run starts
                 combo->setCurrentIndex(combo->findData("whisper-model-large"));
                 QStringList ids;
                 for (const Extensions::Item* i : dlg.missingDownloads()) ids << i->id;
                 CHECK_EQ(ids.join(','), QString("whisper,whisper-model-large,whisper-vad"));
+                combo->setCurrentIndex(combo->findData("parakeet"));
+                ids.clear();
+                for (const Extensions::Item* i : dlg.missingDownloads()) ids << i->id;
+                CHECK_EQ(ids.join(','), QString("whisper,parakeet,whisper-vad"));
                 combo->setCurrentIndex(combo->findText("ggml-own.bin"));
             }
             CHECK(!remove->isHidden());
@@ -553,6 +565,17 @@ int main(int argc, char** argv)
         CHECK_EQ(models.value(1), QString("whisper-model-turbo"));
         CHECK_EQ(Extensions::defaultQuality(), QString("fast"));
         CHECK_EQ(Extensions::qualityModel("accurate"), QString("whisper-model-large"));
+        // Parakeet: pinned to one revision of ggml-org/parakeet-GGUF, offered with the whisper package (parakeet-cli)
+        const Extensions::Item* parakeet = Extensions::find("parakeet");
+        CHECK_EQ(parakeet != nullptr, Extensions::find("whisper") != nullptr);
+        if (parakeet) {
+            CHECK(parakeet->url.contains("/resolve/35156454d1a39de06863303dd209fd2bed6ee079/"));
+            CHECK_EQ(parakeet->size, qint64(668757119));
+            CHECK(parakeet->kind == Extensions::Kind::ParakeetModel);
+            CHECK(Extensions::parseList("parakeet").value(0) == parakeet);
+            CHECK(Extensions::withDependencies({parakeet}).contains(Extensions::find("whisper"))); // brings parakeet-cli
+            CHECK(Extensions::parakeetModel().isEmpty());
+        }
         QString unknown;
         CHECK(Extensions::parseList("large", &unknown).value(0) == Extensions::find("whisper-model-large"));
         CHECK_EQ(Extensions::find("whisper-model-large")->sha256.size(), 64);

@@ -19,6 +19,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 
+#include <algorithm>
 #include <thread>
 
 namespace Extensions {
@@ -159,6 +160,19 @@ QVector<Item> makeCatalog()
           "ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898", 59707625);
     model("whisper-model-tiny", N_("Whisper-Modell „Winzig“ (tiny)"), N_("sehr schnell, ungenau"),
           "ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7", 32152673);
+    // "Sehr schnell": NVIDIA's Parakeet TDT 0.6B v3 (CC-BY-4.0, attribution in Licenses::report and THIRD_PARTY.md)
+    // as whisper.cpp's ggml conversion (ggml-org/parakeet-GGUF, pinned to one revision), run by parakeet-cli of the
+    // whisper package. 5-8x faster than turbo, as good on FLEURS in its 25 European languages, but it swallows short
+    // shouts in chat (measured 22.11.); only offered for those languages (Transcriber::parakeetLanguage). Only where
+    // the whisper package (which carries parakeet-cli) is offered
+    if (std::any_of(list.cbegin(), list.cend(), [](const Item& i) { return i.id == QLatin1String("whisper"); }))
+        list << Item{"parakeet", Kind::ParakeetModel, N_("Spracherkennung „Sehr schnell“ (Parakeet v3)"),
+                     N_("5–8× schneller als Whisper, für 25 europäische Sprachen; überhört manchmal kurze Rufe "
+                        "(NVIDIA Parakeet TDT 0.6B v3, CC BY 4.0)"),
+                     "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/35156454d1a39de06863303dd209fd2bed6ee079/"
+                     "ggml-parakeet-tdt-0.6b-v3-q8_0.bin",
+                     "4d64e9e96c2792186d072fde0034df0ad670cf680a2f53069052ead827fd600e", 668757119,
+                     "ggml-parakeet-tdt-0.6b-v3-q8_0.bin"};
 
     // ONNX Runtime 1.20.1 (microsoft/onnxruntime, MIT), the CPU build of its GitHub release; sums of exactly these
     // archives. They hold onnxruntime-<os>-x64-1.20.1/lib/ with the library (libonnxruntime.so* / onnxruntime.dll),
@@ -400,6 +414,8 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
     for (const Item* i : items) {
         // A model is no use without the program (unless one is on PATH)
         if (i->kind == Kind::WhisperModel && whisperProgram().isEmpty()) add(find("whisper"));
+        // Parakeet runs with parakeet-cli of the whisper package
+        if (i->kind == Kind::ParakeetModel && parakeetProgram().isEmpty()) add(find("whisper"));
         if (i->kind == Kind::Voice && piperProgram().isEmpty()) add(find("piper"));
         if ((i->kind == Kind::AudioModel || i->kind == Kind::FaceModel || i->kind == Kind::CutoutModel) && onnxRuntimeLibrary().isEmpty()
             && piperOnnxRuntime().isEmpty())
@@ -508,15 +524,43 @@ QString whisperVadModel()
     return i ? installedPath(*i) : QString();
 }
 
+QString parakeetProgram()
+{
+    // parakeet-cli comes in the same whisper.cpp package (beside whisper-cli), or one on PATH
+    const QString program = whisperProgram();
+    if (!program.isEmpty())
+        if (const QString beside = QStandardPaths::findExecutable("parakeet-cli", {QFileInfo(program).absolutePath()});
+            !beside.isEmpty())
+            return beside;
+    return QStandardPaths::findExecutable("parakeet-cli");
+}
+
+QString parakeetModel()
+{
+    const Item* i = find("parakeet");
+    return i ? installedPath(*i) : QString();
+}
+
 QString qualityModel(const QString& quality)
 {
     const QString q = quality.trimmed().toLower();
     if (q == QLatin1String("accurate")) return "whisper-model-large";
     if (q == QLatin1String("fast")) return "whisper-model-turbo";
+    if (q == QLatin1String("very_fast")) return "parakeet";
     return {};
 }
 
 QString defaultQuality() { return whisperGpuBackend().isEmpty() ? "fast" : "accurate"; }
+
+QString detectionWhisperModel()
+{
+    // Smallest first: the catalog lists the best first
+    const QStringList ids = installedWhisperModels();
+    if (!ids.isEmpty()) return installedPath(*find(ids.last()));
+    for (const QString& p : customWhisperModels())
+        if (QFileInfo(p).isFile()) return QFileInfo(p).absoluteFilePath();
+    return {};
+}
 
 QString encoderProgram()
 {

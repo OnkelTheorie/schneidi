@@ -362,23 +362,35 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     // checked before looking whether it exists, so an answer never tells about files outside it)
     if (model.contains('/') || model.contains('\\') || QFileInfo(model).suffix().compare("bin", Qt::CaseInsensitive) == 0)
         model = absolute(model);
-    // A quality level instead of a model: accurate = large-v3, fast = turbo
+    // A quality level instead of a model: accurate = large-v3, fast = turbo, very_fast = Parakeet (25 European
+    // languages; another one goes to the best whisper model)
     if (a.contains("quality")) {
         if (a.contains("model")) fail("BAD_ARGUMENT", "give either 'quality' or 'model', not both");
         const QString id = Extensions::qualityModel(a["quality"].toString());
         if (id.isEmpty())
-            fail("BAD_ARGUMENT", QString("quality must be accurate or fast (not '%1')").arg(a["quality"].toString()));
+            fail("BAD_ARGUMENT", QString("quality must be accurate, fast or very_fast (not '%1')").arg(a["quality"].toString()));
         if (!Extensions::isInstalled(*Extensions::find(id)))
             fail("NOT_INSTALLED", QString("the model of quality '%1' is not installed (see `extensions`, e.g. --install %2)")
-                                      .arg(a["quality"].toString(), "whisper," + id.section('-', 2)));
+                                      .arg(a["quality"].toString(), id == "parakeet" ? "parakeet" : "whisper," + id.section('-', 2)));
         model = id;
     }
-    req.model = Extensions::whisperModelPath(model);
-    if (req.model.isEmpty())
-        fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()
-                                                  : "no whisper model installed (see `extensions`, e.g. --install whisper,small)");
-    if (Extensions::whisperProgram().isEmpty())
-        fail("NOT_INSTALLED", "whisper is not installed (see `extensions`, e.g. --install whisper,small)");
+    const bool parakeet = model.compare("parakeet", Qt::CaseInsensitive) == 0 || Transcriber::isParakeet(model);
+    if (parakeet) {
+        req.model = model.compare("parakeet", Qt::CaseInsensitive) == 0 ? Extensions::parakeetModel()
+                                                                          : QFileInfo(model).isFile() ? model : QString();
+        req.whisperModel = Extensions::appWhisperModel(QString());
+        if (req.model.isEmpty())
+            fail("NOT_INSTALLED", "Parakeet is not installed (see `extensions`, e.g. --install parakeet)");
+        if (Extensions::parakeetProgram().isEmpty())
+            fail("NOT_INSTALLED", "parakeet-cli is not installed: it comes with whisper (see `extensions`, e.g. --install whisper)");
+    } else {
+        req.model = Extensions::whisperModelPath(model);
+        if (req.model.isEmpty())
+            fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()
+                                                      : "no whisper model installed (see `extensions`, e.g. --install whisper,small)");
+        if (Extensions::whisperProgram().isEmpty())
+            fail("NOT_INSTALLED", "whisper is not installed (see `extensions`, e.g. --install whisper,small)");
+    }
     req.language = a.contains("language") ? a["language"].toString() : "auto";
     req.threads = a["threads"].toInt();
     req.music = a["music"].toBool();
@@ -517,10 +529,17 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         segments << o;
     }
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
-                    {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
+                    {"model", QFileInfo(t.usedModel()).fileName()}, {"segments", segments}};
     if (!a.contains("captions")) out["length"] = Subtitles::cueLengthKey(cueLength);
     for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
     if (!t.promptNote().isEmpty()) notes << t.promptNote();
+    if (!t.engineNote().isEmpty())
+        notes << (t.usedModel() != req.model
+                      ? QString("Parakeet does not know the language '%1': whisper (%2) wrote it")
+                            .arg(r.language, QFileInfo(t.usedModel()).fileName())
+                      : QString("Parakeet does not know the language '%1' and no whisper model is installed: the text "
+                                "may be poor (quality fast or accurate)")
+                            .arg(r.language.isEmpty() ? req.language : r.language));
     if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {
         out["detected_language"] = heard;
         if (!t.otherLanguage().isEmpty())
