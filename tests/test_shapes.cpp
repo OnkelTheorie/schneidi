@@ -1105,6 +1105,56 @@ void testFollowCheck()
 
 } // namespace
 
+// ---- phone: a selected text title has a box on the picture too (move, size by a corner); the desktop has none ----
+void testTextTitleOverlay()
+{
+    std::printf("text title overlay\n");
+    Project p;
+    ProjectData d;
+    d.timeline = timelineOf({});
+    d.format = kFormat;
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    e.addTitle(0, -1, 50, TitleKind::Text);
+    const int id = *sel.ids().begin();
+    int playhead = 10;
+    ShapeOverlay ov(&e, &sel, [&] { return playhead; });
+    const QRectF frame(0, 0, 320, 180);
+    CHECK(ov.centerPos(frame).isNull()); // the desktop: no box around a text title
+    ov.setTextTitles(true);
+    const QPointF c = ov.centerPos(frame);
+    CHECK(!c.isNull() && std::abs(c.x() - 160) < 2 && std::abs(c.y() - 90) < 40);
+    auto drag = [&](QPointF from, QPointF to) {
+        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        const bool took = ov.mousePress(&press, frame);
+        ov.mouseMove(&move, frame);
+        ov.mouseRelease(&release, frame);
+        return took;
+    };
+    CHECK(drag(c, c + QPointF(30, -20)));
+    const Clip* t = TimelineOps::findClip(p.timeline(), id);
+    CHECK(t && t->title.posX == 30 && t->title.posY == 20);
+    // A corner away from the centre: larger by the distance's ratio, the centre stays
+    const double size0 = t->title.size;
+    const QPointF centre = ov.centerPos(frame), corner = ov.handlePos(4, frame);
+    CHECK(drag(corner, centre + (corner - centre) * 2));
+    t = TimelineOps::findClip(p.timeline(), id);
+    Check::report(t && std::abs(t->title.size - size0 * 2) <= 2, "text title twice as large", __FILE__, __LINE__,
+                  QString("%1 -> %2").arg(size0).arg(t ? t->title.size : -1));
+    CHECK(t && t->title.posX == 30 && t->title.posY == 20);
+    // No rotate knob for a text: a press where a shape's knob would be is not taken (nothing is there)
+    const QPointF knob = ov.handlePos(8, frame);
+    QMouseEvent atKnob(QEvent::MouseButtonPress, knob, knob, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    if (std::abs(knob.y() - ov.handlePos(1, frame).y()) > 26) CHECK(!ov.mousePress(&atKnob, frame));
+    // One undo step per drag
+    p.undoStack()->undo();
+    t = TimelineOps::findClip(p.timeline(), id);
+    CHECK(t && std::abs(t->title.size - size0) < 0.01);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -1135,6 +1185,7 @@ int main(int argc, char** argv)
     testInspector();
     testInspectorProjectChange();
     testOverlay();
+    testTextTitleOverlay();
     testBelowTransitions();
     testFollowSplit();
     testLineBounds();

@@ -219,7 +219,12 @@ Status (updated with each commit):
   the heights ends it (the user's own height from what is shown). Compact header box/button centred in low rows.
   Selecting V1 still selects its linked A1-A5 (as phone editors select a clip with its sound) - kept on purpose.
   Test in test_phone_layout (five streams on 411x914: row < 46, all of V+A1-A5 in sight).
-- 7, 8, 9, 10, 11: NOT STARTED.
+- 7 Title on the picture: DONE. `ShapeOverlay::setTextTitles` (phone and tablet; the desktop unchanged, no box for text
+  there): a selected text/counter title shows its block (`ExportCheck::overlayBlockAt`, as `check` measures it) with
+  four round corner handles; drag inside = move (TitlePosX/Y), a corner = font size by the finger's distance from the
+  centre (as CapCut's corner handle, without its rotation); one undo step per drag; grab zones 22 px in that mode
+  (shapes too). Tests testTextTitleOverlay in test_shapes (189), overlay on in test_phone_layout, test_shape_drag_app 17.
+- 8, 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

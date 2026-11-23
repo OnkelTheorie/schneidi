@@ -29,6 +29,11 @@ public:
     bool mouseRelease(QMouseEvent* e, const QRectF& frame) override;
     Qt::CursorShape cursorAt(const QPointF& pos, const QRectF& frame) const override;
 
+    // Phone: a selected text title gets a box too (drag inside = move, a corner = size around its centre), and every
+    // grab zone is finger-sized. Off on the desktop (as before)
+    void setTextTitles(bool on);
+    bool textTitles() const { return m_textTitles; }
+
     // For tests: widget coordinates of the centre / a handle (0..7 clockwise from the top left, 8 = rotate knob)
     QPointF handlePos(int handle, const QRectF& frame) const;
     QPointF centerPos(const QRectF& frame) const;
@@ -38,6 +43,8 @@ private:
     const Clip* clip() const;
     int localFrame(const Clip& c) const;
     bool isLine() const; // a line: only its two ends are handles (length and angle)
+    bool isText() const; // a text title (setTextTitles): no rotate knob, corners only, size = the font's
+    double hit() const;
     // Project pixels -> widget; shape-local pixels (centre origin, not turned) -> project pixels
     bool transforms(const QRectF& frame, QTransform* toWidget, QTransform* local, double* hw, double* hh) const;
     int partAt(const QPointF& pos, const QRectF& frame) const;
@@ -52,4 +59,6 @@ private:
     QPointF m_press; // project pixels
     double m_startX = 0, m_startY = 0, m_startW = 0, m_startH = 0;
     QTransform m_startLocal; // the shape's centre and rotation at the press (project pixels)
+    bool m_textTitles = false;
+    double m_startSize = 0, m_startDist = 0; // a text title's font size and the press's distance from its centre
 };

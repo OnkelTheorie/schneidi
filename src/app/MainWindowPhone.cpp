@@ -13,6 +13,7 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "ui/touch/ScrollIndicators.h"
+#include "ui/ShapeOverlay.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/ColorPanel.h"
 #include "ui/DeliverPanel.h"
@@ -659,6 +660,8 @@ void MainWindow::applyScrollIndicators()
     m_timeline->setScrollIndicators(on);
     // Many audio tracks (a recording's sound streams) share half of the phone's lanes instead of filling them
     m_timeline->view()->setFitAudioRows(on);
+    // Phone and tablet: a selected text title has a box on the picture (move, size) as phone editors have
+    if (m_shapeOverlay) m_shapeOverlay->setTextTitles(m_phone != nullptr);
 }
 
 void MainWindow::applyCenterPlayhead()

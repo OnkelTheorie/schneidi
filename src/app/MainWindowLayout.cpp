@@ -694,6 +694,7 @@ void MainWindow::showPage(Page page)
         if (!m_shapeOverlay) {
             m_shapeOverlay = new ShapeOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
                                               [this] { return !m_viewer->showsSource(); });
+            m_shapeOverlay->setTextTitles(m_phone != nullptr); // (a phone/tablet: text titles move on the picture)
             // Painting (0.22) over it: what the paint tool and the drawing box do not take goes to the shape box
             m_drawOverlay = new DrawOverlay(m_editor, m_selection, [this] { return m_timeline->view()->playhead(); }, this,
                                             [this] { return !m_viewer->showsSource(); }, m_shapeOverlay);

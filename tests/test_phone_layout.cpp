@@ -17,6 +17,7 @@
 #include "engine/Engine.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
+#include "ui/ShapeOverlay.h"
 #include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
 #include "ui/RenderQueuePanel.h"
@@ -345,6 +346,8 @@ void testWindow(Engine& engine, const QSize& size)
     settle();
     CHECK(!w.liveSelection()->isEmpty());
     CHECK(shell->clipToolsShown());
+    // Item 7: the selected text title has its box on the picture (move, size)
+    if (auto* ov = w.findChild<ShapeOverlay*>(); CHECK(ov)) CHECK(ov->textTitles());
     CHECK(shell->toolButton("split")->isVisible());
     // Every clip tool can be reached: inside the bar's scrolled box (the bar scrolls, nothing lies past its end)
     for (const char* id : {"split", "volume", "speed", "clipEffects", "clipColor", "delete"}) {
