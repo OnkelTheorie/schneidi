@@ -264,6 +264,8 @@ bool MainWindow::rebuildUi(bool retry)
     // The new widgets learn where the playhead is (paused, the engine says nothing until it moves): the viewer's time
     // and bar, the Inspector's keyframe values, the transcript, ... - a display, nothing moves
     if (m_engine->speed() == 0.0) emit m_engine->positionChanged(m_engine->position());
+    else emit m_engine->speedChanged(m_engine->speed()); // playing: the viewer's ⏸, the timeline and multicam grid follow
+    emit m_engine->loopChanged(m_engine->looping());
     if (outputScreen) showPreviewOn(outputScreen);
     if (drawing && m_page == Page::Edit) setDrawTool(true);
     if (large) setViewerLarge(true);

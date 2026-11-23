@@ -10,6 +10,7 @@
 
 #include "check.h"
 
+#include "app/InputBindings.h"
 #include "app/LaunchArgs.h"
 #include "app/MainWindow.h"
 #include "app/SessionResume.h"
@@ -30,6 +31,7 @@
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QLabel>
 #include <QDir>
@@ -244,6 +246,14 @@ void testSwitch(Engine& engine)
     // come again, the page stays, and two switches leave the window with the same children
     for (Page p : {Page::Color, Page::Comp, Page::Studio, Page::Direct, Page::Edit}) w.showPage(p);
     QTest::qWait(20);
+    // ... with the In/Out loop on and the grades bypassed: both stay so, their menu entries say it
+    project->edit("marks", [](Timeline& tl) {
+        tl.markIn = 10;
+        tl.markOut = 60;
+    });
+    if (QAction* loop = InputBindings::instance().action("loop_inout"); CHECK(loop)) loop->setChecked(true);
+    CHECK(engine.looping());
+    engine.setColorBypass(true);
     int children = 0;
     for (const char* design : {"midnight", "dark-orange"}) {
         chooseLook(children ? "de" : "en", design);
@@ -252,10 +262,15 @@ void testSwitch(Engine& engine)
         CHECK(w.currentPage() == Page::Edit);
         CHECK(w.compPage() && w.studioPage() && w.directPage());
         CHECK_EQ(Check::dump(project->timeline()), clipsBefore);
+        CHECK(engine.looping());
+        CHECK(InputBindings::instance().action("loop_inout")->isChecked());
+        CHECK(engine.colorBypass());
+        CHECK(InputBindings::instance().action("color_bypass")->isChecked());
         if (children) CHECK_EQ(int(w.children().size()), children);
         children = int(w.children().size());
     }
     dump(&w, "4-edit-all-pages");
+    engine.setColorBypass(false);
 
     // Never from a nested loop: a context menu's exec (inside the main loop), a progress loop or a drag (Guard). A
     // change asked for meanwhile comes once it is over.

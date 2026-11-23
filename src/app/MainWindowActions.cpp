@@ -667,6 +667,7 @@ void MainWindow::buildActions()
     // exists, removing it switches the loop off (nothing loops by accident). No default key.
     auto* loop = makeAction(play, "loop_inout", T("Im Bereich wiederholen"), QKeySequence(), [] {});
     loop->setCheckable(true);
+    loop->setChecked(m_engine->looping()); // (built again, rebuildUi: the loop stays as it was)
     auto applyLoop = [this, tv, loop] {
         const Timeline& tl = m_project->timeline();
         const bool range = tl.markIn >= 0 || tl.markOut >= 0;
@@ -743,6 +744,7 @@ void MainWindow::buildActions()
     auto* bypass = makeAction(play, "color_bypass", T("Farbkorrektur umgehen (Vorher/Nachher)"), QKeySequence("Shift+D"),
                               [] {});
     bypass->setCheckable(true);
+    bypass->setChecked(m_engine->colorBypass()); // (built again, rebuildUi: as it is)
     connect(bypass, &QAction::toggled, m_engine, &Engine::setColorBypass);
     connect(m_engine, &Engine::colorBypassChanged, bypass, &QAction::setChecked);
     // Like DaVinci (Preferences → Decode Options → use GPU for H.264/H.265): preview and export
