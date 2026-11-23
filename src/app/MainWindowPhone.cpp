@@ -535,7 +535,7 @@ void MainWindow::enableShell(bool tablet)
     m_viewer->screen()->setMinimumSize(160, 72);
     m_viewer->setCompact(true);
     // The large viewer: nothing beside the viewer to hide (full screen stays)
-    if (auto* large = m_viewer->findChild<QToolButton*>("viewAction_large")) large->hide();
+    if (auto* large = m_viewer->findChild<QToolButton*>("viewer_large")) large->hide();
 
     // The main tools: the desktop's panels and pages, one at a time in the sheet
     m_phone->addPanelTool("media", QStringLiteral("▦"), T("Medien"), [this] { return shellHome(m_mediaPool); });
@@ -688,7 +688,7 @@ void MainWindow::disableShell()
     m_addMediaButton = nullptr;
     m_viewer->screen()->setMinimumSize(m_shellHomes->viewerMin);
     m_viewer->setCompact(false);
-    if (auto* large = m_viewer->findChild<QToolButton*>("viewAction_large")) large->show();
+    if (auto* large = m_viewer->findChild<QToolButton*>("viewer_large")) large->show();
     // (its own bar with it; every desktop widget is out). Later, not now: the switch may come from a slot of the
     // shell's own ⋮ menu (Settings › Anordnung), whose button and menu must outlive that slot
     m_phone->disconnect(this);

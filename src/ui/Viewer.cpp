@@ -455,7 +455,6 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
     b->setObjectName(icon == ViewIcon::Large ? "viewer_large" : "viewer_full_screen");
     b->setIcon(viewIcon(icon));
     b->setIconSize(QSize(18, 18));
-    b->setObjectName(icon == ViewIcon::Large ? "viewAction_large" : "viewAction_fullScreen");
     b->setStyleSheet("QToolButton { padding: 3px 3px; }"); // narrow: the bar decides the viewer's minimum width
     b->setCheckable(true);
     b->setChecked(action->isChecked());
