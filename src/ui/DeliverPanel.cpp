@@ -168,6 +168,12 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_name->setToolTip(T("Name der Datei. Leer oder unverändert: der Name der geöffneten Timeline"));
     m_folder = new QLineEdit(QDir::toNativeSeparators(defaultFolder()));
     m_folder->setObjectName("renderFolder");
+    // A folder typed by hand is the user's choice too (a review render or a preset never sets it)
+    connect(m_folder, &QLineEdit::editingFinished, this, [this] {
+        const QString dir = QDir::fromNativeSeparators(m_folder->text().trimmed());
+        if (!dir.isEmpty() && QFileInfo(dir).isDir() && dir != QDir::fromNativeSeparators(defaultFolder()))
+            QSettings().setValue("render/folder", dir);
+    });
     auto* browseBtn = new QToolButton;
     browseBtn->setText(T("Durchsuchen…"));
     connect(browseBtn, &QToolButton::clicked, this, &DeliverPanel::browse);
@@ -185,9 +191,11 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
             m_format->insertSeparator(m_format->count());
         // Where s264 is the only H.264 there is (Android: FFmpeg without x264, no hardware probe), it is not the
         // "experimental" choice beside a proven one but the H.264 format itself: named so (the tool tip says what it is)
+#ifdef Q_OS_ANDROID
         if (QLatin1String(f.id) == QLatin1String("s264") && !HardwareEncoders::formatAvailable("h264"))
             m_format->addItem(QStringLiteral("H.264 (MP4, s264)"), QString(f.id));
         else
+#endif
             m_format->addItem(T(f.label), QString(f.id));
         if (QLatin1String(f.id) == QLatin1String("s264"))
             m_format->setItemData(m_format->count() - 1,
@@ -867,7 +875,9 @@ void DeliverPanel::updateRateLabel()
 void DeliverPanel::browse()
 {
     const QString dir = QFileDialog::getExistingDirectory(this, T("Speicherort wählen"), m_folder->text());
-    if (!dir.isEmpty()) m_folder->setText(QDir::toNativeSeparators(dir));
+    if (dir.isEmpty()) return;
+    m_folder->setText(QDir::toNativeSeparators(dir));
+    QSettings().setValue("render/folder", dir); // the user's choice: the next start offers it again
 }
 
 // ---------- Queue
@@ -890,7 +900,6 @@ RenderJob DeliverPanel::makeJob() const
     job.review = m_review->isChecked() && m_review->isEnabled();
     if (job.review) name = renderFileBaseName(name + " - " + T("Prüf-Render")); // never over the real export
     job.path = QDir(QDir::fromNativeSeparators(m_folder->text().trimmed())).absoluteFilePath(name + ext);
-    QSettings().setValue("render/folder", QFileInfo(job.path).absolutePath()); // the next start offers it again
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;
     if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();

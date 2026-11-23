@@ -37,6 +37,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QListWidget>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QScroller>
@@ -935,9 +936,13 @@ void testShellRoundTrip(Engine& engine)
         w.phoneShell()->openSheet(id);
         settle();
     }
+    // B5: the shell outlives the switch's own call (it may come from a slot of its ⋮ menu)
+    QPointer<PhoneShell> shell = w.phoneShell();
     w.setLayoutForm(MainWindow::LayoutForm::Desktop);
+    CHECK(shell && !w.phoneShell());
     w.resize(1400, 900);
     settle();
+    CHECK(!shell);
     int changed = 0;
     for (auto it = hidden.cbegin(); it != hidden.cend(); ++it)
         if (it.key()->isHidden() != it.value()) {

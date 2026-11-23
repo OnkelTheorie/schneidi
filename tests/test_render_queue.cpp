@@ -3,6 +3,8 @@
 // render one after another with status, error, cancel). Rendering is small and short (ffmpeg/ffprobe needed).
 #include "check.h"
 
+#include <QSettings>
+
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -401,7 +403,9 @@ int main(int argc, char** argv)
         name->setText("Film");
         folder->setText(tmp.path());
         CHECK_EQ(panel.currentPreset(), 0); // YouTube 1080p
+        QSettings().remove("render/folder");
         RenderJob j = panel.makeJob();
+        CHECK(!QSettings().contains("render/folder")); // a job (a review render too) never remembers its folder
         CHECK_EQ(j.size, QSize(1920, 1080));
         CHECK_EQ(j.path, QDir(tmp.path()).filePath("Film.mp4"));
         CHECK_EQ(j.preset, QString("YouTube 1080p"));

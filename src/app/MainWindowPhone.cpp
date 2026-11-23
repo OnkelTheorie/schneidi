@@ -686,7 +686,11 @@ void MainWindow::disableShell()
     m_viewer->screen()->setMinimumSize(m_shellHomes->viewerMin);
     m_viewer->setCompact(false);
     if (auto* large = m_viewer->findChild<QToolButton*>("viewAction_large")) large->show();
-    delete m_phone; // (its own bar with it; every desktop widget is out)
+    // (its own bar with it; every desktop widget is out). Later, not now: the switch may come from a slot of the
+    // shell's own ⋮ menu (Settings › Anordnung), whose button and menu must outlive that slot
+    m_phone->disconnect(this);
+    m_phone->hide();
+    m_phone->deleteLater();
     m_phone = nullptr;
     m_phoneTopBar = nullptr;
     m_topBar->show();
