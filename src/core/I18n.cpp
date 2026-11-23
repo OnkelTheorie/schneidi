@@ -17,6 +17,7 @@ namespace {
 constexpr const char* kContext = "schneidi";
 QString s_installed; // language of this run (install), may differ from the setting (--lang)
 QList<QTranslator*> s_translators; // what install() put in (switchTo takes them out again)
+QString s_savedAtInstall;          // the setting when install() ran (a --lang of this run is no change of it)
 
 // Simple translator without Qt Linguist: dictionary from a JSON resource
 class MapTranslator : public QTranslator {
@@ -119,6 +120,7 @@ void install(const QString& override)
     auto* app = QCoreApplication::instance();
     const QString lang = known(override) ? override : language();
     s_installed = lang;
+    s_savedAtInstall = language();
     // Numbers in spin boxes, dates and sorting follow the UI language, not the system (English UI on a German
     // system showed "1,0 s" next to "170.0"); no thousands separator, number fields read back what they show
     QLocale locale(lang);
@@ -184,6 +186,8 @@ QChar groupSeparatorOf(const QString& lang)
     if (lang == "de" || lang == "es") return QChar('.');
     return QChar(0x00a0);
 }
+
+bool languageChanged() { return !s_savedAtInstall.isEmpty() && language() != s_savedAtInstall; } // (never installed: no)
 
 QString installedLanguage() { return s_installed.isEmpty() ? language() : s_installed; }
 

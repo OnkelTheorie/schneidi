@@ -178,16 +178,25 @@ static Colors& loadedColors()
     return c;
 }
 
+// The saved choice when load() ran (a --design of this run is no change of it)
+static Colors& savedAtLoad()
+{
+    static Colors c;
+    return c;
+}
+
 void load(const QString& overrideDesign)
 {
     builtinValues(); // remember defaults before they get overwritten
-    loadedColors() = saved(kOrder.contains(overrideDesign) ? overrideDesign : savedDesign());
+    savedAtLoad() = saved(savedDesign());
+    loadedColors() = kOrder.contains(overrideDesign) ? saved(overrideDesign) : savedAtLoad();
     activate(loadedColors());
 }
 
 bool changed()
 {
-    return saved(savedDesign()) != loadedColors();
+    // Never loaded (tests): the colors are the built-in ones
+    return saved(savedDesign()) != (savedAtLoad().isEmpty() ? builtinValues() : savedAtLoad());
 }
 
 bool switchToSaved(QApplication& app)

@@ -100,9 +100,18 @@ Seen look(MainWindow& w)
 void testSwitch(Engine& engine)
 {
     chooseLook("de", "dark-orange");
-    I18n::install();
+    // A language or design given for this run only (--lang, --design) is no change of the setting: nothing to apply
+    I18n::install("en");
+    CHECK(!I18n::languageChanged());
+    Theme::load("hell");
+    CHECK(!Theme::changed());
+    CHECK(I18n::switchTo("de"));
     Theme::load();
     Theme::apply(*qApp);
+    I18n::setLanguage("fr");
+    CHECK(I18n::languageChanged());
+    I18n::setLanguage("de");
+    CHECK(!I18n::languageChanged());
 
     MainWindow w(&engine);
     w.disableAutosave();

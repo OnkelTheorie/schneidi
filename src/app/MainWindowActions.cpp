@@ -1006,7 +1006,7 @@ void MainWindow::buildActions()
         a->setChecked(I18n::language() == l.code);
         langGroup->addAction(a);
         connect(a, &QAction::triggered, this, [this, lang = l.code] {
-            if (I18n::language() == lang && I18n::installedLanguage() == lang) return;
+            if (I18n::language() == lang) return;
             I18n::setLanguage(lang);
             applyLookChange();
         });

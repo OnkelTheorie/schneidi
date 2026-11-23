@@ -28,6 +28,9 @@ void install(const QString& override = {}); // after creating the QApplication; 
 // While running: the translators of install() replaced by those of `lang` (also the locale and LANGUAGE); texts made
 // before keep their old language - whoever shows them makes them again. false = `lang` unknown, nothing changed
 bool switchTo(const QString& lang);
+// The setting changed since install()/switchTo (setLanguage): switchTo(language()) is due. A --lang of this run is no
+// change of the setting.
+bool languageChanged();
 QString translate(const QString& lang, const char* source); // source text in another language than the installed one
 QChar decimalPoint();                  // decimal separator of the UI language ("," in German, "." in English)
 // Thousands separator of the UI language ("." in German and Spanish, "," in English, a no-break space in French,

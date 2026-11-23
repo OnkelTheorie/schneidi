@@ -112,7 +112,7 @@ void MainWindow::applyLookChange()
     // After the dialog that changed it is gone (it is a child of this window, maybe still on the stack)
     QTimer::singleShot(0, this, [this] {
         m_rebuildQueued = false;
-        if (I18n::language() != I18n::installedLanguage() || Theme::changed()) rebuildUi();
+        if (I18n::languageChanged() || Theme::changed()) rebuildUi();
     });
 }
 
@@ -194,7 +194,7 @@ bool MainWindow::rebuildUi(bool retry)
 
     // ---- The new look, then everything made again in it
     // (With the widgets gone, the app's new style sheet and palette are cheap: nothing to polish again yet)
-    if (I18n::language() != I18n::installedLanguage()) I18n::switchTo(I18n::language());
+    if (I18n::languageChanged()) I18n::switchTo(I18n::language());
     if (!Theme::switchToSaved(*qApp)) Theme::apply(*qApp); // the font too (a language of its own may want another size)
     ++m_uiGeneration;
     buildUi();

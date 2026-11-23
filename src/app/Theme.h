@@ -85,7 +85,7 @@ void save(const QString& design, const Colors& chosen); // saves design + deviat
 
 void activate(const Colors& colors); // sets the colors above (missing keys stay)
 void load(const QString& overrideDesign = {}); // at startup before apply(); override only for this run (--design)
-bool changed(); // saved choice differs from the colors in use (load/switchToSaved)
+bool changed(); // the saved choice changed since load/switchToSaved (a --design of this run is no change)
 void apply(QApplication& app);
 // The saved choice in use from now on (load + apply); false = it was in use already. Widgets that took colors when
 // they were made keep them: the caller builds them again
