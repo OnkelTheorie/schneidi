@@ -12,9 +12,6 @@
 namespace ContentUri {
 
 bool is(const QString& path); // "content://…"
-// What FFmpeg (and QFile) can open for `path`: a content address as /proc/self/fd/<n> of a descriptor kept open for
-// the run (opened on first use; empty = the provider refused), any other path as it is
-QString openable(const QString& path);
 // A new descriptor of its own for the address (each reader its own file offset; the caller closes it); -1 = refused
 int openFd(const QString& uri);
 // The file a content address stands for, when the app may read it by path (else empty)

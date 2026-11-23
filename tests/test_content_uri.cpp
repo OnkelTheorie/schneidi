@@ -57,10 +57,9 @@ int main(int argc, char** argv)
     }
     CHECK(!ContentUri::is(path));
     CHECK(ContentUri::is("content://com.android.providers.media.documents/document/video%3A42"));
-    CHECK(ContentUri::openable(path) == path);
     CHECK(ContentUri::forImport({path}) == QStringList{path});
 #ifndef Q_OS_ANDROID
-    CHECK(ContentUri::openable("content://x/y").isEmpty()); // no provider here: refused
+    CHECK(ContentUri::openFd("content://x/y") < 0); // no provider here: refused
     AVFormatContext* none = nullptr;
     CHECK(OpenMedia::input(&none, "content://x/y") < 0);
 #endif

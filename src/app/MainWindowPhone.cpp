@@ -24,6 +24,7 @@
 #include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
 #include "core/TimelineOps.h"
+#include "engine/ContentUri.h"
 #include "engine/DeviceMedia.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/SwitchCurtain.h"
@@ -854,7 +855,8 @@ void MainWindow::addPicked(const QStringList& paths)
     importFiles(paths, true, empty);
     // Something to see and feel: the clips came (they land at the timeline's end, maybe out of sight)
     Touch::tick();
-    m_viewer->showNotice(paths.size() == 1 ? T("„%1“ hinzugefügt").arg(QFileInfo(paths.first()).fileName())
+    m_viewer->showNotice(paths.size() == 1 ? T("„%1“ hinzugefügt").arg(ContentUri::is(paths.first()) ? ContentUri::displayName(paths.first())
+                                                                                         : QFileInfo(paths.first()).fileName())
                                            : T("%1 Clips hinzugefügt").arg(paths.size()),
                          2500);
 }

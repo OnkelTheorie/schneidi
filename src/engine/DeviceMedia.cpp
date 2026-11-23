@@ -145,7 +145,11 @@ void requestPermission(QObject* context, std::function<void(bool)> done)
     // One after the other (Android shows one dialog per kind); granted = videos may be read
     const QStringList all = wantedPermissions();
     auto ask = std::make_shared<std::function<void(int, bool)>>();
-    *ask = [context, all, done, ask](int i, bool any) {
+    // (itself only weakly: a strong self-capture kept the function alive forever; each pending answer holds it)
+    std::weak_ptr<std::function<void(int, bool)>> self = ask;
+    *ask = [context, all, done, self](int i, bool any) {
+        const auto ask = self.lock();
+        if (!ask) return;
         if (i >= all.size()) {
             done(any || hasPermission());
             return;

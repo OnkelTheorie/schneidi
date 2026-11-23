@@ -49,25 +49,6 @@ int openFd(const QString& uri)
     return pfd.callMethod<jint>("detachFd");
 }
 
-namespace {
-QMutex g_lock;
-QHash<QString, int> g_fds; // address -> descriptor kept open for the run
-
-} // namespace
-
-QString openable(const QString& path)
-{
-    if (!is(path)) return path;
-    QMutexLocker lock(&g_lock);
-    int fd = g_fds.value(path, -1);
-    if (fd < 0) {
-        fd = openFd(path);
-        if (fd < 0) return {};
-        g_fds.insert(path, fd);
-    }
-    return QStringLiteral("/proc/self/fd/%1").arg(fd);
-}
-
 QString localPath(const QString& uri)
 {
     if (!is(uri)) return uri;
@@ -144,7 +125,6 @@ QStringList forImport(const QStringList& paths)
 
 #else
 
-QString openable(const QString& path) { return is(path) ? QString() : path; }
 int openFd(const QString&) { return -1; }
 QString localPath(const QString& uri) { return is(uri) ? QString() : uri; }
 QString displayName(const QString& uri) { return QFileInfo(uri).fileName(); }
