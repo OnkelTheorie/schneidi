@@ -298,6 +298,13 @@ public:
     // tablet|desktop or SCHNEIDI_PHONE_LAYOUT=1/0 pin it
     static LayoutForm wantedForm(const QSize& logical, LayoutForm current = LayoutForm::Desktop);
     static bool phoneLayoutWanted(); // the start: wantedForm(the screen) == Phone
+    // "Automatisch" picks the form by the window's size only on Android; a desktop system stays Desktop at any size
+    // (half a screen, a portrait monitor) unless the setting or SCHNEIDI_LAYOUT asks for another form.
+    // SCHNEIDI_LAYOUT_BY_SIZE=1/0 and setFormBySize (tests) override
+    static bool formBySize();
+    static void setFormBySize(std::optional<bool> on);
+    // The input is a finger (touch mode or a touchscreen): the shell's centred playhead, magnetic V1 and hold-to-move
+    static bool touchInput();
     static constexpr int kPhoneEdge = 600;     // shorter side below: a phone (unless the window is wide)
     static constexpr int kDesktopWidth = 1100; // width from here: the desktop layout
     LayoutForm layoutForm() const;
@@ -799,6 +806,8 @@ private:
     void applyCenterPlayhead();
     void applyScrollIndicators(); // phone form: thin indicators instead of scroll bars
     class ScrollIndicators* m_scrollIndicators = nullptr;
+    QList<QAction*> m_shellShortcuts; // the hidden menu bar's actions on the window itself (shortcuts keep working)
+    void setShellShortcuts(bool on);
     std::unique_ptr<Ai::Keys> m_aiKeys;
     bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
     // Review mode: the undo index before the request, whether something else changed the history meanwhile, and

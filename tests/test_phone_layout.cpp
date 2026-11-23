@@ -48,6 +48,7 @@
 #include <QMenuBar>
 #include <QScrollArea>
 #include <QTest>
+#include <QUndoStack>
 #include <QToolButton>
 #include <functional>
 
@@ -903,6 +904,20 @@ void testSettingsFit(const QSize& size)
     CHECK(big.size() == before);
 }
 
+// A mouse-driven shell keeps the desktop's timeline (no centred playhead, no magnetic V1); before any test touch
+// device exists (QTest::createTouchDevice registers a touchscreen for the rest of the run)
+void testMouseShell(Engine& engine)
+{
+    Touch::setModeActive(false);
+    MainWindow m(&engine);
+    m.disableAutosave();
+    m.enablePhoneLayout();
+    TimelineView* mv = m.findChild<TimelineView*>();
+    CHECK(!MainWindow::touchInput());
+    CHECK(!mv->centerPlayhead());
+    CHECK(!mv->magneticMain());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -911,6 +926,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("phone-layout");
     qunsetenv("SCHNEIDI_LAYOUT"); // (check.h pins the desktop layout; this test is about the others)
+    MainWindow::setFormBySize(true); // (the forms by the window's size, as on Android)
     testSizes();
     testShell();
     if (qEnvironmentVariableIsEmpty("SCHNEIDI_PHONE_LAYOUT")) testSetting();
@@ -921,6 +937,7 @@ int main(int argc, char** argv)
     Engine engine;
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
+    testMouseShell(engine);
     testSilentRestore(engine);
     testSteadyTransport(engine);
     Touch::installKineticScrolling(&app); // (main.cpp: every scroll area takes a finger)
@@ -929,6 +946,7 @@ int main(int argc, char** argv)
     // The phone's timeline: centred playhead without the sideways scrollbar, hold-to-move and the magnetic main track
     // on by default; the settings switch them (the desktop never has them)
     {
+        Touch::setModeActive(true); // (a finger: touch mode, as on a phone)
         MainWindow w(&engine);
         w.disableAutosave();
         w.enablePhoneLayout();
@@ -937,6 +955,15 @@ int main(int argc, char** argv)
         settle();
         TimelineView* view = w.findChild<TimelineView*>();
         CHECK(view->centerPlayhead() && view->holdToMove() && view->magneticMain());
+        // The hidden menu bar's shortcuts still work (Ctrl+Z undoes)
+        w.editor()->addTitle(0, -1, 50, TitleKind::Text);
+        settle();
+        const int steps = w.editor()->project()->undoStack()->index();
+        QApplication::setActiveWindow(&w);
+        QTest::keyClick(&w, Qt::Key_Z, Qt::ControlModifier);
+        settle();
+        Check::report(w.editor()->project()->undoStack()->index() == steps - 1, "Ctrl+Z works in the phone layout",
+                      __FILE__, __LINE__, QString("%1 -> %2").arg(steps).arg(w.editor()->project()->undoStack()->index()));
         bool barShown = false;
         for (QScrollBar* b : w.findChild<TimelinePanel*>()->findChildren<QScrollBar*>())
             if (b->orientation() == Qt::Horizontal && b->isVisible() && !qobject_cast<QAbstractScrollArea*>(b->parentWidget()->parentWidget()))
@@ -989,6 +1016,7 @@ int main(int argc, char** argv)
         CHECK(!view->fitAudioRows()); // (the desktop: the user's heights)
         QSettings().remove("timeline/magneticMain");
         QSettings().remove("timeline/clipDrag");
+        Touch::setModeActive(false);
     }
     testWindow(engine, {411, 914});
     testWindow(engine, {914, 411});

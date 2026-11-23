@@ -96,8 +96,14 @@ int main(int argc, char** argv)
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
 
-    // The thresholds
+    // Off Android "automatic" never leaves the desktop form by size (a half screen, a portrait monitor)
     using F = MainWindow::LayoutForm;
+#ifndef Q_OS_ANDROID
+    CHECK(!MainWindow::formBySize());
+    CHECK(MainWindow::wantedForm({411, 914}) == F::Desktop && MainWindow::wantedForm({960, 1050}) == F::Desktop);
+#endif
+    MainWindow::setFormBySize(true); // (the size rule itself, as on Android)
+    // The thresholds
     CHECK(MainWindow::wantedForm({1920, 1080}) == F::Desktop);
     CHECK(MainWindow::wantedForm({960, 1050}) == F::Tablet);   // half a desktop screen
     CHECK(MainWindow::wantedForm({841, 701}) == F::Tablet);    // an unfolded foldable
@@ -153,7 +159,8 @@ int main(int argc, char** argv)
                 CHECK(menu->mapTo(&w, menu->rect().center()).y() == undo->mapTo(&w, undo->rect().center()).y());
         }
         same("tablet");
-        CHECK(view->centerPlayhead()); // (default on in the shell forms)
+        // (default on in the shell forms driven by a finger; a mouse keeps the desktop's timeline)
+        CHECK(view->centerPlayhead() == MainWindow::touchInput());
         // A phone's width: the phone form; panels opened as sheets
         w.resize(411, 760);
         settle();

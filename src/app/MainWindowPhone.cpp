@@ -47,6 +47,8 @@
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTimer>
+#include <functional>
+#include <QInputDevice>
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QBoxLayout>
@@ -226,6 +228,7 @@ MainWindow::LayoutForm MainWindow::wantedForm(const QSize& logical, LayoutForm c
     if (auto f = named(settings.value("ui/layoutForm").toString())) return *f;
     if (auto f = named(settings.value("ui/phoneLayout").toString())) return *f; // (0.26 prototype's setting)
     if (logical.isEmpty()) return current;
+    if (!formBySize()) return LayoutForm::Desktop;
     // Phone: the shorter side below 600 (a phone either way up) unless the window is desktop-wide (a short wide
     // desktop window stays a desktop). Desktop: 1100 wide and up. Between: the tablet form (an unfolded foldable,
     // a tablet upright, half a desktop screen). 24 px of hysteresis: a size on the line does not flip back and forth
@@ -235,6 +238,50 @@ MainWindow::LayoutForm MainWindow::wantedForm(const QSize& logical, LayoutForm c
     const int desktopWidth = kDesktopWidth + (current == LayoutForm::Desktop ? -kSlack : kSlack) / 2;
     if (shorter < phoneEdge && w < desktopWidth) return LayoutForm::Phone;
     return w >= desktopWidth ? LayoutForm::Desktop : LayoutForm::Tablet;
+}
+
+namespace {
+std::optional<bool> g_formBySize; // setFormBySize
+}
+
+bool MainWindow::formBySize()
+{
+    if (g_formBySize) return *g_formBySize;
+    const QByteArray env = qgetenv("SCHNEIDI_LAYOUT_BY_SIZE");
+    if (!env.isEmpty()) return env == "1";
+#ifdef Q_OS_ANDROID
+    return true;
+#else
+    return false;
+#endif
+}
+
+void MainWindow::setFormBySize(std::optional<bool> on) { g_formBySize = on; }
+
+bool MainWindow::touchInput()
+{
+    if (Touch::modeActive()) return true;
+    for (const QInputDevice* d : QInputDevice::devices())
+        if (d->type() == QInputDevice::DeviceType::TouchScreen) return true;
+    return false;
+}
+
+void MainWindow::setShellShortcuts(bool on)
+{
+    // The menu bar is hidden in the shell: its actions' shortcuts (Ctrl+S, Ctrl+Z …) only work while they hang on a
+    // visible widget, so the window carries them meanwhile
+    for (QAction* a : std::as_const(m_shellShortcuts)) removeAction(a);
+    m_shellShortcuts.clear();
+    if (!on) return;
+    std::function<void(QMenu*)> collect = [&](QMenu* menu) {
+        for (QAction* a : menu->actions()) {
+            if (a->menu()) collect(a->menu());
+            else if (!a->shortcuts().isEmpty() && !actions().contains(a)) m_shellShortcuts << a;
+        }
+    };
+    for (QAction* top : menuBar()->actions())
+        if (top->menu()) collect(top->menu());
+    addActions(m_shellShortcuts);
 }
 
 bool MainWindow::phoneLayoutWanted()
@@ -267,6 +314,8 @@ void MainWindow::setLayoutForm(LayoutForm form)
         enableShell(form == LayoutForm::Tablet);
     }
     applyScrollIndicators();
+    setShellShortcuts(m_phone != nullptr);
+    applyCenterPlayhead(); // (touch input decides the shell's timeline modes)
     if (curtain) {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest); // (the new arrangement laid out)
         curtain->reveal();
@@ -704,10 +753,12 @@ void MainWindow::applyCenterPlayhead()
     QSettings settings;
     const QString v = settings.value("timeline/centerPlayhead").toString();
     TimelineView* view = m_timeline->view();
-    view->setCenterPlayhead(v == "on" || (v.isEmpty() && m_phone));
-    // The finger's clip handling and the magnetic main track: phone and tablet only (the desktop stays as it is)
+    // Automatic: the shell driven by a finger (a tablet form driven by a mouse keeps the desktop's timeline)
+    const bool finger = m_phone && touchInput();
+    view->setCenterPlayhead(v == "on" || (v.isEmpty() && finger));
+    // The finger's clip handling and the magnetic main track: phone and tablet by touch only
     view->setHoldToMove(settings.value("timeline/clipDrag", "hold").toString() != "instant");
-    view->setMagneticMain(m_phone && settings.value("timeline/magneticMain", true).toBool());
+    view->setMagneticMain(finger && settings.value("timeline/magneticMain", true).toBool());
     view->setMomentum(settings.value("timeline/momentum", "low").toString());
 }
 
