@@ -48,7 +48,9 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCloseEvent>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QSettings>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -367,19 +369,22 @@ void MainWindow::tearDownUi()
 
 bool MainWindow::restartRestoring()
 {
-    // A running render would end with the process: asked like on quit (the project itself is never asked about)
-    if (Exporter::anyRunning() && !m_autosaveDisabled
-        && QMessageBox::question(this, "schneidi", T("Es wird gerade gerendert. Der Neustart bricht das Rendern ab. Trotzdem neu starten?"),
-                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
-        return false;
+    // (A running render is asked about on quit, closeEvent: the project itself is never asked about)
     if (m_tours && (m_tourSaved.active || m_tours->runner()->running())) m_tours->stop(); // the user's project back
     endVoiceover();
+    // The automatic backup up to date and kept (closeEvent leaves it while m_resumeQuit): unsaved work never hangs on
+    // the resume file alone. The new process removes it once the project is in its own backup.
+    if (!m_autosaveDisabled) autosave();
     SessionResume::State state;
     state.projectPath = m_projectPath;
     state.saveSuggestion = m_saveSuggestion;
     state.modified = m_project->isModified();
     state.page = pageId(m_page);
     state.selection = m_selection->ids();
+    if (!m_autosaveDisabled && state.modified) {
+        state.autosave = autosavePath();
+        state.autosaveKey = autosaveKey();
+    }
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
     data.views = savedViews();
@@ -402,6 +407,18 @@ bool MainWindow::restartRestoring()
     return m_restartRequested;
 }
 
+void MainWindow::restartFailed()
+{
+    // main.cpp could not start the new process: this one goes on with everything as it was
+    m_restartRequested = false;
+    m_resumeQuit = false;
+    SessionResume::remove(std::exchange(m_resumeFile, {}));
+    show();
+    QMessageBox::warning(this, "schneidi",
+                         T("schneidi konnte nicht neu gestartet werden. Das Projekt bleibt offen; die neue Größe gilt "
+                           "beim nächsten Start."));
+}
+
 bool MainWindow::resumeSession(const QString& file)
 {
     SessionResume::State state;
@@ -411,15 +428,42 @@ bool MainWindow::resumeSession(const QString& file)
         qWarning("Resume file not readable: %s", qPrintable(error));
         return false;
     }
-    SessionResume::remove(file);
     // As if opened by the user, but without its questions (asked before the restart already) and with the file name
     // of the project: saving writes its own file again
-    if (!applyLoaded(std::move(data), state.projectPath, false)) return false;
+    if (!applyLoaded(std::move(data), state.projectPath, false)) return false; // (the files stay: offered again)
     m_projectFingerprint = state.projectPath.isEmpty() ? QByteArray() : ProjectFile::fingerprint(state.projectPath);
     m_saveSuggestion = state.saveSuggestion;
     if (state.modified) m_project->markModified();
     updateTitle();
+    m_selection->set(state.selection); // (before the page: the Color/Comp page shows the selected clip)
     if (const std::optional<Page> p = pageForId(state.page)) showPage(*p);
-    m_selection->set(state.selection);
+    // Safe now: the unsaved work in this process's own backup, then the old process's backup and the resume files go
+    if (!m_autosaveDisabled && m_project->isModified()) {
+        autosave();
+        if (!QFileInfo::exists(autosavePath())) return true; // not written: the old backup and the files stay
+    }
+    if (!state.autosave.isEmpty() && QFileInfo(state.autosave) != QFileInfo(autosavePath())) {
+        QFile::remove(state.autosave);
+        QSettings().remove(state.autosaveKey);
+    }
+    SessionResume::remove(file);
     return true;
+}
+
+bool MainWindow::offerLeftoverResume()
+{
+    // A restart whose new process never opened its project (did not start, crashed, a file not readable then)
+    for (const QString& file : SessionResume::leftovers()) {
+        SessionResume::State state;
+        ProjectData data;
+        if (!SessionResume::read(file, &state, &data)) continue;
+        const QString name = state.projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(state.projectPath).fileName();
+        const auto answer = QMessageBox::question(
+            this, T("Wiederherstellen"),
+            T("Nach einem Neustart von schneidi wurde „%1“ nicht wieder geöffnet. Jetzt öffnen?").arg(name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (answer == QMessageBox::Yes) return resumeSession(file);
+        SessionResume::remove(file); // (the automatic backup of it, if any, is offered on its own)
+    }
+    return false;
 }

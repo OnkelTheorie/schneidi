@@ -32,6 +32,7 @@
 #include <QLabel>
 #include <QDir>
 #include <QFileInfo>
+#include <QTemporaryDir>
 #include <QEventLoop>
 #include <QMenu>
 #include <QMenuBar>
@@ -313,6 +314,23 @@ void testResume(Engine& engine)
         CHECK(!stateFile.isEmpty());
         CHECK(QFileInfo::exists(stateFile));
     }
+    // Files of its own per restart (two schneidi at once), listed as left over until a window took them
+    CHECK(QFileInfo(stateFile).fileName().startsWith("resume-"));
+    CHECK(SessionResume::leftovers(0).contains(stateFile));
+    CHECK(!SessionResume::leftovers(3600).contains(stateFile)); // just written: no leftover yet
+    // `--resume` comes from the command line: a file outside the resume folder is neither read nor removed
+    {
+        QTemporaryDir dir;
+        const QString decoy = dir.filePath("resume-1-1.json");
+        QFile f(decoy);
+        CHECK(f.open(QIODevice::WriteOnly) && f.write("{\"page\":\"edit\"}") > 0);
+        f.close();
+        MainWindow other(&engine);
+        other.disableAutosave();
+        CHECK(!other.resumeSession(decoy));
+        SessionResume::remove(decoy);
+        CHECK(QFileInfo::exists(decoy));
+    }
     // The restart's arguments carry it, never as a file to open
     const QStringList args = LaunchArgs::restart("/p/film.schneidi", stateFile);
     CHECK_EQ(LaunchArgs::resumeFile(args), stateFile);
@@ -335,6 +353,7 @@ void testResume(Engine& engine)
         CHECK_EQ(tv->view().leftFrame, 12.0);
     }
     CHECK(!QFileInfo::exists(stateFile)); // read once, then gone
+    CHECK(!SessionResume::leftovers(0).contains(stateFile));
     CHECK(!w.resumeSession(stateFile));    // a second time: nothing (and nothing changed)
     CHECK_EQ(Check::dump(w.liveProject()->timeline()), timelineBefore);
 }

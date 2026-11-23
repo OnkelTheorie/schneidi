@@ -692,7 +692,9 @@ int main(int argc, char* argv[])
                 "try again once it is answered");
     // A restart for a new interface size: the project, page and view as they were (MainWindow::restartRestoring)
     const QString resume = LaunchArgs::resumeFile(app.arguments());
-    const bool restored = (!resume.isEmpty() && w.resumeSession(resume)) || (!testRun && w.offerAutosaveRestore());
+    // (A restart's files left over - its new process never opened them - first: their project, then the backup)
+    const bool restored = (!resume.isEmpty() && w.resumeSession(resume))
+                          || (!testRun && (w.offerLeftoverResume() || w.offerAutosaveRestore()));
     StartupTrace::mark("autosave restore check");
     liveWaiting("schneidi is opening a project; try again in a moment");
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
@@ -744,15 +746,22 @@ int main(int argc, char* argv[])
     }
     StartupTrace::mark("event loop starts");
     HangWatch::arm();
-    const int rc = app.exec();
+    int rc = app.exec();
     HangWatch::uninstall(); // waits while quitting (threads, a running voice-over take) are no hang
     if (g_claudeSetupThread) g_claudeSetupThread->wait(); // a running `claude mcp add` finishes first
     // Restart (interface size, compatibility mode, audio driver): only here, when the window is closed and the project
     // is saved or kept in the resume file
     // The live server goes first: the new process would otherwise hand its project back to this one, which is quitting
-    if (w.restartRequested()) {
+    while (w.restartRequested()) {
         live.reset();
-        QProcess::startDetached(QCoreApplication::applicationFilePath(), w.restartArguments());
+        // An AppImage: the image again (this program lives in its mount, which goes when this process ends)
+        const QString image = qEnvironmentVariable("APPIMAGE");
+        if (QProcess::startDetached(image.isEmpty() ? QCoreApplication::applicationFilePath() : image,
+                                    w.restartArguments()))
+            break;
+        qWarning("Restart failed: the new process did not start");
+        w.restartFailed(); // the window back as it was (without the live connection), the user told
+        rc = app.exec();
     }
     return rc;
 }

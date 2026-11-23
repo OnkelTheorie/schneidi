@@ -767,7 +767,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
-    removeAutosave(); // quit normally -> nothing to restore
+    // Quit normally -> nothing to restore. A restart keeping the project as it is (restartRestoring): the backup stays
+    // until the new process has it in its own
+    if (!m_resumeQuit) removeAutosave();
     // The preview on the second monitor goes with the main window (its window is a top-level of its own)
     if (m_output) showPreviewOn(nullptr);
     event->accept();

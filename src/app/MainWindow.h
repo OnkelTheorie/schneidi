@@ -209,8 +209,13 @@ public:
     // their own), its file name, page, playhead, zoom/scroll and selection (app/SessionResume.h). Asks only about a
     // running render. false = cancelled
     bool restartRestoring();
-    // After such a restart (main.cpp, --resume <file>): the state back; false = not readable (nothing changed)
+    // After such a restart (main.cpp, --resume <file>): the state back; false = not readable (nothing changed). The
+    // files go only once the project is open and in this process's automatic backup.
     bool resumeSession(const QString& file);
+    // The new process could not be started (main.cpp): the window back as it was, the user told
+    void restartFailed();
+    // At the start: resume files a restart left (its new process never opened them) offered; true = one opened
+    bool offerLeftoverResume();
 
     // Live connection (cli/Live.h, started in main.cpp): what an AI session sees and controls (MainWindowLive.cpp)
     Project* liveProject() override { return m_project; }
