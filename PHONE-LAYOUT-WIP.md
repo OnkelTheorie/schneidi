@@ -258,7 +258,17 @@ Status (updated with each commit):
   - de+en strings only (6 new). Tests: AI sheet without key field/second title in test_phone_layout (827; 821 with
     NO_TLS), test_ai_chat 867, test_render_queue 376, test_deliver_review 57, test_hw_encoders 159, test_i18n 22,
     test_layout_switch 78, test_touch_input 216, test_window_fit 74, test_shapes 189.
-- Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
+- Emulator check (x86_64 APK of 7a279886, schachi_test, English system): shots in
+  `~/projects/data/schneidi/phone-pass1-2026-11-22/` 00 start (A1-A5 fit), 01 transport at two moments (same place),
+  02 thick selection frame, 03 sheet with V1 above, 04/04c scroll indicator shown then faded, 05 settings fit with
+  OK, 06-07b title box / moved / larger by a corner, 08 text inspector, 09 "Split" notice, 10 export "H.264 (MP4,
+  s264)" + /storage/emulated/0/Movies, 11 AI sheet (no TLS note), 12 landscape (picture ~170 px, rail names), 13
+  "added" notice. Found there and fixed: the scroll indicator stood in the middle of a grown list (29af60d6, test),
+  an empty AI header row over the setup (7a279886).
+- APKs of 7a279886: `android-deps/build610-x86_64-phone/schneidi-0.26.0-x86_64.apk` (84 MB),
+  `android-deps/build610-arm64-phone/schneidi-0.26.0-arm64-v8a.apk` (78 MB). Not installed on the A51.
+- Seen, not changed: a reinstall (kill without going to the background) loses edits since the last autosave
+  (the gallery add was gone after the restore); the Stroke section header has a grey box at its left (touch mode).
 
 ## Pass 1 (22.11. night, stopped for shutdown)
 Done: item 2 (glide/axis lock/snap, setting Schwung) + item 4 (axis lock) in ec64f2cc.
