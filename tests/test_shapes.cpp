@@ -1153,6 +1153,18 @@ void testTextTitleOverlay()
     p.undoStack()->undo();
     t = TimelineOps::findClip(p.timeline(), id);
     CHECK(t && std::abs(t->title.size - size0) < 0.01);
+    // A clip zoomed 2x: the title follows the finger (its position moves half the finger's way in title pixels)
+    e.modifyClips({id}, "zoom", [](Clip& c) {
+        Keys::setValue(c, AnimParam::ZoomX, 0, 2.0);
+        Keys::setValue(c, AnimParam::ZoomY, 0, 2.0);
+    });
+    t = TimelineOps::findClip(p.timeline(), id);
+    const double x0 = t->title.posX;
+    const QPointF at = ov.centerPos(frame);
+    CHECK(drag(at, at + QPointF(40, 0)));
+    t = TimelineOps::findClip(p.timeline(), id);
+    Check::report(t && std::abs(t->title.posX - (x0 + 20)) <= 1, "zoomed clip: title moves with the finger", __FILE__,
+                  __LINE__, QString("%1 -> %2").arg(x0).arg(t ? t->title.posX : -1));
 }
 
 int main(int argc, char** argv)

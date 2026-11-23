@@ -1128,6 +1128,115 @@ void testCompactHeaders()
     CHECK_EQ(TimelineView::kHeaderW, TimelineView::kHeaderWide);
 }
 
+// Review fixes of the phone timeline (centre mode, magnetic V1, cancelled touches)
+void testReviewFixes()
+{
+    using QE = QEvent;
+    const auto drag = [](Fixture& f, QPoint a, QPoint b) {
+        mouse(*f.tv, QE::MouseButtonPress, a, Qt::LeftButton);
+        for (int i = 1; i <= 4; ++i) mouse(*f.tv, QE::MouseMove, a + (b - a) * i / 4, Qt::LeftButton);
+        mouse(*f.tv, QE::MouseButtonRelease, b, Qt::NoButton);
+        QApplication::processEvents();
+    };
+    {
+        // 2: a mouse drag on the ruler in the centre mode slides from the press (it ran away with each re-centring)
+        Fixture f;
+        QObject::connect(f.tv, &TimelineView::seekRequested, [&](int frame) { f.tv->setPlayhead(frame); });
+        f.tv->setPlayhead(100);
+        f.tv->setCenterPlayhead(true);
+        const int centre = TimelineView::kHeaderW + (f.tv->width() - TimelineView::kHeaderW) / 2;
+        drag(f, {centre, 15}, {centre + 40, 15}); // 40 px = 20 frames back
+        Check::report(std::abs(f.tv->playhead() - 80) <= 1, "centre ruler drag relative", __FILE__, __LINE__,
+                      QString::number(f.tv->playhead()));
+        // 11: a zoom keeps the line in the middle at once (not only after the next paint)
+        f.tv->setZoomAndScroll(4.0, 0, 0);
+        CHECK(std::abs(f.x(f.tv->playhead()) - centre) <= 1);
+        f.tv->zoomBy(0.5);
+        CHECK(std::abs(f.x(f.tv->playhead()) - centre) <= 1);
+    }
+    {
+        // 3: moving a clip on another track leaves the magnetic V1 alone (its gap 100..150 stays)
+        Fixture f;
+        f.tv->setMagneticMain(true);
+        const ViewState& v = f.tv->view();
+        // (its name bar: the middle is the volume line)
+        const int a1 = TimelineView::kRulerH + 2 * v.videoTrackHeight + TimelineView::kSeparator + 8;
+        drag(f, {f.x(50), a1}, {f.x(70), a1}); // A1's clip 4, 20 frames on
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 4)->start, 20);
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 2)->start, 150);
+        // 6: a drag that ends where it began is no undo step and changes nothing
+        const int steps = f.project.undoStack()->count();
+        const bool clean = f.project.undoStack()->isClean();
+        mouse(*f.tv, QE::MouseButtonPress, {f.x(200), 120}, Qt::LeftButton);
+        mouse(*f.tv, QE::MouseMove, {f.x(220), 120}, Qt::LeftButton);
+        mouse(*f.tv, QE::MouseMove, {f.x(200), 120}, Qt::LeftButton);
+        mouse(*f.tv, QE::MouseButtonRelease, {f.x(200), 120}, Qt::NoButton);
+        CHECK_EQ(f.project.undoStack()->count(), steps);
+        CHECK(f.project.undoStack()->isClean() == clean);
+        // 5: along the magnetic V1 a drag reorders: clip 1 dropped after clip 2, nothing cut
+        f.editor.packTrack({TrackKind::Video, 0});
+        drag(f, {f.x(50), 120}, {f.x(210), 120});
+        const auto& v1 = f.project.timeline().video[0].clips;
+        Check::report(v1.size() == 2 && v1[0].id == 2 && v1[0].start == 0 && v1[1].id == 1 && v1[1].start == 100
+                          && v1[0].length() == 100 && v1[1].length() == 100,
+                      "drag along V1 reorders", __FILE__, __LINE__,
+                      QString("%1@%2+%3, %4@%5+%6").arg(v1.value(0).id).arg(v1.value(0).start).arg(v1.value(0).length())
+                          .arg(v1.value(1).id).arg(v1.value(1).start).arg(v1.value(1).length()));
+    }
+    {
+        // 4: packTrack keeps linked sound whole: not before 0, not onto another clip, not on a locked track
+        Fixture f;
+        f.project.edit("link", [](Timeline& tl) {
+            tl.video[0].clips[1].linkId = 7;           // clip 2 at 150 -> would go to 100
+            tl.audio[0].clips << clip(9, 20, 100);     // its sound starts at 20 (a J-cut): 20 - 50 < 0
+            tl.audio[0].clips.last().linkId = 7;
+            tl.audio[0].clips.removeFirst();           // (clip 4 out of the way)
+        });
+        CHECK(!f.editor.packTrack({TrackKind::Video, 0}));
+        f.project.edit("sound later", [](Timeline& tl) { TimelineOps::findClip(tl, 9)->start = 150; });
+        f.project.edit("other clip", [](Timeline& tl) { tl.audio[0].clips.prepend(clip(10, 100, 40)); }); // 100..140
+        CHECK(!f.editor.packTrack({TrackKind::Video, 0}));
+        f.project.edit("away", [](Timeline& tl) { tl.audio[0].clips.removeIf([](const Clip& c) { return c.id == 10; }); });
+        f.editor.toggleTrackLock({TrackKind::Audio, 0});
+        CHECK(!f.editor.packTrack({TrackKind::Video, 0}));
+        f.editor.toggleTrackLock({TrackKind::Audio, 0});
+        CHECK(f.editor.packTrack({TrackKind::Video, 0}));
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 9)->start, 100);
+    }
+    {
+        // 7 + 9: a held V1 clip is selected with its sound; a cancelled touch drops the reorder (nothing applied)
+        Fixture f;
+        f.project.edit("link", [](Timeline& tl) {
+            tl.video[0].clips[0].linkId = 3;
+            tl.audio[0].clips[0].linkId = 3;
+        });
+        f.tv->setFingerPans(true);
+        f.tv->setHoldToMove(true);
+        f.tv->setMagneticMain(true);
+        const QPoint at(f.x(50), 120);
+        QTest::touchEvent(f.tv, g_touch).press(0, at, f.tv);
+        QTest::qWait(Touch::longPressMs() + 100);
+        CHECK(f.tv->reordering());
+        CHECK(f.sel.contains(1) && f.sel.contains(4));
+        QTest::touchEvent(f.tv, g_touch).move(0, at + QPoint(150, 0), f.tv);
+        QTouchEvent cancel(QEvent::TouchCancel, g_touch);
+        QApplication::sendEvent(f.tv, &cancel);
+        CHECK(!f.tv->reordering());
+        CHECK_EQ(f.project.timeline().video[0].clips[0].id, 1);
+        pauseTaps();
+        // 8: the layout switches mid-pan (finger pans off): the touch ends without a crash, nothing more moves
+        f.tv->setHoldToMove(false);
+        const QPoint empty(f.x(130), 120);
+        QTest::touchEvent(f.tv, g_touch).press(0, empty, f.tv);
+        QTest::touchEvent(f.tv, g_touch).move(0, empty - QPoint(30, 0), f.tv);
+        f.tv->setFingerPans(false);
+        const double left = f.tv->view().leftFrame;
+        QTest::touchEvent(f.tv, g_touch).move(0, empty - QPoint(60, 0), f.tv);
+        QTest::touchEvent(f.tv, g_touch).release(0, empty - QPoint(60, 0), f.tv);
+        CHECK_EQ(f.tv->view().leftFrame, left);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -1161,5 +1270,6 @@ int main(int argc, char** argv)
     testHoldToMove();
     testMomentumAndAxis();
     testPackTrack();
+    testReviewFixes();
     return Check::result();
 }

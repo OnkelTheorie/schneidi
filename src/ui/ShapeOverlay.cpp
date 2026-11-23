@@ -262,7 +262,18 @@ bool ShapeOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
     if (!transforms(frame, &w, &l, nullptr, nullptr)) return true;
     const QPointF pos = w.inverted().map(e->position()); // project pixels
     if (m_part == Inside) {
-        const QPointF d = pos - m_press;
+        QPointF d = pos - m_press;
+        if (const Clip* c = clip(); c && !c->title.isShape() && Keys::hasTransform(*c)) {
+            // A text title's box is in picture pixels (its clip's zoom and turn in it); its position lives before that
+            // transform: the finger's way through the inverse (else a zoomed clip's title ran zoom times the finger)
+            const int t = localFrame(*c);
+            QTransform lin;
+            lin.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
+            lin.scale(Keys::valueAt(*c, AnimParam::ZoomX, t), Keys::valueAt(*c, AnimParam::ZoomY, t));
+            bool ok = false;
+            const QTransform inv = lin.inverted(&ok);
+            if (ok) d = inv.map(d);
+        }
         set({{int(AnimParam::TitlePosX), std::round(m_startX + d.x())}, {int(AnimParam::TitlePosY), std::round(m_startY - d.y())}});
     } else if (isText()) { // a corner of a text title: the font size by the finger's distance from the centre
         const QPointF centre = m_startLocal.map(QPointF(0, 0));

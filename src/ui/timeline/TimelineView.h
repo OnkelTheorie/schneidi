@@ -252,6 +252,8 @@ private:
     bool m_fingerPans = false;
     bool m_center = false;          // setCenterPlayhead
     double centreLeft() const;      // the left frame that puts the playhead in the lanes' middle
+    QSet<int> withLinked(int id) const; // the clip and the clips linked to it
+    void cancelTouchDrag();             // TouchGestures::onCancel
     void centreScrub(double dx);    // a finger's step in the centred mode (snaps a slow scrub to edges)
     double m_scrubRaw = 0;          // the centred scrub's unsnapped left frame during a pan
     int m_scrubSnap = -1;           // the edge a slow scrub holds at (-1 none)
@@ -548,6 +550,7 @@ private:
     int m_rampDelta = 0;     // timeline frames while dragging
     QPoint m_pressPos;
     int m_scrubFrame = -1; // last jump target while dragging in the ruler (do not jump to the same frame again)
+    int m_scrubPressX = 0, m_scrubPressFrame = 0; // centre mode: the ruler's press (a drag slides from there)
     TrackRef m_anchorRef;
     QVector<int> m_dragIds;
     int m_dragDelta = 0;

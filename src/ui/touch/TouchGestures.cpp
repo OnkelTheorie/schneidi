@@ -169,6 +169,11 @@ bool TouchGestures::touch(QTouchEvent* e)
     }
     if (e->type() == QEvent::TouchCancel) {
         m_hold->stop();
+        m_glide->stop();
+        // The view drops what the finger had begun (a held reorder, a drag) before the release below reaches it:
+        // a cancelled touch never commits anything
+        if (onCancel) onCancel();
+        if (!alive) return true;
         if (TouchDrag::active()) TouchDrag::finish(m_lastGlobal, false);
         if (m_state == State::Pressed) sendMouse(QEvent::MouseButtonRelease, m_lastPos, false);
         if (alive && m_state == State::Pinch && onPinchEnd) onPinchEnd();
@@ -240,7 +245,7 @@ bool TouchGestures::touch(QTouchEvent* e)
             // The axis is chosen once: sideways (time) unless the swipe is clearly vertical (steeper than ~60 deg)
             if (m_axisLock) m_axis = std::abs(d.y()) > 1.7 * std::abs(d.x()) ? Axis::Y : Axis::X;
             if (onPanStart) onPanStart();
-            if (alive) onPan(axisOnly(d));
+            if (alive && onPan) onPan(axisOnly(d));
             if (!alive) return true;
             m_samples.clear();
             m_samples.append({m_clock.elapsed(), m_lastPos});
@@ -252,6 +257,10 @@ bool TouchGestures::touch(QTouchEvent* e)
         if (alive && !TouchDrag::active()) sendMouse(QEvent::MouseMove, m_lastPos, true);
         return true;
     case State::Panning: {
+        if (!onPan) { // the view gave up panning meanwhile (a layout switch): nothing more of this touch
+            m_state = end ? State::Idle : State::Done;
+            return true;
+        }
         if (live >= 2) { // a second finger joins: from here a pinch
             m_state = State::Pinch;
             m_pinchCentre = (pts[0].position() + pts[1].position()) / 2;

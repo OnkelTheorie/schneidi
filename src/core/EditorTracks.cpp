@@ -380,6 +380,31 @@ bool Editor::packTrack(TrackRef ref, const QVector<int>& order, const QString& t
         at += c.length();
     }
     if (shift.isEmpty()) return false;
+    // The linked clips (sound of a V1 clip) move along - only where that keeps everything: not before frame 0 (a
+    // J-cut's sound starting before its picture), not on a locked track, not onto another clip of their track. Else
+    // nothing moves (a gap stays; nothing is cut or goes out of sync)
+    for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) {
+        const auto& tracks = now.tracks(kind);
+        for (int t = 0; t < tracks.size(); ++t) {
+            if (kind == ref.kind && t == ref.index) continue;
+            QVector<QPair<int, int>> spans; // the track's clips as they would be
+            bool shifted = false;
+            for (const Clip& c : tracks[t].clips) {
+                int start = c.start;
+                if (c.linkId && byLink.contains(c.linkId)) {
+                    start += byLink.value(c.linkId);
+                    shifted = true;
+                    if (start < 0) return false;
+                }
+                spans << qMakePair(start, start + c.length());
+            }
+            if (!shifted) continue;
+            if (isTrackLocked({kind, t})) return false;
+            std::sort(spans.begin(), spans.end());
+            for (int i = 1; i < spans.size(); ++i)
+                if (spans[i].first < spans[i - 1].second) return false;
+        }
+    }
     m_project->edit(text.isEmpty() ? T("Hauptspur schließen") : text, [&](Timeline& tl) {
         for (auto* tracks : {&tl.video, &tl.audio})
             for (int t = 0; t < tracks->size(); ++t)

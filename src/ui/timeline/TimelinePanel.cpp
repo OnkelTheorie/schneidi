@@ -297,6 +297,15 @@ void TimelinePanel::setCompact(bool on)
     m_timelines->setMinimumWidth(on ? 0 : 160);
     m_timelines->setSizeAdjustPolicy(on ? QComboBox::AdjustToMinimumContentsLengthWithIcon : QComboBox::AdjustToContents);
     m_timelines->setMinimumContentsLength(on ? 7 : 0);
+    if (!on && m_barScroll) { // the bar back into the panel's own layout (the scroll area goes)
+        auto* lay = static_cast<QBoxLayout*>(layout());
+        const int at = lay->indexOf(m_barScroll);
+        m_barScroll->takeWidget();
+        lay->insertWidget(at, m_barWidget);
+        m_barWidget->setVisible(m_barShown);
+        delete m_barScroll;
+        m_barScroll = nullptr;
+    }
     if (on && !m_barScroll) {
         // What still does not fit scrolls sideways (a swipe), the panel never gets wider for it
         auto* lay = static_cast<QBoxLayout*>(layout());

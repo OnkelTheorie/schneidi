@@ -42,6 +42,7 @@ public:
     std::function<void(const QPointF& pos)> onHoldCue;  // the hold is ready: the next move works the widget itself
 
     std::function<void()> onPanStart;                   // a pan begins (before its first onPan)
+    std::function<void()> onCancel;                     // the system cancelled the touch: drop what it began
 
     // The glide after a pan: Off = none, Low = short (a quick flick only), Normal = like a flicked list
     enum class Momentum { Off, Low, Normal };
