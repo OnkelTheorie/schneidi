@@ -355,6 +355,8 @@ void MainWindow::showEvent(QShowEvent* event)
         snapshotDesktop();
         checkLayoutForm();
     });
+    // A silent restore reached a running window: the next one may be silent again (offerAutosaveRestore)
+    QTimer::singleShot(2000, this, [] { QSettings().remove(kRestoreStartKey); });
 }
 
 void MainWindow::checkLayoutForm()

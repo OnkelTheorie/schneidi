@@ -52,6 +52,7 @@
 #include <QUndoStack>
 #include <QToolButton>
 #include <functional>
+#include <memory>
 
 namespace {
 
@@ -549,7 +550,8 @@ void testSilentRestore(Engine& engine)
         CHECK(w.editor()->project()->isModified());
         w.autosave();
     } // gone without closing (as if killed): the backup stays
-    MainWindow w2(&engine);
+    auto w2p = std::make_unique<MainWindow>(&engine);
+    MainWindow& w2 = *w2p;
     bool asked = false;
     QTimer guard; // a question would block: answer it with No and note it
     QObject::connect(&guard, &QTimer::timeout, &guard, [&asked] {
@@ -565,7 +567,21 @@ void testSilentRestore(Engine& engine)
     int titles = 0;
     for (const Track& t : w2.editor()->project()->timeline().video) titles += int(t.clips.size());
     CHECK(titles >= 1);
-    w2.disableAutosave();
+    // Review B4: that restore never reached a running window (as if the restored project crashed the start): the
+    // next start asks instead of restoring again
+    w2.editor()->addTitle(100, -1, 50, TitleKind::Text);
+    w2.autosave();
+    w2p.reset(); // (killed: its backup is an orphan the next window finds)
+    {
+        MainWindow w3(&engine);
+        asked = false;
+        guard.start(50);
+        w3.offerAutosaveRestore();
+        guard.stop();
+        CHECK(asked);
+        w3.disableAutosave();
+    }
+    QSettings().remove(MainWindow::kRestoreStartKey);
     qputenv("SCHNEIDI_SILENT_RESTORE", "0");
     CHECK(!MainWindow::restoresWithoutAsking());
     qunsetenv("SCHNEIDI_SILENT_RESTORE");

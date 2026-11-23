@@ -298,6 +298,8 @@ public:
     // tablet|desktop or SCHNEIDI_PHONE_LAYOUT=1/0 pin it
     static LayoutForm wantedForm(const QSize& logical, LayoutForm current = LayoutForm::Desktop);
     static bool phoneLayoutWanted(); // the start: wantedForm(the screen) == Phone
+    // Set while a silent autosave restore starts, cleared 2 s after the window is up: still set = that start crashed
+    static constexpr const char* kRestoreStartKey = "autosave/silentRestorePending";
     // "Automatisch" picks the form by the window's size only on Android; a desktop system stays Desktop at any size
     // (half a screen, a portrait monitor) unless the setting or SCHNEIDI_LAYOUT asks for another form.
     // SCHNEIDI_LAYOUT_BY_SIZE=1/0 and setFormBySize (tests) override
