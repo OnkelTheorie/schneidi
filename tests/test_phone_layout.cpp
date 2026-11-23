@@ -740,6 +740,30 @@ void testGallery(Engine& engine)
         CHECK(g.tiles().size() == 3);
         CHECK(tileOf(2)->number() == 1); // (the picks stay through the filter)
     }
+    {
+        // Review B3: a phone full of videos - only the tiles in sight (and a screen below) ask for their picture,
+        // scrolling asks for more
+        QVector<DeviceMediaItem> many;
+        for (int i = 0; i < 400; ++i) {
+            DeviceMediaItem m = items[0];
+            m.path = QString("%1/many-%2.wav").arg(dir.path()).arg(i);
+            m.date = now.addSecs(-i);
+            many << m;
+        }
+        DeviceMedia::setTestItems(many);
+        MediaGallery g;
+        g.resize(411, 700);
+        g.show();
+        settle();
+        const int first = g.thumbnailsRequested();
+        Check::report(first > 0 && first < 100, "gallery: only tiles in sight load", __FILE__, __LINE__,
+                      QString::number(first));
+        auto* scroll = g.findChild<QScrollArea*>();
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+        settle();
+        CHECK(g.thumbnailsRequested() > first && g.thumbnailsRequested() < 400);
+        DeviceMedia::setTestItems(items);
+    }
     // The flow: the big button over the empty timeline, the gallery, two picked, added in that order
     MainWindow w(&engine);
     w.disableAutosave();

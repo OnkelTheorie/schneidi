@@ -7,6 +7,8 @@
 
 #include <QDialog>
 #include <QVector>
+#include <memory>
+#include <atomic>
 
 #include "engine/DeviceMedia.h"
 
@@ -23,6 +25,9 @@ class MediaGallery : public QDialog {
 public:
     enum class Filter { All, Videos, Photos };
     explicit MediaGallery(QWidget* parent = nullptr);
+    ~MediaGallery() override;
+    bool loading() const { return m_loading; } // the device's list still being read (in the background)
+    int thumbnailsRequested() const { return m_requested; } // (tests: only tiles in sight ask)
 
     QStringList chosenPaths() const; // in the order they were picked
     bool otherFileWanted() const { return m_other; }
@@ -38,7 +43,8 @@ private:
     void rebuild();              // sections and tiles for the filter
     void toggle(int item);       // picked / not picked (the order numbers follow)
     void updatePicks();
-    void loadThumbnails();
+    void loadThumbnails(); // the tiles in sight (and a screen below) that have no picture yet
+    void listed(const QVector<DeviceMediaItem>& items);
     int columns() const;
 
     QVector<DeviceMediaItem> m_items;
@@ -52,6 +58,11 @@ private:
     QPushButton* m_add;
     bool m_other = false;
     int m_columns = 0;
+    bool m_loading = false;
+    int m_requested = 0;
+    class QTimer* m_thumbTimer = nullptr; // loadThumbnails once the layout settled (a scroll, a rebuild, a resize)
+    class QThreadPool* m_pool;           // its own two threads: never the app's pool (the engine's work runs there)
+    std::shared_ptr<std::atomic<int>> m_generation; // a rebuild or the end: queued pictures for old tiles skip their work
 };
 
 // One tile: the picture cropped to its square, the length at the bottom right (videos), the pick number at the top right

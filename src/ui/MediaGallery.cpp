@@ -16,6 +16,9 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QThreadPool>
+#include <QTimer>
+#include <QScrollBar>
+#include <QCache>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -194,7 +197,46 @@ MediaGallery::MediaGallery(QWidget* parent) : QDialog(parent)
     footLay->addWidget(m_add);
     lay->addWidget(foot);
 
-    m_items = DeviceMedia::list();
+    m_pool = new QThreadPool(this);
+    m_pool->setMaxThreadCount(2);
+    m_generation = std::make_shared<std::atomic<int>>(0);
+    // Only tiles in sight load their picture (a phone may hold thousands): again whenever the list scrolls
+    m_thumbTimer = new QTimer(this);
+    m_thumbTimer->setSingleShot(true);
+    m_thumbTimer->setInterval(40);
+    connect(m_thumbTimer, &QTimer::timeout, this, &MediaGallery::loadThumbnails);
+    connect(m_scroll->verticalScrollBar(), &QScrollBar::valueChanged, m_thumbTimer, qOverload<>(&QTimer::start));
+    updatePicks();
+    if (DeviceMedia::hasTestItems()) { // (tests: at once)
+        listed(DeviceMedia::list());
+        return;
+    }
+    // The device's list off the UI thread (MediaStore can take a moment with many items)
+    m_loading = true;
+    m_empty->setText(T("Videos und Fotos werden gesucht …"));
+    m_scroll->hide();
+    m_empty->show();
+    QPointer<MediaGallery> self(this);
+    m_pool->start([self] {
+        const QVector<DeviceMediaItem> items = DeviceMedia::list();
+        QMetaObject::invokeMethod(qApp, [self, items] {
+            if (self) self->listed(items);
+        }, Qt::QueuedConnection);
+    });
+}
+
+MediaGallery::~MediaGallery()
+{
+    ++*m_generation; // (queued pictures skip their work)
+    m_pool->clear();
+    m_pool->waitForDone();
+}
+
+void MediaGallery::listed(const QVector<DeviceMediaItem>& items)
+{
+    m_loading = false;
+    m_items = items;
+    m_picked.clear();
     rebuild();
     updatePicks();
 }
@@ -209,6 +251,7 @@ void MediaGallery::resizeEvent(QResizeEvent* event)
 {
     QDialog::resizeEvent(event);
     if (columns() != m_columns) rebuild();
+    else if (m_thumbTimer) m_thumbTimer->start();
 }
 
 void MediaGallery::setFilter(Filter filter)
@@ -222,6 +265,7 @@ QVector<GalleryTile*> MediaGallery::tiles() const { return m_tiles; }
 
 void MediaGallery::rebuild()
 {
+    if (m_loading) return; // (listed() builds them once the device's list is there)
     m_columns = columns();
     m_tiles.clear();
     m_body = new QWidget;
@@ -253,25 +297,52 @@ void MediaGallery::rebuild()
         m_tiles << tile;
     }
     lay->addStretch(1);
+    ++*m_generation; // (the old tiles' queued pictures are not made any more)
+    m_pool->clear();
     m_scroll->setWidget(m_body); // (the old body goes)
     const bool none = m_tiles.isEmpty();
     m_scroll->setVisible(!none);
     m_empty->setVisible(none);
     m_empty->setText(m_items.isEmpty() ? T("Keine Videos oder Fotos auf dem Gerät gefunden. „Andere Datei…“ öffnet die Dateiauswahl.")
                                        : T("Hier ist nichts von dieser Art."));
-    loadThumbnails();
+    m_thumbTimer->start(); // (once laid out: which tiles are in sight)
 }
+
+namespace {
+QCache<QString, QImage>& thumbCache()
+{
+    static QCache<QString, QImage> cache(300); // the last pictures (a second opening shows them at once)
+    return cache;
+}
+} // namespace
 
 void MediaGallery::loadThumbnails()
 {
-    // In the background, one tile after another as they come (Android: the system's cached thumbnails)
-    for (GalleryTile* tile : m_tiles) {
+    // The tiles in sight and one screen below them, in the background on the gallery's own threads (Android: the
+    // system's cached thumbnails); a picture made before comes from the cache
+    if (!m_body || !m_scroll->isVisible()) return;
+    const QRect seen = QRect(QPoint(0, m_scroll->verticalScrollBar()->value()), m_scroll->viewport()->size())
+                           .adjusted(0, 0, 0, m_scroll->viewport()->height());
+    const int generation = *m_generation;
+    for (GalleryTile* tile : std::as_const(m_tiles)) {
+        if (tile->property("asked").toBool()) continue;
+        const QRect at(tile->mapTo(m_body, QPoint(0, 0)), tile->size());
+        if (!seen.intersects(at)) continue;
+        tile->setProperty("asked", true);
         const DeviceMediaItem item = m_items[tile->item()];
+        if (const QImage* known = thumbCache().object(item.path)) {
+            tile->setPicture(*known);
+            continue;
+        }
+        ++m_requested;
         QPointer<GalleryTile> target(tile);
-        QThreadPool::globalInstance()->start([item, target] {
+        auto current = m_generation;
+        m_pool->start([item, target, current, generation] {
+            if (*current != generation) return; // (rebuilt or closed meanwhile)
             const QImage picture = DeviceMedia::thumbnail(item, QSize(320, 320));
             if (picture.isNull()) return;
-            QMetaObject::invokeMethod(qApp, [picture, target] {
+            QMetaObject::invokeMethod(qApp, [picture, target, path = item.path] {
+                thumbCache().insert(path, new QImage(picture));
                 if (target) target->setPicture(picture);
             }, Qt::QueuedConnection);
         });

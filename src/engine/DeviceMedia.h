@@ -32,5 +32,6 @@ void requestPermission(QObject* context, std::function<void(bool granted)> done)
 
 // Tests: the items list() returns instead of the device's (empty = the device's again)
 void setTestItems(const QVector<DeviceMediaItem>& items);
+bool hasTestItems();
 
 } // namespace DeviceMedia

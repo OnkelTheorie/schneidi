@@ -27,6 +27,7 @@ QVector<DeviceMediaItem>& testItems()
 } // namespace
 
 void setTestItems(const QVector<DeviceMediaItem>& items) { testItems() = items; }
+bool hasTestItems() { return !testItems().isEmpty(); }
 
 #ifdef Q_OS_ANDROID
 namespace {
