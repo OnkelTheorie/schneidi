@@ -896,6 +896,11 @@ void testScrollIndicators()
     QTest::mouseRelease(ind, Qt::LeftButton, {}, top + QPoint(0, 150));
     Check::report(area->verticalScrollBar()->value() > 300, "indicator drags the content", __FILE__, __LINE__,
                   QString::number(area->verticalScrollBar()->value()));
+    // Touch mode: a shown indicator never takes a press (the finger's next tap at the edge goes to the content)
+    Touch::setModeActive(true);
+    area->verticalScrollBar()->setValue(50);
+    CHECK(ind->shown() && ind->testAttribute(Qt::WA_TransparentForMouseEvents));
+    Touch::setModeActive(false);
     // Gone: the scroll bars as they were
     delete indicators;
     CHECK(area->verticalScrollBarPolicy() == Qt::ScrollBarAsNeeded && !area->findChild<ScrollIndicator*>());

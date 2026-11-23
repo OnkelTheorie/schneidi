@@ -2,6 +2,7 @@
 #include "ui/touch/ScrollIndicators.h"
 
 #include "app/Theme.h"
+#include "ui/touch/Touch.h"
 
 #include <QAbstractScrollArea>
 #include <QApplication>
@@ -25,7 +26,7 @@ ScrollIndicator::ScrollIndicator(QScrollBar* bar, QWidget* host, std::function<Q
     m_fade->setDuration(220);
     connect(m_fade, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
         m_opacity = v.toDouble();
-        setAttribute(Qt::WA_TransparentForMouseEvents, m_opacity <= 0.0);
+        setAttribute(Qt::WA_TransparentForMouseEvents, m_opacity <= 0.0 || !grabbable());
         update();
     });
     m_idle = new QTimer(this);
@@ -46,6 +47,13 @@ ScrollIndicator::ScrollIndicator(QScrollBar* bar, QWidget* host, std::function<Q
     raise();
 }
 
+bool ScrollIndicator::grabbable()
+{
+    // A finger scrolls the content itself (kinetic): an indicator that took presses right after a pan ate the next
+    // tap at the edge or jumped a page. Only a mouse (touch mode off: a narrow desktop window) drags it
+    return !Touch::modeActive();
+}
+
 void ScrollIndicator::poke()
 {
     if (!m_bar) return;
@@ -64,10 +72,11 @@ void ScrollIndicator::setShown(bool on)
 {
     if (on) {
         m_idle->start();
+        setAttribute(Qt::WA_TransparentForMouseEvents, !grabbable());
         if (m_opacity >= 1.0 && m_fade->state() != QAbstractAnimation::Running) return;
         m_fade->stop();
         m_opacity = 1.0;
-        setAttribute(Qt::WA_TransparentForMouseEvents, false);
+        setAttribute(Qt::WA_TransparentForMouseEvents, !grabbable());
         raise();
         update();
         return;

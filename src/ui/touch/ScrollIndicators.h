@@ -25,6 +25,7 @@ public:
     // calls this itself)
     void poke();
     bool shown() const { return m_opacity > 0.0; }
+    static bool grabbable(); // takes presses while shown (a mouse); never under a finger (touch mode)
     static constexpr int kHit = 14;  // the touch/mouse zone at the edge while shown
     static constexpr int kThin = 4;  // the bar as painted
     static constexpr int kHideMs = 900; // shown this long after the last move
