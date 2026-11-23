@@ -252,6 +252,9 @@ bool MainWindow::rebuildUi(bool retry)
         m_viewer->screen()->setFrame(picture);
         if (m_scopes && m_page == Page::Color) m_scopes->setFrame(picture);
     }
+    // The new widgets learn where the playhead is (paused, the engine says nothing until it moves): the viewer's time
+    // and bar, the Inspector's keyframe values, the transcript, ... - a display, nothing moves
+    if (m_engine->speed() == 0.0) emit m_engine->positionChanged(m_engine->position());
     if (outputScreen) showPreviewOn(outputScreen);
     if (drawing && m_page == Page::Edit) setDrawTool(true);
     if (large) setViewerLarge(true);

@@ -23,10 +23,12 @@
 #include "engine/RenderQueue.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
+#include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
+#include <QLabel>
 #include <QDir>
 #include <QFileInfo>
 #include <QMenuBar>
@@ -50,6 +52,16 @@ TimelineView* timeline(MainWindow& w)
 {
     auto* panel = w.findChild<TimelinePanel*>();
     return panel ? panel->view() : nullptr;
+}
+
+// The viewer's time field(s): what it shows of the playhead
+QStringList viewerTimes(MainWindow& w)
+{
+    QStringList out;
+    if (auto* viewer = w.findChild<Viewer*>())
+        for (const QLabel* l : viewer->findChildren<QLabel*>())
+            if (l->text().startsWith("00:")) out << l->text();
+    return out;
 }
 
 QString firstMenu(MainWindow& w)
@@ -130,9 +142,11 @@ void testSwitch(Engine& engine)
     engine.seek(123);
     QTest::qWait(300);
     CHECK_EQ(tv->playhead(), 123);
+    const QStringList times = viewerTimes(w);
+    CHECK(!times.isEmpty() && !times.contains("00:00:00:00"));
     const ViewState view = tv->view();
     RenderQueue* queue = w.findChild<DeliverPanel*>()->renderQueue();
-    const int directChildren = int(w.children().size());
+    int directChildren = int(w.children().size());
     const int actions = int(w.findChildren<QAction*>().size());
 
     const Seen german = look(w);
@@ -181,9 +195,14 @@ void testSwitch(Engine& engine)
             CHECK_EQ(tvNow->view().scrollY, view.scrollY);
             CHECK_EQ(tvNow->playhead(), 123);
         }
+        CHECK_EQ(viewerTimes(w), times); // the viewer's time too, not 0 until the playhead moves
         CHECK(w.findChild<DeliverPanel*>()->renderQueue() == queue);
-        // Nothing left over or made twice
-        CHECK_EQ(int(w.children().size()), directChildren);
+        // Nothing left over or made twice (the first switch may have fewer: the Edit page's overlays, made when that
+        // page first shows, come only when it shows again)
+        const int children = int(w.children().size());
+        CHECK(children <= directChildren);
+        if (round == 0) directChildren = children;
+        else CHECK_EQ(children, directChildren);
         CHECK_EQ(int(w.findChildren<QAction*>().size()), actions);
         effects = effectsNow;
         tv = tvNow;
@@ -198,6 +217,23 @@ void testSwitch(Engine& engine)
     engine.seek(42);
     QTest::qWait(300);
     CHECK_EQ(tv->playhead(), 42);
+
+    // Every page built once (Color, Comp, Studio, Regie are made on their first showing), back on Edit: all of them
+    // come again, the page stays, and two switches leave the window with the same children
+    for (Page p : {Page::Color, Page::Comp, Page::Studio, Page::Direct, Page::Edit}) w.showPage(p);
+    QTest::qWait(20);
+    int children = 0;
+    for (const char* design : {"midnight", "dark-orange"}) {
+        chooseLook(children ? "de" : "en", design);
+        CHECK(w.rebuildUi(false));
+        QTest::qWait(50);
+        CHECK(w.currentPage() == Page::Edit);
+        CHECK(w.compPage() && w.studioPage() && w.directPage());
+        CHECK_EQ(Check::dump(project->timeline()), clipsBefore);
+        if (children) CHECK_EQ(int(w.children().size()), children);
+        children = int(w.children().size());
+    }
+    dump(&w, "4-edit-all-pages");
 
     // Neither changed: the queued apply does nothing
     const int generation = w.uiGeneration();
