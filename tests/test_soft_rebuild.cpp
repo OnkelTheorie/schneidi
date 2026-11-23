@@ -16,6 +16,7 @@
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/NestedLoop.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -31,7 +32,10 @@
 #include <QLabel>
 #include <QDir>
 #include <QFileInfo>
+#include <QEventLoop>
+#include <QMenu>
 #include <QMenuBar>
+#include <QTimer>
 #include <QSettings>
 #include <QSplitter>
 #include <QTest>
@@ -243,6 +247,39 @@ void testSwitch(Engine& engine)
         children = int(w.children().size());
     }
     dump(&w, "4-edit-all-pages");
+
+    // Never from a nested loop: a context menu's exec (inside the main loop), a progress loop or a drag (Guard). A
+    // change asked for meanwhile comes once it is over.
+    {
+        bool rebuilt = true;
+        QEventLoop main; // (the test has no app.exec: this stands for the main loop)
+        QTimer::singleShot(0, &main, [&] {
+            QMenu menu(&w);
+            menu.addAction("x");
+            QTimer::singleShot(50, &menu, [&] {
+                rebuilt = w.rebuildUi(false);
+                menu.close();
+            });
+            menu.exec(QPoint(20, 20));
+            main.quit();
+        });
+        main.exec();
+        CHECK(!rebuilt);
+    }
+    {
+        const int before = w.uiGeneration();
+        {
+            const NestedLoop::Guard progressLoop;
+            CHECK(!w.rebuildUi(false));
+            chooseLook("de", "graphit");
+            w.applyLookChange();
+            QTest::qWait(150);
+            CHECK_EQ(w.uiGeneration(), before); // waits
+        }
+        QTest::qWait(800);
+        CHECK_EQ(w.uiGeneration(), before + 1); // then comes
+        CHECK_EQ(Theme::window, QColor(Theme::defaults("graphit").value("window")));
+    }
 
     // Neither changed: the queued apply does nothing
     const int generation = w.uiGeneration();

@@ -2,6 +2,7 @@
 // MainWindow: multicam like DaVinci (docs/archiv/plan-0.8.md) – viewer mode with the grid of the angles, cut/switch
 // keys, "Create Multicam Clip" from the Media Pool, angle menu in the timeline.
 #include "app/MainWindow.h"
+#include "core/NestedLoop.h"
 
 #include "app/InputBindings.h"
 #include "app/MulticamDialog.h"
@@ -242,6 +243,7 @@ void MainWindow::createMulticamClip(const QStringList& paths)
     if (dlg.method() == Multicam::SyncMethod::Sound) {
         // Decoding hours of sound takes a while: progress + cancel
         QProgressDialog progress(T("Ton wird synchronisiert…"), T("Abbrechen"), 0, 1000, this);
+        const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
         progress.setWindowTitle(T("Neuer Multicam-Clip"));
         progress.setWindowModality(Qt::WindowModal);
         progress.setMinimumDuration(300);

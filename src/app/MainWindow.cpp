@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
+#include "core/NestedLoop.h"
 #include "app/OpenTrace.h"
 #include "core/Shapes.h"
 #include "core/StartupTrace.h"
@@ -1190,6 +1191,7 @@ void MainWindow::normalizeAudioDialog()
     const bool loudness = dlg.mode() == NormalizeDialog::Mode::Loudness;
     QProgressDialog progress(loudness ? T("Lautheit wird gemessen…") : T("Audiopegel werden gemessen…"), T("Abbrechen"),
                              0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
     const Timeline tl = m_project->timeline(); // copy: stays the same while events are processed

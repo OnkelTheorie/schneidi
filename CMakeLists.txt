@@ -399,6 +399,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowChat.cpp
     src/app/MainWindowRebuild.cpp
     src/app/SessionResume.h src/app/SessionResume.cpp
+    src/core/NestedLoop.h src/core/NestedLoop.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/MainWindowReframe.cpp

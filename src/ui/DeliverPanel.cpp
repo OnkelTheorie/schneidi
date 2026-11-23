@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/DeliverPanel.h"
+#include "core/NestedLoop.h"
 #include "ui/WheelGuard.h"
 
 #include "app/Theme.h"
@@ -950,6 +951,7 @@ bool DeliverPanel::runCheck()
     QString sound;
     bool canceled = false;
     QProgressDialog progress(T("Aufnahmen werden geprüft…"), T("Abbrechen"), 0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(400);
     const auto step = [&progress](double a, double b) {

@@ -12,6 +12,7 @@
 #include "app/TourManager.h"
 #include "app/VoiceoverRecorder.h"
 #include "core/I18n.h"
+#include "core/NestedLoop.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "engine/Engine.h"
@@ -22,6 +23,7 @@
 #include "ui/DrawOverlay.h"
 #include "ui/DeliverPanel.h"
 #include "ui/FrameView.h"
+#include "ui/MediaPool.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/KeyColorPicker.h"
 #include "ui/KeyPickWindow.h"
@@ -119,10 +121,13 @@ void MainWindow::applyLookChange()
 bool MainWindow::rebuildUi(bool retry)
 {
     if (m_rebuilding) return false;
-    // Not in the middle of something that lives in the widgets: a voice-over take, a Regie job, an AI's or the chat's
-    // command, a modal dialog. Tried again a moment later.
-    const bool busy = (m_voiceover && m_voiceover->recording()) || m_directCancel || m_directApplyCancel
-                      || m_directWishTurn || m_liveCommand || m_chatCommand || QApplication::activeModalWidget();
+    // Only from the main loop, never in the middle of something that lives in the widgets: a nested loop (a menu's or
+    // dialog's exec, a drag, a progress loop - code on the stack still uses the widgets), an open popup, a Media Pool
+    // import probing, a voice-over take, a Regie job, an AI's or the chat's command or turn. Tried again a moment later.
+    const bool busy = NestedLoop::running() || QApplication::activeModalWidget() || QApplication::activePopupWidget()
+                      || (m_mediaPool && m_mediaPool->probing()) || (m_voiceover && m_voiceover->recording())
+                      || m_directCancel || m_directApplyCancel || m_directWishTurn || m_liveCommand || m_chatCommand
+                      || m_review.active;
     if (busy) {
         if (retry && !m_rebuildQueued) {
             m_rebuildQueued = true;
@@ -134,7 +139,6 @@ bool MainWindow::rebuildUi(bool retry)
         return false;
     }
     const QScopedValueRollback rebuilding(m_rebuilding, true);
-    closePopups();
     // A tour gives the user's project back first (its steps point at widgets that go now)
     if (m_tours && (m_tourSaved.active || m_tours->runner()->running() || m_tours->asking())) m_tours->stop();
     if (m_keyPicker || m_keyPickWindow) stopKeyPick();
@@ -288,9 +292,9 @@ void MainWindow::tearDownUi()
     delete m_shapeOverlay;
     QList<QPointer<QObject>> made; // what buildUi hung on the window itself
     for (QObject* child : children()) {
+        // (No menus: buildUi hangs none on the window; one of the window is a context menu on someone's stack)
         const bool action = qobject_cast<QAction*>(child) || qobject_cast<QActionGroup*>(child)
-                            || qobject_cast<QShortcut*>(child) || qobject_cast<QMenu*>(child)
-                            || qobject_cast<QButtonGroup*>(child);
+                            || qobject_cast<QShortcut*>(child) || qobject_cast<QButtonGroup*>(child);
         auto* widget = qobject_cast<QWidget*>(child);
         const bool keep = widget && (widget->isWindow() || widget == statusBar() || widget->objectName() == "switchCurtain");
         if (action || (widget && !keep)) made << child;

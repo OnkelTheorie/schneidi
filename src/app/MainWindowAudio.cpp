@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: import presets for audio streams and ducking (docs/archiv/plan-0.8.md)
 #include "app/MainWindow.h"
+#include "core/NestedLoop.h"
 
 #include "app/DuckingDialog.h"
 #include "app/FitMusicDialog.h"
@@ -80,6 +81,7 @@ void MainWindow::duckingDialog()
     if (dlg.exec() != QDialog::Accepted) return;
     // Measure where the chosen tracks have sound (mixes them like the export; originals, never proxies)
     QProgressDialog progress(T("Ton wird gemessen…"), T("Abbrechen"), 0, 1000, this);
+    const NestedLoop::Guard nested; // events run meanwhile: no rebuild of the window (MainWindow::rebuildUi)
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
     const auto step = [&](double f) {
