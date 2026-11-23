@@ -321,7 +321,11 @@ void PhoneShell::openSheet(const QString& id)
         t->scroll->setWidget(p);
         m_sheetLay->addWidget(t->scroll, 1);
         // The panel's own title says what the sheet's header says already (its room goes to the panel's tabs)
-        for (QLabel* title : p->findChildren<QLabel*>("PanelTitle", Qt::FindDirectChildrenOnly)) title->hide();
+        for (QLabel* title : p->findChildren<QLabel*>("PanelTitle", Qt::FindDirectChildrenOnly))
+            if (!title->isHidden()) {
+                title->hide();
+                title->setProperty("phoneHidTitle", true); // (shown again by releasePanels)
+            }
     }
     for (Tool& other : m_tools)
         if (other.scroll) other.scroll->setVisible(&other == t);
@@ -359,7 +363,15 @@ void PhoneShell::setTablet(bool on)
 void PhoneShell::releasePanels()
 {
     for (Tool& t : m_tools)
-        if (t.scroll && t.scroll->widget()) t.scroll->takeWidget();
+        if (t.scroll && t.scroll->widget()) {
+            QWidget* p = t.scroll->takeWidget();
+            for (QLabel* title : p->findChildren<QLabel*>("PanelTitle", Qt::FindDirectChildrenOnly))
+                if (title->property("phoneHidTitle").toBool()) {
+                    title->setProperty("phoneHidTitle", QVariant());
+                    title->show();
+                }
+            if (p->property("phoneOwned").toBool()) p->deleteLater(); // a box the shell made (its content goes home)
+        }
 }
 
 void PhoneShell::setPanelShare(const QString& id, double share)

@@ -918,6 +918,36 @@ void testMouseShell(Engine& engine)
     CHECK(!mv->magneticMain());
 }
 
+// Review B2/B6: the panels' own titles come back on the desktop, the export sheet's box goes
+void testShellRoundTrip(Engine& engine)
+{
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1400, 900);
+    w.show();
+    settle();
+    QHash<QLabel*, bool> hidden;
+    for (QLabel* l : w.findChildren<QLabel*>("PanelTitle")) hidden.insert(l, l->isHidden());
+    w.setLayoutForm(MainWindow::LayoutForm::Phone);
+    w.resize(411, 914);
+    settle();
+    for (const char* id : {"media", "effects", "mixer", "inspector", "transcript", "ai", "export"}) {
+        w.phoneShell()->openSheet(id);
+        settle();
+    }
+    w.setLayoutForm(MainWindow::LayoutForm::Desktop);
+    w.resize(1400, 900);
+    settle();
+    int changed = 0;
+    for (auto it = hidden.cbegin(); it != hidden.cend(); ++it)
+        if (it.key()->isHidden() != it.value()) {
+            ++changed;
+            std::printf("title %s: hidden %d -> %d\n", qPrintable(it.key()->text()), it.value(), it.key()->isHidden());
+        }
+    CHECK_EQ(changed, 0);
+    CHECK(!w.findChild<QWidget*>("phoneExport"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -938,6 +968,7 @@ int main(int argc, char** argv)
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
     testMouseShell(engine);
+    testShellRoundTrip(engine);
     testSilentRestore(engine);
     testSteadyTransport(engine);
     Touch::installKineticScrolling(&app); // (main.cpp: every scroll area takes a finger)
@@ -1014,6 +1045,10 @@ int main(int argc, char** argv)
         CHECK(!view->magneticMain() && !view->centerPlayhead());
         CHECK(!w.findChild<TimelinePanel*>()->scrollIndicators() && !w.findChild<ScrollIndicator*>());
         CHECK(!view->fitAudioRows()); // (the desktop: the user's heights)
+        // Review 10: the desktop gets its own row heights and its tool row back (not the phone's 56/46, no scroll box)
+        CHECK(view->view().videoTrackHeight != 56 && view->view().audioTrackHeight != 46);
+        CHECK(!w.findChild<QScrollArea*>("timelineBarScroll"));
+
         QSettings().remove("timeline/magneticMain");
         QSettings().remove("timeline/clipDrag");
         Touch::setModeActive(false);

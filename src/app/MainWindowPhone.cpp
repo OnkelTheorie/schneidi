@@ -153,6 +153,7 @@ struct ShellHomes : QObject { // (a child of the window: goes with it)
     MainWindow::Page page = MainWindow::Page::Edit;
     QSize viewerMin;
     int timelineMin = 0;
+    QSize trackHeights; // the desktop's video/audio row heights when the shell set the phone's own (0 = untouched)
     double leftFrame = 0; // the desktop's scroll (the phone's centred playhead moves it)
 };
 
@@ -513,7 +514,11 @@ void MainWindow::enableShell(bool tablet)
     m_timeline->view()->setMinimumHeight(64);
     // Rows a finger still hits but a phone's height holds (landscape: V2, V1 and A1 under the ruler); a start value
     // like touch mode's, the user's pinch on the headers changes them as before
-    if (starting) m_timeline->view()->setTrackHeights(56, 46); // (a live switch keeps the user's heights)
+    if (starting) { // (a live switch keeps the user's heights)
+        const ViewState& v = m_timeline->view()->view();
+        m_shellHomes->trackHeights = QSize(v.videoTrackHeight, v.audioTrackHeight);
+        m_timeline->view()->setTrackHeights(56, 46);
+    }
     m_mediaPool->setCompactTiles(true); // two columns beside the bins in portrait
     m_mediaPool->setGeneratorsLast(true); // the material first, the text and shape tiles after it
     m_mediaPool->setImportHandler([this] { openGallery(); }); // "Importieren…": the own gallery
@@ -552,6 +557,7 @@ void MainWindow::enableShell(bool tablet)
         // Queue" alone rendered nothing on the phone, the queue's "Render all" was not on the screen
         auto* box = new QWidget;
         box->setObjectName("phoneExport");
+        box->setProperty("phoneOwned", true); // (deleted when the shell goes; its two panels go home first)
         auto* lay = new QVBoxLayout(box);
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(1);
@@ -666,6 +672,10 @@ void MainWindow::disableShell()
     TimelineView::setCompactHeaders(false);
     m_timeline->view()->setFingerPans(false);
     m_timeline->view()->setMinimumHeight(m_shellHomes->timelineMin);
+    if (!m_shellHomes->trackHeights.isEmpty()) { // the desktop's rows again (the phone's 56/46 were the shell's)
+        m_timeline->view()->setTrackHeights(m_shellHomes->trackHeights.width(), m_shellHomes->trackHeights.height());
+        m_shellHomes->trackHeights = {};
+    }
     m_mediaPool->setCompactTiles(false);
     m_mediaPool->setGeneratorsLast(false);
     if (m_deliver && m_deliver->queuePanel()) m_deliver->queuePanel()->setBelowSettings(false);
