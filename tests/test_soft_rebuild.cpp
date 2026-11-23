@@ -22,6 +22,7 @@
 #include "engine/Engine.h"
 #include "engine/RenderQueue.h"
 #include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 

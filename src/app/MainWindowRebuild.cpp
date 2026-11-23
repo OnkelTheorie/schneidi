@@ -22,6 +22,10 @@
 #include "ui/DrawOverlay.h"
 #include "ui/DeliverPanel.h"
 #include "ui/FrameView.h"
+#include "ui/FullScreenViewer.h"
+#include "ui/KeyColorPicker.h"
+#include "ui/KeyPickWindow.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/ScopesPanel.h"
 #include "ui/SecondScreen.h"
 #include "ui/ShapeOverlay.h"
@@ -43,6 +47,7 @@
 #include <QButtonGroup>
 #include <QCloseEvent>
 #include <QJsonArray>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -284,7 +289,7 @@ void MainWindow::tearDownUi()
                             || qobject_cast<QShortcut*>(child) || qobject_cast<QMenu*>(child)
                             || qobject_cast<QButtonGroup*>(child);
         auto* widget = qobject_cast<QWidget*>(child);
-        const bool keep = widget && (widget->isWindow() || widget == statusBar() || qobject_cast<SwitchCurtain*>(widget));
+        const bool keep = widget && (widget->isWindow() || widget == statusBar() || widget->objectName() == "switchCurtain");
         if (action || (widget && !keep)) made << child;
     }
     for (const QPointer<QObject>& child : std::as_const(made)) delete child.data();
