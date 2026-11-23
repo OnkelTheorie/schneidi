@@ -93,8 +93,10 @@ bool ShapeOverlay::transforms(const QRectF& frame, QTransform* toWidget, QTransf
         l.translate(block.center().x(), block.center().y());
         if (toWidget) *toWidget = view;
         if (local) *local = l;
-        if (hw) *hw = std::max(0.5, block.width() / 2);
-        if (hh) *hh = std::max(0.5, block.height() / 2);
+        // A little room around the letters: the corner handles sit beside them, not on them
+        const double pad = (kHandle + 6) * W / frame.width();
+        if (hw) *hw = std::max(0.5, block.width() / 2 + pad);
+        if (hh) *hh = std::max(0.5, block.height() / 2 + pad);
         return true;
     }
     if (Keys::hasTransform(*c)) { // the clip's own transform as the picture engine applies it to the title

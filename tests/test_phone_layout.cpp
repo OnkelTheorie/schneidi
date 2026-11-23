@@ -367,6 +367,19 @@ void testWindow(Engine& engine, const QSize& size)
     auto* inspector = qobject_cast<Inspector*>(shell->panel("inspector"));
     CHECK(inspector && inspector->currentPage() != 1); // a title has no sound: no Audio tab
     fits("clip selected, Inspector open");
+    if (Touch::modeActive() && inspector) { // item 8: no finger-wide keyframe arrows beside every row, a "B" with room
+        int arrows = 0;
+        for (QToolButton* b : inspector->findChildren<QToolButton*>())
+            if ((b->text() == QString("◀") || b->text() == QString("▶")) && b->isVisibleTo(inspector)) ++arrows;
+        Check::report(arrows == 0, "title inspector without keyframe arrows (touch)", __FILE__, __LINE__,
+                      QString::number(arrows));
+        for (QToolButton* b : inspector->findChildren<QToolButton*>())
+            if (b->text() == "B" && b->isVisibleTo(inspector))
+                Check::report(b->height() >= 28, "brand button finger-high", __FILE__, __LINE__, QString::number(b->height()));
+    }
+    if (const QString dir = qEnvironmentVariable("SCHNEIDI_TEST_SHOTS"); !dir.isEmpty())
+        w.grab().save(QString("%1/title-inspector-%2x%3%4.png").arg(dir).arg(size.width()).arg(size.height())
+                          .arg(Touch::modeActive() ? "-touch" : ""));
     CHECK(w.backStep());
     CHECK(shell->sheet().isEmpty() && shell->clipToolsShown());
     CHECK(w.backStep());

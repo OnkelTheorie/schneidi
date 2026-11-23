@@ -224,7 +224,12 @@ Status (updated with each commit):
   four round corner handles; drag inside = move (TitlePosX/Y), a corner = font size by the finger's distance from the
   centre (as CapCut's corner handle, without its rotation); one undo step per drag; grab zones 22 px in that mode
   (shapes too). Tests testTextTitleOverlay in test_shapes (189), overlay on in test_phone_layout, test_shape_drag_app 17.
-- 8, 9, 10, 11: NOT STARTED.
+- 8 Text inspector: DONE (touch mode only). Cause: the touch style sheet's 30 px minimum against fixed 10/18 px
+  buttons. Keyframe arrows ◀ ▶ hidden in touch mode (the diamond alone, 28x30; the column was ~70 px wide and empty),
+  the brand "B" button 30 px high with its own surface and no menu arrow, the text box across all columns. Text title
+  box got room around the letters (handles beside them, not on them). Tests in test_phone_layout (no arrows, B
+  finger-high; 767), test_brand_kit 179, test_generators 231, test_effects 142, test_shapes 189.
+- 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)
