@@ -270,6 +270,21 @@ void testPieces()
         CHECK(Transcript::cutFrames(split, 0, 200) == QVector<int>{80}); // only where the sound ends
         split.audio[0].clips[1].start = 60;
         CHECK(Transcript::cutFrames(split, 0, 200) == (QVector<int>{50, 60, 90}));
+        // As heard: a music bed ending under the speech (frame 70, A2, no picture) is no cut when the speech clips came
+        // with a picture (linked); without any linked clip every audible track counts; a chosen track counts as it is
+        {
+            Timeline heard = tl;
+            heard.audio[0].clips[0].linkId = 1, heard.audio[0].clips[1].linkId = 2;
+            Clip music;
+            music.mediaPath = "/m/song.mp3", music.start = 0, music.in = 0, music.out = 69;
+            heard.audio[1].clips << music;
+            CHECK(Transcript::cutFrames(heard, 0, 100) == QVector<int>{50});
+            CHECK(Transcript::cutFrames(heard, 0, 100, {1}) == QVector<int>{70});
+            heard.audio[0].clips[0].linkId = heard.audio[0].clips[1].linkId = 0;
+            CHECK(Transcript::cutFrames(heard, 0, 100) == (QVector<int>{50, 70}));
+            heard.audio[1].muted = true; // muted: not heard
+            CHECK(Transcript::cutFrames(heard, 0, 100) == QVector<int>{50});
+        }
         const QVector<qint64> cuts = Transcript::cutsMs(Transcript::cutFrames(tl, 0, 100), 0, 25);
         CHECK(cuts == QVector<qint64>{2000});
 

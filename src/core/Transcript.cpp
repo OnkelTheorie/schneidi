@@ -623,8 +623,15 @@ void endAtCuts(QVector<SubtitleCue>& cues, const QVector<qint64>& cutsMs, double
 QVector<int> cutFrames(const Timeline& tl, int from, int to, const QVector<int>& tracks)
 {
     QVector<int> out;
+    const auto used = [&](int t) { return tracks.isEmpty() ? !tl.audio[t].muted : tracks.contains(t); };
+    // As heard (no tracks chosen): music or effects added in the edit end anywhere under the speech; the recordings
+    // with the voice came with a picture (linked to their video). When the range has such clips, only their cuts
+    bool anyLinked = false;
+    for (int t = 0; tracks.isEmpty() && t < tl.audio.size(); ++t)
+        for (const Clip& c : tl.audio[t].clips)
+            anyLinked = anyLinked || (used(t) && c.linkId != 0 && c.end() > from && c.start < to);
     for (int t = 0; t < tl.audio.size(); ++t) {
-        if (tracks.isEmpty() ? tl.audio[t].muted : !tracks.contains(t)) continue;
+        if (!used(t)) continue;
         QVector<Clip> clips = tl.audio[t].clips;
         std::sort(clips.begin(), clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
         for (int i = 0; i < clips.size(); ++i) {
@@ -637,6 +644,7 @@ QVector<int> cutFrames(const Timeline& tl, int from, int to, const QVector<int>&
                                    && clips[i + 1].mediaPath == c.mediaPath && !c.mediaPath.isEmpty()
                                    && c.out + 1 == clips[i + 1].in && clips[i + 1].speed == c.speed
                                    && clips[i + 1].audioStream == c.audioStream;
+            if (anyLinked && c.linkId == 0) continue;
             if (!continues && c.start > from && c.start < to) out << c.start;
             if (!continued && c.end() > from && c.end() < to) out << c.end();
         }

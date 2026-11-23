@@ -78,6 +78,8 @@ struct Options {
     int maxGapFrames = 18;   // a longer pause starts a new cue
     int minFrames = 12;      // a cue stays at least this long (up to the next one)
     QVector<int> beats;      // timeline frames: each word starts on the next beat (one word per beat), empty = as spoken
+    QVector<int> cuts;       // timeline frames of cuts between clips (Transcript::cutFrames): no cue spans one or
+                             // lasts past it
 };
 // Words placed on beats: each word moves to the nearest beat after the beat of the word before (a word never shares
 // a beat), and lasts until the next word's beat

@@ -108,9 +108,10 @@ QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& leve
                                   bool music = false, const Subtitles::ReadableRules& rules = {},
                                   const QVector<qint64>& cutsMs = {});
 
-// Cuts of a timeline range [from, to) (frames) on the audio tracks `tracks` (empty = every track not muted): where a
-// clip begins or ends inside the range, not where one only continues the one before (same file, the next source
-// frame: a clip split in two). Sorted, each once. For transcripts of a timeline: a subtitle never starts in the clip
+// Cuts of a timeline range [from, to) (frames) on the audio tracks `tracks` (empty = every track not muted; then, when
+// the range has clips linked to a picture, only theirs: a music bed or an effect sound ending under the speech is no
+// cut of the speech): where a clip begins or ends inside the range, not where one only continues the one before
+// (same file, the next source frame: a clip split in two). Sorted, each once. For transcripts of a timeline: a subtitle never starts in the clip
 // before its words' clip (user report 23.11.: the next clip's line already showed at the end of the one before).
 QVector<int> cutFrames(const Timeline& tl, int from, int to, const QVector<int>& tracks = {});
 // cutFrames as ms of the sound transcribed from `from` on (the words' times)

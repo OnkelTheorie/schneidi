@@ -125,6 +125,14 @@ void testFromWords()
     // Sentence end, then max 3 words, then the long pause; short cues last 10 frames up to the next one
     CHECK_EQ(got.join(" | "), QString("10-20:One@0-4 two.@4-8 | 20-30:Three@0-4 four@4-8 five@8-10 | "
                                       "31-41:six@0-2 | 60-70:late@0-4"));
+    // A cut between clips at frame 26 (Transcript::cutFrames): "Three four" end there, "five" starts the next
+    // caption, which lasts to the next cut at 36 at most, not its 10 frames
+    o.cuts = {26, 36};
+    QStringList cut;
+    for (const SubtitleCue& c : Captions::fromWords(words, o)) cut << wordsOf(c);
+    CHECK_EQ(cut.join(" | "), QString("10-20:One@0-4 two.@4-8 | 20-26:Three@0-4 four@4-6 | 28-36:five@0-2 six@3-5 | "
+                                      "60-70:late@0-4"));
+    o.cuts.clear();
     // One word per beat: each word on the nearest free beat, lasting to the next word's beat
     const QVector<TranscriptCut::Word> beat = Captions::onBeats({word(9, 11, "a"), word(12, 14, "b"), word(33, 35, "c")},
                                                                 {10, 20, 30, 40});

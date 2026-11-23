@@ -245,8 +245,15 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
     };
     const int maxWords = std::max(1, o.maxWords);
     int first = 0;
+    // The first cut after frame `f`; INT_MAX = none
+    const auto cutAfter = [&](int f) {
+        const auto it = std::upper_bound(o.cuts.begin(), o.cuts.end(), f);
+        return it == o.cuts.end() ? INT_MAX : *it;
+    };
     for (int i = 0; i < list.size(); ++i) {
         if (i > first && list[i].from - list[i - 1].spokenTo > o.maxGapFrames) add(first, i - 1), first = i;
+        // A cut between two clips: never one caption over it
+        if (i > first && cutAfter(list[i - 1].from) <= list[i].from) add(first, i - 1), first = i;
         const QString t = list[i].text.trimmed();
         const QChar last = t.back();
         const int count = i - first + 1;
@@ -260,6 +267,14 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
         int end = std::max(cues[i].end, cues[i].start + o.minFrames);
         if (i + 1 < cues.size()) end = std::min(end, cues[i + 1].start);
         cues[i].end = std::max(cues[i].end, end);
+        // ... never on into the next clip
+        if (const int cut = cutAfter(cues[i].start); cut < cues[i].end) {
+            cues[i].end = cut;
+            for (CueWord& w : cues[i].words) {
+                w.to = std::clamp(w.to, 1, cues[i].length());
+                w.from = std::clamp(w.from, 0, w.to - 1);
+            }
+        }
     }
     return cues;
 }
