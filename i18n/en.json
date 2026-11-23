@@ -3720,5 +3720,11 @@
  "Gedrückt halten": "Press and hold",
  "Sofort": "At once",
  "Clip ziehen": "Drag clips",
- "Auf Handy und Tablet. Gedrückt halten: Wischen spult auch über Clips, ein Clip bewegt sich erst nach kurzem Halten. Sofort: ein Finger auf einem Clip verschiebt ihn gleich.": "On phone and tablet. Press and hold: swiping scrubs over clips too, a clip moves after a short hold. At once: a finger on a clip moves it right away."
+ "Auf Handy und Tablet. Gedrückt halten: Wischen spult auch über Clips, ein Clip bewegt sich erst nach kurzem Halten. Sofort: ein Finger auf einem Clip verschiebt ihn gleich.": "On phone and tablet. Press and hold: swiping scrubs over clips too, a clip moves after a short hold. At once: a finger on a clip moves it right away.",
+ "„%1“ hinzugefügt": "“%1” added",
+ "%1 Clips hinzugefügt": "%1 clips added",
+ "Geteilt": "Split",
+ "KI einrichten": "Set up AI",
+ "Mit der KI schneiden": "Edit with AI",
+ "Auf diesem Gerät geht der KI-Chat noch nicht: dieser App fehlt die verschlüsselte Verbindung zu den KI-Anbietern. Alles andere geht ohne KI.": "The AI chat does not work on this device yet: this app lacks the encrypted connection to the AI providers. Everything else works without AI."
 }

@@ -243,7 +243,21 @@ Status (updated with each commit):
   their names beside the symbol (`ToolButtonTextBesideIcon`; under it there was no height, the names were cut
   away - also for tools added after the first layout). Tests: picture >= 30 % of the height, names beside, no tool
   row (803), test_layout_switch 78, test_touch_input 216, test_window_fit 74.
-- 11: NOT STARTED.
+- 11 Beginner defaults and feedback: DONE.
+  - Export: where s264 is the only H.264 (no "h264" format available: Android) it is listed as "H.264 (MP4, s264)",
+    not "s264 (experimentell)" (tool tip unchanged); desktop list unchanged. Android export folder: a remembered
+    app-private folder is ignored, and when Qt lists only app folders the shared Movies folder comes from
+    `Environment.getExternalStoragePublicDirectory(DIRECTORY_MOVIES)` (JNI).
+  - AI sheet (`AiChatPanel::setCompact`, phone/tablet shell): no second "KI" title, no dock actions, no stray menu
+    arrow; the setup page says "Mit der KI schneiden" + what it does + a button "KI einrichten" (the form with the key
+    only after it, or when a setup message is shown). Without TLS (`QSslSocket::supportsSsl()` false - the Android
+    APK has no OpenSSL yet) no button but a note that the AI chat cannot work on this device yet
+    (`SCHNEIDI_AI_NO_TLS=1` pretends it in tests).
+  - Feedback: gallery picks -> haptic tick + viewer notice "„name“ hinzugefügt" / "%1 Clips hinzugefügt"; Split tool
+    -> tick + "Geteilt" when it cut; the selected clip's frame 3.5 px in the finger timeline (2 px desktop).
+  - de+en strings only (6 new). Tests: AI sheet without key field/second title in test_phone_layout (827; 821 with
+    NO_TLS), test_ai_chat 867, test_render_queue 376, test_deliver_review 57, test_hw_encoders 159, test_i18n 22,
+    test_layout_switch 78, test_touch_input 216, test_window_fit 74, test_shapes 189.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

@@ -13,6 +13,7 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "ui/touch/ScrollIndicators.h"
+#include "ui/touch/Touch.h"
 #include "ui/ShapeOverlay.h"
 #include "ui/BackgroundJobs.h"
 #include "ui/ColorPanel.h"
@@ -46,6 +47,7 @@
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTimer>
+#include <QFileInfo>
 #include <QCoreApplication>
 #include <QBoxLayout>
 #include <QMenu>
@@ -492,7 +494,10 @@ void MainWindow::enableShell(bool tablet)
     });
     m_phone->addPanelTool("inspector", QStringLiteral("☰"), T("Inspektor"), [this] { return shellHome(m_inspector); });
     m_phone->addPanelTool("transcript", QStringLiteral("¶"), T("Transkript"), [this] { return shellHome(m_transcript); });
-    m_phone->addPanelTool("ai", QStringLiteral("✧"), T("KI"), [this]() -> QWidget* { return shellHome(m_chatPanel); });
+    m_phone->addPanelTool("ai", QStringLiteral("✧"), T("KI"), [this]() -> QWidget* {
+        m_chatPanel->setCompact(true); // (no own title or docking; the setup starts with a button, not a key field)
+        return shellHome(m_chatPanel);
+    });
     m_phone->addPanelTool("export", QStringLiteral("⇪"), T("Export"), [this]() -> QWidget* {
         // The settings and, below them, the render queue (on the desktop it stands beside them): "Add to Render
         // Queue" alone rendered nothing on the phone, the queue's "Render all" was not on the screen
@@ -522,7 +527,15 @@ void MainWindow::enableShell(bool tablet)
     });
 
     // The clip tools (while clips are selected)
-    m_phone->addActionTool("split", QStringLiteral("✂"), T("Teilen"), [] { trigger("split"); });
+    m_phone->addActionTool("split", QStringLiteral("✂"), T("Teilen"), [this] {
+        // A cut under the centred line is hard to see: a haptic tick and a short word when it happened
+        const int before = m_project->undoStack()->index();
+        trigger("split");
+        if (m_project->undoStack()->index() != before) {
+            Touch::tick();
+            m_viewer->showNotice(T("Geteilt"), 1200);
+        }
+    });
     m_phone->addClipPanelTool("volume", QStringLiteral("♪"), T("Lautstärke"), "inspector", [this] {
         // The Audio tab, its Volume section at the top; a video without sound keeps the tab it shows
         if (!m_inspector->showAudio()) m_viewer->showNotice(T("Der ausgewählte Clip hat keinen Ton."), 2500);
@@ -597,6 +610,7 @@ void MainWindow::disableShell()
     }
     // The desktop's own state
     m_timeline->setCompact(false);
+    if (m_chatPanel) m_chatPanel->setCompact(false);
     m_timeline->setBarShown(true);
     m_timeline->setMaximumHeight(QWIDGETSIZE_MAX);
     m_timeline->setMinimumHeight(0);
@@ -773,6 +787,11 @@ void MainWindow::addPicked(const QStringList& paths)
         for (const Track& t : *tracks)
             if (!t.clips.isEmpty()) empty = false;
     importFiles(paths, true, empty);
+    // Something to see and feel: the clips came (they land at the timeline's end, maybe out of sight)
+    Touch::tick();
+    m_viewer->showNotice(paths.size() == 1 ? T("„%1“ hinzugefügt").arg(QFileInfo(paths.first()).fileName())
+                                           : T("%1 Clips hinzugefügt").arg(paths.size()),
+                         2500);
 }
 
 void MainWindow::phoneTogglePanel(QWidget* panel, bool on)

@@ -484,7 +484,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             p.drawText(tr, Qt::AlignTop | Qt::AlignHCenter, p.fontMetrics().elidedText(name, Qt::ElideRight, tr.width()));
         }
         p.setClipping(false);
-        p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0xff, 0xff, 0xff, 200), 1));
+        p.setPen(selected ? QPen(Theme::clipSelected, m_fingerPans ? 3.5 : 2) : QPen(QColor(0xff, 0xff, 0xff, 200), 1));
         p.drawPath(path);
         p.restore();
     }
@@ -736,7 +736,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     if (!ghost && m_retimeClips.contains(c.id)) drawRetime(p, r, c);
 
-    p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
+    p.setPen(selected ? QPen(Theme::clipSelected, m_fingerPans ? 3.5 : 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
     // Placeholder: dashed outline inside the border (the selection stays visible around it); the clip a Media Pool
     // file is dragged onto (drag-fill) gets a filled highlight

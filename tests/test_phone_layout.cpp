@@ -311,6 +311,21 @@ void testWindow(Engine& engine, const QSize& size)
             Check::report(top >= v1 || shell->sheetShare() <= 0.31, "timeline's V1 above the sheet", __FILE__, __LINE__,
                           QString("%1: sheet top %2, V1 bottom %3").arg(id).arg(top).arg(v1));
         }
+        if (QString(id) == "ai") { // item 11: no key field at once; a button first (or why it cannot work here)
+            auto* chat = shell->panel("ai");
+            auto* key = chat->findChild<QWidget*>("ai_setup_key");
+            auto* open = chat->findChild<QPushButton*>("ai_setup_open");
+            auto* intro = chat->findChild<QWidget*>("ai_setup_intro");
+            if (CHECK(key && open && intro) && intro->isVisibleTo(chat)) {
+                CHECK(!key->isVisibleTo(chat));
+                if (open->isVisibleTo(chat)) {
+                    QTest::mouseClick(open, Qt::LeftButton);
+                    CHECK(key->isVisibleTo(chat) && !intro->isVisibleTo(chat));
+                }
+            }
+            for (QLabel* l : chat->findChildren<QLabel*>("PanelTitle"))
+                Check::report(!l->isVisibleTo(chat), "AI sheet without a second title", __FILE__, __LINE__, l->text());
+        }
         if (QString(id) == "inspector") // its tabs' two lines whole (cut at the bottom with the keyboard up)
             for (QToolButton* b : shell->panel("inspector")->findChildren<QToolButton*>())
                 if (b->isVisibleTo(shell) && b->text().contains('\n'))

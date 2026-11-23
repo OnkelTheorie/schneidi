@@ -48,6 +48,11 @@ public:
     void setKeyHint(const std::function<QString(const QString& provider)>& hint) { m_keyHint = hint; }
     void setProviderText(const QString& text, const QString& tip); // the model; provider and address as tooltip
     void setDockedLeft(bool left);
+    // Phone sheet: no title of its own (the sheet has one), no docking, and the setup starts with what the AI does and
+    // a button instead of an empty key field; without encrypted connections (an Android build without OpenSSL) it says
+    // that the chat cannot work here yet
+    void setCompact(bool on);
+    static bool canConnect(); // TLS available (QSslSocket::supportsSsl); tests may pretend with SCHNEIDI_AI_NO_TLS=1
 
     // Review mode: the request changed the project, the user decides (the input waits meanwhile)
     void showApproval(const QString& text);
@@ -114,6 +119,12 @@ private:
     QLineEdit* m_setupKey = nullptr;
     QLineEdit* m_setupAddress = nullptr;
     class QFormLayout* m_setupForm = nullptr;
+    QWidget* m_setupIntro = nullptr; // setCompact: what the AI does + "KI einrichten"
+    QWidget* m_setupBody = nullptr;  // the form, the start button and its message
+    class QLabel* m_setupTitle = nullptr;
+    class QLabel* m_headerTitle = nullptr;
+    class QPushButton* m_setupOpen = nullptr;
+    bool m_compact = false;
     QLabel* m_setupKeyHint = nullptr;
     QComboBox* m_setupModel = nullptr;
     QLabel* m_setupMessage = nullptr;
