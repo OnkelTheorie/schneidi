@@ -55,6 +55,7 @@ void ScrollIndicator::poke()
     m_lastMax = max;
     m_lastPage = page;
     if (!moved || max <= m_bar->minimum()) return; // (nothing to scroll: never shown)
+    place(); // (where the content is now: a scroll area lays out its viewport after its own resize event)
     setShown(true);
     update();
 }
@@ -79,8 +80,11 @@ void ScrollIndicator::setShown(bool on)
 
 bool ScrollIndicator::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == parent() && (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest))
+    // A filter sees the resize before the scroll area lays out its viewport: placed again once that is done
+    if (watched == parent() && (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest)) {
         place();
+        QMetaObject::invokeMethod(this, &ScrollIndicator::place, Qt::QueuedConnection);
+    }
     return QWidget::eventFilter(watched, event);
 }
 

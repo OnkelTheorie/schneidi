@@ -836,6 +836,15 @@ void testScrollIndicators()
     CHECK(ind->shown() && !ind->testAttribute(Qt::WA_TransparentForMouseEvents));
     QTest::qWait(ScrollIndicator::kHideMs + 400);
     CHECK(!ind->shown() && ind->testAttribute(Qt::WA_TransparentForMouseEvents));
+    // The area grows (a sheet laid out after the indicator came): the indicator follows to the new right edge
+    window.resize(520, 400);
+    settle();
+    area->verticalScrollBar()->setValue(200);
+    settle();
+    Check::report(std::abs(ind->geometry().right() - area->viewport()->geometry().right()) <= 1,
+                  "indicator at the grown area's edge", __FILE__, __LINE__,
+                  QString("%1 vs %2").arg(ind->geometry().right()).arg(area->viewport()->geometry().right()));
+    QTest::qWait(ScrollIndicator::kHideMs + 400);
     // Shown, it drags like a bar (a mouse in a narrow window)
     area->verticalScrollBar()->setValue(0);
     const QPoint top(ind->width() / 2, 10);
