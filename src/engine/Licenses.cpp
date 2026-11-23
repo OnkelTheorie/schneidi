@@ -132,6 +132,11 @@ QVector<Part> report()
     // beside it), ONNX Runtime once loaded (below; its LICENSE and ThirdPartyNotices.txt lie beside the library)
     if (const QString yunet = Extensions::faceModel(); !yunet.isEmpty())
         out << Part{"YuNet 2023mar face detection, Shiqi Yu (extension \"faces\")", "MIT", false, yunet};
+    // NVIDIA's Parakeet TDT 0.6B v3 (CC-BY-4.0: attribution) in whisper.cpp's ggml conversion (ggml-org/parakeet-GGUF)
+    if (const QString parakeet = Extensions::parakeetModel(); !parakeet.isEmpty())
+        out << Part{"Parakeet TDT 0.6B v3 by NVIDIA (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), ggml conversion "
+                    "by ggml-org, speech recognition (extension \"parakeet\")",
+                    "CC-BY-4.0", false, parakeet};
 
     // GPL encoders inside this FFmpeg (the GitHub downloads since 0.21 bundle an FFmpeg with x264/x265): named also
     // when they are linked statically into libavcodec and so never show up as a library of their own

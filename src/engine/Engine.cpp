@@ -1114,7 +1114,10 @@ void Engine::setSpeed(double speed)
         seek(looping() && m_mode == Mode::Timeline && m_loopIn < lastFrame() ? m_loopIn.load() : 0);
     }
     const bool wasPlaying = m_speed != 0.0;
-    if (!wasPlaying && speed != 0.0) retryLostSources();
+    if (!wasPlaying && speed != 0.0) {
+        retryLostSources();
+        m_playStart = m_position; // before the pump runs: frames shown during this call move the position on
+    }
     const double before = m_speed;
     m_speed = speed;
     // The pump goes on from the shown frame first (nothing from before is shown after this), then the sound

@@ -34,6 +34,8 @@ class Inspector : public QWidget {
 public:
     explicit Inspector(Editor* editor, QWidget* parent = nullptr);
     ~Inspector() override;
+    // Shown again with the time format chosen in Settings › Timeline (subtitle start/end/duration)
+    void refreshTimes() { refresh(); }
     void setFrameSize(const QSize& size);
     // Builds the pages still waiting for their first use (title, transition, subtitles; see ensurePage)
     void ensureAllPages();

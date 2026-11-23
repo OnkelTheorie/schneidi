@@ -204,63 +204,76 @@ inline int satd8x8U8(const uint8_t* a, int strideA, const uint8_t* b, int stride
 }
 
 #ifdef SCHNEIDI_H264_AVX2
-// Four 4x4 blocks side by side (16 x 4): the 8x4 kernel's steps on both 128-bit lanes at once
-// (lane 0 = columns 0-7, lane 1 = columns 8-15); same result as four satdU8 calls.
-// Core: four rows of differences, each lane holding two 4x4 blocks side by side.
-// Per-block sums stay in vector lanes: each 4x4 block's |coefficient| sum is rounded ((s + 1) >> 1)
-// in its lane and accumulated; one horizontal sum at the end.
+// SATD of strips of 4x4 blocks, four rows at a time, the transform split in three steps:
+// - the first horizontal step is done on the samples: a row comes in as the sums and the differences of its pairs
+//   of neighbouring samples (one multiply-add per row of source and of prediction, then source minus prediction);
+// - the two vertical steps are plain butterflies on these words;
+// - the last horizontal step joins two neighbouring words x, y to |x + y| + |x - y| = 2 max(|x|, |y|).
+// The |coefficient| sum of a 4x4 block is even (it has the parity of the plain coefficient sum, 16 times the first
+// difference), so the sum of the maxima is the block's (s + 1) >> 1 of satdU8 exactly.
+
+// One row of 16 samples: the eight pair sums in lane 0, the eight pair differences in lane 1.
+__attribute__((target("avx2"))) inline __m256i satdPairs16Avx2(const uint8_t* p)
+{
+    const __m256i k = _mm256_setr_epi16(0x0101, 0x0101, 0x0101, 0x0101, 0x0101, 0x0101, 0x0101, 0x0101, short(0xff01), short(0xff01),
+                                        short(0xff01), short(0xff01), short(0xff01), short(0xff01), short(0xff01), short(0xff01));
+    return _mm256_maddubs_epi16(_mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p))), k);
+}
+
+// Two rows of 8 samples (p0 in lane 0, p1 in lane 1): per lane the four pair sums, then the four pair differences.
+__attribute__((target("avx2"))) inline __m256i satdPairs8x2Avx2(const uint8_t* p0, const uint8_t* p1)
+{
+    const __m256i k = _mm256_setr_epi16(0x0101, 0x0101, 0x0101, 0x0101, short(0xff01), short(0xff01), short(0xff01), short(0xff01),
+                                        0x0101, 0x0101, 0x0101, 0x0101, short(0xff01), short(0xff01), short(0xff01), short(0xff01));
+    const __m128i lo = _mm_broadcastq_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p0)));
+    const __m128i hi = _mm_broadcastq_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(p1)));
+    return _mm256_maddubs_epi16(_mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1), k);
+}
+
+// Core: four rows of pair words (source minus prediction); the SATD of their 4x4 blocks is added to the eight
+// 32-bit sums of acc.
 __attribute__((target("avx2"))) inline void satdLanesAccAvx2(const __m256i* r, __m256i& acc)
 {
     const __m256i s01 = _mm256_add_epi16(r[0], r[1]), d01 = _mm256_sub_epi16(r[0], r[1]);
     const __m256i s23 = _mm256_add_epi16(r[2], r[3]), d23 = _mm256_sub_epi16(r[2], r[3]);
-    const __m256i t0 = _mm256_add_epi16(s01, s23), t1 = _mm256_sub_epi16(s01, s23);
-    const __m256i t2 = _mm256_sub_epi16(d01, d23), t3 = _mm256_add_epi16(d01, d23);
-    const __m256i u[2][2] = {{_mm256_unpacklo_epi16(t0, t1), _mm256_unpacklo_epi16(t2, t3)},
-                             {_mm256_unpackhi_epi16(t0, t1), _mm256_unpackhi_epi16(t2, t3)}};
-    __m256i sums[2];
-    for (int k = 0; k < 2; ++k) {
-        const __m256i v0 = _mm256_unpacklo_epi32(u[k][0], u[k][1]), v1 = _mm256_unpackhi_epi32(u[k][0], u[k][1]);
-        const __m256i c1 = _mm256_unpackhi_epi64(v0, v0), c3 = _mm256_unpackhi_epi64(v1, v1);
-        const __m256i ha = _mm256_add_epi16(v0, c1), hb = _mm256_sub_epi16(v0, c1);
-        const __m256i hc = _mm256_add_epi16(v1, c3), hd = _mm256_sub_epi16(v1, c3);
-        const __m256i o01 = _mm256_unpacklo_epi64(_mm256_add_epi16(ha, hc), _mm256_sub_epi16(ha, hc));
-        const __m256i o23 = _mm256_unpacklo_epi64(_mm256_sub_epi16(hb, hd), _mm256_add_epi16(hb, hd));
-        sums[k] = _mm256_madd_epi16(_mm256_add_epi16(_mm256_abs_epi16(o01), _mm256_abs_epi16(o23)), _mm256_set1_epi16(1));
-    }
-    const __m256i h1 = _mm256_hadd_epi32(sums[0], sums[1]); // per lane: k0 halves, k1 halves
-    const __m256i blk = _mm256_hadd_epi32(h1, h1);          // per lane: block k0, block k1 (twice)
-    acc = _mm256_add_epi32(acc, _mm256_srli_epi32(_mm256_add_epi32(blk, _mm256_set1_epi32(1)), 1));
+    const __m256i a0 = _mm256_abs_epi16(_mm256_add_epi16(s01, s23)), a1 = _mm256_abs_epi16(_mm256_sub_epi16(s01, s23));
+    const __m256i a2 = _mm256_abs_epi16(_mm256_sub_epi16(d01, d23)), a3 = _mm256_abs_epi16(_mm256_add_epi16(d01, d23));
+    // The maxima land in the even words (at most 2040 each); the odd words are masked away.
+    const __m256i m0 = _mm256_max_epu16(a0, _mm256_srli_epi32(a0, 16)), m1 = _mm256_max_epu16(a1, _mm256_srli_epi32(a1, 16));
+    const __m256i m2 = _mm256_max_epu16(a2, _mm256_srli_epi32(a2, 16)), m3 = _mm256_max_epu16(a3, _mm256_srli_epi32(a3, 16));
+    const __m256i sum = _mm256_add_epi16(_mm256_add_epi16(m0, m1), _mm256_add_epi16(m2, m3));
+    acc = _mm256_add_epi32(acc, _mm256_and_si256(sum, _mm256_set1_epi32(0xffff)));
 }
 
-__attribute__((target("avx2"))) inline int satdLanesAvx2(const __m256i* r)
+// The sum of the eight 32-bit sums of satdLanesAccAvx2.
+__attribute__((target("avx2"))) inline int satdLanesSumAvx2(__m256i acc)
 {
-    __m256i acc = _mm256_setzero_si256();
-    satdLanesAccAvx2(r, acc);
     const __m128i lanes = _mm_add_epi32(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1));
-    return _mm_cvtsi128_si32(lanes) + _mm_cvtsi128_si32(_mm_srli_si128(lanes, 4));
+    const __m128i half = _mm_add_epi32(lanes, _mm_unpackhi_epi64(lanes, lanes));
+    return _mm_cvtsi128_si32(half) + _mm_cvtsi128_si32(_mm_srli_si128(half, 4));
 }
 
+// Four 4x4 blocks side by side (16 x 4); same result as four satdU8 calls.
 __attribute__((target("avx2"))) inline int satd16x4U8Avx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 {
     __m256i r[4];
     for (int i = 0; i < 4; ++i)
-        r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i * strideA))),
-                                _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i * strideB))));
-    return satdLanesAvx2(r);
+        r[i] = _mm256_sub_epi16(satdPairs16Avx2(a + i * strideA), satdPairs16Avx2(b + i * strideB));
+    __m256i acc = _mm256_setzero_si256();
+    satdLanesAccAvx2(r, acc);
+    return satdLanesSumAvx2(acc);
 }
 
 // An 8x8 block: rows 0-3 in lane 0, rows 4-7 in lane 1; same result as satd8x8U8.
 __attribute__((target("avx2"))) inline int satd8x8U8Avx2(const uint8_t* a, int strideA, const uint8_t* b, int strideB)
 {
     __m256i r[4];
-    for (int i = 0; i < 4; ++i) {
-        const __m128i ra = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + i * strideA)),
-                                              _mm_loadl_epi64(reinterpret_cast<const __m128i*>(a + (i + 4) * strideA)));
-        const __m128i rb = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + i * strideB)),
-                                              _mm_loadl_epi64(reinterpret_cast<const __m128i*>(b + (i + 4) * strideB)));
-        r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(ra), _mm256_cvtepu8_epi16(rb));
-    }
-    return satdLanesAvx2(r);
+    for (int i = 0; i < 4; ++i)
+        r[i] = _mm256_sub_epi16(satdPairs8x2Avx2(a + i * strideA, a + (i + 4) * strideA),
+                                satdPairs8x2Avx2(b + i * strideB, b + (i + 4) * strideB));
+    __m256i acc = _mm256_setzero_si256();
+    satdLanesAccAvx2(r, acc);
+    return satdLanesSumAvx2(acc);
 }
 
 // One 4x4 source block against four predictions side by side (pred: 16 x 4, stride 16):
@@ -304,9 +317,7 @@ __attribute__((target("avx2"))) inline int satdBlockAvx2(const uint8_t* a, int s
     if (w == 16) {
         for (int y = 0; y < h; y += 4) {
             for (int i = 0; i < 4; ++i)
-                r[i] = _mm256_sub_epi16(
-                    _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(a + (y + i) * strideA))),
-                    _mm256_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i*>(b + (y + i) * strideB))));
+                r[i] = _mm256_sub_epi16(satdPairs16Avx2(a + (y + i) * strideA), satdPairs16Avx2(b + (y + i) * strideB));
             satdLanesAccAvx2(r, acc);
         }
     } else {
@@ -314,18 +325,49 @@ __attribute__((target("avx2"))) inline int satdBlockAvx2(const uint8_t* a, int s
             for (int i = 0; i < 4; ++i) {
                 const uint8_t* pa = a + (y + i) * strideA;
                 const uint8_t* pb = b + (y + i) * strideB;
-                const __m128i ra = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pa)),
-                                                      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(pa + 4 * strideA)));
-                const __m128i rb = _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(pb)),
-                                                      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(pb + 4 * strideB)));
-                r[i] = _mm256_sub_epi16(_mm256_cvtepu8_epi16(ra), _mm256_cvtepu8_epi16(rb));
+                r[i] = _mm256_sub_epi16(satdPairs8x2Avx2(pa, pa + 4 * strideA), satdPairs8x2Avx2(pb, pb + 4 * strideB));
             }
             satdLanesAccAvx2(r, acc);
         }
     }
-    // Elements 0 and 1 of each 128-bit lane hold the sums (2 and 3 repeat them).
-    const __m128i lanes = _mm_add_epi32(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1));
-    return _mm_cvtsi128_si32(lanes) + _mm_cvtsi128_si32(_mm_srli_si128(lanes, 4));
+    return satdLanesSumAvx2(acc);
+}
+
+// satdBlockAvx2 for many predictions against one source block: the source's rows as pair words once
+// (w = 16: one entry per row; w = 8: one per two rows four apart, rows 0-3 then 8-11), then each prediction
+// against them. Same sums as satdBlockAvx2.
+__attribute__((target("avx2"))) inline void satdSourcePairsAvx2(const uint8_t* a, int strideA, int w, int h, __m256i* pairs)
+{
+    if (w == 16) {
+        for (int y = 0; y < h; ++y)
+            pairs[y] = satdPairs16Avx2(a + y * strideA);
+    } else {
+        for (int y = 0; y < h; y += 8)
+            for (int i = 0; i < 4; ++i)
+                pairs[y / 2 + i] = satdPairs8x2Avx2(a + (y + i) * strideA, a + (y + i + 4) * strideA);
+    }
+}
+
+__attribute__((target("avx2"))) inline int satdBlockPairsAvx2(const __m256i* pairs, const uint8_t* b, int strideB, int w, int h)
+{
+    __m256i acc = _mm256_setzero_si256();
+    __m256i r[4];
+    if (w == 16) {
+        for (int y = 0; y < h; y += 4) {
+            for (int i = 0; i < 4; ++i)
+                r[i] = _mm256_sub_epi16(pairs[y + i], satdPairs16Avx2(b + (y + i) * strideB));
+            satdLanesAccAvx2(r, acc);
+        }
+    } else {
+        for (int y = 0; y < h; y += 8) {
+            for (int i = 0; i < 4; ++i) {
+                const uint8_t* pb = b + (y + i) * strideB;
+                r[i] = _mm256_sub_epi16(pairs[y / 2 + i], satdPairs8x2Avx2(pb, pb + 4 * strideB));
+            }
+            satdLanesAccAvx2(r, acc);
+        }
+    }
+    return satdLanesSumAvx2(acc);
 }
 
 inline bool haveAvx2()
@@ -595,6 +637,49 @@ inline int sadBlock(const uint8_t* a, int strideA, const uint8_t* b, int strideB
     return s;
 #endif
 }
+
+#if defined(SCHNEIDI_H264_SSE2) && defined(__AVX2__)
+// Builds for AVX2 CPUs only (the x86-64-v3 build): the SAD of many positions against one source block. The block
+// is copied once into rows without gaps (w = 16: h rows of 16 bytes, h even; w = 8: h rows of 8 bytes, h a
+// multiple of 4), so 32 source samples are one memory operand and a position costs two thirds (w = 16) or less
+// than half (w = 8) of sadBlock's instructions. Same sums as sadBlock.
+// 32 samples of a block as one register: two rows of 16 or four rows of 8.
+inline __m256i sadRows32(const uint8_t* p, int stride, int w)
+{
+    if (w == 16)
+        return _mm256_inserti128_si256(_mm256_castsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p))),
+                                       _mm_loadu_si128(reinterpret_cast<const __m128i*>(p + stride)), 1);
+    auto rows2 = [](const uint8_t* q, int qs) {
+        return _mm_castpd_si128(_mm_loadh_pd(_mm_castsi128_pd(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(q))),
+                                             reinterpret_cast<const double*>(q + qs)));
+    };
+    return _mm256_inserti128_si256(_mm256_castsi128_si256(rows2(p, stride)), rows2(p + 2 * stride, stride), 1);
+}
+
+// (stored 32 bytes at a time, as sadPacked reads them: no load waits for two narrower stores)
+inline void sadPackSource(const uint8_t* a, int strideA, int w, int h, uint8_t* packed)
+{
+    const int rows = 32 / w;
+    for (int y = 0; y < h; y += rows)
+        _mm256_store_si256(reinterpret_cast<__m256i*>(packed + y * w), sadRows32(a + y * strideA, strideA, w));
+}
+
+inline int sadPacked(const uint8_t* packed, const uint8_t* b, int strideB, int w, int h)
+{
+    __m256i acc = _mm256_setzero_si256();
+    if (w == 16) {
+        for (int y = 0; y < h; y += 2)
+            acc = _mm256_add_epi64(acc, _mm256_sad_epu8(sadRows32(b + y * strideB, strideB, 16),
+                                                        _mm256_load_si256(reinterpret_cast<const __m256i*>(packed + y * 16))));
+    } else {
+        for (int y = 0; y < h; y += 4)
+            acc = _mm256_add_epi64(acc, _mm256_sad_epu8(sadRows32(b + y * strideB, strideB, 8),
+                                                        _mm256_load_si256(reinterpret_cast<const __m256i*>(packed + y * 8))));
+    }
+    const __m128i lanes = _mm_add_epi64(_mm256_castsi256_si128(acc), _mm256_extracti128_si256(acc, 1));
+    return _mm_cvtsi128_si32(lanes) + _mm_cvtsi128_si32(_mm_unpackhi_epi64(lanes, lanes));
+}
+#endif
 
 // Magnitudes of the Hadamard coefficients of an 8x8 block of samples at two scales, without the DC
 // ones (set to 0): m[0..63] the 4x4 transforms of its four quarters, m[64..127] its 8x8 transform

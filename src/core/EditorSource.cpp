@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Editor: source edits (source in/out, insert, overwrite, replace, place on top, append, fit to fill).
 #include "core/Editor.h"
+#include "core/EditDefaults.h"
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -42,6 +43,7 @@ bool Editor::importPreviewSource(const QString& path, int bin)
         return false;
     MediaInfo info = std::exchange(m_preview, {}); // before addMedia: its mediaChanged finds no preview to adopt
     info.bin = bin;
+    if (info.isImage) info.length = EditDefaults::stillFrames(m_project->fps()); // new still: the default length
     m_project->addMedia(info);
     emit previewSourceChanged();
     return m_project->mediaInfo(path) != nullptr;

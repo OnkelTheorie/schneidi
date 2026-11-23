@@ -2,8 +2,11 @@
 
 ## Speech to text
 - `transcribe` runs whisper locally. It needs the whisper extension: `extensions` without arguments shows what is
-  installed. Missing → ask the user before installing (`extensions` `install` `"whisper,small"`, ~200 MB; `turbo`
-  is better and bigger). Don't pass `model` unless you need a specific one - the default is the best installed.
+  installed. Missing → ask the user before installing (`extensions` `install` `"whisper,turbo"`, ~570 MB; `large`
+  is the most accurate on unclear chat, ~1.1 GB, best with a graphics card; `small` ~200 MB). Don't pass `model`
+  unless you need a specific one. `quality` picks a level instead: `accurate` (large-v3), `fast` (turbo) or
+  `very_fast` (Parakeet, extension `parakeet`, ~670 MB: 5-8x faster for long recordings in 25 European languages,
+  misses short shouts). Default: accurate with a graphics card, else fast, else the best installed.
 - **Set `language`** (`de`, `en`, …): auto-detection is about twice as slow and can pick the wrong language. A
   chosen language is checked: `detected_language` and a note say when whisper clearly hears another one.
 - Transcribe **after** cutting, on the project: the times are then timeline times and fit the edit.
@@ -11,12 +14,17 @@
 - **Plain subtitles: add `readable` true** (with `apply`/`srt`): the words come as 1-2 line cues (≤ 42 characters a
   line, ~17 characters/s, split at sentence and phrase ends, never across a pause) that `check` accepts; without it
   whisper's one-line pieces are often flagged too fast. Don't merge cues with your own script. An existing track:
-  edit op `subtitles` `{track:"ST1", readable:true}`; `readable:{lines:1, line_chars:28}` for vertical video.
+  edit op `subtitles` `{track:"ST1", readable:true}`.
+- **Cue length** (`length`): `auto` (default) gives short cues on a vertical timeline (taller than wide) and normal
+  ones otherwise; `short` = one line, ≤ 25 characters / 6 words, about one short sentence or less (TikTok, Shorts,
+  Reels), `very_short` = 2-3 words, `normal` = as above. The answer's `length` says which was used. An existing
+  track re-split: edit op `subtitles` `{track:"ST1", length:"short"}` (keeps the cues' word times; without them
+  each cue's time is shared by its words' length).
 - Only the voice: by default `transcribe` hears only tracks/streams named like a microphone or voice ("Mikrofon",
   "Mic/Aux", "Voice") when there is more (game, music: no song lyrics in the captions); the answer names them
   (`tracks` / `audio_stream` + a note). Choose yourself with `tracks` on a project (`"A1"`, `"Discord,Mikrofon"`,
   `"all"` = everything audible) or `audio_stream` on a file (number or name, several are mixed).
-- `max_chars` (without `readable`): 42 (one line) for landscape; ~20-28 for vertical video.
+- `max_chars` (without `readable`): 42 (one line) for landscape; giving it without `length` means `normal`.
 
 ## Clean up
 Read the segments. Fix names, brands and obvious mishearings with the `subtitle` op (`id`, `text`). Don't rewrite

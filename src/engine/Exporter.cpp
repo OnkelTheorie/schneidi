@@ -5,6 +5,8 @@
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/RenderJob.h"
 #include "core/SourceBitrate.h"
 #include "core/Subtitles.h"
@@ -21,6 +23,7 @@
 #include "engine/SmartRender.h"
 #include "engine/Stabilizer.h"
 #include "engine/audio/Mixer.h"
+#include "engine/encoder/h264/DevEnv.h"
 #include "engine/picture/Renderer.h"
 #include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Reader.h"
@@ -588,6 +591,14 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
         }
     }
+    // (development, for measuring encoders through the real export: SCHNEIDI_EXPORT_CRF=<n> = that CRF instead of the
+    // quality level's - s264 makes its QP of it as of a level -, SCHNEIDI_EXPORT_BITRATE=<kbit/s> = a bit rate target
+    // as quality "like source" gives one: s264 two passes, other software encoders their average bit rate; only with
+    // SCHNEIDI_S264_DEV=1 as well, so a stray variable cannot change a user's export)
+    if (!s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
+        if (const char* e = schneidi::h264::devEnv("SCHNEIDI_EXPORT_CRF"); e && std::atoi(e) > 0) m_settings.crf = std::atoi(e);
+        if (const char* e = schneidi::h264::devEnv("SCHNEIDI_EXPORT_BITRATE"); e && std::atoi(e) > 0) m_targetBitrateK = std::atoi(e);
+    }
     m_usedCodec.clear();
     m_ownSpeed = -1;
     m_copiedPercent = 0;
@@ -617,6 +628,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
     m_keyframes = ExportWriter::isOwnH264(s.videoCodec) ? cutFrames(tl, m_from, m_length, s.format.rate, rate) : QVector<int>();
+    m_hints.clear();
+    if (ExportWriter::isOwnH264(s.videoCodec))
+        m_hints = encodeHints(tl, m_from, m_length, s.format.size(), out.size(), s.format.rate, rate);
 
     // Renderer and mixer are made in a thread (smart render looks at the files to copy), so the window stays
     // responsive. launch() continues in this thread. Sources open with their first frame.
@@ -751,6 +765,107 @@ QVector<int> Exporter::cutFrames(const Timeline& tl, int from, int length, Frame
     return cuts;
 }
 
+QVector<ExportHintSpan> Exporter::encodeHints(const Timeline& tl, int from, int length, QSize format, QSize out,
+                                                                 FrameRate timelineRate, FrameRate outputRate)
+{
+    QVector<ExportHintSpan> spans;
+    if (length <= 0 || format.isEmpty() || out.isEmpty()) return spans;
+    const int end = from + length;
+    // Between two clip edges the same clips show
+    QVector<int> edges{from, end};
+    QVector<const Clip*> clips;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.start >= end || c.end() <= from) continue;
+            clips << &c;
+            edges << std::clamp(c.start, from, end) << std::clamp(c.end(), from, end);
+        }
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    // First output frame showing timeline frame f or a later one (output frame k shows from + floor(k * tl / out))
+    auto outputFrame = [&](int f) {
+        const int64_t a = int64_t(f - from) * outputRate.num * timelineRate.den;
+        const int64_t b = int64_t(outputRate.den) * timelineRate.num;
+        return int(b > 0 ? (a + b - 1) / b : 0);
+    };
+    static const QSet<QString> kStills{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("webp"), QStringLiteral("bmp"),
+                                       QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg"), QStringLiteral("heic"), QStringLiteral("avif")};
+    const double sx = double(out.width()) / format.width(), sy = double(out.height()) / format.height();
+    static constexpr AnimParam kPlace[] = {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY,
+                                           AnimParam::Rotation, AnimParam::TiltX, AnimParam::TiltY, AnimParam::CropLeft,
+                                           AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom};
+    // What shows at timeline frame f, as the span of output frames [first, last)
+    auto spanAt = [&](int f, int first, int last) {
+        ExportHintSpan span;
+        span.from = first;
+        span.to = last;
+        span.still = true;
+        bool fills = true;  // every media clip showing has the blurred fill at the same place
+        QRectF sharp;       // that place: the fitted picture (project pixels)
+        for (const Clip* c : clips) {
+            if (c->start > f || c->end() <= f) continue;
+            if (c->isTitle()) continue;
+            const bool image = c->kind == ClipKind::Media && kStills.contains(QFileInfo(c->mediaPath).suffix().toLower());
+            if (!(c->kind == ClipKind::Media && (c->freeze || image))) span.still = false;
+            const ClipTransform& t = c->transform;
+            const int at = f - c->start;
+            auto val = [&](AnimParam p) { return Keys::valueAt(*c, p, at); };
+            if (c->kind != ClipKind::Media || !t.hasBlurFill() || val(AnimParam::Rotation) != 0 || val(AnimParam::TiltX) != 0
+                || val(AnimParam::TiltY) != 0) {
+                fills = false;
+                continue;
+            }
+            // As the picture engine places it (Renderer: the fitted picture, cropped, zoomed about its centre, moved; Y up)
+            const QSizeF frame(format);
+            const QSizeF fit = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
+            const double zx = val(AnimParam::ZoomX), zy = val(AnimParam::ZoomY);
+            const double w = fit.width() * zx, h = fit.height() * zy;
+            QRectF r((frame.width() - w) / 2 + val(AnimParam::PosX), (frame.height() - h) / 2 - val(AnimParam::PosY), w, h);
+            if (t.cropOn)
+                r.adjust(val(AnimParam::CropLeft) * zx, val(AnimParam::CropTop) * zy, -val(AnimParam::CropRight) * zx,
+                         -val(AnimParam::CropBottom) * zy);
+            if (sharp.isNull()) sharp = r;
+            else if (std::abs(sharp.left() - r.left()) > 0.5 || std::abs(sharp.top() - r.top()) > 0.5
+                     || std::abs(sharp.width() - r.width()) > 0.5 || std::abs(sharp.height() - r.height()) > 0.5)
+                fills = false;
+        }
+        if (fills && !sharp.isNull()) {
+            // A pixel of margin: the picture's edge is resampled
+            const int l = std::clamp(int(std::floor(sharp.left() * sx)) - 1, 0, out.width());
+            const int r = std::clamp(int(std::ceil(sharp.right() * sx)) + 1, 0, out.width());
+            const int top = std::clamp(int(std::floor(sharp.top() * sy)) - 1, 0, out.height());
+            const int bottom = std::clamp(int(std::ceil(sharp.bottom() * sy)) + 1, 0, out.height());
+            if (top > 0) span.background << QRect(0, 0, out.width(), top);
+            if (bottom < out.height()) span.background << QRect(0, bottom, out.width(), out.height() - bottom);
+            if (l > 0 && bottom > top) span.background << QRect(0, top, l, bottom - top);
+            if (r < out.width() && bottom > top) span.background << QRect(r, top, out.width() - r, bottom - top);
+        }
+        if (span.to <= span.from || (!span.still && span.background.isEmpty())) return;
+        // Joins the span before when it says the same
+        if (!spans.isEmpty() && spans.last().to == span.from && spans.last().still == span.still
+            && spans.last().background == span.background)
+            spans.last().to = span.to;
+        else
+            spans << span;
+    };
+    for (qsizetype i = 0; i + 1 < edges.size(); ++i) {
+        const int a = edges[i], b = edges[i + 1];
+        // Where a clip's place is animated (a zoom punch, a shake) the picture's rectangle is taken frame by frame
+        bool animated = false;
+        for (const Clip* c : clips)
+            if (c->start < b && c->end() > a && !c->isTitle())
+                for (AnimParam p : kPlace) animated = animated || Keys::animated(*c, p);
+        if (!animated) {
+            spanAt(a, outputFrame(a), outputFrame(b));
+            continue;
+        }
+        for (int f = a; f < b; ++f) spanAt(f, outputFrame(f), outputFrame(f + 1));
+    }
+    return spans;
+}
+
 QString Exporter::fallbackCodec(const QString& failed) const
 {
     // A hardware encoder: the software one chosen with it; x264/x265 of the extension (a separate program): the free one
@@ -800,10 +915,13 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     if (s.videoCodec.isEmpty()) return o;
     const int target = m_targetBitrateK; // quality "like source": a bit rate instead of a constant quality
     if (ExportWriter::isOwnH264(codec)) {
-        // Own encoder: a fixed QP from the quality level; "Web" adds the cap as "bitrate" (the writer keeps the QP when
-        // the clip stays below the cap with it, else it encodes in two passes towards the cap, see ExportWriter).
+        // Own encoder: constant quality at the level's CRF (s264's scale is x264's), "qp" the fixed QP of the same level
+        // for the prediction against a cap; "Web" adds the cap as "bitrate" (the writer keeps the constant quality when
+        // the clip stays below the cap at that QP, else it encodes in two passes towards the cap, see ExportWriter).
         // "Like source": the source's rate as that cap - two passes towards it, or "High" when that stays below it
-        o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(s.crf > 0 ? s.crf : 20))});
+        const int crf = s.crf > 0 ? s.crf : 20;
+        o.append({"crf", QByteArray::number(crf)});
+        o.append({"qp", QByteArray::number(ExportWriter::ownH264Qp(crf))});
         // Memory for the first pass's kept analysis (two passes towards a cap): an eighth of the free RAM, at most
         // 1 GB (1080p: ~100 KB per picture); lowMemoryOptions below sets 0
         if (m_availableBytes > 0)
@@ -883,6 +1001,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
     w.keyframes = m_keyframes;
+    w.hints = m_hints;
     w.subtitles = m_textTracks;
     if (!s.videoCodec.isEmpty()) w.externalProgram = HardwareEncoders::externalProgram(codec);
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;

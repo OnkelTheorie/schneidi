@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -609,17 +610,27 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
 
 // ---------- Snapping ----------
 
-QVector<int> TimelineView::snapPoints(const QSet<int>& exclude) const
+QVector<int> TimelineView::snapPoints(const QSet<int>& exclude, bool withInOut) const
 {
-    QVector<int> pts{0, m_playhead};
+    // The user's targets (Settings › Timeline › Snapping); the start always counts
+    const int targets = TimelineOptions::snapTargets();
+    QVector<int> pts{0};
+    if (targets & TimelineOptions::SnapPlayhead) pts << m_playhead;
     const Timeline& tl = m_editor->project()->timeline();
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (const auto& t : tl.tracks(k))
-            for (const auto& c : t.clips)
-                if (!exclude.contains(c.id)) pts << c.start << c.end();
-    for (const SubtitleTrack& t : tl.subtitles)
-        for (const SubtitleCue& c : t.cues)
-            if (!exclude.contains(c.id)) pts << c.start << c.end;
+    if (targets & TimelineOptions::SnapClipEdges) {
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const auto& t : tl.tracks(k))
+                for (const auto& c : t.clips)
+                    if (!exclude.contains(c.id)) pts << c.start << c.end();
+        for (const SubtitleTrack& t : tl.subtitles)
+            for (const SubtitleCue& c : t.cues)
+                if (!exclude.contains(c.id)) pts << c.start << c.end;
+    }
+    if (targets & TimelineOptions::SnapMarkers) pts += tl.markers;
+    if (withInOut && (targets & TimelineOptions::SnapInOut)) {
+        if (tl.markIn >= 0) pts << tl.markIn;
+        if (tl.markOut >= 0) pts << tl.markOut + 1; // the end of the range (Out is its last frame)
+    }
     return pts;
 }
 
@@ -628,7 +639,7 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude,
 {
     if (hit) *hit = false;
     if (!m_snap) return 0;
-    const double maxFrames = kSnapPx / m_view.pxPerFrame;
+    const double maxFrames = TimelineOptions::snapPixels() / m_view.pxPerFrame;
     int best = 0;
     double bestDist = maxFrames + 1;
     bool found = false;
@@ -786,6 +797,7 @@ void TimelineView::setCenterPlayhead(bool on)
 
 void TimelineView::setLeftFrame(double frame)
 {
+    stopFollowing();
     if (m_center) {
         // Sliding the timeline under the fixed line = scrubbing: the frame under the line becomes the playhead
         const double half = (width() - kHeaderW) / 2.0 / m_view.pxPerFrame;
@@ -808,6 +820,7 @@ void TimelineView::setLeftFrame(double frame)
 
 void TimelineView::setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY)
 {
+    stopFollowing();
     m_view.pxPerFrame = std::clamp(pxPerFrame, ViewState::kMinPxPerFrame, ViewState::kMaxPxPerFrame);
     m_view.leftFrame = m_center ? centreLeft() : std::max(0.0, leftFrame);
     setScrollY(scrollY); // limited to the height of the tracks, redraws, reports viewChanged
@@ -822,6 +835,7 @@ void TimelineView::setScrollY(int y)
 
 void TimelineView::zoomBy(double factor)
 {
+    stopFollowing();
     // Keyboard zoom: around the playhead if visible, otherwise around the center
     double anchorX = frameToX(m_playhead);
     if (anchorX < kHeaderW || anchorX > width()) anchorX = kHeaderW + (width() - kHeaderW) / 2.0;
@@ -960,6 +974,7 @@ void TimelineView::finishReorder(bool apply)
 
 void TimelineView::zoomToFit()
 {
+    stopFollowing();
     const int fps = m_editor->project()->fps();
     const int end = std::max(TimelineOps::endFrame(m_editor->project()->timeline()), fps * 10);
     m_view.pxPerFrame = std::clamp((width() - kHeaderW - 40) / double(end), ViewState::kMinPxPerFrame,
@@ -976,9 +991,37 @@ void TimelineView::setPlayhead(int frame)
     if (m_center) { // the timeline slides under the fixed line (playback too: every frame, no paging)
         m_view.leftFrame = centreLeft();
         emit viewChanged();
+    } else if (m_following && m_playSpeed != 0 && m_drag == Drag::None) {
+        // No automatic scrolling along, except by the user's choice while it plays (not while dragging in the ruler)
+        followPlayhead(frame);
     }
-    update(); // otherwise deliberately NO automatic scrolling along
+    update();
     emit playheadChanged(frame);
+}
+
+void TimelineView::setPlaying(double speed)
+{
+    const bool started = m_playSpeed == 0 && speed != 0;
+    m_playSpeed = speed;
+    if (started) {
+        m_followMode = int(TimelineOptions::follow());
+        m_following = m_followMode != int(TimelineOptions::Follow::Off);
+    } else if (speed == 0) {
+        m_following = false;
+    }
+}
+
+void TimelineView::followPlayhead(int frame)
+{
+    const double vis = std::max(1.0, (width() - kHeaderW) / m_view.pxPerFrame);
+    double left = m_view.leftFrame;
+    if (TimelineOptions::Follow(m_followMode) == TimelineOptions::Follow::Center) left = frame - vis / 2;
+    else if (frame < left || frame >= left + vis) // a page: the playhead at the edge it comes from
+        left = m_playSpeed > 0 ? frame : frame - vis + 1;
+    left = std::max(0.0, left);
+    if (left == m_view.leftFrame) return;
+    m_view.leftFrame = left; // not setLeftFrame: that is the user's scrolling and ends following
+    emit viewChanged();
 }
 
 void TimelineView::setTool(Tool tool)

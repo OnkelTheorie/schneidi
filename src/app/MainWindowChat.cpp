@@ -9,6 +9,7 @@
 #include "app/McpClient.h"
 #include "app/ToolErrors.h"
 #include "core/I18n.h"
+#include "core/Relink.h"
 #include "core/Project.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/PreviewOutput.h"
@@ -46,6 +47,7 @@ MainWindow::~MainWindow()
     m_project->undoStack()->blockSignals(true);
     m_project->ownUndoStack()->blockSignals(true);
     m_project->blockSignals(true);
+    if (m_relinkJob) m_relinkJob->cancel = true; // a search for moved files ends soon (its result is dropped)
     delete m_fullScreen; // a window without a parent (FullScreenViewer.h)
     delete m_output;     // its window has no parent either
 }

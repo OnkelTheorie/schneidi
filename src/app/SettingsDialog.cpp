@@ -5,6 +5,7 @@
 
 #include "app/AiSettingsPage.h"
 #include "app/StartTemplatesPage.h"
+#include "app/TimelineSettingsPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/AppPaths.h"
@@ -84,6 +85,9 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
     m_tabs = new QTabWidget;
     m_generalTab = scrolling(buildGeneral());
     m_tabs->addTab(m_generalTab, T("Allgemein"));
+    m_timelinePage = new TimelineSettingsPage;
+    m_timelineTab = scrolling(m_timelinePage);
+    m_tabs->addTab(m_timelineTab, T("Timeline"));
     m_templatesPage = new StartTemplatesPage;
     m_templatesTab = scrolling(m_templatesPage);
     m_tabs->addTab(m_templatesTab, T("Startvorlagen"));
@@ -422,6 +426,10 @@ QWidget* SettingsDialog::buildGeneral()
 
 bool SettingsDialog::autoLinkNodes() const { return m_autoLink->isChecked(); }
 
+ZoomAnchor::Mode SettingsDialog::zoomAnchor() const { return m_timelinePage->zoomAnchor(); }
+
+PlayheadMove::Mode SettingsDialog::afterPlayheadMove() const { return m_timelinePage->afterPlayheadMove(); }
+
 SecondScreenPlan::Mode SettingsDialog::secondScreenMode() const
 {
     return SecondScreenPlan::Mode(m_secondScreen->currentData().toInt());
@@ -485,7 +493,10 @@ int SettingsDialog::backgroundThreads() const { return m_threads->currentData().
 
 void SettingsDialog::showTab(Tab tab)
 {
-    m_tabs->setCurrentWidget(tab == Tab::Ai ? m_aiTab : tab == Tab::Templates ? m_templatesTab : m_generalTab);
+    m_tabs->setCurrentWidget(tab == Tab::Ai          ? m_aiTab
+                             : tab == Tab::Templates ? m_templatesTab
+                             : tab == Tab::Timeline  ? m_timelineTab
+                                                     : m_generalTab);
 }
 
 AiSettings SettingsDialog::aiSettings() const { return m_aiPage->settings(); }

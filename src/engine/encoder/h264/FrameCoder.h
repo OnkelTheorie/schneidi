@@ -34,6 +34,8 @@ struct RefPic {
     std::vector<int16_t> mvx, mvy;
     std::vector<int8_t> ref;
     int gopPos = 0; // display distance from the IDR picture
+    int displayIndex = -1;          // the picture's place in input order
+    std::vector<int32_t> stillFrom; // LookaheadFrame::stillFrom of the picture (hints), empty = none
     int refGopPos = 0; // gopPos of the picture its vectors point to (list 0)
     int frameNum = 0;  // reference pictures since the IDR picture before this one (frame_num, not wrapped)
     // Means of the source picture's 16x16 luma blocks and 8x8 chroma blocks (weighted prediction:
@@ -301,12 +303,21 @@ public:
         // block has half a level or more at a scan position the finer lambda weighs, or was left empty unplanned
         // (emptyOf8). False: the plan with fineLambda would be this plan again.
         bool fineMayDiffer;
+        // The same by quadrant (bit b8), and of trellis plans with estimate what the estimate summed: the cost of
+        // each 8x8 block with its levels (j8), or cost and squared error of each 4x4 block (j4, e4). For taking the
+        // quadrants of a plan over into another one (planInterLuma: same).
+        uint8_t fineQuads = 15;
+        double j8[4]{}, j4[16]{}, e4[16]{};
     };
     void codeInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, MbOut& io,
                        InterResidual& ir, double fineLambda = -1.0);
     // emptyOf8 (4x4 plan): the 8x8 plan of the same prediction; its empty quadrants stay empty.
+    // same: per quadrant a plan of this macroblock (trellis, with estimate, same transform) whose quadrant would
+    // come out again here - the same prediction there, or for a plan with fineLambda the plan without it where
+    // its fineQuads bit is clear - and is copied instead of planned; nullptr = planned.
     void planInterLuma(int mbx, int mby, const uint8_t* lp, int qp, double lambda, bool t8, bool trellis, InterResidual& ir,
-                       double* est, double fineLambda = -1.0, const InterResidual* emptyOf8 = nullptr);
+                       double* est, double fineLambda = -1.0, const InterResidual* emptyOf8 = nullptr,
+                       const InterResidual* const* same = nullptr);
     void reconInterLuma(int mbx, int mby, const uint8_t* lp, int qp, bool t8, MbOut& io, const InterResidual& ir);
     bool writeInterResidual(int mbx, int mby, int qp, bool t8, const InterResidual& res, const ChromaMb& ch, MbOut& io);
     void rdoQuantize(int* levels, const int* residual, int qp, double lambda, int nC) const;
@@ -442,6 +453,10 @@ public:
     bool deblockedInline_ = false; // the wavefront filtered the picture already
     bool detectSceneCut(std::vector<uint8_t>& prevThumb);
     std::vector<float> treeOffset_; // per macroblock, 0 without the tree
+    // Hints per macroblock (Encoder::startFrame), empty = none: bit 0 the samples equal the list 0 reference
+    // picture's, bit 1 background, bit 2 the samples equal the list 1 reference picture's.
+    std::vector<uint8_t> hint_;
+    std::atomic<int> hintStill_{0}, hintBackground_{0}; // macroblocks coded by a hint in this picture
     float qpFrac_ = 0;              // the picture's QP is cfg_.qp + qpFrac_ (constant quality), spread by planMacroblockQp
 };
 

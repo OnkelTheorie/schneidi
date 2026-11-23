@@ -1037,6 +1037,9 @@ struct MediaInfo {
     // HDR transfer of the picture ("HLG", "PQ"; empty = SDR): its clips are mapped to SDR (Clip::hdrToSdr), the Media
     // Pool and the Inspector say so. Filled by MediaProbe
     QString hdr;
+    // Size of the file in bytes when it was last seen (import, saving; "size" in the project file; 0 = not known):
+    // finding a moved file tells it from another file of the same name (core/Relink.h)
+    qint64 fileSize = 0;
 };
 
 // After a clip got another file or audio stream: channel routing (Clip::sourceChannels) the clip's stream of m lacks

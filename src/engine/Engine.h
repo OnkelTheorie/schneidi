@@ -177,6 +177,8 @@ public:
     void togglePlay();
     void setSpeed(double speed);
     double speed() const { return m_speed; }
+    // At (or behind) the last frame of what is shown: playing forward from here would start from the front
+    bool atPlayEnd() const { return atEnd(1.0); }
     // Paused: an edit handed over whose picture is not shown yet (editShown() follows)
     bool editPending() const { return m_editAt.load() != 0; }
     // The picture of an edit while paused was just shown: when the edit reached the engine and when its picture was
@@ -189,6 +191,8 @@ public:
     // is shown at once, the exact one follows (own picture engine)
     void seek(int frame);
     int position() const { return m_position; }
+    // Where playback last started (the position at the start, in the mode of then; -1 = never played)
+    int playStart() const { return m_playStart; }
     // Counters of the preview's frame pump (tests, benchmarks)
     Picture::Pump::Stats pictureStats() const;
     // Frames of the timeline preview the graphics card composited so far (tests: which path drew the picture)
@@ -305,6 +309,7 @@ private:
     // Atomic: onPumpShown reads them on the pump's thread while the UI thread switches mode/speed
     std::atomic<Mode> m_mode{Mode::Timeline};
     std::atomic<double> m_speed{0.0};
+    int m_playStart = -1; // playStart()
     std::atomic<int> m_position{0};
     // Jump during playback: no longer report positions from before the jump
     std::atomic<int> m_seekEpoch{0};

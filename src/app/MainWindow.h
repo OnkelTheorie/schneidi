@@ -8,12 +8,14 @@
 #include "core/LiveHost.h"
 #include "core/PlaybackMeter.h"
 #include "core/ProjectFile.h"
+#include "core/Subtitles.h"
 #include "core/Types.h"
 
 #include <QElapsedTimer>
 #include "engine/PreviewResolution.h"
 #include "engine/ProbeCache.h"
 #include "ui/SecondScreen.h"
+#include "ui/timeline/PlayheadMove.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
@@ -58,6 +60,11 @@ namespace Ai {
 struct Endpoint;
 class Keys;
 } // namespace Ai
+
+namespace Relink {
+struct Root;
+struct Progress;
+} // namespace Relink
 
 class MainWindow : public QMainWindow, public LiveHost {
     Q_OBJECT
@@ -138,6 +145,13 @@ public:
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
+    // File / Media Pool › Find Missing Media… (MainWindowRelink.cpp), also after opening a project with missing media:
+    // looked for by itself near the old places (in the background, core/Relink.h), the clear matches relinked as one
+    // undo step and said in a short note; the dialog ("Search Folder…" / "Leave Offline") only for the rest.
+    // atOpen: after loading (the files of no timeline are asked about only then too)
+    void findMissingMedia(bool atOpen = false);
+    bool relinkSearching() const { return bool(m_relinkJob); } // tests
+    QAction* findMissingAction() const { return m_findMissingAction; } // tests
     // A project that opened but not as written (ProjectFile::load warning): told once, without waiting for an answer
     void showLoadWarning(const QString& warning);
     // Video as project (`schneidi <video>`, File › Open Video as Project…): a new unsaved project whose format (size,
@@ -225,8 +239,13 @@ public:
     // the AI; empty = the user disconnected it) / allow again / how long a silent AI keeps the app (ms, 0 = always)
     void setLiveControls(const std::function<void(const QString& reason)>& disconnect, const std::function<void()>& allow,
                          const std::function<void(int ms)>& idleLimit);
-    // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
+    // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving, except the Timeline
+    // tab: its choices live only in the settings (TimelineOptions), so a test run leaves them as they are
     void settingsDialog(int tab = 0);
+    // After Settings › Timeline changed: the timelines redraw what they show by those choices (no restart)
+    void applyTimelineOptions();
+    // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline
+    void updateStepTexts();
     // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;
     // main.cpp hands it in): a tour runs on a practice project, nothing of an AI may land there
     void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }
@@ -376,6 +395,9 @@ private:
     void contactSheetDialog(); // File › Save Contact Sheet: stills of the timeline as one picture
     void exportTimelineDialog();
     void transcribeDialog();
+    // Timeline › Subtitles › Re-split: the subtitle track of the selection (else the visible one) regrouped into cues
+    // of this length (Subtitles::readable; stored word times kept, otherwise shared by word length), one undo step
+    void resplitSubtitles(Subtitles::CueLength length);
     void speechDialog();
     MediaInfo probeCached(const QString& path);
     void probeLater(const QString& path); // full probe in the background into m_probeCache
@@ -417,10 +439,18 @@ private:
     void updateViewer();        // scrubber range, In/Out and title of the Viewer
     void jumpToEdit(int direction);
     void jumpToMarker(int direction);
-    void jumpToFrame(int frame);
+    void jumpToFrame(int frame); // pauses, then jumps (AI/live and other programmatic jumps)
+    // A jump key (Home/End, edit points, markers, In/Out): playback after it as the user chose (PlayheadMove)
+    void keyJump(int frame);
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);
+    // Stop and go back to where playback last started (Space by choice, the action "stop_return"); paused: only back
+    void stopAndReturn();
+    int m_playStart = -1;          // position where playback last started (Engine::speedChanged from 0); -1 after
+                                   // a project/timeline switch
+    int m_playStartMode = -1;      // its Engine::Mode: back only within the same mode
+    double m_lastSpeed = 0;
 
     void newProject(); // the default start template (or the user's choice, if they want to be asked)
     void openProjectDialog();
@@ -444,6 +474,12 @@ private:
     void offerRestart(const QString& message, const QString& now, const QString& later);
     // ask = offer relinking missing media / list missing effects (not when reloading after an outside change)
     bool applyLoaded(ProjectData data, const QString& path, bool ask = true);
+    // Find Missing Media (MainWindowRelink.cpp): one search in the background (a second request while it runs: none),
+    // `then` with how many were relinked; the "Medien fehlen" dialog for what is still missing; the menu entries
+    // enabled while files are missing
+    void startRelinkSearch(const QVector<Relink::Root>& roots, bool near, const std::function<void(int)>& then);
+    void askForMissingMedia();
+    void updateFindMissingAction();
     // Project file changed outside (schneidi-cli, an AI, another window): reload; unsaved changes here ask first
     void checkProjectFile();
     void setProjectPath(const QString& path);
@@ -534,6 +570,7 @@ private:
     void blurNames();
 
     Engine* m_engine;
+    PlayheadMove::Gesture m_playheadMove; // a click/drag of the playhead in the ruler, overview strip, Studio lanes
     Project* m_project;
     Selection* m_selection;
     Editor* m_editor;
@@ -694,6 +731,9 @@ private:
 
     ProbeCache m_probeCache; // drop preview, Viewer of a file not in the pool, import of a dropped file
     QSet<QString> m_probing; // probeLater() running for these
+    QAction* m_findMissingAction = nullptr;              // File › Find Missing Media… (also in the Media Pool's menu)
+    std::shared_ptr<Relink::Progress> m_relinkJob;    // the search running (null = none)
+    QWidget* m_relinkStatus = nullptr;                   // its line in the status bar (folders searched, Cancel)
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
     QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
     QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (saved in the project: views)

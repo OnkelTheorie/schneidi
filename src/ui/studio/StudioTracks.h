@@ -96,6 +96,9 @@ public:
 
 signals:
     void seekRequested(int frame);
+    // A move of the playhead (ruler or a click into a lane): around its seeks, finished on release (TimelineView's)
+    void playheadMoveStarted();
+    void playheadMoveFinished();
     void soundDropRequested(const QByteArray& sound, int frame); // EffectsLibrary::SoundMimeType data
     void toolChanged(StudioTracks::Tool tool);
 

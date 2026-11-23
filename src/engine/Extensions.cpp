@@ -15,9 +15,11 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUuid>
 
+#include <algorithm>
 #include <thread>
 
 namespace Extensions {
@@ -138,27 +140,39 @@ QVector<Item> makeCatalog()
                            const char* sha, qint64 size) {
         list << Item{id, Kind::WhisperModel, name, description, QString(kModels) + file, sha, size, file};
     };
-    // Best first (installedWhisperModels keeps this order, the first installed one is the default); all multilingual,
-    // quantized (small download)
-    // turbo first (21.11.): on Discord/mic chat with English in German talk large-v3 wrote the English in German ("She
-    // asked, like, which is our favorite ..." -> "Sie fragt, welches unser Lieblingsvokal ist", "I'm Asian" -> "Ich bin
-    // Asien"), with or without a starting text, and wrote words into laughter ("Hahaha.", "Ich bin live." x3) at
-    // 1.5-2x the time; it got some mumbled German words right that turbo missed
-    model("whisper-model-turbo", N_("Whisper-Modell „Sehr gut“ (large-v3-turbo)"),
-          N_("sehr gute Erkennung, braucht deutlich mehr Rechenzeit"), "ggml-large-v3-turbo-q5_0.bin",
-          "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", 574041195);
-    // large-v3: measured 20.11. on mumbled Discord/mic tracks against turbo: fewer wrong words (≈ every second or third
-    // faulty line fixed), ~1.8x its time on the CPU; the full f16 model (3.1 GB) was no better than this q5_0
-    model("whisper-model-large", N_("Whisper-Modell „Gründlich“ (large-v3)"),
-          N_("erkennt undeutliche Sprache manchmal besser, übersetzt aber eingestreutes Englisch oft mit; braucht fast "
-             "doppelt so lange wie „Sehr gut“"),
+    // Best first (installedWhisperModels keeps this order; the default is the one of defaultQuality); all
+    // multilingual, quantized (small download). The two quality levels of the transcribe dialog (qualityModel):
+    // large-v3 "Genau": measured 22.11. (data/asr-eval) the best on real chat (German Discord/mic: 16.6 / 8.6 % word
+    // errors against turbo's 20.9 / 22.2 %) and on FLEURS de/en; ~1.8x turbo's time on the CPU, fine on a graphics
+    // card. On 21.11. it wrote English said in German talk in German now and then ("I'm Asian" -> "Ich bin Asien").
+    model("whisper-model-large", N_("Whisper „Genau“ (large-v3)"),
+          N_("die genaueste Erkennung, auch bei undeutlicher Sprache; braucht ohne Grafikkarte fast doppelt so lange "
+             "wie „Schnell“"),
           "ggml-large-v3-q5_0.bin", "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1", 1081140203);
+    // turbo "Schnell": close to large-v3 on clear speech (FLEURS es/it/pt/pl/ru as good), now and then writes a piece
+    // twice (Transcript::dropRepeats)
+    model("whisper-model-turbo", N_("Whisper „Schnell“ (large-v3-turbo)"),
+          N_("sehr gute Erkennung in deutlich kürzerer Zeit; Standard ohne Grafikkarte"), "ggml-large-v3-turbo-q5_0.bin",
+          "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", 574041195);
     model("whisper-model-small", N_("Whisper-Modell „Gut“ (small)"), N_("empfohlen für Deutsch"),
           "ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb", 190085487);
     model("whisper-model-base", N_("Whisper-Modell „Ausgewogen“ (base)"), N_("schnell, für klare Sprache"),
           "ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898", 59707625);
-    model("whisper-model-tiny", N_("Whisper-Modell „Schnell“ (tiny)"), N_("sehr schnell, ungenau"),
+    model("whisper-model-tiny", N_("Whisper-Modell „Winzig“ (tiny)"), N_("sehr schnell, ungenau"),
           "ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7", 32152673);
+    // "Sehr schnell": NVIDIA's Parakeet TDT 0.6B v3 (CC-BY-4.0, attribution in Licenses::report and THIRD_PARTY.md)
+    // as whisper.cpp's ggml conversion (ggml-org/parakeet-GGUF, pinned to one revision), run by parakeet-cli of the
+    // whisper package. 5-8x faster than turbo, as good on FLEURS in its 25 European languages, but it swallows short
+    // shouts in chat (measured 22.11.); only offered for those languages (Transcriber::parakeetLanguage). Only where
+    // the whisper package (which carries parakeet-cli) is offered
+    if (std::any_of(list.cbegin(), list.cend(), [](const Item& i) { return i.id == QLatin1String("whisper"); }))
+        list << Item{"parakeet", Kind::ParakeetModel, N_("Spracherkennung „Sehr schnell“ (Parakeet v3)"),
+                     N_("5–8× schneller als Whisper, für 25 europäische Sprachen; überhört manchmal kurze Rufe "
+                        "(NVIDIA Parakeet TDT 0.6B v3, CC BY 4.0)"),
+                     "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/35156454d1a39de06863303dd209fd2bed6ee079/"
+                     "ggml-parakeet-tdt-0.6b-v3-q8_0.bin",
+                     "4d64e9e96c2792186d072fde0034df0ad670cf680a2f53069052ead827fd600e", 668757119,
+                     "ggml-parakeet-tdt-0.6b-v3-q8_0.bin"};
 
     // ONNX Runtime 1.20.1 (microsoft/onnxruntime, MIT), the CPU build of its GitHub release; sums of exactly these
     // archives. They hold onnxruntime-<os>-x64-1.20.1/lib/ with the library (libonnxruntime.so* / onnxruntime.dll),
@@ -400,6 +414,8 @@ QVector<const Item*> withDependencies(const QVector<const Item*>& items)
     for (const Item* i : items) {
         // A model is no use without the program (unless one is on PATH)
         if (i->kind == Kind::WhisperModel && whisperProgram().isEmpty()) add(find("whisper"));
+        // Parakeet runs with parakeet-cli of the whisper package
+        if (i->kind == Kind::ParakeetModel && parakeetProgram().isEmpty()) add(find("whisper"));
         if (i->kind == Kind::Voice && piperProgram().isEmpty()) add(find("piper"));
         if ((i->kind == Kind::AudioModel || i->kind == Kind::FaceModel || i->kind == Kind::CutoutModel) && onnxRuntimeLibrary().isEmpty()
             && piperOnnxRuntime().isEmpty())
@@ -506,6 +522,44 @@ QString whisperVadModel()
 {
     const Item* i = find("whisper-vad");
     return i ? installedPath(*i) : QString();
+}
+
+QString parakeetProgram()
+{
+    // parakeet-cli comes in the same whisper.cpp package (beside whisper-cli), or one on PATH
+    const QString program = whisperProgram();
+    if (!program.isEmpty())
+        if (const QString beside = QStandardPaths::findExecutable("parakeet-cli", {QFileInfo(program).absolutePath()});
+            !beside.isEmpty())
+            return beside;
+    return QStandardPaths::findExecutable("parakeet-cli");
+}
+
+QString parakeetModel()
+{
+    const Item* i = find("parakeet");
+    return i ? installedPath(*i) : QString();
+}
+
+QString qualityModel(const QString& quality)
+{
+    const QString q = quality.trimmed().toLower();
+    if (q == QLatin1String("accurate")) return "whisper-model-large";
+    if (q == QLatin1String("fast")) return "whisper-model-turbo";
+    if (q == QLatin1String("very_fast")) return "parakeet";
+    return {};
+}
+
+QString defaultQuality() { return whisperGpuBackend().isEmpty() ? "fast" : "accurate"; }
+
+QString detectionWhisperModel()
+{
+    // Smallest first: the catalog lists the best first
+    const QStringList ids = installedWhisperModels();
+    if (!ids.isEmpty()) return installedPath(*find(ids.last()));
+    for (const QString& p : customWhisperModels())
+        if (QFileInfo(p).isFile()) return QFileInfo(p).absoluteFilePath();
+    return {};
 }
 
 QString encoderProgram()
@@ -626,6 +680,9 @@ QStringList installedWhisperModels()
 QString whisperModelPath(const QString& idOrPath)
 {
     if (idOrPath.isEmpty()) {
+        // The default quality's model (large-v3 with a graphics card, else turbo), else the best installed
+        if (const Item* preferred = find(qualityModel(defaultQuality())); preferred && isInstalled(*preferred))
+            return installedPath(*preferred);
         const QStringList ids = installedWhisperModels();
         return ids.isEmpty() ? QString() : installedPath(*find(ids.first()));
     }
@@ -633,6 +690,65 @@ QString whisperModelPath(const QString& idOrPath)
         if (i.kind == Kind::WhisperModel && (i.id == idOrPath || i.id == "whisper-model-" + idOrPath))
             return installedPath(i);
     return QFileInfo(idOrPath).isFile() ? QFileInfo(idOrPath).absoluteFilePath() : QString();
+}
+
+QStringList customWhisperModels()
+{
+    return QSettings().value("transcribe/customModels").toStringList();
+}
+
+void setCustomWhisperModels(const QStringList& paths)
+{
+    QSettings settings;
+    if (paths.isEmpty())
+        settings.remove("transcribe/customModels");
+    else
+        settings.setValue("transcribe/customModels", paths);
+}
+
+bool isWhisperModelFile(const QString& path, QString* error)
+{
+    const auto fail = [&](const QString& why) {
+        if (error) *error = why;
+        return false;
+    };
+    QFile f(path);
+    if (!QFileInfo(path).isFile() || !f.open(QIODevice::ReadOnly))
+        return fail(T("Die Datei lässt sich nicht lesen: %1").arg(QDir::toNativeSeparators(path)));
+    const QByteArray head = f.read(8);
+    if (head.startsWith("GGUF"))
+        return fail(T("Das ist eine GGUF-Datei (z. B. für llama.cpp). Whisper braucht ein whisper.cpp-Modell im "
+                      "ggml-Format (ggml-….bin)."));
+    // whisper.cpp reads a little-endian uint32 GGML_FILE_MAGIC (0x67676d6c, "lmgg" on disk), then the hyperparameters,
+    // n_vocab first (51864 English-only, 51865 multilingual, 51866 large-v3; the Silero VAD model has none)
+    const auto le32 = [&](int at) {
+        return quint32(quint8(head[at])) | quint32(quint8(head[at + 1])) << 8 | quint32(quint8(head[at + 2])) << 16
+               | quint32(quint8(head[at + 3])) << 24;
+    };
+    if (head.size() < 8 || le32(0) != 0x67676d6cu)
+        return fail(T("Das ist kein whisper.cpp-Modell (ggml-Format, meist ggml-….bin)."));
+    if (const quint32 vocab = le32(4); vocab < 50000 || vocab > 60000)
+        return fail(T("Das ist ein ggml-Modell, aber kein Whisper-Sprachmodell (z. B. das Modell der Sprach-Erkennung)."));
+    if (error) error->clear();
+    return true;
+}
+
+bool hasWhisperModel()
+{
+    if (!installedWhisperModels().isEmpty()) return true;
+    for (const QString& p : customWhisperModels())
+        if (QFileInfo(p).isFile()) return true;
+    return false;
+}
+
+QString appWhisperModel(const QString& idOrPath)
+{
+    if (!idOrPath.isEmpty())
+        if (const QString chosen = whisperModelPath(idOrPath); !chosen.isEmpty()) return chosen;
+    if (const QString best = whisperModelPath(); !best.isEmpty()) return best;
+    for (const QString& p : customWhisperModels())
+        if (QFileInfo(p).isFile()) return QFileInfo(p).absoluteFilePath();
+    return {};
 }
 
 // ---------- Installer ----------

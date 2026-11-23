@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "core/Subtitles.h"
 #include "core/Types.h"
+#include "engine/Extensions.h"
 #include "engine/Transcriber.h"
 
 #include <QDialog>
@@ -11,6 +13,7 @@ class QLabel;
 class QProgressBar;
 class QPushButton;
 class QSpinBox;
+class QToolButton;
 
 // Timeline → Subtitles → Create Subtitles from Audio (like DaVinci): the timeline's sound (whole or In/Out, chosen
 // audio tracks mixed or one after another) through whisper (engine/Transcriber); accepted = results() holds the new
@@ -29,24 +32,44 @@ public:
     QVector<Result> results() const { return m_results; }
     QString language() const { return m_language; } // detected or chosen
     // After the run: whisper is sure the sound is in another language than the chosen one (a hint to show; empty = none)
-    QString languageHint() const { return m_languageHint; }
+    // Also: Parakeet did not know the language (Transcriber::engineNote)
+    QString languageHint() const
+    {
+        return m_engineNote.isEmpty() ? m_languageHint
+               : m_languageHint.isEmpty() ? m_engineNote
+                                          : m_languageHint + "\n\n" + m_engineNote;
+    }
 
     void reject() override;
+    // Adds an own whisper.cpp model file to the model choice (remembered for next time) and selects it; false + error
+    // when it is no whisper model (Extensions::isWhisperModelFile). The "Eigenes Modell…" entry asks for the file.
+    bool addCustomModel(const QString& path, QString* error = nullptr);
+
+    // What the chosen model entry needs downloaded first (the model, the whisper package for it): empty = ready
+    QVector<const Extensions::Item*> missingDownloads() const;
 
 signals:
     void openExtensions(); // whisper or a model is missing
 
 private:
     void updateState();
+    void chooseCustomModel();  // the file dialog of "Eigenes Modell…"
+    void removeCustomModel();  // the chosen own model out of the list (the file stays)
+    void updateRemoveButton(); // only for an own model
+    Subtitles::CueLength cueLength() const; // the chosen one, Auto resolved by the timeline's format
     void run();
     void startJob();
+    void downloadNext(); // the next of m_downloads, then the jobs
 
     Timeline m_timeline;
     ProjectFormat m_format;
     int m_from, m_to;
     QComboBox* m_lang;
     QComboBox* m_model;
+    QToolButton* m_removeModel;
+    QString m_lastModel; // the model chosen before "Eigenes Modell…" (back to it when the file dialog is cancelled)
     QSpinBox* m_chars;
+    QComboBox* m_length; // Untertitel-Länge: auto, normal, short, very_short
     struct TrackBox {
         int index;    // audio track
         QString name; // subtitle track name part ("Mikrofon" or "A3")
@@ -65,7 +88,11 @@ private:
     QPushButton* m_start;
     QPushButton* m_extensions;
     Transcriber m_transcriber;
+    Extensions::Installer m_installer;
+    QVector<const Extensions::Item*> m_downloads; // still to download before the jobs start
+    const Extensions::Item* m_downloading = nullptr;
     QVector<Result> m_results;
     QString m_language;
     QString m_languageHint;
+    QString m_engineNote;
 };

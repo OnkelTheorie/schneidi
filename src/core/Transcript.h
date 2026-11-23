@@ -3,9 +3,11 @@
 // Speech-to-text results (whisper.cpp, see engine/Transcriber): words with times, grouped into subtitle cues.
 // Pure data functions; times in milliseconds from the start of the transcribed audio.
 
+#include "core/Subtitles.h"
 #include "core/Types.h"
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
 #include <QVector>
 
@@ -41,6 +43,12 @@ bool parseWhisperJson(const QByteArray& json, Result* out, QString* error = null
 bool appendWhisperJson(const QByteArray& json, const std::function<qint64(qint64, bool)>& map, Result* out,
                        QString* error = nullptr);
 
+// parakeet-cli's log with token times (-ps, on stderr), files read one after the other: per file as it names it
+// ("Processing file: piece_000.wav") its words, in time order (ms from the file's start). A token that starts a word
+// ("▁Hallo") begins one, the others ("ür", ",", ".") belong to the word before; a word lasts from its first token's
+// start to its last token's end (10 ms steps).
+QHash<QString, QVector<Word>> parseParakeetLog(const QString& log);
+
 // A piece of sound for whisper: stretches of the whole sound (ms) one after the other, `at` = where a stretch starts
 // in the piece; between two stretches the piece is silent (a long pause cut short).
 struct PieceSpan {
@@ -66,22 +74,52 @@ QVector<Piece> speechPieces(const QVector<QPair<qint64, qint64>>& segments, qint
 // how many
 int dropPromptEcho(QVector<Word>& words, const QString& prompt);
 
+// whisper (turbo above all) now and then writes a piece's whole text twice ("A B C. A B C.", 3 of 69 German FLEURS
+// pieces, measured 22.11.) or writes the piece before it once more (its text is the context of the next piece).
+// words[first..] are the words of one piece, words[previous..first) those of the piece before it (previous < 0 =
+// none). A copy is dropped when it has at least `minWords` words, three of them different ("ja ja ja ja" said twice
+// stays), and differs from what it repeats in at most a fifth of its words. Of a piece written twice the first copy
+// stays with its times, its last word lasting to the copy's end - only when the copy is squeezed into the end of the
+// piece (its words start within a quarter of the first copy's time), as whisper writes it; said twice for real, it
+// stays. A piece that only repeats the one before goes whole. Pieces (and pieces before) of more than 300 words are
+// left as they are (speech pieces are ~100 at most). For whisper's speech pieces only: not for music (a chorus
+// sung twice), not for Parakeet (it does not repeat; its blind 28 s pieces can hold a real repeat). Returns how many
+// words were dropped.
+int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous = -1, int minWords = 4);
+
 
 // Words -> subtitle cues (timeline frames, `offset` added): a cue ends after a sentence, before a pause longer than
 // `maxGapMs` or before it would get longer than `maxChars`; long pauses are not shown (a word lasts at most
 // about its spoken length); every cue stays long enough to read, up to the next one. ids stay 0
 // (Editor::importSubtitles assigns them).
-QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars = 42, int maxGapMs = 700, int offset = 0);
+// `cutsMs`: cuts between clips (ms of the transcribed sound, cutsMs below): no cue spans one, none lasts past it.
+QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars = 42, int maxGapMs = 700, int offset = 0,
+                            const QVector<qint64>& cutsMs = {});
 
 // One cue per word (from its start to where it is spoken to, one CueWord; a word overlapping the next ends there),
 // timeline frames with `offset` added: the input of Subtitles::readable with the word times
 QVector<SubtitleCue> wordCues(const QVector<Word>& words, double fps, int offset = 0);
 
-// Readable subtitles of the words (Subtitles::readable of wordCues, word times kept); not for music: then like
+// Readable subtitles of the words (Subtitles::readable of wordCues with `rules`, word times kept); not for music: then like
 // startAtSound per cue (a cue without any sound is dropped, a start in silence moves to the sound) - per cue, so a
 // quiet word between loud ones stays
+// `cutsMs` as in toCues: the words between two cuts are made readable on their own.
 QVector<SubtitleCue> readableCues(const QVector<Word>& words, const Levels& levels, double fps, int offset = 0,
-                                  bool music = false);
+                                  bool music = false, const Subtitles::ReadableRules& rules = {},
+                                  const QVector<qint64>& cutsMs = {});
+
+// Cuts of a timeline range [from, to) (frames) on the audio tracks `tracks` (empty = every track not muted; then, when
+// the range has clips linked to a picture, only theirs: a music bed or an effect sound ending under the speech is no
+// cut of the speech): where a clip begins or ends inside the range, not where one only continues the one before
+// (same file, the next source frame: a clip split in two). Sorted, each once. For transcripts of a timeline: a subtitle never starts in the clip
+// before its words' clip (user report 23.11.: the next clip's line already showed at the end of the one before).
+QVector<int> cutFrames(const Timeline& tl, int from, int to, const QVector<int>& tracks = {});
+// cutFrames as ms of the sound transcribed from `from` on (the words' times)
+QVector<qint64> cutsMs(const QVector<int>& cutFrames, int from, double fps);
+// Words at cuts (ms): a word whose spoken part (spokenEnd) crosses a cut belongs to the side with more of it (whisper
+// and the voice detection's padding start the first word after a cut a little early) - after it, it starts at the
+// cut; before it, it ends there. Any word ends at the next cut after its start.
+void fitToCuts(QVector<Word>& words, const QVector<qint64>& cutsMs);
 
 // End of a word without the pause after it (whisper stretches `to` to the next word)
 qint64 spokenEnd(const Word& w);

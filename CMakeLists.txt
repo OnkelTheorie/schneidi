@@ -174,6 +174,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
     src/core/ChannelLayout.h      src/core/ChannelLayout.cpp
     src/core/Project.h            src/core/Project.cpp
+    src/core/EditDefaults.h       src/core/EditDefaults.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h
     src/core/TaskProgress.h
@@ -239,6 +240,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/BrandKit.h           src/core/BrandKit.cpp
     src/core/ProjectRefs.h        src/core/ProjectRefs.cpp
+    src/core/Relink.h             src/core/Relink.cpp
     src/core/TemplateLibrary.h    src/core/TemplateLibrary.cpp
     src/core/TemplateFill.h       src/core/TemplateFill.cpp
     src/core/DataRows.h           src/core/DataRows.cpp
@@ -252,6 +254,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/ReviewSheet.h        src/core/ReviewSheet.cpp
     src/core/Tours.h              src/core/Tours.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
+    src/core/NameMatch.h          src/core/NameMatch.cpp
     src/core/IndexSearch.h        src/core/IndexSearch.cpp
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
     src/core/SafeGuides.h         src/core/SafeGuides.cpp
@@ -381,10 +384,11 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowStudio.cpp
     src/app/MainWindowDirect.cpp
     src/app/DirectBackend.h src/app/DirectBackend.cpp
-    src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
+    src/app/MainWindowProject.cpp src/app/MainWindowRelink.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
+    src/app/TimelineSettingsPage.h src/app/TimelineSettingsPage.cpp
     src/app/UpdateCheck.h src/app/UpdateCheck.cpp
     src/app/BugReport.h src/app/BugReport.cpp
     src/app/TourManager.h src/app/TourManager.cpp
@@ -448,6 +452,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
     src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
+    src/ui/SearchHitDelegate.h    src/ui/SearchHitDelegate.cpp
     src/ui/WheelGuard.h           src/ui/WheelGuard.cpp
     src/ui/CompactButton.h        src/ui/CompactButton.cpp
     src/ui/ElidedLabel.h
@@ -529,6 +534,9 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
     src/ui/timeline/TimelineColors.h
     src/ui/timeline/TimelineOverview.h src/ui/timeline/TimelineOverview.cpp
+    src/ui/timeline/ZoomAnchor.h  src/ui/timeline/ZoomAnchor.cpp
+    src/ui/timeline/TimelineOptions.h src/ui/timeline/TimelineOptions.cpp
+    src/ui/timeline/PlayheadMove.h src/ui/timeline/PlayheadMove.cpp
     src/engine/AnalysisCache.h    src/engine/AnalysisCache.cpp
 )
 

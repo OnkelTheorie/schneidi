@@ -24,6 +24,7 @@
 #include "core/Timecode.h"
 #include "core/Presets.h"
 #include "core/Project.h"
+#include "core/Relink.h"
 #include "core/Selection.h"
 #include "core/StartTemplates.h"
 #include "core/Subtitles.h"
@@ -472,42 +473,6 @@ void MainWindow::showLoadWarning(const QString& warning)
 
 bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
 {
-    // Missing media like DaVinci "Media Offline": have the folder searched or leave offline
-    int relinked = 0;
-    for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
-         missing = ProjectFile::missingMedia(data)) {
-        // Files only the Media Pool still lists (no timeline reads them) cost nothing: said, so nobody hunts for them
-        const QStringList unused = ProjectFile::unusedMedia(data);
-        const bool allUnused = std::all_of(missing.cbegin(), missing.cend(), [&](const QString& p) { return unused.contains(p); });
-        QString text;
-        if (allUnused)
-            text = missing.size() == 1
-                       ? T("1 Datei im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt "
-                           "sie: das Projekt spielt und exportiert auch ohne sie.")
-                       : T("%1 Dateien im Medienpool nicht gefunden (verschoben oder gelöscht?). Keine Timeline benutzt "
-                           "sie: das Projekt spielt und exportiert auch ohne sie.").arg(missing.size());
-        else
-            text = missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
-                                       : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size());
-        QMessageBox box(QMessageBox::Warning, T("Medien fehlen"), text, QMessageBox::NoButton, this);
-        QStringList names;
-        for (const QString& p : missing.mid(0, 15))
-            names << (!allUnused && unused.contains(p) ? T("%1 (in keiner Timeline benutzt)").arg(p) : p);
-        if (missing.size() > 15) names << "…";
-        box.setInformativeText(names.join('\n'));
-        QPushButton* search = box.addButton(T("Ordner durchsuchen…"), QMessageBox::AcceptRole);
-        box.addButton(T("Offline lassen"), QMessageBox::RejectRole);
-        box.exec();
-        if (box.clickedButton() != search) break;
-        const QString dir = QFileDialog::getExistingDirectory(this, T("Ordner mit den Medien wählen"),
-                                                              QFileInfo(path).absolutePath());
-        if (dir.isEmpty()) break;
-        const int found = ProjectFile::relink(&data, dir, [&data](const QString& file) { return Engine::probe(data.format, file); });
-        relinked += found;
-        if (found == 0)
-            QMessageBox::information(this, T("Medien fehlen"), T("In diesem Ordner wurden keine der Dateien gefunden."));
-    }
-
     // Effects this version does not have (frei0r plugins of older projects): stay in the project, skipped
     if (const QStringList fx = ask ? ProjectFile::missingEffects(data) : QStringList{}; !fx.isEmpty()) {
         QMessageBox box(QMessageBox::Warning, T("Effekte fehlen"),
@@ -521,6 +486,11 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     // Custom code from someone else (filter chains, shaders; core/CodeTrust.h): run it or keep it skipped
     if (ask) TrustDialog::askForProject(this, data, path);
 
+    if (m_relinkJob) { // a search for the project before: it ends, nothing of it lands in this one
+        m_relinkJob->cancel = true;
+        m_relinkJob.reset();
+        if (m_relinkStatus) m_relinkStatus->hide();
+    }
     m_templateDir.clear(); // a project of its own (New from template sets it again afterwards)
     m_templateCopies.clear();
     directReset(false); // a Regie run on the old project ends (the material files stay: they are no project's)
@@ -540,7 +510,6 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     m_sequencePos.clear();
     m_project->load(data);
     OpenTrace::mark("project loaded (signals handled)");
-    if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
     m_sourcePos.clear();
     // The new timeline reaches the picture engine now, not after the edit debounce (m_engineTimer): its first frame
     // renders while the window paints, instead of the old project's picture being shown first
@@ -555,6 +524,10 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     restoreViews(data);
     setProjectPath(path);
     OpenTrace::mark("views restored, path set");
+    // Missing media ("Media Offline"): looked for near their old places in the background, the project is usable
+    // meanwhile; only what is not found clearly is asked about (MainWindowRelink.cpp)
+    if (ask && !m_project->missingMedia().isEmpty()) findMissingMedia(true);
+    updateFindMissingAction();
     return true;
 }
 

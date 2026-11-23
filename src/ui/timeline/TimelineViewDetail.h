@@ -120,7 +120,6 @@ inline void drawLock(QPainter& p, const QRectF& r, const QColor& color)
     p.restore();
 }
 
-constexpr int kSnapPx = 8;
 constexpr double kFinePxPerFrame = 12; // from here audio clips move finer than 1 frame
 constexpr int kDragStartPx = 4;
 constexpr int kAutoScrollZone = 24; // edge zone (px) in which dragging scrolls the timeline along

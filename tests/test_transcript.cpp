@@ -12,6 +12,14 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDir>
+#include <QFile>
+#include <QPushButton>
+#include <QSettings>
+#include <QStandardItemModel>
+#include <QTemporaryDir>
+#include <QToolButton>
 #include <QLabel>
 
 #include <cmath>
@@ -159,6 +167,159 @@ void testPieces()
         CHECK_EQ(w.size(), 2);
         QVector<Transcript::Word> kept{{0, 100, "Wie"}, {100, 200, "geht's?"}};
         CHECK_EQ(Transcript::dropPromptEcho(kept, "Hallo, wie geht's? Gut, und dir? Ja, passt."), 0);
+    }
+    // Repeats (whisper turbo wrote a piece's whole text twice, or the piece before once more)
+    {
+        const auto words = [](const QString& text, qint64 from, qint64 step) {
+            QVector<Transcript::Word> out;
+            for (const QString& s : text.split(' ', Qt::SkipEmptyParts)) out << Transcript::Word{from, from + step, s}, from += step;
+            return out;
+        };
+        const auto text = [](const QVector<Transcript::Word>& ws, qsizetype from = 0) {
+            QStringList out;
+            for (qsizetype i = from; i < ws.size(); ++i) out << ws[i].text;
+            return out.join(' ');
+        };
+        const QString twice = "Das Schwimmen ist hier sicher. Es gibt Familienstrände. Das Schwimmen ist hier sicher. Es "
+                              "gibt Familienstrände.";
+        // One piece written twice: the first copy stays with its times (whisper squeezed the copy into the piece's
+        // end: 19 words at 17.3 s with DTW, measured 23.11.), its last word lasting to the copy's end
+        QVector<Transcript::Word> w = words(twice, 0, 1000);
+        for (int i = 8; i < w.size(); ++i) w[i].from = 8000 + (i - 8) * 10, w[i].to = w[i].from + 10;
+        CHECK_EQ(Transcript::dropRepeats(w, 0), 8);
+        CHECK_EQ(text(w), QString("Das Schwimmen ist hier sicher. Es gibt Familienstrände."));
+        CHECK_EQ(w.first().from, 0);
+        CHECK_EQ(w[3].from, 3000);
+        CHECK_EQ(w.last().from, 7000);
+        CHECK_EQ(w.last().to, 8080);
+        // ... said twice for real (the second time takes its time too): it stays
+        QVector<Transcript::Word> said = words(twice, 0, 1000);
+        CHECK_EQ(Transcript::dropRepeats(said, 0), 0);
+        CHECK_EQ(said.size(), 16);
+        // The copy squeezed into the piece's end (whisper's own times without DTW: 0.9 s against 17 s)
+        const auto squeeze = [](QVector<Transcript::Word>& ws, int from) {
+            for (int i = from; i < ws.size(); ++i) ws[i].from = 4000 + (i - from) * 40, ws[i].to = ws[i].from + 40;
+        };
+        // The copy a word short or with one word changed (case and punctuation do not count)
+        w = words("Das Schwimmen ist hier sicher, es gibt Familienstrände das schwimmen ist hier sicher es gibt", 0, 500);
+        squeeze(w, 8);
+        CHECK_EQ(Transcript::dropRepeats(w, 0), 7);
+        CHECK_EQ(text(w), QString("Das Schwimmen ist hier sicher, es gibt Familienstrände"));
+        w = words("Das Schwimmen ist hier sicher. Es gibt Familienstrände. Das Schwimmen ist hier sicher. Es gibt "
+                  "Strände.",
+                  0, 500);
+        squeeze(w, 8);
+        CHECK_EQ(Transcript::dropRepeats(w, 0), 8);
+        // A whole recording passed in (thousands of words): left alone at once, never compared word by word
+        {
+            QString many;
+            for (int i = 0; i < 4000; ++i) many += QString("wort%1 ").arg(i % 997);
+            QVector<Transcript::Word> all = words(many, 0, 300);
+            CHECK_EQ(Transcript::dropRepeats(all, 0), 0);
+            CHECK_EQ(all.size(), 4000);
+        }
+        // Not a repeat: a short phrase said twice, a chant, different halves, too many changes
+        for (const QString& kept : {QString("Ja, ja. Ja, ja."), QString("Go, go, go! Go, go, go!"),
+                                    QString("ja ja ja ja ja ja ja ja"),
+                                    QString("Wir gehen jetzt rein und dann gucken wir mal was da so los ist"),
+                                    QString("eins zwei drei vier fünf sechs eins zwei sieben acht neun zehn")}) {
+            QVector<Transcript::Word> k = words(kept, 0, 300);
+            squeeze(k, int(k.size() / 2)); // even squeezed
+            CHECK_EQ(Transcript::dropRepeats(k, 0), 0);
+            CHECK_EQ(text(k), kept);
+        }
+        // The piece before written once more: the whole piece goes; times of the piece before stay
+        QVector<Transcript::Word> two = words("Legierungen sind eine Mischung aus Metallen.", 0, 400);
+        two += words("Legierungen sind eine Mischung aus Metallen.", 10000, 400);
+        CHECK_EQ(Transcript::dropRepeats(two, 6, 0), 6);
+        CHECK_EQ(two.size(), 6);
+        CHECK_EQ(two.last().to, 2400);
+        // ... but a new piece that only starts alike stays, and so does one without a piece before
+        two = words("Legierungen sind eine Mischung aus Metallen.", 0, 400);
+        two += words("Legierungen sind eine Mischung aus zwei oder mehr Metallen, vergessen Sie das nicht.", 10000, 400);
+        CHECK_EQ(Transcript::dropRepeats(two, 6, 0), 0);
+        CHECK_EQ(two.size(), 19);
+        QVector<Transcript::Word> alone = words("Legierungen sind eine Mischung aus Metallen.", 0, 400);
+        CHECK_EQ(Transcript::dropRepeats(alone, 0, -1), 0);
+        // Only the newest piece is looked at: a doubled earlier piece stays as it was
+        QVector<Transcript::Word> later = words(twice, 0, 500);
+        const qsizetype second = later.size();
+        later += words("Und jetzt etwas ganz anderes zum Schluss.", 20000, 400);
+        CHECK_EQ(Transcript::dropRepeats(later, second, 0), 0);
+        CHECK_EQ(later.size(), second + 7);
+        CHECK(Transcript::dropRepeats(later, later.size()) == 0); // an empty piece
+    }
+    // Two clips cut back to back (user report 23.11.: the next clip's line already showed at the end of the clip
+    // before): the cut is known, the first word after it (whisper put it 150 ms early) starts at it, no cue spans it
+    {
+        Timeline tl;
+        tl.audio.resize(2);
+        Clip a, b;
+        a.mediaPath = "/m/a.wav", a.start = 0, a.in = 0, a.out = 49;   // frames 0-49 (25 fps: 0-2 s)
+        b.mediaPath = "/m/b.wav", b.start = 50, b.in = 10, b.out = 59; // frames 50-99
+        tl.audio[0].clips << b << a; // in any order
+        CHECK(Transcript::cutFrames(tl, 0, 100) == QVector<int>{50});
+        CHECK(Transcript::cutFrames(tl, 0, 100, {1}).isEmpty()); // the other track
+        CHECK(Transcript::cutFrames(tl, 60, 100).isEmpty());      // outside the range
+        // A clip split in two (same file, next source frame) is no cut; a gap after a clip is
+        Clip rest = a;
+        rest.start = 50, rest.in = 50, rest.out = 79;
+        Timeline split;
+        split.audio.resize(1);
+        split.audio[0].clips << a << rest;
+        CHECK(Transcript::cutFrames(split, 0, 200) == QVector<int>{80}); // only where the sound ends
+        split.audio[0].clips[1].start = 60;
+        CHECK(Transcript::cutFrames(split, 0, 200) == (QVector<int>{50, 60, 90}));
+        // As heard: a music bed ending under the speech (frame 70, A2, no picture) is no cut when the speech clips came
+        // with a picture (linked); without any linked clip every audible track counts; a chosen track counts as it is
+        {
+            Timeline heard = tl;
+            heard.audio[0].clips[0].linkId = 1, heard.audio[0].clips[1].linkId = 2;
+            Clip music;
+            music.mediaPath = "/m/song.mp3", music.start = 0, music.in = 0, music.out = 69;
+            heard.audio[1].clips << music;
+            CHECK(Transcript::cutFrames(heard, 0, 100) == QVector<int>{50});
+            CHECK(Transcript::cutFrames(heard, 0, 100, {1}) == QVector<int>{70});
+            heard.audio[0].clips[0].linkId = heard.audio[0].clips[1].linkId = 0;
+            CHECK(Transcript::cutFrames(heard, 0, 100) == (QVector<int>{50, 70}));
+            heard.audio[1].muted = true; // muted: not heard
+            CHECK(Transcript::cutFrames(heard, 0, 100) == QVector<int>{50});
+        }
+        const QVector<qint64> cuts = Transcript::cutsMs(Transcript::cutFrames(tl, 0, 100), 0, 25);
+        CHECK(cuts == QVector<qint64>{2000});
+
+        const QVector<Transcript::Word> heard{{0, 400, "Das"},       {400, 800, "war"},     {800, 1300, "Clip"},
+                                              {1300, 2100, "eins"},  {1850, 2300, "Hallo"}, {2300, 2600, "hier"},
+                                              {2600, 3000, "zwei."}};
+        // Without the cuts: one line over the cut, starting in the first clip (the bug)
+        const QVector<SubtitleCue> before = Transcript::toCues(heard, 25, 42, 700, 0);
+        CHECK(before.size() == 1 && before.value(0).text.contains("Hallo"));
+        QVector<Transcript::Word> w = heard;
+        Transcript::fitToCuts(w, cuts);
+        CHECK_EQ(w[4].from, 2000);           // "Hallo" belongs to the second clip
+        CHECK_EQ(w[3].to, 2000);             // "eins" never runs on into it
+        CHECK(w[3].from == 1300 && w[0].from == 0);
+        const auto spans = [](const QVector<SubtitleCue>& cues, int cut) {
+            for (const SubtitleCue& c : cues)
+                if (c.start < cut && c.end > cut) return true;
+            return false;
+        };
+        const QVector<SubtitleCue> lines = Transcript::toCues(w, 25, 42, 700, 0, cuts);
+        CHECK_EQ(cues(lines), QString("0-46 Das war Clip eins | 50-85 Hallo hier zwei."));
+        CHECK(!spans(lines, 50));
+        // With an offset (a range from frame 100 on) and short readable cues: the same
+        Timeline later = tl;
+        for (Clip& c : later.audio[0].clips) c.start += 100;
+        const QVector<qint64> laterCuts = Transcript::cutsMs(Transcript::cutFrames(later, 100, 200), 100, 25);
+        CHECK(laterCuts == QVector<qint64>{2000});
+        for (const auto length : {Subtitles::CueLength::Normal, Subtitles::CueLength::Short, Subtitles::CueLength::VeryShort}) {
+            const QVector<SubtitleCue> r = Transcript::readableCues(w, {}, 25, 100, false, Subtitles::rulesFor(length), laterCuts);
+            CHECK(!r.isEmpty() && !spans(r, 150));
+            for (const SubtitleCue& c : r)
+                if (c.text.contains("Hallo")) CHECK(c.start >= 150);
+            for (const SubtitleCue& c : r)
+                for (const CueWord& cw : c.words) CHECK(cw.from >= 0 && cw.to <= c.length() && cw.from < cw.to);
+        }
     }
     // DTW presets by model file, speech segments of the voice detection program
     CHECK_EQ(Transcriber::dtwPreset("/x/ggml-large-v3-q5_0.bin"), QString("large.v3"));
@@ -364,6 +525,115 @@ int main(int argc, char** argv)
         for (QLabel* l : plain.findChildren<QLabel*>()) CHECK(!l->text().startsWith("Nur die Stimme"));
     }
 
+    // Own whisper models: a ggml file anywhere, checked by its header; listed after the catalog, a gone one marked
+    {
+        QTemporaryDir dir;
+        const auto write = [&](const char* name, const QByteArray& bytes) {
+            const QString path = dir.filePath(name);
+            QFile f(path);
+            f.open(QIODevice::WriteOnly);
+            f.write(bytes);
+            return path;
+        };
+        const QByteArray magic("lmgg", 4); // GGML_FILE_MAGIC 0x67676d6c, little-endian
+        const QString good = write("ggml-own.bin", magic + QByteArray("\x59\xca\0\0", 4) + QByteArray(64, '\0'));
+        const QString other = write("ggml-other.bin", magic + QByteArray("\x9a\xca\0\0", 4) + QByteArray(64, '\0'));
+        const QString vad = write("ggml-silero.bin", magic + QByteArray("\x0a\0\0\0", 4) + QByteArray(64, '\0'));
+        const QString text = write("notes.bin", "hello world, no model");
+        const QString gguf = write("model.gguf", QByteArray("GGUF\3\0\0\0", 8) + QByteArray(64, '\0'));
+        const QString gone = dir.filePath("ggml-gone.bin");
+        QString error;
+        CHECK(Extensions::isWhisperModelFile(good, &error));
+        CHECK(error.isEmpty());
+        CHECK(!Extensions::isWhisperModelFile(text, &error));
+        CHECK(error.startsWith("Das ist kein whisper.cpp-Modell"));
+        CHECK(!Extensions::isWhisperModelFile(vad, &error));
+        CHECK(error.contains("kein Whisper-Sprachmodell"));
+        CHECK(!Extensions::isWhisperModelFile(gguf, &error));
+        CHECK(error.contains("GGUF"));
+        CHECK(!Extensions::isWhisperModelFile(gone, &error));
+        CHECK_EQ(Extensions::whisperModelPath(good), QFileInfo(good).absoluteFilePath()); // a path resolves
+        CHECK(Extensions::installedWhisperModels().isEmpty()); // test paths: no catalog model
+        Extensions::setCustomWhisperModels({gone});
+        CHECK(!Extensions::hasWhisperModel());
+        CHECK(Extensions::appWhisperModel({}).isEmpty());
+        Extensions::setCustomWhisperModels({gone, good});
+        CHECK(Extensions::hasWhisperModel()); // the panel's "Whisper ready" with only an own model
+        CHECK_EQ(Extensions::appWhisperModel({}), QFileInfo(good).absoluteFilePath());
+        CHECK_EQ(Extensions::appWhisperModel("whisper-model-turbo"), QFileInfo(good).absoluteFilePath());
+
+        Timeline tl;
+        tl.audio.resize(1);
+        tl.audio[0].clips << Clip{};
+        TranscribeDialog dlg(tl, ProjectFormat{}, 0, 100, {"A1 mix"});
+        auto* combo = dlg.findChild<QComboBox*>("transcribe_model");
+        auto* remove = dlg.findChild<QToolButton*>("transcribe_model_remove");
+        auto* items = combo ? qobject_cast<QStandardItemModel*>(combo->model()) : nullptr;
+        auto* language = dlg.findChild<QComboBox*>("transcribe_language");
+        auto* start = [&]() -> QPushButton* {
+            for (auto* b : dlg.findChildren<QPushButton*>())
+                if (b->text() == "Erzeugen" || b->text() == "Herunterladen und erzeugen") return b;
+            return nullptr;
+        }();
+        if (CHECK(combo && remove && items && language && start)) {
+            const auto entries = [&] {
+                QStringList out;
+                for (int i = 0; i < combo->count(); ++i)
+                    out << combo->itemText(i) + (items->item(i)->isEnabled() ? "" : ":off");
+                return out.join(" | ");
+            };
+            // The quality levels first, as downloads (where the whisper package is offered), then the own models;
+            // "Sehr schnell" (Parakeet) only for a language it knows
+            const bool offered = Extensions::find("whisper") != nullptr;
+            const QString levels = offered ? QString("Whisper „Genau“ (large-v3) – Download 1081 MB | Whisper „Schnell“ "
+                                                     "(large-v3-turbo) – Download 574 MB | ")
+                                           : QString();
+            const QString parakeet = offered ? QString("Spracherkennung „Sehr schnell“ (Parakeet v3) – Download 669 MB | ")
+                                             : QString();
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin")); // the first installed one, not the gone file
+            CHECK_EQ(combo->currentData(Qt::ToolTipRole).toString(),
+                     QDir::toNativeSeparators(QFileInfo(good).absoluteFilePath()));
+            CHECK_EQ(start->text(), QString("Erzeugen"));
+            CHECK(dlg.missingDownloads().isEmpty());
+            language->setCurrentIndex(language->findData("tr")); // Turkish: no Parakeet
+            CHECK_EQ(entries(), levels + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin"));
+            language->setCurrentIndex(language->findData("de"));
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
+            if (offered) {
+                // A missing level: downloaded with the whisper package when the run starts
+                combo->setCurrentIndex(combo->findData("whisper-model-large"));
+                QStringList ids;
+                for (const Extensions::Item* i : dlg.missingDownloads()) ids << i->id;
+                CHECK_EQ(ids.join(','), QString("whisper,whisper-model-large,whisper-vad"));
+                combo->setCurrentIndex(combo->findData("parakeet"));
+                ids.clear();
+                for (const Extensions::Item* i : dlg.missingDownloads()) ids << i->id;
+                CHECK_EQ(ids.join(','), QString("whisper,parakeet,whisper-vad"));
+                combo->setCurrentIndex(combo->findText("ggml-own.bin"));
+            }
+            CHECK(!remove->isHidden());
+            CHECK(!dlg.addCustomModel(text, &error));
+            CHECK(!error.isEmpty());
+            CHECK_EQ(Extensions::customWhisperModels().size(), 2);
+            CHECK(dlg.addCustomModel(other, &error));
+            CHECK_EQ(combo->currentText(), QString("ggml-other.bin"));
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | ggml-other.bin | Eigenes Modell…");
+            CHECK(dlg.addCustomModel(other)); // twice = once
+            CHECK_EQ(Extensions::customWhisperModels().size(), 3);
+            remove->click();
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin"));
+            combo->setCurrentIndex(combo->findText("ggml-gone.bin (fehlt)")); // the gone one can be taken out too
+            CHECK(!remove->isHidden());
+            remove->click();
+            CHECK_EQ(Extensions::customWhisperModels(), QStringList{QFileInfo(good).absoluteFilePath()});
+        }
+        Extensions::setCustomWhisperModels({});
+        CHECK(!QSettings().contains("transcribe/customModels"));
+    }
+
     // Catalog: every download pinned; whisper brings the voice detection, models need the program
     for (const Extensions::Item& i : Extensions::catalog()) {
         CHECK_EQ(i.sha256.size(), 64);
@@ -376,14 +646,27 @@ int main(int argc, char** argv)
         CHECK_EQ(deps[1]->id, QString("whisper-vad"));
     }
     CHECK(Extensions::find("whisper-model-small") != nullptr);
-    // turbo is offered first (the default when installed: large-v3 translated English in German talk), then large-v3;
-    // "large" names it
+    // The quality levels: large-v3 "Genau" first (the best on real chat, measured 22.11.), turbo "Schnell"; "large"
+    // names it. Without a GPU backend beside whisper the default is "fast"
     {
         QStringList models;
         for (const Extensions::Item& i : Extensions::catalog())
             if (i.kind == Extensions::Kind::WhisperModel) models << i.id;
-        CHECK_EQ(models.value(0), QString("whisper-model-turbo"));
-        CHECK_EQ(models.value(1), QString("whisper-model-large"));
+        CHECK_EQ(models.value(0), QString("whisper-model-large"));
+        CHECK_EQ(models.value(1), QString("whisper-model-turbo"));
+        CHECK_EQ(Extensions::defaultQuality(), QString("fast"));
+        CHECK_EQ(Extensions::qualityModel("accurate"), QString("whisper-model-large"));
+        // Parakeet: pinned to one revision of ggml-org/parakeet-GGUF, offered with the whisper package (parakeet-cli)
+        const Extensions::Item* parakeet = Extensions::find("parakeet");
+        CHECK_EQ(parakeet != nullptr, Extensions::find("whisper") != nullptr);
+        if (parakeet) {
+            CHECK(parakeet->url.contains("/resolve/35156454d1a39de06863303dd209fd2bed6ee079/"));
+            CHECK_EQ(parakeet->size, qint64(668757119));
+            CHECK(parakeet->kind == Extensions::Kind::ParakeetModel);
+            CHECK(Extensions::parseList("parakeet").value(0) == parakeet);
+            CHECK(Extensions::withDependencies({parakeet}).contains(Extensions::find("whisper"))); // brings parakeet-cli
+            CHECK(Extensions::parakeetModel().isEmpty());
+        }
         QString unknown;
         CHECK(Extensions::parseList("large", &unknown).value(0) == Extensions::find("whisper-model-large"));
         CHECK_EQ(Extensions::find("whisper-model-large")->sha256.size(), 64);

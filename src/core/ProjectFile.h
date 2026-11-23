@@ -11,6 +11,7 @@
 #include "core/Types.h"
 #include "core/WatchFolders.h"
 
+#include <QHash>
 #include <QJsonObject>
 #include <QLockFile>
 #include <QString>
@@ -108,12 +109,19 @@ inline constexpr int kCliLockWaitMs = 30000;
 // Content fingerprint of a saved project file (empty = unreadable): tells own saves from changes by others
 QByteArray fingerprint(const QString& path);
 
-// Missing media: search for a file of the same name in a folder (recursively) and redirect all references. Of several
-// files of that name the one whose folders match most; several equally good ones: the file stays offline.
-// Returns the number of files found again. `probe` (Engine::probe; empty = not known): each file found is read, its
-// audio streams taken into the media list and channel routing the new file lacks dropped (fitSourceChannels: a clip
-// routed to channels 3/4 of a camera file relinked to a stereo file would play silence).
+// Missing media: search for a file of the same name in a folder (recursively, core/Relink.h Mode::Folder) and redirect
+// all references. Of several files of that name the surest (same size, else same length), then the one whose folders
+// match most; several equally good ones: the file stays offline. Returns the number of files found again. `probe`
+// (Engine::probe; empty = not known): each file found is read - never another kind of media - its audio streams taken
+// into the media list and channel routing the new file lacks dropped (fitSourceChannels: a clip routed to channels 3/4
+// of a camera file relinked to a stereo file would play silence).
 int relink(ProjectData* data, const QString& searchDir, const std::function<MediaInfo(const QString&)>& probe = {});
+// The same, looked for by itself near the old places (Relink::nearRoots, bounded, only clear matches: Mode::Near)
+int relinkNear(ProjectData* data, const std::function<MediaInfo(const QString&)>& probe = {});
+// Files found again (old path -> new path; Relink::match) into the project: every reference redirected (clips, pool,
+// compositing nodes, titles, wipes, effect files, brand kit), the file's size taken and, of files in `probed` (their
+// probes), the audio streams, with channel routing they lack dropped
+void applyRelink(ProjectData* data, const QHash<QString, QString>& moved, const QHash<QString, MediaInfo>& probed);
 QStringList missingMedia(const ProjectData& data);
 // Media Pool files nothing of the project reads (core/ProjectRefs: clips, compositing nodes, titles, wipes, effect
 // files, brand kit), in pool order: missing, they cost nothing (the open dialog says so)

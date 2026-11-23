@@ -362,12 +362,42 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     // checked before looking whether it exists, so an answer never tells about files outside it)
     if (model.contains('/') || model.contains('\\') || QFileInfo(model).suffix().compare("bin", Qt::CaseInsensitive) == 0)
         model = absolute(model);
-    req.model = Extensions::whisperModelPath(model);
-    if (req.model.isEmpty())
-        fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()
-                                                  : "no whisper model installed (see `extensions`, e.g. --install whisper,small)");
-    if (Extensions::whisperProgram().isEmpty())
-        fail("NOT_INSTALLED", "whisper is not installed (see `extensions`, e.g. --install whisper,small)");
+    // A quality level instead of a model: accurate = large-v3, fast = turbo, very_fast = Parakeet (25 European
+    // languages; another one goes to the best whisper model)
+    if (a.contains("quality")) {
+        if (a.contains("model")) fail("BAD_ARGUMENT", "give either 'quality' or 'model', not both");
+        const QString id = Extensions::qualityModel(a["quality"].toString());
+        if (id.isEmpty())
+            fail("BAD_ARGUMENT", QString("quality must be accurate, fast or very_fast (not '%1')").arg(a["quality"].toString()));
+        const Extensions::Item* item = Extensions::find(id);
+        if (!item) // Parakeet only where the whisper package with parakeet-cli is offered (Linux/Windows x64)
+            fail("NOT_INSTALLED", QString("quality '%1' is not offered on this system").arg(a["quality"].toString()));
+        if (!Extensions::isInstalled(*item))
+            fail("NOT_INSTALLED", QString("the model of quality '%1' is not installed (see `extensions`, e.g. --install %2)")
+                                      .arg(a["quality"].toString(), id == "parakeet" ? "parakeet" : "whisper," + id.section('-', 2)));
+        model = id;
+    }
+    // Nothing chosen and no whisper model, but Parakeet is there (`extensions` calls that ready): Parakeet
+    if (model.isEmpty() && Extensions::whisperModelPath().isEmpty() && !Extensions::parakeetModel().isEmpty()
+        && !Extensions::parakeetProgram().isEmpty())
+        model = "parakeet";
+    const bool parakeet = model.compare("parakeet", Qt::CaseInsensitive) == 0 || Transcriber::isParakeet(model);
+    if (parakeet) {
+        req.model = model.compare("parakeet", Qt::CaseInsensitive) == 0 ? Extensions::parakeetModel()
+                                                                          : QFileInfo(model).isFile() ? model : QString();
+        req.whisperModel = Extensions::appWhisperModel(QString());
+        if (req.model.isEmpty())
+            fail("NOT_INSTALLED", "Parakeet is not installed (see `extensions`, e.g. --install parakeet)");
+        if (Extensions::parakeetProgram().isEmpty())
+            fail("NOT_INSTALLED", "parakeet-cli is not installed: it comes with whisper (see `extensions`, e.g. --install whisper)");
+    } else {
+        req.model = Extensions::whisperModelPath(model);
+        if (req.model.isEmpty())
+            fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()
+                                                      : "no whisper model installed (see `extensions`, e.g. --install whisper,small)");
+        if (Extensions::whisperProgram().isEmpty())
+            fail("NOT_INSTALLED", "whisper is not installed (see `extensions`, e.g. --install whisper,small)");
+    }
     req.language = a.contains("language") ? a["language"].toString() : "auto";
     req.threads = a["threads"].toInt();
     req.music = a["music"].toBool();
@@ -448,6 +478,11 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         length = m.info.length;
     }
 
+    // Cue length: chosen, else max_chars keeps the size it gives (normal), else auto (short cues for a vertical picture)
+    Subtitles::CueLength chosen = a.contains("max_chars") ? Subtitles::CueLength::Normal : Subtitles::CueLength::Auto;
+    if (a.contains("length") && !Subtitles::parseCueLength(a["length"].toString(), &chosen))
+        fail("BAD_ARGUMENT", QString("length must be auto, normal, short or very_short (not '%1')").arg(a["length"].toString()));
+
     Transcriber t;
     QEventLoop loop;
     bool ok = false;
@@ -476,18 +511,33 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     failIfCanceled();
     if (!ok) fail("TRANSCRIBE_FAILED", message);
 
-    const Transcript::Result& r = t.result();
+    Transcript::Result r = t.result();
+    // A project: its cuts between clips; the words belong to their clip, no cue spans a cut (the next clip's line
+    // showed at the end of the clip before)
+    QVector<qint64> cuts;
+    if (isProjectFile(src)) {
+        cuts = Transcript::cutsMs(Transcript::cutFrames(req.timeline, req.from, req.to, req.audioTracks), req.from,
+                                  f.rate.fps());
+        Transcript::fitToCuts(r.words, cuts);
+    }
     const int maxChars = a.contains("max_chars") ? std::clamp(a["max_chars"].toInt(), 10, 200) : 42;
-    QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
+    QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset, cuts);
     // Not for music: its "loud" is measured against the file, a quieter intro of a song counts as silence (the first
     // shouted line was dropped while its words were there)
     if (!req.music) {
         Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
         Transcript::endAtSound(cues, r.levels, f.rate.fps(), offset);
     }
-    // Readable subtitles: the words regrouped into 1-2 line cues (word times kept, edit op 'subtitles' takes them)
-    const bool readable = a["readable"].toBool() && !a.contains("captions");
-    if (readable) cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music);
+    // Readable subtitles: the words regrouped into 1-2 line cues, or short ones (word times kept, edit op 'subtitles'
+    // takes them)
+    const Subtitles::CueLength cueLength = Subtitles::resolve(chosen, f.size());
+    const bool shortCues = cueLength == Subtitles::CueLength::Short || cueLength == Subtitles::CueLength::VeryShort;
+    const bool readable = (a["readable"].toBool() || shortCues) && !a.contains("captions");
+    if (readable)
+        cues = Transcript::readableCues(r.words, r.levels, f.rate.fps(), offset, req.music, Subtitles::rulesFor(cueLength),
+                                        cuts);
+    if (shortCues && chosen == Subtitles::CueLength::Auto && !a.contains("captions"))
+        notes << QString("short cues (one line, a few words) for the vertical picture; length:\"normal\" for 1-2 lines");
     QJsonArray segments;
     for (const SubtitleCue& c : cues) {
         QJsonObject o = range(c.start, std::min(c.end, offset + length), f);
@@ -495,9 +545,17 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         segments << o;
     }
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
-                    {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
+                    {"model", QFileInfo(t.usedModel()).fileName()}, {"segments", segments}};
+    if (!a.contains("captions")) out["length"] = Subtitles::cueLengthKey(cueLength);
     for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
     if (!t.promptNote().isEmpty()) notes << t.promptNote();
+    if (!t.engineNote().isEmpty())
+        notes << (t.usedModel() != req.model
+                      ? QString("Parakeet does not know the language '%1': whisper (%2) wrote it")
+                            .arg(r.language, QFileInfo(t.usedModel()).fileName())
+                      : QString("Parakeet does not know the language '%1' and no whisper model is installed: the text "
+                                "may be poor (quality fast or accurate)")
+                            .arg(r.language.isEmpty() ? req.language : r.language));
     if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {
         out["detected_language"] = heard;
         if (!t.otherLanguage().isEmpty())
@@ -515,8 +573,8 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         notes << "no speech found; singing or shouts in music: try again with music:true";
     }
     if (r.dropped > 0 && !Transcript::isSilent(r.levels))
-        notes << QString("%1 word(s) of whisper's well-known made-up lines left out (\"Untertitelung des ZDF\", "
-                         "\"Thanks for watching\" in silence)")
+        notes << QString("%1 word(s) of whisper's well-known made-up lines (\"Untertitelung des ZDF\", \"Thanks for "
+                         "watching\" in silence) or of a piece it wrote twice left out")
                      .arg(r.dropped);
     if (!notes.isEmpty()) out["notes"] = notes;
     if (a["words"].toBool()) {

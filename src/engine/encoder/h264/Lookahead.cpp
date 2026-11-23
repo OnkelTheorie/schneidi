@@ -51,6 +51,30 @@ void Lookahead::analyse(LookaheadFrame& f, const LookaheadFrame* prev) const
     search(f, prev);
 }
 
+// A picture known to equal prev sample for sample (EncodeHints::repeat, checked by the encoder): what analyse
+// would find, without looking - the same half picture, thumbnail and intra costs, and the motion search's answer
+// for an exact match at the same place (vector 0, no error, the bits of a zero vector difference).
+void Lookahead::repeat(LookaheadFrame& f, const LookaheadFrame& prev) const
+{
+    const size_t n = size_t(mbW_) * mbH_;
+    f.half = prev.half;
+    f.thumb = prev.thumb;
+    f.intraCost = prev.intraCost;
+    const int still = 2 * seBits(0);
+    f.interCost.assign(n, still);
+    f.mvx.assign(n, 0);
+    f.mvy.assign(n, 0);
+    f.propagate.assign(n, 0.0f);
+    f.treeLinks.ready = false;
+    f.intraSum = prev.intraSum;
+    f.interSum = 0;
+    for (size_t m = 0; m < n; ++m)
+        f.interSum += std::min(still, int(f.intraCost[m]));
+    f.sceneChange = false;
+    if (f.softKey)
+        f.forceKeyframe = false; // the same picture once more is no change
+}
+
 void Lookahead::prepare(LookaheadFrame& f) const
 {
     const int stride = halfW_ + 2 * kMargin;
@@ -158,11 +182,16 @@ void Lookahead::search(LookaheadFrame& f, const LookaheadFrame* prev) const
     costs(f, prev);
 }
 
+// Scene test bar at a cut the caller knows (EncoderConfig::softCutKeys), percent of the intra cost (H264_SOFTCUT).
+S264_DEV(int, gSoftCutBar, devEnv("H264_SOFTCUT") ? std::atoi(devEnv("H264_SOFTCUT")) : 60);
+
 void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
 {
     {
         const int tw = mbW_ * 4, th = mbH_ * 4;
         f.sceneChange = false;
+        // The bar in percent of the intra cost: lower at a cut the caller knows (EncoderConfig::softCutKeys)
+        const int bar = f.forceKeyframe && f.softKey ? gSoftCutBar : 85;
         constexpr int kRange = 8; // thumbnail pixels = 32 picture pixels
         if (prev && prev->thumb.size() == f.thumb.size()) {
             const std::vector<uint8_t>& thumb = f.thumb;
@@ -270,13 +299,15 @@ void Lookahead::sceneCut(LookaheadFrame& f, const LookaheadFrame* prev) const
                     }
                     interCost += std::min(best, intra);
                     intraLeft -= intra;
-                    if (interCost * 100 > intraCost * 85 || (interCost + intraLeft) * 100 <= intraCost * 85) {
+                    if (interCost * 100 > intraCost * bar || (interCost + intraLeft) * 100 <= intraCost * bar) {
                         decided = true;
                         break;
                     }
                 }
             // Real cuts measured ~0.92-0.95, fast game motion up to ~0.72.
-            f.sceneChange = interCost * 100 > intraCost * 85;
+            f.sceneChange = interCost * 100 > intraCost * bar;
+            if (f.softKey)
+                f.forceKeyframe = f.forceKeyframe && f.sceneChange;
         }
     }
 
@@ -576,6 +607,13 @@ void Lookahead::costs(LookaheadFrame& f, const LookaheadFrame* prev, int threads
     }
 }
 
+// Macroblock tree: a block whose best prediction has no error (its cost is only the bits of a zero vector
+// difference, as on a repeated picture) passes on all of its cost, not the part the vector's bits leave. On a flat
+// still the intra cost is little more than those bits, so it passed on only three quarters per picture and the
+// still's first picture got 2.3 QP less than one with texture (since 22.11.2026; H264_TREESTILL=0 = before).
+S264_DEV(bool, gTreeStill, !devEnv("H264_TREESTILL") || std::atoi(devEnv("H264_TREESTILL")) != 0);
+inline int treeInter(int inter) { return gTreeStill && inter <= 2 * seBits(0) ? 0 : inter; }
+
 void Lookahead::propagate(std::deque<LookaheadFrame>& frames) const
 {
     for (LookaheadFrame& f : frames)
@@ -598,7 +636,7 @@ void Lookahead::propagate(std::deque<LookaheadFrame>& frames) const
             for (int by = 0; by < mbH_; ++by)
                 for (int bx = 0; bx < mbW_; ++bx) {
                     const size_t m = size_t(by) * mbW_ + bx;
-                    const int intra = f.intraCost[m], inter = f.interCost[m];
+                    const int intra = f.intraCost[m], inter = treeInter(f.interCost[m]);
                     if (intra <= 0 || inter >= intra)
                         continue;
                     // Position in the reference in half-pel units; a block covers 16.
@@ -773,10 +811,10 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
                 const int intra = f.intraCost[m];
                 const int c0 = c0v ? (*c0v)[m] : INT32_MAX, c1 = l1.cost[m];
                 const int cb = c0v && bi.size() == n ? bi[m] : INT32_MAX;
-                const int best = std::min({c0, c1, cb});
-                if (intra <= 0 || best >= intra)
+                const int best = std::min({c0, c1, cb}), tb = treeInter(best);
+                if (intra <= 0 || tb >= intra)
                     continue;
-                const float amount = (float(intra) + f.propagate[m]) * float(intra - best) / float(intra);
+                const float amount = (float(intra) + f.propagate[m]) * float(intra - tb) / float(intra);
                 if (best == cb) {
                     if (r >= 0)
                         add(frames[size_t(r)], bx, by, (*mx0)[m], (*my0)[m], amount * w0);
@@ -806,7 +844,7 @@ void Lookahead::propagateB(std::deque<LookaheadFrame>& frames, int maxB, bool we
         for (int by = 0; by < mbH_; ++by)
             for (int bx = 0; bx < mbW_; ++bx) {
                 const size_t m = size_t(by) * mbW_ + bx;
-                const int intra = f.intraCost[m], inter = cv[m];
+                const int intra = f.intraCost[m], inter = treeInter(cv[m]);
                 if (intra <= 0 || inter >= intra)
                     continue;
                 const float amount = (float(intra) + f.propagate[m]) * float(intra - inter) / float(intra);

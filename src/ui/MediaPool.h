@@ -2,6 +2,7 @@
 #pragma once
 #include <functional>
 #include "core/PoolFilter.h"
+#include "engine/MediaProbe.h"
 #include "core/Types.h"
 #include "engine/MediaProbe.h"
 
@@ -41,8 +42,13 @@ class TimelinePosters;
 class MediaPool : public QWidget {
     Q_OBJECT
 public:
+    // The clip list again with the durations in the time format chosen in Settings › Timeline
+    void refreshTimes() { rebuildClips(); }
     // The app's sticky "leave out sound when placing" toggle, shown in the context menu too
     void setLeaveOutSoundAction(QAction* a) { m_leaveOutSound = a; }
+    // "Find Missing Media…" (the main window's): in the menu of offline clips and of the empty space; its enabled state
+    // is the main window's (contextMenuAboutToShow lets it update first)
+    void setFindMissingAction(QAction* a) { m_findMissing = a; }
     static constexpr const char* MimeType = "application/x-schneidi-media";
     // All dragged Media Pool clips (paths, one line per clip) – for moving into a bin
     static constexpr const char* ListMimeType = "application/x-schneidi-media-list";
@@ -95,9 +101,13 @@ public:
     // Instead of the file dialog behind "Importieren…" (the phone: schneidi's own gallery); empty = the dialog
     void setImportHandler(std::function<void()> handler) { m_importHandler = std::move(handler); }
     void setSort(SortKey key, bool ascending);
-    // Search (magnifier on top): shows matching clips (name contains text) in the bin and its sub-bins, and below them
-    // the shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
+    // Search (magnifier on top): shows the matching clips of the whole project (core/NameMatch: every word, a typo,
+    // any separator; by name, clip color, flags, kind and picture format - "4K", "60 fps", "hochkant"), each one of
+    // another bin with that bin under its name; "Only this bin" searches the bin and its sub-bins. Below them the
+    // shots of the material index that match (engine/MediaIndex, core/IndexSearch), each with picture and time
     void setSearch(const QString& text);
+    void setSearchThisBinOnly(bool on);
+    bool searchThisBinOnly() const;
     // Filter (funnel next to the search): by kind, flag and clip color; like the search it shows the matching clips of
     // the bin and its sub-bins, and both combine. For this session only (not in the project).
     const PoolFilter& filter() const;
@@ -169,6 +179,7 @@ signals:
     void watchFolderRequested(int bin);
     // Right-click "Clean up proxy media…": the main window asks and deletes (app/ProxyCleanupDialog)
     void proxyCleanupRequested();
+    void contextMenuAboutToShow(); // the clip menu is being built (actions given to it update their state)
     // Context menu: put this file onto the timeline - 0 insert at the playhead, 1 place on a free track at the playhead,
     // 2 append at the end
     void editRequested(const QString& path, int how);
@@ -183,6 +194,7 @@ protected:
 
 private:
     QAction* m_leaveOutSound = nullptr;
+    QAction* m_findMissing = nullptr;
     ProbeCache* m_probeCache = nullptr;
     int m_probing = 0;           // addFiles waiting for its probes (nested: a Retry)
     bool m_importCanceled = false; // Cancel in the import's progress: the rest of a folder import stops too
@@ -231,6 +243,11 @@ private:
     QLineEdit* m_search;
     PoolFilterButton* m_filterBtn;
     QToolButton* m_filterReset; // beside the bin title while a filter is active
+    QToolButton* m_scopeBtn;    // beside the bin title while searching: only this bin (and its sub-bins)
+    // Picture formats for the search words (MediaProbe::pictureFormat, read in m_thumbPool while searching)
+    QHash<QString, MediaProbe::PictureFormat> m_formats;
+    QSet<QString> m_formatAsked;
+    void requestFormats();
     QLabel* m_emptyHint;        // over the empty list: nothing matches the search or filter
     QAction* m_removeBinKey;   // Delete/Backspace in the bin list
     QAction* m_closeSearchKey; // Esc in the search field

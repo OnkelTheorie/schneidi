@@ -2,16 +2,18 @@
 // schneidi's own H.264 encoder s264 as the experimental export format "s264" (id "h264_own" up to 0.23, still read):
 // never the default, in no preset, never a fallback (not even in the GPL-free build); a short
 // synthetic timeline into MP4 and MKV (ffprobe sees H.264, frame count, duration, frame rate, decodes without errors,
-// PSNR against the source, a forced key frame at a cut between two near-identical sources, BT.709 limited range in the
+// PSNR against the source, no key frame at a cut between two near-identical sources (soft cut keys), BT.709 limited range in the
 // SPS's VUI and the container, the level from levelIdcFor); which cuts force key frames (no splits, jump cuts or
 // montage storms, only clips inside the range); clips shorter than the lookahead; a size that is no multiple of 16; a
 // shorter lookahead (low memory) reaches the encoder; the "web" cap: two passes land within 10 % of it on noise, a
-// still picture keeps the fixed QP far below it; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
+// still picture keeps the fixed QP far below it, a cap below the fixed QP's rate is met, a much too low prediction
+// keeps the cap without QP 51 at the end; 10-bit/4:4:4/WebM refused with a reason and no file, also by the
 // writer itself; cancel during the first pass and while encoding leaves no file; B pictures: pts/dts in MP4 and MKV
 // (testBFrames). Checked with ffprobe/ffmpeg.
 
 #include "check.h"
 
+#include "core/Keyframes.h"
 #include "core/RenderJob.h"
 #include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
@@ -26,7 +28,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLoggingCategory>
 #include <QMap>
+#include <QMutex>
 #include <QRegularExpression>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
@@ -286,8 +290,9 @@ void testContainers(const QString& dir)
 {
     for (const char* name : {"own.mp4", "own.mkv"}) {
         const QString path = dir + "/" + name;
-        // At frame 40 the near-identical second source continues where the first one is: only the forced key frame
-        // makes an IDR there, the encoder's scene detection would not
+        // At frame 40 the near-identical second source continues where the first one is: the cut is passed on as a
+        // key frame request, but the picture does not change there, so s264 continues with a P picture
+        // (EncoderConfig::softCutKeys, since 22.11.2026; an IDR until then)
         Timeline tl = timeline(g_media, 40);
         tl.video[0].clips[1].mediaPath = g_near;
         tl.video[0].clips[1].in = 40;
@@ -306,9 +311,9 @@ void testContainers(const QString& dir)
         // The picture against the timeline's: the first 40 frames are the source's first 40
         const double db = psnr(path, g_media, 40);
         if (!CHECK(db > 38)) std::printf("       %s: PSNR %.2f dB\n", name, db);
-        // Key frames: the first picture and the cut at frame 40
+        // Key frames: only the first picture (the cut at frame 40 continues the picture)
         const QVector<int> keys = keyFrames(path);
-        if (!CHECK_EQ(keys, (QVector<int>{0, 40}))) qDebug() << name << "key frames" << keys;
+        if (!CHECK_EQ(keys, (QVector<int>{0}))) qDebug() << name << "key frames" << keys;
         // Colour tags as the libx264 path writes them (the export's BT.709, limited range): container ...
         CHECK_EQ(v.value("color_space").toString(), QString("bt709"));
         CHECK_EQ(v.value("color_primaries").toString(), QString("bt709"));
@@ -485,6 +490,137 @@ void testCutFrames()
     CHECK_EQ(cuts(two, 0, kFrames), QVector<int>{40});
 }
 
+// What the timeline tells the encoder (Exporter::encodeHints), and a render with it
+void testEncodeHints(const QString& dir)
+{
+    const auto hints = [](const Timeline& tl, QSize format = {640, 360}, QSize out = {640, 360}, FrameRate rate = {25, 1},
+                          int from = 0, int length = kFrames) {
+        return Exporter::encodeHints(tl, from, length, format, out, {25, 1}, rate);
+    };
+    // Moving pictures only: nothing to say
+    const Timeline moving = sequence({{g_media, 0, 40}, {g_near, 40, 35}});
+    CHECK(hints(moving).isEmpty());
+    // A freeze frame: its frames probably repeat (also under a title; not under a second moving clip)
+    Timeline frozen = moving;
+    frozen.video[0].clips[1].freeze = true;
+    QVector<ExportHintSpan> h = hints(frozen);
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK_EQ(h[0].from, 40);
+        CHECK_EQ(h[0].to, kFrames);
+        CHECK(h[0].still);
+        CHECK(h[0].background.isEmpty());
+    }
+    h = hints(frozen, {640, 360}, {640, 360}, {50, 1});
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK_EQ(h[0].from, 80);
+        CHECK_EQ(h[0].to, 2 * kFrames);
+    }
+    h = hints(frozen, {640, 360}, {640, 360}, {25, 1}, 50, 20); // a range inside the freeze frame
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK_EQ(h[0].from, 0);
+        CHECK_EQ(h[0].to, 20);
+    }
+    Timeline titled = frozen;
+    titled.video.resize(2);
+    Clip title;
+    title.id = 9;
+    title.kind = ClipKind::Title;
+    title.start = 50;
+    title.out = 9;
+    titled.video[1].clips << title;
+    h = hints(titled);
+    CHECK(h.size() == 1 && h[0].from == 40 && h[0].to == kFrames && h[0].still);
+    titled.video[1].clips[0].kind = ClipKind::Media;
+    titled.video[1].clips[0].mediaPath = g_media;
+    h = hints(titled); // moving pictures over frames 50..59
+    if (CHECK_EQ(h.size(), 2)) {
+        CHECK(h[0].from == 40 && h[0].to == 50 && h[1].from == 60 && h[1].to == kFrames);
+    }
+    // No clip at all (black): still
+    Timeline gap = sequence({{g_media, 0, 20}});
+    h = hints(gap);
+    CHECK(h.size() == 1 && h[0].from == 20 && h[0].to == kFrames && h[0].still);
+
+    // 16:9 pictures fitted into a 9:16 frame with the blurred fill: the bars above and below are background
+    Timeline fill = sequence({{g_media, 0, kFrames}});
+    Clip& c = fill.video[0].clips[0];
+    c.pictureAspect = 16.0 / 9.0;
+    c.transform.fill = FitFill::Blur;
+    h = hints(fill, {1080, 1920}, {1080, 1920});
+    if (CHECK_EQ(h.size(), 1)) {
+        CHECK(!h[0].still && h[0].from == 0 && h[0].to == kFrames);
+        // The picture is 607.5 high around the middle (656.25 .. 1263.75), a pixel of margin
+        if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 1080, 655), QRect(0, 1265, 1080, 655)}))) qDebug() << h[0].background;
+    }
+    h = hints(fill, {1080, 1920}, {540, 960}); // rendered at half the size
+    if (CHECK_EQ(h.size(), 1))
+        if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 540, 327), QRect(0, 633, 540, 327)}))) qDebug() << h[0].background;
+    // Zoomed to 0.5 and moved right and up: bars on all four sides
+    c.transform.zoomX = c.transform.zoomY = 0.5;
+    c.transform.posX = 100;
+    c.transform.posY = 200;
+    h = hints(fill, {1080, 1920}, {1080, 1920});
+    if (CHECK_EQ(h.size(), 1))
+        if (!CHECK_EQ(h[0].background, (QVector<QRect>{QRect(0, 0, 1080, 607), QRect(0, 913, 1080, 1007), QRect(0, 607, 369, 306),
+                                                        QRect(911, 607, 169, 306)})))
+            qDebug() << h[0].background;
+    // A place that is animated (a zoom punch): followed frame by frame - at zoom 1 the bars of the picture above,
+    // at zoom 2 (1080 x 1215 around the middle) smaller ones, between them one span per frame
+    Timeline animated = sequence({{g_media, 0, kFrames}});
+    animated.video[0].clips[0].pictureAspect = 16.0 / 9.0;
+    animated.video[0].clips[0].transform.fill = FitFill::Blur;
+    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY}) {
+        Keys::setKey(animated.video[0].clips[0], p, 10, 1);
+        Keys::setKey(animated.video[0].clips[0], p, 20, 2);
+    }
+    h = hints(animated, {1080, 1920}, {1080, 1920});
+    if (CHECK(h.size() > 3)) {
+        CHECK(h.first().from == 0 && h.first().to == 11);
+        if (!CHECK_EQ(h.first().background, (QVector<QRect>{QRect(0, 0, 1080, 655), QRect(0, 1265, 1080, 655)}))) qDebug() << h.first().background;
+        CHECK(h.last().from == 20 && h.last().to == kFrames);
+        if (!CHECK_EQ(h.last().background, (QVector<QRect>{QRect(0, 0, 1080, 351), QRect(0, 1569, 1080, 351)}))) qDebug() << h.last().background;
+        for (qsizetype i = 1; i < h.size(); ++i) CHECK(h[i].from == h[i - 1].to);
+    }
+    // None while the picture is rotated, where the fill is off, or where a clip without the fill shows as well
+    Timeline rotated = fill;
+    rotated.video[0].clips[0].transform.rotation = 5;
+    CHECK(hints(rotated, {1080, 1920}, {1080, 1920}).isEmpty());
+    Timeline off = fill;
+    off.video[0].clips[0].transform.transformOn = false;
+    CHECK(hints(off, {1080, 1920}, {1080, 1920}).isEmpty());
+    Timeline over = fill;
+    over.video.resize(2);
+    over.video[1].clips << moving.video[0].clips[0];
+    over.video[1].clips[0].id = 7;
+    h = hints(over, {1080, 1920}, {1080, 1920}); // frames 0..39 covered by the plain clip
+    CHECK(h.size() == 1 && h[0].from == 40 && h[0].to == kFrames && !h[0].background.isEmpty());
+
+    // Rendered: a clip, then its freeze frame, with the hints and without ("hints=0"). Both decode, the same
+    // length; the freeze frame's pictures are found as repeats, so the hinted file is not larger
+    {
+        Timeline tl = timeline(g_media, 30);
+        tl.video[0].clips[1].freeze = true;
+        const QString with = dir + "/hints.mp4", without = dir + "/nohints.mp4";
+        ExportSettings s = settings(with);
+        if (CHECK(render(tl, s))) {
+            s = settings(without);
+            s.codecOptions << "hints=0";
+            if (CHECK(render(tl, s))) {
+                for (const QString& path : {with, without}) {
+                    CHECK_EQ(probe(path).value("nb_read_frames").toString().toInt(), kFrames);
+                    const QString errors = decodeErrors(path);
+                    if (!CHECK(errors.isEmpty())) std::printf("       %s\n", qPrintable(errors.left(400)));
+                    const double db = psnr(path, g_media, 30);
+                    if (!CHECK(db > 38)) std::printf("       PSNR %.2f dB\n", db);
+                }
+                if (!CHECK(QFileInfo(with).size() <= QFileInfo(without).size()))
+                    std::printf("       with hints %lld bytes, without %lld\n", static_cast<long long>(QFileInfo(with).size()),
+                                static_cast<long long>(QFileInfo(without).size()));
+            }
+        }
+    }
+}
+
 // Rendered: splits, jump cuts and a montage of 2-frame clips make no row of key frames
 void testNoKeyStorm(const QString& dir)
 {
@@ -599,6 +735,150 @@ void testBitrate(const QString& dir)
     CHECK(decodeErrors(still).isEmpty());
     CHECK(psnr(still, g_still, kFrames) > 40);
     CHECK_EQ(spsFields(still).value("level_idc", -1), expectedLevel(0));
+}
+
+// The writer's info lines while a render runs (from its threads): ownFirstPass says there what it predicted
+QMutex g_infoMutex;
+QStringList g_info;
+QtMessageHandler g_previousHandler = nullptr;
+void infoHandler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+{
+    if (type == QtInfoMsg) {
+        QMutexLocker lock(&g_infoMutex);
+        g_info << msg;
+    } else if (g_previousHandler) {
+        g_previousHandler(type, context, msg);
+    }
+}
+// The prediction of the last render against a cap ("... predicts <n> kbit/s for the cap ...: <decision>"), -1 = none
+double predictedKbit(QString* decision)
+{
+    QMutexLocker lock(&g_infoMutex);
+    static const QRegularExpression re(QStringLiteral("predicts (\\d+) kbit/s for the cap \\d+ kbit/s: (.*)$"));
+    for (qsizetype i = g_info.size() - 1; i >= 0; --i)
+        if (const QRegularExpressionMatch m = re.match(g_info[i]); m.hasMatch()) {
+            if (decision) *decision = m.captured(2);
+            return m.captured(1).toDouble();
+        }
+    return -1;
+}
+
+// A cap below the clip's rate at the quality level is met, and the first pass predicts the rate of what the export
+// really codes (constant quality since 22.11.2026). The fixed-QP prediction used to take a calm picture pair as the
+// whole clip's measure (2.6-7x too low on real projects, the cap then exceeded by 60 %); a prediction of a fixed QP's
+// rate under the constant quality export was 28 % low on a short and 30 % high on a game highlight.
+// Moving noise with two equal still pictures at the start, a third and two thirds in (where the old pair probes sat).
+void testCapBelowFixedRate(const QString& dir)
+{
+    const Timeline tl = sequence({{g_still, 0, 2}, {g_noisy, 2, 23}, {g_still, 0, 2}, {g_noisy, 27, 23}, {g_still, 0, 2},
+                                  {g_noisy, 52, 23}});
+    const auto kbitOf = [](const QString& path) { return QFileInfo(path).size() * 8.0 / 1000 / (kFrames / 25.0); };
+    QLoggingCategory::defaultCategory()->setEnabled(QtInfoMsg, true);
+    g_previousHandler = qInstallMessageHandler(infoHandler);
+    // The rate at the "web" level: a cap far above it keeps the constant quality, and the prediction is that rate
+    const QString free = dir + "/cap-free.mp4";
+    ExportSettings s = settings(free, RenderSettings::kQualityWeb);
+    s.maxBitrateK = 200000;
+    s.audioCodec.clear();
+    const bool freeDone = render(tl, s);
+    QString decision;
+    const double predicted = predictedKbit(&decision);
+    const double freeKbit = kbitOf(free);
+    CHECK(freeDone);
+    if (!CHECK(predicted > 0.75 * freeKbit && predicted < 1.25 * freeKbit && decision == "constant quality"))
+        std::printf("       predicted %.0f kbit/s (%s), coded %.0f\n", predicted, qPrintable(decision), freeKbit);
+    // Half of it as the cap: two passes towards it, met
+    const QString capped = dir + "/cap-half.mp4";
+    s.path = capped;
+    s.maxBitrateK = int(freeKbit / 2);
+    {
+        QMutexLocker lock(&g_infoMutex);
+        g_info.clear();
+    }
+    const bool cappedDone = render(tl, s);
+    predictedKbit(&decision);
+    qInstallMessageHandler(g_previousHandler);
+    if (!CHECK(cappedDone)) return;
+    CHECK_EQ(decision, QStringLiteral("two passes towards the cap"));
+    const double kbit = kbitOf(capped);
+    if (!CHECK(kbit < s.maxBitrateK * 1.1 && kbit > s.maxBitrateK * 0.7))
+        std::printf("       %.0f kbit/s for the cap %d (constant quality: %.0f)\n", kbit, s.maxBitrateK, freeKbit);
+    CHECK_EQ(probe(capped).value("nb_read_frames").toString().toInt(), kFrames);
+    CHECK(decodeErrors(capped).isEmpty());
+}
+
+// The QP of every slice in decode order (26 + pic_init_qp_minus26 + slice_qp_delta, as trace_headers reads them)
+QVector<int> sliceQps(const QString& path)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-nostdin", "-v", "info", "-i", path, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "trace_headers",
+                       "-f", "null", "-"});
+    p.waitForFinished(120000);
+    static const QRegularExpression line(R"(^\[trace_headers[^\]]*\]\s+\d+\s+(pic_init_qp_minus26|slice_qp_delta)\s+[01]+\s+=\s+(-?\d+)\s*$)",
+                                         QRegularExpression::MultilineOption);
+    QVector<int> qps;
+    int init = 0;
+    for (auto it = line.globalMatch(QString::fromUtf8(p.readAllStandardError())); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        if (m.captured(1) == QLatin1String("pic_init_qp_minus26")) init = m.captured(2).toInt();
+        else qps << 26 + init + m.captured(2).toInt();
+    }
+    return qps;
+}
+
+// The quality level under a cap whose prediction was much too low, with the hardest part at the end (moving noise
+// only where the five probe runs do not look, the last 15 pictures among it): the VBV holds the cap, and the last
+// pictures are not driven towards QP 51 by the demand that the buffer ends as full as it started (with it: QP 47
+// at the end against 33 before, 22.11.2026).
+void testCapLowPredictionEnd(const QString& dir)
+{
+    // 250 pictures; probe runs at [15,35) [65,85) [115,135) [165,185) [215,235): all on the still picture
+    const Timeline tl = sequence({{g_still, 0, 70}, {g_still, 0, 65}, {g_noisy, 0, 30}, {g_still, 0, 20}, {g_noisy, 30, 30},
+                                  {g_still, 0, 20}, {g_noisy, 45, 15}});
+    constexpr int kLength = 250;
+    QLoggingCategory::defaultCategory()->setEnabled(QtInfoMsg, true);
+    g_previousHandler = qInstallMessageHandler(infoHandler);
+    {
+        QMutexLocker lock(&g_infoMutex);
+        g_info.clear();
+    }
+    const QString free = dir + "/low-free.mp4";
+    ExportSettings s = settings(free, RenderSettings::kQualityWeb);
+    s.maxBitrateK = 200000;
+    s.audioCodec.clear();
+    const bool freeDone = render(tl, s);
+    QString decision;
+    const double predicted = predictedKbit(&decision);
+    const auto kbitOf = [](const QString& path) { return QFileInfo(path).size() * 8.0 / 1000 / (kLength / 25.0); };
+    const double freeKbit = kbitOf(free);
+    // The cap just above what keeps the constant quality (the prediction below 0.8 of it): far below what it codes
+    const QString capped = dir + "/low-capped.mp4";
+    s.path = capped;
+    s.maxBitrateK = int(std::ceil(predicted * 1.3));
+    {
+        QMutexLocker lock(&g_infoMutex);
+        g_info.clear();
+    }
+    const bool cappedDone = render(tl, s);
+    predictedKbit(&decision);
+    qInstallMessageHandler(g_previousHandler);
+    if (!CHECK(freeDone && cappedDone && predicted > 0)) return;
+    CHECK_EQ(decision, QStringLiteral("constant quality"));
+    if (!CHECK(freeKbit > 1.5 * s.maxBitrateK)) // (else the test does not test what it should)
+        std::printf("       predicted %.0f kbit/s, coded %.0f without the cap %d\n", predicted, freeKbit, s.maxBitrateK);
+    const double kbit = kbitOf(capped);
+    if (!CHECK(kbit < s.maxBitrateK * 1.1)) std::printf("       %.0f kbit/s for the cap %d\n", kbit, s.maxBitrateK);
+    const QVector<int> qps = sliceQps(capped);
+    if (!CHECK(qps.size() >= kLength)) return;
+    int lastMax = 0, before = 0;
+    for (qsizetype i = 0; i < qps.size(); ++i) {
+        int& top = i >= qps.size() - 40 ? lastMax : before;
+        top = std::max(top, qps[i]);
+    }
+    if (!CHECK(lastMax < 51 && lastMax <= before + 8))
+        std::printf("       QP of the last 40 pictures up to %d, before up to %d\n", lastMax, before);
+    CHECK_EQ(probe(capped).value("nb_read_frames").toString().toInt(), kLength);
+    CHECK(decodeErrors(capped).isEmpty());
 }
 
 void testRefused(const QString& dir)
@@ -801,10 +1081,13 @@ int main(int argc, char** argv)
     testBFrames(tmp.path());
     testSpeedOption(tmp.path());
     testCutFrames();
+    testEncodeHints(tmp.path());
     testNoKeyStorm(tmp.path());
     testShortAndOdd(tmp.path());
     testLookahead(tmp.path());
     testBitrate(tmp.path());
+    testCapBelowFixedRate(tmp.path());
+    testCapLowPredictionEnd(tmp.path());
     testRefused(tmp.path());
     testSizes(tmp.path());
     testReview();
