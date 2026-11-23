@@ -237,8 +237,9 @@ QVector<TimelineView::Row> TimelineView::rows() const
         y += out.last().h;
     }
     y += kSeparator;
+    const int audioH = audioRowHeight();
     for (int i = 0; i < tl.audio.size(); ++i) {
-        out << row({TrackKind::Audio, i}, y, m_view.audioTrackHeight);
+        out << row({TrackKind::Audio, i}, y, audioH);
         y += out.last().h;
     }
     return out;
@@ -249,6 +250,22 @@ void TimelineView::setTrackHeights(int video, int audio)
     m_view.videoTrackHeight = video;
     m_view.audioTrackHeight = audio;
     update();
+}
+
+void TimelineView::setFitAudioRows(bool on)
+{
+    if (m_fitAudio == on) return;
+    m_fitAudio = on;
+    setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
+}
+
+int TimelineView::audioRowHeight() const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    const int n = int(tl.audio.size());
+    if (!m_fitAudio || n <= 2) return m_view.audioTrackHeight;
+    const int share = (viewportHeight() - subtitlesHeight()) / 2 / n;
+    return std::clamp(share, kFitAudioMin, std::max(kFitAudioMin, m_view.audioTrackHeight));
 }
 
 std::optional<TimelineView::Row> TimelineView::rowAt(int y) const
@@ -810,6 +827,10 @@ void TimelineView::pinchView(const QPointF& from, const QPointF& to, double scal
     if (m_pinch == Pinch::None) {
         const auto row = from.x() < kHeaderW && from.y() >= kRulerH ? rowAt(int(from.y())) : std::nullopt;
         m_pinch = !row ? Pinch::View : row->ref.kind == TrackKind::Audio ? Pinch::AudioHeight : Pinch::VideoHeight;
+        if (m_pinch == Pinch::AudioHeight && m_fitAudio) { // the user's own height from now on, from what is shown
+            m_view.audioTrackHeight = audioRowHeight();
+            m_fitAudio = false;
+        }
         if (row) m_pinchTrackH = m_pinch == Pinch::AudioHeight ? m_view.audioTrackHeight : m_view.videoTrackHeight;
     }
     if (m_pinch != Pinch::View) {
@@ -982,7 +1003,8 @@ QString TimelineView::renderCacheToolTip(const QPoint& pos) const
 
 QRect TimelineView::headerButton(const Row& row) const
 {
-    if (compactHeaders()) return QRect(kHeaderW - 26, row.y + 6, 22, 18); // beside the short name
+    // beside the short name; a low row (fitted audio rows) has it in its middle
+    if (compactHeaders()) return QRect(kHeaderW - 26, row.y + std::clamp((row.h - row.lane - 18) / 2, 2, 6), 22, 18);
     return QRect(kHeaderW - 30, row.y + 6, 20, 16);
 }
 
@@ -1030,7 +1052,7 @@ void TimelineView::setLiveTake(const Voiceover::LiveTake* take, int track)
 
 QRect TimelineView::shortNameRect(const Row& row) const
 {
-    if (compactHeaders()) return QRect(6, row.y + 7, 24, 16);
+    if (compactHeaders()) return QRect(6, row.y + std::clamp((row.h - row.lane - 16) / 2, 3, 7), 24, 16);
     return QRect(10, row.y + 6, 26, 16);
 }
 

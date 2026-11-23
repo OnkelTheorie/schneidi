@@ -657,6 +657,8 @@ void MainWindow::applyScrollIndicators()
         m_scrollIndicators = nullptr;
     }
     m_timeline->setScrollIndicators(on);
+    // Many audio tracks (a recording's sound streams) share half of the phone's lanes instead of filling them
+    m_timeline->view()->setFitAudioRows(on);
 }
 
 void MainWindow::applyCenterPlayhead()

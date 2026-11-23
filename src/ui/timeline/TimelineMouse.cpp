@@ -908,6 +908,10 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         // only the track kind under the mouse (video or audio tracks), like in DaVinci
         const auto row = rowAt(int(e->position().y()));
         const bool audio = row && row->ref.kind == TrackKind::Audio;
+        if (audio && m_fitAudio) { // the user's own height from now on, from what is shown
+            m_view.audioTrackHeight = audioRowHeight();
+            m_fitAudio = false;
+        }
         int& h = audio ? m_view.audioTrackHeight : m_view.videoTrackHeight;
         h = std::clamp(h + int(steps * 6), 28, 220);
         setScrollY(m_view.scrollY);

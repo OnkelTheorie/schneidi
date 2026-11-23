@@ -214,7 +214,12 @@ Status (updated with each commit):
   `Touch::narrowForPhone` (check box/radio texts broken into lines, wide combo boxes shrink, button rows wider than the
   room stack, form rows wrap long labels). Test testSettingsFit (411x914, 914x411, 360x740: size, OK inside, every
   page's minimum width <= the phone's). `SCHNEIDI_TEST_SHOTS=<dir>` saves the dialog's picture.
-- 6, 7, 8, 9, 10, 11: NOT STARTED.
+- 6 Many audio tracks: DONE. `TimelineView::setFitAudioRows` (phone form): with more than two audio tracks they share
+  half of the lanes' height (rows down to 24 px, never taller than the user's audio height); a pinch or Ctrl-wheel on
+  the heights ends it (the user's own height from what is shown). Compact header box/button centred in low rows.
+  Selecting V1 still selects its linked A1-A5 (as phone editors select a clip with its sound) - kept on purpose.
+  Test in test_phone_layout (five streams on 411x914: row < 46, all of V+A1-A5 in sight).
+- 7, 8, 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

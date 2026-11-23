@@ -285,7 +285,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (!row && ref.kind == TrackKind::Audio && !allRows.isEmpty()) { // track is created on release
                 const Row& last = allRows.last();
                 const int extra = ref.index - int(tl.audio.size());
-                row = Row{ref, last.y + last.h + extra * m_view.audioTrackHeight, m_view.audioTrackHeight};
+                row = Row{ref, last.y + last.h + extra * audioRowHeight(), audioRowHeight()};
             }
             if (!row) continue;
             Clip moved = *c;
@@ -305,7 +305,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (kind == TrackKind::Audio && !allRows.isEmpty()) {
                 const Row& last = allRows.last();
                 const int missing = std::max(0, idx - int(tl.audio.size()));
-                return Row{{kind, idx}, last.y + last.h + missing * m_view.audioTrackHeight, m_view.audioTrackHeight};
+                return Row{{kind, idx}, last.y + last.h + missing * audioRowHeight(), audioRowHeight()};
             }
             return std::nullopt;
         };
@@ -1087,8 +1087,8 @@ std::optional<TimelineView::Row> TimelineView::liveTakeRow() const
     if (all.isEmpty()) return std::nullopt;
     const Row& last = all.last();
     const int missing = std::max(0, m_liveTrack - int(m_editor->project()->timeline().audio.size()));
-    return Row{{TrackKind::Audio, m_liveTrack}, last.y + last.h + missing * m_view.audioTrackHeight,
-               m_view.audioTrackHeight};
+    return Row{{TrackKind::Audio, m_liveTrack}, last.y + last.h + missing * audioRowHeight(),
+               audioRowHeight()};
 }
 
 // The take while it is recorded: a red clip from the playhead to where the input has got, its waveform from the

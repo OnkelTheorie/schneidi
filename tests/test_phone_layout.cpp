@@ -897,6 +897,28 @@ int main(int argc, char** argv)
         }
         w.phoneShell()->closeSheet();
         CHECK(w.findChild<TimelinePanel*>()->scrollIndicators());
+        // Item 6: a recording with five sound streams (A1-A5) shares half of the lanes instead of filling them
+        w.editor()->project()->edit("five streams", [&](Timeline& tl) {
+            tl.audio.resize(5);
+            for (int i = 0; i < 5; ++i) {
+                Clip c;
+                c.id = w.editor()->project()->newClipId();
+                c.mediaPath = QStringLiteral("phone-test-missing.mkv");
+                c.start = 0;
+                c.in = 0;
+                c.out = 99;
+                tl.audio[i].clips << c;
+            }
+        });
+        w.resize(411, 914); // (the A51's portrait)
+        settle();
+        CHECK(view->fitAudioRows());
+        const int audioRow = view->audioRowHeight();
+        Check::report(audioRow < 46 && audioRow >= TimelineView::kFitAudioMin && 5 * audioRow <= view->viewportHeight() / 2 + 5,
+                      "five audio tracks share half of the lanes", __FILE__, __LINE__,
+                      QString("row %1, lanes %2").arg(audioRow).arg(view->viewportHeight()));
+        Check::report(view->contentHeight() <= view->viewportHeight(), "V and A1-A5 all in sight", __FILE__, __LINE__,
+                      QString("%1 > %2").arg(view->contentHeight()).arg(view->viewportHeight()));
         QSettings().setValue("timeline/magneticMain", false);
         QSettings().setValue("timeline/clipDrag", "instant");
         w.setLayoutForm(MainWindow::LayoutForm::Desktop);
@@ -905,6 +927,7 @@ int main(int argc, char** argv)
         w.setLayoutForm(MainWindow::LayoutForm::Desktop);
         CHECK(!view->magneticMain() && !view->centerPlayhead());
         CHECK(!w.findChild<TimelinePanel*>()->scrollIndicators() && !w.findChild<ScrollIndicator*>());
+        CHECK(!view->fitAudioRows()); // (the desktop: the user's heights)
         QSettings().remove("timeline/magneticMain");
         QSettings().remove("timeline/clipDrag");
     }

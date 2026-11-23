@@ -69,6 +69,12 @@ public:
     QPointF holdCue() const { return m_holdCue; } // tests: where the hold's ring shows (negative = none)
     // Start heights of the rows (the phone layout); later only the user's pinch/wheel on the headers changes them
     void setTrackHeights(int video, int audio);
+    // Phone: with more than two audio tracks (a recording with several sound streams) they share half of the lanes'
+    // height (rows down to kFitAudioMin) instead of filling the timeline; a pinch or wheel on the heights ends it
+    void setFitAudioRows(bool on);
+    bool fitAudioRows() const { return m_fitAudio; }
+    int audioRowHeight() const; // the audio tracks' height as shown
+    static constexpr int kFitAudioMin = 24;
     Tool tool() const { return m_tool; }
     // Trim mode and the Slip/Slide tools: a press on a clip starts a TrimEdit
     bool trimTool() const { return m_tool == Tool::Trim || m_tool == Tool::Slip || m_tool == Tool::Slide; }
@@ -527,6 +533,7 @@ private:
     enum class Pinch { None, View, VideoHeight, AudioHeight }; // what the running pinch changes
     Pinch m_pinch = Pinch::None;
     double m_pinchTrackH = 0; // track height during a pinch on the headers (unrounded)
+    bool m_fitAudio = false; // setFitAudioRows
     bool m_snap = true;
     bool m_showNames = true;
     bool m_showDurations = false;
