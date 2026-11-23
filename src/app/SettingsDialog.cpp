@@ -34,6 +34,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QThread>
 #include <QVBoxLayout>
@@ -44,10 +45,11 @@ namespace {
 // their fields below them, hints wrap), so nothing is cut off at the right in a long language with a large font
 class PageArea : public QScrollArea {
 public:
+    bool narrow = false; // a phone: as narrow as the screen, long rows wrap (SettingsDialog::fitScreen)
     QSize minimumSizeHint() const override
     {
         QSize s = QScrollArea::minimumSizeHint();
-        if (widget())
+        if (widget() && !narrow)
             s.setWidth(std::max(s.width(), widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width()
                                                + 2 * frameWidth()));
         return s;
@@ -98,6 +100,33 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
     lay->addWidget(buttons);
     // Room for the longest page without scrolling (Start Templates with its buttons below the list); fits a 768 screen
     resize(640, 680);
+}
+
+void SettingsDialog::fitScreen(const QRect& room)
+{
+    if (!room.isValid() || (room.width() >= width() && room.height() >= height())) return;
+    // A phone: the dialog fills the screen (its OK/Cancel at the bottom in sight), the pages scroll inside it and get
+    // as narrow as the screen - a long label puts its field below it, what is still wider scrolls sideways
+    for (QWidget* area : {m_generalTab, m_templatesTab, m_aiTab})
+        if (auto* page = dynamic_cast<PageArea*>(area)) {
+            // (the page's room: the screen less the dialog's, the page's and its group boxes' margins)
+            Touch::narrowForPhone(page->widget(), room.width() - 72);
+            page->narrow = true;
+            page->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            page->updateGeometry();
+        }
+    m_tabs->setUsesScrollButtons(true);
+    m_tabs->tabBar()->setExpanding(false);
+    setMinimumSize(0, 0);
+    setMaximumSize(room.size());
+    setGeometry(room);
+    m_fitRoom = room;
+}
+
+void SettingsDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    if (m_fitRoom.isValid()) setGeometry(m_fitRoom); // (a platform may place a new window by its own idea)
 }
 
 QWidget* SettingsDialog::buildGeneral()

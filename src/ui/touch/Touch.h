@@ -103,6 +103,10 @@ void installBackKey(QApplication* app, std::function<bool()> stepBack);
 // final ones: a check box's text was cut at the edge) grows to its contents' width once shown, at most the screen's.
 // main.cpp installs it on Android only
 void installDialogFit(QApplication* app);
+// A form made for a desktop dialog, fitted to a phone's width: check box and radio texts break into lines, combo boxes
+// may get narrower than their longest entry, a row of buttons wider than `width` stacks, form rows put a long label
+// above its field. Only widgets wider than `width` change
+void narrowForPhone(QWidget* root, int width);
 // A short haptic tick (a snap reached, as phones do it); Android's own haptic feedback, nothing elsewhere. Tests count
 // the ticks: tickCount()
 void tick();

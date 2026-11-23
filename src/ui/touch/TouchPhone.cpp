@@ -3,6 +3,12 @@
 // keyboard, the back key, safe areas. Nothing here is Android-only code; main.cpp decides what runs where.
 #include "ui/touch/Touch.h"
 #include <QLayout>
+#include <QAbstractButton>
+#include <QBoxLayout>
+#include <QFormLayout>
+#include <QComboBox>
+#include <QRadioButton>
+#include <QCheckBox>
 #include <QScreen>
 
 #include <algorithm>
@@ -216,6 +222,64 @@ protected:
 } // namespace
 
 void installDialogFit(QApplication* app) { app->installEventFilter(new DialogFit(app)); }
+
+namespace {
+// `text` with line breaks so that no line is wider than `width` (words stay whole)
+QString breakLines(const QString& text, const QFontMetrics& fm, int width)
+{
+    QStringList lines;
+    QString line;
+    for (const QString& word : text.split(u' ', Qt::SkipEmptyParts)) {
+        const QString tried = line.isEmpty() ? word : line + u' ' + word;
+        if (!line.isEmpty() && fm.horizontalAdvance(tried) > width) {
+            lines << line;
+            line = word;
+        } else {
+            line = tried;
+        }
+    }
+    if (!line.isEmpty()) lines << line;
+    return lines.join(u'\n');
+}
+} // namespace
+
+void narrowForPhone(QWidget* root, int width)
+{
+    if (!root || width <= 0) return;
+    root->ensurePolished();
+    for (QFormLayout* form : root->findChildren<QFormLayout*>()) form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    for (QAbstractButton* b : root->findChildren<QAbstractButton*>()) {
+        if (!qobject_cast<QCheckBox*>(b) && !qobject_cast<QRadioButton*>(b)) continue;
+        b->ensurePolished();
+        const int wide = b->sizeHint().width();
+        if (wide <= width || b->text().contains(u'\n')) continue;
+        const int indicator = wide - b->fontMetrics().horizontalAdvance(b->text());
+        b->setText(breakLines(b->text(), b->fontMetrics(), std::max(80, width - indicator)));
+    }
+    for (QComboBox* c : root->findChildren<QComboBox*>())
+        if (c->minimumSizeHint().width() > width * 2 / 3) {
+            c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+            c->setMinimumContentsLength(12);
+            c->setMinimumWidth(0);
+            QEvent restyled(QEvent::StyleChange); // (QComboBox keeps its cached minimum size otherwise)
+            QCoreApplication::sendEvent(c, &restyled);
+        }
+    // Rows of buttons (a box layout of only buttons and stretch) wider than the room: one under the other
+    for (QBoxLayout* box : root->findChildren<QBoxLayout*>()) {
+        if (box->direction() != QBoxLayout::LeftToRight || box->count() < 2) continue;
+        bool buttons = true;
+        for (int i = 0; i < box->count() && buttons; ++i) {
+            QLayoutItem* item = box->itemAt(i);
+            buttons = item->spacerItem() || qobject_cast<QAbstractButton*>(item->widget());
+        }
+        if (buttons && box->minimumSize().width() > width) box->setDirection(QBoxLayout::TopToBottom);
+    }
+    // (sizes are cached per layout: all of them anew)
+    for (QLayout* l : root->findChildren<QLayout*>()) l->invalidate();
+    for (QWidget* w : root->findChildren<QWidget*>()) w->updateGeometry();
+    if (root->layout()) root->layout()->invalidate();
+    root->updateGeometry();
+}
 
 namespace {
 int g_ticks = 0;

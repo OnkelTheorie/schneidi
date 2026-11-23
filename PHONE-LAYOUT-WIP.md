@@ -209,7 +209,12 @@ Status (updated with each commit):
   keeps a way; hidden = transparent to the mouse). Timeline: `TimelinePanel::setScrollIndicators` (over the lanes,
   poked from syncScrollbars). Leaving the phone form restores the policies. Tests testScrollIndicators + "no scroll
   bar in the phone window" in test_phone_layout (710 green), test_layout_switch 78.
-- 5, 6, 7, 8, 9, 10, 11: NOT STARTED.
+- 5 Settings dialog: DONE. `SettingsDialog::fitScreen(room)` (MainWindow in a shell form passes the window's rect;
+  does nothing when the dialog fits): fills the window, OK/Cancel at the bottom, pages scroll and get narrow via
+  `Touch::narrowForPhone` (check box/radio texts broken into lines, wide combo boxes shrink, button rows wider than the
+  room stack, form rows wrap long labels). Test testSettingsFit (411x914, 914x411, 360x740: size, OK inside, every
+  page's minimum width <= the phone's). `SCHNEIDI_TEST_SHOTS=<dir>` saves the dialog's picture.
+- 6, 7, 8, 9, 10, 11: NOT STARTED.
 - Not yet: emulator screenshots (to ~/projects/data/schneidi/phone-pass1-2026-11-22/), arm64 APK.
 
 ## Pass 1 (22.11. night, stopped for shutdown)

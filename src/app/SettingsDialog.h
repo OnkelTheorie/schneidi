@@ -31,6 +31,9 @@ public:
 
     SettingsDialog(const AiSettings& ai, QWidget* parent = nullptr);
     void showTab(Tab tab);
+    // Smaller than the dialog's own size (a phone): fills `room` (the screen's available part), pages narrow and
+    // scrolling, OK/Cancel in sight
+    void fitScreen(const QRect& room);
 
     AiSettings aiSettings() const;
     QString language() const; // code, as I18n::language()
@@ -78,8 +81,12 @@ signals:
     void designRequested();
     void keyBindingsRequested();
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     QWidget* buildGeneral();
+    QRect m_fitRoom; // fitScreen
 
     QTabWidget* m_tabs = nullptr;
     QWidget* m_generalTab = nullptr;

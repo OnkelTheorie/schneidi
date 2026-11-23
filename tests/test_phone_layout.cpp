@@ -800,6 +800,50 @@ void testScrollIndicators()
     CHECK(area->verticalScrollBarPolicy() == Qt::ScrollBarAsNeeded && !area->findChild<ScrollIndicator*>());
 }
 
+// Item 5 of the phone review: the settings dialog was wider and taller than the screen (OK/Cancel out of sight, the
+// page not scrolling): on a phone it fills the window, OK in sight, its pages as narrow as the screen
+void testSettingsFit(const QSize& size)
+{
+    SettingsDialog dlg{AiSettings{}};
+    const QRect room(QPoint(0, 0), size);
+    dlg.fitScreen(room);
+    dlg.show();
+    settle();
+    Check::report(dlg.size() == room.size() && room.contains(dlg.frameGeometry().topLeft()),
+                  "settings dialog fills the phone window", __FILE__, __LINE__, rect(dlg.frameGeometry()));
+    if (const QString dir = qEnvironmentVariable("SCHNEIDI_TEST_SHOTS"); !dir.isEmpty()) // (a look at it)
+        dlg.grab().save(QString("%1/settings-%2x%3.png").arg(dir).arg(size.width()).arg(size.height()));
+    QPushButton* ok = nullptr;
+    for (QPushButton* b : dlg.findChildren<QPushButton*>())
+        if (b->text().contains("OK", Qt::CaseInsensitive)) ok = b;
+    if (CHECK(ok)) CHECK(ok->isVisible() && inside(ok, &dlg));
+    for (QScrollArea* area : dlg.findChildren<QScrollArea*>()) {
+        if (!area->widget() || area->horizontalScrollBarPolicy() != Qt::ScrollBarAsNeeded) continue;
+        const int least = area->widget()->minimumSizeHint().width();
+        if (least > size.width()) { // what holds it
+            std::function<void(QWidget*, int)> dump = [&](QWidget* p, int depth) {
+                for (QWidget* c : p->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+                    const int m = std::max(c->minimumSizeHint().width(), c->minimumWidth());
+                    if (!c->isHidden() && m > size.width() * 2 / 3) {
+                        std::printf("%*s%s %s %s min %d\n", depth * 2, "", c->metaObject()->className(),
+                                    qPrintable(c->objectName()), qPrintable(c->property("text").toString().left(30)), m);
+                        if (depth < 9) dump(c, depth + 1);
+                    }
+                }
+            };
+            dump(area->widget(), 1);
+        }
+        Check::report(least <= size.width(), "settings page about as narrow as the phone", __FILE__, __LINE__,
+                      QString("%1 needs %2 of %3").arg(area->widget()->metaObject()->className()).arg(least)
+                          .arg(size.width()));
+    }
+    // A desktop-sized room leaves it as it was
+    SettingsDialog big{AiSettings{}};
+    const QSize before = big.size();
+    big.fitScreen(QRect(0, 0, 1920, 1080));
+    CHECK(big.size() == before);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -871,6 +915,9 @@ int main(int argc, char** argv)
     Theme::apply(app);
     testWindow(engine, {411, 914});
     testWindow(engine, {914, 411});
+    testSettingsFit({411, 914});
+    testSettingsFit({914, 411});
+    testSettingsFit({360, 740});
     testWindow(engine, {360, 740}); // a small phone (turned: 740x360)
     testWindow(engine, {914, 380}); // landscape below the status bar
     return Check::result();

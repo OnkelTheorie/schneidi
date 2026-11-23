@@ -61,6 +61,8 @@ void MainWindow::settingsDialog(int tab)
             if (!isPageHidden(p) || pageId(p) == startPage()) pages.append({pageId(p), pageTitle(p)});
         dlg.setStartPages(pages, startPage());
     }
+    // A phone: the dialog is the app window's size (its own size reached past the screen, OK out of sight)
+    if (m_phone) dlg.fitScreen(QRect(mapToGlobal(QPoint(0, 0)), size()));
     if (dlg.exec() != QDialog::Accepted) return;
     if (!dlg.startPage().isEmpty()) setStartPage(dlg.startPage()); // test runs: not saved (setStartPage)
     // Start templates: the template new projects start with, whether New Project asks (test runs keep the settings)
