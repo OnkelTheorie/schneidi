@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Inspector: building blocks (sections, effect sections, sliders, XY fields, keyframe buttons).
+#include "ui/touch/Touch.h"
 #include "ui/Inspector.h"
 
 #include "app/Theme.h"
@@ -163,6 +164,13 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
                                      "QToolButton:disabled { color: transparent; }").arg(Theme::textDim.name());
     prev->setStyleSheet(arrowCss);
     next->setStyleSheet(arrowCss);
+    if (Touch::modeActive()) {
+        // Touch mode's style sheet made the 10 px arrows finger-wide: a wide empty column beside every row and the
+        // diamond pushed to the edge. A finger gets the diamond alone, finger-sized (the timeline jumps to keys)
+        prev->hide();
+        next->hide();
+        diamond->setFixedSize(28, 30);
+    }
 
     // Keyframe at the playhead for all parameters of the row?
     auto onKey = [this, params](const Clip& c) {

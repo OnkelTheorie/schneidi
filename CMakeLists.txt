@@ -37,7 +37,7 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 # Linux: "show in file manager" over the freedesktop D-Bus interface (src/ui/FileManager.cpp); without it the folder opens
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(Qt6 QUIET COMPONENTS DBus)
 endif()
 find_package(PkgConfig REQUIRED)
@@ -316,6 +316,10 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/video/Convert.h    src/engine/video/Convert.cpp
     src/engine/FfmpegLog.h        src/engine/FfmpegLog.cpp
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
+    src/engine/ContentUri.h       src/engine/ContentUri.cpp
+    src/engine/DeviceMedia.h      src/engine/DeviceMedia.cpp
+    src/ui/MediaGallery.h         src/ui/MediaGallery.cpp
+    src/ui/SwitchCurtain.h        src/ui/SwitchCurtain.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/picture/CompNodes.h src/engine/picture/CompNodes.cpp
@@ -400,6 +404,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/app/MainWindowRebuild.cpp
     src/app/SessionResume.h src/app/SessionResume.cpp
     src/core/NestedLoop.h src/core/NestedLoop.cpp
+    src/app/MainWindowPhone.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/MainWindowReframe.cpp
@@ -467,7 +472,6 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/ShapeOverlay.h         src/ui/ShapeOverlay.cpp
-    src/ui/SwitchCurtain.h        src/ui/SwitchCurtain.cpp
     src/ui/DrawOverlay.h          src/ui/DrawOverlay.cpp
     src/ui/TourOverlay.h          src/ui/TourOverlay.cpp
     src/ui/comp/CompShared.h      src/ui/comp/CompShared.cpp
@@ -493,6 +497,12 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/ui/MulticamView.h         src/ui/MulticamView.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/FrameView.h            src/ui/FrameView.cpp
+    src/ui/touch/Touch.h          src/ui/touch/Touch.cpp
+    src/ui/touch/TouchGestures.h  src/ui/touch/TouchGestures.cpp
+    src/ui/touch/TouchMode.cpp
+    src/ui/touch/TouchPhone.cpp
+    src/ui/touch/ScrollIndicators.h src/ui/touch/ScrollIndicators.cpp
+    src/ui/phone/PhoneShell.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp
@@ -546,6 +556,9 @@ file(GLOB SCHNEIDI_I18N RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJE
 qt_add_resources(schneidi_lib "i18n" PREFIX "/" FILES ${SCHNEIDI_I18N})
 set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json assets/themes/beige.json)
 qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
+# Symbol glyphs as fallback fonts (tools/make_symbol_fonts.py): Android's fonts lack many (boxes); loaded only there
+set(SCHNEIDI_SYMBOL_FONTS assets/fonts/schneidi-symbols-a.ttf assets/fonts/schneidi-symbols-b.ttf assets/fonts/schneidi-symbols-c.ttf)
+qt_add_resources(schneidi_lib "fonts" PREFIX "/" BASE assets FILES ${SCHNEIDI_SYMBOL_FONTS})
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 # Bundled looks: effect presets (LUT + effects) in the preset format of core/Presets, names in core/EffectFolders
@@ -655,7 +668,47 @@ endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
-add_executable(schneidi src/main.cpp)
+if(ANDROID)
+    # Android app (packaging/android, docs/dev/android.md): the program is a shared library that Qt's Java activity
+    # loads; the `apk` target packs it with Qt and the FFmpeg libraries of packaging/android/build-ffmpeg-android.sh
+    qt_policy(SET QTP0002 NEW)
+    qt_add_executable(schneidi src/main.cpp) # (finalized at the end of this file by Qt)
+    set(_schneidi_android_libs "")
+    foreach(_lib IN LISTS FFMPEG_LINK_LIBRARIES AVFILTER_LINK_LIBRARIES)
+        if(_lib MATCHES "\\.so$")
+            list(APPEND _schneidi_android_libs ${_lib})
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _schneidi_android_libs)
+    # Android 15 draws apps that target SDK 35 under the system bars (edge to edge); only Qt 6.9+ reports the safe
+    # areas that keep the window out of them, older Qt targets 34
+    if(Qt6_VERSION VERSION_LESS 6.9)
+        set(_schneidi_target_sdk 34)
+    else()
+        set(_schneidi_target_sdk 35)
+    endif()
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate) # (the media permission: QtAndroidPrivate::requestPermission)
+    target_link_libraries(schneidi_lib PRIVATE Qt6::CorePrivate)
+    # Qt's own texts (Cancel, Save, a text field's menu) in the UI languages: an APK has no Qt translations folder,
+    # they go into the resources (core/I18n.cpp looks in :/qt-translations; ~2.4 MB)
+    set(_qt_tr_dir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_TRANSLATIONS}")
+    set(_qt_tr "")
+    foreach(_l de es fr it ja ko nl pl pt_BR ru tr uk zh_CN)
+        if(EXISTS "${_qt_tr_dir}/qtbase_${_l}.qm")
+            list(APPEND _qt_tr "${_qt_tr_dir}/qtbase_${_l}.qm")
+        endif()
+    endforeach()
+    if(_qt_tr)
+        qt_add_resources(schneidi_lib "qt_translations" PREFIX "/qt-translations" BASE "${_qt_tr_dir}" FILES ${_qt_tr})
+    endif()
+    set_target_properties(schneidi PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/packaging/android/app
+        QT_ANDROID_EXTRA_LIBS "${_schneidi_android_libs}"
+        QT_ANDROID_VERSION_NAME ${SCHNEIDI_NEXT_VERSION}
+        QT_ANDROID_TARGET_SDK_VERSION ${_schneidi_target_sdk})
+else()
+    add_executable(schneidi src/main.cpp)
+endif()
 target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi schneidi_buildinfo)
 target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live connection (cli/Live.h)
@@ -712,7 +765,9 @@ endif()
 
 # Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe README.md)
 include(GNUInstallDirs)
-install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(NOT ANDROID) # (Android: the `apk` target packs the app)
+    install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 if(SCHNEIDI_SHARED_LIBS)
     # Installed shared build (rare: a developer's `cmake --install`): the libraries go into a private folder that
     # the programs find relative to themselves

@@ -16,6 +16,7 @@ class QLabel;
 class RenderQueuePanel : public QWidget {
     Q_OBJECT
 public:
+    void setBelowSettings(bool on); // the empty hint says where the settings are
     RenderQueuePanel(Project* project, RenderQueue* queue, QWidget* parent = nullptr);
 
     void removeJobs(const QVector<int>& ids); // running job stays

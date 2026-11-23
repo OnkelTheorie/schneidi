@@ -21,12 +21,14 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
+#include "ui/touch/Touch.h"
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QUndoStack>
 #include <QUrl>
 #include <QContextMenuEvent>
 #include <QHash>
@@ -42,6 +44,22 @@
 #include "ui/timeline/TimelineViewDetail.h"
 
 using namespace TimelineViewDetail;
+
+
+namespace {
+// A macro that ended up empty (nothing changed: a trim against its limit, a move onto itself) is no undo step and
+// does not mark the project modified
+void endMacroOrDrop(QUndoStack* undo)
+{
+    undo->endMacro();
+    const int i = undo->index() - 1;
+    if (i < 0) return;
+    if (const QUndoCommand* c = undo->command(i); c && c->childCount() == 0 && c->id() == -1) {
+        const_cast<QUndoCommand*>(c)->setObsolete(true);
+        undo->undo(); // (an obsolete command is deleted instead of undone)
+    }
+}
+} // namespace
 
 void TimelineView::startRubber(Qt::KeyboardModifiers mods)
 {
@@ -180,6 +198,11 @@ bool TimelineView::closeSelectedGap()
 
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
+    m_touchPointer = Touch::isTouch(e);
+    if (m_reorder.on) { // the held clip of the magnetic main track follows the finger (mouseMoveEvent)
+        m_reorder.fingerX = e->position().x();
+        return;
+    }
     if (e->button() == Qt::LeftButton && m_gap.on) {
         m_gap = {};
         update();
@@ -218,6 +241,10 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         if (marksPress(pos, e->modifiers())) return; // In/Out handles, the range's grip
         m_drag = Drag::Scrub;
         m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        // The centre mode: the press jumps there, the lanes re-centre on it - a drag then slides the ruler under the
+        // fixed line from that point (the absolute frame under the pointer would run away with every re-centring)
+        m_scrubPressX = pos.x();
+        m_scrubPressFrame = m_scrubFrame;
         emit playheadMoveStarted();
         emit seekRequested(m_scrubFrame);
         return;
@@ -401,6 +428,15 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
 
 void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
+    if (m_reorder.on) {
+        m_reorder.fingerX = e->position().x();
+        const int n = int(m_reorder.order.size());
+        const double slot = m_reorder.tw + 4;
+        m_reorder.to = std::clamp(int(std::lround((m_reorder.fingerX - m_reorder.tw / 2.0 - m_reorder.base) / slot)), 0, n - 1);
+        update();
+        return;
+    }
+    if (m_drag == Drag::None) m_touchPointer = Touch::isTouch(e); // a running drag keeps the press's zones
     const QPoint pos = e->position().toPoint();
     m_dragPos = pos;
     m_dragMods = e->modifiers();
@@ -431,7 +467,9 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
     case Drag::Scrub: {
         // Only jump on a new frame: every jump discards the buffer during playback and decodes anew –
         // when clicking (mouse jitters by a pixel) that stuttered
-        const int frame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        const int frame = m_center ? std::max(0, int(std::lround(m_scrubPressFrame - (pos.x() - m_scrubPressX)
+                                                                                          / m_view.pxPerFrame)))
+                                   : std::max(0, int(std::lround(xToFrame(pos.x()))));
         if (frame != m_scrubFrame) {
             m_scrubFrame = frame;
             emit seekRequested(frame);
@@ -710,6 +748,10 @@ void TimelineView::clickSeek()
 
 void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
+    if (m_reorder.on) {
+        finishReorder(true);
+        return;
+    }
     // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it
     if ((m_drag == Drag::Marks && m_markRight) != (e->button() == Qt::RightButton)) return;
     if (e->button() != Qt::LeftButton && e->button() != Qt::RightButton) return;
@@ -765,10 +807,60 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         if (moved && to >= 0 && to != m_trackDragRef.index) m_editor->moveTrack(m_trackDragRef.kind, m_trackDragRef.index, to);
         updateHoverCursor(e->position().toPoint());
         update();
+        // Compact headers (phone): a tap on the header is its menu (lock, name, mic, color, tracks live there)
+        if (!moved && compactHeaders())
+            if (const auto row = rowFor(m_trackDragRef)) headerMenu(*row, mapToGlobal(e->position().toPoint()));
         return;
     }
-    if (m_drag == Drag::Move)
-        m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
+    if (m_drag == Drag::Move && (m_dragFine != 0 || m_dragTrackDelta != 0)) {
+        const Timeline& before = m_editor->project()->timeline();
+        const auto onMain = [&](const Timeline& tl) {
+            for (int id : m_dragIds) {
+                TrackRef r;
+                if (TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video && r.index == 0) return true;
+            }
+            return false;
+        };
+        const bool magnetic = m_magnetic && !before.video.isEmpty();
+        const bool fromMain = magnetic && onMain(before);
+        QUndoStack* undo = m_editor->project()->undoStack();
+        // (only V1 clips and their linked sound in the drag)
+        const auto mainOnly = [&] {
+            QSet<int> links;
+            for (const Clip& c : before.video[0].clips)
+                if (m_dragIds.contains(c.id) && c.linkId) links.insert(c.linkId);
+            for (int id : m_dragIds) {
+                TrackRef r;
+                const Clip* c = TimelineOps::findClip(before, id, &r);
+                if (!c || (!(r.kind == TrackKind::Video && r.index == 0) && !(c->linkId && links.contains(c->linkId))))
+                    return false;
+            }
+            return true;
+        };
+        if (fromMain && m_anchorRef.kind == TrackKind::Video && m_dragTrackDelta == 0 && m_dragFine % 100 == 0
+            && mainOnly()) {
+            // Along the magnetic main track: a reorder (the clips take their new place in the row, the others make
+            // room) - never an overwrite that cuts a neighbour and then closes the gap (its material was gone)
+            QVector<QPair<double, int>> places; // new start (the moved ones at their drop, others where they are)
+            const int frames = m_dragFine / 100;
+            for (const Clip& c : before.video[0].clips) {
+                const bool moved = m_dragIds.contains(c.id);
+                // a moved clip goes before one it was dropped on the first half of (its middle decides)
+                places << qMakePair(moved ? c.start + frames + c.length() / 2.0 : c.start + c.length() / 2.0 + 0.1, c.id);
+            }
+            std::stable_sort(places.begin(), places.end());
+            QVector<int> order;
+            for (const auto& [at, id] : places) order << id;
+            m_editor->packTrack({TrackKind::Video, 0}, order, T("Clips verschieben"));
+        } else {
+            // The magnetic main track: a clip moved onto or off V1 leaves no gap there (one undo step). A clip moved
+            // elsewhere (music on A2, a title on V2) leaves V1 alone
+            undo->beginMacro(T("Clips verschieben"));
+            m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
+            if (magnetic && (fromMain || onMain(m_editor->project()->timeline()))) m_editor->packTrack({TrackKind::Video, 0});
+            endMacroOrDrop(undo);
+        }
+    }
     if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
         const Drag d = m_drag;
         m_drag = Drag::None; // before the change, so the preview does not apply twice
@@ -789,7 +881,18 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     m_drag = Drag::None; // before trimClip, so the preview is not applied twice
     if (ramp && m_rampDelta != 0) m_editor->moveSpeedPoint(m_rampDrag.clipId, m_rampDrag.point, m_rampDelta);
     m_rampDelta = 0;
-    if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
+    if (trimmed && m_trimDelta != 0) {
+        TrackRef where;
+        const bool onMain = m_magnetic && TimelineOps::findClip(m_editor->project()->timeline(), m_trim.clipId, &where)
+                            && where.kind == TrackKind::Video && where.index == 0;
+        QUndoStack* undo = m_editor->project()->undoStack();
+        if (onMain) undo->beginMacro(T("Clip trimmen"));
+        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
+        if (onMain) { // magnetic main track: the gap the trim left closes
+            m_editor->packTrack({TrackKind::Video, 0});
+            endMacroOrDrop(undo);
+        }
+    }
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;
@@ -882,6 +985,7 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
         const double ax = ZoomAnchor::anchorX(std::max<double>(mouseX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
         m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.2, steps), xToFrame(ax), ax - kHeaderW);
+        if (m_center) m_view.leftFrame = centreLeft();
         update();
         emit viewChanged();
         break;
@@ -890,6 +994,10 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         // only the track kind under the mouse (video or audio tracks), like in DaVinci
         const auto row = rowAt(int(e->position().y()));
         const bool audio = row && row->ref.kind == TrackKind::Audio;
+        if (audio && m_fitAudio) { // the user's own height from now on, from what is shown
+            m_view.audioTrackHeight = audioRowHeight();
+            m_fitAudio = false;
+        }
         int& h = audio ? m_view.audioTrackHeight : m_view.videoTrackHeight;
         h = std::clamp(h + int(steps * 6), 28, 220);
         setScrollY(m_view.scrollY);

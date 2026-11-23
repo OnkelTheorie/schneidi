@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
 #include "core/NestedLoop.h"
+
+#include "engine/ContentUri.h"
 #include "app/OpenTrace.h"
 #include "core/Shapes.h"
 #include "core/StartupTrace.h"
@@ -208,12 +210,24 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     (new HdrScan(m_project, m_engine->proxies(), this))->scan();
     m_engine->updateTimeline(m_project->renderTimeline());
     buildUi();
+    // The layout form (once: rebuildUi brings back the form it had) for the screen the window opens on (maximized there); later sizes are checked as they come
+    if (QScreen* screen = startScreen()) {
+        const LayoutForm form = wantedForm(screen->availableGeometry().size());
+        if (form != LayoutForm::Desktop) setLayoutForm(form);
+    }
+    applyCenterPlayhead(); // (the desktop: only when set to "on")
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
     // Automatic backup every minute (only on changes), separate from the project file
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosaveTimer->start(60 * 1000);
+#ifdef Q_OS_ANDROID
+    // Going to the background may be the end (the system frees the memory without asking): the backup now
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive && !m_autosaveDisabled) autosave();
+    });
+#endif
     // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
     // and checkProjectFile() adds it again
     m_projectWatcher = new QFileSystemWatcher(this);
@@ -717,8 +731,9 @@ void MainWindow::warmUpVideoDecoding()
     if (QGuiApplication::platformName() != QLatin1String("offscreen")) Video::Hardware::warmUp();
 }
 
-void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)
+void MainWindow::importFiles(const QStringList& picked, bool placeOnTimeline, bool adoptFormat)
 {
+    const QStringList paths = ContentUri::forImport(picked); // (Android: content:// -> the file where readable)
     warmUpVideoDecoding();
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
@@ -1233,6 +1248,8 @@ void MainWindow::onTimelineFormatChanged()
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
     const QEvent::Type t = event->type();
+    // The timeline's "+ Videos hinzufügen" follows V1 and the lanes' edge
+    if (t == QEvent::Resize && m_addMediaButton && obj == m_timeline->view()) updateAddMediaButton();
     // Double-click on a clip with a compositing graph in the timeline: open it on the Comp page (the press before
     // selected it; the timeline itself has no double-click on clips)
     if (t == QEvent::MouseButtonDblClick && m_timeline && obj == m_timeline->view()) {
@@ -1521,6 +1538,7 @@ void MainWindow::setupBackgroundJobs()
         m_backgroundJobs->adoptJobs(*m_oldJobs);
         delete m_oldJobs;
     }
+    if (m_phone) phoneAdoptBackgroundJobs();     // the page bar is hidden there: the phone's top bar
     ProxyManager* proxies = m_engine->proxies();
     ProxyProgress* progress = ProxyProgress::of(proxies);
     connect(progress, &ProxyProgress::changed, m_backgroundJobs, [this, proxies, progress] {

@@ -5,7 +5,9 @@
 #include "core/I18n.h"
 #include "ui/ElidedLabel.h"
 
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QTimer>
 #include <QToolButton>
@@ -47,6 +49,42 @@ BackgroundJobs::BackgroundJobs(QWidget* parent) : QWidget(parent)
     lay->addWidget(m_text);
     lay->addWidget(m_cancel);
     hide();
+}
+
+void BackgroundJobs::setCompact(bool on)
+{
+    if (m_compact == on) return;
+    m_compact = on;
+    delete layout(); // the widgets stay (children of this), only their arrangement changes
+    if (on) {
+        // Two short rows beside the ✕: the bar over the line, narrow enough for a phone's top bar
+        auto* grid = new QGridLayout(this);
+        grid->setContentsMargins(2, 0, 0, 0);
+        grid->setHorizontalSpacing(2);
+        grid->setVerticalSpacing(1);
+        m_bar->setFixedSize(48, 4);
+        m_text->setMaximumWidth(fontMetrics().averageCharWidth() * 12);
+        grid->addWidget(m_bar, 0, 0, Qt::AlignBottom | Qt::AlignHCenter);
+        grid->addWidget(m_text, 1, 0, Qt::AlignTop | Qt::AlignHCenter);
+        grid->addWidget(m_cancel, 0, 1, 2, 1, Qt::AlignVCenter);
+    } else {
+        auto* lay = new QHBoxLayout(this);
+        lay->setContentsMargins(4, 0, 2, 0);
+        lay->setSpacing(6);
+        m_bar->setFixedSize(90, 5);
+        m_text->setMaximumWidth(fontMetrics().averageCharWidth() * 44);
+        lay->addWidget(m_bar, 0, Qt::AlignVCenter);
+        lay->addWidget(m_text);
+        lay->addWidget(m_cancel);
+    }
+    refresh();
+}
+
+void BackgroundJobs::mouseReleaseEvent(QMouseEvent* event)
+{
+    QWidget::mouseReleaseEvent(event);
+    if (m_compact && event->button() == Qt::LeftButton && rect().contains(event->position().toPoint()))
+        emit detailsRequested(toolTip());
 }
 
 int BackgroundJobs::indexOf(const QString& id) const
@@ -151,7 +189,11 @@ void BackgroundJobs::refresh()
     QString line = shown->job.text;
     int running = 0;
     for (const Entry& e : m_jobs) running += e.done || e.job.notice ? 0 : 1;
-    if (running > 1) line += "  " + T("(+%1)").arg(running - 1);
+    QString more = running > 1 ? T("(+%1)").arg(running - 1) : QString();
+    // Compact (phone): a running job with an amount shows only its percent, the rest is a tap away
+    if (m_compact && !shown->done && !shown->job.notice && shown->job.fraction >= 0)
+        line = QString::number(qRound(std::clamp(shown->job.fraction, 0.0, 1.0) * 100)) + " %";
+    if (!more.isEmpty()) line += (m_compact ? " " : "  ") + more;
     m_text->setFullText(line);
     QStringList tips;
     for (const Entry& e : m_jobs) {

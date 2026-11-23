@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/ExportCheck.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
@@ -43,7 +44,9 @@ const Clip* ShapeOverlay::clip() const
     if (!m_selection || m_selection->ids().size() != 1) return nullptr;
     if (m_timelineShown && !m_timelineShown()) return nullptr; // a source clip in the viewer: not the timeline's shape
     const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), *m_selection->ids().begin());
-    if (!c || !c->isTitle() || !c->title.isShape() || c->title.shape.followClip > 0) return nullptr;
+    if (!c || !c->isTitle()) return nullptr;
+    const bool text = m_textTitles && !c->title.isShape() && !c->title.isProgress() && !c->title.isDrawing();
+    if (!text && (!c->title.isShape() || c->title.shape.followClip > 0)) return nullptr;
     const int f = m_playhead ? m_playhead() : c->start;
     return f >= c->start && f < c->end() ? c : nullptr;
 }
@@ -52,6 +55,21 @@ bool ShapeOverlay::isLine() const
 {
     const Clip* c = clip();
     return c && c->title.shape.kind == ShapeKind::Line;
+}
+
+bool ShapeOverlay::isText() const
+{
+    const Clip* c = clip();
+    return c && !c->title.isShape();
+}
+
+double ShapeOverlay::hit() const { return m_textTitles ? 22 : kHit; }
+
+void ShapeOverlay::setTextTitles(bool on)
+{
+    if (m_textTitles == on) return;
+    m_textTitles = on;
+    emit changed();
 }
 
 int ShapeOverlay::localFrame(const Clip& c) const
@@ -69,6 +87,18 @@ bool ShapeOverlay::transforms(const QRectF& frame, QTransform* toWidget, QTransf
     QTransform view, flat;
     view.translate(frame.left(), frame.top());
     view.scale(frame.width() / W, frame.height() / H);
+    if (!c->title.isShape()) { // a text title: its block as `check` measures it (the clip's own transform in it)
+        const QRectF block = ExportCheck::overlayBlockAt(*c, t, W, H);
+        QTransform l;
+        l.translate(block.center().x(), block.center().y());
+        if (toWidget) *toWidget = view;
+        if (local) *local = l;
+        // A little room around the letters: the corner handles sit beside them, not on them
+        const double pad = (kHandle + 6) * W / frame.width();
+        if (hw) *hw = std::max(0.5, block.width() / 2 + pad);
+        if (hh) *hh = std::max(0.5, block.height() / 2 + pad);
+        return true;
+    }
     if (Keys::hasTransform(*c)) { // the clip's own transform as the picture engine applies it to the title
         flat.translate(W / 2 + Keys::valueAt(*c, AnimParam::PosX, t), H / 2 - Keys::valueAt(*c, AnimParam::PosY, t));
         flat.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
@@ -127,18 +157,24 @@ void ShapeOverlay::paint(QPainter& p, const QRectF& frame)
     p.drawPath(shown);
     p.setPen(QPen(QColor(255, 255, 255, 230), 1.2, Qt::DashLine));
     p.drawPath(shown);
-    const QPointF top = w.map(l.map(QPointF(0, -hh))), knob = handlePos(kRotate, frame);
-    p.setPen(QPen(QColor(255, 255, 255, 200), 1));
-    p.drawLine(top, knob);
-    p.setBrush(Theme::primary);
-    p.setPen(QPen(QColor(0, 0, 0, 160), 1));
-    p.drawEllipse(knob, kHandle, kHandle);
+    const bool text = isText();
+    if (!text) {
+        const QPointF top = w.map(l.map(QPointF(0, -hh))), knob = handlePos(kRotate, frame);
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1));
+        p.drawLine(top, knob);
+        p.setBrush(Theme::primary);
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1));
+        p.drawEllipse(knob, kHandle, kHandle);
+    }
     p.setBrush(QColor(255, 255, 255));
+    p.setPen(QPen(QColor(0, 0, 0, 160), 1));
     const bool line = isLine();
+    const double size = m_textTitles ? kHandle + 2 : kHandle; // (a finger's: a little larger)
     for (int i = 0; i < 8; ++i) {
-        if (line && !lineHandle(i)) continue;
+        if ((line && !lineHandle(i)) || (text && i % 2 == 1)) continue;
         const QPointF h = handlePos(i, frame);
-        p.drawRect(QRectF(h.x() - kHandle, h.y() - kHandle, 2 * kHandle, 2 * kHandle));
+        if (text) p.drawEllipse(h, size, size);
+        else p.drawRect(QRectF(h.x() - size, h.y() - size, 2 * size, 2 * size));
     }
     p.restore();
 }
@@ -148,11 +184,13 @@ int ShapeOverlay::partAt(const QPointF& pos, const QRectF& frame) const
     QTransform w, l;
     double hw = 0, hh = 0;
     if (!transforms(frame, &w, &l, &hw, &hh)) return None;
-    const auto near = [&](const QPointF& h) { return std::hypot(h.x() - pos.x(), h.y() - pos.y()) <= kHit; };
-    if (near(handlePos(kRotate, frame))) return kRotate;
+    const double grab = hit();
+    const auto near = [&](const QPointF& h) { return std::hypot(h.x() - pos.x(), h.y() - pos.y()) <= grab; };
+    const bool text = isText();
+    if (!text && near(handlePos(kRotate, frame))) return kRotate;
     const bool line = isLine();
     for (int i = 0; i < 8; ++i)
-        if ((!line || lineHandle(i)) && near(handlePos(i, frame))) return i;
+        if ((!line || lineHandle(i)) && (!text || i % 2 == 0) && near(handlePos(i, frame))) return i;
     bool ok = false;
     const QTransform inv = (l * w).inverted(&ok);
     if (!ok) return None;
@@ -174,7 +212,7 @@ void ShapeOverlay::set(const QVector<QPair<int, double>>& values)
     const Clip* c = clip();
     if (!c) return;
     const int t = localFrame(*c);
-    m_editor->modifyClips({c->id}, T("Form"), [&](Clip& clip) {
+    m_editor->modifyClips({c->id}, c->title.isShape() ? T("Form") : T("Titel"), [&](Clip& clip) {
         for (const auto& [param, v] : values) Keys::setValue(clip, AnimParam(param), t, v); // animated: a keyframe
     }, QString("shape:overlay:%1").arg(c->id));
 }
@@ -185,8 +223,11 @@ std::optional<QRectF> ShapeOverlay::paintedBounds(const QRectF& frame) const
     double hw = 0, hh = 0;
     if (!transforms(frame, &w, &l, &hw, &hh)) return QRectF(); // nothing drawn
     QRectF r = (l * w).mapRect(QRectF(-hw, -hh, 2 * hw, 2 * hh));
-    const QPointF knob = handlePos(kRotate, frame);
-    r = r.united(QRectF(knob, knob));
+    if (!isText()) {
+        const QPointF knob = handlePos(kRotate, frame);
+        r = r.united(QRectF(knob, knob));
+    }
+    r.adjust(-2, -2, 2, 2); // (a finger's handles are larger)
     // Handles, the knob and the outline's width around it; clipped like paint()
     return r.adjusted(-kHandle - 3, -kHandle - 3, kHandle + 3, kHandle + 3)
         .intersected(frame.adjusted(-kKnob - 10, -kKnob - 10, kKnob + 10, kKnob + 10));
@@ -208,6 +249,9 @@ bool ShapeOverlay::mousePress(QMouseEvent* e, const QRectF& frame)
     m_startY = Keys::valueAt(*c, AnimParam::TitlePosY, t);
     m_startW = Keys::valueAt(*c, AnimParam::ShapeWidth, t);
     m_startH = Keys::valueAt(*c, AnimParam::ShapeHeight, t);
+    m_startSize = Keys::valueAt(*c, AnimParam::TitleSize, t);
+    const QPointF centre = m_startLocal.map(QPointF(0, 0));
+    m_startDist = std::max(1.0, std::hypot(m_press.x() - centre.x(), m_press.y() - centre.y()));
     return true;
 }
 
@@ -218,8 +262,23 @@ bool ShapeOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
     if (!transforms(frame, &w, &l, nullptr, nullptr)) return true;
     const QPointF pos = w.inverted().map(e->position()); // project pixels
     if (m_part == Inside) {
-        const QPointF d = pos - m_press;
+        QPointF d = pos - m_press;
+        if (const Clip* c = clip(); c && !c->title.isShape() && Keys::hasTransform(*c)) {
+            // A text title's box is in picture pixels (its clip's zoom and turn in it); its position lives before that
+            // transform: the finger's way through the inverse (else a zoomed clip's title ran zoom times the finger)
+            const int t = localFrame(*c);
+            QTransform lin;
+            lin.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
+            lin.scale(Keys::valueAt(*c, AnimParam::ZoomX, t), Keys::valueAt(*c, AnimParam::ZoomY, t));
+            bool ok = false;
+            const QTransform inv = lin.inverted(&ok);
+            if (ok) d = inv.map(d);
+        }
         set({{int(AnimParam::TitlePosX), std::round(m_startX + d.x())}, {int(AnimParam::TitlePosY), std::round(m_startY - d.y())}});
+    } else if (isText()) { // a corner of a text title: the font size by the finger's distance from the centre
+        const QPointF centre = m_startLocal.map(QPointF(0, 0));
+        const double k = std::hypot(pos.x() - centre.x(), pos.y() - centre.y()) / m_startDist;
+        set({{int(AnimParam::TitleSize), std::round(std::clamp(m_startSize * k, 6.0, 2000.0))}});
     } else if (m_part == kRotate) {
         const QPointF v = pos - l.map(QPointF(0, 0));
         double angle = std::atan2(v.y(), v.x()) * 180 / M_PI + 90; // clockwise, 0 = the knob straight up

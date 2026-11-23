@@ -90,6 +90,12 @@ void apply(QApplication& app);
 // The saved choice in use from now on (load + apply); false = it was in use already. Widgets that took colors when
 // they were made keep them: the caller builds them again
 bool switchToSaved(QApplication& app);
+// The bundled symbol fonts (assets/fonts, tools/make_symbol_fonts.py) as fallback families for the UI font: Android's
+// fonts lack symbols the UI writes as text (✦ ☰ ⏮ ⤢ drew as boxes). Registered once; empty elsewhere (the desktop
+// keeps its system fonts) unless SCHNEIDI_SYMBOL_FONTS=1 (tests)
+QStringList symbolFontFamilies();
+// What touch mode (ui/touch/Touch.h) adds to the application style sheet in apply(): larger controls
+QString touchStyleSheet();
 
 // helpers
 QColor mix(const QColor& a, const QColor& b, double t); // t = 0 -> a, 1 -> b

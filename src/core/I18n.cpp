@@ -160,10 +160,12 @@ void install(const QString& override)
         if (lang == "en") return;
     }
     // Qt's own texts (dialog buttons like Save/Discard, the context menu of text fields) in the same language: where
-    // Qt keeps them, else next to the program (Windows package: windeployqt's Qt has none of its own)
+    // Qt keeps them, else next to the program (Windows package: windeployqt's Qt has none of its own), else in the
+    // resources (Android: the APK carries them there)
     auto* qt = new QTranslator(app);
     if (qt->load(QLocale(lang), "qtbase", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath))
-        || qt->load(QLocale(lang), "qtbase", "_", QCoreApplication::applicationDirPath() + "/translations"))
+        || qt->load(QLocale(lang), "qtbase", "_", QCoreApplication::applicationDirPath() + "/translations")
+        || qt->load(QLocale(lang), "qtbase", "_", QStringLiteral(":/qt-translations")))
         put(qt);
     else
         delete qt;

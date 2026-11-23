@@ -32,6 +32,7 @@
 #include "ui/ScopesPanel.h"
 #include "ui/SecondScreen.h"
 #include "ui/ShapeOverlay.h"
+#include "ui/touch/ScrollIndicators.h"
 #include "ui/SwitchCurtain.h"
 #include "ui/Viewer.h"
 #include "ui/comp/CompPage.h"
@@ -147,6 +148,10 @@ bool MainWindow::rebuildUi(bool retry)
     if (m_keyPicker || m_keyPickWindow) stopKeyPick();
     // The window's still on top: everything below changes unseen, then it fades (reduced motion: it simply goes)
     SwitchCurtain* curtain = SwitchCurtain::cover(this);
+    // Phone or tablet: the desktop's arrangement first (the shell hands every widget back to its desktop place, the
+    // state below is the desktop's); the form comes back at the end, with a shell of the new widgets
+    const LayoutForm form = layoutForm();
+    if (form != LayoutForm::Desktop) setLayoutForm(LayoutForm::Desktop);
 
     // ---- What the widgets hold
     // The layout as the user sees it: the large viewer and a viewer moved to a second monitor give their space back
@@ -279,6 +284,8 @@ bool MainWindow::rebuildUi(bool retry)
         if (QAction* a = InputBindings::instance().action("key_trainer")) a->trigger();
     updatePageButtons();
     updateRenderCacheBar();
+    if (form != LayoutForm::Desktop) setLayoutForm(form);
+    applyCenterPlayhead();
     if (curtain) curtain->reveal();
     return true;
 }
@@ -375,6 +382,13 @@ void MainWindow::tearDownUi()
     m_topBarLayout = nullptr;
     m_voiceoverAction = nullptr;
     m_voiceoverEscape = nullptr;
+    // The phone/tablet shell (rebuildUi went back to the desktop form first: these are the desktop's or gone)
+    m_topBar = m_pageBar = m_phoneTopBar = nullptr;
+    m_addMediaButton = nullptr;
+    m_phone = nullptr;
+    delete std::exchange(m_scrollIndicators, nullptr);
+    dropShellHomes(); // (its places and toggles were the old widgets')
+    m_shellShortcuts.clear();
 }
 
 // ---------- Restart for the interface size ----------

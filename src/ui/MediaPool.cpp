@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/MediaPool.h"
 #include "core/NestedLoop.h"
+
+#include "engine/ContentUri.h"
 #include "ui/SplitterMemory.h"
 
 #include "app/Theme.h"
@@ -81,6 +83,7 @@ namespace {
 
 constexpr QSize kThumb{144, 81};
 constexpr QSize kListIcon{64, 36};
+constexpr QSize kCompactThumb{96, 54}; // the phone's tiles (the pictures are kThumb, drawn smaller)
 constexpr int kColorBarH = 6; // Clip color as a stripe at the bottom of the thumbnail
 
 class MediaList : public QListWidget {
@@ -524,6 +527,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     titleRow->addWidget(m_filterReset);
 
     m_list = new MediaList;
+    m_list->setObjectName("pool_list");
     m_list->setItemDelegate(new SearchHitDelegate(m_list)); // search hits: the matched part, the bin of other bins' hits
     m_list->setMovement(QListView::Static);
     m_list->setResizeMode(QListView::Adjust);
@@ -696,6 +700,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
 
 void MediaPool::importDialog()
 {
+    if (m_importHandler) {
+        m_importHandler();
+        return;
+    }
     const QStringList files = QFileDialog::getOpenFileNames(
         this, T("Medien importieren"), QString(),
         T("Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "
@@ -790,8 +798,11 @@ QVector<MediaPool::Unreadable> MediaPool::addFiles(const QStringList& paths, int
     return failed;
 }
 
-void MediaPool::importFiles(const QStringList& paths)
+void MediaPool::importFiles(const QStringList& picked)
 {
+    // Android's picker hands out content:// addresses: the file's path where the app may read it, else the address
+    // (read through ContentResolver, its permission kept for later runs)
+    const QStringList paths = ContentUri::forImport(picked);
     // Folder (e.g. dragged from the file manager) including subfolders as bins
     QStringList files, subtitles;
     for (const QString& path : paths) {
@@ -1016,8 +1027,9 @@ void MediaPool::applyViewMode()
         m_list->setSpacing(1);
     } else {
         m_list->setViewMode(QListView::IconMode);
-        m_list->setIconSize(kThumb);
-        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 52)); // two text lines + the item border
+        const QSize thumb = m_compactTiles ? kCompactThumb : kThumb;
+        m_list->setIconSize(thumb);
+        m_list->setGridSize(tileSize());
         m_list->setWordWrap(true);
         m_list->setSpacing(0);
     }
@@ -1026,6 +1038,26 @@ void MediaPool::applyViewMode()
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
+}
+
+QSize MediaPool::tileSize() const
+{
+    if (!m_compactTiles) return QSize(kThumb.width() + 16, kThumb.height() + 52); // two text lines + the item border
+    return QSize(kCompactThumb.width() + 12, kCompactThumb.height() + 2 * m_list->fontMetrics().height() + 12);
+}
+
+void MediaPool::setGeneratorsLast(bool on)
+{
+    if (m_generatorsLast == on) return;
+    m_generatorsLast = on;
+    rebuildClips();
+}
+
+void MediaPool::setCompactTiles(bool on)
+{
+    if (m_compactTiles == on) return;
+    m_compactTiles = on;
+    applyViewMode();
 }
 
 MediaPool::~MediaPool()
@@ -1174,7 +1206,9 @@ void MediaPool::rebuildClips()
     };
     if (!words.isEmpty()) requestFormats();
 
-    if (m_currentBin == 0 && !narrowed) {
+    // The generators (text, shape): the Master's first tiles; the phone shows the clips first (setGeneratorsLast)
+    const auto addGenerators = [&] {
+        if (m_currentBin != 0 || narrowed) return;
         // Title generator at the front of the Master (in DaVinci under Effects > Titles > "Text"); drag = 5 s title
         QPixmap titleThumb(kThumb);
         titleThumb.fill(Theme::titleClip.darker(135));
@@ -1210,7 +1244,8 @@ void MediaPool::rebuildClips()
         shapeItem->setData(Qt::UserRole, QString(ShapeItem));
         shapeItem->setToolTip(T("Form (Kreis, Rechteck, Pfeil, Stern …) – in die Timeline ziehen"));
         m_list->addItem(shapeItem);
-    }
+    };
+    if (!m_generatorsLast) addGenerators();
 
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
     QVector<const Sequence*> seqs;
@@ -1280,12 +1315,12 @@ void MediaPool::rebuildClips()
         m_items.insert(m->path, item);
         updateItem(m->path);
     }
+    if (m_generatorsLast) addGenerators();
     for (int i = 0; i < m_list->count(); ++i)
         if (selected.contains(m_list->item(i)->data(Qt::UserRole).toString())) m_list->item(i)->setSelected(true);
     m_list->verticalScrollBar()->setValue(scroll);
     if (m_viewMode != ViewMode::List) // room for the bin line of other bins' hits
-        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 52
-                                                             + (anySubtitle ? SearchHitDelegate::subtitleHeight(m_list->font()) : 0)));
+        m_list->setGridSize(tileSize() + QSize(0, anySubtitle ? SearchHitDelegate::subtitleHeight(m_list->font()) : 0));
     m_emptyHint->setText(filter.active() ? T("Nichts passt zum Filter") : T("Nichts passt zur Suche"));
     m_emptyHint->setVisible(narrowed && m_list->count() == 0);
 }

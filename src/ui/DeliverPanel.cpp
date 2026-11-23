@@ -38,12 +38,16 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStandardItemModel>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QScrollBar>
 #include <QScrollArea>
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+#endif
 #include <QEvent>
 #include <algorithm>
 
@@ -111,6 +115,35 @@ public:
 
 } // namespace
 
+QString DeliverPanel::defaultFolder()
+{
+    // The folder the last export went to; else the videos folder. Android: the shared one (/storage/emulated/0/
+    // Movies, the gallery sees it), not the app's own (writableLocation's first answer, hidden from the user)
+    const QString last = QSettings().value("render/folder").toString();
+#ifdef Q_OS_ANDROID
+    // (an app-private folder remembered from an older build: hidden from the gallery and the user, not kept)
+    const auto appPrivate = [](const QString& dir) {
+        return dir.contains("/Android/data/") || dir.contains("/data/user/") || dir.contains("/data/data/");
+    };
+    if (!last.isEmpty() && QFileInfo(last).isDir() && !appPrivate(last)) return last;
+    const QStringList all = QStandardPaths::standardLocations(QStandardPaths::MoviesLocation);
+    for (const QString& dir : all)
+        if (!appPrivate(dir)) return dir;
+    // Qt listed only the app's own folders: Android's shared Movies folder from the system
+    const QJniObject kind = QJniObject::getStaticObjectField<jstring>("android/os/Environment", "DIRECTORY_MOVIES");
+    const QJniObject movies = QJniObject::callStaticObjectMethod(
+        "android/os/Environment", "getExternalStoragePublicDirectory", "(Ljava/lang/String;)Ljava/io/File;",
+        kind.object<jstring>());
+    if (movies.isValid()) {
+        const QString path = movies.callObjectMethod<jstring>("getAbsolutePath").toString();
+        if (!path.isEmpty()) return path;
+    }
+#else
+    if (!last.isEmpty() && QFileInfo(last).isDir()) return last;
+#endif
+    return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+}
+
 DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue)
     : QWidget(parent), m_project(project), m_queue(queue ? queue : new RenderQueue(project, this))
 {
@@ -135,8 +168,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
     m_name = new QLineEdit;
     m_name->setObjectName("renderName");
     m_name->setToolTip(T("Name der Datei. Leer oder unverändert: der Name der geöffneten Timeline"));
-    m_folder = new QLineEdit(QDir::toNativeSeparators(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)));
+    m_folder = new QLineEdit(QDir::toNativeSeparators(defaultFolder()));
     m_folder->setObjectName("renderFolder");
+    // A folder typed by hand is the user's choice too (a review render or a preset never sets it)
+    connect(m_folder, &QLineEdit::editingFinished, this, [this] {
+        const QString dir = QDir::fromNativeSeparators(m_folder->text().trimmed());
+        if (!dir.isEmpty() && QFileInfo(dir).isDir() && dir != QDir::fromNativeSeparators(defaultFolder()))
+            QSettings().setValue("render/folder", dir);
+    });
     auto* browseBtn = new QToolButton;
     browseBtn->setText(T("Durchsuchen…"));
     connect(browseBtn, &QToolButton::clicked, this, &DeliverPanel::browse);
@@ -152,7 +191,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
         if (!HardwareEncoders::formatAvailable(f.id)) continue; // e.g. MP3 with an FFmpeg without LAME
         if (m_format->count() > 0 && group(renderFormat(m_format->itemData(m_format->count() - 1).toString())) != group(f))
             m_format->insertSeparator(m_format->count());
-        m_format->addItem(T(f.label), QString(f.id));
+        // Where s264 is the only H.264 there is (Android: FFmpeg without x264, no hardware probe), it is not the
+        // "experimental" choice beside a proven one but the H.264 format itself: named so (the tool tip says what it is)
+#ifdef Q_OS_ANDROID
+        if (QLatin1String(f.id) == QLatin1String("s264") && !HardwareEncoders::formatAvailable("h264"))
+            m_format->addItem(QStringLiteral("H.264 (MP4, s264)"), QString(f.id));
+        else
+#endif
+            m_format->addItem(T(f.label), QString(f.id));
         if (QLatin1String(f.id) == QLatin1String("s264"))
             m_format->setItemData(m_format->count() - 1,
                                   T("s264 ist schneidis H.264-Encoder und noch experimentell: in zwei Durchgängen schneller "
@@ -838,7 +884,9 @@ void DeliverPanel::updateRateLabel()
 void DeliverPanel::browse()
 {
     const QString dir = QFileDialog::getExistingDirectory(this, T("Speicherort wählen"), m_folder->text());
-    if (!dir.isEmpty()) m_folder->setText(QDir::toNativeSeparators(dir));
+    if (dir.isEmpty()) return;
+    m_folder->setText(QDir::toNativeSeparators(dir));
+    QSettings().setValue("render/folder", dir); // the user's choice: the next start offers it again
 }
 
 // ---------- Queue

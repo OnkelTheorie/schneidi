@@ -16,6 +16,7 @@
 #include "core/Voiceover.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/touch/TouchGestures.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QContextMenuEvent>
@@ -54,6 +55,11 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
     setFocusPolicy(Qt::ClickFocus);
     setAcceptDrops(true); // effect sounds
     setMinimumSize(320, kRulerH + kMinLaneH + 16);
+    // Fingers: one = the mouse code (select, points, pen draws), two = zoom around the fingers and scroll with them;
+    // begun on the track headers: the lane height
+    auto* touch = new TouchGestures(this);
+    touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
+    touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
     m_hbar = new QScrollBar(Qt::Horizontal, this);
     m_vbar = new QScrollBar(Qt::Vertical, this);
     m_vbar->hide();
@@ -1134,6 +1140,26 @@ void StudioTracks::leaveEvent(QEvent* e)
 {
     m_hover = {-1, -1};
     QWidget::leaveEvent(e);
+}
+
+void StudioTracks::pinchView(const QPointF& from, const QPointF& to, double scale)
+{
+    if (m_pinch == Pinch::None) {
+        m_pinch = from.x() < kHeaderW && from.y() >= kRulerH ? Pinch::Height : Pinch::View;
+        m_pinchH = m_laneH;
+    }
+    if (m_pinch == Pinch::Height) { // like the track-height wheel: from the height shown now
+        m_pinchH = std::clamp(m_pinchH * scale, double(kMinUserLaneH), double(kMaxUserLaneH));
+        setLaneHeight(int(std::lround(m_pinchH)));
+        syncScrollBars();
+        return;
+    }
+    const double ax = std::max<double>(kHeaderW, from.x()), bx = std::max<double>(kHeaderW, to.x());
+    m_view.setZoomAround(m_view.pxPerFrame * scale, frameAt(ax), bx - kHeaderW);
+    if (m_vbar->isVisible())
+        m_scrollY = std::clamp(m_scrollY - int(std::lround(to.y() - from.y())), 0, m_vbar->maximum());
+    syncScrollBars();
+    update();
 }
 
 void StudioTracks::wheelEvent(QWheelEvent* e)

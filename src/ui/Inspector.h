@@ -39,6 +39,9 @@ public:
     void setFrameSize(const QSize& size);
     // Builds the pages still waiting for their first use (title, transition, subtitles; see ensurePage)
     void ensureAllPages();
+    // The Audio tab at its top (the Volume section first): the phone's Volume tool. False = no audio clip selected
+    bool showAudio();
+    int currentPage() const; // tests: 0 video, 1 audio, …
 
 public slots:
     // Playhead (timeline frame): values show the interpolated value there, keyframes are set there
@@ -51,6 +54,7 @@ public slots:
     void setKeyPicking(bool on);
 
 protected:
+    void showEvent(QShowEvent* event) override;
     // Dragging the header of an effect section changes the effect order
     bool eventFilter(QObject* watched, QEvent* event) override;
 

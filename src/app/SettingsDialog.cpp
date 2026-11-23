@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/SettingsDialog.h"
 #include "app/UiScale.h"
+#include "ui/touch/Touch.h"
 
 #include "app/AiSettingsPage.h"
 #include "app/StartTemplatesPage.h"
@@ -34,6 +35,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QThread>
 #include <QVBoxLayout>
@@ -44,10 +46,11 @@ namespace {
 // their fields below them, hints wrap), so nothing is cut off at the right in a long language with a large font
 class PageArea : public QScrollArea {
 public:
+    bool narrow = false; // a phone: as narrow as the screen, long rows wrap (SettingsDialog::fitScreen)
     QSize minimumSizeHint() const override
     {
         QSize s = QScrollArea::minimumSizeHint();
-        if (widget())
+        if (widget() && !narrow)
             s.setWidth(std::max(s.width(), widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width()
                                                + 2 * frameWidth()));
         return s;
@@ -103,6 +106,33 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
     resize(640, 680);
 }
 
+void SettingsDialog::fitScreen(const QRect& room)
+{
+    if (!room.isValid() || (room.width() >= width() && room.height() >= height())) return;
+    // A phone: the dialog fills the screen (its OK/Cancel at the bottom in sight), the pages scroll inside it and get
+    // as narrow as the screen - a long label puts its field below it, what is still wider scrolls sideways
+    for (QWidget* area : {m_generalTab, m_templatesTab, m_aiTab})
+        if (auto* page = dynamic_cast<PageArea*>(area)) {
+            // (the page's room: the screen less the dialog's, the page's and its group boxes' margins)
+            Touch::narrowForPhone(page->widget(), room.width() - 72);
+            page->narrow = true;
+            page->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            page->updateGeometry();
+        }
+    m_tabs->setUsesScrollButtons(true);
+    m_tabs->tabBar()->setExpanding(false);
+    setMinimumSize(0, 0);
+    setMaximumSize(room.size());
+    setGeometry(room);
+    m_fitRoom = room;
+}
+
+void SettingsDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    if (m_fitRoom.isValid()) setGeometry(m_fitRoom); // (a platform may place a new window by its own idea)
+}
+
 QWidget* SettingsDialog::buildGeneral()
 {
     auto* page = new QWidget;
@@ -128,6 +158,33 @@ QWidget* SettingsDialog::buildGeneral()
         m_uiScale->addItem(percent(saved), saved);
     m_uiScale->setCurrentIndex(std::max(0, m_uiScale->findData(UiScale::saved())));
     form->addRow(T("Größe"), m_uiScale);
+    // Larger controls for fingers (ui/touch/Touch.h); auto = on for a touchscreen without mouse or touchpad
+    m_touchMode = new QComboBox;
+    m_touchMode->setObjectName("settings_touch_mode");
+    m_touchMode->addItem(T("Automatisch"), int(Touch::Mode::Auto));
+    m_touchMode->addItem(T("Immer"), int(Touch::Mode::On));
+    m_touchMode->addItem(T("Nie"), int(Touch::Mode::Off));
+    m_touchMode->setCurrentIndex(std::max(0, m_touchMode->findData(int(Touch::savedMode()))));
+    m_touchMode->setToolTip(T("Größere Knöpfe, Zeilen, Spuren und Griffe für die Bedienung mit dem Finger. "
+                              "Automatisch: an bei einem Touchscreen ohne Maus und Touchpad."));
+    form->addRow(T("Touch-Modus"), m_touchMode);
+    // Viewer, timeline and tools stacked, one panel at a time (MainWindow::phoneLayoutWanted)
+    m_phoneLayout = new QComboBox;
+    m_phoneLayout->setObjectName("settings_phone_layout");
+    m_phoneLayout->addItem(T("Automatisch"), QString());
+    m_phoneLayout->addItem(T("Handy"), QStringLiteral("phone"));
+    m_phoneLayout->addItem(T("Tablet"), QStringLiteral("tablet"));
+    m_phoneLayout->addItem(T("Desktop"), QStringLiteral("desktop"));
+    m_phoneLayout->setCurrentIndex(std::max(0, m_phoneLayout->findData(savedPhoneLayout())));
+    m_phoneLayout->setToolTip(T("Handy: Vorschau, Timeline und Werkzeuge untereinander, ein Bereich nach dem anderen. "
+                                "Tablet: Werkzeugleiste links, ein Bereich fest daneben. Automatisch: nach der "
+                                "Fenstergröße, wechselt sofort."));
+    form->addRow(T("Anordnung"), m_phoneLayout);
+    m_reduceMotion = new QCheckBox(T("Bewegungen reduzieren"));
+    m_reduceMotion->setObjectName("settings_reduce_motion");
+    m_reduceMotion->setChecked(QSettings().value("ui/reduceMotion", false).toBool());
+    m_reduceMotion->setToolTip(T("Wechselt die Anordnung (Fenstergröße, Klapphandy), ohne Überblenden."));
+    form->addRow(QString(), m_reduceMotion);
     // The page shown at the start and on New Project (MainWindow::showStartPage); filled by setStartPages
     m_startPage = new QComboBox;
     m_startPage->setObjectName("settings_start_page");
@@ -257,6 +314,45 @@ QWidget* SettingsDialog::buildGeneral()
     xform->addRow(hint(T("Proxy-Medien sind kleine Kopien für eine flüssige Vorschau, der Export nutzt immer die "
                          "Originale. Von Hand: Wiedergabe › Proxy-Medien erzeugen oder Rechtsklick auf einen Clip.")));
     lay->addWidget(proxyBox);
+
+    // Timeline: the playhead fixed in the middle (phones' editors) - automatic = on the phone and tablet forms
+    auto* timelineBox = new QGroupBox(T("Timeline"));
+    auto* tform = new QFormLayout(timelineBox);
+    m_centerPlayhead = new QComboBox;
+    m_centerPlayhead->setObjectName("settings_center_playhead");
+    m_centerPlayhead->addItem(T("Automatisch (Handy, Tablet)"), QString());
+    m_centerPlayhead->addItem(T("Immer"), QStringLiteral("on"));
+    m_centerPlayhead->addItem(T("Nie"), QStringLiteral("off"));
+    m_centerPlayhead->setCurrentIndex(std::max(0, m_centerPlayhead->findData(QSettings().value("timeline/centerPlayhead").toString())));
+    tform->addRow(T("Abspielmarke in der Mitte"), m_centerPlayhead);
+    tform->addRow(hint(T("Die Abspielmarke bleibt in der Mitte stehen, die Timeline gleitet darunter: zur Seite ziehen "
+                         "spult, beim Abspielen läuft die Timeline mit.")));
+    // Phone and tablet: how a finger handles clips (as phone editors do by default)
+    m_magneticMain = new QCheckBox(T("Hauptspur magnetisch"));
+    m_magneticMain->setObjectName("settings_magnetic_main");
+    m_magneticMain->setChecked(QSettings().value("timeline/magneticMain", true).toBool());
+    m_magneticMain->setToolTip(T("Auf Handy und Tablet: Clips auf V1 liegen ohne Lücken hintereinander; gedrückt halten "
+                                 "und ziehen sortiert sie um. Aus: Lücken erlaubt wie am Desktop."));
+    tform->addRow(QString(), m_magneticMain);
+    m_clipDrag = new QComboBox;
+    m_clipDrag->setObjectName("settings_clip_drag");
+    m_clipDrag->addItem(T("Gedrückt halten"), QStringLiteral("hold"));
+    m_clipDrag->addItem(T("Sofort"), QStringLiteral("instant"));
+    m_clipDrag->setCurrentIndex(std::max(0, m_clipDrag->findData(QSettings().value("timeline/clipDrag", "hold").toString())));
+    m_clipDrag->setToolTip(T("Auf Handy und Tablet. Gedrückt halten: Wischen spult auch über Clips, ein Clip bewegt sich "
+                             "erst nach kurzem Halten. Sofort: ein Finger auf einem Clip verschiebt ihn gleich."));
+    tform->addRow(T("Clip ziehen"), m_clipDrag);
+    // How far the timeline glides after a flick of the finger (phone and tablet)
+    m_momentum = new QComboBox;
+    m_momentum->setObjectName("settings_timeline_momentum");
+    m_momentum->addItem(T("Wenig"), QStringLiteral("low"));
+    m_momentum->addItem(T("Normal"), QStringLiteral("normal"));
+    m_momentum->addItem(T("Aus"), QStringLiteral("off"));
+    m_momentum->setCurrentIndex(std::max(0, m_momentum->findData(QSettings().value("timeline/momentum", "low").toString())));
+    m_momentum->setToolTip(T("Wie weit die Timeline nach einem schnellen Wischen weitergleitet. Langsames Ziehen hält an "
+                             "Clip-Anfängen und -Enden kurz an."));
+    tform->addRow(T("Schwung der Timeline"), m_momentum);
+    lay->addWidget(timelineBox);
 
     // Compositing: new nodes from the node search linked at once (default) or only added
     auto* comp = new QGroupBox(T("Compositing"));
@@ -418,3 +514,31 @@ QString SettingsDialog::startPage() const { return m_startPage->currentData().to
 QString SettingsDialog::language() const { return m_language->currentData().toString(); }
 
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
+bool SettingsDialog::magneticMain() const { return m_magneticMain->isChecked(); }
+QString SettingsDialog::clipDrag() const { return m_clipDrag->currentData().toString(); }
+QString SettingsDialog::timelineMomentum() const { return m_momentum->currentData().toString(); }
+
+QString SettingsDialog::centerPlayhead() const { return m_centerPlayhead->currentData().toString(); }
+
+bool SettingsDialog::reduceMotion() const { return m_reduceMotion->isChecked(); }
+
+QString SettingsDialog::phoneLayout() const { return m_phoneLayout->currentData().toString(); }
+
+QString SettingsDialog::savedPhoneLayout()
+{
+    QSettings s;
+    const QString v = s.value("ui/layoutForm").toString();
+    if (v == "phone" || v == "tablet" || v == "desktop") return v;
+    const QString old = s.value("ui/phoneLayout").toString(); // (the 0.26 prototype's on/off)
+    return old == "on" ? QStringLiteral("phone") : old == "off" ? QStringLiteral("desktop") : QString();
+}
+
+void SettingsDialog::setSavedPhoneLayout(const QString& value)
+{
+    QSettings s;
+    s.remove("ui/phoneLayout");
+    if (value.isEmpty()) s.remove("ui/layoutForm");
+    else s.setValue("ui/layoutForm", value);
+}
+
+Touch::Mode SettingsDialog::touchMode() const { return Touch::Mode(m_touchMode->currentData().toInt()); }

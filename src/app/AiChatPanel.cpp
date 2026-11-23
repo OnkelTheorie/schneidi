@@ -28,6 +28,7 @@
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
+#include <QSslSocket>
 #include <QVBoxLayout>
 
 namespace {
@@ -439,14 +440,14 @@ AiChatPanel::AiChatPanel(AiChat* chat, QWidget* parent) : QWidget(parent), m_cha
     outer->setSpacing(0);
 
     // Header like the other panels: title, provider and model, menu
-    auto* header = new QWidget;
+    auto* header = m_header = new QWidget;
     header->setObjectName("ai_chat_header");
     header->setAttribute(Qt::WA_StyledBackground);
     header->setStyleSheet(QString("#ai_chat_header { background: %1; }").arg(Theme::panelHeader.name()));
     auto* head = new QHBoxLayout(header);
     head->setContentsMargins(0, 0, 4, 0);
     head->setSpacing(4);
-    auto* title = new QLabel(T("KI"));
+    auto* title = m_headerTitle = new QLabel(T("KI"));
     title->setObjectName("PanelTitle");
     m_provider = dimLabel();
     m_provider->setWordWrap(false);
@@ -760,11 +761,36 @@ QWidget* AiChatPanel::buildSetup()
     auto* lay = new QVBoxLayout(page);
     lay->setContentsMargins(10, 10, 10, 10);
     lay->setSpacing(8);
-    auto* title = new QLabel(T("KI-Chat einrichten"));
+    auto* title = m_setupTitle = new QLabel(T("KI-Chat einrichten"));
     title->setStyleSheet("font-weight: 600;");
     lay->addWidget(title);
-    lay->addWidget(dimLabel(T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … "
-                              "Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.")));
+    m_setupText = dimLabel(T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … "
+                             "Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst."));
+    lay->addWidget(m_setupText);
+    // A phone (setCompact): first only a button; the form after it (or a note when this build cannot connect)
+    m_setupIntro = new QWidget;
+    m_setupIntro->setObjectName("ai_setup_intro");
+    auto* introLay = new QVBoxLayout(m_setupIntro);
+    introLay->setContentsMargins(0, 4, 0, 0);
+    m_setupOpen = new QPushButton(T("KI einrichten"));
+    m_setupOpen->setObjectName("ai_setup_open");
+    m_setupOpen->setStyleSheet(Theme::primaryButtonStyle());
+    introLay->addWidget(m_setupOpen);
+    auto* noTls = dimLabel(T("Auf diesem Gerät geht der KI-Chat noch nicht: dieser App fehlt die verschlüsselte "
+                             "Verbindung zu den KI-Anbietern. Alles andere geht ohne KI."));
+    noTls->setObjectName("ai_setup_no_tls");
+    introLay->addWidget(noTls);
+    m_setupIntro->hide();
+    lay->addWidget(m_setupIntro);
+    m_setupBody = new QWidget;
+    auto* bodyLay = new QVBoxLayout(m_setupBody);
+    bodyLay->setContentsMargins(0, 0, 0, 0);
+    bodyLay->setSpacing(8);
+    lay->addWidget(m_setupBody);
+    connect(m_setupOpen, &QPushButton::clicked, this, [this] {
+        m_setupIntro->hide();
+        m_setupBody->show();
+    });
     auto* form = new QFormLayout;
     form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     form->setRowWrapPolicy(QFormLayout::WrapAllRows); // labels above the fields: the panel is narrow
@@ -788,7 +814,7 @@ QWidget* AiChatPanel::buildSetup()
     m_setupModel->setEditable(true);
     m_setupModel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     form->addRow(T("Modell"), m_setupModel);
-    lay->addLayout(form);
+    bodyLay->addLayout(form);
     auto* start = new QPushButton(T("Chat starten"));
     start->setObjectName("ai_setup_start");
     start->setDefault(true);
@@ -819,11 +845,11 @@ QWidget* AiChatPanel::buildSetup()
     auto* row = new QHBoxLayout;
     row->addWidget(start);
     row->addStretch(1);
-    lay->addLayout(row);
+    bodyLay->addLayout(row);
     m_setupMessage = new QLabel;
     m_setupMessage->setWordWrap(true);
     m_setupMessage->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
-    lay->addWidget(m_setupMessage);
+    bodyLay->addWidget(m_setupMessage);
     auto* more = new QLabel(QString("<a href=\"settings\">%1</a>").arg(T("Mehr in Einstellungen › KI …").toHtmlEscaped()));
     more->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
     connect(more, &QLabel::linkActivated, this, &AiChatPanel::settingsRequested);
@@ -855,14 +881,53 @@ void AiChatPanel::setupProviderChanged()
                                     .arg(p && !p->keyEnv.isEmpty() ? p->keyEnv : QString("SCHNEIDI_AI_KEY")));
 }
 
+bool AiChatPanel::canConnect()
+{
+    if (qEnvironmentVariableIntValue("SCHNEIDI_AI_NO_TLS") == 1) return false;
+    return QSslSocket::supportsSsl();
+}
+
+void AiChatPanel::setCompact(bool on)
+{
+    m_compact = on;
+    if (m_headerTitle) m_headerTitle->setVisible(!on);
+    if (m_left) m_left->setVisible(!on);
+    if (m_right) m_right->setVisible(!on);
+    // (the touch style's menu arrow stood alone under the "⋯")
+    m_menuButton->setStyleSheet(on ? QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }") : QString());
+    const bool tls = canConnect();
+    m_setupIntro->setVisible(on);
+    m_setupOpen->setVisible(tls);
+    if (auto* note = m_setupIntro->findChild<QLabel*>("ai_setup_no_tls")) note->setVisible(!tls);
+    m_setupBody->setVisible(!on);
+    if (m_setupTitle) m_setupTitle->setText(on ? T("Mit der KI schneiden") : T("KI-Chat einrichten"));
+    // (no choice in sight on the phone's first view: the text without "choose which AI")
+    m_setupText->setText(on ? T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, "
+                                "Farbe … Jede Änderung kannst du rückgängig machen.")
+                            : T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … "
+                                "Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst."));
+    updateCompactHeader();
+}
+
+void AiChatPanel::updateCompactHeader()
+{
+    // The phone's sheet has its title; while the setup shows, the chat's header row (model, menu) is an empty bar
+    if (m_header) m_header->setVisible(!(m_compact && setupShown()));
+}
+
 void AiChatPanel::showSetup(bool on, const QString& provider, const QString& message)
 {
     if (on) {
         if (const int i = m_setupProvider->findData(provider); i >= 0) m_setupProvider->setCurrentIndex(i);
         setupProviderChanged();
         m_setupMessage->setText(message);
+        if (m_compact && !message.isEmpty() && canConnect()) { // (a message about the form: the form in sight)
+            m_setupIntro->hide();
+            m_setupBody->show();
+        }
     }
     m_pages->setCurrentIndex(on ? 1 : 0);
+    updateCompactHeader();
 }
 
 bool AiChatPanel::setupShown() const { return m_pages->currentIndex() == 1; }

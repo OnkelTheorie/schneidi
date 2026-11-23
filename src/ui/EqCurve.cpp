@@ -28,6 +28,7 @@ bool hasGain(const EqBand& b) { return b.kind != EqBand::Kind::HighPass && b.kin
 
 EqCurve::EqCurve(Editor* editor, int track, QWidget* parent) : QWidget(parent), m_editor(editor), m_track(track)
 {
+    setProperty("touchDrags", true); // a finger drag edits the curve, never scrolls the panel around it
     setMinimumSize(320, 160);
     setMouseTracking(true);
     setToolTip(T("Punkte ziehen: seitlich = Frequenz, hoch/runter = Verstärkung\nDoppelklick auf einen Punkt = 0 dB"));

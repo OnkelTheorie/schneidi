@@ -6,6 +6,8 @@
 #include "core/StartupTrace.h"
 #include "engine/CpuPath.h"
 #include "ui/ViewerOverlay.h"
+#include "ui/touch/Touch.h"
+#include "ui/touch/TouchGestures.h"
 
 #include <QTabletEvent>
 #ifdef SCHNEIDI_HAVE_RHI
@@ -150,6 +152,14 @@ FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::vie
 {
     setMouseTracking(true);
     setAttribute(Qt::WA_OpaquePaintEvent);
+    // Fingers: one = the mouse code (overlay, pan while zoomed in, drag out), two = pinch zoom + pan, double tap = fit
+    auto* touch = new TouchGestures(this);
+    touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchZoom(from, to, scale); };
+    touch->onDoubleTap = [this](const QPointF&) {
+        if (m_image.isNull()) return false;
+        setZoom(kFit);
+        return true;
+    };
     std::function<Probe()> probe;
 #ifdef SCHNEIDI_HAVE_RHI
     probe = [] { return FrameViewRhiSurface::probe(); };
@@ -711,6 +721,12 @@ void FrameView::mouseMoveEvent(QMouseEvent* e)
     m_pressPos = QPoint(-1, -1);
     QMimeData* mime = dragData();
     if (!mime) return;
+    if (Touch::isTouch(e)) { // a finger: no QDrag (its loop waits for a mouse), the touch layer carries it
+        const QPixmap pix = m_image.isNull() ? QPixmap()
+            : QPixmap::fromImage(m_image.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        TouchDrag::start(this, mime, pix, e->globalPosition());
+        return;
+    }
     auto* drag = new QDrag(this);
     drag->setMimeData(mime);
     if (!m_image.isNull())
@@ -739,8 +755,7 @@ void FrameView::wheelEvent(QWheelEvent* e)
         return;
     }
     // From the zoom shown (fit included) to the next step up resp. down; below the fit size = fit
-    const double fitZoom = std::min(double(width()) / frameSize().width(), double(height()) / frameSize().height())
-                           * devicePixelRatioF();
+    const double fitZoom = this->fitZoom();
     const double now = m_zoom == kFit ? fitZoom : m_zoom;
     double next = now;
     if (e->angleDelta().y() > 0) {
@@ -754,6 +769,28 @@ void FrameView::wheelEvent(QWheelEvent* e)
     }
     setZoom(next);
     e->accept();
+}
+
+double FrameView::fitZoom() const
+{
+    const QSize fs = frameSize();
+    if (fs.isEmpty() || width() <= 0 || height() <= 0) return 1.0;
+    return std::min(double(width()) / fs.width(), double(height()) / fs.height()) * devicePixelRatioF();
+}
+
+void FrameView::pinchZoom(const QPointF& from, const QPointF& to, double scale)
+{
+    if (m_image.isNull() || frameSize().isEmpty()) return;
+    const double fit = fitZoom();
+    const double next = (m_zoom == kFit ? fit : m_zoom) * scale;
+    // At or below the fit size: fit (centred, no pan)
+    if (next <= fit * 1.001) {
+        setZoom(kFit);
+        return;
+    }
+    const QPointF under = widgetToFrame(from); // the picture point between the fingers stays between them
+    setZoom(next);
+    setPan(m_pan + (to - frameToWidget(under)));
 }
 
 void FrameView::leaveEvent(QEvent*)

@@ -10,7 +10,7 @@ struct ViewState {
     static constexpr double kMaxPxPerFrame = 60.0;  // individual frames wide
 
     double pxPerFrame = 4.0; // Zoom
-    double leftFrame = 0.0;  // frame at the left edge (scroll X), never < 0
+    double leftFrame = 0.0;  // frame at the left edge (scroll X), never < 0 (the centre mode: room before frame 0)
     int scrollY = 0;         // pixels (scroll Y through the tracks)
     int videoTrackHeight = 64;
     int audioTrackHeight = 52;

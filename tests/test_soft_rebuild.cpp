@@ -28,11 +28,13 @@
 #include "ui/BackgroundJobs.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
+#include "ui/phone/PhoneShell.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QLabel>
 #include <QDir>
@@ -330,6 +332,68 @@ void testSwitch(Engine& engine)
     CHECK_EQ(w.uiGeneration(), generation);
 }
 
+void testPhone(Engine& engine)
+{
+    // The phone form by the window's size (as on Android): a language and design switch keeps the form - a shell of
+    // the new widgets - and the state; the desktop comes back as it was when the window is wide again
+    MainWindow::setFormBySize(true);
+    chooseLook("de", "dark-orange");
+    I18n::switchTo("de");
+    Theme::switchToSaved(*qApp);
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(411, 760);
+    w.show();
+    QTest::qWait(400); // (the form follows the size a moment later)
+    CHECK(w.layoutForm() == MainWindow::LayoutForm::Phone);
+    Project* project = w.liveProject();
+    w.editor()->addTitle(0, -1, 0, TitleKind::Text);
+    w.editor()->addTitle(150, -1, 0, TitleKind::Text);
+    const int steps = project->undoStack()->index();
+    const QString clips = Check::dump(project->timeline());
+    QSet<int> selected;
+    for (const Clip& c : project->timeline().video.value(0).clips) selected = {c.id};
+    w.liveSelection()->set(selected);
+    engine.seek(60);
+    QTest::qWait(300);
+    TimelineView* tv = timeline(w);
+    CHECK(tv && tv->playhead() == 60);
+    const double zoom = tv ? tv->view().pxPerFrame : 0;
+    PhoneShell* shell = w.phoneShell();
+    CHECK(shell);
+    dump(&w, "5-phone-de");
+
+    chooseLook("en", "hell");
+    CHECK(w.rebuildUi(false));
+    QTest::qWait(400);
+    CHECK(w.layoutForm() == MainWindow::LayoutForm::Phone);
+    CHECK(w.phoneShell() && w.phoneShell() != shell);
+    CHECK_EQ(I18n::installedLanguage(), QString("en"));
+    CHECK_EQ(Theme::window, QColor(Theme::defaults("hell").value("window")));
+    CHECK_EQ(project->undoStack()->index(), steps);
+    CHECK_EQ(Check::dump(project->timeline()), clips);
+    CHECK_EQ(w.liveSelection()->ids(), selected);
+    tv = timeline(w);
+    if (CHECK(tv)) {
+        CHECK_EQ(tv->playhead(), 60);
+        CHECK_EQ(tv->view().pxPerFrame, zoom);
+    }
+    if (auto* add = w.addMediaButton(); CHECK(add)) CHECK_EQ(add->text(), QString("Add videos")); // the shell's own, new
+    dump(&w, "6-phone-en");
+
+    // Wide again: the desktop form, with its page bar in the new language
+    w.resize(1600, 950);
+    QTest::qWait(400);
+    CHECK(w.layoutForm() == MainWindow::LayoutForm::Desktop);
+    CHECK_EQ(firstMenu(w), QString("&File"));
+    CHECK_EQ(Check::dump(project->timeline()), clips);
+    dump(&w, "7-desktop-en");
+
+    chooseLook("de", "dark-orange");
+    CHECK(w.rebuildUi(false));
+    MainWindow::setFormBySize(std::nullopt);
+}
+
 void testResume(Engine& engine)
 {
     // A restart's resume file, written from one window and read by a new one (as main.cpp does with --resume)
@@ -414,6 +478,7 @@ int main(int argc, char** argv)
     QSettings().remove("panels");
     QSettings().remove("layout");
     testSwitch(engine);
+    testPhone(engine);
     testResume(engine);
     return Check::result();
 }

@@ -79,6 +79,8 @@ void TimelineView::paintEvent(QPaintEvent*)
             finishRename(false);
         }
     }
+    // The centre mode: whatever moved the view (a zoom around the fingers, the wheel), the playhead stays in the middle
+    if (m_center) m_view.leftFrame = centreLeft();
     QPainter p(this);
     p.fillRect(rect(), Theme::timelineBg);
     drawTracks(p);
@@ -103,6 +105,8 @@ void TimelineView::paintEvent(QPaintEvent*)
                     p.drawRect(r.adjusted(0, 0, -1, -1));
                 }
             }
+    drawTouchSelection(p);
+    drawReorder(p);
     drawPlayhead(p);
     drawAiArrows(p);
 }
@@ -129,7 +133,7 @@ void TimelineView::drawRuler(QPainter& p)
 
     p.save();
     p.setClipRect(kHeaderW, 0, width() - kHeaderW, kRulerH);
-    const int first = int(m_view.leftFrame) / minor * minor;
+    const int first = std::max(0, int(m_view.leftFrame) / minor * minor); // (the centre mode shows room before 0)
     const int last = int(xToFrame(width())) + minor;
     QFont f = font();
     f.setPointSizeF(7.5);
@@ -141,7 +145,11 @@ void TimelineView::drawRuler(QPainter& p)
         p.drawLine(x, kRulerH - (isMajor ? 12 : 5), x, kRulerH - 1);
         if (isMajor) {
             p.setPen(Theme::textDim);
-            p.drawText(x + 3, 12, timeText(fr));
+            // The centred mode (phones): short seconds "00:07" when the marks are a second or more apart
+            const QString text = m_center && major >= fps
+                                     ? QString("%1:%2").arg(fr / fps / 60, 2, 10, QChar('0')).arg(fr / fps % 60, 2, 10, QChar('0'))
+                                     : timeText(fr);
+            p.drawText(x + 3, 12, text);
         }
     }
     // Render cache (like DaVinci): red = still to be rendered, blue = done
@@ -172,6 +180,11 @@ void TimelineView::drawRuler(QPainter& p)
 
     // Top left corner: current timecode as in DaVinci, in the recessed field
     p.fillRect(QRect(0, 0, kHeaderW, kRulerH), Theme::panelHeader);
+    if (compactHeaders()) { // no room for it (phone): the viewer shows the time right above
+        p.setPen(Theme::border);
+        p.drawLine(kHeaderW - 1, 0, kHeaderW - 1, height());
+        return;
+    }
     const QRect tcBox(4, 4, kHeaderW - 9, kRulerH - 8);
     p.fillRect(tcBox, Theme::well);
     p.setPen(Theme::border);
@@ -282,7 +295,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (!row && ref.kind == TrackKind::Audio && !allRows.isEmpty()) { // track is created on release
                 const Row& last = allRows.last();
                 const int extra = ref.index - int(tl.audio.size());
-                row = Row{ref, last.y + last.h + extra * m_view.audioTrackHeight, m_view.audioTrackHeight};
+                row = Row{ref, last.y + last.h + extra * audioRowHeight(), audioRowHeight()};
             }
             if (!row) continue;
             Clip moved = *c;
@@ -302,7 +315,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (kind == TrackKind::Audio && !allRows.isEmpty()) {
                 const Row& last = allRows.last();
                 const int missing = std::max(0, idx - int(tl.audio.size()));
-                return Row{{kind, idx}, last.y + last.h + missing * m_view.audioTrackHeight, m_view.audioTrackHeight};
+                return Row{{kind, idx}, last.y + last.h + missing * audioRowHeight(), audioRowHeight()};
             }
             return std::nullopt;
         };
@@ -481,7 +494,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             p.drawText(tr, Qt::AlignTop | Qt::AlignHCenter, p.fontMetrics().elidedText(name, Qt::ElideRight, tr.width()));
         }
         p.setClipping(false);
-        p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0xff, 0xff, 0xff, 200), 1));
+        p.setPen(selected ? QPen(Theme::clipSelected, m_fingerPans ? 3.5 : 2) : QPen(QColor(0xff, 0xff, 0xff, 200), 1));
         p.drawPath(path);
         p.restore();
     }
@@ -733,7 +746,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     if (!ghost && m_retimeClips.contains(c.id)) drawRetime(p, r, c);
 
-    p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
+    p.setPen(selected ? QPen(Theme::clipSelected, m_fingerPans ? 3.5 : 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
     // Placeholder: dashed outline inside the border (the selection stays visible around it); the clip a Media Pool
     // file is dragged onto (drag-fill) gets a filled highlight
@@ -774,9 +787,10 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         if (r.width() >= 56) drawCurveIcon(p, r, m_curves.contains(c.id));
     }
 
-    // Fade handles (white grips at the top corners), only under the mouse resp. while dragging
+    // Fade handles (white grips at the top corners), only under the mouse (a finger: on the selected clip) resp.
+    // while dragging
     const bool fading = m_drag == Drag::Fade && m_fade.clipId == c.id;
-    if (!ghost && r.width() >= 24 && m_tool == Tool::Select && (c.id == m_hoverClip || fading)) {
+    if (!ghost && r.width() >= 24 && m_tool == Tool::Select && (fadeHandlesShown(c.id) || fading)) {
         p.setPen(QPen(QColor(0, 0, 0, 160), 1));
         p.setBrush(QColor(0xf4, 0xf4, 0xf4));
         for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End})
@@ -1001,7 +1015,8 @@ void TimelineView::drawHeaders(QPainter& p)
         p.drawRect(shortBox.adjusted(0, 0, -1, -1));
         p.setPen(Theme::text);
         p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
-        if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
+        const bool compact = compactHeaders(); // phone: short name, eye/mute, small marks; the rest in the menu
+        if (!compact && !(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
             f.setBold(false);
             f.setPointSizeF(8.5);
             p.setFont(f);
@@ -1013,8 +1028,9 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setPointSizeF(7.5);
         p.setFont(f);
         p.setPen(Theme::textDim);
-        p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
-                   (t.clips.size() == 1 ? T("1 Clip") : T("%1 Clips").arg(t.clips.size())));
+        if (!compact)
+            p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
+                       (t.clips.size() == 1 ? T("1 Clip") : T("%1 Clips").arg(t.clips.size())));
 
         // Button: video = eye (hide), audio = M (mute)
         const QRect b = headerButton(row);
@@ -1028,6 +1044,14 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         p.setFont(f);
         p.drawText(b, Qt::AlignCenter, row.ref.kind == TrackKind::Video ? (t.hidden ? "⊘" : "◉") : "M");
+        if (compact) { // only what is on: locked, armed for a voice-over (small, below)
+            const QRect mark(6, row.y + 28, 18, 14);
+            if (t.locked && mark.bottom() < row.y + row.h) drawLock(p, mark, Theme::primary);
+            if (row.ref.kind == TrackKind::Audio && row.ref.index == m_armedTrack && mark.bottom() < row.y + row.h)
+                drawMic(p, mark.translated(22, 0), Theme::recording);
+            p.setRenderHint(QPainter::Antialiasing, false);
+            continue;
+        }
         // Lock: locked = bright on orange
         const QRect lb = lockButton(row);
         p.setPen(Qt::NoPen);
@@ -1085,8 +1109,8 @@ std::optional<TimelineView::Row> TimelineView::liveTakeRow() const
     if (all.isEmpty()) return std::nullopt;
     const Row& last = all.last();
     const int missing = std::max(0, m_liveTrack - int(m_editor->project()->timeline().audio.size()));
-    return Row{{TrackKind::Audio, m_liveTrack}, last.y + last.h + missing * m_view.audioTrackHeight,
-               m_view.audioTrackHeight};
+    return Row{{TrackKind::Audio, m_liveTrack}, last.y + last.h + missing * audioRowHeight(),
+               audioRowHeight()};
 }
 
 // The take while it is recorded: a red clip from the playhead to where the input has got, its waveform from the
@@ -1166,6 +1190,35 @@ void TimelineView::drawRubber(QPainter& p)
 
 void TimelineView::drawPlayhead(QPainter& p)
 {
+    if (m_center) {
+        // A thin line in the text color, fixed in the lanes' middle; at the ruler's left the time "00:07 / 00:32"
+        const int x = int(std::lround(frameToX(m_playhead)));
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(Theme::text, 2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(x, kRulerH - 6, x, height() - 2);
+        const int fps = std::max(1, m_editor->project()->fps());
+        const auto mmss = [fps](int f) {
+            const int sec = std::max(0, f) / fps;
+            return QString("%1:%2").arg(sec / 60, 2, 10, QChar('0')).arg(sec % 60, 2, 10, QChar('0'));
+        };
+        const QString now = mmss(m_playhead), total = " / " + mmss(TimelineOps::endFrame(m_editor->project()->timeline()));
+        QFont f = font();
+        f.setPixelSize(11);
+        f.setBold(true);
+        const QFontMetrics fm(f);
+        QFont g = f;
+        g.setBold(false);
+        const int w = fm.horizontalAdvance(now) + QFontMetrics(g).horizontalAdvance(total) + 12;
+        const QRect box(kHeaderW, 0, w, kRulerH - 1);
+        p.fillRect(box, Theme::ruler);
+        p.setFont(f);
+        p.setPen(Theme::text);
+        p.drawText(box.adjusted(6, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, now);
+        p.setFont(g);
+        p.setPen(Theme::textDim);
+        p.drawText(box.adjusted(6 + fm.horizontalAdvance(now), 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, total);
+        return;
+    }
     const int x = int(frameToX(m_playhead));
     if (x < kHeaderW || x > width()) return;
     p.setPen(QPen(Theme::playhead, 1));
@@ -1251,5 +1304,81 @@ void TimelineView::drawTrackAutomation(QPainter& p, const Row& row, const Track&
     if (curve.isEmpty()) p.setPen(QPen(Theme::alpha(Theme::secondary, 140), 1.0, Qt::DashLine));
     else p.setPen(QPen(Theme::alpha(Theme::secondary, 200), 1.2));
     p.drawPolyline(line);
+    p.restore();
+}
+
+// Phones: the selected clip framed in the text color with a trim handle at each end (a finger's width to grab)
+void TimelineView::drawTouchSelection(QPainter& p)
+{
+    if (!m_fingerPans || !m_holdToMove || m_reorder.on) return;
+    const QSet<int> sel = m_editor->selection()->ids();
+    if (sel.isEmpty()) return;
+    const Timeline& tl = m_editor->project()->timeline();
+    p.save();
+    p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
+    p.setRenderHint(QPainter::Antialiasing);
+    for (const Row& row : rows())
+        for (const Clip& c : tl.track(row.ref).clips) {
+            if (!sel.contains(c.id)) continue;
+            const QRect r = clipRect(row, c);
+            if (r.right() < kHeaderW || r.left() > width()) continue;
+            p.setPen(QPen(Theme::text, 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(QRectF(r).adjusted(1, 1, -1, -1), 3, 3);
+            const int hw = 12;
+            for (const QRect h : {QRect(r.left(), r.top(), hw, r.height()), QRect(r.right() - hw + 1, r.top(), hw, r.height())}) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(Theme::text);
+                p.drawRoundedRect(h, 3, 3);
+                p.setPen(QPen(Theme::window, 2, Qt::SolidLine, Qt::RoundCap));
+                const int cx = h.center().x(), half = std::min(8, h.height() / 4);
+                p.drawLine(cx, h.center().y() - half, cx, h.center().y() + half);
+            }
+        }
+    p.restore();
+}
+
+// The magnetic main track while a clip is held: its clips as small pictures in a row, the held one under the finger,
+// the others making room where it would land
+void TimelineView::drawReorder(QPainter& p)
+{
+    if (!m_reorder.on) return;
+    const auto row = rowFor({TrackKind::Video, 0});
+    if (!row) return;
+    const Timeline& tl = m_editor->project()->timeline();
+    p.save();
+    const QRect lane(kHeaderW, row->y, width() - kHeaderW, row->h - row->lane);
+    p.setClipRect(lane);
+    p.fillRect(lane, Theme::trackBg);
+    p.setRenderHint(QPainter::Antialiasing);
+    const int tw = m_reorder.tw, th = std::max(20, lane.height() - 10), gap = 4;
+    const auto tile = [&](const Clip& c, double x, bool held) {
+        const QRectF r(x, lane.top() + (lane.height() - th) / 2.0, tw, th);
+        QImage img = m_cache ? m_cache->cachedThumbnail(c.mediaPath, c.in) : QImage();
+        if (img.isNull() && m_cache) img = m_cache->thumbnail(c.mediaPath, c.in, 1);
+        QPainterPath clip;
+        clip.addRoundedRect(r, 4, 4);
+        p.save();
+        p.setClipPath(clip, Qt::IntersectClip);
+        p.fillRect(r, clipColor(m_editor->project(), c, &tl.video[0]));
+        if (!img.isNull()) {
+            const QSize s = img.size().scaled(r.size().toSize(), Qt::KeepAspectRatioByExpanding);
+            p.drawImage(QRectF(r.center().x() - s.width() / 2.0, r.center().y() - s.height() / 2.0, s.width(), s.height()), img);
+        }
+        p.restore();
+        if (held) {
+            p.setPen(QPen(Theme::text, 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(r.adjusted(-1, -1, 1, 1), 4, 4);
+        }
+    };
+    int slot = 0;
+    for (int id : m_reorder.order) {
+        if (id == m_reorder.id) continue;
+        if (slot == m_reorder.to) ++slot; // the room where the held one lands
+        if (const Clip* c = TimelineOps::findClip(tl, id)) tile(*c, m_reorder.base + slot * (tw + gap), false);
+        ++slot;
+    }
+    if (const Clip* c = TimelineOps::findClip(tl, m_reorder.id)) tile(*c, m_reorder.fingerX - tw / 2.0, true);
     p.restore();
 }
