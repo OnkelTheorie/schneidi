@@ -123,6 +123,9 @@ private:
     QWidget* m_setupBody = nullptr;  // the form, the start button and its message
     class QLabel* m_setupTitle = nullptr;
     class QLabel* m_headerTitle = nullptr;
+    QWidget* m_header = nullptr;
+    class QLabel* m_setupText = nullptr;
+    void updateCompactHeader();
     class QPushButton* m_setupOpen = nullptr;
     bool m_compact = false;
     QLabel* m_setupKeyHint = nullptr;

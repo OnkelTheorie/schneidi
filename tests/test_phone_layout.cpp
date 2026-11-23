@@ -318,6 +318,7 @@ void testWindow(Engine& engine, const QSize& size)
             auto* intro = chat->findChild<QWidget*>("ai_setup_intro");
             if (CHECK(key && open && intro) && intro->isVisibleTo(chat)) {
                 CHECK(!key->isVisibleTo(chat));
+                if (auto* header = chat->findChild<QWidget*>("ai_chat_header")) CHECK(!header->isVisibleTo(chat));
                 if (open->isVisibleTo(chat)) {
                     QTest::mouseClick(open, Qt::LeftButton);
                     CHECK(key->isVisibleTo(chat) && !intro->isVisibleTo(chat));

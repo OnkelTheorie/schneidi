@@ -3726,5 +3726,6 @@
  "Geteilt": "Split",
  "KI einrichten": "Set up AI",
  "Mit der KI schneiden": "Edit with AI",
- "Auf diesem Gerät geht der KI-Chat noch nicht: dieser App fehlt die verschlüsselte Verbindung zu den KI-Anbietern. Alles andere geht ohne KI.": "The AI chat does not work on this device yet: this app lacks the encrypted connection to the AI providers. Everything else works without AI."
+ "Auf diesem Gerät geht der KI-Chat noch nicht: dieser App fehlt die verschlüsselte Verbindung zu den KI-Anbietern. Alles andere geht ohne KI.": "The AI chat does not work on this device yet: this app lacks the encrypted connection to the AI providers. Everything else works without AI.",
+ "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen.": "The AI edits your open project: cutting, removing pauses, titles, sound, color … You can undo every change."
 }

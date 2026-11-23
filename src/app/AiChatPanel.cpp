@@ -440,7 +440,7 @@ AiChatPanel::AiChatPanel(AiChat* chat, QWidget* parent) : QWidget(parent), m_cha
     outer->setSpacing(0);
 
     // Header like the other panels: title, provider and model, menu
-    auto* header = new QWidget;
+    auto* header = m_header = new QWidget;
     header->setObjectName("ai_chat_header");
     header->setAttribute(Qt::WA_StyledBackground);
     header->setStyleSheet(QString("#ai_chat_header { background: %1; }").arg(Theme::panelHeader.name()));
@@ -764,8 +764,9 @@ QWidget* AiChatPanel::buildSetup()
     auto* title = m_setupTitle = new QLabel(T("KI-Chat einrichten"));
     title->setStyleSheet("font-weight: 600;");
     lay->addWidget(title);
-    lay->addWidget(dimLabel(T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … "
-                              "Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.")));
+    m_setupText = dimLabel(T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … "
+                             "Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst."));
+    lay->addWidget(m_setupText);
     // A phone (setCompact): first only a button; the form after it (or a note when this build cannot connect)
     m_setupIntro = new QWidget;
     m_setupIntro->setObjectName("ai_setup_intro");
@@ -900,6 +901,18 @@ void AiChatPanel::setCompact(bool on)
     if (auto* note = m_setupIntro->findChild<QLabel*>("ai_setup_no_tls")) note->setVisible(!tls);
     m_setupBody->setVisible(!on);
     if (m_setupTitle) m_setupTitle->setText(on ? T("Mit der KI schneiden") : T("KI-Chat einrichten"));
+    // (no choice in sight on the phone's first view: the text without "choose which AI")
+    m_setupText->setText(on ? T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, "
+                                "Farbe … Jede Änderung kannst du rückgängig machen.")
+                            : T("Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … "
+                                "Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst."));
+    updateCompactHeader();
+}
+
+void AiChatPanel::updateCompactHeader()
+{
+    // The phone's sheet has its title; while the setup shows, the chat's header row (model, menu) is an empty bar
+    if (m_header) m_header->setVisible(!(m_compact && setupShown()));
 }
 
 void AiChatPanel::showSetup(bool on, const QString& provider, const QString& message)
@@ -914,6 +927,7 @@ void AiChatPanel::showSetup(bool on, const QString& provider, const QString& mes
         }
     }
     m_pages->setCurrentIndex(on ? 1 : 0);
+    updateCompactHeader();
 }
 
 bool AiChatPanel::setupShown() const { return m_pages->currentIndex() == 1; }
