@@ -6,6 +6,7 @@
 
 #include "app/AiChatPanel.h"
 #include "app/AiLog.h"
+#include "app/InputBindings.h"
 #include "app/KeyTrainer.h"
 #include "app/SessionResume.h"
 #include "app/Theme.h"
@@ -194,6 +195,8 @@ bool MainWindow::rebuildUi(bool retry)
     const bool updateBar = m_updateBar && !m_updateBar->isHidden() && m_updateNews.size() == 2;
     const bool scaleBar = m_scaleBar && !m_scaleBar->isHidden();
     const bool multicam = m_multicamMode;
+    const bool aiLogOpen = m_aiLogView && m_aiLogView->isVisible();
+    const bool keyTrainerOpen = m_keyTrainer && m_keyTrainer->isVisible();
 
     // ---- The old widgets go
     tearDownUi();
@@ -270,6 +273,10 @@ bool MainWindow::rebuildUi(bool retry)
     if (drawing && m_page == Page::Edit) setDrawTool(true);
     if (large) setViewerLarge(true);
     if (fullScreenViewer) setViewerFullScreen(true);
+    // Windows of their own that were open: again, in the new look
+    if (aiLogOpen) showAiLog();
+    if (keyTrainerOpen)
+        if (QAction* a = InputBindings::instance().action("key_trainer")) a->trigger();
     updatePageButtons();
     updateRenderCacheBar();
     if (curtain) curtain->reveal();

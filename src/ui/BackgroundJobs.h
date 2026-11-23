@@ -37,8 +37,8 @@ public:
     // The job ended: `doneText` is shown for holdMs(), then the job goes (a new setJob in between keeps it)
     void finishJob(const QString& id, const QString& doneText);
     void removeJob(const QString& id);
-    // The jobs still running and the notices of `other` (the indicator the window had before it built its widgets
-    // again, MainWindow::rebuildUi); their next update brings their text in the new language
+    // Every job of `other` - running, notices, just finished (their done text) - (the indicator the window had
+    // before it built its widgets again, MainWindow::rebuildUi); their next update brings their text in the new language
     void adoptJobs(const BackgroundJobs& other);
 
     QStringList jobIds() const;

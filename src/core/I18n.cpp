@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QLibraryInfo>
 #include <QLocale>
+#include <QMutex>
 #include <QSettings>
 #include <QTranslator>
 
@@ -18,6 +19,16 @@ namespace {
 
 constexpr const char* kContext = "schneidi";
 QString s_installed; // language of this run (install), may differ from the setting (--lang)
+QMutex s_installedMutex; // switchTo changes it while other threads read it (decimalPoint in a render or export)
+
+QString installedOrSaved()
+{
+    {
+        const QMutexLocker lock(&s_installedMutex);
+        if (!s_installed.isEmpty()) return s_installed;
+    }
+    return I18n::language();
+}
 QList<QTranslator*> s_translators; // what install() put in (switchTo takes them out again)
 QString s_savedAtInstall;          // the setting when install() ran (a --lang of this run is no change of it)
 std::atomic<int> s_generation{0};  // install()/switchTo: I18n::Cached tables are made again
@@ -122,7 +133,10 @@ void install(const QString& override)
 {
     auto* app = QCoreApplication::instance();
     const QString lang = known(override) ? override : language();
-    s_installed = lang;
+    {
+        const QMutexLocker lock(&s_installedMutex);
+        s_installed = lang;
+    }
     s_savedAtInstall = language();
     ++s_generation;
     // Numbers in spin boxes, dates and sorting follow the UI language, not the system (English UI on a German
@@ -163,7 +177,8 @@ bool switchTo(const QString& lang)
         delete t;
     }
     s_translators.clear();
-    prepareEnvironment(lang); // the platform theme's own texts (KDE message box buttons) in new dialogs
+    // (Not LANGUAGE for the platform theme's own texts, prepareEnvironment: changing the environment while other
+    // threads run is not safe; KDE's own message box buttons keep the start's language until the next start)
     install(lang);
     return true;
 }
@@ -195,11 +210,11 @@ int generation() { return s_generation.load(); }
 
 bool languageChanged() { return !s_savedAtInstall.isEmpty() && language() != s_savedAtInstall; } // (never installed: no)
 
-QString installedLanguage() { return s_installed.isEmpty() ? language() : s_installed; }
+QString installedLanguage() { return installedOrSaved(); }
 
-QChar decimalPoint() { return decimalPointOf(s_installed.isEmpty() ? language() : s_installed); }
+QChar decimalPoint() { return decimalPointOf(installedOrSaved()); }
 
-QChar groupSeparator() { return groupSeparatorOf(s_installed.isEmpty() ? language() : s_installed); }
+QChar groupSeparator() { return groupSeparatorOf(installedOrSaved()); }
 
 } // namespace I18n
 

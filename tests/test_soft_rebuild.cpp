@@ -25,6 +25,7 @@
 #include "engine/Engine.h"
 #include "engine/RenderQueue.h"
 #include "engine/picture/CompNodes.h"
+#include "ui/BackgroundJobs.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "ui/Viewer.h"
@@ -254,6 +255,18 @@ void testSwitch(Engine& engine)
     if (QAction* loop = InputBindings::instance().action("loop_inout"); CHECK(loop)) loop->setChecked(true);
     CHECK(engine.looping());
     engine.setColorBypass(true);
+    // ... jobs in the corner (one running, one just done) and the key trainer open: all of it again afterwards
+    if (auto* jobs = w.findChild<BackgroundJobs*>(); CHECK(jobs)) {
+        jobs->setHoldMs(60000);
+        BackgroundJobs::Job job;
+        job.text = "läuft";
+        job.fraction = 0.5;
+        jobs->setJob("test_running", job);
+        jobs->finishJob("test_done", "fertig");
+    }
+    if (QAction* trainer = InputBindings::instance().action("key_trainer"); CHECK(trainer)) trainer->trigger();
+    QTest::qWait(20);
+    CHECK(w.findChild<QWidget*>("key_trainer") && w.findChild<QWidget*>("key_trainer")->isVisible());
     int children = 0;
     for (const char* design : {"midnight", "dark-orange"}) {
         chooseLook(children ? "de" : "en", design);
@@ -262,6 +275,11 @@ void testSwitch(Engine& engine)
         CHECK(w.currentPage() == Page::Edit);
         CHECK(w.compPage() && w.studioPage() && w.directPage());
         CHECK_EQ(Check::dump(project->timeline()), clipsBefore);
+        if (auto* jobs = w.findChild<BackgroundJobs*>(); CHECK(jobs)) {
+            CHECK(jobs->hasJob("test_running"));
+            CHECK(jobs->hasJob("test_done"));
+        }
+        CHECK(w.findChild<QWidget*>("key_trainer") && w.findChild<QWidget*>("key_trainer")->isVisible());
         CHECK(engine.looping());
         CHECK(InputBindings::instance().action("loop_inout")->isChecked());
         CHECK(engine.colorBypass());
