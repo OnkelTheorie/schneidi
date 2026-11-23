@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStringList>
 
 #include <algorithm>
@@ -172,6 +173,85 @@ int dropPromptEcho(QVector<Word>& words, const QString& prompt)
         words.remove(i, echo.size());
         dropped += int(echo.size());
     }
+    return dropped;
+}
+
+namespace {
+// A word as it is compared for repeats: lower case, letters and digits only
+QString plainWord(QString t)
+{
+    t = t.toLower();
+    t.removeIf([](QChar c) { return !c.isLetterOrNumber(); });
+    return t;
+}
+
+// Words that differ between a and b (Levenshtein over whole words)
+qsizetype wordDistance(const QStringList& a, const QStringList& b)
+{
+    QVector<qsizetype> row(b.size() + 1);
+    for (qsizetype j = 0; j <= b.size(); ++j) row[j] = j;
+    for (qsizetype i = 1; i <= a.size(); ++i) {
+        qsizetype diag = row[0];
+        row[0] = i;
+        for (qsizetype j = 1; j <= b.size(); ++j) {
+            const qsizetype up = row[j];
+            row[j] = std::min({row[j] + 1, row[j - 1] + 1, diag + (a[i - 1] == b[j - 1] ? 0 : 1)});
+            diag = up;
+        }
+    }
+    return row[b.size()];
+}
+
+// b repeats a: enough words, enough different ones, at most a fifth of them changed
+bool repeats(const QStringList& a, const QStringList& b, int minWords)
+{
+    if (a.size() < minWords || b.size() < minWords) return false;
+    if (QSet<QString>(a.begin(), a.end()).size() < 3) return false;
+    const qsizetype longer = std::max(a.size(), b.size());
+    return wordDistance(a, b) * 5 <= longer;
+}
+} // namespace
+
+int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous, int minWords)
+{
+    first = std::clamp<qsizetype>(first, 0, words.size());
+    QStringList piece;
+    QVector<qsizetype> at; // index in words of each plain word (punctuation-only words are left out)
+    for (qsizetype i = first; i < words.size(); ++i)
+        if (const QString p = plainWord(words[i].text); !p.isEmpty()) piece << p, at << i;
+    if (piece.isEmpty()) return 0;
+    // The piece before written once more: the whole piece goes
+    if (previous >= 0 && previous < first) {
+        QStringList before;
+        for (qsizetype i = previous; i < first; ++i)
+            if (const QString p = plainWord(words[i].text); !p.isEmpty()) before << p;
+        if (repeats(before, piece, minWords)) {
+            const int n = int(words.size() - first);
+            words.remove(first, n);
+            return n;
+        }
+    }
+    // The piece written twice: a split near the middle whose halves match (the second may be a little shorter or
+    // longer); the best of them: a copy that starts like the piece, then the fewest changes
+    const qsizetype n = piece.size();
+    const qsizetype slack = std::max<qsizetype>(1, n / 10);
+    qsizetype best = -1, bestScore = 0;
+    for (qsizetype k = n / 2 - slack; k <= (n + 1) / 2 + slack; ++k) {
+        if (k < minWords || n - k < minWords) continue;
+        const QStringList a = piece.mid(0, k), b = piece.mid(k);
+        if (!repeats(a, b, minWords)) continue;
+        const qsizetype score = wordDistance(a, b) + (a.first() == b.first() ? 0 : n);
+        if (best < 0 || score < bestScore) best = k, bestScore = score;
+    }
+    if (best < 0) return 0;
+    const qsizetype cut = at[best]; // first word of the copy
+    const qint64 end = words.last().to;
+    const int dropped = int(words.size() - cut);
+    words.remove(cut, dropped);
+    // The first copy has the right times, the copy is squeezed into the end of the piece (measured 23.11. with DTW:
+    // "Es gibt Familienstrände, …" 4.5-17.3 s, the copy's 19 words all at 17.3 s): the times stay; the last word may
+    // last to where the copy ended (it was cut short at the copy's start, spokenEnd keeps it to its spoken length)
+    words.last().to = std::max(words.last().to, end);
     return dropped;
 }
 

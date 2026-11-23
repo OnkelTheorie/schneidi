@@ -527,8 +527,8 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         notes << "no speech found; singing or shouts in music: try again with music:true";
     }
     if (r.dropped > 0 && !Transcript::isSilent(r.levels))
-        notes << QString("%1 word(s) of whisper's well-known made-up lines left out (\"Untertitelung des ZDF\", "
-                         "\"Thanks for watching\" in silence)")
+        notes << QString("%1 word(s) of whisper's well-known made-up lines (\"Untertitelung des ZDF\", \"Thanks for "
+                         "watching\" in silence) or of a piece it wrote twice left out")
                      .arg(r.dropped);
     if (!notes.isEmpty()) out["notes"] = notes;
     if (a["words"].toBool()) {

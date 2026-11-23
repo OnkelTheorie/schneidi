@@ -167,6 +167,68 @@ void testPieces()
         QVector<Transcript::Word> kept{{0, 100, "Wie"}, {100, 200, "geht's?"}};
         CHECK_EQ(Transcript::dropPromptEcho(kept, "Hallo, wie geht's? Gut, und dir? Ja, passt."), 0);
     }
+    // Repeats (whisper turbo wrote a piece's whole text twice, or the piece before once more)
+    {
+        const auto words = [](const QString& text, qint64 from, qint64 step) {
+            QVector<Transcript::Word> out;
+            for (const QString& s : text.split(' ', Qt::SkipEmptyParts)) out << Transcript::Word{from, from + step, s}, from += step;
+            return out;
+        };
+        const auto text = [](const QVector<Transcript::Word>& ws, qsizetype from = 0) {
+            QStringList out;
+            for (qsizetype i = from; i < ws.size(); ++i) out << ws[i].text;
+            return out.join(' ');
+        };
+        const QString twice = "Das Schwimmen ist hier sicher. Es gibt Familienstrände. Das Schwimmen ist hier sicher. Es "
+                              "gibt Familienstrände.";
+        // One piece written twice: the first copy stays with its times (whisper squeezed the copy into the piece's
+        // end: 19 words at 17.3 s with DTW, measured 23.11.), its last word lasting to the copy's end
+        QVector<Transcript::Word> w = words(twice, 0, 1000);
+        for (int i = 8; i < w.size(); ++i) w[i].from = 8000 + (i - 8) * 10, w[i].to = w[i].from + 10;
+        CHECK_EQ(Transcript::dropRepeats(w, 0), 8);
+        CHECK_EQ(text(w), QString("Das Schwimmen ist hier sicher. Es gibt Familienstrände."));
+        CHECK_EQ(w.first().from, 0);
+        CHECK_EQ(w[3].from, 3000);
+        CHECK_EQ(w.last().from, 7000);
+        CHECK_EQ(w.last().to, 8080);
+        // The copy a word short or with one word changed (case and punctuation do not count)
+        w = words("Das Schwimmen ist hier sicher, es gibt Familienstrände das schwimmen ist hier sicher es gibt", 0, 500);
+        CHECK_EQ(Transcript::dropRepeats(w, 0), 7);
+        CHECK_EQ(text(w), QString("Das Schwimmen ist hier sicher, es gibt Familienstrände"));
+        w = words("Das Schwimmen ist hier sicher. Es gibt Familienstrände. Das Schwimmen ist hier sicher. Es gibt "
+                  "Strände.",
+                  0, 500);
+        CHECK_EQ(Transcript::dropRepeats(w, 0), 8);
+        // Not a repeat: a short phrase said twice, a chant, different halves, too many changes
+        for (const QString& kept : {QString("Ja, ja. Ja, ja."), QString("Go, go, go! Go, go, go!"),
+                                    QString("ja ja ja ja ja ja ja ja"),
+                                    QString("Wir gehen jetzt rein und dann gucken wir mal was da so los ist"),
+                                    QString("eins zwei drei vier fünf sechs eins zwei sieben acht neun zehn")}) {
+            QVector<Transcript::Word> k = words(kept, 0, 300);
+            CHECK_EQ(Transcript::dropRepeats(k, 0), 0);
+            CHECK_EQ(text(k), kept);
+        }
+        // The piece before written once more: the whole piece goes; times of the piece before stay
+        QVector<Transcript::Word> two = words("Legierungen sind eine Mischung aus Metallen.", 0, 400);
+        two += words("Legierungen sind eine Mischung aus Metallen.", 10000, 400);
+        CHECK_EQ(Transcript::dropRepeats(two, 6, 0), 6);
+        CHECK_EQ(two.size(), 6);
+        CHECK_EQ(two.last().to, 2400);
+        // ... but a new piece that only starts alike stays, and so does one without a piece before
+        two = words("Legierungen sind eine Mischung aus Metallen.", 0, 400);
+        two += words("Legierungen sind eine Mischung aus zwei oder mehr Metallen, vergessen Sie das nicht.", 10000, 400);
+        CHECK_EQ(Transcript::dropRepeats(two, 6, 0), 0);
+        CHECK_EQ(two.size(), 19);
+        QVector<Transcript::Word> alone = words("Legierungen sind eine Mischung aus Metallen.", 0, 400);
+        CHECK_EQ(Transcript::dropRepeats(alone, 0, -1), 0);
+        // Only the newest piece is looked at: a doubled earlier piece stays as it was
+        QVector<Transcript::Word> later = words(twice, 0, 500);
+        const qsizetype second = later.size();
+        later += words("Und jetzt etwas ganz anderes zum Schluss.", 20000, 400);
+        CHECK_EQ(Transcript::dropRepeats(later, second, 0), 0);
+        CHECK_EQ(later.size(), second + 7);
+        CHECK(Transcript::dropRepeats(later, later.size()) == 0); // an empty piece
+    }
     // DTW presets by model file, speech segments of the voice detection program
     CHECK_EQ(Transcriber::dtwPreset("/x/ggml-large-v3-q5_0.bin"), QString("large.v3"));
     CHECK_EQ(Transcriber::dtwPreset("ggml-large-v3-turbo-q5_0.bin"), QString("large.v3.turbo"));

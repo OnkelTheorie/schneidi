@@ -191,6 +191,7 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         } else {
             m_result.dropped = Transcript::dropHallucinations(m_result.words, m_result.levels);
         }
+        m_result.dropped += m_repeats;
         if (!m_prompt.isEmpty() && !m_request.verbatim) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_prompt);
         Transcript::fitToSpeech(m_result.words, m_result.levels);
         const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
@@ -486,19 +487,27 @@ bool Transcriber::readResult(QString* error)
 {
     m_result.words.clear();
     m_result.language.clear();
+    m_repeats = 0;
     if (m_pieces.isEmpty()) {
         QFile json(m_tmp->filePath("out.json"));
         if (!json.open(QIODevice::ReadOnly)) return false;
-        return Transcript::parseWhisperJson(json.readAll(), &m_result, error);
+        if (!Transcript::parseWhisperJson(json.readAll(), &m_result, error)) return false;
+        m_repeats = Transcript::dropRepeats(m_result.words, 0);
+        return true;
     }
+    qsizetype previous = -1; // the words of the last piece that had any
     for (int i = 0; i < m_pieces.size(); ++i) {
         QFile json(m_tmp->filePath(QString("piece_%1.wav.json").arg(i, 3, 10, QChar('0'))));
         if (!json.open(QIODevice::ReadOnly)) return false;
         const Transcript::Piece& piece = m_pieces[i];
+        const qsizetype first = m_result.words.size();
         if (!Transcript::appendWhisperJson(json.readAll(),
                                            [&piece](qint64 t, bool end) { return Transcript::pieceTime(piece, t, end); },
                                            &m_result, error))
             return false;
+        // A piece written twice, or the piece before written once more (whisper turbo)
+        m_repeats += Transcript::dropRepeats(m_result.words, first, previous);
+        if (m_result.words.size() > first) previous = first;
     }
     return true;
 }

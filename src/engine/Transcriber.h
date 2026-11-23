@@ -123,6 +123,7 @@ private:
     // (piece_000.wav …); empty = the whole sound at once.
     QVector<Transcript::Piece> m_pieces;
     QString m_prompt; // the starting text whisper got (its echo is removed)
+    int m_repeats = 0; // words of repeated pieces readResult dropped (Transcript::dropRepeats)
     int m_piece = 0, m_lastPercent = 0; // piece whisper works on now (its progress restarts per file)
     QString m_speedModel; // model file (+ "@gpu"): the key of its measured speed (whisperSeconds)
     bool m_cpuOnly = false; // whisper failed on the graphics card: this request runs on the CPU (-ng)

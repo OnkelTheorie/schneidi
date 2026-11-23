@@ -67,6 +67,15 @@ QVector<Piece> speechPieces(const QVector<QPair<qint64, qint64>>& segments, qint
 // how many
 int dropPromptEcho(QVector<Word>& words, const QString& prompt);
 
+// whisper (turbo above all) now and then writes a piece's whole text twice ("A B C. A B C.", 3 of 69 German FLEURS
+// pieces, measured 22.11.) or writes the piece before it once more (its text is the context of the next piece).
+// words[first..] are the words of one piece, words[previous..first) those of the piece before it (previous < 0 =
+// none). A copy is dropped when it has at least `minWords` words, three of them different ("ja ja ja ja" said twice
+// stays), and differs from what it repeats in at most a fifth of its words. Of a piece written twice the first copy
+// stays with its times (whisper squeezes the copy into the end of the piece), its last word lasting to the copy's
+// end; a piece that only repeats the one before goes whole. Returns how many words were dropped.
+int dropRepeats(QVector<Word>& words, qsizetype first, qsizetype previous = -1, int minWords = 4);
+
 
 // Words -> subtitle cues (timeline frames, `offset` added): a cue ends after a sentence, before a pause longer than
 // `maxGapMs` or before it would get longer than `maxChars`; long pauses are not shown (a word lasts at most
