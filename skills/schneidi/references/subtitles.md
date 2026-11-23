@@ -2,8 +2,10 @@
 
 ## Speech to text
 - `transcribe` runs whisper locally. It needs the whisper extension: `extensions` without arguments shows what is
-  installed. Missing → ask the user before installing (`extensions` `install` `"whisper,small"`, ~200 MB; `turbo`
-  is better and bigger). Don't pass `model` unless you need a specific one - the default is the best installed.
+  installed. Missing → ask the user before installing (`extensions` `install` `"whisper,turbo"`, ~570 MB; `large`
+  is the most accurate on unclear chat, ~1.1 GB, best with a graphics card; `small` ~200 MB). Don't pass `model`
+  unless you need a specific one. `quality` picks a level instead: `accurate` (large-v3) or `fast` (turbo).
+  Default: accurate with a graphics card, else fast, else the best installed.
 - **Set `language`** (`de`, `en`, …): auto-detection is about twice as slow and can pick the wrong language. A
   chosen language is checked: `detected_language` and a note say when whisper clearly hears another one.
 - Transcribe **after** cutting, on the project: the times are then timeline times and fit the edit.

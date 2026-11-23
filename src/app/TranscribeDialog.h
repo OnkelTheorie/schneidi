@@ -2,6 +2,7 @@
 #pragma once
 #include "core/Subtitles.h"
 #include "core/Types.h"
+#include "engine/Extensions.h"
 #include "engine/Transcriber.h"
 
 #include <QDialog>
@@ -38,6 +39,9 @@ public:
     // when it is no whisper model (Extensions::isWhisperModelFile). The "Eigenes Modell…" entry asks for the file.
     bool addCustomModel(const QString& path, QString* error = nullptr);
 
+    // What the chosen model entry needs downloaded first (the model, the whisper package for it): empty = ready
+    QVector<const Extensions::Item*> missingDownloads() const;
+
 signals:
     void openExtensions(); // whisper or a model is missing
 
@@ -49,6 +53,7 @@ private:
     Subtitles::CueLength cueLength() const; // the chosen one, Auto resolved by the timeline's format
     void run();
     void startJob();
+    void downloadNext(); // the next of m_downloads, then the jobs
 
     Timeline m_timeline;
     ProjectFormat m_format;
@@ -77,6 +82,9 @@ private:
     QPushButton* m_start;
     QPushButton* m_extensions;
     Transcriber m_transcriber;
+    Extensions::Installer m_installer;
+    QVector<const Extensions::Item*> m_downloads; // still to download before the jobs start
+    const Extensions::Item* m_downloading = nullptr;
     QVector<Result> m_results;
     QString m_language;
     QString m_languageHint;

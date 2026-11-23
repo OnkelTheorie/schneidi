@@ -1561,7 +1561,11 @@ const QVector<Command>& commands()
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"language", T::String, "spoken language: de, en, fr, … (default auto = detect; a chosen one is checked "
                                   "against whisper's detection: detected_language + a note when it hears another)"},
-          {"model", T::String, "large, turbo, small, base, tiny or a model file (default: best installed)"},
+          {"quality", T::String, "instead of model: accurate (whisper large-v3, the best on unclear chat) or fast "
+                                 "(large-v3-turbo). Default: accurate with a graphics card for whisper, else fast (if "
+                                 "installed)"},
+          {"model", T::String, "large, turbo, small, base, tiny or a model file (default: see quality, else the best "
+                               "installed)"},
           {"words", T::Boolean, "also return every word with its time"},
           {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
                                 "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},

@@ -15,6 +15,7 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
+#include <QPushButton>
 #include <QSettings>
 #include <QStandardItemModel>
 #include <QTemporaryDir>
@@ -477,30 +478,51 @@ int main(int argc, char** argv)
         auto* combo = dlg.findChild<QComboBox*>("transcribe_model");
         auto* remove = dlg.findChild<QToolButton*>("transcribe_model_remove");
         auto* items = combo ? qobject_cast<QStandardItemModel*>(combo->model()) : nullptr;
-        if (CHECK(combo && remove && items)) {
+        auto* start = [&]() -> QPushButton* {
+            for (auto* b : dlg.findChildren<QPushButton*>())
+                if (b->text() == "Erzeugen" || b->text() == "Herunterladen und erzeugen") return b;
+            return nullptr;
+        }();
+        if (CHECK(combo && remove && items && start)) {
             const auto entries = [&] {
                 QStringList out;
                 for (int i = 0; i < combo->count(); ++i)
                     out << combo->itemText(i) + (items->item(i)->isEnabled() ? "" : ":off");
                 return out.join(" | ");
             };
-            CHECK_EQ(entries(), QString("ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…"));
-            CHECK_EQ(combo->currentText(), QString("ggml-own.bin")); // the first usable one, not the gone file
-            CHECK_EQ(combo->itemData(1, Qt::ToolTipRole).toString(),
+            // The quality levels first, as downloads (where the whisper package is offered), then the own models
+            const bool offered = Extensions::find("whisper") != nullptr;
+            const QString levels = offered ? QString("Whisper „Genau“ (large-v3) – Download 1081 MB | Whisper „Schnell“ "
+                                                     "(large-v3-turbo) – Download 574 MB | ")
+                                           : QString();
+            const QString parakeet;
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
+            CHECK_EQ(combo->currentText(), QString("ggml-own.bin")); // the first installed one, not the gone file
+            CHECK_EQ(combo->currentData(Qt::ToolTipRole).toString(),
                      QDir::toNativeSeparators(QFileInfo(good).absoluteFilePath()));
+            CHECK_EQ(start->text(), QString("Erzeugen"));
+            CHECK(dlg.missingDownloads().isEmpty());
+            if (offered) {
+                // A missing level: downloaded with the whisper package when the run starts
+                combo->setCurrentIndex(combo->findData("whisper-model-large"));
+                QStringList ids;
+                for (const Extensions::Item* i : dlg.missingDownloads()) ids << i->id;
+                CHECK_EQ(ids.join(','), QString("whisper,whisper-model-large,whisper-vad"));
+                combo->setCurrentIndex(combo->findText("ggml-own.bin"));
+            }
             CHECK(!remove->isHidden());
             CHECK(!dlg.addCustomModel(text, &error));
             CHECK(!error.isEmpty());
             CHECK_EQ(Extensions::customWhisperModels().size(), 2);
             CHECK(dlg.addCustomModel(other, &error));
             CHECK_EQ(combo->currentText(), QString("ggml-other.bin"));
-            CHECK_EQ(entries(), QString("ggml-gone.bin (fehlt):off | ggml-own.bin | ggml-other.bin | Eigenes Modell…"));
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | ggml-other.bin | Eigenes Modell…");
             CHECK(dlg.addCustomModel(other)); // twice = once
             CHECK_EQ(Extensions::customWhisperModels().size(), 3);
             remove->click();
-            CHECK_EQ(entries(), QString("ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…"));
+            CHECK_EQ(entries(), levels + parakeet + "ggml-gone.bin (fehlt):off | ggml-own.bin | Eigenes Modell…");
             CHECK_EQ(combo->currentText(), QString("ggml-own.bin"));
-            combo->setCurrentIndex(0); // the gone one can be taken out too
+            combo->setCurrentIndex(combo->findText("ggml-gone.bin (fehlt)")); // the gone one can be taken out too
             CHECK(!remove->isHidden());
             remove->click();
             CHECK_EQ(Extensions::customWhisperModels(), QStringList{QFileInfo(good).absoluteFilePath()});
@@ -521,14 +543,16 @@ int main(int argc, char** argv)
         CHECK_EQ(deps[1]->id, QString("whisper-vad"));
     }
     CHECK(Extensions::find("whisper-model-small") != nullptr);
-    // turbo is offered first (the default when installed: large-v3 translated English in German talk), then large-v3;
-    // "large" names it
+    // The quality levels: large-v3 "Genau" first (the best on real chat, measured 22.11.), turbo "Schnell"; "large"
+    // names it. Without a GPU backend beside whisper the default is "fast"
     {
         QStringList models;
         for (const Extensions::Item& i : Extensions::catalog())
             if (i.kind == Extensions::Kind::WhisperModel) models << i.id;
-        CHECK_EQ(models.value(0), QString("whisper-model-turbo"));
-        CHECK_EQ(models.value(1), QString("whisper-model-large"));
+        CHECK_EQ(models.value(0), QString("whisper-model-large"));
+        CHECK_EQ(models.value(1), QString("whisper-model-turbo"));
+        CHECK_EQ(Extensions::defaultQuality(), QString("fast"));
+        CHECK_EQ(Extensions::qualityModel("accurate"), QString("whisper-model-large"));
         QString unknown;
         CHECK(Extensions::parseList("large", &unknown).value(0) == Extensions::find("whisper-model-large"));
         CHECK_EQ(Extensions::find("whisper-model-large")->sha256.size(), 64);

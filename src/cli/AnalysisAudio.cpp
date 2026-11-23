@@ -362,6 +362,17 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     // checked before looking whether it exists, so an answer never tells about files outside it)
     if (model.contains('/') || model.contains('\\') || QFileInfo(model).suffix().compare("bin", Qt::CaseInsensitive) == 0)
         model = absolute(model);
+    // A quality level instead of a model: accurate = large-v3, fast = turbo
+    if (a.contains("quality")) {
+        if (a.contains("model")) fail("BAD_ARGUMENT", "give either 'quality' or 'model', not both");
+        const QString id = Extensions::qualityModel(a["quality"].toString());
+        if (id.isEmpty())
+            fail("BAD_ARGUMENT", QString("quality must be accurate or fast (not '%1')").arg(a["quality"].toString()));
+        if (!Extensions::isInstalled(*Extensions::find(id)))
+            fail("NOT_INSTALLED", QString("the model of quality '%1' is not installed (see `extensions`, e.g. --install %2)")
+                                      .arg(a["quality"].toString(), "whisper," + id.section('-', 2)));
+        model = id;
+    }
     req.model = Extensions::whisperModelPath(model);
     if (req.model.isEmpty())
         fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()

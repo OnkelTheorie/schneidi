@@ -79,7 +79,8 @@ QString whisperGpuBackend();
 QString whisperVadProgram();
 // Installed models, best first (ids)
 QStringList installedWhisperModels();
-// Model file for an id or a path; empty id = best installed. Empty result = not installed.
+// Model file for an id or a path; empty id = the default quality's model if installed (defaultQuality), else the best
+// installed. Empty result = not installed.
 QString whisperModelPath(const QString& idOrPath = {});
 // Own whisper.cpp models the user added in the app (QSettings "transcribe/customModels"): absolute paths in the order
 // added; files that are gone stay listed (the app shows them marked, the user removes them)
@@ -93,6 +94,12 @@ bool hasWhisperModel();
 // The model file the app transcribes with for a stored choice ("transcribe/model": id or path): that one, else the best
 // installed, else the first own model that exists; empty = none
 QString appWhisperModel(const QString& idOrPath);
+
+// The quality levels of speech recognition (transcribe dialog, CLI/MCP `quality`): "accurate" = whisper large-v3,
+// "fast" = large-v3-turbo. The catalog id of a level's model; empty = no such level
+QString qualityModel(const QString& quality);
+// "accurate" with a GPU backend beside whisper (whisperGpuBackend: large-v3 runs ~10x faster there), else "fast"
+QString defaultQuality();
 
 // ffmpeg program of the x264/x265 extension (or the one SCHNEIDI_ENCODER_FFMPEG names); empty = not installed.
 // Whether it really has libx264/libx265: HardwareEncoders::externalProgram.
