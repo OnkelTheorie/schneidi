@@ -149,6 +149,8 @@ private:
     bool m_landscape = false;
     bool m_tablet = false;
     bool m_laidOut = false;
+    QSize m_steadySize; // portrait: the shell's size when the rows' room was last measured (not under a keyboard)
+    int m_steadyMost = 0;
     bool m_clipMode = false;
     int m_dragStartY = -1;
     double m_dragStartShare = 0;

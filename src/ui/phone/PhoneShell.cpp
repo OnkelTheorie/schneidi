@@ -16,6 +16,11 @@
 #include <QScrollerProperties>
 #include <QTimer>
 #include <QScrollBar>
+#include <QAbstractSpinBox>
+#include <QInputMethod>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QToolButton>
 #include <algorithm>
 
@@ -598,7 +603,18 @@ void PhoneShell::refreshTimelineHeight()
         const int room = height() - top - bar - kGap;
         if (room <= 0) return;
         const int most = room * 5 / 9;
-        h = std::clamp(m_timelineHeight(most), room * 3 / 10, most);
+        // Typing in a sheet: the soft keyboard (or the status bar) makes the window lower for a moment - the rows keep
+        // the room they had (they jumped with every such resize), only the timeline gets lower and scrolls
+        const QWidget* focus = QApplication::focusWidget();
+        const bool typing = QGuiApplication::inputMethod()->isVisible()
+                            || qobject_cast<const QLineEdit*>(focus) || qobject_cast<const QTextEdit*>(focus)
+                            || qobject_cast<const QPlainTextEdit*>(focus) || qobject_cast<const QAbstractSpinBox*>(focus);
+        const bool transient = typing && m_steadyMost > 0 && width() == m_steadySize.width() && height() < m_steadySize.height();
+        if (!transient) {
+            m_steadySize = size();
+            m_steadyMost = most;
+        }
+        h = std::clamp(m_timelineHeight(transient ? m_steadyMost : most), room * 3 / 10, most);
     }
     m_timeline->setMinimumHeight(0);
     m_timeline->setMaximumHeight(h);

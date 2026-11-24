@@ -48,6 +48,7 @@
 #include <QMessageBox>
 #include <QTimer>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLayout>
 #include <QMenuBar>
 #include <QScrollArea>
@@ -1135,6 +1136,22 @@ int main(int argc, char** argv)
         Check::report(emptyBelow <= TimelineView::kFitAudioMin + 4, "no empty lanes below A5 in portrait", __FILE__,
                       __LINE__, QString("%1 px empty").arg(emptyBelow));
         const int viewerFive = w.findChild<Viewer*>()->height();
+        // Typing in a sheet: the keyboard makes the window lower for a moment - the rows keep their height
+        {
+            auto* field = new QLineEdit(w.phoneShell());
+            field->show();
+            QApplication::setActiveWindow(&w);
+            field->setFocus();
+            settle();
+            w.resize(411, 600);
+            settle();
+            Check::report(view->audioRowHeight() == audioRow, "keyboard up: the audio rows keep their height", __FILE__,
+                          __LINE__, QString("%1 / %2").arg(view->audioRowHeight()).arg(audioRow));
+            delete field;
+            w.resize(411, 914);
+            settle();
+            CHECK(view->audioRowHeight() == audioRow && w.findChild<Viewer*>()->height() == viewerFive);
+        }
         // Fewer tracks (V1 + A1): a lower timeline, a taller viewer; never lower than 3/10 of the room (~1/4 of the shell)
         w.editor()->project()->edit("two streams", [&](Timeline& tl) {
             tl.audio.resize(1);
