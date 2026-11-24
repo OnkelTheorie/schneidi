@@ -137,6 +137,9 @@ public:
     void setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY);
     void setScrollY(int y);
     void zoomBy(double factor);
+    // Zoom by `factor` at the pointer's x - or at the playhead while it is visible, by choice (ZoomAnchor): the wheel
+    // and a touchpad pinch (QNativeGestureEvent)
+    void zoomAtPointer(double factor, double pointerX);
     void zoomToFit();
     // Two fingers (touch): zoom by `scale` around the fingers and follow their centre from `from` to `to`
     void pinchView(const QPointF& from, const QPointF& to, double scale);
@@ -251,6 +254,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent*) override;
     bool eventFilter(QObject* obj, QEvent* e) override;
     void wheelEvent(QWheelEvent*) override;
+    bool nativeGesture(class QNativeGestureEvent* e); // a touchpad pinch zooms (from event()); false = not taken
     void contextMenuEvent(QContextMenuEvent*) override;
     bool event(QEvent* e) override; // tooltips of story sections and notes in the ruler
     void leaveEvent(QEvent*) override;

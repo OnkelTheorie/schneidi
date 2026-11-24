@@ -26,6 +26,8 @@
 
 #include <QApplication>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QPointingDevice>
 #include <QSettings>
 #include <QTest>
 #include <QToolButton>
@@ -859,6 +861,65 @@ void testWheelSideways()
     InputBindings::instance().applyWheelPreset("standard");
 }
 
+// A touchpad pinch (native gesture) at x: begin, the zoom steps, end
+static void pinch(TimelineView& tv, double x, std::initializer_list<double> values)
+{
+    const QPointF at(x, 60);
+    const auto send = [&](Qt::NativeGestureType type, double value) {
+        QNativeGestureEvent e(type, QPointingDevice::primaryPointingDevice(), 2, at, at, tv.mapToGlobal(at), value,
+                              QPointF());
+        QApplication::sendEvent(&tv, &e);
+        CHECK(e.isAccepted());
+    };
+    send(Qt::BeginNativeGesture, 0);
+    for (double v : values) send(Qt::ZoomNativeGesture, v);
+    send(Qt::EndNativeGesture, 0);
+}
+
+// Pinching on the touchpad zooms the timeline (QNativeGestureEvent): spreading in, closing out; anchored like the
+// wheel zoom - the frame under the pointer stays by default, the visible playhead by choice (Settings › Timeline ›
+// Zoom an); nothing else of the view or the model changes
+void testPinchZoom()
+{
+    Fixture f;
+    QSettings().remove("timeline");
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
+    const auto frameAt = [&](double x) {
+        return f.tv.view().leftFrame + (x - TimelineView::kHeaderW) / f.tv.view().pxPerFrame;
+    };
+    const auto xOf = [&](double frame) {
+        return TimelineView::kHeaderW + (frame - f.tv.view().leftFrame) * f.tv.view().pxPerFrame;
+    };
+    const double x = TimelineView::kHeaderW + 400;
+    const QString before = Check::dump(f.project.timeline());
+    f.tv.setZoomAndScroll(2.0, 20, 0);
+    f.tv.setPlayhead(150);
+    const double under = frameAt(x), playheadX = xOf(150);
+    pinch(f.tv, x, {0.1, 0.1, 0.05});
+    CHECK(std::abs(f.tv.view().pxPerFrame - 2.0 * 1.1 * 1.1 * 1.05) < 1e-9);
+    CHECK(std::abs(frameAt(x) - under) < 1e-6);
+    CHECK(std::abs(xOf(150) - playheadX) > 10);
+    // Closing the fingers zooms out
+    const double px = f.tv.view().pxPerFrame;
+    pinch(f.tv, x, {-0.2});
+    CHECK(std::abs(f.tv.view().pxPerFrame - px * 0.8) < 1e-9);
+    CHECK(std::abs(frameAt(x) - under) < 1e-6);
+    // Anchored at the playhead by choice: the red line keeps its x
+    ZoomAnchor::setMode(ZoomAnchor::Mode::Playhead);
+    f.tv.setZoomAndScroll(2.0, 20, 0);
+    pinch(f.tv, x, {0.25});
+    CHECK(std::abs(f.tv.view().pxPerFrame - 2.5) < 1e-9);
+    CHECK(std::abs(xOf(150) - playheadX) < 1e-6);
+    ZoomAnchor::setMode(ZoomAnchor::Mode::Mouse);
+    // Never past the limits
+    pinch(f.tv, x, {5, 5, 5, 5, 5, 5});
+    CHECK_EQ(f.tv.view().pxPerFrame, ViewState::kMaxPxPerFrame);
+    CHECK_EQ(f.tv.playhead(), 150);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    CHECK_EQ(Check::dump(f.project.timeline()), before);
+    QSettings().remove("timeline");
+}
+
 // A middle-button mouse event (press/move/release) at pt
 static void middle(TimelineView& tv, QEvent::Type type, QPoint pt)
 {
@@ -1247,6 +1308,7 @@ int main(int argc, char** argv)
     testWheelZoomAnchor();
     testWheelSideways();
     testMiddleDragPans();
+    testPinchZoom();
     testFollowPlayback();
     testClickSetsPlayhead();
     testSnapOptions();

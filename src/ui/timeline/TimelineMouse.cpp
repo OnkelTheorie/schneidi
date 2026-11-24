@@ -28,6 +28,7 @@
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 #include <QUndoStack>
 #include <QUrl>
 #include <QContextMenuEvent>
@@ -992,6 +993,37 @@ void TimelineView::leaveEvent(QEvent*)
     }
 }
 
+void TimelineView::zoomAtPointer(double factor, double pointerX)
+{
+    stopFollowing(); // the user zooms: the view no longer follows the playing playhead
+    // At the pointer or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
+    const double ax = ZoomAnchor::anchorX(std::max<double>(pointerX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
+    m_view.setZoomAround(m_view.pxPerFrame * factor, xToFrame(ax), ax - kHeaderW);
+    if (m_center) m_view.leftFrame = centreLeft();
+    update();
+    emit viewChanged();
+}
+
+bool TimelineView::nativeGesture(QNativeGestureEvent* e)
+{
+    switch (e->gestureType()) {
+    case Qt::BeginNativeGesture: // (macOS: accepting the start brings the rest of the gesture)
+    case Qt::EndNativeGesture:
+        e->accept();
+        return true;
+    case Qt::ZoomNativeGesture: {
+        // A touchpad pinch: value() is the spread's change since the last event (0.05 = 5 % wider). Anchored like the
+        // wheel zoom (Settings › Timeline › Zoom an)
+        const double factor = 1.0 + e->value();
+        if (factor > 0 && factor != 1.0) zoomAtPointer(factor, e->position().x());
+        e->accept();
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 void TimelineView::wheelEvent(QWheelEvent* e)
 {
     // The binding of the held modifiers; a sideways swipe pans sideways (InputBindings::wheelMove, like the Studio)
@@ -1007,16 +1039,9 @@ void TimelineView::wheelEvent(QWheelEvent* e)
     case WheelAction::ScrollHorizontal:
         setLeftFrame(m_view.leftFrame - steps * (width() - kHeaderW) * 0.1 / m_view.pxPerFrame);
         break;
-    case WheelAction::Zoom: {
-        stopFollowing(); // the user zooms: the view no longer follows the playing playhead
-        // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
-        const double ax = ZoomAnchor::anchorX(std::max<double>(mouseX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
-        m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.2, steps), xToFrame(ax), ax - kHeaderW);
-        if (m_center) m_view.leftFrame = centreLeft();
-        update();
-        emit viewChanged();
+    case WheelAction::Zoom:
+        zoomAtPointer(std::pow(1.2, steps), mouseX);
         break;
-    }
     case WheelAction::TrackHeight: {
         // only the track kind under the mouse (video or audio tracks), like in DaVinci
         const auto row = rowAt(int(e->position().y()));
