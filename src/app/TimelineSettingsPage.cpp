@@ -122,6 +122,14 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     fresh->addRow(T("Standbilder"), m_stillSeconds);
     m_transitionSeconds = secondsBox("timeline_transition_seconds", 0.04, 30, TimelineOptions::transitionSeconds());
     fresh->addRow(T("Übergänge"), m_transitionSeconds);
+    using CF = TimelineOptions::ClipFormat;
+    m_clipFormat = combo("timeline_first_clip_format",
+                         {{T("Fragen"), int(CF::Ask)}, {T("Projekt immer anpassen"), int(CF::Adapt)}, {T("Nie ändern"), int(CF::Keep)}},
+                         int(TimelineOptions::clipFormat()));
+    fresh->addRow(T("Erster Clip mit anderem Format"), m_clipFormat);
+    fresh->addRow(hint(T("Wenn der erste Videoclip in einer leeren Timeline eine andere Größe oder Bildrate hat als das "
+                         "Projekt. Projekt immer anpassen: übernimmt das Format des Clips ohne Frage (wie Premiere, "
+                         "Final Cut, CapCut). Feste Werte aus Startvorlage oder Projekteinstellungen bleiben immer.")));
     fresh->addRow(hint(T("So lang werden Bilder, die du ab jetzt importierst, und Übergänge ohne eigene Länge "
                          "(Strg+T, aus den Effekten gezogen). Schon importierte Bilder behalten ihre Länge.")));
 
@@ -195,6 +203,14 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(hint(T("Zurück zur Startposition: die Abspielmarke springt dorthin, wo du das Abspielen gestartet hast "
                         "(wie in Vegas), gut zum wiederholten Anhören eines Schnitts. K hält immer an der Stelle an; "
                         "„Stopp und zurück zur Startposition“ gibt es auch als eigene Taste (Tastenbelegung).")));
+    using SS = TimelineOptions::ShuttleSteps;
+    m_shuttle = combo("timeline_shuttle_steps",
+                      {{T("Verdoppeln (1–2–4–8–16×)"), int(SS::Double)}, {T("Sanft (1–2–3–5–8×)"), int(SS::Gentle)}},
+                      int(TimelineOptions::shuttleSteps()));
+    play->addRow(T("J/L-Stufen"), m_shuttle);
+    play->addRow(hint(T("Wie schnell J und L bei jedem weiteren Druck werden. Sanft (wie Avid) lässt mehr Zwischenstufen. "
+                        "K halten und J oder L tippen geht einen Frame, K und J oder L halten spielt mit halber "
+                        "Geschwindigkeit.")));
     m_afterSeek = combo("timeline_after_playhead_move",
                         {{T("Standard"), int(PlayheadMove::Mode::Standard)},
                          {T("Weiter wie vorher"), int(PlayheadMove::Mode::Continue)},
@@ -216,6 +232,17 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     mouse->addRow(hint(T("Nur auswählen: die Abspielmarke setzt du im Lineal. Abspielmarke setzen: ein Klick auf einen "
                          "Clip oder eine leere Stelle setzt sie auch dorthin (wie in Vegas, Final Cut, Shotcut, "
                          "CapCut). Ziehen wählt weiter mit dem Rahmen aus bzw. verschiebt.")));
+    m_trimOver = combo("timeline_edge_meets_clip", {{T("Überschreiben"), 1}, {T("Anhalten"), 0}},
+                       TimelineOptions::trimOverwrites() ? 1 : 0);
+    mouse->addRow(T("Kante trifft Nachbarclip"), m_trimOver);
+    mouse->addRow(hint(T("Überschreiben: ziehst du die Kante eines Clips über den Nachbarn, wird der dort gekürzt oder "
+                         "entfernt. Anhalten: die Kante bleibt am Nachbarn stehen (wie in Premiere, DaVinci, Kdenlive). "
+                         "Das Trim-Werkzeug (T) schiebt die Nachbarn immer weiter.")));
+    m_middle = combo("timeline_middle_drag", {{T("Ansicht verschieben"), 1}, {T("Nichts"), 0}},
+                     TimelineOptions::middleDragPans() ? 1 : 0);
+    mouse->addRow(T("Mittlere Maustaste ziehen"), m_middle);
+    mouse->addRow(hint(T("Ansicht verschieben: Ziehen mit gedrückter mittlerer Maustaste (Mausrad) schiebt die Timeline "
+                         "zur Seite und nach oben oder unten, wie in Kdenlive, Vegas und Blender.")));
 
     lay->addStretch(1);
 }
@@ -234,6 +261,15 @@ TimelineOptions::Follow TimelineSettingsPage::follow() const
 
 bool TimelineSettingsPage::clickSetsPlayhead() const { return m_click->currentData().toInt() == 1; }
 
+TimelineOptions::ClipFormat TimelineSettingsPage::clipFormat() const
+{
+    return TimelineOptions::ClipFormat(m_clipFormat->currentData().toInt());
+}
+
+bool TimelineSettingsPage::trimOverwrites() const { return m_trimOver->currentData().toInt() == 1; }
+
+bool TimelineSettingsPage::middleDragPans() const { return m_middle->currentData().toInt() == 1; }
+
 TimelineOptions::TimeFormat TimelineSettingsPage::timeFormat() const
 {
     return TimelineOptions::TimeFormat(m_timeFormat->currentData().toInt());
@@ -250,6 +286,11 @@ int TimelineSettingsPage::snapTargets() const
 TimelineOptions::SnapReach TimelineSettingsPage::snapReach() const
 {
     return TimelineOptions::SnapReach(m_snapReach->currentData().toInt());
+}
+
+TimelineOptions::ShuttleSteps TimelineSettingsPage::shuttleSteps() const
+{
+    return TimelineOptions::ShuttleSteps(m_shuttle->currentData().toInt());
 }
 
 bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
@@ -293,10 +334,14 @@ void TimelineSettingsPage::store() const
     if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());
     if (std::abs(transitionSeconds() - TimelineOptions::transitionSeconds()) > 1e-9)
         TimelineOptions::setTransitionSeconds(transitionSeconds());
+    if (shuttleSteps() != TimelineOptions::shuttleSteps()) TimelineOptions::setShuttleSteps(shuttleSteps());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());
+    if (clipFormat() != TimelineOptions::clipFormat()) TimelineOptions::setClipFormat(clipFormat());
+    if (trimOverwrites() != TimelineOptions::trimOverwrites()) TimelineOptions::setTrimOverwrites(trimOverwrites());
+    if (middleDragPans() != TimelineOptions::middleDragPans()) TimelineOptions::setMiddleDragPans(middleDragPans());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());
     if (zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(zoomAnchor());

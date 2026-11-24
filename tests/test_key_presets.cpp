@@ -180,7 +180,7 @@ bool layoutNeutral(const QString& input)
 void testLayoutNeutralKeys()
 {
     InputBindings& b = InputBindings::instance();
-    for (const char* preset : {"standard", "beginner", "premiere", "finalcut"}) {
+    for (const char* preset : {"standard", "beginner", "premiere", "finalcut", "kdenlive", "shotcut", "vegas", "capcut"}) {
         b.applyPreset(preset);
         for (const char* id : {"trim_start", "trim_end", "split_alt"}) {
             const QStringList keys = in(id);
@@ -457,7 +457,7 @@ void testKysContexts()
     CHECK_EQ(in("split"), QStringList({"K", ""}));
     CHECK(!in("mark_in").contains("K"));
     checkUniqueKeys("contexts.kys");
-    for (const char* preset : {"standard", "beginner", "premiere", "finalcut"}) {
+    for (const char* preset : {"standard", "beginner", "premiere", "finalcut", "kdenlive", "shotcut", "vegas", "capcut"}) {
         b.applyPreset(preset);
         checkUniqueKeys(preset);
     }
@@ -468,9 +468,13 @@ void testPresets()
 {
     InputBindings& b = InputBindings::instance();
     const QStringList ids = InputBindings::presetIds();
-    for (const char* id : {"standard", "beginner", "premiere", "finalcut"}) CHECK(ids.contains(id));
+    for (const char* id : {"standard", "beginner", "premiere", "finalcut", "kdenlive", "shotcut", "vegas", "capcut"}) CHECK(ids.contains(id));
     CHECK_EQ(InputBindings::presetName("premiere"), QString("Premiere Pro"));
     CHECK_EQ(InputBindings::presetName("finalcut"), QString("Final Cut Pro"));
+    CHECK_EQ(InputBindings::presetName("kdenlive"), QString("Kdenlive"));
+    CHECK_EQ(InputBindings::presetName("shotcut"), QString("Shotcut"));
+    CHECK_EQ(InputBindings::presetName("vegas"), QString("Vegas Pro"));
+    CHECK_EQ(InputBindings::presetName("capcut"), QString("CapCut"));
 
     // The second monitor stays reachable in every set
     for (const QString& id : ids) {
@@ -530,9 +534,85 @@ void testPresets()
     CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
     CHECK_EQ(in("select_edit_point").value(0), QString("V"));
 
+    // The editors' own sets with their wheel (the same as the wheel's quick sets; Shotcut's is CapCut's)
+    const auto wheelIs = [&](const char* id) {
+        Check::report(b.currentWheelPreset() == id, "wheel of the preset", __FILE__, __LINE__, b.currentWheelPreset());
+    };
+    b.applyPreset("kdenlive");
+    CHECK_EQ(in("split").value(0), QString("Shift+R"));
+    CHECK_EQ(in("split_on_tracks").value(0), QString("Ctrl+Shift+R"));
+    CHECK_EQ(in("tool_blade").value(0), QString("X"));
+    CHECK_EQ(in("tool_select").value(0), QString("S"));
+    CHECK_EQ(in("insert_clip").value(0), QString("V"));
+    CHECK_EQ(in("overwrite_clip").value(0), QString("B"));
+    CHECK_EQ(in("add_marker").value(0), QString("G"));
+    CHECK_EQ(in("marker_next").value(0), QString("Ctrl+Right"));
+    CHECK_EQ(in("edit_prev").value(0), QString("Alt+Left"));
+    CHECK_EQ(in("go_start"), QStringList({"Ctrl+Home", "Home"}));
+    CHECK_EQ(in("trim_start").value(0), QString("("));
+    CHECK_EQ(in("trim_start").value(1), QString("Shift+Q")); // the layout-neutral second key stays
+    CHECK_EQ(in("viewer_full_screen").value(0), QString("F11"));
+    CHECK_EQ(in("app_full_screen").value(0), QString("Ctrl+Shift+F"));
+    CHECK_EQ(in("viewer_second_screen").value(0), QString("Ctrl+F12"));
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::Zoom);
+    wheelIs("kdenlive");
+    CHECK(b.action("split")->shortcuts().contains(QKeySequence("Shift+R")));
+
+    b.applyPreset("shotcut");
+    CHECK_EQ(in("split").value(0), QString("S"));
+    CHECK_EQ(in("split_on_tracks").value(0), QString("Shift+S"));
+    CHECK_EQ(in("append_at_end").value(0), QString("A"));
+    CHECK_EQ(in("replace_clip").value(0), QString("R"));
+    CHECK_EQ(in("ripple_delete"), QStringList({"X", "Shift+Del"}));
+    CHECK_EQ(in("delete"), QStringList({"Z", "Backspace"}));
+    CHECK_EQ(in("snapping").value(0), QString("Ctrl+P"));
+    CHECK_EQ(in("deselect").value(0), QString("Ctrl+D"));
+    CHECK_EQ(in("second_next").value(0), QString("PgDown"));
+    CHECK_EQ(in("zoom_fit").value(0), QString("0"));
+    CHECK_EQ(in("marker_next").value(0), QString(">"));
+    CHECK_EQ(in("page_deliver").value(0), QString("Ctrl+E"));
+    CHECK_EQ(in("tool_select"), QStringList({"", ""})); // A appends there
+    CHECK(b.wheelAction(Qt::NoModifier) == WheelAction::ScrollHorizontal);
+    wheelIs("capcut");
+
+    b.applyPreset("vegas");
+    CHECK_EQ(in("split").value(0), QString("S"));
+    CHECK_EQ(in("snapping").value(0), QString("F8"));
+    CHECK_EQ(in("zoom_in").value(0), QString("Up"));
+    CHECK_EQ(in("zoom_out").value(0), QString("Down"));
+    CHECK_EQ(in("edit_prev").value(0), QString("Ctrl+Alt+Left"));
+    CHECK_EQ(in("marker_prev").value(0), QString("Ctrl+Left"));
+    CHECK_EQ(in("frame_prev"), QStringList({"Alt+Left", "Left"}));
+    CHECK_EQ(in("play_pause"), QStringList({"Space", "Return"}));
+    CHECK_EQ(in("trim_end"), QStringList({"Alt+]", "Shift+W"}));
+    CHECK_EQ(in("link_clips").value(0), QString("G"));
+    CHECK_EQ(in("loop_inout").value(0), QString("Q"));
+    CHECK_EQ(in("show_timeline"), QStringList({"", ""})); // Q loops there
+    CHECK(b.wheelAction(Qt::NoModifier) == WheelAction::Zoom);
+    wheelIs("vegas");
+
+    b.applyPreset("capcut");
+    CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
+    CHECK_EQ(in("split_on_tracks").value(0), QString("Ctrl+Shift+B"));
+    CHECK_EQ(in("trim_start"), QStringList({"Q", "Shift+Q"}));
+    CHECK_EQ(in("trim_end"), QStringList({"W", "Shift+W"}));
+    CHECK_EQ(in("tool_select").value(0), QString("A"));
+    CHECK_EQ(in("tool_blade").value(0), QString("B"));
+    CHECK_EQ(in("zoom_fit").value(0), QString("Shift+Z"));
+    CHECK_EQ(in("linked_selection").value(0), QString("~"));
+    CHECK_EQ(in("page_deliver").value(0), QString("Ctrl+E"));
+    CHECK_EQ(in("viewer_full_screen").value(0), QString("Ctrl+Shift+F"));
+    CHECK_EQ(in("viewer_second_screen").value(0), QString("Ctrl+F12"));
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::Zoom);
+    wheelIs("capcut");
+    // Back to standard: its keys and wheel again
+    b.applyPreset("standard");
+    CHECK_EQ(in("split").value(0), QString("Ctrl+B"));
+    wheelIs("standard");
+
     // KEY_PRESETS_LIST=1: which keys schneidi's actions lose per preset (for the docs)
     if (qEnvironmentVariableIsSet("KEY_PRESETS_LIST"))
-        for (const char* preset : {"premiere", "finalcut"}) {
+        for (const char* preset : {"premiere", "finalcut", "kdenlive", "shotcut", "vegas", "capcut"}) {
             const auto set = b.presetInputs(preset);
             for (const auto& e : b.entries())
                 for (int s = 0; s < InputBindings::kSlots; ++s) {

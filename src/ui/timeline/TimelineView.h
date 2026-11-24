@@ -137,6 +137,9 @@ public:
     void setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY);
     void setScrollY(int y);
     void zoomBy(double factor);
+    // Zoom by `factor` at the pointer's x - or at the playhead while it is visible, by choice (ZoomAnchor): the wheel
+    // and a touchpad pinch (QNativeGestureEvent)
+    void zoomAtPointer(double factor, double pointerX);
     void zoomToFit();
     // Two fingers (touch): zoom by `scale` around the fingers and follow their centre from `from` to `to`
     void pinchView(const QPointF& from, const QPointF& to, double scale);
@@ -251,7 +254,10 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent*) override;
     bool eventFilter(QObject* obj, QEvent* e) override;
     void wheelEvent(QWheelEvent*) override;
+    bool nativeGesture(class QNativeGestureEvent* e); // a touchpad pinch zooms (from event()); false = not taken
     void contextMenuEvent(QContextMenuEvent*) override;
+    void hideEvent(QHideEvent*) override;
+    void focusOutEvent(QFocusEvent*) override;
     bool event(QEvent* e) override; // tooltips of story sections and notes in the ruler
     void leaveEvent(QEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
@@ -571,6 +577,11 @@ private:
     void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 
     Drag m_drag = Drag::None;
+    // Middle button held in the tracks: the view follows the pointer (TimelineOptions::middleDragPans), apart from
+    // m_drag (a left-button drag never runs at the same time)
+    bool m_panning = false;
+    QPointF m_panLast;
+    void endPan(); // ends the middle button's pan (its release, or a lost one: menu, dialog, hidden, focus gone)
     QSet<int> m_retimeClips; // clips with visible retime controls
     RetimeHit m_rampDrag;    // dragged speed point
     int m_rampDelta = 0;     // timeline frames while dragging
@@ -588,6 +599,7 @@ private:
     EdgeHit m_trim{0, TimelineOps::Edge::Start};
     QVector<int> m_trimIds;
     int m_trimDelta = 0;
+    bool m_trimOverwrite = true; // TimelineOptions::trimOverwrites, read at the press
 
     // Trim mode: running edit, delta and preview of the timeline
     TimelineOps::TrimEdit m_trimEdit;

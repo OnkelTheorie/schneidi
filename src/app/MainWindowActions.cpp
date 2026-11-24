@@ -63,6 +63,7 @@
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/TimelineOptions.h"
+#include "app/JklKeys.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -638,10 +639,22 @@ void MainWindow::buildActions()
         if (m_engine->speed() != 0.0 && TimelineOptions::spaceReturns()) stopAndReturn();
         else m_engine->togglePlay();
     });
-    makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
-    makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
+    // J/K/L (JklKeys): J/L faster with every press, K stops; K held + J/L tapped = one frame, held = half speed
+    QAction* jklBack = makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] {
+        if (m_jkl) m_jkl->shuttlePressed(-1);
+    });
+    QAction* jklStop = makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] {
+        if (m_jkl) m_jkl->stopPressed();
+    });
     makeAction(play, "stop_return", T("Stopp und zurück zur Startposition"), QKeySequence(), [this] { stopAndReturn(); });
-    makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
+    QAction* jklForward = makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] {
+        if (m_jkl) m_jkl->shuttlePressed(1);
+    });
+    delete m_jkl; // (actions built again: a new set)
+    m_jkl = new JklKeys(jklBack, jklStop, jklForward,
+                        {[this] { return m_engine->speed(); }, [this](double speed) { m_engine->setSpeed(speed); },
+                         [this](int frames) { stepFrames(frames); }, [this] { m_engine->pause(); }},
+                        this);
     play->addSeparator();
     makeAction(play, "frame_prev", T("1 Frame zurück"), QKeySequence(Qt::Key_Left), [this] { stepFrames(-1); });
     makeAction(play, "frame_next", T("1 Frame vor"), QKeySequence(Qt::Key_Right), [this] { stepFrames(1); });

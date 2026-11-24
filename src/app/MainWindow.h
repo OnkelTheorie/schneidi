@@ -33,6 +33,7 @@
 #include <optional>
 
 class Engine;
+class JklKeys;
 class Project;
 class Selection;
 class MediaPool;
@@ -465,7 +466,7 @@ private:
     void keyJump(int frame);
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
-    void shuttle(int direction);
+    JklKeys* m_jkl = nullptr; // J/K/L with K held (buildActions)
     // Stop and go back to where playback last started (Space by choice, the action "stop_return"); paused: only back
     void stopAndReturn();
     int m_playStart = -1;          // position where playback last started (Engine::speedChanged from 0); -1 after

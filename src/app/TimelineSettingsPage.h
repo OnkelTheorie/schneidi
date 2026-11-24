@@ -27,8 +27,12 @@ public:
     ZoomAnchor::Mode zoomAnchor() const;          // where wheel zoom stays put (ZoomAnchor::mode)
     PlayheadMove::Mode afterPlayheadMove() const; // playback after moving the playhead (PlayheadMove::mode)
     TimelineOptions::Follow follow() const;       // follow the playhead while playing
+    TimelineOptions::ShuttleSteps shuttleSteps() const; // the speeds J/L step through
     bool spaceReturns() const;                    // Space stops and goes back to the start position
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
+    TimelineOptions::ClipFormat clipFormat() const; // the first clip with another format: ask, adapt, keep
+    bool trimOverwrites() const;                  // a clip's edge overwrites the neighbour (else it stops there)
+    bool middleDragPans() const;                  // dragging with the middle button pans the view
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
     TimelineOptions::Thumbnails thumbnails() const; // pictures on video clips
     TimelineOptions::WaveShape waveShape() const;
@@ -47,7 +51,11 @@ private:
     QComboBox* m_afterSeek = nullptr;
     QComboBox* m_follow = nullptr;
     QComboBox* m_space = nullptr;
+    QComboBox* m_shuttle = nullptr;
     QComboBox* m_click = nullptr;
+    QComboBox* m_middle = nullptr;
+    QComboBox* m_trimOver = nullptr;
+    QComboBox* m_clipFormat = nullptr;
     QComboBox* m_timeFormat = nullptr;
     QComboBox* m_thumbnails = nullptr;
     QComboBox* m_waveShape = nullptr;

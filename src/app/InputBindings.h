@@ -2,7 +2,8 @@
 #pragma once
 // Key and mouse wheel bindings, customizable via keybindings.json in the config folder
 // (Linux: ~/.config/schneidi/, Windows: %APPDATA%/schneidi/).
-// Defaults follow DaVinci Resolve; built-in presets for people coming from Premiere Pro and Final Cut Pro.
+// Defaults follow DaVinci Resolve; built-in presets for people coming from Premiere Pro, Final Cut Pro, Kdenlive,
+// Shotcut, Vegas Pro and CapCut.
 
 #include <QHash>
 #include <QJsonObject>
@@ -79,8 +80,9 @@ public:
     bool exportSet(const QString& path) const;
     bool importSet(const QString& path, QString* error);
     // Built-in sets: "standard" (like DaVinci Resolve, the defaults), "beginner" (few, telling keys: S splits,
-    // Ctrl+1-4 switch pages, no single-letter keys for special tools; Ctrl+wheel zooms), "premiere" and "finalcut"
-    // (the well-known default keys of those programs on schneidi's actions, Cmd = Ctrl). Plus the user's own sets
+    // Ctrl+1-4 switch pages, no single-letter keys for special tools; Ctrl+wheel zooms), "premiere", "finalcut",
+    // "kdenlive", "shotcut", "vegas" and "capcut" (the default keys of those programs on schneidi's actions, Cmd =
+    // Ctrl; the last four with their wheel too). Plus the user's own sets
     // ("custom:<name>", e.g. an imported Premiere .kys file) from the keypresets folder. Replaces the current set
     // including mouse buttons and wheel, takes effect immediately and is saved
     static QStringList presetIds();

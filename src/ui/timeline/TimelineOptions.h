@@ -27,12 +27,33 @@ void setFollow(Follow follow);
 bool clickSetsPlayhead();
 void setClickSetsPlayhead(bool on);
 
+// Dragging with the middle mouse button in the tracks pans the view sideways and up/down (Settings › Timeline ›
+// Mouse), like Kdenlive, Blender, Vegas, Fairlight and schneidi's own viewer and compositing canvas. On by default
+// (it changed nothing before: the middle button did nothing in the timeline). Read at every press.
+bool middleDragPans();
+void setMiddleDragPans(bool on);
+
+// A clip's edge dragged with the selection tool onto its neighbour (Settings › Timeline › Mouse): overwrites it
+// (default, as before: the neighbour is shortened or removed where the clip now lies; quick) or stops there like
+// Premiere, DaVinci, Kdenlive, Shotcut. The trim tool (T) ripples either way. Read at every press on an edge.
+bool trimOverwrites();
+void setTrimOverwrites(bool on);
+
 // What the play/pause key (Space) does while it plays (Settings › Timeline › Playback): stop where it is (default,
 // like Premiere, Final Cut, Kdenlive, Shotcut, CapCut) or stop and go back to where playback started (like Vegas and
 // audio programs: hear a cut again and again). K always stops where it is; the action "Stop and return" does the
 // latter whatever is set. Read at every key press.
 bool spaceReturns();
 void setSpaceReturns(bool on);
+
+// The speeds J/L step through when pressed again (Settings › Timeline › Playback): doubling 1-2-4-8-16 (default, as
+// before; DaVinci) or gentle 1-2-3-5-8 (Avid; Premiere 1-2-3-4). shuttleSpeed: the speed after a press of J
+// (direction -1) or L (+1) at the current speed - the other direction (or paused) starts at 1x, a slower one (half
+// speed of K+J/L) goes to 1x, the top speed stays. Read at every press.
+enum class ShuttleSteps { Double, Gentle };
+ShuttleSteps shuttleSteps();
+void setShuttleSteps(ShuttleSteps steps);
+double shuttleSpeed(double current, int direction, ShuttleSteps steps);
 
 // Snapping on or off (the magnet button, N): remembered across starts (default on, as every editor). Stored by the
 // main window when the user switches it (not in test runs).
@@ -51,6 +72,14 @@ SnapReach snapReach();
 void setSnapReach(SnapReach reach);
 int snapPixels(SnapReach reach);
 inline int snapPixels() { return snapPixels(snapReach()); }
+
+// The first video clip in an empty timeline whose format (size, frame rate) differs from the project's (Settings ›
+// Timeline › New clips): ask (default, as before; DaVinci, Kdenlive), always adapt the project without asking
+// (Premiere, Final Cut, CapCut) or never change it. Fixed values (start template, Project Settings) stay either way.
+// Read at every such clip.
+enum class ClipFormat { Ask, Adapt, Keep };
+ClipFormat clipFormat();
+void setClipFormat(ClipFormat choice);
 
 // Default lengths (Settings › Timeline › New clips): stills imported from now on (5 s) and transitions added without
 // a length (1 s). applyEditDefaults() hands the stored choice to the core (EditDefaults): at the start and after OK.

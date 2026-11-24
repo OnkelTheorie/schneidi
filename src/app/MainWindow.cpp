@@ -844,7 +844,10 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         want.height = fixedSize ? cur.height : cf.height;
         want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;
         if (want == cur) return;
-        if (ask) {
+        // The user's choice (Settings › Timeline): ask (default), always adapt, never change
+        const TimelineOptions::ClipFormat choice = ask ? TimelineOptions::clipFormat() : TimelineOptions::ClipFormat::Adapt;
+        if (choice == TimelineOptions::ClipFormat::Keep) return;
+        if (choice == TimelineOptions::ClipFormat::Ask) {
             // Like DaVinci "Change project frame rate?", here including resolution
             QString clipRate = cf.rate.label();
             if (cf.variable)
@@ -1277,14 +1280,6 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     if (t == QEvent::MouseButtonPress)
         if (QAction* a = InputBindings::instance().action(id); a && a->isEnabled()) a->trigger();
     return true; // also swallow release/double-click of the bound key
-}
-
-void MainWindow::shuttle(int direction)
-{
-    // Pressing J/L repeatedly = faster, like in DaVinci
-    const double s = m_engine->speed();
-    if (direction > 0) m_engine->setSpeed(s <= 0 ? 1.0 : std::min(s * 2, 16.0));
-    else m_engine->setSpeed(s >= 0 ? -1.0 : std::max(s * 2, -16.0));
 }
 
 void MainWindow::stepFrames(int frames)
