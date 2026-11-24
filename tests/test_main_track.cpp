@@ -360,6 +360,26 @@ void testAnnotations()
     CHECK_EQ(f.tl().subtitles[0].cues[0].start, 110);
     CHECK_EQ(f.tl().subtitles[0].cues[0].end, 130);
     CHECK_ONE_STEP(f, before, steps, "markers follow");
+    // Review 6: a subtitle in a closed gap is never deleted - it lands on the cut like a marker, keeps its length; the
+    // one after it keeps its order, the earlier is shortened only as far as needed
+    {
+        Fixture g;
+        g.project.edit("cues", [](Timeline& tl) {
+            SubtitleTrack st;
+            SubtitleCue a, b;
+            a.id = 41, a.start = 120, a.end = 140, a.text = "in the gap";
+            b.id = 42, b.start = 170, b.end = 190, b.text = "in c";
+            st.cues = {a, b};
+            tl.subtitles = {st};
+        });
+        g.sel.set({2, 12});
+        g.editor.deleteSelection(); // b gone: 120-140 lies in the gap 100-160
+        const auto& cues = g.tl().subtitles[0].cues;
+        if (CHECK_EQ(cues.size(), 2)) {
+            CHECK(cues[0].id == 41 && cues[0].start == 100 && cues[0].end == 110);
+            CHECK(cues[1].id == 42 && cues[1].start == 110 && cues[1].end == 130);
+        }
+    }
     // An insert pushes them right
     f.editor.addMediaAt({"/x/x.mp4"}, 0, 0);
     CHECK_EQ(f.tl().markers, (QVector<int>{250, 300, 340}));
