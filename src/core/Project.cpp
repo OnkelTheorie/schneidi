@@ -497,7 +497,9 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
 
 bool Project::magnetActive() const
 {
-    return m_magneticMain && m_magnetHold == 0;
+    if (!m_magneticMain || m_magnetHold > 0) return false;
+    const Sequence* s = sequence(m_current); // a multicam sequence: its angles lie in sync on purpose
+    return !(s && s->multicam);
 }
 
 QString Project::magnetize(Timeline& after) const

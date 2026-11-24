@@ -169,6 +169,7 @@ bool Editor::inMulticamSequence() const
 
 int Editor::createMulticamClip(const QString& name, const QVector<Multicam::Angle>& angles, int bin)
 {
+    const Project::MagnetHold hold(m_project); // (the angles are placed in sync; the magnetic main track waits)
     Project* p = m_project;
     struct Usable {
         QString name;

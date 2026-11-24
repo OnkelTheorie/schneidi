@@ -394,6 +394,30 @@ void testTrackStructure()
     CHECK(!MainTrack::touched(a, b, MainTrack::kMain));
 }
 
+void testMulticam()
+{
+    // Inside a multicam sequence the angles lie in sync on purpose: nothing packs, a drop overwrites (review 2)
+    Fixture f;
+    f.project.editSequences("multicam", [](QVector<Sequence>& seqs, int& current) {
+        for (Sequence& s : seqs)
+            if (s.id == current) s.multicam = true;
+    });
+    CHECK(f.editor.magneticMain() && !f.project.magnetActive() && !f.editor.magnetActive());
+    f.sel.set({2, 12});
+    f.editor.deleteSelection();
+    CHECK_EQ(TimelineOps::findClip(f.tl(), 3)->start, 160);
+    // A hold (syncs, the AI's commands) does the same
+    Fixture g;
+    {
+        const Project::MagnetHold hold(&g.project);
+        CHECK(!g.project.magnetActive());
+        g.sel.set({2, 12});
+        g.editor.deleteSelection();
+        CHECK_EQ(TimelineOps::findClip(g.tl(), 3)->start, 160);
+    }
+    CHECK(g.project.magnetActive());
+}
+
 void testCore()
 {
     // MainTrack directly: insertPoint, openGap refusing, pack's ripple
@@ -440,6 +464,7 @@ int main(int argc, char** argv)
     I18n::install("de");
     testCore();
     testTrackStructure();
+    testMulticam();
     testOff();
     testDelete();
     testOtherTracks();
