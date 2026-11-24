@@ -554,9 +554,15 @@ void Viewer::updateBalance()
             m_barBalanceLeft = new QSpacerItem(0, 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
             m_transport->insertSpacerItem(m_transport->indexOf(m_timecode) + 1, m_barBalanceLeft);
         }
-        const auto wide = [](QLayoutItem* item) { return std::max(item->sizeHint().width(), item->minimumSize().width()); };
-        const int left = std::max(m_timecode->sizeHint().width(), m_timecode->minimumWidth());
-        const int diff = left - wide(m_barRight);
+        // (From the widgets, not the layouts' cached hints: those lag behind a button just hidden or retitled)
+        const auto wide = [](QWidget* w) { return std::max(w->sizeHint().width(), w->minimumWidth()); };
+        int right = 0;
+        for (int i = 0; i < m_barRight->count(); ++i)
+            if (QWidget* w = m_barRight->itemAt(i)->widget(); w && !w->isHidden()) right += wide(w);
+        const int diff = wide(m_timecode) - right;
+        if (m_barBalanceLeft->sizeHint().width() == std::max(0, -diff) && m_barBalance->sizeHint().width() == std::max(0, diff)
+            && m_barBalance->sizePolicy().horizontalPolicy() == QSizePolicy::Preferred)
+            return; // (unchanged: no new layout pass - event() calls this on every layout request)
         m_barBalanceLeft->changeSize(std::max(0, -diff), 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
         m_barBalance->changeSize(std::max(0, diff), 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
         m_transport->invalidate();
@@ -614,6 +620,14 @@ int Viewer::wantedPreviewEdge() const
     const int longer = std::max(covered.width(), covered.height());
     m_shownEdge = std::clamp((longer + 63) / 64 * 64, 64, PreviewResolution::kAutoCap);
     return m_shownEdge;
+}
+
+bool Viewer::event(QEvent* event)
+{
+    // The buttons' sizes settle late (the style sheet's font on the first show, a new zoom text, a longer timecode):
+    // each change asks for a layout pass, and the compact row's balance follows it
+    if (m_compact && m_barBalanceLeft && event->type() == QEvent::LayoutRequest) updateBalance();
+    return QWidget::event(event);
 }
 
 bool Viewer::eventFilter(QObject* obj, QEvent* event)

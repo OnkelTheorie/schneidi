@@ -112,6 +112,7 @@ signals:
     void previewEdgeWanted(); // wantedPreviewEdge() changed (picture area resized, other screen)
 
 protected:
+    bool event(QEvent* event) override; // compact: the transport row balanced again when its buttons change size
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:

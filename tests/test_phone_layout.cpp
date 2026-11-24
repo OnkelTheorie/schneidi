@@ -18,6 +18,8 @@
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
 #include "ui/ShapeOverlay.h"
+#include "ui/FrameView.h"
+#include "ui/Viewer.h"
 #include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
 #include "ui/RenderQueuePanel.h"
@@ -218,6 +220,12 @@ void testWindow(Engine& engine, const QSize& size)
                           .arg(least.height()));
     };
     fits("phone layout fits the window");
+    if (!shell->landscape()) // the A51 finding: the play button in the window's middle (also in touch mode)
+        if (auto* play = w.findChild<QToolButton*>("viewer_play"); CHECK(play)) {
+            const int mid = play->mapTo(&w, play->rect().center()).x();
+            Check::report(std::abs(mid - w.width() / 2) <= 3, "play button in the middle (portrait)", __FILE__, __LINE__,
+                          QString("centre %1 of %2%3").arg(mid).arg(w.width()).arg(Touch::modeActive() ? ", touch" : ""));
+        }
     if (shell->landscape()) { // item 10: a picture worth the name, the rail's tools with their names
         if (auto* screen = w.findChild<QWidget*>("viewer_screen"); CHECK(screen))
             Check::report(screen->height() >= size.height() * 3 / 10, "landscape picture not tiny", __FILE__, __LINE__,
