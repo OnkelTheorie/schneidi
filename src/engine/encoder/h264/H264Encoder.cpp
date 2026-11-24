@@ -2071,10 +2071,15 @@ void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
         return;
     const size_t n = tpQOff_.size();
     auto kind = [&](const LookaheadFrame& g) { return g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1; };
-    auto level = [&](const LookaheadFrame& g, int t) { // the tree's offsets as one QP offset of the picture, per unit of strength
-        double shift = 0;
-        vbvCost(&g, t, &shift);
-        return shift / std::max(0.1, treeStrength(g));
+    const size_t mbs = size_t(mbW_) * mbH_;
+    auto level = [&](const LookaheadFrame& g, int) { // the picture's mean tree offset, per unit of strength
+        if (g.intraCost.size() != mbs || g.propagate.size() != mbs)
+            return 0.0;
+        const double strength = treeStrength(g);
+        double sum = 0;
+        for (size_t m = 0; m < mbs; ++m)
+            sum += std::max(-gTreeCap, Lookahead::qpOffset(g, int(m), strength));
+        return sum / double(mbs) / std::max(0.1, strength);
     };
     if (size_t(queue_.back().index) + 1 < n) {
         // Pictures still join the queue: this picture has the whole lookahead behind it.
@@ -2096,8 +2101,7 @@ void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
     for (const LookaheadFrame& g : queue_) {
         const size_t i = size_t(g.index);
         const int t = kind(g);
-        // (a picture whose type is not final yet has no tree of its own)
-        if (i >= n || t == 2 || (g.coded && &g != &frame) || (useB() && !g.decided && &g != &frame))
+        if (i >= n || t == 2 || (g.coded && &g != &frame))
             continue;
         const float tail = float(gTpTail * std::max(0.0, (level(g, t) - tpTreeLevel_) * treeStrength(g)));
         if (std::abs(tail - tpTail_[i]) < 0.05f)
@@ -2117,7 +2121,8 @@ void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
             all[k] += row[size_t(k)];
         }
         if (devEnv("H264_RC_TRACE"))
-            std::fprintf(stderr, "tail: at %d picture %zu tree short by %.2f (level %.2f)\n", frameIndex_, i, tail, tpTreeLevel_);
+            std::fprintf(stderr, "tail: at %d picture %zu tree short by %.2f (level %.2f, strength %.1f, decided %d)\n", frameIndex_, i, tail,
+                         tpTreeLevel_, treeStrength(g), int(g.decided));
     }
 }
 
@@ -4737,7 +4742,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // The QP stays put; the model's k settles over the first pictures (the probe misses
             // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
             // slowly (at most half a QP per picture).
-            tpTreeTail(frame, type);
+            if (!fc.treeOffset_.empty()) // the tree was run over the queue for this picture
+                tpTreeTail(frame, type);
             const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
             qp = twoPassQp(kOf(true), kOf(false), kB(), plan);
             const double rest = qp;
