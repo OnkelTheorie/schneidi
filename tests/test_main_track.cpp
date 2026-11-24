@@ -44,6 +44,8 @@ struct Fixture {
     Editor editor{&project, &sel};
     explicit Fixture(bool magnetic = true)
     {
+        while (project.newClipId() < 100) {} // (the fixed ids below are taken)
+        while (project.newLinkId() < 100) {}
         for (const char* n : {"a", "b", "c", "x"})
             project.addMedia(MediaInfo{QString("/x/%1.mp4").arg(n), QString("%1.mp4").arg(n), 200, true, true, false});
         project.edit("setup", [](Timeline& tl) {
@@ -57,7 +59,7 @@ struct Fixture {
     }
     const Timeline& tl() const { return project.timeline(); }
     QString d() const { return dump(project.timeline()); }
-    int steps() const { return project.undoStack()->count(); }
+    int steps() { return project.undoStack()->index(); }
     // One undo step since `before`; undo gives `before` back exactly, redo `after`
     void checkUndo(const Timeline& before, int stepsBefore, const char* what, int line)
     {
@@ -83,11 +85,12 @@ void testOff()
     f.sel.set({2, 12});
     f.editor.deleteSelection();
     CHECK_EQ(f.d(), QString("V1: a[0-100|0-99] c[160-240|0-79]  V2:  A1: a[0-100|0-99] c[160-240|0-79]  A2:"));
+    // Packing only on request (the phone's reorder, the switch turned on)
+    CHECK(f.editor.packTrack(MainTrack::kMain));
+    CHECK_EQ(f.d(), QString("V1: a[0-100|0-99] c[100-180|0-79]  V2:  A1: a[0-100|0-99] c[100-180|0-79]  A2:"));
     f.editor.addMediaAt({"/x/x.mp4"}, 50);
     CHECK_EQ(f.tl().video[0].clips[0].length(), 50); // a overwritten from 50 on
     CHECK_EQ(f.tl().video[0].clips[1].start, 50);
-    // Packing only on request (the phone's reorder, the switch turned on)
-    CHECK(f.editor.packTrack(MainTrack::kMain));
 }
 
 void testDelete()
@@ -319,11 +322,12 @@ void testLocked()
     CHECK(f.editor.takeNotice().refused);
     f.editor.toggleTrackLock({TrackKind::Audio, 0});
     // V1 locked: nothing on it changes, nothing packs
-    Fixture g;
+    Fixture g(false);
     g.project.edit("gap", [](Timeline& tl) {
         TimelineOps::findClip(tl, 3)->start = 200;
         TimelineOps::findClip(tl, 13)->start = 200;
     });
+    g.editor.setMagneticMain(true);
     g.editor.toggleTrackLock(MainTrack::kMain);
     CHECK(!g.editor.packTrack(MainTrack::kMain));
     g.sel.set({1, 11});
@@ -374,7 +378,8 @@ void testCore()
     t.clips = {mk(1, "a", 0, 100), mk(2, "b", 100, 60)};
     CHECK_EQ(MainTrack::insertPoint(t, 30), 0);
     CHECK_EQ(MainTrack::insertPoint(t, 70), 100);
-    CHECK_EQ(MainTrack::insertPoint(t, 130), 100);
+    CHECK_EQ(MainTrack::insertPoint(t, 125), 100);
+    CHECK_EQ(MainTrack::insertPoint(t, 130), 160); // (halfway: after it)
     CHECK_EQ(MainTrack::insertPoint(t, 140), 160);
     CHECK_EQ(MainTrack::insertPoint(t, 900), 160);
     CHECK_EQ(MainTrack::insertPoint(t, 140, {2}), 100);

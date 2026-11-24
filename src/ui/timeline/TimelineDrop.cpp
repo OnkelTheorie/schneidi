@@ -9,6 +9,7 @@
 #include "core/I18n.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/MainTrack.h"
 #include "core/Project.h"
 #include "core/Retime.h"
 #include "core/Selection.h"
@@ -260,6 +261,10 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e)
     m_dropFrame = std::max(0, frame);
     m_dropTrack = dropTrackAt(pos.y());
     m_dropParts = dropParts(e->mimeData(), e->modifiers());
+    // The magnetic main track: a picture dropped onto V1 goes in at the nearest cut (Editor::addMediaAt), shown there
+    if (const Timeline& tl = m_editor->project()->timeline();
+        magneticMain() && m_dropTrack == 0 && !tl.video.isEmpty() && m_dropParts != PlaceParts::Sound)
+        m_dropFrame = MainTrack::insertPoint(tl.video[0], m_dropFrame);
     e->setDropAction(Qt::CopyAction); // see dragEnterEvent
     e->accept();
     update();
