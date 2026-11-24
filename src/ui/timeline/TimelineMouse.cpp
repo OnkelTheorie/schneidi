@@ -430,10 +430,28 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
     if (m_reorder.on) {
         m_reorder.fingerX = e->position().x();
-        const int n = int(m_reorder.order.size());
-        const double slot = m_reorder.tw + 4;
-        m_reorder.to = std::clamp(int(std::lround((m_reorder.fingerX - m_reorder.tw / 2.0 - m_reorder.base) / slot)), 0, n - 1);
-        update();
+        reorderFollowFinger();
+        if (reorderEdgeSpeed() != 0) {
+            if (!m_reorderScroll) {
+                m_reorderScroll = new QTimer(this);
+                m_reorderScroll->setInterval(16);
+                connect(m_reorderScroll, &QTimer::timeout, this, [this] {
+                    const double speed = m_reorder.on ? reorderEdgeSpeed() : 0;
+                    if (speed == 0) {
+                        m_reorderScroll->stop();
+                        return;
+                    }
+                    const int n = int(m_reorder.order.size());
+                    const double row = n * (m_reorder.tw + 4.0) - 4;
+                    const double most = kHeaderW + 4.0, least = width() - 4.0 - row; // the row's first tile / last tile in sight
+                    double base = m_reorder.base + speed;
+                    base = speed > 0 ? std::min(base, std::max(m_reorder.base, most)) : std::max(base, std::min(m_reorder.base, least));
+                    m_reorder.base = base;
+                    reorderFollowFinger();
+                });
+            }
+            if (!m_reorderScroll->isActive()) m_reorderScroll->start();
+        }
         return;
     }
     if (m_drag == Drag::None) m_touchPointer = Touch::isTouch(e); // a running drag keeps the press's zones

@@ -287,6 +287,11 @@ private:
     } m_reorder;
     void startReorder(const QPointF& pos, int clipId);
     void finishReorder(bool apply);
+    // The finger near the lanes' left/right edge while the row is wider than the lanes: the row scrolls under it
+    // (faster the closer to the edge), the held clip's landing place follows
+    double reorderEdgeSpeed() const;
+    void reorderFollowFinger(); // m_reorder.to from the finger and the row's place
+    class QTimer* m_reorderScroll = nullptr;
     void drawReorder(QPainter& p);
     void drawTouchSelection(QPainter& p);
     bool onSelectedHandle(const QPointF& pos) const;

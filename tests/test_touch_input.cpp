@@ -1010,6 +1010,44 @@ void testHoldToMove()
     f.tv->setFingerPans(false);
 }
 
+// The magnetic main track's reorder row wider than the lanes: the finger near the right edge scrolls it, so the held
+// clip reaches the last place (without, it stopped at the tiles in sight)
+void testReorderEdgeScroll()
+{
+    Fixture f;
+    f.project.edit("many", [](Timeline& tl) {
+        tl.video[0].clips.clear();
+        for (int i = 0; i < 16; ++i) tl.video[0].clips << clip(10 + i, i * 20, 20);
+    });
+    f.tv->setFingerPans(true);
+    f.tv->setHoldToMove(true);
+    f.tv->setMagneticMain(true);
+    f.tv->setPlayhead(300);
+    QApplication::processEvents();
+    const QPoint from(f.x(10), 120);
+    QTest::touchEvent(f.tv, g_touch).press(0, from, f.tv);
+    QTest::qWait(Touch::longPressMs() + 100);
+    if (!CHECK(f.tv->reordering())) {
+        QTest::touchEvent(f.tv, g_touch).release(0, from, f.tv);
+        return;
+    }
+    const QPoint edge(f.tv->width() - 6, 120);
+    for (int i = 1; i <= 10; ++i) {
+        QTest::touchEvent(f.tv, g_touch).move(0, from + (edge - from) * i / 10, f.tv);
+        QTest::qWait(10);
+    }
+    QTest::qWait(2500); // (the row scrolls while the finger rests at the edge)
+    QTest::touchEvent(f.tv, g_touch).release(0, edge, f.tv);
+    const auto& v1 = f.project.timeline().video[0].clips;
+    Check::report(!v1.isEmpty() && v1.last().id == 10, "reorder row scrolls at the edge: the held clip goes last",
+                  __FILE__, __LINE__, QString("last %1").arg(v1.isEmpty() ? -1 : v1.last().id));
+    bool packed = true;
+    for (int i = 1; i < v1.size(); ++i) packed = packed && v1[i].start == v1[i - 1].start + v1[i - 1].length();
+    CHECK(packed);
+    pauseTaps();
+    f.tv->setFingerPans(false);
+}
+
 // The timeline's glide (setting timeline/momentum): only a real flick glides, "low" less far than "normal", "off"
 // never; a finger on the gliding view stops it at once (no tap); a sideways swipe never scrolls the lanes up or down;
 // a slow scrub in the centred mode holds at a clip's edge (a haptic tick)
@@ -1281,6 +1319,7 @@ int main(int argc, char** argv)
     testCompactHeaders();
     testCenterPlayhead();
     testHoldToMove();
+    testReorderEdgeScroll();
     testMomentumAndAxis();
     testPackTrack();
     testReviewFixes();

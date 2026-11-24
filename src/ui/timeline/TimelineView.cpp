@@ -978,10 +978,33 @@ void TimelineView::cancelTouchDrag()
     update();
 }
 
+double TimelineView::reorderEdgeSpeed() const
+{
+    const int n = int(m_reorder.order.size());
+    const double row = n * (m_reorder.tw + 4.0) - 4;
+    const double most = kHeaderW + 4.0, least = width() - 4.0 - row;
+    constexpr double kZone = 48, kFastest = 14; // px from the edge; px per 16 ms step right at the edge
+    const double x = m_reorder.fingerX;
+    if (x < kHeaderW + kZone && m_reorder.base < most) // tiles hidden at the left: the row moves right
+        return kFastest * std::clamp((kHeaderW + kZone - x) / kZone, 0.15, 1.0);
+    if (x > width() - kZone && m_reorder.base > least) // hidden at the right: it moves left
+        return -kFastest * std::clamp((x - (width() - kZone)) / kZone, 0.15, 1.0);
+    return 0;
+}
+
+void TimelineView::reorderFollowFinger()
+{
+    const int n = int(m_reorder.order.size());
+    const double slot = m_reorder.tw + 4;
+    m_reorder.to = std::clamp(int(std::lround((m_reorder.fingerX - m_reorder.tw / 2.0 - m_reorder.base) / slot)), 0, n - 1);
+    update();
+}
+
 void TimelineView::finishReorder(bool apply)
 {
     if (!m_reorder.on) return;
     m_reorder.on = false;
+    if (m_reorderScroll) m_reorderScroll->stop();
     if (apply) {
         QVector<int> order = m_reorder.order;
         order.removeAll(m_reorder.id);
