@@ -205,6 +205,7 @@ struct Player::Impl {
         int sPos = 0, sLen = 0;
         bool sTail = false;
         int64_t sNext = 0;
+        int64_t sAsked = 0; // the position the last slice was asked for (a join needs a drag moving forward)
         int sPlayed = 0; // samples of the slice under way handed to the ring
     };
 
@@ -234,11 +235,12 @@ struct Player::Impl {
     void mixSlice(Feed& f, const ScrubRequest& req, bool cut);
     void writeStaged(Feed& f, int n); // n samples of the staged sound into the ring as blocks (padded with silence)
     int scrubFade() const { return opt.rate * kScrubFadeMs / 1000; }
-    // A request this close to where the mixed sound goes on continues it (a slow drag runs behind by the lead)
+    // A request moving forward and this close to where the mixed sound goes on continues it (a slow drag runs
+    // behind by the lead); backwards or far away it plays from where it was asked
     bool joins(const Feed& f, int64_t pos) const
     {
         const int64_t tol = int64_t(opt.rate) * kScrubMaxMs / 1000;
-        return f.sTail && pos >= f.sNext - 2 * tol && pos <= f.sNext + tol;
+        return f.sTail && pos >= f.sAsked && pos >= f.sNext - 2 * tol && pos <= f.sNext + tol;
     }
     void noteChannelPeaks(Feed& f, const float* p, size_t n);
     // Ahead of the device: at least 50 ms and the asked buffer, and the device's real buffer + 20 ms – a device may
@@ -652,6 +654,7 @@ void Player::Impl::mixSlice(Feed& f, const ScrubRequest& req, bool cut)
     f.sLen += n - at;
     f.sTail = true;
     f.sNext = from + n;
+    f.sAsked = req.pos;
     scrubSlices.fetch_add(1, std::memory_order_relaxed);
 }
 

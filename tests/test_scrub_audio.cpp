@@ -192,6 +192,17 @@ int main(int argc, char** argv)
     const qsizetype soloFrom = sp.size();
     player->scrub(5.0 * kRate);
     const qsizetype soloTo = settle(sp, 300);
+    // 4b. A held Left key (a frame back every 25 ms, a fast key repeat): every step plays from its own time, never on past the one before
+    player->setTimeline(tl, kFps);
+    sleepMs(50);
+    const qsizetype backFrom = sp.size();
+    std::vector<double> backAsked;
+    for (int i = 0; i < 12; ++i) {
+        backAsked.push_back((8.0 - i / 30.0) * kRate);
+        player->scrub(backAsked.back());
+        sleepMs(25);
+    }
+    const qsizetype backTo = settle(sp, 300);
     // Playing ends scrubbing: no scrub sound afterwards, and play/pause still work
     player->setTimeline(tl, kFps);
     player->play(6.0 * kRate, 1.0);
@@ -270,6 +281,28 @@ int main(int argc, char** argv)
         CHECK(m.empty());
         CHECK_EQ(int(s.size()), 1);
         CHECK(soloLeft > 6000 && soloLeft < 11000 && std::abs(soloLeft - soloRight) < 600); // 0.3 alone, no time code
+    }
+
+    // 4b.
+    {
+        double highest = 0;
+        for (qsizetype i = backFrom; i < std::min(backTo, sp.frames()); ++i)
+            if (sp.loud(i)) highest = std::max(highest, timeAt(sp, i));
+        // Each step's start: its own time 5-7 ms in (behind the fade-in) somewhere in what was heard
+        int found = 0;
+        for (double p : backAsked) {
+            const double want = p + 0.006 * kRate;
+            for (qsizetype i = backFrom; i < std::min(backTo, sp.frames()); ++i)
+                if (std::abs(timeAt(sp, i) - want) < 0.001 * kRate) {
+                    ++found;
+                    break;
+                }
+        }
+        std::printf("Rückwärts-Schritte: höchste gehörte Zeit %.4f s (erster Schritt 8,0 s), %d von %zu Schritten von "
+                    "ihrer Zeit an gehört\n",
+                    highest / kRate, found, backAsked.size());
+        CHECK(highest < backAsked[0] + 0.090 * kRate); // never on past the first step's slice
+        CHECK(found >= int(backAsked.size()) - 2);       // (a step may be replaced by the next before it is mixed)
     }
 
     // 5. No step anywhere (440 Hz at 0.5 changes by < 950 per sample; a cut of the time code or the sine: thousands)
