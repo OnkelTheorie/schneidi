@@ -945,6 +945,32 @@ void testHoldToMove()
                   QString("%1 -> %2").arg(len).arg(f.project.timeline().video[0].clips[0].length()));
     pauseTaps();
     f.project.undoStack()->undo();
+    // Just outside the handle (12 px right of clip 1's end, the empty gap): a swipe slides the view like anywhere else
+    // (that side of the edge was a dead zone: neither the view nor a trim followed the finger)
+    {
+        f.tv->setPlayhead(60);
+        QApplication::processEvents();
+        const QPoint outside(f.x(100) + 12, 120);
+        swipe(f.tv, outside, outside - QPoint(40, 0));
+        QTest::qWait(700);
+        Check::report(f.project.timeline().video[0].clips[0].length() == len && f.tv->playhead() > 60,
+                      "beside a handle a swipe scrubs", __FILE__, __LINE__,
+                      QString("length %1, playhead %2").arg(f.project.timeline().video[0].clips[0].length()).arg(f.tv->playhead()));
+        pauseTaps();
+    }
+    // On a locked track the handle trims nothing (edgeAt): a swipe there slides the view too
+    {
+        f.project.edit("lock", [](Timeline& tl) { tl.video[0].locked = true; });
+        f.tv->setPlayhead(60);
+        QApplication::processEvents();
+        swipe(f.tv, handle, handle - QPoint(40, 0));
+        QTest::qWait(700);
+        Check::report(f.project.timeline().video[0].clips[0].length() == len && f.tv->playhead() > 60,
+                      "locked track: a swipe on the handle scrubs", __FILE__, __LINE__,
+                      QString("length %1, playhead %2").arg(f.project.timeline().video[0].clips[0].length()).arg(f.tv->playhead()));
+        f.project.undoStack()->undo();
+        pauseTaps();
+    }
     // A long press on a clip: no menu, the clip selected
     f.sel.clear();
     f.tv->setPlayhead(200);
@@ -994,6 +1020,44 @@ void testHoldToMove()
     Check::report(v1.size() == 2 && v1[0].id == 2 && v1[0].start == 0 && v1[1].id == 1 && v1[1].start == v1[0].length(),
                   "magnetic reorder, no gaps", __FILE__, __LINE__,
                   QString("%1@%2, %3@%4").arg(v1.value(0).id).arg(v1.value(0).start).arg(v1.value(1).id).arg(v1.value(1).start));
+    f.tv->setFingerPans(false);
+}
+
+// The magnetic main track's reorder row wider than the lanes: the finger near the right edge scrolls it, so the held
+// clip reaches the last place (without, it stopped at the tiles in sight)
+void testReorderEdgeScroll()
+{
+    Fixture f;
+    f.project.edit("many", [](Timeline& tl) {
+        tl.video[0].clips.clear();
+        for (int i = 0; i < 16; ++i) tl.video[0].clips << clip(10 + i, i * 20, 20);
+    });
+    f.tv->setFingerPans(true);
+    f.tv->setHoldToMove(true);
+    f.tv->setMagneticMain(true);
+    f.tv->setPlayhead(300);
+    QApplication::processEvents();
+    const QPoint from(f.x(10), 120);
+    QTest::touchEvent(f.tv, g_touch).press(0, from, f.tv);
+    QTest::qWait(Touch::longPressMs() + 100);
+    if (!CHECK(f.tv->reordering())) {
+        QTest::touchEvent(f.tv, g_touch).release(0, from, f.tv);
+        return;
+    }
+    const QPoint edge(f.tv->width() - 6, 120);
+    for (int i = 1; i <= 10; ++i) {
+        QTest::touchEvent(f.tv, g_touch).move(0, from + (edge - from) * i / 10, f.tv);
+        QTest::qWait(10);
+    }
+    QTest::qWait(2500); // (the row scrolls while the finger rests at the edge)
+    QTest::touchEvent(f.tv, g_touch).release(0, edge, f.tv);
+    const auto& v1 = f.project.timeline().video[0].clips;
+    Check::report(!v1.isEmpty() && v1.last().id == 10, "reorder row scrolls at the edge: the held clip goes last",
+                  __FILE__, __LINE__, QString("last %1").arg(v1.isEmpty() ? -1 : v1.last().id));
+    bool packed = true;
+    for (int i = 1; i < v1.size(); ++i) packed = packed && v1[i].start == v1[i - 1].start + v1[i - 1].length();
+    CHECK(packed);
+    pauseTaps();
     f.tv->setFingerPans(false);
 }
 
@@ -1268,6 +1332,7 @@ int main(int argc, char** argv)
     testCompactHeaders();
     testCenterPlayhead();
     testHoldToMove();
+    testReorderEdgeScroll();
     testMomentumAndAxis();
     testPackTrack();
     testReviewFixes();

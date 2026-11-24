@@ -269,36 +269,17 @@ void MediaGallery::rebuild()
     m_columns = columns();
     m_tiles.clear();
     m_body = new QWidget;
-    auto* lay = new QVBoxLayout(m_body);
-    lay->setContentsMargins(4, 4, 4, 4);
-    lay->setSpacing(4);
-    QDate day;
-    QGridLayout* grid = nullptr;
-    int n = 0;
-    for (int i = 0; i < m_items.size(); ++i) {
-        const DeviceMediaItem& m = m_items[i];
-        if ((m_filter == Filter::Videos && !m.video) || (m_filter == Filter::Photos && m.video)) continue;
-        if (!grid || m.date.date() != day) { // a new day: its heading and grid
-            day = m.date.date();
-            auto* heading = new QLabel(dayName(day));
-            heading->setStyleSheet(QString("color: %1; font-weight: 600; padding: 10px 4px 2px 4px;").arg(Theme::text.name()));
-            lay->addWidget(heading);
-            grid = new QGridLayout;
-            grid->setSpacing(3);
-            for (int c = 0; c < m_columns; ++c) grid->setColumnStretch(c, 1);
-            lay->addLayout(grid);
-            n = 0;
-        }
-        auto* tile = new GalleryTile(i, m);
-        tile->setNumber(int(m_picked.indexOf(i)) + 1);
-        connect(tile, &GalleryTile::tapped, this, &MediaGallery::toggle);
-        grid->addWidget(tile, n / m_columns, n % m_columns);
-        ++n;
-        m_tiles << tile;
-    }
-    lay->addStretch(1);
+    m_bodyLay = new QVBoxLayout(m_body);
+    m_bodyLay->setContentsMargins(4, 4, 4, 4);
+    m_bodyLay->setSpacing(4);
+    m_bodyLay->addStretch(1);
+    m_grid = nullptr;
+    m_gridCount = 0;
+    m_day = {};
+    m_next = 0;
     ++*m_generation; // (the old tiles' queued pictures are not made any more)
     m_pool->clear();
+    appendPage();
     m_scroll->setWidget(m_body); // (the old body goes)
     const bool none = m_tiles.isEmpty();
     m_scroll->setVisible(!none);
@@ -306,6 +287,44 @@ void MediaGallery::rebuild()
     m_empty->setText(m_items.isEmpty() ? T("Keine Videos oder Fotos auf dem Gerät gefunden. „Andere Datei…“ öffnet die Dateiauswahl.")
                                        : T("Hier ist nichts von dieser Art."));
     m_thumbTimer->start(); // (once laid out: which tiles are in sight)
+}
+
+void MediaGallery::appendPage()
+{
+    // A phone may hold thousands of videos and photos: a widget per item at once took seconds and memory, so the
+    // tiles come a page at a time (loadThumbnails asks for the next when the list is scrolled near its end)
+    int added = 0;
+    for (; m_next < m_items.size() && added < kPage; ++m_next) {
+        const int i = m_next;
+        const DeviceMediaItem& m = m_items[i];
+        if ((m_filter == Filter::Videos && !m.video) || (m_filter == Filter::Photos && m.video)) continue;
+        const int at = m_bodyLay->count() - 1; // (before the stretch)
+        if (!m_grid || m.date.date() != m_day) { // a new day: its heading and grid
+            m_day = m.date.date();
+            auto* heading = new QLabel(dayName(m_day));
+            heading->setStyleSheet(QString("color: %1; font-weight: 600; padding: 10px 4px 2px 4px;").arg(Theme::text.name()));
+            m_bodyLay->insertWidget(at, heading);
+            m_grid = new QGridLayout;
+            m_grid->setSpacing(3);
+            for (int c = 0; c < m_columns; ++c) m_grid->setColumnStretch(c, 1);
+            m_bodyLay->insertLayout(at + 1, m_grid);
+            m_gridCount = 0;
+        }
+        auto* tile = new GalleryTile(i, m);
+        tile->setNumber(int(m_picked.indexOf(i)) + 1);
+        connect(tile, &GalleryTile::tapped, this, &MediaGallery::toggle);
+        m_grid->addWidget(tile, m_gridCount / m_columns, m_gridCount % m_columns);
+        ++m_gridCount;
+        m_tiles << tile;
+        ++added;
+    }
+}
+
+bool MediaGallery::morePages() const
+{
+    for (int i = m_next; i < m_items.size(); ++i)
+        if (m_filter == Filter::All || (m_filter == Filter::Videos) == m_items[i].video) return true;
+    return false;
 }
 
 namespace {
@@ -321,6 +340,12 @@ void MediaGallery::loadThumbnails()
     // The tiles in sight and one screen below them, in the background on the gallery's own threads (Android: the
     // system's cached thumbnails); a picture made before comes from the cache
     if (!m_body || !m_scroll->isVisible()) return;
+    // Near the end of the tiles so far (within a screen): the next page, then again once it is laid out
+    if (QScrollBar* bar = m_scroll->verticalScrollBar();
+        m_next < m_items.size() && bar->maximum() - bar->value() < m_scroll->viewport()->height() && morePages()) {
+        appendPage();
+        m_thumbTimer->start();
+    }
     const QRect seen = QRect(QPoint(0, m_scroll->verticalScrollBar()->value()), m_scroll->viewport()->size())
                            .adjusted(0, 0, 0, m_scroll->viewport()->height());
     const int generation = *m_generation;

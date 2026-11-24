@@ -79,6 +79,9 @@ public:
     // height (rows down to kFitAudioMin) instead of filling the timeline; a pinch or wheel on the heights ends it
     void setFitAudioRows(bool on);
     bool fitAudioRows() const { return m_fitAudio; }
+    // The lanes' height the fitted audio rows share (0 = the view's own): a phone timeline only as tall as its rows
+    // keeps the rows' height of its tallest form, else rows and timeline would shrink each other
+    void setFitAudioLanes(int lanes);
     int audioRowHeight() const; // the audio tracks' height as shown
     int mainTrackBottom() const; // y below V1's row as shown now (the ruler's bottom without tracks)
     // Height that shows the ruler, every video track and the first `audioRows` audio tracks (not scrolled)
@@ -217,6 +220,9 @@ signals:
     // The ruler menu's "loop in the range" entry was switched
     void loopInOutRequested(bool on);
     void viewChanged();
+    // The rows' total height changed by the user (after a pinch on the headers, a wheel on them, a keyframe lane or a
+    // curve editor opened or closed): the phone's timeline fits itself to its rows again
+    void trackHeightsChanged();
     // setPlayhead moved the playhead (the overview strip follows it)
     void playheadChanged(int frame);
     void toolChanged(TimelineView::Tool tool);
@@ -288,6 +294,11 @@ private:
     } m_reorder;
     void startReorder(const QPointF& pos, int clipId);
     void finishReorder(bool apply);
+    // The finger near the lanes' left/right edge while the row is wider than the lanes: the row scrolls under it
+    // (faster the closer to the edge), the held clip's landing place follows
+    double reorderEdgeSpeed() const;
+    void reorderFollowFinger(); // m_reorder.to from the finger and the row's place
+    class QTimer* m_reorderScroll = nullptr;
     void drawReorder(QPainter& p);
     void drawTouchSelection(QPainter& p);
     bool onSelectedHandle(const QPointF& pos) const;
@@ -555,10 +566,13 @@ private:
     Tool m_tool = Tool::Select;
     bool m_touchPointer = false; // the last press/move came from a finger: larger grab zones (edges, In/Out handles)
     int edgeGrabPx() const;
+    int edgeGrabPxFor(bool touch) const; // (onSelectedHandle: a finger before its press arrived)
+    static constexpr double kRollPx = 3;  // trimHitAt: the roll zone at a cut
     enum class Pinch { None, View, VideoHeight, AudioHeight }; // what the running pinch changes
     Pinch m_pinch = Pinch::None;
     double m_pinchTrackH = 0; // track height during a pinch on the headers (unrounded)
     bool m_fitAudio = false; // setFitAudioRows
+    int m_fitLanes = 0;      // setFitAudioLanes
     bool m_snap = TimelineOptions::snapping(); // remembered (the main window stores it)
     bool m_showNames = true;
     bool m_showDurations = false;

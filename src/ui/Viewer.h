@@ -112,6 +112,7 @@ signals:
     void previewEdgeWanted(); // wantedPreviewEdge() changed (picture area resized, other screen)
 
 protected:
+    bool event(QEvent* event) override; // compact: the transport row balanced again when its buttons change size
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
@@ -140,6 +141,8 @@ private:
     QHBoxLayout* m_barRight;        // Before/After and the view buttons
     QWidget* m_partHandles = nullptr; // with a source: drag only its picture / only its sound
     class QSpacerItem* m_barBalance; // keeps the transport buttons centered (left: timecode, right: m_barRight)
+    class QSpacerItem* m_barBalanceLeft = nullptr; // compact: the same on the timecode's side (right side wider)
+    QHBoxLayout* m_transport = nullptr;
     QWidget* m_multicam = nullptr;
     bool m_multicamOn = false;
     QWidget* m_awayPage;

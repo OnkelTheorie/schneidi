@@ -132,7 +132,11 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     }
     auto* touch = m_gestures = new TouchGestures(this);
     touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
-    touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
+    touch->onPinchEnd = [this] {
+        const bool heights = m_pinch == Pinch::AudioHeight || m_pinch == Pinch::VideoHeight;
+        m_pinch = Pinch::None;
+        if (heights) emit trackHeightsChanged();
+    };
     touch->onCancel = [this] { cancelTouchDrag(); };
     touch->setMomentum(TouchGestures::Momentum::Low); // (setMomentum: the setting)
     touch->setAxisLock(true);                         // a sideways swipe moves along the time only
@@ -261,6 +265,14 @@ void TimelineView::setFitAudioRows(bool on)
     setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
 }
 
+void TimelineView::setFitAudioLanes(int lanes)
+{
+    lanes = std::max(0, lanes);
+    if (m_fitLanes == lanes) return;
+    m_fitLanes = lanes;
+    if (m_fitAudio) setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
+}
+
 int TimelineView::mainTrackBottom() const
 {
     if (const auto r = rowFor({TrackKind::Video, 0})) return std::max(kRulerH, r->y + r->h);
@@ -280,7 +292,8 @@ int TimelineView::audioRowHeight() const
     const Timeline& tl = m_editor->project()->timeline();
     const int n = int(tl.audio.size());
     if (!m_fitAudio || n <= 2) return m_view.audioTrackHeight;
-    const int share = (viewportHeight() - subtitlesHeight()) / 2 / n;
+    const int lanes = m_fitLanes > 0 ? m_fitLanes : viewportHeight();
+    const int share = (lanes - subtitlesHeight()) / 2 / n;
     return std::clamp(share, kFitAudioMin, std::max(kFitAudioMin, m_view.audioTrackHeight));
 }
 
@@ -346,7 +359,6 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         // exactly at the cut of two adjacent clips: Roll
         const bool prevAdj = i > 0 && clips[i - 1].end() == c.start;
         const bool nextAdj = i + 1 < clips.size() && clips[i + 1].start == c.end();
-        constexpr double kRollPx = 3;
         if (prevAdj && pos.x() < x1 + kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::Start};
         if (nextAdj && pos.x() >= x2 - kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::End};
         const double grab = std::min<double>(edgeGrabPx() + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
@@ -875,9 +887,14 @@ void TimelineView::pinchView(const QPointF& from, const QPointF& to, double scal
 
 int TimelineView::edgeGrabPx() const
 {
+    return edgeGrabPxFor(m_touchPointer);
+}
+
+int TimelineView::edgeGrabPxFor(bool touch) const
+{
     // The phone's trim handles of a selected clip: a finger's width to grab
-    if (m_fingerPans && m_holdToMove && m_touchPointer) return 24;
-    return Touch::grabPx(m_touchPointer, kEdgeGrabPx);
+    if (m_fingerPans && m_holdToMove && touch) return 24;
+    return Touch::grabPx(touch, kEdgeGrabPx);
 }
 
 void TimelineView::setHoldToMove(bool hold)
@@ -902,7 +919,24 @@ bool TimelineView::onSelectedHandle(const QPointF& pos) const
             if (!sel.contains(c.id)) continue;
             const QRect r = clipRect(row, c);
             if (pos.y() < r.top() || pos.y() > r.bottom()) continue;
-            if (std::abs(pos.x() - r.left()) <= 24 || std::abs(pos.x() - r.right()) <= 24) return true;
+            // Exactly where a finger's press trims (edgeAt, in the trim tools trimHitAt: inside the clip, at most a
+            // third of it, the roll zone at a cut; Slip/Slide anywhere on it; never on a locked track). It was 24 px
+            // on both sides of each edge: outside the clip the finger neither slid the view nor trimmed this clip
+            const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
+            if (pos.x() < x1 || pos.x() >= x2) continue;
+            if (isLocked(row)) return false;
+            if (m_tool == Tool::Slip || m_tool == Tool::Slide) return true;
+            double grab = edgeGrabPxFor(true);
+            if (m_tool == Tool::Trim) {
+                const auto& clips = tl.track(row.ref).clips;
+                const bool adjacent = std::any_of(clips.cbegin(), clips.cend(), [&c](const Clip& o) {
+                    return o.end() == c.start || o.start == c.end();
+                });
+                if (adjacent) grab += kRollPx;
+            }
+            grab = std::min(grab, (x2 - x1) / 3);
+            if (pos.x() < x1 + grab || pos.x() >= x2 - grab) return true;
+            return false;
         }
     return false;
 }
@@ -959,10 +993,33 @@ void TimelineView::cancelTouchDrag()
     update();
 }
 
+double TimelineView::reorderEdgeSpeed() const
+{
+    const int n = int(m_reorder.order.size());
+    const double row = n * (m_reorder.tw + 4.0) - 4;
+    const double most = kHeaderW + 4.0, least = width() - 4.0 - row;
+    constexpr double kZone = 48, kFastest = 14; // px from the edge; px per 16 ms step right at the edge
+    const double x = m_reorder.fingerX;
+    if (x < kHeaderW + kZone && m_reorder.base < most) // tiles hidden at the left: the row moves right
+        return kFastest * std::clamp((kHeaderW + kZone - x) / kZone, 0.15, 1.0);
+    if (x > width() - kZone && m_reorder.base > least) // hidden at the right: it moves left
+        return -kFastest * std::clamp((x - (width() - kZone)) / kZone, 0.15, 1.0);
+    return 0;
+}
+
+void TimelineView::reorderFollowFinger()
+{
+    const int n = int(m_reorder.order.size());
+    const double slot = m_reorder.tw + 4;
+    m_reorder.to = std::clamp(int(std::lround((m_reorder.fingerX - m_reorder.tw / 2.0 - m_reorder.base) / slot)), 0, n - 1);
+    update();
+}
+
 void TimelineView::finishReorder(bool apply)
 {
     if (!m_reorder.on) return;
     m_reorder.on = false;
+    if (m_reorderScroll) m_reorderScroll->stop();
     if (apply) {
         QVector<int> order = m_reorder.order;
         order.removeAll(m_reorder.id);

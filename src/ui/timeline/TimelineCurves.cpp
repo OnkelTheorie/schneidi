@@ -67,6 +67,7 @@ void TimelineView::setCurveEditor(const QVector<int>& ids, bool on, AnimParam pa
     Selection* sel = m_editor->selection();
     if (ids.contains(sel->keyClip()) && sel->keyParam() >= 0) sel->setKeyframes(0, {});
     setScrollY(m_view.scrollY); // height has changed
+    emit trackHeightsChanged();
 }
 
 bool TimelineView::curveEditorShown(int clipId) const
@@ -377,6 +378,7 @@ bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
         Selection* sel = m_editor->selection();
         if (sel->keyClip() == id && sel->keyParam() >= 0) sel->setKeyframes(0, {});
         setScrollY(m_view.scrollY); // height has changed
+        emit trackHeightsChanged();
         return true;
     }
     const auto h = curveHitAt(pos);

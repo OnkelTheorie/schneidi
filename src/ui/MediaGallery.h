@@ -26,6 +26,7 @@ public:
     enum class Filter { All, Videos, Photos };
     explicit MediaGallery(QWidget* parent = nullptr);
     ~MediaGallery() override;
+    static constexpr int kPage = 120; // tiles built at a time
     bool loading() const { return m_loading; } // the device's list still being read (in the background)
     int thumbnailsRequested() const { return m_requested; } // (tests: only tiles in sight ask)
 
@@ -40,7 +41,9 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    void rebuild();              // sections and tiles for the filter
+    void rebuild();              // sections and tiles for the filter (its first page)
+    void appendPage();           // the next kPage tiles (a library of thousands: tiles as the list is scrolled)
+    bool morePages() const;      // items for the filter not yet shown
     void toggle(int item);       // picked / not picked (the order numbers follow)
     void updatePicks();
     void loadThumbnails(); // the tiles in sight (and a screen below) that have no picture yet
@@ -54,6 +57,12 @@ private:
     QVector<QAbstractButton*> m_filterButtons;
     QScrollArea* m_scroll;
     QWidget* m_body = nullptr;
+    class QVBoxLayout* m_bodyLay = nullptr; // appendPage: the sections so far, a stretch last
+    class QGridLayout* m_grid = nullptr;    // the last day's grid, its tile count and day
+    int m_gridCount = 0;
+    QDate m_day;
+    int m_next = 0; // the next item appendPage looks at
+
     QLabel* m_empty;
     QPushButton* m_add;
     bool m_other = false;

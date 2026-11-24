@@ -11,6 +11,7 @@
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "core/Editor.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Types.h"
@@ -18,6 +19,8 @@
 #include "ui/BackgroundJobs.h"
 #include "ui/Inspector.h"
 #include "ui/ShapeOverlay.h"
+#include "ui/FrameView.h"
+#include "ui/Viewer.h"
 #include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
 #include "ui/RenderQueuePanel.h"
@@ -45,6 +48,7 @@
 #include <QMessageBox>
 #include <QTimer>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLayout>
 #include <QMenuBar>
 #include <QScrollArea>
@@ -218,6 +222,12 @@ void testWindow(Engine& engine, const QSize& size)
                           .arg(least.height()));
     };
     fits("phone layout fits the window");
+    if (!shell->landscape()) // the A51 finding: the play button in the window's middle (also in touch mode)
+        if (auto* play = w.findChild<QToolButton*>("viewer_play"); CHECK(play)) {
+            const int mid = play->mapTo(&w, play->rect().center()).x();
+            Check::report(std::abs(mid - w.width() / 2) <= 3, "play button in the middle (portrait)", __FILE__, __LINE__,
+                          QString("centre %1 of %2%3").arg(mid).arg(w.width()).arg(Touch::modeActive() ? ", touch" : ""));
+        }
     if (shell->landscape()) { // item 10: a picture worth the name, the rail's tools with their names
         if (auto* screen = w.findChild<QWidget*>("viewer_screen"); CHECK(screen))
             Check::report(screen->height() >= size.height() * 3 / 10, "landscape picture not tiny", __FILE__, __LINE__,
@@ -758,10 +768,23 @@ void testGallery(Engine& engine)
         const int first = g.thumbnailsRequested();
         Check::report(first > 0 && first < 100, "gallery: only tiles in sight load", __FILE__, __LINE__,
                       QString::number(first));
+        // Tiles a page at a time (a widget per item of a large library took seconds); scrolling to the end brings
+        // the next page, a pick on the first page stays
+        Check::report(g.tiles().size() == MediaGallery::kPage, "gallery: first page of tiles only", __FILE__, __LINE__,
+                      QString::number(g.tiles().size()));
+        g.tiles().first()->tapped(g.tiles().first()->item());
         auto* scroll = g.findChild<QScrollArea*>();
         scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
         settle();
         CHECK(g.thumbnailsRequested() > first && g.thumbnailsRequested() < 400);
+        Check::report(g.tiles().size() > MediaGallery::kPage, "gallery: scrolled to the end, the next page", __FILE__,
+                      __LINE__, QString::number(g.tiles().size()));
+        for (int i = 0; i < 10 && g.tiles().size() < 400; ++i) {
+            scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+            settle();
+        }
+        CHECK(g.tiles().size() == 400);
+        CHECK(g.chosenPaths() == QStringList{many[0].path} && g.tiles().first()->number() == 1);
         DeviceMedia::setTestItems(items);
     }
     // The flow: the big button over the empty timeline, the gallery, two picked, added in that order
@@ -851,6 +874,27 @@ void testSteadyTransport(Engine& engine)
         }
     }
     Check::report(steady, "timecode and play button keep their place while the time runs", __FILE__, __LINE__, moved);
+    // The play button in the middle of the window (the A51: the timecode left is narrower than "Fit" + full screen at
+    // the right, it sat at 46 %), also with another zoom text and on a narrower phone
+    const auto centred = [&](const char* what) {
+        tc->parentWidget()->layout()->activate();
+        const int mid = play->mapTo(&w, play->rect().center()).x();
+        Check::report(std::abs(mid - w.width() / 2) <= 3, "play button in the middle of the phone window", __FILE__,
+                      __LINE__, QString("%1: centre %2 of %3").arg(what).arg(mid).arg(w.width()));
+    };
+    centred("411 wide");
+    if (auto* viewer = w.findChild<Viewer*>(); CHECK(viewer)) {
+        viewer->setZoom(1.0);
+        settle();
+        centred("zoom 100 %");
+        viewer->setZoom(FrameView::kFit);
+    }
+    w.resize(360, 740);
+    settle();
+    centred("360 wide");
+    emit engine.positionChanged(89898);
+    settle();
+    centred("360 wide, long timecode");
     Check::report(tc->font().fixedPitch() || QFontInfo(tc->font()).fixedPitch(), "timecode in a fixed-pitch font",
                   __FILE__, __LINE__, QFontInfo(tc->font()).family());
 }
@@ -1081,11 +1125,84 @@ int main(int argc, char** argv)
         settle();
         CHECK(view->fitAudioRows());
         const int audioRow = view->audioRowHeight();
-        Check::report(audioRow < 46 && audioRow >= TimelineView::kFitAudioMin && 5 * audioRow <= view->viewportHeight() / 2 + 5,
+        Check::report(audioRow < 46 && audioRow >= TimelineView::kFitAudioMin && 5 * audioRow <= view->viewportHeight(),
                       "five audio tracks share half of the lanes", __FILE__, __LINE__,
                       QString("row %1, lanes %2").arg(audioRow).arg(view->viewportHeight()));
         Check::report(view->contentHeight() <= view->viewportHeight(), "V and A1-A5 all in sight", __FILE__, __LINE__,
                       QString("%1 > %2").arg(view->contentHeight()).arg(view->viewportHeight()));
+        // The A51 shot: ~110 px empty below A5 - the timeline is only as tall as its rows (and a short empty lane), the
+        // viewer gets the rest
+        const int emptyBelow = view->viewportHeight() - view->contentHeight();
+        Check::report(emptyBelow <= TimelineView::kFitAudioMin + 4, "no empty lanes below A5 in portrait", __FILE__,
+                      __LINE__, QString("%1 px empty").arg(emptyBelow));
+        const int viewerFive = w.findChild<Viewer*>()->height();
+        // Typing in a sheet: the keyboard makes the window lower for a moment - the rows keep their height
+        {
+            auto* field = new QLineEdit(w.phoneShell());
+            field->show();
+            QApplication::setActiveWindow(&w);
+            field->setFocus();
+            settle();
+            w.resize(411, 600);
+            settle();
+            Check::report(view->audioRowHeight() == audioRow, "keyboard up: the audio rows keep their height", __FILE__,
+                          __LINE__, QString("%1 / %2").arg(view->audioRowHeight()).arg(audioRow));
+            delete field;
+            w.resize(411, 914);
+            settle();
+            CHECK(view->audioRowHeight() == audioRow && w.findChild<Viewer*>()->height() == viewerFive);
+        }
+        // Fewer tracks (V1 + A1): a lower timeline, a taller viewer; never lower than 3/10 of the room (~1/4 of the shell)
+        w.editor()->project()->edit("two streams", [&](Timeline& tl) {
+            tl.audio.resize(1);
+            tl.video.resize(1);
+        });
+        settle();
+        auto* panel = w.findChild<TimelinePanel*>();
+        Check::report(w.findChild<Viewer*>()->height() > viewerFive && panel->height() >= w.phoneShell()->height() / 4,
+                      "V1 + A1: the viewer gets the timeline's empty room", __FILE__, __LINE__,
+                      QString("viewer %1 (five: %2), timeline %3").arg(w.findChild<Viewer*>()->height()).arg(viewerFive)
+                          .arg(panel->height()));
+        Check::report(view->contentHeight() <= view->viewportHeight(), "V1 + A1 in sight", __FILE__, __LINE__);
+        // A curve editor opened under the clip (+120 px of rows, no timeline change): the timeline grows with it, up
+        // to its old share; closed, it is low again
+        {
+            int clipId = 0;
+            w.editor()->project()->edit("keys", [&](Timeline& tl) {
+                if (tl.video[0].clips.isEmpty()) {
+                    Clip c;
+                    c.id = w.editor()->project()->newClipId();
+                    c.mediaPath = QStringLiteral("phone-test-missing.mkv");
+                    c.out = 99;
+                    tl.video[0].clips << c;
+                }
+                Clip& c = tl.video[0].clips[0];
+                Keys::setKey(c, AnimParam::Opacity, 10, 20);
+                Keys::setKey(c, AnimParam::Opacity, 80, 80);
+                clipId = c.id;
+            });
+            settle();
+            const int before = panel->height();
+            view->setCurveEditor({clipId}, true, AnimParam::Opacity);
+            settle();
+            Check::report(panel->height() > before + 60 && view->contentHeight() <= view->viewportHeight(),
+                          "curve editor opened: the phone timeline grows with its rows", __FILE__, __LINE__,
+                          QString("%1 -> %2, content %3 / lanes %4").arg(before).arg(panel->height())
+                              .arg(view->contentHeight()).arg(view->viewportHeight()));
+            view->setCurveEditor({clipId}, false);
+            settle();
+            Check::report(panel->height() == before, "curve editor closed: as low as before", __FILE__, __LINE__,
+                          QString("%1 / %2").arg(panel->height()).arg(before));
+            w.editor()->project()->undoStack()->undo();
+            settle();
+        }
+        // Back to five: the rows' old height and the timeline as before
+        w.editor()->project()->undoStack()->undo();
+        settle();
+        Check::report(view->audioRowHeight() == audioRow && w.findChild<Viewer*>()->height() == viewerFive,
+                      "five tracks again: the same rows and viewer", __FILE__, __LINE__,
+                      QString("row %1 / %2, viewer %3 / %4").arg(view->audioRowHeight()).arg(audioRow)
+                          .arg(w.findChild<Viewer*>()->height()).arg(viewerFive));
         QSettings().setValue("timeline/magneticMain", false);
         QSettings().setValue("timeline/clipDrag", "instant");
         w.setLayoutForm(MainWindow::LayoutForm::Desktop);

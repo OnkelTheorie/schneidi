@@ -360,7 +360,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         updateModeText();
     });
 
-    auto* transport = new QHBoxLayout;
+    auto* transport = m_transport = new QHBoxLayout;
     transport->setContentsMargins(4, 2, 4, 4);
     transport->addWidget(m_timecode);
     transport->addStretch(1);
@@ -537,6 +537,8 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
     };
     show(zoom());
     connect(this, &Viewer::zoomChanged, b, show);
+    // ("Fit" and "100 %" differ in width: compact keeps the play button in the middle)
+    connect(this, &Viewer::zoomChanged, this, [this] { if (m_compact) updateBalance(); });
     m_barRight->insertWidget(0, b);
     updateBalance();
     layout()->invalidate();
@@ -544,9 +546,36 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
 
 void Viewer::updateBalance()
 {
-    // The transport buttons centered: as much room right of them as the timecode takes left (compact: none, the
-    // buttons may sit off the middle)
-    const int balance = m_compact ? 0 : std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
+    if (m_compact) {
+        // Phone/tablet: the play button in the middle of the viewer (= the window's on a phone) whichever side is
+        // wider - the timecode or the zoom and full-screen buttons - so the side spacers make both sides equally wide.
+        // Shrinkable (a narrow viewer squeezes them first, its minimum width stays)
+        if (!m_barBalanceLeft) {
+            m_barBalanceLeft = new QSpacerItem(0, 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
+            m_transport->insertSpacerItem(m_transport->indexOf(m_timecode) + 1, m_barBalanceLeft);
+        }
+        // (From the widgets, not the layouts' cached hints: those lag behind a button just hidden or retitled)
+        const auto wide = [](QWidget* w) { return std::max(w->sizeHint().width(), w->minimumWidth()); };
+        int right = 0;
+        for (int i = 0; i < m_barRight->count(); ++i)
+            if (QWidget* w = m_barRight->itemAt(i)->widget(); w && !w->isHidden()) right += wide(w);
+        const int diff = wide(m_timecode) - right;
+        if (m_barBalanceLeft->sizeHint().width() == std::max(0, -diff) && m_barBalance->sizeHint().width() == std::max(0, diff)
+            && m_barBalance->sizePolicy().horizontalPolicy() == QSizePolicy::Preferred)
+            return; // (unchanged: no new layout pass - event() calls this on every layout request)
+        m_barBalanceLeft->changeSize(std::max(0, -diff), 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
+        m_barBalance->changeSize(std::max(0, diff), 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
+        m_transport->invalidate();
+        return;
+    }
+    if (m_barBalanceLeft) { // back on the desktop: its own row again
+        m_transport->removeItem(m_barBalanceLeft);
+        delete m_barBalanceLeft;
+        m_barBalanceLeft = nullptr;
+        m_transport->invalidate();
+    }
+    // The transport buttons centered: as much room right of them as the timecode takes left
+    const int balance = std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
     m_barBalance->changeSize(balance, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
 }
 
@@ -591,6 +620,14 @@ int Viewer::wantedPreviewEdge() const
     const int longer = std::max(covered.width(), covered.height());
     m_shownEdge = std::clamp((longer + 63) / 64 * 64, 64, PreviewResolution::kAutoCap);
     return m_shownEdge;
+}
+
+bool Viewer::event(QEvent* event)
+{
+    // The buttons' sizes settle late (the style sheet's font on the first show, a new zoom text, a longer timecode):
+    // each change asks for a layout pass, and the compact row's balance follows it
+    if (m_compact && m_barBalanceLeft && event->type() == QEvent::LayoutRequest) updateBalance();
+    return QWidget::event(event);
 }
 
 bool Viewer::eventFilter(QObject* obj, QEvent* event)
@@ -834,6 +871,7 @@ void Viewer::updateTimecode(int frame)
         for (QChar& c : wide)
             if (c.isDigit()) c = widest;
         m_timecode->setMinimumWidth(std::max(m_timecode->minimumWidth(), fm.horizontalAdvance(wide) + 16));
+        if (m_compact) updateBalance();
     }
     m_scrubber->setPosition(frame);
 }

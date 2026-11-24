@@ -579,12 +579,23 @@ void MainWindow::enableShell(bool tablet)
     });
     m_phone->setPanelShare("export", 0.92); // tall at once: the settings and "Render all" without a drag
     // A tool's sheet leaves the timeline's video rows in sight (the clip a tool works on), down to V1 and the gap
-    m_phone->setTimelineHeightHint([this] {
+    m_phone->setTimelineHeightHint([this](int most) {
         TimelineView* view = m_timeline->view();
-        // Every video track and A1 (what is around the lanes - scroll bars - as laid out now)
-        return view->heightFor(1) + std::max(0, m_timeline->height() - view->height());
+        // What is around the lanes (the tool row above them) as laid out now
+        const int around = std::max(0, m_timeline->height() - view->height());
+        if (m_phone->landscape()) { // every video track and A1
+            view->setFitAudioLanes(0);
+            return view->heightFor(1) + around;
+        }
+        // Portrait: every row (keyframe lanes too) and a little empty lane under the last one (its end in sight);
+        // many audio rows share the lanes of the tallest timeline, so the rows keep their height when it shrinks
+        view->setFitAudioLanes(most - around - TimelineView::kRulerH);
+        return TimelineView::kRulerH + view->contentHeight() + TimelineView::kFitAudioMin + around;
     });
     connect(m_editor->project(), &Project::timelineChanged, m_phone, [this] { m_phone->refreshTimelineHeight(); });
+    connect(m_timeline->view(), &TimelineView::trackHeightsChanged, m_phone, [this] {
+        if (m_phone) m_phone->refreshTimelineHeight();
+    });
     m_phone->setSheetTopHint([this] {
         TimelineView* view = m_timeline->view();
         return view->mapTo(m_phone, QPoint(0, view->mainTrackBottom() + 10)).y();
@@ -678,6 +689,7 @@ void MainWindow::disableShell()
     m_timeline->setBarShown(true);
     m_timeline->setMaximumHeight(QWIDGETSIZE_MAX);
     m_timeline->setMinimumHeight(0);
+    m_timeline->view()->setFitAudioLanes(0);
     TimelineView::setCompactHeaders(false);
     m_timeline->view()->setFingerPans(false);
     m_timeline->view()->setMinimumHeight(m_shellHomes->timelineMin);
