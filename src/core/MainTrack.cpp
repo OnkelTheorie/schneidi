@@ -163,8 +163,8 @@ bool touched(const Timeline& before, const Timeline& after, TrackRef ref)
 {
     const auto& a = before.tracks(ref.kind);
     const auto& b = after.tracks(ref.kind);
-    if (ref.index >= b.size()) return false;
-    if (ref.index >= a.size()) return !b[ref.index].clips.isEmpty();
+    // Tracks added or removed: another track may be V1 now (it is no edit of V1's clips)
+    if (a.size() != b.size() || ref.index >= b.size()) return false;
     const QVector<Clip>& x = a[ref.index].clips;
     const QVector<Clip>& y = b[ref.index].clips;
     if (x.size() != y.size()) return true;

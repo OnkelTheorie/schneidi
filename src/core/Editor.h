@@ -269,6 +269,8 @@ public:
     // V1 clip longer pushes what follows. Linked clips on other tracks go along; nothing on a locked track moves.
     void setMagneticMain(bool on);
     bool magneticMain() const;
+    // The switch acts now (Project::magnetActive: on, not held, not in a multicam sequence)
+    bool magnetActive() const;
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap.
     // markerCut: what happens to timeline markers/notes inside a range on ripple (cut_pauses: they move to the cut)
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text,

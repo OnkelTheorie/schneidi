@@ -275,7 +275,7 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind, const st
     bool room = false;
     if (track < 0) {
         // The magnetic main track holds the pictures; a title goes on a track above it (as in phone editors)
-        track = magneticMain() ? 1 : 0;
+        track = magnetActive() ? 1 : 0;
         for (int i = track; i < cur.video.size(); ++i)
             for (const Clip& x : cur.video[i].clips)
                 if (x.start < c.end() && x.end() > c.start) track = i + 1;
@@ -360,7 +360,7 @@ void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, 
 {
     if (fine % 100 == 0) return moveClips(idsIn, fine / 100, kind, trackDelta);
     // The magnetic main track has whole frames: a move on or onto V1 goes to the nearest one
-    if (magneticMain())
+    if (magnetActive())
         for (int id : withCopies(editable(idsIn)))
             if (TrackRef r; TimelineOps::findClip(m_project->timeline(), id, &r) && r.kind == TrackKind::Video
                             && (r.index == 0 || r.index + trackDelta == 0))

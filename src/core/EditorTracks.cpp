@@ -284,6 +284,7 @@ void Editor::setMasterLimiterCeiling(double db)
 
 void Editor::addTrack(TrackKind kind, int index)
 {
+    const Project::MagnetHold hold(m_project); // (track structure: no other track becomes a packed V1)
     const int n = m_project->timeline().tracks(kind).size();
     index = std::clamp(index, 0, n);
     if (inMulticamSequence()) index = n; // the angle table points at the tracks: new ones only on top
@@ -312,6 +313,7 @@ bool Editor::canRemoveTrack(TrackRef ref) const
 
 void Editor::removeTrack(TrackRef ref)
 {
+    const Project::MagnetHold hold(m_project); // (track structure: no other track becomes a packed V1)
     if (!canRemoveTrack(ref)) return;
     const Timeline& cur = m_project->timeline();
     // Clear the selection on the track (clips, transition, keyframe diamonds)
@@ -335,6 +337,7 @@ void Editor::removeTrack(TrackRef ref)
 
 void Editor::moveTrack(TrackKind kind, int from, int to)
 {
+    const Project::MagnetHold hold(m_project); // (track structure: no other track becomes a packed V1)
     const int n = m_project->timeline().tracks(kind).size();
     if (from < 0 || from >= n || inMulticamSequence()) return;
     to = std::clamp(to, 0, n - 1);

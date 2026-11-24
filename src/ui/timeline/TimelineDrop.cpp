@@ -263,7 +263,7 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e)
     m_dropParts = dropParts(e->mimeData(), e->modifiers());
     // The magnetic main track: a picture dropped onto V1 goes in at the nearest cut (Editor::addMediaAt), shown there
     if (const Timeline& tl = m_editor->project()->timeline();
-        magneticMain() && m_dropTrack == 0 && !tl.video.isEmpty() && m_dropParts != PlaceParts::Sound)
+        m_editor->magnetActive() && m_dropTrack == 0 && !tl.video.isEmpty() && m_dropParts != PlaceParts::Sound)
         m_dropFrame = MainTrack::insertPoint(tl.video[0], m_dropFrame);
     e->setDropAction(Qt::CopyAction); // see dragEnterEvent
     e->accept();

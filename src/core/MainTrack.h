@@ -33,7 +33,8 @@ Result openGap(Timeline& tl, TrackRef ref, int frame, int length, QString* why =
 // after it, else `frame` (a gap). Clips in `exclude` (being moved) do not count.
 int insertPoint(const Track& t, int frame, const QVector<int>& exclude = {});
 
-// Did an edit change where the clips of `ref` lie (ids, starts, lengths), or did the track appear?
+// Did an edit change where the clips of `ref` lie (ids, starts, lengths)? Not when the track count changed (track
+// structure edits; moving a track is held by the Editor: Project::MagnetHold).
 bool touched(const Timeline& before, const Timeline& after, TrackRef ref);
 
 } // namespace MainTrack

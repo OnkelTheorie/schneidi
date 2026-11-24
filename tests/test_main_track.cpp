@@ -371,6 +371,29 @@ void testAnnotations()
     CHECK_EQ(f.tl().markers, marks);
 }
 
+void testTrackStructure()
+{
+    // Moving, adding or removing a video track never packs the track that becomes V1 (review 1)
+    Fixture f(false);
+    f.project.edit("V2 with gaps", [](Timeline& tl) { tl.video[1].clips = {mk(30, "x", 50, 20), mk(31, "x", 200, 20)}; });
+    f.editor.setMagneticMain(true);
+    f.editor.moveTrack(TrackKind::Video, 1, 0);
+    CHECK_EQ(f.tl().video[0].clips[0].start, 50);
+    CHECK_EQ(f.tl().video[0].clips[1].start, 200);
+    f.project.undoStack()->undo();
+    f.editor.removeTrack(MainTrack::kMain);
+    CHECK_EQ(f.tl().video[0].clips[0].start, 50);
+    CHECK_EQ(f.tl().video[0].clips[1].start, 200);
+    f.project.undoStack()->undo();
+    f.editor.addTrack(TrackKind::Video, 0);
+    CHECK(f.tl().video[0].clips.isEmpty());
+    CHECK_EQ(f.tl().video[2].clips[0].start, 50);
+    // The track count changed: no edit of V1's clips
+    Timeline a = f.tl(), b = f.tl();
+    b.video.removeFirst();
+    CHECK(!MainTrack::touched(a, b, MainTrack::kMain));
+}
+
 void testCore()
 {
     // MainTrack directly: insertPoint, openGap refusing, pack's ripple
@@ -416,6 +439,7 @@ int main(int argc, char** argv)
     Check::initApp("main_track");
     I18n::install("de");
     testCore();
+    testTrackStructure();
     testOff();
     testDelete();
     testOtherTracks();

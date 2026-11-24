@@ -87,6 +87,19 @@ public:
     // and emits magneticGapKept. A switch of the app, not saved in the project.
     void setMagneticMain(bool on) { m_magneticMain = on; }
     bool magneticMain() const { return m_magneticMain; }
+    // The switch acts now: on, not held (MagnetHold) and not in a multicam sequence (its angles lie in sync on purpose)
+    bool magnetActive() const;
+    // While one lives, edits are not packed and placements onto V1 overwrite as without the switch: track structure
+    // edits (V2 would become V1), syncs, the AI's commands (Live: packed once at the end of its step)
+    class MagnetHold {
+    public:
+        explicit MagnetHold(Project* p) : m_p(p) { ++m_p->m_magnetHold; }
+        ~MagnetHold() { --m_p->m_magnetHold; }
+        MagnetHold(const MagnetHold&) = delete;
+        MagnetHold& operator=(const MagnetHold&) = delete;
+    private:
+        Project* m_p;
+    };
     // What edit() does to `after` (an edit of the open timeline) when the magnetic main track is on; for previews.
     // Returns why a gap stays (empty = packed or nothing to do).
     QString magnetize(Timeline& after) const;
@@ -330,6 +343,7 @@ private:
     int m_mergeSession = 0;
     bool m_editSeries = false;
     bool m_magneticMain = false;
+    int m_magnetHold = 0;
     void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
     void sanitizePool(); // references to missing bins -> Master, resolve parent cycles
     bool m_mediaDirty = false;

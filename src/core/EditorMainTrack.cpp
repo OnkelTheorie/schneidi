@@ -36,11 +36,16 @@ bool Editor::magneticMain() const
     return m_project->magneticMain();
 }
 
+bool Editor::magnetActive() const
+{
+    return m_project->magnetActive();
+}
+
 bool Editor::mainInsert(int& frame, int length, bool* room)
 {
     *room = false;
     const Timeline& cur = m_project->timeline();
-    if (!magneticMain() || length <= 0 || cur.video.isEmpty() || isTrackLocked(MainTrack::kMain)) return true;
+    if (!magnetActive() || length <= 0 || cur.video.isEmpty() || isTrackLocked(MainTrack::kMain)) return true;
     frame = MainTrack::insertPoint(cur.video[0], std::max(0, frame));
     Timeline probe = cur;
     QString why;
@@ -56,7 +61,7 @@ bool Editor::moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind
                         const QVector<int>& cues, int cueDelta)
 {
     const Timeline& cur = m_project->timeline();
-    if (!magneticMain() || cur.video.isEmpty() || isTrackLocked(MainTrack::kMain)) return false;
+    if (!magnetActive() || cur.video.isEmpty() || isTrackLocked(MainTrack::kMain)) return false;
     QVector<const Clip*> onMain, arriving; // moved V1 clips; moved video clips that land on V1 from above
     for (int id : ids) {
         TrackRef r;
@@ -132,7 +137,7 @@ bool Editor::moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind
 std::optional<Timeline> Editor::mainTrimRoom(int clipId, TimelineOps::Edge edge, int delta, int* at, int* room) const
 {
     const Timeline& cur = m_project->timeline();
-    if (!magneticMain() || isTrackLocked(MainTrack::kMain)) return std::nullopt;
+    if (!magnetActive() || isTrackLocked(MainTrack::kMain)) return std::nullopt;
     TrackRef r;
     const Clip* c = TimelineOps::findClip(cur, clipId, &r);
     const bool longer = edge == TimelineOps::Edge::End ? delta > 0 : delta < 0;

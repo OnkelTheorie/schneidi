@@ -475,7 +475,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
     // The magnetic main track closes what the edit opened on V1 (the same undo step)
-    const QString gapKept = m_magneticMain ? magnetize(after) : QString();
+    const QString gapKept = magnetActive() ? magnetize(after) : QString();
     TimelineOps::unpairBrokenDissolves(timeline(), after);
     TimelineOps::keepFadesApart(timeline(), after);
     TimelineOps::forgetSlotLengths(timeline(), after); // (the fill itself goes through editSequences)
@@ -495,9 +495,14 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     if (!gapKept.isEmpty()) emit magneticGapKept(gapKept);
 }
 
+bool Project::magnetActive() const
+{
+    return m_magneticMain && m_magnetHold == 0;
+}
+
 QString Project::magnetize(Timeline& after) const
 {
-    if (!m_magneticMain || !MainTrack::touched(timeline(), after, MainTrack::kMain)) return {};
+    if (!magnetActive() || !MainTrack::touched(timeline(), after, MainTrack::kMain)) return {};
     QString why;
     MainTrack::pack(after, MainTrack::kMain, {}, &why);
     return why;
