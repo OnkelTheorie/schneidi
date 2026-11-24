@@ -30,8 +30,10 @@ Result pack(Timeline& tl, TrackRef ref, const QVector<int>& order = {}, QString*
 Result openGap(Timeline& tl, TrackRef ref, int frame, int length, QString* why = nullptr);
 
 // Where something inserted at `frame` goes on the track: the nearer edge of a clip under it, the end of the last clip
-// after it, else `frame` (a gap). Clips in `exclude` (being moved) do not count.
-int insertPoint(const Track& t, int frame, const QVector<int>& exclude = {});
+// after it, else `frame` (a gap). Clips in `exclude` (being moved) do not count. Never before `atLeast`: then the first
+// cut (clip edge, the track's end) at or after it, past the end `atLeast` itself (what comes along with the inserted
+// clips - their sound, other pasted clips - must not go before frame 0).
+int insertPoint(const Track& t, int frame, const QVector<int>& exclude = {}, int atLeast = 0);
 
 // Did an edit change where the clips of `ref` lie (ids, starts, lengths)? Not when the track count changed (track
 // structure edits; moving a track is held by the Editor: Project::MagnetHold).

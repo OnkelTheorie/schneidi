@@ -148,15 +148,22 @@ Result openGap(Timeline& tl, TrackRef ref, int frame, int length, QString* why)
     return shiftWithLinks(tl, ref, shift, {qMakePair(frame, length)}, T("Kein Platz auf %1: "), why);
 }
 
-int insertPoint(const Track& t, int frame, const QVector<int>& exclude)
+int insertPoint(const Track& t, int frame, const QVector<int>& exclude, int atLeast)
 {
-    int end = 0;
+    int end = 0, at = -1;
     for (const Clip& c : t.clips) {
         if (exclude.contains(c.id)) continue;
-        if (c.start < frame && frame < c.end()) return frame - c.start < c.end() - frame ? c.start : c.end();
+        if (at < 0 && c.start < frame && frame < c.end()) at = frame - c.start < c.end() - frame ? c.start : c.end();
         end = std::max(end, c.end());
     }
-    return frame >= end ? end : std::max(0, frame);
+    if (at < 0) at = frame >= end ? end : std::max(0, frame);
+    if (at >= atLeast) return at;
+    int best = std::max(end, atLeast); // the first cut at or after atLeast
+    for (const Clip& c : t.clips)
+        if (!exclude.contains(c.id))
+            for (int cut : {c.start, c.end()})
+                if (cut >= atLeast) best = std::min(best, cut);
+    return best;
 }
 
 bool touched(const Timeline& before, const Timeline& after, TrackRef ref)

@@ -1125,15 +1125,18 @@ void Editor::paste(int frame)
         }
     // The magnetic main track: clips pasted onto V1 go in at the nearest cut, the later ones make room
     bool room = false;
-    int lo = INT_MAX, hi = 0;
-    for (const auto& it : items)
+    int lo = INT_MAX, hi = 0, first = INT_MAX;
+    for (const auto& it : items) {
+        first = std::min(first, it.clip.start);
         if (it.ref == MainTrack::kMain) {
             lo = std::min(lo, it.clip.start);
             hi = std::max(hi, it.clip.end());
         }
+    }
     if (lo != INT_MAX) {
         int at = frame + lo;
-        if (!mainInsert(at, hi - lo, &room)) return;
+        // (nothing pasted before frame 0: a J-cut's sound before its picture)
+        if (!mainInsert(at, hi - lo, &room, lo - first)) return;
         frame = at - lo;
     }
     QSet<int> pasted;

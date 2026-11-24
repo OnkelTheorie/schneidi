@@ -800,9 +800,9 @@ private:
     TimelineOps::SourceLength sourceLength() const;
     void tell(const QString& text, bool refused);
     // Magnetic main track, a placement of `length` frames onto V1 at `frame`: *room = make room there first
-    // (MainTrack::openGap at `frame`, moved to MainTrack::insertPoint). False = no room (refused, told); with the
+    // (MainTrack::openGap at `frame`, moved to MainTrack::insertPoint, never before `atLeast`). False = no room (refused, told); with the
     // switch off always true without room.
-    bool mainInsert(int& frame, int length, bool* room);
+    bool mainInsert(int& frame, int length, bool* room, int atLeast = 0);
     // Magnetic main track, moveClips of clips on or onto V1: a reorder along V1 or an insert onto it. False = not such
     // a move (the plain move, then Project::edit closes V1).
     bool moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta,

@@ -418,6 +418,44 @@ void testMulticam()
     CHECK(g.project.magnetActive());
 }
 
+void testNotBeforeZero()
+{
+    // Review 3: pasting a V1 clip with something that starts before it (a title 20 frames earlier) near frame 0 - the
+    // insert point moves right far enough that nothing goes before frame 0
+    Fixture f;
+    f.project.edit("title", [](Timeline& tl) {
+        Clip t = mk(20, "t", 80, 30);
+        t.kind = ClipKind::Title;
+        tl.video[1].clips = {t};
+    });
+    f.sel.set({2, 12, 20});
+    f.editor.copySelection();
+    const Timeline before = f.tl();
+    const int steps = f.steps();
+    f.editor.paste(5); // b's copy would go in at 0, the title at -20
+    for (const Track& t : f.tl().video)
+        for (const Clip& c : t.clips) CHECK(c.start >= 0);
+    CHECK_EQ(f.d(), QString("V1: a[0-100|0-99] b[100-160|0-59] b[160-220|0-59] c[220-300|0-79]  V2: T[80-110|0-29]  " // (the copy replaced the title)
+                            "A1: a[0-100|0-99] b[100-160|0-59] b[160-220|0-59] c[220-300|0-79]  A2:"));
+    CHECK_ONE_STEP(f, before, steps, "paste not before 0");
+    // Review 4: moving onto V1 together with a clip that limits the delta (sound on A2 that cannot go before 0): the
+    // clips land in the room made for them, the pushed clip is not overwritten
+    Fixture g;
+    g.project.edit("x on V2, sound on A2", [](Timeline& tl) {
+        tl.video[1].clips = {mk(30, "x", 300, 40)};
+        tl.audio[1].clips = {mk(31, "m", 250, 20)};
+    });
+    g.editor.moveClips({30, 31}, -290, TrackKind::Video, -1); // x wants 10 (in at 0), m would go to -40
+    CHECK_EQ(g.d(), QString("V1: a[0-100|0-99] x[100-140|0-39] b[140-200|0-59] c[200-280|0-79]  V2:  "
+                            "A1: a[0-50|0-49] m[50-70|0-19] a[70-100|70-99] b[140-200|0-59] c[200-280|0-79]  A2:"));
+    // insertPoint never before atLeast
+    Track t;
+    t.clips = {mk(1, "a", 0, 100), mk(2, "b", 100, 60)};
+    CHECK_EQ(MainTrack::insertPoint(t, 10, {}, 20), 100);
+    CHECK_EQ(MainTrack::insertPoint(t, 10, {}, 170), 170);
+    CHECK_EQ(MainTrack::insertPoint(t, 130, {}, 100), 160);
+}
+
 void testCore()
 {
     // MainTrack directly: insertPoint, openGap refusing, pack's ripple
@@ -465,6 +503,7 @@ int main(int argc, char** argv)
     testCore();
     testTrackStructure();
     testMulticam();
+    testNotBeforeZero();
     testOff();
     testDelete();
     testOtherTracks();

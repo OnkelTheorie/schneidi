@@ -41,12 +41,12 @@ bool Editor::magnetActive() const
     return m_project->magnetActive();
 }
 
-bool Editor::mainInsert(int& frame, int length, bool* room)
+bool Editor::mainInsert(int& frame, int length, bool* room, int atLeast)
 {
     *room = false;
     const Timeline& cur = m_project->timeline();
     if (!magnetActive() || length <= 0 || cur.video.isEmpty() || isTrackLocked(MainTrack::kMain)) return true;
-    frame = MainTrack::insertPoint(cur.video[0], std::max(0, frame));
+    frame = MainTrack::insertPoint(cur.video[0], std::max(0, frame), {}, atLeast);
     Timeline probe = cur;
     QString why;
     if (MainTrack::openGap(probe, MainTrack::kMain, frame, length, &why) == MainTrack::Result::Refused) {
@@ -117,14 +117,15 @@ bool Editor::moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind
         first = std::min(first, c->start);
         last = std::max(last, c->end());
     }
-    int at = first + deltaFrames;
-    bool room = false;
-    if (!mainInsert(at, last - first, &room)) return true;
-    // Not before frame 0 with one delta for everything (as moveClips)
+    // Not before frame 0 with one delta for everything (as moveClips): the insert point is far enough right for that,
+    // so the clips land exactly in the room made for them
     int earliest = INT_MAX;
     for (int id : ids)
         if (const Clip* c = TimelineOps::findClip(cur, id)) earliest = std::min(earliest, c->start);
-    const int delta = std::max(at - first, -earliest);
+    int at = first + deltaFrames;
+    bool room = false;
+    if (!mainInsert(at, last - first, &room, first - earliest)) return true;
+    const int delta = at - first;
     p->edit(T("Clips verschieben"), [&](Timeline& tl) {
         if (room) MainTrack::openGap(tl, MainTrack::kMain, at, last - first);
         TimelineOps::detachTransitions(tl, ids);
