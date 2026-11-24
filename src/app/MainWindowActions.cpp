@@ -341,6 +341,16 @@ void MainWindow::buildActions()
     });
     m_drawEscape->setEnabled(false); // only while painting (updateEscapeKeys)
     makeAction(toolsMenu, "snapping", T("Einrasten an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
+    // The magnetic main track (core/MainTrack.h): Shift+N beside snapping (N); no preset uses it
+    m_magneticAction = makeAction(toolsMenu, "magnetic_main", T("Lücken automatisch schließen (Spur 1)"), QKeySequence("Shift+N"),
+                                  [this] { setMagneticMainByUser(m_magneticAction->isChecked()); });
+    m_magneticAction->setCheckable(true);
+    m_magneticAction->setToolTip(T("Lücken automatisch schließen (Spur 1, Shift+N): Clips auf V1 liegen ohne Lücken "
+                                   "hintereinander. Löschen, Kürzen und Verschieben lassen die folgenden Clips "
+                                   "nachrücken, Einfügen schiebt sie nach rechts statt zu überschreiben. Verknüpfter "
+                                   "Ton geht mit."));
+    m_magneticAction->setChecked(tv->magneticMain());
+    m_timeline->addToolAction(m_magneticAction, TimelinePanel::Icon::MainTrack);
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
     linked->setToolTip(T("Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, "

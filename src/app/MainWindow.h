@@ -638,6 +638,7 @@ private:
     class DrawOverlay* m_drawOverlay = nullptr;
     class DrawBar* m_drawBar = nullptr;
     QAction* m_drawAction = nullptr;
+    QAction* m_magneticAction = nullptr; // "Lücken automatisch schließen (Spur 1)" (follows applyCenterPlayhead)
     void setDrawTool(bool on);
     void drawToolChanged(bool on);
     QPointer<class KeyTrainer> m_keyTrainer;     // Help › Practice keys, while open
@@ -872,6 +873,9 @@ private:
     // The timeline's playhead fixed in the middle: setting timeline/centerPlayhead on/off, else on in the phone and
     // tablet forms (TimelineView::setCenterPlayhead)
     void applyCenterPlayhead();
+    // The magnetic main track switched by the user (toolbar, Shift+N, Settings): stored for the input in use (finger:
+    // the phone's setting, else the desktop's), applied; switched on, V1's gaps close at once (one undo step)
+    void setMagneticMainByUser(bool on);
     void applyScrollIndicators(); // phone form: thin indicators instead of scroll bars
     class ScrollIndicators* m_scrollIndicators = nullptr;
     QList<QAction*> m_shellShortcuts; // the hidden menu bar's actions on the window itself (shortcuts keep working)

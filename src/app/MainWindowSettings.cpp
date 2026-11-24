@@ -95,6 +95,7 @@ void MainWindow::settingsDialog(int tab)
     // Timeline tab: the timelines read the choices from the settings when they need them (no restart), so storing
     // is applying. A test run (disableAutosave) must not write the user's settings: there the tab is NOT applied
     // (unlike the other tabs, which apply without saving); tests set TimelineOptions themselves
+    const bool magneticWas = m_timeline->view()->magneticMain();
     if (!m_autosaveDisabled) dlg.timelinePage()->store();
     applyTimelineOptions();
     setSecondScreenMode(dlg.secondScreenMode());
@@ -127,6 +128,11 @@ void MainWindow::settingsDialog(int tab)
         QSettings().setValue("timeline/momentum", dlg.timelineMomentum());
     }
     applyCenterPlayhead();
+    // The magnetic main track switched on here: V1's gaps close at once, as with its switch (setMagneticMainByUser)
+    if (!magneticWas && m_timeline->view()->magneticMain()) {
+        m_timeline->view()->setMagneticMain(false);
+        setMagneticMainByUser(true);
+    }
     if (phoneChanged) checkLayoutForm();
     // Language like from the menu (Workspace › Language) and the design: at once (applyLookChange, after this dialog
     // is gone); test runs keep the language setting

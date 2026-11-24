@@ -259,9 +259,16 @@ public:
     // something inside that range - closing would cut it or move tracks apart (lock that track to close it anyway).
     bool closeGap(TrackRef on, int from, int to, QString* why = nullptr);
     // The main track as phone editors keep it (magnetic): its clips back to back from frame 0 in `order` (clip ids;
-    // empty = by their start), clips linked to them (the same linkId, on other tracks) move along. One undo step
-    // `text`; nothing when nothing moves. Returns whether something moved.
+    // empty = by their start), clips linked to them (the same linkId, on other tracks) move along (MainTrack::pack).
+    // One undo step `text`; nothing when nothing moves, a refusal is told (notice). Returns whether something moved.
     bool packTrack(TrackRef ref, const QVector<int>& order = {}, const QString& text = {});
+    // The magnetic main track (core/MainTrack.h; desktop "Lücken automatisch schließen (Spur 1)", phone "Hauptspur
+    // magnetisch"), off by default. On: an edit that changes V1 closes its gaps in the same undo step (Project::edit);
+    // placing onto V1 (addMediaAt, placeSourceRange, paste, a title dropped there, clips moved onto it) pushes the
+    // later clips right at the nearest cut instead of overwriting; moving V1 clips along V1 reorders them; making a
+    // V1 clip longer pushes what follows. Linked clips on other tracks go along; nothing on a locked track moves.
+    void setMagneticMain(bool on);
+    bool magneticMain() const;
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap.
     // markerCut: what happens to timeline markers/notes inside a range on ripple (cut_pauses: they move to the cut)
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text,
@@ -790,6 +797,18 @@ signals:
 private:
     TimelineOps::SourceLength sourceLength() const;
     void tell(const QString& text, bool refused);
+    // Magnetic main track, a placement of `length` frames onto V1 at `frame`: *room = make room there first
+    // (MainTrack::openGap at `frame`, moved to MainTrack::insertPoint). False = no room (refused, told); with the
+    // switch off always true without room.
+    bool mainInsert(int& frame, int length, bool* room);
+    // Magnetic main track, moveClips of clips on or onto V1: a reorder along V1 or an insert onto it. False = not such
+    // a move (the plain move, then Project::edit closes V1).
+    bool moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta,
+                    const QVector<int>& cues, int cueDelta);
+    // Magnetic main track, a V1 clip made longer: the timeline with room after (or before) it, *at/*room the gap
+    // opened (MainTrack::openGap); nullopt = not such a trim (or no room)
+    std::optional<Timeline> mainTrimRoom(int clipId, TimelineOps::Edge edge, int delta, int* at = nullptr,
+                                         int* room = nullptr) const;
     // A ripple from `before` to `tl` that would take linked clips apart (an unlocked track that cannot follow, e.g. a
     // clip there lies across the edit point): refused - tl back to `before`, the notice says which track and clip.
     // `ignore`: clips the edit changes on purpose. True = keeps them together (or it is done anyway: see below).

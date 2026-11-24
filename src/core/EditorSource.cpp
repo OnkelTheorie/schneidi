@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Editor: source edits (source in/out, insert, overwrite, replace, place on top, append, fit to fill).
 #include "core/Editor.h"
+#include "core/MainTrack.h"
 #include "core/EditDefaults.h"
 
 #include "core/EffectFolders.h"
@@ -582,7 +583,11 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     if (m.isImage || speed <= 0) speed = 1.0;
     const int sIn = RetimeMap::materialForPicture(in, speed);
     const int len = std::max(1, RetimeMap::materialForPicture(out + 1, speed) - sIn); // no picture past `out`
+    // The magnetic main track: onto V1 the later clips make room (at the nearest cut) instead of being overwritten
+    bool room = false;
+    if (m2.hasVideo && track == 0 && !mainInsert(frame, len, &room)) return 0;
     m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
+        if (room) MainTrack::openGap(tl, MainTrack::kMain, frame, len);
         const int at = std::max(0, frame);
         const int moved = chosen || !m2.hasAudio ? -1 : unmutedSoundTrack(tl, m2, track, at, len, m2.hasVideo ? track : -1);
         if (moved < 0) {

@@ -23,6 +23,7 @@
 #include "ui/Inspector.h"
 #include "ui/MediaGallery.h"
 #include "ui/MediaPool.h"
+#include "core/MainTrack.h"
 #include "core/TimelineOps.h"
 #include "engine/ContentUri.h"
 #include "engine/DeviceMedia.h"
@@ -33,6 +34,7 @@
 #include "ui/Viewer.h"
 #include "ui/phone/PhoneShell.h"
 #include "ui/FrameView.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -58,6 +60,7 @@
 #include <QMenuBar>
 #include <QScreen>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QToolButton>
 #include <QUndoStack>
@@ -793,8 +796,31 @@ void MainWindow::applyCenterPlayhead()
     view->setCenterPlayhead(v == "on" || (v.isEmpty() && finger));
     // The finger's clip handling and the magnetic main track: phone and tablet by touch only
     view->setHoldToMove(settings.value("timeline/clipDrag", "hold").toString() != "instant");
-    view->setMagneticMain(finger && settings.value("timeline/magneticMain", true).toBool());
+    // (a finger: the phone's setting, default on; a mouse: the desktop's switch, default off)
+    view->setMagneticMain(finger ? settings.value("timeline/magneticMain", true).toBool() : TimelineOptions::magneticMain());
+    if (m_magneticAction) {
+        const QSignalBlocker b(m_magneticAction);
+        m_magneticAction->setChecked(view->magneticMain());
+    }
     view->setMomentum(settings.value("timeline/momentum", "low").toString());
+}
+
+void MainWindow::setMagneticMainByUser(bool on)
+{
+    const bool finger = m_phone && touchInput(); // (the setting of the input in use, as applyCenterPlayhead reads it)
+    if (!m_autosaveDisabled) {
+        if (finger) QSettings().setValue("timeline/magneticMain", on);
+        else TimelineOptions::setMagneticMain(on);
+    }
+    TimelineView* view = m_timeline->view();
+    const bool was = view->magneticMain();
+    view->setMagneticMain(on);
+    if (m_magneticAction) {
+        const QSignalBlocker b(m_magneticAction);
+        m_magneticAction->setChecked(on);
+    }
+    // Switched on: what it promises at once (V1 without gaps; one undo step, nothing when there are none)
+    if (on && !was) m_editor->packTrack(MainTrack::kMain, {}, T("Lücken auf Spur 1 schließen"));
 }
 
 void MainWindow::updateAddMediaButton()

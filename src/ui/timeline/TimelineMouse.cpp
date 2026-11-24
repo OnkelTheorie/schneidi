@@ -47,21 +47,6 @@
 using namespace TimelineViewDetail;
 
 
-namespace {
-// A macro that ended up empty (nothing changed: a trim against its limit, a move onto itself) is no undo step and
-// does not mark the project modified
-void endMacroOrDrop(QUndoStack* undo)
-{
-    undo->endMacro();
-    const int i = undo->index() - 1;
-    if (i < 0) return;
-    if (const QUndoCommand* c = undo->command(i); c && c->childCount() == 0 && c->id() == -1) {
-        const_cast<QUndoCommand*>(c)->setObsolete(true);
-        undo->undo(); // (an obsolete command is deleted instead of undone)
-    }
-}
-} // namespace
-
 void TimelineView::startRubber(Qt::KeyboardModifiers mods)
 {
     Selection* sel = m_editor->selection();
@@ -859,53 +844,8 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         return;
     }
     if (m_drag == Drag::Move && (m_dragFine != 0 || m_dragTrackDelta != 0)) {
-        const Timeline& before = m_editor->project()->timeline();
-        const auto onMain = [&](const Timeline& tl) {
-            for (int id : m_dragIds) {
-                TrackRef r;
-                if (TimelineOps::findClip(tl, id, &r) && r.kind == TrackKind::Video && r.index == 0) return true;
-            }
-            return false;
-        };
-        const bool magnetic = m_magnetic && !before.video.isEmpty();
-        const bool fromMain = magnetic && onMain(before);
-        QUndoStack* undo = m_editor->project()->undoStack();
-        // (only V1 clips and their linked sound in the drag)
-        const auto mainOnly = [&] {
-            QSet<int> links;
-            for (const Clip& c : before.video[0].clips)
-                if (m_dragIds.contains(c.id) && c.linkId) links.insert(c.linkId);
-            for (int id : m_dragIds) {
-                TrackRef r;
-                const Clip* c = TimelineOps::findClip(before, id, &r);
-                if (!c || (!(r.kind == TrackKind::Video && r.index == 0) && !(c->linkId && links.contains(c->linkId))))
-                    return false;
-            }
-            return true;
-        };
-        if (fromMain && m_anchorRef.kind == TrackKind::Video && m_dragTrackDelta == 0 && m_dragFine % 100 == 0
-            && mainOnly()) {
-            // Along the magnetic main track: a reorder (the clips take their new place in the row, the others make
-            // room) - never an overwrite that cuts a neighbour and then closes the gap (its material was gone)
-            QVector<QPair<double, int>> places; // new start (the moved ones at their drop, others where they are)
-            const int frames = m_dragFine / 100;
-            for (const Clip& c : before.video[0].clips) {
-                const bool moved = m_dragIds.contains(c.id);
-                // a moved clip goes before one it was dropped on the first half of (its middle decides)
-                places << qMakePair(moved ? c.start + frames + c.length() / 2.0 : c.start + c.length() / 2.0 + 0.1, c.id);
-            }
-            std::stable_sort(places.begin(), places.end());
-            QVector<int> order;
-            for (const auto& [at, id] : places) order << id;
-            m_editor->packTrack({TrackKind::Video, 0}, order, T("Clips verschieben"));
-        } else {
-            // The magnetic main track: a clip moved onto or off V1 leaves no gap there (one undo step). A clip moved
-            // elsewhere (music on A2, a title on V2) leaves V1 alone
-            undo->beginMacro(T("Clips verschieben"));
-            m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
-            if (magnetic && (fromMain || onMain(m_editor->project()->timeline()))) m_editor->packTrack({TrackKind::Video, 0});
-            endMacroOrDrop(undo);
-        }
+        // (the magnetic main track is the Editor's: along V1 a reorder, onto it an insert, off it no gap)
+        m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
     }
     if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
         const Drag d = m_drag;
@@ -927,18 +867,8 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     m_drag = Drag::None; // before trimClip, so the preview is not applied twice
     if (ramp && m_rampDelta != 0) m_editor->moveSpeedPoint(m_rampDrag.clipId, m_rampDrag.point, m_rampDelta);
     m_rampDelta = 0;
-    if (trimmed && m_trimDelta != 0) {
-        TrackRef where;
-        const bool onMain = m_magnetic && TimelineOps::findClip(m_editor->project()->timeline(), m_trim.clipId, &where)
-                            && where.kind == TrackKind::Video && where.index == 0;
-        QUndoStack* undo = m_editor->project()->undoStack();
-        if (onMain) undo->beginMacro(T("Clip trimmen"));
-        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, m_trimOverwrite);
-        if (onMain) { // magnetic main track: the gap the trim left closes
-            m_editor->packTrack({TrackKind::Video, 0});
-            endMacroOrDrop(undo);
-        }
-    }
+    // (the magnetic main track closes the gap or pushes what follows: Editor::trimClip)
+    if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, m_trimOverwrite);
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;

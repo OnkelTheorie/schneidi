@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Editor: trimming (edges, trim mode, slip, edit points, trim to playhead).
 #include "core/Editor.h"
+#include "core/MainTrack.h"
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -32,14 +33,23 @@ TimelineOps::SourceLength Editor::sourceLength() const
 
 int Editor::clampTrim(int clipId, TimelineOps::Edge edge, int delta, bool overwrite) const
 {
+    // The magnetic main track: a V1 clip made longer pushes what follows (only the material limits it)
+    if (const auto room = mainTrimRoom(clipId, edge, delta))
+        return TimelineOps::clampTrim(*room, withFollowers({clipId}), edge, delta, sourceLength(), false);
     return TimelineOps::clampTrim(m_project->timeline(), withFollowers({clipId}), edge, delta, sourceLength(), overwrite);
 }
 
 void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta, bool overwrite)
 {
     const QVector<int> ids = withFollowers({clipId});
-    if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength(), overwrite) == 0) return;
+    int at = 0, room = 0;
+    const std::optional<Timeline> roomy = mainTrimRoom(clipId, edge, delta, &at, &room);
+    if (roomy) overwrite = false; // (nothing to overwrite: the room is made)
+    const int clamped = TimelineOps::clampTrim(roomy ? *roomy : m_project->timeline(), ids, edge, delta, sourceLength(), overwrite);
+    if (clamped == 0) return;
+    if (roomy) delta = clamped;
     m_project->edit(T("Trimmen"), [&](Timeline& tl) {
+        if (roomy) MainTrack::openGap(tl, MainTrack::kMain, at, room); // (a gap left over closes in Project::edit)
         if (overwrite) TimelineOps::trimClipsOver(tl, ids, edge, delta, sourceLength(), [this] { return m_project->newClipId(); });
         else TimelineOps::trimClips(tl, ids, edge, delta, sourceLength());
     });
@@ -47,11 +57,14 @@ void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta, bool overwr
 
 Timeline Editor::previewTrim(int clipId, TimelineOps::Edge edge, int delta, bool overwrite) const
 {
-    Timeline tl = m_project->timeline();
     const QVector<int> ids = withFollowers({clipId});
+    const std::optional<Timeline> roomy = mainTrimRoom(clipId, edge, delta);
+    Timeline tl = roomy ? *roomy : m_project->timeline();
+    if (roomy) overwrite = false;
     int nextId = -1; // a preview never keeps its ids (and an extended edge splits no neighbor)
     if (overwrite) TimelineOps::trimClipsOver(tl, ids, edge, delta, sourceLength(), [&nextId] { return nextId--; });
     else TimelineOps::trimClips(tl, ids, edge, delta, sourceLength());
+    m_project->magnetize(tl); // the magnetic main track: as the trim will leave it
     return tl;
 }
 

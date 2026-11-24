@@ -33,6 +33,7 @@ public:
     TimelineOptions::ClipFormat clipFormat() const; // the first clip with another format: ask, adapt, keep
     bool trimOverwrites() const;                  // a clip's edge overwrites the neighbour (else it stops there)
     bool middleDragPans() const;                  // dragging with the middle button pans the view
+    bool magneticMain() const;                    // the desktop's magnetic main track (TimelineOptions::magneticMain)
     TimelineOptions::TimeFormat timeFormat() const; // how times are shown
     TimelineOptions::Thumbnails thumbnails() const; // pictures on video clips
     TimelineOptions::WaveShape waveShape() const;
@@ -55,6 +56,7 @@ private:
     QComboBox* m_click = nullptr;
     QComboBox* m_middle = nullptr;
     QComboBox* m_trimOver = nullptr;
+    QCheckBox* m_magnetic = nullptr;
     QComboBox* m_clipFormat = nullptr;
     QComboBox* m_timeFormat = nullptr;
     QComboBox* m_thumbnails = nullptr;

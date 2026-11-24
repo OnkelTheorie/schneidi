@@ -9,6 +9,7 @@
 #include "core/ProjectFormat.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
+#include "core/MainTrack.h"
 #include "core/Retime.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -62,6 +63,8 @@ Editor::Editor(Project* project, Selection* selection, QObject* parent)
     connect(m_project, &Project::mediaChanged, this, &Editor::adoptPreviewSource);
     connect(m_project, &Project::loaded, this, [this] { keepClipboardFitting(true); });
     connect(m_project, &Project::formatChanged, this, [this] { keepClipboardFitting(false); });
+    // The magnetic main track could not close a gap: say why (the edit itself is done)
+    connect(m_project, &Project::magneticGapKept, this, [this](const QString& why) { tell(why, false); });
     m_clipboardRate = m_project->format().rate;
 }
 
@@ -166,9 +169,16 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
 
     const QString text = infos.size() == 1 ? T("Einfügen: %1").arg(infos.first().name)
                                            : T("%1 Clips einfügen").arg(infos.size());
+    // The magnetic main track: onto V1 the later clips make room (at the nearest cut) instead of being overwritten
+    bool room = false;
+    int total = 0;
+    for (const MediaInfo& m : infos) total += m.length;
+    const bool ontoMain = idx0 == 0 && videoOk && std::any_of(infos.begin(), infos.end(), [](const MediaInfo& m) { return m.hasVideo; });
+    if (ontoMain && !mainInsert(frame, total, &room)) return;
     p->edit(text, [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         const int idx = std::max(0, track);
+        if (room) MainTrack::openGap(tl, MainTrack::kMain, frame, total);
         int start = std::max(0, frame);
         for (const MediaInfo& m : infos) {
             const MediaInfo* info = &m;
@@ -262,17 +272,22 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind, const st
     c.in = 0;
     // Placed with its final length: placing 5 s first and shortening afterwards overwrote what followed on the track
     c.out = (length > 0 ? length : 5 * p->fps()) - 1;
+    bool room = false;
     if (track < 0) {
-        track = 0;
-        for (int i = 0; i < cur.video.size(); ++i)
+        // The magnetic main track holds the pictures; a title goes on a track above it (as in phone editors)
+        track = magneticMain() ? 1 : 0;
+        for (int i = track; i < cur.video.size(); ++i)
             for (const Clip& x : cur.video[i].clips)
                 if (x.start < c.end() && x.end() > c.start) track = i + 1;
         while (isTrackLocked({TrackKind::Video, track})) ++track; // skip locked track
     } else if (isTrackLocked({TrackKind::Video, track})) {
         return;
+    } else if (track == 0 && !mainInsert(c.start, c.length(), &room)) {
+        return;
     }
     c.id = p->newClipId();
     p->edit(kind == TitleKind::Drawing ? T("Zeichnen") : T("Titel einfügen"), [&](Timeline& tl) {
+        if (room) MainTrack::openGap(tl, MainTrack::kMain, c.start, c.length());
         TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
         TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); }, tl.frameRate);
     });
@@ -331,6 +346,7 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
     const bool clips = !TimelineOps::tracksOf(cur, ids).isEmpty();
     if (!clips && (cues.isEmpty() || cueDelta == 0)) return;
     if (deltaFrames == 0 && dt == 0) return;
+    if (clips && moveOnMain(ids, deltaFrames, kind, dt, cues, cueDelta)) return; // the magnetic main track
     Project* p = m_project;
     p->edit(clips ? T("Clips verschieben") : T("Untertitel verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
@@ -343,6 +359,12 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
 void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, int trackDelta)
 {
     if (fine % 100 == 0) return moveClips(idsIn, fine / 100, kind, trackDelta);
+    // The magnetic main track has whole frames: a move on or onto V1 goes to the nearest one
+    if (magneticMain())
+        for (int id : withCopies(editable(idsIn)))
+            if (TrackRef r; TimelineOps::findClip(m_project->timeline(), id, &r) && r.kind == TrackKind::Video
+                            && (r.index == 0 || r.index + trackDelta == 0))
+                return moveClips(idsIn, int(std::lround(fine / 100.0)), kind, trackDelta);
     const QVector<int> ids = withCopies(editable(idsIn));
     if (ids.isEmpty()) return;
     const Timeline& cur = m_project->timeline();
@@ -1101,8 +1123,22 @@ void Editor::paste(int frame)
             m.bin = 0; // bins are the other project's
             p->addMedia(m);
         }
+    // The magnetic main track: clips pasted onto V1 go in at the nearest cut, the later ones make room
+    bool room = false;
+    int lo = INT_MAX, hi = 0;
+    for (const auto& it : items)
+        if (it.ref == MainTrack::kMain) {
+            lo = std::min(lo, it.clip.start);
+            hi = std::max(hi, it.clip.end());
+        }
+    if (lo != INT_MAX) {
+        int at = frame + lo;
+        if (!mainInsert(at, hi - lo, &room)) return;
+        frame = at - lo;
+    }
     QSet<int> pasted;
     p->edit(T("Einfügen"), [&](Timeline& tl) {
+        if (room) MainTrack::openGap(tl, MainTrack::kMain, frame + lo, hi - lo);
         QHash<int, int> linkMap; // copy gets its own link
         QHash<int, int> idMap;   // old -> new (a shape following a clip pasted with it follows the copy)
         for (const auto& it : items) {

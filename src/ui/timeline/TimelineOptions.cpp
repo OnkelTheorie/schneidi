@@ -49,6 +49,10 @@ bool trimOverwrites() { return stored("timeline/edgeMeetsClip") != "stop"; }
 
 void setTrimOverwrites(bool on) { store("timeline/edgeMeetsClip", "stop", on); }
 
+bool magneticMain() { return QSettings().value("timeline/magneticMainDesktop").toBool(); }
+
+void setMagneticMain(bool on) { store("timeline/magneticMainDesktop", "true", !on); }
+
 ClipFormat clipFormat()
 {
     const QString v = stored("timeline/firstClipFormat");

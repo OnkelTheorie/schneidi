@@ -147,6 +147,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/CodeTrust.h          src/core/CodeTrust.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
+    src/core/MainTrack.h          src/core/MainTrack.cpp
     src/core/ProxyChoice.h        src/core/ProxyChoice.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
@@ -189,6 +190,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/EditorAttributes.cpp
     src/core/EditorDetail.h
     src/core/EditorTracks.cpp
+    src/core/EditorMainTrack.cpp
     src/core/EditorTrim.cpp
     src/core/EditorSource.cpp
     src/core/EditorTransitions.cpp

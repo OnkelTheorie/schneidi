@@ -107,6 +107,15 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
         p.drawPolyline(QPolygonF{{16.3, 7.8}, {18.5, 10}, {16.3, 12.2}});
         break;
     }
+    case I::MainTrack: { // the magnetic main track: two clips pushed together, arrows closing the gap above them
+        p.drawRoundedRect(QRectF(2.5, 10, 7.5, 6.5), 1.2, 1.2);
+        p.drawRoundedRect(QRectF(10, 10, 7.5, 6.5), 1.2, 1.2);
+        p.drawLine(QPointF(2.5, 5.5), QPointF(8, 5.5));
+        p.drawLine(QPointF(12, 5.5), QPointF(17.5, 5.5));
+        p.drawPolyline(QPolygonF{{6, 3.3}, {8.2, 5.5}, {6, 7.7}});
+        p.drawPolyline(QPolygonF{{14, 3.3}, {11.8, 5.5}, {14, 7.7}});
+        break;
+    }
     case I::Record: { // microphone: record a voice-over onto the armed/selected track
         p.setBrush(c);
         p.setPen(Qt::NoPen);
