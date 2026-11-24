@@ -1817,6 +1817,10 @@ S264_DEV(double, gTpFollow, devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPF
 // debt is paid. Measured on seven clips of 4 to 30 s: every target within 2 % at 2 s (within 2.5 %
 // at 4 s), for 0.2 to 0.5 % of BD-rate; H264_TPFOLLOW=0 with it is 0.5 to 1 % better and misses by up to 3.3 %.
 S264_DEV(double, gTpLag, devEnv("H264_TPLAG") ? std::atof(devEnv("H264_TPLAG")) : 2.0);
+// ... and over no more than this share of the clip (H264_TPLAGSHARE; 0 = the seconds above whatever the clip's
+// length, as before 24.11.2026): 2 s are all of a 2 s clip - a debt known after its first third was still not paid
+// at its end (2 s cuts of game footage: 2.5 to 3 % over their target, a clip of 16 s or more is not touched).
+S264_DEV(double, gTpLagShare, devEnv("H264_TPLAGSHARE") ? std::atof(devEnv("H264_TPLAGSHARE")) : 0.125);
 // The least budget the pictures left are planned with: this share of what they cost at the plan
 // QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
@@ -2048,6 +2052,73 @@ void Encoder::tpStartBoost(double kI, double kP)
         tpQOff_[i] -= off;
     }
     tpBuildTables();
+}
+
+// Two-pass: the macroblock tree runs out at the clip's end. Nothing follows the last lookahead window, so its
+// reference pictures inherit less and less and are coded with ever smaller offsets (traced on a 2 s clip: the mean
+// offset of the last six P pictures -7.8, -7.4, -6.9, -6.0, -4.7, -1.9 against -8.2 before; they cost 39 to 18 kbit
+// instead of 43 at the same QP). The model's k is learned at the tree's full level and planned that tail at the full
+// price; the bits it did not take were left over - about a lookahead window's share of them, 9 % of a 2 s clip and
+// well under 1 % of a minute. So once the clip's end is in the queue (the tree of every picture left is final then)
+// each queued reference picture's shortfall against the level so far goes into the plan as a coarser QP of that
+// picture (tpQOff_, as the model sees it - the picture is coded as before), and the plan spends the difference on
+// all the pictures left. H264_TPTAIL: weight of the shortfall (0 = off, the plan before 24.11.2026).
+S264_DEV(double, gTpTail, devEnv("H264_TPTAIL") ? std::atof(devEnv("H264_TPTAIL")) : 1.0);
+
+void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
+{
+    if (gTpTail <= 0 || !cfg_.mbtree || queue_.empty() || tpQOff_.empty())
+        return;
+    const size_t n = tpQOff_.size();
+    auto kind = [&](const LookaheadFrame& g) { return g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1; };
+    auto level = [&](const LookaheadFrame& g, int t) { // the tree's offsets as one QP offset of the picture, per unit of strength
+        double shift = 0;
+        vbvCost(&g, t, &shift);
+        return shift / std::max(0.1, treeStrength(g));
+    };
+    if (size_t(queue_.back().index) + 1 < n) {
+        // Pictures still join the queue: this picture has the whole lookahead behind it.
+        if (type != 2) {
+            const double own = level(frame, type);
+            tpTreeCount_ = std::min(tpTreeCount_ + 1, 16); // the level of the last pictures, not of the whole clip
+            tpTreeLevel_ += (own - tpTreeLevel_) / tpTreeCount_;
+        }
+        return;
+    }
+    if (tpTreeCount_ == 0) { // a clip no longer than the lookahead: the level of its first picture
+        if (type == 2)
+            return;
+        tpTreeLevel_ = level(frame, type);
+        tpTreeCount_ = 1;
+    }
+    tpTail_.resize(n, 0.0f);
+    std::vector<double> row(kTpQSteps);
+    for (const LookaheadFrame& g : queue_) {
+        const size_t i = size_t(g.index);
+        const int t = kind(g);
+        // (a picture whose type is not final yet has no tree of its own)
+        if (i >= n || t == 2 || (g.coded && &g != &frame) || (useB() && !g.decided && &g != &frame))
+            continue;
+        const float tail = float(gTpTail * std::max(0.0, (level(g, t) - tpTreeLevel_) * treeStrength(g)));
+        if (std::abs(tail - tpTail_[i]) < 0.05f)
+            continue;
+        double* rem = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+        double* all = tpAllTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+        tpRow(i, row.data());
+        for (int k = 0; k < kTpQSteps; ++k) {
+            rem[k] = std::max(0.0, rem[k] - row[size_t(k)]);
+            all[k] = std::max(0.0, all[k] - row[size_t(k)]);
+        }
+        tpQOff_[i] += tail - tpTail_[i];
+        tpTail_[i] = tail;
+        tpRow(i, row.data());
+        for (int k = 0; k < kTpQSteps; ++k) {
+            rem[k] += row[size_t(k)];
+            all[k] += row[size_t(k)];
+        }
+        if (devEnv("H264_RC_TRACE"))
+            std::fprintf(stderr, "tail: at %d picture %zu tree short by %.2f (level %.2f)\n", frameIndex_, i, tail, tpTreeLevel_);
+    }
 }
 
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
@@ -4666,13 +4737,16 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // The QP stays put; the model's k settles over the first pictures (the probe misses
             // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
             // slowly (at most half a QP per picture).
+            tpTreeTail(frame, type);
             const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
             qp = twoPassQp(kOf(true), kOf(false), kB(), plan);
             const double rest = qp;
             if (rcFramesSeen_ >= 12) {
                 const double gap = gTpDev > 0 ? std::clamp(rest - plan, -gTpDev, gTpDev) : rest - plan;
-                if (gTpLag > 0)
-                    tpGap_ += (gap - tpGap_) / std::max(1.0, gTpLag * cfg_.fps);
+                if (gTpLag > 0) {
+                    const double lag = gTpLagShare > 0 ? std::min(gTpLag * cfg_.fps, gTpLagShare * double(cfg_.firstPass->size())) : gTpLag * cfg_.fps;
+                    tpGap_ += (gap - tpGap_) / std::max(1.0, lag);
+                }
                 qp = plan + gTpFollow * (qp - plan) + (1.0 - gTpFollow) * tpGap_;
             }
             if (gTpDev > 0 && rcFramesSeen_ >= 12)
@@ -4702,7 +4776,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             qp += tpOff_[size_t(frame.index)];
         cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : bQp) : qp)), 10, 51);
         if (twoPass) // the model's cost of this picture: its need at the QP it is coded with, as cost * 2^(-qp/6)
-            costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1), cfg_.qp) * std::exp2(cfg_.qp / 6.0);
+            costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1),
+                              cfg_.qp + (size_t(frame.index) < tpTail_.size() ? tpTail_[size_t(frame.index)] : 0.0f)) * std::exp2(cfg_.qp / 6.0);
         rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {
@@ -4781,7 +4856,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             cfg_.qp = int(std::lround(nq));
             qpFrac = float(nq - cfg_.qp);
             if (cfg_.bitrateKbps > 0 && lookahead && cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size())
-                costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1), cfg_.qp) * std::exp2(cfg_.qp / 6.0);
+                costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1),
+                              cfg_.qp + (size_t(frame.index) < tpTail_.size() ? tpTail_[size_t(frame.index)] : 0.0f)) * std::exp2(cfg_.qp / 6.0);
         }
         fc.vbvQp_ = cfg_.qp + qpFrac;
         fc.vbvCost_ = cost;

@@ -657,6 +657,13 @@ private:
     double kPOfBin(int kind, int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB, double planQp = -1) const;
     double tpGap_ = 0; // two-pass: the gap between the QP that spends what is left and the plan QP, averaged (gTpLag)
+    // Two-pass, the clip's end (tpTreeTail): the macroblock tree's level over the reference pictures coded with the
+    // whole lookahead behind them (per unit of tree strength) and, per picture, the QPs the tree falls short of that
+    // level once the clip's end is in the queue (already part of tpQOff_).
+    double tpTreeLevel_ = 0;
+    int tpTreeCount_ = 0;
+    std::vector<float> tpTail_;
+    void tpTreeTail(const LookaheadFrame& frame, int type);
     double twoPassPlanQp(double kI, double kP, double kB) const;
     double frameCost(const LookaheadFrame& f, bool intra, const std::vector<int32_t>* inter = nullptr) const;
     double treeStrength(const LookaheadFrame& f) const;
