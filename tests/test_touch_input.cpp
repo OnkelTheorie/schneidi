@@ -945,6 +945,19 @@ void testHoldToMove()
                   QString("%1 -> %2").arg(len).arg(f.project.timeline().video[0].clips[0].length()));
     pauseTaps();
     f.project.undoStack()->undo();
+    // Just outside the handle (12 px right of clip 1's end, the empty gap): a swipe slides the view like anywhere else
+    // (that side of the edge was a dead zone: neither the view nor a trim followed the finger)
+    {
+        f.tv->setPlayhead(60);
+        QApplication::processEvents();
+        const QPoint outside(f.x(100) + 12, 120);
+        swipe(f.tv, outside, outside - QPoint(40, 0));
+        QTest::qWait(700);
+        Check::report(f.project.timeline().video[0].clips[0].length() == len && f.tv->playhead() > 60,
+                      "beside a handle a swipe scrubs", __FILE__, __LINE__,
+                      QString("length %1, playhead %2").arg(f.project.timeline().video[0].clips[0].length()).arg(f.tv->playhead()));
+        pauseTaps();
+    }
     // A long press on a clip: no menu, the clip selected
     f.sel.clear();
     f.tv->setPlayhead(200);

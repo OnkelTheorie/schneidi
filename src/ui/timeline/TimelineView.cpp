@@ -915,7 +915,13 @@ bool TimelineView::onSelectedHandle(const QPointF& pos) const
             if (!sel.contains(c.id)) continue;
             const QRect r = clipRect(row, c);
             if (pos.y() < r.top() || pos.y() > r.bottom()) continue;
-            if (std::abs(pos.x() - r.left()) <= 24 || std::abs(pos.x() - r.right()) <= 24) return true;
+            // Exactly where a press trims (edgeAt with the finger's 24 px: inside the clip, at most a third of it).
+            // It was 24 px on both sides of each edge: outside the clip the finger neither slid the view nor trimmed
+            // this clip (an empty lane did nothing, a neighbour's edge trimmed the neighbour)
+            const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
+            if (pos.x() < x1 || pos.x() >= x2) continue;
+            const double grab = std::min<double>(24, (x2 - x1) / 3);
+            if (pos.x() < x1 + grab || pos.x() >= x2 - grab) return true;
         }
     return false;
 }
