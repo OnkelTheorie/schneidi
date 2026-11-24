@@ -180,6 +180,40 @@ void testRebound()
     QTest::keyRelease(&win.w, Qt::Key_S, Qt::ShiftModifier);
 }
 
+// A stop key on a shifted symbol or the number pad: held as the shortcut map matches it ('<' typed as Shift+, on a US
+// keyboard; the pad's 5 with its keypad flag); the plain digit of a pad binding is not the stop key
+void testShiftedAndKeypadKeys()
+{
+    Window win;
+    win.stop->setShortcut(QKeySequence("<"));
+    QTest::keyPress(&win.w, Qt::Key_Less, Qt::ShiftModifier);
+    CHECK(win.keys->stopHeld());
+    win.tap(Qt::Key_L);
+    CHECK_EQ(win.position, 101);
+    QTest::keyRelease(&win.w, Qt::Key_Less, Qt::ShiftModifier);
+    CHECK(!win.keys->stopHeld());
+    QTest::keyPress(&win.w, Qt::Key_Less); // unshifted (a German keyboard)
+    CHECK(win.keys->stopHeld());
+    QTest::keyRelease(&win.w, Qt::Key_Less);
+    CHECK(!win.keys->stopHeld());
+    // Ctrl+< is not '<'
+    QTest::keyPress(&win.w, Qt::Key_Less, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(!win.keys->stopHeld());
+    QTest::keyRelease(&win.w, Qt::Key_Less, Qt::ControlModifier | Qt::ShiftModifier);
+    // The number pad: its 5 with the keypad flag
+    win.stop->setShortcut(QKeySequence(Qt::Key_5));
+    QTest::keyPress(&win.w, Qt::Key_5, Qt::KeypadModifier);
+    CHECK(win.keys->stopHeld());
+    win.tap(Qt::Key_J);
+    CHECK_EQ(win.position, 100);
+    QTest::keyRelease(&win.w, Qt::Key_5, Qt::KeypadModifier);
+    CHECK(!win.keys->stopHeld());
+    // Shift+5 is '%' on most layouts, not the 5
+    QTest::keyPress(&win.w, Qt::Key_5, Qt::ShiftModifier);
+    CHECK(!win.keys->stopHeld());
+    QTest::keyRelease(&win.w, Qt::Key_5, Qt::ShiftModifier);
+}
+
 void testTriggeredWithoutKey()
 {
     // The stop action from the menu (or an AI's "stop"): it stops, but K is not held - L shuttles afterwards
@@ -209,6 +243,7 @@ int main(int argc, char** argv)
     testShuttle();
     testHoldStop();
     testRebound();
+    testShiftedAndKeypadKeys();
     testTriggeredWithoutKey();
     return Check::result();
 }

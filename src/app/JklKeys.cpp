@@ -55,12 +55,25 @@ void JklKeys::shuttlePressed(int direction)
     m_hooks.setSpeed(next);
 }
 
-bool JklKeys::isKeyOf(const QAction* action, const QKeyEvent* e, bool exact)
+bool JklKeys::pressMatches(QKeyCombination bound, const QKeyEvent* e)
+{
+    // As Qt's shortcut map matches: the number pad's flag does not count, and Shift does not where it only types the
+    // symbol ('<' is Shift+, on a US keyboard, unshifted on a German one). Shift+letter stays a key of its own
+    const Qt::KeyboardModifiers ignore = Qt::KeypadModifier;
+    const Qt::KeyboardModifiers want = bound.keyboardModifiers() & ~ignore;
+    const Qt::KeyboardModifiers got = e->modifiers() & ~ignore;
+    const int key = e->key();
+    if (bound.key() != Qt::Key(key)) return false;
+    if (want == got) return true;
+    const bool symbol = key < 0x01000000 && !(key >= Qt::Key_A && key <= Qt::Key_Z) && !(key >= Qt::Key_0 && key <= Qt::Key_9);
+    return symbol && got.testFlag(Qt::ShiftModifier) && !want.testFlag(Qt::ShiftModifier) && want == (got & ~Qt::ShiftModifier);
+}
+
+bool JklKeys::isKeyOf(const QAction* action, const QKeyEvent* e, bool press)
 {
     if (!action) return false;
     for (const QKeySequence& seq : action->shortcuts())
-        if (seq.count() == 1
-            && (exact ? seq[0] == e->keyCombination() : seq[0].key() == Qt::Key(e->key()))) // released: modifiers may go first
+        if (seq.count() == 1 && (press ? pressMatches(seq[0], e) : seq[0].key() == Qt::Key(e->key()))) // released: modifiers may go first
             return true;
     return false;
 }

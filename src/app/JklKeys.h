@@ -41,7 +41,8 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    static bool isKeyOf(const QAction* action, const QKeyEvent* e, bool exact);
+    static bool isKeyOf(const QAction* action, const QKeyEvent* e, bool press);
+    static bool pressMatches(QKeyCombination bound, const QKeyEvent* e);
     void releaseShuttle();
     void releaseAll();
 
