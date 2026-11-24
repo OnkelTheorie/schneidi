@@ -200,6 +200,10 @@ add_dependencies(test_live schneidi-cli)
 schneidi_test(test_live_ops016)
 target_link_libraries(test_live_ops016 PRIVATE schneidi_cli_lib)
 add_dependencies(test_live_ops016 schneidi-cli)
+# The magnetic main track and the AI's live edits: ops keep their meaning, V1 packed once at the end, one undo step
+schneidi_test(test_live_magnetic)
+target_link_libraries(test_live_magnetic PRIVATE schneidi_cli_lib)
+add_dependencies(test_live_magnetic schneidi-cli)
 schneidi_test(test_live_talk017) # jl_cut and room_tone live in the app: one undo step, same as on the file
 target_link_libraries(test_live_talk017 PRIVATE schneidi_cli_lib)
 add_dependencies(test_live_talk017 schneidi-cli)
