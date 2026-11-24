@@ -75,7 +75,8 @@ bool Editor::moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind
     if (!onMain.isEmpty() && trackDelta == 0) {
         // Along V1: a reorder. The moved clips take their new place in the row (a clip goes before one it was dropped
         // on the first half of: its middle decides), the others make room - never an overwrite that cuts a neighbour.
-        // The sound linked to them goes along with the pack; other moved clips (a title on V2) move as usual.
+        // The sound linked to them goes along with the pack; other moved items (a title on V2, subtitles) move by the
+        // offset the first moved V1 clip really got, so they stay with it.
         QVector<QPair<double, int>> places;
         for (const Clip& c : cur.video[0].clips) {
             const bool moved = ids.contains(c.id);
@@ -93,13 +94,37 @@ bool Editor::moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind
             const Clip* c = TimelineOps::findClip(cur, id, &r);
             if (c && !(r == MainTrack::kMain) && !(c->linkId && links.contains(c->linkId))) others << id;
         }
+        QVector<int> sorted; // V1 now, by start
+        for (const Clip& c : cur.video[0].clips) sorted << c.id;
+        const bool reordered = order != sorted;
+        QVector<int> mainMoved; // the moved V1 clips and their sound (their dissolves go when the order changes)
+        const Clip* anchor = nullptr;
+        for (const Clip* c : onMain) {
+            if (!anchor || c->start < anchor->start) anchor = c;
+            mainMoved << c->id;
+        }
+        for (int id : ids)
+            if (TrackRef r; const Clip* c = TimelineOps::findClip(cur, id, &r))
+                if (!(r == MainTrack::kMain) && c->linkId && links.contains(c->linkId)) mainMoved << id;
+        int earliest = INT_MAX; // the others and the subtitles: not before frame 0
+        for (int id : others)
+            if (const Clip* c = TimelineOps::findClip(cur, id)) earliest = std::min(earliest, c->start);
+        for (int id : cues)
+            if (const SubtitleCue* c = Subtitles::find(cur, id)) earliest = std::min(earliest, c->start);
+        const int anchorId = anchor->id, anchorStart = anchor->start;
         const auto apply = [&](Timeline& tl, QString* why) {
-            if (!others.isEmpty()) {
+            if (reordered) TimelineOps::detachTransitions(tl, mainMoved);
+            const MainTrack::Result r = MainTrack::pack(tl, MainTrack::kMain, order, why);
+            if (r == MainTrack::Result::Refused) return r;
+            const Clip* moved = TimelineOps::findClip(std::as_const(tl), anchorId);
+            int offset = moved ? moved->start - anchorStart : 0;
+            if (earliest != INT_MAX) offset = std::max(offset, -earliest);
+            if (offset != 0 && !others.isEmpty()) {
                 TimelineOps::detachTransitions(tl, others);
-                TimelineOps::moveClips(tl, others, deltaFrames, kind, 0, newId);
+                TimelineOps::moveClips(tl, others, offset, kind, 0, newId);
             }
-            if (cueDelta) Subtitles::move(tl, cues, cueDelta, 0, newId);
-            return MainTrack::pack(tl, MainTrack::kMain, order, why);
+            if (offset != 0 && cueDelta) Subtitles::move(tl, cues, offset, 0, newId);
+            return r;
         };
         Timeline probe = cur;
         QString why;

@@ -218,9 +218,29 @@ void testMoveAlong()
         t.kind = ClipKind::Title;
         tl.video[1].clips = {t};
     });
+    // (review 9: the title moves with c's real offset, 100, not the raw 150)
     f.editor.moveClips({3, 13, 20}, 150, TrackKind::Video, 0);
-    CHECK_EQ(f.d(), QString("V1: a[0-100|0-99] c[100-180|0-79] b[180-240|0-59]  V2: T[150-180|0-29]  "
+    CHECK_EQ(f.d(), QString("V1: a[0-100|0-99] c[100-180|0-79] b[180-240|0-59]  V2: T[100-130|0-29]  "
                             "A1: a[0-100|0-99] c[100-180|0-79] b[180-240|0-59]  A2:"));
+}
+
+void testReorderDissolve()
+{
+    // Review 8: a reorder takes the dissolves of the reordered clips off first (as a move does)
+    Fixture f;
+    f.project.edit("dissolve a|b", [](Timeline& tl) {
+        tl.video[0].clips[0].transOut = 10;
+        tl.video[0].clips[1].transIn = 10;
+    });
+    f.editor.moveClips({1, 11}, 90, TrackKind::Video, 0); // b, a, c
+    const Clip* a = TimelineOps::findClip(f.tl(), 1);
+    const Clip* b = TimelineOps::findClip(f.tl(), 2);
+    CHECK(a->start == 60 && b->start == 0);
+    CHECK(a->transOut == 0 && a->transIn == 0 && b->transIn == 0 && b->transOut == 0);
+    // A move that keeps the order keeps its dissolve
+    f.project.undoStack()->undo();
+    f.editor.moveClips({1, 11}, 5, TrackKind::Video, 0);
+    CHECK(TimelineOps::findClip(f.tl(), 1)->transOut == 10);
 }
 
 void testMoveOnto()
@@ -536,6 +556,7 @@ int main(int argc, char** argv)
     testOtherTracks();
     testTrim();
     testMoveAlong();
+    testReorderDissolve();
     testMoveOnto();
     testDropAndPaste();
     testRange();
