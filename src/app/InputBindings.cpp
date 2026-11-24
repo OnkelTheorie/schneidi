@@ -271,6 +271,198 @@ const KeyTable& finalCutKeys()
     return keys;
 }
 
+// Kdenlive's default keys (docs.kdenlive.org › Shortcuts). Home/End there go to the clip's start/end: schneidi's go
+// to the timeline's (Ctrl+Home/End in Kdenlive) and keep Home/End as their second key
+const KeyTable& kdenliveKeys()
+{
+    static const KeyTable keys = {
+        // Edit
+        {"split", {"Shift+R"}},              // Cut Clip
+        {"split_on_tracks", {"Ctrl+Shift+R"}}, // Cut All Clips
+        {"delete", {"Del"}},
+        {"delete_alt", {"Backspace"}},
+        {"ripple_delete", {"Shift+Del"}},    // Extract Clip
+        {"insert_clip", {"V"}},              // Insert Clip Zone in Timeline
+        {"overwrite_clip", {"B"}},           // Overwrite Clip Zone in Timeline
+        {"trim_start", {"("}},               // Resize Item Start (to the playhead)
+        {"trim_end", {")"}},                 // Resize Item End
+        {"add_transition", {"U"}},           // Mix Clips
+        {"link_clips", {"Ctrl+G"}},          // Group Clips
+        {"deselect", {"Ctrl+Shift+A"}},
+        {"lock_tracks", {"Shift+L"}},        // Toggle Track Lock
+        // Tools
+        {"tool_select", {"S"}},
+        {"tool_blade", {"X"}},               // Razor Tool
+        // Marks and markers (guides)
+        {"mark_in", {"I"}},                  // Set Zone In
+        {"mark_out", {"O"}},
+        {"goto_in", {"Shift+I"}},            // Go to Zone Start
+        {"goto_out", {"Shift+O"}},
+        {"add_marker", {"G"}},               // Add/Remove Guide
+        {"marker_prev", {"Ctrl+Left"}},      // Go to Previous Guide
+        {"marker_next", {"Ctrl+Right"}},
+        {"loop_inout", {"Ctrl+Shift+Space"}}, // Loop Zone
+        // Playback and view
+        {"play_pause", {"Space"}},
+        {"shuttle_back", {"J"}},
+        {"stop", {"K"}},
+        {"shuttle_fwd", {"L"}},
+        {"frame_prev", {"Left"}},
+        {"frame_next", {"Right"}},
+        {"second_prev", {"Shift+Left"}},
+        {"second_next", {"Shift+Right"}},
+        {"edit_prev", {"Alt+Left"}},         // Go to Previous Snap Point
+        {"edit_next", {"Alt+Right"}},
+        {"go_start", {"Ctrl+Home", "Home"}}, // Go to Project Start
+        {"go_end", {"Ctrl+End", "End"}},
+        {"zoom_in", {"Ctrl++", "Ctrl+="}},
+        {"zoom_out", {"Ctrl+-"}},
+        {"viewer_full_screen", {"F11"}},     // Switch Monitor Fullscreen
+        {"app_full_screen", {"Ctrl+Shift+F"}}, // Full Screen Mode
+        {"viewer_second_screen", {"Ctrl+F12"}}, // schneidi's own, kept reachable
+        // File
+        {"page_deliver", {"Ctrl+Return"}},   // Render
+        {"settings", {"Ctrl+Shift+,"}},      // Configure Kdenlive
+        {"edit_keybindings", {"Ctrl+Alt+,"}}, // Configure Keyboard Shortcuts
+    };
+    return keys;
+}
+
+// Shotcut's default keys (shotcut.org › Keyboard Shortcuts, Windows/Linux). In the timeline Shotcut's I/O trim the
+// clip; schneidi's I/O set the In/Out points like Shotcut's player
+const KeyTable& shotcutKeys()
+{
+    static const KeyTable keys = {
+        // Edit
+        {"split", {"S"}},                    // Split at playhead
+        {"split_on_tracks", {"Shift+S"}},    // Split all tracks
+        {"append_at_end", {"A"}},
+        {"insert_clip", {"V"}},
+        {"overwrite_clip", {"B"}},
+        {"replace_clip", {"R"}},
+        {"ripple_delete", {"X", "Shift+Del"}},
+        {"ripple_delete_alt", {"Shift+Backspace"}},
+        {"delete", {"Z", "Backspace"}},      // Lift
+        {"delete_alt", {"Del"}},
+        {"nudge_left", {","}},
+        {"nudge_right", {"."}},
+        {"select_all", {"Ctrl+A"}},
+        {"deselect", {"Ctrl+D"}},            // Select none
+        {"snapping", {"Ctrl+P"}},
+        {"redo", {"Ctrl+Y", "Ctrl+Shift+Z"}},
+        // Marks and markers
+        {"mark_in", {"I"}},
+        {"mark_out", {"O"}},
+        {"add_marker", {"M"}},
+        {"marker_prev", {"<"}},
+        {"marker_next", {">"}},
+        // Playback and view
+        {"play_pause", {"Space"}},
+        {"shuttle_back", {"J"}},
+        {"stop", {"K"}},
+        {"shuttle_fwd", {"L"}},
+        {"frame_prev", {"Left"}},
+        {"frame_next", {"Right"}},
+        {"second_prev", {"PgUp"}},           // Back 1 second
+        {"second_next", {"PgDown"}},
+        {"edit_prev", {"Alt+Left"}},
+        {"edit_next", {"Alt+Right"}},
+        {"go_start", {"Home"}},
+        {"go_end", {"End"}},
+        {"zoom_in", {"="}},
+        {"zoom_out", {"-"}},
+        {"zoom_fit", {"0"}},
+        {"app_full_screen", {"F11", "Ctrl+Shift+F"}},
+        {"viewer_second_screen", {"Ctrl+F12"}}, // schneidi's own, kept reachable
+        // File
+        {"page_deliver", {"Ctrl+E"}},        // Export video
+    };
+    return keys;
+}
+
+// Vegas Pro's default keys (the VEGAS Pro documentation's shortcut tables). Space starts and stops playback there
+// (back to the start position: Settings › Timeline › "Space stops"), Enter plays/pauses
+const KeyTable& vegasKeys()
+{
+    static const KeyTable keys = {
+        // Edit
+        {"split", {"S"}},                    // Split events
+        {"delete", {"Del"}},
+        {"delete_alt", {"Backspace"}},
+        {"trim_start", {"Alt+["}},           // Trim event start to cursor
+        {"trim_end", {"Alt+]"}},
+        {"link_clips", {"G"}},               // Group selected events
+        {"select_all", {"Ctrl+A"}},
+        {"snapping", {"F8"}},
+        // Tools
+        {"tool_select", {"Ctrl+D"}},         // Normal editing tool
+        // Marks and markers
+        {"mark_in", {"I"}},
+        {"mark_out", {"O"}},
+        {"add_marker", {"M"}},
+        {"marker_prev", {"Ctrl+Left"}},
+        {"marker_next", {"Ctrl+Right"}},
+        {"loop_inout", {"Q"}},               // Loop playback
+        // Playback and view
+        {"play_pause", {"Space", "Return"}},
+        {"shuttle_back", {"J"}},
+        {"stop", {"K"}},
+        {"shuttle_fwd", {"L"}},
+        {"frame_prev", {"Alt+Left", "Left"}},
+        {"frame_next", {"Alt+Right", "Right"}},
+        {"edit_prev", {"Ctrl+Alt+Left"}},    // Previous event edge
+        {"edit_next", {"Ctrl+Alt+Right"}},
+        {"go_start", {"Ctrl+Home", "W"}},
+        {"go_end", {"Ctrl+End", "End"}},
+        {"zoom_in", {"Up"}},
+        {"zoom_out", {"Down"}},
+        // File
+        {"project_settings", {"Alt+Return"}}, // Project properties
+    };
+    return keys;
+}
+
+// CapCut's default keys (desktop, Windows; Cmd = Ctrl on macOS)
+const KeyTable& capcutKeys()
+{
+    static const KeyTable keys = {
+        // Edit
+        {"split", {"Ctrl+B"}},
+        {"split_on_tracks", {"Ctrl+Shift+B"}},
+        {"trim_start", {"Q"}},               // Delete left of the playhead
+        {"trim_end", {"W"}},                 // Delete right of the playhead
+        {"delete", {"Backspace"}},
+        {"delete_alt", {"Del"}},
+        {"linked_selection", {"~"}},         // Linkage on/off
+        {"snapping", {"N"}},                 // Auto snapping
+        // Tools
+        {"tool_select", {"A"}},
+        {"tool_blade", {"B"}},               // Split mode
+        // Marks and markers
+        {"mark_in", {"I"}},
+        {"mark_out", {"O"}},
+        {"clear_in_out", {"Alt+X"}},
+        {"add_marker", {"M"}},
+        // Playback and view
+        {"play_pause", {"Space"}},
+        {"frame_prev", {"Left"}},
+        {"frame_next", {"Right"}},
+        {"edit_prev", {"Up"}},               // Previous cut
+        {"edit_next", {"Down"}},
+        {"go_start", {"Home"}},
+        {"go_end", {"End"}},
+        {"zoom_out", {"Ctrl+-"}},
+        {"zoom_fit", {"Shift+Z"}},
+        {"viewer_full_screen", {"Ctrl+Shift+F"}},
+        {"viewer_second_screen", {"Ctrl+F12"}}, // schneidi's own, kept reachable
+        // File
+        {"import", {"Ctrl+I"}},
+        {"project_new", {"Ctrl+N"}},
+        {"page_deliver", {"Ctrl+E"}},        // Export
+    };
+    return keys;
+}
+
 // Premiere command names (.kys) -> action ids, as Premiere Pro saves them in a custom shortcut set (checked against a
 // set saved by Premiere on Windows; several names changed between versions, e.g. the transport and In/Out commands)
 const QHash<QString, QString>& kysCommands()
@@ -707,7 +899,7 @@ QString InputBindings::customPresetDir()
 
 QStringList InputBindings::presetIds()
 {
-    QStringList ids{"standard", "beginner", "premiere", "finalcut"};
+    QStringList ids{"standard", "beginner", "premiere", "finalcut", "kdenlive", "shotcut", "vegas", "capcut"};
     for (const QFileInfo& f : QDir(customPresetDir()).entryInfoList({"*.json"}, QDir::Files, QDir::Name))
         ids << "custom:" + f.completeBaseName();
     return ids;
@@ -718,6 +910,10 @@ QString InputBindings::presetName(const QString& id)
     if (id == "beginner") return T("Einsteiger");
     if (id == "premiere") return "Premiere Pro";
     if (id == "finalcut") return "Final Cut Pro";
+    if (id == "kdenlive") return "Kdenlive";
+    if (id == "shotcut") return "Shotcut";
+    if (id == "vegas") return "Vegas Pro";
+    if (id == "capcut") return "CapCut";
     if (id.startsWith("custom:")) return id.mid(7);
     return T("Standard");
 }
@@ -797,6 +993,10 @@ void InputBindings::loadPreset(const QString& id)
         overlay(premiereKeys()); // Alt+wheel zooms there too (the default)
     } else if (id == "finalcut") {
         overlay(finalCutKeys());
+    } else if (id == "kdenlive" || id == "shotcut" || id == "vegas" || id == "capcut") {
+        // Their keys and their wheel (Shotcut's is CapCut's: wheel sideways, Ctrl zooms, Shift up/down)
+        overlay(id == "kdenlive" ? kdenliveKeys() : id == "shotcut" ? shotcutKeys() : id == "vegas" ? vegasKeys() : capcutKeys());
+        m_wheel = wheelPreset(id == "shotcut" ? QStringLiteral("capcut") : id);
     } else if (id.startsWith("custom:")) {
         QFile f(QDir(customPresetDir()).filePath(id.mid(7) + ".json"));
         if (f.open(QIODevice::ReadOnly)) applyJson(QJsonDocument::fromJson(f.readAll()).object(), true);
