@@ -1061,7 +1061,7 @@ void testStandingStart()
     // 7016fe69, 539 after the cheaper trellis: the macroblock tree fades out over the clip's last lookahead
     // window (its mean offset goes from -8.2 to -1.9 over the last six P pictures, they cost 39 to 18 kbit
     // instead of 43 at the same QP), the model's k did not know, and the leftover budget was followed over 2 s -
-    // as long as the whole clip. With the tail in the plan (Encoder::tpTreeTail) 576, with the lag bound to the
+    // as long as the whole clip. With the tail in the plan (Encoder::tpTreeTail) 573, with the lag bound to the
     // clip's length as well (gTpLagShare) 592.)
     if (info.qps[0] < lateQp - 7 || startBytes * 4 > bytes || std::abs(kbps - 600.0) >= 30.0 || std::getenv("H264_TEST_STANDING"))
         std::fprintf(stderr, "standing start, two-pass: I QP %d, P QP later %d, %zu of %zu bytes in the standing pictures, %.0f kbit/s\n",

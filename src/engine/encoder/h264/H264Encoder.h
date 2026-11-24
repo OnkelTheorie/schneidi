@@ -662,6 +662,13 @@ private:
     // level once the clip's end is in the queue (already part of tpQOff_).
     double tpTreeLevel_ = 0;
     int tpTreeCount_ = 0;
+    // ... and how far the tree of a queued picture with d pictures behind it lies above that of the picture coded at
+    // the time, by d / 4 (learned while pictures still join the queue: what the missing lookahead alone does).
+    static constexpr int kTpTailSteps = 16;
+    double tpTailShape_[kTpTailSteps] = {};
+    int tpTailShapeCount_[kTpTailSteps] = {};
+    int tpTailRuns_ = 0;
+    bool tpTailOpen_ = false; // the tree has run once with the clip's end in the queue
     std::vector<float> tpTail_;
     void tpTreeTail(const LookaheadFrame& frame, int type);
     double twoPassPlanQp(double kI, double kP, double kB) const;

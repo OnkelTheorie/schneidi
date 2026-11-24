@@ -1819,8 +1819,10 @@ S264_DEV(double, gTpFollow, devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPF
 S264_DEV(double, gTpLag, devEnv("H264_TPLAG") ? std::atof(devEnv("H264_TPLAG")) : 2.0);
 // ... and over no more than this share of the clip (H264_TPLAGSHARE; 0 = the seconds above whatever the clip's
 // length, as before 24.11.2026): 2 s are all of a 2 s clip - a debt known after its first third was still not paid
-// at its end (2 s cuts of game footage: 2.5 to 3 % over their target, a clip of 16 s or more is not touched).
-S264_DEV(double, gTpLagShare, devEnv("H264_TPLAGSHARE") ? std::atof(devEnv("H264_TPLAGSHARE")) : 0.125);
+// at its end. Measured on 2 s cuts of game footage (miss of the target, share 0 / 0.125 / 0.25 / 0.5): +3.1 / +1.5 /
+// +1.4 / +2.3 % and +2.7 / +0.4 / +1.6 / +2.3 %, the synthetic clip with a standing start 573 / 592 / 592 / 580 of
+// 600 kbit/s. A quarter leaves every clip of 8 s or more as it was (those hit their targets within 2 %).
+S264_DEV(double, gTpLagShare, devEnv("H264_TPLAGSHARE") ? std::atof(devEnv("H264_TPLAGSHARE")) : 0.25);
 // The least budget the pictures left are planned with: this share of what they cost at the plan
 // QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
@@ -2062,7 +2064,13 @@ void Encoder::tpStartBoost(double kI, double kP)
 // well under 1 % of a minute. So once the clip's end is in the queue (the tree of every picture left is final then)
 // each queued reference picture's shortfall against the level so far goes into the plan as a coarser QP of that
 // picture (tpQOff_, as the model sees it - the picture is coded as before), and the plan spends the difference on
-// all the pictures left. H264_TPTAIL: weight of the shortfall (0 = off, the plan before 24.11.2026).
+// all the pictures left.
+// Only what the missing lookahead does counts: a picture whose tree is weaker because of what it shows (the first
+// pictures of a new scene, 35 pictures before the end of a talk cut) is no tail - taken for one, the plan coded
+// exactly those pictures finer and the clip went 7 % further over. While pictures still join the queue, every
+// fourth run of the tree notes how far the offsets of the queued pictures with d pictures behind them lie above
+// the coded picture's (tpTailShape_); a picture d before the clip's end is short by no more than that.
+// H264_TPTAIL: weight of the shortfall (0 = off, the plan before 24.11.2026).
 S264_DEV(double, gTpTail, devEnv("H264_TPTAIL") ? std::atof(devEnv("H264_TPTAIL")) : 1.0);
 
 void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
@@ -2070,30 +2078,57 @@ void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
     if (gTpTail <= 0 || !cfg_.mbtree || queue_.empty() || tpQOff_.empty())
         return;
     const size_t n = tpQOff_.size();
-    auto kind = [&](const LookaheadFrame& g) { return g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1; };
     const size_t mbs = size_t(mbW_) * mbH_;
-    auto level = [&](const LookaheadFrame& g, int) { // the picture's mean tree offset, per unit of strength
+    auto kind = [&](const LookaheadFrame& g) { return g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1; };
+    // A picture's mean tree offset per unit of strength (every stride-th macroblock).
+    auto level = [&](const LookaheadFrame& g, size_t stride) {
         if (g.intraCost.size() != mbs || g.propagate.size() != mbs)
             return 0.0;
         const double strength = treeStrength(g);
         double sum = 0;
-        for (size_t m = 0; m < mbs; ++m)
+        size_t count = 0;
+        for (size_t m = 0; m < mbs; m += stride, ++count)
             sum += std::max(-gTreeCap, Lookahead::qpOffset(g, int(m), strength));
-        return sum / double(mbs) / std::max(0.1, strength);
+        return sum / double(std::max<size_t>(1, count)) / std::max(0.1, strength);
     };
-    if (size_t(queue_.back().index) + 1 < n) {
+    const int last = queue_.back().index;
+    if (size_t(last) + 1 < n) {
         // Pictures still join the queue: this picture has the whole lookahead behind it.
-        if (type != 2) {
-            const double own = level(frame, type);
-            tpTreeCount_ = std::min(tpTreeCount_ + 1, 16); // the level of the last pictures, not of the whole clip
-            tpTreeLevel_ += (own - tpTreeLevel_) / tpTreeCount_;
+        if (type == 2)
+            return;
+        const double own = level(frame, 1);
+        tpTreeCount_ = std::min(tpTreeCount_ + 1, 16); // the level of the last pictures, not of the whole clip
+        tpTreeLevel_ += (own - tpTreeLevel_) / tpTreeCount_;
+        if (tpTailRuns_++ % 4)
+            return;
+        double sum[kTpTailSteps] = {};
+        int count[kTpTailSteps] = {};
+        const double ownCoarse = level(frame, 7);
+        for (const LookaheadFrame& g : queue_) {
+            if (g.index <= frame.index || g.coded || kind(g) == 2)
+                continue;
+            const int step = std::min((last - g.index) / 4, kTpTailSteps - 1);
+            sum[step] += level(g, 7) - ownCoarse;
+            ++count[step];
         }
+        for (int k = 0; k < kTpTailSteps; ++k)
+            if (count[k]) {
+                tpTailShapeCount_[k] = std::min(tpTailShapeCount_[k] + 1, 16);
+                tpTailShape_[k] += (sum[k] / count[k] - tpTailShape_[k]) / tpTailShapeCount_[k];
+            }
         return;
+    }
+    // The run that first has the clip's end in the queue does not count: the pictures that joined last are not
+    // searched yet and show no tree at all (the plan took them for free and coded the pictures before them finer).
+    if (!tpTailOpen_) {
+        tpTailOpen_ = true;
+        if (tpTreeCount_ > 0)
+            return;
     }
     if (tpTreeCount_ == 0) { // a clip no longer than the lookahead: the level of its first picture
         if (type == 2)
             return;
-        tpTreeLevel_ = level(frame, type);
+        tpTreeLevel_ = level(frame, 1);
         tpTreeCount_ = 1;
     }
     tpTail_.resize(n, 0.0f);
@@ -2103,7 +2138,11 @@ void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
         const int t = kind(g);
         if (i >= n || t == 2 || (g.coded && &g != &frame))
             continue;
-        const float tail = float(gTpTail * std::max(0.0, (level(g, t) - tpTreeLevel_) * treeStrength(g)));
+        double shortBy = std::max(0.0, level(g, 1) - tpTreeLevel_);
+        const int step = std::min((last - g.index) / 4, kTpTailSteps - 1);
+        if (tpTailShapeCount_[step] > 0) // (none noted: a clip no longer than the lookahead)
+            shortBy = std::min(shortBy, std::max(0.0, tpTailShape_[step]));
+        const float tail = float(gTpTail * shortBy * treeStrength(g));
         if (std::abs(tail - tpTail_[i]) < 0.05f)
             continue;
         double* rem = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
@@ -2121,8 +2160,8 @@ void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
             all[k] += row[size_t(k)];
         }
         if (devEnv("H264_RC_TRACE"))
-            std::fprintf(stderr, "tail: at %d picture %zu tree short by %.2f (level %.2f, strength %.1f, decided %d)\n", frameIndex_, i, tail,
-                         tpTreeLevel_, treeStrength(g), int(g.decided));
+            std::fprintf(stderr, "tail: at %d picture %zu tree short by %.2f (level %.2f, strength %.1f, shape %.2f)\n", frameIndex_, i, tail,
+                         tpTreeLevel_, treeStrength(g), tpTailShapeCount_[step] > 0 ? tpTailShape_[step] : -1.0);
     }
 }
 
