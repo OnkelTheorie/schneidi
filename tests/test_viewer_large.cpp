@@ -165,9 +165,11 @@ void testKeys(MainWindow& w)
     CHECK(fileMenu);
 
     // Full screen: Ctrl+F in schneidi's own sets; the sets of other editors use their key (Premiere Ctrl+`,
-    // Final Cut Ctrl+Shift+F). Either way the key belongs to full screen alone
+    // Final Cut and CapCut Ctrl+Shift+F, Kdenlive F11; Shotcut and Vegas have none for the preview: Ctrl+F stays).
+    // Either way the key belongs to full screen alone
     CHECK(b.action("viewer_full_screen") != nullptr);
-    const QHash<QString, QString> fullScreenKey{{"premiere", "Ctrl+`"}, {"finalcut", "Ctrl+Shift+F"}};
+    const QHash<QString, QString> fullScreenKey{
+        {"premiere", "Ctrl+`"}, {"finalcut", "Ctrl+Shift+F"}, {"capcut", "Ctrl+Shift+F"}, {"kdenlive", "F11"}};
     for (const QString& preset : InputBindings::presetIds()) {
         b.applyPreset(preset);
         const QString key = fullScreenKey.value(preset, "Ctrl+F");
