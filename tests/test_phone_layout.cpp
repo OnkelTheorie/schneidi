@@ -851,6 +851,27 @@ void testSteadyTransport(Engine& engine)
         }
     }
     Check::report(steady, "timecode and play button keep their place while the time runs", __FILE__, __LINE__, moved);
+    // The play button in the middle of the window (the A51: the timecode left is narrower than "Fit" + full screen at
+    // the right, it sat at 46 %), also with another zoom text and on a narrower phone
+    const auto centred = [&](const char* what) {
+        tc->parentWidget()->layout()->activate();
+        const int mid = play->mapTo(&w, play->rect().center()).x();
+        Check::report(std::abs(mid - w.width() / 2) <= 3, "play button in the middle of the phone window", __FILE__,
+                      __LINE__, QString("%1: centre %2 of %3").arg(what).arg(mid).arg(w.width()));
+    };
+    centred("411 wide");
+    if (auto* viewer = w.findChild<Viewer*>(); CHECK(viewer)) {
+        viewer->setZoom(1.0);
+        settle();
+        centred("zoom 100 %");
+        viewer->setZoom(FrameView::kFit);
+    }
+    w.resize(360, 740);
+    settle();
+    centred("360 wide");
+    emit engine.positionChanged(89898);
+    settle();
+    centred("360 wide, long timecode");
     Check::report(tc->font().fixedPitch() || QFontInfo(tc->font()).fixedPitch(), "timecode in a fixed-pitch font",
                   __FILE__, __LINE__, QFontInfo(tc->font()).family());
 }
@@ -1081,11 +1102,36 @@ int main(int argc, char** argv)
         settle();
         CHECK(view->fitAudioRows());
         const int audioRow = view->audioRowHeight();
-        Check::report(audioRow < 46 && audioRow >= TimelineView::kFitAudioMin && 5 * audioRow <= view->viewportHeight() / 2 + 5,
+        Check::report(audioRow < 46 && audioRow >= TimelineView::kFitAudioMin && 5 * audioRow <= view->viewportHeight(),
                       "five audio tracks share half of the lanes", __FILE__, __LINE__,
                       QString("row %1, lanes %2").arg(audioRow).arg(view->viewportHeight()));
         Check::report(view->contentHeight() <= view->viewportHeight(), "V and A1-A5 all in sight", __FILE__, __LINE__,
                       QString("%1 > %2").arg(view->contentHeight()).arg(view->viewportHeight()));
+        // The A51 shot: ~110 px empty below A5 - the timeline is only as tall as its rows (and a short empty lane), the
+        // viewer gets the rest
+        const int emptyBelow = view->viewportHeight() - view->contentHeight();
+        Check::report(emptyBelow <= TimelineView::kFitAudioMin + 4, "no empty lanes below A5 in portrait", __FILE__,
+                      __LINE__, QString("%1 px empty").arg(emptyBelow));
+        const int viewerFive = w.findChild<Viewer*>()->height();
+        // Fewer tracks (V1 + A1): a lower timeline, a taller viewer; never lower than 3/10 of the room (~1/4 of the shell)
+        w.editor()->project()->edit("two streams", [&](Timeline& tl) {
+            tl.audio.resize(1);
+            tl.video.resize(1);
+        });
+        settle();
+        auto* panel = w.findChild<TimelinePanel*>();
+        Check::report(w.findChild<Viewer*>()->height() > viewerFive && panel->height() >= w.phoneShell()->height() / 4,
+                      "V1 + A1: the viewer gets the timeline's empty room", __FILE__, __LINE__,
+                      QString("viewer %1 (five: %2), timeline %3").arg(w.findChild<Viewer*>()->height()).arg(viewerFive)
+                          .arg(panel->height()));
+        Check::report(view->contentHeight() <= view->viewportHeight(), "V1 + A1 in sight", __FILE__, __LINE__);
+        // Back to five: the rows' old height and the timeline as before
+        w.editor()->project()->undoStack()->undo();
+        settle();
+        Check::report(view->audioRowHeight() == audioRow && w.findChild<Viewer*>()->height() == viewerFive,
+                      "five tracks again: the same rows and viewer", __FILE__, __LINE__,
+                      QString("row %1 / %2, viewer %3 / %4").arg(view->audioRowHeight()).arg(audioRow)
+                          .arg(w.findChild<Viewer*>()->height()).arg(viewerFive));
         QSettings().setValue("timeline/magneticMain", false);
         QSettings().setValue("timeline/clipDrag", "instant");
         w.setLayoutForm(MainWindow::LayoutForm::Desktop);

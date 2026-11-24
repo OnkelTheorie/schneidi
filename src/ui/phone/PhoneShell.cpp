@@ -577,13 +577,29 @@ QSize PhoneShell::minimumSizeHint() const
 void PhoneShell::refreshTimelineHeight()
 {
     if (!m_timeline) return;
-    if (!m_landscape || m_tablet || !m_timelineHeight) {
+    if (m_tablet || !m_timelineHeight || !m_laidOut) {
         m_timeline->setMinimumHeight(0);
         m_timeline->setMaximumHeight(QWIDGETSIZE_MAX);
         return;
     }
-    // Its first rows, but never more than 60 % of the height (the picture keeps at least the rest) nor less than a third
-    const int h = std::clamp(m_timelineHeight(), height() / 3, height() * 3 / 5);
+    int h = 0;
+    if (m_landscape) {
+        // Its first rows, but never more than 60 % of the height (the picture keeps at least the rest) nor less than a
+        // third
+        const int most = height() * 3 / 5;
+        h = std::clamp(m_timelineHeight(most), height() / 3, most);
+    } else {
+        // Between the top bar and the tools: never taller than its old share (5 of 9 against the viewer: many tracks
+        // scroll as before), never lower than 3/10 (room to pan, a sheet over it); in between as tall as its rows, and
+        // the viewer gets what is left (a portrait picture grows, a wide one stays as wide as the screen)
+        constexpr int kGap = 1;
+        const int top = m_top ? std::max(m_top->height(), m_top->sizeHint().height()) + kGap : 0;
+        const int bar = std::max(m_bar->height(), m_bar->sizeHint().height()) + kGap;
+        const int room = height() - top - bar - kGap;
+        if (room <= 0) return;
+        const int most = room * 5 / 9;
+        h = std::clamp(m_timelineHeight(most), room * 3 / 10, most);
+    }
     m_timeline->setMinimumHeight(0);
     m_timeline->setMaximumHeight(h);
     m_timeline->setMinimumHeight(h);

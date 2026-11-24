@@ -360,7 +360,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         updateModeText();
     });
 
-    auto* transport = new QHBoxLayout;
+    auto* transport = m_transport = new QHBoxLayout;
     transport->setContentsMargins(4, 2, 4, 4);
     transport->addWidget(m_timecode);
     transport->addStretch(1);
@@ -537,6 +537,8 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
     };
     show(zoom());
     connect(this, &Viewer::zoomChanged, b, show);
+    // ("Fit" and "100 %" differ in width: compact keeps the play button in the middle)
+    connect(this, &Viewer::zoomChanged, this, [this] { if (m_compact) updateBalance(); });
     m_barRight->insertWidget(0, b);
     updateBalance();
     layout()->invalidate();
@@ -544,9 +546,30 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
 
 void Viewer::updateBalance()
 {
-    // The transport buttons centered: as much room right of them as the timecode takes left (compact: none, the
-    // buttons may sit off the middle)
-    const int balance = m_compact ? 0 : std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
+    if (m_compact) {
+        // Phone/tablet: the play button in the middle of the viewer (= the window's on a phone) whichever side is
+        // wider - the timecode or the zoom and full-screen buttons - so the side spacers make both sides equally wide.
+        // Shrinkable (a narrow viewer squeezes them first, its minimum width stays)
+        if (!m_barBalanceLeft) {
+            m_barBalanceLeft = new QSpacerItem(0, 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
+            m_transport->insertSpacerItem(m_transport->indexOf(m_timecode) + 1, m_barBalanceLeft);
+        }
+        const auto wide = [](QLayoutItem* item) { return std::max(item->sizeHint().width(), item->minimumSize().width()); };
+        const int left = std::max(m_timecode->sizeHint().width(), m_timecode->minimumWidth());
+        const int diff = left - wide(m_barRight);
+        m_barBalanceLeft->changeSize(std::max(0, -diff), 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
+        m_barBalance->changeSize(std::max(0, diff), 0, QSizePolicy::Preferred, QSizePolicy::Minimum);
+        m_transport->invalidate();
+        return;
+    }
+    if (m_barBalanceLeft) { // back on the desktop: its own row again
+        m_transport->removeItem(m_barBalanceLeft);
+        delete m_barBalanceLeft;
+        m_barBalanceLeft = nullptr;
+        m_transport->invalidate();
+    }
+    // The transport buttons centered: as much room right of them as the timecode takes left
+    const int balance = std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
     m_barBalance->changeSize(balance, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
 }
 
@@ -834,6 +857,7 @@ void Viewer::updateTimecode(int frame)
         for (QChar& c : wide)
             if (c.isDigit()) c = widest;
         m_timecode->setMinimumWidth(std::max(m_timecode->minimumWidth(), fm.horizontalAdvance(wide) + 16));
+        if (m_compact) updateBalance();
     }
     m_scrubber->setPosition(frame);
 }

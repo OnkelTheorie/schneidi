@@ -64,9 +64,11 @@ public:
     // Where a sheet without its own height starts (shell y): the timeline's video rows stay in sight above it, as
     // phone editors keep the clips in sight under a tool's panel. Empty = the usual share
     void setSheetTopHint(std::function<int()> top) { m_sheetTopHint = std::move(top); }
-    // Landscape: the timeline as tall as this (its first video and audio rows), the viewer gets the rest - the picture
-    // was ~70 px high at a fixed 1 : 2. Called again on refreshTimelineHeight (tracks added, heights changed)
-    void setTimelineHeightHint(std::function<int()> height) { m_timelineHeight = std::move(height); }
+    // The timeline as tall as this, the viewer gets the rest. Landscape: its first video and audio rows (the picture
+    // was ~70 px high at a fixed 1 : 2); portrait: all its rows (few tracks left empty lanes under the last one).
+    // `most` = the tallest it may get (portrait: the old 5 : 4 share). Called again on refreshTimelineHeight (tracks
+    // added, heights changed)
+    void setTimelineHeightHint(std::function<int(int most)> height) { m_timelineHeight = std::move(height); }
     void refreshTimelineHeight();
     double defaultShare() const;
 
@@ -142,7 +144,7 @@ private:
     QString m_openedBy; // the clip tool that opened the sheet (its panel belongs to a main tool), else empty
     double m_share = 0.55;
     std::function<int()> m_sheetTopHint;
-    std::function<int()> m_timelineHeight;
+    std::function<int(int)> m_timelineHeight;
     QHash<QString, double> m_shares; // per panel: its height (setPanelShare, then the user's drags)
     bool m_landscape = false;
     bool m_tablet = false;

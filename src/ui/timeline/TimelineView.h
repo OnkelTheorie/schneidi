@@ -79,6 +79,9 @@ public:
     // height (rows down to kFitAudioMin) instead of filling the timeline; a pinch or wheel on the heights ends it
     void setFitAudioRows(bool on);
     bool fitAudioRows() const { return m_fitAudio; }
+    // The lanes' height the fitted audio rows share (0 = the view's own): a phone timeline only as tall as its rows
+    // keeps the rows' height of its tallest form, else rows and timeline would shrink each other
+    void setFitAudioLanes(int lanes);
     int audioRowHeight() const; // the audio tracks' height as shown
     int mainTrackBottom() const; // y below V1's row as shown now (the ruler's bottom without tracks)
     // Height that shows the ruler, every video track and the first `audioRows` audio tracks (not scrolled)
@@ -214,6 +217,8 @@ signals:
     // The ruler menu's "loop in the range" entry was switched
     void loopInOutRequested(bool on);
     void viewChanged();
+    // A pinch on the track headers changed the video or audio rows' height (after the gesture)
+    void trackHeightsChanged();
     // setPlayhead moved the playhead (the overview strip follows it)
     void playheadChanged(int frame);
     void toolChanged(TimelineView::Tool tool);
@@ -553,6 +558,7 @@ private:
     Pinch m_pinch = Pinch::None;
     double m_pinchTrackH = 0; // track height during a pinch on the headers (unrounded)
     bool m_fitAudio = false; // setFitAudioRows
+    int m_fitLanes = 0;      // setFitAudioLanes
     bool m_snap = TimelineOptions::snapping(); // remembered (the main window stores it)
     bool m_showNames = true;
     bool m_showDurations = false;

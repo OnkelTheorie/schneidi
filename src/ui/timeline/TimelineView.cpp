@@ -132,7 +132,11 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     }
     auto* touch = m_gestures = new TouchGestures(this);
     touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
-    touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
+    touch->onPinchEnd = [this] {
+        const bool heights = m_pinch == Pinch::AudioHeight || m_pinch == Pinch::VideoHeight;
+        m_pinch = Pinch::None;
+        if (heights) emit trackHeightsChanged();
+    };
     touch->onCancel = [this] { cancelTouchDrag(); };
     touch->setMomentum(TouchGestures::Momentum::Low); // (setMomentum: the setting)
     touch->setAxisLock(true);                         // a sideways swipe moves along the time only
@@ -261,6 +265,14 @@ void TimelineView::setFitAudioRows(bool on)
     setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
 }
 
+void TimelineView::setFitAudioLanes(int lanes)
+{
+    lanes = std::max(0, lanes);
+    if (m_fitLanes == lanes) return;
+    m_fitLanes = lanes;
+    if (m_fitAudio) setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
+}
+
 int TimelineView::mainTrackBottom() const
 {
     if (const auto r = rowFor({TrackKind::Video, 0})) return std::max(kRulerH, r->y + r->h);
@@ -280,7 +292,8 @@ int TimelineView::audioRowHeight() const
     const Timeline& tl = m_editor->project()->timeline();
     const int n = int(tl.audio.size());
     if (!m_fitAudio || n <= 2) return m_view.audioTrackHeight;
-    const int share = (viewportHeight() - subtitlesHeight()) / 2 / n;
+    const int lanes = m_fitLanes > 0 ? m_fitLanes : viewportHeight();
+    const int share = (lanes - subtitlesHeight()) / 2 / n;
     return std::clamp(share, kFitAudioMin, std::max(kFitAudioMin, m_view.audioTrackHeight));
 }
 
