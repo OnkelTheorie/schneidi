@@ -766,10 +766,23 @@ void testGallery(Engine& engine)
         const int first = g.thumbnailsRequested();
         Check::report(first > 0 && first < 100, "gallery: only tiles in sight load", __FILE__, __LINE__,
                       QString::number(first));
+        // Tiles a page at a time (a widget per item of a large library took seconds); scrolling to the end brings
+        // the next page, a pick on the first page stays
+        Check::report(g.tiles().size() == MediaGallery::kPage, "gallery: first page of tiles only", __FILE__, __LINE__,
+                      QString::number(g.tiles().size()));
+        g.tiles().first()->tapped(g.tiles().first()->item());
         auto* scroll = g.findChild<QScrollArea*>();
         scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
         settle();
         CHECK(g.thumbnailsRequested() > first && g.thumbnailsRequested() < 400);
+        Check::report(g.tiles().size() > MediaGallery::kPage, "gallery: scrolled to the end, the next page", __FILE__,
+                      __LINE__, QString::number(g.tiles().size()));
+        for (int i = 0; i < 10 && g.tiles().size() < 400; ++i) {
+            scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+            settle();
+        }
+        CHECK(g.tiles().size() == 400);
+        CHECK(g.chosenPaths() == QStringList{many[0].path} && g.tiles().first()->number() == 1);
         DeviceMedia::setTestItems(items);
     }
     // The flow: the big button over the empty timeline, the gallery, two picked, added in that order
