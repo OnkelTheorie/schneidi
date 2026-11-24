@@ -256,6 +256,8 @@ protected:
     void wheelEvent(QWheelEvent*) override;
     bool nativeGesture(class QNativeGestureEvent* e); // a touchpad pinch zooms (from event()); false = not taken
     void contextMenuEvent(QContextMenuEvent*) override;
+    void hideEvent(QHideEvent*) override;
+    void focusOutEvent(QFocusEvent*) override;
     bool event(QEvent* e) override; // tooltips of story sections and notes in the ruler
     void leaveEvent(QEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
@@ -579,6 +581,7 @@ private:
     // m_drag (a left-button drag never runs at the same time)
     bool m_panning = false;
     QPointF m_panLast;
+    void endPan(); // ends the middle button's pan (its release, or a lost one: menu, dialog, hidden, focus gone)
     QSet<int> m_retimeClips; // clips with visible retime controls
     RetimeHit m_rampDrag;    // dragged speed point
     int m_rampDelta = 0;     // timeline frames while dragging

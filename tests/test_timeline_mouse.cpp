@@ -965,6 +965,34 @@ void testMiddleDragPans()
     middle(f.tv, QEvent::MouseMove, from + QPoint(2000, 0));
     middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(2000, 0));
     CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    // A lost release (a menu or a dialog took the mouse while the button was down): a move without the button ends
+    // the pan instead of scrolling, and a left press works again
+    {
+        Fixture g;
+        g.tv.setZoomAndScroll(2.0, 0, 0);
+        const QPoint at(g.x(50), 120); // clip 1 on V1
+        middle(g.tv, QEvent::MouseButtonPress, at);
+        mouse(g.tv, QEvent::MouseMove, at + QPoint(-80, 0), Qt::NoButton);
+        CHECK_EQ(g.tv.view().leftFrame, 0.0);
+        mouse(g.tv, QEvent::MouseMove, at + QPoint(40, 0), Qt::NoButton);
+        CHECK_EQ(g.tv.view().leftFrame, 0.0);
+        mouse(g.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(g.tv, QEvent::MouseButtonRelease, at, Qt::NoButton);
+        CHECK(g.sel.ids().contains(1));
+        // The same when the left press comes first after the lost release
+        g.sel.clear();
+        middle(g.tv, QEvent::MouseButtonPress, at);
+        mouse(g.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(g.tv, QEvent::MouseButtonRelease, at, Qt::NoButton);
+        CHECK(g.sel.ids().contains(1));
+        // Hidden mid-pan (a page switch): it ends
+        g.sel.clear();
+        middle(g.tv, QEvent::MouseButtonPress, at);
+        g.tv.hide();
+        g.tv.show();
+        mouse(g.tv, QEvent::MouseMove, at + QPoint(-80, 0), Qt::MiddleButton);
+        CHECK_EQ(g.tv.view().leftFrame, 0.0);
+    }
     // Off: the middle button does nothing
     TimelineOptions::setMiddleDragPans(false);
     CHECK(!TimelineOptions::middleDragPans());

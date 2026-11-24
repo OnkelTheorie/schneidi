@@ -225,6 +225,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         return;
     }
     if (e->button() != Qt::LeftButton) return;
+    if (m_panning && !(e->buttons() & Qt::MiddleButton)) endPan(); // its release got lost (a menu, a dialog)
     if (m_panning) return; // the middle button's pan runs: the left one waits
     if (m_drag == Drag::Marks && m_markRight) return; // the right button's drag runs: the left one waits
     const QPoint pos = e->position().toPoint();
@@ -450,6 +451,7 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    if (m_panning && !(e->buttons() & Qt::MiddleButton)) endPan(); // its release got lost: a plain move never pans
     if (m_panning) {
         const QPointF d = e->position() - m_panLast;
         m_panLast = e->position();
@@ -774,10 +776,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::MiddleButton) {
-        if (m_panning) {
-            m_panning = false;
-            unsetCursor();
-        }
+        endPan();
         return;
     }
     // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it
@@ -991,6 +990,25 @@ void TimelineView::leaveEvent(QEvent*)
         m_hoverFrame = -1;
         update();
     }
+}
+
+void TimelineView::endPan()
+{
+    if (!m_panning) return;
+    m_panning = false;
+    unsetCursor();
+}
+
+void TimelineView::hideEvent(QHideEvent* e)
+{
+    endPan(); // (a page switch mid-pan: the release goes elsewhere)
+    QWidget::hideEvent(e);
+}
+
+void TimelineView::focusOutEvent(QFocusEvent* e)
+{
+    endPan(); // a dialog or another window took over: its release may never come
+    QWidget::focusOutEvent(e);
 }
 
 void TimelineView::zoomAtPointer(double factor, double pointerX)
