@@ -1008,6 +1008,45 @@ void testMouseShell(Engine& engine)
     CHECK(!mv->magneticMain());
 }
 
+// The desktop's magnetic main track switch: Werkzeuge › "Lücken automatisch schließen (Spur 1)", Shift+N, a toolbar
+// button; off by default; switched on, V1's gaps close at once (one undo step), off again nothing moves
+void testDesktopMagnetic(Engine& engine)
+{
+    QSettings().remove("timeline/magneticMainDesktop");
+    MainWindow m(&engine);
+    m.disableAutosave();
+    TimelineView* view = m.findChild<TimelineView*>();
+    QAction* a = InputBindings::instance().action("magnetic_main");
+    if (!CHECK(a)) return;
+    CHECK(a->isCheckable() && !a->isChecked());
+    CHECK_EQ(a->shortcut(), QKeySequence("Shift+N"));
+    CHECK(!view->magneticMain());
+    Project* p = m.editor()->project();
+    p->edit("clips", [p](Timeline& tl) {
+        Clip c;
+        c.mediaPath = "/x/a.mp4";
+        c.out = 49;
+        c.id = p->newClipId();
+        c.start = 0;
+        tl.video[0].clips << c;
+        c.id = p->newClipId();
+        c.start = 100;
+        tl.video[0].clips << c;
+    });
+    const int steps = p->undoStack()->index();
+    a->trigger();
+    CHECK(a->isChecked() && view->magneticMain() && m.editor()->magneticMain());
+    CHECK_EQ(p->timeline().video[0].clips[1].start, 50);
+    CHECK_EQ(p->undoStack()->index(), steps + 1);
+    a->trigger();
+    CHECK(!a->isChecked() && !view->magneticMain());
+    CHECK_EQ(p->undoStack()->index(), steps + 1);
+    // The toolbar has its button (the action's)
+    bool button = false;
+    for (QToolButton* b : m.findChildren<QToolButton*>()) button |= b->defaultAction() == a;
+    CHECK(button);
+}
+
 // Review B2/B6: the panels' own titles come back on the desktop, the export sheet's box goes
 void testShellRoundTrip(Engine& engine)
 {
@@ -1062,6 +1101,7 @@ int main(int argc, char** argv)
     QString err;
     if (!CHECK(engine.init(&err))) return Check::result();
     testMouseShell(engine);
+    testDesktopMagnetic(engine);
     testShellRoundTrip(engine);
     testSilentRestore(engine);
     testSteadyTransport(engine);

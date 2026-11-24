@@ -7,7 +7,8 @@
 // table is checked here too (with an engine: test_viewer_large); a sideways wheel delta (touchpad) pans sideways;
 // the view follows the playing playhead only by choice (page/centre) and stops when the user scrolls or zooms;
 // a click into the tracks sets the playhead by choice; snapping remembered, its targets and reach by choice;
-// thumbnail tiles for each choice (filmstrip, first, first and last, none); waveform height (dB/linear) and shape.
+// thumbnail tiles for each choice (filmstrip, first, first and last, none); waveform height (dB/linear) and shape;
+// the magnetic main track by mouse (shorter: no gap, along V1: reorder, longer: pushes).
 #include "check.h"
 #include "timeline_guard.h"
 
@@ -688,6 +689,60 @@ void testTrimOverwrite()
 
 // Story sections as a band in the ruler (color of the kind), notes as marks below it; a section's edge drags (one
 // undo step, not past the neighbor) instead of moving the playhead
+// The magnetic main track by mouse (Editor::setMagneticMain, the desktop switch): a shorter V1 clip closes the gap,
+// a V1 clip dragged along V1 reorders (nothing cut), a longer one pushes what follows; each drag one undo step
+void testMagneticMain()
+{
+    struct Main : ToolFixture {
+        Main()
+        {
+            Timeline tl;
+            tl.video.resize(1);
+            tl.audio.resize(1);
+            auto at = [](int id, int start, int len, int in, int link) {
+                Clip c = clip(id, start, len);
+                c.in = in;
+                c.out = in + len - 1;
+                c.linkId = link;
+                return c;
+            };
+            tl.video[0].clips << at(1, 0, 100, 0, 1) << at(2, 100, 60, 500, 2) << at(3, 160, 100, 1000, 3);
+            tl.audio[0].clips << at(4, 0, 100, 0, 1) << at(5, 100, 60, 500, 2) << at(6, 160, 100, 1000, 3);
+            project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 6, 3});
+            project.undoStack()->clear();
+            tv.setMagneticMain(true);
+            QApplication::processEvents();
+        }
+        const Clip* c(int id) const { return TimelineOps::findClip(project.timeline(), id); }
+    };
+    Main f;
+    CHECK(f.editor.magneticMain());
+    // End of 1 dragged 30 frames left: 2 and 3 (with their sound) move up
+    drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 - f.frames(30), 60});
+    CHECK_EQ(f.c(1)->end(), 70);
+    CHECK(f.c(2)->start == 70 && f.c(5)->start == 70 && f.c(3)->start == 130 && f.c(6)->start == 130);
+    CHECK_EQ(f.project.undoStack()->index(), 1);
+    // 1 dragged past the middle of 2: 2, 1, 3 - nothing cut
+    drag(f.tv, {f.x(35), 60}, {f.x(35) + f.frames(80), 60});
+    CHECK(f.c(2)->start == 0 && f.c(1)->start == 60 && f.c(3)->start == 130);
+    CHECK(f.c(5)->start == 0 && f.c(4)->start == 60 && f.c(6)->start == 130);
+    CHECK(f.c(1)->length() == 70 && f.c(2)->length() == 60 && f.c(3)->length() == 100);
+    CHECK_EQ(f.project.undoStack()->index(), 2);
+    // End of 1 dragged 20 frames right (edge meets clip: overwrite by default): 3 is pushed, not cut
+    drag(f.tv, {f.x(130) - 2, 60}, {f.x(130) - 2 + f.frames(20), 60});
+    CHECK_EQ(f.c(1)->end(), 150);
+    CHECK(f.c(3)->start == 150 && f.c(3)->length() == 100 && f.c(6)->start == 150);
+    CHECK_EQ(f.project.undoStack()->index(), 3);
+    // Undo all three: as it was
+    for (int i = 0; i < 3; ++i) f.project.undoStack()->undo();
+    CHECK(f.c(1)->end() == 100 && f.c(2)->start == 100 && f.c(3)->start == 160);
+    // Switch off: a shorter clip leaves its gap again
+    f.tv.setMagneticMain(false);
+    CHECK(!f.editor.magneticMain());
+    drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 - f.frames(30), 60});
+    CHECK(f.c(1)->end() == 70 && f.c(2)->start == 100);
+}
+
 void testStoryBand()
 {
     Fixture f;
@@ -1332,6 +1387,7 @@ int main(int argc, char** argv)
     testSlipSlideTools();
     testSplitEdit();
     testTrimOverwrite();
+    testMagneticMain();
     testStoryBand();
     testWheelZoomAnchor();
     testWheelSideways();
