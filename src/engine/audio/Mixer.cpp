@@ -285,6 +285,7 @@ struct Mixer::Impl {
     bool readSource(Voice& v, VoiceState& st, int64_t u, int count, float* const* out);
     void restart();
     void continueChunk();
+    void settleLevels(); // Mixer::settleLevels, nested sequences too
     void render(int64_t pos, int count, float* const* out);
 };
 
@@ -1110,13 +1111,17 @@ const std::vector<float>& Mixer::blockPeaks() const { return d->blockPeaks; }
 
 void Mixer::setChunked(int warm) { d->chunkWarm = warm < 0 ? -1 : warm; }
 
-void Mixer::settleLevels()
+void Mixer::settleLevels() { d->settleLevels(); }
+
+void Mixer::Impl::settleLevels()
 {
-    for (auto& ts : d->trackStates) {
+    for (TrackState& ts : trackStates) {
         ts.levelSet = false; // the next block takes the value as it is (no glide)
         ts.autoGlide = false;
+        for (VoiceState& v : ts.voices)
+            if (v.sub) v.sub->settleLevels(); // a nested sequence's own tracks
     }
-    d->masterApplied = d->masterGain;
+    masterApplied = masterGain;
 }
 
 bool Mixer::updateMix(const Timeline& timeline)
