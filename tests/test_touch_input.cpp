@@ -958,6 +958,19 @@ void testHoldToMove()
                       QString("length %1, playhead %2").arg(f.project.timeline().video[0].clips[0].length()).arg(f.tv->playhead()));
         pauseTaps();
     }
+    // On a locked track the handle trims nothing (edgeAt): a swipe there slides the view too
+    {
+        f.project.edit("lock", [](Timeline& tl) { tl.video[0].locked = true; });
+        f.tv->setPlayhead(60);
+        QApplication::processEvents();
+        swipe(f.tv, handle, handle - QPoint(40, 0));
+        QTest::qWait(700);
+        Check::report(f.project.timeline().video[0].clips[0].length() == len && f.tv->playhead() > 60,
+                      "locked track: a swipe on the handle scrubs", __FILE__, __LINE__,
+                      QString("length %1, playhead %2").arg(f.project.timeline().video[0].clips[0].length()).arg(f.tv->playhead()));
+        f.project.undoStack()->undo();
+        pauseTaps();
+    }
     // A long press on a clip: no menu, the clip selected
     f.sel.clear();
     f.tv->setPlayhead(200);

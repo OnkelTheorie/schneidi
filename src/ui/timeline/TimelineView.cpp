@@ -359,7 +359,6 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         // exactly at the cut of two adjacent clips: Roll
         const bool prevAdj = i > 0 && clips[i - 1].end() == c.start;
         const bool nextAdj = i + 1 < clips.size() && clips[i + 1].start == c.end();
-        constexpr double kRollPx = 3;
         if (prevAdj && pos.x() < x1 + kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::Start};
         if (nextAdj && pos.x() >= x2 - kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::End};
         const double grab = std::min<double>(edgeGrabPx() + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
@@ -888,9 +887,14 @@ void TimelineView::pinchView(const QPointF& from, const QPointF& to, double scal
 
 int TimelineView::edgeGrabPx() const
 {
+    return edgeGrabPxFor(m_touchPointer);
+}
+
+int TimelineView::edgeGrabPxFor(bool touch) const
+{
     // The phone's trim handles of a selected clip: a finger's width to grab
-    if (m_fingerPans && m_holdToMove && m_touchPointer) return 24;
-    return Touch::grabPx(m_touchPointer, kEdgeGrabPx);
+    if (m_fingerPans && m_holdToMove && touch) return 24;
+    return Touch::grabPx(touch, kEdgeGrabPx);
 }
 
 void TimelineView::setHoldToMove(bool hold)
@@ -915,13 +919,24 @@ bool TimelineView::onSelectedHandle(const QPointF& pos) const
             if (!sel.contains(c.id)) continue;
             const QRect r = clipRect(row, c);
             if (pos.y() < r.top() || pos.y() > r.bottom()) continue;
-            // Exactly where a press trims (edgeAt with the finger's 24 px: inside the clip, at most a third of it).
-            // It was 24 px on both sides of each edge: outside the clip the finger neither slid the view nor trimmed
-            // this clip (an empty lane did nothing, a neighbour's edge trimmed the neighbour)
+            // Exactly where a finger's press trims (edgeAt, in the trim tools trimHitAt: inside the clip, at most a
+            // third of it, the roll zone at a cut; Slip/Slide anywhere on it; never on a locked track). It was 24 px
+            // on both sides of each edge: outside the clip the finger neither slid the view nor trimmed this clip
             const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
             if (pos.x() < x1 || pos.x() >= x2) continue;
-            const double grab = std::min<double>(24, (x2 - x1) / 3);
+            if (isLocked(row)) return false;
+            if (m_tool == Tool::Slip || m_tool == Tool::Slide) return true;
+            double grab = edgeGrabPxFor(true);
+            if (m_tool == Tool::Trim) {
+                const auto& clips = tl.track(row.ref).clips;
+                const bool adjacent = std::any_of(clips.cbegin(), clips.cend(), [&c](const Clip& o) {
+                    return o.end() == c.start || o.start == c.end();
+                });
+                if (adjacent) grab += kRollPx;
+            }
+            grab = std::min(grab, (x2 - x1) / 3);
             if (pos.x() < x1 + grab || pos.x() >= x2 - grab) return true;
+            return false;
         }
     return false;
 }

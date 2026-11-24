@@ -560,6 +560,8 @@ private:
     Tool m_tool = Tool::Select;
     bool m_touchPointer = false; // the last press/move came from a finger: larger grab zones (edges, In/Out handles)
     int edgeGrabPx() const;
+    int edgeGrabPxFor(bool touch) const; // (onSelectedHandle: a finger before its press arrived)
+    static constexpr double kRollPx = 3;  // trimHitAt: the roll zone at a cut
     enum class Pinch { None, View, VideoHeight, AudioHeight }; // what the running pinch changes
     Pinch m_pinch = Pinch::None;
     double m_pinchTrackH = 0; // track height during a pinch on the headers (unrounded)
