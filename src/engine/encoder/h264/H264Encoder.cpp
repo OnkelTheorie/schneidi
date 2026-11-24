@@ -2195,9 +2195,9 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
 // AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
 // (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
-// (5.6 until 24.11.2026: the tree's level in startFrame, kCrfTreeLevel, made every value 10 to 40 % larger. With 6.2,
-// crf 19 to 28 against x264 medium: game clips with stills +9 to +24 %, highlights -7 to -9 %, a vertical short -25 to
-// -28 % - before +0 to +6 %, -12 to -13 %, -26 to -28 %.)
+// (5.6 until 24.11.2026: the tree's level in startFrame, kCrfTreeLevel, made every value 11 to 43 % larger. With 6.2
+// a vertical short stays where it was (+1 to +2 %), highlights grow by 5 to 6 %, game clips with stills by 10 to 21 %;
+// crf 19 to 28 against x264 medium: -25 to -28 %, -7 to -9 %, +9 to +24 % (before -26 to -29 %, -11 to -15 %, -2 to +6 %).)
 S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 6.2);
 // QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
 // with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
