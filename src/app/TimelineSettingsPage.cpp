@@ -216,6 +216,11 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     mouse->addRow(hint(T("Nur auswählen: die Abspielmarke setzt du im Lineal. Abspielmarke setzen: ein Klick auf einen "
                          "Clip oder eine leere Stelle setzt sie auch dorthin (wie in Vegas, Final Cut, Shotcut, "
                          "CapCut). Ziehen wählt weiter mit dem Rahmen aus bzw. verschiebt.")));
+    m_middle = combo("timeline_middle_drag", {{T("Ansicht verschieben"), 1}, {T("Nichts"), 0}},
+                     TimelineOptions::middleDragPans() ? 1 : 0);
+    mouse->addRow(T("Mittlere Maustaste ziehen"), m_middle);
+    mouse->addRow(hint(T("Ansicht verschieben: Ziehen mit gedrückter mittlerer Maustaste (Mausrad) schiebt die Timeline "
+                         "zur Seite und nach oben oder unten, wie in Kdenlive, Vegas und Blender.")));
 
     lay->addStretch(1);
 }
@@ -233,6 +238,8 @@ TimelineOptions::Follow TimelineSettingsPage::follow() const
 }
 
 bool TimelineSettingsPage::clickSetsPlayhead() const { return m_click->currentData().toInt() == 1; }
+
+bool TimelineSettingsPage::middleDragPans() const { return m_middle->currentData().toInt() == 1; }
 
 TimelineOptions::TimeFormat TimelineSettingsPage::timeFormat() const
 {
@@ -297,6 +304,7 @@ void TimelineSettingsPage::store() const
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());
+    if (middleDragPans() != TimelineOptions::middleDragPans()) TimelineOptions::setMiddleDragPans(middleDragPans());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());
     if (zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(zoomAnchor());

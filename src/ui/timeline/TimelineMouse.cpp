@@ -212,7 +212,19 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         marksRightPress(e->position().toPoint());
         return;
     }
+    // Middle button: drag the view sideways and up/down (user input: the core rule holds), by choice
+    if (e->button() == Qt::MiddleButton) {
+        if (m_drag == Drag::None && !m_panning && TimelineOptions::middleDragPans()) {
+            m_panning = true;
+            m_panLast = e->position();
+            stopFollowing(); // like the wheel: the view no longer follows the playing playhead
+            setCursor(Qt::ClosedHandCursor);
+            e->accept();
+        }
+        return;
+    }
     if (e->button() != Qt::LeftButton) return;
+    if (m_panning) return; // the middle button's pan runs: the left one waits
     if (m_drag == Drag::Marks && m_markRight) return; // the right button's drag runs: the left one waits
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
@@ -434,6 +446,13 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         const double slot = m_reorder.tw + 4;
         m_reorder.to = std::clamp(int(std::lround((m_reorder.fingerX - m_reorder.tw / 2.0 - m_reorder.base) / slot)), 0, n - 1);
         update();
+        return;
+    }
+    if (m_panning) {
+        const QPointF d = e->position() - m_panLast;
+        m_panLast = e->position();
+        if (d.x() != 0) setLeftFrame(m_view.leftFrame - d.x() / m_view.pxPerFrame);
+        if (const int dy = int(std::lround(d.y())); dy != 0) setScrollY(m_view.scrollY - dy);
         return;
     }
     if (m_drag == Drag::None) m_touchPointer = Touch::isTouch(e); // a running drag keeps the press's zones
@@ -750,6 +769,13 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
     if (m_reorder.on) {
         finishReorder(true);
+        return;
+    }
+    if (e->button() == Qt::MiddleButton) {
+        if (m_panning) {
+            m_panning = false;
+            unsetCursor();
+        }
         return;
     }
     // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it

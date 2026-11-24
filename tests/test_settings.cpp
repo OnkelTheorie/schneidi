@@ -402,6 +402,8 @@ void testTimelineTab()
     }
     // Space while playing: stop where it is (default) or go back to the start position
     checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
+    // Middle button drag: pans the view (default) or nothing
+    checkTimelineChoice("timeline_middle_drag", 2, 1, [] { return int(TimelineOptions::middleDragPans()); });
     // A click into the tracks: only select (default) or set the playhead too
     checkTimelineChoice("timeline_click_sets_playhead", 2, 0, [] { return int(TimelineOptions::clickSetsPlayhead()); });
     // Times as timecode (default), seconds or frames; each entry shows an example

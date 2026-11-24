@@ -41,6 +41,10 @@ bool clickSetsPlayhead() { return QSettings().value("timeline/clickSetsPlayhead"
 
 void setClickSetsPlayhead(bool on) { store("timeline/clickSetsPlayhead", "true", !on); }
 
+bool middleDragPans() { return stored("timeline/middleDrag") != "off"; }
+
+void setMiddleDragPans(bool on) { store("timeline/middleDrag", "off", on); }
+
 bool spaceReturns() { return stored("timeline/spaceStops") == "return"; }
 
 void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }

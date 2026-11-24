@@ -571,6 +571,10 @@ private:
     void clickSeek(); // a click into the tracks at m_pressPos: the playhead there, by choice (clickSetsPlayhead)
 
     Drag m_drag = Drag::None;
+    // Middle button held in the tracks: the view follows the pointer (TimelineOptions::middleDragPans), apart from
+    // m_drag (a left-button drag never runs at the same time)
+    bool m_panning = false;
+    QPointF m_panLast;
     QSet<int> m_retimeClips; // clips with visible retime controls
     RetimeHit m_rampDrag;    // dragged speed point
     int m_rampDelta = 0;     // timeline frames while dragging

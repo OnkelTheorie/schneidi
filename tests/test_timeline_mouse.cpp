@@ -829,6 +829,63 @@ void testWheelSideways()
     InputBindings::instance().applyWheelPreset("standard");
 }
 
+// A middle-button mouse event (press/move/release) at pt
+static void middle(TimelineView& tv, QEvent::Type type, QPoint pt)
+{
+    const Qt::MouseButton b = type == QEvent::MouseMove ? Qt::NoButton : Qt::MiddleButton;
+    const Qt::MouseButtons held = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MiddleButton;
+    QMouseEvent e(type, pt, tv.mapToGlobal(pt), b, held, Qt::NoModifier);
+    QApplication::sendEvent(&tv, &e);
+}
+
+// Dragging with the middle button pans the view sideways and up/down (TimelineOptions::middleDragPans, on by
+// default); the model, the selection and the playhead stay; switched off it does nothing
+void testMiddleDragPans()
+{
+    Fixture f;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::middleDragPans());
+    f.tv.resize(1200, 120); // short: room to scroll vertically
+    f.tv.setZoomAndScroll(2.0, 200, 40);
+    f.tv.setPlayhead(170);
+    const QString before = Check::dump(f.project.timeline());
+    const QPoint from(TimelineView::kHeaderW + 300, 60);
+    middle(f.tv, QEvent::MouseButtonPress, from);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(50, 10));
+    middle(f.tv, QEvent::MouseMove, from + QPoint(100, 20));
+    // The content follows the pointer: 100 px right = 50 frames earlier at 2 px/frame, 20 px down = 20 px up
+    CHECK(std::abs(f.tv.view().leftFrame - 150) < 1e-6);
+    CHECK_EQ(f.tv.view().scrollY, 20);
+    // While it pans, a left press waits (no rubber band, no selection)
+    mouse(f.tv, QEvent::MouseButtonPress, from + QPoint(100, 20), Qt::LeftButton | Qt::MiddleButton);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(60, 20));
+    CHECK(std::abs(f.tv.view().leftFrame - 170) < 1e-6);
+    middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(60, 20));
+    // Released: moving on changes nothing
+    mouse(f.tv, QEvent::MouseMove, from, Qt::NoButton);
+    CHECK(std::abs(f.tv.view().leftFrame - 170) < 1e-6);
+    CHECK_EQ(f.tv.view().scrollY, 20);
+    CHECK_EQ(f.tv.playhead(), 170);
+    CHECK(f.sel.ids().isEmpty());
+    CHECK_EQ(Check::dump(f.project.timeline()), before);
+    CHECK_EQ(f.project.undoStack()->count(), 0);
+    // Not before the start of the timeline
+    middle(f.tv, QEvent::MouseButtonPress, from);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(2000, 0));
+    middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(2000, 0));
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    // Off: the middle button does nothing
+    TimelineOptions::setMiddleDragPans(false);
+    CHECK(!TimelineOptions::middleDragPans());
+    f.tv.setZoomAndScroll(2.0, 200, 40);
+    middle(f.tv, QEvent::MouseButtonPress, from);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(100, 20));
+    middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(100, 20));
+    CHECK_EQ(f.tv.view().leftFrame, 200.0);
+    CHECK_EQ(f.tv.view().scrollY, 40);
+    QSettings().remove("timeline");
+}
+
 // Following the playhead while playing (TimelineOptions::follow): off by default (core rule); page turns and centre
 // only while it plays and only for the playback; scrolling or zooming sideways ends it until the next start
 void testFollowPlayback()
@@ -1159,6 +1216,7 @@ int main(int argc, char** argv)
     testStoryBand();
     testWheelZoomAnchor();
     testWheelSideways();
+    testMiddleDragPans();
     testFollowPlayback();
     testClickSetsPlayhead();
     testSnapOptions();

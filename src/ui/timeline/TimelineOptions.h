@@ -27,6 +27,12 @@ void setFollow(Follow follow);
 bool clickSetsPlayhead();
 void setClickSetsPlayhead(bool on);
 
+// Dragging with the middle mouse button in the tracks pans the view sideways and up/down (Settings › Timeline ›
+// Mouse), like Kdenlive, Blender, Vegas, Fairlight and schneidi's own viewer and compositing canvas. On by default
+// (it changed nothing before: the middle button did nothing in the timeline). Read at every press.
+bool middleDragPans();
+void setMiddleDragPans(bool on);
+
 // What the play/pause key (Space) does while it plays (Settings › Timeline › Playback): stop where it is (default,
 // like Premiere, Final Cut, Kdenlive, Shotcut, CapCut) or stop and go back to where playback started (like Vegas and
 // audio programs: hear a cut again and again). K always stops where it is; the action "Stop and return" does the
