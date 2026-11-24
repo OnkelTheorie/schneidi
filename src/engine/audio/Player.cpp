@@ -595,7 +595,8 @@ bool Player::Impl::scrubStep(Feed& f, std::unique_lock<std::mutex>& lock)
                 for (int c = 0; c < kChannels; ++c) f.staged[c][size_t(f.sLen - fade + i)] *= out;
             }
         f.sTail = false;
-        writeStaged(f, f.sLen - f.sPos);
+        // One block per room check (the ring must never hold more than kRing - 1); the rest goes out like firm sound
+        writeStaged(f, std::min(kBlock, f.sLen - f.sPos));
         lock.lock();
         return true;
     }
