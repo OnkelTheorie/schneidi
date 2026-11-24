@@ -20,6 +20,7 @@
 
 #include "app/AiChatPanel.h"
 #include "app/InputBindings.h"
+#include "app/JklKeys.h"
 #include "app/MainWindow.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -164,9 +165,11 @@ void testKeys(MainWindow& w)
     CHECK(fileMenu);
 
     // Full screen: Ctrl+F in schneidi's own sets; the sets of other editors use their key (Premiere Ctrl+`,
-    // Final Cut Ctrl+Shift+F). Either way the key belongs to full screen alone
+    // Final Cut and CapCut Ctrl+Shift+F, Kdenlive F11; Shotcut and Vegas have none for the preview: Ctrl+F stays).
+    // Either way the key belongs to full screen alone
     CHECK(b.action("viewer_full_screen") != nullptr);
-    const QHash<QString, QString> fullScreenKey{{"premiere", "Ctrl+`"}, {"finalcut", "Ctrl+Shift+F"}};
+    const QHash<QString, QString> fullScreenKey{
+        {"premiere", "Ctrl+`"}, {"finalcut", "Ctrl+Shift+F"}, {"capcut", "Ctrl+Shift+F"}, {"kdenlive", "F11"}};
     for (const QString& preset : InputBindings::presetIds()) {
         b.applyPreset(preset);
         const QString key = fullScreenKey.value(preset, "Ctrl+F");
@@ -692,6 +695,45 @@ void testSpaceAndFollow(MainWindow& w, Engine& engine)
     QSettings().remove("timeline");
 }
 
+// J/K/L in the real window with the engine (app/JklKeys, test_jkl_keys has the details): K held + L tapped = one frame
+// forward and paused, K + L held = half speed, letting go stops; K let go: L plays at 1x
+void testJkl(MainWindow& w, Engine& engine)
+{
+    const Timeline& tl = w.liveProject()->timeline();
+    if (tl.video.value(0).clips.isEmpty()) return; // no ffmpeg: no clip to play
+    w.showPage(MainWindow::Page::Edit);
+    TimelineView* tv = w.findChild<TimelinePanel*>()->view();
+    tv->setFocus();
+    engine.pause();
+    settle();
+    for (int i = 0; i < 5 && engine.position() != 10; ++i) {
+        engine.seek(10);
+        settle();
+    }
+    QTest::keyPress(tv, Qt::Key_K);
+    QTest::keyClick(tv, Qt::Key_L);
+    settle();
+    CHECK(engine.speed() == 0.0);
+    CHECK_EQ(engine.position(), 11);
+    QTest::keyClick(tv, Qt::Key_J);
+    QTest::keyClick(tv, Qt::Key_J);
+    settle();
+    CHECK_EQ(engine.position(), 9);
+    QTest::keyPress(tv, Qt::Key_L);
+    QTest::qWait(JklKeys::kHoldMs + 150);
+    CHECK_EQ(engine.speed(), 0.5);
+    QTest::keyRelease(tv, Qt::Key_L);
+    settle();
+    CHECK(engine.speed() == 0.0);
+    QTest::keyRelease(tv, Qt::Key_K);
+    QTest::keyClick(tv, Qt::Key_L);
+    settle();
+    CHECK_EQ(engine.speed(), 1.0);
+    QTest::keyClick(tv, Qt::Key_K);
+    settle();
+    CHECK(engine.speed() == 0.0);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -722,5 +764,6 @@ int main(int argc, char** argv)
     testFullScreen(w, engine);
     testPlayheadMoves(w, engine);
     testSpaceAndFollow(w, engine);
+    testJkl(w, engine);
     return Check::result();
 }

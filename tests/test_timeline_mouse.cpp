@@ -26,6 +26,8 @@
 
 #include <QApplication>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QPointingDevice>
 #include <QSettings>
 #include <QTest>
 #include <QToolButton>
@@ -652,6 +654,36 @@ void testTrimOverwrite()
         CHECK(f.c(2) && f.c(2)->start == 130 && f.c(2)->in == 500);
         CHECK_EQ(f.c(3)->start, 190);
     }
+    // By choice (Settings › Timeline: "Edge meets neighbour clip: stop") the edge stops at the neighbour
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::trimOverwrites());
+    TimelineOptions::setTrimOverwrites(false);
+    CHECK(!TimelineOptions::trimOverwrites());
+    {
+        // End of 1 dragged 30 frames into 2: stays at 100 (there is material: 1 could grow, but 2 is in the way)
+        Over f;
+        const QString original = f.dump();
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 + f.frames(30), 60});
+        CHECK_EQ(f.dump(), original);
+        CHECK_EQ(f.project.undoStack()->count(), 0);
+        // Shortening still works, then growing up to the neighbour again (not past it)
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 - f.frames(20), 60});
+        CHECK_EQ(f.c(1)->end(), 80);
+        CHECK_EQ(f.c(4)->end(), 80);
+        drag(f.tv, {f.x(80) - 2, 60}, {f.x(80) - 2 + f.frames(50), 60});
+        CHECK_EQ(f.c(1)->end(), 100);
+        CHECK_EQ(f.c(4)->end(), 100);
+        CHECK(f.c(2) && f.c(2)->start == 100 && f.c(2)->in == 500 && f.c(2)->end() == 160);
+    }
+    {
+        // Start of 3 dragged left over 2: stops at 2's end, nothing of 2 goes
+        Over f;
+        drag(f.tv, {f.x(160) + 2, 60}, {f.x(160) + 2 - f.frames(70), 60});
+        CHECK_EQ(f.c(3)->start, 160);
+        CHECK(f.c(2) && f.c(2)->end() == 160);
+        CHECK(f.c(5) && f.c(5)->end() == 160);
+    }
+    QSettings().remove("timeline");
 }
 
 // Story sections as a band in the ruler (color of the kind), notes as marks below it; a section's edge drags (one
@@ -827,6 +859,150 @@ void testWheelSideways()
     wheel(f.tv, 120, 30, Qt::ControlModifier);
     CHECK(f.tv.view().pxPerFrame > 2.0 * 1.1);
     InputBindings::instance().applyWheelPreset("standard");
+}
+
+// A touchpad pinch (native gesture) at x: begin, the zoom steps, end
+static void pinch(TimelineView& tv, double x, std::initializer_list<double> values)
+{
+    const QPointF at(x, 60);
+    const auto send = [&](Qt::NativeGestureType type, double value) {
+        QNativeGestureEvent e(type, QPointingDevice::primaryPointingDevice(), 2, at, at, tv.mapToGlobal(at), value,
+                              QPointF());
+        QApplication::sendEvent(&tv, &e);
+        CHECK(e.isAccepted());
+    };
+    send(Qt::BeginNativeGesture, 0);
+    for (double v : values) send(Qt::ZoomNativeGesture, v);
+    send(Qt::EndNativeGesture, 0);
+}
+
+// Pinching on the touchpad zooms the timeline (QNativeGestureEvent): spreading in, closing out; anchored like the
+// wheel zoom - the frame under the pointer stays by default, the visible playhead by choice (Settings › Timeline ›
+// Zoom an); nothing else of the view or the model changes
+void testPinchZoom()
+{
+    Fixture f;
+    QSettings().remove("timeline");
+    CHECK(ZoomAnchor::mode() == ZoomAnchor::Mode::Mouse);
+    const auto frameAt = [&](double x) {
+        return f.tv.view().leftFrame + (x - TimelineView::kHeaderW) / f.tv.view().pxPerFrame;
+    };
+    const auto xOf = [&](double frame) {
+        return TimelineView::kHeaderW + (frame - f.tv.view().leftFrame) * f.tv.view().pxPerFrame;
+    };
+    const double x = TimelineView::kHeaderW + 400;
+    const QString before = Check::dump(f.project.timeline());
+    f.tv.setZoomAndScroll(2.0, 20, 0);
+    f.tv.setPlayhead(150);
+    const double under = frameAt(x), playheadX = xOf(150);
+    pinch(f.tv, x, {0.1, 0.1, 0.05});
+    CHECK(std::abs(f.tv.view().pxPerFrame - 2.0 * 1.1 * 1.1 * 1.05) < 1e-9);
+    CHECK(std::abs(frameAt(x) - under) < 1e-6);
+    CHECK(std::abs(xOf(150) - playheadX) > 10);
+    // Closing the fingers zooms out
+    const double px = f.tv.view().pxPerFrame;
+    pinch(f.tv, x, {-0.2});
+    CHECK(std::abs(f.tv.view().pxPerFrame - px * 0.8) < 1e-9);
+    CHECK(std::abs(frameAt(x) - under) < 1e-6);
+    // Anchored at the playhead by choice: the red line keeps its x
+    ZoomAnchor::setMode(ZoomAnchor::Mode::Playhead);
+    f.tv.setZoomAndScroll(2.0, 20, 0);
+    pinch(f.tv, x, {0.25});
+    CHECK(std::abs(f.tv.view().pxPerFrame - 2.5) < 1e-9);
+    CHECK(std::abs(xOf(150) - playheadX) < 1e-6);
+    ZoomAnchor::setMode(ZoomAnchor::Mode::Mouse);
+    // Never past the limits
+    pinch(f.tv, x, {5, 5, 5, 5, 5, 5});
+    CHECK_EQ(f.tv.view().pxPerFrame, ViewState::kMaxPxPerFrame);
+    CHECK_EQ(f.tv.playhead(), 150);
+    CHECK_EQ(f.tv.view().scrollY, 0);
+    CHECK_EQ(Check::dump(f.project.timeline()), before);
+    QSettings().remove("timeline");
+}
+
+// A middle-button mouse event (press/move/release) at pt
+static void middle(TimelineView& tv, QEvent::Type type, QPoint pt)
+{
+    const Qt::MouseButton b = type == QEvent::MouseMove ? Qt::NoButton : Qt::MiddleButton;
+    const Qt::MouseButtons held = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MiddleButton;
+    QMouseEvent e(type, pt, tv.mapToGlobal(pt), b, held, Qt::NoModifier);
+    QApplication::sendEvent(&tv, &e);
+}
+
+// Dragging with the middle button pans the view sideways and up/down (TimelineOptions::middleDragPans, on by
+// default); the model, the selection and the playhead stay; switched off it does nothing
+void testMiddleDragPans()
+{
+    Fixture f;
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::middleDragPans());
+    f.tv.resize(1200, 120); // short: room to scroll vertically
+    f.tv.setZoomAndScroll(2.0, 200, 40);
+    f.tv.setPlayhead(170);
+    const QString before = Check::dump(f.project.timeline());
+    const QPoint from(TimelineView::kHeaderW + 300, 60);
+    middle(f.tv, QEvent::MouseButtonPress, from);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(50, 10));
+    middle(f.tv, QEvent::MouseMove, from + QPoint(100, 20));
+    // The content follows the pointer: 100 px right = 50 frames earlier at 2 px/frame, 20 px down = 20 px up
+    CHECK(std::abs(f.tv.view().leftFrame - 150) < 1e-6);
+    CHECK_EQ(f.tv.view().scrollY, 20);
+    // While it pans, a left press waits (no rubber band, no selection)
+    mouse(f.tv, QEvent::MouseButtonPress, from + QPoint(100, 20), Qt::LeftButton | Qt::MiddleButton);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(60, 20));
+    CHECK(std::abs(f.tv.view().leftFrame - 170) < 1e-6);
+    middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(60, 20));
+    // Released: moving on changes nothing
+    mouse(f.tv, QEvent::MouseMove, from, Qt::NoButton);
+    CHECK(std::abs(f.tv.view().leftFrame - 170) < 1e-6);
+    CHECK_EQ(f.tv.view().scrollY, 20);
+    CHECK_EQ(f.tv.playhead(), 170);
+    CHECK(f.sel.ids().isEmpty());
+    CHECK_EQ(Check::dump(f.project.timeline()), before);
+    CHECK_EQ(f.project.undoStack()->count(), 0);
+    // Not before the start of the timeline
+    middle(f.tv, QEvent::MouseButtonPress, from);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(2000, 0));
+    middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(2000, 0));
+    CHECK_EQ(f.tv.view().leftFrame, 0.0);
+    // A lost release (a menu or a dialog took the mouse while the button was down): a move without the button ends
+    // the pan instead of scrolling, and a left press works again
+    {
+        Fixture g;
+        g.tv.setZoomAndScroll(2.0, 0, 0);
+        const QPoint at(g.x(50), 120); // clip 1 on V1
+        middle(g.tv, QEvent::MouseButtonPress, at);
+        mouse(g.tv, QEvent::MouseMove, at + QPoint(-80, 0), Qt::NoButton);
+        CHECK_EQ(g.tv.view().leftFrame, 0.0);
+        mouse(g.tv, QEvent::MouseMove, at + QPoint(40, 0), Qt::NoButton);
+        CHECK_EQ(g.tv.view().leftFrame, 0.0);
+        mouse(g.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(g.tv, QEvent::MouseButtonRelease, at, Qt::NoButton);
+        CHECK(g.sel.ids().contains(1));
+        // The same when the left press comes first after the lost release
+        g.sel.clear();
+        middle(g.tv, QEvent::MouseButtonPress, at);
+        mouse(g.tv, QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(g.tv, QEvent::MouseButtonRelease, at, Qt::NoButton);
+        CHECK(g.sel.ids().contains(1));
+        // Hidden mid-pan (a page switch): it ends
+        g.sel.clear();
+        middle(g.tv, QEvent::MouseButtonPress, at);
+        g.tv.hide();
+        g.tv.show();
+        mouse(g.tv, QEvent::MouseMove, at + QPoint(-80, 0), Qt::MiddleButton);
+        CHECK_EQ(g.tv.view().leftFrame, 0.0);
+    }
+    // Off: the middle button does nothing
+    TimelineOptions::setMiddleDragPans(false);
+    CHECK(!TimelineOptions::middleDragPans());
+    f.tv.setZoomAndScroll(2.0, 200, 40);
+    middle(f.tv, QEvent::MouseButtonPress, from);
+    middle(f.tv, QEvent::MouseMove, from + QPoint(100, 20));
+    middle(f.tv, QEvent::MouseButtonRelease, from + QPoint(100, 20));
+    CHECK_EQ(f.tv.view().leftFrame, 200.0);
+    CHECK_EQ(f.tv.view().scrollY, 40);
+    QSettings().remove("timeline");
 }
 
 // Following the playhead while playing (TimelineOptions::follow): off by default (core rule); page turns and centre
@@ -1159,6 +1335,8 @@ int main(int argc, char** argv)
     testStoryBand();
     testWheelZoomAnchor();
     testWheelSideways();
+    testMiddleDragPans();
+    testPinchZoom();
     testFollowPlayback();
     testClickSetsPlayhead();
     testSnapOptions();

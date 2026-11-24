@@ -18,6 +18,7 @@
 #include "ui/SlotText.h"
 
 #include <QHelpEvent>
+#include <QNativeGestureEvent>
 #include <QInputDialog>
 #include <QMenu>
 #include <QPainter>
@@ -142,6 +143,7 @@ bool TimelineView::event(QEvent* e)
         else QToolTip::hideText();
         return true;
     }
+    if (e->type() == QEvent::NativeGesture && nativeGesture(static_cast<QNativeGestureEvent*>(e))) return true;
     return QWidget::event(e);
 }
 

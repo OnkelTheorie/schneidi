@@ -28,6 +28,7 @@
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 #include <QUndoStack>
 #include <QUrl>
 #include <QContextMenuEvent>
@@ -212,7 +213,20 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         marksRightPress(e->position().toPoint());
         return;
     }
+    // Middle button: drag the view sideways and up/down (user input: the core rule holds), by choice
+    if (e->button() == Qt::MiddleButton) {
+        if (m_drag == Drag::None && !m_panning && TimelineOptions::middleDragPans()) {
+            m_panning = true;
+            m_panLast = e->position();
+            stopFollowing(); // like the wheel: the view no longer follows the playing playhead
+            setCursor(Qt::ClosedHandCursor);
+            e->accept();
+        }
+        return;
+    }
     if (e->button() != Qt::LeftButton) return;
+    if (m_panning && !(e->buttons() & Qt::MiddleButton)) endPan(); // its release got lost (a menu, a dialog)
+    if (m_panning) return; // the middle button's pan runs: the left one waits
     if (m_drag == Drag::Marks && m_markRight) return; // the right button's drag runs: the left one waits
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
@@ -380,6 +394,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trim = *hit;
         m_trimIds = m_editor->withCopies(group); // as Editor::trimClip trims
         m_trimDelta = 0;
+        m_trimOverwrite = TimelineOptions::trimOverwrites(); // for the whole drag
         m_drag = Drag::Trim;
         updateTrimFrames(m_editor->project()->timeline(), {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, 0);
         update();
@@ -453,6 +468,14 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
             }
             if (!m_reorderScroll->isActive()) m_reorderScroll->start();
         }
+        return;
+    }
+    if (m_panning && !(e->buttons() & Qt::MiddleButton)) endPan(); // its release got lost: a plain move never pans
+    if (m_panning) {
+        const QPointF d = e->position() - m_panLast;
+        m_panLast = e->position();
+        if (d.x() != 0) setLeftFrame(m_view.leftFrame - d.x() / m_view.pxPerFrame);
+        if (const int dy = int(std::lround(d.y())); dy != 0) setScrollY(m_view.scrollY - dy);
         return;
     }
     if (m_drag == Drag::None) m_touchPointer = Touch::isTouch(e); // a running drag keeps the press's zones
@@ -609,10 +632,10 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start : c->end();
         const QSet<int> exclude(m_trimIds.begin(), m_trimIds.end());
         delta += snapDelta({edgeFrame + delta}, exclude);
-        // the edge runs over a neighbor (overwrite); its edge only snaps
-        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta, true);
+        // The edge runs over a neighbor (overwrite, default) or stops at it (by choice); its edge only snaps
+        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta, m_trimOverwrite);
         if (clamped != m_trimDelta || !m_trimPreview) { // timeline and trim view: as after release (no ripple)
-            m_trimPreview = m_editor->previewTrim(m_trim.clipId, m_trim.edge, clamped, true);
+            m_trimPreview = m_editor->previewTrim(m_trim.clipId, m_trim.edge, clamped, m_trimOverwrite);
             updateTrimFrames(*m_trimPreview, {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, clamped);
         }
         m_trimDelta = clamped;
@@ -771,6 +794,10 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         finishReorder(true);
         return;
     }
+    if (e->button() == Qt::MiddleButton) {
+        endPan();
+        return;
+    }
     // The right button's drag (a new In/Out range) ends with that button only, the left one's never with it
     if ((m_drag == Drag::Marks && m_markRight) != (e->button() == Qt::RightButton)) return;
     if (e->button() != Qt::LeftButton && e->button() != Qt::RightButton) return;
@@ -906,7 +933,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
                             && where.kind == TrackKind::Video && where.index == 0;
         QUndoStack* undo = m_editor->project()->undoStack();
         if (onMain) undo->beginMacro(T("Clip trimmen"));
-        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
+        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, m_trimOverwrite);
         if (onMain) { // magnetic main track: the gap the trim left closes
             m_editor->packTrack({TrackKind::Video, 0});
             endMacroOrDrop(undo);
@@ -984,6 +1011,56 @@ void TimelineView::leaveEvent(QEvent*)
     }
 }
 
+void TimelineView::endPan()
+{
+    if (!m_panning) return;
+    m_panning = false;
+    unsetCursor();
+}
+
+void TimelineView::hideEvent(QHideEvent* e)
+{
+    endPan(); // (a page switch mid-pan: the release goes elsewhere)
+    QWidget::hideEvent(e);
+}
+
+void TimelineView::focusOutEvent(QFocusEvent* e)
+{
+    endPan(); // a dialog or another window took over: its release may never come
+    QWidget::focusOutEvent(e);
+}
+
+void TimelineView::zoomAtPointer(double factor, double pointerX)
+{
+    stopFollowing(); // the user zooms: the view no longer follows the playing playhead
+    // At the pointer or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
+    const double ax = ZoomAnchor::anchorX(std::max<double>(pointerX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
+    m_view.setZoomAround(m_view.pxPerFrame * factor, xToFrame(ax), ax - kHeaderW);
+    if (m_center) m_view.leftFrame = centreLeft();
+    update();
+    emit viewChanged();
+}
+
+bool TimelineView::nativeGesture(QNativeGestureEvent* e)
+{
+    switch (e->gestureType()) {
+    case Qt::BeginNativeGesture: // (macOS: accepting the start brings the rest of the gesture)
+    case Qt::EndNativeGesture:
+        e->accept();
+        return true;
+    case Qt::ZoomNativeGesture: {
+        // A touchpad pinch: value() is the spread's change since the last event (0.05 = 5 % wider). Anchored like the
+        // wheel zoom (Settings › Timeline › Zoom an)
+        const double factor = 1.0 + e->value();
+        if (factor > 0 && factor != 1.0) zoomAtPointer(factor, e->position().x());
+        e->accept();
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 void TimelineView::wheelEvent(QWheelEvent* e)
 {
     // The binding of the held modifiers; a sideways swipe pans sideways (InputBindings::wheelMove, like the Studio)
@@ -999,16 +1076,9 @@ void TimelineView::wheelEvent(QWheelEvent* e)
     case WheelAction::ScrollHorizontal:
         setLeftFrame(m_view.leftFrame - steps * (width() - kHeaderW) * 0.1 / m_view.pxPerFrame);
         break;
-    case WheelAction::Zoom: {
-        stopFollowing(); // the user zooms: the view no longer follows the playing playhead
-        // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor)
-        const double ax = ZoomAnchor::anchorX(std::max<double>(mouseX, kHeaderW), frameToX(m_playhead), kHeaderW, width());
-        m_view.setZoomAround(m_view.pxPerFrame * std::pow(1.2, steps), xToFrame(ax), ax - kHeaderW);
-        if (m_center) m_view.leftFrame = centreLeft();
-        update();
-        emit viewChanged();
+    case WheelAction::Zoom:
+        zoomAtPointer(std::pow(1.2, steps), mouseX);
         break;
-    }
     case WheelAction::TrackHeight: {
         // only the track kind under the mouse (video or audio tracks), like in DaVinci
         const auto row = rowAt(int(e->position().y()));
