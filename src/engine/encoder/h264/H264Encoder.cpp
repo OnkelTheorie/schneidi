@@ -2195,10 +2195,10 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
 // AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
 // (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
-// (5.6 until 24.11.2026: the tree's level in startFrame, kCrfTreeLevel, made every value 11 to 43 % larger. With 6.2
-// a vertical short stays where it was (+1 to +2 %), highlights grow by 5 to 6 %, game clips with stills by 10 to 21 %;
-// crf 19 to 28 against x264 medium: -25 to -28 %, -7 to -9 %, +9 to +24 % (before -26 to -29 %, -11 to -15 %, -2 to +6 %).)
-S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 6.2);
+// (5.6 until 24.11.2026: the tree's level in startFrame, kCrfTreeLevel, made every value 11 to 43 % larger. 6.55 brings
+// the sizes at the export's quality levels (crf 18 / 22 / 28) back in the mean of the three test projects (-0.2 %): game
+// clips with stills +5 / +8 / +4 %, highlights -1 %, a vertical short -5 / -5 / -4 % against before.)
+S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 6.55);
 // QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
 // with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
 S264_DEV(double, gCrfSlope, devEnv("H264_CRFSLOPE") ? std::atof(devEnv("H264_CRFSLOPE")) : 0.87);
@@ -4878,7 +4878,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // +2.9 %, -3.8 / +1.3 % at 1.25; a vertical short -6.6 / -10.3 %, -7.1 / -11.9 %. The whole tree at 1.25 times
         // the strength instead (mbtreeStrength 2.5): talk -3.7 / -0.7 %, highlights -4.3 / +1.7 %, the short -6.3 /
         // -11.3 % - and two-pass missed its targets further (talk at 12 Mbit/s +14 instead of +9 %). The sizes of a
-        // crf value grow by 10 to 40 % with it (gCrfBase went up 0.6 for that). With both, PSNR-Y / SSIM-Y / VMAF: talk
+        // crf value grow by 10 to 40 % with it (gCrfBase went up for that). With gCrfBase 6.2, PSNR-Y / SSIM-Y / VMAF: talk
         // -2.9 / -1.3 / +3.2 % (before +0.1 / +6.1 / +5.9 %), highlights -3.9 / +1.5 / -3.7 % (-3.7 / +2.9 / -2.1 %), the
         // short -7.1 / -12.2 / -26.2 % (-6.6 / -10.3 / -24.2 %), a screen recording -3.4 / -3.3 % (-2.3 / -1.7 %).
         // H264_CRFTREELEVEL: the factor (1 = before).
