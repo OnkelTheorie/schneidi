@@ -391,6 +391,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trim = *hit;
         m_trimIds = m_editor->withCopies(group); // as Editor::trimClip trims
         m_trimDelta = 0;
+        m_trimOverwrite = TimelineOptions::trimOverwrites(); // for the whole drag
         m_drag = Drag::Trim;
         updateTrimFrames(m_editor->project()->timeline(), {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, 0);
         update();
@@ -609,10 +610,10 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start : c->end();
         const QSet<int> exclude(m_trimIds.begin(), m_trimIds.end());
         delta += snapDelta({edgeFrame + delta}, exclude);
-        // the edge runs over a neighbor (overwrite); its edge only snaps
-        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta, true);
+        // The edge runs over a neighbor (overwrite, default) or stops at it (by choice); its edge only snaps
+        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta, m_trimOverwrite);
         if (clamped != m_trimDelta || !m_trimPreview) { // timeline and trim view: as after release (no ripple)
-            m_trimPreview = m_editor->previewTrim(m_trim.clipId, m_trim.edge, clamped, true);
+            m_trimPreview = m_editor->previewTrim(m_trim.clipId, m_trim.edge, clamped, m_trimOverwrite);
             updateTrimFrames(*m_trimPreview, {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, clamped);
         }
         m_trimDelta = clamped;
@@ -913,7 +914,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
                             && where.kind == TrackKind::Video && where.index == 0;
         QUndoStack* undo = m_editor->project()->undoStack();
         if (onMain) undo->beginMacro(T("Clip trimmen"));
-        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, true);
+        m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta, m_trimOverwrite);
         if (onMain) { // magnetic main track: the gap the trim left closes
             m_editor->packTrack({TrackKind::Video, 0});
             endMacroOrDrop(undo);

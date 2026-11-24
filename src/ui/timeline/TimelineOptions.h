@@ -33,6 +33,12 @@ void setClickSetsPlayhead(bool on);
 bool middleDragPans();
 void setMiddleDragPans(bool on);
 
+// A clip's edge dragged with the selection tool onto its neighbour (Settings › Timeline › Mouse): overwrites it
+// (default, as before: the neighbour is shortened or removed where the clip now lies; quick) or stops there like
+// Premiere, DaVinci, Kdenlive, Shotcut. The trim tool (T) ripples either way. Read at every press on an edge.
+bool trimOverwrites();
+void setTrimOverwrites(bool on);
+
 // What the play/pause key (Space) does while it plays (Settings › Timeline › Playback): stop where it is (default,
 // like Premiere, Final Cut, Kdenlive, Shotcut, CapCut) or stop and go back to where playback started (like Vegas and
 // audio programs: hear a cut again and again). K always stops where it is; the action "Stop and return" does the

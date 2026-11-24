@@ -216,6 +216,12 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     mouse->addRow(hint(T("Nur auswählen: die Abspielmarke setzt du im Lineal. Abspielmarke setzen: ein Klick auf einen "
                          "Clip oder eine leere Stelle setzt sie auch dorthin (wie in Vegas, Final Cut, Shotcut, "
                          "CapCut). Ziehen wählt weiter mit dem Rahmen aus bzw. verschiebt.")));
+    m_trimOver = combo("timeline_edge_meets_clip", {{T("Überschreiben"), 1}, {T("Anhalten"), 0}},
+                       TimelineOptions::trimOverwrites() ? 1 : 0);
+    mouse->addRow(T("Kante trifft Nachbarclip"), m_trimOver);
+    mouse->addRow(hint(T("Überschreiben: ziehst du die Kante eines Clips über den Nachbarn, wird der dort gekürzt oder "
+                         "entfernt. Anhalten: die Kante bleibt am Nachbarn stehen (wie in Premiere, DaVinci, Kdenlive). "
+                         "Das Trim-Werkzeug (T) schiebt die Nachbarn immer weiter.")));
     m_middle = combo("timeline_middle_drag", {{T("Ansicht verschieben"), 1}, {T("Nichts"), 0}},
                      TimelineOptions::middleDragPans() ? 1 : 0);
     mouse->addRow(T("Mittlere Maustaste ziehen"), m_middle);
@@ -238,6 +244,8 @@ TimelineOptions::Follow TimelineSettingsPage::follow() const
 }
 
 bool TimelineSettingsPage::clickSetsPlayhead() const { return m_click->currentData().toInt() == 1; }
+
+bool TimelineSettingsPage::trimOverwrites() const { return m_trimOver->currentData().toInt() == 1; }
 
 bool TimelineSettingsPage::middleDragPans() const { return m_middle->currentData().toInt() == 1; }
 
@@ -304,6 +312,7 @@ void TimelineSettingsPage::store() const
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());
+    if (trimOverwrites() != TimelineOptions::trimOverwrites()) TimelineOptions::setTrimOverwrites(trimOverwrites());
     if (middleDragPans() != TimelineOptions::middleDragPans()) TimelineOptions::setMiddleDragPans(middleDragPans());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());

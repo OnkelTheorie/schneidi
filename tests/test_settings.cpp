@@ -402,6 +402,8 @@ void testTimelineTab()
     }
     // Space while playing: stop where it is (default) or go back to the start position
     checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
+    // A clip's edge onto its neighbour: overwrites (default) or stops
+    checkTimelineChoice("timeline_edge_meets_clip", 2, 1, [] { return int(TimelineOptions::trimOverwrites()); });
     // Middle button drag: pans the view (default) or nothing
     checkTimelineChoice("timeline_middle_drag", 2, 1, [] { return int(TimelineOptions::middleDragPans()); });
     // A click into the tracks: only select (default) or set the playhead too

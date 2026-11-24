@@ -652,6 +652,36 @@ void testTrimOverwrite()
         CHECK(f.c(2) && f.c(2)->start == 130 && f.c(2)->in == 500);
         CHECK_EQ(f.c(3)->start, 190);
     }
+    // By choice (Settings › Timeline: "Edge meets neighbour clip: stop") the edge stops at the neighbour
+    QSettings().remove("timeline");
+    CHECK(TimelineOptions::trimOverwrites());
+    TimelineOptions::setTrimOverwrites(false);
+    CHECK(!TimelineOptions::trimOverwrites());
+    {
+        // End of 1 dragged 30 frames into 2: stays at 100 (there is material: 1 could grow, but 2 is in the way)
+        Over f;
+        const QString original = f.dump();
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 + f.frames(30), 60});
+        CHECK_EQ(f.dump(), original);
+        CHECK_EQ(f.project.undoStack()->count(), 0);
+        // Shortening still works, then growing up to the neighbour again (not past it)
+        drag(f.tv, {f.x(100) - 2, 60}, {f.x(100) - 2 - f.frames(20), 60});
+        CHECK_EQ(f.c(1)->end(), 80);
+        CHECK_EQ(f.c(4)->end(), 80);
+        drag(f.tv, {f.x(80) - 2, 60}, {f.x(80) - 2 + f.frames(50), 60});
+        CHECK_EQ(f.c(1)->end(), 100);
+        CHECK_EQ(f.c(4)->end(), 100);
+        CHECK(f.c(2) && f.c(2)->start == 100 && f.c(2)->in == 500 && f.c(2)->end() == 160);
+    }
+    {
+        // Start of 3 dragged left over 2: stops at 2's end, nothing of 2 goes
+        Over f;
+        drag(f.tv, {f.x(160) + 2, 60}, {f.x(160) + 2 - f.frames(70), 60});
+        CHECK_EQ(f.c(3)->start, 160);
+        CHECK(f.c(2) && f.c(2)->end() == 160);
+        CHECK(f.c(5) && f.c(5)->end() == 160);
+    }
+    QSettings().remove("timeline");
 }
 
 // Story sections as a band in the ruler (color of the kind), notes as marks below it; a section's edge drags (one

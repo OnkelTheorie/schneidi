@@ -592,6 +592,7 @@ private:
     EdgeHit m_trim{0, TimelineOps::Edge::Start};
     QVector<int> m_trimIds;
     int m_trimDelta = 0;
+    bool m_trimOverwrite = true; // TimelineOptions::trimOverwrites, read at the press
 
     // Trim mode: running edit, delta and preview of the timeline
     TimelineOps::TrimEdit m_trimEdit;

@@ -45,6 +45,10 @@ bool middleDragPans() { return stored("timeline/middleDrag") != "off"; }
 
 void setMiddleDragPans(bool on) { store("timeline/middleDrag", "off", on); }
 
+bool trimOverwrites() { return stored("timeline/edgeMeetsClip") != "stop"; }
+
+void setTrimOverwrites(bool on) { store("timeline/edgeMeetsClip", "stop", on); }
+
 bool spaceReturns() { return stored("timeline/spaceStops") == "return"; }
 
 void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }
