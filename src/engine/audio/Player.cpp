@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <utility>
 #include <thread>
@@ -37,6 +38,12 @@ constexpr int64_t kHoldNs = 300'000'000;
 constexpr int64_t kSilentNs = 250'000'000; // a device that took nothing for this long (at least) has vanished
 constexpr int64_t kRetryNs = 2'000'000'000; // on a fallback: look for the asked output this often
 constexpr int kSilentTries = 3;             // reopened this often without it calling back: silence until it is back
+// Scrubbing (scrub()): slice lengths and edge fades in ms of the output rate; jumps keep the filters going and warm
+// noise reduction up over this many samples only (Mixer::setChunked)
+constexpr int kScrubMinMs = 40;
+constexpr int kScrubMaxMs = 80;
+constexpr int kScrubFadeMs = 4;
+constexpr int kScrubWarm = 1024;
 
 int64_t nowNs()
 {
@@ -91,6 +98,21 @@ struct Player::Impl {
     std::atomic<uint32_t> holdGen{0};
     std::atomic<bool> muted{false};
     std::atomic<SharedLoudness*> loudness{nullptr};
+
+    // Scrubbing (paused). The newest request under `mutex`; scrubCmd = cmd.gen of the scrub generation (none: ~0),
+    // scrubGen the same for the callback (a scrub's end is no dropout)
+    struct ScrubRequest {
+        uint64_t serial = 0;
+        int64_t pos = 0;
+        int len = 0; // samples of the slice
+    } scrubReq;
+    uint64_t scrubTaken = 0; // serial the feeder took last
+    uint32_t scrubCmd = ~0u;
+    std::atomic<uint32_t> scrubGen{~0u};
+    int64_t scrubAt = 0;      // when the last request came (ns), GUI side
+    int64_t scrubPos = -1;    // its position
+    double scrubSpeed = 0;    // how fast the requests move (timeline seconds per second, smoothed)
+    std::atomic<int> scrubRequests{0}, scrubSlices{0}, scrubJoins{0}, scrubReplaced{0}, scrubCuts{0};
 
     // Clock, published by the callback after every block (seqlock): stream = all samples handed to the device
     std::atomic<uint32_t> seq{0};
@@ -176,6 +198,14 @@ struct Player::Impl {
         std::vector<float> chunkPeaks, tailPeaks;
         // 5.1/7.1: per speaker, tracks then master (Mixer::channelPeaks); the same per block backwards
         std::vector<float> chPeaks, chunkChPeaks, tailChPeaks;
+        // Scrubbing: mixed slices waiting for the ring (planar, samples [sPos, sLen)). With sTail the last `fade`
+        // samples are the sound after the slice, not faded yet: the next slice continues after them (sNext) or
+        // crossfades over them, or they fade out when nothing follows
+        std::vector<float> staged[kChannels], slice[kChannels];
+        int sPos = 0, sLen = 0;
+        bool sTail = false;
+        int64_t sNext = 0;
+        int sPlayed = 0; // samples of the slice under way handed to the ring
     };
 
     explicit Impl(const Options& o) : opt(o), bufferNow(o.buffer) {}
@@ -199,6 +229,17 @@ struct Player::Impl {
     void mixForward(Feed& f, int n, float* const* out);
     void mixBackward(Feed& f, int n, float* const* out);
     void notePeaks(Feed& f, const float* p, size_t n);
+    // Scrubbing, one step of the feeder (under `mutex`, unlocks while mixing); false = nothing to do, wait
+    bool scrubStep(Feed& f, std::unique_lock<std::mutex>& lock);
+    void mixSlice(Feed& f, const ScrubRequest& req, bool cut);
+    void writeStaged(Feed& f, int n); // n samples of the staged sound into the ring as blocks (padded with silence)
+    int scrubFade() const { return opt.rate * kScrubFadeMs / 1000; }
+    // A request this close to where the mixed sound goes on continues it (a slow drag runs behind by the lead)
+    bool joins(const Feed& f, int64_t pos) const
+    {
+        const int64_t tol = int64_t(opt.rate) * kScrubMaxMs / 1000;
+        return f.sTail && pos >= f.sNext - 2 * tol && pos <= f.sNext + tol;
+    }
     void noteChannelPeaks(Feed& f, const float* p, size_t n);
     // Ahead of the device: at least 50 ms and the asked buffer, and the device's real buffer + 20 ms – a device may
     // take its whole buffer at once (miniaudio's DirectSound: gaps up to 100 ms, then 2 periods of 1440 at once,
@@ -249,6 +290,8 @@ void Player::Impl::process(float* out, int frames)
         }
     }
     const bool hold = until != 0 && now < until && holdGen.load(std::memory_order_relaxed) == g;
+    // Scrubbing: the sound ends after every slice on purpose (no dropout), the slices fade themselves
+    const bool scrubbing = scrubGen.load(std::memory_order_relaxed) == g;
     const float muteTarget = muted.load(std::memory_order_relaxed) ? 0.f : 1.f;
     int i = 0;
     bool sound = false, fade = false;
@@ -318,10 +361,10 @@ void Player::Impl::process(float* out, int frames)
             if (s.fadeInAt != s.handed) fadeOutTail(i); // not faded out at the end of the callback before
             s.inRun = false;
             s.gapT = s.total + i;
-            underruns.fetch_add(1, std::memory_order_relaxed);
+            if (!scrubbing) underruns.fetch_add(1, std::memory_order_relaxed);
         }
         sound = false;
-    } else if (s.inRun && !hold && own >= 0 && s.handed - s.fadeInAt > kFade
+    } else if (s.inRun && !hold && !scrubbing && own >= 0 && s.handed - s.fadeInAt > kFade
                && written.load(std::memory_order_acquire) == s.prevWritten && now - s.prevNow >= 4'000'000) {
         // Full, but the next callback could not be: less than `frames` of this generation left in the ring, and the
         // feeder wrote nothing since the callback before although it had the time (a feeder that keeps up tops the
@@ -421,6 +464,10 @@ void Player::Impl::feed()
             continue;
         }
         const Command c = cmd;
+        if (!c.playing && c.gen == scrubCmd && f.mixer) {
+            if (!scrubStep(f, lock)) wake.wait(lock);
+            continue;
+        }
         if (!c.playing || !f.mixer) {
             wake.wait(lock);
             continue;
@@ -498,6 +545,129 @@ void Player::Impl::startGeneration(Feed& f, const Command& c)
     f.revPos = f.revLen = 0;
     f.haveTail = false;
     f.master.reset();
+}
+
+// ---- Scrubbing ----
+
+bool Player::Impl::scrubStep(Feed& f, std::unique_lock<std::mutex>& lock)
+{
+    if (f.gen != cmd.gen) { // a new scrub: nothing staged from before
+        f.gen = cmd.gen;
+        f.genFrom = written.load(std::memory_order_relaxed);
+        f.old.reset();
+        f.sPos = f.sLen = 0;
+        f.sTail = false;
+        f.sPlayed = 0;
+    }
+    // As far ahead as playback keeps (the device may take a whole period at once): the newest request is taken
+    // when the ring needs more, so a fast drag never queues up
+    const uint64_t w = written.load(std::memory_order_relaxed), r = consumed.load(std::memory_order_acquire);
+    if (w - std::max(r, f.genFrom) >= uint64_t(leadBlocks()) || w - r >= uint64_t(kRing - 1)) {
+        waitFor(wake, lock, std::chrono::milliseconds(2));
+        return true;
+    }
+    const int fade = scrubFade();
+    const bool fresh = scrubReq.serial != scrubTaken;
+    const int firm = f.sLen - f.sPos - (f.sTail ? fade : 0); // staged sound that plays whatever comes next
+    // A request elsewhere cuts a slice that played its shortest length (the newest position wins)
+    const int minLen = opt.rate * kScrubMinMs / 1000;
+    const bool cut = fresh && firm >= kBlock && f.sPlayed >= minLen && !joins(f, scrubReq.pos);
+    if (firm >= kBlock && !cut) {
+        lock.unlock();
+        writeStaged(f, kBlock);
+        lock.lock();
+        return true;
+    }
+    if (fresh) {
+        const ScrubRequest req = scrubReq;
+        scrubTaken = req.serial;
+        lock.unlock();
+        mixSlice(f, req, cut);
+        lock.lock();
+        return true;
+    }
+    if (f.sLen > f.sPos) { // nothing new: the last slice fades out over its tail and ends
+        lock.unlock();
+        if (f.sTail)
+            for (int i = 0; i < fade; ++i) {
+                const double x = (i + 0.5) / fade * std::numbers::pi / 2;
+                const float out = float(std::cos(x) * std::cos(x));
+                for (int c = 0; c < kChannels; ++c) f.staged[c][size_t(f.sLen - fade + i)] *= out;
+            }
+        f.sTail = false;
+        writeStaged(f, f.sLen - f.sPos);
+        lock.lock();
+        return true;
+    }
+    return false;
+}
+
+void Player::Impl::mixSlice(Feed& f, const ScrubRequest& req, bool cut)
+{
+    const int fade = scrubFade();
+    if (cut) { // the staged rest goes: the sound right after what is in the ring becomes the tail that fades out
+        f.sLen = f.sPos + fade;
+        f.sTail = true;
+        scrubCuts.fetch_add(1, std::memory_order_relaxed);
+    }
+    const bool join = !cut && joins(f, req.pos);
+    const int64_t from = join ? f.sNext : req.pos;
+    const int n = req.len + fade;
+    // Staged sound to the front, room for the slice
+    const int keep = f.sLen - f.sPos;
+    for (int c = 0; c < kChannels; ++c) {
+        std::copy(f.staged[c].begin() + f.sPos, f.staged[c].begin() + f.sLen, f.staged[c].begin());
+        if (f.staged[c].size() < size_t(keep + n)) f.staged[c].resize(size_t(keep + n));
+        if (f.slice[c].size() < size_t(n)) f.slice[c].resize(size_t(n));
+    }
+    f.sPos = 0;
+    f.sLen = keep;
+    float* out[kChannels];
+    for (int c = 0; c < kChannels; ++c) out[c] = f.slice[c].data();
+    f.mixer->setChunked(kScrubWarm); // a jump keeps the filters going and warms noise reduction up briefly
+    if (!join) f.mixer->settleLevels(); // a mute or fader changed since the last slice holds from the start
+    f.mixer->setMeterBlock(0);
+    f.mixer->render(from, n, out);
+    int at = 0; // samples of the slice that overlap the staged tail
+    if (!join) {
+        // Fade in (sin²); over a tail before it crossfades with that tail fading out (cos²: the two add up to one)
+        for (int i = 0; i < fade; ++i) {
+            const double x = (i + 0.5) / fade * std::numbers::pi / 2;
+            const float in = float(std::sin(x) * std::sin(x)), outGain = 1.f - in;
+            for (int c = 0; c < kChannels; ++c) {
+                out[c][i] *= in;
+                if (f.sTail) {
+                    float& t = f.staged[c][size_t(f.sLen - fade + i)];
+                    t = t * outGain + out[c][i];
+                }
+            }
+        }
+        if (f.sTail) at = fade;
+        f.sPlayed = 0;
+    } else {
+        scrubJoins.fetch_add(1, std::memory_order_relaxed);
+    }
+    for (int c = 0; c < kChannels; ++c) std::copy(out[c] + at, out[c] + n, f.staged[c].begin() + f.sLen);
+    f.sLen += n - at;
+    f.sTail = true;
+    f.sNext = from + n;
+    scrubSlices.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Player::Impl::writeStaged(Feed& f, int n)
+{
+    for (int done = 0; done < n; done += kBlock) {
+        const int k = std::min(kBlock, n - done);
+        Block& b = ring[written.load(std::memory_order_relaxed) % kRing];
+        for (int i = 0; i < kBlock; ++i)
+            for (int c = 0; c < kChannels; ++c)
+                b.data[i * kChannels + c] = i < k ? f.staged[c][size_t(f.sPos + done + i)] : 0.f;
+        b.gen = f.gen;
+        written.fetch_add(1, std::memory_order_release);
+    }
+    f.sPos += n;
+    f.sPlayed += n;
+    if (f.sPos >= f.sLen) f.sPos = f.sLen = 0;
 }
 
 // Track peaks (L, R per track) into the peaks of the block being made
@@ -866,6 +1036,8 @@ void Player::play(double position, double speed)
         std::lock_guard<std::mutex> lock(d->mutex);
         d->cmd = {d->cmd.gen + 1, true, position, speed};
         d->heardMax = 0;
+        d->scrubTaken = d->scrubReq.serial; // a scrub request not mixed yet is dropped
+        d->scrubAt = 0;
         d->holdGen.store(d->cmd.gen, std::memory_order_relaxed);
         d->holdUntil.store(nowNs() + kHoldNs, std::memory_order_release); // after holdGen: seen with it
         d->gen.store(d->cmd.gen, std::memory_order_release);
@@ -930,6 +1102,41 @@ double Player::speed() const
 void Player::release() { d->holdUntil.store(0, std::memory_order_relaxed); }
 
 void Player::setMuted(bool muted) { d->muted.store(muted, std::memory_order_relaxed); }
+
+void Player::scrub(double position)
+{
+    if (!d->deviceOpened.load()) { // like play(): only until the first device is open
+        std::lock_guard<std::mutex> dl(d->deviceMutex);
+        if (!d->device) d->openDevice();
+    }
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
+        if (d->cmd.playing) return;
+        const int64_t now = nowNs();
+        const int64_t pos = std::max<int64_t>(0, std::llround(position));
+        const double dt = d->scrubAt != 0 ? double(now - d->scrubAt) * 1e-9 : 1e9;
+        if (pos == d->scrubPos && dt < 0.5) return; // the same place again (a mouse move within one frame)
+        // How fast the scrub moves: smoothed over the requests of one drag; a pause between requests starts anew
+        const double v = dt < 0.25 && d->scrubPos >= 0 ? double(std::abs(pos - d->scrubPos)) / d->opt.rate / std::max(dt, 1e-3) : 0;
+        d->scrubSpeed = dt < 0.25 ? 0.5 * d->scrubSpeed + 0.5 * v : 0;
+        // Slow (up to real time) the longest slices, from 4x the shortest
+        const double t = std::clamp((d->scrubSpeed - 1.0) / 3.0, 0.0, 1.0);
+        const int maxLen = d->opt.rate * kScrubMaxMs / 1000, minLen = d->opt.rate * kScrubMinMs / 1000;
+        const int len = int(std::lround(maxLen - t * (maxLen - minLen)));
+        if (d->scrubReq.serial != d->scrubTaken) d->scrubReplaced.fetch_add(1, std::memory_order_relaxed);
+        d->scrubReq = {d->scrubReq.serial + 1, pos, len};
+        d->scrubAt = now;
+        d->scrubPos = pos;
+        d->scrubRequests.fetch_add(1, std::memory_order_relaxed);
+        if (d->scrubCmd != d->cmd.gen) { // the first request since playing or the last scrub: a generation of its own
+            ++d->cmd.gen;
+            d->scrubCmd = d->cmd.gen;
+            d->scrubGen.store(d->cmd.gen, std::memory_order_relaxed);
+            d->gen.store(d->cmd.gen, std::memory_order_release); // after scrubGen: the callback sees both
+        }
+    }
+    d->wake.notify_all();
+}
 
 double Player::position() const
 {
@@ -996,6 +1203,11 @@ Player::Stats Player::stats() const
     s.fadeOuts = d->fadeOuts.load();
     s.reopens = d->reopens.load();
     s.reroutes = d->reroutes.load();
+    s.scrubRequests = d->scrubRequests.load();
+    s.scrubSlices = d->scrubSlices.load();
+    s.scrubJoins = d->scrubJoins.load();
+    s.scrubReplaced = d->scrubReplaced.load();
+    s.scrubCuts = d->scrubCuts.load();
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         s.buffer = d->opt.buffer;

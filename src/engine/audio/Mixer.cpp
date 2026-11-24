@@ -1110,6 +1110,15 @@ const std::vector<float>& Mixer::blockPeaks() const { return d->blockPeaks; }
 
 void Mixer::setChunked(int warm) { d->chunkWarm = warm < 0 ? -1 : warm; }
 
+void Mixer::settleLevels()
+{
+    for (auto& ts : d->trackStates) {
+        ts.levelSet = false; // the next block takes the value as it is (no glide)
+        ts.autoGlide = false;
+    }
+    d->masterApplied = d->masterGain;
+}
+
 bool Mixer::updateMix(const Timeline& timeline)
 {
     Impl& m = *d;

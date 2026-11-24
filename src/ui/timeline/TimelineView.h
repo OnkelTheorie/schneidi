@@ -45,6 +45,8 @@ public:
     // exception to the core rule (the view follows the playhead), only in this mode (docs/architektur.md)
     void setCenterPlayhead(bool on);
     bool centerPlayhead() const { return m_center; }
+    // A seekRequested being sent comes from the finger sliding the lanes under the centred line (the user scrubbing)
+    bool scrubbing() const { return m_centreScrubbing; }
     // Phone clip handling (with setFingerPans), as phone editors do it: hold = a swipe anywhere (clips too) slides the
     // view, a tap selects (a frame with trim handles, ~24 px to grab), a long press then a drag moves the clip; false
     // ("Sofort") = a finger on a clip moves it at once, only empty lanes slide
@@ -280,6 +282,7 @@ private:
     QSet<int> withLinked(int id) const; // the clip and the clips linked to it
     void cancelTouchDrag();             // TouchGestures::onCancel
     void centreScrub(double dx);    // a finger's step in the centred mode (snaps a slow scrub to edges)
+    bool m_centreScrubbing = false; // centreScrub is moving the playhead (scrubbing())
     double m_scrubRaw = 0;          // the centred scrub's unsnapped left frame during a pan
     int m_scrubSnap = -1;           // the edge a slow scrub holds at (-1 none)
     QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment

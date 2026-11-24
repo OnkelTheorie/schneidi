@@ -1169,6 +1169,14 @@ void Engine::seek(int frame)
     stopAtEnd(); // a click behind the end while playing: nothing to show there, stop instead of playing over nothing
 }
 
+void Engine::scrubTo(int frame)
+{
+    if (!connected()) return;
+    seek(frame);
+    // (seek may have stopped at the end or clamped the frame: the sound of the frame now shown)
+    if (m_speed == 0.0 && m_scrubAudio) m_player->scrub(soundStart(std::max(0, m_position - m_offset), 1.0));
+}
+
 void Engine::syncRenderCache()
 {
     if (m_renderer) m_renderCache->sync(m_built);
@@ -1184,6 +1192,8 @@ Picture::Pump::Stats Engine::pictureStats() const
 {
     return m_pump ? m_pump->stats() : Picture::Pump::Stats{};
 }
+
+Audio::Player::Stats Engine::audioStats() const { return m_player->stats(); }
 
 int Engine::timelineFramesOnGpu() const
 {

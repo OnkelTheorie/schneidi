@@ -18,6 +18,10 @@
 //
 // Speeds: 1 and -1 sound normal; 2 and 4 (and backwards) play the sound faster like tape; other speeds are silent
 // while the clock runs.
+//
+// Scrubbing (paused): scrub() plays a short slice of the same mix at a position - dragging the playhead, frame steps.
+// The feeder mixes it with the mixer it plays with (no second decoder, never on the calling thread) and fades its
+// edges; slices following each other crossfade, one that continues where the last ended joins it without a seam.
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
@@ -71,6 +75,12 @@ public:
     void release();
     // Dragging the playhead while playing: silent (fading) until unmuted, the clock runs on
     void setMuted(bool muted);
+    // Paused: plays a slice of the mix at clock position `position` (scrubbing; ignored while playing). Slices last
+    // 40-80 ms, the shorter the faster the requests move, and fade in and out over a few ms. The newest request
+    // wins: one not mixed yet is replaced, and once the requests stop the sound ends after the slice under way. A
+    // request close ahead of the sound already mixed continues it (a slow drag plays on without a seam). play() ends
+    // scrubbing; the clock (position()) is not touched.
+    void scrub(double position);
 
     // The clock (see above). Paused: where the sound stopped (or the last play() position)
     double position() const;
@@ -95,6 +105,11 @@ public:
         int reopens = 0;    // device reopened because it went silent or the chosen output came back
         int reroutes = 0;   // the system moved the sound to another output by itself
         int buffer = 0;     // samples the device is asked to buffer now (grows after dropouts)
+        int scrubRequests = 0; // scrub() calls taken (not ignored)
+        int scrubSlices = 0;   // slices mixed for them
+        int scrubJoins = 0;    // of them: continued the slice before without a seam
+        int scrubReplaced = 0; // requests replaced by a newer one before they were mixed
+        int scrubCuts = 0;     // slices cut short by a request elsewhere (the rest dropped, crossfaded)
     };
     Stats stats() const;
     // Tests: the feeder makes no sound for `ms` (a starved computer); the sound runs dry and must not click

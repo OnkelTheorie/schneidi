@@ -5,6 +5,7 @@
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
+#include "engine/audio/Player.h"
 #include "engine/picture/Pump.h"
 
 #include <QElapsedTimer>
@@ -190,11 +191,19 @@ public:
     // Seeks in quick succession while stopped (dragging the playhead, holding an arrow key) scrub: a close picture
     // is shown at once, the exact one follows (own picture engine)
     void seek(int frame);
+    // A seek the user scrubs with (dragging the playhead, frame steps): stopped and with scrub audio on, it also
+    // plays a short slice of the sound there (Audio::Player::scrub); playing it is a plain seek
+    void scrubTo(int frame);
+    // Sound while scrubbing (Playback menu, Settings › Timeline; MainWindow keeps it in sync with the stored choice)
+    void setScrubAudio(bool on) { m_scrubAudio = on; }
+    bool scrubAudio() const { return m_scrubAudio; }
     int position() const { return m_position; }
     // Where playback last started (the position at the start, in the mode of then; -1 = never played)
     int playStart() const { return m_playStart; }
     // Counters of the preview's frame pump (tests, benchmarks)
     Picture::Pump::Stats pictureStats() const;
+    // Counters of the live sound (tests: scrub slices, dropouts)
+    Audio::Player::Stats audioStats() const;
     // Frames of the timeline preview the graphics card composited so far (tests: which path drew the picture)
     int timelineFramesOnGpu() const;
     // While playing: the frame heard right now (fractional, in positions like position()); NaN when stopped.
@@ -329,6 +338,7 @@ private: // steady ns of the last edit while paused, until its picture is shown 
 
     // Own audio engine (docs/archiv/plan-0.10-ton.md): the player plays the sound, the picture follows its clock
     std::unique_ptr<Audio::Player> m_player;
+    bool m_scrubAudio = true; // setScrubAudio
     Timeline m_sourceSound;  // source view: the file as a timeline
     int m_gridSoundAngle = 0; // multicam grid: whose sound plays
 

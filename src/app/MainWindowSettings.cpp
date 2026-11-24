@@ -156,6 +156,10 @@ void MainWindow::offerScaleRestart()
 void MainWindow::applyTimelineOptions()
 {
     TimelineOptions::applyEditDefaults(); // still and transition lengths for the core
+    if (!m_autosaveDisabled) { // (a test run keeps its own choice: the settings were not stored)
+        m_engine->setScrubAudio(TimelineOptions::scrubAudio());
+        if (m_scrubAudioAction) m_scrubAudioAction->setChecked(TimelineOptions::scrubAudio());
+    }
     updateStepTexts();
     m_timeline->view()->update();
     m_timeline->overview()->update();

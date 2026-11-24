@@ -203,6 +203,10 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(hint(T("Zurück zur Startposition: die Abspielmarke springt dorthin, wo du das Abspielen gestartet hast "
                         "(wie in Vegas), gut zum wiederholten Anhören eines Schnitts. K hält immer an der Stelle an; "
                         "„Stopp und zurück zur Startposition“ gibt es auch als eigene Taste (Tastenbelegung).")));
+    m_scrubAudio = combo("timeline_scrub_audio", {{T("An"), 1}, {T("Aus"), 0}}, TimelineOptions::scrubAudio() ? 1 : 0);
+    play->addRow(T("Ton beim Scrubben"), m_scrubAudio);
+    play->addRow(hint(T("An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle "
+                        "(gut, um Schnitte an Sprache zu setzen). Umschalten auch im Menü Wiedergabe oder mit Shift+S.")));
     using SS = TimelineOptions::ShuttleSteps;
     m_shuttle = combo("timeline_shuttle_steps",
                       {{T("Verdoppeln (1–2–4–8–16×)"), int(SS::Double)}, {T("Sanft (1–2–3–5–8×)"), int(SS::Gentle)}},
@@ -295,6 +299,8 @@ TimelineOptions::ShuttleSteps TimelineSettingsPage::shuttleSteps() const
 
 bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
 
+bool TimelineSettingsPage::scrubAudio() const { return m_scrubAudio->currentData().toInt() == 1; }
+
 double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value(); }
 
 double TimelineSettingsPage::transitionSeconds() const { return m_transitionSeconds->value(); }
@@ -336,6 +342,7 @@ void TimelineSettingsPage::store() const
         TimelineOptions::setTransitionSeconds(transitionSeconds());
     if (shuttleSteps() != TimelineOptions::shuttleSteps()) TimelineOptions::setShuttleSteps(shuttleSteps());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
+    if (scrubAudio() != TimelineOptions::scrubAudio()) TimelineOptions::setScrubAudio(scrubAudio());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());

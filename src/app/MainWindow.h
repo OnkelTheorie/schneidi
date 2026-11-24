@@ -638,6 +638,7 @@ private:
     class DrawOverlay* m_drawOverlay = nullptr;
     class DrawBar* m_drawBar = nullptr;
     QAction* m_drawAction = nullptr;
+    QAction* m_scrubAudioAction = nullptr; // Playback › Sound while scrubbing (rebuilt with the menus)
     void setDrawTool(bool on);
     void drawToolChanged(bool on);
     QPointer<class KeyTrainer> m_keyTrainer;     // Help › Practice keys, while open

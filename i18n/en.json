@@ -3889,5 +3889,8 @@
  "Mit der KI schneiden": "Edit with AI",
  "Auf diesem Gerät geht der KI-Chat noch nicht: dieser App fehlt die verschlüsselte Verbindung zu den KI-Anbietern. Alles andere geht ohne KI.": "The AI chat does not work on this device yet: this app lacks the encrypted connection to the AI providers. Everything else works without AI.",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen.": "The AI edits your open project: cutting, removing pauses, titles, sound, color … You can undo every change.",
- "Videos und Fotos werden gesucht …": "Looking for videos and photos …"
+ "Videos und Fotos werden gesucht …": "Looking for videos and photos …",
+ "An": "On",
+ "Ton beim Scrubben": "Audio while scrubbing",
+ "An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle (gut, um Schnitte an Sprache zu setzen). Umschalten auch im Menü Wiedergabe oder mit Shift+S.": "On: dragging the playhead or stepping frames plays a short moment of the sound there (handy for cutting on speech). Also switched in the Playback menu or with Shift+S."
 }

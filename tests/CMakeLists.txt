@@ -290,13 +290,14 @@ schneidi_test(test_stretch) # own time stretcher (keep pitch)
 schneidi_test(test_export_audio)
 schneidi_test(test_audio_analysis)
 schneidi_test(test_audio_player)
+schneidi_test(test_scrub_audio) # sound while scrubbing: slices from the right time, fades, newest wins, mute, setting
 schneidi_test(test_transcribe_gpu)
 schneidi_test(test_transcribe_pieces)
 schneidi_test(test_screen_awake)
 if(TARGET Qt6::DBus)
     target_compile_definitions(test_screen_awake PRIVATE SCHNEIDI_HAVE_DBUS)
 endif()
-set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
+set_tests_properties(test_audio_player test_scrub_audio PROPERTIES RUN_SERIAL TRUE) # real time
 schneidi_test(test_still_refresh) # paused: an edit is shown at once (shape handle drag)
 schneidi_test(test_shape_drag_app) # the whole app: a shape corner drag, the picture follows the box
 schneidi_test(test_play_end) # playback stops at the end and stays stopped

@@ -110,6 +110,9 @@ public:
     // cleaning of a voice, which then listen only `warm` samples before the new position instead of up to half a
     // second (no seek, little decoding per chunk). -1 (the default): every jump starts over, like the export.
     void setChunked(int warm);
+    // The next render starts at the mixer panel values set now instead of gliding there from what played last
+    // (scrubbing: a slice elsewhere after a fader moved or a track was muted while paused is no live change)
+    void settleLevels();
 
     // Counters for tests and the log
     struct Stats {
