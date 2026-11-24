@@ -186,6 +186,18 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     snap->addRow(hint(T("Ein- und ausschalten mit dem Magnet-Knopf oder N, das bleibt nach dem Neustart. Einrast-Abstand: wie "
                         "nah eine Kante kommen muss. Der In/Out-Bereich rastet immer auch an Markern ein.")));
 
+    // The magnetic main track (core/MainTrack.h): the desktop's switch, also in the toolbar (Shift+N)
+    QFormLayout* mainTrack = group(lay, T("Spur 1"));
+    m_magnetic = new QCheckBox(T("Lücken automatisch schließen (Spur 1)"));
+    m_magnetic->setObjectName("timeline_magnetic_main");
+    m_magnetic->setChecked(TimelineOptions::magneticMain());
+    mainTrack->addRow(m_magnetic);
+    mainTrack->addRow(hint(T("An: Clips auf V1 liegen ohne Lücken hintereinander, wie die Hauptspur in CapCut oder Final Cut. "
+                        "Löschen, Kürzen und Verschieben lassen die folgenden Clips nachrücken; Einfügen und Ablegen "
+                        "auf V1 schieben sie nach rechts, statt zu überschreiben. Verknüpfter Ton und verknüpfte Clips "
+                        "gehen mit, gesperrte Spuren bleiben. Auch mit dem Knopf in der Timeline oder Shift+N. Auf "
+                        "Handy und Tablet gilt die Einstellung „Hauptspur magnetisch“.")));
+
     // Playback: following the playhead (read at every play start), what it does after the user moved the playhead
     // (PlayheadMove, read at every move)
     QFormLayout* play = group(lay, T("Wiedergabe"));
@@ -270,6 +282,8 @@ bool TimelineSettingsPage::trimOverwrites() const { return m_trimOver->currentDa
 
 bool TimelineSettingsPage::middleDragPans() const { return m_middle->currentData().toInt() == 1; }
 
+bool TimelineSettingsPage::magneticMain() const { return m_magnetic->isChecked(); }
+
 TimelineOptions::TimeFormat TimelineSettingsPage::timeFormat() const
 {
     return TimelineOptions::TimeFormat(m_timeFormat->currentData().toInt());
@@ -342,6 +356,7 @@ void TimelineSettingsPage::store() const
     if (clipFormat() != TimelineOptions::clipFormat()) TimelineOptions::setClipFormat(clipFormat());
     if (trimOverwrites() != TimelineOptions::trimOverwrites()) TimelineOptions::setTrimOverwrites(trimOverwrites());
     if (middleDragPans() != TimelineOptions::middleDragPans()) TimelineOptions::setMiddleDragPans(middleDragPans());
+    if (magneticMain() != TimelineOptions::magneticMain()) TimelineOptions::setMagneticMain(magneticMain());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());
     if (follow() != TimelineOptions::follow()) TimelineOptions::setFollow(follow());
     if (zoomAnchor() != ZoomAnchor::mode()) ZoomAnchor::setMode(zoomAnchor());

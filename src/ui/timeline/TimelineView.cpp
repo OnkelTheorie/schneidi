@@ -741,7 +741,7 @@ void TimelineView::setFingerPans(bool on)
     m_gestures->onHoldCue = [this](const QPointF& pos) {
         m_holdCue = pos;
         // The magnetic main track: a held clip on V1 shows the whole track as small pictures to reorder
-        if (m_magnetic && m_holdToMove)
+        if (magneticMain() && m_holdToMove)
             if (const auto row = rowAt(int(pos.y())); row && row->ref.kind == TrackKind::Video && row->ref.index == 0
                                                       && !isLocked(*row))
                 if (const int id = clipAt(pos.toPoint())) startReorder(pos, id);
@@ -903,9 +903,14 @@ void TimelineView::setHoldToMove(bool hold)
     update();
 }
 
+bool TimelineView::magneticMain() const
+{
+    return m_editor->magneticMain();
+}
+
 void TimelineView::setMagneticMain(bool on)
 {
-    m_magnetic = on;
+    m_editor->setMagneticMain(on);
     if (!on && m_reorder.on) finishReorder(false);
 }
 

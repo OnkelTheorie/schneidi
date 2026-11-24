@@ -38,6 +38,11 @@ void setMiddleDragPans(bool on);
 // Premiere, DaVinci, Kdenlive, Shotcut. The trim tool (T) ripples either way. Read at every press on an edge.
 bool trimOverwrites();
 void setTrimOverwrites(bool on);
+// The magnetic main track on the desktop (Settings › Timeline, the toolbar's switch, Shift+N; core/MainTrack.h):
+// "Lücken automatisch schließen (Spur 1)", default off. Phone and tablet driven by a finger have their own setting
+// ("Hauptspur magnetisch", timeline/magneticMain, default on).
+bool magneticMain();
+void setMagneticMain(bool on);
 
 // What the play/pause key (Space) does while it plays (Settings › Timeline › Playback): stop where it is (default,
 // like Premiere, Final Cut, Kdenlive, Shotcut, CapCut) or stop and go back to where playback started (like Vegas and

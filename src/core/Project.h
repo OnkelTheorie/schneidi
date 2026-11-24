@@ -82,6 +82,27 @@ public:
     // (e.g. dragging a slider in the Inspector). closeMerge() ends the series.
     void edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey = {});
     void closeMerge() { ++m_mergeSession; }
+    // The magnetic main track (core/MainTrack.h; Editor::setMagneticMain): on = every edit that changes where V1's
+    // clips lie also packs V1 (MainTrack::pack), in the same undo step. A pack that cannot be done leaves the gap
+    // and emits magneticGapKept. A switch of the app, not saved in the project.
+    void setMagneticMain(bool on) { m_magneticMain = on; }
+    bool magneticMain() const { return m_magneticMain; }
+    // The switch acts now: on, not held (MagnetHold) and not in a multicam sequence (its angles lie in sync on purpose)
+    bool magnetActive() const;
+    // While one lives, edits are not packed and placements onto V1 overwrite as without the switch: track structure
+    // edits (V2 would become V1), syncs, the AI's commands (Live: packed once at the end of its step)
+    class MagnetHold {
+    public:
+        explicit MagnetHold(Project* p) : m_p(p) { ++m_p->m_magnetHold; }
+        ~MagnetHold() { --m_p->m_magnetHold; }
+        MagnetHold(const MagnetHold&) = delete;
+        MagnetHold& operator=(const MagnetHold&) = delete;
+    private:
+        Project* m_p;
+    };
+    // What edit() does to `after` (an edit of the open timeline) when the magnetic main track is on; for previews.
+    // Returns why a gap stays (empty = packed or nothing to do).
+    QString magnetize(Timeline& after) const;
     // During timelineChanged: this edit continues the undo step before it (a handle or slider dragged, many per second)
     bool inEditSeries() const { return m_editSeries; }
     // The undo steps after `fromIndex` (QUndoStack::index()) become one step called `text`, e.g. an AI chat turn the
@@ -283,6 +304,7 @@ signals:
     void stillsChanged();        // Color page stills changed, or another project loaded
     void watchFoldersChanged(); // the list of watch folders (also after load())
     void undoStackChanged(); // undoStack() is another one now (setHistoryAside)
+    void magneticGapKept(const QString& why); // the magnetic main track could not close a gap (see setMagneticMain)
     void loaded(); // another project (or a new empty one) replaced everything, after the other signals of load()
 
 private:
@@ -320,6 +342,8 @@ private:
     int m_lastLinkId = 0;
     int m_mergeSession = 0;
     bool m_editSeries = false;
+    bool m_magneticMain = false;
+    int m_magnetHold = 0;
     void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
     void sanitizePool(); // references to missing bins -> Master, resolve parent cycles
     bool m_mediaDirty = false;

@@ -8,6 +8,7 @@
 #include "core/I18n.h"
 #include "core/CodeTrust.h"
 #include "core/LiveHost.h"
+#include "core/MainTrack.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -172,6 +173,17 @@ QString opNames(const QJsonObject& args)
         if (const QString n = op.toObject().value("op").toString(); !n.isEmpty() && !names.contains(n)) names << n;
     if (names.size() > 4) names = names.mid(0, 4) << "…";
     return names.join(", ");
+}
+
+// An edit with ops that place V1 in sync with other material on purpose (a multicam clip, a voice-over to the
+// picture): the magnetic main track does not pack after it
+bool syncsMain(const QJsonObject& args)
+{
+    QJsonValue v = args.value("ops");
+    if (v.isObject()) v = QJsonArray{v};
+    for (const QJsonValue& op : v.toArray())
+        if (const QString n = op.toObject().value("op").toString(); n == "multicam" || n == "voiceover") return true;
+    return false;
 }
 
 // Undo text: "KI: split, delete"
@@ -705,10 +717,16 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     const bool step = (name == "edit" && !planning) || name == "import" || name == "watch" || name == "brand"
                       || name == "templates";
     const int index = undo->index();
+    // The magnetic main track: the AI's ops keep their own meaning (a place at a time stays there, nothing is packed
+    // between them); V1 is packed once at the end of the step, in its undo step
+    std::optional<Project::MagnetHold> magnetHold;
+    const Timeline mainBefore = step ? p->timeline() : Timeline();
+    const int sequenceBefore = p->currentSequence();
     if (step) {
         p->closeMerge();
         const QString planText = T("KI: Plan %1").arg(args.value("plan_id").toString().trimmed().toLower());
         undo->beginMacro(planRun ? planText : name == "edit" ? undoText(args) : T("KI: %1").arg(name));
+        magnetHold.emplace(p);
     }
     QJsonObject result;
     Context ctx;
@@ -743,6 +761,10 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
         return failed("INTERNAL", "the command failed");
     }
     if (step) {
+        magnetHold.reset();
+        if (p->magnetActive() && p->currentSequence() == sequenceBefore && !(name == "edit" && syncsMain(args))
+            && MainTrack::touched(mainBefore, p->timeline(), MainTrack::kMain))
+            p->edit(T("Hauptspur schließen"), [](Timeline& tl) { MainTrack::pack(tl, MainTrack::kMain); });
         undo->endMacro();
         // An import of media only changes nothing in the undo history: no empty step
         if (name != "edit" && undo->index() == index + 1 && undo->command(index)->childCount() == 0)

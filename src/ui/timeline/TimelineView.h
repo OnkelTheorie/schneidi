@@ -53,7 +53,7 @@ public:
     // The main track (V1) magnetic: no gaps (a move or trim on it closes them; Editor::packTrack), a long press on one
     // of its clips shows all of them as small pictures in a row to reorder
     void setMagneticMain(bool on);
-    bool magneticMain() const { return m_magnetic; }
+    bool magneticMain() const; // (the switch lives in the Editor: Editor::setMagneticMain)
     bool reordering() const { return m_reorder.on; } // tests
     // The glide after a flick on the lanes ("low" default, "normal", "off"; setting timeline/momentum). A pan locks
     // its axis at the start (sideways = time only); a slow scrub in the centred mode stops at clip edges and marks
@@ -284,7 +284,6 @@ private:
     int m_scrubSnap = -1;           // the edge a slow scrub holds at (-1 none)
     QPointF m_holdCue{-1, -1}; // a hold armed the drag there: a ring for a moment
     bool m_holdToMove = true;
-    bool m_magnetic = false;
     mutable bool m_lastSnap = false; // a snap reached during a drag: one haptic tick
     struct Reorder {
         bool on = false;
