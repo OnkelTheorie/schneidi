@@ -2195,7 +2195,9 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
 // AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
 // (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
-S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 5.6);
+// (5.6 until 24.11.2026: the tree's level in startFrame, kCrfTreeLevel, made every value 10 to 40 % larger; with 6.2
+// the three test projects are on average as far from x264's sizes as before - talk above, the short below.)
+S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 6.2);
 // QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
 // with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
 S264_DEV(double, gCrfSlope, devEnv("H264_CRFSLOPE") ? std::atof(devEnv("H264_CRFSLOPE")) : 0.87);
@@ -4867,12 +4869,21 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // mean offset of the full strength (unclamped) against the one applied; the split stays as it is.
         // B pictures (no tree of their own) take their reference's. H264_CRFTREEX: weight (measuring).
         static const double kCrfTreeX = devEnv("H264_CRFTREEX") ? std::atof(devEnv("H264_CRFTREEX")) : 1.0;
-        static const double kCrfTreeRef = devEnv("H264_CRFTREEREF") ? std::atof(devEnv("H264_CRFTREEREF")) : 0.0;
+        // ... and by a quarter of that mean offset more (kCrfTreeLevel 1.25: the level of a tree of 1.25 times the
+        // strength, the split inside the picture as it is; B pictures follow their reference): pictures that much of
+        // the clip is predicted from - stills, calm stretches, a talking head - get finer against moving ones than the
+        // tree alone makes them. Measured 24.11.2026, BD-rate against x264 medium (PSNR-Y / SSIM-Y, CRF 19-28) at
+        // 1 / 1.25 / 1.5: talk (game clips and stills) +0.1 / +6.1 %, -2.4 / -1.1 %, +0.1 / -0.1 %; highlights -3.7 /
+        // +2.9 %, -3.8 / +1.3 % at 1.25; a vertical short -6.6 / -10.3 %, -7.1 / -11.9 %. The whole tree at 1.25 times
+        // the strength instead (mbtreeStrength 2.5): talk -3.7 / -0.7 %, highlights -4.3 / +1.7 %, the short -6.3 /
+        // -11.3 % - and two-pass missed its targets further (talk at 12 Mbit/s +14 instead of +9 %). The sizes of a
+        // crf value grow by 10 to 40 % with it (gCrfBase went up 0.6 for that). H264_CRFTREELEVEL: the factor (1 = before).
+        static const double kCrfTreeLevel = devEnv("H264_CRFTREELEVEL") ? std::atof(devEnv("H264_CRFTREELEVEL")) : 1.25;
         if (!fc.treeOffset_.empty()) {
             double t = 0, x = 0;
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m) {
                 t += fc.treeOffset_[m];
-                x += Lookahead::qpOffset(frame, int(m), kCrfTreeRef > 0 ? kCrfTreeRef : cfg_.mbtreeStrength);
+                x += Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength * kCrfTreeLevel);
             }
             crfTreeShift_ = (x - t) / double(fc.treeOffset_.size());
         }
