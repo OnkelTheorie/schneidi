@@ -217,7 +217,8 @@ signals:
     // The ruler menu's "loop in the range" entry was switched
     void loopInOutRequested(bool on);
     void viewChanged();
-    // A pinch on the track headers changed the video or audio rows' height (after the gesture)
+    // The rows' total height changed by the user (after a pinch on the headers, a wheel on them, a keyframe lane or a
+    // curve editor opened or closed): the phone's timeline fits itself to its rows again
     void trackHeightsChanged();
     // setPlayhead moved the playhead (the overview strip follows it)
     void playheadChanged(int frame);

@@ -11,6 +11,7 @@
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "core/Editor.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Types.h"
@@ -1146,6 +1147,38 @@ int main(int argc, char** argv)
                       QString("viewer %1 (five: %2), timeline %3").arg(w.findChild<Viewer*>()->height()).arg(viewerFive)
                           .arg(panel->height()));
         Check::report(view->contentHeight() <= view->viewportHeight(), "V1 + A1 in sight", __FILE__, __LINE__);
+        // A curve editor opened under the clip (+120 px of rows, no timeline change): the timeline grows with it, up
+        // to its old share; closed, it is low again
+        {
+            int clipId = 0;
+            w.editor()->project()->edit("keys", [&](Timeline& tl) {
+                if (tl.video[0].clips.isEmpty()) {
+                    Clip c;
+                    c.id = w.editor()->project()->newClipId();
+                    c.mediaPath = QStringLiteral("phone-test-missing.mkv");
+                    c.out = 99;
+                    tl.video[0].clips << c;
+                }
+                Clip& c = tl.video[0].clips[0];
+                Keys::setKey(c, AnimParam::Opacity, 10, 20);
+                Keys::setKey(c, AnimParam::Opacity, 80, 80);
+                clipId = c.id;
+            });
+            settle();
+            const int before = panel->height();
+            view->setCurveEditor({clipId}, true, AnimParam::Opacity);
+            settle();
+            Check::report(panel->height() > before + 60 && view->contentHeight() <= view->viewportHeight(),
+                          "curve editor opened: the phone timeline grows with its rows", __FILE__, __LINE__,
+                          QString("%1 -> %2, content %3 / lanes %4").arg(before).arg(panel->height())
+                              .arg(view->contentHeight()).arg(view->viewportHeight()));
+            view->setCurveEditor({clipId}, false);
+            settle();
+            Check::report(panel->height() == before, "curve editor closed: as low as before", __FILE__, __LINE__,
+                          QString("%1 / %2").arg(panel->height()).arg(before));
+            w.editor()->project()->undoStack()->undo();
+            settle();
+        }
         // Back to five: the rows' old height and the timeline as before
         w.editor()->project()->undoStack()->undo();
         settle();

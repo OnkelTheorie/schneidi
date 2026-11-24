@@ -268,6 +268,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         else m_keyLanes.insert(kid);
         if (sel->keyClip() == kid) sel->setKeyframes(0, {});
         setScrollY(m_view.scrollY); // height has changed (adjust scrollbar, redraws)
+        emit trackHeightsChanged();
         return;
     }
     if (const auto k = keyframeAt(pos)) {
@@ -1019,6 +1020,7 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         int& h = audio ? m_view.audioTrackHeight : m_view.videoTrackHeight;
         h = std::clamp(h + int(steps * 6), 28, 220);
         setScrollY(m_view.scrollY);
+        emit trackHeightsChanged();
         break;
     }
     case WheelAction::None:
